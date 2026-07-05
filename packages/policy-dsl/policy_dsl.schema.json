@@ -1,0 +1,286 @@
+{
+  "$defs": {
+    "AltitudeEnvelope": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "constraint_type": {
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "scope": {
+          "default": "mission",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "priority": {
+          "default": "P1",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "layer": {
+          "default": "mission",
+          "enum": [
+            "regulation",
+            "site",
+            "mission"
+          ],
+          "title": "Layer",
+          "type": "string"
+        },
+        "violation_action": {
+          "enum": [
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        },
+        "type": {
+          "const": "altitude_envelope",
+          "default": "altitude_envelope",
+          "title": "Type",
+          "type": "string"
+        },
+        "altitude_min_m": {
+          "title": "Altitude Min M",
+          "type": "number"
+        },
+        "altitude_max_m": {
+          "title": "Altitude Max M",
+          "type": "number"
+        },
+        "altitude_ref": {
+          "default": "AGL",
+          "enum": [
+            "AGL",
+            "MSL"
+          ],
+          "title": "Altitude Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "constraint_type",
+        "violation_action",
+        "altitude_min_m",
+        "altitude_max_m"
+      ],
+      "title": "AltitudeEnvelope",
+      "type": "object"
+    },
+    "LatLon": {
+      "properties": {
+        "lat": {
+          "maximum": 90.0,
+          "minimum": -90.0,
+          "title": "Lat",
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180.0,
+          "minimum": -180.0,
+          "title": "Lon",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lat",
+        "lon"
+      ],
+      "title": "LatLon",
+      "type": "object"
+    },
+    "PolygonFence": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "constraint_type": {
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "scope": {
+          "default": "mission",
+          "enum": [
+            "global",
+            "mission",
+            "segment",
+            "waypoint"
+          ],
+          "title": "Scope",
+          "type": "string"
+        },
+        "priority": {
+          "default": "P1",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "layer": {
+          "default": "mission",
+          "enum": [
+            "regulation",
+            "site",
+            "mission"
+          ],
+          "title": "Layer",
+          "type": "string"
+        },
+        "violation_action": {
+          "enum": [
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        },
+        "type": {
+          "const": "polygon_fence",
+          "default": "polygon_fence",
+          "title": "Type",
+          "type": "string"
+        },
+        "geometry": {
+          "$ref": "#/$defs/PolygonGeometry"
+        }
+      },
+      "required": [
+        "id",
+        "constraint_type",
+        "violation_action",
+        "geometry"
+      ],
+      "title": "PolygonFence",
+      "type": "object"
+    },
+    "PolygonGeometry": {
+      "properties": {
+        "vertices": {
+          "items": {
+            "$ref": "#/$defs/LatLon"
+          },
+          "minItems": 3,
+          "title": "Vertices",
+          "type": "array"
+        },
+        "altitude_floor_m": {
+          "default": 0.0,
+          "title": "Altitude Floor M",
+          "type": "number"
+        },
+        "altitude_ceiling_m": {
+          "default": 200.0,
+          "title": "Altitude Ceiling M",
+          "type": "number"
+        },
+        "altitude_ref": {
+          "default": "AGL",
+          "enum": [
+            "AGL",
+            "MSL"
+          ],
+          "title": "Altitude Ref",
+          "type": "string"
+        }
+      },
+      "required": [
+        "vertices"
+      ],
+      "title": "PolygonGeometry",
+      "type": "object"
+    }
+  },
+  "description": "Top-level authored document \u2014 what an operator writes as YAML/JSON.",
+  "properties": {
+    "policy_id": {
+      "title": "Policy Id",
+      "type": "string"
+    },
+    "version": {
+      "title": "Version",
+      "type": "string"
+    },
+    "generation": {
+      "default": 0,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "issued_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Issued At"
+    },
+    "constraints": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "altitude_envelope": "#/$defs/AltitudeEnvelope",
+            "polygon_fence": "#/$defs/PolygonFence"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/PolygonFence"
+          },
+          {
+            "$ref": "#/$defs/AltitudeEnvelope"
+          }
+        ]
+      },
+      "minItems": 1,
+      "title": "Constraints",
+      "type": "array"
+    }
+  },
+  "required": [
+    "policy_id",
+    "version",
+    "constraints"
+  ],
+  "title": "PolicyDoc",
+  "type": "object"
+}

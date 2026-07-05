@@ -1,0 +1,77 @@
+# dev topology (architecture-constraints.md): everything on one host.
+# Functional rail = Gazebo Harmonic + ardupilot_gazebo + ArduPilot SITL, with
+# MAVROS 2 (Humble) carrying the safety path and mavlink-router fanning out to a
+# GCS. The Safety Shield + a VLA stub close the loop.
+#
+# This is the canonical CI / fast-iteration configuration. The hil and flight
+# topologies reuse the same images with the Shield/VLA moved to the Orin.
+#
+# NOTE: the ArduPilot SITL + Gazebo Harmonic images are built from the upstream
+#   projects (no official multi-arch images cover this exact combo). See
+#   sim/README.md for the one-time `docker build` of `vlaguard/sitl-gazebo`.
+
+name: vlaguard-dev
+
+services:
+  sitl-gazebo:
+    # ArduPilot SITL + Gazebo Harmonic + ArduPilot/ardupilot_gazebo plugin
+    image: vlaguard/sitl-gazebo:harmonic
+    build:
+      context: ./ardupilot_gazebo
+    environment:
+      - GZ_SIM_RESOURCE_PATH=/sim/worlds
+    ports:
+      - "5760:5760"   # SITL serial0 (MAVLink TCP)
+    volumes:
+      - ./ardupilot_gazebo/worlds:/sim/worlds:ro
+    command: >
+      sim_vehicle.py -v ArduCopter -f gazebo-iris
+      --model JSON --out=udp:mavlink-router:14550 --speedup 1
+
+  mavlink-router:
+    image: vlaguard/mavlink-router:latest
+    build:
+      context: ./mavlink-router
+    depends_on: [sitl-gazebo]
+    # fan-out: MAVROS (14555) + Mission Planner GCS (14556), parallel not serial
+    command: >
+      mavlink-routerd -e mavros:14555 -e host.docker.internal:14556
+      0.0.0.0:14550
+
+  mavros:
+    image: vlaguard/mavros:humble
+    build:
+      context: ../ros2_ws
+      dockerfile: Dockerfile.mavros
+    depends_on: [mavlink-router]
+    environment:
+      - FCU_URL=udp://:14555@mavlink-router:14555
+    network_mode: service:mavlink-router
+
+  shield:
+    image: vlaguard/ros2:humble
+    build:
+      context: ..
+      dockerfile: ros2_ws/Dockerfile
+    depends_on: [mavros]
+    network_mode: service:mavlink-router
+    volumes:
+      - ../bundles:/bundles:ro
+      - ../episodes:/episodes
+    command: >
+      ros2 run safety_shield_node shield_node --ros-args
+      -p bundle_path:=/bundles/itri-icl-2026-demo-v0.3.0.tar.gz
+      -p audit_path:=/episodes/dev/shield_audit.jsonl
+
+  mavlink-adapter:
+    image: vlaguard/ros2:humble
+    depends_on: [shield]
+    network_mode: service:mavlink-router
+    command: ros2 run mavlink_adapter mavlink_adapter
+
+  vla-stub:
+    # publishes /vla/action_4d at 10 Hz; swapped for a real VLA backend in hil/flight
+    image: vlaguard/ros2:humble
+    depends_on: [shield]
+    network_mode: service:mavlink-router
+    command: python3 -m demo.ros_vla_stub

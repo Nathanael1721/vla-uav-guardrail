@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>safety_shield_node</name>
+  <version>0.1.0</version>
+  <description>
+    ROS 2 (Humble) node wrapping the ROS-free Safety Shield core
+    (packages/safety-shield). Subscribes the VLA 4-D action stream, runs the
+    monitor/repair/escalate tick, and republishes the post-Shield setpoint.
+  </description>
+  <maintainer email="kuantinglai@gmail.com">Kuan-Ting Lai</maintainer>
+  <license>Proprietary</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>mavros_msgs</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

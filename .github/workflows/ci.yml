@@ -1,0 +1,35 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-type-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+      - name: Sync workspace
+        run: uv sync --python 3.11
+      - name: Ruff
+        run: uv run ruff check packages demo ros2_ws
+      - name: Mypy
+        run: uv run mypy packages/*/src demo/mid_term_demo.py demo/vla_stub.py
+      - name: Py-compile ROS nodes (no ROS env in CI)
+        run: |
+          uv run python -m py_compile \
+            ros2_ws/src/safety_shield_node/safety_shield_node/node.py \
+            ros2_ws/src/mavlink_adapter/mavlink_adapter/node.py \
+            demo/ros_vla_stub.py
+      - name: Pytest
+        run: uv run pytest
+
+  # Functional-rail smoke (Gazebo Harmonic + ArduPilot SITL) is added in Phase 3;
+  # it runs the dev-topology docker-compose headless against the scenario smoke set.
+  # functional-rail-smoke:
+  #   runs-on: ubuntu-22.04   # ROS 2 Humble
+  #   ...

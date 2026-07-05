@@ -1,0 +1,55 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+*.so
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+
+# --- uv ---
+# uv.lock is committed; ignore local caches
+.uv/
+
+# --- Tooling caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+
+# --- Docs (mkdocs) ---
+site/
+
+# --- Generated artefacts ---
+# built bundles / episode recordings
+bundles/*.tar.gz
+episodes/
+*.bag2/
+
+# --- ROS 2 ---
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# --- Editors / IDEs ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+
+# --- Secrets / local env ---
+.env
+.env.*
+!.env.example

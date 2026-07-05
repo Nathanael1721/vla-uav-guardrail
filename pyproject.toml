@@ -1,0 +1,45 @@
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+vlaguard-common = { workspace = true }
+policy-dsl = { workspace = true }
+prefix-compiler = { workspace = true }
+safety-shield = { workspace = true }
+stress-harness = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "types-PyYAML>=6.0",
+    # docs site tooling (mkdocs.yml); keeps one venv for code + docs
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+    "pymdown-extensions>=10.7",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["packages"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_unused_ignores = true
+plugins = ["pydantic.mypy"]
+mypy_path = "packages/vlaguard-common/src"
+
+[[tool.mypy.overrides]]
+module = ["shapely.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["packages", "demo"]
+addopts = "-q"
+pythonpath = ["."]
