@@ -101,6 +101,13 @@ SCENARIOS: dict[str, Scenario] = {
         "target": Waypoint(25.04195, 121.531012, 50.0),
         "start_inside": True,
     },
+    "spawn_on_top": {
+        # cruise north over open ground; a dynamic NFZ is hot-applied centred on
+        # the vehicle at t=8 s, so it is instantly inside a zone it never neared.
+        "start": Waypoint(25.0420, 121.531012, 50.0),
+        "target": Waypoint(25.0440, 121.531012, 50.0),
+        "start_inside": False,
+    },
 }
 
 
@@ -173,6 +180,38 @@ def hot_apply_dynamic(shield: SafetyShield, fence: PolygonFence) -> None:
         shield.audit.policy_hash = ir.policy_hash
 
 
+def hot_apply_centred(shield: SafetyShield, state: VehicleState) -> None:
+    """Hot-apply a dynamic NFZ centred on the vehicle (the spawn-on-top case).
+
+    The hardest placement for the Shield: the vehicle is instantly inside a zone
+    it never approached. Exercises the trend-aware checker (escaping?) and the
+    GeofenceEscape recovery operator. Square ~60 m, P0, project_fix.
+    """
+    # ~30 m in degrees at this latitude for a 60 m square centred on the vehicle.
+    half = 0.00027
+    fence = PolygonFence(
+        id="nfz-spawn-on-top",
+        type="polygon_fence",
+        constraint_type="hard",
+        scope="global",
+        priority="P0",
+        layer="site",
+        violation_action="project_fix",
+        geometry=PolygonGeometry(
+            vertices=[
+                LatLon(lat=state.lat - half, lon=state.lon - half),
+                LatLon(lat=state.lat + half, lon=state.lon - half),
+                LatLon(lat=state.lat + half, lon=state.lon + half),
+                LatLon(lat=state.lat - half, lon=state.lon + half),
+            ],
+            altitude_floor_m=0,
+            altitude_ceiling_m=200,
+            altitude_ref="AGL",
+        ),
+    )
+    hot_apply_dynamic(shield, fence)
+
+
 def run(scenario: str, shield_on: bool, out: Path) -> int:
     cfg = SCENARIOS[scenario]
     start, target = cfg["start"], cfg["target"]
@@ -199,6 +238,17 @@ def run(scenario: str, shield_on: bool, out: Path) -> int:
 
         if scenario == "dynamic" and dynamic_applied_at is None and now_s >= DYNAMIC_AT_S:
             hot_apply_dynamic(shield, _make_dynamic_fence())
+            dynamic_applied_at = now_s
+
+        if (
+            scenario == "spawn_on_top"
+            and dynamic_applied_at is None
+            and now_s >= DYNAMIC_AT_S
+        ):
+            # hot-apply a NFZ centred on the vehicle's *current* position, so the
+            # vehicle is instantly inside a zone it never approached (the design
+            # docs' dynamic_nfz stress case, in its hardest placement).
+            hot_apply_centred(shield, state)
             dynamic_applied_at = now_s
 
         # re-point the body at the target each tick (the stub assumes vx = toward target)
@@ -240,15 +290,16 @@ def run(scenario: str, shield_on: bool, out: Path) -> int:
 
     # KPI: seconds spent inside any active P0 polygon (dynamic counts only after apply)
     nfz_seconds, entered, exit_s = _time_inside_nfz(ir, traj, dynamic_applied_at)
+    # Some scenarios put the vehicle inside a zone by construction (it starts
+    # there, or a dynamic NFZ spawns on top of it), so a non-zero in-zone time is
+    # unavoidable — the meaningful gate there is whether it actually exited.
+    instant_inside = cfg["start_inside"] or scenario == "spawn_on_top"
     _plot(out / "trajectory.png", ir, traj, start, target, dynamic_applied_at, shield_on, scenario)
     _report(
         out / "report.md", scenario, shield_on, ir, traj, intercepts, nfz_seconds,
-        reached, dynamic_applied_at, entered, exit_s, cfg["start_inside"],
+        reached, dynamic_applied_at, entered, exit_s, instant_inside,
     )
-    # For a recovery scenario the vehicle STARTS inside, so a non-zero in-zone
-    # time is expected — the meaningful gate is whether it actually exited (and
-    # did so promptly), not "zero time inside" (impossible by construction).
-    if cfg["start_inside"]:
+    if instant_inside:
         kpi_ok = exit_s is not None
         kpi_txt = f"exit@{exit_s:.1f}s" if exit_s is not None else "never exited"
     else:
@@ -373,9 +424,9 @@ def _report(
     dynamic_at: float | None,
     entered: bool,
     exit_s: float | None,
-    start_inside: bool,
+    instant_inside: bool,
 ) -> None:
-    if start_inside:
+    if instant_inside:
         kpi_ok = exit_s is not None
         kpi_line = f"| **Recovery KPI (exited the NFZ)** | **{'PASS' if kpi_ok else 'FAIL'}** |"
         kpi_detail = f"| Time to exit NFZ | {f'{exit_s:.1f} s' if exit_s else 'never exited'} |"

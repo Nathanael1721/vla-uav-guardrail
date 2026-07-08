@@ -27,6 +27,7 @@ sim:
 	uv run python -m demo.kinematic_demo --scenario crossing --shield on
 	uv run python -m demo.kinematic_demo --scenario dynamic  --shield on
 	uv run python -m demo.kinematic_demo --scenario recovery --shield on
+	uv run python -m demo.kinematic_demo --scenario spawn_on_top --shield on
 
 # Export the published DSL JSON Schema contract
 schema:
