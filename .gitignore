@@ -32,6 +32,7 @@ site/
 # built bundles / episode recordings
 bundles/*.tar.gz
 episodes/
+demo/out/
 *.bag2/
 
 # --- ROS 2 ---
