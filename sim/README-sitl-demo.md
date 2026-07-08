@@ -41,9 +41,22 @@ pip3 install --break-system-packages shapely pydantic pyyaml
 
 ## What is *not* here yet
 
-The VLA stub does not arm/takeoff the vehicle, so this validates the **software
-plumbing** (MAVROS ↔ Shield ↔ VLA, audit trail, policy-hash matching) rather than
-a flown A/B mission. A full flown A/B over SITL needs the bring-up's arming/
-takeoff state-machine (cf. the in-house prototype's `sitl/run_sitl_demo.py`),
-which is the natural next step. The Shield logic itself is already fully
-exercised by `make sim` (kinematic) and the unit suite.
+The VLA stub does not arm/takeoff the vehicle, so the bring-up validates the
+**software plumbing** (MAVROS ↔ Shield ↔ VLA, audit trail, policy-hash matching)
+rather than a flown A/B mission. A `flight_controller` node is added
+(`ros2_ws/src/safety_shield_node/safety_shield_node/flight_controller.py`) that
+arms + takes off via the MAVROS services so the copter is airborne before the
+VLA path drives it; the bring-up runs it as a blocking step `[3/5]`. It is
+implemented, compiles, imports, and matches the exact MAVROS QoS on this build
+(`/mavros/state` = RELIABLE+TRANSIENT_LOCAL; `/mavros/local_position/pose` =
+BEST_EFFORT+VOLATILE — verified via `ros2 topic info -v`).
+
+The remaining blocker on this Jazzy host is **not code**: MAVROS does not report
+`connected: true` against this SITL even though the TCP listener is up, so the
+state-machine stays in `wait_connect`. That is a MAVROS↔SITL FCU-URL / DDS
+discovery issue on this environment (the in-house prototype's pymavlink path,
+which bypasses MAVROS entirely, is known-good on the same SITL). Resolving it is
+an environment task, not a Shield task. The Shield logic itself is already fully
+exercised by `make sim` (kinematic, including the inside-zone recovery and the
+spawn-on-top dynamic-NFZ case) and the 29-test unit suite.
+
