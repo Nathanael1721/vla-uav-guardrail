@@ -1,4 +1,4 @@
-.PHONY: sync lint type test check demo sim schema
+.PHONY: sync lint type test check demo sim sitl schema
 
 sync:
 	uv sync --python 3.11
@@ -28,6 +28,12 @@ sim:
 	uv run python -m demo.kinematic_demo --scenario dynamic  --shield on
 	uv run python -m demo.kinematic_demo --scenario recovery --shield on
 	uv run python -m demo.kinematic_demo --scenario spawn_on_top --shield on
+
+# Flown A/B against a real ArduPilot SITL (WSL only): pymavlink direct, the
+# production safety_shield as the pilot's guardrail. Starts/restarts SITL
+# between runs. Result: shield off = NFZ violation (FAIL); shield on = 0 (PASS).
+sitl:
+	wsl bash sim/run_sitl_flight_ab.sh
 
 # Export the published DSL JSON Schema contract
 schema:
