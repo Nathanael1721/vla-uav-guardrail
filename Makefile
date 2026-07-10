@@ -1,4 +1,4 @@
-.PHONY: sync lint type test check demo sim sitl schema
+.PHONY: sync lint type test check demo sim sitl airsim schema
 
 sync:
 	uv sync --python 3.11
@@ -34,6 +34,11 @@ sim:
 # between runs. Result: shield off = NFZ violation (FAIL); shield on = 0 (PASS).
 sitl:
 	wsl bash sim/run_sitl_flight_ab.sh
+
+# Project AirSim (UE5) visual A/B — the perception rail. Starts the Neighborhood
+# world if not already running, runs shield off then on. Windows + conda 'pas'.
+airsim:
+	powershell -ExecutionPolicy Bypass -File sim/run_projectairsim_ab.ps1
 
 # Export the published DSL JSON Schema contract
 schema:
