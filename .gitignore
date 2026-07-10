@@ -54,3 +54,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# --- Project AirSim client log ---
+projectairsim_client.log
