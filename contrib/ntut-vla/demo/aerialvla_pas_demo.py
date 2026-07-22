@@ -382,13 +382,15 @@ async def fly(args) -> int:
             await drone.move_by_velocity_async(
                 e.vx, e.vy, -e.vz_up, duration=0.3,
                 yaw_is_rate=True, yaw=e.yaw_rate)
-            # stuck detector: wedged on a roof/wall -> ESCAPE at >6 s (reverse
-            # heading + climb for 4 s); still stalled after that (>14 s) -> skip
-            pos_key = (round(state.x, 1), round(state.y, 1), round(state.up, 1))
+            # stuck detector: HORIZONTAL position only (x, y) — NOT altitude.
+            # During an ESCAPE climb 'up' changes every tick; if it were in the
+            # key the stall timer would reset forever and the drone would climb
+            # to the ceiling and hover instead of skipping an unreachable point.
+            pos_key = (round(state.x / 3.0), round(state.y / 3.0))  # 3 m buckets
             if pos_key == last_pos:
                 stall_since = stall_since or time.time()
                 stalled_s = time.time() - stall_since
-                if stalled_s > 11.0:
+                if stalled_s > 9.0:
                     print(f"  [flight] STUCK at {pos_key} even after ESCAPE — "
                           f"skipping waypoint {wp_i + 1}")
                     wp_i += 1
@@ -427,11 +429,17 @@ async def fly(args) -> int:
             await asyncio.sleep(TICK)
 
         vla.stop()
-        for _ in range(200):
+        # CONTROLLED descent from ANY altitude (the drone may be at the 55 m
+        # ceiling when the flight ends). Rate scales with height so it's brisk
+        # up high and gentle near the ground — never a free-fall. Generous
+        # iteration cap so it actually reaches the ground before land_async.
+        for _ in range(600):
             kin = drone.get_ground_truth_kinematics()
-            if -kin["pose"]["position"]["z"] <= 1.0:
+            up = -kin["pose"]["position"]["z"]
+            if up <= 1.2:
                 break
-            await drone.move_by_velocity_async(0.0, 0.0, 0.8, duration=0.3)
+            v_down = max(0.6, min(2.0, up * 0.15))    # 2 m/s high → 0.6 m/s low
+            await drone.move_by_velocity_async(0.0, 0.0, v_down, duration=0.3)
             await asyncio.sleep(0.1)
         await (await drone.land_async())
         drone.disarm()
