@@ -120,6 +120,27 @@ def quat_yaw(q: dict) -> float:
     return math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
 
 
+def carrot_point(px, py, path, lookahead):
+    """Pure-pursuit: return a point `lookahead` metres ahead along `path`
+    (a polyline [(x,y), ...] of upcoming waypoints), starting from the drone's
+    projection onto the first segment. Makes the flown path hug the plan and
+    smooths corners (no per-waypoint overshoot). Falls back to the last point."""
+    if not path:
+        return (px, py)
+    # walk from the drone position along the polyline, accumulating length
+    prev = (px, py)
+    remaining = lookahead
+    for pt in path:
+        seg = math.hypot(pt[0] - prev[0], pt[1] - prev[1])
+        if seg >= remaining:
+            t = remaining / max(seg, 1e-9)
+            return (prev[0] + (pt[0] - prev[0]) * t,
+                    prev[1] + (pt[1] - prev[1]) * t)
+        remaining -= seg
+        prev = pt
+    return path[-1]
+
+
 async def fly(args) -> int:
     from projectairsim import Drone, ProjectAirSimClient, World
 
@@ -279,17 +300,31 @@ async def fly(args) -> int:
                     print("  [flight] ESCAPE window over — resuming VLA control")
                 fwd, dwn, yr, land = vla.latest()
                 vx, vy = fwd * math.cos(yaw), fwd * math.sin(yaw)
-                a = args.goal_blend
+                # goal target: in --follow mode, aim at a look-ahead CARROT along
+                # the planned polyline so the flown path HUGS the plan (no corner
+                # overshoot); otherwise aim straight at the current waypoint.
+                if args.follow:
+                    goal = carrot_point(state.x, state.y,
+                                        list(waypoints[wp_i:]), args.lookahead)
+                    a = args.follow_blend       # planner-dominant tracking
+                else:
+                    goal = target
+                    a = args.goal_blend
                 if prev_avoid == "slow":
                     a *= 0.25                 # obstacle near: soften goal-pull
                 elif prev_avoid == "climb+steer":
                     a = 0.0                   # pinned/close: goal-pull OFF so the
                                               # strafe+escape isn't fighting it
                 if a > 0:
-                    gd = math.hypot(target[0] - state.x, target[1] - state.y)
+                    gd = math.hypot(goal[0] - state.x, goal[1] - state.y)
                     if gd > 1e-6:
-                        gvx = (target[0] - state.x) / gd * mission.speed_pref_mps
-                        gvy = (target[1] - state.y) / gd * mission.speed_pref_mps
+                        # slow down on the final approach to the last waypoint
+                        spd = mission.speed_pref_mps
+                        last_d = math.hypot(waypoints[-1][0] - state.x,
+                                            waypoints[-1][1] - state.y)
+                        spd = min(spd, max(1.0, last_d))
+                        gvx = (goal[0] - state.x) / gd * spd
+                        gvy = (goal[1] - state.y) / gd * spd
                         vx, vy = (1 - a) * vx + a * gvx, (1 - a) * vy + a * gvy
                 vz_up, yaw_rate = -dwn, yr * args.yaw_gain
                 # depth avoider: world-frame action, AFTER goal-blend, BEFORE
@@ -547,6 +582,16 @@ def main() -> int:
     ap.add_argument("--no-shield", action="store_true",
                     help="COMPARISON: bypass the Safety Shield entirely (raw VLA "
                          "action, will violate NFZ/altitude) — for before/after demos")
+    ap.add_argument("--follow", action="store_true", default=True,
+                    help="pure-pursuit: track the planned polyline tightly "
+                         "(actual path hugs the plan). On by default.")
+    ap.add_argument("--no-follow", dest="follow", action="store_false",
+                    help="VLA-dominant: aim straight at each waypoint (organic, "
+                         "looser path)")
+    ap.add_argument("--follow-blend", type=float, default=0.85,
+                    help="how strongly to track the planned path (0..1)")
+    ap.add_argument("--lookahead", type=float, default=8.0,
+                    help="pure-pursuit carrot distance (m)")
     args = ap.parse_args()
     if args.best:
         import json as _json
