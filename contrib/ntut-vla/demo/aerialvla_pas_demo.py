@@ -219,6 +219,9 @@ async def fly(args) -> int:
 
     wp_i = 0
     target = waypoints[0]
+    # NFZ polygons (for a proximity slow-down so aggressive path-following can't
+    # corner-cut into a fence faster than the Shield can repair)
+    nfz_polys = [fence_polygon(f) for f in policy.by_type(PolygonFence)]
     print(f"[policy] {policy.policy_id} {policy.policy_hash}")
     print(f"[task]   route={waypoints}  object={args.object!r}")
 
@@ -385,6 +388,17 @@ async def fly(args) -> int:
                     yaw_rate = 0.75 * face_rate + 0.25 * yaw_rate
                     align = max(0.25, math.cos(min(abs(herr), math.pi / 2)))
                     vx, vy = vx * align, vy * align
+                # NFZ-proximity slow-down: near a fence boundary, cut horizontal
+                # speed hard so the Shield always has room to keep us out (the
+                # planned path clears NFZs, but pure-pursuit + momentum could
+                # otherwise clip a corner at speed).
+                if nfz_polys:
+                    pt = Point(state.x, state.y)
+                    dmin = min(p.exterior.distance(pt) if p.contains(pt)
+                               else p.distance(pt) for p in nfz_polys)
+                    if dmin < 8.0:
+                        sc = max(0.2, dmin / 8.0)
+                        vx, vy = vx * sc, vy * sc
                 raw = Action4D(vx=vx, vy=vy, vz_up=vz_up, yaw_rate=yaw_rate)
             smooth = limiter(raw)
             if args.no_shield:
