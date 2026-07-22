@@ -205,6 +205,44 @@ def _los_clear(grid, c0, c1):
     return True
 
 
+def _world_clear(grid, res, ox, oy, a, b):
+    """True if the straight WORLD segment a->b crosses no blocked cell."""
+    ai, aj = _to_cell(res, ox, oy, a[0], a[1])
+    bi, bj = _to_cell(res, ox, oy, b[0], b[1])
+    return _los_clear(grid, (ai, aj), (bi, bj))
+
+
+def smooth_path(grid, res, ox, oy, pts, iters=3):
+    """Chaikin corner-cutting on a world polyline, keeping clearance: a cut point
+    is only accepted if the segment it sits on stays collision-free on `grid`.
+    Rounds the sharp A* corners into smooth curves without entering obstacles.
+    Endpoints are preserved."""
+    pts = [(float(x), float(y)) for x, y in pts]
+    for _ in range(max(0, iters)):
+        if len(pts) < 3:
+            break
+        out = [pts[0]]
+        for k in range(len(pts) - 1):
+            a, b = pts[k], pts[k + 1]
+            q = (a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25)
+            r = (a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75)
+            # accept cut points only if they + their connecting segment are clear
+            if (not _blocked_cell(grid, *_to_cell(res, ox, oy, *q))
+                    and not _blocked_cell(grid, *_to_cell(res, ox, oy, *r))
+                    and _world_clear(grid, res, ox, oy, q, r)):
+                out.extend([q, r])
+            else:
+                out.append(b)          # keep the original vertex (stay clear)
+        out.append(pts[-1])
+        # drop consecutive duplicates
+        dedup = [out[0]]
+        for p in out[1:]:
+            if math.hypot(p[0] - dedup[-1][0], p[1] - dedup[-1][1]) > 0.3:
+                dedup.append(p)
+        pts = dedup
+    return pts
+
+
 # ---------------------------------------------------------------------------
 # global planner: 8-connected A* + line-of-sight simplification
 # ---------------------------------------------------------------------------

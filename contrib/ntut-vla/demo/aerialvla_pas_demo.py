@@ -121,13 +121,9 @@ def quat_yaw(q: dict) -> float:
 
 
 def carrot_point(px, py, path, lookahead):
-    """Pure-pursuit: return a point `lookahead` metres ahead along `path`
-    (a polyline [(x,y), ...] of upcoming waypoints), starting from the drone's
-    projection onto the first segment. Makes the flown path hug the plan and
-    smooths corners (no per-waypoint overshoot). Falls back to the last point."""
+    """Legacy simple carrot (kept for --no-follow fallbacks)."""
     if not path:
         return (px, py)
-    # walk from the drone position along the polyline, accumulating length
     prev = (px, py)
     remaining = lookahead
     for pt in path:
@@ -139,6 +135,71 @@ def carrot_point(px, py, path, lookahead):
         remaining -= seg
         prev = pt
     return path[-1]
+
+
+class PathFollower:
+    """Proper arc-length pure-pursuit over a fixed planned polyline.
+
+    Tracks a monotonic progress `s` = the drone's projection onto the polyline
+    (never rewinds), so passing a waypoint does NOT make the carrot jump to the
+    next segment and loop. The carrot is a point `lookahead` m ahead of the
+    projection. Also reports a corner-slowdown factor from the path bend within
+    the look-ahead, so the drone eases through sharp turns instead of overshooting.
+    """
+
+    def __init__(self, pts):
+        self.pts = [(float(x), float(y)) for x, y in pts]
+        self.cum = [0.0]
+        for a, b in zip(self.pts, self.pts[1:]):
+            self.cum.append(self.cum[-1] + math.hypot(b[0] - a[0], b[1] - a[1]))
+        self.total = self.cum[-1]
+        self.s = 0.0
+
+    def _point_at(self, s):
+        s = max(0.0, min(s, self.total))
+        for k in range(len(self.pts) - 1):
+            if s <= self.cum[k + 1] or k == len(self.pts) - 2:
+                seg = self.cum[k + 1] - self.cum[k]
+                t = 0.0 if seg < 1e-9 else (s - self.cum[k]) / seg
+                a, b = self.pts[k], self.pts[k + 1]
+                return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+        return self.pts[-1]
+
+    def update(self, px, py):
+        """Advance the projection monotonically; return (carrot, slow_factor)."""
+        # search the projection forward from the current s within a window
+        best_s, best_d = self.s, 1e18
+        s0 = self.s
+        step = 0.5
+        s = s0
+        while s <= min(self.total, s0 + 25.0):
+            cx, cy = self._point_at(s)
+            d = (cx - px) ** 2 + (cy - py) ** 2
+            if d < best_d:
+                best_d, best_s = d, s
+            s += step
+        self.s = max(self.s, best_s)             # monotonic — never rewind
+        return self._point_at(self.s)
+
+    def carrot(self, lookahead):
+        return self._point_at(self.s + lookahead)
+
+    def corner_slow(self, ahead=10.0, min_factor=0.35):
+        """0.35..1: heading change of the path over the next `ahead` m -> slow."""
+        p0 = self._point_at(self.s)
+        p1 = self._point_at(self.s + ahead * 0.5)
+        p2 = self._point_at(self.s + ahead)
+        v1 = (p1[0] - p0[0], p1[1] - p0[1])
+        v2 = (p2[0] - p1[0], p2[1] - p1[1])
+        n1, n2 = math.hypot(*v1), math.hypot(*v2)
+        if n1 < 1e-6 or n2 < 1e-6:
+            return 1.0
+        cos = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (n1 * n2)))
+        # cos=1 straight -> 1.0 ; cos=-1 U-turn -> min_factor
+        return min_factor + (1.0 - min_factor) * (cos + 1.0) / 2.0
+
+    def done(self, margin=3.0):
+        return self.s >= self.total - margin
 
 
 async def fly(args) -> int:
@@ -166,6 +227,7 @@ async def fly(args) -> int:
     # The planning grid = surveyed BUILDINGS (city map) + drawn/loaded NFZs from
     # the policy, so the planner routes GLOBALLY around a no-fly-zone instead of
     # leaving the Shield to slide reactively along its edge (which just wobbles).
+    plan_grid = None                      # inflated planning grid (for smoothing)
     cmap = None if args.no_planner else city_planner.load_occ(args.citymap)
     fences = [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
     if cmap is None and not fences:
@@ -197,6 +259,7 @@ async def fly(args) -> int:
             print(f"[planner] stamped {len(fences)} NFZ -> {n_fence_cells} grid cells")
         # clearance is constant, so inflate once and reuse for every leg
         grid = city_planner.inflate(occ, res, args.clearance)
+        plan_grid = (grid, res, ox, oy)
         n_user = len(waypoints)
         # full ordered stop list = [spawn/current pos] + user waypoints.
         # no pre-loop pose available here, so use the spawn origin (35, -20).
@@ -222,6 +285,16 @@ async def fly(args) -> int:
     # NFZ polygons (for a proximity slow-down so aggressive path-following can't
     # corner-cut into a fence faster than the Shield can repair)
     nfz_polys = [fence_polygon(f) for f in policy.by_type(PolygonFence)]
+    # planned polyline (spawn + expanded waypoints) for arc-length pure-pursuit.
+    # Chaikin-smooth it (clearance-preserving) so the sharp A* corners become
+    # smooth curves — the flown path then reads as clean arcs, not a jagged detour.
+    plan_pts = [(35.0, -20.0)] + list(waypoints)
+    if args.follow and plan_grid is not None and args.smooth_path:
+        g, gres, gox, goy = plan_grid
+        plan_pts = city_planner.smooth_path(g, gres, gox, goy, plan_pts, iters=2)
+        print(f"[planner] smoothed path -> {len(plan_pts)} points")
+    follower = PathFollower(plan_pts) if args.follow else None
+    (out / "planned.json").write_text(json.dumps(plan_pts), encoding="utf-8")
     print(f"[policy] {policy.policy_id} {policy.policy_hash}")
     print(f"[task]   route={waypoints}  object={args.object!r}")
 
@@ -268,8 +341,12 @@ async def fly(args) -> int:
         tick = 0
         reached = False
         flight_budget_s = MAX_S * max(1, len(waypoints))   # more time for routes
-        last_pos, stall_since = None, None
         escape_until, escape_done = None, False   # ESCAPE mode (stall recovery)
+        # progress-based stuck detection: measure distance to the CURRENT target
+        # and only reset the timer on genuine progress toward it. Robust to the
+        # ESCAPE maneuver's own jitter (which does NOT reduce target distance),
+        # so a truly wedged waypoint gets SKIPPED instead of escape-looping.
+        best_d, progress_t = 1e18, time.time()
         last_dlr = (100.0, 100.0)                 # freshest left/right depth
         avoid_state, prev_avoid = "", ""          # depth-avoider status
         live_path, live_tmp = out / "live.json", out / "live.json.tmp"
@@ -303,12 +380,14 @@ async def fly(args) -> int:
                     print("  [flight] ESCAPE window over — resuming VLA control")
                 fwd, dwn, yr, land = vla.latest()
                 vx, vy = fwd * math.cos(yaw), fwd * math.sin(yaw)
-                # goal target: in --follow mode, aim at a look-ahead CARROT along
-                # the planned polyline so the flown path HUGS the plan (no corner
-                # overshoot); otherwise aim straight at the current waypoint.
-                if args.follow:
-                    goal = carrot_point(state.x, state.y,
-                                        list(waypoints[wp_i:]), args.lookahead)
+                # goal target: in --follow mode, arc-length pure-pursuit along
+                # the planned polyline (monotonic projection -> no waypoint-pass
+                # loops) + corner slow-down; otherwise aim at the current waypoint.
+                corner_sc = 1.0
+                if follower is not None:
+                    follower.update(state.x, state.y)
+                    goal = follower.carrot(args.lookahead)
+                    corner_sc = follower.corner_slow()
                     a = args.follow_blend       # planner-dominant tracking
                 else:
                     goal = target
@@ -321,8 +400,9 @@ async def fly(args) -> int:
                 if a > 0:
                     gd = math.hypot(goal[0] - state.x, goal[1] - state.y)
                     if gd > 1e-6:
-                        # slow down on the final approach to the last waypoint
-                        spd = mission.speed_pref_mps
+                        # speed = cruise, eased through corners (corner_sc) and on
+                        # the final approach to the last waypoint
+                        spd = mission.speed_pref_mps * corner_sc
                         last_d = math.hypot(waypoints[-1][0] - state.x,
                                             waypoints[-1][1] - state.y)
                         spd = min(spd, max(1.0, last_d))
@@ -431,34 +511,38 @@ async def fly(args) -> int:
             await drone.move_by_velocity_async(
                 e.vx, e.vy, -e.vz_up, duration=0.3,
                 yaw_is_rate=True, yaw=e.yaw_rate)
-            # stuck detector: HORIZONTAL position only (x, y) — NOT altitude.
-            # During an ESCAPE climb 'up' changes every tick; if it were in the
-            # key the stall timer would reset forever and the drone would climb
-            # to the ceiling and hover instead of skipping an unreachable point.
-            pos_key = (round(state.x / 3.0), round(state.y / 3.0))  # 3 m buckets
-            if pos_key == last_pos:
-                stall_since = stall_since or time.time()
-                stalled_s = time.time() - stall_since
-                if stalled_s > 9.0:
-                    print(f"  [flight] STUCK at {pos_key} even after ESCAPE — "
-                          f"skipping waypoint {wp_i + 1}")
-                    wp_i += 1
-                    stall_since, escape_until, escape_done = None, None, False
-                    if wp_i >= len(waypoints):
-                        break
-                    target = waypoints[wp_i]
-                    vla.target_xy = target
-                elif stalled_s > 6.0 and not escape_done:
-                    escape_until = time.time() + 4.0
-                    escape_done = True
-                    print(f"  [flight] ESCAPE: stalled {stalled_s:.1f}s at {pos_key}"
-                          f" — reversing heading at 1.5 m/s + climb for 4 s")
-            else:
-                last_pos, stall_since = pos_key, None
-                escape_done = False       # moved again -> a future stall may escape
-
-            if math.hypot(state.x - target[0], state.y - target[1]) < 3.0:
+            # progress toward the CURRENT target: reset the no-progress timer only
+            # when we get meaningfully closer. ESCAPE jitter never reduces target
+            # distance, so a wedged waypoint's timer keeps growing and it SKIPS.
+            d_tgt = math.hypot(state.x - target[0], state.y - target[1])
+            if d_tgt < best_d - 1.5:
+                best_d, progress_t = d_tgt, time.time()
+                escape_done = False
+            no_prog = time.time() - progress_t
+            if no_prog > 16.0:
+                print(f"  [flight] no progress {no_prog:.0f}s toward {target} — "
+                      f"skipping waypoint {wp_i + 1}")
                 wp_i += 1
+                best_d, progress_t = 1e18, time.time()
+                escape_until, escape_done = None, False
+                if wp_i >= len(waypoints):
+                    break
+                target = waypoints[wp_i]
+                vla.target_xy = target
+            elif no_prog > 7.0 and not escape_done and min(last_dlr) < 15.0:
+                # only ESCAPE when something is actually CLOSE (genuine wedging).
+                # In open space the stall is shield/NFZ interaction — reversing
+                # there would just fling the drone into other geometry; wait for
+                # the skip instead.
+                escape_until = time.time() + 4.0
+                escape_done = True
+                print(f"  [flight] ESCAPE: wedged {no_prog:.1f}s at "
+                      f"({state.x:.0f},{state.y:.0f}) d_lr={last_dlr} — reverse+climb 4 s")
+
+            if d_tgt < 3.0:
+                wp_i += 1
+                best_d, progress_t = 1e18, time.time()
+                escape_until, escape_done = None, False
                 if wp_i >= len(waypoints):
                     reached = True
                     print(f"  [flight] final waypoint reached at tick {tick}")
@@ -505,6 +589,38 @@ async def fly(args) -> int:
                  if f.altitude_floor_m <= pt["up"] <= f.altitude_ceiling_m
                  and poly.contains(Point(pt["x"], pt["y"])))
     nfz_s = inside * TICK
+
+    # ---- path-quality metrics: how tightly the flown path hugs the plan ----
+    def _seg_dist(px, py, a, b):
+        vx, vy = b[0] - a[0], b[1] - a[1]
+        L2 = vx * vx + vy * vy
+        if L2 < 1e-9:
+            return math.hypot(px - a[0], py - a[1])
+        t = max(0.0, min(1.0, ((px - a[0]) * vx + (py - a[1]) * vy) / L2))
+        return math.hypot(px - (a[0] + vx * t), py - (a[1] + vy * t))
+
+    devs = []
+    for pt in traj:
+        dmin = min((_seg_dist(pt["x"], pt["y"], plan_pts[k], plan_pts[k + 1])
+                    for k in range(len(plan_pts) - 1)), default=0.0)
+        devs.append(dmin)
+    flown_len = sum(math.hypot(traj[i]["x"] - traj[i - 1]["x"],
+                               traj[i]["y"] - traj[i - 1]["y"])
+                    for i in range(1, len(traj)))
+    plan_len = sum(math.hypot(plan_pts[k + 1][0] - plan_pts[k][0],
+                              plan_pts[k + 1][1] - plan_pts[k][1])
+                   for k in range(len(plan_pts) - 1))
+    mean_dev = sum(devs) / max(1, len(devs))
+    max_dev = max(devs) if devs else 0.0
+    len_ratio = flown_len / plan_len if plan_len > 0 else 0.0
+    metrics = {"reached": reached, "nfz_s": nfz_s, "interventions": n_touched,
+               "mean_dev": round(mean_dev, 2), "max_dev": round(max_dev, 2),
+               "len_ratio": round(len_ratio, 3), "ticks": len(traj),
+               "params": {"lookahead": args.lookahead, "follow_blend": args.follow_blend,
+                          "clearance": args.clearance}}
+    (out / "metrics.json").write_text(json.dumps(metrics, indent=1), encoding="utf-8")
+    print(f"[path] mean_dev {mean_dev:.2f}m  max_dev {max_dev:.2f}m  "
+          f"len_ratio {len_ratio:.3f}  (lower/1.0 = cleaner)")
 
     (out / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
     try:
@@ -602,10 +718,13 @@ def main() -> int:
     ap.add_argument("--no-follow", dest="follow", action="store_false",
                     help="VLA-dominant: aim straight at each waypoint (organic, "
                          "looser path)")
-    ap.add_argument("--follow-blend", type=float, default=0.85,
+    ap.add_argument("--follow-blend", type=float, default=0.90,
                     help="how strongly to track the planned path (0..1)")
-    ap.add_argument("--lookahead", type=float, default=8.0,
+    ap.add_argument("--lookahead", type=float, default=6.0,
                     help="pure-pursuit carrot distance (m)")
+    ap.add_argument("--smooth-path", action="store_true",
+                    help="experimental Chaikin smoothing of the planned polyline "
+                         "(off by default — can lengthen paths with tight detours)")
     args = ap.parse_args()
     if args.best:
         import json as _json
