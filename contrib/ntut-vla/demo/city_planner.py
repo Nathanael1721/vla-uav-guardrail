@@ -47,7 +47,12 @@ def load_occ(path=DEFAULT_OCC):
         return None
 
     occ = np.asarray(data["occ"]).astype(np.uint8)
-    height = np.asarray(data["height"]).astype(np.float32)
+    # 'height' is optional — camera-survey maps carry it, the ground-truth voxel
+    # maps (build_voxel_map.py) do not. It is not needed for planning.
+    if "height" in data.files:
+        height = np.asarray(data["height"]).astype(np.float32)
+    else:
+        height = np.zeros_like(occ, dtype=np.float32)
     res = float(data["res"])
     ox = float(data["origin_x"])
     oy = float(data["origin_y"])

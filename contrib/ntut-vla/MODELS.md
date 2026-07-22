@@ -40,13 +40,17 @@ P0 violations **0**. See `docs/aerialvla-ft-report.md`.
 | Classic AirSim worlds (AirSimNH, Blocks, …) | `D:\AirSim\` | 10s of GB |
 | City occupancy maps (per world) | `demo/out/citymap/occ_<map>.npz` | small, but regenerable |
 
-Rebuild an occupancy map for a world (fly a survey):
+Rebuild an occupancy map for a world. **Preferred: ground-truth voxel grid**
+(queries the sim geometry directly — 1:1 accurate, solid blocks + real streets):
 
 ```powershell
 # start the sim on that world first, then:
-python demo\survey_city.py --alt 52 --half 70 --line-step 3
-# → demo/out/citymap/occ.npz ; copy to occ_<map>.npz for the GUI to pick up
+python demo\build_voxel_map.py --out occ_day     # -> occ_day.npz (+ occ.npz)
 ```
+
+Legacy camera survey (`survey_city.py`) also exists but is approximate (nadir
+sampling leaves holes and can misregister); use `build_voxel_map.py` when the
+world exposes `create_voxel_grid` (Project AirSim does).
 
 ## Datasets (not in git)
 
