@@ -254,6 +254,12 @@ async def fly(args) -> int:
     else:
         waypoints = [(mission.target_x, mission.target_y)]
 
+    if args.rth:
+        # Return-To-Home: the spawn becomes the final waypoint, so the return
+        # leg is planned around obstacles and guarded exactly like every other.
+        waypoints = list(waypoints) + [(35.0, -20.0)]
+        print("[flight] RTH enabled — returning to spawn (35,-20) at the end")
+
     # ---- global planner: expand the user route into obstacle-avoiding legs ----
     # The reactive depth-avoider + Shield further down stay EXACTLY as-is (they
     # remain the final safety net); this only reshapes the *waypoint* list.
@@ -749,6 +755,9 @@ def main() -> int:
                     help="building clearance (m) the global planner inflates by")
     ap.add_argument("--no-planner", action="store_true",
                     help="disable global planning (reactive depth avoider only)")
+    ap.add_argument("--rth", action="store_true",
+                    help="Return-To-Home: fly back to the spawn point after the "
+                         "last waypoint (the return leg is planned + guarded too)")
     ap.add_argument("--no-shield", action="store_true",
                     help="COMPARISON: bypass the Safety Shield entirely (raw VLA "
                          "action, will violate NFZ/altitude) — for before/after demos")
