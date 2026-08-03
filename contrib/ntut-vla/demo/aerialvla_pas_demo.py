@@ -32,7 +32,9 @@ sys.path.insert(0, str(ROOT / "demo"))
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
 from guardrail.compiler import ConstraintCompiler                   # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
-from guardrail.models import Action4D, PolygonFence                 # noqa: E402
+from guardrail.models import (                                      # noqa: E402
+    Action4D, ObstacleClearance, PolygonFence,
+)
 from shapely.geometry import Point                                  # noqa: E402
 
 from aerialvla_demo import AerialVLABackend, RateLimiter            # noqa: E402
@@ -210,8 +212,39 @@ async def fly(args) -> int:
 
     policy = load_policy(args.policy)
     mission = ConstraintCompiler(policy).parse_command(args.command)
-    shield = Shield(policy, lookahead_s=3.0, dt=0.5)
+
+    # City occupancy is needed by BOTH the global planner (further down) and —
+    # new — the Shield's hard obstacle_clearance rules, so load it once here.
+    # The Shield gets the RAW occ, never the planner-inflated grid: the
+    # constraint's own min_clearance_m IS the margin, inflating first would
+    # double-count it. Loading is independent of --no-planner, because
+    # clearance is a safety rule, not a planning convenience.
+    cmap = city_planner.load_occ(args.citymap)
+    shield_map = None
+    if policy.by_type(ObstacleClearance):
+        if cmap is not None:
+            shield_map = {"occ": cmap["occ"], "res": cmap["res"],
+                          "ox": cmap["ox"], "oy": cmap["oy"]}
+            print(f"[shield] obstacle map {cmap['occ'].shape} res={cmap['res']}m "
+                  f"-> obstacle_clearance ARMED")
+        else:
+            print(f"[shield] no city map at {args.citymap} "
+                  f"-> obstacle_clearance INERT (reactive depth layer only)")
+    shield = Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=shield_map)
     audit = AuditLogger(out / "audit.jsonl", policy.policy_hash)
+
+    # CONFIG CONSISTENCY: the planner must not route tighter than the Shield's
+    # clearance rule allows, or the two fight — the plan hugs a wall, the Shield
+    # pushes off it, and the drone stops making progress. Verified offline:
+    # planner 2 m vs rule 5 m => route never completes. Raise the planner's
+    # clearance to at least the rule (plus nothing — the rule IS the margin).
+    _min_clear = max((c.min_clearance_m for c in policy.by_type(ObstacleClearance)),
+                     default=0.0)
+    if _min_clear > args.clearance:
+        print(f"[planner] clearance {args.clearance}m < obstacle_clearance rule "
+              f"{_min_clear}m -> raising planner clearance to {_min_clear}m "
+              f"(plan and Shield must agree)")
+        args.clearance = _min_clear
 
     # route: either --route "x1,y1; x2,y2; ..." (multi-waypoint patrol) or the
     # single target compiled from --command
@@ -228,7 +261,8 @@ async def fly(args) -> int:
     # the policy, so the planner routes GLOBALLY around a no-fly-zone instead of
     # leaving the Shield to slide reactively along its edge (which just wobbles).
     plan_grid = None                      # inflated planning grid (for smoothing)
-    cmap = None if args.no_planner else city_planner.load_occ(args.citymap)
+    if args.no_planner:               # already loaded above for the Shield
+        cmap = None
     fences = [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
     if cmap is None and not fences:
         print("[planner] no city map, no NFZ — reactive only")
@@ -257,8 +291,14 @@ async def fly(args) -> int:
                         n_fence_cells += 1
         if fences:
             print(f"[planner] stamped {len(fences)} NFZ -> {n_fence_cells} grid cells")
-        # clearance is constant, so inflate once and reuse for every leg
-        grid = city_planner.inflate(occ, res, args.clearance)
+        # clearance is constant, so inflate once and reuse for every leg.
+        # shape="euclid": "clearance_m" means exactly that distance. The square
+        # kernel reaches sqrt(2)*r diagonally (~40% over-inflation), which closes
+        # diagonal street gaps and made a 5 m rule UNROUTABLE on this map
+        # (measured: square 3/3 legs unreachable at 5 m, euclid 0/3). Safety
+        # still comes from the Shield's obstacle_clearance rule, not from the
+        # planner being secretly more conservative than it claims.
+        grid = city_planner.inflate(occ, res, args.clearance, shape="euclid")
         plan_grid = (grid, res, ox, oy)
         n_user = len(waypoints)
         # full ordered stop list = [spawn/current pos] + user waypoints.

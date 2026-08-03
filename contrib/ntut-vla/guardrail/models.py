@@ -1,12 +1,13 @@
 """
 Policy DSL (mini) — Pydantic models + YAML loader.
 
-Scaled-down version of the grant's constraint taxonomy. Three constraint classes
+Scaled-down version of the grant's constraint taxonomy. Four constraint classes
 for v0 (the grant has nine):
 
     polygon_fence       keep-OUT area (no-fly zone), 2-D polygon + altitude band
     altitude_envelope   min/max height above ground
     kinematic_envelope  speed / climb-rate / yaw-rate caps
+    obstacle_clearance  min distance from MAPPED buildings (needs a runtime map)
 
 Coordinates: local meters (x = North, y = East), altitude = meters above ground,
 up positive. The real grant DSL uses WGS84 lat/lon; local meters keeps the
@@ -95,8 +96,28 @@ class KinematicEnvelope(ConstraintBase):
     yaw_rate_max_dps: float = Field(gt=0)
 
 
+class ObstacleClearance(ConstraintBase):
+    """Keep at least `min_clearance_m` away from every MAPPED obstacle
+    (surveyed buildings in the city occupancy grid).
+
+    Unlike the other three, this rule cannot be evaluated from the policy file
+    alone — it needs the occupancy map, which is handed to the Shield at
+    construction time (`Shield(..., obstacle_map=...)`). With no map the rule
+    is INERT: it never fires and never raises. Distance is measured in the
+    horizontal plane only; buildings are treated as infinitely tall columns,
+    which is the conservative reading of a 2-D occupancy grid.
+
+    soft_margin_m widens the band the repair operator tapers speed over
+    ([0, min_clearance_m + soft_margin_m]); it never raises a violation on its
+    own — hence "slows, does not block".
+    """
+    type: Literal["obstacle_clearance"]
+    min_clearance_m: float = Field(gt=0)
+    soft_margin_m: float = Field(default=0.0, ge=0)
+
+
 Constraint = Annotated[
-    Union[PolygonFence, AltitudeEnvelope, KinematicEnvelope],
+    Union[PolygonFence, AltitudeEnvelope, KinematicEnvelope, ObstacleClearance],
     Field(discriminator="type"),
 ]
 
