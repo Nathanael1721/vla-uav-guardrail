@@ -64,17 +64,35 @@ def quat_yaw(q: dict) -> float:
 
 
 class SemanticObs:
-    """Camera + pose feed for the VLA (its own sim connection: thread safety)."""
+    """Camera + pose feed for the VLA (its own sim connection: thread safety).
+
+    Frames are decoded LAZILY, in `get_obs`, not in the subscription callbacks.
+
+    This matters more than it looks. The callbacks fire on every camera message —
+    two cameras, tens of messages a second — and decoding there meant a PNG
+    decode, a colour conversion and a bicubic resize per message, all inside the
+    receive thread holding the GIL. The VLA needs exactly one frame per
+    inference, so that work was being done roughly fifty times more often than
+    anything consumed it, and it starved the inference thread: measured 7-9 s per
+    action in flight against ~3 s for the same model standalone.
+
+    Storing the raw message and decoding on demand keeps the callbacks to a
+    pointer assignment.
+    """
 
     def __init__(self):
         import threading
         self.lock = threading.Lock()
-        self.front = None
-        self.down = None
-        self.depth = None
+        self._front_msg = None
+        self._down_msg = None
+        self._depth_msg = None
+        self._chase_msg = None
         self.pose = (0.0, 0.0, 0.0)
+        self._n_front = 0
+        self._n_decode = 0
 
-    def _img(self, msg):
+    @staticmethod
+    def _decode(msg):
         import cv2
         from PIL import Image
         if not msg or "data" not in msg or not len(msg["data"]):
@@ -88,31 +106,17 @@ class SemanticObs:
             (224, 224), resample=Image.BICUBIC)
 
     def put_front(self, msg):
-        im = self._img(msg)
-        if im is not None:
-            with self.lock:
-                self.front = im
+        with self.lock:
+            self._front_msg = msg
+            self._n_front += 1
 
     def put_down(self, msg):
-        im = self._img(msg)
-        if im is not None:
-            with self.lock:
-                self.down = im
+        with self.lock:
+            self._down_msg = msg
 
     def put_depth(self, msg):
-        try:
-            data = msg["data"]
-            raw = (np.array(data, dtype="B") if isinstance(data, list)
-                   else np.frombuffer(data, dtype=np.uint8))
-            h, w = msg["height"], msg["width"]
-            if msg.get("encoding") == "16UC1" or raw.size == h * w * 2:
-                arr = raw.view(np.uint16).reshape(h, w).astype(np.float32)
-            else:
-                arr = raw.view(np.float32).reshape(h, w).astype(np.float32)
-        except Exception:
-            return
         with self.lock:
-            self.depth = arr
+            self._depth_msg = msg
 
     def put_pose(self, x, y, yaw):
         with self.lock:
@@ -120,13 +124,80 @@ class SemanticObs:
 
     def get_obs(self):
         with self.lock:
-            if self.front is None or self.down is None:
-                return None
-            return self.front, self.down, self.pose
+            fm, dm, pose = self._front_msg, self._down_msg, self.pose
+        if fm is None or dm is None:
+            return None
+        front, down = self._decode(fm), self._decode(dm)
+        if front is None or down is None:
+            return None
+        with self.lock:
+            self._n_decode += 1
+        return front, down, pose
+
+    def put_chase(self, msg):
+        with self.lock:
+            self._chase_msg = msg
+
+    def get_chase_native(self):
+        """Third-person view from behind the aircraft, for demo recording."""
+        with self.lock:
+            msg = getattr(self, "_chase_msg", None)
+        return self._decode_native(msg)
+
+    def _decode_native(self, msg):
+        import cv2
+        from PIL import Image
+        if not msg or "data" not in msg or not len(msg["data"]):
+            return None
+        buf = np.frombuffer(msg["data"], dtype=np.uint8)
+        arr = (cv2.imdecode(buf, cv2.IMREAD_COLOR) if msg.get("encoding") == "PNG"
+               else buf.reshape(msg["height"], msg["width"], 3))
+        if arr is None:
+            return None
+        return Image.fromarray(cv2.cvtColor(arr, cv2.COLOR_BGR2RGB))
+
+    def get_front_native(self):
+        """Front frame at its captured resolution, undistorted.
+
+        `get_obs` squashes 400x225 into a 224x224 square for the VLA's mosaic,
+        which both downsamples and changes the aspect ratio. A detector wants the
+        real pixels — a 4.5 m car at 22 m range is only ~29 px wide, and there is
+        none to spare.
+        """
+        import cv2
+        from PIL import Image
+        with self.lock:
+            msg = self._front_msg
+        if not msg or "data" not in msg or not len(msg["data"]):
+            return None
+        buf = np.frombuffer(msg["data"], dtype=np.uint8)
+        arr = (cv2.imdecode(buf, cv2.IMREAD_COLOR) if msg.get("encoding") == "PNG"
+               else buf.reshape(msg["height"], msg["width"], 3))
+        if arr is None:
+            return None
+        return Image.fromarray(cv2.cvtColor(arr, cv2.COLOR_BGR2RGB))
+
+    def stats(self) -> dict:
+        """How many frames arrived vs how many were actually decoded."""
+        with self.lock:
+            return {"frames_received": self._n_front, "frames_decoded": self._n_decode}
 
     def get_depth(self):
+        """Depth map in metres, decoded on demand like the camera frames."""
         with self.lock:
-            return self.depth
+            msg = self._depth_msg
+        if not msg:
+            return None
+        try:
+            data = msg["data"]
+            raw = (np.array(data, dtype="B") if isinstance(data, list)
+                   else np.frombuffer(data, dtype=np.uint8))
+            h, w = msg["height"], msg["width"]
+            if msg.get("encoding") == "16UC1" or raw.size == h * w * 2:
+                return raw.view(np.uint16).reshape(h, w).astype(np.float32)
+            return raw.view(np.float32).reshape(h, w).astype(np.float32)
+        except Exception:
+            return None
 
 
 async def fly(args) -> int:
@@ -153,7 +224,11 @@ async def fly(args) -> int:
     # target_xy is only used for the VLA's own direction-hint text; in semantic
     # mode we give it nothing to aim at, so the hint stays empty and the model
     # must decide from the image + instruction alone.
-    vla = AerialVLABackend(args.instruction, (0.0, 0.0),
+    #
+    # This MUST be None, not (0, 0). (0, 0) is a real coordinate: semantic_direction
+    # happily emits a bearing phrase pointing at the world origin, which handed the
+    # model a ground-truth steering hint and confounded every earlier "semantic" run.
+    vla = AerialVLABackend(args.instruction, None,
                            obs_factory=lambda: obs.get_obs, lora_id=args.adapter)
 
     traj, n_touched = [], 0
