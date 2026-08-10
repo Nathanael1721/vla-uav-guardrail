@@ -47,6 +47,36 @@ from .models import (
 
 BRAKE = Action4D(vx=0.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)
 
+
+def _sanitise(a: Action4D) -> tuple[Action4D, list[str]]:
+    """Force every channel finite, returning the names of the ones that were not.
+
+    NaN fails EVERY comparison, so an action carrying one sails through _check()
+    with zero violations and out through the untouched-passthrough branch of
+    filter() — the guardrail fails OPEN, which is the one direction it must never
+    fail. Infinity is no better: the speed clamp scales it by cap/hypot, and
+    inf * 0.0 is NaN, so a bounded repair operator manufactures the poison.
+
+    This is reachable from a real pilot, not just from a fuzzer. servo() sizes
+    forward speed from the detector's box width, so a zero-width box is one
+    division away from NaN, and a detector that fails mid-flight is a normal
+    event rather than an exotic one.
+
+    Fail-safe reading: a non-finite command is not a command. The channel goes to
+    zero, and the caller sees a violation, so it is never silent.
+    """
+    bad = [n for n, v in (("vx", a.vx), ("vy", a.vy),
+                          ("vz_up", a.vz_up), ("yaw_rate", a.yaw_rate))
+           if not math.isfinite(v)]
+    if not bad:
+        return a, bad
+    return Action4D(
+        vx=a.vx if math.isfinite(a.vx) else 0.0,
+        vy=a.vy if math.isfinite(a.vy) else 0.0,
+        vz_up=a.vz_up if math.isfinite(a.vz_up) else 0.0,
+        yaw_rate=a.yaw_rate if math.isfinite(a.yaw_rate) else 0.0,
+    ), bad
+
 # Chamfer(1, sqrt2) OVER-estimates true Euclidean distance by at most 8.24%
 # (worst case at atan(sqrt2-1) = 22.5 deg). Over-estimating clearance is the
 # UNSAFE direction — it would report "further from the wall than we are" — so
@@ -670,11 +700,24 @@ class Shield:
     # ---------------- the public entry point ---------------- #
 
     def filter(self, state: State, raw: Action4D) -> ShieldDecision:
+        # Finiteness first: every check below is a comparison, and NaN loses them
+        # all, so an unsanitised action would be declared legal and passed
+        # straight through. See _sanitise().
+        raw, nonfinite = _sanitise(raw)
         violations = self._check(state, raw)
+        if nonfinite:
+            violations = violations + [Violation(
+                rule_id="action-finite", category="contract",
+                detail=f"non-finite channel(s) {','.join(nonfinite)} zeroed",
+                predicted_at_s=0.0)]
+
         if not violations:
             return ShieldDecision(raw=raw, emitted=raw)   # untouched passthrough
 
         repairs: list[Repair] = []
+        if nonfinite:
+            repairs.append(Repair(operator="Sanitise",
+                                  detail=f"{','.join(nonfinite)} -> 0.0"))
         fixed = self._repair_kinematic(raw, repairs)
         fixed = self._repair_altitude(state, fixed, repairs)
         # Clearance and geofence are COUPLED: the anti-stall tangent can leave
