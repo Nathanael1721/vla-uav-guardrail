@@ -19,7 +19,7 @@ $ROOT    = "D:\OneDrive\College\S2-TaipeiTech\Lab\VLA Drone"
 $PY      = "C:\Users\natha\.conda\envs\vla-real\python.exe"
 $UE      = "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe"
 $UPROJ   = "$ROOT\PASBlocks\Blocks.uproject"
-$ADAPTER = "D:/models/aerialvla-ft/run2/epoch1"     # our fine-tuned model
+$ADAPTER = "D:/models/aerialvla-lora/aero_vla"      # ORIGINAL, not our fine-tune
 $MAPS = @{ day      = "/Game/JapaneseCity/Maps/Demo_day"
            night    = "/Game/JapaneseCity/Maps/Demo_night"
            airport  = "/Game/Airport/Maps/demo"

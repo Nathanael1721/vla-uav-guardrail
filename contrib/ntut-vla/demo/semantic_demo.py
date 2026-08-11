@@ -386,7 +386,9 @@ def main() -> int:
     ap.add_argument("--policy", default=str(ROOT / "policies" / "urban_clearance.yaml"))
     ap.add_argument("--citymap",
                     default=str(ROOT / "demo" / "out" / "citymap" / "occ_day.npz"))
-    ap.add_argument("--adapter", default="D:/models/aerialvla-ft/run2/epoch1")
+    # Original adapter by default: our fine-tune scores LOWER on object-slot
+    # sensitivity (0.321 vs 0.454), which is the only slot that matters here.
+    ap.add_argument("--adapter", default="D:/models/aerialvla-lora/aero_vla")
     ap.add_argument("--tag", default="semantic")
     ap.add_argument("--max-s", type=float, default=90.0)
     ap.add_argument("--yaw-gain", type=float, default=0.4)

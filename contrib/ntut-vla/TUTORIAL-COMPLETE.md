@@ -28,7 +28,7 @@ That is the whole demo. Everything else in this file is detail.
 | Occupancy map | `demo/build_voxel_map.py` | asks the sim for its real building geometry → `demo/out/citymap/occ_<map>.npz` |
 | Global planner | `demo/city_planner.py` | Theta* route around buildings + no-fly zones |
 | Path follower | inside `demo/aerialvla_pas_demo.py` | arc-length pure-pursuit — flies the planned line tightly |
-| VLA pilot | `D:\models\aerialvla-ft\run2\epoch1` | camera + language → local flight commands |
+| VLA pilot | `D:\models\aerialvla-lora\aero_vla` (ORIGINAL adapter) | camera + language → local flight commands |
 | Reactive avoidance | inside the flight script | front depth camera: brake < 15 m, side-step < 8 m |
 | **Guardrail (Shield)** | `guardrail/shield.py` | validates EVERY action: NFZ, altitude band, speed caps, building clearance |
 | Mission GUI | `demo/gui_mission_control.py` | draw the mission, watch it fly |
@@ -110,7 +110,7 @@ python demo\gui_mission_control.py
 
 ```powershell
 python demo\aerialvla_pas_demo.py `
-  --best --adapter D:/models/aerialvla-ft/run2/epoch1 `
+  --best --adapter D:/models/aerialvla-lora/aero_vla `
   --route "42,42; 42,-42; -42,-42" `
   --policy policies\urban_clearance.yaml `
   --citymap demo\out\citymap\occ_day.npz `
@@ -146,6 +146,107 @@ python demo\semantic_demo.py --instruction "fly along the open street and keep c
 No target, no planner, no path following — the VLA steers from camera + language
 only, and the guardrail still holds. This is the demo that shows what a VLA is
 *for*; a classical planner cannot run this mission at all.
+
+> **Fixed 2026-08-04.** This script used to pass `target_xy=(0, 0)` meaning "no
+> target", but `(0, 0)` is a real coordinate: the model was still being handed a
+> bearing phrase pointing at the world origin (from the spawn point that reads
+> `"to your right rear "`). Every semantic result recorded before this date was
+> confounded. It now passes `None`, which really does produce no hint.
+
+### 4.6 Proving the VLA and the guardrail run *side by side*
+
+The demos above show the guardrail holding. They do not show the VLA and the
+guardrail acting **at the same instant** — and on coordinate missions a sceptic
+can fairly say the planner did the flying. This experiment settles it.
+
+The idea rests on one property of the Shield: **every repair passes `yaw_rate`
+through untouched**, and the only rule that could clamp it compares a `45.0`
+threshold against a value the sim consumes as rad/s, which the VLA never drives
+past ±0.44. So **heading is authored entirely by the VLA, and the track is where
+the Shield intervenes.** Put a semantic target behind a no-fly zone and both show
+up in one log line: the nose stays on the target while the track is bent away.
+
+```powershell
+python experiments\verify_shield_yaw.py                 # V3: no sim needed, run first
+python demo\semantic_seek.py --dry-spawn --tag probe    # V1: then OPEN the PNG
+python experiments\verify_sign_convention.py            # V2: yaw sign vs the sim
+python experiments\semantic_ab.py --conditions experiments\conditions_simultaneity.yaml --dry-run
+python experiments\semantic_ab.py --conditions experiments\conditions_simultaneity.yaml
+python experiments\analyze_semantic_ab.py --conditions experiments\conditions_simultaneity.yaml
+```
+
+| File | Role |
+|---|---|
+| `demo/semantic_seek.py` | the flight: no planner, no follower, no goal blend |
+| `demo/semantic_target.py` | spawns a tall, uniquely-coloured prop and reads its true pose back |
+| `policies/semantic_conflict.yaml` | one NFZ across the corridor, altitude 18–30 m |
+| `experiments/conditions_simultaneity.yaml` | the 8-cell matrix **and the pass thresholds, pre-registered** |
+| `experiments/analyze_semantic_ab.py` | metrics, claim scoring, figures |
+
+### 4.6b "Follow the car"
+
+A moving car-sized target driven down a real street, with the VLA asked to follow
+it in plain language. Full step-by-step in
+[TUTORIAL-FOLLOW-THE-CAR.md](TUTORIAL-FOLLOW-THE-CAR.md); the short version:
+
+```powershell
+python experiments\probe_moving_car.py                 # spawn it and LOOK at it
+python demo\semantic_seek.py --follow-car --object "orange car" --hint-mode none --policy policies\follow_car.yaml --cruise-alt 9 --start-beta-deg 0 --max-s 120 --tag follow_none
+python experiments\analyze_semantic_ab.py --conditions experiments\conditions_follow_car.yaml
+```
+
+Result, reproduced: **the drone does not move.** All twelve inferences return
+`[0, 49, 49]` — stop and land. Given the coordinate-derived hint instead
+(`--hint-mode truth`) it flies, but ends 102.9 m from the car against a
+stationary drone's 48.0 m. Read §4.7 for why.
+
+Note there is no car in this simulator — the target is a 4.5 × 2.0 × 1.6 m orange
+box, a saloon car's real footprint, moved by client-side teleport. That caveat
+belongs with any conclusion drawn from these flights.
+
+### 4.7 Read this before interpreting anything above
+
+**The language slot does not steer this model.** A 108-pass controlled ablation
+(`experiments/ablate_image_vs_hint.py`, written up in
+[docs/FINDING-what-drives-aerialvla.md](docs/FINDING-what-drives-aerialvla.md))
+found that AerialVLA's actions are driven by the `{direction}` phrase in its
+prompt — a compass bearing computed from **ground-truth coordinates** — and not
+by the object description. Correct and wrong colour words produce
+indistinguishable actions. Given no direction phrase at all, the model emits
+`LAND` on 11 of 18 real frames.
+
+So a mission like *"follow the red car"* is not achievable with this model, and
+the reason is not a missing asset. It is that the slot which steers is the one
+derived from coordinates.
+
+Two practical consequences:
+
+* The simultaneity flights run with `--hint-mode truth`, i.e. the model gets the
+  direction phrase it was trained on, because that is the only setting under
+  which it flies at all. Those flights record `hint_mode: "truth"` and
+  `hint_used: true`. **A hinted flight is not a semantic result** — do not quote
+  one as evidence of language grounding.
+* `--hint-mode none` remains available and is the honest semantic configuration.
+  Expect the drone to stop.
+
+**The simultaneity claim survives all of this**, and this is the point worth
+carrying into the write-up: whether the pilot is *competent* has no bearing on
+whether it is *active at the same instant* as the Shield. An incompetent pilot
+still emits a direction the Shield must override. The safety guarantee does not
+depend on the pilot's competence — which is a stronger claim for the grant than a
+marginal navigation result would have been.
+
+Other things worth knowing:
+
+* **Cruise is 22 m here, not 45 m.** The front camera is horizontal with a 29.2°
+  vertical half-FOV, so a ground object only enters the frame beyond 1.79 ×
+  altitude. At 45 m the target is invisible until 80 m away.
+* **Inference is ~3 s standalone, ~10 s with the sim rendering on the same GPU.**
+  A 90 s flight therefore yields roughly nine decisions, not ninety.
+* **Where a navigation number is reported, the headline is the *worse* of the two
+  mirrored start headings.** A model with a constant yaw bias scores ~1.0 from
+  one side and ~0.0 from the other; synthetic validation confirmed this correctly
+  rejects a biased model that scored 0.602 from one side alone.
 
 ### 4.5 Stress scenarios
 

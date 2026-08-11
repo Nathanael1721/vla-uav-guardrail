@@ -41,7 +41,11 @@ UNREAL = ("C:/Program Files/Epic Games/UE_5.7/Engine/Binaries/Win64/"
           "UnrealEditor.exe")
 UPROJECT = ROOT / "PASBlocks" / "Blocks.uproject"
 FLIGHT_SCRIPT = "demo/aerialvla_pas_demo.py"
-ADAPTER = "D:/models/aerialvla-ft/run2/epoch1"
+# The ORIGINAL adapter, not our fine-tune. Measured: the fine-tune improved
+# coordinate path efficiency (0.942 -> 0.996) but LOWERED object-slot sensitivity
+# (0.454 -> 0.321) -- it got better at the thing a planner already does and worse
+# at the thing the grant needs. See docs/FINDING-what-drives-aerialvla.md.
+ADAPTER = "D:/models/aerialvla-lora/aero_vla"
 POLICY_REL = "policies/gui_policy.yaml"
 BASE_POLICY = ROOT / "policies" / "urban_demo_policy.yaml"
 TAG = "gui_flight"

@@ -27,13 +27,13 @@ limiter (only so the sim stays numerically stable). That is the "villain".
 
 ```powershell
 # 1) NO GUARDRAIL — flies straight through the NFZ:
-python demo\aerialvla_pas_demo.py --best --adapter D:/models/aerialvla-ft/run2/epoch1 `
+python demo\aerialvla_pas_demo.py --best --adapter D:/models/aerialvla-lora/aero_vla `
   --route "0,0; 30,30" --policy policies\gui_high_test.yaml `
   --command "fly to (0, 0) at 6 m/s altitude 45" --no-shield --no-planner `
   --tag compare_off --map-label "NO-GUARDRAIL"
 
 # 2) GUARDED — routes around the NFZ:
-python demo\aerialvla_pas_demo.py --best --adapter D:/models/aerialvla-ft/run2/epoch1 `
+python demo\aerialvla_pas_demo.py --best --adapter D:/models/aerialvla-lora/aero_vla `
   --route "0,0; 30,30" --policy policies\gui_high_test.yaml `
   --citymap demo\out\citymap\occ_day.npz `
   --command "fly to (0, 0) at 6 m/s altitude 45" `
