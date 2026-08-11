@@ -62,6 +62,7 @@ from guardrail.models import (                                      # noqa: E402
 from shapely.geometry import Point                                  # noqa: E402
 
 import city_planner                                                 # noqa: E402
+import city_traffic
 import moving_car                                                   # noqa: E402
 from aerialvla_demo import RateLimiter                              # noqa: E402
 from semantic_demo import SemanticObs, quat_yaw                     # noqa: E402
@@ -432,6 +433,7 @@ async def fly(args) -> int:
     obs = SemanticObs()
     rows, traj, n_touched = [], [], 0
     car = None
+    traffic = None
     client = ProjectAirSimClient()
     client.connect()
     grounder = None
@@ -456,14 +458,26 @@ async def fly(args) -> int:
                 print(f"[view] no Chase camera in this config ({type(exc).__name__})")
 
         if not args.no_car:
-            car = moving_car.MovingCar(
-                world, speed_mps=args.car_speed,
-                route=(moving_car.STRAIGHT_ROUTE if args.straight else None),
-                one_shot=args.straight,
-                phase_s=(0.0 if args.straight else 10.0),
-                stops=([(0.30, args.car_stop_s), (0.62, args.car_stop_s)]
-                       if args.straight and args.car_stop_s > 0 else None))
-            car.spawn()
+            stops = ([(0.30, args.car_stop_s), (0.62, args.car_stop_s)]
+                     if args.straight and args.car_stop_s > 0 else None)
+            if args.traffic > 0:
+                # Several vehicles, same mesh, only the target painted. `car`
+                # stays a MovingCar (the fleet's target), so every downstream
+                # use — ground-truth separation, the HUD, the metrics — is
+                # unchanged and the traffic is purely additive.
+                traffic = city_traffic.Traffic(world, fleet=city_traffic.default_fleet(
+                    n_background=args.traffic, speed=args.car_speed,
+                    target_stops=stops, bg_every=args.traffic_every))
+                traffic.spawn()
+                car = traffic.target
+            else:
+                car = moving_car.MovingCar(
+                    world, speed_mps=args.car_speed,
+                    route=(moving_car.STRAIGHT_ROUTE if args.straight else None),
+                    one_shot=args.straight,
+                    phase_s=(0.0 if args.straight else 10.0),
+                    stops=stops)
+                car.spawn()
             # let the actor settle before the first teleport; it is briefly
             # not movable straight after spawning
             for _ in range(10):
@@ -520,7 +534,9 @@ async def fly(args) -> int:
             yaw = quat_yaw(kin["pose"]["orientation"])
             state = State(x=p["x"], y=p["y"], up=-p["z"])
             obs.put_pose(p["x"], p["y"], yaw)
-            if car is not None and tick % 2 == 0:
+            if traffic is not None:
+                traffic.update(time.time() - t0, tick)
+            elif car is not None and tick % 2 == 0:
                 car.update(time.time() - t0)
 
             g = grounder.latest()
@@ -673,7 +689,9 @@ async def fly(args) -> int:
         if grounder is not None:
             grounder.stop()
         try:
-            if car is not None:
+            if traffic is not None:
+                traffic.destroy()
+            elif car is not None:
                 car.destroy()
         except Exception:
             pass
@@ -740,6 +758,17 @@ def main() -> int:
     ap.add_argument("--max-s", type=float, default=120.0)
     ap.add_argument("--cruise-alt", type=float, default=9.0)
     ap.add_argument("--car-speed", type=float, default=3.0)
+    ap.add_argument("--traffic", type=int, default=0,
+                    help="number of BACKGROUND vehicles besides the target. "
+                         "They are the same mesh and unpainted, so the noun "
+                         "cannot separate them and only the colour test can - "
+                         "which turns 'the noun does most of the work' from a "
+                         "stated limitation into a measurement. Capped at the "
+                         "number of lanes (4).")
+    ap.add_argument("--traffic-every", type=int, default=2,
+                    help="ticks between teleports for BACKGROUND vehicles. The "
+                         "target always updates every tick. At 2 m/s and every "
+                         "2nd tick a vehicle moves 0.4 m between updates.")
     ap.add_argument("--car-stop-s", type=float, default=6.0,
                     help="how long the car pauses at each of two points along "
                          "the straight route. A follower has to stop too, so "
