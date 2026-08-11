@@ -731,7 +731,7 @@ async def fly(args) -> int:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--object", default="a car",
+    ap.add_argument("--object", default="a white car",
                     help="what to follow, in words. This is the only thing that "
                          "tells the drone what its target is.")
     ap.add_argument("--policy", default=str(ROOT / "policies" / "follow_car.yaml"))

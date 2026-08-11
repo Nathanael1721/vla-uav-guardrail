@@ -21,7 +21,10 @@
 
 .PARAMETER Object
     What to follow, in words. Be specific: "a car" alone makes it chase city
-    clutter. Default "an orange car".
+    clutter. Default "a white car" - the target is SKM_SportsCar painted with
+    M_Orange, which renders WHITE on that mesh (measured; a material is a shader,
+    not a colour). Avoid "a blue car": the asphalt in this map sits in the blue
+    hue band above the saturation floor.
 
 .PARAMETER Controls
     Also fly the two control conditions (wrong colour word, and no car present).
@@ -33,7 +36,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Object = "an orange car",
+    [string]$Object = "a white car",
     [switch]$SkipSim,
     [switch]$Controls,
     [switch]$NoVideo
@@ -105,7 +108,10 @@ Fly "vlm_nfz_smooth" $Object "policies\follow_car_nfz.yaml" 70 0 -Record
 
 if ($Controls) {
     Say "CONTROL 1: same car, WRONG colour word — should NOT follow"
-    Fly "vlm_wrongcolour" "a blue car" "policies\follow_car.yaml" 62 6
+    # "a red car", not "a blue car": the asphalt reads blue above the saturation
+    # floor, so a blue query can score on the road itself and the control looks
+    # weaker than the colour gate really is. Red has no such background overlap.
+    Fly "vlm_wrongcolour" "a red car" "policies\follow_car.yaml" 62 6
     Say "CONTROL 2: right words, NO car in the scene"
     Fly "vlm_nocar" $Object "policies\follow_car.yaml" 62 6 -NoCar
 }
