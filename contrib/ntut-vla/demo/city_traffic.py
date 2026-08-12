@@ -80,11 +80,20 @@ TARGET_LANE_X = 38.0
 # and the first version of this file did exactly that -- two cars in lane 34
 # driving opposite ways met head-on at 0.0 m separation at t=27.8 s, which the
 # fleet-geometry test caught before it ever reached the simulator.
-BG_LANE_X = (35.0, 41.0, 32.0, 44.0)
+# Three, not four. Each looping vehicle occupies LOOP_W of lateral band plus a
+# clearance margin, and the legal corridor is only [32, 46] with the target
+# holding the middle. Four lanes fitted when distractors drove a straight line and
+# parked; once they loop, lane 35's return leg reaches x = 33.8 and sits 1.3 m
+# from a vehicle at 32.5. The band does not have room, so the fleet is three.
+BG_LANE_X = (34.5, 41.5, 45.0)
 
 # Same start and end as STRAIGHT_ROUTE, so every vehicle covers the same ground
 # and the target is not the only one that happens to pass through frame.
 ROUTE_Y0, ROUTE_Y1 = -8.0, 58.0
+# Width of a distractor's return leg. Must stay well inside the 3 m lane
+# pitch so a looping vehicle never enters a neighbour's lane, and must be
+# wide enough that _Path can fit a corner arc (radius <= 0.45 * leg).
+LOOP_W = 1.0
 
 
 @dataclass
@@ -94,7 +103,14 @@ class VehicleSpec:
     name: str
     lane_x: float
     speed_mps: float
-    phase_s: float
+    # Fraction of this vehicle's OWN route length, not a number of seconds.
+    #
+    # Absolute offsets do not survive vehicles having different speeds. With
+    # phase_s = 31 s against a 32.7 s route, BgCar3 reached the end of its run
+    # 1.7 s into a 60 s flight and parked there — a static prop dressed as
+    # traffic, and one that quietly stopped counting as a distractor. A fraction
+    # is scale-free: 0.4 is 40% along the route whatever the speed.
+    phase_frac: float
     is_target: bool
     painted: bool                    # True -> M_Orange -> reads white
     reverse: bool = False            # drive the lane the other way
@@ -102,8 +118,26 @@ class VehicleSpec:
     stops: List[Tuple[float, float]] = field(default_factory=list)
 
     def route(self) -> List[Tuple[float, float]]:
+        """The target drives a straight one-shot run; distractors drive a loop.
+
+        A two-point route cannot be closed -- _Path reads it as a 180 degree
+        hairpin at each end and divides by zero -- so a looping vehicle gets a
+        thin four-point circuit instead: up the lane, across by LOOP_W, back
+        down, across again. LOOP_W is well inside the 3 m lane pitch, so a
+        distractor never strays into a neighbour's lane, and the U-turn at each
+        end is what keeps it alive as a distractor for the whole flight instead
+        of parking halfway through.
+        """
         y0, y1 = (ROUTE_Y1, ROUTE_Y0) if self.reverse else (ROUTE_Y0, ROUTE_Y1)
-        return [(self.lane_x, y0), (self.lane_x, y1)]
+        if self.is_target:
+            return [(self.lane_x, y0), (self.lane_x, y1)]
+        # Always AWAY from the target's lane, never toward it. Tying the loop
+        # direction to `reverse` instead let the lane-41 vehicle swing back to
+        # x = 39.4, which is 1.4 m from the target's lane -- close enough to
+        # occlude the very thing the aircraft is trying to pick out.
+        w = LOOP_W if self.lane_x > TARGET_LANE_X else -LOOP_W
+        return [(self.lane_x, y0), (self.lane_x, y1),
+                (self.lane_x + w, y1), (self.lane_x + w, y0)]
 
     def car_spec(self) -> CarSpec:
         """Painted vehicles get M_Orange (renders white on this mesh); the rest
@@ -127,7 +161,7 @@ def default_fleet(n_background: int = 5, speed: float = 2.0,
     to be picked out of a scene where other cars are both nearer and further.
     """
     fleet = [VehicleSpec(name="TargetCar", lane_x=TARGET_LANE_X, speed_mps=speed,
-                         phase_s=10.0, is_target=True, painted=True,
+                         phase_frac=0.15, is_target=True, painted=True,
                          update_every=1,
                          stops=list(target_stops or []))]
     # One vehicle per lane, never two. Sharing a lane is not a cosmetic problem:
@@ -146,7 +180,10 @@ def default_fleet(n_background: int = 5, speed: float = 2.0,
             # Not all the same speed: identical speeds make the whole scene move
             # as one rigid body, which reads as a texture rather than as traffic.
             speed_mps=speed * (0.75 + 0.15 * (i % 3)),
-            phase_s=10.0 + 7.0 * (i + 1),
+            # Evenly along their own routes, and never past 0.75 - a vehicle
+            # that starts near the end parks almost immediately and stops being
+            # a distractor at all.
+            phase_frac=0.15 + 0.6 * (i + 1) / (n_background + 1),
             is_target=False,
             painted=False,
             # Alternate direction so the street has oncoming traffic.
@@ -172,10 +209,27 @@ class Traffic:
         self.cars: List[MovingCar] = []
         self._specs: List[VehicleSpec] = []
         for vs in self.fleet:
-            self.cars.append(MovingCar(
+            # Only the TARGET runs one_shot. Background vehicles loop.
+            #
+            # A one_shot vehicle parks at the end of its route and stops being a
+            # distractor: 66 m at 1.5 m/s is 44 s, so on a 90 s flight half the
+            # traffic is stationary scenery by the midpoint, and the selection
+            # problem quietly gets easier exactly when it should not. Looping
+            # reverses their heading at each end, which is the artefact the
+            # straight route was introduced to avoid -- but that artefact only
+            # matters for the TRACKED target, whose continuity filter it breaks.
+            # On a distractor it costs a little realism and buys a distractor
+            # that is still there at the end of the flight.
+            car = MovingCar(
                 world, speed_mps=vs.speed_mps, route=vs.route(), name=vs.name,
-                spec=vs.car_spec(), corner_r=corner_r, phase_s=vs.phase_s,
-                one_shot=True, stops=list(vs.stops)))
+                spec=vs.car_spec(),
+                corner_r=(corner_r if vs.is_target else 0.6), phase_s=0.0,
+                one_shot=vs.is_target, stops=list(vs.stops))
+            # lap_time is only known once the speed profile is built, so the
+            # fraction is converted here rather than guessed by the caller.
+            car.phase_s = vs.phase_frac * car.lap_time
+            car.pos = car.pose_at(0.0)[:2]
+            self.cars.append(car)
             self._specs.append(vs)
         self.n_updates = 0
         self.n_skipped = 0
@@ -250,7 +304,10 @@ class Traffic:
                 {"name": vs.name, "is_target": vs.is_target,
                  "painted": vs.painted, "material": car.material_used,
                  "lane_x": vs.lane_x, "speed_mps": round(vs.speed_mps, 2),
-                 "phase_s": vs.phase_s, "reverse": vs.reverse,
+                 "phase_frac": round(vs.phase_frac, 3),
+                 "phase_s": round(car.phase_s, 1),
+                 "lap_s": round(car.lap_time, 1),
+                 "parked_ticks": car._parked_ticks, "reverse": vs.reverse,
                  "update_every": vs.update_every,
                  "asset": car.spec.asset}
                 for vs, car in zip(self._specs, self.cars)

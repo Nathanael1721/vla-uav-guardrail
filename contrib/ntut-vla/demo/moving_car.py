@@ -244,6 +244,10 @@ class MovingCar:
         self.one_shot = bool(one_shot)
         x, y, h = self.pose_at(0.0)
         self.pos, self.heading = (x, y), h
+        # Last pose actually sent to the sim, so a no-op teleport can be skipped.
+        # See update() for why that mattered so much.
+        self._last_sent: Optional[Tuple[float, float, float]] = None
+        self._parked_ticks = 0
 
     def _build_speed_profile(self, lat_acc: float, lon_acc: float) -> None:
         """Cap speed by cornering grip, then by how hard it can brake and pull.
@@ -361,6 +365,8 @@ class MovingCar:
                   "instruction will not match what the camera sees")
         self.pos, self.heading = (x, y), h
         self._fail_streak = 0
+        self._last_sent = None
+        self._parked_ticks = 0
         return self.actual_name
 
     def update(self, t: float) -> Tuple[float, float]:
@@ -368,14 +374,35 @@ class MovingCar:
         self.pos, self.heading = (x, y), h
         if self.actual_name is None:
             return x, y
+
+        # Do not re-send a pose the object is already at.
+        #
+        # This was the whole of the "SetObjectPose ... not movable" mystery. With
+        # one_shot the car parks at the end of its route, pose_at clamps, and
+        # update() then asks the sim to teleport it to where it already is on
+        # every remaining tick. The sim refuses a no-op teleport and reports it as
+        # "check if object state is movable!", which reads like actor corruption
+        # and was diagnosed as such for weeks.
+        #
+        # It is not. Across five flights the fault fired at EXACTLY (38.0, 58.0)
+        # every time - the last point of STRAIGHT_ROUTE - and the time it fired
+        # tracked the route length plus the stop dwell: 34.4 s with no stops,
+        # 48.5 s with two 6 s stops. Nothing degrades and nothing is corrupt; the
+        # car has simply arrived.
+        moved = (abs(x - self._last_sent[0]) > 1e-4
+                 or abs(y - self._last_sent[1]) > 1e-4
+                 or abs(h - self._last_sent[2]) > 1e-4) if self._last_sent else True
+        if not moved:
+            self._parked_ticks += 1
+            return x, y
+
         try:
             self.world.set_object_pose(self.actual_name, self._pose(x, y, h), True)
             self._fail_streak = 0
+            self._last_sent = (x, y, h)
         except Exception as e:
-            # The object is briefly not movable right after spawning. A long run
-            # of failures is different: the car is frozen and any tracking result
-            # from that flight is meaningless, so say so loudly rather than
-            # printing the same line hundreds of times.
+            # A real failure now means a real failure: the car was asked to move
+            # somewhere new and could not.
             self._fail_streak = getattr(self, "_fail_streak", 0) + 1
             if self._fail_streak in (1, 10):
                 print(f"[car] teleport failed ({type(e).__name__}: {e})")
@@ -411,4 +438,5 @@ class MovingCar:
                 "speed_range": [round(float(self.v.min()), 2),
                                 round(float(self.v.max()), 2)],
                 "desc_match": self.spec.desc_match,
-                "desc_mismatch": self.spec.desc_mismatch}
+                "desc_mismatch": self.spec.desc_mismatch,
+                "parked_ticks": self._parked_ticks}
