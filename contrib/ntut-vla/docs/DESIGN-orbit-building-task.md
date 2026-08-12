@@ -267,6 +267,64 @@ needs target persistence — which one — not just detection — what kind.** T
 an architectural gap, and it is the same gap the discrimination work touched from
 the other side.
 
+## Closed: the task is geometrically impossible in this map
+
+The depth range and the instance lock were both built, both unit-tested, and both
+flown (`orbit_depth2`, 100 s). The flight ended 220 m from the block, and the
+detection log says why in one number.
+
+**Median box width: 395 px in a 400 px frame.**
+
+The detector's answer to `"a building"` is the entire image. Everything
+downstream depends on box geometry, and at that scale there is none left:
+
+* the box centre is pinned near 200 px no matter which block is in view, so the
+  instance lock reported **0 switches and 0 gate rejections** — a perfect score
+  that means nothing, because there was no signal to reject;
+* `range_from_depth` samples the middle of the box, which for a full-frame box is
+  just the middle of the image — the distance to whatever is straight ahead, not
+  to a chosen building;
+* the yaw servo centres a box that is already centred, so it has nothing to do.
+
+This is a **framing** problem, not a control problem, and the numbers close it:
+
+| box as fraction of frame | required range |
+|---|---|
+| 99% (what we measured at 41 m) | 25 m |
+| 70% | 41 m |
+| 50% | 60 m |
+| **35% — a trackable object** | **89 m** |
+
+Against that, the ring has to stay on the occupancy grid (±78 m from the block,
+which sits at the origin) and clear of the neighbouring blocks (nearest at 56 m),
+which caps a usable radius at roughly **45 m**.
+
+**Required ≥ 89 m, available ≤ 45 m. No radius satisfies both.** A 50 × 50 m
+subject cannot be orbited by a 90° camera inside an 80 × 80 m map. Nothing in the
+controller can fix that, and no amount of tuning will.
+
+### What that leaves
+
+The two components stand on their own and are worth keeping:
+
+* **Depth range works** and is now the only honest range signal in the codebase.
+  It is independent of apparent width, which is the property the width servo
+  lacked — verified by a test that gives the same object two very different box
+  widths and requires the range to be unchanged.
+* **The instance lock works** on the case it was built for: it holds a target
+  against a rival scoring ten times higher, survives a 20° yaw turn without a
+  false switch, and reports a genuine re-acquire instead of hiding it. That case
+  is **several small objects** — the four-car traffic scene — not one object that
+  fills the frame.
+
+### If the orbit is wanted
+
+Pick a subject that is small in frame. A spawned prop (`demo/semantic_target.py`
+already spawns and recolours one) at a few metres across would sit at 5–15% of
+the frame from 20–40 m, which is the regime every part of this pipeline was built
+for. Orbiting a city block was the wrong subject, chosen because it was the only
+thing in the map that could be named — and naming it was never the hard part.
+
 ## What to do next
 
 1. **Add a tangential term to the control law.** An orbit needs

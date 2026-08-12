@@ -128,6 +128,137 @@ def colour_match(img, box, word) -> float:
     return float(m.mean())
 
 
+def range_from_depth(depth, det, shrink: float = 0.35):
+    """Metres to the detected object, from the depth image. None if unusable.
+
+    The detection box comes from the Scene capture and indexes straight into the
+    depth capture, which is why both are configured at the same resolution and
+    the same field of view.
+
+    Two deliberate choices:
+
+    * **Shrink the box before sampling.** A bounding box always contains
+      background — sky above a car, road beside it — and background is usually
+      much further away than the object. Sampling the middle 35% keeps the
+      window on the object itself.
+    * **Median, not mean.** Even a shrunken window catches the odd background
+      pixel, and one sky pixel at 5 km would drag a mean into uselessness. The
+      median ignores it.
+
+    Why this exists at all: the radial servo used apparent box width, which is a
+    fine range proxy for a car (about the same width from any angle) and a bad
+    one for a building. On a 50 x 50 m block apparent width swings by root-2
+    between face-on and corner-on, so circling made the width servo command
+    reverse from the aspect change alone and the orbit radius spiralled from
+    37.7 m to 178 m.
+    """
+    if depth is None or det is None:
+        return None
+    cx, cy, bw, bh = float(det[0]), float(det[1]), float(det[2]), float(det[3])
+    h, w = depth.shape[:2]
+    half_w, half_h = max(1.0, bw * shrink / 2), max(1.0, bh * shrink / 2)
+    x0, x1 = int(max(0, cx - half_w)), int(min(w, cx + half_w + 1))
+    y0, y1 = int(max(0, cy - half_h)), int(min(h, cy + half_h + 1))
+    if x1 <= x0 or y1 <= y0:
+        return None
+    win = depth[y0:y1, x0:x1]
+    # The renderer reports "no hit" as a huge value rather than as NaN, so both
+    # have to be filtered or the median is meaningless.
+    good = win[np.isfinite(win) & (win > 0.1) & (win < 1000.0)]
+    if good.size < 4:
+        return None
+    return float(np.median(good))
+
+
+class TargetLock:
+    """Binds the controller to ONE instance of the named class, not to whichever
+    instance the detector happens to like this tick.
+
+    The gap this closes. "a building" names a KIND, and the map has nine city
+    blocks; "a car" names a kind, and the traffic scene has four. The detector
+    answers "where is something of this kind", the controller centres whatever
+    box it is handed, and nothing ties one tick's answer to the last. Measured on
+    the orbit flights: box-centre discontinuities over 80 px occurred 24, 5 and 8
+    times, so the aircraft was chasing whichever building was most salient at
+    that moment, and that walks across the map.
+
+    For the car this was solved by accident — colour supplied INSTANCE
+    persistence on top of CLASS detection. Nothing supplies it for a building.
+
+    The lock predicts where the held instance should now appear, using the
+    aircraft's own yaw change (which moves every object in frame by a known
+    number of pixels) and accepts the nearest candidate to that prediction. A
+    candidate that is too far from the prediction is a DIFFERENT object, and
+    taking it would be a silent target switch.
+    """
+
+    def __init__(self, hfov_deg: float = 90.0, gate_frac: float = 0.28,
+                 hold_s: float = 2.0):
+        self.hfov_deg = hfov_deg
+        self.gate_frac = gate_frac      # max jump, as a fraction of image width
+        self.hold_s = hold_s            # how long a lock survives with no match
+        self.cx = None
+        self.last_yaw = None
+        self.last_t = None
+        self.n_locked = 0
+        self.n_switched = 0
+        self.n_rejected = 0
+
+    def _predict(self, img_w: int, yaw: float) -> float:
+        """Where the held instance should be now, given how far the nose turned.
+
+        A yaw of d radians slides a distant object across the frame by
+        d / hfov * width pixels, in the opposite direction to the turn. Without
+        this the gate would reject the true target every time the aircraft
+        turned, which is precisely when it is tracking hardest.
+        """
+        if self.cx is None or self.last_yaw is None:
+            return None
+        d = math.atan2(math.sin(yaw - self.last_yaw), math.cos(yaw - self.last_yaw))
+        px_per_rad = img_w / math.radians(self.hfov_deg)
+        return self.cx - d * px_per_rad
+
+    def select(self, candidates, img_w: int, yaw: float, now: float):
+        """Pick the candidate that is the held instance. `candidates` are the
+        detector's boxes, best-scoring first; each is the usual 8-tuple.
+
+        Returns (chosen, switched). `switched` is True when the lock was dropped
+        and re-acquired on a different object — the event worth logging, because
+        it is the moment the mission silently changes target.
+        """
+        if not candidates:
+            return None, False
+        stale = self.last_t is None or (now - self.last_t) > self.hold_s
+        pred = None if stale else self._predict(img_w, yaw)
+        if pred is None:
+            chosen = candidates[0]
+            switched = self.cx is not None
+            self.n_switched += int(switched)
+        else:
+            gate = self.gate_frac * img_w
+            near = [(abs(float(c[0]) - pred), c) for c in candidates]
+            near.sort(key=lambda p: p[0])
+            if near[0][0] <= gate:
+                chosen = near[0][1]
+                self.n_locked += 1
+                switched = False
+            else:
+                # Nothing where the held instance should be. Re-acquire, and say
+                # so: this is a target switch, not a continuation.
+                self.n_rejected += len(candidates)
+                chosen = candidates[0]
+                switched = True
+                self.n_switched += 1
+        self.cx = float(chosen[0])
+        self.last_yaw = yaw
+        self.last_t = now
+        return chosen, switched
+
+    def stats(self) -> dict:
+        return {"locked": self.n_locked, "switched": self.n_switched,
+                "rejected_candidates": self.n_rejected}
+
+
 class FenceGuard:
     """Lets the controller see the no-fly zones, so it can stop before them.
 
@@ -301,8 +432,12 @@ class Grounder:
 
     def __init__(self, obs: SemanticObs, query: str, thresh: float = 0.02,
                  jump_frac: float = 0.35, log_path: Path | None = None,
-                 colour_min: float = 0.10):
+                 colour_min: float = 0.10, lock: "TargetLock | None" = None):
         self.obs = obs
+        # Instance persistence. None keeps the historical behaviour exactly:
+        # take the best-ranked candidate every tick and never ask whether it is
+        # the same object as last tick.
+        self.lock = lock
         self.query = query
         self.thresh = thresh
         self.jump_frac = jump_frac
@@ -356,7 +491,7 @@ class Grounder:
                 out, threshold=0.0,
                 target_sizes=torch.tensor([[H, W]]).to("cuda"))[0]
             sc, bx = res["scores"], res["boxes"]
-            det, best = None, -1.0
+            det, switched, cands = None, False, []
             if len(sc):
                 # Score every plausible box, do not just take the detector's top
                 # one. Ranking by detector score alone is what let a city object
@@ -373,10 +508,21 @@ class Grounder:
                     cm = colour_match(img, (x0, y0, x1, y1), self.colour)
                     if self.colour is not None and cm < self.colour_min:
                         continue              # right shape, wrong colour
-                    combined = s * (0.25 + 0.75 * cm)
-                    if combined > best:
-                        best = combined
-                        det = (cx, cy, x1 - x0, y1 - y0, s, W, H, cm)
+                    cands.append((cx, cy, x1 - x0, y1 - y0, s, W, H, cm))
+            if cands:
+                # Rank by score-and-colour, then let the instance lock decide
+                # WHICH of the survivors is the one we were already following.
+                # Ranking alone answers "is this the right kind of thing"; it has
+                # nothing to say about "is this the same one", and with several
+                # identical vehicles or nine city blocks those are different
+                # questions.
+                cands.sort(key=lambda c: -(c[4] * (0.25 + 0.75 * c[7])))
+                if self.lock is None:
+                    det = cands[0]
+                else:
+                    yaw_now = (self.obs.pose[2] if getattr(self.obs, "pose", None)
+                               else 0.0)
+                    det, switched = self.lock.select(cands, W, yaw_now, time.time())
             with self._lock:
                 self._seq += 1
                 self._infer_ms = ms
@@ -401,6 +547,7 @@ class Grounder:
             if self.log_path is not None:
                 rec = {"seq": self._seq, "t": self._t, "infer_ms": round(ms, 1),
                        "query": self.query,
+                       "switched": bool(switched),
                        "det": (None if det is None else
                                {"cx": round(det[0], 1), "cy": round(det[1], 1),
                                 "w": round(det[2], 1), "h": round(det[3], 1),
@@ -479,6 +626,19 @@ async def fly(args) -> int:
                          lambda _, m: obs.put_front(m))
         client.subscribe(drone.sensors["DownCamera"]["scene_camera"],
                          lambda _, m: obs.put_down(m))
+        # Range signal. Optional by design: an older robot config has no depth
+        # capture on FrontCamera, and every mission except the orbit works
+        # perfectly well on apparent width, so a missing stream degrades to the
+        # width servo rather than failing the flight.
+        have_depth = False
+        try:
+            client.subscribe(drone.sensors["FrontCamera"]["depth_camera"],
+                             lambda _, m: obs.put_depth(m))
+            have_depth = True
+            print("[range] FrontCamera depth stream subscribed")
+        except Exception as exc:
+            print(f"[range] no depth stream ({type(exc).__name__}) — "
+                  "falling back to apparent box width")
         view_dir = None
         if args.save_view:
             try:
@@ -548,9 +708,10 @@ async def fly(args) -> int:
                                                    yaw_is_rate=False, yaw=psi0)
                 await asyncio.sleep(0.1)
 
+        lock = TargetLock(gate_frac=args.lock_gate) if args.lock_target else None
         grounder = Grounder(obs, args.object, thresh=args.det_thresh,
                             log_path=out / "detections.jsonl",
-                            colour_min=args.colour_min)
+                            colour_min=args.colour_min, lock=lock)
         grounder.start()
         for _ in range(600):                      # wait for the detector to load
             if grounder.latest()["seq"] > 0:
@@ -644,7 +805,18 @@ async def fly(args) -> int:
             # searched heading would circle a place the subject is not, and the
             # aircraft would spiral away from a target it had already lost.
             orbit_fwd = fwd
-            if args.orbit_speed and mode == "track":
+            rng_m = None
+            if args.orbit_speed and mode == "track" and args.orbit_radius > 0:
+                rng_m = range_from_depth(obs.get_depth(), det)
+                if rng_m is not None:
+                    # A true range closes the loop the width servo could not.
+                    # Positive error means too far, so close in. Same sign as the
+                    # width servo, but the signal no longer depends on which face
+                    # of the subject happens to be showing.
+                    orbit_fwd = float(np.clip(
+                        (rng_m - args.orbit_radius) * args.orbit_radial_gain,
+                        -args.speed_max, args.speed_max))
+            if args.orbit_speed and mode == "track" and rng_m is None:
                 # Clamp the radial term hard while orbiting.
                 #
                 # Apparent width is a usable range proxy for a car, which looks
@@ -860,6 +1032,20 @@ def main() -> int:
                          "between face-on and corner-on, and unclamped that "
                          "aspect change alone spiralled the radius from 37.7 m "
                          "to 178 m. Only applies when --orbit-speed is set.")
+    ap.add_argument("--orbit-radius", type=float, default=0.0,
+                    help="target orbit radius in metres, held from the DEPTH "
+                         "camera rather than apparent box width. 0 keeps the "
+                         "width servo.")
+    ap.add_argument("--orbit-radial-gain", type=float, default=0.15,
+                    help="m/s of radial correction per metre of range error")
+    ap.add_argument("--lock-target", action="store_true",
+                    help="bind to ONE instance of the named class instead of "
+                         "whichever the detector prefers this tick. Needed when "
+                         "the scene holds several of the same kind - four cars, "
+                         "or nine city blocks.")
+    ap.add_argument("--lock-gate", type=float, default=0.28,
+                    help="max accepted jump from the predicted position, as a "
+                         "fraction of image width")
     ap.add_argument("--traffic", type=int, default=0,
                     help="number of BACKGROUND vehicles besides the target. "
                          "They are the same mesh and unpainted, so the noun "

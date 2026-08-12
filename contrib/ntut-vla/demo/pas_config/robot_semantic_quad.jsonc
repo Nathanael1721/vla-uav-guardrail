@@ -332,6 +332,57 @@
           "pixels-as-float": false,
           "compress": false,
           "target-gamma": 2.5
+        },
+        // DEPTH_PERSPECTIVE (2), not DEPTH_PLANAR (1). Planar depth measures
+        // along the optical axis, so an off-axis target reads nearer than it is
+        // by cos(bearing); perspective depth is the true radial distance, which
+        // is what a range signal has to be.
+        //
+        // Same 400x225 and same 90 deg FOV as the Scene capture ON PURPOSE: the
+        // detection box comes from the Scene image and is used to index straight
+        // into this one, so any mismatch in resolution or field of view would
+        // silently sample the wrong pixels.
+        //
+        // This was previously removed as "rendered for nothing", which was true
+        // while the controller had no use for range. It has one now: the orbit
+        // radial servo used apparent box width, which swings by root-2 on a
+        // square building between face-on and corner-on and spiralled the radius
+        // from 37.7 m to 178 m. See docs/DESIGN-orbit-building-task.md.
+        // "streaming-enabled": true is LOAD-BEARING here, and it is the one
+        // thing the shipped reference config gets away with omitting.
+        //
+        // With it false the topic still appears in the subscribe list and frames
+        // still arrive on schedule — they are simply all zeros. Nothing errors,
+        // nothing warns, and range_from_depth quietly returns None on every
+        // tick, so the controller silently falls back to the width servo and the
+        // orbit fails in exactly the way it failed without any depth at all.
+        // Measured: 0 of 90000 non-zero with streaming off, 34824 of 90000 with
+        // it on. Do not "tidy" this back to false.
+        //
+        // "pixels-as-float": true is requested and IGNORED — the sim publishes
+        // 16UC1 either way, i.e. uint16 metres with 0 meaning no hit and 65504
+        // the far sentinel. SemanticObs.get_depth() already decodes that, and
+        // range_from_depth filters both sentinels. The cost is 1 m of range
+        // resolution, which is fine against a 41 m orbit radius.
+        {
+          "image-type": 1,
+          "width": 400,
+          "height": 225,
+          "fov-degrees": 90,
+          "capture-enabled": true,
+          "streaming-enabled": true,
+          "pixels-as-float": true,
+          "compress": false
+        },
+        {
+          "image-type": 2,
+          "width": 400,
+          "height": 225,
+          "fov-degrees": 90,
+          "capture-enabled": true,
+          "streaming-enabled": true,
+          "pixels-as-float": true,
+          "compress": false
         }
       ],
       "origin": {
