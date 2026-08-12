@@ -177,36 +177,70 @@ class FenceGuard:
         k = (d - self.stand_off_m) / (self.brake_m - self.stand_off_m)
         return float(np.clip(k, 0.0, 1.0)), d, k < 0.35
 
-    def slide(self, x: float, y: float, vx: float, vy: float, probe_m: float = 8.0):
-        """Which way to sidestep when the direct line is blocked.
+    def slide(self, x: float, y: float, vx: float, vy: float, probe_m: float = 8.0,
+              reach_m: float = 14.0, step_m: float = 1.0):
+        """Which way to sidestep, and how far the detour has to be.
 
         Braking alone is safe but passive: the aircraft stops at the boundary and
         the target drives away. If the fence does not span the whole corridor
-        there is a way past, and this finds it by probing left and right
-        perpendicular to the blocked heading and going whichever way the fence
-        falls further behind.
+        there is a way past, and this looks for it.
 
-        Returns a unit vector, or (0, 0) when neither side is better — in which
-        case stopping really is the only legal answer.
+        Returns (ux, uy, cost_m): a unit vector and how far sideways the aircraft
+        must travel before the way ahead opens. (0, 0, inf) means neither side
+        opens within `reach_m`, and stopping really is the only legal answer.
+
+        WHY IT MEASURES A DETOUR LENGTH RATHER THAN A CLEARANCE
+
+        The first version scored each side by the fence distance at a single
+        probe point. That is symmetric information — it says how far the fence is
+        on the left and on the right — and it cannot tell which side the aircraft
+        can actually get PAST on. Flown against follow_car_gap.yaml, whose fence
+        covers x 26..42 and leaves 7 m of road at x 43..50, the aircraft slid WEST
+        to x = 30.9. Wrong side entirely: west is the closed end.
+
+        So each side is now scored by the smallest lateral displacement after
+        which the forward direction is clear. That is exactly the question — how
+        big is the detour — and the side with the shorter answer wins. On the gap
+        policy the eastward answer is finite and the westward one is infinite.
         """
         from shapely.geometry import Point
         speed = math.hypot(vx, vy)
         if not self.polys or speed < 1e-3:
-            return 0.0, 0.0
+            return 0.0, 0.0, float("inf")
         ux, uy = vx / speed, vy / speed
         lx, ly = -uy, ux                      # left of the commanded heading
-        best, bx, by = None, 0.0, 0.0
+
+        def _ahead_clear(px: float, py: float) -> bool:
+            return all(
+                min(poly.distance(Point(px + ux * a, py + uy * a))
+                    for poly in self.polys) >= self.stand_off_m
+                for a in (probe_m * 0.5, probe_m, probe_m * 1.5))
+
+        # No blockage, no detour. Without this the probe reaches past nothing
+        # when the fence is still far away, BOTH sides score the minimum cost,
+        # and the tie is broken by iteration order -- which silently picked WEST,
+        # the closed end of the gap policy, for the whole distant approach.
+        # "Which way round" is only a question once there is something in the way.
+        if _ahead_clear(x, y):
+            return 0.0, 0.0, float("inf")
+
+        best_cost, bx, by = float("inf"), 0.0, 0.0
+        n = max(1, int(reach_m / step_m))
         for sgn in (1.0, -1.0):
-            px = x + lx * sgn * probe_m + ux * probe_m * 0.5
-            py = y + ly * sgn * probe_m + uy * probe_m * 0.5
-            d = min(poly.distance(Point(px, py)) for poly in self.polys)
-            inside = any(poly.contains(Point(px, py)) for poly in self.polys)
-            score = -1.0 if inside else d
-            if best is None or score > best:
-                best, bx, by = score, lx * sgn, ly * sgn
-        if best is None or best <= self.stand_off_m:
-            return 0.0, 0.0
-        return bx, by
+            for k in range(1, n + 1):
+                off = k * step_m
+                px = x + lx * sgn * off
+                py = y + ly * sgn * off
+                # Standing here must itself be legal, with the stand-off kept.
+                if min(poly.distance(Point(px, py)) for poly in self.polys) < self.stand_off_m:
+                    continue
+                # ...and the way ahead from here must be open for a real distance,
+                # not merely one step: a one-step gap is a corner, not a route.
+                if _ahead_clear(px, py):
+                    if off < best_cost:
+                        best_cost, bx, by = off, lx * sgn, ly * sgn
+                    break                     # shortest detour on this side
+        return bx, by, best_cost
 
 
 def annotate(img, det, hud: dict):
@@ -594,20 +628,75 @@ async def fly(args) -> int:
             # constraint filter, not a regulator
             vz_up = float(np.clip((args.cruise_alt - state.up) * args.alt_gain,
                                   -args.climb_max, args.climb_max))
-            cvx, cvy = fwd * math.cos(yaw), fwd * math.sin(yaw)
+            # Radial term: forward speed along the nose, which the width servo
+            # sizes to hold a stand-off. On its own this is STATION KEEPING —
+            # point at the subject, hold distance, hover facing it. Measured on
+            # the first orbit attempt: radius held at 37.7 +- 2.6 m (pass) while
+            # angular coverage reached only -23.9 deg (fail). The radius was
+            # right and the angle never advanced, because nothing in the
+            # commanded velocity carried the aircraft AROUND anything.
+            #
+            # Tangential term: the yaw servo already keeps the nose on the
+            # subject, so perpendicular to the nose IS the tangent of a circle
+            # about it. One lateral component is the whole orbit.
+            #
+            # Only while the target is actually in view. Orbiting on a coasted or
+            # searched heading would circle a place the subject is not, and the
+            # aircraft would spiral away from a target it had already lost.
+            orbit_fwd = fwd
+            if args.orbit_speed and mode == "track":
+                # Clamp the radial term hard while orbiting.
+                #
+                # Apparent width is a usable range proxy for a car, which looks
+                # about the same width from any angle at these distances. It is a
+                # BAD one for a 50 x 50 m block: apparent width swings by root-2
+                # between face-on and corner-on, so circling the subject makes the
+                # width servo read "too close" and command reverse purely from the
+                # changing aspect. Measured on the first orbit-mode flight, with
+                # the tangential term added and the radial term unclamped: angular
+                # coverage improved from -23.9 to +97.7 deg (the tangential term
+                # works) while the radius blew out from 37.7 +- 2.6 m to
+                # 94.5 +- 51.2 m, reaching 178 m. It orbited, and spiralled away
+                # while doing it.
+                #
+                # There is no range sensor in this path, so width is the only
+                # radial feedback there is. Limiting how fast it may act keeps the
+                # aspect swing from becoming a spiral while still letting a real
+                # range error be corrected, just slowly.
+                orbit_fwd = float(np.clip(fwd, -args.orbit_radial_max,
+                                          args.orbit_radial_max))
+            cvx, cvy = orbit_fwd * math.cos(yaw), orbit_fwd * math.sin(yaw)
+            if args.orbit_speed and mode == "track":
+                cvx += -args.orbit_speed * math.sin(yaw)
+                cvy += args.orbit_speed * math.cos(yaw)
             fscale, fdist, fblocked = fence.gate(state.x, state.y, cvx, cvy)
             gvx, gvy = cvx * fscale, cvy * fscale
-            if fblocked:
-                nfz_hold_ticks += 1
-                # blocked ahead: try to slide around rather than just stop
-                sx, sy = fence.slide(state.x, state.y, cvx, cvy)
+            # Commit to a side at the BRAKE distance, not at the stand-off.
+            #
+            # gate() only raises `fblocked` inside 6.15 m (k < 0.35), by which
+            # point the aircraft is already down to 35% speed, and 5 m of lateral
+            # travel at that speed costs more ground than a 2 m/s target gives
+            # away. Measured on follow_car_gap.yaml: 26.1% of the flight within
+            # 30 m against 99.6% unfenced -- the rule cost the path AND the
+            # target. Starting the detour at 12 m is what buys the aircraft
+            # enough room to still be following something at the far end.
+            approaching = (fdist is not None and fdist < fence.brake_m
+                           and fscale < 1.0)
+            if fblocked or approaching:
+                if fblocked:
+                    nfz_hold_ticks += 1
+                sx, sy, scost = fence.slide(state.x, state.y, cvx, cvy)
                 if sx or sy:
-                    lat = args.slide_speed * (1.0 - fscale)
+                    # Lateral urgency rises as the fence closes, but never waits
+                    # for the stand-off: at the brake distance it is already a
+                    # third of slide_speed, which is what makes it anticipatory.
+                    urgency = float(np.clip(1.0 - fscale, 0.33, 1.0))
+                    lat = args.slide_speed * urgency
                     gvx += sx * lat
                     gvy += sy * lat
                     fmode = "skirt"
                 else:
-                    fmode = "hold"
+                    fmode = "hold" if fblocked else "near"
             else:
                 fmode = "clear" if fdist is None or fdist > 20 else "near"
             raw = Action4D(vx=gvx, vy=gvy, vz_up=vz_up, yaw_rate=yaw_rate)
@@ -758,6 +847,19 @@ def main() -> int:
     ap.add_argument("--max-s", type=float, default=120.0)
     ap.add_argument("--cruise-alt", type=float, default=9.0)
     ap.add_argument("--car-speed", type=float, default=3.0)
+    ap.add_argument("--orbit-speed", type=float, default=0.0,
+                    help="lateral m/s perpendicular to the nose, which turns "
+                         "station-keeping into an orbit. 0 disables it and the "
+                         "follow behaviour is byte-identical. Positive circles "
+                         "one way, negative the other. Only applied while the "
+                         "target is in view: orbiting a coasted heading would "
+                         "circle a place the subject is not.")
+    ap.add_argument("--orbit-radial-max", type=float, default=0.6,
+                    help="cap on the width-servo forward speed while orbiting. "
+                         "Apparent width swings by root-2 on a square block "
+                         "between face-on and corner-on, and unclamped that "
+                         "aspect change alone spiralled the radius from 37.7 m "
+                         "to 178 m. Only applies when --orbit-speed is set.")
     ap.add_argument("--traffic", type=int, default=0,
                     help="number of BACKGROUND vehicles besides the target. "
                          "They are the same mesh and unpainted, so the noun "

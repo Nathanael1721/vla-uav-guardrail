@@ -214,6 +214,59 @@ target present — and it means subject retention cannot be used to tell a good 
 from a bad one. It should be dropped from the pass set or replaced with a measure
 that uses colour or box stability.
 
+## Three attempts at the tangential term, and why it is not a tuning problem
+
+The follow-up added `--orbit-speed` (a lateral command perpendicular to the nose,
+which is the tangent because the yaw servo already points at the subject) and then
+`--orbit-radial-max` (a clamp on the width servo). Both flown:
+
+| flight | tangential | radial clamp | M1 coverage | sign | radius |
+|---|---|---|---|---|---|
+| `orbit_bld` | — | — | −23.9° | 0.59 | **37.7 ± 2.6** |
+| `orbit_bld2` | 2.5 m/s | none | **+97.7°** | **0.82** | 94.5 ± 51.2 (31→178) |
+| `orbit_bld3` | 2.5 m/s | 0.6 m/s | −2.5° | 0.58 | 108.3 ± 37.2 |
+
+**The tangential term works.** `orbit_bld2` quadrupled angular coverage and turned
+sign consistency from a coin flip (0.59) into real circulation (0.82), close to
+the 120° / 0.80 pass bar. That part of the diagnosis was right.
+
+**The radius is the blocker, and it is not tunable.** Apparent width is a fine
+range proxy for a car, which looks about the same width from any angle. On a
+50 × 50 m block it swings by √2 between face-on and corner-on, so circling the
+subject makes the width servo read "too close" and command reverse from the
+*aspect change alone*. The trace shows `fwd = −1.6` while the tangential term
+pushes sideways: an outward spiral.
+
+Clamping the radial term made it **worse**, and the reason closes the argument.
+Angular rate is ω = v/r. At 41 m a 2.5 m/s tangential command sweeps 3.5°/s; at
+108 m it sweeps 1.3°/s. So a radius blow-out does not merely miss M2, it destroys
+M1 as well — and the clamp, by preventing any radial correction, made the
+blow-out permanent. **Radius and coverage are coupled, so coverage cannot be
+fixed without fixing radius first.**
+
+Apparent width cannot fix radius on a non-round subject. The fix is a real range
+measurement. The depth camera exists in the scene config and is not used in this
+control path; wiring it in is the honest next step and is a larger piece of work
+than a control-law tweak.
+
+`--orbit-speed` defaults to 0, so none of this touches the follow behaviour —
+verified by regression, the follow flights are unchanged.
+
+## A second, more fundamental gap
+
+`"a building"` names a *kind*, and this map has nine city blocks. The controller
+centres whatever box the detector returns, and nothing binds it to the same block
+from one tick to the next: box-centre discontinuities over 80 px occur 24, 5 and 8
+times across the three flights. So the aircraft is not necessarily circling one
+subject — it is chasing whichever building is most salient right now, and that
+walks across the map.
+
+For the car this was solved by accident: colour supplied *instance* persistence on
+top of *class* detection. Nothing supplies it for a building. **The orbit task
+needs target persistence — which one — not just detection — what kind.** That is
+an architectural gap, and it is the same gap the discrimination work touched from
+the other side.
+
 ## What to do next
 
 1. **Add a tangential term to the control law.** An orbit needs
