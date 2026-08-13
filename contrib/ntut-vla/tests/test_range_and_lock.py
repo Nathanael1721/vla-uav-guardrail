@@ -26,7 +26,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
-from follow_vlm import TargetLock, range_from_depth          # noqa: E402
+from follow_vlm import (TargetLock, implied_width_m,          # noqa: E402
+                        presence_verdict, range_from_depth)
 
 W, H = 400, 225
 
@@ -181,6 +182,65 @@ def test_lock_is_opt_in_and_absent_by_default():
     import inspect
     sig = inspect.signature(follow_vlm.Grounder.__init__)
     assert sig.parameters["lock"].default is None
+
+
+# -------------------------------------------------------------- presence
+
+def test_a_car_sized_box_at_a_plausible_range_reads_present():
+    """40 px at 30 m in a 400 px / 90 deg frame implies about 6 m — a car."""
+    v, why = presence_verdict(_det(200.0, bw=40.0, colour=0.5), 30.0,
+                              "a white car", 0.10)
+    assert v == "PRESENT", (v, why)
+
+
+def test_no_detection_reads_absent():
+    v, why = presence_verdict(None, 25.0, "a white car", 0.10)
+    assert v == "ABSENT" and "no detection" in why
+
+
+def test_a_box_filling_the_frame_is_a_wall_not_an_object():
+    """The orbit flights returned a MEDIAN box of 395 px in a 400 px frame for
+    "a building", and every downstream stage treated it as a target."""
+    v, why = presence_verdict(_det(200.0, bw=395.0, colour=0.9), 40.0,
+                              "a building", 0.10)
+    assert v == "ABSENT" and "frame" in why, (v, why)
+
+
+def test_the_wrong_colour_reads_absent():
+    v, why = presence_verdict(_det(200.0, bw=40.0, colour=0.02), 30.0,
+                              "a white car", 0.10)
+    assert v == "ABSENT" and "colour" in why, (v, why)
+
+
+def test_a_car_that_would_have_to_be_forty_metres_wide_reads_absent():
+    """The check that only depth makes possible. Same box, same colour, same
+    score — only the range says this cannot be a car."""
+    near = presence_verdict(_det(200.0, bw=84.0, colour=0.5), 12.0, "a car", 0.10)
+    far = presence_verdict(_det(200.0, bw=84.0, colour=0.5), 60.0, "a car", 0.10)
+    assert near[0] == "PRESENT", near        # 84 px at 12 m is 4.0 m: a car
+    assert far[0] == "ABSENT" and "wide" in far[1], far   # at 60 m it is 19.8 m
+
+
+def test_without_range_it_says_unsure_rather_than_present():
+    """Honest about not knowing. Defaulting to PRESENT is how the old system
+    scored 1.000 subject retention on a flight 200 m from any traffic light."""
+    v, why = presence_verdict(_det(200.0, bw=40.0, colour=0.5), None,
+                              "a white car", 0.10)
+    assert v == "UNSURE", (v, why)
+
+
+def test_implied_width_scales_with_range_and_not_with_score():
+    a = implied_width_m(_det(200.0, bw=40.0, score=0.9), 30.0)
+    b = implied_width_m(_det(200.0, bw=40.0, score=0.01), 30.0)
+    c = implied_width_m(_det(200.0, bw=40.0), 60.0)
+    assert abs(a - b) < 1e-9, "score changed a geometric quantity"
+    assert abs(c - 2 * a) < 0.2, (a, c)
+
+
+def test_an_unknown_noun_skips_the_size_check_rather_than_guessing():
+    v, _ = presence_verdict(_det(200.0, bw=40.0, colour=0.5), 30.0,
+                            "a white widget", 0.10)
+    assert v == "PRESENT"
 
 
 # --------------------------------------------------------------------- runner

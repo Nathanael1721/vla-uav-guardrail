@@ -170,6 +170,145 @@ def range_from_depth(depth, det, shrink: float = 0.35):
     return float(np.median(good))
 
 
+def implied_width_m(det, rng_m: float, hfov_deg: float = 90.0):
+    """How wide the detected thing must physically be, given its range.
+
+    A box is an angle. With a range, that angle becomes a size — and a size can
+    be checked against what the named object actually is. This is the first
+    signal in the system that can say a detection is IMPLAUSIBLE rather than
+    merely low-scoring.
+    """
+    if det is None or rng_m is None or rng_m <= 0:
+        return None
+    bw, W = float(det[2]), float(det[5])
+    half = math.radians(hfov_deg / 2.0) * (bw / W)
+    return 2.0 * rng_m * math.tan(half)
+
+
+# Physical width in metres that a phrase is allowed to imply. Deliberately wide:
+# the job is to reject a 40 m "car", not to measure one.
+PLAUSIBLE_WIDTH_M = {
+    "car": (1.0, 8.0), "truck": (2.0, 14.0), "bus": (2.0, 16.0),
+    "van": (1.5, 10.0), "person": (0.2, 1.5), "traffic light": (0.1, 2.0),
+    "lamp post": (0.1, 2.0), "tree": (0.5, 20.0), "building": (5.0, 200.0),
+}
+
+
+def plausible_noun(query: str):
+    q = query.lower()
+    for noun in PLAUSIBLE_WIDTH_M:
+        if noun in q:
+            return noun
+    return None
+
+
+def presence_verdict(det, rng_m, query: str, colour_min: float,
+                     frame_frac_max: float = 0.85):
+    """PRESENT / ABSENT / UNSURE for the thing the operator named.
+
+    Acknowledged limitation number two has always been that this system cannot
+    say the object is not there: with no car in the scene the raw detector still
+    fires on roughly three quarters of frames, and only the colour gate suppresses
+    the follow. The orbit control arm made the cost plain — subject retention
+    scored 1.000 on BOTH arms, including the one that flew 200 m from any traffic
+    light — so detection presence separated nothing at all.
+
+    Three checks, each rejecting a different way of being wrong, and none of them
+    a confidence threshold:
+
+    * **Colour.** Already there, and still the strongest: a box whose pixels are
+      not the named colour is not the named object.
+    * **Scale.** A box covering most of the frame is a wall, not an object. The
+      orbit flights returned a median box of 395 px in a 400 px frame for
+      "a building" and every downstream stage treated it as a target.
+    * **Implied size.** With depth, a box angle becomes a physical width. A "car"
+      that must be 40 m across is not a car. This one is new and is the only
+      check that uses the range signal for anything other than control.
+
+    Returns (verdict, reason). UNSURE when depth is unavailable and the cheaper
+    checks pass — honest about not knowing rather than defaulting to PRESENT.
+    """
+    if det is None:
+        return "ABSENT", "no detection"
+    bw, W = float(det[2]), float(det[5])
+    if bw / W > frame_frac_max:
+        return "ABSENT", f"box is {bw / W:.0%} of frame — a wall, not an object"
+    if colour_word(query) is not None and float(det[7]) < colour_min:
+        return "ABSENT", f"colour {float(det[7]):.2f} < {colour_min:.2f}"
+    noun = plausible_noun(query)
+    w_m = implied_width_m(det, rng_m)
+    if noun is not None and w_m is not None:
+        lo, hi = PLAUSIBLE_WIDTH_M[noun]
+        if not (lo <= w_m <= hi):
+            return "ABSENT", (f"implies {w_m:.1f} m wide at {rng_m:.0f} m; "
+                              f"a {noun} is {lo}-{hi} m")
+    if w_m is None:
+        return "UNSURE", "no range — size not checked"
+    return "PRESENT", f"{w_m:.1f} m wide at {rng_m:.0f} m"
+
+
+class PresenceMonitor:
+    """presence_verdict plus the one check that needs memory: does the thing keep
+    the same physical size?
+
+    Implied width is a physical property, so for a real object it is CONSTANT
+    while range and apparent width both change. For a detector wandering between
+    unrelated bits of city it is not. That makes instability a signal no single
+    frame can provide, and measurement says it is the best one available:
+
+        arm            implied width   range     rolling CV (1 s)   CV > 0.35
+        car present        3.4 m       29.8 m         0.406            0.56
+        NO car at all      5.4 m       69.0 m         0.615            0.84
+
+    Nothing here is a confidence score — every check is geometric or photometric,
+    which is the point: the detector's own confidence is exactly what cannot tell
+    absence from presence.
+
+    READ THE OUTPUT AS A FLIGHT-LEVEL INDICATOR, NOT A PER-TICK VERDICT.
+
+    A threshold sweep over both logs found the ceiling of this whole approach:
+
+        cv_max   width band   ABSENT with a car   ABSENT with no car   gap
+         0.35      1.0-8.0          0.40                0.75          0.35
+         0.55      1.0-8.0          0.24                0.45          0.21
+         none      1.0-8.0          0.19                0.31          0.13
+
+    The defaults are that optimum. But 0.40 means the check calls ABSENT on two
+    ticks in five of a flight that tracked its target 100% of the time within
+    30 m — so a controller must NOT gate on it tick by tick. Over a whole flight
+    75% against 40% does separate the conditions, and that is the honest claim:
+    the first signal in this system that responds to absence at all, at aggregate
+    resolution only.
+    """
+
+    def __init__(self, query: str, colour_min: float, window: int = 10,
+                 cv_max: float = 0.35):
+        self.query = query
+        self.colour_min = colour_min
+        self.window = window
+        self.cv_max = cv_max
+        self._w: list[float] = []
+        self.counts = {"PRESENT": 0, "ABSENT": 0, "UNSURE": 0}
+
+    def update(self, det, rng_m):
+        verdict, why = presence_verdict(det, rng_m, self.query, self.colour_min)
+        w_m = implied_width_m(det, rng_m)
+        if w_m is not None:
+            self._w.append(w_m)
+            del self._w[:-self.window]
+        if verdict == "PRESENT" and len(self._w) >= self.window:
+            mean = sum(self._w) / len(self._w)
+            if mean > 0.1:
+                var = sum((v - mean) ** 2 for v in self._w) / len(self._w)
+                cv = math.sqrt(var) / mean
+                if cv > self.cv_max:
+                    verdict = "ABSENT"
+                    why = (f"size unstable: {cv:.2f} CV over {self.window} ticks "
+                           f"— not one physical object")
+        self.counts[verdict] = self.counts.get(verdict, 0) + 1
+        return verdict, why
+
+
 class TargetLock:
     """Binds the controller to ONE instance of the named class, not to whichever
     instance the detector happens to like this tick.
@@ -682,6 +821,8 @@ async def fly(args) -> int:
     rows, traj, n_touched = [], [], 0
     car = None
     traffic = None
+    n_absent = 0
+    presence = PresenceMonitor(args.object, args.colour_min)
     client = ProjectAirSimClient()
     client.connect()
     grounder = None
@@ -872,9 +1013,11 @@ async def fly(args) -> int:
             # searched heading would circle a place the subject is not, and the
             # aircraft would spiral away from a target it had already lost.
             orbit_fwd = fwd
-            rng_m = None
+            rng_m = range_from_depth(obs.get_depth(), det) if have_depth else None
+            verdict, why = presence.update(det, rng_m)
+            if verdict == "ABSENT":
+                n_absent += 1
             if args.orbit_speed and mode == "track" and args.orbit_radius > 0:
-                rng_m = range_from_depth(obs.get_depth(), det)
                 if rng_m is not None:
                     # A true range closes the loop the width servo could not.
                     # Positive error means too far, so close in. Same sign as the
@@ -956,6 +1099,8 @@ async def fly(args) -> int:
                 "fence_d": (round(fdist, 2) if fdist is not None else None),
                 "fence_scale": round(fscale, 3), "fence_hold": fblocked,
                 "fence_mode": fmode,
+                "presence": verdict, "presence_why": why,
+                "rng_m": (round(rng_m, 2) if rng_m is not None else None),
                 "infer_ms": round(g["infer_ms"], 1),
                 "det": (None if det is None else
                         {"cx": round(det[0], 1), "cy": round(det[1], 1),
@@ -988,6 +1133,7 @@ async def fly(args) -> int:
                         "alt": state.up, "shield": d.touched,
                         "query": args.object, "mode": mode,
                         "fence_d": fdist, "fence_hold": fblocked,
+                        "presence": verdict, "rng_m": rng_m,
                         "fence_mode": fmode,
                     }).save(view_dir / "fpv" / f"{tick:05d}.jpg", quality=85)
             if tick % 50 == 0:
@@ -1056,6 +1202,7 @@ async def fly(args) -> int:
         "nfz_s": round(len(inside) * TICK, 2), "nfz_entered": bool(inside),
         "alt_violation_s": round(alt_bad * TICK, 1),
         "interventions": n_touched,
+        "frac_absent": round(n_absent / max(1, len(traj)), 3),
         "nfz_hold_ticks": nfz_hold_ticks,
         "params": {"yaw_gain": args.yaw_gain, "want_width": args.want_width,
                    "speed_max": args.speed_max, "cruise_alt": args.cruise_alt,
@@ -1072,6 +1219,8 @@ async def fly(args) -> int:
           f"within 30 m {metrics['frac_within_30m']}")
     print(f"[report] guardrail: NFZ {metrics['nfz_s']}s, altitude escape "
           f"{metrics['alt_violation_s']}s, interventions {n_touched}")
+    print(f"[report] presence: verdict ABSENT on {metrics['frac_absent']*100:.0f}% "
+          f"of ticks (with no target in the scene this should be HIGH)")
     return 0
 
 
