@@ -247,6 +247,53 @@ def presence_verdict(det, rng_m, query: str, colour_min: float,
     return "PRESENT", f"{w_m:.1f} m wide at {rng_m:.0f} m"
 
 
+def appearance(img, box, h_bins: int = 8, s_bins: int = 4):
+    """A small HSV histogram of the box interior — what the thing LOOKS like.
+
+    The gap this closes is the ceiling the absence work hit. Four geometric checks
+    reach 0.75 ABSENT with no target against 0.40 with one, and cannot do better,
+    because in a dense city there really are white, car-sized, car-distance
+    objects — geometrically they ARE a car. Position identity (`TargetLock`) and
+    size plausibility both say "consistent"; nothing says "that is a DIFFERENT
+    white thing".
+
+    Deliberately coarse: 8 hue by 4 saturation is 32 numbers. The job is to tell
+    one object from another across a few seconds of the same flight, not to
+    re-identify it tomorrow under different light. A big descriptor would mostly
+    encode illumination.
+
+    The middle 60% of the box is sampled for the same reason `range_from_depth`
+    shrinks its window — a bounding box always contains background, and here the
+    background is what makes two different objects look alike.
+    """
+    import cv2
+    if img is None or box is None:
+        return None
+    x0, y0, x1, y1 = [int(max(0, v)) for v in box]
+    if x1 - x0 < 4 or y1 - y0 < 4:
+        return None
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    hw, hh = (x1 - x0) * 0.3, (y1 - y0) * 0.3
+    crop = np.asarray(img)[int(cy - hh):int(cy + hh) + 1,
+                           int(cx - hw):int(cx + hw) + 1]
+    if crop.size == 0:
+        return None
+    hsv = cv2.cvtColor(crop, cv2.COLOR_RGB2HSV)
+    h = (hsv[..., 0].astype(int) * h_bins // 180).clip(0, h_bins - 1)
+    s = (hsv[..., 1].astype(int) * s_bins // 256).clip(0, s_bins - 1)
+    hist = np.bincount((h * s_bins + s).ravel(),
+                       minlength=h_bins * s_bins).astype(float)
+    total = hist.sum()
+    return hist / total if total > 0 else None
+
+
+def appearance_similarity(a, b) -> float:
+    """Histogram intersection, 0..1. 1 is identical."""
+    if a is None or b is None:
+        return 1.0            # no opinion rather than a false accusation
+    return float(np.minimum(a, b).sum())
+
+
 class PresenceMonitor:
     """presence_verdict plus the one check that needs memory: does the thing keep
     the same physical size?
@@ -282,16 +329,57 @@ class PresenceMonitor:
     """
 
     def __init__(self, query: str, colour_min: float, window: int = 10,
-                 cv_max: float = 0.35):
+                 cv_max: float = 0.35, appear_min: float = 0.0):
         self.query = query
         self.colour_min = colour_min
         self.window = window
         self.cv_max = cv_max
+        # How much the thing may change appearance and still be the same thing.
+        #
+        # DEFAULT 0 — DISABLED, because it was measured and it does not help.
+        # Flown as a matched present/absent pair and swept offline:
+        #
+        #     appear_min   ABSENT with car   ABSENT no car   gap
+        #        0.00 (off)     0.37              0.67       0.30
+        #        0.40           0.49              0.85       0.36
+        #        0.55           0.68              0.96       0.28
+        #
+        # The best it ever adds is 0.01 over geometry alone (0.36 against 0.35),
+        # and it buys that by raising BOTH arms together rather than separating
+        # them. The reason is resolution, not concept: at this range the box is
+        # 22 px wide, the middle-60% sample is about 13 x 9 px, and a 32-bin
+        # histogram from ~126 pixels is 4 pixels per bin. That is noise with a
+        # shape, not a fingerprint — present and absent similarity distributions
+        # overlap heavily (median 0.679 against 0.515, p10 0.341 against 0.259).
+        #
+        # Kept, tested and opt-in: the machinery is correct and would work on a
+        # target that fills more of the frame, which is the closer-range or
+        # higher-resolution case. It is simply not usable here.
+        self.appear_min = appear_min
         self._w: list[float] = []
+        self._ref = None            # appearance of the instance being followed
+        self._ref_hits = 0
+        self.last_sim = None
         self.counts = {"PRESENT": 0, "ABSENT": 0, "UNSURE": 0}
 
-    def update(self, det, rng_m):
+    def update(self, det, rng_m, app=None):
         verdict, why = presence_verdict(det, rng_m, self.query, self.colour_min)
+        # Appearance identity. Geometry can only say "consistent with a car";
+        # this is the only check that can say "a DIFFERENT car-like thing".
+        if verdict == "PRESENT" and app is not None and self.appear_min > 0:
+            if self._ref is None:
+                self._ref = app
+            else:
+                sim = appearance_similarity(self._ref, app)
+                self.last_sim = sim
+                if sim < self.appear_min:
+                    verdict = "ABSENT"
+                    why = f"looks different: {sim:.2f} similarity to the target"
+                else:
+                    # Drift slowly toward the current look, so gradual lighting
+                    # change is tolerated but a jump to another object is not.
+                    self._ref = 0.9 * self._ref + 0.1 * app
+                    self._ref_hits += 1
         w_m = implied_width_m(det, rng_m)
         if w_m is not None:
             self._w.append(w_m)
@@ -654,6 +742,7 @@ class Grounder:
         self._stop = False
         self._seq = 0
         self._det = None          # (cx, cy, w, h, score, W, H, colour)
+        self._app = None          # HSV histogram of the chosen box
         self._t = 0.0             # last time the detector RAN
         self._t_det = 0.0         # last time it actually FOUND the target
         self.drop_after = 8.0     # forget the box entirely after this long
@@ -726,6 +815,11 @@ class Grounder:
                     yaw_now = (self.obs.pose[2] if getattr(self.obs, "pose", None)
                                else 0.0)
                     det, switched = self.lock.select(cands, W, yaw_now, time.time())
+            app = None
+            if det is not None:
+                x0 = det[0] - det[2] / 2, det[1] - det[3] / 2
+                app = appearance(img, (x0[0], x0[1],
+                                       det[0] + det[2] / 2, det[1] + det[3] / 2))
             with self._lock:
                 self._seq += 1
                 self._infer_ms = ms
@@ -738,6 +832,7 @@ class Grounder:
                 self._t = time.time()
                 if det is not None:
                     self._det = det
+                    self._app = app
                     self._t_det = time.time()
                     self._n_seen += 1
                     last = (det[0], time.time())
@@ -762,7 +857,7 @@ class Grounder:
     def latest(self) -> dict:
         with self._lock:
             return {"seq": self._seq, "t": self._t, "t_det": self._t_det,
-                    "det": self._det, "infer_ms": self._infer_ms,
+                    "det": self._det, "app": self._app, "infer_ms": self._infer_ms,
                     "n_seen": self._n_seen, "n_miss": self._n_miss}
 
 
@@ -1014,7 +1109,7 @@ async def fly(args) -> int:
             # aircraft would spiral away from a target it had already lost.
             orbit_fwd = fwd
             rng_m = range_from_depth(obs.get_depth(), det) if have_depth else None
-            verdict, why = presence.update(det, rng_m)
+            verdict, why = presence.update(det, rng_m, g.get("app"))
             if verdict == "ABSENT":
                 n_absent += 1
             if args.orbit_speed and mode == "track" and args.orbit_radius > 0:
@@ -1100,6 +1195,8 @@ async def fly(args) -> int:
                 "fence_scale": round(fscale, 3), "fence_hold": fblocked,
                 "fence_mode": fmode,
                 "presence": verdict, "presence_why": why,
+                "app_sim": (round(presence.last_sim, 3)
+                            if presence.last_sim is not None else None),
                 "rng_m": (round(rng_m, 2) if rng_m is not None else None),
                 "infer_ms": round(g["infer_ms"], 1),
                 "det": (None if det is None else

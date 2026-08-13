@@ -26,8 +26,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
-from follow_vlm import (TargetLock, implied_width_m,          # noqa: E402
-                        presence_verdict, range_from_depth)
+from follow_vlm import (PresenceMonitor, TargetLock,          # noqa: E402
+                        appearance, appearance_similarity,
+                        implied_width_m, presence_verdict, range_from_depth)
 
 W, H = 400, 225
 
@@ -240,6 +241,86 @@ def test_implied_width_scales_with_range_and_not_with_score():
 def test_an_unknown_noun_skips_the_size_check_rather_than_guessing():
     v, _ = presence_verdict(_det(200.0, bw=40.0, colour=0.5), 30.0,
                             "a white widget", 0.10)
+    assert v == "PRESENT"
+
+
+# ----------------------------------------------------------- appearance
+
+def _img(rgb, w=200, h=120):
+    return np.tile(np.array(rgb, dtype=np.uint8), (h, w, 1))
+
+
+BOX = (40.0, 20.0, 160.0, 100.0)
+
+
+def test_the_same_object_looks_the_same():
+    a = appearance(_img((200, 30, 30)), BOX)
+    b = appearance(_img((200, 30, 30)), BOX)
+    assert appearance_similarity(a, b) > 0.99
+
+
+def test_a_different_colour_looks_different():
+    red = appearance(_img((200, 30, 30)), BOX)
+    blue = appearance(_img((30, 30, 200)), BOX)
+    assert appearance_similarity(red, blue) < 0.2, appearance_similarity(red, blue)
+
+
+def test_a_shade_change_is_tolerated_more_than_a_hue_change():
+    """Lighting must not read as a different object; a different object must."""
+    base = appearance(_img((200, 40, 40)), BOX)
+    dim = appearance(_img((150, 30, 30)), BOX)      # same hue, darker
+    other = appearance(_img((40, 200, 40)), BOX)    # different hue
+    assert appearance_similarity(base, dim) > appearance_similarity(base, other)
+
+
+def test_the_descriptor_is_normalised_and_small():
+    a = appearance(_img((200, 30, 30)), BOX)
+    assert a is not None and a.size == 32
+    assert abs(float(a.sum()) - 1.0) < 1e-6
+
+
+def test_a_degenerate_box_yields_nothing_rather_than_noise():
+    assert appearance(_img((200, 30, 30)), (10.0, 10.0, 12.0, 12.0)) is None
+    assert appearance(None, BOX) is None
+
+
+def test_missing_descriptors_are_no_opinion_not_a_mismatch():
+    """A frame without an image must not be read as 'the target changed'."""
+    a = appearance(_img((200, 30, 30)), BOX)
+    assert appearance_similarity(a, None) == 1.0
+    assert appearance_similarity(None, None) == 1.0
+
+
+def test_the_monitor_rejects_a_look_alike_of_the_wrong_colour():
+    """The ceiling this was built to break: geometry says 'consistent with a
+    car', appearance says 'a DIFFERENT car-like thing'."""
+    # appear_min defaults to 0 (disabled — it does not help at flight
+    # resolution, see the docstring), so this test opts in explicitly.
+    m = PresenceMonitor("a white car", colour_min=0.0, window=999, appear_min=0.55)
+    red = appearance(_img((200, 30, 30)), BOX)
+    blue = appearance(_img((30, 30, 200)), BOX)
+    v1, _ = m.update(_det(200.0, bw=84.0, colour=0.5), 12.0, red)
+    assert v1 == "PRESENT", v1
+    v2, why = m.update(_det(200.0, bw=84.0, colour=0.5), 12.0, blue)
+    assert v2 == "ABSENT" and "different" in why, (v2, why)
+
+
+def test_the_monitor_tolerates_gradual_drift():
+    """Slow lighting change must not trip it, or every flight would end ABSENT."""
+    m = PresenceMonitor("a white car", colour_min=0.0, window=999, appear_min=0.55)
+    for k in range(30):
+        shade = 200 - k          # gently darkening, same hue
+        app = appearance(_img((shade, 30, 30)), BOX)
+        v, why = m.update(_det(200.0, bw=84.0, colour=0.5), 12.0, app)
+        assert v == "PRESENT", f"tripped at step {k}: {why}"
+
+
+def test_appearance_is_opt_out():
+    m = PresenceMonitor("a white car", colour_min=0.0, window=999, appear_min=0.0)
+    red = appearance(_img((200, 30, 30)), BOX)
+    blue = appearance(_img((30, 30, 200)), BOX)
+    m.update(_det(200.0, bw=84.0, colour=0.5), 12.0, red)
+    v, _ = m.update(_det(200.0, bw=84.0, colour=0.5), 12.0, blue)
     assert v == "PRESENT"
 
 

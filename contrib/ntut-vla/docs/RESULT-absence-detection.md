@@ -86,9 +86,35 @@ detector says "car-like thing here" and the geometry agrees.
 
 What would separate them is **appearance identity** — is this the same object I
 was following, not merely a similar one — which is what `TargetLock` does for
-position but nothing does for appearance. A short appearance descriptor per
-tracked instance is the next honest step, and it is a different piece of work
-from this one.
+position but nothing does for appearance.
+
+### That was tried, and it does not work at this range
+
+An HSV appearance descriptor (8 hue × 4 saturation over the middle 60% of the
+box) was built, tested, flown as its own present/absent pair, and swept offline:
+
+| `appear_min` | ABSENT with a car | ABSENT with no car | gap |
+|---|---|---|---|
+| 0.00 (off) | 0.37 | 0.67 | 0.30 |
+| **0.40 (best)** | 0.49 | 0.85 | **0.36** |
+| 0.55 | 0.68 | 0.96 | 0.28 |
+
+The best it ever adds is **0.01** over geometry alone, and it buys that by
+raising *both* arms together rather than separating them.
+
+The reason is resolution, not concept. At this range the detection box is 22 px
+wide, so the middle-60% sample is about **13 × 9 px** — roughly 126 pixels
+spread over 32 histogram bins, i.e. **4 pixels per bin**. That is noise with a
+shape rather than a fingerprint, and the similarity distributions overlap
+accordingly: median 0.679 present against 0.515 absent, p10 0.341 against 0.259.
+
+The code is kept, tested and **opt-in with a default of 0 (disabled)**. It is
+correct and would work on a target that fills more of the frame. It is simply not
+usable at a 22 px box.
+
+**So the ceiling stands, and it is a sensing limit rather than a logic one.**
+Breaking it needs more pixels on the target — a closer stand-off, a longer lens,
+or a higher-resolution capture — not a cleverer rule.
 
 ## What is safe to say
 
