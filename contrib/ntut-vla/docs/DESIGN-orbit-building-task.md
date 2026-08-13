@@ -1,7 +1,10 @@
 # Building-orbit scan — task and evaluation design
 
-**Status:** flown 2026-08-11. **The language separates the arms; neither arm
-orbits.** Results and the diagnosis are at the end of this document.
+**Status:** 2026-08-14. **It orbits — on a subject small enough to be an object.**
+A parked car at 16 m gave −408.5° of angular coverage, more than a full lap, with
+the detection box at 8% of frame instead of 99%. The city-block attempt and why
+it was geometrically impossible are kept below as the record; the working result
+is at the end.
 **Meeting action item:** 2026-08-05, "環繞建築掃描 / environ building scan".
 **Policy:** `policies/orbit_building.yaml` (`sha256:b94223dce2ed42ef`)
 
@@ -324,6 +327,53 @@ already spawns and recolours one) at a few metres across would sit at 5–15% of
 the frame from 20–40 m, which is the regime every part of this pipeline was built
 for. Orbiting a city block was the wrong subject, chosen because it was the only
 thing in the map that could be named — and naming it was never the hard part.
+
+---
+
+# Flown against a SMALL subject, 2026-08-14 — and it orbits
+
+The framing argument said the city block was the wrong subject and a subject a
+few metres across would work. That is now tested. A car was parked at (40, −40) —
+the point with the largest free radius on the whole map, 22.6 m, and only 20.6 m
+from the usual spawn — and orbited at 16 m with `--park-at`.
+
+| | city block (`orbit_bld2`) | **parked car (`orbit_prop`)** | control, "a traffic light" |
+|---|---|---|---|
+| box width median | 395 px (**99%** of frame) | **32 px (8%)** | 384 px (96%) |
+| M1 angular coverage | +97.7° | **−408.5°** | −60.2° |
+| M1 sign consistency | 0.82 | 0.65 | 0.60 |
+| M2 radius | 94.5 ± 51.2 m | **24.3 ± 10.1 m** (target 16) | 127.9 ± 65.2 m |
+| within 30 m of subject | — | **0.821** | 0.156 |
+| NFZ / altitude | 0.0 / 0.0 | 0.0 / 0.0 | 0.0 / 0.0 |
+
+**−408.5° is more than a full lap.** The aircraft went round the subject and
+round again. That is the first time anything in this project has circumnavigated
+anything, and it happened for exactly the predicted reason: the box dropped from
+99% of the frame to 8%, so there was geometry left to servo, lock and range.
+
+The control arm separates decisively — told "a traffic light" in the same scene,
+the aircraft locked a building (box 96% of frame) and wandered to a mean radius of
+128 m. Same policy, same start, same parked car in view.
+
+## What still fails, honestly
+
+**M1 fails on sign consistency**, 0.65 against the 0.80 bar. The coverage is
+there several times over; the aircraft simply does not sweep monotonically — it
+advances, backs up a little, advances again.
+
+**M2 fails on radius**, 24.3 m against a 16 m target. That 8 m of drift matters
+because the free space at that point is 22.6 m, so an orbit at 24.3 m is pressed
+into the building-clearance ring — which is what the 412 Shield interventions
+are. The guardrail held (NFZ 0.0 s, altitude 0.0 s) and it should not have had to.
+
+**Raising the radial gain makes it worse, not better.** `--orbit-radial-gain`
+0.15 → 0.45 took the flight from 24.3 m mean and 0.821 within 30 m to 120.8 m and
+0.096: the aircraft left entirely. A stronger gain amplifies every noisy range
+reading into a full-speed command, and the loop destabilises. 0.15 stands.
+
+The remaining work is a proper radial controller — damping, or a rate limit on
+the radial command — rather than a larger proportional term. That is a control
+design task, not a tuning pass, and it is not attempted here.
 
 ## What to do next
 

@@ -968,12 +968,22 @@ async def fly(args) -> int:
                 traffic.spawn()
                 car = traffic.target
             else:
-                car = moving_car.MovingCar(
-                    world, speed_mps=args.car_speed,
-                    route=(moving_car.STRAIGHT_ROUTE if args.straight else None),
-                    one_shot=args.straight,
-                    phase_s=(0.0 if args.straight else 10.0),
-                    stops=stops)
+                if args.park_at:
+                    px, py = [float(v) for v in args.park_at.split(",")]
+                    # A one-metre route driven once: the car reaches the far end
+                    # almost immediately and stays there. pose_at clamps, and
+                    # update() now skips the no-op teleport, so a parked subject
+                    # costs nothing per tick.
+                    car = moving_car.MovingCar(
+                        world, speed_mps=0.5, route=[(px, py), (px, py + 1.0)],
+                        one_shot=True, phase_s=0.0)
+                else:
+                    car = moving_car.MovingCar(
+                        world, speed_mps=args.car_speed,
+                        route=(moving_car.STRAIGHT_ROUTE if args.straight else None),
+                        one_shot=args.straight,
+                        phase_s=(0.0 if args.straight else 10.0),
+                        stops=stops)
                 car.spawn()
             # let the actor settle before the first teleport; it is briefly
             # not movable straight after spawning
@@ -1345,6 +1355,14 @@ def main() -> int:
                          "between face-on and corner-on, and unclamped that "
                          "aspect change alone spiralled the radius from 37.7 m "
                          "to 178 m. Only applies when --orbit-speed is set.")
+    ap.add_argument("--park-at", default=None, metavar="X,Y",
+                    help="park the car at this world point instead of driving "
+                         "a route, for the orbit task. The subject must be "
+                         "SMALL in frame: the orbit failed on a 50x50 m city "
+                         "block because its box filled 99 percent of the image, "
+                         "leaving no geometry to servo, lock or range. A 4.3 m "
+                         "car at a 16 m radius is a 68 px box, which is the "
+                         "regime the whole pipeline was built for.")
     ap.add_argument("--orbit-radius", type=float, default=0.0,
                     help="target orbit radius in metres, held from the DEPTH "
                          "camera rather than apparent box width. 0 keeps the "
