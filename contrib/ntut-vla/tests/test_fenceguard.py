@@ -33,8 +33,17 @@ GAP = ROOT / "policies" / "follow_car_gap.yaml"      # fence x 26..42, gap x 43.
 FULL = ROOT / "policies" / "follow_car_nfz.yaml"     # fence x 26..54, no gap
 
 
-def _guard(path, brake_m=12.0, stand_off_m=3.0):
-    return FenceGuard(load_policy(path), brake_m=brake_m, stand_off_m=stand_off_m)
+CITYMAP = ROOT / "demo" / "out" / "citymap" / "occ_day.npz"
+
+
+def _guard(path, brake_m=12.0, stand_off_m=3.0, with_map=False):
+    smap = None
+    if with_map and CITYMAP.exists():
+        import city_planner
+        cm = city_planner.load_occ(str(CITYMAP))
+        smap = {"occ": cm["occ"], "res": cm["res"], "ox": cm["ox"], "oy": cm["oy"]}
+    return FenceGuard(load_policy(path), brake_m=brake_m, stand_off_m=stand_off_m,
+                      obstacle_map=smap)
 
 
 # The car drives north up lane x = 38, so the aircraft approaches heading +y.
@@ -146,6 +155,42 @@ def test_a_stationary_command_asks_for_no_detour():
     """With no commanded motion there is no heading to sidestep relative to."""
     g = _guard(GAP)
     assert g.slide(38.0, -6.0, 0.0, 0.0) == (0.0, 0.0, float("inf"))
+
+
+def test_a_detour_must_stay_on_the_road_not_merely_outside_the_fence():
+    """The regression the anticipatory slide introduced.
+
+    follow_car_nfz.yaml spans the whole corridor deliberately, so there is no way
+    past. Knowing only about fences, slide() found one anyway by routing around
+    the fence's eastern END at x > 55 - off the street entirely. Flown, fence_mode
+    was `skirt` on 378 of 498 ticks against `hold` on 442 of 552 before, and
+    Shield interventions went 0 -> 298 as the aircraft was pushed into building
+    clearance. The Shield caught every one, which is the system working; the
+    controller should not have been proposing them.
+    """
+    if not CITYMAP.exists():
+        return
+    g = _guard(FULL, with_map=True)
+    offered = []
+    for y in range(-20, 2):
+        for x in (36.0, 38.0, 42.0, 46.0):
+            sx, sy, cost = g.slide(x, float(y), *NORTH)
+            if sx or sy:
+                offered.append((x, y, round(cost, 1)))
+    assert not offered, (
+        f"slide offered a way past a corridor-spanning fence at {offered[:5]} - "
+        "those detours leave the road"
+    )
+
+
+def test_the_gap_policy_still_finds_its_gap_with_the_map_on():
+    """The clearance check must not be so strict that it kills the real gap."""
+    if not CITYMAP.exists():
+        return
+    g = _guard(GAP, with_map=True)
+    sx, sy, cost = g.slide(38.0, -6.0, *NORTH)
+    assert sx > 0.5, f"clearance check destroyed the genuine eastward gap: {sx},{sy}"
+    assert math.isfinite(cost)
 
 
 # --------------------------------------------------------------------- runner

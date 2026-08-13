@@ -7,21 +7,37 @@ questions you will actually get.
 
 ## The 30-second version, if you only get one sentence
 
-> We told a drone to follow an orange car, in words. It did — within 30 m for the
-> whole flight, and it stopped when the car stopped. Then we put a no-fly zone
-> across the route: it braked, held 3 m outside, and never entered.
+> We told a drone to follow a white car, in words. It did — within 30 m for
+> **100%** of the flight, and it stopped when the car stopped. Then we put three
+> more cars on the same street, identical except for colour, and it still picked
+> the right one. And with a no-fly zone across the route it braked, held outside,
+> and never entered.
 
 ## The one thing that makes it a result rather than a video
 
-> Change one word — "an orange car" to "a blue car", same scene, same orange car
-> — and following collapses from 100% to 21%. That is the control. Without it,
-> "the drone ended up near the car" is just drift.
+> Change one word — "a white car" to "a red car", same scene, same white car —
+> and the system does not follow badly, it **fails to acquire at all**: the
+> detector's hit rate collapses from 1.000 to **0.221** and time within 30 m from
+> 100% to **24%**. That is the control. Without it, "the drone ended up near the
+> car" is just drift.
+
+That hit-rate collapse is new and it is worth a sentence of its own. The previous
+control used "a blue car", and this map's **asphalt reads blue** — above the
+saturation floor, the road filled 0.99 of the box — so a blue query always had a
+background-coloured escape hatch and the detector kept firing (hit rate 0.99)
+while the colour gate quietly suppressed the follow. Red has no such overlap, so
+the gate now rejects nearly every candidate outright. The system is closer to
+saying *"that thing is not here"* than it has ever been.
 
 ## The second thing, if you get more time
 
-> The car stops twice mid-route. The drone stops too: 1.17 m/s while the car
-> moves, 0.36 m/s while it is parked. A follower has to stop — that is what
-> separates following from flying down the same street.
+> The car stops twice mid-route and the drone stops with it. A follower has to
+> stop — that is what separates following from flying down the same street.
+
+The speed figures previously quoted here (1.17 m/s moving, 0.36 m/s parked) came
+from the contaminated set AND cannot be recomputed offline, because the car's
+per-tick ground-truth pose is not written to disk. Say the qualitative version
+until the logging gap is closed and the pair is re-measured.
 
 ---
 
@@ -29,29 +45,48 @@ questions you will actually get.
 
 Verified configuration - the one to demo.
 
+Every row below was re-flown on 2026-08-11 after two faults were found that
+invalidated the earlier set: the target mesh was an open roll-cage buggy, and a
+teleport fault was respawning the car at the start of its route mid-flight. Do
+not quote any figure from before that date.
+
+| arm | tag | detector hit | within 30 m | mean sep | Shield |
+|---|---|---|---|---|---|
+| tracking | `vlm_nofreeze` | 0.993 | **1.000** | 13.4 m | 0 |
+| tracking, replicate | `v2_track_r2` | 1.000 | **1.000** | 12.5 m | 0 |
+| **CONTROL, "a red car"** | `v2_wrongcolour` | **0.221** | **0.241** | 71.8 m | 10 |
+| 3 identical distractors | `vlm_traffic2` | 0.979 | **1.000** | 17.7 m | 0 |
+| NFZ across the corridor | `v2_nfz2` | 1.000 | 0.349 | 38.8 m | 0 |
+
 | | value |
 |---|---|
-| detector found the car | **100%** of frames |
-| within 30 m of the car | **100%** of the flight |
-| mean separation | **15.6 m**, closest 9.3 m |
-| drone speed while car MOVES | **1.17 m/s** |
-| drone speed while car is STOPPED | **0.36 m/s** (correlation +0.55) |
-| wrong colour word (control) | **20.7%** within 30 m, 68.5 m mean |
-| no-fly zone time | **0.0 s**, every flight |
-| altitude band escape | **0.0 s**, every flight |
-| fenced flight: Shield overrides | **659 to 0** after the controller learned the fence |
-| fenced flight: closest to the boundary | **3.00 m** (stand-off is 3 m) |
-| detector rate | **4-5 Hz** (was 0.11 Hz) |
-| detector size | **153 M** params (was 7 B) |
-| car | real mesh, 3.7 x 1.8 x 1.2 m, 2.0 m/s, 66 m straight, stops twice, parks |
+| **NFZ time / altitude escape** | **0.0 s / 0.0 s, on every flight ever recorded** |
+| tracking, n=2 | 1.000 and 1.000 within 30 m |
+| detector rate | **3.9–5.4 Hz** measured (was 0.11 Hz) |
+| detector size | **153 M** params (was 7 B), 0.61 GB VRAM |
+| target mesh | `SKM_SportsCar`, "a car" scores **0.1272** (buggy scored 0.0395) |
+| colour pairing | `M_Orange` renders **white** on this mesh — verified, and the phrase says white |
+| car | 4.3 × 1.9 × 1.2 m, 2.0 m/s, 66 m straight, stops twice, parks |
 
+**The NFZ arm's 0.349 is not a tracking failure.** The fence spans the whole
+corridor by design, so the aircraft is held outside while the car drives through
+and away. Losing the target is the correct outcome; entering the zone would not
+be. NFZ 0.0 s with **0 Shield interventions** is the number that matters there —
+the controller's own fence awareness kept it out, so the safety layer never had
+to act.
+
+**The gap-fence variant is still work in progress**, not a capability: it holds
+the rule (NFZ 0.0 s) but does not exploit the gap (0.284 within 30 m). Present
+`follow_car_nfz.yaml` as the NFZ demo.
 **Earlier circuit numbers (65-90% within range) are superseded.** A closed loop
 looks more natural but its turns swing the car through the aircraft's blind spot
 - the front camera cannot see closer than 0.86 x altitude. Straight, with stops,
 fixed it.
 
 **Where they come from:** `demo/out/<tag>/metrics.json`, one file per flight.
-Tags: `vlm_stopgo`, `vlm_nfz_smooth`, `vlm_col_blue`.
+Current tags: `vlm_nofreeze`, `v2_track_r2`, `v2_wrongcolour`, `vlm_traffic2`,
+`v2_nfz2`. The older `vlm_stopgo` / `vlm_nfz_smooth` / `vlm_col_blue` set is kept
+for the record but must not be quoted — see the note above the table.
 
 ---
 
@@ -59,9 +94,12 @@ Tags: `vlm_stopgo`, `vlm_nfz_smooth`, `vlm_col_blue`.
 
 Volunteering a limitation is much stronger than conceding it under questioning.
 
-1. **"The noun does most of the work."** "a car" alone chases city clutter and
-   ends 51 m away. The colour check helps, but the system grounds *"car"*, not
-   *"that particular one"*.
+1. **"The noun does most of the work — but we now measure how much."** "a car"
+   alone chases city clutter and ends 51 m away. Put three IDENTICAL cars on the
+   street and only the colour test can separate them; it does, and the cost shows
+   up honestly as the detector hit rate falling 1.000 → 0.979 and mean separation
+   13.4 → 17.7 m. The system grounds *"car"* by network and *"white"* by fixed
+   rule, and those are different mechanisms.
 2. **"It cannot tell you the object is absent."** With no car in the scene the
    raw detector still fires on about 75% of frames. Only the colour check
    suppresses it.
@@ -78,9 +116,10 @@ Volunteering a limitation is much stronger than conceding it under questioning.
 
 **Q: Is the drone really following, or does it just drift near the car?**
 The wrong-colour control answers that. Identical scene, identical car, one word
-changed: 100% within 30 m becomes 20.7%. Drift would score the same in both.
+changed: 100% within 30 m becomes 24.1%, and the detector's hit rate collapses
+from 1.000 to 0.221. Drift would score the same in both.
 
-**Q: Closest approach 9.3 m — why not closer?**
+**Q: Closest approach 1.0-2.1 m — is that safe?**
 That is the stand-off it is asked to hold, set by `--want-width`. Closest
 approach is not the score anyway: a drone that never moves still records about
 12 m, because the car drives past it. Judge by mean separation and time within
@@ -146,8 +185,9 @@ The interface is one struct, `Action4D(vx, vy, vz_up, yaw_rate)`. `raw` never
 reaches the simulator — only `shield.filter(state, smooth).emitted` flies.
 
 **Q: The guardrail records 0.0 s violations. Does it do anything?**
-On the fenced flight the aircraft was held outside the zone for 433 ticks, coming
-no closer than 3.00 m against a 3 m stand-off. The HUD reads NFZ AHEAD — HOLDING
+On the fenced flight (`v2_nfz2`) the aircraft was held outside the zone for the
+whole crossing with **0 Shield interventions** — the controller's own fence
+awareness kept it out, so the safety layer never had to act. The HUD reads NFZ AHEAD — HOLDING
 while TARGET LOCKED stays up: it can see where it wants to go and is not allowed
 to go there.
 

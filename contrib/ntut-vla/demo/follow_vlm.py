@@ -273,13 +273,28 @@ class FenceGuard:
     keeps tracking so the target stays in view.
     """
 
-    def __init__(self, policy, brake_m: float = 12.0, stand_off_m: float = 3.0):
+    def __init__(self, policy, brake_m: float = 12.0, stand_off_m: float = 3.0,
+                 obstacle_map: dict | None = None, min_clearance_m: float = 5.0):
         from guardrail.geometry import fence_polygon
         from guardrail.models import PolygonFence
         self.polys = [fence_polygon(f).buffer(f.margin_m)
                       for f in policy.by_type(PolygonFence)]
         self.brake_m = brake_m
         self.stand_off_m = stand_off_m
+        # A detour has to stay on the ROAD, not merely outside the fence.
+        #
+        # Without this, slide() answers a question narrower than the one being
+        # asked. On follow_car_nfz.yaml — a fence spanning the whole corridor,
+        # deliberately, so that there IS no way past — it found one anyway by
+        # routing around the fence's eastern END at x > 55, which is off the
+        # street entirely. Measured: fence_mode was `skirt` on 378 of 498 ticks
+        # against `hold` on 442 of 552 before, and Shield interventions went from
+        # 0 to 298 as the aircraft was pushed into building clearance.
+        #
+        # The Shield caught every one of those, which is the system working. But
+        # the controller should not be proposing them.
+        self.occ = obstacle_map
+        self.min_clearance_m = min_clearance_m
 
     def gate(self, x: float, y: float, vx: float, vy: float):
         """Scale a commanded velocity down as it closes on a fence.
@@ -341,11 +356,32 @@ class FenceGuard:
         ux, uy = vx / speed, vy / speed
         lx, ly = -uy, ux                      # left of the commanded heading
 
+        def _on_road(px: float, py: float) -> bool:
+            """Far enough from every MAPPED building. Cheap Chebyshev scan of the
+            occupancy grid rather than a distance transform, because slide() runs
+            inside the 10 Hz control loop."""
+            if not self.occ:
+                return True
+            occ, res = self.occ["occ"], self.occ["res"]
+            ox, oy = self.occ["ox"], self.occ["oy"]
+            r = int(math.ceil(self.min_clearance_m / res))
+            i0 = int(round((px - ox) / res))
+            j0 = int(round((py - oy) / res))
+            n, m = occ.shape
+            for i in range(max(0, i0 - r), min(n, i0 + r + 1)):
+                for j in range(max(0, j0 - r), min(m, j0 + r + 1)):
+                    if occ[i, j] and math.hypot(ox + i * res - px,
+                                                oy + j * res - py) < self.min_clearance_m:
+                        return False
+            return True
+
         def _ahead_clear(px: float, py: float) -> bool:
-            return all(
-                min(poly.distance(Point(px + ux * a, py + uy * a))
-                    for poly in self.polys) >= self.stand_off_m
-                for a in (probe_m * 0.5, probe_m, probe_m * 1.5))
+            pts = [(px + ux * a, py + uy * a)
+                   for a in (probe_m * 0.5, probe_m, probe_m * 1.5)]
+            if not all(min(poly.distance(Point(*q)) for poly in self.polys)
+                       >= self.stand_off_m for q in pts):
+                return False
+            return all(_on_road(*q) for q in pts)
 
         # No blockage, no detour. Without this the probe reaches past nothing
         # when the fence is still far away, BOTH sides score the minimum cost,
@@ -365,6 +401,8 @@ class FenceGuard:
                 # Standing here must itself be legal, with the stand-off kept.
                 if min(poly.distance(Point(px, py)) for poly in self.polys) < self.stand_off_m:
                     continue
+                if not _on_road(px, py):
+                    continue          # outside the fence but off the street
                 # ...and the way ahead from here must be open for a real distance,
                 # not merely one step: a one-step gap is a corner, not a route.
                 if _ahead_clear(px, py):
@@ -600,7 +638,10 @@ async def fly(args) -> int:
         smap = {"occ": cmap["occ"], "res": cmap["res"],
                 "ox": cmap["ox"], "oy": cmap["oy"]}
     shield = Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=smap)
-    fence = FenceGuard(policy, brake_m=args.fence_brake, stand_off_m=args.fence_standoff)
+    clr = policy.by_type(ObstacleClearance)
+    fence = FenceGuard(policy, brake_m=args.fence_brake,
+                       stand_off_m=args.fence_standoff, obstacle_map=smap,
+                       min_clearance_m=(clr[0].min_clearance_m if clr else 5.0))
     audit = AuditLogger(out / "audit.jsonl", policy.policy_hash)
     if fence.polys:
         print(f"[fence] {len(fence.polys)} no-fly zone(s) known to the controller: "
