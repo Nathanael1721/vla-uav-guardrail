@@ -55,6 +55,15 @@ vehicles instead of one changed nothing about the safety layer.
 
 ## Result 2 — the gap-fence flight is a negative result
 
+> **SUPERSEDED 2026-08-11.** The diagnosis below — that `FenceGuard` is
+> reactive and picks the wrong side — identified two real defects, both since
+> fixed, and neither was why this flight lost the car. The actual cause was
+> `--want-width 0.10` at the policy's 13 m cruise, which commands a ~30 m
+> stand-off and parks the aircraft exactly on the metric threshold. Corrected
+> to 0.20, the same policy scores **0.759** within 30 m against the 0.261
+> recorded here. See `docs/FINDING-gapfence-was-never-the-fence.md`.
+
+
 `follow_car_gap.yaml` had never been flown. It fences x 26–42 of a 20 m corridor
 and leaves 7 m of legal road at x 43–50, and the claim it was written to
 demonstrate is the interesting one: *a rule that costs the aircraft its preferred

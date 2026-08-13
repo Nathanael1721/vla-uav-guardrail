@@ -102,6 +102,12 @@ if ($SkipSim -and -not (Test-SimUp)) { throw "-SkipSim given but nothing on 8989
 Say "DEMO 1: follow `"$Object`" — no fence, pure tracking"
 Fly "vlm_stopgo" $Object "policies\follow_car.yaml" 62 6 -Record
 
+# --want-width is COUPLED to --cruise-alt. It is an angular stand-off, so the
+# same value is a much larger ground distance from higher up. 0.10 suits the 9 m
+# cruise these demos fly. follow_car_gap.yaml forces 13 m and needs about 0.20,
+# or the aircraft holds a 30 m stand-off and the "within 30 m" metric reads that
+# as failure — it scored 0.26 for that reason alone, and 0.759 once corrected.
+# See docs/FINDING-gapfence-was-never-the-fence.md.
 Say "DEMO 2: same mission with a no-fly zone across the route"
 Say "        the car drives through it, the drone must not"
 Fly "vlm_nfz_smooth" $Object "policies\follow_car_nfz.yaml" 70 0 -Record

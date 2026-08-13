@@ -193,6 +193,41 @@ def test_the_gap_policy_still_finds_its_gap_with_the_map_on():
     assert math.isfinite(cost)
 
 
+def test_flying_along_the_gap_is_not_braked():
+    """The reason the gap flight lost the car.
+
+    Inside follow_car_gap.yaml's 7 m gap at x = 47, heading north, the nearest
+    fence point is the corner at (43, 1) and that corner gets nearer as the
+    aircraft advances — so a gate that brakes on shrinking distance throttled a
+    trajectory that never enters the zone. Measured on v2_gap: the aircraft DID
+    find the gap (277 of 552 ticks at x > 43) and was still held to 1.62-1.68 m/s
+    against a car doing 2.0, slower than its target on 537 of 552 ticks.
+    """
+    g = _guard(GAP)
+    for y in (-6.0, -2.0, 2.0, 6.0, 10.0):
+        scale, dist, blocked = g.gate(47.0, y, *NORTH)
+        assert scale == 1.0, (
+            f"at (47,{y}) flying north up the gap, the gate scaled to {scale:.2f} "
+            f"(fence {dist:.1f} m away) — that trajectory never enters the zone"
+        )
+        assert not blocked
+
+
+def test_flying_into_the_fence_is_still_braked():
+    """The gate must not become permissive: a heading that DOES enter the zone
+    has to be slowed exactly as before."""
+    g = _guard(GAP)
+    scale, dist, blocked = g.gate(38.0, -6.0, *NORTH)   # straight into it
+    assert scale < 1.0, f"a heading into the fence was not braked (scale {scale})"
+    assert dist is not None and dist < g.brake_m
+
+
+def test_a_heading_away_from_the_fence_is_never_braked():
+    g = _guard(GAP)
+    scale, _, blocked = g.gate(38.0, -6.0, 0.0, -2.0)   # south, away
+    assert scale == 1.0 and not blocked
+
+
 # --------------------------------------------------------------------- runner
 
 if __name__ == "__main__":

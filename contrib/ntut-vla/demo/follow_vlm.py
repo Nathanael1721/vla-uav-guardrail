@@ -311,11 +311,37 @@ class FenceGuard:
         speed = math.hypot(vx, vy)
         if speed < 1e-3:
             return 1.0, d, d <= self.stand_off_m
-        # only brake for motion that actually closes on the fence
-        ahead = Point(x + vx / speed * 2.0, y + vy / speed * 2.0)
-        d_ahead = min(poly.distance(ahead) for poly in self.polys)
-        if d_ahead >= d:
+
+        # Brake for a predicted INCURSION, not for a shrinking distance.
+        #
+        # Comparing the distance 2 m ahead against the distance now brakes for any
+        # motion that closes on the fence, including motion that passes cleanly by
+        # it. Inside the gap of follow_car_gap.yaml, flying north up x = 47, the
+        # nearest fence point is the corner at (43, 1) and that corner does get
+        # nearer — so the gate throttled a trajectory that never enters the zone.
+        #
+        # Measured on v2_gap: the aircraft found the gap (277 of 552 ticks at
+        # x > 43, reaching x = 50.3) and was still throttled to 1.62-1.68 m/s in
+        # `near` and `skirt` against a car doing 2.0. Slower than the target for
+        # 537 of 552 ticks, so it could not keep up no matter which side it chose.
+        # That, not the side choice, is why the gap flight lost the car.
+        #
+        # Forecasting the actual path answers the right question: does this
+        # velocity, held, put the aircraft inside the stand-off within the
+        # lookahead? Same idea the Shield uses, and it leaves a parallel pass
+        # unbraked.
+        ux, uy = vx / speed, vy / speed
+        horizon = max(self.brake_m, speed * 3.0)
+        d_min = d
+        for a in np.linspace(0.0, horizon, 8)[1:]:
+            q = Point(x + ux * a, y + uy * a)
+            d_min = min(d_min, min(poly.distance(q) for poly in self.polys))
+            if d_min <= self.stand_off_m:
+                break
+        if d_min > self.stand_off_m:
             return 1.0, d, False
+        # It does close inside the stand-off somewhere ahead; how urgently is
+        # still governed by how far away the fence is right now.
         if d <= self.stand_off_m:
             return 0.0, d, True
         if d >= self.brake_m:
@@ -1114,6 +1140,16 @@ def main() -> int:
                     help="control condition: fly the same mission with no car "
                          "in the scene")
     ap.add_argument("--yaw-gain", type=float, default=1.2)
+    # COUPLED TO CRUISE ALTITUDE, and nobody had written that down until a
+    # flight was misdiagnosed twice over it. This is an ANGULAR stand-off: the
+    # servo holds the target at this fraction of frame width. At the 9 m cruise
+    # the follow policies use, 0.10 is right and both tracking flights score
+    # 1.000 within 30 m. follow_car_gap.yaml forces 13 m (its band is 10-17, to
+    # clear street furniture the obstacle map cannot see), and at 13 m the same
+    # angular stand-off is about 30 m of GROUND distance - which is exactly the
+    # metric threshold, so the aircraft sat on it and the score read 0.26.
+    # Raising it to 0.20 took that flight to 0.759 with nothing else changed.
+    # Any policy that moves the cruise altitude must revisit this.
     ap.add_argument("--want-width", type=float, default=0.10,
                     help="target apparent width as a fraction of the image; "
                          "sets the standoff distance")
