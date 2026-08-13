@@ -366,14 +366,35 @@ because the free space at that point is 22.6 m, so an orbit at 24.3 m is pressed
 into the building-clearance ring — which is what the 412 Shield interventions
 are. The guardrail held (NFZ 0.0 s, altitude 0.0 s) and it should not have had to.
 
-**Raising the radial gain makes it worse, not better.** `--orbit-radial-gain`
-0.15 → 0.45 took the flight from 24.3 m mean and 0.821 within 30 m to 120.8 m and
-0.096: the aircraft left entirely. A stronger gain amplifies every noisy range
-reading into a full-speed command, and the loop destabilises. 0.15 stands.
+**Four radial configurations were flown. The simplest one wins.**
 
-The remaining work is a proper radial controller — damping, or a rate limit on
-the radial command — rather than a larger proportional term. That is a control
-design task, not a tuning pass, and it is not attempted here.
+| configuration | M1 coverage | sign | M2 radius | within 30 m | Shield |
+|---|---|---|---|---|---|
+| **gain 0.15, undamped** | **−408.5°** | 0.65 | **24.3 ± 10.1 m** | **0.821** | 412 |
+| gain 0.15 + damping | −422.9° | 0.67 | 33.6 ± 25.2 m | 0.714 | 307 |
+| gain 0.25 + damping | −59.0° | 0.58 | 127.8 ± 56.9 m | 0.118 | 139 |
+| gain 0.45, undamped | +23.1° | 0.61 | 126.3 ± 46.7 m | 0.096 | 327 |
+
+Two clear facts and one refuted hypothesis.
+
+**Gain above 0.15 collapses the loop.** Both 0.25 and 0.45 leave the subject
+entirely — a stronger proportional term turns every noisy range reading into a
+full-speed command.
+
+**Damping was the obvious fix and it does not work.** The reasoning was sound:
+depth is published as uint16 *metres*, so the range is quantised to 1 m and jumps
+when the box wobbles, and a low-pass plus a slew limit should quieten it. Flown at
+the same gain, it improved coverage a little (−422.9° against −408.5°, sign 0.67
+against 0.65) and made radius hold clearly worse (33.6 ± 25.2 m against
+24.3 ± 10.1, and 0.714 within 30 m against 0.821). The filter costs more phase
+than it buys in noise. Both knobs are kept but default to inert, with the
+measurement in their help text so the next person does not repeat it.
+
+So the radius is still not held, and it is now known that neither a larger gain
+nor a filtered one fixes it. What has not been tried is a radial term driven by
+something other than instantaneous depth — for instance integrating the tangential
+motion to estimate the subject's position and servoing on that. That is a
+different design, not a further tuning pass.
 
 ## What to do next
 

@@ -918,6 +918,8 @@ async def fly(args) -> int:
     traffic = None
     n_absent = 0
     presence = PresenceMonitor(args.object, args.colour_min)
+    rng_f = None            # low-passed range, for the orbit radial term
+    orbit_fwd_prev = 0.0
     client = ProjectAirSimClient()
     client.connect()
     grounder = None
@@ -1124,13 +1126,32 @@ async def fly(args) -> int:
                 n_absent += 1
             if args.orbit_speed and mode == "track" and args.orbit_radius > 0:
                 if rng_m is not None:
+                    # Low-pass the range before it drives anything.
+                    #
+                    # The sim publishes depth as 16UC1 — uint16 METRES — so the
+                    # signal is quantised to 1 m, and the median inside a
+                    # shrunken box jumps whenever the box wobbles. A pure
+                    # proportional radial term turns each of those jumps into a
+                    # command: raising the gain from 0.15 to 0.45 took the flight
+                    # from a 24.3 m mean radius to 120.8 m, the aircraft leaving
+                    # entirely. The answer is a quieter signal, not a louder
+                    # response.
+                    rng_f = (rng_m if rng_f is None
+                             else (1.0 - args.orbit_rng_lp) * rng_f
+                                  + args.orbit_rng_lp * rng_m)
                     # A true range closes the loop the width servo could not.
                     # Positive error means too far, so close in. Same sign as the
                     # width servo, but the signal no longer depends on which face
                     # of the subject happens to be showing.
-                    orbit_fwd = float(np.clip(
-                        (rng_m - args.orbit_radius) * args.orbit_radial_gain,
+                    want = float(np.clip(
+                        (rng_f - args.orbit_radius) * args.orbit_radial_gain,
                         -args.speed_max, args.speed_max))
+                    # ...and rate-limit the command itself, so even a filtered
+                    # step cannot become an instant full-speed dash.
+                    step = args.orbit_radial_slew * TICK
+                    orbit_fwd = float(np.clip(want, orbit_fwd_prev - step,
+                                              orbit_fwd_prev + step))
+                    orbit_fwd_prev = orbit_fwd
             if args.orbit_speed and mode == "track" and rng_m is None:
                 # Clamp the radial term hard while orbiting.
                 #
@@ -1355,6 +1376,16 @@ def main() -> int:
                          "between face-on and corner-on, and unclamped that "
                          "aspect change alone spiralled the radius from 37.7 m "
                          "to 178 m. Only applies when --orbit-speed is set.")
+    ap.add_argument("--orbit-rng-lp", type=float, default=1.0,
+                    help="low-pass weight on the depth range for the orbit "
+                         "radial term; 1.0 is pass-through. DEFAULT OFF because "
+                         "damping was measured and made things WORSE: 0.15 took "
+                         "within-30 m from 0.821 to 0.714 at the same gain. Depth "
+                         "is quantised to 1 m (uint16 metres) and does jump, but "
+                         "filtering it costs more phase than it buys in noise.")
+    ap.add_argument("--orbit-radial-slew", type=float, default=99.0,
+                    help="max change in the radial command, m/s per second; the "
+                         "default is high enough to be inert. See --orbit-rng-lp.")
     ap.add_argument("--park-at", default=None, metavar="X,Y",
                     help="park the car at this world point instead of driving "
                          "a route, for the orbit task. The subject must be "
