@@ -1,3 +1,5 @@
+> **SUPERSEDED.** See `TUTORIAL.md` in the project root, which is the single verified guide. This file is kept as history only and its commands, tags and numbers may be out of date.
+
 # Tutorial — Guardrail OFF vs ON (comparison demo)
 
 Shows the guardrail's value as a direct A/B on Project AirSim: the **same VLA**,

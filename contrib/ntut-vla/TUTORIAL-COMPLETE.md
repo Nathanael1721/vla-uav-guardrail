@@ -1,3 +1,5 @@
+> **SUPERSEDED.** See `TUTORIAL.md` in the project root, which is the single verified guide. This file is kept as history only and its commands, tags and numbers may be out of date.
+
 # Complete Operating Guide — VLA Drone + Guardrail
 
 Everything you need to run the system, in order. Written 2026-08-04, after the

@@ -202,51 +202,52 @@ _txt(s, 0.55, y + 2.10, 8.9, 0.7,
 
 # ------------------------------------------------------------ 06 results --
 s, y = slide("Results", "It follows, and the rules hold.",
-             "Car at 2.0 m/s. Separation measured against its true position, offline.")
+             "Every row re-flown 2026-08-11. Separation scored offline against ground truth.")
 table(s, 0.55, y, 8.9,
-      ["Condition", "Detector hit", "Mean sep.", "Within 30 m", "Shield overrides", "NFZ time"], [
-    ["Follow: car stops twice", "100%", "15.6 m", ("100%", "good"), "0", ("0.0 s", "good")],
-    ["Follow + no-fly zone", "67.8%", "45.2 m", ("28.6%", "bad"), ("0", "teal"), ("0.0 s", "good")],
-    ["Control: wrong colour", "99.0%", ("68.5 m", "bad"), ("20.7%", "bad"), "27", "0.0 s"],
-], [2.6, 1.30, 1.20, 1.25, 1.35, 1.20])
-_txt(s, 0.55, y + 1.35, 8.9, 1.25,
-     "Row 1: the drone stops when the car stops \u2014 1.17 m/s while the car moves against 0.36 m/s while it is\n"
-     "parked, correlation +0.55. A follower has to stop, so this is the evidence that it tracks the car\n"
-     "rather than just flying down the same street.\n"
-     "Row 2 is a deliberate failure: the fence has no way round, so the car escapes and tracking collapses\n"
-     "to 28.6% \u2014 with zero Shield overrides, because the controller now stops itself, and the zone still\n"
-     "never entered.", 10, False, GREY)
+      ["Condition", "Detector hit", "Mean sep.", "Within 30 m", "Shield", "NFZ / alt"], [
+    ["Follow, car stops twice", "99.3%", "13.4 m", ("100%", "good"), "0", ("0.0 s", "good")],
+    ["Same again (replicate)", "100%", "12.5 m", ("100%", "good"), "0", ("0.0 s", "good")],
+    ["+ 3 identical distractors", "97.9%", "17.7 m", ("100%", "good"), "0", ("0.0 s", "good")],
+    ["Control: wrong colour", ("22.1%", "bad"), ("71.8 m", "bad"), ("24.1%", "bad"), "10", "0.0 s"],
+    ["No-fly zone across road", "100%", "38.8 m", "34.9%", ("0", "teal"), ("0.0 s", "good")],
+], [2.6, 1.30, 1.20, 1.25, 1.05, 1.50])
+_txt(s, 0.55, y + 1.72, 8.9, 1.0,
+     "Rows 1 and 2 are the same flight twice \u2014 both 100%. Row 3 is the harder task: three MORE cars, same\n"
+     "mesh, only colour differs, so the noun cannot separate them and only the colour test can. Still 100%.\n"
+     "Row 5 is a deliberate failure \u2014 the fence spans the whole road, so the car escapes and tracking must\n"
+     "collapse. Zero Shield overrides, because the controller stops itself.", 10, False, GREY)
 
 # ------------------------------------------------------ 07 it's the words --
 s, y = slide("Proof", "One word decides whether it follows.",
-             "Identical scene, identical orange car, identical settings.")
+             "Identical scene, identical white car, identical settings.")
 _rect(s, 0.55, y, 4.35, 1.85, CARD)
-_txt(s, 0.75, y + 0.22, 3.95, 0.34, "\"an orange car\"", 15, True, GOOD)
+_txt(s, 0.75, y + 0.22, 3.95, 0.34, "\"a white car\"", 15, True, GOOD)
 _txt(s, 0.75, y + 0.70, 3.95, 0.9,
-     "100% of the flight within 30 m\nmean separation 15.6 m", 12, False, BODY)
+     "100% of the flight within 30 m\ndetector hit rate 99.3%", 12, False, BODY)
 _rect(s, 5.10, y, 4.35, 1.85, CARD)
-_txt(s, 5.30, y + 0.22, 3.95, 0.34, "\"a blue car\"", 15, True, BAD)
+_txt(s, 5.30, y + 0.22, 3.95, 0.34, "\"a red car\"", 15, True, BAD)
 _txt(s, 5.30, y + 0.70, 3.95, 0.9,
-     "20.7% within 30 m\nmean separation 68.5 m", 12, False, BODY)
-_txt(s, 0.55, y + 2.05, 8.9, 0.8,
-     "This is the control that matters. Without it, \"the drone ended up near the car\" could just be drift.\n"
-     "The colour word is verified against the pixels in the box \u2014 the detector grounds the noun,\n"
-     "an HSV check grounds the adjective.", 11, False, BODY)
+     "24.1% within 30 m\ndetector hit rate 22.1%", 12, False, BODY)
+_txt(s, 0.55, y + 2.05, 8.9, 0.85,
+     "It does not follow badly \u2014 it FAILS TO ACQUIRE. The hit rate collapses from 99.3% to 22.1%, because\n"
+     "the colour gate rejects nearly every candidate outright. The detector grounds the noun; a fixed HSV\n"
+     "rule grounds the adjective. Two different mechanisms, and we say so rather than blur them.",
+     11, False, BODY)
 
 # ----------------------------------------------------- 08 guardrail works --
-s, y = slide("Safety", "Safe is not enough \u2014 it also has to look safe.",
-             "The no-fly-zone flight, before and after the controller learned about fences.")
-kpi(s, 0.55, y, 2.85, "659 \u2192 0", "Shield overrides, after the fix", GOOD)
-kpi(s, 3.58, y, 2.85, "3.00 m", "closest approach; stand-off is 3 m", TEAL)
-kpi(s, 6.61, y, 2.84, "0.0 s", "inside the zone, every flight", GOOD)
-_rect(s, 0.55, y + 1.25, 8.9, 1.5, CARD)
+s, y = slide("Safety", "The guardrail never changed \u2014 and it caught a real one.",
+             "Not one line of shield.py or any policy was edited for any of this work.")
+kpi(s, 0.55, y, 2.85, "0.0 s", "in the zone, every flight ever", GOOD)
+kpi(s, 3.58, y, 2.85, "659 -> 0", "Shield overrides, after the fix", TEAL)
+kpi(s, 6.61, y, 2.84, "NaN", "was passing straight through", BAD)
+_rect(s, 0.55, y + 1.25, 8.9, 1.55, CARD)
 _txt(s, 0.80, y + 1.42, 8.4, 0.3,
-     "Two layers arguing ten times a second looks exactly as unsafe as it is.", 12.5, True, INK)
-_txt(s, 0.80, y + 1.80, 8.4, 0.95,
-     "The servo asked to close on the car every tick and the Shield refused every tick. Neither changed its\n"
-     "mind, so the aircraft chattered against the boundary \u2014 659 corrections in 795 ticks. The controller\n"
-     "now knows the geofence itself (mission data, not target data), brakes from 12 m and holds at 3 m,\n"
-     "while yaw keeps tracking so the target stays in view. HUD reads NFZ AHEAD \u2014 HOLDING.",
+     "A safety layer that fails OPEN is worse than none, and ours did.", 12.5, True, INK)
+_txt(s, 0.80, y + 1.80, 8.4, 1.1,
+     "NaN loses every comparison, so an action carrying one raised zero violations and took the untouched\n"
+     "passthrough branch \u2014 reaching the autopilot byte-identical. Infinity was worse: the speed clamp\n"
+     "scales by cap/hypot, and inf times 0 is NaN, so a BOUNDED repair operator manufactured the poison.\n"
+     "Found by a new coverage suite, not by a flight. A non-finite command is now not a command.",
      10.5, False, GREY)
 
 # --------------------------------------------- 09 how the layers connect --
@@ -309,40 +310,42 @@ _txt(s, 0.78, y + 0.15, 8.4, 0.42,
 
 # ------------------------------------------------------------- 11 limits --
 s, y = slide("Limits", "What this does not do.",
-             "Stated here so nobody discovers it during questions.")
-for head, body in [
-    ("The noun does most of the work",
-     "\"a car\" alone chases city clutter and ends 51 m away. The colour check helps, but this grounds\n"
-     "\"car\", not \"that particular one\"."),
-    ("It cannot say the object is absent",
-     "With no car in the scene the raw detector still fires on ~75% of frames. Only the colour check\n"
-     "suppresses it."),
-    ("The target is made easy, and it is a simulator",
-     "The car drives straight and parks, because turns swing it through the blind spot. The obstacle map\n"
-     "holds buildings only \u2014 not trees or lamp posts. One flight per condition, and no hardware yet."),
-]:
-    _rect(s, 0.55, y, 8.9, 0.95, CARD)
-    _txt(s, 0.78, y + 0.13, 8.4, 0.28, head, 12, True, INK)
-    _txt(s, 0.78, y + 0.45, 8.4, 0.45, body, 10, False, GREY)
-    y += 1.08
+             "Volunteered, not conceded \u2014 each one is measured.")
+_rect(s, 0.55, y, 8.9, 0.78, CARD)
+_txt(s, 0.78, y + 0.13, 8.5, 0.55,
+     "1 \u00b7 The noun is grounded by a network; the colour by a fixed rule.\n"
+     "      Nine colour words exist. Anything outside them passes unverified.", 10.5, False, INK)
+_rect(s, 0.55, y + 0.92, 8.9, 0.78, CARD)
+_txt(s, 0.78, y + 1.05, 8.5, 0.55,
+     "2 \u00b7 It cannot reliably say the object is ABSENT \u2014 only at flight level.\n"
+     "      75% ABSENT with no target against 40% with one. Per tick it does not separate.",
+     10.5, False, INK)
+_rect(s, 0.55, y + 1.84, 8.9, 0.78, CARD)
+_txt(s, 0.78, y + 1.97, 8.5, 0.55,
+     "3 \u00b7 The subject must be SMALL in frame, and it is a simulator.\n"
+     "      A 50 m block filled 99% of the image and nothing downstream worked. No hardware yet.",
+     10.5, False, INK)
 
 # --------------------------------------------------------------- 12 next --
 s, y = slide("Next", "Where this goes.")
-for head, body in [
-    ("Confidence, not just position",
-     "A track-confirmation stage, so the system can report that the target is gone instead of\n"
-     "locking onto whatever is nearest."),
-    ("A fence with a gap",
-     "Built and unit-tested \u2014 it picks the open side and refuses when there is none \u2014 but not yet\n"
-     "demonstrated in flight: the aircraft met street furniture the obstacle map does not contain."),
-    ("Toward hardware",
-     "The guardrail already runs on any action source. The open questions are latency and camera\n"
-     "geometry on a real airframe."),
-]:
-    _rect(s, 0.55, y, 0.06, 0.85, TEAL, radius=False)
-    _txt(s, 0.80, y + 0.02, 8.6, 0.3, head, 12.5, True, INK)
-    _txt(s, 0.80, y + 0.36, 8.6, 0.5, body, 10.5, False, GREY)
-    y += 1.05
+_rect(s, 0.55, y, 4.35, 2.15, CARD)
+_txt(s, 0.75, y + 0.18, 3.95, 0.3, "Decisions we need", 13, True, INK)
+_txt(s, 0.75, y + 0.58, 3.95, 1.5,
+     "\u00b7 Frame contract: ours is world-frame,\n"
+     "   upstream is body-frame. Both cannot\n"
+     "   be right, and it blocks the flight\n"
+     "   controller work.\n"
+     "\u00b7 COCO: we recommend dropping it,\n"
+     "   with the measurements attached.", 10.5, False, GREY)
+_rect(s, 5.10, y, 4.35, 2.15, CARD)
+_txt(s, 5.30, y + 0.18, 3.95, 0.3, "Work in progress", 13, True, INK)
+_txt(s, 5.30, y + 0.58, 3.95, 1.5,
+     "\u00b7 Orbit: it now circles a small target,\n"
+     "   more than a full lap, but does not\n"
+     "   hold its radius.\n"
+     "\u00b7 Absence: needs more pixels on the\n"
+     "   target, not a cleverer rule.\n"
+     "\u00b7 Then: MAVLink through to ArduPilot.", 10.5, False, GREY)
 
 # ----------------------------------------------------------- 13 takeaway --
 s = prs.slides.add_slide(BLANK)

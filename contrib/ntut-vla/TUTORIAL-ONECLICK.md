@@ -1,3 +1,5 @@
+> **SUPERSEDED.** See `TUTORIAL.md` in the project root, which is the single verified guide. This file is kept as history only and its commands, tags and numbers may be out of date.
+
 # One-Click Demo Guide — Fine-Tuned VLA + Guardrail
 
 Everything below runs the FULL stack automatically — simulator, fine-tuned

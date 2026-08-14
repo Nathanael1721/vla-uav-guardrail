@@ -11,13 +11,14 @@
     box and telemetry drawn on it, and a third-person chase view — and stitches
     them into one side-by-side video.
 
-    Measured: the detector holds the car on 100% of frames, the drone stays within
-    30 m for the whole flight at a mean 15.6 m, and it stops when the car stops
-    (1.17 m/s while the car moves, 0.36 m/s while it is parked). NFZ time and
-    altitude escape are 0.0 s on every flight.
+    Measured 2026-08-11, all three demos:
+      DEMO 1  tracking          100% of the flight within 30 m, mean 13.4 m
+      DEMO 2  + 3 distractors   100% within 30 m, mean 17.7 m, hit rate 97.9%
+      DEMO 3  no-fly zone       34.9% within 30 m by design, 0 Shield overrides
+    NFZ time and altitude escape are 0.0 s on every flight ever recorded.
 
-    Takes about 12 minutes: two flights, each preceded by a simulator restart,
-    then two videos.
+    Takes about 18 minutes: three flights, each preceded by a simulator restart,
+    then three videos. Add -Controls for two more flights.
 
 .PARAMETER Object
     What to follow, in words. Be specific: "a car" alone makes it chase city
@@ -81,7 +82,7 @@ function Start-Sim {
     throw "simulator did not open port 8989"
 }
 
-function Fly($tag, $obj, $policy, $secs, $stopS, [switch]$NoCar, [switch]$Record) {
+function Fly($tag, $obj, $policy, $secs, $stopS, $traffic, [switch]$NoCar, [switch]$Record) {
     # The simulator is restarted before every flight. Measured repeatedly: it
     # refuses the next connection after a flight disconnects, so reusing it
     # silently costs a run.
@@ -90,6 +91,7 @@ function Fly($tag, $obj, $policy, $secs, $stopS, [switch]$NoCar, [switch]$Record
            "--max-s", "$secs", "--det-thresh", "0.008",
            "--car-speed", "2.0", "--car-stop-s", "$stopS",
            "--policy", $policy, "--straight")
+    if ($traffic -gt 0) { $a += @("--traffic", "$traffic") }
     if ($NoCar)  { $a += "--no-car" }
     if ($Record) { $a += "--save-view" }
     & $Py @a
@@ -100,7 +102,8 @@ function Fly($tag, $obj, $policy, $secs, $stopS, [switch]$NoCar, [switch]$Record
 if ($SkipSim -and -not (Test-SimUp)) { throw "-SkipSim given but nothing on 8989" }
 
 Say "DEMO 1: follow `"$Object`" — no fence, pure tracking"
-Fly "vlm_stopgo" $Object "policies\follow_car.yaml" 62 6 -Record
+Say "        measured 100% of the flight within 30 m, on two separate flights"
+Fly "demo_follow" $Object "policies\follow_car.yaml" 70 6 0 -Record
 
 # --want-width is COUPLED to --cruise-alt. It is an angular stand-off, so the
 # same value is a much larger ground distance from higher up. 0.10 suits the 9 m
@@ -108,32 +111,38 @@ Fly "vlm_stopgo" $Object "policies\follow_car.yaml" 62 6 -Record
 # or the aircraft holds a 30 m stand-off and the "within 30 m" metric reads that
 # as failure — it scored 0.26 for that reason alone, and 0.759 once corrected.
 # See docs/FINDING-gapfence-was-never-the-fence.md.
-Say "DEMO 2: same mission with a no-fly zone across the route"
+Say "DEMO 2: three MORE cars, same mesh, only the colour differs"
+Say "        the noun cannot separate them — only the colour test can"
+Fly "demo_traffic" $Object "policies\follow_car.yaml" 70 6 3 -Record
+
+Say "DEMO 3: same mission with a no-fly zone across the route"
 Say "        the car drives through it, the drone must not"
-Fly "vlm_nfz_smooth" $Object "policies\follow_car_nfz.yaml" 70 0 -Record
+Fly "demo_nfz" $Object "policies\follow_car_nfz.yaml" 70 6 0 -Record
 
 if ($Controls) {
     Say "CONTROL 1: same car, WRONG colour word — should NOT follow"
     # "a red car", not "a blue car": the asphalt reads blue above the saturation
     # floor, so a blue query can score on the road itself and the control looks
     # weaker than the colour gate really is. Red has no such background overlap.
-    Fly "vlm_wrongcolour" "a red car" "policies\follow_car.yaml" 62 6
+    Fly "demo_wrongcolour" "a red car" "policies\follow_car.yaml" 70 6 0
     Say "CONTROL 2: right words, NO car in the scene"
-    Fly "vlm_nocar" $Object "policies\follow_car.yaml" 62 6 -NoCar
+    Fly "demo_nocar" $Object "policies\follow_car.yaml" 70 6 0 -NoCar
 }
 
 if (-not $NoVideo) {
     Say "building the side-by-side demo videos"
-    & $Py "tools\make_demo_video.py" "--tag" "vlm_stopgo" "--fps" "10"
-    & $Py "tools\make_demo_video.py" "--tag" "vlm_nfz_smooth" "--fps" "10"
+    & $Py "tools\make_demo_video.py" "--tag" "demo_follow" "--fps" "10"
+    & $Py "tools\make_demo_video.py" "--tag" "demo_traffic" "--fps" "10"
+    & $Py "tools\make_demo_video.py" "--tag" "demo_nfz" "--fps" "10"
 }
 
 Say "summary"
 & $Py -c @"
 import json, pathlib
-tags = ['vlm_stopgo', 'vlm_nfz_smooth', 'vlm_wrongcolour', 'vlm_nocar']
-cols = ['tag','object','sep_min_m','sep_mean_m','frac_within_30m',
-        'interventions','nfz_hold_ticks','nfz_s','alt_violation_s']
+tags = ['demo_follow', 'demo_traffic', 'demo_nfz',
+        'demo_wrongcolour', 'demo_nocar']
+cols = ['tag','object','det_hit_rate','sep_mean_m','frac_within_30m',
+        'interventions','nfz_s','alt_violation_s','frac_absent']
 print('  ' + ' | '.join(f'{c:>16}' for c in cols))
 for t in tags:
     f = pathlib.Path('demo/out') / t / 'metrics.json'
@@ -149,6 +158,7 @@ print('  because the car drives past it.')
 
 Stop-OurSim
 Say "done."
-Write-Host "    videos  : demo\out\vlm_stopgo\vlm_stopgo_demo.mp4            (tracking, car stops twice)"
-Write-Host "              demo\out\vlm_nfz_smooth\vlm_nfz_smooth_demo.mp4  (guardrail brakes and holds)"
+Write-Host "    videos  : demo\out\demo_follow\demo_follow_demo.mp4   (tracking, car stops twice)"
+Write-Host "              demo\out\demo_traffic\demo_traffic_demo.mp4 (picks one of four identical cars)"
+Write-Host "              demo\out\demo_nfz\demo_nfz_demo.mp4         (guardrail holds it outside)"
 Write-Host "    metrics : demo\out\<tag>\metrics.json"
