@@ -917,6 +917,12 @@ async def fly(args) -> int:
     car = None
     traffic = None
     n_absent = 0
+    # Initialised at function scope, not inside the `async with`. When the sim
+    # fails to connect the block raises before its own initialisers run, and the
+    # metrics section then dies with UnboundLocalError - which buries the real
+    # error under a confusing one. A failed flight should report zeros.
+    tick = 0
+    nfz_hold_ticks = 0
     presence = PresenceMonitor(args.object, args.colour_min)
     rng_f = None            # low-passed range, for the orbit radial term
     orbit_fwd_prev = 0.0
@@ -1036,7 +1042,7 @@ async def fly(args) -> int:
         print(f"[flight] cruise {args.cruise_alt:.0f} m — following {args.object!r}")
 
         limiter = RateLimiter(args.dv_h, args.dv_z)
-        t0, tick, last_seen, nfz_hold_ticks = time.time(), 0, 0.0, 0
+        t0, last_seen = time.time(), 0.0
         last_bearing, brg_rate, last_cmd, mode = 0.0, 0.0, (0.0, 0.0), "hold"
         while time.time() - t0 < args.max_s:
             tick += 1

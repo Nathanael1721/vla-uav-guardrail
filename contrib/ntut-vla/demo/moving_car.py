@@ -40,44 +40,35 @@ import numpy as np
 class CarSpec:
     """The car itself. Dimensions come from the mesh, not from a guess."""
 
-    # SKM_SportsCar, not SM_Offroad_Body. The offroad "car" is an open roll-cage
-    # buggy - a tube chassis with a visible driver seat and daylight through most
-    # of it - which is why OWL-ViT only ever half-recognised it. Measured at the
-    # same pose and camera, one phrase per forward pass:
+    # BACK TO SM_Offroad_Body, and the reason is the ADJECTIVE, not the noun.
     #
-    #     SM_Offroad_Body + M_Orange   "a car" 0.0395   IoU 0.59
-    #     SKM_SportsCar   (default)    "a car" 0.1272   IoU 0.65
+    # SKM_SportsCar detects far better as "a car" - 0.1272 against 0.0395 - so it
+    # was made the target. That was the wrong trade, and a flight showed it: the
+    # box sat on distant pale buildings while the real car filled the lower half
+    # of the frame.
     #
-    # 3.2x the score, and it is a solid car body rather than a frame. A roll cage
-    # is mostly holes, so its own bounding box fills with road - which is also
-    # what held colour_match down to 0.099 against a 0.10 gate at 22 m.
-    # See docs/FINDING-vehicle-mesh-and-materials.md.
-    asset: str = "SKM_SportsCar"
-    length_m: float = 4.3
-    width_m: float = 1.9
+    # M_Orange is the only material this build will bind, and it renders WHITE on
+    # the sports car and genuinely ORANGE on this mesh. Measured over the scene:
+    #
+    #     orange   0.0% of pixels        white   8.5% of pixels
+    #
+    # One pixel in twelve of this city passes the white test - pale concrete,
+    # road markings, lit facades. Orange passes essentially nowhere else. The
+    # colour gate is what turns "some car-like thing" into "THAT car", so a
+    # unique colour is worth more than a better noun score. Optimising the noun
+    # and losing the adjective is what broke the tracking.
+    #
+    # The sports car keeps its place as a DISTRACTOR, where its silhouette is an
+    # asset rather than a liability.
+    asset: str = "SM_Offroad_Body"
+    length_m: float = 3.7
+    width_m: float = 1.8
     height_m: float = 1.2
     unit_scale: bool = True            # mesh ships at real scale; do not resize
-    # Painted, not left in its own materials: unpainted the sports car renders
-    # blue-grey and the JapaneseCity asphalt renders blue-grey too, so the colour
-    # gate cannot separate them (measured: mesh default reads blue at 0.99 of the
-    # box, and that 0.99 is the ROAD showing through and around the car).
-    #
-    # A material is not a colour - it is a shader whose result depends on the
-    # mesh. M_Orange renders orange on the buggy and WHITE on this mesh, and the
-    # detector agrees: "a white car" 0.1178 against "an orange car" 0.0002.
-    # So the verified pairing here is M_Orange + the phrase "a white car",
-    # white covering 0.13-0.14 of the box against the 0.10 gate.
-    #
-    # M_Orange is also the ONLY material the sim accepts. list_assets returns
-    # 2109 names and not one of them is a material, so paths cannot be
-    # discovered; every other path tried was refused outright.
     materials: List[str] = field(default_factory=lambda: [
         "/Game/Geometry/Materials/M_Orange",
     ])
-    desc_match: str = "a white car"
-    # NOT "a blue car". The asphalt in this map sits in the blue hue band above
-    # the saturation floor, so a blue query has a background-coloured escape
-    # hatch and the control is weaker than it looks. Red has no such overlap.
+    desc_match: str = "an orange car"
     desc_mismatch: str = "a red car"
     ground_z_ned: float = 0.0
 

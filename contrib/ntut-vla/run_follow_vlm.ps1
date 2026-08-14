@@ -13,7 +13,7 @@
 
     Measured 2026-08-11, all three demos:
       DEMO 1  tracking          100% of the flight within 30 m, mean 13.4 m
-      DEMO 2  + 3 distractors   100% within 30 m, mean 10.3 m, hit rate 100%
+      DEMO 2  + 3 distractors   100% within 30 m, mean 15.2 m
       DEMO 3  no-fly zone       34.9% within 30 m by design, 0 Shield overrides
     NFZ time and altitude escape are 0.0 s on every flight ever recorded.
 
@@ -22,10 +22,10 @@
 
 .PARAMETER Object
     What to follow, in words. Be specific: "a car" alone makes it chase city
-    clutter. Default "a white car" - the target is SKM_SportsCar painted with
-    M_Orange, which renders WHITE on that mesh (measured; a material is a shader,
-    not a colour). Avoid "a blue car": the asphalt in this map sits in the blue
-    hue band above the saturation floor.
+    clutter. Default "an orange car", and the colour matters more than the noun:
+    measured over this scene, ORANGE covers 0.0% of pixels and WHITE covers 8.5%.
+    A unique colour is what turns "some car-like thing" into "THAT car". Avoid
+    "a blue car" too - the asphalt here reads blue above the saturation floor.
 
 .PARAMETER Controls
     Also fly the two control conditions (wrong colour word, and no car present).
@@ -37,7 +37,7 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Object = "a white car",
+    [string]$Object = "an orange car",
     [switch]$SkipSim,
     [switch]$Controls,
     [switch]$NoVideo
@@ -90,7 +90,7 @@ function Fly($tag, $obj, $policy, $secs, $stopS, $traffic, [switch]$NoCar, [swit
     $a = @("demo\follow_vlm.py", "--object", $obj, "--tag", $tag,
            "--max-s", "$secs", "--det-thresh", "0.008",
            "--car-speed", "2.0", "--car-stop-s", "$stopS",
-           "--policy", $policy, "--straight")
+           "--policy", $policy, "--straight", "--want-width", "0.16")
     if ($traffic -gt 0) { $a += @("--traffic", "$traffic", "--traffic-mode", "demo", "--lock-target") }
     if ($NoCar)  { $a += "--no-car" }
     if ($Record) { $a += "--save-view" }

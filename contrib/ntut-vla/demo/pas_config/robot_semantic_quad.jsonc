@@ -364,16 +364,12 @@
         // the far sentinel. SemanticObs.get_depth() already decodes that, and
         // range_from_depth filters both sentinels. The cost is 1 m of range
         // resolution, which is fine against a 41 m orbit radius.
-        {
-          "image-type": 1,
-          "width": 400,
-          "height": 225,
-          "fov-degrees": 90,
-          "capture-enabled": true,
-          "streaming-enabled": true,
-          "pixels-as-float": true,
-          "compress": false
-        },
+        // ONE depth capture, not two. Both DEPTH_PLANAR (1) and
+        // DEPTH_PERSPECTIVE (2) were enabled while working out which one the sim
+        // would actually populate; only perspective is used, and leaving planar
+        // on cost a second full render target every 0.1 s on the same GPU that
+        // runs the detector and draws the viewport. The game window came up
+        // BLANK WHITE with both enabled.
         {
           "image-type": 2,
           "width": 400,

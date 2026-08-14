@@ -118,8 +118,8 @@ def circuit() -> List[Tuple[float, float]]:
 # Which of these actually RENDER as their name on SKM_SportsCar is measured by
 # experiments/survey_materials.py, not assumed.
 TARGET_MATERIAL = "/Game/Geometry/Materials/M_Orange"
-TARGET_ASSET = "SKM_SportsCar"
-TARGET_COLOUR_WORD = "white"        # M_Orange renders WHITE on the sports car
+TARGET_ASSET = "SM_Offroad_Body"
+TARGET_COLOUR_WORD = "orange"       # M_Orange renders genuinely ORANGE here
 
 # Distractors differ by MESH as well as material, because in this build colour
 # alone cannot be varied. Three routes were tried and measured:
@@ -144,18 +144,21 @@ TARGET_COLOUR_WORD = "white"        # M_Orange renders WHITE on the sports car
 # discrimination experiment use --traffic-mode experiment, which holds the mesh
 # constant and accepts that the distractors are then only distinguishable from
 # the target and not from each other.
+# NOTHING here is orange, and that is the whole point. Measured over the scene,
+# orange covers 0.0% of pixels and white covers 8.5% - so orange identifies the
+# target and every other appearance competes only on the noun.
 BG_PALETTE_DEMO: List[Tuple[Optional[str], str, str]] = [
-    ("/Game/Geometry/Materials/M_Orange", "orange", "SM_Offroad_Body"),
-    (None, "", "SM_Offroad_Body"),
-    (None, "", "SKM_SportsCar"),
+    (None, "", "SKM_SportsCar"),      # solid car body, blue-grey
+    (None, "", "SM_Offroad_Body"),    # same shape as the target, wrong colour
+    ("/Game/Geometry/Materials/M_Orange", "white", "SKM_SportsCar"),
 ]
 
 # Same mesh as the target; only the paint differs. Weaker visually, stronger as
 # evidence.
 BG_PALETTE_EXPERIMENT: List[Tuple[Optional[str], str, str]] = [
-    (None, "", "SKM_SportsCar"),
-    (None, "", "SKM_SportsCar"),
-    (None, "", "SKM_SportsCar"),
+    (None, "", "SM_Offroad_Body"),
+    (None, "", "SM_Offroad_Body"),
+    (None, "", "SM_Offroad_Body"),
 ]
 
 
@@ -188,10 +191,8 @@ class VehicleSpec:
     def car_spec(self) -> CarSpec:
         sp = CarSpec()
         sp.asset = self.asset
-        if self.asset == "SM_Offroad_Body":
-            # The offroad body is a different size and it is NOT a car body - it
-            # is an open roll cage. Recorded here so the ground truth is honest.
-            sp.length_m, sp.width_m, sp.height_m = 3.7, 1.8, 1.2
+        if self.asset == "SKM_SportsCar":
+            sp.length_m, sp.width_m, sp.height_m = 4.3, 1.9, 1.2
         sp.materials = [self.material] if self.material else []
         sp.desc_match = f"a {self.colour_word} car" if self.colour_word else "a car"
         return sp
