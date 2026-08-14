@@ -966,7 +966,8 @@ async def fly(args) -> int:
                 # unchanged and the traffic is purely additive.
                 traffic = city_traffic.Traffic(world, fleet=city_traffic.default_fleet(
                     n_background=args.traffic, speed=args.car_speed,
-                    target_stops=stops, bg_every=args.traffic_every))
+                    target_stops=stops, bg_every=args.traffic_every,
+                    mode=args.traffic_mode))
                 traffic.spawn()
                 car = traffic.target
             else:
@@ -1415,7 +1416,14 @@ def main() -> int:
                          "which turns 'the noun does most of the work' from a "
                          "stated limitation into a measurement. Capped at the "
                          "number of lanes (4).")
-    ap.add_argument("--traffic-every", type=int, default=2,
+    ap.add_argument("--traffic-mode", choices=("demo", "experiment"),
+                    default="demo",
+                    help="demo: distractors differ in MESH as well as paint, "
+                         "which is what makes the scene readable and the track "
+                         "stable. experiment: same mesh throughout, so colour is "
+                         "the only free variable - weaker to watch, stronger as "
+                         "evidence.")
+    ap.add_argument("--traffic-every", type=int, default=1,
                     help="ticks between teleports for BACKGROUND vehicles. The "
                          "target always updates every tick. At 2 m/s and every "
                          "2nd tick a vehicle moves 0.4 m between updates.")

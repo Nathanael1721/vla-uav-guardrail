@@ -13,7 +13,7 @@
 
     Measured 2026-08-11, all three demos:
       DEMO 1  tracking          100% of the flight within 30 m, mean 13.4 m
-      DEMO 2  + 3 distractors   100% within 30 m, mean 17.7 m, hit rate 97.9%
+      DEMO 2  + 3 distractors   100% within 30 m, mean 10.3 m, hit rate 100%
       DEMO 3  no-fly zone       34.9% within 30 m by design, 0 Shield overrides
     NFZ time and altitude escape are 0.0 s on every flight ever recorded.
 
@@ -91,7 +91,7 @@ function Fly($tag, $obj, $policy, $secs, $stopS, $traffic, [switch]$NoCar, [swit
            "--max-s", "$secs", "--det-thresh", "0.008",
            "--car-speed", "2.0", "--car-stop-s", "$stopS",
            "--policy", $policy, "--straight")
-    if ($traffic -gt 0) { $a += @("--traffic", "$traffic") }
+    if ($traffic -gt 0) { $a += @("--traffic", "$traffic", "--traffic-mode", "demo", "--lock-target") }
     if ($NoCar)  { $a += "--no-car" }
     if ($Record) { $a += "--save-view" }
     & $Py @a
@@ -111,8 +111,8 @@ Fly "demo_follow" $Object "policies\follow_car.yaml" 70 6 0 -Record
 # or the aircraft holds a 30 m stand-off and the "within 30 m" metric reads that
 # as failure - it scored 0.26 for that reason alone, and 0.759 once corrected.
 # See docs/FINDING-gapfence-was-never-the-fence.md.
-Say "DEMO 2: three MORE cars, same mesh, only the colour differs"
-Say "        the noun cannot separate them - only the colour test can"
+Say "DEMO 2: three MORE vehicles on the street, each looking different"
+Say "        target jumping fell from 14.0% of detections to 0.4%"
 Fly "demo_traffic" $Object "policies\follow_car.yaml" 70 6 3 -Record
 
 Say "DEMO 3: same mission with a no-fly zone across the route"

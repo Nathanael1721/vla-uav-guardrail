@@ -678,8 +678,20 @@ async def survey(args) -> int:
                 spawned.append(name)
                 applied, mat_err = (True, None)
                 if mat is not None:
-                    ok, mat_err = _rpc("set_object_material",
-                                       world.set_object_material, name, mat)
+                    # --as-texture routes the same candidate list through
+                    # set_object_texture_from_packaged_asset instead. Worth its
+                    # own mode because set_object_material accepts exactly ONE
+                    # material in this build (M_Orange) while the texture call
+                    # accepts everything it was offered - which proves nothing on
+                    # its own, since "returns True" and "renders differently" are
+                    # different claims. This measures the pixels either way.
+                    if getattr(args, "as_texture", False):
+                        ok, mat_err = _rpc("set_object_texture",
+                                           world.set_object_texture_from_packaged_asset,
+                                           name, mat)
+                    else:
+                        ok, mat_err = _rpc("set_object_material",
+                                           world.set_object_material, name, mat)
                     applied = bool(ok) and mat_err is None
                     print(f"  material {'applied' if applied else 'REFUSED'}: {mat}")
                 back, _ = _rpc("get_object_pose", world.get_object_pose, name)
@@ -951,6 +963,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="Measure what each candidate material actually renders as, "
                     "and whether OWL-ViT still finds the car once it is painted.")
+    ap.add_argument("--as-texture", action="store_true",
+                    help="apply each candidate as a TEXTURE rather than a "
+                         "material")
     ap.add_argument("--materials", nargs="*", default=None,
                     help="material asset paths to survey. 'auto' surveys the "
                          "material-like names list_assets reports. Default is a "
