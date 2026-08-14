@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Drone follows a named moving object using vision and language, through the guardrail.
 
@@ -7,8 +7,8 @@
     mission whose only steering input is "find the thing I named, in the camera".
     No target coordinates reach the controller.
 
-    Records two views for the demo — the drone's own camera with the detection
-    box and telemetry drawn on it, and a third-person chase view — and stitches
+    Records two views for the demo - the drone's own camera with the detection
+    box and telemetry drawn on it, and a third-person chase view - and stitches
     them into one side-by-side video.
 
     Measured 2026-08-11, all three demos:
@@ -101,7 +101,7 @@ function Fly($tag, $obj, $policy, $secs, $stopS, $traffic, [switch]$NoCar, [swit
 # as well - that was an extra two-minute restart before the first run.
 if ($SkipSim -and -not (Test-SimUp)) { throw "-SkipSim given but nothing on 8989" }
 
-Say "DEMO 1: follow `"$Object`" — no fence, pure tracking"
+Say "DEMO 1: follow `"$Object`" - no fence, pure tracking"
 Say "        measured 100% of the flight within 30 m, on two separate flights"
 Fly "demo_follow" $Object "policies\follow_car.yaml" 70 6 0 -Record
 
@@ -109,10 +109,10 @@ Fly "demo_follow" $Object "policies\follow_car.yaml" 70 6 0 -Record
 # same value is a much larger ground distance from higher up. 0.10 suits the 9 m
 # cruise these demos fly. follow_car_gap.yaml forces 13 m and needs about 0.20,
 # or the aircraft holds a 30 m stand-off and the "within 30 m" metric reads that
-# as failure — it scored 0.26 for that reason alone, and 0.759 once corrected.
+# as failure - it scored 0.26 for that reason alone, and 0.759 once corrected.
 # See docs/FINDING-gapfence-was-never-the-fence.md.
 Say "DEMO 2: three MORE cars, same mesh, only the colour differs"
-Say "        the noun cannot separate them — only the colour test can"
+Say "        the noun cannot separate them - only the colour test can"
 Fly "demo_traffic" $Object "policies\follow_car.yaml" 70 6 3 -Record
 
 Say "DEMO 3: same mission with a no-fly zone across the route"
@@ -120,7 +120,7 @@ Say "        the car drives through it, the drone must not"
 Fly "demo_nfz" $Object "policies\follow_car_nfz.yaml" 70 6 0 -Record
 
 if ($Controls) {
-    Say "CONTROL 1: same car, WRONG colour word — should NOT follow"
+    Say "CONTROL 1: same car, WRONG colour word - should NOT follow"
     # "a red car", not "a blue car": the asphalt reads blue above the saturation
     # floor, so a blue query can score on the road itself and the control looks
     # weaker than the colour gate really is. Red has no such background overlap.

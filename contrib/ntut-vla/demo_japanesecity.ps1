@@ -1,4 +1,4 @@
-# demo_japanesecity.ps1 - ONE-CLICK demo: fine-tuned VLA + guardrail on Project
+﻿# demo_japanesecity.ps1 - ONE-CLICK demo: fine-tuned VLA + guardrail on Project
 # AirSim's urban maps (PASBlocks repo content). Starts the sim, waits, flies,
 # pops the trajectory plot.
 #

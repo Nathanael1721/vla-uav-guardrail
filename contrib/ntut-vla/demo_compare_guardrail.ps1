@@ -1,4 +1,4 @@
-# demo_compare_guardrail.ps1 — side-by-side: guardrail OFF vs ON, same route,
+﻿# demo_compare_guardrail.ps1 - side-by-side: guardrail OFF vs ON, same route,
 # same NFZ, on Project AirSim. Shows the guardrail's value as a direct A/B.
 #
 # Usage (from repo root):
@@ -53,7 +53,7 @@ function Fly($tag, $extra) {
 }
 
 Set-Location $ROOT
-Write-Host "A/B COMPARISON — guardrail OFF vs ON (map: $Map, route: $Route)" -ForegroundColor White
+Write-Host "A/B COMPARISON - guardrail OFF vs ON (map: $Map, route: $Route)" -ForegroundColor White
 Fly "compare_off" @("--no-shield")       # 1) NO guardrail -> should VIOLATE the NFZ
 Fly "compare_on"  @()                    # 2) guarded      -> should PASS (NFZ 0.0 s)
 Write-Host ""
