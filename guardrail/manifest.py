@@ -49,6 +49,12 @@ UNRESOLVED = "unresolved"
 # the value the flight scripts pass is fixed and this module refuses the HIL name.
 TOPOLOGY_PROJECTAIRSIM = "projectairsim-single-host"
 TOPOLOGY_CANONICAL_HIL = "canonical-hil"
+# ArduPilot SITL driven straight over pymavlink (sitl/run_sitl_demo.py). Real
+# flight code and a real MAVLink path, but NOT the grant's canonical topology,
+# which also requires MAVROS 2. Naming it separately keeps the difference from
+# being blurred in either direction: these runs are not Project AirSim, and they
+# are not yet KPI-grade either.
+TOPOLOGY_ARDUPILOT_SITL = "ardupilot-sitl-pymavlink"
 
 MIN_DET_HZ = 2.0
 MAX_HEADING_ERR_DEG = 10.0
@@ -200,19 +206,49 @@ def sim_speedup_from_scene(scene_path: str | Path) -> float | None:
     return round(float(rate) / float(step), 4)
 
 
+def sim_speedup_from_mavlink(master, timeout: float = 3.0) -> float | None:
+    """Read SIM_SPEEDUP from a running ArduPilot SITL, or None.
+
+    The second derivation source, for the rail that has no scene file. It is a
+    READ, like sim_speedup_from_scene: the value comes from the thing being
+    measured. Returning None when the parameter cannot be fetched is the point -
+    an unread speedup must surface as "unresolved", never as an assumed 1.0.
+    """
+    try:
+        master.mav.param_request_read_send(
+            master.target_system, master.target_component, b"SIM_SPEEDUP", -1)
+        msg = master.recv_match(type="PARAM_VALUE", blocking=True, timeout=timeout)
+        if msg is None:
+            return None
+        if msg.param_id.strip("\x00") != "SIM_SPEEDUP":
+            return None
+        return round(float(msg.param_value), 4)
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
 def build_manifest(policy_hash: str, model_id: str, seed: int,
-                   scene_path: str | Path,
+                   scene_path: str | Path | None = None,
                    weight_paths: list[str | Path] | None = None,
                    topology: str = TOPOLOGY_PROJECTAIRSIM,
-                   repo: str | Path | None = None) -> dict[str, Any]:
-    """The six fields, in the grant's order and under the grant's names."""
+                   repo: str | Path | None = None,
+                   sim_speedup: float | None = None) -> dict[str, Any]:
+    """The six fields, in the grant's order and under the grant's names.
+
+    `sim_speedup` may be passed only for a rail with no scene file, and only
+    with a value produced by a derivation helper such as
+    `sim_speedup_from_mavlink()`. Never pass a literal: the whole reason this
+    field is derived rather than declared is that a hand-written 1.0 is exactly
+    the number a broken run would also carry.
+    """
     if topology == TOPOLOGY_CANONICAL_HIL:
         # Guard, not politeness. Our flights do not run the canonical topology and
         # a number labelled as though they did would misreport the grant.
         raise ValueError(
             "canonical-hil is the grant's ArduPilot SITL + MAVROS topology; "
-            "this rail is Project AirSim and must not claim it")
-    speedup = sim_speedup_from_scene(scene_path)
+            "no rail here runs MAVROS 2 and none may claim it")
+    speedup = (sim_speedup if scene_path is None
+               else sim_speedup_from_scene(scene_path))
     return {
         "code_revision": code_revision(repo),
         "vla_model_hash": model_hash(model_id, weight_paths),

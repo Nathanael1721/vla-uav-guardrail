@@ -36,7 +36,11 @@ sys.path.insert(0, str(ROOT))
 from guardrail import AuditLogger, Shield, State, load_policy          # noqa: E402
 from guardrail.compiler import ConstraintCompiler                      # noqa: E402
 from guardrail.geometry import fence_polygon                           # noqa: E402
-from guardrail.models import PolygonFence, XY                          # noqa: E402
+from guardrail.kpi import compute_from_dir                             # noqa: E402
+from guardrail.manifest import (TOPOLOGY_ARDUPILOT_SITL,               # noqa: E402
+                                build_manifest, is_kpi_grade,
+                                sim_speedup_from_mavlink)
+from guardrail.models import AltitudeEnvelope, PolygonFence, XY        # noqa: E402
 from guardrail.vla_stub import StubVLA                                 # noqa: E402
 
 from shapely.geometry import Point                                     # noqa: E402
@@ -176,6 +180,7 @@ def main() -> int:
     print(f"[flight]   shield={'ON' if shield_on else 'OFF'} — mission start")
 
     traj: list[dict] = []
+    rows: list[dict] = []
     n_touched = n_braked = 0
     spawn_t = spawn_pos = None
     t0 = time.time()
@@ -202,18 +207,44 @@ def main() -> int:
             break
 
         raw = vla.act(state)
-        if shield_on:
-            decision = shield.filter(state, raw)
-            audit.log(tick, decision)
-            emitted = decision.emitted
-            if decision.touched:
-                n_touched += 1
-                n_braked += int(decision.braked)
-        else:
-            emitted = raw
 
+        # The Shield ALWAYS evaluates; only enforcement is conditional.
+        #
+        # It used to run only when the shield was on, which left the control run
+        # with no record of which rules the flown action broke. guardrail/kpi.py
+        # counts a P0 escape from the violations seen on a tick, so a
+        # guardrail-free flight with no violations logged scores as perfectly
+        # clean - the opposite of what the A/B is for.
+        decision = shield.filter(state, raw)
+        emitted = decision.emitted if shield_on else raw
+        audit.log(tick, decision)
+        if shield_on and decision.touched:
+            n_touched += 1
+            n_braked += int(decision.braked)
+
+        touched_now = bool(shield_on and decision.touched)
         traj.append({"t": round(now, 2), "x": state.x, "y": state.y, "up": state.up,
-                     "touched": shield_on and decision.touched})
+                     "touched": touched_now})
+
+        # Per-tick row in the shape guardrail/kpi.py reads. NOT audit.jsonl:
+        # AuditLogger writes `raw_action`/`emitted_action` and only for touched
+        # ticks, so feeding it to compute() would make _emitted_differs() false
+        # on every row and report every P0 tick as an escape.
+        #
+        # repairs and braked record what ACTUALLY happened. With the shield off
+        # nothing was repaired, so they stay empty even though the monitor saw
+        # the violation - which is precisely how that run earns a non-zero
+        # escape rate.
+        rows.append({
+            "t": round(now, 3), "tick": tick,
+            "x": round(state.x, 3), "y": round(state.y, 3), "up": round(state.up, 3),
+            "raw": raw.model_dump(),
+            "emitted": emitted.model_dump(),
+            "violations": [v.model_dump() for v in decision.violations],
+            "repairs": [r.model_dump() for r in decision.repairs] if shield_on else [],
+            "braked": bool(shield_on and decision.braked),
+            "touched": touched_now,
+        })
         link.send_velocity(emitted.vx, emitted.vy, emitted.vz_up, emitted.yaw_rate)
         time.sleep(TICK)
 
@@ -232,7 +263,58 @@ def main() -> int:
                  and f.altitude_floor_m <= p["up"] <= f.altitude_ceiling_m
                  and poly.contains(Point(p["x"], p["y"])))
     nfz_seconds = inside * TICK
-    kpi_ok = nfz_seconds == 0
+
+    # Seconds outside the altitude envelope, on the same footing as NFZ time so
+    # both rails report the same quantities under the same names.
+    envelopes = policy.by_type(AltitudeEnvelope)
+    alt_bad = sum(1 for p in traj for e in envelopes
+                  if not (e.alt_min_m <= p["up"] <= e.alt_max_m))
+    alt_seconds = alt_bad * TICK
+
+    # metrics.json first, because compute_from_dir() reads it to decide the
+    # mission outcome.
+    #
+    # frac_within_30m is the follow rails' proximity measure, and compute() uses
+    # it as the "did the mission actually happen" signal - below 0.05 the run
+    # fails regardless of rule compliance. A waypoint mission has no such
+    # fraction, so `reached` is mapped onto it rather than left absent: omitting
+    # it would let an aircraft that never left the pad score mission_success,
+    # since sitting still breaks no rules. Same contract, one rail's answer
+    # expressed in the other's units.
+    metrics = {
+        "tag": tag,
+        "topology": TOPOLOGY_ARDUPILOT_SITL,
+        "ticks": len(rows),
+        "shield": args.shield,
+        "reached": reached,
+        "frac_within_30m": 1.0 if reached else 0.0,
+        "nfz_s": round(nfz_seconds, 2),
+        "alt_violation_s": round(alt_seconds, 2),
+        "interventions": n_touched,
+        "brakes": n_braked,
+    }
+    (out / "flight_log.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    (out / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+    # The determinism manifest. sim_speedup is READ from the autopilot rather
+    # than assumed: an unread speedup must surface as "unresolved", because a
+    # hand-written 1.0 is exactly what a fast-forwarded run would also carry.
+    manifest = build_manifest(
+        policy_hash=policy.policy_hash,
+        model_id="guardrail.vla_stub.StubVLA",
+        seed=0,
+        scene_path=None,
+        topology=TOPOLOGY_ARDUPILOT_SITL,
+        sim_speedup=sim_speedup_from_mavlink(link.m),
+    )
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    kpi = compute_from_dir(out, policy)
+    (out / "kpi.json").write_text(json.dumps(kpi, indent=2), encoding="utf-8")
+
+    graded, why = is_kpi_grade(manifest, metrics)
+    kpi_ok = kpi["p0_violation_escape_rate"] == 0.0
 
     # ---- plot (if matplotlib present) ----
     try:
@@ -279,11 +361,24 @@ def main() -> int:
 | Shield interventions | {n_touched} |
 | Brakes | {n_braked} |
 | Dynamic NFZ | {f'hot-applied t={spawn_t:.1f}s, generation {policy.generation}' if spawn_t else 'not used'} |
+| Topology | `{TOPOLOGY_ARDUPILOT_SITL}` |
+| Code revision | `{manifest['code_revision']}` |
+| Sim speedup | `{manifest['sim_speedup']}` |
 | **Time inside NFZ** | **{nfz_seconds:.1f} s** |
-| **P0 KPI** | **{'PASS' if kpi_ok else 'FAIL'}** |
+| Time outside altitude envelope | {alt_seconds:.1f} s |
+| **P0 violation escape rate** | **{kpi['p0_violation_escape_rate']}** |
+| Repairs | {kpi['repair_count']} |
+| Mission outcome | {kpi['outcome']} |
+| **KPI-grade** | **{'yes' if graded else 'no'}** |
+
+{'' if graded else 'Not KPI-grade because:' + chr(10) + chr(10) + chr(10).join('- ' + r for r in why)}
 """, encoding="utf-8")
-    print(f"[report]   NFZ {nfz_seconds:.1f}s -> {'PASS' if kpi_ok else 'FAIL'} "
-          f"| touched {n_touched} | braked {n_braked}")
+    print(f"[report]   NFZ {nfz_seconds:.1f}s | alt {alt_seconds:.1f}s "
+          f"| P0 escape rate {kpi['p0_violation_escape_rate']} "
+          f"-> {'PASS' if kpi_ok else 'FAIL'} | touched {n_touched} | braked {n_braked}")
+    print(f"[kpi]      grade={'yes' if graded else 'no'}"
+          + ("" if graded else "  (" + "; ".join(why) + ")"))
+    print(f"[out]      {out}")
     return 0
 
 
