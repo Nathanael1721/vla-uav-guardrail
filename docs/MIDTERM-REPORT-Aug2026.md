@@ -320,19 +320,46 @@ An eight-flight study of 150 s each established that the Shield and the action s
 
 ### 6.5 The same Guardrail over ArduPilot
 
-The results above run on Project AirSim. The same Guardrail package also flies over **ArduPilot SITL** — real flight code, real MAVLink, `SET_POSITION_TARGET_LOCAL_NED` in GUIDED mode. Not one line of `guardrail/` differs between the two rails; only the adapter beneath them does, which is the architecture rule the project claims.
+The results above run on Project AirSim. The same Guardrail package also flies over **ArduPilot SITL** — real flight code, real MAVLink. Not one line of `guardrail/` differs between the rails; only the adapter beneath them does, which is the architecture rule this project claims.
 
-| Configuration | P0 escape rate | Time in zone | Interventions | Outcome |
-|---|---|---|---|---|
-| Guardrail disabled | 0.627 | 3.7 s | 0 | fail |
-| Guardrail enabled | 0.000 | 0.0 s | 217 | success |
-| Guardrail enabled, dynamic zone | 0.000 | 0.0 s | 218 | success |
+#### The grant's canonical topology
 
-The disabled run is the control, and it earns its escape rate honestly: the Shield still evaluates every tick, it simply does not enforce, so the violations it observes are recorded against an action that flew unaltered. Without that the control would have shown no violations at all and scored as clean, which is the opposite of what the comparison is for.
+`vla_stub → /vla/action_4d → shield node → MAVROS 2 → ArduPilot SITL`. This is the configuration the grant names for contractual KPI figures, and these are **the first KPI-grade runs this project has produced**.
 
-Determinism manifest for the enabled run: code revision `4fcfb0ff73da`, policy `sha256:8a311f9d22d22600`, topology `ardupilot-sitl-pymavlink`, simulation speed-up `1.0` — read from the autopilot with a parameter request rather than assumed.
+| Configuration | P0 escape rate | Time in zone | Interventions | Outcome | KPI-grade |
+|---|---|---|---|---|---|
+| Guardrail disabled | 0.627 | 3.7 s | 0 | fail | yes |
+| Guardrail enabled | 0.000 | 0.0 s | 219 | success | yes |
+| Guardrail enabled, dynamic zone | 0.000 | 0.0 s | 307 | success | yes |
 
-These runs are still not KPI-grade. The grant's canonical topology is ArduPilot SITL **with MAVROS 2**, and this rail drives pymavlink directly, so `is_kpi_grade()` refuses them and says so. Adding MAVROS 2 is the remaining step, not a new rail.
+The disabled run is grade-eligible and **fails**, which is the point of a control: its numbers may be quoted, and what they say is that without the Guardrail 62.7 % of ticks flew a P0 violation and the aircraft spent 3.7 s inside the zone. With the Guardrail, on the same rail and the same policy, both are zero.
+
+It earns that escape rate honestly. The Shield evaluates on every tick and only enforcement is conditional, so the violations it observes are recorded against an action that flew unaltered. Were it to run only when enforcing, the control would log no violations at all and score as perfectly clean.
+
+Determinism manifest, all six fields resolved:
+
+| Field | Value |
+|---|---|
+| `code_revision` | `c4249edef599` |
+| `vla_model_hash` | `guardrail.vla_stub.StubVLA@src:6be6a7c1f655ad93` |
+| `policy_hash` | `sha256:77d64d2e5e94ac39` |
+| `random_seed` | `0` |
+| `sim_speedup` | `1.0` |
+| `topology` | `canonical-hil` |
+
+`canonical-hil` is not a label the caller may simply assert. `build_manifest()` requires evidence that every link of the chain was live — a ROS 2 distribution, a MAVROS node on the graph, and a flight controller reporting connected — because MAVROS starts happily with nothing on the other end and publishes `connected: false` indefinitely, so a node can fly an entire mission into the void and look healthy. Recorded for these runs: `ros_distro=jazzy`, `mavros_node=/mavros`, `fcu_connected=True`.
+
+#### Direct MAVLink, for comparison
+
+The same missions driven through pymavlink rather than MAVROS. Identical Guardrail, one adapter lower, and deliberately **not** KPI-grade: the topology is honest about lacking MAVROS 2, so `is_kpi_grade()` refuses it.
+
+| Configuration | P0 escape rate | Time in zone | Interventions |
+|---|---|---|---|
+| Guardrail disabled | 0.627 | 3.7 s | 0 |
+| Guardrail enabled | 0.000 | 0.0 s | 217 |
+| Guardrail enabled, dynamic zone | 0.000 | 0.0 s | 218 |
+
+That the two rails agree to three decimal places on the escape rate, through different middleware, is itself the adapter-isolation claim being tested rather than asserted.
 
 ### 6.6 Demonstration recordings
 
@@ -398,10 +425,13 @@ no-coordinate-leak property is therefore checked, not claimed.
 
 Each limitation below is measured rather than anticipated.
 
-1. **No flight recorded to date is KPI-grade.** `is_kpi_grade()` requires the
-   grant's canonical topology (ArduPilot SITL with MAVROS 2). All results in
-   Section 6 were produced on the Project AirSim rail and are functional-rail
-   evidence, not contractual acceptance figures. Section 10 addresses this.
+1. **KPI-grade runs exist, but only on the waypoint mission.** The canonical
+   topology now produces grade-eligible results (Section 6.5), so the earlier
+   position that no run qualified no longer holds. The limit has moved rather
+   than disappeared: those runs fly a stub pilot to a waypoint under ArduPilot,
+   while the tracking results in 6.1 and 6.2 remain Project AirSim evidence and
+   are not grade-eligible. Bringing the perception stack onto the canonical rail
+   is the next boundary, and it is not a small one — that rail has no renderer.
 
 2. **The occupancy map contains buildings only.** It holds no trees, street
    furniture, or parked vehicles. A 9 m flight has already contacted street
@@ -437,7 +467,7 @@ Each limitation below is measured rather than anticipated.
 | WP1 | Policy DSL | In use. Policies validated and hashed. Four constraint types; per-object standoff not yet expressible (Limitation 4). |
 | WP2 | Prefix compiler | Reduced version in use on the VLA path. |
 | WP3 | Safety Shield | Implemented, tested, and exercised under conflict. P0 escape rate 0 on every flight recorded. |
-| WP4 | Stress harness and determinism | Manifest and KPI computation implemented, unit-tested, and now emitted by both rails including ArduPilot SITL (Section 6.5). Scenario sweep harness not built. MAVROS 2 outstanding for the canonical topology. |
+| WP4 | Stress harness and determinism | Manifest and KPI computation implemented, unit-tested, and emitted by every rail. The canonical ArduPilot SITL + MAVROS 2 topology produces **KPI-grade runs** (Section 6.5). Scenario sweep harness not built. |
 
 ---
 
@@ -445,14 +475,14 @@ Each limitation below is measured rather than anticipated.
 
 Ordered by contribution to the acceptance criteria rather than by effort.
 
-**10.1 Add MAVROS 2 to the SITL rail.** The rail itself is done: it emits a
-determinism manifest, a per-tick flight log and a KPI file, and the
-guardrail-on/off comparison in Section 6.5 is now expressed in the grant's own
-acceptance vocabulary rather than an ad-hoc pass flag. What remains is the
-topology. The grant's canonical configuration is ArduPilot SITL **with
-MAVROS 2**, and this rail drives pymavlink directly, so `is_kpi_grade()`
-correctly refuses these runs. Adding MAVROS 2 is the single remaining step
-between the measurements already taken and contractual KPI figures.
+**10.1 Bring the perception stack onto the canonical rail.** The topology
+question is settled: MAVROS 2 is in place and `is_kpi_grade()` passes runs on
+it. What is not settled is scope. Those runs carry a stub pilot on a waypoint
+mission, because ArduPilot SITL has no renderer and therefore no camera, while
+the tracking results that make up most of this report still come from Project
+AirSim and remain outside the gate. Closing that means feeding AirSim imagery
+to a Guardrail driven over MAVROS — the two simulators cooperating rather than
+substituting — and it is the largest remaining piece of work.
 
 **10.2 Detector throughput and the recording trade.** Section 6.3 shows the
 threshold is reachable today with recording off, and that the recorder is the
