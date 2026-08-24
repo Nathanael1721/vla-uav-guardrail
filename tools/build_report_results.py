@@ -138,10 +138,55 @@ def build() -> str:
     for k, c, w in zip(keys, caps, wins):
         out.append(f"| {c} | {w} | {f2(dz[k])} Hz | {f2(lz[k])} Hz | "
                    f"{str(iz[k]) + ' ms' if iz[k] else 'not recorded'} |")
-    out += ["", C["interpretation"], "",
-            "**Neither configuration met the threshold, and the threshold is not "
-            "relaxed to fit the data.** " + C["tracking_unaffected"] + " Detector "
-            "throughput is carried into the next period as open work.", ""]
+    out += ["", C["interpretation"], ""]
+
+    B = study.get("_inference_breakdown")
+    if B:
+        idle, fl, inf = B["idle_ms"], B["in_flight_ms"], B["inflation_over_idle"]
+        out += ["The invariance above was first read as a fixed per-inference cost. "
+                "That reading was wrong, and the correction matters because it changes "
+                "which remedies are worth trying. Timing the CPU preprocessing and the "
+                "GPU forward pass separately, in flight and on an idle GPU at the "
+                "detector's real 400 x 225 input:", "",
+                "| | Idle | In flight | Inflation |", "|---|---|---|---|",
+                f"| Preprocessing (CPU) | {f1(idle['preprocess_cpu'])} ms | "
+                f"{f1(fl['preprocess_cpu'])} ms | {f1(inf['preprocess_cpu'])}x |",
+                f"| Forward pass (GPU) | {f1(idle['forward_gpu'])} ms | "
+                f"{f1(fl['forward_gpu'])} ms | {f1(inf['forward_gpu'])}x |",
+                f"| Total | {f1(idle['total'])} ms | {f1(fl['total'])} ms | "
+                f"{f1(inf['total'])}x |", "",
+                "The cost is not fixed: it is 66 ms on an idle GPU. The simulator "
+                "starves the GPU specifically, and the invariance to capture resolution "
+                "meant only that the binding consumer is something else.", ""]
+
+        L = B.get("levers_tested_after_the_breakdown", {})
+        if L:
+            rec = L.get("recording_rate", {})
+            out += ["Three candidate remedies followed. Lowering Unreal's scalability "
+                    "settings had no effect at all, and half precision bought 1.19x, "
+                    "which does not justify the accuracy risk. The recording is the "
+                    "consumer:", "",
+                    "| Recording | Detector rate | Forward pass |", "|---|---|---|"]
+            for key, lab in (("record_20hz", "20 Hz"), ("record_10hz", "10 Hz"),
+                             ("record_off", "off")):
+                r = rec.get(key)
+                if r:
+                    out.append(f"| {lab} | {f2(r['det_hz'])} Hz | "
+                               f"{f1(r['forward_ms'])} ms |")
+            out += ["",
+                    "Detector hit rate and ticks-held were 1.000 in all three, so this "
+                    "costs nothing in tracking quality. The recorder pulls camera frames "
+                    "over RPC at the record rate, forcing the simulator to render and "
+                    "serialise extra captures — which is why the **forward pass** moves "
+                    "with it, and why capture resolution never did.", ""]
+
+    out += ["**Neither configuration met the threshold, and the threshold is not "
+            "relaxed to fit the data.** " + C["tracking_unaffected"], "",
+            "The threshold is, however, now reachable: 4.10 Hz was measured with "
+            "recording off. Recording is itself a deliverable, so the resolution is to "
+            "stop doing both in one pass — measurement runs without recording, "
+            "demonstration runs with it and labelled as demonstrations. An instrument "
+            "that perturbs the measurement should not be attached during it.", ""]
 
     # ---- 6.4 the slot ----------------------------------------------------
     out += ["### 6.4 Independence from the action source", "",
@@ -167,9 +212,49 @@ def build() -> str:
             "guardrail-disabled control flights scored zero such ticks and spent 32.4 s "
             "and 84.2 s outside a P0 rule respectively.", ""]
 
-    # ---- 6.5 video -------------------------------------------------------
+    # ---- 6.5 SITL --------------------------------------------------------
+    sitl = []
+    for tag, label in (("sitl_shield_off", "Guardrail disabled"),
+                       ("sitl_shield_on", "Guardrail enabled"),
+                       ("sitl_shield_on_dynamic", "Guardrail enabled, dynamic zone")):
+        d = ROOT / "demo" / "out" / tag
+        if (d / "kpi.json").is_file() and (d / "metrics.json").is_file():
+            sitl.append((label, json.loads((d / "kpi.json").read_text(encoding="utf-8")),
+                         json.loads((d / "metrics.json").read_text(encoding="utf-8")),
+                         json.loads((d / "manifest.json").read_text(encoding="utf-8"))))
+
+    if sitl:
+        man = sitl[0][3]
+        out += ["### 6.5 The same Guardrail over ArduPilot", "",
+                "The results above run on Project AirSim. The same Guardrail package "
+                "also flies over **ArduPilot SITL** — real flight code, real MAVLink, "
+                "`SET_POSITION_TARGET_LOCAL_NED` in GUIDED mode. Not one line of "
+                "`guardrail/` differs between the two rails; only the adapter beneath "
+                "them does, which is the architecture rule the project claims.", "",
+                "| Configuration | P0 escape rate | Time in zone | Interventions | Outcome |",
+                "|---|---|---|---|---|"]
+        for label, k, m, _ in sitl:
+            out.append(f"| {label} | {f3(k['p0_violation_escape_rate'])} | "
+                       f"{f1(m['nfz_s'])} s | {m['interventions']} | {k['outcome']} |")
+        out += ["",
+                "The disabled run is the control, and it earns its escape rate "
+                "honestly: the Shield still evaluates every tick, it simply does not "
+                "enforce, so the violations it observes are recorded against an action "
+                "that flew unaltered. Without that the control would have shown no "
+                "violations at all and scored as clean, which is the opposite of what "
+                "the comparison is for.", "",
+                f"Determinism manifest for the enabled run: code revision "
+                f"`{man['code_revision']}`, policy `{man['policy_hash']}`, topology "
+                f"`{man['topology']}`, simulation speed-up `{man['sim_speedup']}` — read "
+                f"from the autopilot with a parameter request rather than assumed.", "",
+                "These runs are still not KPI-grade. The grant's canonical topology is "
+                "ArduPilot SITL **with MAVROS 2**, and this rail drives pymavlink "
+                "directly, so `is_kpi_grade()` refuses them and says so. Adding MAVROS 2 "
+                "is the remaining step, not a new rail.", ""]
+
+    # ---- 6.6 video -------------------------------------------------------
     if any(R.values()):
-        out += ["### 6.5 Demonstration recordings", "",
+        out += ["### 6.6 Demonstration recordings", "",
                 "| Scenario | Frames | Capture rate | Duration |", "|---|---|---|---|"]
         for t in TAGS:
             r = R[t]

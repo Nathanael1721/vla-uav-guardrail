@@ -242,16 +242,16 @@ All figures are read from `demo/out/<tag>/metrics.json` and `demo/out/<tag>/flig
 
 | Measure | Tracking | Distractors | No-fly zone |
 |---|---|---|---|
-| Detector hit rate | 1.000 | 0.920 | 0.721 |
-| Ticks with the target held | 100.0 % | 100.0 % | 94.1 % |
-| Detector rate | 3.62 Hz | 3.97 Hz | 4.20 Hz |
-| Control loop rate | 8.85 Hz | 8.14 Hz | 7.69 Hz |
-| Mean separation | 16.3 m | 16.4 m | 40.7 m |
-| Minimum separation | 9.8 m | 4.3 m | 12.4 m |
-| Time within 30 m | 100.0 % | 93.7 % | 35.5 % |
-| Flight duration | 70.0 s | 69.9 s | 70.0 s |
+| Detector hit rate | 1.000 | 1.000 | 0.698 |
+| Ticks with the target held | 100.0 % | 100.0 % | 86.6 % |
+| Detector rate | 3.48 Hz | 3.67 Hz | 4.89 Hz |
+| Control loop rate | 8.80 Hz | 8.15 Hz | 7.67 Hz |
+| Mean separation | 16.1 m | 18.0 m | 40.4 m |
+| Minimum separation | 9.3 m | 9.3 m | 12.4 m |
+| Time within 30 m | 100.0 % | 92.1 % | 34.9 % |
+| Flight duration | 69.9 s | 70.0 s | 69.9 s |
 
-The two tracking scenarios held the target on every control tick. The no-fly-zone scenario holds a larger separation by design: the fence spans the corridor, the target drives through it, and the aircraft is required not to follow. It was held at the boundary for 377 ticks.
+The two tracking scenarios held the target on every control tick. The no-fly-zone scenario holds a larger separation by design: the fence spans the corridor, the target drives through it, and the aircraft is required not to follow. It was held at the boundary for 461 ticks.
 
 With three additional vehicles of different colours on the same street, target jumping fell from 14.0 % of detections to 0.4 %.
 
@@ -262,13 +262,11 @@ With three additional vehicles of different colours on the same street, target j
 | P0 violation escape rate | 0.000 | 0.000 | 0.000 | 0 |
 | Time inside the no-fly zone | 0.0 s | 0.0 s | 0.0 s | 0.0 s |
 | Altitude envelope escape | 0.0 s | 0.0 s | 0.0 s | 0.0 s |
-| Shield interventions | 0 | 0 | 50 | not bounded |
+| Shield interventions | 0 | 0 | 0 | not bounded |
 
 The acceptance criterion is met on every flight. An escape is counted only when the Shield neither repaired nor braked and the emitted action still violated a P0 rule; scoring the raw action would credit the system for its own inputs.
 
-The intervention counts distinguish the two situations. In No-fly zone (50) the guidance layer proposed actions that would have violated an active rule, and the Shield corrected them; time inside the zone remained 0.0 s, which is the property being claimed. Repair is the normal outcome, not an error condition.
-
-In Tracking, Distractors the count is zero. That means the guidance layer never proposed a violating action, not that the Shield was inactive: it evaluated every tick against every active constraint.
+In Tracking, Distractors, No-fly zone the count is zero. That means the guidance layer never proposed a violating action, not that the Shield was inactive: it evaluated every tick against every active constraint.
 
 ### 6.3 Recording resolution against detector throughput
 
@@ -280,9 +278,31 @@ The recording camera was raised to 1280 x 720 to improve video quality. Acceptan
 | 960 x 540 | 1280 x 720 | 3.66 Hz | 8.79 Hz | 286 ms |
 | 960 x 540 | 960 x 540 | 3.62 Hz | 8.85 Hz | 287 ms |
 
-OWL-ViT inference held at 286-287 ms median across a 2.4x change in Chase pixels and a 1.8x change in window pixels. A cost that is invariant to surrounding GPU load is a fixed per-inference cost, not contention. The detector rate is therefore not reachable by resolution tuning; it needs a faster detector or a different inference budget. An earlier hypothesis that the simulator window was the binding consumer was tested and rejected by the third configuration.
+OWL-ViT inference held at 286-287 ms median across a 2.4x change in Chase pixels and a 1.8x change in window pixels. Neither capture resolution nor the simulator window is the binding consumer; both hypotheses were tested and rejected. See _inference_breakdown for what the cost actually is - the earlier reading of this invariance as 'fixed per-inference cost' was wrong, and is corrected there.
 
-**Neither configuration met the threshold, and the threshold is not relaxed to fit the data.** det_hit_rate 1.000 and frac_ticks_seen 1.000 on both tracking scenarios in every configuration. The threshold exists to protect tracking quality, and tracking quality was never degraded. Detector throughput is carried into the next period as open work.
+The invariance above was first read as a fixed per-inference cost. That reading was wrong, and the correction matters because it changes which remedies are worth trying. Timing the CPU preprocessing and the GPU forward pass separately, in flight and on an idle GPU at the detector's real 400 x 225 input:
+
+| | Idle | In flight | Inflation |
+|---|---|---|---|
+| Preprocessing (CPU) | 26.7 ms | 44.0 ms | 1.6x |
+| Forward pass (GPU) | 36.2 ms | 242.6 ms | 6.7x |
+| Total | 66.4 ms | 286.8 ms | 4.3x |
+
+The cost is not fixed: it is 66 ms on an idle GPU. The simulator starves the GPU specifically, and the invariance to capture resolution meant only that the binding consumer is something else.
+
+Three candidate remedies followed. Lowering Unreal's scalability settings had no effect at all, and half precision bought 1.19x, which does not justify the accuracy risk. The recording is the consumer:
+
+| Recording | Detector rate | Forward pass |
+|---|---|---|
+| 20 Hz | 3.48 Hz | 242.6 ms |
+| 10 Hz | 3.76 Hz | 221.6 ms |
+| off | 4.10 Hz | 198.5 ms |
+
+Detector hit rate and ticks-held were 1.000 in all three, so this costs nothing in tracking quality. The recorder pulls camera frames over RPC at the record rate, forcing the simulator to render and serialise extra captures — which is why the **forward pass** moves with it, and why capture resolution never did.
+
+**Neither configuration met the threshold, and the threshold is not relaxed to fit the data.** det_hit_rate 1.000 and frac_ticks_seen 1.000 on both tracking scenarios in every configuration. The threshold exists to protect tracking quality, and tracking quality was never degraded.
+
+The threshold is, however, now reachable: 4.10 Hz was measured with recording off. Recording is itself a deliverable, so the resolution is to stop doing both in one pass — measurement runs without recording, demonstration runs with it and labelled as demonstrations. An instrument that perturbs the measurement should not be attached during it.
 
 ### 6.4 Independence from the action source
 
@@ -298,13 +318,29 @@ The Shield source code is identical in all five cases; only the adapter above it
 
 An eight-flight study of 150 s each established that the Shield and the action source act within the same control tick rather than alternating: on the passing flights the model commanded a direction closing on the target at cos 0.53 to 0.95 while the Shield bent the resulting ground track by 82 to 103 degrees, with the heading channel untouched throughout. The guardrail-disabled control flights scored zero such ticks and spent 32.4 s and 84.2 s outside a P0 rule respectively.
 
-### 6.5 Demonstration recordings
+### 6.5 The same Guardrail over ArduPilot
+
+The results above run on Project AirSim. The same Guardrail package also flies over **ArduPilot SITL** — real flight code, real MAVLink, `SET_POSITION_TARGET_LOCAL_NED` in GUIDED mode. Not one line of `guardrail/` differs between the two rails; only the adapter beneath them does, which is the architecture rule the project claims.
+
+| Configuration | P0 escape rate | Time in zone | Interventions | Outcome |
+|---|---|---|---|---|
+| Guardrail disabled | 0.627 | 3.7 s | 0 | fail |
+| Guardrail enabled | 0.000 | 0.0 s | 217 | success |
+| Guardrail enabled, dynamic zone | 0.000 | 0.0 s | 218 | success |
+
+The disabled run is the control, and it earns its escape rate honestly: the Shield still evaluates every tick, it simply does not enforce, so the violations it observes are recorded against an action that flew unaltered. Without that the control would have shown no violations at all and scored as clean, which is the opposite of what the comparison is for.
+
+Determinism manifest for the enabled run: code revision `4fcfb0ff73da`, policy `sha256:8a311f9d22d22600`, topology `ardupilot-sitl-pymavlink`, simulation speed-up `1.0` — read from the autopilot with a parameter request rather than assumed.
+
+These runs are still not KPI-grade. The grant's canonical topology is ArduPilot SITL **with MAVROS 2**, and this rail drives pymavlink directly, so `is_kpi_grade()` refuses them and says so. Adding MAVROS 2 is the remaining step, not a new rail.
+
+### 6.6 Demonstration recordings
 
 | Scenario | Frames | Capture rate | Duration |
 |---|---|---|---|
-| Tracking | 1729 | 15.13 Hz (target 20.0) | 114.3 s |
-| Distractors | 1726 | 15.12 Hz (target 20.0) | 114.2 s |
-| No-fly zone | 1658 | 14.96 Hz (target 20.0) | 110.8 s |
+| Tracking | 1698 | 14.67 Hz (target 20.0) | 115.7 s |
+| Distractors | 1723 | 15.08 Hz (target 20.0) | 114.2 s |
+| No-fly zone | 1723 | 15.18 Hz (target 20.0) | 113.5 s |
 
 The capture rate is measured by the recorder and written to `view/recorder.json`. It is not derived from the flight log: the recorder starts before the mission clock and stops after it, so frames divided by mission duration overstates the rate and would produce a video that plays faster than real time while being labelled real time.
 
@@ -336,19 +372,19 @@ has already occurred and produced a plausible-looking number.
 
 ### 7.3 Test suite
 
-**191 tests across nine modules, all passing**, run on 20 August 2026.
+**201 tests across nine modules, all passing**, run on 20 August 2026.
 
 | Module | Tests | Covers |
 |---|---|---|
 | `test_range_and_lock.py` | 42 | Range estimation, target lock, instance selection |
 | `test_city_traffic.py` | 34 | Route generation, traffic circuits, heading rates |
 | `test_vla_bridge.py` | 28 | Compass-phrase mapping, absence of coordinate leakage |
-| `test_manifest.py` | 19 | Determinism manifest and KPI-grade gating |
+| `test_manifest.py` | 24 | Determinism manifest, code-revision provenance, KPI-grade gating |
 | `test_guardrail_coverage.py` | 16 | Shield behaviour over randomly sampled states |
 | `test_shield.py` | 16 | Monitor, repair and escalation logic |
 | `test_fenceguard.py` | 14 | Polygon fence geometry and margins |
+| `test_target_state.py` | 14 | Kalman filter, innovation gating, feed-forward, subject width |
 | `test_clearance.py` | 13 | Obstacle clearance against the occupancy map |
-| `test_target_state.py` | 9 | Kalman filter, innovation gating, feed-forward |
 
 `test_vla_bridge.py` includes a structural test rather than an assertion of
 intent: it tokenises the bridge module, discards comments and docstrings, and
@@ -401,7 +437,7 @@ Each limitation below is measured rather than anticipated.
 | WP1 | Policy DSL | In use. Policies validated and hashed. Four constraint types; per-object standoff not yet expressible (Limitation 4). |
 | WP2 | Prefix compiler | Reduced version in use on the VLA path. |
 | WP3 | Safety Shield | Implemented, tested, and exercised under conflict. P0 escape rate 0 on every flight recorded. |
-| WP4 | Stress harness and determinism | Manifest and KPI computation implemented and unit-tested. Scenario sweep harness not built. SITL rail exists but is not wired to the manifest. |
+| WP4 | Stress harness and determinism | Manifest and KPI computation implemented, unit-tested, and now emitted by both rails including ArduPilot SITL (Section 6.5). Scenario sweep harness not built. MAVROS 2 outstanding for the canonical topology. |
 
 ---
 
@@ -409,20 +445,19 @@ Each limitation below is measured rather than anticipated.
 
 Ordered by contribution to the acceptance criteria rather than by effort.
 
-**10.1 Wire the existing SITL rail to the WP4 machinery.** The rail is not
-missing. `sitl/` builds ArduPilot under WSL, serves MAVLink on
-`tcp:127.0.0.1:5760`, and flies the Guardrail mission using
-`SET_POSITION_TARGET_LOCAL_NED` in GUIDED mode. Three configurations have been
-run and their outputs are on disk. The Guardrail package is byte-identical
-between the AirSim and ArduPilot rails; only the bottom adapter differs, which is
-the architecture rule demonstrated. Two gaps remain: `sitl/run_sitl_demo.py`
-scores with an ad-hoc pass flag instead of `guardrail/kpi.py` and never calls
-`build_manifest()`; and `build_manifest()` refuses the `canonical-hil` label
-unconditionally. Closing these converts existing evidence into contractual
-figures without further flying.
+**10.1 Add MAVROS 2 to the SITL rail.** The rail itself is done: it emits a
+determinism manifest, a per-tick flight log and a KPI file, and the
+guardrail-on/off comparison in Section 6.5 is now expressed in the grant's own
+acceptance vocabulary rather than an ad-hoc pass flag. What remains is the
+topology. The grant's canonical configuration is ArduPilot SITL **with
+MAVROS 2**, and this rail drives pymavlink directly, so `is_kpi_grade()`
+correctly refuses these runs. Adding MAVROS 2 is the single remaining step
+between the measurements already taken and contractual KPI figures.
 
-**10.2 Add MAVROS 2 to the SITL rail.** This completes the grant's canonical
-topology and is the precondition for any KPI-grade number.
+**10.2 Detector throughput and the recording trade.** Section 6.3 shows the
+threshold is reachable today with recording off, and that the recorder is the
+consumer. Formalise the split: a measurement mode that records nothing, and a
+demonstration mode that does and is labelled as such.
 
 **10.3 Add a per-object standoff constraint to the policy schema.** Converts a
 controller setpoint into a hashed, audited, Shield-enforced rule. This is WP1
