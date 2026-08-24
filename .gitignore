@@ -1,0 +1,88 @@
+# Working tree is ~34 GB; the source in it is ~3 MB. Everything below is either
+# a build output, a flight artefact, someone else's repository, or a file this
+# repository can regenerate. Sizes are measured, not estimated.
+
+# --- Simulators and engine builds ------------------------------------------
+# PASBlocks is the Unreal project and its build output.
+PASBlocks/
+# Unrelated projects that happen to share this folder. Never ours to commit.
+USSCVNSupercarrier/
+USSCVNSupercarrier*/
+DronePack/
+airsim_lab/
+
+# --- Other people's repositories --------------------------------------------
+# kuanting-vla-uav-guardrail is Prof. Lai's repo with its own .git; source/
+# holds read-only clones (AeroVLA, uav-vla, UAV-VLPA, vla-survey).
+kuanting-vla-uav-guardrail/
+source/
+
+# --- Flight artefacts -------------------------------------------------------
+# 2.9 GB across 18,138 files, of which 16,442 are recorded JPEG frames. Every
+# flight rewrites these; metrics that matter are quoted into docs/data/.
+demo/out/
+logs/
+_archive/
+
+# ...except the occupancy grids. They live under demo/out/ by accident of where
+# build_voxel_map.py writes them, but they are INPUT to the Shield's obstacle
+# clearance rule, not output of a flight. 7 KB each, and rebuilding them needs
+# the simulator, so a fresh clone that lacks them cannot fly at all.
+!demo/out/citymap/
+!demo/out/citymap/*.npz
+
+# Experiment output, same category: 299 files and 34 MB, which would be 87% of
+# this repository. Docs reference it as a raw-data pointer, exactly as they do
+# demo/out/. A figure that a document actually needs is copied into docs/img/,
+# which is tracked - that is the existing convention.
+experiments/out/
+
+# --- Datasets and weights ---------------------------------------------------
+# Standing rule: no models, 3D maps or datasets in git.
+dataset/
+training/data/
+models/*.pt
+models/*.onnx
+models/*.safetensors
+*.glb
+*.fbx
+*.uasset
+
+# --- Runtime and sync litter ------------------------------------------------
+projectairsim_client.log
+OneDrive_*.zip
+.claude/settings.local.json
+
+# --- Generated documents ----------------------------------------------------
+# All of these are rebuilt from tracked sources:
+#   docs/MIDTERM-REPORT-Aug2026.md  -> tools/report_to_html.py -> Word -> .docx/.pdf
+#   tools/deck/build_midterm_deck.js -> .pptx -> PowerPoint -> .pdf
+# Tracking them would put a 486 MB deck in the object store permanently.
+docs/*.pptx
+docs/*.pdf
+docs/*.docx
+docs/*.html
+docs/video/
+demo/**/*.mp4
+
+# --- Python -----------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# --- Node (deck build) ------------------------------------------------------
+node_modules/
+package-lock.json
+
+# --- Editors and OS ---------------------------------------------------------
+.vscode/
+.idea/
+.zcode/
+Thumbs.db
+desktop.ini
+*.swp

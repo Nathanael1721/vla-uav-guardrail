@@ -1,0 +1,332 @@
+"""
+ROS 2 node: Safety Shield — the grant's WP3 deliverable shape, in miniature.
+
+Topology (matches the architecture diagram):
+
+    [vla_stub node] --/vla/action_4d--> [THIS NODE] --Twist--> [mavros] --MAVLink--> ArduPilot SITL
+
+Per 10 Hz tick: take the latest VLA action, Shield.filter() it against the
+policy, publish ONLY the safe action to /mavros/setpoint_velocity/cmd_vel_unstamped.
+Bring-up (GUIDED/arm/takeoff) and landing run through mavros services.
+
+Run (after `source /opt/ros/jazzy/setup.bash`):
+
+    ~/venv-ros/bin/python sitl/ros2_shield_node.py --shield on [--dynamic]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import sys
+import time
+from pathlib import Path
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
+from geometry_msgs.msg import PoseStamped, Twist
+from std_msgs.msg import Float32MultiArray
+from mavros_msgs.msg import State as MavState
+from mavros_msgs.srv import CommandBool, CommandTOL, SetMode, StreamRate
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from guardrail import Action4D, AuditLogger, Shield, State, load_policy   # noqa: E402
+from guardrail.compiler import ConstraintCompiler                         # noqa: E402
+from guardrail.geometry import fence_polygon                              # noqa: E402
+from guardrail.models import PolygonFence, XY                             # noqa: E402
+
+from shapely.geometry import Point                                        # noqa: E402
+
+TICK = 0.1
+MAX_S = 120
+REACH_M = 2.0
+DYNAMIC_AT_S = 8.0
+DYNAMIC_FENCE = PolygonFence(
+    id="nfz-dynamic", type="polygon_fence",
+    vertices=[XY(x=23, y=6), XY(x=31, y=6), XY(x=31, y=14), XY(x=23, y=14)],
+    margin_m=1.0,
+)
+
+
+class ShieldNode(Node):
+    def __init__(self, shield_on: bool, dynamic: bool, out: Path) -> None:
+        super().__init__("safety_shield")
+        self.shield_on = shield_on
+        self.dynamic = dynamic
+        self.out = out
+
+        self.policy = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
+        compiler = ConstraintCompiler(self.policy)
+        self.mission = compiler.parse_command("fly to the northeast pad at 6 m/s")
+        (out / "prompt.yaml").write_text(compiler.build_prompt(self.mission),
+                                         encoding="utf-8")
+        self.shield = Shield(self.policy, lookahead_s=3.0, dt=0.5)
+        self.audit = AuditLogger(out / "audit.jsonl", self.policy.policy_hash)
+
+        self.state: State | None = None
+        self.raw_action = Action4D()
+        self.mav_connected = False
+        self.traj: list[dict] = []
+        self.n_touched = self.n_braked = 0
+        self.spawn_t = self.spawn_pos = None
+        self.mission_t0: float | None = None
+        self.done = False
+        self.reached = False
+
+        self.create_subscription(PoseStamped, "/mavros/local_position/pose",
+                                 self._on_pose, qos_profile_sensor_data)
+        self.create_subscription(MavState, "/mavros/state", self._on_state, 10)
+        self.create_subscription(Float32MultiArray, "/vla/action_4d",
+                                 self._on_action, 10)
+        self.pub = self.create_publisher(
+            Twist, "/mavros/setpoint_velocity/cmd_vel_unstamped", 10)
+
+        self.cli_mode = self.create_client(SetMode, "/mavros/set_mode")
+        self.cli_arm = self.create_client(CommandBool, "/mavros/cmd/arming")
+        self.cli_tol = self.create_client(CommandTOL, "/mavros/cmd/takeoff")
+        self.cli_rate = self.create_client(StreamRate, "/mavros/set_stream_rate")
+
+    # ---------------- subscriptions ---------------- #
+
+    def _on_pose(self, msg: PoseStamped) -> None:
+        # mavros ENU -> our up-positive frame (x=N, y=E). Adapter-edge rule.
+        self.state = State(x=msg.pose.position.y, y=msg.pose.position.x,
+                           up=msg.pose.position.z)
+
+    def _on_state(self, msg: MavState) -> None:
+        self.mav_connected = msg.connected
+
+    def _on_action(self, msg: Float32MultiArray) -> None:
+        d = list(msg.data)
+        if len(d) == 4:
+            self.raw_action = Action4D(vx=d[0], vy=d[1], vz_up=d[2], yaw_rate=d[3])
+
+    # ---------------- helpers ---------------- #
+
+    def _call(self, client, req, timeout: float = 5.0):
+        if not client.wait_for_service(timeout_sec=timeout):
+            return None
+        fut = client.call_async(req)
+        rclpy.spin_until_future_complete(self, fut, timeout_sec=timeout)
+        return fut.result()
+
+    def bring_up(self) -> None:
+        log = self.get_logger()
+        t_end = time.time() + 180
+        while time.time() < t_end and not self.mav_connected:
+            rclpy.spin_once(self, timeout_sec=0.5)
+        if not self.mav_connected:
+            raise RuntimeError("mavros never connected to FCU")
+        log.info("FCU connected")
+
+        # ArduPilot streams nothing until asked (found empirically: pose topic
+        # stays silent without this — same lesson as the pymavlink rail).
+        self._call(self.cli_rate,
+                   StreamRate.Request(stream_id=0, message_rate=10, on_off=True))
+        log.info("stream rate 10 Hz requested")
+
+        while time.time() < t_end:
+            r = self._call(self.cli_mode, SetMode.Request(custom_mode="GUIDED"))
+            if r and r.mode_sent:
+                break
+            time.sleep(1)
+        log.info("GUIDED requested")
+
+        while time.time() < t_end:
+            r = self._call(self.cli_arm, CommandBool.Request(value=True))
+            if r and r.success:
+                log.info("armed")
+                break
+            time.sleep(2)
+            rclpy.spin_once(self, timeout_sec=0.1)
+        else:
+            raise RuntimeError("arming timed out (EKF)")
+
+        alt = self.mission.cruise_alt_m
+        while time.time() < t_end:
+            r = self._call(self.cli_tol, CommandTOL.Request(altitude=float(alt)))
+            if r and r.success:
+                log.info(f"takeoff accepted -> {alt} m")
+                break
+            time.sleep(2)
+        else:
+            raise RuntimeError("takeoff never accepted")
+
+        while time.time() < t_end:
+            rclpy.spin_once(self, timeout_sec=0.5)
+            if self.state and self.state.up >= alt - 1.0:
+                log.info(f"at {self.state.up:.1f} m — mission start")
+                return
+        raise RuntimeError("never reached takeoff altitude")
+
+    # ---------------- mission tick ---------------- #
+
+    def start_mission(self) -> None:
+        self.mission_t0 = time.time()
+        self.create_timer(TICK, self._tick)
+
+    def _tick(self) -> None:
+        if self.done or self.state is None:
+            return
+        now = time.time() - self.mission_t0
+        if now > MAX_S:
+            self.get_logger().warn("mission time cap")
+            self._finish()
+            return
+        st = self.state
+
+        if self.dynamic and self.spawn_t is None and now >= DYNAMIC_AT_S:
+            self.shield.hot_apply(DYNAMIC_FENCE)
+            self.audit.policy_hash = self.policy.policy_hash
+            self.spawn_t, self.spawn_pos = now, (st.x, st.y)
+            self.get_logger().info(
+                f"dynamic NFZ applied t={now:.1f}s -> generation {self.policy.generation}")
+
+        dist = math.hypot(self.mission.target_x - st.x, self.mission.target_y - st.y)
+        if dist < REACH_M:
+            self.reached = True
+            self.get_logger().info(f"target reached t={now:.1f}s")
+            self._finish()
+            return
+
+        raw = self.raw_action
+        touched = False
+        if self.shield_on:
+            decision = self.shield.filter(st, raw)
+            self.audit.log(len(self.traj), decision)
+            emitted = decision.emitted
+            touched = decision.touched
+            if touched:
+                self.n_touched += 1
+                self.n_braked += int(decision.braked)
+        else:
+            emitted = raw
+
+        self.traj.append({"t": round(now, 2), "x": st.x, "y": st.y,
+                          "up": st.up, "touched": touched})
+
+        # our frame -> ENU Twist (adapter edge): E=vy, N=vx, U=vz_up.
+        tw = Twist()
+        tw.linear.x = float(emitted.vy)
+        tw.linear.y = float(emitted.vx)
+        tw.linear.z = float(emitted.vz_up)
+        tw.angular.z = float(-math.radians(emitted.yaw_rate))  # CW dps -> CCW rad/s
+        self.pub.publish(tw)
+
+    # ---------------- wrap-up ---------------- #
+
+    def _finish(self) -> None:
+        self.done = True
+        # Fire-and-forget: we are INSIDE a timer callback here, so a blocking
+        # spin_until_future_complete would raise "Executor is already spinning".
+        # The main loop keeps spinning ~3 s after done=True so this goes out.
+        if self.cli_mode.service_is_ready():
+            self.cli_mode.call_async(SetMode.Request(custom_mode="LAND"))
+        self.get_logger().info("LAND requested")
+        self._report()
+
+    def _report(self) -> None:
+        fences = [(f, fence_polygon(f)) for f in self.policy.by_type(PolygonFence)]
+
+        def active(f, p):
+            if f.id == DYNAMIC_FENCE.id:
+                return self.spawn_t is not None and p["t"] >= self.spawn_t
+            return True
+
+        inside = sum(1 for p in self.traj for f, poly in fences
+                     if active(f, p)
+                     and f.altitude_floor_m <= p["up"] <= f.altitude_ceiling_m
+                     and poly.contains(Point(p["x"], p["y"])))
+        nfz_s = inside * TICK
+        kpi = "PASS" if nfz_s == 0 else "FAIL"
+
+        try:
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(figsize=(7, 7))
+            for f, poly in fences:
+                dyn = f.id == DYNAMIC_FENCE.id
+                c = "purple" if dyn else "red"
+                xs, ys = poly.exterior.xy
+                ax.fill(ys, xs, alpha=0.25, color=c,
+                        label="dynamic NFZ" if dyn else f"NFZ {f.id}")
+            if self.spawn_pos:
+                ax.plot(self.spawn_pos[1], self.spawn_pos[0], "X",
+                        color="purple", markersize=12)
+            if self.traj:
+                ax.plot([p["y"] for p in self.traj], [p["x"] for p in self.traj],
+                        "-", color="tab:blue", linewidth=2, label="flight path")
+                tx = [p["y"] for p in self.traj if p["touched"]]
+                if tx:
+                    ax.plot(tx, [p["x"] for p in self.traj if p["touched"]], ".",
+                            color="orange", markersize=4, label="shield active")
+                ax.plot(self.traj[0]["y"], self.traj[0]["x"], "go",
+                        markersize=10, label="start")
+            ax.plot(self.mission.target_y, self.mission.target_x, "k*",
+                    markersize=16, label="target")
+            ax.set_xlabel("East (m)"); ax.set_ylabel("North (m)")
+            ax.set_title(f"ROS 2 + MAVROS rail — shield "
+                         f"{'ON' if self.shield_on else 'OFF'}\n"
+                         f"NFZ time: {nfz_s:.1f}s | "
+                         f"{'reached' if self.reached else 'NOT reached'}")
+            ax.legend(loc="upper left", fontsize=9)
+            ax.set_aspect("equal"); ax.grid(alpha=0.3)
+            fig.tight_layout(); fig.savefig(self.out / "trajectory.png", dpi=130)
+        except ImportError:
+            pass
+
+        (self.out / "trajectory.json").write_text(json.dumps(self.traj),
+                                                  encoding="utf-8")
+        (self.out / "report.md").write_text(f"""# ROS 2 rail report — shield {'ON' if self.shield_on else 'OFF'}
+
+| Item | Value |
+|------|-------|
+| Path | vla_stub node -> /vla/action_4d -> shield node -> mavros -> ArduPilot SITL |
+| ROS 2 | Jazzy · rclpy · MAVROS 2 |
+| Policy | `{self.policy.policy_id}` `{self.policy.policy_hash}` |
+| Target reached | {'yes' if self.reached else 'NO'} |
+| Ticks | {len(self.traj)} |
+| Shield interventions | {self.n_touched} |
+| Brakes | {self.n_braked} |
+| Dynamic NFZ | {f'hot-applied t={self.spawn_t:.1f}s, generation {self.policy.generation}' if self.spawn_t else 'not used'} |
+| **Time inside NFZ** | **{nfz_s:.1f} s** |
+| **P0 KPI** | **{kpi}** |
+""", encoding="utf-8")
+        print(f"[report] NFZ {nfz_s:.1f}s -> {kpi} | touched {self.n_touched} "
+              f"| braked {self.n_braked} | ticks {len(self.traj)}")
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--shield", choices=["on", "off"], default="on")
+    ap.add_argument("--dynamic", action="store_true")
+    ap.add_argument("--tag", default=None)
+    args, ros_args = ap.parse_known_args()
+
+    tag = args.tag or (f"ros2_shield_{args.shield}" + ("_dynamic" if args.dynamic else ""))
+    out = ROOT / "demo" / "out" / tag
+    out.mkdir(parents=True, exist_ok=True)
+
+    rclpy.init(args=ros_args)
+    node = ShieldNode(args.shield == "on", args.dynamic, out)
+    try:
+        node.bring_up()
+        node.start_mission()
+        while rclpy.ok() and not node.done:
+            rclpy.spin_once(node, timeout_sec=0.5)
+        # keep spinning briefly so LAND goes out
+        t0 = time.time()
+        while rclpy.ok() and time.time() - t0 < 3:
+            rclpy.spin_once(node, timeout_sec=0.2)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+
+
+if __name__ == "__main__":
+    main()
