@@ -176,8 +176,32 @@ def model_hash(model_id: str, weight_paths: list[str | Path] | None = None) -> s
             h.update(str(int(st.st_mtime)).encode())
             hashed_any = True
     if not hashed_any:
+        # A code-only pilot has no weights and no HuggingFace revision, but it is
+        # not unresolved: it is fully determined by its source. Hashing that file
+        # pins it exactly, where "unresolved" would wrongly suggest the run
+        # cannot be reproduced. Applies to ids like
+        # "guardrail.vla_stub.StubVLA", which the SITL rails use.
+        src = _source_of(model_id)
+        if src is not None:
+            return f"{model_id}@src:{hashlib.sha256(src).hexdigest()[:16]}"
         return f"{model_id}@{UNRESOLVED}"
     return f"{model_id}@sha256:{h.hexdigest()[:16]}"
+
+
+def _source_of(model_id: str) -> bytes | None:
+    """Source bytes of a dotted `package.module.Symbol` id inside this repo."""
+    parts = model_id.split(".")
+    root = Path(__file__).resolve().parents[1]
+    # Drop trailing symbol names until a module file is found, so both
+    # "pkg.mod.Class" and "pkg.mod" resolve.
+    for cut in range(len(parts), 0, -1):
+        cand = root.joinpath(*parts[:cut]).with_suffix(".py")
+        if cand.is_file():
+            try:
+                return cand.read_bytes()
+            except OSError:
+                return None
+    return None
 
 
 def sim_speedup_from_scene(scene_path: str | Path) -> float | None:
@@ -206,6 +230,32 @@ def sim_speedup_from_scene(scene_path: str | Path) -> float | None:
     return round(float(rate) / float(step), 4)
 
 
+def check_hil_evidence(ev: dict | None) -> list[str]:
+    """What is missing before a run may call itself canonical HIL. Empty = nothing.
+
+    The grant's canonical topology is ArduPilot SITL driven through MAVROS 2, so
+    the evidence has to show all three links of that chain were live: a ROS 2
+    distribution, the MAVROS node itself, and a flight controller reporting
+    connected. A run that merely imported rclpy has not demonstrated any of it.
+
+    `fcu_connected` is the load-bearing one. MAVROS starts happily with nothing
+    on the other end of the serial or UDP link and publishes `connected: false`
+    forever, so a node can come up, run a whole mission into the void, and look
+    healthy from the outside.
+    """
+    if not ev:
+        return ["no evidence supplied"]
+    missing = []
+    if not ev.get("ros_distro"):
+        missing.append("ros_distro not reported")
+    if not ev.get("mavros_node"):
+        missing.append("no MAVROS node seen on the graph")
+    if ev.get("fcu_connected") is not True:
+        missing.append(f"MAVROS reports fcu_connected={ev.get('fcu_connected')!r}, "
+                       f"so nothing was flying")
+    return missing
+
+
 def sim_speedup_from_mavlink(master, timeout: float = 3.0) -> float | None:
     """Read SIM_SPEEDUP from a running ArduPilot SITL, or None.
 
@@ -232,7 +282,8 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
                    weight_paths: list[str | Path] | None = None,
                    topology: str = TOPOLOGY_PROJECTAIRSIM,
                    repo: str | Path | None = None,
-                   sim_speedup: float | None = None) -> dict[str, Any]:
+                   sim_speedup: float | None = None,
+                   hil_evidence: dict | None = None) -> dict[str, Any]:
     """The six fields, in the grant's order and under the grant's names.
 
     `sim_speedup` may be passed only for a rail with no scene file, and only
@@ -242,11 +293,20 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
     the number a broken run would also carry.
     """
     if topology == TOPOLOGY_CANONICAL_HIL:
-        # Guard, not politeness. Our flights do not run the canonical topology and
-        # a number labelled as though they did would misreport the grant.
-        raise ValueError(
-            "canonical-hil is the grant's ArduPilot SITL + MAVROS topology; "
-            "no rail here runs MAVROS 2 and none may claim it")
+        # The guard opens on EVIDENCE, never on the caller's word. Claiming the
+        # canonical topology is claiming KPI-grade eligibility, so the caller
+        # must show it was actually talking to a flight controller through
+        # MAVROS 2 - a fact only a live connection can produce.
+        #
+        # The evidence is checked here and recorded in the run's metrics.json,
+        # not in the manifest: the manifest is exactly six fields by the grant's
+        # definition and stays that way.
+        missing = check_hil_evidence(hil_evidence)
+        if missing:
+            raise ValueError(
+                "canonical-hil is the grant's ArduPilot SITL + MAVROS 2 topology "
+                "and may not be claimed without evidence of it: "
+                + "; ".join(missing))
     speedup = (sim_speedup if scene_path is None
                else sim_speedup_from_scene(scene_path))
     return {

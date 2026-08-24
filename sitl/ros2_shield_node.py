@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -36,7 +37,11 @@ sys.path.insert(0, str(ROOT))
 from guardrail import Action4D, AuditLogger, Shield, State, load_policy   # noqa: E402
 from guardrail.compiler import ConstraintCompiler                         # noqa: E402
 from guardrail.geometry import fence_polygon                              # noqa: E402
-from guardrail.models import PolygonFence, XY                             # noqa: E402
+from guardrail.kpi import compute_from_dir                                # noqa: E402
+from guardrail.manifest import (TOPOLOGY_ARDUPILOT_SITL,                  # noqa: E402
+                                TOPOLOGY_CANONICAL_HIL, build_manifest,
+                                is_kpi_grade)
+from guardrail.models import AltitudeEnvelope, PolygonFence, XY           # noqa: E402
 
 from shapely.geometry import Point                                        # noqa: E402
 
@@ -70,6 +75,18 @@ class ShieldNode(Node):
         self.raw_action = Action4D()
         self.mav_connected = False
         self.traj: list[dict] = []
+        self.rows: list[dict] = []
+        # Evidence that this really is the grant's canonical topology, gathered
+        # from the live system rather than asserted. build_manifest() refuses
+        # canonical-hil without it, and fcu_connected is the load-bearing part:
+        # MAVROS comes up happily with nothing on the other end and publishes
+        # connected: false forever, so a node can fly a whole mission into the
+        # void and look healthy.
+        self.hil_evidence: dict = {
+            "ros_distro": os.environ.get("ROS_DISTRO"),
+            "mavros_node": None,
+            "fcu_connected": None,
+        }
         self.n_touched = self.n_braked = 0
         self.spawn_t = self.spawn_pos = None
         self.mission_t0: float | None = None
@@ -98,6 +115,12 @@ class ShieldNode(Node):
 
     def _on_state(self, msg: MavState) -> None:
         self.mav_connected = msg.connected
+        # Receiving /mavros/state at all is proof a MAVROS node is on the graph,
+        # and msg.connected is MAVROS's own answer about the flight controller.
+        # Recorded on every message so the manifest reflects the end of the
+        # mission, not an optimistic moment during bring-up.
+        self.hil_evidence["mavros_node"] = "/mavros"
+        self.hil_evidence["fcu_connected"] = bool(msg.connected)
 
     def _on_action(self, msg: Float32MultiArray) -> None:
         d = list(msg.data)
@@ -193,20 +216,39 @@ class ShieldNode(Node):
             return
 
         raw = self.raw_action
-        touched = False
-        if self.shield_on:
-            decision = self.shield.filter(st, raw)
-            self.audit.log(len(self.traj), decision)
-            emitted = decision.emitted
-            touched = decision.touched
-            if touched:
-                self.n_touched += 1
-                self.n_braked += int(decision.braked)
-        else:
-            emitted = raw
+
+        # The Shield ALWAYS evaluates; only enforcement is conditional. It used
+        # to run only when the shield was on, so the control flight recorded no
+        # violations at all - and guardrail/kpi.py counts an escape from the
+        # violations seen on a tick, which made a guardrail-free run score as
+        # perfectly clean. demo/out/ros2_shield_off has no audit.jsonl for
+        # exactly that reason.
+        decision = self.shield.filter(st, raw)
+        emitted = decision.emitted if self.shield_on else raw
+        self.audit.log(len(self.traj), decision)
+        touched = bool(self.shield_on and decision.touched)
+        if touched:
+            self.n_touched += 1
+            self.n_braked += int(decision.braked)
 
         self.traj.append({"t": round(now, 2), "x": st.x, "y": st.y,
                           "up": st.up, "touched": touched})
+
+        # Per-tick row in the shape guardrail/kpi.py reads. Not audit.jsonl:
+        # AuditLogger writes raw_action/emitted_action and only for touched
+        # ticks, so feeding it to compute() would report every P0 tick as an
+        # escape. repairs and braked record what ACTUALLY happened, so with the
+        # shield off they stay empty and that run earns its escape rate.
+        self.rows.append({
+            "t": round(now, 3), "tick": len(self.traj),
+            "x": round(st.x, 3), "y": round(st.y, 3), "up": round(st.up, 3),
+            "raw": raw.model_dump(),
+            "emitted": emitted.model_dump(),
+            "violations": [v.model_dump() for v in decision.violations],
+            "repairs": [r.model_dump() for r in decision.repairs] if self.shield_on else [],
+            "braked": bool(self.shield_on and decision.braked),
+            "touched": touched,
+        })
 
         # our frame -> ENU Twist (adapter edge): E=vy, N=vx, U=vz_up.
         tw = Twist()
@@ -281,6 +323,71 @@ class ShieldNode(Node):
 
         (self.out / "trajectory.json").write_text(json.dumps(self.traj),
                                                   encoding="utf-8")
+
+        # ---- WP4 artefacts -------------------------------------------------
+        envelopes = self.policy.by_type(AltitudeEnvelope)
+        alt_bad = sum(1 for p in self.traj for e in envelopes
+                      if not (e.alt_min_m <= p["up"] <= e.alt_max_m))
+        alt_s = alt_bad * TICK
+
+        metrics = {
+            "tag": self.out.name,
+            "topology": TOPOLOGY_CANONICAL_HIL,
+            "ticks": len(self.rows),
+            "shield": "on" if self.shield_on else "off",
+            "reached": self.reached,
+            # compute() reads frac_within_30m as the "did the mission happen"
+            # signal. A waypoint mission has no such fraction, so reaching the
+            # target is expressed in its units - otherwise an aircraft that
+            # never left the pad scores mission_success, since sitting still
+            # breaks no rules.
+            "frac_within_30m": 1.0 if self.reached else 0.0,
+            "nfz_s": round(nfz_s, 2),
+            "alt_violation_s": round(alt_s, 2),
+            "interventions": self.n_touched,
+            "brakes": self.n_braked,
+            # Kept here rather than in the manifest: the manifest is exactly six
+            # fields by the grant's definition and stays that way.
+            "hil_evidence": self.hil_evidence,
+        }
+        (self.out / "flight_log.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in self.rows), encoding="utf-8")
+        (self.out / "metrics.json").write_text(json.dumps(metrics, indent=2),
+                                               encoding="utf-8")
+
+        # This is the rail the grant names for contractual KPI figures, so it is
+        # the one allowed to claim canonical-hil - and only on the evidence
+        # gathered above. If MAVROS never reported a connected flight
+        # controller, build_manifest() refuses and the run is recorded as what
+        # it actually was.
+        try:
+            manifest = build_manifest(
+                policy_hash=self.policy.policy_hash,
+                model_id="guardrail.vla_stub.StubVLA",
+                seed=0, scene_path=None, sim_speedup=1.0,
+                topology=TOPOLOGY_CANONICAL_HIL,
+                hil_evidence=self.hil_evidence)
+        except ValueError as e:
+            self.get_logger().warn(f"not canonical HIL: {e}")
+            manifest = build_manifest(
+                policy_hash=self.policy.policy_hash,
+                model_id="guardrail.vla_stub.StubVLA",
+                seed=0, scene_path=None, sim_speedup=1.0,
+                topology=TOPOLOGY_ARDUPILOT_SITL)
+        (self.out / "manifest.json").write_text(json.dumps(manifest, indent=2),
+                                                encoding="utf-8")
+
+        kpi_res = compute_from_dir(self.out, self.policy)
+        (self.out / "kpi.json").write_text(json.dumps(kpi_res, indent=2),
+                                           encoding="utf-8")
+        graded, why = is_kpi_grade(manifest, {**metrics, "det_hz": None,
+                                              "start_heading_err_deg": None})
+        self.get_logger().info(
+            f"P0 escape rate {kpi_res['p0_violation_escape_rate']} | "
+            f"NFZ {nfz_s:.1f}s | alt {alt_s:.1f}s | interventions {self.n_touched}")
+        self.get_logger().info(
+            f"KPI-GRADE: {'YES' if graded else 'no'}"
+            + ("" if graded else "  (" + "; ".join(why) + ")"))
         (self.out / "report.md").write_text(f"""# ROS 2 rail report — shield {'ON' if self.shield_on else 'OFF'}
 
 | Item | Value |

@@ -255,6 +255,62 @@ def test_a_clean_revision_raises_no_code_revision_objection():
     assert not any("code_revision" in r for r in why), why
 
 
+# ------------------------------------------- canonical HIL needs evidence
+
+GOOD_HIL = {"ros_distro": "jazzy", "mavros_node": "/mavros", "fcu_connected": True}
+
+
+def test_canonical_hil_cannot_be_claimed_without_evidence():
+    """Claiming the canonical topology is claiming KPI-grade eligibility, so it
+    may not rest on the caller's word."""
+    from guardrail.manifest import TOPOLOGY_CANONICAL_HIL
+    for bad in (None, {}, {"ros_distro": "jazzy"}):
+        try:
+            _man(topology=TOPOLOGY_CANONICAL_HIL, hil_evidence=bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"evidence {bad!r} was accepted")
+
+
+def test_a_disconnected_flight_controller_is_not_canonical_hil():
+    """MAVROS comes up happily with nothing on the other end and publishes
+    connected: false forever, so a whole mission can run into the void."""
+    from guardrail.manifest import TOPOLOGY_CANONICAL_HIL, check_hil_evidence
+    ev = dict(GOOD_HIL, fcu_connected=False)
+    assert any("fcu_connected" in m for m in check_hil_evidence(ev))
+    try:
+        _man(topology=TOPOLOGY_CANONICAL_HIL, hil_evidence=ev)
+    except ValueError:
+        return
+    raise AssertionError("a disconnected FCU was accepted as canonical HIL")
+
+
+def test_canonical_hil_with_evidence_is_accepted_and_kpi_grade():
+    """And when the evidence is there it must actually pass, or the gate can
+    never be met and the field is decorative."""
+    from guardrail.manifest import TOPOLOGY_CANONICAL_HIL
+    m = _man(topology=TOPOLOGY_CANONICAL_HIL, hil_evidence=GOOD_HIL)
+    assert m["topology"] == TOPOLOGY_CANONICAL_HIL
+    ok, why = is_kpi_grade({**m, "code_revision": "abc123abc123"}, GOOD_METRICS)
+    assert ok, why
+
+
+def test_a_code_only_pilot_is_pinned_by_its_source_not_left_unresolved():
+    """StubVLA has no weights and no HuggingFace revision, but it is fully
+    determined by its source file. Reporting 'unresolved' would wrongly say the
+    run cannot be reproduced."""
+    from guardrail.manifest import model_hash
+    h = model_hash("guardrail.vla_stub.StubVLA")
+    assert "@src:" in h, h
+    assert "unresolved" not in h
+    assert model_hash("guardrail.vla_stub.StubVLA") == h, "must be stable"
+
+
+def test_an_unknown_model_id_still_says_unresolved():
+    from guardrail.manifest import model_hash
+    assert "unresolved" in model_hash("no.such.module.Thing")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
