@@ -926,6 +926,8 @@ class Grounder:
         self._t_det = 0.0         # last time it actually FOUND the target
         self.drop_after = 8.0     # forget the box entirely after this long
         self._infer_ms = 0.0
+        self._pre_ms = 0.0
+        self._fwd_ms = 0.0
         self._n_seen = 0
         self._n_miss = 0
         self._thread = threading.Thread(target=self._worker, daemon=True)
@@ -957,12 +959,30 @@ class Grounder:
             # property range_from_depth already relies on.
             dep = self.obs.get_depth() if self.colour_mask else None
             W, H = img.size
+            # Split, because the total alone cannot say WHY it is slow. Offline
+            # on an idle GPU this whole block is 66 ms (26.7 CPU preprocessing,
+            # 36.2 forward) at the real 400x225 input - see
+            # experiments/profile_owlvit.py. In flight it measures 287 ms, which
+            # is 4.3x slower and is NOT explained by capture resolution: it
+            # barely moved across a 2.4x change in Chase pixels and not at all
+            # across a 1.8x change in window pixels.
+            #
+            # So the slowdown comes from sharing the machine with the simulator,
+            # and the two halves point at different culprits. Preprocessing is
+            # CPU and would be starved by the recorder's JPEG encoding, the
+            # control loop and msgpack deserialisation. The forward pass is GPU
+            # and would be starved by Unreal's rendering. Logging them apart is
+            # the difference between knowing and guessing.
             t = time.time()
             inputs = proc(text=queries, images=img, return_tensors="pt").to("cuda")
+            t_pre = time.time()
             with torch.no_grad():
                 out = model(**inputs)
             torch.cuda.synchronize()
-            ms = (time.time() - t) * 1000
+            t_fwd = time.time()
+            pre_ms = (t_pre - t) * 1000
+            fwd_ms = (t_fwd - t_pre) * 1000
+            ms = (t_fwd - t) * 1000
             res = proc.post_process_object_detection(
                 out, threshold=0.0,
                 target_sizes=torch.tensor([[H, W]]).to("cuda"))[0]
@@ -1009,6 +1029,8 @@ class Grounder:
             with self._lock:
                 self._seq += 1
                 self._infer_ms = ms
+                self._pre_ms = pre_ms
+                self._fwd_ms = fwd_ms
                 # `_t` is when the detector last RAN. `_t_det` is when it last
                 # actually FOUND something. Conflating the two was a real bug:
                 # the control loop aged the detection against `_t`, which
@@ -1044,6 +1066,7 @@ class Grounder:
         with self._lock:
             return {"seq": self._seq, "t": self._t, "t_det": self._t_det,
                     "det": self._det, "app": self._app, "infer_ms": self._infer_ms,
+                    "pre_ms": self._pre_ms, "fwd_ms": self._fwd_ms,
                     "n_seen": self._n_seen, "n_miss": self._n_miss}
 
 
@@ -1648,6 +1671,8 @@ async def fly(args) -> int:
                             if presence.last_sim is not None else None),
                 "rng_m": (round(rng_m, 2) if rng_m is not None else None),
                 "infer_ms": round(g["infer_ms"], 1),
+                "pre_ms": round(g.get("pre_ms", 0.0), 1),
+                "fwd_ms": round(g.get("fwd_ms", 0.0), 1),
                 "det": (None if det is None else
                         {"cx": round(det[0], 1), "cy": round(det[1], 1),
                          "w": round(det[2], 1), "score": round(det[4], 4),
