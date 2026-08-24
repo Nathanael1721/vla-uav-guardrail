@@ -201,6 +201,60 @@ def test_priorities_come_from_the_policy_constraints_list():
     assert "P0" in prios.values()
 
 
+# -------------------------------------------------- code_revision provenance
+
+def test_code_revision_names_a_repository_that_holds_the_shield():
+    """The field must name a commit a reader could check out to get this code.
+
+    It used to name `kuanting-vla-uav-guardrail` - a repository with no
+    guardrail/shield.py in it - because that path was searched first and merely
+    resolving was accepted as good enough.
+    """
+    from guardrail.manifest import CODE_SENTINEL, _tracks_our_code, code_revision
+    rev = code_revision()
+    if rev == "unversioned":
+        return                      # no git available; nothing to assert about
+    assert _tracks_our_code(ROOT), \
+        f"{ROOT} reports a revision but does not track {CODE_SENTINEL}"
+
+
+def test_a_repository_without_our_code_is_never_accepted():
+    """Even asked for by name. Order alone would not have caught the original
+    bug: the failure was accepting a repo without checking it holds the code."""
+    from guardrail.manifest import _tracks_our_code, code_revision
+    fork = ROOT / "kuanting-vla-uav-guardrail"
+    if not (fork / ".git").exists():
+        return
+    assert not _tracks_our_code(fork), \
+        "the fork is expected not to contain guardrail/shield.py"
+    asked = code_revision(fork)
+    ours = code_revision()
+    assert asked == ours, \
+        f"asking for the fork returned {asked!r}; it must fall through to {ours!r}"
+
+
+def test_a_dirty_tree_is_not_kpi_grade():
+    """A dirty revision does not describe the code that flew: checking out that
+    commit gives you something else."""
+    ok, why = is_kpi_grade({**_man(), "code_revision": "abc123abc123-dirty"},
+                           GOOD_METRICS)
+    assert not ok and any("uncommitted" in r for r in why), why
+
+
+def test_an_unknown_cleanliness_is_not_kpi_grade():
+    ok, why = is_kpi_grade({**_man(), "code_revision": "abc123abc123-unknown"},
+                           GOOD_METRICS)
+    assert not ok and any("clean" in r for r in why), why
+
+
+def test_a_clean_revision_raises_no_code_revision_objection():
+    """Topology will still object - this rail is not canonical HIL - but the
+    revision itself must draw no complaint."""
+    ok, why = is_kpi_grade({**_man(), "code_revision": "abc123abc123"},
+                           GOOD_METRICS)
+    assert not any("code_revision" in r for r in why), why
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

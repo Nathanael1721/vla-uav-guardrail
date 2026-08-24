@@ -54,20 +54,53 @@ MIN_DET_HZ = 2.0
 MAX_HEADING_ERR_DEG = 10.0
 
 
-def code_revision(repo: str | Path | None = None) -> str:
-    """Git revision of the tracked repository, with a dirty flag.
+# A repository only counts as ours if it tracks this file. Resolving to SOME
+# revision is not enough: the field has to name a commit a reader could check
+# out to reproduce the run.
+CODE_SENTINEL = "guardrail/shield.py"
 
-    The working directory is not itself a git repo - the tracked one is
-    `kuanting-vla-uav-guardrail`. When neither resolves this returns
-    "unversioned", which is a fact rather than a placeholder.
+
+def _tracks_our_code(cand: Path) -> bool:
+    """Does this repository actually contain the Shield?"""
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(cand), "ls-files", "--error-unmatch", CODE_SENTINEL],
+            capture_output=True, text=True, timeout=15)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def code_revision(repo: str | Path | None = None) -> str:
+    """Git revision of the repository holding the code that runs, with a dirty flag.
+
+    Two rules, both learned from getting this wrong.
+
+    FIRST, the working directory wins. It used to be searched AFTER
+    `kuanting-vla-uav-guardrail`, so on a machine where only the fork was a git
+    repo this returned the fork's HEAD - `fe0dc0ffd3a6-dirty` - even though the
+    fork does not contain `guardrail/shield.py`. Every determinism manifest
+    written before 2026-08-20 names a commit that cannot reproduce the flight it
+    describes.
+
+    SECOND, a candidate must TRACK the code. Order alone would not have caught
+    it: the failure was not "the wrong repo was checked first", it was "a repo
+    that resolves was accepted without asking whether it holds the code". A
+    reader who checks out the reported revision must find the Shield there.
+
+    Returns "unversioned" when nothing qualifies, which is a fact rather than a
+    placeholder, and which `is_kpi_grade()` correctly refuses.
     """
+    here = Path(__file__).resolve().parents[1]
     for cand in ([Path(repo)] if repo else []) + [
-            Path(__file__).resolve().parents[1] / "kuanting-vla-uav-guardrail",
-            Path(__file__).resolve().parents[1]]:
+            here,
+            here / "kuanting-vla-uav-guardrail"]:
         try:
             head = subprocess.run(["git", "-C", str(cand), "rev-parse", "HEAD"],
                                   capture_output=True, text=True, timeout=15)
             if head.returncode != 0:
+                continue
+            if not _tracks_our_code(cand):
                 continue
             rev = head.stdout.strip()[:12]
             st = subprocess.run(["git", "-C", str(cand), "status", "--porcelain"],
@@ -213,6 +246,19 @@ def is_kpi_grade(manifest: dict, metrics: dict) -> tuple[bool, list[str]]:
         v = str(manifest.get(field, ""))
         if UNRESOLVED in v or v in ("", "unversioned"):
             reasons.append(f"{field} did not resolve ({v!r})")
+
+    # A dirty tree means the named commit is not the code that flew: checking it
+    # out would give you something else. "-unknown" is the same problem wearing a
+    # politer word - git could not say whether the tree was clean.
+    rev = str(manifest.get("code_revision", ""))
+    if rev.endswith("-dirty"):
+        reasons.append(
+            f"code_revision is {rev!r}: the working tree had uncommitted changes, "
+            f"so checking out that commit does not reproduce this run")
+    elif rev.endswith("-unknown"):
+        reasons.append(
+            f"code_revision is {rev!r}: git could not report whether the tree was "
+            f"clean, so the revision cannot be trusted to describe the run")
 
     hz = metrics.get("det_hz")
     if hz is not None and hz < MIN_DET_HZ:
