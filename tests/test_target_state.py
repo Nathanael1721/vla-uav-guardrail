@@ -160,6 +160,63 @@ def test_the_stand_off_matches_what_want_width_used_to_hold():
     assert want_range_from_width(0.32, 4.0) < r, "bigger box must mean closer"
 
 
+# ------------------------------------------------- subject width by name
+
+def _subject_width():
+    """Load the width table without importing follow_vlm, which needs the sim."""
+    src = (ROOT / "demo" / "follow_vlm.py").read_text(encoding="utf-8")
+    start = src.index("SUBJECT_WIDTH_M = {")
+    end = src.index("\n\n\n", src.index("def subject_width"))
+    ns = {}
+    exec(src[start:end], ns)                                     # noqa: S102
+    return ns["subject_width"]
+
+
+def test_a_pedestrian_is_not_assumed_to_be_a_car():
+    """implied_range_from_width assumed 4.0 m for everything. A pedestrian is
+    about 0.5 m, so the same code reported a person at ~8x their true distance -
+    and the 2026-08-19 review asked for a pedestrian in the scene next."""
+    sw = _subject_width()
+    w_car, from_car = sw("a yellow car")
+    w_ped, from_ped = sw("a pedestrian")
+    assert (w_car, from_car) == (4.0, "car")
+    assert (w_ped, from_ped) == (0.5, "pedestrian")
+    assert w_car / w_ped == 8.0, "the error this fixes is a factor of eight"
+
+
+def test_the_derived_stand_off_shrinks_with_the_subject():
+    """--want-width is angular, so the stand-off it asks for scales with the
+    subject's real width. Same flag, different mission."""
+    sw = _subject_width()
+    car = want_range_from_width(0.16, sw("a yellow car")[0])
+    ped = want_range_from_width(0.16, sw("a pedestrian")[0])
+    assert car > 4 * ped, f"car {car:.1f} m vs pedestrian {ped:.1f} m"
+    assert 15.0 < car < 17.0, f"the measured car stand-off moved: {car:.1f} m"
+
+
+def test_an_unknown_subject_falls_back_audibly():
+    """A silent 4.0 must not look like a decision: the caller needs to know no
+    word matched so it can say so."""
+    sw = _subject_width()
+    w, word = sw("a purple giraffe")
+    assert w == 4.0 and word is None
+
+
+def test_the_longest_matching_word_wins():
+    """So a more specific entry is never shadowed by a shorter one inside it."""
+    sw = _subject_width()
+    assert sw("a motorcycle")[1] == "motorcycle"
+    assert sw("a white bus")[1] == "bus"
+
+
+def test_every_car_query_still_resolves_to_four_metres():
+    """Every recorded flight used 4.0. If any car-ish phrase now derives
+    something else, the existing measured numbers stop being comparable."""
+    sw = _subject_width()
+    for q in ("a yellow car", "a red car", "the taxi", "a blue sedan"):
+        assert sw(q)[0] == 4.0, f"{q!r} changed the width of past flights"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

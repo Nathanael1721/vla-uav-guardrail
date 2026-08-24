@@ -103,6 +103,48 @@ def colour_word(query: str):
     return None
 
 
+# Real-world width of the subject, used to turn an apparent box width into a
+# range whenever depth is unusable - which is most of the time, because the
+# depth stream quantises to whole metres.
+#
+# This was a single hardcoded 4.0, a car, applied to whatever was named. The
+# 2026-08-19 review asked for a pedestrian in the scene next, and a pedestrian
+# is about 0.5 m wide: the same code would have reported a person at roughly
+# EIGHT TIMES their true distance, and the aircraft would have flown that far
+# in to close the gap. The pedestrian demo is meaningless until the width
+# follows the noun.
+#
+# Longest match wins, so "police car" does not resolve on "car" if a more
+# specific entry is ever added. Values are ordinary vehicle and body widths, not
+# measurements of the assets - a rough width is enough, since range goes as the
+# width and a 20 percent error is a 20 percent range error, not a factor of 8.
+SUBJECT_WIDTH_M = {
+    "pedestrian": 0.5, "person": 0.5, "human": 0.5, "man": 0.5, "woman": 0.5,
+    "cyclist": 0.6, "bicycle": 0.6, "bike": 0.6,
+    "motorcycle": 0.8, "motorbike": 0.8, "scooter": 0.8,
+    "car": 4.0, "taxi": 4.0, "sedan": 4.0, "suv": 4.4,
+    "van": 5.0, "delivery": 5.0, "pickup": 5.4,
+    "truck": 6.0, "lorry": 6.0, "bus": 12.0,
+}
+SUBJECT_WIDTH_DEFAULT = 4.0
+
+
+def subject_width(query: str) -> tuple[float, str | None]:
+    """Real width implied by the words, and the word it came from.
+
+    Returns the default with a None word when nothing matches, so the caller can
+    say so out loud rather than let a silent 4.0 look like a decision.
+    """
+    q = query.lower()
+    best = None
+    for w in SUBJECT_WIDTH_M:
+        if w in q and (best is None or len(w) > len(best)):
+            best = w
+    if best is None:
+        return SUBJECT_WIDTH_DEFAULT, None
+    return SUBJECT_WIDTH_M[best], best
+
+
 # The depth stream is quantised to whole metres (see SemanticObs.get_depth),
 # so a margin below 1 m is below the resolution of the signal it tests. A
 # 0.9 m true height difference quantises to 1 m about 90% of the time, which
@@ -1094,6 +1136,22 @@ def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
 async def fly(args) -> int:
     from projectairsim import Drone, ProjectAirSimClient, World
 
+    # Resolve the subject's real width from what was actually named, unless the
+    # command line said otherwise. Printed either way: a width the flight chose
+    # for itself has to be visible, because it scales every range estimate.
+    if args.object_width_m is None:
+        args.object_width_m, matched = subject_width(args.object)
+        if matched:
+            print(f"[subject]  width prior: {args.object_width_m:.2f} m "
+                  f"(from {matched!r} in {args.object!r})")
+        else:
+            print(f"[subject]  WARNING no width known for {args.object!r}; "
+                  f"falling back to {args.object_width_m:.2f} m, a car. If the "
+                  f"subject is not car-sized, every range estimate is wrong by "
+                  f"the ratio - pass --object-width-m.")
+    else:
+        print(f"[subject]  width {args.object_width_m:.2f} m (from the command line)")
+
     # Seed every RNG the flight can reach. WP4 requires random_seed in the
     # determinism manifest, and a manifest that records a seed nothing honours
     # would be worse than no manifest at all.
@@ -1380,10 +1438,30 @@ async def fly(args) -> int:
         want_range = (args.want_range if args.want_range > 0
                       else want_range_from_width(args.want_width,
                                                  args.object_width_m))
+
+        # --want-width is an ANGULAR target, so the stand-off it asks for scales
+        # with the subject's real width. 0.16 was tuned against a 4 m car and
+        # gives 15.8 m; the same flag against a 0.5 m pedestrian asks for 2.0 m,
+        # which is not a small adjustment but a different mission.
+        #
+        # FrontCamera is pitched 20 deg down with a 29.4 deg vertical half-FOV,
+        # so it sees the ground from about 0.86 x altitude outward. Inside that
+        # the subject is under the aircraft and out of frame, and the tracker
+        # would be closing on something it can no longer see.
+        blind_m = 0.86 * args.cruise_alt
+        if want_range < blind_m:
+            print(f"[flight] WARNING stand-off {want_range:.1f} m is inside the "
+                  f"camera's near blind spot ({blind_m:.1f} m at {args.cruise_alt:.0f} m "
+                  f"altitude): the subject leaves frame before the aircraft gets "
+                  f"there. --want-width {args.want_width} was calibrated for a 4 m "
+                  f"car; for a {args.object_width_m:.2f} m subject set --want-range "
+                  f"directly, or fly lower.")
+
         last_est_seq = None
         if estimator is not None:
             print(f"[flight] target estimator ON, stand-off {want_range:.1f} m "
-                  f"(from --want-width {args.want_width})")
+                  f"(from --want-width {args.want_width} and a "
+                  f"{args.object_width_m:.2f} m subject)")
         while time.time() - t0 < args.max_s:
             tick += 1
             kin = drone.get_ground_truth_kinematics()
@@ -2047,9 +2125,13 @@ def main() -> int:
     ap.add_argument("--want-range", type=float, default=0.0,
                     help="stand-off in metres. 0 derives it from --want-width, "
                          "so old command lines keep their behaviour.")
-    ap.add_argument("--object-width-m", type=float, default=4.0,
-                    help="assumed real width of the subject, used to turn an "
-                         "apparent width into a range when depth is unusable")
+    ap.add_argument("--object-width-m", type=float, default=None,
+                    help="real width of the subject in metres, used to turn an "
+                         "apparent box width into a range when depth is "
+                         "unusable. Default: derived from --object via "
+                         "SUBJECT_WIDTH_M, so 'a pedestrian' gets 0.5 m and "
+                         "'a yellow car' gets 4.0 m. Pass a value to override; "
+                         "the flight prints which width it used and why.")
     ap.add_argument("--seed", type=int, default=20260817,
                     help="random seed, recorded in the WP4 determinism "
                          "manifest and applied to every RNG the flight "
