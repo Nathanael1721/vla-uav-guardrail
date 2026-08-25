@@ -1139,6 +1139,11 @@ async def fly(args) -> int:
     # Resolve the subject's real width from what was actually named, unless the
     # command line said otherwise. Printed either way: a width the flight chose
     # for itself has to be visible, because it scales every range estimate.
+    # The word the width came from is also what a SubjectStandoff rule matches
+    # on, so "a pedestrian" selects both the 0.5 m width and the 10 m stand-off
+    # from one phrase rather than two flags that can disagree.
+    subject_class = subject_width(args.object)[1]
+
     if args.object_width_m is None:
         args.object_width_m, matched = subject_width(args.object)
         if matched:
@@ -1723,6 +1728,22 @@ async def fly(args) -> int:
                 fmode = "clear" if fdist is None or fdist > 20 else "near"
             raw = Action4D(vx=gvx, vy=gvy, vz_up=vz_up, yaw_rate=yaw_rate)
             smooth = limiter(raw)
+
+            # Tell the Shield where the subject is, so SubjectStandoff rules can
+            # bind. The position comes from the ESTIMATOR's state vector, which
+            # is built from bearing, range and the aircraft's own pose - so this
+            # carries no target ground truth and the no-leak property holds.
+            #
+            # Cleared to None the moment the estimator has nothing, and that is
+            # required rather than tidy: a stale position would have the Shield
+            # enforcing a stand-off from where the subject used to be, which is
+            # both wrong and invisible in the logs.
+            if estimator is not None and estimator.x is not None and est_obs is not None:
+                shield.set_subject(float(estimator.x[0]), float(estimator.x[1]),
+                                   subject_class)
+            else:
+                shield.set_subject(None)
+
             d = shield.filter(state, smooth)
             audit.log(tick, d)
             if d.touched:

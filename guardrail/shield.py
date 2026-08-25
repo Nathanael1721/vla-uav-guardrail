@@ -43,6 +43,7 @@ from .models import (
     Policy,
     PolygonFence,
     State,
+    SubjectStandoff,
 )
 
 BRAKE = Action4D(vx=0.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)
@@ -239,6 +240,13 @@ class Shield:
         self._alts = policy.by_type(AltitudeEnvelope)
         self._kins = policy.by_type(KinematicEnvelope)
         self._clear = policy.by_type(ObstacleClearance)
+        self._standoffs = policy.by_type(SubjectStandoff)
+        # Where the thing we are following is, in world coordinates, plus what
+        # kind of thing it is. Supplied by the perception stack once per tick via
+        # set_subject(); None means "not currently tracking anything", and every
+        # SubjectStandoff rule is inert until it is set.
+        self._subject: tuple[float, float] | None = None
+        self._subject_class: str | None = None
 
         # Distance field: built ONCE here, never per tick (same rule as the
         # fence polygons). Skipped entirely when nothing needs it.
@@ -457,6 +465,47 @@ class Shield:
                         rule_id=env.id, category="altitude", predicted_at_s=t,
                         detail=f"alt {p.up:.1f}m > ceiling {env.alt_max_m}m, not descending"))
                     break
+
+        # -- subject standoff: trend-aware, same shape as the fence rule.
+        #
+        # Inert with no subject set, which is the honest reading: a standoff rule
+        # with nothing to stand off from has no opinion. "Already too close but
+        # opening the range" passes, because the alternative is to raise a
+        # violation on the very action that is fixing it - and BRAKE inside the
+        # ring would freeze the aircraft at the distance it must not hold.
+        if self._subject is not None:
+            sx, sy = self._subject
+            d_now = math.hypot(state.x - sx, state.y - sy)
+            what = self._subject_class or "subject"
+            for so in self._standoffs:
+                if not so.binds(self._subject_class):
+                    continue
+
+                if d_now < so.min_range_m - 1e-9:
+                    # ALREADY inside. Judge the trend from the radial velocity,
+                    # not from predicted positions: _predict yields the current
+                    # pose as its first sample, where the range has not changed
+                    # yet, so a comparison against it can never see an opening
+                    # move and the rule fires on the very action that is
+                    # recovering. Same shape as the geofence "escaping" test.
+                    ux, uy = ((sx - state.x) / d_now, (sy - state.y) / d_now) \
+                        if d_now > 1e-6 else (0.0, 0.0)
+                    opening = -(action.vx * ux + action.vy * uy)
+                    if opening <= 0.1:
+                        found.append(Violation(
+                            rule_id=so.id, category="standoff", predicted_at_s=0.0,
+                            detail=(f"range {d_now:.1f}m to {what} < min "
+                                    f"{so.min_range_m}m and not opening")))
+                    continue        # while inside, predictive checks are moot
+
+                for t, p in self._predict(state, action):
+                    d = math.hypot(p.x - sx, p.y - sy)
+                    if d < so.min_range_m - 1e-9:
+                        found.append(Violation(
+                            rule_id=so.id, category="standoff", predicted_at_s=t,
+                            detail=(f"range closes to {d:.1f}m from {what} in "
+                                    f"{t:.1f}s, below min {so.min_range_m}m")))
+                        break
 
         # -- geofence: trend-aware for the "already inside" case.
         for f, poly in self._fences:
@@ -699,6 +748,89 @@ class Shield:
 
     # ---------------- mid-flight policy update ---------------- #
 
+    def set_subject(self, x: float | None, y: float | None = None,
+                    subject_class: str | None = None) -> None:
+        """Tell the Shield where the tracked subject is, once per tick.
+
+        The Shield cannot see. SubjectStandoff rules are inert until the
+        perception stack supplies this, and calling `set_subject(None)` when the
+        target is lost is REQUIRED rather than optional: a stale position would
+        have the Shield enforcing a standoff from where the subject used to be,
+        which is both wrong and unfalsifiable from the logs.
+
+        `subject_class` is what selects between per-class rules, so a policy can
+        hold 10 m from a pedestrian and 5 m from a vehicle.
+        """
+        if x is None or y is None:
+            self._subject = None
+            self._subject_class = None
+            return
+        self._subject = (float(x), float(y))
+        self._subject_class = subject_class
+
+    def _repair_standoff(self, state: State, a: Action4D,
+                         repairs: list["Repair"]) -> Action4D:
+        """Remove the closing component of velocity along the line to the subject.
+
+        Not a brake and not a reversal: the tangential component survives, so the
+        aircraft can still circle the subject at the held range and keep it in
+        frame. Killing the whole velocity would stop the mission to satisfy a
+        rule that only objects to one direction of travel.
+        """
+        if self._subject is None:
+            return a
+        sx, sy = self._subject
+        worst = None
+        for so in self._standoffs:
+            if so.binds(self._subject_class):
+                worst = so if worst is None or so.min_range_m > worst.min_range_m else worst
+        if worst is None:
+            return a
+
+        dx, dy = sx - state.x, sy - state.y
+        d = math.hypot(dx, dy)
+        if d < 1e-6:
+            return a                       # directly overhead; no defined line
+        ux, uy = dx / d, dy / d            # unit vector pointing AT the subject
+
+        closing = a.vx * ux + a.vy * uy    # positive means approaching
+        ring = worst.min_range_m
+
+        # The REPAIR must trigger on the same criterion the CHECK uses, or it
+        # declines to act on the very violation that was raised and the action
+        # falls through to the brake - and, inside the ring, to the rescue
+        # search, which was measured emitting +5 m/s straight AT the subject.
+        # The check is predictive over the full lookahead, so this must be too:
+        # at 4 m/s and a 3 s horizon the aircraft commits 12 m ahead of itself.
+        breach_ahead = (d - closing * self.lookahead_s) < ring - 1e-9
+
+        if d < ring - 1e-9:
+            # ALREADY inside. Removing the closing component would leave the
+            # range exactly where it is, which the check reads as "not opening" -
+            # so the violation would persist every tick and the aircraft would be
+            # frozen at a distance the policy forbids. Recovery means opening the
+            # range, the same reasoning as the clearance ring's push-out.
+            cap = min((k.speed_max_mps for k in self._kins), default=4.0)
+            out = min(cap, max(0.5, (ring - d) / max(self.lookahead_s, 1e-3)))
+            vx = a.vx - closing * ux - out * ux
+            vy = a.vy - closing * uy - out * uy
+            repairs.append(Repair(
+                operator="StandoffRecover",
+                detail=(f"range {d:.1f}m inside min {ring}m: opening at "
+                        f"{out:.2f} m/s, tangential motion kept")))
+            return Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
+
+        if closing <= 0.0 or not breach_ahead:
+            return a                       # opening already, or no breach coming
+
+        vx, vy = a.vx - closing * ux, a.vy - closing * uy
+        repairs.append(Repair(
+            operator="StandoffHold",
+            detail=(f"range {d:.1f}m, closing {closing:.2f} m/s would breach "
+                    f"min {ring}m within {self.lookahead_s:.0f}s: closing "
+                    f"component removed, tangential motion kept")))
+        return Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
+
     def hot_apply(self, fence: PolygonFence) -> None:
         """Inject a dynamic NFZ mid-flight (grant: dynamic_nfz hot-apply).
         Bumps the policy generation so every artefact after this instant
@@ -738,6 +870,7 @@ class Shield:
         # is exactly what the P0 guard then brakes on — every tick, forever.
         for _ in range(_REPAIR_PASSES):
             fixed = self._repair_clearance(state, fixed, repairs)
+            fixed = self._repair_standoff(state, fixed, repairs)
             fixed = self._repair_geofence(state, fixed, repairs)
             # ...and the caps last: AltitudeFix sizes vz to reach the band in one
             # lookahead, which can overshoot the climb cap on a deep recovery.

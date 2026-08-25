@@ -70,7 +70,11 @@ class FrameRecorder(threading.Thread):
         # and was actually a name collision.
         self._stop_evt = threading.Event()
         self.n_written = 0
-        self.n_slow = 0
+        self.n_late = 0          # arrived more than half a period after the slot
+        self.n_skipped = 0       # no HUD yet, so nothing to stamp
+        self.n_empty = 0         # both cameras returned nothing
+        self.n_failed = 0        # an exception during capture or encode
+        self.n_cleared = 0       # stale frames removed from a previous flight
         self.t0: Optional[float] = None
         self.t_stop: Optional[float] = None
 
@@ -118,7 +122,28 @@ class FrameRecorder(threading.Thread):
                 det[5] = float(det[5]) * s  # image width, used by the servo tag
         return im, det
 
+    def _clear(self) -> int:
+        """Remove frames from previous flights before recording new ones.
+
+        These directories were never cleared, and tools/make_demo_video.py globs
+        them, so a flight shorter than its predecessor produced a video ending in
+        somebody else's footage. Measured on the delivered demos: 36, 7 and 8
+        stale frames on the tail of the three clips. The frames are numbered from
+        zero every run, so the leftovers are always at the END, which is exactly
+        where nobody looks.
+        """
+        n = 0
+        for d in (self.tps_dir, self.fpv_dir):
+            for f in d.glob("*.jpg"):
+                try:
+                    f.unlink()
+                    n += 1
+                except OSError:
+                    pass
+        return n
+
     def run(self) -> None:
+        self.n_cleared = self._clear()
         self.t0 = time.time()
         nxt = self.t0
         while not self._stop_evt.is_set():
@@ -126,41 +151,77 @@ class FrameRecorder(threading.Thread):
             if now < nxt:
                 time.sleep(min(0.01, nxt - now))
                 continue
+
+            # Count the slot as missed when we arrive more than half a period
+            # late. The old test asked whether we were a FULL SECOND behind -
+            # twenty periods at 20 Hz - and then resynchronised, which forgave
+            # the accumulated debt. A recorder running steadily 25 percent below
+            # its target therefore reported late_or_failed = 0, and the one
+            # number that would have revealed it was the one being suppressed.
+            if now - nxt > self.period * 0.5:
+                self.n_late += 1
             nxt += self.period
-            if now - nxt > 1.0:             # fell far behind; resynchronise
+            if now - nxt > 1.0:             # far behind; resynchronise
                 nxt = now + self.period
-                self.n_slow += 1
 
             with self._lock:
                 hud, det = self._hud, self._det
             if hud is None:
+                self.n_skipped += 1
                 continue
 
             idx = self.n_written
             try:
+                wrote = False
                 v = self.obs.get_chase_native()
                 if v is not None:
                     v.save(self.tps_dir / f"{idx:05d}.jpg", quality=self.quality)
+                    wrote = True
                 f = self.obs.get_front_native()
                 if f is not None:
                     f, det_s = self._upscale(f, det)
                     self.annotate(f, det_s, hud).save(
                         self.fpv_dir / f"{idx:05d}.jpg", quality=self.quality)
-                self.n_written += 1
+                    wrote = True
+                # Count WRITES, not polls. This incremented even when both
+                # cameras returned None, so the index advanced without a file
+                # behind it and the count disagreed with the directory.
+                if wrote:
+                    self.n_written += 1
+                else:
+                    self.n_empty += 1
             except Exception:
                 # A recording fault must never take the flight down with it.
-                self.n_slow += 1
+                self.n_failed += 1
 
     def summary(self) -> dict:
         end = self.t_stop or time.time()
         secs = (end - self.t0) if self.t0 else 0.0
-        return {
+        target = round(1.0 / self.period, 1)
+        achieved = round(self.n_written / secs, 2) if secs > 1 else None
+        s = {
             "frames": self.n_written,
-            "target_hz": round(1.0 / self.period, 1),
-            "achieved_hz": round(self.n_written / secs, 2) if secs > 1 else None,
+            "target_hz": target,
+            "achieved_hz": achieved,
             "seconds": round(secs, 2),
-            "late_or_failed": self.n_slow,
+            "late_slots": self.n_late,
+            "skipped_no_hud": self.n_skipped,
+            "empty_captures": self.n_empty,
+            "failed": self.n_failed,
+            "stale_frames_cleared": self.n_cleared,
         }
+        # State the shortfall rather than leaving it to be inferred from two
+        # numbers a reader has to divide. The recorder held 15.1 Hz against a
+        # 20 Hz target for the whole midterm campaign and nothing said so.
+        if achieved and target:
+            s["rate_ratio"] = round(achieved / target, 3)
+            if achieved < target * 0.9:
+                s["WARNING"] = (f"recorded at {achieved} Hz against a {target} Hz "
+                                f"target ({100 * achieved / target:.0f} %); the video "
+                                f"is correct in duration because fps is taken from "
+                                f"achieved_hz, but it is smoother than this only if "
+                                f"the target is met")
+        return s
 
     def write_sidecar(self, path) -> dict:
         """Persist the achieved rate next to the frames.
