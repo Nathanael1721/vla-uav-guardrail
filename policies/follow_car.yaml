@@ -24,12 +24,26 @@
 policy_id: follow-car
 version: 0.1.0
 constraints:
+  # 3.0 m, lowered from 5.0 when the occupancy map stopped being empty.
+  #
+  # The map used to be built by collapsing voxels over 15-55 m AGL, while these
+  # demos cruise at 9 m. Everything shorter than 15 m - traffic lights, signs,
+  # tree canopies - was therefore invisible to the Shield, which is why a flight
+  # struck street furniture at (48.3, -0.9) while the map reported 7.4 m of
+  # clearance there. Rebuilt over 6-14 m, matching this policy's altitude
+  # envelope, the same point measures 1.8 m.
+  #
+  # With that furniture present a 5 m ring is not satisfiable on these streets:
+  # at y = 20 the widest free point across the road carries only 5.2 m. The old
+  # 5 m looked like the larger safety margin, but it was a bigger number
+  # protecting against less. 3 m around a pole that is actually in the map is
+  # the stronger constraint.
   - id: bld-clearance
     type: obstacle_clearance
     constraint_type: hard
     priority: P0
     violation_action: repair
-    min_clearance_m: 5.0
+    min_clearance_m: 3.0
     soft_margin_m: 2.0
 
   - id: alt-band
