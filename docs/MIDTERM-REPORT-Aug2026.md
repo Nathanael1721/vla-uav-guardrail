@@ -184,8 +184,9 @@ remains the controller's; the ground track is what the Shield bends. This makes
 simultaneity observable: a tick in which `emitted.yaw_rate == raw.yaw_rate` while
 `emitted.(vx, vy) != raw.(vx, vy)` is one in which both systems acted.
 
-**Constraint taxonomy.** Four types are currently expressible:
-`PolygonFence`, `AltitudeEnvelope`, `KinematicEnvelope`, `ObstacleClearance`.
+**Constraint taxonomy.** Five types are expressible: `PolygonFence`,
+`AltitudeEnvelope`, `KinematicEnvelope`, `ObstacleClearance` and
+`SubjectStandoff`.
 Each carries a priority (P0/P1/P2) and a violation action (repair or brake).
 Policies are YAML, validated into a Pydantic model, and hashed to `policy_hash`.
 
@@ -433,20 +434,30 @@ Each limitation below is measured rather than anticipated.
    are not grade-eligible. Bringing the perception stack onto the canonical rail
    is the next boundary, and it is not a small one — that rail has no renderer.
 
-2. **The occupancy map contains buildings only.** It holds no trees, street
-   furniture, or parked vehicles. A 9 m flight has already contacted street
-   furniture at (48.3, −0.9). The Shield cannot constrain against geometry
-   absent from its map; this is a data gap, not a Shield defect.
+2. **Resolved.** The occupancy map was described here as containing buildings
+   only, following a 9 m flight that contacted street furniture at (48.3, −0.9)
+   where the map reported 7.4 m of clearance. That was a description of the
+   sampling band, not of the city: the map was built by collapsing voxels over
+   15–55 m AGL while the demos cruise at 9 m, so nothing shorter than a building
+   could appear. Rebuilt over 6–14 m the same point measures 1.8 m, and the
+   Shield now performs real obstacle avoidance — 58 interventions on a demo that
+   previously recorded 0 because there was nothing to avoid. Adopting it also
+   required a street mask, since "on the road" had been inferred from the
+   absence of obstacles. See
+   `docs/FINDING-the-occupancy-map-was-looking-elsewhere.md`.
 
 3. **Depth is quantised to one metre.** The depth stream arrives as `16UC1` at
    whole-metre granularity despite a float pixel request. It supports proximity
    detection but not a metric standoff requirement such as "hold 10 m".
 
-4. **Per-object standoff is not expressible in policy.** The requirement "hold
-   10 m from a pedestrian, with different policies per object class" is presently
-   a command-line parameter (`--want-range`). It is therefore not hashed into
-   `policy_hash`, not audited, and not enforced by the Shield. It is a controller
-   setpoint rather than a rule.
+4. **Resolved.** The requirement "hold 10 m from a pedestrian, with different
+   policies per object class" was a command-line parameter and therefore not
+   hashed, not audited and not enforced. `SubjectStandoff` is now a constraint
+   type: `subject_class` selects which rule binds, the Shield checks it against
+   a 3 s forecast, and a breach is repaired by removing the closing component of
+   velocity so the aircraft may still circle at the held range. Demonstrated by
+   commanding the pilot to hold 3 m against a 5 m rule — the aircraft spent 0 of
+   501 ticks inside the ring, closest approach 9.7 m, P0 escape rate 0.0.
 
 5. **Range from apparent width assumes a car.** `implied_range_from_width()`
    uses `object_width_m = 4.0`. Applied unchanged to a pedestrian of roughly
@@ -464,7 +475,7 @@ Each limitation below is measured rather than anticipated.
 
 | WP | Component | Status |
 |---|---|---|
-| WP1 | Policy DSL | In use. Policies validated and hashed. Four constraint types; per-object standoff not yet expressible (Limitation 4). |
+| WP1 | Policy DSL | In use. Policies validated and hashed. Five constraint types, including the per-object stand-off requested at the 19 August review. |
 | WP2 | Prefix compiler | Reduced version in use on the VLA path. |
 | WP3 | Safety Shield | Implemented, tested, and exercised under conflict. P0 escape rate 0 on every flight recorded. |
 | WP4 | Stress harness and determinism | Manifest and KPI computation implemented, unit-tested, and emitted by every rail. The canonical ArduPilot SITL + MAVROS 2 topology produces **KPI-grade runs** (Section 6.5). Scenario sweep harness not built. |
@@ -489,23 +500,31 @@ threshold is reachable today with recording off, and that the recorder is the
 consumer. Formalise the split: a measurement mode that records nothing, and a
 demonstration mode that does and is labelled as such.
 
-**10.3 Add a per-object standoff constraint to the policy schema.** Converts a
-controller setpoint into a hashed, audited, Shield-enforced rule. This is WP1
-work and is the prerequisite for the pedestrian scenario being meaningful.
+**10.3 Extend the scene with pedestrians and additional vehicles.** Requested at
+the 19 August review, and now unblocked: the per-object stand-off exists as a
+policy rule and `object_width_m` is derived per class, which were the two things
+that would have made a pedestrian demonstration meaningless. It needs a
+pedestrian asset added to the simulator scene. `policies/follow_pedestrian.yaml`
+already carries the requested rules — 10 m from a person, 5 m from anything
+else, on a lower altitude band because the camera's blind spot at 9 m is 7.7 m
+and therefore inside the stand-off itself.
 
-**10.4 Extend the scene with pedestrians and additional vehicles.** Requested at
-the 19 August review. Requires 10.3 and a per-class `object_width_m` first
-(Limitation 5).
+**10.4 Give every `FenceGuard` caller the street mask, then lengthen the detour
+search.** The gap policy's detour is 15.0 m against a 14 m search range, so it
+reports no gap. Raising the range recovers it and simultaneously lets a
+mask-less guard route around a corridor-spanning fence's end, so the two have to
+move together. Both halves are pinned by a test.
 
-**10.5 Populate the occupancy map with trees, street furniture, and parked
-vehicles.** Addresses a demonstrated collision, requires no additional sensor,
-and is a precondition for evaluating whether depth or LiDAR is needed.
+**10.5 Populate the occupancy map beyond this one city.** The map is now built
+over the band the aircraft flies in, but only for `Demo_day`. Every other scene
+still carries a map sampled at 15–55 m and therefore has the same blind spot
+this period's incident exposed.
 
-**10.6 Detector throughput.** If detector rate becomes binding again, the
-candidate is YOLO-World: open-vocabulary at 30–50 Hz, with text prompts
-compiled into weights so there is no runtime language cost. Retraining a
-closed-vocabulary detector to recognise colours is not recommended; it would
-remove the open-vocabulary interface without addressing throughput.
+**10.6 A faster detector, if throughput becomes binding again.** The candidate
+is YOLO-World: open-vocabulary at 30–50 Hz, with text prompts compiled into
+weights so there is no runtime language cost. Retraining a closed-vocabulary
+detector to recognise colours is not recommended; it would remove the
+open-vocabulary interface without addressing throughput.
 
 ---
 
