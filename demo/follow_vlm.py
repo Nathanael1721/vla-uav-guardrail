@@ -714,7 +714,8 @@ class FenceGuard:
     """
 
     def __init__(self, policy, brake_m: float = 12.0, stand_off_m: float = 3.0,
-                 obstacle_map: dict | None = None, min_clearance_m: float = 5.0):
+                 obstacle_map: dict | None = None, min_clearance_m: float = 5.0,
+                 street_mask: dict | None = None):
         from guardrail.geometry import fence_polygon
         from guardrail.models import PolygonFence
         self.polys = [fence_polygon(f).buffer(f.margin_m)
@@ -735,6 +736,14 @@ class FenceGuard:
         # the controller should not be proposing them.
         self.occ = obstacle_map
         self.min_clearance_m = min_clearance_m
+        # ...and "on the road" has to be ASKED, not inferred from the absence of
+        # obstacles. That inference held only while the obstacle map was built
+        # over 15-55 m AGL and so contained nothing but buildings, making every
+        # road free by construction. Rebuilt over the flight band it fails both
+        # ways: a canopy over a road is occupied at cruise and perfectly
+        # drivable, and 461 low structures that had been blocked became free, so
+        # detours over rooftops started scoring as legal road again.
+        self.street = street_mask
 
     def gate(self, x: float, y: float, vx: float, vy: float):
         """Scale a commanded velocity down as it closes on a fence.
@@ -789,6 +798,13 @@ class FenceGuard:
         k = (d - self.stand_off_m) / (self.brake_m - self.stand_off_m)
         return float(np.clip(k, 0.0, 1.0)), d, k < 0.35
 
+    # reach_m stays 14. The detour around follow_car_gap.yaml's fence is 15.0 m
+    # once street furniture is in the obstacle map, so 14 misses it - but raising
+    # it to 20 lets a guard WITHOUT a street mask find a way around a
+    # corridor-spanning fence's END, which is the off-road regression
+    # test_a_detour_must_stay_on_the_road exists to catch. The reach cannot move
+    # until every caller supplies the street mask.
+    # See docs/FINDING-the-occupancy-map-was-looking-elsewhere.md.
     def slide(self, x: float, y: float, vx: float, vy: float, probe_m: float = 8.0,
               reach_m: float = 14.0, step_m: float = 1.0):
         """Which way to sidestep, and how far the detour has to be.
@@ -822,8 +838,19 @@ class FenceGuard:
         ux, uy = vx / speed, vy / speed
         lx, ly = -uy, ux                      # left of the commanded heading
 
-        def _on_road(px: float, py: float) -> bool:
-            """Far enough from every MAPPED building. Cheap Chebyshev scan of the
+        def _on_street(px: float, py: float) -> bool:
+            """Is this point on a road at all? Unmapped counts as not a road."""
+            if not self.street:
+                return True
+            st, res = self.street["street"], self.street["res"]
+            i = int((px - self.street["ox"]) / res)
+            j = int((py - self.street["oy"]) / res)
+            if not (0 <= i < st.shape[0] and 0 <= j < st.shape[1]):
+                return False
+            return bool(st[i, j])
+
+        def _clear_of_obstacles(px: float, py: float) -> bool:
+            """Far enough from every MAPPED obstacle. Cheap Chebyshev scan of the
             occupancy grid rather than a distance transform, because slide() runs
             inside the 10 Hz control loop."""
             if not self.occ:
@@ -847,7 +874,7 @@ class FenceGuard:
             if not all(min(poly.distance(Point(*q)) for poly in self.polys)
                        >= self.stand_off_m for q in pts):
                 return False
-            return all(_on_road(*q) for q in pts)
+            return all(_clear_of_obstacles(*q) and _on_street(*q) for q in pts)
 
         # No blockage, no detour. Without this the probe reaches past nothing
         # when the fence is still far away, BOTH sides score the minimum cost,
@@ -867,7 +894,7 @@ class FenceGuard:
                 # Standing here must itself be legal, with the stand-off kept.
                 if min(poly.distance(Point(px, py)) for poly in self.polys) < self.stand_off_m:
                     continue
-                if not _on_road(px, py):
+                if not (_clear_of_obstacles(px, py) and _on_street(px, py)):
                     continue          # outside the fence but off the street
                 # ...and the way ahead from here must be open for a real distance,
                 # not merely one step: a one-step gap is a corner, not a route.
@@ -1177,9 +1204,25 @@ async def fly(args) -> int:
                 "ox": cmap["ox"], "oy": cmap["oy"]}
     shield = Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=smap)
     clr = policy.by_type(ObstacleClearance)
+
+    # Where the roads are, which is a different question from where the
+    # obstacles are - see demo/build_street_mask.py. The detour search needs
+    # both: outside the fence, clear of obstacles, AND on a road.
+    street = None
+    _sm = Path(args.citymap).parent / "street.npz"
+    if _sm.is_file():
+        from build_street_mask import load_street
+        street = load_street(_sm)
+        print(f"[fence] street mask loaded: {int(street['street'].sum())} road cells")
+    else:
+        print(f"[fence] WARNING no street mask at {_sm}; detours will be judged "
+              f"on obstacles alone, which lets slide() route off-road. "
+              f"Build it with: python demo/build_street_mask.py")
+
     fence = FenceGuard(policy, brake_m=args.fence_brake,
                        stand_off_m=args.fence_standoff, obstacle_map=smap,
-                       min_clearance_m=(clr[0].min_clearance_m if clr else 5.0))
+                       min_clearance_m=(clr[0].min_clearance_m if clr else 5.0),
+                       street_mask=street)
     audit = AuditLogger(out / "audit.jsonl", policy.policy_hash)
     if fence.polys:
         print(f"[fence] {len(fence.polys)} no-fly zone(s) known to the controller: "

@@ -1,8 +1,8 @@
 # The occupancy map was sampling a band the aircraft never flies in
 
 **Date:** 2026-08-25
-**Status:** cause found and fixed; the corrected map is NOT yet the default, and
-this note says why.
+**Status:** ADOPTED 2026-08-25. The corrected map is now the default. This note
+keeps the reasoning, the failed first attempt, and the one thing still open.
 
 ## The incident
 
@@ -89,20 +89,64 @@ until the demo passes; it is an obstacle.
 
 | File | Band | Role |
 |---|---|---|
-| `occ_day.npz` | 15–55 m | Current default. Every measured result to date used it. |
-| `occ_day_flightband_6to14.npz` | 6–14 m | The corrected map. Ready, evidenced, not yet wired in. |
-| `occ_day_highband_15to55.npz` | 15–55 m | Explicit copy of the default, so the swap is reversible. |
+| `occ_day.npz` | 6–14 m | **Default.** What the aircraft can hit at cruise. |
+| `street.npz` | — | Where the roads are. A different question; see below. |
+| `occ_day_flightband_6to14.npz` | 6–14 m | Named copy of the default. |
+| `occ_day_highband_15to55.npz` | 15–55 m | The old default, and now the building-footprint mask that `street.npz` is built from. |
+| `ground_2to4.npz` | 2–4 m | Low clutter, the other input to the street mask. |
 
-## To adopt it
+## The street mask
 
-1. Add a street mask and rewrite the two "stays on the road" tests against it
-   instead of against the obstacle map.
-2. Move `follow_car_gap.yaml`'s corridor west to where the gap actually is.
-3. Set `min_clearance_m: 3.0` in both follow policies. This reads as a weaker
-   rule and is the opposite — the old 5 m was a larger number measured against a
-   map with nothing short in it, and 3 m around a pole that is really there
-   beats 5 m around a pole that is not.
-4. Copy `occ_day_flightband_6to14.npz` over `occ_day.npz` and re-fly all three
-   demos, since every number in the midterm report is conditioned on the map.
+The two failures above have one cause: *road* was being inferred from *absence
+of obstacle*, which holds only while the obstacle map contains nothing but
+buildings. `demo/build_street_mask.py` asks the question directly, from three
+bands that answer three different things:
 
-Doing (4) without (1)–(3) is what produced the 0.48 hit rate.
+```
+2–4 m     low clutter: kerbs, walls, parked vehicles, tree trunks
+6–14 m    what the aircraft hits at a 9 m cruise   -> the obstacle map
+15–55 m   only buildings reach this                -> building footprints
+```
+
+A cell is **street** when it is free of buildings *and* free of low clutter:
+3752 of 6400 cells. A cell is a **canopy** when it is street below and blocked
+at cruise: **128 cells**, drivable by a car and closed to the aircraft. Those
+128 are exactly what made the old inference wrong.
+
+Buildings are what makes this work. They are the only structures tall enough to
+appear in the 15–55 m band, so that band is a footprint mask rather than the
+obstacle map it was being used as. A low-band test alone is not enough: the
+voxel grid reports building interiors as empty at 2–4 m, because walls are
+surfaces rather than solids, so it calls the inside of a city block a road.
+
+## What changed to adopt it
+
+1. `demo/build_street_mask.py` added; `FenceGuard` takes a `street_mask` and
+   `slide()` now requires a detour to be outside the fence, clear of obstacles
+   **and** on a road. The three were previously one check named `_on_road` that
+   only measured distance from buildings.
+2. Both road tests rewritten to ask the street mask instead of the obstacle map.
+3. `min_clearance_m` 5.0 → 3.0 in all three follow policies.
+4. `occ_day.npz` replaced. Re-flown: detector hit rate 1.000, target held on
+   100 % of ticks, P0 escape rate 0.0, and **58 Shield interventions** where the
+   same demo previously recorded 0.
+
+## Still open: the gap policy's detour is one metre out of reach
+
+`follow_car_gap.yaml`'s corridor at x 43–50 has a solid eastern end under the
+corrected map, so the first viable column sits further east and the detour grows
+to **15.0 m**. `slide()` searches 14 m, so it reports no gap at all.
+
+The gap is real — at `reach_m=20` it is found, eastward, at cost 15.0. What
+stops that being the fix is that a longer reach lets a guard with **no** street
+mask route around a corridor-spanning fence's *end*, which is the off-road
+regression the detour test exists to catch. **The reach cannot move until every
+`FenceGuard` caller supplies the mask.**
+
+Both halves are pinned by
+`tests/test_fenceguard.py::test_the_gap_policy_gap_is_out_of_search_range_once_the_map_is_honest`,
+so neither can drift unnoticed.
+
+This one failed in the *safe* direction — no detour found falls through to
+braking — which is the hardest kind of failure to see. The gap demo looked like
+a policy problem and was a search-range one.

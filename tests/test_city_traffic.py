@@ -379,39 +379,52 @@ def test_summary_records_the_colour_ground_truth():
 
 # ------------------------------------------- the turning route (aug 2026)
 
-def _occ():
-    """The city occupancy grid, or None when it is not on this machine."""
-    import numpy as np
-    f = ROOT / "demo" / "out" / "citymap" / "occ_day.npz"
+def _street():
+    """The street mask, or None when it is not on this machine.
+
+    NOT the occupancy map. The two answer different questions, and this test
+    used to ask the wrong one - see the docstring below.
+    """
+    f = ROOT / "demo" / "out" / "citymap" / "street.npz"
     if not f.is_file():
         return None
-    d = np.load(f)
-    return d["occ"], float(d["res"]), float(d["origin_x"]), float(d["origin_y"])
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT / "demo"))
+    from build_street_mask import load_street
+    return load_street(f)
 
 
-def test_the_turn_route_stays_on_mapped_road():
+def test_the_turn_route_stays_on_the_road():
     """The subject may drive a corner now, but not through a building.
 
-    The map is a regular block grid - 28 m streets between blocks at
-    x in [28,54] and y in [28,54] - so the corner sits inside the square where
-    the two streets meet. Every sampled point of the run is checked, not just
-    the waypoints, because the rounded corner leaves the straight legs.
+    This checked the route against the OCCUPANCY MAP, and passed for as long as
+    that map was built by collapsing voxels over 15-55 m AGL: nothing but
+    buildings was in it, so every road was free by construction and free space
+    was a fair proxy for road.
+
+    Rebuilt over the band the aircraft actually flies in, that proxy is wrong in
+    the direction this test could not tolerate. The route crosses a canopy at
+    (38.0, 22.1) - a tree over the road - which is occupied at a 9 m cruise and
+    entirely drivable underneath. The map was right and the question was wrong:
+    a car is not constrained by what blocks a drone at altitude.
+
+    So the route is now checked against demo/out/citymap/street.npz, which is
+    built from what a car cares about: free of buildings and free of low
+    clutter, ignoring anything overhead.
     """
     from moving_car import MovingCar, TURN_ROUTE
-    got = _occ()
-    if got is None:
-        return                                  # map not present; nothing to check
-    occ, res, ox, oy = got
-
-    def free(x, y):
-        i, j = int((x - ox) / res), int((y - oy) / res)
-        return 0 <= i < occ.shape[0] and 0 <= j < occ.shape[1] and occ[i, j] == 0
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT / "demo"))
+    from build_street_mask import is_street
+    mask = _street()
+    if mask is None:
+        return                                  # mask not present; nothing to check
 
     car = MovingCar(_FakeWorld(), speed_mps=2.0, route=TURN_ROUTE, corner_r=6.0,
                     one_shot=True, phase_s=0.0, stops=[(0.30, 6.0), (0.62, 6.0)])
     pts = [car.pose_at(i * 0.1) for i in range(int(car.lap_time / 0.1))]
-    bad = [(round(x, 1), round(y, 1)) for x, y, _ in pts if not free(x, y)]
-    assert not bad, f"turn route leaves mapped free space at {bad[:5]}"
+    bad = [(round(x, 1), round(y, 1)) for x, y, _ in pts if not is_street(mask, x, y)]
+    assert not bad, f"turn route leaves the road at {bad[:5]}"
 
 
 def test_the_corner_is_gentle_enough_to_follow():
