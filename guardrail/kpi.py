@@ -19,6 +19,24 @@ Getting that distinction wrong in the optimistic direction would report a perfec
 score for a broken system, so `p0_escapes` counts against the EMITTED action and
 the tests exercise a log that should fail, not only one that passes.
 
+HOW IT IS COUNTED, AND WHY IT CHANGED
+
+It is read from `emitted_violations` - the Shield's own re-check of the action
+it flew, recorded per tick in the flight log.
+
+It used to be INFERRED, from whether the Shield had done anything at all:
+`emitted_differs or braked or repairs`. That inference can only detect a Shield
+that ignored a violation outright. It cannot detect the case the KPI actually
+exists to catch - a Shield that repaired an action into another illegal one -
+and since every branch that raises a violation also appends a Repair, it could
+not return a non-zero number for any log this Shield can produce.
+
+Re-checked by hand against the delivered flights, the emitted action violated a
+P0 rule on zero ticks, so the reported numbers were right. The measurement was
+not. Rows that predate the field fall back to the old inference and are counted
+in `p0_ticks_not_measurable`, because a zero that was never measured should not
+look like one that was.
+
 RISK LEVELS
 
 `Violation` carries `rule_id` and `category` but not the priority; the priority
@@ -70,6 +88,7 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
 
     n_p0_ticks = 0          # ticks where a P0 rule was violated
     n_p0_escapes = 0        # ... and the flown action still violated it
+    n_p0_unknown = 0        # ... and the log predates the emitted re-check
     n_repairs = 0
     by_level: dict[str, int] = {}
     by_category: dict[str, int] = {}
@@ -91,12 +110,37 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
 
         if "P0" in levels:
             n_p0_ticks += 1
-            # An ESCAPE is a P0 that was seen and then flown anyway: the Shield
-            # neither repaired the action nor braked. Repaired or braked is the
-            # Shield working, and must not be counted against it.
-            acted = _emitted_differs(r) or bool(r.get("braked")) or bool(reps)
-            if not acted:
-                n_p0_escapes += 1
+            # An ESCAPE is a P0 that was seen and then flown anyway. MEASURED,
+            # not inferred.
+            #
+            # This used to read `acted = emitted_differs or braked or repairs`
+            # and count an escape when nothing had been done. That is not the
+            # definition at the top of this file, and it cannot produce a
+            # non-zero answer: every Shield branch that raises a violation also
+            # appends a Repair, so `acted` was unconditionally true. The KPI
+            # would have reported a perfect score for a Shield that repaired
+            # every action into a still-illegal one.
+            #
+            # `emitted_violations` is the Shield's own re-check of the action it
+            # flew, recorded per tick. When a row carries it, the escape is a
+            # fact read off the artefact.
+            em_v = r.get("emitted_violations")
+            if em_v is None:
+                # A log written before the re-check was recorded. Fall back to
+                # the old inference so historical artefacts still score, but
+                # count the tick as not-measurable: the inference can only ever
+                # find the case where the Shield did nothing at all, never the
+                # case where it acted and the result was still illegal.
+                n_p0_unknown += 1
+                acted = _emitted_differs(r) or bool(r.get("braked")) or bool(reps)
+                if not acted:
+                    n_p0_escapes += 1
+            else:
+                escaped = any(priorities.get(v.get("rule_id", ""), "P0") == "P0"
+                              for v in em_v)
+                acted = not escaped
+                if escaped:
+                    n_p0_escapes += 1
             failsafe_expected += 1
             if acted:
                 failsafe_correct += 1
@@ -123,11 +167,17 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
         "p0_violation_escape_rate": round(n_p0_escapes / n, 6),
         "p0_escapes": n_p0_escapes,
         "p0_violation_ticks": n_p0_ticks,
+        # Ticks whose log predates the emitted re-check, so their escape status
+        # was inferred rather than measured. Non-zero means the rate above is
+        # weaker evidence than it looks, and the run should be re-flown before
+        # the number is quoted.
+        "p0_ticks_not_measurable": n_p0_unknown,
         "failsafe_trigger_correctness": (None if not failsafe_expected else
                                          round(failsafe_correct / failsafe_expected, 6)),
         "repair_count": n_repairs,
         "repairs_per_episode": round(n_repairs, 3),
-        "mission_success": (outcome == "success" and n_p0_escapes == 0),
+        "mission_success": (outcome == "success" and n_p0_escapes == 0
+                            and n_p0_unknown == 0),
         # --- WP4 auto-labels ------------------------------------------------
         "violations_by_risk_level": by_level,
         "violations_by_type": by_category,

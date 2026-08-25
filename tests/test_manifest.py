@@ -88,11 +88,23 @@ def test_an_unreadable_scene_is_unresolved_not_assumed_real_time():
 
 def test_our_rail_may_not_claim_the_canonical_hil_topology():
     """The field exists so the difference cannot be blurred. Our flights are
-    Project AirSim; the grant's KPI topology is ArduPilot SITL + MAVROS."""
+    Project AirSim; the grant's KPI topology is ArduPilot SITL + MAVROS.
+
+    Tested WITH good evidence, which is the whole point. Without evidence this
+    was just a second copy of
+    `test_canonical_hil_cannot_be_claimed_without_evidence`, and its failure
+    message - "a Project AirSim run was allowed to claim canonical-hil" - named
+    a property nothing actually enforced. Supplying `hil_evidence` used to be
+    enough to get our own Project AirSim scene stamped `canonical-hil`, the one
+    label the grant reads as KPI-grade.
+
+    The scene file is the tell: the canonical rail is ArduPilot SITL and has no
+    simulator scene.
+    """
     try:
-        _man(topology=TOPOLOGY_CANONICAL_HIL)
+        _man(topology=TOPOLOGY_CANONICAL_HIL, hil_evidence=GOOD_HIL)
     except ValueError as e:
-        assert "canonical-hil" in str(e)
+        assert "scene" in str(e).lower(), e
     else:
         raise AssertionError("a Project AirSim run was allowed to claim canonical-hil")
 
@@ -148,6 +160,43 @@ def test_a_p0_flown_anyway_IS_counted_as_an_escape():
     assert k["p0_escapes"] == 10
     assert k["p0_violation_escape_rate"] == 1.0
     assert k["outcome"] == "fail" and k["mission_success"] is False
+
+
+def test_a_repair_that_did_not_fix_it_IS_an_escape():
+    """The case the old accounting could not see, and the reason it changed.
+
+    A repair ran, so `repairs` is non-empty and the action changed - the old
+    inference (`emitted_differs or braked or repairs`) therefore scored this as
+    the Shield working. But the re-check on the flown action still names a P0
+    rule, which is the definition of an escape. Because every Shield branch
+    that raises a violation also appends a Repair, this shape is the ONLY way
+    a real escape can occur, and it was exactly the one being missed.
+    """
+    row = _tick(repaired=True, moved=True)
+    row["emitted_violations"] = [{"rule_id": "nfz-route", "category": "geofence"}]
+    k = K.compute([row] * 10, PRIOS)
+    assert k["p0_escapes"] == 10, k
+    assert k["p0_violation_escape_rate"] == 1.0
+    assert k["outcome"] == "fail" and k["mission_success"] is False
+    assert k["failsafe_trigger_correctness"] == 0.0
+
+
+def test_a_measured_clean_repair_is_not_an_escape_and_is_marked_measured():
+    """The good case, recorded rather than assumed."""
+    row = _tick(repaired=True, moved=True)
+    row["emitted_violations"] = []
+    k = K.compute([row] * 10, PRIOS)
+    assert k["p0_escapes"] == 0
+    assert k["p0_ticks_not_measurable"] == 0, "these rows carry the re-check"
+
+
+def test_a_log_without_the_recheck_is_flagged_as_not_measurable():
+    """Old artefacts still score, but must not look like measured zeros."""
+    k = K.compute([_tick(repaired=True, moved=True)] * 10, PRIOS)
+    assert k["p0_escapes"] == 0
+    assert k["p0_ticks_not_measurable"] == 10
+    assert k["mission_success"] is False, (
+        "a run whose escape rate was never measured must not claim success")
 
 
 def test_a_p0_that_was_repaired_is_not_an_escape():
@@ -289,7 +338,14 @@ def test_canonical_hil_with_evidence_is_accepted_and_kpi_grade():
     """And when the evidence is there it must actually pass, or the gate can
     never be met and the field is decorative."""
     from guardrail.manifest import TOPOLOGY_CANONICAL_HIL
-    m = _man(topology=TOPOLOGY_CANONICAL_HIL, hil_evidence=GOOD_HIL)
+    # A REAL canonical run: ArduPilot SITL, so no Project AirSim scene file and
+    # the speedup read from the flight controller instead of from a scene.
+    # This used to lean on _man()'s default scene_path, which is our own
+    # Project AirSim scene - the very thing this topology is not.
+    m = build_manifest(policy_hash="sha256:deadbeefdeadbeef",
+                       model_id="google/owlvit-base-patch32", seed=42,
+                       scene_path=None, sim_speedup=1.0,
+                       topology=TOPOLOGY_CANONICAL_HIL, hil_evidence=GOOD_HIL)
     assert m["topology"] == TOPOLOGY_CANONICAL_HIL
     ok, why = is_kpi_grade({**m, "code_revision": "abc123abc123"}, GOOD_METRICS)
     assert ok, why

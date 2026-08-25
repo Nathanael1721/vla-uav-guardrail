@@ -69,8 +69,13 @@ def main() -> int:
                 cand = rec.get("achieved_hz") or rec.get("target_hz")
                 if cand and float(cand) > 0:
                     fps = round(float(cand), 2)
+                    # The WRITING window, not the recorder's whole life. The
+                    # recorder is up before the mission clock is, and quoting
+                    # the lifetime here made the arithmetic look wrong even
+                    # once achieved_hz was right.
+                    win = rec.get("writing_seconds") or rec.get("seconds")
                     print(f"[video] recorder captured {rec.get('frames')} frames "
-                          f"over {rec.get('seconds')} s -> {fps} fps "
+                          f"over {win} s of writing -> {fps} fps "
                           f"(target was {rec.get('target_hz')} Hz)")
             except (ValueError, KeyError, TypeError):
                 pass

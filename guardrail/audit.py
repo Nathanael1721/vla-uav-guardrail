@@ -32,6 +32,10 @@ class AuditLogger:
             "violations": [v.model_dump() for v in decision.violations],
             "repairs": [r.model_dump() for r in decision.repairs],
             "emitted_action": decision.emitted.model_dump(),
+            # What is still wrong with the action that was FLOWN. Empty is the
+            # good case; non-empty is a P0 escape, the grant's hard KPI.
+            "emitted_violations": [v.model_dump()
+                                   for v in decision.emitted_violations],
             "braked": decision.braked,
         }
         with self.path.open("a", encoding="utf-8") as f:

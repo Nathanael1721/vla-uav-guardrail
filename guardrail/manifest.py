@@ -307,6 +307,25 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
                 "canonical-hil is the grant's ArduPilot SITL + MAVROS 2 topology "
                 "and may not be claimed without evidence of it: "
                 + "; ".join(missing))
+        # A scene file is itself evidence, and it contradicts the claim.
+        #
+        # The canonical rail is ArduPilot SITL: there is no Project AirSim scene
+        # in it, which is precisely why `sim_speedup` may be passed in for a
+        # rail with no scene file (see below). So a caller handing over BOTH a
+        # scene path and the canonical topology is describing two different
+        # stacks at once, and the honest answer is to refuse rather than to
+        # believe the half that flatters the run.
+        #
+        # Without this the evidence check was the only gate, and evidence is a
+        # dict the caller assembles. Our own Project AirSim scene passed
+        # straight through and got stamped `canonical-hil`, which is the one
+        # label the grant reads as KPI-grade.
+        if scene_path is not None:
+            raise ValueError(
+                "canonical-hil is the ArduPilot SITL + MAVROS 2 topology and has "
+                f"no simulator scene file, but scene_path={str(scene_path)!r} was "
+                f"given. A run with a Project AirSim scene is "
+                f"{TOPOLOGY_PROJECTAIRSIM!r}, whatever evidence accompanies it.")
     speedup = (sim_speedup if scene_path is None
                else sim_speedup_from_scene(scene_path))
     return {

@@ -191,8 +191,15 @@ def pavement_spots(street_mask, buildings, n: int, rng: random.Random,
         for j in range(nj):
             if not st[i, j] or not touches_building(i, j):
                 continue
-            x = ox + (i + 0.5) * res
-            y = oy + (j + 0.5) * res
+            # The cell's centre is `ox + i*res`. Adding half a cell was the
+            # only place in this repository that did so - the other twelve
+            # world-from-grid conversions all use this form - and it put every
+            # figure exactly 1 m from the cell that had just been validated as
+            # pavement, on the boundary between two cells. Checked against a
+            # correctly indexed street lookup, 5 of 12 figures in the
+            # `city_people` flight were not standing on street at all.
+            x = ox + i * res
+            y = oy + j * res
             if avoid:
                 d = _dist_to_route(x, y, list(avoid))
                 if d < avoid_radius_m or d > near_radius_m:
@@ -250,8 +257,8 @@ def _pace_segment(x, y, street_mask, buildings, max_m=10.0, step=1.0):
     ni, nj = st.shape
 
     def pavement(px, py):
-        i = int((px - ox) / res)
-        j = int((py - oy) / res)
+        i = int(round((px - ox) / res))
+        j = int(round((py - oy) / res))
         if not (0 <= i < ni and 0 <= j < nj) or not st[i, j]:
             return False
         for di, dj in ((1, 0), (-1, 0), (0, 1), (0, -1), (2, 0), (-2, 0), (0, 2), (0, -2)):

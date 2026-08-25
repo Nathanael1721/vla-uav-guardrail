@@ -8,6 +8,7 @@ Run either way:
 Every test states its story in one line. The key invariant everywhere:
 whatever the Shield emits must itself pass a re-check (P0 escape = 0).
 """
+import math
 import sys
 from pathlib import Path
 
@@ -63,10 +64,23 @@ def test_overspeed_clamped():
 
 
 def test_yaw_rate_clamped():
+    """The cap is in DEGREES per second; the action carries RADIANS per second.
+
+    This assertion used to read `abs(d.emitted.yaw_rate) <= 45.0`, comparing a
+    rad/s quantity against a degree bound. The Shield emits 0.785 rad/s here,
+    so the test passed - and would have gone on passing for anything up to
+    45 rad/s, which is 2578 deg/s. It was the only test named for the yaw clamp
+    and it was blind to exactly the 57.3x units defect this project fixed on
+    2026-08-17 (see tests/test_guardrail_coverage.py).
+
+    So: convert, then compare, and pin the value rather than just bounding it.
+    """
     s = make_shield()
     d = s.filter(State(x=-20, y=-20, up=4), Action4D(yaw_rate=90))
     assert d.touched
-    assert abs(d.emitted.yaw_rate) <= 45.0 + 1e-9
+    dps = math.degrees(d.emitted.yaw_rate)
+    assert abs(dps) <= 45.0 + 1e-9, f"emitted {dps} deg/s, cap is 45"
+    assert abs(dps - 45.0) < 1e-6, f"should clamp exactly to the cap, got {dps}"
 
 
 # --------------------------------------------------------------- altitude
@@ -292,13 +306,23 @@ def test_orbiting_at_the_ring_is_allowed():
 
 
 def test_standoff_violations_are_repaired_not_escaped():
-    """The hard KPI, on the new rule: seen and then flown anyway is an escape."""
+    """The hard KPI, on the new rule: seen and then flown anyway is an escape.
+
+    `dec.repairs or dec.braked` asserts only that something was ATTEMPTED, so a
+    repair operator that runs and leaves the violation in place still passed.
+    That is not what an escape rate of zero means. Every other test in this file
+    uses the strong form - re-check the EMITTED action - so this one now does
+    too.
+    """
     sh = _standoff_shield(min_range_m=10.0)
     sh.set_subject(30.0, 0.0, "pedestrian")
     for d in (15.0, 11.0, 9.0, 6.0):
-        dec = sh.filter(State(x=30.0 - d, y=0.0, up=9.0), Action4D(vx=4.0))
+        st = State(x=30.0 - d, y=0.0, up=9.0)
+        dec = sh.filter(st, Action4D(vx=4.0))
         if dec.violations:
-            assert dec.repairs or dec.braked, f"P0 escape at {d} m"
+            assert dec.repairs or dec.braked, f"P0 escape at {d} m: nothing attempted"
+            assert not sh._check(st, dec.emitted), (
+                f"at {d} m the repair ran but the emitted action still violates")
 
 
 def test_a_lost_subject_must_clear_the_stale_position():
@@ -321,5 +345,14 @@ if __name__ == "__main__":
         except AssertionError as e:
             failed += 1
             print(f"FAIL  {fn.__name__}  {e}")
+        except Exception as e:                       # noqa: BLE001
+            # Any crash is a fail, not the end of the run. Without this arm
+            # an ImportError or a numpy error in one test propagates out of
+            # the loop, every remaining test is silently skipped, and the
+            # summary line never prints - so the file looks like it ran
+            # clean when most of it never executed. pytest runs them all, so
+            # the two invocation modes disagreed about coverage.
+            failed += 1
+            print(f"ERROR {fn.__name__}  {type(e).__name__}: {e}")
     print(f"\n{len(fns) - failed}/{len(fns)} passed")
     sys.exit(1 if failed else 0)

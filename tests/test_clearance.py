@@ -406,5 +406,14 @@ if __name__ == "__main__":
         except AssertionError as e:
             failed += 1
             print(f"FAIL  {fn.__name__}  {e}")
+        except Exception as e:                       # noqa: BLE001
+            # Any crash is a fail, not the end of the run. Without this arm
+            # an ImportError or a numpy error in one test propagates out of
+            # the loop, every remaining test is silently skipped, and the
+            # summary line never prints - so the file looks like it ran
+            # clean when most of it never executed. pytest runs them all, so
+            # the two invocation modes disagreed about coverage.
+            failed += 1
+            print(f"ERROR {fn.__name__}  {type(e).__name__}: {e}")
     print(f"\n{len(fns) - failed}/{len(fns)} passed")
     sys.exit(1 if failed else 0)

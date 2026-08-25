@@ -217,10 +217,30 @@ class ShieldDecision(BaseModel):
     violations: list[Violation] = []
     repairs: list[Repair] = []
     braked: bool = False
+    # What is STILL wrong with the action that was actually flown.
+    #
+    # `violations` is the check on `raw`, so on its own it cannot answer the
+    # grant's hard KPI - "a P0 that was seen and then flown anyway". The escape
+    # rate was inferred instead, from whether the Shield had done *something*
+    # (see guardrail/kpi.py), and since every branch that produces a violation
+    # also appends a Repair, that inference could not return a non-zero number
+    # for any log this Shield can generate.
+    #
+    # Recording the re-check makes the KPI a measured fact rather than an
+    # inference, and makes it auditable offline from the artefact alone. Empty
+    # is the good case and the overwhelmingly common one: re-checked against
+    # every delivered flight, the emitted action violated a P0 rule on zero
+    # ticks.
+    emitted_violations: list[Violation] = []
 
     @property
     def touched(self) -> bool:
         return bool(self.violations)
+
+    @property
+    def escaped(self) -> bool:
+        """A P0 rule was violated by the action that was flown."""
+        return bool(self.emitted_violations)
 
 
 class Shield:
@@ -855,6 +875,8 @@ class Shield:
                 predicted_at_s=0.0)]
 
         if not violations:
+            # Nothing was wrong with it, so the re-check is empty by
+            # construction and does not need running again.
             return ShieldDecision(raw=raw, emitted=raw)   # untouched passthrough
 
         repairs: list[Repair] = []
@@ -899,7 +921,8 @@ class Shield:
             elif not self._check(state, BRAKE):
                 repairs.append(Repair(operator="Brake", detail="repair not converged -> stop"))
                 return ShieldDecision(raw=raw, emitted=BRAKE, violations=violations,
-                                      repairs=_dedupe(repairs), braked=True)
+                                      repairs=_dedupe(repairs), braked=True,
+                                      emitted_violations=self._check(state, BRAKE))
             elif best is not None:
                 repairs.append(Repair(
                     operator="ClearanceEscape",
@@ -908,7 +931,13 @@ class Shield:
             else:
                 repairs.append(Repair(operator="Brake", detail="repair not converged -> stop"))
                 return ShieldDecision(raw=raw, emitted=BRAKE, violations=violations,
-                                      repairs=_dedupe(repairs), braked=True)
+                                      repairs=_dedupe(repairs), braked=True,
+                                      emitted_violations=self._check(state, BRAKE))
 
+        # One more _check, on the action that is actually leaving the building.
+        # In the common case `fixed` already re-checked clean inside the loop
+        # above and this is a repeat; in the `best is not None` branch it is the
+        # only check that has ever been run against what gets flown.
         return ShieldDecision(raw=raw, emitted=fixed, violations=violations,
-                              repairs=_dedupe(repairs))
+                              repairs=_dedupe(repairs),
+                              emitted_violations=self._check(state, fixed))

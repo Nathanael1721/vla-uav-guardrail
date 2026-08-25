@@ -66,10 +66,26 @@ def test_a_few_background_pixels_do_not_move_the_answer():
 
 
 def test_non_finite_and_zero_depths_are_rejected():
+    """Invalid samples must be dropped, and the OBJECT still read.
+
+    `r is None or math.isfinite(r)` only rejected NaN and infinity, so it also
+    accepted the background. Regress the sampling window back to the whole box
+    and this fixture returns ~300 - the sky - which is finite, and the test
+    passed while the servo flew on it. The value is what matters, so assert the
+    value; the sibling tests above already do.
+
+    Both invalid kinds are covered: NaN over part of the object, and 0.0, which
+    the name always promised and the fixture never actually contained.
+    """
     d = _depth(bg=300.0, box=(180, 97, 220, 127), val=25.0)
     d[105:115, 190:210] = np.nan
     r = range_from_depth(d, _det(200.0))
-    assert r is None or math.isfinite(r), r
+    assert r is not None and abs(r - 25.0) < 0.5, r
+
+    z = _depth(bg=300.0, box=(180, 97, 220, 127), val=25.0)
+    z[105:115, 190:210] = 0.0
+    rz = range_from_depth(z, _det(200.0))
+    assert rz is not None and abs(rz - 25.0) < 0.5, rz
 
 
 def test_an_all_invalid_window_returns_none_rather_than_a_number():
@@ -86,9 +102,14 @@ def test_no_depth_or_no_detection_is_not_an_error():
 
 
 def test_a_box_off_the_edge_of_the_frame_is_handled():
+    """Clipped at the frame edge, it must still read the OBJECT.
+
+    `r is None or r > 0` accepted the 300 m background as readily as the 18 m
+    object, so this proved only that the call did not crash.
+    """
     d = _depth(bg=300.0, box=(0, 97, 20, 127), val=18.0)
     r = range_from_depth(d, _det(2.0, 112.0, 40.0, 30.0))
-    assert r is None or r > 0
+    assert r is not None and abs(r - 18.0) < 0.5, r
 
 
 def test_range_is_independent_of_apparent_width():

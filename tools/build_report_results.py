@@ -159,9 +159,13 @@ def build() -> str:
                 "starves the GPU specifically, and the invariance to capture resolution "
                 "meant only that the binding consumer is something else.", ""]
 
-        L = B.get("levers_tested_after_the_breakdown", {})
-        if L:
-            rec = L.get("recording_rate", {})
+        # Not `L`: that name holds the per-tag loop rates built at the top
+        # of this function and read by row(). Rebinding it worked only
+        # because every row() call happens above this line, and would
+        # break silently the moment one was added below.
+        levers = B.get("levers_tested_after_the_breakdown", {})
+        if levers:
+            rec = levers.get("recording_rate", {})
             out += ["Three candidate remedies followed. Lowering Unreal's scalability "
                     "settings had no effect at all, and half precision bought 1.19x, "
                     "which does not justify the accuracy risk. The recording is the "
@@ -239,7 +243,13 @@ def build() -> str:
                               ("shield_on", "Guardrail enabled"),
                               ("shield_on_dynamic", "Guardrail enabled, dynamic zone")):
             d = ROOT / "demo" / "out" / f"{prefix}_{suffix}"
-            if (d / "kpi.json").is_file() and (d / "manifest.json").is_file():
+            # All THREE, because all three are read below. Guarding two of
+            # them and reading a third turns a run interrupted between
+            # writing kpi.json and metrics.json into a FileNotFoundError
+            # that takes out the whole of section 6 - including 6.1-6.4,
+            # which have nothing to do with this rail.
+            if all((d / f).is_file()
+                   for f in ("kpi.json", "metrics.json", "manifest.json")):
                 rows_.append((label,
                               json.loads((d / "kpi.json").read_text(encoding="utf-8")),
                               json.loads((d / "metrics.json").read_text(encoding="utf-8")),
@@ -344,7 +354,13 @@ def main() -> int:
         print("could not locate section 6 between '## 6. Results' and '## 7.'")
         return 1
 
-    REPORT.write_text(pat.sub(new + "\n---\n\n", text), encoding="utf-8")
+    # A LAMBDA, not a replacement string. re.sub interprets backslashes in
+    # the replacement, and `new` carries values straight out of
+    # manifest.json plus free text out of docs/data/*.json. One Windows
+    # path in any of them raises "re.error: bad escape" and the report
+    # silently fails to rebuild.
+    REPORT.write_text(pat.sub(lambda _m: new + "\n---\n\n", text),
+                      encoding="utf-8")
     print(f"section 6 regenerated in {REPORT.name}")
     for t in TAGS:
         m, l = metrics(t), loop(t)

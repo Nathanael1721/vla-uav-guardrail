@@ -66,26 +66,93 @@ def accessor_bounds(js: dict, idx: int) -> tuple[list, list] | None:
     return None
 
 
+def _node_matrices(js: dict) -> dict:
+    """World matrix per node index, walking down each scene root.
+
+    Accessor min/max are in the primitive's OWN space. A root or armature node
+    carrying a scale - 0.01 is the usual one, for a model authored in
+    centimetres - is not in those numbers. Reporting them raw is precisely the
+    mistake this tool exists to catch: it would print "tallest axis 175.00" for
+    a file that spawns correctly at 1.75 m, or call a 17 m pedestrian fine.
+
+    Deliberately the same walk `tools/bake_glb_poses.py::global_matrices` does,
+    so the two tools cannot disagree about the size of the same file.
+    """
+    nodes = js.get("nodes", [])
+    parent = {}
+    for i, n in enumerate(nodes):
+        for c in n.get("children", []):
+            parent[c] = i
+
+    def local(n: dict):
+        if "matrix" in n:
+            m = [n["matrix"][r::4] for r in range(4)]        # column- -> row-major
+            return [list(row) for row in m]
+        t = n.get("translation", [0.0, 0.0, 0.0])
+        r = n.get("rotation", [0.0, 0.0, 0.0, 1.0])          # x, y, z, w
+        s = n.get("scale", [1.0, 1.0, 1.0])
+        x, y, z, w = r
+        rot = [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+        m = [[rot[i][j] * s[j] for j in range(3)] + [t[i]] for i in range(3)]
+        return m + [[0.0, 0.0, 0.0, 1.0]]
+
+    def mul(a, b):
+        return [[sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)]
+                for i in range(4)]
+
+    cache: dict = {}
+
+    def world(i: int):
+        if i in cache:
+            return cache[i]
+        m = local(nodes[i])
+        p = parent.get(i)
+        cache[i] = m if p is None else mul(world(p), m)
+        return cache[i]
+
+    return {i: world(i) for i in range(len(nodes))}
+
+
 def describe(path: Path) -> dict:
     js, _bin = read_glb(path)
 
     skins = js.get("skins", [])
     anims = js.get("animations", [])
 
+    mats = _node_matrices(js)
+    # Which node draws which mesh. A mesh drawn by no node contributes nothing
+    # to what gets spawned, so it contributes nothing to the bounding box.
+    drawn = [(n["mesh"], i) for i, n in enumerate(js.get("nodes", [])) if "mesh" in n]
+
     lo = [float("inf")] * 3
     hi = [float("-inf")] * 3
     n_verts = 0
-    for mesh in js.get("meshes", []):
-        for prim in mesh.get("primitives", []):
+    no_bounds = 0
+    for mesh_idx, node_idx in drawn:
+        m = mats[node_idx]
+        for prim in js["meshes"][mesh_idx].get("primitives", []):
             pidx = prim.get("attributes", {}).get("POSITION")
             if pidx is None:
                 continue
             n_verts += js["accessors"][pidx].get("count", 0)
             b = accessor_bounds(js, pidx)
-            if b:
-                for k in range(3):
-                    lo[k] = min(lo[k], b[0][k])
-                    hi[k] = max(hi[k], b[1][k])
+            if not b:
+                no_bounds += 1
+                continue
+            # Transform all eight corners: a rotation turns the box, so mapping
+            # only min and max would understate it.
+            for cx in (b[0][0], b[1][0]):
+                for cy in (b[0][1], b[1][1]):
+                    for cz in (b[0][2], b[1][2]):
+                        for k in range(3):
+                            v = (m[k][0] * cx + m[k][1] * cy
+                                 + m[k][2] * cz + m[k][3])
+                            lo[k] = min(lo[k], v)
+                            hi[k] = max(hi[k], v)
 
     size = [round(hi[k] - lo[k], 3) if hi[k] > lo[k] else None for k in range(3)]
 
@@ -99,6 +166,7 @@ def describe(path: Path) -> dict:
         "animations": [a.get("name", f"anim{i}") for i, a in enumerate(anims)],
         "rigged": bool(skins),
         "bbox_size": size,
+        "prims_without_bounds": no_bounds,
         "up_axis_guess": ("Y" if size[1] and size[1] == max(x for x in size if x)
                           else "Z" if size[2] and size[2] == max(x for x in size if x)
                           else "?"),
@@ -126,6 +194,9 @@ def main() -> int:
         print(f"{d['file']:<16} {d['bytes']:>8,} B  verts {d['vertices']:>6}  "
               f"nodes {d['nodes']:>3}  skins {d['skins']}  "
               f"bbox {d['bbox_size']}  tallest axis {tall:.2f}")
+        if d["prims_without_bounds"]:
+            print(f"{'':16} NOTE {d['prims_without_bounds']} primitive(s) declare no "
+                  f"POSITION min/max; the box above is only what could be measured")
         if d["animations"]:
             print(f"{'':16} animations: {', '.join(d['animations'][:8])}")
 

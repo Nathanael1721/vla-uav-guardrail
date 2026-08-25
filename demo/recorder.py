@@ -77,6 +77,10 @@ class FrameRecorder(threading.Thread):
         self.n_cleared = 0       # stale frames removed from a previous flight
         self.t0: Optional[float] = None
         self.t_stop: Optional[float] = None
+        # When the FIRST frame was written, which is not when the recorder
+        # started. See summary() - the gap between the two is the whole reason
+        # every delivered video played a third too slow.
+        self.t_first_write: Optional[float] = None
 
     # ---------------------------------------------------------- from the loop --
 
@@ -187,6 +191,8 @@ class FrameRecorder(threading.Thread):
                 # cameras returned None, so the index advanced without a file
                 # behind it and the count disagreed with the directory.
                 if wrote:
+                    if self.t_first_write is None:
+                        self.t_first_write = now
                     self.n_written += 1
                 else:
                     self.n_empty += 1
@@ -195,15 +201,39 @@ class FrameRecorder(threading.Thread):
                 self.n_failed += 1
 
     def summary(self) -> dict:
+        """What was captured, and how fast it was ACTUALLY captured.
+
+        The rate is measured over the window in which frames were being
+        written, not over the recorder's whole life. Those are different
+        windows, and using the wrong one is not a rounding error.
+
+        The recorder is started at scene setup but writes nothing until the
+        control loop first calls `set_hud()`, which is after arming and the
+        climb to cruise - about 27 s later on these missions. `_hud` is never
+        cleared once set, so every skipped slot is in that opening stretch and
+        the writing window is one contiguous block at the end.
+
+        Dividing by the whole life therefore counted ~27 s of deliberate
+        silence as recording time. Measured across the eleven runs on disk, it
+        reported 14.6-16.7 Hz for a recorder that was hitting 20.00 Hz exactly,
+        every time. tools/make_demo_video.py takes its fps from this number, so
+        every video delivered up to 2026-08-25 plays about 1.3x slower than
+        real time while the tool prints that the duration is correct.
+
+        `skipped_no_hud` is still reported. It was never wrong - it was only
+        the wrong thing to leave in the denominator.
+        """
         end = self.t_stop or time.time()
         secs = (end - self.t0) if self.t0 else 0.0
+        writing = (end - self.t_first_write) if self.t_first_write else 0.0
         target = round(1.0 / self.period, 1)
-        achieved = round(self.n_written / secs, 2) if secs > 1 else None
+        achieved = round(self.n_written / writing, 2) if writing > 1 else None
         s = {
             "frames": self.n_written,
             "target_hz": target,
             "achieved_hz": achieved,
             "seconds": round(secs, 2),
+            "writing_seconds": round(writing, 2),
             "late_slots": self.n_late,
             "skipped_no_hud": self.n_skipped,
             "empty_captures": self.n_empty,
@@ -211,16 +241,21 @@ class FrameRecorder(threading.Thread):
             "stale_frames_cleared": self.n_cleared,
         }
         # State the shortfall rather than leaving it to be inferred from two
-        # numbers a reader has to divide. The recorder held 15.1 Hz against a
-        # 20 Hz target for the whole midterm campaign and nothing said so.
+        # numbers a reader has to divide.
+        #
+        # This warning fired on every run of the midterm campaign and was a
+        # false alarm every time: it was reading a rate computed over the wrong
+        # window. A warning that is always on teaches its reader to ignore it,
+        # which is worse than not having one - so the number it judges is now
+        # the real capture rate.
         if achieved and target:
             s["rate_ratio"] = round(achieved / target, 3)
             if achieved < target * 0.9:
                 s["WARNING"] = (f"recorded at {achieved} Hz against a {target} Hz "
-                                f"target ({100 * achieved / target:.0f} %); the video "
-                                f"is correct in duration because fps is taken from "
-                                f"achieved_hz, but it is smoother than this only if "
-                                f"the target is met")
+                                f"target ({100 * achieved / target:.0f} %) over "
+                                f"{writing:.1f} s of writing; the video's duration is "
+                                f"right because fps is taken from achieved_hz, but "
+                                f"it is choppier than the target asked for")
         return s
 
     def write_sidecar(self, path) -> dict:

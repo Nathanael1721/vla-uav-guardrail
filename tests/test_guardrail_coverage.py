@@ -411,8 +411,30 @@ def test_gap_fence_leaves_a_flyable_gap_BEFORE_flying_it():
         f"no legal x in 26..50 at y={y_mid}, alt={mid_alt} -- the gap does not "
         "exist and the flight would fail for policy reasons, not safety ones"
     )
-    width = max(legal) - min(legal)
-    assert width >= 5.0, f"gap only {width} m wide (legal x: {legal})"
+    # The LONGEST CONTIGUOUS run, not the span.
+    #
+    # `max(legal) - min(legal)` measures the span of a set that need not be
+    # contiguous. It is contiguous today (fence x 26..42, legal x 43..50), so
+    # the old form happened to give the right answer. Move the fence into the
+    # middle of the corridor - x 30..40, which this file's own
+    # `test_full_fence_policy_really_blocks_the_whole_corridor` records as an
+    # earlier configuration - and legal becomes [26..29] + [41..50]: a span of
+    # 24 that passes a ">= 5 m" check while the western gap is 4 m wide and the
+    # eastern one is on the far side of the zone. Two slivers on opposite sides
+    # of a fence are not a gap an aircraft can fly through.
+    runs, run = [], [legal[0]]
+    for x in legal[1:]:
+        if x == run[-1] + 1:
+            run.append(x)
+        else:
+            runs.append(run)
+            run = [x]
+    runs.append(run)
+    best = max(runs, key=len)
+    width = best[-1] - best[0]
+    assert width >= 5.0, (
+        f"widest contiguous gap only {width} m (x {best[0]}..{best[-1]}); "
+        f"all legal x: {legal}")
     # And the blocked side must still be blocked, or the fence does nothing.
     x_in = 0.5 * (min(v.x for v in fence.vertices) + max(v.x for v in fence.vertices))
     assert s._check(State(x=x_in, y=y_mid, up=mid_alt), Action4D()), (

@@ -381,6 +381,112 @@ def test_without_an_obstacle_map_the_old_behaviour_is_exact():
     assert g.slide(CANOPY_LINE_X, 18.0, *NORTH_FAST) == (0.0, 0.0, float("inf"))
 
 
+
+
+
+# ---------------------------------------------------------------------------
+# Grid indexing: round, not truncate.
+#
+# demo/city_planner.py:7-9 documents the convention and demo/build_voxel_map.py
+# uses it when it writes these grids: cell `i` is CENTRED at `origin + i*res`,
+# so a world point belongs to cell `round((v - origin) / res)`. The street mask
+# is a cell-wise AND of those grids and inherits their origin unchanged.
+#
+# Three point lookups truncated instead, reading the mask shifted by up to half
+# a cell - 1.0 m at this map's 2.0 m resolution. Measured over 40 000 random
+# points, truncation and rounding disagreed about whether a point was on a road
+# 9.4 % of the time. It became load-bearing when slide() started running on
+# unfenced policies, i.e. on every tracking flight.
+# ---------------------------------------------------------------------------
+
+def test_a_point_belongs_to_the_cell_it_is_nearest_to():
+    """1.4 m past a cell centre is inside the NEXT cell, not the one behind."""
+    mask = _street_mask()
+    if mask is None:
+        return
+    from build_street_mask import is_street
+    res, ox, oy = mask["res"], mask["ox"], mask["oy"]
+    st = mask["street"]
+
+    # Find a boundary where the two neighbouring cells actually differ, so the
+    # convention is observable rather than accidentally agreeing.
+    found = None
+    for i in range(1, st.shape[0] - 1):
+        for j in range(1, st.shape[1] - 1):
+            if bool(st[i, j]) != bool(st[i + 1, j]):
+                found = (i, j)
+                break
+        if found:
+            break
+    assert found, "no boundary in the mask to test the convention against"
+
+    i, j = found
+    y = oy + j * res
+    # 0.4 of a cell past centre i -> still cell i; 0.6 past -> cell i+1.
+    near_i = ox + (i + 0.4) * res
+    near_next = ox + (i + 0.6) * res
+    assert is_street(mask, near_i, y) == bool(st[i, j]), (
+        "a point 0.4 cells past a centre must still resolve to that cell")
+    assert is_street(mask, near_next, y) == bool(st[i + 1, j]), (
+        "a point 0.6 cells past a centre must resolve to the NEXT cell; "
+        "truncation would keep it in the previous one")
+
+
+def test_the_guard_and_is_street_agree_about_every_probe_point():
+    """FenceGuard has its own street lookup. If the two disagree, slide() can
+    offer a detour the road test then rejects - or worse, accept one it should
+    have rejected."""
+    mask = _street_mask()
+    if mask is None:
+        return
+    from build_street_mask import is_street
+    g = _demo_guard()
+    if g.street is None:
+        return
+    res, ox, oy = mask["res"], mask["ox"], mask["oy"]
+    st = mask["street"]
+
+    def guard_says(px, py):
+        i = int(round((px - g.street["ox"]) / res))
+        j = int(round((py - g.street["oy"]) / res))
+        if not (0 <= i < st.shape[0] and 0 <= j < st.shape[1]):
+            return False
+        return bool(g.street["street"][i, j])
+
+    disagree = []
+    for a in range(-40, 41, 3):
+        for b in range(-40, 41, 3):
+            x, y = a + 0.9, b + 0.9        # deliberately off-centre
+            if guard_says(x, y) != is_street(mask, x, y):
+                disagree.append((x, y))
+    assert not disagree, f"guard and is_street disagree at {disagree[:5]}"
+
+
+def test_pedestrians_are_placed_on_the_street_they_were_chosen_for():
+    """pavement_spots validated a CELL and then returned a point 1 m away from
+    it, because it computed the centre as `ox + (i+0.5)*res`. Every other
+    world-from-grid conversion in the repository uses `ox + i*res`. Checked
+    against a correctly indexed lookup, 5 of the 12 figures in the `city_people`
+    flight were not standing on street at all."""
+    mask = _street_mask()
+    if mask is None:
+        return
+    import random
+    import numpy as np
+    from build_street_mask import is_street
+    bld_p = ROOT / "demo" / "out" / "citymap" / "occ_day_highband_15to55.npz"
+    if not bld_p.is_file():
+        return
+    import pedestrians as P
+    import moving_car
+    bld = np.load(bld_p)["occ"]
+    route = [(x, y) for x, y in moving_car.ROUTES["turn"]]
+    spots = P.pavement_spots(mask, bld, 12, random.Random(20260825), avoid=route)
+    assert spots, "no pavement spots found at all"
+    off = [(x, y) for x, y in spots if not is_street(mask, x, y)]
+    assert not off, f"{len(off)} of {len(spots)} figures are not on street: {off}"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
