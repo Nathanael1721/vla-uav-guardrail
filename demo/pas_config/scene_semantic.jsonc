@@ -13,6 +13,30 @@
       "robot-config": "robot_semantic_quad.jsonc"
     }
   ],
+  // The subject vehicle, moved by a trajectory the simulator interpolates
+  // rather than by one teleport per control tick. See env_actor_car.jsonc for
+  // why, and docs/FINDING-scene-motion-belongs-to-the-simulator.md for the
+  // measurements. The origin is a parking spot off the demo route; the real
+  // route is uploaded at flight start.
+  //
+  // The origin is ZERO deliberately. An imported trajectory carries absolute
+  // NED positions, and the actor's origin is applied on top of them, so a
+  // non-zero origin here shifts the whole route by that much. With the origin
+  // at the route's own start (38, -8) the car drove a path offset by exactly
+  // that, and the aircraft - which follows what the camera sees while the
+  // metrics measure against the intended path - reported a mean separation of
+  // 69 m and a hit rate of 0.226.
+  "environment-actors": [
+    {
+      "type": "env_actor",
+      "name": "SemCarActor",
+      "origin": {
+        "xyz": "0.0 0.0 0.0",
+        "rpy-deg": "0 0 0"
+      },
+      "env-actor-config": "env_actor_car.jsonc"
+    }
+  ],
   "clock": {
     "type": "steppable",
     "step-ns": 3000000,

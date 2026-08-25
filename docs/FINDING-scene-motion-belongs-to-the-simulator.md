@@ -1,8 +1,9 @@
 # Scene motion belongs to the simulator, not to a client thread
 
 **Date:** 2026-08-25
-**Status:** cause established, first approach tried and **abandoned on evidence**,
-correct mechanism identified and not yet built.
+**Status:** cause established; a threaded fix tried and **abandoned on
+evidence**; the simulator-side mechanism **built and proven working**, but held
+back as opt-in for one concrete reason given at the end.
 
 ## The complaint
 
@@ -121,10 +122,59 @@ need:
 The same choice applies to vehicles, except vehicles need no articulation at all
 — a trajectory alone fixes them, with the existing packaged or glTF mesh.
 
-## Recommended order
+## Built and proven
 
-1. Move the **car** to an env actor with an imported trajectory. No new assets,
-   no articulation, and it settles the complaint that was actually raised.
-   Measure the duplicate-frame fraction: it is 44 % now and should approach 0.
-2. Then decide the pedestrian's appearance, having seen whether a primitive
-   figure is detected as a person.
+`demo/pas_config/env_actor_car.jsonc` declares the vehicle as an environment
+actor, `demo/car_trajectory.py` samples the existing `MovingCar` motion model
+into a trajectory, and `follow_vlm.py --car-mode envactor` uploads it once and
+lets the simulator play it. Sampled at 20 Hz the route is a point every 12.5 cm,
+against the 54 cm teleport steps it replaces.
+
+Two failures on the way, both worth keeping:
+
+**Playback starts when the trajectory is bound, not when the mission does.**
+Binding it during scene setup had the car driving through arming and the climb
+to cruise, so by the time the camera was looking it had gone. `set_trajectory`
+now runs where the mission clock starts.
+
+**Yaw needs unwrapping before upload.** `pose_at` wraps heading to (-pi, pi],
+and interpolating from +179 to -179 spins the car 358 degrees the wrong way in
+one sample interval. The demo route turns through 90 degrees and crosses that
+boundary.
+
+## Why it is opt-in rather than the default
+
+Env-actor links take a packaged `unreal_mesh` by asset path. They cannot take a
+glTF, because `spawn_object_from_file` has no equivalent here — and the demo's
+subject is `taxi.glb`, chosen because it measured the strongest colour gate of
+the fleet at 0.317.
+
+The only packaged car available is `/Rover/OffroadCar/SM_Offroad_Body`, and the
+only material this build will bind renders **white**. Against the demo's
+standing query, "a yellow car", the colour gate rejects it:
+
+| query | detector hit rate | target held |
+|---|---|---|
+| `a yellow car` | **0.232** | 50 % |
+| `a white car` | **0.958** | 99 % |
+
+Same actor, same trajectory, same flight. Nothing was wrong with the mechanism —
+the car was the wrong colour for the question being asked. That measurement is
+also the proof that the trajectory itself works.
+
+So `--car-mode spawn` stays the default, keeping the yellow taxi and every
+recorded number with it, and `--car-mode envactor --object "a white car"` is the
+smooth-motion path. Making it the default needs a yellow car mesh imported into
+PASBlocks, which is Unreal editor work.
+
+## Still to do
+
+- Import a coloured car mesh, then make the env actor the default and re-measure
+  the duplicate-frame fraction, which is the number the whole exercise is about.
+- The pedestrian. Env actors are articulated — `set_link_rotation_angles` over
+  named links — so a figure with thigh, shin and arm links gives a real gait
+  driven by the simulator. It needs either limb meshes imported, or links built
+  from `box` primitives, which our own robot config shows is supported. A box
+  figure needs no assets but has to be checked against the detector rather than
+  assumed: a pedestrian OWL-ViT does not read as a person fails the mission the
+  pedestrian exists for.

@@ -67,6 +67,7 @@ from shapely.geometry import Point                                  # noqa: E402
 import city_planner                                                 # noqa: E402
 import city_traffic
 from recorder import FrameRecorder
+import car_trajectory
 from target_state import TargetState, want_range_from_width
 import moving_car                                                   # noqa: E402
 from aerialvla_demo import RateLimiter                              # noqa: E402
@@ -75,6 +76,9 @@ from semantic_demo import SemanticObs, quat_yaw                     # noqa: E402
 TICK = 0.1
 SIM_CONFIG_DIR = str(ROOT / "demo" / "pas_config")
 SCENE = "scene_semantic.jsonc"
+# Declared in that scene file. The simulator drives this actor along an uploaded
+# trajectory; see demo/env_actor_car.jsonc and demo/car_trajectory.py.
+ENV_CAR_NAME = "SemCarActor"
 DETECTOR_ID = "google/owlvit-base-patch32"
 
 
@@ -1161,7 +1165,7 @@ def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
 
 
 async def fly(args) -> int:
-    from projectairsim import Drone, ProjectAirSimClient, World
+    from projectairsim import Drone, EnvActor, ProjectAirSimClient, World
 
     # Resolve the subject's real width from what was actually named, unless the
     # command line said otherwise. Printed either way: a width the flight chose
@@ -1237,6 +1241,7 @@ async def fly(args) -> int:
     rows, traj, n_touched = [], [], 0
     car = None
     traffic = None
+    env_car = None
     n_absent = 0
     # Initialised at function scope, not inside the `async with`. When the sim
     # fails to connect the block raises before its own initialisers run, and the
@@ -1381,7 +1386,33 @@ async def fly(args) -> int:
                     if route_name:
                         print(f"[car] route '{route_name}': "
                               f"{car.path.total:.0f} m, {car.lap_time:.0f} s to drive")
-                car.spawn()
+
+                # Prefer the environment actor: the simulator interpolates the
+                # whole route at render rate, instead of the client teleporting
+                # once per control tick. Teleporting sampled a continuous motion
+                # model at 8.69 Hz in 54 cm steps against a 15.57 Hz capture, so
+                # 44 % of frames during motion repeated a position - the whole of
+                # the "choppy" complaint.
+                #
+                # Falls back to spawning if the actor is not in the scene, so a
+                # scene config without it still flies.
+                if args.car_mode != "spawn":
+                    try:
+                        env_car = EnvActor(client, world, ENV_CAR_NAME)
+                        info = car_trajectory.upload(world, car,
+                                                     seconds=args.max_s + 5.0)
+                        car.actual_name = None      # nothing to teleport or destroy
+                        print(f"[car] driven by the simulator: {info['samples']} "
+                              f"samples over {info['seconds']:.0f}s at "
+                              f"{info['sample_hz']:.0f} Hz, one upload")
+                    except Exception as exc:
+                        env_car = None
+                        print(f"[car] env actor {ENV_CAR_NAME!r} unavailable "
+                              f"({type(exc).__name__}: {exc}); falling back to "
+                              f"per-tick teleport, which will look choppier")
+                        car.spawn()
+                else:
+                    car.spawn()
 
             # DOES THE QUESTION MATCH THE SUBJECT?
             #
@@ -1473,6 +1504,14 @@ async def fly(args) -> int:
         print(f"[flight] cruise {args.cruise_alt:.0f} m — following {args.object!r}")
 
         limiter = RateLimiter(args.dv_h, args.dv_z)
+
+        # Start the car with the MISSION clock, not at scene setup. The
+        # trajectory plays from the instant it is bound, so binding it earlier
+        # had the car driving through arming and the climb to cruise.
+        if env_car is not None:
+            car_trajectory.start(env_car)
+            print("[car] trajectory playback started with the mission clock")
+
         t0, last_seen = time.time(), 0.0
         last_bearing, brg_rate, last_cmd, mode = 0.0, 0.0, (0.0, 0.0), "hold"
         # The presence verdict is computed further down the tick, so the search
@@ -1519,8 +1558,16 @@ async def fly(args) -> int:
             obs.put_pose(p["x"], p["y"], yaw)
             if traffic is not None:
                 traffic.update(time.time() - t0, tick)
-            elif car is not None and tick % 2 == 0:
+            elif car is not None and env_car is None and tick % 2 == 0:
+                # Only when the client owns the motion. With an env actor the
+                # simulator is already interpolating the uploaded trajectory,
+                # and teleporting on top of it would fight the playback.
                 car.update(time.time() - t0)
+            elif car is not None:
+                # Keep ground truth current for scoring without an RPC: pose_at
+                # is a pure function of time and describes exactly the path that
+                # was uploaded, so the metrics and the simulator agree.
+                car.pos = car.pose_at(time.time() - t0)[:2]
 
             g = grounder.latest()
             # age against the last DETECTION, not the last inference
@@ -2096,6 +2143,17 @@ def main() -> int:
     ap.add_argument("--lock-gate", type=float, default=0.28,
                     help="max accepted jump from the predicted position, as a "
                          "fraction of image width")
+    ap.add_argument("--car-mode", choices=["spawn", "envactor"], default="spawn",
+                    help="how the subject vehicle moves. 'spawn' (default) is "
+                         "the client-side teleport, one per control tick; it can "
+                         "carry the yellow taxi glTF, which every measured "
+                         "flight uses. 'envactor' uploads the whole route once "
+                         "and the SIMULATOR interpolates it at render rate - "
+                         "much smoother and no per-frame RPC - but env-actor "
+                         "links take a packaged unreal_mesh, not a glTF, and the "
+                         "only packaged car renders WHITE. Use it with "
+                         "--object 'a white car': with a yellow query the colour "
+                         "gate rejects it and the hit rate falls to 0.23.")
     ap.add_argument("--traffic", type=int, default=0,
                     help="number of BACKGROUND vehicles besides the target. "
                          "They are the same mesh and unpainted, so the noun "
