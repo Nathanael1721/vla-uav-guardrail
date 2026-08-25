@@ -243,16 +243,16 @@ All figures are read from `demo/out/<tag>/metrics.json` and `demo/out/<tag>/flig
 
 | Measure | Tracking | Distractors | No-fly zone |
 |---|---|---|---|
-| Detector hit rate | 1.000 | 1.000 | 0.698 |
-| Ticks with the target held | 100.0 % | 100.0 % | 86.6 % |
-| Detector rate | 3.48 Hz | 3.67 Hz | 4.89 Hz |
-| Control loop rate | 8.80 Hz | 8.15 Hz | 7.67 Hz |
-| Mean separation | 16.1 m | 18.0 m | 40.4 m |
-| Minimum separation | 9.3 m | 9.3 m | 12.4 m |
-| Time within 30 m | 100.0 % | 92.1 % | 34.9 % |
-| Flight duration | 69.9 s | 70.0 s | 69.9 s |
+| Detector hit rate | 1.000 | 1.000 | 0.662 |
+| Ticks with the target held | 100.0 % | 100.0 % | 92.5 % |
+| Detector rate | 4.07 Hz | 4.56 Hz | 4.80 Hz |
+| Control loop rate | 8.78 Hz | 8.07 Hz | 7.83 Hz |
+| Mean separation | 17.4 m | 19.0 m | 40.5 m |
+| Minimum separation | 11.1 m | 11.0 m | 12.4 m |
+| Time within 30 m | 100.0 % | 92.2 % | 35.9 % |
+| Flight duration | 69.9 s | 69.9 s | 70.0 s |
 
-The two tracking scenarios held the target on every control tick. The no-fly-zone scenario holds a larger separation by design: the fence spans the corridor, the target drives through it, and the aircraft is required not to follow. It was held at the boundary for 461 ticks.
+The two tracking scenarios held the target on every control tick. The no-fly-zone scenario holds a larger separation by design: the fence spans the corridor, the target drives through it, and the aircraft is required not to follow. It was held at the boundary for 405 ticks.
 
 With three additional vehicles of different colours on the same street, target jumping fell from 14.0 % of detections to 0.4 %.
 
@@ -263,11 +263,11 @@ With three additional vehicles of different colours on the same street, target j
 | P0 violation escape rate | 0.000 | 0.000 | 0.000 | 0 |
 | Time inside the no-fly zone | 0.0 s | 0.0 s | 0.0 s | 0.0 s |
 | Altitude envelope escape | 0.0 s | 0.0 s | 0.0 s | 0.0 s |
-| Shield interventions | 0 | 0 | 0 | not bounded |
+| Shield interventions | 54 | 49 | 45 | not bounded |
 
 The acceptance criterion is met on every flight. An escape is counted only when the Shield neither repaired nor braked and the emitted action still violated a P0 rule; scoring the raw action would credit the system for its own inputs.
 
-In Tracking, Distractors, No-fly zone the count is zero. That means the guidance layer never proposed a violating action, not that the Shield was inactive: it evaluated every tick against every active constraint.
+The intervention counts distinguish the two situations. In Tracking (54), Distractors (49), No-fly zone (45) the guidance layer proposed actions that would have violated an active rule, and the Shield corrected them; time inside the zone remained 0.0 s, which is the property being claimed. Repair is the normal outcome, not an error condition.
 
 ### 6.3 Recording resolution against detector throughput
 
@@ -301,9 +301,9 @@ Three candidate remedies followed. Lowering Unreal's scalability settings had no
 
 Detector hit rate and ticks-held were 1.000 in all three, so this costs nothing in tracking quality. The recorder pulls camera frames over RPC at the record rate, forcing the simulator to render and serialise extra captures — which is why the **forward pass** moves with it, and why capture resolution never did.
 
-**Neither configuration met the threshold, and the threshold is not relaxed to fit the data.** det_hit_rate 1.000 and frac_ticks_seen 1.000 on both tracking scenarios in every configuration. The threshold exists to protect tracking quality, and tracking quality was never degraded.
+**The threshold is met on every scenario reported here** — Tracking 4.07 Hz, Distractors 4.56 Hz, No-fly zone 4.80 Hz, against a 4.0 Hz gate fixed before the runs, and with the recorder attached rather than removed for the measurement. det_hit_rate 1.000 and frac_ticks_seen 1.000 on both tracking scenarios in every configuration. The threshold exists to protect tracking quality, and tracking quality was never degraded.
 
-The threshold is, however, now reachable: 4.10 Hz was measured with recording off. Recording is itself a deliverable, so the resolution is to stop doing both in one pass — measurement runs without recording, demonstration runs with it and labelled as demonstrations. An instrument that perturbs the measurement should not be attached during it.
+That was not true earlier in the period. It took the recording rate coming down off the critical path, and the obstacle map being rebuilt over the band the aircraft occupies, before the detector had enough of the GPU to clear it.
 
 ### 6.4 Independence from the action source
 
@@ -366,9 +366,9 @@ That the two rails agree to three decimal places on the escape rate, through dif
 
 | Scenario | Frames | Capture rate | Duration |
 |---|---|---|---|
-| Tracking | 1698 | 14.67 Hz (target 20.0) | 115.7 s |
-| Distractors | 1723 | 15.08 Hz (target 20.0) | 114.2 s |
-| No-fly zone | 1723 | 15.18 Hz (target 20.0) | 113.5 s |
+| Tracking | 1724 | 15.57 Hz (target 20.0) | 110.7 s |
+| Distractors | 1725 | 15.59 Hz (target 20.0) | 110.7 s |
+| No-fly zone | 1716 | 15.74 Hz (target 20.0) | 109.0 s |
 
 The capture rate is measured by the recorder and written to `view/recorder.json`. It is not derived from the flight log: the recorder starts before the mission clock and stops after it, so frames divided by mission duration overstates the rate and would produce a video that plays faster than real time while being labelled real time.
 

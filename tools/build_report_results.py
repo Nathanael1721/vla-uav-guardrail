@@ -180,13 +180,33 @@ def build() -> str:
                     "serialise extra captures — which is why the **forward pass** moves "
                     "with it, and why capture resolution never did.", ""]
 
-    out += ["**Neither configuration met the threshold, and the threshold is not "
-            "relaxed to fit the data.** " + C["tracking_unaffected"], "",
-            "The threshold is, however, now reachable: 4.10 Hz was measured with "
-            "recording off. Recording is itself a deliverable, so the resolution is to "
-            "stop doing both in one pass — measurement runs without recording, "
-            "demonstration runs with it and labelled as demonstrations. An instrument "
-            "that perturbs the measurement should not be attached during it.", ""]
+    # Whether the gate is met is read from the delivered runs, not asserted.
+    # This paragraph twice went stale: it said the threshold was unreachable,
+    # then that it was reachable only with recording off.
+    gate = study["_gate"]["det_hz_min"]
+    rates = {HEAD[t]: M[t]["det_hz"] for t in TAGS}
+    met = [k for k, v in rates.items() if v >= gate]
+    missed = [k for k, v in rates.items() if v < gate]
+    detail = ", ".join(f"{k} {f2(v)} Hz" for k, v in rates.items())
+
+    if not missed:
+        out += [f"**The threshold is met on every scenario reported here** — {detail}, "
+                f"against a {f1(gate)} Hz gate fixed before the runs, and with the "
+                f"recorder attached rather than removed for the measurement. "
+                + C["tracking_unaffected"], "",
+                "That was not true earlier in the period. It took the recording rate "
+                "coming down off the critical path, and the obstacle map being rebuilt "
+                "over the band the aircraft occupies, before the detector had enough "
+                "of the GPU to clear it.", ""]
+    else:
+        out += [f"**The threshold is not met on {', '.join(missed)}, and it is not "
+                f"relaxed to fit the data.** Measured: {detail}, against a "
+                f"{f1(gate)} Hz gate fixed before the runs. " + C["tracking_unaffected"],
+                "",
+                "Recording is itself a deliverable, so the resolution is to stop doing "
+                "both in one pass — measurement runs without it, demonstration runs "
+                "with it and labelled as demonstrations. An instrument that perturbs "
+                "the measurement should not be attached during it.", ""]
 
     # ---- 6.4 the slot ----------------------------------------------------
     out += ["### 6.4 Independence from the action source", "",
