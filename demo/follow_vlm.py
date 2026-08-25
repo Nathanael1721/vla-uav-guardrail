@@ -68,6 +68,7 @@ import city_planner                                                 # noqa: E402
 import city_traffic
 from recorder import FrameRecorder
 import car_trajectory
+import pedestrians as people_mod
 from target_state import TargetState, want_range_from_width
 import moving_car                                                   # noqa: E402
 from aerialvla_demo import RateLimiter                              # noqa: E402
@@ -1227,6 +1228,7 @@ async def fly(args) -> int:
                        stand_off_m=args.fence_standoff, obstacle_map=smap,
                        min_clearance_m=(clr[0].min_clearance_m if clr else 5.0),
                        street_mask=street)
+
     audit = AuditLogger(out / "audit.jsonl", policy.policy_hash)
     if fence.polys:
         print(f"[fence] {len(fence.polys)} no-fly zone(s) known to the controller: "
@@ -1242,6 +1244,7 @@ async def fly(args) -> int:
     car = None
     traffic = None
     env_car = None
+    people = None
     n_absent = 0
     # Initialised at function scope, not inside the `async with`. When the sim
     # fails to connect the block raises before its own initialisers run, and the
@@ -1414,6 +1417,27 @@ async def fly(args) -> int:
                 else:
                     car.spawn()
 
+        # Scenery. Spawned once and, for all but a couple of them, never touched
+        # again - a standing figure costs no per-tick RPC, so it cannot take
+        # anything from the detector. Default 0 so every recorded flight and every
+        # existing command line keeps its meaning.
+        if args.pedestrians > 0 and street is not None:
+            import numpy as _np
+            _b = Path(args.citymap).parent / "occ_day_highband_15to55.npz"
+            _bld = _np.load(_b)["occ"] if _b.is_file() else None
+            if _bld is None:
+                print("[people] no building mask; cannot tell a pavement from a road, "
+                      "so nobody is placed")
+            else:
+                _route = moving_car.ROUTES.get(args.route or "turn") or []
+                _samp = [(x, y) for x, y in _route]
+                people = people_mod.Pedestrians(
+                    world, street, _bld, count=args.pedestrians,
+                    walking=args.pedestrians_walking, seed=args.seed,
+                    people_dir=args.people_dir, avoid=_samp)
+                people.spawn()
+
+
             # DOES THE QUESTION MATCH THE SUBJECT?
             #
             # This exact mismatch is what made detection worse rather than
@@ -1556,6 +1580,11 @@ async def fly(args) -> int:
             yaw = quat_yaw(kin["pose"]["orientation"])
             state = State(x=p["x"], y=p["y"], up=-p["z"])
             obs.put_pose(p["x"], p["y"], yaw)
+            if people is not None:
+                # Only the pacing few cost anything here; the standing majority
+                # is skipped without an RPC. Scenery is never allowed to fail a
+                # flight, so update() swallows its own errors.
+                people.update(time.time() - t0)
             if traffic is not None:
                 traffic.update(time.time() - t0, tick)
             elif car is not None and env_car is None and tick % 2 == 0:
@@ -1950,6 +1979,8 @@ async def fly(args) -> int:
             if grounder is not None:
                 grounder.stop()
             try:
+                if people is not None:
+                    people.destroy()
                 if traffic is not None:
                     traffic.destroy()
                 elif car is not None:
@@ -2143,6 +2174,19 @@ def main() -> int:
     ap.add_argument("--lock-gate", type=float, default=0.28,
                     help="max accepted jump from the predicted position, as a "
                          "fraction of image width")
+    ap.add_argument("--pedestrians", type=int, default=0,
+                    help="how many decorative people to place on pavements near "
+                         "the route. They are scenery: nothing detects them and "
+                         "no rule refers to them yet. Standing figures cost no "
+                         "per-tick RPC at all. Default 0 so recorded flights are "
+                         "unaffected.")
+    ap.add_argument("--pedestrians-walking", type=int, default=2,
+                    help="how many of them walk rather than stand. Each walker "
+                         "is one teleport per tick, on the same budget the "
+                         "detector uses.")
+    ap.add_argument("--people-dir", default=None,
+                    help="baked figures from tools/bake_glb_poses.py; defaults "
+                         "to VLA_PEOPLE_DIR or D:/models/quaternius_people/posed")
     ap.add_argument("--car-mode", choices=["spawn", "envactor"], default="spawn",
                     help="how the subject vehicle moves. 'spawn' (default) is "
                          "the client-side teleport, one per control tick; it can "
