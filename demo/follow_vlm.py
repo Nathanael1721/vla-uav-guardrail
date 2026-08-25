@@ -750,6 +750,85 @@ class FenceGuard:
         # detours over rooftops started scoring as legal road again.
         self.street = street_mask
 
+    def clearance(self, px: float, py: float, cap_m: float) -> float:
+        """Distance to the nearest mapped obstacle, searched no further than `cap_m`.
+
+        Returns `cap_m` when nothing is within it, so callers can treat the cap
+        as "far enough to be uninteresting" without a special case. A local
+        scan rather than a distance transform, for the same reason
+        `_clear_of_obstacles` uses one: this runs inside the control loop.
+        """
+        if not self.occ:
+            return cap_m
+        occ, res = self.occ["occ"], self.occ["res"]
+        ox, oy = self.occ["ox"], self.occ["oy"]
+        n, m = occ.shape
+        r = int(math.ceil(cap_m / res))
+        i0 = int(round((px - ox) / res))
+        j0 = int(round((py - oy) / res))
+        best = cap_m
+        for i in range(max(0, i0 - r), min(n, i0 + r + 1)):
+            for j in range(max(0, j0 - r), min(m, j0 + r + 1)):
+                if occ[i, j]:
+                    d = math.hypot(ox + i * res - px, oy + j * res - py)
+                    if d < best:
+                        best = d
+        return best
+
+    def _obstacle_gate(self, x: float, y: float, vx: float, vy: float):
+        """The building half of `gate`, shaped exactly like the fence half.
+
+        Brakes for a PREDICTED incursion rather than a shrinking distance, so
+        flying parallel to a wall - which is most of a street - is not braked.
+        The urgency then comes from how close the obstacle is right now.
+
+        The ring is the policy's own `min_clearance_m`, the same number the
+        Shield enforces. The controller stopping at the same line the Shield
+        would defend is the point: the Shield becomes a backstop instead of the
+        only thing steering.
+        """
+        if not self.occ:
+            return 1.0, None, False
+        speed = math.hypot(vx, vy)
+        if speed < 1e-3:
+            return 1.0, None, False
+        ring = self.min_clearance_m
+        ux, uy = vx / speed, vy / speed
+        horizon = max(self.brake_m, speed * 3.0)
+
+        # URGENCY IS HOW FAR AHEAD THE INCURSION IS, NOT HOW CLOSE THE WALL IS.
+        #
+        # The fence half can scale by the current distance because a fence is a
+        # region you approach and then leave. Buildings are not like that: they
+        # line the street continuously, so current clearance sits at 4-5 m for
+        # the whole flight. Scaling by it throttled the aircraft to 11 % of
+        # commanded speed twelve metres before anything was in the way, which is
+        # precisely how the gap flight lost its car - "slower than the target for
+        # 537 of 552 ticks, so it could not keep up no matter which side it
+        # chose".
+        #
+        # Distance-to-incursion has neither problem. Flying parallel to a wall
+        # never enters the ring and is never braked; flying at one brakes in
+        # proportion to how soon.
+        d_now = self.clearance(x, y, self.brake_m)
+        a_hit = None
+        for a in np.linspace(0.0, horizon, 12)[1:]:
+            c = self.clearance(x + ux * a, y + uy * a, self.brake_m)
+            # CLOSING, not merely inside. Both halves are needed. Without the
+            # ring test, any approach at all would brake. Without the "nearer
+            # than now" test, an aircraft already inside the ring and flying
+            # OUT of it brakes hardest exactly when it is escaping - measured
+            # at scale 0.09 while retreating south from the canopy, which would
+            # pin it against the obstacle it was leaving.
+            if c <= ring and c < d_now - 1e-6:
+                a_hit = float(a)
+                break
+        if a_hit is None:
+            return 1.0, None, False
+
+        k = a_hit / self.brake_m
+        return float(np.clip(k, 0.0, 1.0)), d_now, k < 0.35
+
     def gate(self, x: float, y: float, vx: float, vy: float):
         """Scale a commanded velocity down as it closes on a fence.
 
@@ -758,8 +837,9 @@ class FenceGuard:
         a wall.
         """
         from shapely.geometry import Point
+        o_scale, o_d, o_blocked = self._obstacle_gate(x, y, vx, vy)
         if not self.polys:
-            return 1.0, None, False
+            return o_scale, o_d, o_blocked
         p = Point(x, y)
         d = min(poly.distance(p) for poly in self.polys)
         speed = math.hypot(vx, vy)
@@ -793,15 +873,19 @@ class FenceGuard:
             if d_min <= self.stand_off_m:
                 break
         if d_min > self.stand_off_m:
-            return 1.0, d, False
+            # Fence clear; the buildings may still have something to say.
+            return (o_scale, d if o_d is None else o_d, o_blocked)
         # It does close inside the stand-off somewhere ahead; how urgently is
         # still governed by how far away the fence is right now.
         if d <= self.stand_off_m:
             return 0.0, d, True
         if d >= self.brake_m:
-            return 1.0, d, False
+            return min(1.0, o_scale), d, o_blocked
         k = (d - self.stand_off_m) / (self.brake_m - self.stand_off_m)
-        return float(np.clip(k, 0.0, 1.0)), d, k < 0.35
+        f_scale = float(np.clip(k, 0.0, 1.0))
+        # Whichever hazard is more urgent governs. Taking the minimum cannot
+        # relax the fence behaviour that the fenced policies are tested on.
+        return min(f_scale, o_scale), d, (k < 0.35) or o_blocked
 
     # reach_m stays 14. The detour around follow_car_gap.yaml's fence is 15.0 m
     # once street furniture is in the obstacle map, so 14 misses it - but raising
@@ -838,7 +922,21 @@ class FenceGuard:
         """
         from shapely.geometry import Point
         speed = math.hypot(vx, vy)
-        if not self.polys or speed < 1e-3:
+        # A BUILDING IS AS GOOD A REASON TO SIDESTEP AS A FENCE.
+        #
+        # This used to return "no opinion" whenever the policy declared no
+        # no-fly zone, and the demo policy declares none - so on every tracking
+        # flight the whole of this function was dead code. Everything below
+        # already consults the occupancy grid and the street mask; only the
+        # gate at the top was fence-shaped.
+        #
+        # What that cost is on record. Chasing the car north along x = 38, the
+        # flight-band map is BLOCKED at (38, 22) - a canopy, road underneath,
+        # solid at cruise - and the clearance reachable on that line falls to
+        # 0.0 m. Five metres east, at x = 43, it is 5.0 m. The controller could
+        # not see that, so it commanded 4 m/s due north into the canopy for
+        # forty consecutive ticks and the Shield turned every one of them away.
+        if speed < 1e-3 or (not self.polys and not self.occ):
             return 0.0, 0.0, float("inf")
         ux, uy = vx / speed, vy / speed
         lx, ly = -uy, ux                      # left of the commanded heading
@@ -876,8 +974,9 @@ class FenceGuard:
         def _ahead_clear(px: float, py: float) -> bool:
             pts = [(px + ux * a, py + uy * a)
                    for a in (probe_m * 0.5, probe_m, probe_m * 1.5)]
-            if not all(min(poly.distance(Point(*q)) for poly in self.polys)
-                       >= self.stand_off_m for q in pts):
+            if self.polys and not all(
+                    min(poly.distance(Point(*q)) for poly in self.polys)
+                    >= self.stand_off_m for q in pts):
                 return False
             return all(_clear_of_obstacles(*q) and _on_street(*q) for q in pts)
 
@@ -897,7 +996,8 @@ class FenceGuard:
                 px = x + lx * sgn * off
                 py = y + ly * sgn * off
                 # Standing here must itself be legal, with the stand-off kept.
-                if min(poly.distance(Point(px, py)) for poly in self.polys) < self.stand_off_m:
+                if self.polys and min(poly.distance(Point(px, py))
+                                      for poly in self.polys) < self.stand_off_m:
                     continue
                 if not (_clear_of_obstacles(px, py) and _on_street(px, py)):
                     continue          # outside the fence but off the street

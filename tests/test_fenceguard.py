@@ -296,6 +296,91 @@ def test_a_heading_away_from_the_fence_is_never_braked():
 
 # --------------------------------------------------------------------- runner
 
+
+
+
+# ---------------------------------------------------------------------------
+# Buildings, not just fences.
+#
+# The demo policy declares no no-fly zone, and until 2026-08-25 FenceGuard
+# returned "no opinion" whenever that was true - so on every tracking flight
+# gate() and slide() were dead code. The occupancy grid and the street mask
+# were already wired in and already consulted; only the guard clause at the top
+# of each method was fence-shaped.
+#
+# Measured cost, from demo/out/people_check: chasing the car north along
+# x = 38, the map is BLOCKED at (38, 22) - a canopy, road underneath, solid at
+# the 6-14 m cruise band - and the clearance reachable on that line falls to
+# 0.0 m. Five metres east at x = 43 it is 5.0 m. The controller could not see
+# any of that, so it commanded 4 m/s due north for forty consecutive ticks and
+# the Shield turned every one away: 163 clearance violations against 50 on the
+# run that happened to enter half a metre wider, and the aircraft lost the car
+# (sep_end 58.1 m against 16.8 m).
+# ---------------------------------------------------------------------------
+
+CANOPY_LINE_X = 38.0          # the car's route; blocked at y = 22 at cruise
+CORRIDOR_X = 43.0             # 5.0 m of clearance, the way past
+NORTH_FAST = (0.0, 4.0)
+
+
+def _demo_guard():
+    """The demo policy, with the map the flight actually flies with."""
+    return _guard(ROOT / "policies" / "follow_car.yaml", with_map=True)
+
+
+def test_a_canopy_is_seen_even_though_the_policy_has_no_fence():
+    g = _demo_guard()
+    scale, dist, blocked = g.gate(CANOPY_LINE_X, 18.0, *NORTH_FAST)
+    assert blocked, "flying at a blocked cell must raise blocked"
+    assert scale < 0.35, f"must brake hard four metres out, got {scale}"
+    assert dist is not None and dist < 6.0
+
+
+def test_the_detour_around_the_canopy_goes_east_where_the_corridor_is():
+    g = _demo_guard()
+    sx, sy, cost = g.slide(CANOPY_LINE_X, 18.0, *NORTH_FAST)
+    assert (sx, sy) != (0.0, 0.0), "there IS a way past; it must be found"
+    assert sx > 0.5, f"the corridor is east at x=43; slid ({sx}, {sy})"
+    assert cost < 8.0, f"the detour is about 5 m, reported {cost}"
+
+
+def test_the_corridor_the_detour_recommends_is_itself_unbraked():
+    """Otherwise the advice is useless: braked either way, it cannot keep up."""
+    g = _demo_guard()
+    for y in (16.0, 20.0, 22.0, 26.0):
+        scale, _d, blocked = g.gate(CORRIDOR_X, y, *NORTH_FAST)
+        assert scale == 1.0 and not blocked, f"braked in the free corridor at y={y}"
+
+
+def test_flying_parallel_to_a_wall_is_not_braked():
+    """A street is walls on both sides. Braking for proximity rather than for a
+    predicted incursion would throttle the whole flight - which is exactly how
+    the gap flight lost its car."""
+    g = _demo_guard()
+    scale, _d, blocked = g.gate(34.0, 18.0, 4.0, 0.0)
+    assert scale == 1.0 and not blocked
+
+
+def test_escaping_the_ring_is_never_braked():
+    """Inside the ring and flying OUT of it. Braking here pins the aircraft
+    against the obstacle it is leaving; measured at scale 0.09 before the
+    incursion test required the forecast to be CLOSING, not merely inside."""
+    g = _demo_guard()
+    scale, _d, blocked = g.gate(CANOPY_LINE_X, 21.0, 0.0, -4.0)
+    assert scale == 1.0 and not blocked
+    # ...while drifting further in, from the same place, still brakes.
+    scale_in, _d2, blocked_in = g.gate(CANOPY_LINE_X, 20.0, *NORTH_FAST)
+    assert blocked_in and scale_in < 0.35
+
+
+def test_without_an_obstacle_map_the_old_behaviour_is_exact():
+    """Fenceless policy, no map: no opinion, as before. Anyone running without
+    a built citymap must see no change at all."""
+    g = _guard(ROOT / "policies" / "follow_car.yaml", with_map=False)
+    assert g.gate(CANOPY_LINE_X, 18.0, *NORTH_FAST) == (1.0, None, False)
+    assert g.slide(CANOPY_LINE_X, 18.0, *NORTH_FAST) == (0.0, 0.0, float("inf"))
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

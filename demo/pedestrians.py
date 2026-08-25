@@ -52,15 +52,29 @@ from typing import List, Optional, Tuple
 PEOPLE_DIR_ENV = "VLA_PEOPLE_DIR"
 PEOPLE_DIR_DEFAULT = "D:/models/quaternius_people/posed"
 
-# Measured on the baked meshes: every figure stands 4.84-4.86 units tall, so
-# 1.75 / 4.85 puts them at human height. Getting this wrong by a factor is
+# Measured on the baked meshes: 4.806, 4.812, 4.821, 4.812 units tall, so
+# 1.75 / 4.81 puts them at human height. Getting this wrong by a factor is
 # obvious; getting it wrong by twenty percent is not, which is why it is derived
 # from the measurement rather than guessed.
-MODEL_HEIGHT_UNITS = 4.85
+#
+# This read 4.85 while the baker still edited the source file in place, because
+# that file kept the ORIGINAL bind-pose POSITION accessors alongside the posed
+# ones and a bounding box over all of them is the union of two poses. The clean
+# writer emits only the posed geometry, so this is now the figure's real height.
+MODEL_HEIGHT_UNITS = 4.81
 TARGET_HEIGHT_M = 1.75
 GLB_SCALE = TARGET_HEIGHT_M / MODEL_HEIGHT_UNITS
 
 STAND_FILES = ["stand_a.glb", "stand_b.glb", "stand_c.glb", "stand_d.glb"]
+
+# A pacing figure in a STANDING pose glides, which reads worse than not moving
+# at all. These are the same four models baked mid-stride (Man_Run at 0.18 s):
+# measured stride 1.29 m and the head dips from 1.75 m to 1.62 m, as a walking
+# person's does. Still a single static pose - the importer keeps no bones - but
+# a moving figure in a stride pose reads as walking at the 11-20 m the camera
+# sees them from. Optional: if they were never baked, walkers fall back to
+# standing meshes rather than failing.
+WALK_FILES = ["walk_a.glb", "walk_b.glb", "walk_c.glb", "walk_d.glb"]
 
 # A pedestrian walks at about 1.4 m/s. At the ~8.7 Hz control loop that is a
 # 16 cm step per update, against the 54 cm that made the CAR look choppy - a
@@ -117,10 +131,35 @@ def _pose(x: float, y: float, h: float, z: float = 0.0):
     })
 
 
+def _dist_to_route(x: float, y: float,
+                   route: List[Tuple[float, float]]) -> float:
+    """Distance to the route POLYLINE, not to its nearest corner.
+
+    Measuring to waypoints is what emptied the first populated flight of
+    visible people. The demo route is three points spanning the whole map, so
+    a pavement halfway down a 48 m straight measured as ~16 m from the nearest
+    CORNER while being 11 m from the road the camera actually flies along -
+    and spots genuinely near the far end of the map measured as "close"
+    because one distant waypoint happened to be within the band. Figures ended
+    up 12 to 42 m away, mostly where the camera never looks.
+    """
+    if not route:
+        return 0.0
+    if len(route) == 1:
+        return math.hypot(x - route[0][0], y - route[0][1])
+    best = float("inf")
+    for (ax, ay), (bx, by) in zip(route, route[1:]):
+        vx, vy = bx - ax, by - ay
+        L2 = vx * vx + vy * vy
+        t = 0.0 if L2 < 1e-9 else max(0.0, min(1.0, ((x - ax) * vx + (y - ay) * vy) / L2))
+        best = min(best, math.hypot(x - (ax + t * vx), y - (ay + t * vy)))
+    return best
+
+
 def pavement_spots(street_mask, buildings, n: int, rng: random.Random,
                    avoid: List[Tuple[float, float]] = (),
-                   avoid_radius_m: float = 8.0,
-                   near_radius_m: float = 45.0) -> List[Tuple[float, float]]:
+                   avoid_radius_m: float = 7.0,
+                   near_radius_m: float = 20.0) -> List[Tuple[float, float]]:
     """Cells that are street AND touch a building - i.e. a pavement.
 
     The street mask alone will not do: it marks roads and pavements alike, so
@@ -128,11 +167,12 @@ def pavement_spots(street_mask, buildings, n: int, rng: random.Random,
     that is walkable and adjacent to a building footprint is against a
     shopfront, which is where people actually stand.
 
-    Placement is a BAND around the route, not a scatter across the map. Too
+    Placement is a BAND along the route, not a scatter across the map. Too
     close and a figure competes with the subject for the tracker's attention;
     too far and it is decoration nobody ever sees, since the camera only ever
-    looks near the route. So: at least `avoid_radius_m` away, at most
-    `near_radius_m`.
+    looks near the route. So: at least `avoid_radius_m` from the route line, at
+    most `near_radius_m` - measured to the polyline, which is the whole point,
+    see `_dist_to_route`.
     """
     st = street_mask["street"]
     res = street_mask["res"]
@@ -154,7 +194,7 @@ def pavement_spots(street_mask, buildings, n: int, rng: random.Random,
             x = ox + (i + 0.5) * res
             y = oy + (j + 0.5) * res
             if avoid:
-                d = min(math.hypot(x - ax, y - ay) for ax, ay in avoid)
+                d = _dist_to_route(x, y, list(avoid))
                 if d < avoid_radius_m or d > near_radius_m:
                     continue
             spots.append((x, y))
@@ -265,6 +305,7 @@ class Pedestrians:
         if not models:
             print("[people] figure directory has no stand_*.glb; nothing spawned")
             return
+        strides = [self.dir / f for f in WALK_FILES if (self.dir / f).is_file()]
 
         spots = pavement_spots(self.street_mask, self.buildings,
                                self.count, self.rng, avoid=self.avoid)
@@ -274,6 +315,8 @@ class Pedestrians:
 
         for k, (x, y) in enumerate(spots):
             glb = models[k % len(models)]
+            if k < self.walking and strides:
+                glb = strides[k % len(strides)]
             # Face roughly along the pavement, varied so they do not look ranked.
             h = self.rng.uniform(-math.pi, math.pi)
             fig = Figure(name=f"Person{k}", glb=glb, x=x, y=y, heading=h)
@@ -286,6 +329,12 @@ class Pedestrians:
                     fig.walker = _Pace(x, y, ex, ey)
                     h = math.atan2(ey - y, ex - x)
                     fig.heading = h
+                else:
+                    # No room to pace, so it will stand - and a stride pose
+                    # standing still is worse than a standing pose standing
+                    # still. Put the standing mesh back.
+                    glb = models[k % len(models)]
+                    fig.glb = glb
             try:
                 data = glb.read_bytes()
                 s = GLB_SCALE
