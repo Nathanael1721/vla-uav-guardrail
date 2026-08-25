@@ -20,7 +20,13 @@ source/
 # --- Flight artefacts -------------------------------------------------------
 # 2.9 GB across 18,138 files, of which 16,442 are recorded JPEG frames. Every
 # flight rewrites these; metrics that matter are quoted into docs/data/.
-demo/out/
+# NOTE the trailing /* rather than a plain `demo/out/`. Git cannot re-include a
+# file whose PARENT DIRECTORY is excluded, so `demo/out/` followed by
+# `!demo/out/citymap/` silently keeps the exclusion and the negation never runs.
+# That is exactly what happened here: the occupancy grids were described in this
+# file as kept, and `git check-ignore` reported them still matched by
+# `demo/out/`. Excluding the ENTRIES lets the negation below take effect.
+demo/out/*
 logs/
 _archive/
 
@@ -29,7 +35,6 @@ _archive/
 # clearance rule, not output of a flight. 7 KB each, and rebuilding them needs
 # the simulator, so a fresh clone that lacks them cannot fly at all.
 !demo/out/citymap/
-!demo/out/citymap/*.npz
 
 # Experiment output, same category: 299 files and 34 MB, which would be 87% of
 # this repository. Docs reference it as a raw-data pointer, exactly as they do
