@@ -37,7 +37,7 @@ image — building tops that exist at 15–55 m and nothing at all at 9 m.
 
 **Under the corrected map the Shield would have prevented the collision.**
 
-## Why it is not the default yet
+## Why adopting it took three coordinated changes
 
 Installing the corrected map alone made the demos worse, and the first flight
 said so immediately: detector hit rate fell **1.000 → 0.48**, the target was held
@@ -51,8 +51,8 @@ six of twenty-five route waypoints fell below the minimum. Lowering
 ticks, P0 escape rate 0.0, and **52 Shield interventions where the same demo
 previously recorded 0** — because there had been nothing in the map to avoid.
 
-That pairing works. What blocks adopting it is a third consequence, and it is
-conceptual rather than numeric.
+That pairing works. What held adoption up was a third consequence, conceptual
+rather than numeric, and it is resolved further down.
 
 ### The map is not a road map
 
@@ -70,11 +70,11 @@ Two tests fail under the corrected map, and both fail for the same reason.
   that the old map forbade, so "on the road" can no longer be inferred from
   free space either.
 
-Both need a **street mask** — a separate layer saying where a route may run —
+Both needed a **street mask** — a separate layer saying where a route may run —
 rather than inferring roadness from the absence of obstacles. That is a design
-change, not a threshold.
+change rather than a threshold, and it is what the rest of this note describes.
 
-### And the gap policy's gap has moved
+### And the gap policy's detour grew past the search range
 
 `policies/follow_car_gap.yaml` describes a corridor at x 43–50. Under the
 corrected map its eastern half is solid: **0.0 m at x 48–50, y 0**. The western
