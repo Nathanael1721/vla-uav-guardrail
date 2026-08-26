@@ -231,7 +231,7 @@ async def fly(args) -> int:
             print(f"[shield] no city map at {args.citymap} "
                   f"-> obstacle_clearance INERT (reactive depth layer only)")
     shield = Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=shield_map)
-    audit = AuditLogger(out / "audit.jsonl", policy.policy_hash)
+    audit = AuditLogger(out / "audit.jsonl", policy)   # the POLICY, so a hot-applied rule restamps the hash
 
     # CONFIG CONSISTENCY: the planner must not route tighter than the Shield's
     # clearance rule allows, or the two fight — the plan hugs a wall, the Shield

@@ -335,6 +335,122 @@ def test_a_lost_subject_must_clear_the_stale_position():
     assert not sh.filter(State(x=24.0, y=0.0, up=9.0), Action4D(vx=4.0)).touched
 
 
+
+
+
+# ---------------------------------------------------------------------------
+# A repair must FLOOR an escape, never cap it.
+#
+# Fixed 2026-08-26. The monitors are trend-aware; three repair operators judged
+# position only. So once any unrelated violation dragged an action into the
+# repair loop, a position-only repair clobbered an action that was already
+# correctly escaping:
+#
+#   StandoffRecover   3.00 m/s -> 3.000   |   3.01 m/s -> 0.500   (6x slower)
+#   GeofenceEscape    4.00 m/s -> 4.000   |   4.01 m/s -> 2.000   (2x slower)
+#   ClearanceFix      5.00 m/s -> 5.000   |   5.01 m/s -> 3.573 + sideways drift
+#
+# Why every test below adds an unrelated yaw breach: the existing coverage
+# (tests/test_clearance.py::test_escaping_the_ring_is_still_not_flagged) only
+# ever exercised escape with NOTHING else wrong, which takes filter()'s
+# untouched-passthrough branch and never enters the repair loop at all. That is
+# the precise gap that let this survive. yaw_rate is P1 and does not touch
+# horizontal motion, so it opens the loop without disturbing what is measured.
+#
+# The fix is a FLOOR and not a decline, which matters in the other direction:
+# the monitor forgives any opening above 0.1 m/s, so a repair that simply stood
+# aside would leave the aircraft crawling out of a zone it must not be in.
+# ---------------------------------------------------------------------------
+
+YAW_BREACH = math.radians(60)        # P1, horizontal-motion-neutral
+
+
+def _standoff_ring_shield(min_range_m=10.0):
+    from guardrail import load_policy as _lp
+    sh = Shield(_lp(Path(__file__).resolve().parents[1] / "policies"
+                    / "follow_pedestrian.yaml"), lookahead_s=3.0, dt=0.5)
+    sh.set_subject(0.0, 0.0, "pedestrian")
+    return sh
+
+
+def test_standoff_recovery_is_never_slowed_by_an_unrelated_violation():
+    sh = _standoff_ring_shield()
+    st = State(x=9.0, y=0.0, up=9.0)          # inside a 10 m ring, flying out
+    clean = sh.filter(st, Action4D(vx=3.0)).emitted.vx
+    over = sh.filter(st, Action4D(vx=3.01)).emitted.vx
+    assert clean > 2.9, clean
+    assert over >= clean - 1e-6, (
+        f"a 0.3 % overspeed cut the escape from {clean:.3f} to {over:.3f} m/s")
+
+
+def test_standoff_recovery_raises_a_crawl_rather_than_accepting_it():
+    """The monitor forgives anything over 0.1 m/s. The repair must not."""
+    sh = _standoff_ring_shield()
+    d = sh.filter(State(x=9.0, y=0.0, up=9.0),
+                  Action4D(vx=0.15, yaw_rate=YAW_BREACH))
+    assert d.emitted.vx >= 0.5 - 1e-6, (
+        f"left the aircraft crawling out of a standoff ring at {d.emitted.vx:.3f} m/s")
+
+
+def test_geofence_escape_is_never_slowed_by_an_unrelated_violation():
+    s = make_shield()
+    st = State(x=22.0, y=15.0, up=4.0)        # inside the zone, 1 m from the edge
+    clean = s.filter(st, Action4D(vx=4.0)).emitted.vx
+    over = s.filter(st, Action4D(vx=4.01)).emitted.vx
+    assert clean > 3.9, clean
+    assert over >= clean - 1e-6, (
+        f"a 0.25 % overspeed cut the NFZ escape from {clean:.3f} to {over:.3f} m/s")
+
+
+def test_geofence_escape_raises_a_crawl_to_the_recovery_speed():
+    """2.0 m/s is the reference implementation's escape_speed_mps. It is a
+    FLOOR, not a ceiling, and not a reason to decline."""
+    s = make_shield()
+    d = s.filter(State(x=22.0, y=15.0, up=4.0),
+                 Action4D(vx=0.15, yaw_rate=YAW_BREACH))
+    assert d.emitted.vx >= 2.0 - 1e-6, (
+        f"left the aircraft crawling out of a no-fly zone at {d.emitted.vx:.3f} m/s")
+
+
+def test_a_command_into_the_zone_is_still_turned_around():
+    """The floor must not have turned the recovery into a no-op."""
+    s = make_shield()
+    d = s.filter(State(x=22.0, y=15.0, up=4.0), Action4D(vx=-4.0))
+    assert d.emitted.vx >= 2.0 - 1e-6, d.emitted
+    assert not s._check(State(x=22.0, y=15.0, up=4.0), d.emitted)
+
+
+def test_the_escape_survives_the_speed_cap_and_the_mission_pays():
+    """When the cap binds, it must eat the TANGENTIAL component.
+
+    Scaling the whole vector shrinks the very component getting the aircraft
+    out: measured, a 3.00 m/s standoff recovery came out at 2.12 while 2.12 m/s
+    of mission motion was preserved untouched.
+    """
+    sh = _standoff_ring_shield()
+    d = sh.filter(State(x=9.0, y=0.0, up=9.0),
+                  Action4D(vx=0.0, vy=5.0, yaw_rate=YAW_BREACH))
+    assert d.emitted.vx >= 0.5 - 1e-6, f"escape was sacrificed: {d.emitted}"
+    assert abs(d.emitted.vy) < 5.0, "the tangential component should have paid"
+
+
+def test_escape_speed_is_monotonic_in_the_commanded_speed():
+    """Faster in must never mean slower out. This is the property the whole
+    defect violated, and it holds only while the repair loop is engaged."""
+    for label, sh, st, axis in (
+            ("standoff", _standoff_ring_shield(), State(x=9.0, y=0.0, up=9.0), "vx"),
+            ("geofence", make_shield(), State(x=22.0, y=15.0, up=4.0), "vx")):
+        prev = -9.9
+        for i in range(0, 61):
+            cmd = i * 0.1
+            got = getattr(sh.filter(st, Action4D(vx=cmd, yaw_rate=YAW_BREACH)).emitted,
+                          axis)
+            assert got >= prev - 1e-9, (
+                f"{label}: commanding {cmd:.1f} m/s emitted {got:.3f}, "
+                f"less than the {prev:.3f} emitted by a slower command")
+            prev = got
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

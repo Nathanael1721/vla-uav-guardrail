@@ -367,6 +367,56 @@ def test_an_unknown_model_id_still_says_unresolved():
     assert "unresolved" in model_hash("no.such.module.Thing")
 
 
+
+
+
+def test_an_audit_record_after_a_hot_apply_carries_the_new_policy_hash():
+    """hot_apply promises it: "every artefact after this instant carries a
+    different policy_hash - the audit trail shows exactly which rules were
+    active when". AuditLogger snapshotted the string at construction, so it
+    did not. Reproduced: a record whose violation was `nfz-hot`, stamped with
+    the hash of a policy that did not contain `nfz-hot`."""
+    import json as _json
+    import tempfile
+    from pathlib import Path as _P
+    from guardrail import load_policy as _lp
+    from guardrail.audit import AuditLogger
+    from guardrail.models import Action4D, PolygonFence, State
+    from guardrail.shield import Shield
+
+    pol = _lp(ROOT / "policies" / "demo_policy.yaml")
+    sh = Shield(pol, lookahead_s=3.0, dt=0.5)
+    path = _P(tempfile.mkdtemp()) / "audit.jsonl"
+    al = AuditLogger(path, pol)              # the POLICY, not a snapshot string
+    before = pol.policy_hash
+
+    al.log(1, sh.filter(State(x=-20, y=-20, up=4), Action4D(vx=8)))
+    sh.hot_apply(PolygonFence(
+        id="nfz-hot", type="polygon_fence",
+        vertices=[{"x": -25, "y": -25}, {"x": -15, "y": -25},
+                  {"x": -15, "y": -15}, {"x": -25, "y": -15}]))
+    al.log(2, sh.filter(State(x=-20, y=-20, up=4), Action4D(vx=1)))
+
+    recs = [_json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]
+    assert len(recs) == 2, recs
+    assert recs[0]["policy_hash"] == before
+    assert recs[1]["policy_hash"] != before, "hot-applied rule did not restamp the hash"
+    fired = [v["rule_id"] for v in recs[1]["violations"]]
+    assert "nfz-hot" in fired, fired
+
+
+def test_a_plain_hash_string_still_works_for_callers_that_pass_one():
+    """Backward compatibility: the string form is a snapshot and stays one."""
+    import tempfile
+    from pathlib import Path as _P
+    from guardrail import load_policy as _lp
+    from guardrail.audit import AuditLogger
+
+    pol = _lp(ROOT / "policies" / "demo_policy.yaml")
+    al = AuditLogger(_P(tempfile.mkdtemp()) / "audit.jsonl", pol.policy_hash)
+    assert al.policy_hash == pol.policy_hash
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

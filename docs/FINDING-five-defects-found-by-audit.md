@@ -161,15 +161,11 @@ rate 0.0 with `p0_ticks_not_measurable` 0 - measured for the first time.
 is unchanged by this work - the lowest reading, 3.43, is `people_control`, flown
 before any of it - and remains open.
 
+## Closed since
+
+The three repair operators and the audit hash were fixed on 2026-08-26. See
+`docs/FINDING-repairs-must-floor-the-escape.md`.
+
 ## Still open
 
-- **Three repair operators cap a recovery they should floor.** `StandoffRecover`,
-  `GeofenceEscape` and `_repair_clearance` fire on distance alone with no trend
-  test, and assign the outward component rather than taking the larger of it and
-  what was already commanded. A command 0.3 % over the P1 speed cap can cut a
-  legal escape from a P0 breach by 6x. Reported with reproducers, not yet fixed:
-  changing repair operators needs flight verification of its own.
-- **`AuditLogger` snapshots `policy_hash` at construction**, so records written
-  after a `hot_apply` carry the hash of a policy that no longer applies -
-  contradicting `hot_apply`'s own docstring.
 - **`det_hz` under recording**, above.

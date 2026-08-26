@@ -1334,7 +1334,7 @@ async def fly(args) -> int:
                        min_clearance_m=(clr[0].min_clearance_m if clr else 5.0),
                        street_mask=street)
 
-    audit = AuditLogger(out / "audit.jsonl", policy.policy_hash)
+    audit = AuditLogger(out / "audit.jsonl", policy)   # the POLICY, so a hot-applied rule restamps the hash
     if fence.polys:
         print(f"[fence] {len(fence.polys)} no-fly zone(s) known to the controller: "
               f"brake from {args.fence_brake:.0f} m, hold at {args.fence_standoff:.0f} m")
@@ -1357,6 +1357,8 @@ async def fly(args) -> int:
     # error under a confusing one. A failed flight should report zeros.
     tick = 0
     nfz_hold_ticks = 0
+    guard_hold_ticks = 0        # any hold: fence OR building
+
     presence = PresenceMonitor(args.object, args.colour_min)
     rng_f = None            # low-passed range, for the orbit radial term
     orbit_fwd_prev = 0.0
@@ -1935,7 +1937,19 @@ async def fly(args) -> int:
                            and fscale < 1.0)
             if fblocked or approaching:
                 if fblocked:
-                    nfz_hold_ticks += 1
+                    guard_hold_ticks += 1
+                    # ...and NFZ holds only when there is actually an NFZ.
+                    #
+                    # `fblocked` used to mean "a fence blocked us" and now also
+                    # means "a building did", because gate() was taught about
+                    # obstacles. Counting both under `nfz_hold_ticks` reported
+                    # 7 no-fly-zone holds on follow_car.yaml, a policy that
+                    # declares no fence at all. The mission-outcome test reads
+                    # `nfz_s`, which is measured separately and was never
+                    # affected - this is a reported number being wrong, not a
+                    # verdict being wrong.
+                    if fence.polys:
+                        nfz_hold_ticks += 1
                 sx, sy, scost = fence.slide(state.x, state.y, cvx, cvy)
                 if sx or sy:
                     # Lateral urgency rises as the fence closes, but never waits
@@ -2154,6 +2168,8 @@ async def fly(args) -> int:
         "interventions": n_touched,
         "frac_absent": round(n_absent / max(1, len(traj)), 3),
         "nfz_hold_ticks": nfz_hold_ticks,
+        "guard_hold_ticks": guard_hold_ticks,
+
         "params": {"yaw_gain": args.yaw_gain, "want_width": args.want_width,
                    "speed_max": args.speed_max, "cruise_alt": args.cruise_alt,
                    "alt_gain": args.alt_gain, "det_thresh": args.det_thresh},

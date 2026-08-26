@@ -346,7 +346,7 @@ async def fly(args) -> int:
         shield_map = {"occ": cmap["occ"], "res": cmap["res"],
                       "ox": cmap["ox"], "oy": cmap["oy"]}
     shield = Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=shield_map)
-    audit = AuditLogger(out / "audit.jsonl", policy.policy_hash)
+    audit = AuditLogger(out / "audit.jsonl", policy)   # the POLICY, so a hot-applied rule restamps the hash
 
     # ---- the only place target coordinates are allowed in this process ----
     tgt = tuple(float(v) for v in args.target_xy.split(","))
