@@ -29,7 +29,8 @@ from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import PoseStamped, Twist
 from std_msgs.msg import Float32MultiArray
 from mavros_msgs.msg import State as MavState
-from mavros_msgs.srv import CommandBool, CommandTOL, SetMode, StreamRate
+from mavros_msgs.srv import (CommandBool, CommandTOL, ParamGet, SetMode,
+                             StreamRate)
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -69,7 +70,10 @@ class ShieldNode(Node):
         (out / "prompt.yaml").write_text(compiler.build_prompt(self.mission),
                                          encoding="utf-8")
         self.shield = Shield(self.policy, lookahead_s=3.0, dt=0.5)
-        self.audit = AuditLogger(out / "audit.jsonl", self.policy.policy_hash)
+        # The POLICY, not a snapshot of its hash: this rail hot-applies a
+        # fence mid-flight and the audit trail must show which generation
+        # was in force for each record.
+        self.audit = AuditLogger(out / "audit.jsonl", self.policy)
 
         self.state: State | None = None
         self.raw_action = Action4D()
@@ -105,6 +109,7 @@ class ShieldNode(Node):
         self.cli_arm = self.create_client(CommandBool, "/mavros/cmd/arming")
         self.cli_tol = self.create_client(CommandTOL, "/mavros/cmd/takeoff")
         self.cli_rate = self.create_client(StreamRate, "/mavros/set_stream_rate")
+        self.cli_param = self.create_client(ParamGet, "/mavros/param/get")
 
     # ---------------- subscriptions ---------------- #
 
@@ -135,6 +140,32 @@ class ShieldNode(Node):
         fut = client.call_async(req)
         rclpy.spin_until_future_complete(self, fut, timeout_sec=timeout)
         return fut.result()
+
+    def read_sim_speedup(self) -> float | None:
+        """Read SIM_SPEEDUP from the autopilot through MAVROS, or None.
+
+        This rail used to pass a literal 1.0 into build_manifest(), which that
+        function's own docstring forbids: "a hand-written 1.0 is exactly the
+        number a broken run would also carry." The effect was perverse - the
+        three runs that PASSED is_kpi_grade() were the ones that asserted the
+        value, while the pymavlink rail, which actually reads it, was refused
+        for its topology.
+
+        Returning None on any failure is deliberate. An unread speedup must
+        surface as "unresolved" and fail the gate, never as an assumed 1.0.
+        pymavlink is not installed in the ROS venv, so this goes through the
+        MAVROS parameter service rather than a second MAVLink connection.
+        """
+        try:
+            res = self._call(self.cli_param, ParamGet.Request(param_id="SIM_SPEEDUP"))
+        except Exception:                                     # noqa: BLE001
+            return None
+        if res is None or not res.success:
+            return None
+        # ParamValue carries both an integer and a real field; ArduPilot returns
+        # SIM_SPEEDUP as a float, so prefer real and fall back to integer.
+        val = float(res.value.real) if res.value.real else float(res.value.integer)
+        return round(val, 4) if val else None
 
     def bring_up(self) -> None:
         log = self.get_logger()
@@ -203,7 +234,9 @@ class ShieldNode(Node):
 
         if self.dynamic and self.spawn_t is None and now >= DYNAMIC_AT_S:
             self.shield.hot_apply(DYNAMIC_FENCE)
-            self.audit.policy_hash = self.policy.policy_hash
+            # No restamp: AuditLogger holds the policy and reads the hash at log
+            # time. Assigning here raised AttributeError once policy_hash became
+            # a read-only property, killing every --dynamic run at this line.
             self.spawn_t, self.spawn_pos = now, (st.x, st.y)
             self.get_logger().info(
                 f"dynamic NFZ applied t={now:.1f}s -> generation {self.policy.generation}")
@@ -245,6 +278,22 @@ class ShieldNode(Node):
             "raw": raw.model_dump(),
             "emitted": emitted.model_dump(),
             "violations": [v.model_dump() for v in decision.violations],
+            # The check on what was FLOWN, which is what guardrail/kpi.py counts
+            # a P0 escape from. Without it every P0 tick here scores as "not
+            # measurable" and the escape rate falls back to an inference that
+            # cannot return a non-zero answer.
+            #
+            # Which list that is depends on the arm of the A/B, and getting it
+            # wrong would destroy the comparison:
+            #   shield ON  -> `decision.emitted` flew, so its re-check applies.
+            #   shield OFF -> `raw` flew unmodified, so the violations already
+            #                 found on `raw` ARE the violations of the flown
+            #                 action. That is what earns the control run its
+            #                 escape rate instead of scoring it clean.
+            "emitted_violations": [
+                v.model_dump() for v in
+                (decision.emitted_violations if self.shield_on else decision.violations)
+            ],
             "repairs": [r.model_dump() for r in decision.repairs] if self.shield_on else [],
             "braked": bool(self.shield_on and decision.braked),
             "touched": touched,
@@ -360,11 +409,16 @@ class ShieldNode(Node):
         # gathered above. If MAVROS never reported a connected flight
         # controller, build_manifest() refuses and the run is recorded as what
         # it actually was.
+        # READ, never assert. None here fails the KPI gate, which is correct:
+        # a speedup nobody measured is not evidence of real-time flight.
+        speedup = self.read_sim_speedup()
+        self.get_logger().info(f"SIM_SPEEDUP read from autopilot: {speedup}")
+
         try:
             manifest = build_manifest(
                 policy_hash=self.policy.policy_hash,
                 model_id="guardrail.vla_stub.StubVLA",
-                seed=0, scene_path=None, sim_speedup=1.0,
+                seed=0, scene_path=None, sim_speedup=speedup,
                 topology=TOPOLOGY_CANONICAL_HIL,
                 hil_evidence=self.hil_evidence)
         except ValueError as e:
@@ -372,16 +426,22 @@ class ShieldNode(Node):
             manifest = build_manifest(
                 policy_hash=self.policy.policy_hash,
                 model_id="guardrail.vla_stub.StubVLA",
-                seed=0, scene_path=None, sim_speedup=1.0,
+                seed=0, scene_path=None, sim_speedup=speedup,
                 topology=TOPOLOGY_ARDUPILOT_SITL)
         (self.out / "manifest.json").write_text(json.dumps(manifest, indent=2),
                                                 encoding="utf-8")
 
         kpi_res = compute_from_dir(self.out, self.policy)
-        (self.out / "kpi.json").write_text(json.dumps(kpi_res, indent=2),
-                                           encoding="utf-8")
+        # The grade belongs IN the artefact. This is the rail whose numbers are
+        # meant to be quotable, and its kpi.json said nothing about whether they
+        # were - nor did its report.md, which omitted the manifest entirely.
         graded, why = is_kpi_grade(manifest, {**metrics, "det_hz": None,
                                               "start_heading_err_deg": None})
+        kpi_res["kpi_grade"] = graded
+        kpi_res["kpi_grade_reasons"] = why
+        kpi_res["manifest"] = manifest
+        (self.out / "kpi.json").write_text(json.dumps(kpi_res, indent=2),
+                                           encoding="utf-8")
         self.get_logger().info(
             f"P0 escape rate {kpi_res['p0_violation_escape_rate']} | "
             f"NFZ {nfz_s:.1f}s | alt {alt_s:.1f}s | interventions {self.n_touched}")

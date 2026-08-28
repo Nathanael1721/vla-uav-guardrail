@@ -173,7 +173,10 @@ def main() -> int:
 
     vla = StubVLA(mission)
     shield = Shield(policy, lookahead_s=3.0, dt=0.5)
-    audit = AuditLogger(out / "audit.jsonl", policy.policy_hash)
+    # The POLICY, not a snapshot of its hash. This rail hot-applies a fence
+    # mid-flight, and AuditLogger reads the hash live so records written after
+    # that carry the generation that was actually in force.
+    audit = AuditLogger(out / "audit.jsonl", policy)
 
     link = MavlinkAdapter(args.url)
     link.prepare(mission.cruise_alt_m)
@@ -195,7 +198,10 @@ def main() -> int:
 
         if args.dynamic and spawn_t is None and now >= DYNAMIC_AT_S:
             shield.hot_apply(DYNAMIC_FENCE)
-            audit.policy_hash = policy.policy_hash
+            # No restamp needed: AuditLogger holds the policy and reads the hash
+            # at log time. Assigning here raised AttributeError once policy_hash
+            # became a read-only property, which killed every --dynamic run at
+            # exactly this line.
             spawn_t, spawn_pos = now, (state.x, state.y)
             print(f"[dynamic]  t={now:.1f}s '{DYNAMIC_FENCE.id}' applied "
                   f"-> generation {policy.generation}")
@@ -241,6 +247,20 @@ def main() -> int:
             "raw": raw.model_dump(),
             "emitted": emitted.model_dump(),
             "violations": [v.model_dump() for v in decision.violations],
+            # The check on what was FLOWN - what guardrail/kpi.py counts a P0
+            # escape from. Without it every P0 tick scores "not measurable" and
+            # the rate falls back to an inference that cannot return non-zero.
+            #
+            # Which list depends on the arm of the A/B:
+            #   shield ON  -> `decision.emitted` flew, so its re-check applies.
+            #   shield OFF -> `raw` flew unmodified, so the violations already
+            #                 found on `raw` ARE the flown action's violations.
+            #                 That is what earns the control run its escape rate
+            #                 rather than scoring it clean.
+            "emitted_violations": [
+                v.model_dump() for v in
+                (decision.emitted_violations if shield_on else decision.violations)
+            ],
             "repairs": [r.model_dump() for r in decision.repairs] if shield_on else [],
             "braked": bool(shield_on and decision.braked),
             "touched": touched_now,
@@ -311,9 +331,15 @@ def main() -> int:
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     kpi = compute_from_dir(out, policy)
-    (out / "kpi.json").write_text(json.dumps(kpi, indent=2), encoding="utf-8")
-
+    # The grade belongs IN the artefact, not only in the prose report. A reader
+    # holding kpi.json could not previously tell whether its numbers were
+    # quotable as contractual figures - which is the single thing the grade
+    # exists to say. demo/follow_vlm.py has recorded it this way all along.
     graded, why = is_kpi_grade(manifest, metrics)
+    kpi["kpi_grade"] = graded
+    kpi["kpi_grade_reasons"] = why
+    kpi["manifest"] = manifest
+    (out / "kpi.json").write_text(json.dumps(kpi, indent=2), encoding="utf-8")
     kpi_ok = kpi["p0_violation_escape_rate"] == 0.0
 
     # ---- plot (if matplotlib present) ----
