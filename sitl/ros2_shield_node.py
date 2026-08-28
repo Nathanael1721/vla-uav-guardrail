@@ -29,8 +29,8 @@ from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import PoseStamped, Twist
 from std_msgs.msg import Float32MultiArray
 from mavros_msgs.msg import State as MavState
-from mavros_msgs.srv import (CommandBool, CommandTOL, ParamGet, SetMode,
-                             StreamRate)
+from mavros_msgs.srv import CommandBool, CommandTOL, SetMode, StreamRate
+from rcl_interfaces.srv import GetParameters
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -91,6 +91,7 @@ class ShieldNode(Node):
             "mavros_node": None,
             "fcu_connected": None,
         }
+        self.sim_speedup: float | None = None   # read once, during bring-up
         self.n_touched = self.n_braked = 0
         self.spawn_t = self.spawn_pos = None
         self.mission_t0: float | None = None
@@ -109,7 +110,8 @@ class ShieldNode(Node):
         self.cli_arm = self.create_client(CommandBool, "/mavros/cmd/arming")
         self.cli_tol = self.create_client(CommandTOL, "/mavros/cmd/takeoff")
         self.cli_rate = self.create_client(StreamRate, "/mavros/set_stream_rate")
-        self.cli_param = self.create_client(ParamGet, "/mavros/param/get")
+        self.cli_param = self.create_client(GetParameters,
+                                            "/mavros/param/get_parameters")
 
     # ---------------- subscriptions ---------------- #
 
@@ -142,30 +144,66 @@ class ShieldNode(Node):
         return fut.result()
 
     def read_sim_speedup(self) -> float | None:
-        """Read SIM_SPEEDUP from the autopilot through MAVROS, or None.
+        """Read SIM_SPEEDUP from the autopilot, or None.
 
         This rail used to pass a literal 1.0 into build_manifest(), which that
         function's own docstring forbids: "a hand-written 1.0 is exactly the
         number a broken run would also carry." The effect was perverse - the
-        three runs that PASSED is_kpi_grade() were the ones that asserted the
-        value, while the pymavlink rail, which actually reads it, was refused
-        for its topology.
+        runs that PASSED is_kpi_grade() were the ones that asserted the value,
+        while the pymavlink rail, which reads it, was refused for its topology.
 
-        Returning None on any failure is deliberate. An unread speedup must
-        surface as "unresolved" and fail the gate, never as an assumed 1.0.
-        pymavlink is not installed in the ROS venv, so this goes through the
-        MAVROS parameter service rather than a second MAVLink connection.
+        Two things about the route, both learned by probing a live MAVROS:
+
+        1. MAVROS 2 surfaces autopilot parameters as ROS 2 NODE PARAMETERS on
+           the `/mavros/param` node, not through `mavros_msgs/ParamGet`. That
+           service exists and is advertised, and calling it simply never
+           returns - which read as None on every flight and looked like a
+           timeout. `ros2 param get /mavros/param SIM_SPEEDUP` answers
+           "Double value is: 1.0", so `rcl_interfaces/GetParameters` is the
+           correct client.
+        2. MAVROS populates that parameter set itself on FCU connect (1382
+           parameters on this host). Forcing an extra pull raced the refill and
+           returned 0.0, so this polls instead.
+
+        Returning None on any failure is deliberate: an unread speedup must
+        surface as "unresolved" and fail the gate, never pass as an assumed 1.0.
         """
-        try:
-            res = self._call(self.cli_param, ParamGet.Request(param_id="SIM_SPEEDUP"))
-        except Exception:                                     # noqa: BLE001
-            return None
-        if res is None or not res.success:
-            return None
-        # ParamValue carries both an integer and a real field; ArduPilot returns
-        # SIM_SPEEDUP as a float, so prefer real and fall back to integer.
-        val = float(res.value.real) if res.value.real else float(res.value.integer)
-        return round(val, 4) if val else None
+        # MAVROS pulls the vehicle's parameters itself once the FCU
+        # connects, and forcing a second pull here made it WORSE: the read
+        # raced the refill and came back 0.0, a speedup that would mean time
+        # had stopped. So poll the node parameter instead and accept the first
+        # strictly positive answer.
+        #
+        # Treating 0.0 as "not populated yet" rather than as a value is safe in
+        # the direction that matters: if it never resolves this returns None,
+        # the manifest records an unresolved speedup, and is_kpi_grade()
+        # refuses the run. An unread speedup must never pass as an assumed 1.0.
+        deadline = time.time() + 20.0
+        while time.time() < deadline:
+            try:
+                res = self._call(self.cli_param,
+                                 GetParameters.Request(names=["SIM_SPEEDUP"]),
+                                 timeout=5.0)
+            except Exception as e:                            # noqa: BLE001
+                self.get_logger().warn(f"[speedup] {type(e).__name__}: {e}")
+                return None
+            if res is not None and res.values:
+                v = res.values[0]
+                # DO NOT TRUST `type` HERE. MAVROS answers SIM_SPEEDUP with
+                # type=3 (INTEGER) while leaving integer_value=0 and putting
+                # the real number in double_value=1.0. Believing the type field
+                # read a speedup of zero - which would mean time had stopped -
+                # and, because is_kpi_grade() only checks != 1.0, would have
+                # quietly failed every canonical run with a nonsense reason.
+                #
+                # So take whichever field actually carries a value. Both empty
+                # means not populated yet; keep polling.
+                val = (float(v.double_value) or float(v.integer_value))
+                if val > 0.0:
+                    return round(val, 4)
+            rclpy.spin_once(self, timeout_sec=0.5)
+        self.get_logger().warn("[speedup] SIM_SPEEDUP never resolved")
+        return None
 
     def bring_up(self) -> None:
         log = self.get_logger()
@@ -213,6 +251,16 @@ class ShieldNode(Node):
             rclpy.spin_once(self, timeout_sec=0.5)
             if self.state and self.state.up >= alt - 1.0:
                 log.info(f"at {self.state.up:.1f} m — mission start")
+                # Read SIM_SPEEDUP HERE, not in _finish().
+                #
+                # _finish() runs inside a timer callback, and
+                # spin_until_future_complete() from within a callback is a
+                # nested spin: the future never completes and the read returned
+                # None on every flight. bring_up() owns the main thread and
+                # spins explicitly, so the service call resolves normally.
+                # Cached because the value cannot change mid-flight.
+                self.sim_speedup = self.read_sim_speedup()
+                log.info(f"SIM_SPEEDUP read from autopilot: {self.sim_speedup}")
                 return
         raise RuntimeError("never reached takeoff altitude")
 
@@ -411,8 +459,7 @@ class ShieldNode(Node):
         # it actually was.
         # READ, never assert. None here fails the KPI gate, which is correct:
         # a speedup nobody measured is not evidence of real-time flight.
-        speedup = self.read_sim_speedup()
-        self.get_logger().info(f"SIM_SPEEDUP read from autopilot: {speedup}")
+        speedup = self.sim_speedup
 
         try:
             manifest = build_manifest(
