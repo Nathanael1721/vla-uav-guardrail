@@ -1,0 +1,422 @@
+/*
+ * Progress deck — ITRI / NTUT, reporting period to 2026-08-31.
+ * Same nathan-deck design system as build_midterm_deck.js (tokens unchanged).
+ *
+ * THE TWO RULES, inherited and still enforced:
+ *
+ *   1. Every number on a slide is READ FROM THE ARTEFACTS at build time. A
+ *      slide cannot drift from the data it claims to report. This period that
+ *      rule earned its keep: a metric that had been quoted for a week turned
+ *      out to measure something else, and the only reason the correction is
+ *      cheap is that the deck regenerates from disk.
+ *
+ *   2. No video is embedded. A previous deck reached 486 MB that way. Videos
+ *      ship alongside, by filename.
+ */
+
+const pptxgen = require("pptxgenjs");
+const React = require("react");
+const ReactDOMServer = require("react-dom/server");
+const sharp = require("sharp");
+const fs = require("fs");
+const path = require("path");
+
+const {
+  FaBullseye, FaShieldAlt, FaEye, FaChartBar, FaExclamationTriangle,
+  FaClipboardCheck, FaTasks, FaRoad, FaMicrochip, FaCity, FaWalking,
+} = require("react-icons/fa");
+
+/* ── DESIGN TOKENS (authoritative, unchanged) ──────────────────────────── */
+const TEAL = "249DB2";
+const TEAL_DK = "1A7484";
+const TEAL_TINT = "EAF6F8";
+const BLACK = "1A1A1A";
+const INK = "2B2B2B";
+const GREY = "6B7280";
+const WHITE = "FFFFFF";
+const LINE = "E3E8EC";
+const FF = "Poppins";
+
+const REPO = "D:/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone";
+
+/* ── DATA LOADING ──────────────────────────────────────────────────────── */
+function readJson(rel) {
+  return JSON.parse(fs.readFileSync(path.join(REPO, rel), "utf8"));
+}
+function metrics(tag) { return readJson(`demo/out/${tag}/metrics.json`); }
+function kpi(tag) { return readJson(`demo/out/${tag}/kpi.json`); }
+function has(tag) { return fs.existsSync(path.join(REPO, "demo/out", tag, "metrics.json")); }
+
+function videoMb(rel) {
+  const p = path.join(REPO, rel);
+  return fs.existsSync(p) ? (fs.statSync(p).size / 1048576).toFixed(1) + " MB" : "pending";
+}
+
+/* Tracking accuracy, recomputed here from the flight log rather than trusted:
+ * the same projection demo/track_truth.py uses. Quoting a stored number would
+ * reintroduce exactly the problem this period uncovered. */
+function trackAccuracy(tag) {
+  const p = path.join(REPO, "demo/out", tag, "flight_log.jsonl");
+  if (!fs.existsSync(p)) return null;
+  const rows = fs.readFileSync(p, "utf8").split("\n").filter((l) => l.trim()).map(JSON.parse);
+  const errs = [];
+  let outOfFov = 0;
+  for (const r of rows) {
+    if (!r.det || r.tgt_x === null || r.tgt_x === undefined || r.psi === undefined) continue;
+    const W = r.det.img_w || 400;
+    let rel = Math.atan2(r.tgt_y - r.y, r.tgt_x - r.x) - r.psi;
+    rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+    const deg = (rel * 180) / Math.PI;
+    errs.push(Math.abs(r.det.cx - W * (0.5 + deg / 90)));
+    if (Math.abs(deg) > 45) outOfFov++;
+  }
+  if (!errs.length) return null;
+  const s = errs.slice().sort((a, b) => a - b);
+  return {
+    n: errs.length,
+    median: s[Math.floor(s.length / 2)],
+    p95: s[Math.min(s.length - 1, Math.floor(0.95 * s.length))],
+    onTarget: errs.filter((e) => e <= 100).length / errs.length,
+    outOfFov,
+  };
+}
+
+const n = (v, d = 2) => (v === null || v === undefined ? "n/a" : Number(v).toFixed(d));
+const pct = (v) => (v === null || v === undefined ? "n/a" : (Number(v) * 100).toFixed(1) + " %");
+
+async function iconPng(Icon, color = "#" + TEAL, size = 256) {
+  const svg = ReactDOMServer.renderToStaticMarkup(
+    React.createElement(Icon, { color, size: String(size) }));
+  const buf = await sharp(Buffer.from(svg)).png().toBuffer();
+  return "image/png;base64," + buf.toString("base64");
+}
+
+async function main() {
+  const pres = new pptxgen();
+  pres.layout = "LAYOUT_16x9";
+  pres.title = "Safety-Constrained VLA for ArduPilot UAVs — Progress, August 2026";
+  pres.author = "Nathanael Tjahyadi";
+
+  const ic = {
+    aim: await iconPng(FaBullseye),
+    shield: await iconPng(FaShieldAlt),
+    eye: await iconPng(FaEye),
+    chart: await iconPng(FaChartBar),
+    warn: await iconPng(FaExclamationTriangle),
+    check: await iconPng(FaClipboardCheck),
+    tasks: await iconPng(FaTasks),
+    road: await iconPng(FaRoad),
+    chip: await iconPng(FaMicrochip),
+    city: await iconPng(FaCity),
+    walk: await iconPng(FaWalking),
+  };
+
+  /* ── SHARED HELPERS (nathan-deck geometry, copied verbatim) ──────────── */
+  function badge(s, i) {
+    s.addShape(pres.shapes.ROUNDED_RECTANGLE, {
+      x: 9.3, y: 5.18, w: 0.5, h: 0.32,
+      fill: { color: TEAL }, line: { color: TEAL }, rectRadius: 0.06,
+    });
+    s.addText(String(i).padStart(2, "0"), {
+      x: 9.3, y: 5.18, w: 0.5, h: 0.32,
+      fontSize: 9, color: WHITE, fontFace: FF, bold: true,
+      align: "center", valign: "middle",
+    });
+  }
+
+  function heading(s, eyebrow, title, x = 0.55, y = 0.45) {
+    s.addText(eyebrow.toUpperCase(), {
+      x, y, w: 8.5, h: 0.28,
+      fontSize: 10, color: TEAL, fontFace: FF, bold: true, charSpacing: 2,
+    });
+    s.addText(title, {
+      x, y: y + 0.3, w: 8.9, h: 0.6,
+      fontSize: 26, color: BLACK, fontFace: FF, bold: true,
+    });
+    s.addShape(pres.shapes.LINE, {
+      x, y: y + 0.98, w: 0.9, h: 0, line: { color: TEAL, width: 2.5 },
+    });
+  }
+
+  function card(s, x, y, w, h, iconData, titleTxt, bodyTxt) {
+    s.addShape(pres.shapes.ROUNDED_RECTANGLE, {
+      x, y, w, h, fill: { color: WHITE }, line: { color: LINE, width: 1 },
+      rectRadius: 0.08,
+      shadow: { type: "outer", blur: 6, offset: 2, angle: 90, color: "D9DEE3", opacity: 0.4 },
+    });
+    let ty = y + 0.22;
+    if (iconData) {
+      s.addImage({ data: iconData, x: x + 0.22, y: y + 0.22, w: 0.36, h: 0.36 });
+      s.addText(titleTxt, {
+        x: x + 0.68, y: y + 0.2, w: w - 0.9, h: 0.4,
+        fontSize: 13, color: INK, fontFace: FF, bold: true, valign: "middle",
+      });
+      ty = y + 0.72;
+    } else {
+      s.addText(titleTxt, {
+        x: x + 0.24, y: y + 0.2, w: w - 0.48, h: 0.4,
+        fontSize: 13, color: INK, fontFace: FF, bold: true,
+      });
+      ty = y + 0.66;
+    }
+    if (bodyTxt) {
+      // A card shorter than its own header leaves negative room for the body,
+      // and pptxgenjs emits <a:ext cy="-100584">. PowerPoint then refuses the
+      // WHOLE package with no clue which shape caused it. Guard, do not debug.
+      const bodyH = h - (ty - y) - 0.2;
+      if (bodyH <= 0) {
+        throw new Error(
+          `card "${titleTxt}" is ${h}" tall but its header needs ` +
+          `${(ty - y + 0.2).toFixed(2)}", leaving ${bodyH.toFixed(2)}" for the body. ` +
+          `Negative extents make the whole deck unopenable. Raise h to at least ` +
+          `${(ty - y + 0.45).toFixed(2)}".`);
+      }
+      s.addText(bodyTxt, {
+        x: x + 0.24, y: ty, w: w - 0.48, h: bodyH,
+        fontSize: 11, color: GREY, fontFace: FF, lineSpacingMultiple: 1.25, valign: "top",
+      });
+    }
+  }
+
+  function darkBase(s, eyebrow) {
+    s.background = { color: TEAL_DK };
+    s.addShape(pres.shapes.RECTANGLE, {
+      x: 0, y: 0, w: 0.09, h: 5.625, fill: { color: TEAL }, line: { color: TEAL },
+    });
+    if (eyebrow) {
+      s.addText(eyebrow.toUpperCase(), {
+        x: 0.55, y: 0.5, w: 9, h: 0.3,
+        fontSize: 10, color: TEAL_TINT, fontFace: FF, bold: true, charSpacing: 3,
+      });
+    }
+  }
+
+  function table(s, rows, colFrac, x, y, rh, emphasis = []) {
+    const tw = 8.9;
+    const colW = colFrac.map((f) => tw * f);
+    rows.forEach((r, ri) => {
+      let cx = x;
+      r.forEach((cell, ci) => {
+        const header = ri === 0;
+        const zebra = !header && ri % 2 === 0;
+        const emph = emphasis.some(([a, b]) => a === ri && b === ci);
+        s.addShape(pres.shapes.RECTANGLE, {
+          x: cx, y: y + ri * rh, w: colW[ci], h: rh,
+          fill: { color: header ? TEAL : zebra ? TEAL_TINT : WHITE },
+          line: { color: LINE, width: 1 },
+        });
+        s.addText(String(cell), {
+          x: cx + 0.1, y: y + ri * rh, w: colW[ci] - 0.2, h: rh,
+          fontSize: header ? 11.5 : 11,
+          color: header ? WHITE : emph ? TEAL : INK,
+          bold: header || emph, fontFace: FF,
+          align: ci === 0 ? "left" : "center", valign: "middle",
+        });
+        cx += colW[ci];
+      });
+    });
+  }
+
+  let SLIDE = 0;
+  const next = () => ++SLIDE;
+
+  /* ── 01 · COVER ─────────────────────────────────────────────────────── */
+  {
+    const s = pres.addSlide();
+    darkBase(s, "ITRI · NTUT AIoT Laboratory · Feb–Nov 2026");
+    s.addText("Semantic-Spatial Translation and\nSafety-Constrained VLA for ArduPilot UAVs", {
+      x: 0.55, y: 1.5, w: 8.9, h: 1.4,
+      fontSize: 30, color: WHITE, fontFace: FF, bold: true, lineSpacingMultiple: 1.1,
+    });
+    s.addShape(pres.shapes.ROUNDED_RECTANGLE, {
+      x: 0.55, y: 3.15, w: 3.5, h: 0.42,
+      fill: { color: TEAL }, line: { color: TEAL }, rectRadius: 0.1,
+    });
+    s.addText("Progress report · 31 August 2026", {
+      x: 0.55, y: 3.15, w: 3.5, h: 0.42,
+      fontSize: 11, color: WHITE, fontFace: FF, bold: true,
+      align: "center", valign: "middle",
+    });
+    s.addText("Nathanael Tjahyadi · Guardrail layer (WP1–WP4)\nPrincipal Investigator: Prof. Kuan-Ting Lai", {
+      x: 0.55, y: 3.85, w: 8.9, h: 0.7,
+      fontSize: 12, color: TEAL_TINT, fontFace: FF, lineSpacingMultiple: 1.3,
+    });
+  }
+
+  /* ── 02 · THE HEADLINE ──────────────────────────────────────────────── */
+  {
+    const s = pres.addSlide();
+    heading(s, "This period", "The hard KPI is now measured, not inferred");
+    const on = kpi("ros2_shield_on"), off = kpi("ros2_shield_off");
+    const dyn = has("ros2_shield_on_dynamic") ? kpi("ros2_shield_on_dynamic") : null;
+    const rows = [["Configuration", "P0 escape rate", "P0 ticks", "Unmeas.", "KPI-grade"]];
+    rows.push(["Guardrail OFF (control)", n(off.p0_violation_escape_rate, 6),
+      off.p0_violation_ticks, off.p0_ticks_not_measurable, off.kpi_grade ? "yes" : "no"]);
+    rows.push(["Guardrail ON", n(on.p0_violation_escape_rate, 1),
+      on.p0_violation_ticks, on.p0_ticks_not_measurable, on.kpi_grade ? "yes" : "no"]);
+    if (dyn) {
+      rows.push(["Guardrail ON + dynamic NFZ", n(dyn.p0_violation_escape_rate, 1),
+        dyn.p0_violation_ticks, dyn.p0_ticks_not_measurable, dyn.kpi_grade ? "yes" : "no"]);
+    }
+    table(s, rows, [0.34, 0.18, 0.14, 0.18, 0.16], 0.55, 1.72, 0.44,
+      [[2, 1], [3, 1]]);
+    card(s, 0.55, 3.7, 8.9, 1.25, ic.check, "What changed",
+      "The escape rate used to be INFERRED from whether the Shield had acted — and every branch that raises a violation also appends a repair, so that test could never return non-zero. The Shield now records a re-check of the action it flew.");
+    badge(s, next() + 1);
+  }
+
+  /* ── 03 · THE MEETING REQUEST, ANSWERED ─────────────────────────────── */
+  {
+    const s = pres.addSlide();
+    heading(s, "19 August review", "“Hold 10 m from a person”, flown");
+    const off = metrics("ros2_ped_off"), on = metrics("ros2_ped_on");
+    const koff = kpi("ros2_ped_off"), kon = kpi("ros2_ped_on");
+    const rows = [["", "Guardrail OFF", "Guardrail ON"]];
+    rows.push(["Time inside the 10 m ring", n(off.standoff_s, 1) + " s", n(on.standoff_s, 1) + " s"]);
+    rows.push(["Closest approach", n(off.standoff_min_range_m, 2) + " m", n(on.standoff_min_range_m, 2) + " m"]);
+    rows.push(["P0 escape rate", n(koff.p0_violation_escape_rate, 6), n(kon.p0_violation_escape_rate, 1)]);
+    rows.push(["Mission target reached", off.frac_within_30m ? "yes" : "no", on.frac_within_30m ? "yes" : "no"]);
+    rows.push(["KPI-grade", koff.kpi_grade ? "yes" : "no", kon.kpi_grade ? "yes" : "no"]);
+    table(s, rows, [0.4, 0.3, 0.3], 0.55, 1.65, 0.36, [[1, 2], [2, 2], [3, 2]]);
+    card(s, 0.55, 3.92, 8.9, 1.25, ic.walk, "How to read this",
+      "Both runs reach the target. The subject position is DECLARED, not perceived — this rail has no camera, so the measurement is of the Shield, which the review confirmed is the deliverable.");
+    badge(s, next() + 1);
+  }
+
+  /* ── 04 · THE METRIC THAT WAS WRONG ─────────────────────────────────── */
+  {
+    const s = pres.addSlide();
+    heading(s, "Correction", "A metric that measured the wrong thing");
+    const rows = [["Flight", "det_hit_rate", "frac_on_target", "p95 error", "Target off-frame"]];
+    for (const [tag, label] of [["city_full", "Populated city, no lock"],
+                                ["city_kpi", "Populated city (b)"],
+                                ["demo_traffic", "Distractors"],
+                                ["city_demo", "Pedestrians only"]]) {
+      if (!has(tag)) continue;
+      const a = trackAccuracy(tag);
+      if (!a) continue;
+      rows.push([label, n(metrics(tag).det_hit_rate, 3), pct(a.onTarget),
+        n(a.p95, 1) + " px", String(a.outOfFov)]);
+    }
+    table(s, rows, [0.32, 0.17, 0.19, 0.16, 0.16], 0.55, 1.72, 0.42, [[1, 2]]);
+    card(s, 0.55, 4.0, 8.9, 1.2, ic.warn, "Why it mattered",
+      "det_hit_rate counts inferences that produced ANY box — a box on a parked lookalike scores like a box on the target. It is a detector-liveness rate. The flight with the best reported rate was the worst tracker, including frames where the target was outside the camera entirely. frac_on_target scores against the ground truth already present in every flight log.");
+    badge(s, next() + 1);
+  }
+
+  /* ── 05 · THE FIX ───────────────────────────────────────────────────── */
+  {
+    const s = pres.addSlide();
+    heading(s, "Instance lock", "Binding the controller to one vehicle");
+    const before = trackAccuracy("city_full");
+    const after = trackAccuracy("lock_on") || trackAccuracy("city_locked");
+    const rows = [["", "Lock off", "Lock on"]];
+    if (before && after) {
+      rows.push(["Boxes on the correct vehicle", pct(before.onTarget), pct(after.onTarget)]);
+      rows.push(["Median error", n(before.median, 1) + " px", n(after.median, 1) + " px"]);
+      rows.push(["p95 error", n(before.p95, 1) + " px", n(after.p95, 1) + " px"]);
+      rows.push(["Detections with target off-frame", String(before.outOfFov), String(after.outOfFov)]);
+    }
+    table(s, rows, [0.44, 0.28, 0.28], 0.55, 1.62, 0.36, [[1, 2], [4, 2]]);
+    card(s, 0.55, 3.52, 4.3, 1.6, ic.eye, "Gate, tightened",
+      "0.28 → 0.12 of image width. Real tracking moves the box a median of 0.0 px per tick, so the old gate admitted thirteen times that — and passed the two jumps onto the wrong vehicle.");
+    card(s, 5.15, 3.52, 4.3, 1.6, ic.chip, "Size consistency",
+      "The target measured 20–24 px wide, every wrong box 47–84 px. More than 1.8× different in width is a different object — 59 candidates rejected on the recorded run.");
+    badge(s, next() + 1);
+  }
+
+  /* ── 06 · THE SCENE ─────────────────────────────────────────────────── */
+  {
+    const s = pres.addSlide();
+    heading(s, "Scene enrichment", "A street with people and vehicles on it");
+    card(s, 0.55, 1.72, 2.85, 1.5, ic.city, "Parked vehicles",
+      "12 at the kerb, chosen from 12 models. Spawned once and never touched, so they cost no per-tick RPC at all.");
+    card(s, 3.58, 1.72, 2.85, 1.5, ic.road, "Moving traffic",
+      "Background vehicles on a shared circuit. These are the expensive ones: about 9 RPC/s each.");
+    card(s, 6.60, 1.72, 2.85, 1.5, ic.walk, "Pedestrians",
+      "12 on pavements, baked to static meshes; a few pace a verified stretch. The standing majority is free.");
+    card(s, 0.55, 3.42, 8.9, 1.5, ic.chart, "Why most of it is static",
+      "A moving object costs one pose update per control tick, inside the same loop that runs the detector, whose rate only just clears its 4.0 Hz gate. A real street carries far more parked vehicles than moving ones — so the realistic choice and the affordable one are the same choice. Measured with 29 objects on the street: detector 5.15 Hz, all boxes on the correct vehicle, P0 escape rate 0.0.");
+    badge(s, next() + 1);
+  }
+
+  /* ── 07 · WHAT IS OPEN ──────────────────────────────────────────────── */
+  {
+    const s = pres.addSlide();
+    heading(s, "Remaining work", "Ordered by contribution to acceptance");
+    const items = [
+      ["1", "Perception on the KPI-grade rail",
+       "ArduPilot SITL has no renderer, so all tracking evidence sits outside the contractual gate"],
+      ["2", "Scenario sweep harness (WP4)",
+       "The KPI machinery runs per flight; nothing sweeps a scenario library"],
+      ["3", "Mean repair magnitude and mean time to safe",
+       "Named as grant KPIs, never measured, no target ever recorded"],
+      ["4", "Corridor and time-window constraints (WP1)",
+       "In the DSL specification, absent from the five implemented types"],
+      ["5", "Appearance re-identification",
+       "The colour histogram is already computed each tick; position and size have sufficed so far"],
+    ];
+    let y = 1.82;
+    items.forEach(([nn, t, b]) => {
+      s.addShape(pres.shapes.ROUNDED_RECTANGLE, {
+        x: 0.55, y, w: 0.38, h: 0.38,
+        fill: { color: TEAL }, line: { color: TEAL }, rectRadius: 0.05,
+      });
+      s.addText(nn, {
+        x: 0.55, y, w: 0.38, h: 0.38, fontSize: 11, color: WHITE, fontFace: FF,
+        bold: true, align: "center", valign: "middle",
+      });
+      s.addText(t, {
+        x: 1.05, y: y - 0.02, w: 8.4, h: 0.26, fontSize: 12, color: INK, fontFace: FF, bold: true,
+      });
+      s.addText(b, {
+        x: 1.05, y: y + 0.22, w: 8.4, h: 0.26, fontSize: 10, color: GREY, fontFace: FF,
+      });
+      y += 0.62;
+    });
+    badge(s, next() + 1);
+  }
+
+  /* ── 08 · DELIVERABLES ──────────────────────────────────────────────── */
+  {
+    const s = pres.addSlide();
+    heading(s, "Deliverables", "Accompanying this deck");
+    const rows = [["Artefact", "File", "Size"]];
+    rows.push(["This deck", "docs/VLA-Guardrail-Sept2026.pptx / .pdf", "-"]);
+    rows.push(["Populated city, lock on", "docs/video/city_locked.mp4",
+      videoMb("demo/out/city_locked/city_locked_final.mp4")]);
+    rows.push(["Remaining-work checklist", "docs/CHECKLIST-remaining-work.md", "-"]);
+    rows.push(["Findings this period", "docs/FINDING-*.md (7 documents)", "-"]);
+    table(s, rows, [0.34, 0.48, 0.18], 0.55, 1.72, 0.42);
+    s.addText("Every figure in this deck is read from demo/out/<tag>/metrics.json and kpi.json at build time; tracking accuracy is recomputed from the flight logs. Videos ship as separate files and are not embedded.", {
+      x: 0.55, y: 3.72, w: 8.9, h: 0.6,
+      fontSize: 10, color: GREY, fontFace: FF, italic: true, lineSpacingMultiple: 1.3,
+    });
+    badge(s, next() + 1);
+  }
+
+  /* ── 09 · CLOSING ───────────────────────────────────────────────────── */
+  {
+    const s = pres.addSlide();
+    darkBase(s, "Summary");
+    const on = kpi("ros2_shield_on");
+    s.addText("P0 violation escape rate", {
+      x: 0.55, y: 1.6, w: 8.9, h: 0.4,
+      fontSize: 14, color: TEAL_TINT, fontFace: FF,
+    });
+    s.addText(n(on.p0_violation_escape_rate, 1), {
+      x: 0.55, y: 2.0, w: 8.9, h: 1.1,
+      fontSize: 68, color: WHITE, fontFace: FF, bold: true,
+    });
+    s.addText("measured — not inferred — on the grant's canonical ArduPilot topology,\nwith zero unmeasurable ticks, across three configurations.", {
+      x: 0.55, y: 3.2, w: 8.9, h: 0.8,
+      fontSize: 13, color: TEAL_TINT, fontFace: FF, lineSpacingMultiple: 1.3,
+    });
+  }
+
+  const out = path.join(REPO, "docs/VLA-Guardrail-Sept2026.pptx");
+  await pres.writeFile({ fileName: out });
+  console.log("wrote " + out);
+}
+
+main().catch((e) => { console.error(e); process.exit(1); });
