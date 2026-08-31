@@ -40,12 +40,16 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
+# One window, named so a second recorder cannot open a rival one.
+LIVE_WINDOW = "VLA Guardrail - drone view | chase view"
+
 
 class FrameRecorder(threading.Thread):
     """Third-person and annotated first-person frames, written on their own thread."""
 
     def __init__(self, obs, out_dir: Path, annotate_fn: Callable,
-                 hz: float = 20.0, height: int = 720, quality: int = 88):
+                 hz: float = 20.0, height: int = 720, quality: int = 88,
+                 live_view: bool = False, live_height: int = 480):
         super().__init__(daemon=True)
         self.obs = obs
         self.tps_dir = Path(out_dir) / "tps"
@@ -56,6 +60,14 @@ class FrameRecorder(threading.Thread):
         self.period = 1.0 / max(1.0, float(hz))
         self.height = int(height)
         self.quality = int(quality)
+        # Show the pair being written, in a window, while the aircraft flies.
+        # Costs no RPC: both frames are already decoded here for the file
+        # write, so this is one hstack and one imshow on a thread that is
+        # deliberately not the control loop.
+        self.live_view = bool(live_view)
+        self.live_height = int(live_height)
+        self.n_shown = 0
+        self._live_failed = False
 
         self._lock = threading.Lock()
         self._hud: Optional[dict] = None
@@ -101,6 +113,17 @@ class FrameRecorder(threading.Thread):
         # measured duration and understate the achieved rate.
         self.t_stop = time.time()
         self._stop_evt.set()
+        if self.live_view and not self._live_failed:
+            # Close the window from the thread that owns it is not possible
+            # here - stop() is called by the flight - but destroyAllWindows is
+            # safe and a leaked window would sit on top of the terminal after
+            # every flight. Failure is ignored: the mission is already over.
+            try:
+                import cv2
+                cv2.destroyWindow(LIVE_WINDOW)
+                cv2.waitKey(1)
+            except Exception:                                     # noqa: BLE001
+                pass
 
     # ------------------------------------------------------------- the thread --
 
@@ -177,6 +200,7 @@ class FrameRecorder(threading.Thread):
             idx = self.n_written
             try:
                 wrote = False
+                ann = None
                 v = self.obs.get_chase_native()
                 if v is not None:
                     v.save(self.tps_dir / f"{idx:05d}.jpg", quality=self.quality)
@@ -184,9 +208,14 @@ class FrameRecorder(threading.Thread):
                 f = self.obs.get_front_native()
                 if f is not None:
                     f, det_s = self._upscale(f, det)
-                    self.annotate(f, det_s, hud).save(
-                        self.fpv_dir / f"{idx:05d}.jpg", quality=self.quality)
+                    # Kept, not written inline: the live window shows this exact
+                    # image, so drawing it twice would be both wasteful and a
+                    # chance for the window and the file to disagree.
+                    ann = self.annotate(f, det_s, hud)
+                    ann.save(self.fpv_dir / f"{idx:05d}.jpg", quality=self.quality)
                     wrote = True
+                if self.live_view and not self._live_failed:
+                    self._show(ann, v)
                 # Count WRITES, not polls. This incremented even when both
                 # cameras returned None, so the index advanced without a file
                 # behind it and the count disagreed with the directory.
@@ -199,6 +228,29 @@ class FrameRecorder(threading.Thread):
             except Exception:
                 # A recording fault must never take the flight down with it.
                 self.n_failed += 1
+
+    def _show(self, ann, chase) -> None:
+        """Draw the same two panels into a window. Never raises.
+
+        A display fault must cost a frame, not the mission - the same rule the
+        rest of this loop keeps. On the first failure the window is disabled
+        for the remainder of the flight and said once, because a headless host
+        would otherwise print a traceback twenty times a second.
+        """
+        try:
+            import cv2
+            from two_view import pil_to_bgr, side_by_side
+            panel = side_by_side(pil_to_bgr(ann), pil_to_bgr(chase),
+                                 height=self.live_height)
+            if panel is None:
+                return
+            cv2.imshow(LIVE_WINDOW, panel)
+            cv2.waitKey(1)          # required for the window to repaint
+            self.n_shown += 1
+        except Exception as exc:                                  # noqa: BLE001
+            self._live_failed = True
+            print(f"[recorder] live view unavailable ({type(exc).__name__}: "
+                  f"{exc}); recording continues")
 
     def summary(self) -> dict:
         """What was captured, and how fast it was ACTUALLY captured.
@@ -235,6 +287,11 @@ class FrameRecorder(threading.Thread):
             "seconds": round(secs, 2),
             "writing_seconds": round(writing, 2),
             "late_slots": self.n_late,
+            # Frames actually painted into the live window. Zero with the
+            # window off; well below `frames` would mean the display was
+            # costing the recorder slots, which is the thing it promised not
+            # to do.
+            "live_frames_shown": self.n_shown,
             "skipped_no_hud": self.n_skipped,
             "empty_captures": self.n_empty,
             "failed": self.n_failed,

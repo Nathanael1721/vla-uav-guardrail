@@ -19,6 +19,12 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "demo"))
+
+# The SAME layout the live window uses (demo/two_view.py). Two
+# open-coded copies would drift, and the drift would only show up
+# when someone compared a live screenshot against the video.
+from two_view import side_by_side                        # noqa: E402
 
 
 def main() -> int:
@@ -117,10 +123,9 @@ def main() -> int:
     for i in range(n):
         a = load(fpv[min(i, len(fpv) - 1)], args.height) if fpv else None
         b = load(tps[min(i, len(tps) - 1)], args.height) if tps else None
-        if a is None and b is None:
+        panel = side_by_side(a, b)
+        if panel is None:
             continue
-        panel = (np.hstack([a, b]) if a is not None and b is not None
-                 else (a if a is not None else b))
         first = panel.shape
         break
     if first is None:
@@ -133,14 +138,9 @@ def main() -> int:
     for i in range(n):
         a = load(fpv[min(i, len(fpv) - 1)], args.height) if fpv else None
         b = load(tps[min(i, len(tps) - 1)], args.height) if tps else None
-        if a is None and b is None:
+        panel = side_by_side(a, b)
+        if panel is None:
             continue
-        if a is not None and b is not None:
-            if a.shape[0] != b.shape[0]:
-                b = cv2.resize(b, (b.shape[1], a.shape[0]))
-            panel = np.hstack([a, b])
-        else:
-            panel = a if a is not None else b
         if panel.shape[:2] != first[:2]:
             panel = cv2.resize(panel, (first[1], first[0]))
         writer.write(panel)

@@ -1430,10 +1430,15 @@ async def fly(args) -> int:
                 (view_dir / "fpv").mkdir(parents=True, exist_ok=True)
                 recorder = FrameRecorder(obs, view_dir, annotate,
                                          hz=args.record_hz,
-                                         height=args.record_height)
+                                         height=args.record_height,
+                                         live_view=args.live_view,
+                                         live_height=args.live_height)
                 recorder.start()
                 print(f"[view] recording {args.record_hz:.0f} Hz at "
                       f"{args.record_height}p on its own thread -> {view_dir}")
+                if args.live_view:
+                    print(f"[view] live window open at {args.live_height}p "
+                          f"(drone view | chase view)")
             except Exception as exc:
                 print(f"[view] no Chase camera in this config ({type(exc).__name__})")
 
@@ -2500,6 +2505,17 @@ def main() -> int:
                          "changes the parallax, which is what actually clears "
                          "a street tree from the line of sight. 0 restores the "
                          "old stop-and-spin behaviour.")
+    ap.add_argument("--live-view", action="store_true",
+                    help="show the two-view composite in a window WHILE flying. "
+                         "Costs no RPC - the recorder thread already holds both "
+                         "decoded frames for the file write, so this is one "
+                         "hstack and one imshow off the control loop. Requires "
+                         "--save-view, which is what produces those frames. "
+                         "Off by default so existing command lines are unchanged.")
+    ap.add_argument("--live-height", type=int, default=480,
+                    help="height of each panel in the live window (default 480). "
+                         "Independent of --record-height: the window can be "
+                         "small without shrinking the recorded frames.")
     ap.add_argument("--save-view", action="store_true",
                     help="record the third-person (Chase) camera to "
                          "demo/out/<tag>/tps/ for the demo video")
@@ -2525,7 +2541,15 @@ def main() -> int:
                     help="hold this far outside a no-fly zone")
     ap.add_argument("--dv-h", type=float, default=0.4)
     ap.add_argument("--dv-z", type=float, default=0.2)
-    return asyncio.run(fly(ap.parse_args()))
+    args = ap.parse_args()
+    if args.live_view and not args.save_view:
+        # The window shows the frames the recorder writes. Without --save-view
+        # the recorder is never started, so there is nothing to show. Refusing
+        # is clearer than silently enabling capture the caller did not ask for,
+        # which would also change where the flight writes.
+        ap.error("--live-view needs --save-view: the window draws the frames "
+                 "the recorder produces, and without it none are captured")
+    return asyncio.run(fly(args))
 
 
 if __name__ == "__main__":
