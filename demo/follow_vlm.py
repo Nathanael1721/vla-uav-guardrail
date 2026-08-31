@@ -1350,6 +1350,7 @@ async def fly(args) -> int:
     traffic = None
     env_car = None
     people = None
+    parked = None
     n_absent = 0
     # Initialised at function scope, not inside the `async with`. When the sim
     # fails to connect the block raises before its own initialisers run, and the
@@ -1533,7 +1534,10 @@ async def fly(args) -> int:
         # again - a standing figure costs no per-tick RPC, so it cannot take
         # anything from the detector. Default 0 so every recorded flight and every
         # existing command line keeps its meaning.
-        if args.pedestrians > 0 and street is not None:
+        # Both kinds of scenery share the kerb search and the building
+        # mask, so they are placed together - `--parked` alone must work
+        # without `--pedestrians`, which gating on the latter would break.
+        if (args.pedestrians > 0 or args.parked > 0) and street is not None:
             import numpy as _np
             _b = Path(args.citymap).parent / "occ_day_highband_15to55.npz"
             _bld = _np.load(_b)["occ"] if _b.is_file() else None
@@ -1543,11 +1547,26 @@ async def fly(args) -> int:
             else:
                 _route = moving_car.ROUTES.get(args.route or "turn") or []
                 _samp = [(x, y) for x, y in _route]
-                people = people_mod.Pedestrians(
-                    world, street, _bld, count=args.pedestrians,
-                    walking=args.pedestrians_walking, seed=args.seed,
-                    people_dir=args.people_dir, avoid=_samp)
-                people.spawn()
+                if args.pedestrians > 0:
+                    people = people_mod.Pedestrians(
+                        world, street, _bld, count=args.pedestrians,
+                        walking=args.pedestrians_walking, seed=args.seed,
+                        people_dir=args.people_dir, avoid=_samp)
+                    people.spawn()
+
+                # Parked vehicles, allocated from the SAME kerb after the
+                # pedestrians have taken theirs. Passing their positions is
+                # what stops a car being spawned on top of a person - two
+                # objects in one cell reads as a bug, not as a street.
+                if args.parked > 0:
+                    import parked_cars as parked_mod
+                    parked = parked_mod.ParkedCars(
+                        world, street, _bld, count=args.parked, seed=args.seed,
+                        models_dir=args.glb_dir, route=_samp,
+                        circuit=city_traffic.circuit(),
+                        taken=([(f.x, f.y) for f in people.figures]
+                               if people is not None else []))
+                    parked.spawn()
 
 
             # DOES THE QUESTION MATCH THE SUBJECT?
@@ -2111,6 +2130,8 @@ async def fly(args) -> int:
             try:
                 if people is not None:
                     people.destroy()
+                if parked is not None:
+                    parked.destroy()
                 if traffic is not None:
                     traffic.destroy()
                 elif car is not None:
@@ -2505,6 +2526,13 @@ def main() -> int:
                          "changes the parallax, which is what actually clears "
                          "a street tree from the line of sight. 0 restores the "
                          "old stop-and-spin behaviour.")
+    ap.add_argument("--parked", type=int, default=0,
+                    help="parked vehicles at the kerb. They are spawned once and "
+                         "never touched, so unlike --traffic they cost NOTHING "
+                         "per tick - which is why a street can be filled with "
+                         "them without moving det_hz. Kept 3 m clear of the "
+                         "target's route and of the background circuit, and "
+                         "never the target's own model. Off by default.")
     ap.add_argument("--live-view", action="store_true",
                     help="show the two-view composite in a window WHILE flying. "
                          "Costs no RPC - the recorder thread already holds both "

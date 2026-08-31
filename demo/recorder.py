@@ -113,17 +113,15 @@ class FrameRecorder(threading.Thread):
         # measured duration and understate the achieved rate.
         self.t_stop = time.time()
         self._stop_evt.set()
-        if self.live_view and not self._live_failed:
-            # Close the window from the thread that owns it is not possible
-            # here - stop() is called by the flight - but destroyAllWindows is
-            # safe and a leaked window would sit on top of the terminal after
-            # every flight. Failure is ignored: the mission is already over.
-            try:
-                import cv2
-                cv2.destroyWindow(LIVE_WINDOW)
-                cv2.waitKey(1)
-            except Exception:                                     # noqa: BLE001
-                pass
+        # The window is NOT closed here. stop() runs on the flight thread and
+        # the window belongs to the recorder thread; OpenCV windows are
+        # thread-affine, and destroying one from another thread blocked stop()
+        # long enough that the run never reached write_sidecar(). The result
+        # was a flight with 1728 frames and no recorder.json, which sent the
+        # video builder down its fallback path and produced a clip that plays
+        # 1.24x fast - the exact fault the sidecar exists to prevent.
+        #
+        # run() closes it instead, on its way out.
 
     # ------------------------------------------------------------- the thread --
 
@@ -228,6 +226,16 @@ class FrameRecorder(threading.Thread):
             except Exception:
                 # A recording fault must never take the flight down with it.
                 self.n_failed += 1
+
+        # Out of the loop: the thread that opened the window is the only one
+        # allowed to close it.
+        if self.live_view and not self._live_failed:
+            try:
+                import cv2
+                cv2.destroyWindow(LIVE_WINDOW)
+                cv2.waitKey(1)
+            except Exception:                                     # noqa: BLE001
+                pass
 
     def _show(self, ann, chase) -> None:
         """Draw the same two panels into a window. Never raises.

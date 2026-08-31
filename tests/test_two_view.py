@@ -90,6 +90,28 @@ def test_the_video_tool_and_the_live_window_use_the_same_function():
     assert "side_by_side" in rec
 
 
+def test_the_window_is_closed_by_the_thread_that_opened_it():
+    """stop() runs on the FLIGHT thread; the window belongs to the recorder.
+
+    Closing it from stop() blocked long enough that the run never reached
+    write_sidecar(), so a flight produced 1728 frames and no recorder.json -
+    and the video builder fell back to frames/flight_seconds, which overstates
+    the rate and plays the clip 1.24x fast. Exactly the fault the sidecar was
+    introduced to prevent, reintroduced by a two-line teardown.
+    """
+    import re
+    src = (ROOT / "demo" / "recorder.py").read_text(encoding="utf-8")
+    stop_i = src.index("    def stop(self)")
+    # Just stop(), to the NEXT method - not everything up to _show, which would
+    # sweep in run() where the close correctly lives.
+    nxt = re.search(r"\n    def ", src[stop_i + 10:])
+    stop_body = src[stop_i:stop_i + 10 + (nxt.start() if nxt else len(src))]
+    assert "destroyWindow" not in stop_body, (
+        "stop() closes the OpenCV window, but it runs on the flight thread and "
+        "the window is owned by the recorder thread")
+    assert "destroyWindow" in src, "nothing closes the window at all"
+
+
 def test_the_live_window_cannot_take_the_flight_down():
     """A display fault must cost a frame, not the mission."""
     rec = (ROOT / "demo" / "recorder.py").read_text(encoding="utf-8")

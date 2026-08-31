@@ -163,12 +163,21 @@ GLB_DIR_DEFAULT = "D:/models/kenney_car-kit/glb"
 # (0.317) and because nothing else on this street is yellow except lane paint,
 # which is thin and never forms a car-shaped box.
 GLB_TARGET = ("taxi.glb", "yellow")
+# The first three carry a colour word because their colour was MEASURED against
+# the gate (see the table above). The rest are here to fill a street, and make
+# no colour claim - an empty word means the fleet counts them as "a car" and
+# nothing more, which is honest and keeps them out of any colour statistic.
 GLB_PALETTE: List[Tuple[str, str]] = [
     ("police.glb", "white"),
     ("sedan.glb", "red"),
     ("van.glb", ""),            # scores well as "a car"; no colour claim made
     ("suv.glb", ""),
     ("delivery.glb", ""),
+    ("truck.glb", ""),
+    ("hatchback-sports.glb", ""),
+    ("suv-luxury.glb", ""),
+    ("sedan-sports.glb", ""),
+    ("delivery-flat.glb", ""),
 ]
 
 
