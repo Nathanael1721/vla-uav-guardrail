@@ -197,6 +197,21 @@ def test_both_rails_write_the_kpi_grade_into_the_artefact():
         assert '"kpi_grade"' in src, f"{name} does not record the grade in kpi.json"
 
 
+def test_no_shell_script_has_windows_line_endings():
+    """A .sh with CRLF is not a runnable script.
+
+    bash reads the carriage return as part of the token, so `set -e` becomes an
+    invalid option and the first function definition is a syntax error. This is
+    easy to reintroduce from Windows - pathlib.write_text translates newlines on
+    write - and the failure appears in WSL, far from the edit.
+    """
+    crlf = bytes([13, 10])          # CR LF, written this way so
+    # the literal cannot itself be mangled by a newline-translating write
+    for sh in sorted((ROOT / "sitl").glob("*.sh")):
+        assert crlf not in sh.read_bytes(), (
+            f"{sh.name} has CRLF line endings and will not run under bash")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
