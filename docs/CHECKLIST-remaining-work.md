@@ -38,6 +38,17 @@ Current measured position, canonical topology, `code_revision 4bafc63fab21`:
 
 ---
 
+## Correction, 2026-08-31
+
+`det_hit_rate` is a detector-LIVENESS rate, not a tracking-accuracy rate: it
+counts inferences that produced any box. Claims elsewhere in this repository
+that cite it as evidence the tracker held the right vehicle do not support that
+conclusion. `frac_on_target` now measures it properly. Re-measured, the run with
+the best reported hit rate (0.995) was tracking the wrong vehicle for 24 % of
+its mission. See `docs/FINDING-the-hit-rate-was-not-a-hit-rate.md`.
+
+The SITL KPI figures are unaffected - no detector is in that loop.
+
 ## Open
 
 ### 1. Perception on the KPI-grade rail — WP4

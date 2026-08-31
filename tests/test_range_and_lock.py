@@ -510,6 +510,92 @@ def test_the_stats_counter_reports_which_path_ran():
     assert st.get("masked") == 1 and st.get("whole_box") == 1, st
 
 
+
+
+
+# ---------------------------------------------------------------------------
+# The gate that let a real switch through, and the size test that stops it.
+#
+# On demo/out/city_full the aircraft followed a different vehicle for 13.4 s -
+# 24 % of the mission - and the two jumps that started it were 76.4 px and
+# 84.7 px on a 400 px frame. The gate was 0.28 * 400 = 112 px, so both passed.
+#
+# What made that gate indefensible is what legitimate tracking looks like in
+# the same flight: the box moves by a MEDIAN of 0.0 px and a p95 of 8.8 px
+# between ticks. 112 px was thirteen times the motion it was admitting.
+#
+# The wrong boxes were also 47-84 px wide against the taxi's 20-24 - two to
+# four times larger - which is the signal the size test uses.
+# ---------------------------------------------------------------------------
+
+def _cand(cx, w=22.0, score=0.15, colour=0.30):
+    """The detector's 8-tuple, in the shape TargetLock.select consumes."""
+    return (cx, 110.0, w, w * 0.6, score, 0, "car", colour)
+
+
+def test_the_seventy_six_pixel_switch_is_now_rejected():
+    """The exact jump from city_full tick 55, which the old gate allowed."""
+    lock = TargetLock(gate_frac=0.12)
+    lock.select([_cand(206.4, w=21.0)], 400, 0.0, 100.0)
+    chosen, switched = lock.select([_cand(282.8, w=47.3)], 400, 0.0, 100.1)
+    assert switched, (
+        "a 76 px jump to a box twice the width is a different vehicle; the lock "
+        "must report a switch rather than follow it silently")
+
+
+def test_the_old_gate_would_have_allowed_it():
+    """Pins WHY the default moved, so nobody widens it back without reading."""
+    lock = TargetLock(gate_frac=0.28, size_ratio=99.0)
+    lock.select([_cand(206.4, w=21.0)], 400, 0.0, 100.0)
+    _chosen, switched = lock.select([_cand(282.8, w=47.3)], 400, 0.0, 100.1)
+    assert not switched, (
+        "if this now reports a switch the historical claim is wrong and the "
+        "comment explaining the 0.28 -> 0.12 change needs revisiting")
+
+
+def test_a_candidate_of_the_wrong_size_loses_to_one_of_the_right_size():
+    """Position alone would have taken the nearer, larger box."""
+    lock = TargetLock(gate_frac=0.12)
+    lock.select([_cand(200.0, w=22.0)], 400, 0.0, 100.0)
+    # The lookalike is CLOSER to the prediction, but three times the width.
+    chosen, switched = lock.select(
+        [_cand(210.0, w=66.0), _cand(224.0, w=23.0)], 400, 0.0, 100.1)
+    assert chosen[2] == 23.0, f"took the wrong-sized box: width {chosen[2]}"
+    assert not switched
+
+
+def test_the_size_test_is_a_ratio_so_closing_range_is_allowed():
+    """The target grows as the aircraft closes; that must not read as a switch."""
+    lock = TargetLock(gate_frac=0.12, size_ratio=1.8)
+    lock.select([_cand(200.0, w=20.0)], 400, 0.0, 100.0)
+    chosen, switched = lock.select([_cand(202.0, w=34.0)], 400, 0.0, 100.1)
+    assert not switched, "1.7x growth is within the ratio and must be accepted"
+    assert chosen[2] == 34.0
+
+
+def test_the_held_size_follows_the_instance_after_a_switch():
+    """Otherwise the lock compares forever against a vehicle it stopped following."""
+    lock = TargetLock(gate_frac=0.12)
+    lock.select([_cand(200.0, w=20.0)], 400, 0.0, 100.0)
+    lock.select([_cand(340.0, w=70.0)], 400, 0.0, 100.1)      # forced switch
+    assert lock.w == 70.0, f"held width is {lock.w}, not the new instance's"
+    _c, switched = lock.select([_cand(342.0, w=72.0)], 400, 0.0, 100.2)
+    assert not switched, "continuing on the NEW instance is not another switch"
+
+
+def test_first_acquisition_accepts_any_size():
+    """Nothing to compare against yet."""
+    lock = TargetLock(gate_frac=0.12)
+    chosen, switched = lock.select([_cand(200.0, w=200.0)], 400, 0.0, 100.0)
+    assert chosen is not None and not switched
+
+
+def test_the_default_gate_is_the_measured_one():
+    """A regression here would silently restore the behaviour that lost the car."""
+    assert TargetLock().gate_frac == 0.12
+    assert TargetLock().size_ratio == 1.8
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

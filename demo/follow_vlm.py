@@ -66,6 +66,7 @@ from shapely.geometry import Point                                  # noqa: E402
 
 import city_planner                                                 # noqa: E402
 import city_traffic
+import track_truth
 from recorder import FrameRecorder
 import car_trajectory
 import pedestrians as people_mod
@@ -637,17 +638,48 @@ class TargetLock:
     taking it would be a silent target switch.
     """
 
-    def __init__(self, hfov_deg: float = 90.0, gate_frac: float = 0.28,
-                 hold_s: float = 2.0):
+    def __init__(self, hfov_deg: float = 90.0, gate_frac: float = 0.12,
+                 hold_s: float = 2.0, size_ratio: float = 1.8):
         self.hfov_deg = hfov_deg
-        self.gate_frac = gate_frac      # max jump, as a fraction of image width
+        # 0.12 of the width, not 0.28. The old value is 112 px on a 400 px
+        # frame, and measured on a real flight the box moves by a MEDIAN of
+        # 0.0 px and a p95 of 8.8 px between ticks - so 112 px admitted roughly
+        # thirteen times the motion it was meant to allow. The two switches
+        # that began a 13 s episode of following the wrong vehicle jumped 76
+        # and 85 px, and both passed the old gate. 0.12 is 48 px: still five
+        # times the p95 of legitimate motion, and it rejects both.
+        self.gate_frac = gate_frac
         self.hold_s = hold_s            # how long a lock survives with no match
+        # The other signal, and the one that separates these objects cleanly.
+        # In that same flight the taxi measured 20-24 px wide while every wrong
+        # box was 47-84 px - two to four times larger. A candidate whose width
+        # differs from the held instance's by more than this factor is a
+        # different object, however close to the prediction it lands.
+        self.size_ratio = size_ratio
         self.cx = None
+        self.w = None
         self.last_yaw = None
         self.last_t = None
         self.n_locked = 0
         self.n_switched = 0
         self.n_rejected = 0
+        self.n_size_rejected = 0
+
+    def _size_ok(self, cand) -> bool:
+        """Is this candidate the right SIZE to be the instance being held?
+
+        Scale-invariant on purpose: the target's apparent width changes as the
+        aircraft closes, so the test is a ratio, not a difference. With no held
+        width yet, everything passes - the first acquisition has nothing to
+        compare against.
+        """
+        if self.w is None or len(cand) < 3:
+            return True
+        w = float(cand[2])
+        if w <= 0.0 or self.w <= 0.0:
+            return True
+        r = w / self.w
+        return (1.0 / self.size_ratio) <= r <= self.size_ratio
 
     def _predict(self, img_w: int, yaw: float) -> float:
         """Where the held instance should be now, given how far the nose turned.
@@ -681,9 +713,13 @@ class TargetLock:
             self.n_switched += int(switched)
         else:
             gate = self.gate_frac * img_w
-            near = [(abs(float(c[0]) - pred), c) for c in candidates]
+            # Size first: a candidate of the wrong size is the wrong object, so
+            # it should not be allowed to win on position alone.
+            ok = [c for c in candidates if self._size_ok(c)]
+            self.n_size_rejected += len(candidates) - len(ok)
+            near = [(abs(float(c[0]) - pred), c) for c in (ok or candidates)]
             near.sort(key=lambda p: p[0])
-            if near[0][0] <= gate:
+            if ok and near[0][0] <= gate:
                 chosen = near[0][1]
                 self.n_locked += 1
                 switched = False
@@ -695,13 +731,19 @@ class TargetLock:
                 switched = True
                 self.n_switched += 1
         self.cx = float(chosen[0])
+        # Track the size too, so the next tick can compare against it. Updated
+        # on a switch as well: after re-acquiring, the NEW instance is the one
+        # being held, and comparing against the old one's width forever would
+        # reject the thing we just decided to follow.
+        self.w = float(chosen[2]) if len(chosen) > 2 else None
         self.last_yaw = yaw
         self.last_t = now
         return chosen, switched
 
     def stats(self) -> dict:
         return {"locked": self.n_locked, "switched": self.n_switched,
-                "rejected_candidates": self.n_rejected}
+                "rejected_candidates": self.n_rejected,
+                "size_rejected": self.n_size_rejected}
 
 
 class FenceGuard:
@@ -1237,7 +1279,22 @@ class Grounder:
                                {"cx": round(det[0], 1), "cy": round(det[1], 1),
                                 "w": round(det[2], 1), "h": round(det[3], 1),
                                 "score": round(det[4], 4), "colour": round(det[7], 3),
-                                "img_w": det[5], "img_h": det[6]})}
+                                "img_w": det[5], "img_h": det[6]}),
+                       # The RUNNER-UP, and how many candidates there were.
+                       #
+                       # Only the winner used to be logged, so the margin
+                       # between first and second choice was unrecoverable from
+                       # any artefact - and a selection failure cannot be
+                       # diagnosed after the fact without it. Establishing that
+                       # one flight had followed the wrong vehicle needed a
+                       # ground-truth reconstruction precisely because this was
+                       # missing. Two extra numbers per tick is a cheap price.
+                       "n_cands": len(cands),
+                       "runner_up": (None if len(cands) < 2 else
+                                     {"cx": round(cands[1][0], 1),
+                                      "w": round(cands[1][2], 1),
+                                      "score": round(cands[1][4], 4),
+                                      "colour": round(cands[1][7], 3)})}
                 with self.log_path.open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(rec) + "\n")
 
@@ -2171,7 +2228,25 @@ async def fly(args) -> int:
         "tag": args.tag, "ticks": len(traj), "object": args.object,
         "detector": DETECTOR_ID,
         "det_seen": g["n_seen"], "det_missed": g["n_miss"],
+        # LIVENESS, not accuracy. This counts the inferences that produced a
+        # box - any box. A box on a parked lookalike, a building or road paint
+        # scores exactly like a box on the target. It was read as a tracking
+        # metric for a long time and it is not one; `frac_on_target` below is.
         "det_hit_rate": round(g["n_seen"] / max(1, g["n_seen"] + g["n_miss"]), 3),
+        # ACCURACY, scored against the target position already in every row.
+        # Measured on the flights that existed before this was added, the two
+        # disagree badly enough to invert the ranking: the run with the best
+        # det_hit_rate (0.995) had frac_on_target 0.728, while the run with the
+        # worst (0.977) tracked perfectly at 1.000.
+        **track_truth.score_rows(rows),
+        # What the instance lock did, or that it was not running. `switched` is
+        # the event that matters: the moment the mission silently changes
+        # target. Reporting `enabled: False` explicitly is the point - a lock
+        # that was never on looks identical in every other number to one that
+        # was, and that is exactly how a flight followed the wrong vehicle for
+        # 13 s without anything noticing.
+        "target_lock": ({"enabled": True, **lock.stats()} if lock is not None
+                        else {"enabled": False}),
         "det_hz": round((g["n_seen"] + g["n_miss"]) / max(1e-6, len(traj) * TICK), 2),
         "start_heading_err_deg": (None if start_heading_err_deg is None
                                   else round(start_heading_err_deg, 2)),
@@ -2324,7 +2399,7 @@ def main() -> int:
                          "whichever the detector prefers this tick. Needed when "
                          "the scene holds several of the same kind - four cars, "
                          "or nine city blocks.")
-    ap.add_argument("--lock-gate", type=float, default=0.28,
+    ap.add_argument("--lock-gate", type=float, default=0.12,
                     help="max accepted jump from the predicted position, as a "
                          "fraction of image width")
     ap.add_argument("--pedestrians", type=int, default=0,
