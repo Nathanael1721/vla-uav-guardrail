@@ -1,3 +1,5 @@
+> **SUPERSEDED.** See `TUTORIAL.md` in the project root, which is the single verified guide. This file is kept as history only and its commands, tags and numbers may be out of date.
+
 # Running the "follow the car" experiment
 
 > **Start here if you just want the drone to follow the car.**

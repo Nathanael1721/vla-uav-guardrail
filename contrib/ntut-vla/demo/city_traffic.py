@@ -13,6 +13,16 @@ With several cars on the same street the query has to select. Every distractor
 scores well as "a car" -- they are the same mesh -- so the noun cannot separate
 them and only the colour test can. That turns limitation one into a measurement.
 
+WHAT THE FLEET LOOKS LIKE NOW
+
+With the glTF models installed the street carries a yellow taxi, a white police
+car, a red sedan and a blue van -- four genuinely different colours, which is
+what the tracker needs in order to have anything to discriminate. Without them
+everything below still applies and the fleet falls back to two meshes and one
+material. See docs/FINDING-glb-vehicles-aug15.md; the section below records why
+the mesh path was built the way it was, and still governs `--traffic-mode
+experiment`.
+
 THE DESIGN CHOICE THAT MATTERS: SAME MESH, DIFFERENT COLOUR
 
 An earlier plan mixed meshes (a sports car against the old offroad buggy). That
@@ -62,6 +72,8 @@ vehicles at every 2nd tick = 35 RPC/s, against 10 for the single-car demo.
 from __future__ import annotations
 
 import math
+import os
+import pathlib
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
@@ -120,6 +132,56 @@ def circuit() -> List[Tuple[float, float]]:
 TARGET_MATERIAL = "/Game/Geometry/Materials/M_Orange"
 TARGET_ASSET = "SM_Offroad_Body"
 TARGET_COLOUR_WORD = "orange"       # M_Orange renders genuinely ORANGE here
+
+# ---------------------------------------------------------------- glTF fleet --
+# The packaged-asset path above can produce exactly ONE colour. A glTF carrying
+# an embedded baseColorTexture can produce as many as the atlas holds, because
+# the colour travels inside the mesh file and no /Game/... material is involved.
+# Measured in-sim, at the same pose, in the same run as the incumbent:
+#
+#     model         query            score    colour_match
+#     taxi.glb      a yellow car     0.108    0.317
+#     police.glb    a white car      0.095    0.255
+#     sedan.glb     a red car        0.097    0.237
+#     van.glb       a car            0.095    -
+#     SM_Offroad_Body+M_Orange       0.047    0.119     <- what this replaces
+#
+# and the fitness probe confirmed the two things a fleet needs beyond looking
+# right: 20/20 teleports with 0.0 m readback error (they are movable), and four
+# spawned at once without complaint. See docs/FINDING-glb-vehicles-aug15.md.
+#
+# THE MODELS ARE NOT IN THIS REPO and must never be committed - they are a 4.8 MB
+# third-party asset pack. Kenney's Car Kit, CC0, from
+# https://opengameart.org/content/car-kit, repacked by tools/embed_glb_textures.py
+# so the shared texture atlas is embedded rather than referenced by URI (the sim
+# takes one byte array and cannot resolve an external "Textures/colormap.png").
+# Point VLA_GLB_DIR at the output, or pass --glb-dir.
+GLB_DIR_ENV = "VLA_GLB_DIR"
+GLB_DIR_DEFAULT = "D:/models/kenney_car-kit/glb"
+
+# Yellow is the target because it measured the strongest colour gate of the four
+# (0.317) and because nothing else on this street is yellow except lane paint,
+# which is thin and never forms a car-shaped box.
+GLB_TARGET = ("taxi.glb", "yellow")
+GLB_PALETTE: List[Tuple[str, str]] = [
+    ("police.glb", "white"),
+    ("sedan.glb", "red"),
+    ("van.glb", ""),            # scores well as "a car"; no colour claim made
+    ("suv.glb", ""),
+    ("delivery.glb", ""),
+]
+
+
+def glb_dir(explicit: Optional[str] = None) -> Optional[pathlib.Path]:
+    """Where the vehicle models live, or None if they were never downloaded.
+
+    Returning None rather than raising is deliberate: the repo has to stay
+    runnable for anyone who has not fetched a third-party asset pack, so the
+    fleet silently falls back to the packaged meshes and says so once.
+    """
+    cand = explicit or os.environ.get(GLB_DIR_ENV) or GLB_DIR_DEFAULT
+    p = pathlib.Path(cand)
+    return p if p.is_dir() and any(p.glob("*.glb")) else None
 
 # Distractors differ by MESH as well as material, because in this build colour
 # alone cannot be varied. Three routes were tried and measured:
@@ -180,11 +242,29 @@ class VehicleSpec:
     asset: str = TARGET_ASSET
     update_every: int = 1
     stops: List[Tuple[float, float]] = field(default_factory=list)
+    # Absolute path to a glTF vehicle. When set it wins over `asset`/`material`
+    # and the vehicle brings its own colour.
+    glb_path: Optional[str] = None
+    # Which fixed route the TARGET drives. Distractors always take the circuit.
+    # 'straight' is the measurement baseline; 'turn' is the one that corners at
+    # the intersection and is better to watch.
+    route_name: str = "straight"
+
+    # Up the street, then left at the intersection onto the cross street. Same
+    # geometry as moving_car.TURN_ROUTE, restated here because the fleet's
+    # target route is defined by TARGET_LANE_X / ROUTE_Y0 / ROUTE_Y1 rather than
+    # imported.
+    TURN_CORNER_Y: float = 40.0
+    TURN_END_X: float = -10.0
 
     def route(self) -> List[Tuple[float, float]]:
         """The target drives a straight one-shot run and parks; every distractor
         drives the shared closed circuit."""
         if self.is_target:
+            if self.route_name == "turn":
+                return [(TARGET_LANE_X, ROUTE_Y0),
+                        (TARGET_LANE_X, self.TURN_CORNER_Y),
+                        (self.TURN_END_X, self.TURN_CORNER_Y)]
             return [(TARGET_LANE_X, ROUTE_Y0), (TARGET_LANE_X, ROUTE_Y1)]
         return circuit()
 
@@ -195,13 +275,60 @@ class VehicleSpec:
             sp.length_m, sp.width_m, sp.height_m = 4.3, 1.9, 1.2
         sp.materials = [self.material] if self.material else []
         sp.desc_match = f"a {self.colour_word} car" if self.colour_word else "a car"
+        if self.glb_path:
+            sp.glb_path = self.glb_path
+            sp.length_m, sp.width_m, sp.height_m = 4.0, 1.9, 1.5
+            sp.materials = []
         return sp
+
+
+def glb_fleet(n_background: int = 3, speed: float = 2.0,
+              target_stops: Optional[List[Tuple[float, float]]] = None,
+              bg_every: int = 1, models: Optional[pathlib.Path] = None,
+              route_name: str = "straight") -> Optional[List[VehicleSpec]]:
+    """Target plus distractors, every one a differently-coloured glTF vehicle.
+
+    Returns None when the models are not installed, so the caller can fall back
+    to the packaged meshes rather than fail.
+
+    This is the configuration the mesh path could not express: FOUR genuinely
+    different colours instead of one, which is what the tracker needs in order
+    to have anything to discriminate. It does mix meshes, and that confounds
+    shape with colour exactly as `--traffic-mode experiment` warns -- so the
+    experiment mode below is unchanged and remains the arm to quote when the
+    question is whether the colour word is doing the work.
+    """
+    d = pathlib.Path(models) if models is not None else glb_dir()
+    if d is None or not d.is_dir():
+        return None
+    tgt_file, tgt_word = GLB_TARGET
+    if not (d / tgt_file).is_file():
+        return None
+    fleet = [VehicleSpec(name="TargetCar", speed_mps=speed, phase_frac=0.15,
+                         is_target=True, material=None, colour_word=tgt_word,
+                         update_every=1, stops=list(target_stops or []),
+                         glb_path=str(d / tgt_file), route_name=route_name)]
+    pal = [(f, w) for f, w in GLB_PALETTE if (d / f).is_file()]
+    n_background = int(n_background)
+    if n_background > len(pal):
+        print(f"[traffic] {n_background} distractors requested but only "
+              f"{len(pal)} models are present - using {len(pal)}")
+        n_background = len(pal)
+    for i in range(n_background):
+        fname, word = pal[i]
+        fleet.append(VehicleSpec(
+            name=f"BgCar{i + 1}", speed_mps=speed,
+            phase_frac=(0.15 + (i + 1) / (n_background + 1)) % 1.0,
+            is_target=False, material=None, colour_word=word,
+            update_every=max(1, int(bg_every)), glb_path=str(d / fname)))
+    return fleet
 
 
 def default_fleet(n_background: int = 3, speed: float = 2.0,
                   target_stops: Optional[List[Tuple[float, float]]] = None,
                   bg_every: int = 1, mode: str = "demo",
-                  palette=None) -> List[VehicleSpec]:
+                  palette=None, models: Optional[pathlib.Path] = None,
+                  route_name: str = "straight") -> List[VehicleSpec]:
     """Target plus `n_background` distractors sharing one circuit.
 
     Distractors are spread evenly around the lap rather than given separate
@@ -214,10 +341,27 @@ def default_fleet(n_background: int = 3, speed: float = 2.0,
     AND neither can the colour gate, so the tracker has nothing to hold on to and
     wanders between them. That is what it was doing.
     """
+    # The glTF fleet, when the caller supplied models. Discovery is deliberately
+    # NOT done here: a fleet that silently changes shape depending on what
+    # happens to be installed on the machine is untestable and unreproducible.
+    # Callers resolve the directory with `glb_dir()` and pass the result.
+    #
+    # Only for `demo` mode. `experiment` exists precisely to hold the mesh
+    # constant so colour is the only free variable, and swapping in five
+    # different silhouettes would destroy the property that mode is for.
+    if models is not None and mode != "experiment" and palette is None:
+        g = glb_fleet(n_background, speed, target_stops, bg_every, models,
+                      route_name=route_name)
+        if g is not None:
+            return g
+        print(f"[traffic] {models} holds no usable vehicle models - falling "
+              f"back to packaged meshes, one colour only")
+
     fleet = [VehicleSpec(name="TargetCar", speed_mps=speed, phase_frac=0.15,
                          is_target=True, material=TARGET_MATERIAL,
                          colour_word=TARGET_COLOUR_WORD, asset=TARGET_ASSET,
-                         update_every=1, stops=list(target_stops or []))]
+                         update_every=1, stops=list(target_stops or []),
+                         route_name=route_name)]
     pal = list(palette or (BG_PALETTE_EXPERIMENT if mode == "experiment"
                            else BG_PALETTE_DEMO))
     n_background = int(n_background)
@@ -306,6 +450,8 @@ class Traffic:
         """
         for vs, car in zip(self._specs, self.cars):
             car.spawn()
+            if vs.glb_path:
+                continue        # colour is baked into the file; nothing to check
             if vs.material and car.material_used is None:
                 print(f"[traffic] *** {vs.name}: PAINT FAILED - the target is not "
                       f"white, the colour query cannot select it ***")
@@ -361,6 +507,8 @@ class Traffic:
                  "material_applied": car.material_used,
                  "material": vs.material, "colour_word": vs.colour_word,
                  "asset": vs.asset,
+                 "glb": None if not vs.glb_path
+                        else pathlib.Path(vs.glb_path).name,
                  "speed_mps": round(vs.speed_mps, 2),
                  "phase_frac": round(vs.phase_frac, 3),
                  "phase_s": round(car.phase_s, 1),

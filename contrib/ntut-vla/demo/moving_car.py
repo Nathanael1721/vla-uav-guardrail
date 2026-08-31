@@ -23,9 +23,18 @@ Motion is by client-side teleport (`world.set_object_pose(..., teleport=True)`)
 rather than an environment actor, because env actors must be declared when the
 scene loads and cannot be added to a running sim.
 
-The mesh is `SM_Offroad_Body` from `PASBlocks/Plugins/Rover` — a real vehicle,
-3.70 x 1.79 x 1.16 m by the sim's own bounding box — painted orange so the colour
-word in the instruction has something to verify against.
+Two kinds of vehicle can be driven, and which one you get depends on whether the
+glTF models are installed:
+
+  * **A packaged mesh.** `SM_Offroad_Body` from `PASBlocks/Plugins/Rover` — a real
+    vehicle, 3.70 x 1.79 x 1.16 m by the sim's own bounding box — painted orange
+    so the colour word in the instruction has something to verify against. This
+    is the fallback, and it can produce exactly ONE colour, because the build
+    binds exactly one material.
+  * **A glTF file**, via `CarSpec.glb_path`. The colour is embedded in the mesh
+    file, so no material is bound and the fleet can carry as many different
+    colours as the texture atlas holds. Measured better on both the detector
+    score and the colour gate; see docs/FINDING-glb-vehicles-aug15.md.
 """
 from __future__ import annotations
 
@@ -72,6 +81,36 @@ class CarSpec:
     desc_mismatch: str = "a red car"
     ground_z_ned: float = 0.0
 
+    # --- glTF vehicles -------------------------------------------------------
+    # Set `glb_path` and the car is spawned from a FILE instead of a packaged
+    # asset, which is the only way this build produces more than one colour.
+    #
+    # The constraint that forced it: `set_object_material` binds exactly one
+    # material (M_Orange) and refuses every other, including ones that provably
+    # exist on disk, and `set_object_texture_from_packaged_asset` returns True
+    # while changing nothing. Colour therefore has to arrive INSIDE the mesh
+    # file. A glTF carrying an embedded baseColorTexture does that, and measured
+    # in-sim it works: taxi renders yellow, police white, sedan red, van blue.
+    #
+    # Measured against the incumbent at the same pose in the same run:
+    #
+    #     SM_Offroad_Body + M_Orange   "an orange car" 0.047   colour 0.119
+    #     taxi.glb                     "a yellow car"  0.108   colour 0.317
+    #
+    # so the glTF is better on BOTH the detector score and the colour gate, and
+    # supplies four distinguishable vehicles where the packaged path supplies
+    # one. See docs/FINDING-glb-vehicles-aug15.md.
+    glb_path: Optional[str] = None
+    # Kenney ships ~2 units per car; x2 gives a ~4 m vehicle. Measured by eye
+    # against the road markings and against the sim's own lane width.
+    glb_scale: float = 2.0
+    # glTF is Y-up/-Z-forward, the sim is Z-up NED with heading 0 = +x/North;
+    # the two do not agree. Measured by sweeping yaw and taking the widest
+    # detection box (broadside): the flank appears at 90 and 270 deg, and the
+    # bonnet points North at 270. So quaternion yaw = heading + 270 deg.
+    # experiments/probe_glb_yaw.py reproduces it.
+    glb_yaw_offset_deg: float = 270.0
+
 
 # Closed circuit around the block. Every leg verified against the occupancy map
 # at >= 10 m from the nearest building. 111 m round, about 44 s a lap at 2.5 m/s.
@@ -90,6 +129,33 @@ DEFAULT_ROUTE: List[Tuple[float, float]] = [
 # stop at the far end — used with one_shot=True so it parks instead of looping.
 # The street at x = 38 is clear of buildings by >= 10 m from y = -40 to y = +60.
 STRAIGHT_ROUTE: List[Tuple[float, float]] = [(38.0, -8.0), (38.0, 58.0)]
+
+# Up the street, then LEFT at the intersection onto the cross street.
+#
+# The city map is a regular block grid: 28 m streets between building blocks, at
+# x in [28,54] and y in [28,54] (and mirrored at [-54,-28]). The car's usual
+# street runs along y and occupies x in [28,54]; the cross street runs along x
+# and occupies y in [28,54]. They meet in the square x,y in [28,54] - the
+# intersection already visible in the demo frames, with the zebra crossing.
+#
+# The corner sits at (38, 40), inside that square, and the second leg runs SOUTH
+# along the y = 40 lane - decreasing x - because the cross street is free for
+# every x, so going that way gives a long leg without leaving the mapped grid.
+# 93 m along the path: 58 s of motion at 2.5 m/s with two 8 s stops, and 0 of
+# 521 sampled points outside mapped free space.
+#
+# WHY THIS IS BACK. The closed circuit was abandoned because its turns swung the
+# car through the aircraft's blind spot - the front camera sees nothing closer
+# than 0.86 x altitude, about 7.7 m at 9 m - and every lost lock cost a chunk of
+# the flight. Three things changed since: the colour gate no longer rejects a
+# sunlit car, the target estimator predicts through detection gaps and serves a
+# bearing on 100% of ticks instead of 38-55%, and the search sweep is bounded so
+# a brief loss no longer becomes a 292 degree spin. A corner is survivable now.
+# It is still the risk of this route, and analyse_lost_lock.py is how it is
+# checked rather than assumed.
+TURN_ROUTE: List[Tuple[float, float]] = [(38.0, -8.0), (38.0, 40.0), (-10.0, 40.0)]
+
+ROUTES = {"straight": STRAIGHT_ROUTE, "turn": TURN_ROUTE}
 
 
 class _Path:
@@ -324,6 +390,8 @@ class MovingCar:
     def _pose(self, x: float, y: float, h: float):
         from projectairsim.types import Pose, Quaternion, Vector3
         from projectairsim.utils import rpy_to_quaternion
+        if self.spec.glb_path:
+            h = h + math.radians(self.spec.glb_yaw_offset_deg)
         w, qx, qy, qz = rpy_to_quaternion(0.0, 0.0, h)
         # mesh origin sits at road level, so no half-height offset
         return Pose({
@@ -334,16 +402,29 @@ class MovingCar:
 
     def spawn(self) -> str:
         x, y, h = self.pose_at(0.0)
-        scale = ([1.0, 1.0, 1.0] if self.spec.unit_scale
-                 else [self.spec.length_m, self.spec.width_m, self.spec.height_m])
-        self.actual_name = self.world.spawn_object(
-            self.name, self.spec.asset, self._pose(x, y, h), scale, False)
-        print(f"[car] spawned {self.actual_name!r} "
-              f"{self.spec.length_m}x{self.spec.width_m}x{self.spec.height_m} m "
-              f"at ({x:.1f}, {y:.1f})")
+        if self.spec.glb_path:
+            # The glTF carries its own colour, so no material is applied and
+            # `material_used` deliberately stays None. Callers that treat "no
+            # material" as a paint failure must check `glb_path` first --
+            # Traffic.spawn() does.
+            import pathlib as _pl
+            data = _pl.Path(self.spec.glb_path).read_bytes()
+            s = float(self.spec.glb_scale)
+            self.actual_name = self.world.spawn_object_from_file(
+                self.name, "gltf", data, True, self._pose(x, y, h), [s, s, s], False)
+            print(f"[car] spawned {self.actual_name!r} from "
+                  f"{_pl.Path(self.spec.glb_path).name} x{s:g} at ({x:.1f}, {y:.1f})")
+        else:
+            scale = ([1.0, 1.0, 1.0] if self.spec.unit_scale
+                     else [self.spec.length_m, self.spec.width_m, self.spec.height_m])
+            self.actual_name = self.world.spawn_object(
+                self.name, self.spec.asset, self._pose(x, y, h), scale, False)
+            print(f"[car] spawned {self.actual_name!r} "
+                  f"{self.spec.length_m}x{self.spec.width_m}x{self.spec.height_m} m "
+                  f"at ({x:.1f}, {y:.1f})")
         print(f"[car] circuit {self.path.total:.0f} m, lap {self.lap_time:.0f}s, "
               f"speed {self.v.min():.1f}-{self.v.max():.1f} m/s")
-        for mat in self.spec.materials:
+        for mat in (() if self.spec.glb_path else self.spec.materials):
             try:
                 self.world.set_object_material(self.actual_name, mat)
                 self.material_used = mat
@@ -351,7 +432,7 @@ class MovingCar:
                 break
             except Exception as e:
                 print(f"[car] material {mat} failed ({type(e).__name__})")
-        if self.material_used is None:
+        if self.material_used is None and not self.spec.glb_path:
             print("[car] WARNING: no material applied — the colour word in the "
                   "instruction will not match what the camera sees")
         self.pos, self.heading = (x, y), h
@@ -421,7 +502,10 @@ class MovingCar:
             self.actual_name = None
 
     def truth(self) -> dict:
+        import pathlib as _pl
         return {"name": self.actual_name, "asset": self.spec.asset,
+                "glb": None if not self.spec.glb_path
+                       else _pl.Path(self.spec.glb_path).name,
                 "size_m": [self.spec.length_m, self.spec.width_m, self.spec.height_m],
                 "material": self.material_used, "speed_mps": self.speed,
                 "route": self.route, "circuit_m": round(self.path.total, 1),

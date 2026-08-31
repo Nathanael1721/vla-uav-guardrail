@@ -43,6 +43,7 @@ from .models import (
     Policy,
     PolygonFence,
     State,
+    SubjectStandoff,
 )
 
 BRAKE = Action4D(vx=0.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)
@@ -216,10 +217,30 @@ class ShieldDecision(BaseModel):
     violations: list[Violation] = []
     repairs: list[Repair] = []
     braked: bool = False
+    # What is STILL wrong with the action that was actually flown.
+    #
+    # `violations` is the check on `raw`, so on its own it cannot answer the
+    # grant's hard KPI - "a P0 that was seen and then flown anyway". The escape
+    # rate was inferred instead, from whether the Shield had done *something*
+    # (see guardrail/kpi.py), and since every branch that produces a violation
+    # also appends a Repair, that inference could not return a non-zero number
+    # for any log this Shield can generate.
+    #
+    # Recording the re-check makes the KPI a measured fact rather than an
+    # inference, and makes it auditable offline from the artefact alone. Empty
+    # is the good case and the overwhelmingly common one: re-checked against
+    # every delivered flight, the emitted action violated a P0 rule on zero
+    # ticks.
+    emitted_violations: list[Violation] = []
 
     @property
     def touched(self) -> bool:
         return bool(self.violations)
+
+    @property
+    def escaped(self) -> bool:
+        """A P0 rule was violated by the action that was flown."""
+        return bool(self.emitted_violations)
 
 
 class Shield:
@@ -239,6 +260,13 @@ class Shield:
         self._alts = policy.by_type(AltitudeEnvelope)
         self._kins = policy.by_type(KinematicEnvelope)
         self._clear = policy.by_type(ObstacleClearance)
+        self._standoffs = policy.by_type(SubjectStandoff)
+        # Where the thing we are following is, in world coordinates, plus what
+        # kind of thing it is. Supplied by the perception stack once per tick via
+        # set_subject(); None means "not currently tracking anything", and every
+        # SubjectStandoff rule is inert until it is set.
+        self._subject: tuple[float, float] | None = None
+        self._subject_class: str | None = None
 
         # Distance field: built ONCE here, never per tick (same rule as the
         # fence polygons). Skipped entirely when nothing needs it.
@@ -376,7 +404,14 @@ class Shield:
         vz, yr = a.vz_up, a.yaw_rate
         for k in self._kins:
             vz = max(-k.climb_rate_max_mps, min(k.climb_rate_max_mps, vz))
-            yr = max(-k.yaw_rate_max_dps, min(k.yaw_rate_max_dps, yr))
+            # UNITS. The policy states the cap in DEGREES per second; the
+            # Action4D contract carries yaw_rate in RADIANS per second.
+            # These were compared raw, so a 45 dps cap sat at 45 rad/s
+            # (2578 dps) and this P1 rule could never fire on any real
+            # action. Convert at the boundary, here and at the two other
+            # sites below.
+            ymax = math.radians(k.yaw_rate_max_dps)
+            yr = max(-ymax, min(ymax, yr))
         for k in range(12):
             ang = k * math.pi / 6.0
             ux, uy = math.cos(ang), math.sin(ang)
@@ -415,88 +450,166 @@ class Shield:
                 clean, clean_key = cand, key
         return clean, best
 
+    # ---------------- the monitor, one predicate per rule ---------------- #
+    #
+    # Split out of a single `_check` on 2026-08-26 so that the REPAIRS can ask
+    # the same question the monitor asks, instead of each carrying its own
+    # weaker copy of the trend test. Three repair operators had drifted into
+    # judging position only, and would clobber an action that was already
+    # escaping - measured at six times slower on the standoff rule.
+    #
+    # `_check` folds these and is unchanged in behaviour, which
+    # tests/test_check_contract.py pins by hashing its answers over 28 800
+    # seeded samples across every policy in policies/.
+
+    def _check_kinematic(self, k, action: Action4D) -> list[Violation]:
+        """A property of the action alone - no state, no forecast."""
+        out = []
+        h_speed = (action.vx ** 2 + action.vy ** 2) ** 0.5
+        if h_speed > k.speed_max_mps + 1e-9:
+            out.append(Violation(
+                rule_id=k.id, category="kinematic", predicted_at_s=0.0,
+                detail=f"h-speed {h_speed:.2f} > max {k.speed_max_mps}"))
+        if abs(action.vz_up) > k.climb_rate_max_mps + 1e-9:
+            out.append(Violation(
+                rule_id=k.id, category="kinematic", predicted_at_s=0.0,
+                detail=f"|vz| {abs(action.vz_up):.2f} > max {k.climb_rate_max_mps}"))
+        yaw_dps = math.degrees(abs(action.yaw_rate))     # contract is rad/s
+        if yaw_dps > k.yaw_rate_max_dps + 1e-9:
+            out.append(Violation(
+                rule_id=k.id, category="kinematic", predicted_at_s=0.0,
+                detail=f"|yaw_rate| {yaw_dps:.1f} dps > max {k.yaw_rate_max_dps}"))
+        return out
+
+    def _check_altitude(self, env, state: State, action: Action4D) -> list[Violation]:
+        """Trend-aware. Outside the band but moving back in = OK."""
+        for t, p in self._predict(state, action):
+            below = p.up < env.alt_min_m - 1e-9
+            above = p.up > env.alt_max_m + 1e-9
+            if below and action.vz_up <= 1e-9:
+                return [Violation(
+                    rule_id=env.id, category="altitude", predicted_at_s=t,
+                    detail=f"alt {p.up:.1f}m < floor {env.alt_min_m}m, not climbing")]
+            if above and action.vz_up >= -1e-9:
+                return [Violation(
+                    rule_id=env.id, category="altitude", predicted_at_s=t,
+                    detail=f"alt {p.up:.1f}m > ceiling {env.alt_max_m}m, not descending")]
+        return []
+
+    def _check_standoff(self, so, state: State, action: Action4D) -> list[Violation]:
+        """Trend-aware, same shape as the fence rule.
+
+        Inert with no subject set, which is the honest reading: a standoff rule
+        with nothing to stand off from has no opinion. "Already too close but
+        opening the range" passes, because the alternative is to raise a
+        violation on the very action that is fixing it - and BRAKE inside the
+        ring would freeze the aircraft at the distance it must not hold.
+        """
+        if self._subject is None or not so.binds(self._subject_class):
+            return []
+        sx, sy = self._subject
+        d_now = math.hypot(state.x - sx, state.y - sy)
+        what = self._subject_class or "subject"
+
+        if d_now < so.min_range_m - 1e-9:
+            # ALREADY inside. Judge the trend from the radial velocity, not from
+            # predicted positions: _predict yields the current pose as its first
+            # sample, where the range has not changed yet, so a comparison
+            # against it can never see an opening move and the rule fires on the
+            # very action that is recovering. Same shape as the geofence
+            # "escaping" test.
+            ux, uy = ((sx - state.x) / d_now, (sy - state.y) / d_now) \
+                if d_now > 1e-6 else (0.0, 0.0)
+            opening = -(action.vx * ux + action.vy * uy)
+            if opening <= 0.1:
+                return [Violation(
+                    rule_id=so.id, category="standoff", predicted_at_s=0.0,
+                    detail=(f"range {d_now:.1f}m to {what} < min "
+                            f"{so.min_range_m}m and not opening"))]
+            return []        # while inside, predictive checks are moot
+
+        for t, p in self._predict(state, action):
+            d = math.hypot(p.x - sx, p.y - sy)
+            if d < so.min_range_m - 1e-9:
+                return [Violation(
+                    rule_id=so.id, category="standoff", predicted_at_s=t,
+                    detail=(f"range closes to {d:.1f}m from {what} in "
+                            f"{t:.1f}s, below min {so.min_range_m}m"))]
+        return []
+
+    def _check_fence(self, f, poly, state: State, action: Action4D) -> list[Violation]:
+        """Trend-aware for the already-inside case."""
+        if point_in_fence(state.x, state.y, state.up, f, poly):
+            ox, oy = push_out_direction(state.x, state.y, poly)
+            escaping = (action.vx * ox + action.vy * oy) > 0.1
+            if not escaping:
+                return [Violation(
+                    rule_id=f.id, category="geofence", predicted_at_s=0.0,
+                    detail="currently INSIDE zone and not escaping")]
+            return []      # while inside, predictive entry checks are moot
+        for t, p in self._predict(state, action):
+            if point_in_fence(p.x, p.y, p.up, f, poly):
+                return [Violation(
+                    rule_id=f.id, category="geofence", predicted_at_s=t,
+                    detail=f"predicted pos ({p.x:.1f},{p.y:.1f}) inside NFZ at t+{t:.1f}s")]
+        return []
+
+    def _clear_forecast(self, state: State, action: Action4D):
+        """(steps, dists) over the clearance horizon.
+
+        Shared so a repair that has already paid for the forecast does not pay
+        again, once per rule per repair pass.
+        """
+        steps = list(self._predict(state, action, self._clear_horizon_s(action)))
+        return steps, [self._distance_at(p.x, p.y) for _, p in steps]
+
+    def _check_clearance(self, c, state: State, action: Action4D,
+                         steps=None, dists=None) -> list[Violation]:
+        """Trend-aware, same shape as the geofence rule."""
+        if self._dist is None:
+            return []
+        if steps is None or dists is None:
+            steps, dists = self._clear_forecast(state, action)
+        d_now = dists[0]
+        # "moving away" = distance grows over the FIRST forecast step
+        receding = len(dists) > 1 and dists[1] > d_now + 1e-6
+        # Being inside the ring is forgiven only while the forecast KEEPS
+        # improving. The old code dropped the ENTIRE horizon on the strength of
+        # one 0.5 s step, so a drone anywhere inside the ring got a free pass on
+        # every obstacle on the map - including forecasts that ended up inside a
+        # building.
+        forgiving = d_now < c.min_clearance_m and receding
+        prev = None
+        for (t, p), d in zip(steps, dists):
+            if d >= c.min_clearance_m:
+                forgiving = False         # out of the ring: normal rules again
+                prev = d
+                continue
+            if forgiving and (prev is None or d > prev + 1e-6):
+                prev = d
+                continue                  # still actively escaping -> never freeze
+            return [Violation(
+                rule_id=c.id, category="clearance", predicted_at_s=t,
+                detail=(f"obstacle dist {d:.2f}m < min {c.min_clearance_m}m "
+                        f"at ({p.x:.1f},{p.y:.1f}) t+{t:.1f}s"))]
+        return []
+
     def _check(self, state: State, action: Action4D) -> list[Violation]:
         found: list[Violation] = []
-
-        # -- kinematic: property of the action itself
         for k in self._kins:
-            h_speed = (action.vx ** 2 + action.vy ** 2) ** 0.5
-            if h_speed > k.speed_max_mps + 1e-9:
-                found.append(Violation(
-                    rule_id=k.id, category="kinematic", predicted_at_s=0.0,
-                    detail=f"h-speed {h_speed:.2f} > max {k.speed_max_mps}"))
-            if abs(action.vz_up) > k.climb_rate_max_mps + 1e-9:
-                found.append(Violation(
-                    rule_id=k.id, category="kinematic", predicted_at_s=0.0,
-                    detail=f"|vz| {abs(action.vz_up):.2f} > max {k.climb_rate_max_mps}"))
-            if abs(action.yaw_rate) > k.yaw_rate_max_dps + 1e-9:
-                found.append(Violation(
-                    rule_id=k.id, category="kinematic", predicted_at_s=0.0,
-                    detail=f"|yaw_rate| {abs(action.yaw_rate):.1f} > max {k.yaw_rate_max_dps}"))
-
-        # -- altitude: trend-aware. Outside the band but moving back in = OK.
+            found += self._check_kinematic(k, action)
         for env in self._alts:
-            for t, p in self._predict(state, action):
-                below = p.up < env.alt_min_m - 1e-9
-                above = p.up > env.alt_max_m + 1e-9
-                if below and action.vz_up <= 1e-9:
-                    found.append(Violation(
-                        rule_id=env.id, category="altitude", predicted_at_s=t,
-                        detail=f"alt {p.up:.1f}m < floor {env.alt_min_m}m, not climbing"))
-                    break
-                if above and action.vz_up >= -1e-9:
-                    found.append(Violation(
-                        rule_id=env.id, category="altitude", predicted_at_s=t,
-                        detail=f"alt {p.up:.1f}m > ceiling {env.alt_max_m}m, not descending"))
-                    break
-
-        # -- geofence: trend-aware for the "already inside" case.
+            found += self._check_altitude(env, state, action)
+        if self._subject is not None:
+            for so in self._standoffs:
+                found += self._check_standoff(so, state, action)
         for f, poly in self._fences:
-            if point_in_fence(state.x, state.y, state.up, f, poly):
-                ox, oy = push_out_direction(state.x, state.y, poly)
-                escaping = (action.vx * ox + action.vy * oy) > 0.1
-                if not escaping:
-                    found.append(Violation(
-                        rule_id=f.id, category="geofence", predicted_at_s=0.0,
-                        detail="currently INSIDE zone and not escaping"))
-                continue   # while inside, predictive entry checks are moot
-            for t, p in self._predict(state, action):
-                if point_in_fence(p.x, p.y, p.up, f, poly):
-                    found.append(Violation(
-                        rule_id=f.id, category="geofence", predicted_at_s=t,
-                        detail=f"predicted pos ({p.x:.1f},{p.y:.1f}) inside NFZ at t+{t:.1f}s"))
-                    break
-
-        # -- obstacle clearance: trend-aware, same shape as the geofence rule.
-        # Inert (loop body never runs) when the policy has no clearance rule;
-        # self._dist is None when the Shield was built without a map.
+            found += self._check_fence(f, poly, state, action)
         if self._dist is not None and self._clear:
-            steps = list(self._predict(state, action, self._clear_horizon_s(action)))
-            dists = [self._distance_at(p.x, p.y) for _, p in steps]
-            d_now = dists[0]
-            # "moving away" = distance grows over the FIRST forecast step
-            receding = len(dists) > 1 and dists[1] > d_now + 1e-6
+            # One forecast shared across every clearance rule, as before.
+            steps, dists = self._clear_forecast(state, action)
             for c in self._clear:
-                # Being inside the ring is forgiven only while the forecast KEEPS
-                # improving. The old code dropped the ENTIRE horizon on the
-                # strength of one 0.5 s step, so a drone anywhere inside the ring
-                # got a free pass on every obstacle on the map — including
-                # forecasts that ended up inside a building.
-                forgiving = d_now < c.min_clearance_m and receding
-                prev = None
-                for (t, p), d in zip(steps, dists):
-                    if d >= c.min_clearance_m:
-                        forgiving = False     # out of the ring: normal rules again
-                        prev = d
-                        continue
-                    if forgiving and (prev is None or d > prev + 1e-6):
-                        prev = d
-                        continue              # still actively escaping -> never freeze
-                    found.append(Violation(
-                        rule_id=c.id, category="clearance", predicted_at_s=t,
-                        detail=(f"obstacle dist {d:.2f}m < min {c.min_clearance_m}m "
-                                f"at ({p.x:.1f},{p.y:.1f}) t+{t:.1f}s")))
-                    break
+                found += self._check_clearance(c, state, action, steps, dists)
 
         # dedupe by (rule, category), keep earliest
         seen: dict[tuple, Violation] = {}
@@ -521,9 +634,12 @@ class Shield:
                 new = k.climb_rate_max_mps * (1 if vz > 0 else -1)
                 repairs.append(Repair(operator="ClimbClamp", detail=f"vz {vz:.2f} -> {new:.2f}"))
                 vz = new
-            if abs(yr) > k.yaw_rate_max_dps:
-                new = k.yaw_rate_max_dps * (1 if yr > 0 else -1)
-                repairs.append(Repair(operator="YawClamp", detail=f"yaw {yr:.1f} -> {new:.1f}"))
+            ymax = math.radians(k.yaw_rate_max_dps)
+            if abs(yr) > ymax:
+                new = ymax * (1 if yr > 0 else -1)
+                repairs.append(Repair(
+                    operator="YawClamp",
+                    detail=f"yaw {math.degrees(yr):.1f} -> {math.degrees(new):.1f} dps"))
                 yr = new
         return Action4D(vx=vx, vy=vy, vz_up=vz, yaw_rate=yr)
 
@@ -576,10 +692,40 @@ class Shield:
             hard_r = c.min_clearance_m
             soft_r = c.min_clearance_m + c.soft_margin_m
             probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
-            steps = list(self._predict(state, probe, self._clear_horizon_s(probe)))
-            dists = [self._distance_at(p.x, p.y) for _, p in steps]
+            steps, dists = self._clear_forecast(state, probe)
+
+            # Ask the MONITOR, against the mutating vector, rather than
+            # re-deriving a weaker condition here. The two had drifted: the
+            # monitor forgives an action that keeps improving the forecast,
+            # this loop fired on `d_min < hard_r` alone. So an aircraft flying
+            # straight away from a wall at 5.00 m/s passed through untouched
+            # while 5.01 - two tenths of a percent over the speed cap, enough
+            # to drag it into the repair loop - came out at 3.57 m/s with a
+            # sideways component it never asked for.
+            content = not self._check_clearance(c, state, probe, steps, dists)
             d_min = min(dists)
-            if d_min >= hard_r:
+            if content and d_min >= hard_r:
+                continue                       # clear of the ring; nothing to do
+            if content:
+                # Inside the ring and the monitor is satisfied - but its test is
+                # `d > prev + 1e-6` per forecast sample, an epsilon rather than a
+                # rate, so a two-centimetre-per-second creep past a building
+                # counts as escaping. Declining outright here would leave that
+                # crawl in place. Raise the outward component to the recovery
+                # speed and leave the tangential alone; never reshape an action
+                # the monitor is happy with.
+                oxc, oyc = self._away_dir(state.x, state.y, hard_r)
+                if oxc == 0.0 and oyc == 0.0:
+                    continue
+                out_have = vx * oxc + vy * oyc
+                need = min(cap, max(0.5, (hard_r - d_min) / max(self.lookahead_s, 1e-6)))
+                if out_have < need:
+                    vx += oxc * (need - out_have)
+                    vy += oyc * (need - out_have)
+                    repairs.append(Repair(
+                        operator="ClearanceFix",
+                        detail=(f"{c.id}: inside {hard_r}m and leaving at "
+                                f"{out_have:.2f} m/s -> raised to {need:.2f}")))
                 continue
 
             # the FIRST offending pose is the obstacle we have to steer off; at
@@ -591,41 +737,56 @@ class Shield:
             if ox == 0.0 and oy == 0.0:
                 continue                       # nothing to steer by; rescue decides
 
-            before = d_min
-            into = -(vx * ox + vy * oy)        # speed heading AT the obstacle
-            if into > 0:
-                vx += ox * into                # cancel it -> now runs tangent
-                vy += oy * into
+            # `before` measured the SAME way as `after`.
+            #
+            # It used to be `min(dists)`, which includes t = 0, while `after`
+            # comes from _clear_min_dist, which excludes it. At (38, 20.5)
+            # flying away at 5 m/s that is 0.886 against 3.696 - a 4.2x gap, so
+            # `after > before` held automatically and the "never leave it
+            # worse" invariant below was suppressed exactly where it mattered.
+            before = self._clear_min_dist(state, probe)
+
+            out_c = vx * ox + vy * oy          # outward component already commanded
+            tx, ty = vx - out_c * ox, vy - out_c * oy      # tangential = mission part
             depth = hard_r - d_min             # how far inside the ring we are
             # taper the tangential (mission) motion, floored so we still move
             scale = max(_CLEAR_MIN_SCALE, 1.0 - depth / max(soft_r, 1e-6))
-            vx *= scale
-            vy *= scale
-            # ... then push outward, UNtapered: recover `depth` in one lookahead
             push = min(cap, max(0.5, depth / max(self.lookahead_s, 1e-6)))
-            vx += ox * push
-            vy += oy * push
-            # the outward push must not break the kinematic cap (that repair
-            # already ran, and the P0 re-check would brake on it)
-            h = math.hypot(vx, vy)
-            if h > cap > 0:
-                vx, vy = vx * cap / h, vy * cap / h
+            # FLOOR, not assign: never slow an escape that is already faster
+            # than the recovery this repair would have sized.
+            out_n = min(cap, max(out_c, push))
+            # The cap eats the TANGENTIAL first - scaling the whole vector
+            # would undo the push that was just computed.
+            room = math.sqrt(max(cap * cap - out_n * out_n, 0.0))
+            t_mag = math.hypot(tx, ty)
+            t_scale = min(scale, room / t_mag) if t_mag > 1e-9 else 0.0
+            cx = tx * t_scale + ox * out_n
+            cy = ty * t_scale + oy * out_n
+
             # INVARIANT: a repair must never leave the forecast worse than it
             # found it. Where the local gradient is a poor guide (corners, two
             # buildings in play) fall back to the direction search rather than
             # shipping a "fix" that flies further in.
-            after = self._clear_min_dist(
-                state, Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate))
+            cand = Action4D(vx=cx, vy=cy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
+            after = self._clear_min_dist(state, cand)
             if after <= before + 1e-9:
-                esc = self._best_clear_dir(state, a, cap)
-                if esc is not None and self._clear_min_dist(state, esc) > after:
-                    vx, vy = esc.vx, esc.vy
-                    after = self._clear_min_dist(state, esc)
+                esc = self._best_clear_dir(state, probe, cap)
+                esc_d = self._clear_min_dist(state, esc) if esc is not None else None
+                if esc_d is not None and esc_d > max(after, before):
+                    cx, cy, after = esc.vx, esc.vy, esc_d
+                elif before >= after:
+                    # Nothing on offer improves on the action we were handed, so
+                    # ship THAT rather than a "fix" that scores worse. `before`
+                    # is by definition its score, which makes this the monotone
+                    # answer instead of a guess.
+                    cx, cy, after = vx, vy, before
+            vx, vy = cx, cy
             repairs.append(Repair(
                 operator="ClearanceFix",
                 detail=(f"{c.id}: dist {d_min:.2f}m < {hard_r}m -> push "
-                        f"({ox:+.2f},{oy:+.2f}) at {push:.2f} m/s, "
-                        f"tangential x{scale:.2f}, forecast {before:.2f}->{after:.2f}m")))
+                        f"({ox:+.2f},{oy:+.2f}) at {out_n:.2f} m/s "
+                        f"(commanded {out_c:+.2f}, recovery needs {push:.2f}), "
+                        f"tangential x{t_scale:.2f}, forecast {before:.2f}->{after:.2f}m")))
         return Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
 
     def _repair_geofence(self, state: State, a: Action4D, repairs: list[Repair]) -> Action4D:
@@ -640,10 +801,45 @@ class Shield:
         for f, poly in self._fences:
             if point_in_fence(state.x, state.y, state.up, f, poly):
                 ox, oy = push_out_direction(state.x, state.y, poly)
+                # FLOOR the exit speed, never assign it.
+                #
+                # `spd` stays min(2.0, cap): 2.0 is the reference
+                # implementation's `escape_speed_mps` default, chosen because
+                # GeofenceEscape is a recovery operator exempt from the
+                # magnitude cap and should leave at a moderate, envelope-safe
+                # speed rather than bolt down an unvalidated straight line.
+                #
+                # What changed is that it was ASSIGNED over the whole
+                # horizontal vector. An aircraft 1 m inside the boundary
+                # already leaving at 4.00 m/s passed through untouched, while
+                # 4.01 - a quarter of a percent over the speed cap, enough to
+                # drag it into the repair loop - was slowed to 2.00 and took
+                # twice as long to get out of a P0 zone.
+                #
+                # Note this is evaluated against the MUTATING (vx, vy): with
+                # two overlapping fences the second must see what the first
+                # left behind, or the last one silently wins.
                 spd = min(2.0, cap)
-                vx, vy = ox * spd, oy * spd
+                out_now = vx * ox + vy * oy          # outward speed commanded
+                probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
+                if not self._check_fence(f, poly, state, probe):
+                    # The monitor is content, so this action IS escaping - but
+                    # it forgives anything above 0.1 m/s, which would leave a
+                    # crawl. Raise the outward component to the floor and leave
+                    # the tangential alone rather than reshaping a legal action.
+                    if out_now < spd:
+                        vx += ox * (spd - out_now)
+                        vy += oy * (spd - out_now)
+                        repairs.append(Repair(
+                            operator="GeofenceEscape",
+                            detail=(f"{f.id}: inside and leaving at "
+                                    f"{out_now:.2f} m/s -> raised to {spd:.1f}")))
+                    continue
+                keep = min(cap, max(out_now, spd))
+                vx, vy = ox * keep, oy * keep
                 repairs.append(Repair(operator="GeofenceEscape",
-                                      detail=f"{f.id}: inside -> exit at {spd:.1f} m/s"))
+                                      detail=(f"{f.id}: inside -> exit at {keep:.1f} m/s "
+                                              f"(commanded {out_now:+.2f})")))
                 continue
 
             probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
@@ -688,6 +884,138 @@ class Shield:
 
     # ---------------- mid-flight policy update ---------------- #
 
+    def set_subject(self, x: float | None, y: float | None = None,
+                    subject_class: str | None = None) -> None:
+        """Tell the Shield where the tracked subject is, once per tick.
+
+        The Shield cannot see. SubjectStandoff rules are inert until the
+        perception stack supplies this, and calling `set_subject(None)` when the
+        target is lost is REQUIRED rather than optional: a stale position would
+        have the Shield enforcing a standoff from where the subject used to be,
+        which is both wrong and unfalsifiable from the logs.
+
+        `subject_class` is what selects between per-class rules, so a policy can
+        hold 10 m from a pedestrian and 5 m from a vehicle.
+        """
+        if x is None or y is None:
+            self._subject = None
+            self._subject_class = None
+            return
+        self._subject = (float(x), float(y))
+        self._subject_class = subject_class
+
+    @staticmethod
+    def _cap_sparing_radial(a: Action4D, ux: float, uy: float,
+                            keep: float, cap: float) -> Action4D:
+        """Fit under `cap` by spending the TANGENTIAL component, not the escape.
+
+        Scaling the whole horizontal vector is the obvious way to respect the
+        speed cap and the wrong one during a recovery: it shrinks the very
+        component that is getting the aircraft out. Measured on the standoff
+        rule, the end-of-pass SpeedClamp took a 3.00 m/s recovery down to 2.12
+        while faithfully preserving 2.12 m/s of *mission* motion - it spent the
+        budget on the part that was not urgent.
+
+        `(ux, uy)` is the unit escape direction and `keep` the outward speed
+        that must survive. Whatever room the cap leaves goes to the tangential
+        part; if `keep` alone exceeds the cap, the escape is clipped to the cap
+        and the tangential is dropped entirely.
+        """
+        keep = min(abs(keep), cap)
+        out_v = (a.vx * ux + a.vy * uy)
+        tx, ty = a.vx - out_v * ux, a.vy - out_v * uy      # tangential remainder
+        t_mag = math.hypot(tx, ty)
+        room = math.sqrt(max(cap * cap - keep * keep, 0.0))
+        if t_mag > room > 0.0:
+            tx, ty = tx * room / t_mag, ty * room / t_mag
+        elif room <= 0.0:
+            tx = ty = 0.0
+        out_keep = max(out_v, keep) if out_v >= 0 else keep
+        return Action4D(vx=tx + ux * out_keep, vy=ty + uy * out_keep,
+                        vz_up=a.vz_up, yaw_rate=a.yaw_rate)
+
+    def _repair_standoff(self, state: State, a: Action4D,
+                         repairs: list["Repair"]) -> Action4D:
+        """Remove the closing component of velocity along the line to the subject.
+
+        Not a brake and not a reversal: the tangential component survives, so the
+        aircraft can still circle the subject at the held range and keep it in
+        frame. Killing the whole velocity would stop the mission to satisfy a
+        rule that only objects to one direction of travel.
+        """
+        if self._subject is None:
+            return a
+        sx, sy = self._subject
+        worst = None
+        for so in self._standoffs:
+            if so.binds(self._subject_class):
+                worst = so if worst is None or so.min_range_m > worst.min_range_m else worst
+        if worst is None:
+            return a
+
+        dx, dy = sx - state.x, sy - state.y
+        d = math.hypot(dx, dy)
+        if d < 1e-6:
+            return a                       # directly overhead; no defined line
+        ux, uy = dx / d, dy / d            # unit vector pointing AT the subject
+
+        closing = a.vx * ux + a.vy * uy    # positive means approaching
+        ring = worst.min_range_m
+
+        # The REPAIR must trigger on the same criterion the CHECK uses, or it
+        # declines to act on the very violation that was raised and the action
+        # falls through to the brake - and, inside the ring, to the rescue
+        # search, which was measured emitting +5 m/s straight AT the subject.
+        # The check is predictive over the full lookahead, so this must be too:
+        # at 4 m/s and a 3 s horizon the aircraft commits 12 m ahead of itself.
+        breach_ahead = (d - closing * self.lookahead_s) < ring - 1e-9
+
+        if d < ring - 1e-9:
+            # ALREADY inside. Removing the closing component would leave the
+            # range exactly where it is, which the check reads as "not opening" -
+            # so the violation would persist every tick and the aircraft would be
+            # frozen at a distance the policy forbids. Recovery means opening the
+            # range, the same reasoning as the clearance ring's push-out.
+            cap = min((k.speed_max_mps for k in self._kins), default=4.0)
+            want = min(cap, max(0.5, (ring - d) / max(self.lookahead_s, 1e-3)))
+            # FLOOR the opening rate, never assign it.
+            #
+            # `-closing` is the opening speed already commanded. Writing the
+            # radial component to `want` outright made the repair a CEILING on
+            # a legal escape: at 9 m from a pedestrian with a 10 m ring, an
+            # action opening at 3.00 m/s passed through untouched, while 3.01 -
+            # a third of a percent over the speed cap, enough to drag it into
+            # the repair loop - came out at 0.500 m/s. Six times slower escape
+            # from a P0 breach, and the KPI could not see it because the result
+            # still re-checks clean.
+            #
+            # It is a floor and not a decline for the opposite reason: the
+            # monitor forgives any opening above 0.1 m/s, so a repair that
+            # simply stood aside would leave a 0.11 m/s crawl out of a ring the
+            # policy forbids near a person.
+            out = min(cap, max(want, -closing))
+            vx = a.vx - (closing + out) * ux
+            vy = a.vy - (closing + out) * uy
+            repairs.append(Repair(
+                operator="StandoffRecover",
+                detail=(f"range {d:.1f}m inside min {ring}m: opening at "
+                        f"{out:.2f} m/s (commanded {-closing:+.2f}, "
+                        f"recovery needs {want:.2f}), tangential motion kept")))
+            return self._cap_sparing_radial(
+                Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate),
+                ux=-ux, uy=-uy, keep=out, cap=cap)
+
+        if closing <= 0.0 or not breach_ahead:
+            return a                       # opening already, or no breach coming
+
+        vx, vy = a.vx - closing * ux, a.vy - closing * uy
+        repairs.append(Repair(
+            operator="StandoffHold",
+            detail=(f"range {d:.1f}m, closing {closing:.2f} m/s would breach "
+                    f"min {ring}m within {self.lookahead_s:.0f}s: closing "
+                    f"component removed, tangential motion kept")))
+        return Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
+
     def hot_apply(self, fence: PolygonFence) -> None:
         """Inject a dynamic NFZ mid-flight (grant: dynamic_nfz hot-apply).
         Bumps the policy generation so every artefact after this instant
@@ -712,6 +1040,8 @@ class Shield:
                 predicted_at_s=0.0)]
 
         if not violations:
+            # Nothing was wrong with it, so the re-check is empty by
+            # construction and does not need running again.
             return ShieldDecision(raw=raw, emitted=raw)   # untouched passthrough
 
         repairs: list[Repair] = []
@@ -727,6 +1057,7 @@ class Shield:
         # is exactly what the P0 guard then brakes on — every tick, forever.
         for _ in range(_REPAIR_PASSES):
             fixed = self._repair_clearance(state, fixed, repairs)
+            fixed = self._repair_standoff(state, fixed, repairs)
             fixed = self._repair_geofence(state, fixed, repairs)
             # ...and the caps last: AltitudeFix sizes vz to reach the band in one
             # lookahead, which can overshoot the climb cap on a deep recovery.
@@ -755,7 +1086,8 @@ class Shield:
             elif not self._check(state, BRAKE):
                 repairs.append(Repair(operator="Brake", detail="repair not converged -> stop"))
                 return ShieldDecision(raw=raw, emitted=BRAKE, violations=violations,
-                                      repairs=_dedupe(repairs), braked=True)
+                                      repairs=_dedupe(repairs), braked=True,
+                                      emitted_violations=self._check(state, BRAKE))
             elif best is not None:
                 repairs.append(Repair(
                     operator="ClearanceEscape",
@@ -764,7 +1096,13 @@ class Shield:
             else:
                 repairs.append(Repair(operator="Brake", detail="repair not converged -> stop"))
                 return ShieldDecision(raw=raw, emitted=BRAKE, violations=violations,
-                                      repairs=_dedupe(repairs), braked=True)
+                                      repairs=_dedupe(repairs), braked=True,
+                                      emitted_violations=self._check(state, BRAKE))
 
+        # One more _check, on the action that is actually leaving the building.
+        # In the common case `fixed` already re-checked clean inside the loop
+        # above and this is a repeat; in the `best is not None` branch it is the
+        # only check that has ever been run against what gets flown.
         return ShieldDecision(raw=raw, emitted=fixed, violations=violations,
-                              repairs=_dedupe(repairs))
+                              repairs=_dedupe(repairs),
+                              emitted_violations=self._check(state, fixed))

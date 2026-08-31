@@ -391,12 +391,29 @@
       "type": "camera",
       "enabled": true,
       "parent-link": "Frame",
-      "capture-interval": 0.1,
+      // 20 Hz, and 960x540. This camera is what the DEMO VIDEO and the
+      // simulator window show; it is NOT the detector's input.
+      //
+      // It was 1280x720 and the comment here claimed that, since this is not
+      // the detector's camera, a bigger capture "costs GPU but changes no
+      // measurement". That was wrong and the measurement disproved it: at
+      // 1280x720 the detector fell to det_hz 2.94-3.96 (gate is 4.0) and the
+      // control loop to 7.50-8.69 Hz (gate is 9.5). A flight recorded with the
+      // recorder writing ZERO frames still reached only 8.16 Hz, so roughly
+      // 1.8 Hz of the loss is this camera's render and deserialisation cost,
+      // not Python. The panels share one GPU; a bigger Chase capture starves
+      // the detector, and a slower detector tracks a moving car worse.
+      //
+      // 960x540 is the first rung of a back-off ladder fixed before the runs
+      // (960x540@20 -> 1280x720@15 -> 960x540@15).
+      // FrontCamera stays 400x225: it IS the detector's input, and every
+      // measured number in this repo depends on it.
+      "capture-interval": 0.05,
       "capture-settings": [
         {
           "image-type": 0,
-          "width": 640,
-          "height": 360,
+          "width": 960,
+          "height": 540,
           "fov-degrees": 90,
           "capture-enabled": true,
           "streaming-enabled": true,

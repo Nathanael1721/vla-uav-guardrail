@@ -1,3 +1,5 @@
+> **SUPERSEDED.** See `TUTORIAL.md` in the project root, which is the single verified guide. This file is kept as history only and its commands, tags and numbers may be out of date.
+
 # Demo: a drone follows a car it was told about, in words
 
 Step by step, from a cold machine. Everything here was run to produce the numbers

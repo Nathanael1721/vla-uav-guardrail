@@ -116,8 +116,49 @@ class ObstacleClearance(ConstraintBase):
     soft_margin_m: float = Field(default=0.0, ge=0)
 
 
+class SubjectStandoff(ConstraintBase):
+    """Keep at least `min_range_m` from the SUBJECT being followed.
+
+    Asked for at the 2026-08-19 review: "hold 10 m from a person, and different
+    policies for different objects". Until now that was `--want-range`, a
+    command-line flag on the controller - which meant it was not hashed into
+    `policy_hash`, not written to the audit log, and not enforced by the Shield.
+    It was a setpoint the pilot was asked to aim for, not a rule it was held to,
+    and the difference is the whole point of the project.
+
+    Like ObstacleClearance this cannot be evaluated from the policy file alone:
+    the Shield has no idea where the subject is. The perception stack supplies it
+    once per tick through `Shield.set_subject()`. With no subject set the rule is
+    INERT - it never fires and never raises - because a standoff rule with
+    nothing to stand off from has no opinion, and inventing one would be worse
+    than silence.
+
+    `subject_class` selects which rule applies to what: "pedestrian" binds only
+    when the tracked subject is a pedestrian, "*" binds to anything. That is what
+    makes "different policies for different objects" expressible rather than a
+    single global number.
+
+    Distance is horizontal only, matching ObstacleClearance. Altitude is governed
+    by AltitudeEnvelope, and mixing the two would make a rule that a legal climb
+    could violate.
+    """
+    type: Literal["subject_standoff"]
+    subject_class: str = "*"
+    min_range_m: float = Field(gt=0)
+    soft_margin_m: float = Field(default=0.0, ge=0)
+
+    def binds(self, subject_class: str | None) -> bool:
+        """Does this rule apply to the subject currently being tracked?"""
+        if self.subject_class == "*":
+            return True
+        if subject_class is None:
+            return False
+        return self.subject_class.lower() == subject_class.lower()
+
+
 Constraint = Annotated[
-    Union[PolygonFence, AltitudeEnvelope, KinematicEnvelope, ObstacleClearance],
+    Union[PolygonFence, AltitudeEnvelope, KinematicEnvelope, ObstacleClearance,
+          SubjectStandoff],
     Field(discriminator="type"),
 ]
 

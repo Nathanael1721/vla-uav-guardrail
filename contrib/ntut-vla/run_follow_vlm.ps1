@@ -22,10 +22,54 @@
 
 .PARAMETER Object
     What to follow, in words. Be specific: "a car" alone makes it chase city
-    clutter. Default "an orange car", and the colour matters more than the noun:
-    measured over this scene, ORANGE covers 0.0% of pixels and WHITE covers 8.5%.
-    A unique colour is what turns "some car-like thing" into "THAT car". Avoid
-    "a blue car" too - the asphalt here reads blue above the saturation floor.
+    clutter. The colour matters more than the noun: a unique colour is what
+    turns "some car-like thing" into "THAT car".
+
+    Default "a yellow car", which is the glTF taxi. Measured at the same pose in
+    the same run, it beats the mesh subject it replaced on both halves of the
+    test - detector score 0.108 against 0.047, colour gate 0.317 against 0.119 -
+    and it comes with three more genuinely different-coloured vehicles, which
+    the packaged path could not produce at all.
+
+    If the models are not installed the subject falls back to the orange buggy;
+    pass -Object "an orange car" then. You will not have to guess, because the
+    flight prints a loud warning when the query and the subject disagree.
+    Avoid "a blue car" - the asphalt here reads blue above the saturation floor.
+
+.PARAMETER Route
+    Route the subject drives. "turn" (default) goes up the street and turns left
+    at the intersection onto the cross street. "straight" is the baseline every
+    measured result used; quote separation figures from that one, because a
+    turning route is not comparable with them.
+
+.PARAMETER RecordHz
+    Save one recorded frame every N control ticks. 1 (default) gives a real-time
+    video. The previous value of 3 recorded the whole flight but played it back
+    at 3x speed, which is why a 58 s flight came out as a 20 s clip.
+
+.PARAMETER SimWidth
+    Width of the simulator window, default 960.
+
+    Lowered from 1280 on measurement. This window is a SECOND continuous render,
+    on top of the Chase and FrontCamera captures, and it feeds nothing: the demo
+    video is built from the Chase camera's captured frames, not from the window.
+    It was costing GPU that OWL-ViT needs. In flight, inference measured 286 ms
+    median against 34-56 ms on an idle GPU, which is the whole of the detector
+    rate: 1 / 0.286 = 3.5 Hz, and det_hz read 3.66.
+
+    Dropping the Chase capture from 1280x720 to 960x540 moved det_hz only
+    2.94 -> 3.66, so the Chase camera was not the main thief. The window is the
+    remaining one.
+
+    Pass -SimWidth 1920 -SimHeight 1080 to watch it full size, and do not
+    compare the resulting numbers with the measured runs.
+
+    If the window opens BLANK rather than small, that was a different bug -
+    two depth captures were streaming at once - and it is fixed. See
+    docs/FINDING-glb-vehicles-aug15.md.
+
+.PARAMETER SimHeight
+    Height of the simulator window, default 720.
 
 .PARAMETER Controls
     Also fly the two control conditions (wrong colour word, and no car present).
@@ -37,7 +81,14 @@
 #>
 [CmdletBinding()]
 param(
-    [string]$Object = "an orange car",
+    [string]$Object = "a yellow car",
+    [double]$CarSpeed = 2.5,
+    [ValidateSet("straight","turn")]
+    [string]$Route  = "turn",
+    [double]$RecordHz = 20,
+    [int]$RecordHeight = 540,
+    [int]$SimWidth  = 960,
+    [int]$SimHeight = 540,
     [switch]$SkipSim,
     [switch]$Controls,
     [switch]$NoVideo
@@ -73,7 +124,7 @@ function Start-Sim {
     Start-Sleep -Seconds 4
     # PowerShell, not Git Bash: bash rewrites the /Game/... map argument into a
     # Windows path, the map is not found, and the engine crashes on the fallback.
-    Start-Process -FilePath $UE -ArgumentList "`"$Proj`"", $Map, '-game', '-windowed', '-ResX=1280', '-ResY=720' | Out-Null
+    Start-Process -FilePath $UE -ArgumentList "`"$Proj`"", $Map, '-game', '-windowed', "-ResX=$SimWidth", "-ResY=$SimHeight" | Out-Null
     Say "simulator starting ..."
     for ($i = 0; $i -lt 90; $i++) {
         Start-Sleep -Seconds 5
@@ -89,8 +140,9 @@ function Fly($tag, $obj, $policy, $secs, $stopS, $traffic, [switch]$NoCar, [swit
     if (-not $SkipSim) { Start-Sim }
     $a = @("demo\follow_vlm.py", "--object", $obj, "--tag", $tag,
            "--max-s", "$secs", "--det-thresh", "0.008",
-           "--car-speed", "2.0", "--car-stop-s", "$stopS",
-           "--policy", $policy, "--straight", "--want-width", "0.16")
+           "--car-speed", "$CarSpeed", "--car-stop-s", "$stopS",
+           "--policy", $policy, "--route", $Route, "--want-width", "0.16",
+           "--record-hz", "$RecordHz", "--record-height", "$RecordHeight")
     if ($traffic -gt 0) { $a += @("--traffic", "$traffic", "--traffic-mode", "demo", "--lock-target") }
     if ($NoCar)  { $a += "--no-car" }
     if ($Record) { $a += "--save-view" }
@@ -103,7 +155,7 @@ if ($SkipSim -and -not (Test-SimUp)) { throw "-SkipSim given but nothing on 8989
 
 Say "DEMO 1: follow `"$Object`" - no fence, pure tracking"
 Say "        measured 100% of the flight within 30 m, on two separate flights"
-Fly "demo_follow" $Object "policies\follow_car.yaml" 70 6 0 -Record
+Fly "demo_follow" $Object "policies\follow_car.yaml" 70 8 0 -Record
 
 # --want-width is COUPLED to --cruise-alt. It is an angular stand-off, so the
 # same value is a much larger ground distance from higher up. 0.10 suits the 9 m
@@ -113,11 +165,11 @@ Fly "demo_follow" $Object "policies\follow_car.yaml" 70 6 0 -Record
 # See docs/FINDING-gapfence-was-never-the-fence.md.
 Say "DEMO 2: three MORE vehicles on the street, each looking different"
 Say "        target jumping fell from 14.0% of detections to 0.4%"
-Fly "demo_traffic" $Object "policies\follow_car.yaml" 70 6 3 -Record
+Fly "demo_traffic" $Object "policies\follow_car.yaml" 70 8 3 -Record
 
 Say "DEMO 3: same mission with a no-fly zone across the route"
 Say "        the car drives through it, the drone must not"
-Fly "demo_nfz" $Object "policies\follow_car_nfz.yaml" 70 6 0 -Record
+Fly "demo_nfz" $Object "policies\follow_car_nfz.yaml" 70 8 0 -Record
 
 if ($Controls) {
     Say "CONTROL 1: same car, WRONG colour word - should NOT follow"
@@ -131,9 +183,12 @@ if ($Controls) {
 
 if (-not $NoVideo) {
     Say "building the side-by-side demo videos"
-    & $Py "tools\make_demo_video.py" "--tag" "demo_follow" "--fps" "10"
-    & $Py "tools\make_demo_video.py" "--tag" "demo_traffic" "--fps" "10"
-    & $Py "tools\make_demo_video.py" "--tag" "demo_nfz" "--fps" "10"
+    # --height is passed explicitly and must match -RecordHeight. The recorder
+    # already wrote frames at that height; letting the builder default to 720
+    # would upscale a 540-line panel and soften it for nothing.
+    & $Py "tools\make_demo_video.py" "--tag" "demo_follow"  "--height" "$RecordHeight"
+    & $Py "tools\make_demo_video.py" "--tag" "demo_traffic" "--height" "$RecordHeight"
+    & $Py "tools\make_demo_video.py" "--tag" "demo_nfz"     "--height" "$RecordHeight"
 }
 
 Say "summary"
@@ -141,7 +196,14 @@ Say "summary"
 import json, pathlib
 tags = ['demo_follow', 'demo_traffic', 'demo_nfz',
         'demo_wrongcolour', 'demo_nocar']
-cols = ['tag','object','det_hit_rate','sep_mean_m','frac_within_30m',
+# frac_ticks_seen sits next to det_hit_rate deliberately. hit rate is
+# seen/(seen+missed) over the inferences that RAN, so a stalled detector
+# reads 1.000 on a flight that spent 76% of its time scanning. The
+# fraction of TICKS the target was actually held is the honest column.
+# kpi_grade and p0_violation_escape_rate are the grant's own vocabulary. The
+# escape rate is the hard KPI (target 0); kpi_grade says whether this run is
+# even allowed to be quoted as a contractual number.
+cols = ['tag','object','kpi_grade','p0_violation_escape_rate','det_hit_rate','frac_ticks_seen','det_hz','sep_mean_m','frac_within_30m',
         'interventions','nfz_s','alt_violation_s','frac_absent']
 print('  ' + ' | '.join(f'{c:>16}' for c in cols))
 for t in tags:

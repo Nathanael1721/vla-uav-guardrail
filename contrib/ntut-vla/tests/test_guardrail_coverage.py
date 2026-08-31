@@ -77,39 +77,48 @@ def _finite(a: Action4D) -> bool:
 # is named yaw_rate_max_dps and compared against the raw number, so the units
 # disagree by a factor of 57.3 -- in the direction that makes the cap unreachable.
 
-def test_yaw_cap_fires_when_handed_a_degrees_scale_value():
-    """Sanity anchor: the comparison itself works. It is the UNIT that is wrong."""
+def test_yaw_cap_compares_degrees_with_degrees():
+    """Fixed 2026-08-17. The policy states the cap in DEGREES per second and the
+    Action4D contract carries yaw_rate in RADIANS per second; the two were
+    compared raw, so a 45 dps cap effectively sat at 45 rad/s = 2578 dps and
+    this P1 rule could never fire on any real action."""
     s = _shield()
-    d = s.filter(State(x=-20, y=-20, up=4), Action4D(yaw_rate=90.0))
-    assert d.touched
-    assert abs(d.emitted.yaw_rate) <= 45.0 + 1e-9
+    over = math.radians(60.0)                      # 60 dps, over the 45 dps cap
+    d = s.filter(State(x=-20, y=-20, up=4), Action4D(yaw_rate=over))
+    assert d.touched, "a 60 dps command must trip a 45 dps cap"
+    assert math.degrees(abs(d.emitted.yaw_rate)) <= 45.0 + 1e-6
 
 
-def test_yaw_cap_is_unreachable_at_flight_scale_KNOWN_DEFECT():
-    """A P1 rule that no real action can ever trip.
+def test_the_yaw_cap_now_fires_at_flight_scale():
+    """AerialVLA's widest output is +-1.1 rad/s = 63 dps, which SHOULD be
+    clamped by a 45 dps cap and previously was not."""
+    s = _shield()
+    widest = 1.1
+    assert math.degrees(widest) > 45.0, "premise: this should violate"
+    d = s.filter(State(x=-20, y=-20, up=4), Action4D(yaw_rate=widest))
+    assert abs(d.emitted.yaw_rate) < widest, "the cap is inert again"
+    assert math.degrees(abs(d.emitted.yaw_rate)) <= 45.0 + 1e-6
 
-    AerialVLA's widest output is +-1.1 rad/s, which is 63 deg/s and SHOULD be
-    clamped by a 45 deg/s cap. As a raw number 1.1 < 45, so nothing fires.
-    Asserting the defect rather than hiding it: this test turns red the day
-    someone fixes the unit, which is the moment to re-check F1, because a live
-    yaw cap would make the Shield edit yaw for the first time and that would
-    break the "heading is the pilot's, track is the guardrail's" separation the
-    follow demo rests on.
 
-    Fix, when the decision is taken: convert at the boundary (compare
-    degrees(yaw_rate) against yaw_rate_max_dps) and re-run
-    experiments/verify_shield_yaw.py to re-measure the yaw-edit count.
+def test_F1_the_shield_still_does_not_edit_yaw_in_the_follow_demo():
+    """The property the follow demo's headline rests on: heading is the pilot's,
+    the track is the guardrail's.
+
+    Fixing the unit above made a P1 rule live for the first time, which is
+    exactly the change that could have broken F1. Measured over all three demo
+    flights, the WORST yaw command anywhere is 11.8 dps - four times under the
+    45 dps cap - so the live rule is a no-op there. This asserts that margin
+    rather than trusting it, and will fail if either the cap or the controller's
+    yaw authority moves toward the other.
     """
     s = _shield()
-    widest_real_rad_s = 1.1
-    assert math.degrees(widest_real_rad_s) > 45.0, "premise: this SHOULD violate"
-
-    d = s.filter(State(x=-20, y=-20, up=4),
-                 Action4D(yaw_rate=widest_real_rad_s))
-    assert d.emitted.yaw_rate == widest_real_rad_s, (
-        "yaw cap now fires at flight scale -- the unit was fixed. Re-check F1 "
-        "(Shield must not edit yaw) before deleting this test."
-    )
+    worst_seen_dps = 11.8
+    for dps in (0.0, 5.0, worst_seen_dps, 2 * worst_seen_dps):
+        yr = math.radians(dps)
+        d = s.filter(State(x=-20, y=-20, up=4), Action4D(vx=1.0, yaw_rate=yr))
+        assert d.emitted.yaw_rate == yr, (
+            f"the Shield edited yaw at {dps} dps; F1 is broken and the follow "
+            f"demo's claim needs restating")
 
 
 # ------------------------------------------------------------------- 2. FUZZ
@@ -402,8 +411,30 @@ def test_gap_fence_leaves_a_flyable_gap_BEFORE_flying_it():
         f"no legal x in 26..50 at y={y_mid}, alt={mid_alt} -- the gap does not "
         "exist and the flight would fail for policy reasons, not safety ones"
     )
-    width = max(legal) - min(legal)
-    assert width >= 5.0, f"gap only {width} m wide (legal x: {legal})"
+    # The LONGEST CONTIGUOUS run, not the span.
+    #
+    # `max(legal) - min(legal)` measures the span of a set that need not be
+    # contiguous. It is contiguous today (fence x 26..42, legal x 43..50), so
+    # the old form happened to give the right answer. Move the fence into the
+    # middle of the corridor - x 30..40, which this file's own
+    # `test_full_fence_policy_really_blocks_the_whole_corridor` records as an
+    # earlier configuration - and legal becomes [26..29] + [41..50]: a span of
+    # 24 that passes a ">= 5 m" check while the western gap is 4 m wide and the
+    # eastern one is on the far side of the zone. Two slivers on opposite sides
+    # of a fence are not a gap an aircraft can fly through.
+    runs, run = [], [legal[0]]
+    for x in legal[1:]:
+        if x == run[-1] + 1:
+            run.append(x)
+        else:
+            runs.append(run)
+            run = [x]
+    runs.append(run)
+    best = max(runs, key=len)
+    width = best[-1] - best[0]
+    assert width >= 5.0, (
+        f"widest contiguous gap only {width} m (x {best[0]}..{best[-1]}); "
+        f"all legal x: {legal}")
     # And the blocked side must still be blocked, or the fence does nothing.
     x_in = 0.5 * (min(v.x for v in fence.vertices) + max(v.x for v in fence.vertices))
     assert s._check(State(x=x_in, y=y_mid, up=mid_alt), Action4D()), (

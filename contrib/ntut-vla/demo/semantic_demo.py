@@ -183,7 +183,16 @@ class SemanticObs:
             return {"frames_received": self._n_front, "frames_decoded": self._n_decode}
 
     def get_depth(self):
-        """Depth map in metres, decoded on demand like the camera frames."""
+        """Depth map in metres, decoded on demand like the camera frames.
+
+        SAY WHICH BRANCH RAN. The robot config asks for `pixels-as-float: true`
+        and does not get it: the stream arrives as 16UC1, so depth is QUANTISED
+        TO WHOLE METRES. Every rng_m in the flight logs is an integer (or a .5
+        from a median of an even sample), and that quantisation is a large part
+        of the range noise the target estimator has to absorb. It was diagnosed
+        once from the orbit results and then had to be diagnosed again from the
+        follow results, because nothing said it out loud.
+        """
         with self.lock:
             msg = self._depth_msg
         if not msg:
@@ -193,7 +202,18 @@ class SemanticObs:
             raw = (np.array(data, dtype="B") if isinstance(data, list)
                    else np.frombuffer(data, dtype=np.uint8))
             h, w = msg["height"], msg["width"]
-            if msg.get("encoding") == "16UC1" or raw.size == h * w * 2:
+            quantised = msg.get("encoding") == "16UC1" or raw.size == h * w * 2
+            if not getattr(self, "_depth_encoding_reported", False):
+                self._depth_encoding_reported = True
+                enc = msg.get("encoding", "?")
+                if quantised:
+                    print(f"[depth] encoding {enc!r}, {raw.size / max(1, h * w):.0f} "
+                          f"bytes/px -> uint16, QUANTISED TO 1 m. The config asks "
+                          f"for pixels-as-float and the sim is not honouring it; "
+                          f"range noise is floored at +-0.5 m.")
+                else:
+                    print(f"[depth] encoding {enc!r} -> float32, full precision")
+            if quantised:
                 return raw.view(np.uint16).reshape(h, w).astype(np.float32)
             return raw.view(np.float32).reshape(h, w).astype(np.float32)
         except Exception:
@@ -213,7 +233,7 @@ async def fly(args) -> int:
         shield_map = {"occ": cmap["occ"], "res": cmap["res"],
                       "ox": cmap["ox"], "oy": cmap["oy"]}
     shield = Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=shield_map)
-    audit = AuditLogger(out / "audit.jsonl", policy.policy_hash)
+    audit = AuditLogger(out / "audit.jsonl", policy)   # the POLICY, so a hot-applied rule restamps the hash
 
     print(f"[policy]    {policy.policy_id} {policy.policy_hash}")
     print(f"[semantic]  instruction = {args.instruction!r}")

@@ -63,7 +63,7 @@ Without that control, "the drone ended up near the car" could just be drift.
 Everything the script does is one Python command. This is DEMO 1:
 
 ```powershell
-C:\Users\natha\.conda\envs\vla-real\python.exe demo\follow_vlm.py --object "a white car" --tag my_run --max-s 70 --det-thresh 0.008 --car-speed 2.0 --car-stop-s 6 --policy policies\follow_car.yaml --straight
+C:\Users\natha\.conda\envs\vla-real\python.exe demo\follow_vlm.py --object "a yellow car" --tag my_run --max-s 70 --det-thresh 0.008 --car-speed 2.0 --car-stop-s 6 --policy policies\follow_car.yaml --straight
 ```
 
 The simulator must already be running. Start it with:
@@ -79,7 +79,8 @@ Wait until port 8989 answers — about 25 seconds. Then fly.
 | flag | what it does |
 |---|---|
 | `--object` | **what to follow, in words.** This is the whole interface. |
-| `--traffic N` | add N distractor cars (max 3), same model, unpainted |
+| `--traffic N` | add N distractor cars. With the glTF models installed each is a different colour; without them they fall back to two meshes |
+| `--glb-dir` | where the glTF vehicles live. Defaults to `$VLA_GLB_DIR` then `D:/models/kenney_car-kit/glb`. Not in the repo - see `docs/FINDING-glb-vehicles-aug15.md` to install |
 | `--policy` | which guardrail rules apply |
 | `--max-s` | how long to fly |
 | `--save-view` | record frames for the video |
@@ -139,12 +140,12 @@ The three numbers that matter in `metrics.json`:
 
 ```powershell
 # Orbit a parked car — it circles more than a full lap
-C:\Users\natha\.conda\envs\vla-real\python.exe demo\follow_vlm.py --object "a white car" --tag orbit --max-s 100 --cruise-alt 18 --park-at "40,-40" --orbit-speed 2.5 --orbit-radius 16 --lock-target --policy policies\orbit_building.yaml
+C:\Users\natha\.conda\envs\vla-real\python.exe demo\follow_vlm.py --object "a yellow car" --tag orbit --max-s 100 --cruise-alt 18 --park-at "40,-40" --orbit-speed 2.5 --orbit-radius 16 --lock-target --policy policies\orbit_building.yaml
 ```
 
 ```powershell
 # No-fly zone with a 7 m gap left open, so the rule costs the path not the target
-C:\Users\natha\.conda\envs\vla-real\python.exe demo\follow_vlm.py --object "a white car" --tag gap --max-s 70 --cruise-alt 13 --want-width 0.20 --car-speed 2.0 --policy policies\follow_car_gap.yaml --straight
+C:\Users\natha\.conda\envs\vla-real\python.exe demo\follow_vlm.py --object "a yellow car" --tag gap --max-s 70 --cruise-alt 13 --want-width 0.20 --car-speed 2.0 --policy policies\follow_car_gap.yaml --straight
 ```
 
 **`--want-width` is tied to `--cruise-alt`.** It sets an *angular* stand-off, so

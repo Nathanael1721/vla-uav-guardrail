@@ -344,7 +344,7 @@ def main() -> int:
     policy = load_policy(args.policy)
     mission = ConstraintCompiler(policy).parse_command(args.command)
     shield = Shield(policy, lookahead_s=3.0, dt=0.5)
-    audit = AuditLogger(out / "audit.jsonl", policy.policy_hash)
+    audit = AuditLogger(out / "audit.jsonl", policy)   # the POLICY, so a hot-applied rule restamps the hash
     target = (mission.target_x, mission.target_y)
     print(f"[policy] {policy.policy_id} {policy.policy_hash}")
     print(f"[task]   target={target}  object={args.object!r}")

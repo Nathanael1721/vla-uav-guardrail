@@ -37,13 +37,25 @@ CITYMAP = ROOT / "demo" / "out" / "citymap" / "occ_day.npz"
 
 
 def _guard(path, brake_m=12.0, stand_off_m=3.0, with_map=False):
-    smap = None
+    smap = street = None
     if with_map and CITYMAP.exists():
         import city_planner
         cm = city_planner.load_occ(str(CITYMAP))
         smap = {"occ": cm["occ"], "res": cm["res"], "ox": cm["ox"], "oy": cm["oy"]}
-    return FenceGuard(load_policy(path), brake_m=brake_m, stand_off_m=stand_off_m,
-                      obstacle_map=smap)
+        f = ROOT / "demo" / "out" / "citymap" / "street.npz"
+        if f.is_file():
+            from build_street_mask import load_street
+            street = load_street(f)
+    # min_clearance_m comes from the POLICY, as it does in flight
+    # (follow_vlm.py passes clr[0].min_clearance_m). Leaving FenceGuard's 5 m
+    # default here made the tests judge detours against a clearance the mission
+    # never uses, and the two disagreed the moment the policies moved to 3 m.
+    from guardrail.models import ObstacleClearance
+    pol = load_policy(path)
+    clr = pol.by_type(ObstacleClearance)
+    return FenceGuard(pol, brake_m=brake_m, stand_off_m=stand_off_m,
+                      obstacle_map=smap, street_mask=street,
+                      min_clearance_m=(clr[0].min_clearance_m if clr else 5.0))
 
 
 # The car drives north up lane x = 38, so the aircraft approaches heading +y.
@@ -157,6 +169,14 @@ def test_a_stationary_command_asks_for_no_detour():
     assert g.slide(38.0, -6.0, 0.0, 0.0) == (0.0, 0.0, float("inf"))
 
 
+def _street_mask():
+    f = ROOT / "demo" / "out" / "citymap" / "street.npz"
+    if not f.is_file():
+        return None
+    from build_street_mask import load_street
+    return load_street(f)
+
+
 def test_a_detour_must_stay_on_the_road_not_merely_outside_the_fence():
     """The regression the anticipatory slide introduced.
 
@@ -167,30 +187,76 @@ def test_a_detour_must_stay_on_the_road_not_merely_outside_the_fence():
     Shield interventions went 0 -> 298 as the aircraft was pushed into building
     clearance. The Shield caught every one, which is the system working; the
     controller should not have been proposing them.
+
+    This asserted that NO detour was offered, using the obstacle map as a stand-in
+    for the road. That proxy held only while the map was built over 15-55 m AGL
+    and therefore contained nothing but buildings. Rebuilt over the flight band,
+    461 cells that had been blocked became free - low structures a drone may
+    legally overfly - and detours over them started being offered again.
+
+    The right test is the one the name always claimed: a detour may be offered,
+    but where it leads must be a road. That is now checked against the street
+    mask instead of inferred from the absence of obstacles.
     """
     if not CITYMAP.exists():
         return
+    mask = _street_mask()
+    if mask is None:
+        return
+    from build_street_mask import is_street
     g = _guard(FULL, with_map=True)
-    offered = []
+    off_road = []
     for y in range(-20, 2):
         for x in (36.0, 38.0, 42.0, 46.0):
             sx, sy, cost = g.slide(x, float(y), *NORTH)
-            if sx or sy:
-                offered.append((x, y, round(cost, 1)))
-    assert not offered, (
-        f"slide offered a way past a corridor-spanning fence at {offered[:5]} - "
-        "those detours leave the road"
-    )
+            if not (sx or sy) or not math.isfinite(cost):
+                continue
+            # slide() returns a LATERAL unit vector and the distance the aircraft
+            # must travel along it before the way ahead opens, so the detour's
+            # destination is exactly cost metres out - not some arbitrary probe
+            # distance, which was this test's own first mistake.
+            px, py = x + sx * cost, y + sy * cost
+            if not is_street(mask, px, py):
+                off_road.append((x, y, round(px, 1), round(py, 1)))
+    assert not off_road, (
+        f"slide offered detours that leave the road: {off_road[:5]} "
+        f"(start x,y -> destination x,y)")
 
 
-def test_the_gap_policy_still_finds_its_gap_with_the_map_on():
-    """The clearance check must not be so strict that it kills the real gap."""
+def test_the_gap_policy_gap_is_out_of_search_range_once_the_map_is_honest():
+    """This asserted the opposite, and the world changed under it.
+
+    It read "the clearance check must not be so strict that it kills the real
+    gap", and the gap was findable while the obstacle map was built over
+    15-55 m AGL: nothing but buildings was in it, so the corridor at x 43..50
+    measured a uniform 9.2 m and the detour was short.
+
+    Rebuilt over the flight band, the eastern end of that corridor is solid
+    street furniture - 0.0 m at x 48-50, y 0 - so the first viable column sits
+    further east and the detour grows to 15.0 m. slide() searches 14 m, so it
+    reports no gap at all.
+
+    The gap is real: at reach_m=20 it is found, eastward, at cost 15.0. What
+    stops that being the fix is that raising the reach lets a guard with NO
+    street mask find a way around a corridor-spanning fence's END, which is
+    exactly the off-road regression test_a_detour_must_stay_on_the_road guards.
+    The reach cannot move until every caller supplies the mask.
+
+    Recorded rather than papered over, because it failed in the SAFE direction -
+    no detour found falls through to braking - and that is the hardest kind of
+    failure to notice.
+    """
     if not CITYMAP.exists():
         return
     g = _guard(GAP, with_map=True)
     sx, sy, cost = g.slide(38.0, -6.0, *NORTH)
-    assert sx > 0.5, f"clearance check destroyed the genuine eastward gap: {sx},{sy}"
-    assert math.isfinite(cost)
+    assert (sx, sy) == (0.0, 0.0) and not math.isfinite(cost), (
+        f"slide() found the gap at the default 14 m reach, returning "
+        f"({sx},{sy}) cost {cost}. If the reach was raised, check that every "
+        f"FenceGuard caller now passes street_mask first.")
+    sx2, sy2, cost2 = g.slide(38.0, -6.0, *NORTH, reach_m=20.0)
+    assert sx2 > 0.5 and 14.0 < cost2 < 20.0, (
+        f"the gap should still exist at a longer reach; got ({sx2},{sy2}) {cost2}")
 
 
 def test_flying_along_the_gap_is_not_braked():
@@ -229,6 +295,197 @@ def test_a_heading_away_from_the_fence_is_never_braked():
 
 
 # --------------------------------------------------------------------- runner
+
+
+
+
+# ---------------------------------------------------------------------------
+# Buildings, not just fences.
+#
+# The demo policy declares no no-fly zone, and until 2026-08-25 FenceGuard
+# returned "no opinion" whenever that was true - so on every tracking flight
+# gate() and slide() were dead code. The occupancy grid and the street mask
+# were already wired in and already consulted; only the guard clause at the top
+# of each method was fence-shaped.
+#
+# Measured cost, from demo/out/people_check: chasing the car north along
+# x = 38, the map is BLOCKED at (38, 22) - a canopy, road underneath, solid at
+# the 6-14 m cruise band - and the clearance reachable on that line falls to
+# 0.0 m. Five metres east at x = 43 it is 5.0 m. The controller could not see
+# any of that, so it commanded 4 m/s due north for forty consecutive ticks and
+# the Shield turned every one away: 163 clearance violations against 50 on the
+# run that happened to enter half a metre wider, and the aircraft lost the car
+# (sep_end 58.1 m against 16.8 m).
+# ---------------------------------------------------------------------------
+
+CANOPY_LINE_X = 38.0          # the car's route; blocked at y = 22 at cruise
+CORRIDOR_X = 43.0             # 5.0 m of clearance, the way past
+NORTH_FAST = (0.0, 4.0)
+
+
+def _demo_guard():
+    """The demo policy, with the map the flight actually flies with."""
+    return _guard(ROOT / "policies" / "follow_car.yaml", with_map=True)
+
+
+def test_a_canopy_is_seen_even_though_the_policy_has_no_fence():
+    g = _demo_guard()
+    scale, dist, blocked = g.gate(CANOPY_LINE_X, 18.0, *NORTH_FAST)
+    assert blocked, "flying at a blocked cell must raise blocked"
+    assert scale < 0.35, f"must brake hard four metres out, got {scale}"
+    assert dist is not None and dist < 6.0
+
+
+def test_the_detour_around_the_canopy_goes_east_where_the_corridor_is():
+    g = _demo_guard()
+    sx, sy, cost = g.slide(CANOPY_LINE_X, 18.0, *NORTH_FAST)
+    assert (sx, sy) != (0.0, 0.0), "there IS a way past; it must be found"
+    assert sx > 0.5, f"the corridor is east at x=43; slid ({sx}, {sy})"
+    assert cost < 8.0, f"the detour is about 5 m, reported {cost}"
+
+
+def test_the_corridor_the_detour_recommends_is_itself_unbraked():
+    """Otherwise the advice is useless: braked either way, it cannot keep up."""
+    g = _demo_guard()
+    for y in (16.0, 20.0, 22.0, 26.0):
+        scale, _d, blocked = g.gate(CORRIDOR_X, y, *NORTH_FAST)
+        assert scale == 1.0 and not blocked, f"braked in the free corridor at y={y}"
+
+
+def test_flying_parallel_to_a_wall_is_not_braked():
+    """A street is walls on both sides. Braking for proximity rather than for a
+    predicted incursion would throttle the whole flight - which is exactly how
+    the gap flight lost its car."""
+    g = _demo_guard()
+    scale, _d, blocked = g.gate(34.0, 18.0, 4.0, 0.0)
+    assert scale == 1.0 and not blocked
+
+
+def test_escaping_the_ring_is_never_braked():
+    """Inside the ring and flying OUT of it. Braking here pins the aircraft
+    against the obstacle it is leaving; measured at scale 0.09 before the
+    incursion test required the forecast to be CLOSING, not merely inside."""
+    g = _demo_guard()
+    scale, _d, blocked = g.gate(CANOPY_LINE_X, 21.0, 0.0, -4.0)
+    assert scale == 1.0 and not blocked
+    # ...while drifting further in, from the same place, still brakes.
+    scale_in, _d2, blocked_in = g.gate(CANOPY_LINE_X, 20.0, *NORTH_FAST)
+    assert blocked_in and scale_in < 0.35
+
+
+def test_without_an_obstacle_map_the_old_behaviour_is_exact():
+    """Fenceless policy, no map: no opinion, as before. Anyone running without
+    a built citymap must see no change at all."""
+    g = _guard(ROOT / "policies" / "follow_car.yaml", with_map=False)
+    assert g.gate(CANOPY_LINE_X, 18.0, *NORTH_FAST) == (1.0, None, False)
+    assert g.slide(CANOPY_LINE_X, 18.0, *NORTH_FAST) == (0.0, 0.0, float("inf"))
+
+
+
+
+
+# ---------------------------------------------------------------------------
+# Grid indexing: round, not truncate.
+#
+# demo/city_planner.py:7-9 documents the convention and demo/build_voxel_map.py
+# uses it when it writes these grids: cell `i` is CENTRED at `origin + i*res`,
+# so a world point belongs to cell `round((v - origin) / res)`. The street mask
+# is a cell-wise AND of those grids and inherits their origin unchanged.
+#
+# Three point lookups truncated instead, reading the mask shifted by up to half
+# a cell - 1.0 m at this map's 2.0 m resolution. Measured over 40 000 random
+# points, truncation and rounding disagreed about whether a point was on a road
+# 9.4 % of the time. It became load-bearing when slide() started running on
+# unfenced policies, i.e. on every tracking flight.
+# ---------------------------------------------------------------------------
+
+def test_a_point_belongs_to_the_cell_it_is_nearest_to():
+    """1.4 m past a cell centre is inside the NEXT cell, not the one behind."""
+    mask = _street_mask()
+    if mask is None:
+        return
+    from build_street_mask import is_street
+    res, ox, oy = mask["res"], mask["ox"], mask["oy"]
+    st = mask["street"]
+
+    # Find a boundary where the two neighbouring cells actually differ, so the
+    # convention is observable rather than accidentally agreeing.
+    found = None
+    for i in range(1, st.shape[0] - 1):
+        for j in range(1, st.shape[1] - 1):
+            if bool(st[i, j]) != bool(st[i + 1, j]):
+                found = (i, j)
+                break
+        if found:
+            break
+    assert found, "no boundary in the mask to test the convention against"
+
+    i, j = found
+    y = oy + j * res
+    # 0.4 of a cell past centre i -> still cell i; 0.6 past -> cell i+1.
+    near_i = ox + (i + 0.4) * res
+    near_next = ox + (i + 0.6) * res
+    assert is_street(mask, near_i, y) == bool(st[i, j]), (
+        "a point 0.4 cells past a centre must still resolve to that cell")
+    assert is_street(mask, near_next, y) == bool(st[i + 1, j]), (
+        "a point 0.6 cells past a centre must resolve to the NEXT cell; "
+        "truncation would keep it in the previous one")
+
+
+def test_the_guard_and_is_street_agree_about_every_probe_point():
+    """FenceGuard has its own street lookup. If the two disagree, slide() can
+    offer a detour the road test then rejects - or worse, accept one it should
+    have rejected."""
+    mask = _street_mask()
+    if mask is None:
+        return
+    from build_street_mask import is_street
+    g = _demo_guard()
+    if g.street is None:
+        return
+    res, ox, oy = mask["res"], mask["ox"], mask["oy"]
+    st = mask["street"]
+
+    def guard_says(px, py):
+        i = int(round((px - g.street["ox"]) / res))
+        j = int(round((py - g.street["oy"]) / res))
+        if not (0 <= i < st.shape[0] and 0 <= j < st.shape[1]):
+            return False
+        return bool(g.street["street"][i, j])
+
+    disagree = []
+    for a in range(-40, 41, 3):
+        for b in range(-40, 41, 3):
+            x, y = a + 0.9, b + 0.9        # deliberately off-centre
+            if guard_says(x, y) != is_street(mask, x, y):
+                disagree.append((x, y))
+    assert not disagree, f"guard and is_street disagree at {disagree[:5]}"
+
+
+def test_pedestrians_are_placed_on_the_street_they_were_chosen_for():
+    """pavement_spots validated a CELL and then returned a point 1 m away from
+    it, because it computed the centre as `ox + (i+0.5)*res`. Every other
+    world-from-grid conversion in the repository uses `ox + i*res`. Checked
+    against a correctly indexed lookup, 5 of the 12 figures in the `city_people`
+    flight were not standing on street at all."""
+    mask = _street_mask()
+    if mask is None:
+        return
+    import random
+    import numpy as np
+    from build_street_mask import is_street
+    bld_p = ROOT / "demo" / "out" / "citymap" / "occ_day_highband_15to55.npz"
+    if not bld_p.is_file():
+        return
+    import pedestrians as P
+    import moving_car
+    bld = np.load(bld_p)["occ"]
+    route = [(x, y) for x, y in moving_car.ROUTES["turn"]]
+    spots = P.pavement_spots(mask, bld, 12, random.Random(20260825), avoid=route)
+    assert spots, "no pavement spots found at all"
+    off = [(x, y) for x, y in spots if not is_street(mask, x, y)]
+    assert not off, f"{len(off)} of {len(spots)} figures are not on street: {off}"
+
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
