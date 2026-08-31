@@ -35,6 +35,8 @@ nohup "$PY" "$DIR/ros2_vla_stub_node.py" > ~/sitl-run/vla.log 2>&1 &
 sleep 2
 
 echo "=== shield node (mission) ==="
-"$PY" "$DIR/ros2_shield_node.py" --shield "$SHIELD" $DYN
+# "$@" beyond the first two lets a caller add --policy / --subject without
+# this script needing to know about them.
+"$PY" "$DIR/ros2_shield_node.py" --shield "$SHIELD" $DYN "${@:3}"
 
 echo "=== done (cleanup runs via trap) ==="

@@ -42,7 +42,8 @@ from guardrail.kpi import compute_from_dir                                # noqa
 from guardrail.manifest import (TOPOLOGY_ARDUPILOT_SITL,                  # noqa: E402
                                 TOPOLOGY_CANONICAL_HIL, build_manifest,
                                 is_kpi_grade)
-from guardrail.models import AltitudeEnvelope, PolygonFence, XY           # noqa: E402
+from guardrail.models import (AltitudeEnvelope, PolygonFence,
+                              SubjectStandoff, XY)           # noqa: E402
 
 from shapely.geometry import Point                                        # noqa: E402
 
@@ -58,13 +59,16 @@ DYNAMIC_FENCE = PolygonFence(
 
 
 class ShieldNode(Node):
-    def __init__(self, shield_on: bool, dynamic: bool, out: Path) -> None:
+    def __init__(self, shield_on: bool, dynamic: bool, out: Path,
+                 subject=None, subject_class: str = "pedestrian",
+                 policy_path=None) -> None:
         super().__init__("safety_shield")
         self.shield_on = shield_on
         self.dynamic = dynamic
         self.out = out
 
-        self.policy = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
+        self.policy = load_policy(policy_path or
+                                  ROOT / "policies" / "sim_demo_policy.yaml")
         compiler = ConstraintCompiler(self.policy)
         self.mission = compiler.parse_command("fly to the northeast pad at 6 m/s")
         (out / "prompt.yaml").write_text(compiler.build_prompt(self.mission),
@@ -74,6 +78,23 @@ class ShieldNode(Node):
         # fence mid-flight and the audit trail must show which generation
         # was in force for each record.
         self.audit = AuditLogger(out / "audit.jsonl", self.policy)
+
+        # A DECLARED subject, so subject_standoff rules bind on a rail with no
+        # camera. The position is ground truth, not perception - which is the
+        # honest framing and also the right one: the 2026-08-19 review confirmed
+        # the Shield is the deliverable and the pilot a swappable input.
+        # Without this the standoff rules are present and silently inert.
+        self.subject = subject
+        self.subject_class = subject_class
+        if subject is not None:
+            self.shield.set_subject(subject[0], subject[1], subject_class)
+            rings = [(c.id, c.min_range_m)
+                     for c in self.policy.by_type(SubjectStandoff)
+                     if c.binds(subject_class)]
+            self.get_logger().info(
+                f"{subject_class} DECLARED at ({subject[0]:.1f}, {subject[1]:.1f}); "
+                + (", ".join(f"{i} {r:.0f}m" for i, r in rings) if rings
+                   else "WARNING no standoff rule binds - the ring is inert"))
 
         self.state: State | None = None
         self.raw_action = Action4D()
@@ -357,6 +378,28 @@ class ShieldNode(Node):
 
     # ---------------- wrap-up ---------------- #
 
+    def _standoff_metrics(self) -> dict:
+        """Seconds inside a declared subject's ring, and the closest approach.
+
+        Horizontal range, which is the rule's own definition - and the reason
+        this demonstrates "must not fly OVER a person": at cruise altitude a
+        straight run passes 0 m away in plan view.
+        """
+        if self.subject is None:
+            return {"standoff_s": None, "standoff_min_range_m": None,
+                    "subject": None}
+        rings = [c.min_range_m for c in self.policy.by_type(SubjectStandoff)
+                 if c.binds(self.subject_class)]
+        ring = max(rings) if rings else 0.0
+        d = [math.hypot(p["x"] - self.subject[0], p["y"] - self.subject[1])
+             for p in self.traj]
+        return {
+            "standoff_s": round(sum(1 for v in d if v < ring) * TICK, 2),
+            "standoff_min_range_m": (round(min(d), 2) if d else None),
+            "subject": {"class": self.subject_class, "x": self.subject[0],
+                        "y": self.subject[1], "position_source": "declared"},
+        }
+
     def _finish(self) -> None:
         self.done = True
         # Fire-and-forget: we are INSIDE a timer callback here, so a blocking
@@ -440,6 +483,7 @@ class ShieldNode(Node):
             # breaks no rules.
             "frac_within_30m": 1.0 if self.reached else 0.0,
             "nfz_s": round(nfz_s, 2),
+            **self._standoff_metrics(),
             "alt_violation_s": round(alt_s, 2),
             "interventions": self.n_touched,
             "brakes": self.n_braked,
@@ -519,6 +563,14 @@ def main() -> None:
     ap.add_argument("--shield", choices=["on", "off"], default="on")
     ap.add_argument("--dynamic", action="store_true")
     ap.add_argument("--tag", default=None)
+    ap.add_argument("--policy", default=None,
+                    help="policy YAML; defaults to policies/sim_demo_policy.yaml")
+    ap.add_argument("--subject", default=None, metavar="X,Y",
+                    help="declare a subject at this NED position so "
+                         "subject_standoff rules bind. DECLARED, not perceived - "
+                         "this rail has no camera and the measurement is of the "
+                         "SHIELD, which the review confirmed is the deliverable.")
+    ap.add_argument("--subject-class", default="pedestrian")
     args, ros_args = ap.parse_known_args()
 
     tag = args.tag or (f"ros2_shield_{args.shield}" + ("_dynamic" if args.dynamic else ""))
@@ -526,7 +578,12 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     rclpy.init(args=ros_args)
-    node = ShieldNode(args.shield == "on", args.dynamic, out)
+    subject = None
+    if args.subject:
+        subject = tuple(float(v) for v in args.subject.split(","))
+    node = ShieldNode(args.shield == "on", args.dynamic, out,
+                      subject=subject, subject_class=args.subject_class,
+                      policy_path=args.policy)
     try:
         node.bring_up()
         node.start_mission()

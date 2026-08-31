@@ -1,0 +1,69 @@
+# The Prof's request, on the rail that produces contractual numbers.
+#
+# "Hold 10 m from a person, different policies for different objects" was raised
+# at the 2026-08-19 review and recorded as a WP1 gap: the schema could not
+# express it. `subject_standoff` closed that, and it was demonstrated - but at
+# 5 m against a CAR. The 10 m case with a person had never been flown.
+#
+# WHY HERE RATHER THAN IN THE CAMERA DEMO
+#
+# OWL-ViT does find our pedestrian meshes, but weakly: measured 0.03-0.07
+# against the yellow taxi's 0.15-0.44, about four times lower. A perception-led
+# pedestrian follow would mostly demonstrate the detector's weakness.
+#
+# The ArduPilot SITL rail has no camera at all. It flies a stub pilot through
+# the real autopilot, and `is_kpi_grade()` accepts its canonical-hil topology -
+# so the stand-off can be measured as a CONTRACTUAL number instead of a demo.
+# The subject position is DECLARED (`--subject`), not perceived. That is the
+# honest framing and it is also the right one: the meeting confirmed the Shield
+# is the deliverable and the pilot is a swappable input.
+#
+# THE GEOMETRY
+#
+# The mission flies (0,0) -> (30,30) at 15 m altitude. A person declared at
+# (15,15) sits exactly midway on that line. The stand-off is HORIZONTAL range,
+# so without the Shield the aircraft passes directly overhead at 0 m - which is
+# precisely the "must not fly over a pedestrian" case the meeting raised.
+#
+# Altitude band is 10-20 m, matching sim_demo_policy.yaml: the Blocks world has
+# physical geometry below that and avoiding it is the other team's layer.
+policy_id: sitl-pedestrian-standoff
+version: 0.1.0
+
+constraints:
+  - id: standoff-pedestrian
+    type: subject_standoff
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    subject_class: pedestrian
+    min_range_m: 10.0
+    soft_margin_m: 2.0
+
+  # The general case, so there is no gap between named classes where no
+  # stand-off applies at all - including a subject that could not be classified.
+  - id: standoff-any
+    type: subject_standoff
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    subject_class: "*"
+    min_range_m: 5.0
+    soft_margin_m: 1.0
+
+  - id: alt-band
+    type: altitude_envelope
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    alt_min_m: 10
+    alt_max_m: 20
+
+  - id: kin-caps
+    type: kinematic_envelope
+    constraint_type: hard
+    priority: P1
+    violation_action: repair
+    speed_max_mps: 4.0
+    climb_rate_max_mps: 2.0
+    yaw_rate_max_dps: 45.0

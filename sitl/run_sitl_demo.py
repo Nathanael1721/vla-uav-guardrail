@@ -40,7 +40,8 @@ from guardrail.kpi import compute_from_dir                             # noqa: E
 from guardrail.manifest import (TOPOLOGY_ARDUPILOT_SITL,               # noqa: E402
                                 build_manifest, is_kpi_grade,
                                 sim_speedup_from_mavlink)
-from guardrail.models import AltitudeEnvelope, PolygonFence, XY        # noqa: E402
+from guardrail.models import (AltitudeEnvelope, PolygonFence,
+                              SubjectStandoff, XY)        # noqa: E402
 from guardrail.vla_stub import StubVLA                                 # noqa: E402
 
 from shapely.geometry import Point                                     # noqa: E402
@@ -154,6 +155,16 @@ def main() -> int:
     ap.add_argument("--policy", default=str(ROOT / "policies" / "sim_demo_policy.yaml"))
     ap.add_argument("--shield", choices=["on", "off"], default="on")
     ap.add_argument("--dynamic", action="store_true")
+    ap.add_argument("--subject", default=None, metavar="X,Y",
+                    help="declare a subject (a person) at this NED position, so "
+                         "subject_standoff rules bind. The position is DECLARED, "
+                         "not perceived: this rail has no camera, and the point "
+                         "is to measure the SHIELD - which the 2026-08-19 review "
+                         "confirmed is the deliverable, with the pilot a "
+                         "swappable input. Without it the standoff rules are "
+                         "inert, which is what they silently were.")
+    ap.add_argument("--subject-class", default="pedestrian",
+                    help="which subject_standoff rule binds (default pedestrian)")
     ap.add_argument("--url", default="tcp:127.0.0.1:5760")
     ap.add_argument("--tag", default=None)
     args = ap.parse_args()
@@ -177,6 +188,24 @@ def main() -> int:
     # mid-flight, and AuditLogger reads the hash live so records written after
     # that carry the generation that was actually in force.
     audit = AuditLogger(out / "audit.jsonl", policy)
+
+    subject = None
+    if args.subject:
+        sx, sy = (float(v) for v in args.subject.split(","))
+        subject = (sx, sy)
+        shield.set_subject(sx, sy, args.subject_class)
+        rings = [(c.id, c.min_range_m) for c in policy.by_type(SubjectStandoff)
+                 if c.binds(args.subject_class)]
+        print(f"[subject]  {args.subject_class} DECLARED at ({sx:.1f}, {sy:.1f}) "
+              f"- position is ground truth, not perception")
+        if rings:
+            print(f"[subject]  binding rules: " +
+                  ", ".join(f"{i} {r:.0f}m" for i, r in rings))
+        else:
+            # A standoff rule that binds nothing is the failure this whole
+            # exercise exists to expose, so it is said out loud.
+            print(f"[subject]  WARNING no subject_standoff rule binds "
+                  f"'{args.subject_class}' in this policy - the ring is inert")
 
     link = MavlinkAdapter(args.url)
     link.prepare(mission.cruise_alt_m)
@@ -291,6 +320,21 @@ def main() -> int:
                   if not (e.alt_min_m <= p["up"] <= e.alt_max_m))
     alt_seconds = alt_bad * TICK
 
+    # Seconds spent inside a declared subject's stand-off ring, reported the
+    # same way as NFZ time so the A/B reads identically. Horizontal range, which
+    # is the rule's own definition - and the reason this demonstrates "must not
+    # fly OVER a person": at 15 m altitude a straight run passes 0 m away.
+    standoff_seconds = 0.0
+    standoff_min_m = None
+    if subject is not None:
+        rings = [c.min_range_m for c in policy.by_type(SubjectStandoff)
+                 if c.binds(args.subject_class)]
+        ring = max(rings) if rings else 0.0
+        d = [math.hypot(p["x"] - subject[0], p["y"] - subject[1]) for p in traj]
+        if d:
+            standoff_min_m = round(min(d), 2)
+        standoff_seconds = sum(1 for v in d if v < ring) * TICK
+
     # metrics.json first, because compute_from_dir() reads it to decide the
     # mission outcome.
     #
@@ -309,6 +353,10 @@ def main() -> int:
         "reached": reached,
         "frac_within_30m": 1.0 if reached else 0.0,
         "nfz_s": round(nfz_seconds, 2),
+        "standoff_s": round(standoff_seconds, 2),
+        "standoff_min_range_m": standoff_min_m,
+        "subject": ({"class": args.subject_class, "x": subject[0], "y": subject[1],
+                     "position_source": "declared"} if subject else None),
         "alt_violation_s": round(alt_seconds, 2),
         "interventions": n_touched,
         "brakes": n_braked,
