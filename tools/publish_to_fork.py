@@ -94,6 +94,33 @@ def existing_files() -> set[str]:
             for p in DEST.rglob("*") if p.is_file()}
 
 
+# Paths under contrib/ntut-vla/ that are AUTHORED IN THE FORK and must survive
+# a sync. The mirror is generated, but the directory it writes into is not
+# purely generated - these were written there, for Prof. Lai, and never existed
+# in this repository.
+#
+# Without this the prune below treated them as drift and deleted them: the
+# fork's README.md, MODELS.md (which carries the asset provenance for models
+# that are deliberately not in git), the two slide decks, and every
+# results/*/metrics.json - 42 files on the run that found this.
+#
+# The anti-drift rule still holds for everything the mirror actually produces.
+# It just no longer assumes that "not tracked here" means "stale".
+KEEP_IN_FORK = (
+    "README.md",
+    "MODELS.md",
+    "docs/VLA-Guardrail-FineTuned-Jul2026.pptx",
+    "docs/VLA-Guardrail-Follow-Aug2026.pptx",
+)
+KEEP_PREFIXES = ("results/",)
+
+
+def fork_authored(rel: str) -> bool:
+    """True for a mirror path this script must not delete."""
+    rel = rel.replace("\\", "/")
+    return rel in KEEP_IN_FORK or rel.startswith(KEEP_PREFIXES)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true",
@@ -117,13 +144,15 @@ def main() -> int:
         else:
             unchanged.append(rel)
 
-    removed = sorted(have - wanted)
+    removed = sorted(r for r in (have - wanted) if not fork_authored(r))
+    preserved = sorted(r for r in (have - wanted) if fork_authored(r))
 
     print(f"source : {ROOT}")
     print(f"mirror : {DEST}")
     print(f"  add     {len(added)}")
     print(f"  update  {len(updated)}")
     print(f"  delete  {len(removed)}")
+    print(f"  keep    {len(preserved)}   (authored in the fork, never mirrored)")
     print(f"  same    {len(unchanged)}")
 
     for label, items in (("add", added), ("update", updated), ("delete", removed)):
