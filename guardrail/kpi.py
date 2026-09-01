@@ -1,13 +1,22 @@
-"""The grant's four locked acceptance KPIs, computed from one flight's artefacts.
+"""The grant's five locked acceptance KPIs, computed from one flight's artefacts.
 
-From the WP4 acceptance table:
+`Grant overview` names five, and for most of this project only three of them
+existed here. `mean repair magnitude` and `mean time to safe` were never
+computed - two fifths of the contractual acceptance criteria with no number
+against them - although every field they need has been in the flight log all
+along. They are measured below as of 2026-09-01.
 
 | KPI                            | Target                | Source                    |
 |--------------------------------|-----------------------|---------------------------|
 | Mission success rate           | tracked, no target    | outcome == success AND no P0 |
 | **P0 violation escape rate**   | **0 (hard limit)**    | Shield repair log         |
 | Fail-safe trigger correctness  | >= 99%                | triggered when expected   |
-| Average repair count / episode | tracked               | Shield repair log         |
+| **Mean repair magnitude**      | tracked               | |emitted - raw| on repaired ticks |
+| **Mean time to safe**          | tracked               | violation episode duration |
+
+`Average repair count / episode` is kept alongside them: it is what this file
+reported in place of a magnitude, and a count is not a magnitude - a hundred
+nudges of 0.01 m/s and one 3 m/s slam score identically.
 
 THE ONE THAT MATTERS
 
@@ -48,6 +57,7 @@ Shield's decision path.
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -80,6 +90,127 @@ def _emitted_differs(row: dict) -> bool:
                for k in ("vx", "vy", "vz_up", "yaw_rate"))
 
 
+def _repair_magnitude(row: dict) -> tuple[float, float] | None:
+    """How far the Shield moved this action: (translational m/s, yaw deg/s).
+
+    The two are returned APART and never summed into one norm. vx/vy/vz_up are
+    m/s and yaw_rate is deg/s, so a four-channel norm would be a quantity with
+    no unit - the same manoeuvre would score differently in rad/s. Reporting a
+    single tidy number would be the version that looks better and means less.
+
+    Returns None when the row cannot answer - a log missing either action - so
+    the caller counts it as unmeasurable instead of as a zero-magnitude repair.
+    A zero is a claim; a missing field is not.
+    """
+    raw, em = row.get("raw") or {}, row.get("emitted") or {}
+    if not raw or not em:
+        return None
+    trans = math.sqrt(sum(
+        (float(em.get(k, 0.0)) - float(raw.get(k, 0.0))) ** 2
+        for k in ("vx", "vy", "vz_up")))
+    yaw = abs(float(em.get("yaw_rate", 0.0)) - float(raw.get("yaw_rate", 0.0)))
+    return trans, yaw
+
+
+def _episodes(rows: list[dict], is_bad, prefix: str) -> dict[str, Any]:
+    """Durations of the maximal runs of consecutive ticks where `is_bad(row)`.
+
+    Shared by the two episode metrics below, which differ only in what counts as
+    a bad tick. Duration is read from the logged `t`, never from an assumed tick
+    period: the AirSim demos log near 10 Hz and the SITL rails do not, so a
+    hardcoded 0.1 would quietly misreport one of the two rails by a factor of
+    twenty.
+
+    An episode still open when the log ends never resolved, so it has no
+    duration. Those are CENSORED - counted and reported, excluded from the mean.
+    Dropping them silently would let the worst possible flight, one that never
+    recovers at all, score the same as a clean one.
+    """
+    durations: list[float] = []
+    censored = 0
+    start_t: float | None = None
+    missing_t = False
+
+    for r in rows:
+        t = r.get("t")
+        if t is None:
+            missing_t = True
+            continue
+        bad = is_bad(r)
+        if bad and start_t is None:
+            start_t = float(t)
+        elif not bad and start_t is not None:
+            durations.append(float(t) - start_t)
+            start_t = None
+    if start_t is not None:
+        censored += 1
+
+    return {
+        f"mean_{prefix}_s": (round(sum(durations) / len(durations), 3)
+                             if durations else None),
+        f"max_{prefix}_s": (round(max(durations), 3) if durations else None),
+        f"{prefix}_episodes": len(durations),
+        f"{prefix}_censored": censored,
+        f"{prefix}_not_measurable": missing_t,
+    }
+
+
+def _time_to_safe(rows: list[dict]) -> dict[str, Any]:
+    """How long the vehicle spent in an UNSAFE POSITION before getting out.
+
+    THE DISTINCTION THIS METRIC EXISTS TO MAKE
+
+    A tick can carry a violation for two completely different reasons:
+
+      * the requested ACTION is illegal - too fast, climbing too hard, aimed at
+        a fence it has not reached yet;
+      * the current POSITION is illegal - already inside the zone, already
+        below the altitude floor.
+
+    Only the second is what "time to safe" asks about. Measured against the
+    first, `ros2_shield_on` reports 21.9 s - while its independently-computed
+    `nfz_s` and `alt_violation_s` are both 0.0, because the aircraft was never
+    anywhere it should not have been. It flew alongside a no-fly zone for
+    twenty seconds with the Shield trimming a pilot that kept asking to turn
+    into it. That is the Shield working, and reporting it as "it took 21.9
+    seconds to become safe" would be false in the direction that flatters
+    nobody.
+
+    That mistake has been made in this repository once already, with
+    `det_hit_rate` (see `docs/FINDING-the-hit-rate-was-not-a-hit-rate.md`), and
+    the fix is the same: measure the thing the name promises.
+
+    So an unsafe tick is one where the POSITION itself is illegal, recorded per
+    tick as `unsafe` by `Shield.state_is_unsafe()`. Logs written before that
+    field existed report `time_to_safe_not_measurable` rather than a zero -
+    `tools/rescore_kpis.py` can reconstruct it for a delivered flight whose
+    policy we still hold.
+
+    The reconstruction cross-checks exactly against numbers computed by a
+    different code path: `sitl_ped_on` yields 216 unsafe ticks against a
+    logged `alt_violation_s` of 21.6 s, and `ros2_shield_off` 41 ticks
+    against `nfz_s` 3.7 s.
+    """
+    if not any("unsafe" in r for r in rows):
+        return {"mean_time_to_safe_s": None, "max_time_to_safe_s": None,
+                "time_to_safe_episodes": 0, "time_to_safe_censored": 0,
+                "time_to_safe_not_measurable": True}
+    return _episodes(rows, lambda r: bool(r.get("unsafe")), "time_to_safe")
+
+
+def _intervention_episodes(rows: list[dict]) -> dict[str, Any]:
+    """How long the Shield had to keep intervening, in unbroken stretches.
+
+    Not a safety metric and deliberately not named as one: a long intervention
+    episode with zero unsafe ticks is the Shield doing its job continuously,
+    which is the normal picture when a mission runs alongside a fence. It is
+    reported because it is the honest reading of the number this file used to
+    call a time-to-safe, and because it says something the repair COUNT does
+    not - whether the Shield was engaged in one long stretch or many brief ones.
+    """
+    return _episodes(rows, lambda r: bool(r.get("violations")), "intervention")
+
+
 def compute(rows: Iterable[dict], priorities: dict[str, str],
             metrics: dict | None = None) -> dict[str, Any]:
     """Compute the four KPIs from per-tick flight-log rows."""
@@ -90,6 +221,9 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
     n_p0_escapes = 0        # ... and the flown action still violated it
     n_p0_unknown = 0        # ... and the log predates the emitted re-check
     n_repairs = 0
+    trans_mags: list[float] = []     # |emitted - raw| per repaired tick, m/s
+    yaw_mags: list[float] = []       # ... and deg/s, kept apart on purpose
+    n_repair_unknown = 0             # repaired ticks whose log lacks an action
     by_level: dict[str, int] = {}
     by_category: dict[str, int] = {}
     failsafe_expected = failsafe_correct = 0
@@ -98,6 +232,17 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
         vios = r.get("violations") or []
         reps = r.get("repairs") or []
         n_repairs += len(reps)
+
+        # Magnitude is only defined where a repair happened. Averaging over every
+        # tick instead would report a number that shrinks as the flight gets
+        # longer, so a long quiet cruise would look like a gentler Shield.
+        if reps:
+            mag = _repair_magnitude(r)
+            if mag is None:
+                n_repair_unknown += 1
+            else:
+                trans_mags.append(mag[0])
+                yaw_mags.append(mag[1])
 
         levels = set()
         for v in vios:
@@ -176,6 +321,23 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
                                          round(failsafe_correct / failsafe_expected, 6)),
         "repair_count": n_repairs,
         "repairs_per_episode": round(n_repairs, 3),
+        # --- mean repair magnitude ------------------------------------------
+        # Translational and yaw are separate quantities in separate units and
+        # are never combined; see _repair_magnitude().
+        "mean_repair_magnitude_mps": (round(sum(trans_mags) / len(trans_mags), 4)
+                                      if trans_mags else None),
+        "max_repair_magnitude_mps": (round(max(trans_mags), 4)
+                                     if trans_mags else None),
+        "mean_yaw_repair_dps": (round(sum(yaw_mags) / len(yaw_mags), 4)
+                                if yaw_mags else None),
+        "repaired_ticks": len(trans_mags),
+        "repair_ticks_not_measurable": n_repair_unknown,
+        # --- mean time to safe ----------------------------------------------
+        # Position-based, not action-based. See _time_to_safe() for why the
+        # difference is the whole point of the metric.
+        **_time_to_safe(rows),
+        # Reported alongside it, and never confused with it.
+        **_intervention_episodes(rows),
         "mission_success": (outcome == "success" and n_p0_escapes == 0
                             and n_p0_unknown == 0),
         # --- WP4 auto-labels ------------------------------------------------
