@@ -1,0 +1,75 @@
+{
+  "_why": "Which open-vocabulary detector should this project use. Scores are not comparable in absolute terms across architectures; person_over_taxi is the within-model figure.",
+  "_gate": {
+    "det_hz_min": 4.0,
+    "note": "hz_ceiling is inference alone on an idle GPU. In flight OWL-ViT measures 4.3x worse than its idle figure, so a ceiling near 4 Hz will not hold."
+  },
+  "_frames": "demo\\out\\city_locked\\view\\fpv",
+  "_queries": [
+    "a yellow car",
+    "a person"
+  ],
+  "_inference_size": "400x225",
+  "results": [
+    {
+      "backend": "owlvit",
+      "model_id": "google/owlvit-base-patch32",
+      "load_s": 5.5,
+      "frames": 24,
+      "pre_ms_median": 40.5,
+      "fwd_ms_median": 59.0,
+      "total_ms_median": 100.5,
+      "total_ms_p95": 119.5,
+      "hz_ceiling": 9.95,
+      "taxi_score_median": 0.1822,
+      "person_score_median": 0.0622,
+      "person_over_taxi": 0.341,
+      "vram_gb": 0.68
+    },
+    {
+      "backend": "owlv2",
+      "model_id": "google/owlv2-base-patch16-ensemble",
+      "load_s": 3.2,
+      "frames": 24,
+      "pre_ms_median": 247.9,
+      "fwd_ms_median": 216.6,
+      "total_ms_median": 468.6,
+      "total_ms_p95": 547.6,
+      "hz_ceiling": 2.13,
+      "taxi_score_median": 0.6021,
+      "person_score_median": 0.1006,
+      "person_over_taxi": 0.167,
+      "vram_gb": 2.57
+    },
+    {
+      "backend": "gdino",
+      "model_id": "IDEA-Research/grounding-dino-tiny",
+      "load_s": 8.6,
+      "frames": 24,
+      "pre_ms_median": 76.3,
+      "fwd_ms_median": 391.1,
+      "total_ms_median": 466.7,
+      "total_ms_p95": 501.0,
+      "hz_ceiling": 2.14,
+      "taxi_score_median": 0.8106,
+      "person_score_median": 0.3268,
+      "person_over_taxi": 0.403,
+      "vram_gb": 3.28
+    },
+    {
+      "backend": "gdino-base",
+      "model_id": "IDEA-Research/grounding-dino-base",
+      "load_s": 5.0,
+      "frames": 24,
+      "pre_ms_median": 79.7,
+      "fwd_ms_median": 485.6,
+      "total_ms_median": 569.0,
+      "total_ms_p95": 658.0,
+      "hz_ceiling": 1.76,
+      "taxi_score_median": 0.7832,
+      "person_score_median": 0.3112,
+      "person_over_taxi": 0.397,
+      "vram_gb": 3.53
+    }
+  ]
+}

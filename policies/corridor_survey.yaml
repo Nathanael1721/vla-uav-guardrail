@@ -1,0 +1,75 @@
+# A survey flight confined to a corridor, with a night curfew on the fence.
+#
+# The first policy in this repository to use either of the two rule classes the
+# grant's DSL names and no implementation carried: `corridor` (keep-IN) and
+# `valid_time` (a recurring schedule any rule may hold).
+#
+# WHY A CORRIDOR AND NOT A FENCE
+#
+# Every rule here until now has been keep-OUT: a no-fly zone says where the
+# aircraft may not go, and everywhere else is permitted by default. A survey or
+# delivery mission is authorised the other way round - it may fly one route and
+# nowhere else - and that is not expressible by adding fences, because it would
+# take a fence around the whole rest of the world.
+#
+# THE GEOMETRY
+#
+# A 40 m wide corridor along a dog-leg: (0,0) -> (60,0) -> (60,60), between 10
+# and 20 m AGL. Half-width is 20 m, so the aircraft may wander 20 m either side
+# of the centerline and no further. The altitude band belongs to the corridor
+# rather than to a global envelope, because a corridor is a tube: inside the
+# width but above the ceiling is outside the corridor, while a global envelope
+# would impose the same ceiling everywhere else too.
+#
+# THE CURFEW
+#
+# `nfz-school` carries a `valid_time`: weekdays 07:30-17:30, the hours a school
+# yard is occupied. Outside them the rule is inert - not deleted, not relaxed,
+# simply not in force - and the Shield neither raises it nor repairs against it.
+# A schedule is part of the rule, so it is inside `policy_hash` and therefore
+# inside the audit trail; a window that was not hashed would let the same policy
+# id mean two different things.
+policy_id: corridor-survey
+version: 0.1.0
+
+constraints:
+  - id: corridor-survey-route
+    type: corridor
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    centerline:
+      - { x: 0.0,  y: 0.0 }
+      - { x: 60.0, y: 0.0 }
+      - { x: 60.0, y: 60.0 }
+    width_m: 40.0
+    altitude_floor_m: 10.0
+    altitude_ceiling_m: 20.0
+
+  - id: nfz-school
+    type: polygon_fence
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    vertices:
+      - { x: 50.0, y: 12.0 }
+      - { x: 70.0, y: 12.0 }
+      - { x: 70.0, y: 30.0 }
+      - { x: 50.0, y: 30.0 }
+    altitude_floor_m: 0.0
+    altitude_ceiling_m: 100.0
+    margin_m: 1.0
+    valid_time:
+      recurrence:
+        days: [Mon, Tue, Wed, Thu, Fri]
+        start_time: "07:30"
+        end_time: "17:30"
+
+  - id: kin-caps
+    type: kinematic_envelope
+    constraint_type: hard
+    priority: P1
+    violation_action: repair
+    speed_max_mps: 4.0
+    climb_rate_max_mps: 2.0
+    yaw_rate_max_dps: 45.0

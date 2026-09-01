@@ -34,10 +34,12 @@ import math
 import numpy as np
 from pydantic import BaseModel
 
-from .geometry import fence_polygon, point_in_fence, push_out_direction
+from .geometry import (fence_polygon, nearest_on_polyline, point_in_fence,
+                       push_out_direction)
 from .models import (
     Action4D,
     AltitudeEnvelope,
+    Corridor,
     KinematicEnvelope,
     ObstacleClearance,
     Policy,
@@ -245,22 +247,32 @@ class ShieldDecision(BaseModel):
 
 class Shield:
     def __init__(self, policy: Policy, lookahead_s: float = 3.0, dt: float = 0.5,
-                 obstacle_map: dict | None = None):
+                 obstacle_map: dict | None = None, now=None):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
         rules get their world here. With obstacle_map=None those rules are
-        inert and the Shield behaves exactly as before."""
+        inert and the Shield behaves exactly as before.
+
+        now: a zero-argument callable returning the current datetime, used only
+        to evaluate `valid_time` windows. INJECTED rather than called inline so
+        that a scheduled rule is testable at all - a check that reads the wall
+        clock itself can only be tested at the hour the suite happens to run.
+        None means "no clock", and with no clock every rule is in force: see
+        `ConstraintBase.active_at`, where absent always means active."""
         self.policy = policy
         self.lookahead_s = lookahead_s
         self.dt = dt
+        self._now = now
         # Pre-build shapely polygons once (grant: pre-compute at ingest,
         # never rebuild per tick).
-        self._fences = [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
-        self._alts = policy.by_type(AltitudeEnvelope)
-        self._kins = policy.by_type(KinematicEnvelope)
-        self._clear = policy.by_type(ObstacleClearance)
-        self._standoffs = policy.by_type(SubjectStandoff)
+        self._all_fences = [(f, fence_polygon(f))
+                            for f in policy.by_type(PolygonFence)]
+        self._all_alts = policy.by_type(AltitudeEnvelope)
+        self._all_kins = policy.by_type(KinematicEnvelope)
+        self._all_clear = policy.by_type(ObstacleClearance)
+        self._all_standoffs = policy.by_type(SubjectStandoff)
+        self._all_corridors = policy.by_type(Corridor)
         # Where the thing we are following is, in world coordinates, plus what
         # kind of thing it is. Supplied by the perception stack once per tick via
         # set_subject(); None means "not currently tracking anything", and every
@@ -272,11 +284,58 @@ class Shield:
         # fence polygons). Skipped entirely when nothing needs it.
         self._dist = None
         self._res = self._ox = self._oy = 0.0
-        if obstacle_map is not None and self._clear:
+        if obstacle_map is not None and self._all_clear:
             self._res = float(obstacle_map["res"])
             self._ox = float(obstacle_map["ox"])
             self._oy = float(obstacle_map["oy"])
             self._dist = _build_signed_distance_field(obstacle_map["occ"], self._res)
+
+    # ---------------- which rules are in force right now ---------------- #
+    #
+    # Exposed as PROPERTIES rather than as a filter at each call site. The rule
+    # lists are read from more than twenty places - checks, five repair
+    # operators, the speed-cap lookups, the rescue search - and gating only the
+    # checks would produce the worst possible split: a rule that raises no
+    # violation while its repair operator still bends the action away from it.
+    # Making the lists themselves time-aware means every consumer, present and
+    # future, sees the same set.
+    #
+    # With no clock injected these return the stored list unchanged, so the
+    # common path allocates nothing and behaves exactly as before.
+
+    def _act(self, rules: list) -> list:
+        if self._now is None:
+            return rules
+        when = self._now()
+        return [r for r in rules if r.active_at(when)]
+
+    @property
+    def _kins(self) -> list:
+        return self._act(self._all_kins)
+
+    @property
+    def _alts(self) -> list:
+        return self._act(self._all_alts)
+
+    @property
+    def _clear(self) -> list:
+        return self._act(self._all_clear)
+
+    @property
+    def _standoffs(self) -> list:
+        return self._act(self._all_standoffs)
+
+    @property
+    def _corridors(self) -> list:
+        return self._act(self._all_corridors)
+
+    @property
+    def _fences(self) -> list:
+        """Same gating, but the entries are (rule, prebuilt polygon) pairs."""
+        if self._now is None:
+            return self._all_fences
+        when = self._now()
+        return [(f, p) for f, p in self._all_fences if f.active_at(when)]
 
     # ---------------- obstacle distance field ---------------- #
 
@@ -554,6 +613,68 @@ class Shield:
                     detail=f"predicted pos ({p.x:.1f},{p.y:.1f}) inside NFZ at t+{t:.1f}s")]
         return []
 
+    def _corridor_geom(self, c, x: float, y: float):
+        """(lateral distance from centerline, unit vector pointing back to it)."""
+        d, nx, ny = nearest_on_polyline(x, y, c.points())
+        if d < 1e-9:
+            return d, (0.0, 0.0)          # on the line; no defined "back"
+        return d, ((nx - x) / d, (ny - y) / d)
+
+    def _check_corridor(self, c, state: State, action: Action4D) -> list[Violation]:
+        """Keep-IN, trend-aware. The mirror image of _check_fence.
+
+        A fence is violated by being inside it; a corridor by being outside. The
+        trend logic is the same in both: already out but actively coming back
+        PASSES, because raising a violation on the recovery action is what
+        freezes an aircraft in the state the rule forbids. That reasoning cost
+        this project several days on the clearance ring and is not re-derived
+        per rule type.
+
+        Lateral position and altitude are judged together but recovered
+        separately: being wide of the centerline says nothing about whether the
+        climb is right, so an action returning laterally while still sinking
+        below the floor is not yet a recovery.
+        """
+        pts = c.points()
+        half = c.half_width_m
+        d_now, (ux, uy) = self._corridor_geom(c, state.x, state.y)
+        wide = d_now > half + 1e-9
+        below = state.up < c.altitude_floor_m - 1e-9
+        above = state.up > c.altitude_ceiling_m + 1e-9
+
+        if wide or below or above:
+            bad = []
+            if wide and (action.vx * ux + action.vy * uy) <= 0.1:
+                bad.append(f"{d_now:.1f}m off centerline (half-width {half:.1f}m), "
+                           f"not returning")
+            if below and action.vz_up <= 1e-9:
+                bad.append(f"alt {state.up:.1f}m < floor {c.altitude_floor_m}m, "
+                           f"not climbing")
+            if above and action.vz_up >= -1e-9:
+                bad.append(f"alt {state.up:.1f}m > ceiling {c.altitude_ceiling_m}m, "
+                           f"not descending")
+            if bad:
+                return [Violation(rule_id=c.id, category="corridor",
+                                  predicted_at_s=0.0,
+                                  detail="outside corridor: " + "; ".join(bad))]
+            return []          # coming back on every axis that is wrong
+
+        for t, p in self._predict(state, action):
+            d, _, _ = nearest_on_polyline(p.x, p.y, pts)
+            if d > half + 1e-9:
+                return [Violation(
+                    rule_id=c.id, category="corridor", predicted_at_s=t,
+                    detail=(f"predicted {d:.1f}m off centerline at t+{t:.1f}s, "
+                            f"half-width {half:.1f}m"))]
+            if not (c.altitude_floor_m - 1e-9 <= p.up
+                    <= c.altitude_ceiling_m + 1e-9):
+                return [Violation(
+                    rule_id=c.id, category="corridor", predicted_at_s=t,
+                    detail=(f"predicted alt {p.up:.1f}m outside corridor band "
+                            f"[{c.altitude_floor_m}, {c.altitude_ceiling_m}] "
+                            f"at t+{t:.1f}s"))]
+        return []
+
     def _clear_forecast(self, state: State, action: Action4D):
         """(steps, dists) over the clearance horizon.
 
@@ -605,6 +726,8 @@ class Shield:
                 found += self._check_standoff(so, state, action)
         for f, poly in self._fences:
             found += self._check_fence(f, poly, state, action)
+        for c in self._corridors:
+            found += self._check_corridor(c, state, action)
         if self._dist is not None and self._clear:
             # One forecast shared across every clearance rule, as before.
             steps, dists = self._clear_forecast(state, action)
@@ -643,20 +766,52 @@ class Shield:
                 yr = new
         return Action4D(vx=vx, vy=vy, vz_up=vz, yaw_rate=yr)
 
+    @staticmethod
+    def _reentry_margin(lo: float, hi: float) -> float:
+        """How far INSIDE the band a recovery should aim.
+
+        Aiming at the boundary itself makes the recovery a decaying exponential
+        that converges to the edge and never crosses it. Measured on
+        `sim_demo_policy` with a 10 m floor: from 3 m the vehicle reaches
+        9.10 m in 6 s, 9.88 m in 12 s and 9.99973 m after thirty seconds -
+        still below the floor, still in an unsafe position, and it would stay
+        there for any length of flight.
+
+        The Shield reported this as healthy the whole time, and by its own
+        contract it was: the emitted action climbs, so there is no illegal
+        action and the P0 escape rate is 0. What was wrong was the STATE, which
+        is exactly the gap `mean time to safe` was added to see - and this is
+        the defect the first scenario sweep found.
+        """
+        return min(1.0, (hi - lo) / 4.0)
+
     def _repair_altitude(self, state: State, a: Action4D, repairs: list[Repair]) -> Action4D:
         """Project vz so the lookahead endpoint lands inside the band.
-        Handles both overshoot (flying out of the band) and recovery
-        (already outside: climb/descend back at a sane rate)."""
+
+        Two cases that look alike and are not:
+
+          * ALREADY outside - aim a margin INSIDE the band, so the recovery
+            actually arrives. See _reentry_margin.
+          * inside and about to overshoot - aim at the boundary exactly. There
+            is nothing to recover from, and pulling further in would fight a
+            legal cruise that happens to sit near the edge of its own envelope.
+        """
         vz = a.vz_up
+        L = self.lookahead_s
         for env in self._alts:
-            end_up = state.up + vz * self.lookahead_s
+            end_up = state.up + vz * L
+            margin = self._reentry_margin(env.alt_min_m, env.alt_max_m)
             if end_up > env.alt_max_m:
-                new = (env.alt_max_m - state.up) / self.lookahead_s
+                outside = state.up > env.alt_max_m
+                tgt = env.alt_max_m - (margin if outside else 0.0)
+                new = (tgt - state.up) / L
                 repairs.append(Repair(operator="AltitudeFix",
                                       detail=f"vz {vz:.2f} -> {new:.2f} (ceiling {env.alt_max_m}m)"))
                 vz = new
             elif end_up < env.alt_min_m:
-                new = (env.alt_min_m - state.up) / self.lookahead_s
+                outside = state.up < env.alt_min_m
+                tgt = env.alt_min_m + (margin if outside else 0.0)
+                new = (tgt - state.up) / L
                 repairs.append(Repair(operator="AltitudeFix",
                                       detail=f"vz {vz:.2f} -> {new:.2f} (floor {env.alt_min_m}m)"))
                 vz = new
@@ -1016,6 +1171,137 @@ class Shield:
                     f"component removed, tangential motion kept")))
         return Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
 
+    def _repair_corridor(self, state: State, a: Action4D,
+                         repairs: list["Repair"]) -> Action4D:
+        """Steer back toward the centerline, keeping the along-corridor motion.
+
+        Same shape as _repair_standoff, and for the same reason: the tangential
+        component is the mission. A corridor rule objects to sideways drift, not
+        to progress, so scaling the whole horizontal vector would satisfy the
+        rule by cancelling the flight - which is why this goes through
+        `_cap_sparing_radial` rather than a plain clamp.
+
+        Two cases, and the difference matters:
+
+          * ALREADY outside - recover at a real rate, floored at 0.5 m/s, sized
+            to close the gap within one lookahead. FLOORED, never assigned: an
+            action already returning faster than that must not be slowed down by
+            its own repair. That exact bug (a repair acting as a ceiling on a
+            legal escape) was found on the standoff rule, where 3.01 m/s of
+            outbound recovery came back as 0.500.
+
+          * still inside but FORECAST to exit - cancel the outward drift, i.e.
+            floor the inward rate at zero. The permitted outward rate is
+            actually (half - d) / lookahead, slightly more than zero, but
+            `_cap_sparing_radial` takes the magnitude of what it is given and
+            cannot express "outward, but slower". Holding the lateral position
+            is the conservative side of that approximation and still leaves the
+            along-corridor component untouched.
+
+        The corridor's ALTITUDE band is repaired here too, not delegated to
+        _repair_altitude - that operator only knows `AltitudeEnvelope` rules, so
+        a policy carrying a corridor and no envelope had its band checked and
+        never fixed. Measured before this branch: below the floor and not
+        climbing, the Shield raised the violation, found no operator willing to
+        act, fell through to the rescue search and emitted an action that STILL
+        violated. A P0 escape manufactured by the rule that was supposed to
+        prevent one.
+        """
+        if not self._corridors:
+            return a
+        cap = min((k.speed_max_mps for k in self._kins), default=4.0)
+        L = max(self.lookahead_s, 1e-3)
+
+        for c in self._corridors:
+            # Altitude first: it is independent of the lateral geometry and its
+            # repair is a straight projection, exactly as for AltitudeEnvelope.
+            end_up = state.up + a.vz_up * L
+            if end_up > c.altitude_ceiling_m or end_up < c.altitude_floor_m:
+                # Aim a margin inside when already outside, for the same reason
+                # AltitudeFix does - see Shield._reentry_margin. Targeting the
+                # edge converges on it without ever crossing.
+                m = self._reentry_margin(c.altitude_floor_m, c.altitude_ceiling_m)
+                if end_up > c.altitude_ceiling_m:
+                    tgt = c.altitude_ceiling_m - (
+                        m if state.up > c.altitude_ceiling_m else 0.0)
+                else:
+                    tgt = c.altitude_floor_m + (
+                        m if state.up < c.altitude_floor_m else 0.0)
+                new = (tgt - state.up) / L
+                repairs.append(Repair(
+                    operator="CorridorAltitudeFix",
+                    detail=f"{c.id}: vz {a.vz_up:.2f} -> {new:.2f} (band "
+                           f"[{c.altitude_floor_m}, {c.altitude_ceiling_m}]m)"))
+                a = Action4D(vx=a.vx, vy=a.vy, vz_up=new, yaw_rate=a.yaw_rate)
+
+            d, (ux, uy) = self._corridor_geom(c, state.x, state.y)
+            if ux == 0.0 and uy == 0.0:
+                # Dead on the centerline: there is no "back" from here. The
+                # direction that matters is the one the FORECAST leaves by, so
+                # take the geometry at the lookahead endpoint instead. Skipping
+                # (the first version) left a straight sideways departure with no
+                # repair at all, and the P0 guard stopped the aircraft mid-
+                # mission - safe, but a full stop for a drift the operator could
+                # simply have been steered out of.
+                _, end = list(self._predict(state, a))[-1]
+                d2, (ux, uy) = self._corridor_geom(c, end.x, end.y)
+                if ux == 0.0 and uy == 0.0:
+                    continue                   # genuinely not moving laterally
+            half = c.half_width_m
+            inward = a.vx * ux + a.vy * uy     # positive = heading back
+            outward = -inward
+
+            if d > half + 1e-9:
+                need = max((d - half) / L, 0.5)
+            elif d + outward * L > half + 1e-9:
+                need = 0.0
+            else:
+                continue                        # forecast stays inside
+            if inward >= need - 1e-9:
+                continue                        # already returning fast enough
+
+            before = (a.vx, a.vy)
+            a = self._cap_sparing_radial(a, ux, uy, min(need, cap), cap)
+            if (a.vx, a.vy) != before:
+                repairs.append(Repair(
+                    operator="CorridorReturn",
+                    detail=(f"{c.id}: {d:.1f}m off centerline "
+                            f"(half-width {half:.1f}m), inward "
+                            f"{inward:.2f} -> {need:.2f} m/s")))
+        return a
+
+    def state_is_unsafe(self, state: State) -> list[Violation]:
+        """Is this POSITION illegal, whatever the vehicle does next?
+
+        The test is "would standing still here violate a rule". That separates
+        the two things a violation can mean, which are easy to conflate and
+        measure completely different quantities:
+
+          * the requested ACTION is illegal - too fast, or aimed at a fence it
+            has not reached yet. The Shield repairs it and nothing unsafe ever
+            happens.
+          * the POSITION is illegal - already inside the zone, already under the
+            floor. No choice of action makes this tick safe.
+
+        `p0_violation_escape_rate` is about the first. `mean time to safe` is
+        about the second, and computing it from the first inflates it wildly:
+        `ros2_shield_on` has 219 present-tense action violations and ZERO unsafe
+        positions.
+
+        `filter()` already relies on this idea - it asks `_check(state, BRAKE)`
+        before it dares to brake, precisely because stopping inside a clearance
+        ring is not a fail-safe. This exposes the same question by name so the
+        KPI layer can record it per tick instead of re-deriving it.
+
+        Cross-checked against dwell times computed by an unrelated code path:
+        216 unsafe ticks on `sitl_ped_on` against a logged `alt_violation_s` of
+        21.6 s, and 41 on `ros2_shield_off` against `nfz_s` 3.7 s.
+
+        Returns the violations, so a caller can say WHICH rule the position
+        breaks; truthiness is the common use.
+        """
+        return self._check(state, BRAKE)
+
     def hot_apply(self, fence: PolygonFence) -> None:
         """Inject a dynamic NFZ mid-flight (grant: dynamic_nfz hot-apply).
         Bumps the policy generation so every artefact after this instant
@@ -1023,7 +1309,7 @@ class Shield:
         which rules were active when."""
         self.policy.constraints.append(fence)
         self.policy.generation += 1
-        self._fences.append((fence, fence_polygon(fence)))
+        self._all_fences.append((fence, fence_polygon(fence)))
 
     # ---------------- the public entry point ---------------- #
 
@@ -1058,6 +1344,7 @@ class Shield:
         for _ in range(_REPAIR_PASSES):
             fixed = self._repair_clearance(state, fixed, repairs)
             fixed = self._repair_standoff(state, fixed, repairs)
+            fixed = self._repair_corridor(state, fixed, repairs)
             fixed = self._repair_geofence(state, fixed, repairs)
             # ...and the caps last: AltitudeFix sizes vz to reach the band in one
             # lookahead, which can overshoot the climb cap on a deep recovery.
