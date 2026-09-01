@@ -29,6 +29,8 @@ from typing import Annotated, Literal, Union
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
+from .projection import project_raw
+
 
 # --------------------------------------------------------------------------- #
 # Runtime data types (not part of the policy file)
@@ -280,11 +282,22 @@ Constraint = Annotated[
 ]
 
 
+class Origin(BaseModel):
+    """The anchor a lat/lon policy is projected about. See guardrail/projection.py."""
+    lat: float = Field(ge=-90.0, le=90.0)
+    lon: float = Field(ge=-180.0, le=180.0)
+
+
 class Policy(BaseModel):
     """A validated policy bundle (the 'IR' in miniature)."""
     policy_id: str
     version: str = "0.1.0"
     generation: int = 0            # bumps on every mid-flight hot-apply (grant rule)
+    # Present only on policies authored in WGS84. Kept on the model rather than
+    # discarded after projection so the policy still records where its metres
+    # are anchored - a bare local frame with no origin cannot be replayed
+    # against a map, and it is part of the hash for the same reason.
+    origin: Origin | None = None
     constraints: list[Constraint]
 
     @property
@@ -300,6 +313,13 @@ class Policy(BaseModel):
 
 def load_policy(path: str | Path) -> Policy:
     """YAML file -> validated Policy. Any schema error raises here, loudly,
-    BEFORE flight — never mid-air."""
+    BEFORE flight — never mid-air.
+
+    A policy may be authored in local metres (as every existing one is) or in
+    WGS84 lat/lon, which the DSL spec calls canonical. Geographic coordinates
+    are projected to the local frame HERE, before validation, so the constraint
+    models never learn about two coordinate systems — the swap this file's
+    header predicted would be "a loader change only".
+    """
     raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    return Policy.model_validate(raw)
+    return Policy.model_validate(project_raw(raw))

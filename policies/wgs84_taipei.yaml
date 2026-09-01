@@ -1,0 +1,69 @@
+# The same kind of policy every other file here expresses in metres, written in
+# WGS84 instead — the frame the DSL spec calls canonical.
+#
+# `policy-dsl.md`: "latitude / longitude is canonical... the DSL itself never
+# carries projected coordinates." Every other policy in this repository is in
+# local metres, and `models.py` has carried an admission of that since its first
+# version, together with the prediction that fixing it would be "a loader change
+# only". It was.
+#
+# WHY BOTH FORMS STAY SUPPORTED
+#
+# Local metres are what AirSim, the SITL rails and every delivered artefact use.
+# Converting the project wholesale would invalidate every recorded flight and
+# every existing policy in exchange for no new evidence, so lat/lon is ADDITIVE:
+# a policy may be authored either way, and geographic coordinates are projected
+# once at load time.
+#
+# THE ORIGIN IS REQUIRED, NOT DEFAULTED
+#
+# Without `origin` the loader REFUSES a geographic policy rather than assuming
+# (0, 0). An assumed origin does not fail — it silently relocates every rule in
+# the file to the Gulf of Guinea and validates perfectly on the way.
+#
+# The geometry mirrors the reference implementation's demo bundle so the two can
+# be compared directly: a school-yard polygon near NTUT, with the same weekday
+# curfew the reference's worked example carries.
+policy_id: wgs84-taipei-demo
+version: 0.1.0
+
+origin:
+  lat: 25.04245
+  lon: 121.5314
+
+constraints:
+  - id: nfz-school-yard
+    type: polygon_fence
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    vertices:
+      - { lat: 25.0421, lon: 121.5310 }
+      - { lat: 25.0428, lon: 121.5310 }
+      - { lat: 25.0428, lon: 121.5318 }
+      - { lat: 25.0421, lon: 121.5318 }
+    altitude_floor_m: 0.0
+    altitude_ceiling_m: 200.0
+    margin_m: 1.0
+    valid_time:
+      recurrence:
+        days: [Mon, Tue, Wed, Thu, Fri]
+        start_time: "07:30"
+        end_time: "17:30"
+
+  - id: envelope-default
+    type: altitude_envelope
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    alt_min_m: 5.0
+    alt_max_m: 80.0
+
+  - id: kin-caps
+    type: kinematic_envelope
+    constraint_type: hard
+    priority: P1
+    violation_action: repair
+    speed_max_mps: 12.0
+    climb_rate_max_mps: 4.0
+    yaw_rate_max_dps: 60.0
