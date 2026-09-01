@@ -295,6 +295,10 @@ def main() -> int:
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
+    # allow_nan=False, deliberately. Python happily writes a bare `NaN` token,
+    # which is NOT valid JSON: the deck build (JavaScript) refused to parse this
+    # file and that is how a NaN repair magnitude was found at all. Failing here
+    # is better than shipping an artefact only Python can read.
     out.write_text(json.dumps({
         "_what": "Every scenario in experiments/scenarios.yaml, scored with "
                  "guardrail.kpi.compute - the same function the delivered "
@@ -303,7 +307,7 @@ def main() -> int:
         "_counts": {"pass": n_pass, "fail": n_fail,
                     "known_failure": n_known, "skipped": n_skip},
         "results": rows_out,
-    }, indent=2) + "\n", encoding="utf-8")
+    }, indent=2, allow_nan=False) + "\n", encoding="utf-8")
 
     print(f"\n{n_pass} passed, {n_fail} failed, {n_known} known failures, "
           f"{n_skip} skipped -> {out.relative_to(ROOT)}")

@@ -96,6 +96,32 @@ def test_max_magnitude_is_reported_because_a_mean_hides_the_slam():
     assert abs(res["max_repair_magnitude_mps"] - 5.5) < 1e-6, res
 
 
+def test_a_nonfinite_raw_action_does_not_poison_the_magnitude():
+    """REGRESSION, found by the deck build refusing to parse an artefact.
+
+    A pilot can emit NaN — `servo()` sizes forward speed from the detector's box
+    width, so a zero-width box is one division away from it. `Sanitise` replaces
+    the channel with 0.0, but the RAW action in the log still carries NaN, and
+    `NaN - 0.0` is NaN. That propagated through the mean and made the whole
+    flight's repair magnitude NaN.
+
+    It was invisible in Python, which prints and re-reads `NaN` happily. It
+    surfaced only when the JavaScript deck build tried to parse the sweep
+    results and rejected the file: `NaN` is not valid JSON. Hence the second
+    half of the fix — both writers now pass allow_nan=False, so an artefact that
+    only Python can read fails loudly at the point it is written.
+    """
+    import json as _json
+    row = _row(0.0, vio=True, reps=1)
+    row["raw"]["vx"] = float("nan")
+    res = K.compute([row], {}, {})
+    assert res["repair_ticks_not_measurable"] == 1, res
+    assert res["repaired_ticks"] == 0, res
+    assert res["mean_repair_magnitude_mps"] is None, res
+    # and the whole result must survive a STRICT json round-trip
+    _json.loads(_json.dumps(res, allow_nan=False))
+
+
 def test_a_repaired_tick_with_no_action_logged_is_unmeasurable_not_zero():
     """A missing field is not evidence of a gentle repair."""
     bad = _row(0.0, vio=True, reps=1)

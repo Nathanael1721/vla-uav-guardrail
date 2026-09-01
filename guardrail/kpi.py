@@ -98,18 +98,35 @@ def _repair_magnitude(row: dict) -> tuple[float, float] | None:
     no unit - the same manoeuvre would score differently in rad/s. Reporting a
     single tidy number would be the version that looks better and means less.
 
-    Returns None when the row cannot answer - a log missing either action - so
-    the caller counts it as unmeasurable instead of as a zero-magnitude repair.
-    A zero is a claim; a missing field is not.
+    Returns None when the row cannot answer, so the caller counts it as
+    unmeasurable instead of as a zero-magnitude repair. A zero is a claim; a
+    missing field is not. Two cases return None:
+
+      * either action is absent - a log written before both were recorded;
+      * the RAW action carries a non-finite channel. `Sanitise` replaces a NaN
+        with 0.0, and `NaN - 0.0` is NaN, which then propagates silently through
+        the mean and poisons the whole flight's figure. It also serialises as a
+        bare `NaN` token that no strict JSON reader will accept, which is how
+        this was found: the deck build refused to parse the sweep results.
+
+        Reporting the distance from "not a number" to zero as a repair magnitude
+        would be meaningless anyway. The Shield's response to a non-command is
+        already recorded as a Sanitise repair and as a violation; it does not
+        need a fabricated size as well.
     """
     raw, em = row.get("raw") or {}, row.get("emitted") or {}
     if not raw or not em:
         return None
-    trans = math.sqrt(sum(
-        (float(em.get(k, 0.0)) - float(raw.get(k, 0.0))) ** 2
-        for k in ("vx", "vy", "vz_up")))
-    yaw = abs(float(em.get("yaw_rate", 0.0)) - float(raw.get("yaw_rate", 0.0)))
-    return trans, yaw
+    keys = ("vx", "vy", "vz_up", "yaw_rate")
+    try:
+        rv = {k: float(raw.get(k, 0.0)) for k in keys}
+        ev = {k: float(em.get(k, 0.0)) for k in keys}
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (*rv.values(), *ev.values())):
+        return None
+    trans = math.sqrt(sum((ev[k] - rv[k]) ** 2 for k in ("vx", "vy", "vz_up")))
+    return trans, abs(ev["yaw_rate"] - rv["yaw_rate"])
 
 
 def _episodes(rows: list[dict], is_bad, prefix: str) -> dict[str, Any]:

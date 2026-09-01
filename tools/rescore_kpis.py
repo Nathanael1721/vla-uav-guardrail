@@ -165,8 +165,13 @@ def main() -> int:
                 unverified += 1
             if r["added"] and not args.dry_run and not r["drift"]:
                 merged = dict(r["stored"], **r["added"])
+                # allow_nan=False: Python writes a bare `NaN` token that is not
+                # valid JSON, so an artefact carrying one is readable by Python
+                # and by nothing else — including the deck build, which is where
+                # exactly that was caught.
                 r["path"].write_text(
-                    json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+                    json.dumps(merged, indent=2, allow_nan=False) + "\n",
+                    encoding="utf-8")
                 written += 1
 
     print(f"{'run':<22} {'repairs':>8} {'mean m/s':>9} {'max m/s':>8} "
