@@ -766,20 +766,52 @@ class Shield:
                 yr = new
         return Action4D(vx=vx, vy=vy, vz_up=vz, yaw_rate=yr)
 
+    @staticmethod
+    def _reentry_margin(lo: float, hi: float) -> float:
+        """How far INSIDE the band a recovery should aim.
+
+        Aiming at the boundary itself makes the recovery a decaying exponential
+        that converges to the edge and never crosses it. Measured on
+        `sim_demo_policy` with a 10 m floor: from 3 m the vehicle reaches
+        9.10 m in 6 s, 9.88 m in 12 s and 9.99973 m after thirty seconds -
+        still below the floor, still in an unsafe position, and it would stay
+        there for any length of flight.
+
+        The Shield reported this as healthy the whole time, and by its own
+        contract it was: the emitted action climbs, so there is no illegal
+        action and the P0 escape rate is 0. What was wrong was the STATE, which
+        is exactly the gap `mean time to safe` was added to see - and this is
+        the defect the first scenario sweep found.
+        """
+        return min(1.0, (hi - lo) / 4.0)
+
     def _repair_altitude(self, state: State, a: Action4D, repairs: list[Repair]) -> Action4D:
         """Project vz so the lookahead endpoint lands inside the band.
-        Handles both overshoot (flying out of the band) and recovery
-        (already outside: climb/descend back at a sane rate)."""
+
+        Two cases that look alike and are not:
+
+          * ALREADY outside - aim a margin INSIDE the band, so the recovery
+            actually arrives. See _reentry_margin.
+          * inside and about to overshoot - aim at the boundary exactly. There
+            is nothing to recover from, and pulling further in would fight a
+            legal cruise that happens to sit near the edge of its own envelope.
+        """
         vz = a.vz_up
+        L = self.lookahead_s
         for env in self._alts:
-            end_up = state.up + vz * self.lookahead_s
+            end_up = state.up + vz * L
+            margin = self._reentry_margin(env.alt_min_m, env.alt_max_m)
             if end_up > env.alt_max_m:
-                new = (env.alt_max_m - state.up) / self.lookahead_s
+                outside = state.up > env.alt_max_m
+                tgt = env.alt_max_m - (margin if outside else 0.0)
+                new = (tgt - state.up) / L
                 repairs.append(Repair(operator="AltitudeFix",
                                       detail=f"vz {vz:.2f} -> {new:.2f} (ceiling {env.alt_max_m}m)"))
                 vz = new
             elif end_up < env.alt_min_m:
-                new = (env.alt_min_m - state.up) / self.lookahead_s
+                outside = state.up < env.alt_min_m
+                tgt = env.alt_min_m + (margin if outside else 0.0)
+                new = (tgt - state.up) / L
                 repairs.append(Repair(operator="AltitudeFix",
                                       detail=f"vz {vz:.2f} -> {new:.2f} (floor {env.alt_min_m}m)"))
                 vz = new
@@ -1185,8 +1217,16 @@ class Shield:
             # repair is a straight projection, exactly as for AltitudeEnvelope.
             end_up = state.up + a.vz_up * L
             if end_up > c.altitude_ceiling_m or end_up < c.altitude_floor_m:
-                tgt = (c.altitude_ceiling_m if end_up > c.altitude_ceiling_m
-                       else c.altitude_floor_m)
+                # Aim a margin inside when already outside, for the same reason
+                # AltitudeFix does - see Shield._reentry_margin. Targeting the
+                # edge converges on it without ever crossing.
+                m = self._reentry_margin(c.altitude_floor_m, c.altitude_ceiling_m)
+                if end_up > c.altitude_ceiling_m:
+                    tgt = c.altitude_ceiling_m - (
+                        m if state.up > c.altitude_ceiling_m else 0.0)
+                else:
+                    tgt = c.altitude_floor_m + (
+                        m if state.up < c.altitude_floor_m else 0.0)
                 new = (tgt - state.up) / L
                 repairs.append(Repair(
                     operator="CorridorAltitudeFix",

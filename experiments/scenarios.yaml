@@ -1,0 +1,186 @@
+# The scenario library the sweep harness runs.
+#
+# `docs/MIDTERM-REPORT-Aug2026.md` states, verbatim, "Scenario sweep harness not
+# built." The KPI machinery has always worked one flight at a time, which means
+# every guarantee this project makes rests on the handful of missions somebody
+# thought to fly by hand.
+#
+# WHAT A SCENARIO IS
+#
+#   policy   the rules in force
+#   start    where the vehicle begins
+#   pilot    what it is asked to do - deliberately a DUMB pilot, because the
+#            Shield's job is to survive a bad one. A clever pilot that never
+#            asks for anything illegal tests nothing.
+#   subject  optional: where the tracked thing is, for stand-off rules
+#   shield   on or off. The OFF arm is not decoration - it is what proves the
+#            harness can still see a failure.
+#   gates    what must be true afterwards. A scenario with no gate is a
+#            demonstration, not a test.
+#
+# `expect: known_failure` marks a scenario whose gates are EXPECTED to fail. It
+# is reported as a known failure, never as a pass and never silently. That is
+# how an open defect stays visible in the sweep instead of living only in a
+# document nobody re-reads.
+
+defaults:
+  dt: 0.1
+  ticks: 300
+  lookahead_s: 3.0
+
+scenarios:
+  # ---- no-fly zone: the canonical pair ---------------------------------- #
+  - id: nfz-head-on
+    why: "Flown straight at a no-fly zone. The Shield must never let it in."
+    policy: policies/sim_demo_policy.yaml
+    start: { x: -20.0, y: 15.0, up: 15.0 }
+    pilot: { type: goto, to: [40.0, 15.0], speed: 4.0, up: 15.0 }
+    shield: on
+    gates:
+      p0_violation_escape_rate: { max: 0.0 }
+      time_to_safe_episodes: { max: 0 }
+
+  - id: nfz-head-on-control
+    why: >
+      The same flight unshielded. This scenario must FAIL its safety gate to be
+      doing its job: if an unguarded run into a no-fly zone scores clean, the
+      harness is measuring nothing and every other pass here is worthless.
+    policy: policies/sim_demo_policy.yaml
+    start: { x: -20.0, y: 15.0, up: 15.0 }
+    pilot: { type: goto, to: [40.0, 15.0], speed: 4.0, up: 15.0 }
+    shield: off
+    gates:
+      p0_violation_escape_rate: { min: 0.01 }
+      time_to_safe_episodes: { min: 1 }
+
+  # ---- altitude --------------------------------------------------------- #
+  - id: altitude-floor-recovery
+    why: "Starts below the floor. Recovery must climb, not freeze."
+    policy: policies/sim_demo_policy.yaml
+    start: { x: -30.0, y: -30.0, up: 3.0 }
+    pilot: { type: constant, action: { vx: 3.0 } }
+    shield: on
+    gates:
+      p0_violation_escape_rate: { max: 0.0 }
+      ended_safe: { equals: true }
+
+  - id: altitude-ceiling-hold
+    why: "Commanded to climb through the ceiling for the whole flight."
+    policy: policies/sim_demo_policy.yaml
+    start: { x: -30.0, y: -30.0, up: 18.0 }
+    pilot: { type: constant, action: { vx: 2.0, vz_up: 2.0 } }
+    shield: on
+    gates:
+      p0_violation_escape_rate: { max: 0.0 }
+      ended_safe: { equals: true }
+
+  # ---- kinematics and the contract -------------------------------------- #
+  - id: speed-cap
+    why: "A pilot asking for 20 m/s against a 4 m/s cap."
+    policy: policies/sim_demo_policy.yaml
+    start: { x: -40.0, y: -40.0, up: 15.0 }
+    pilot: { type: constant, action: { vx: 20.0 } }
+    shield: on
+    gates:
+      p0_violation_escape_rate: { max: 0.0 }
+      max_speed_flown: { max: 4.001 }
+
+  - id: nonfinite-action
+    why: >
+      A NaN command, which is one division away from any detector reporting a
+      zero-width box. NaN loses every comparison, so an unsanitised action is
+      declared legal and passed straight through - the guardrail failing OPEN.
+    policy: policies/sim_demo_policy.yaml
+    start: { x: -40.0, y: -40.0, up: 15.0 }
+    pilot: { type: constant, action: { vx: .nan, vy: 2.0 } }
+    shield: on
+    gates:
+      p0_violation_escape_rate: { max: 0.0 }
+      all_actions_finite: { equals: true }
+
+  # ---- corridor: the new keep-IN rule ------------------------------------ #
+  - id: corridor-along
+    why: "A clean run down the middle. Nothing should be touched."
+    policy: policies/corridor_survey.yaml
+    start: { x: 2.0, y: 0.0, up: 15.0 }
+    pilot: { type: goto, to: [55.0, 0.0], speed: 4.0, up: 15.0 }
+    shield: on
+    at: "2026-09-05T09:00:00"          # a Saturday: the curfew is not in force
+    gates:
+      p0_violation_escape_rate: { max: 0.0 }
+      repair_count: { max: 0 }
+      reached_goal: { equals: true }
+
+  - id: corridor-drift-out
+    why: "Aimed straight out of the side of the corridor."
+    policy: policies/corridor_survey.yaml
+    start: { x: 30.0, y: 0.0, up: 15.0 }
+    pilot: { type: constant, action: { vy: 4.0 } }
+    shield: on
+    at: "2026-09-05T09:00:00"
+    gates:
+      p0_violation_escape_rate: { max: 0.0 }
+      time_to_safe_episodes: { max: 0 }
+      max_offset_from_corridor: { max: 20.001 }
+
+  - id: corridor-curfew-in-hours
+    why: "The scheduled fence is in force on a Monday morning and must bind."
+    policy: policies/corridor_survey.yaml
+    start: { x: 60.0, y: 0.0, up: 15.0 }
+    pilot: { type: goto, to: [60.0, 55.0], speed: 4.0, up: 15.0 }
+    shield: on
+    at: "2026-09-07T09:00:00"          # Monday, inside 07:30-17:30
+    gates:
+      p0_violation_escape_rate: { max: 0.0 }
+      ended_safe: { equals: true }
+
+  - id: corridor-curfew-out-of-hours
+    why: >
+      The same flight at 23:00. The fence is not in force, so the aircraft may
+      fly through where it stood - and nothing may repair against it. A rule
+      that still bends the action out of hours is enforcing a rule the policy
+      says is off.
+    policy: policies/corridor_survey.yaml
+    start: { x: 60.0, y: 0.0, up: 15.0 }
+    pilot: { type: goto, to: [60.0, 55.0], speed: 4.0, up: 15.0 }
+    shield: on
+    at: "2026-09-07T23:00:00"
+    gates:
+      p0_violation_escape_rate: { max: 0.0 }
+      reached_goal: { equals: true }
+
+  # ---- subject stand-off ------------------------------------------------- #
+  - id: standoff-approach
+    why: >
+      Flown at a declared pedestrian who is NOT on the route. The 10 m ring must
+      hold and the mission must still finish.
+    policy: policies/sitl_pedestrian.yaml
+    start: { x: 0.0, y: 0.0, up: 15.0 }
+    pilot: { type: goto, to: [40.0, 0.0], speed: 4.0, up: 15.0 }
+    subject: { x: 20.0, y: 14.0, class: pedestrian }
+    shield: on
+    gates:
+      p0_violation_escape_rate: { max: 0.0 }
+      min_range_to_subject: { min: 9.99 }
+      reached_goal: { equals: true }
+
+  - id: standoff-wedge
+    expect: known_failure
+    why: >
+      THE OPEN DEFECT, pinned here so it stops living only in a document.
+      The subject sits exactly on the route, so every direction that makes
+      progress also closes the range. The Shield never emits an illegal action -
+      the P0 gate holds - but the mission wedges: the aircraft cannot get past
+      the subject and never reaches its goal. Recorded on 2026-08-31 as the gap
+      between "the action was repaired" and "the trajectory was sensible".
+      When this scenario starts PASSING, the defect is fixed and the marker
+      should come off.
+    policy: policies/sitl_pedestrian.yaml
+    start: { x: 0.0, y: 0.0, up: 15.0 }
+    pilot: { type: goto, to: [40.0, 0.0], speed: 4.0, up: 15.0 }
+    subject: { x: 20.0, y: 0.0, class: pedestrian }
+    shield: on
+    gates:
+      p0_violation_escape_rate: { max: 0.0 }
+      min_range_to_subject: { min: 9.99 }
+      reached_goal: { equals: true }
