@@ -2,7 +2,7 @@
   "_what": "Every scenario in experiments/scenarios.yaml, scored with guardrail.kpi.compute - the same function the delivered flights use.",
   "_backend": "headless",
   "_counts": {
-    "pass": 11,
+    "pass": 12,
     "fail": 0,
     "known_failure": 1,
     "skipped": 0
@@ -50,6 +50,10 @@
         "all_actions_finite": true,
         "ended_safe": true,
         "min_range_to_subject": null,
+        "min_range_by_class": {},
+        "final_range_to_subject": null,
+        "range_at_reclassify": null,
+        "subject_class_final": null,
         "max_offset_from_corridor": null,
         "reached_goal": false,
         "final": {
@@ -101,6 +105,10 @@
         "all_actions_finite": true,
         "ended_safe": true,
         "min_range_to_subject": null,
+        "min_range_by_class": {},
+        "final_range_to_subject": null,
+        "range_at_reclassify": null,
+        "subject_class_final": null,
         "max_offset_from_corridor": null,
         "reached_goal": true,
         "final": {
@@ -152,6 +160,10 @@
         "all_actions_finite": true,
         "ended_safe": true,
         "min_range_to_subject": null,
+        "min_range_by_class": {},
+        "final_range_to_subject": null,
+        "range_at_reclassify": null,
+        "subject_class_final": null,
         "max_offset_from_corridor": null,
         "reached_goal": null,
         "final": {
@@ -203,6 +215,10 @@
         "all_actions_finite": true,
         "ended_safe": true,
         "min_range_to_subject": null,
+        "min_range_by_class": {},
+        "final_range_to_subject": null,
+        "range_at_reclassify": null,
+        "subject_class_final": null,
         "max_offset_from_corridor": null,
         "reached_goal": null,
         "final": {
@@ -254,6 +270,10 @@
         "all_actions_finite": true,
         "ended_safe": true,
         "min_range_to_subject": null,
+        "min_range_by_class": {},
+        "final_range_to_subject": null,
+        "range_at_reclassify": null,
+        "subject_class_final": null,
         "max_offset_from_corridor": null,
         "reached_goal": null,
         "final": {
@@ -305,6 +325,10 @@
         "all_actions_finite": true,
         "ended_safe": true,
         "min_range_to_subject": null,
+        "min_range_by_class": {},
+        "final_range_to_subject": null,
+        "range_at_reclassify": null,
+        "subject_class_final": null,
         "max_offset_from_corridor": null,
         "reached_goal": null,
         "final": {
@@ -352,6 +376,10 @@
         "all_actions_finite": true,
         "ended_safe": true,
         "min_range_to_subject": null,
+        "min_range_by_class": {},
+        "final_range_to_subject": null,
+        "range_at_reclassify": null,
+        "subject_class_final": null,
         "max_offset_from_corridor": 0.0,
         "reached_goal": true,
         "final": {
@@ -403,6 +431,10 @@
         "all_actions_finite": true,
         "ended_safe": true,
         "min_range_to_subject": null,
+        "min_range_by_class": {},
+        "final_range_to_subject": null,
+        "range_at_reclassify": null,
+        "subject_class_final": null,
         "max_offset_from_corridor": 8.4,
         "reached_goal": null,
         "final": {
@@ -454,6 +486,10 @@
         "all_actions_finite": true,
         "ended_safe": true,
         "min_range_to_subject": null,
+        "min_range_by_class": {},
+        "final_range_to_subject": null,
+        "range_at_reclassify": null,
+        "subject_class_final": null,
         "max_offset_from_corridor": 0.4,
         "reached_goal": false,
         "final": {
@@ -501,6 +537,10 @@
         "all_actions_finite": true,
         "ended_safe": true,
         "min_range_to_subject": null,
+        "min_range_by_class": {},
+        "final_range_to_subject": null,
+        "range_at_reclassify": null,
+        "subject_class_final": null,
         "max_offset_from_corridor": 0.0,
         "reached_goal": true,
         "final": {
@@ -548,11 +588,78 @@
         "all_actions_finite": true,
         "ended_safe": true,
         "min_range_to_subject": 14.0,
+        "min_range_by_class": {
+          "pedestrian": 14.0
+        },
+        "final_range_to_subject": 22.177,
+        "range_at_reclassify": null,
+        "min_range_as_pedestrian": 14.0,
+        "subject_class_final": "pedestrian",
         "max_offset_from_corridor": null,
         "reached_goal": true,
         "final": {
           "x": 37.2,
           "y": 0.0,
+          "up": 15.0
+        }
+      }
+    },
+    {
+      "id": "standoff-reclassified",
+      "status": "pass",
+      "why": "THE ANSWER TO THE 2026-09-02 REVIEW, made measurable.\nProf. Lai's point was fair: BoT-SORT and ByteTrack associate detections across frames better than we do, so \"we track well\" is not a claim worth making. But a tracker must be given a BOX and cannot be given a NOUN. It returns an ID; it never returns a CLASS.\nThe stand-off rule is written per class - 10 m from a pedestrian, 5 m from anything else - so the policy needs to know the subject IS a person before it can pick the rule. That is not a tracking-quality contest the open-vocabulary detector might lose; it is a question a tracker cannot be asked at all.\nHere one object never moves and the policy is never edited. Only the class word attached to it changes, twelve seconds in, and the enforced ring goes from 5 m to 10 m. Both rules come from policies/sitl_pedestrian.yaml exactly as it already shipped - nothing was added for this scenario, which is the point: the capability was in the schema the whole time.",
+      "gates_failed": [],
+      "kpi": {
+        "kpi_version": "1.0",
+        "ticks": 400,
+        "outcome": "success",
+        "p0_violation_escape_rate": 0.0,
+        "p0_escapes": 0,
+        "p0_violation_ticks": 300,
+        "p0_ticks_not_measurable": 0,
+        "failsafe_trigger_correctness": 1.0,
+        "repair_count": 360,
+        "repairs_per_episode": 360,
+        "mean_repair_magnitude_mps": 3.8293,
+        "max_repair_magnitude_mps": 4.4973,
+        "mean_yaw_repair_dps": 0.0,
+        "repaired_ticks": 300,
+        "repair_ticks_not_measurable": 0,
+        "mean_time_to_safe_s": 5.4,
+        "max_time_to_safe_s": 5.4,
+        "time_to_safe_episodes": 1,
+        "time_to_safe_censored": 0,
+        "time_to_safe_not_measurable": false,
+        "mean_intervention_s": null,
+        "max_intervention_s": null,
+        "intervention_episodes": 0,
+        "intervention_censored": 1,
+        "intervention_not_measurable": false,
+        "mission_success": true,
+        "violations_by_risk_level": {
+          "P0": 578
+        },
+        "violations_by_type": {
+          "standoff": 578
+        },
+        "max_speed_flown": 4.0,
+        "all_actions_finite": true,
+        "ended_safe": true,
+        "min_range_to_subject": 6.621,
+        "min_range_by_class": {
+          "car": 6.621,
+          "pedestrian": 6.621
+        },
+        "final_range_to_subject": 10.033,
+        "range_at_reclassify": 6.621,
+        "min_range_as_car": 6.621,
+        "min_range_as_pedestrian": 6.621,
+        "subject_class_final": "pedestrian",
+        "max_offset_from_corridor": null,
+        "reached_goal": false,
+        "final": {
+          "x": 22.0,
+          "y": -4.03,
           "up": 15.0
         }
       }
@@ -601,6 +708,13 @@
         "all_actions_finite": true,
         "ended_safe": true,
         "min_range_to_subject": 20.0,
+        "min_range_by_class": {
+          "pedestrian": 20.0
+        },
+        "final_range_to_subject": 20.0,
+        "range_at_reclassify": null,
+        "min_range_as_pedestrian": 20.0,
+        "subject_class_final": "pedestrian",
         "max_offset_from_corridor": null,
         "reached_goal": false,
         "final": {

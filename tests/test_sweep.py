@@ -138,6 +138,91 @@ def test_the_curfew_changes_the_outcome_of_the_same_flight():
 
 
 # --------------------------------------------------------------------------- #
+# re-labelling the subject: the answer to the 2026-09-02 review
+# --------------------------------------------------------------------------- #
+
+def test_a_scenario_without_reclassify_behaves_exactly_as_before():
+    """The schedule is optional and must change nothing when absent.
+
+    Every existing subject scenario has no `reclassify` key, so if adding the
+    feature altered their behaviour the whole library would silently move.
+    """
+    import copy
+    plain = copy.deepcopy(BY_ID["standoff-approach"])
+    assert "reclassify" not in plain["subject"]
+    rows, extra = S.run_headless(plain, DEFAULTS)
+    ref_rows, ref_extra = _run("standoff-approach")
+    assert extra["min_range_to_subject"] == ref_extra["min_range_to_subject"]
+    assert extra["range_at_reclassify"] is None
+    assert extra["subject_class_final"] == plain["subject"]["class"]
+
+
+def test_the_enforced_ring_changes_with_the_label_and_nothing_else():
+    """One object, one policy, one word changed — and the ring moves 5 m to 10 m.
+
+    This is the concrete form of the argument that a tracker cannot make: it
+    returns an ID, never a class, and the stand-off rule is written per class.
+    Both rules already existed in policies/sitl_pedestrian.yaml; nothing was
+    added for this scenario.
+    """
+    rows, extra = _run("standoff-reclassified")
+    assert extra["min_range_as_car"] < 10.0, (
+        f"never got inside the 10 m ring while it was legal to: {extra}")
+    assert extra["range_at_reclassify"] < 10.0, (
+        "the label flipped while the aircraft was already clear, so the new "
+        "rule never had to do anything - the scenario proves nothing")
+    assert extra["final_range_to_subject"] >= 9.99, (
+        f"did not recover to the pedestrian ring: {extra}")
+    assert extra["subject_class_final"] == "pedestrian"
+
+
+def test_the_recovery_is_the_shield_not_the_mission_wandering_off():
+    """The pilot's goal never changes, so the aircraft is still asking to close.
+
+    If the range grew because the mission moved on, the demo would be an
+    accident. Repairs prove the Shield is holding it out.
+    """
+    from guardrail import kpi as K
+    sc = BY_ID["standoff-reclassified"]
+    rows, extra = _run("standoff-reclassified")
+    res = K.compute(rows, K.rule_priorities(load_policy(ROOT / sc["policy"])), {})
+    assert res["repair_count"] > 0, "the Shield did nothing"
+    assert res["p0_violation_escape_rate"] == 0.0, (
+        f"an illegal action flew during the recovery: {res}")
+
+
+def test_removing_the_reclassification_makes_the_scenario_fail():
+    """The negative control. A scenario that cannot fail is not a test.
+
+    With the subject left labelled a car the aircraft sits at 6.6 m quite
+    legally, and four of the gates must catch it.
+    """
+    import copy
+    sc = BY_ID["standoff-reclassified"]
+    from guardrail import kpi as K
+    broken = copy.deepcopy(sc)
+    broken["subject"].pop("reclassify")
+    rows, extra = S.run_headless(broken, DEFAULTS)
+    res = K.compute(rows, K.rule_priorities(load_policy(ROOT / sc["policy"])), {})
+    res.update(extra)
+    bad = S.check_gates(sc["gates"], res)
+    assert len(bad) >= 3, f"the gates barely noticed: {bad}"
+
+
+def test_a_relabel_schedule_is_applied_in_time_order_not_file_order():
+    """Written out of order, it must still apply in order."""
+    import copy
+    sc = copy.deepcopy(BY_ID["standoff-reclassified"])
+    sc["subject"]["reclassify"] = [
+        {"at_s": 20.0, "class": "car"},
+        {"at_s": 10.0, "class": "pedestrian"},
+    ]
+    _, extra = S.run_headless(sc, DEFAULTS)
+    assert extra["subject_class_final"] == "car", (
+        "the later entry must win at the end regardless of file order")
+
+
+# --------------------------------------------------------------------------- #
 # the wedge, kept visible
 # --------------------------------------------------------------------------- #
 

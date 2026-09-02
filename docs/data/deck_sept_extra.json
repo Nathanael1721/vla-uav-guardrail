@@ -64,12 +64,12 @@
   },
   "sweep": {
     "counts": {
-      "pass": 11,
+      "pass": 12,
       "fail": 0,
       "known_failure": 1,
       "skipped": 0
     },
-    "n_scenarios": 12,
+    "n_scenarios": 13,
     "known_failures": [
       "standoff-wedge"
     ]

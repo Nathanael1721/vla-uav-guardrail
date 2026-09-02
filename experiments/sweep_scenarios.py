@@ -109,8 +109,15 @@ def run_headless(sc: dict, defaults: dict) -> tuple[list[dict], dict]:
 
     on = bool(sc.get("shield", True))
     subj = sc.get("subject")
+    # A subject may be RE-LABELLED part-way through, which is the whole point of
+    # the open-vocabulary demo: the object does not move and the policy does not
+    # change, only the class word attached to it. Sorted so the schedule can be
+    # written in any order without silently applying out of sequence.
+    relabels = sorted(subj.get("reclassify", []) if subj else [],
+                      key=lambda r: float(r["at_s"]))
+    subj_class = subj.get("class") if subj else None
     if subj:
-        shield.set_subject(subj["x"], subj["y"], subj.get("class"))
+        shield.set_subject(subj["x"], subj["y"], subj_class)
 
     corridors = policy.by_type(Corridor)
     st = State(**sc["start"])
@@ -119,8 +126,27 @@ def run_headless(sc: dict, defaults: dict) -> tuple[list[dict], dict]:
     min_range = math.inf
     max_offset = 0.0
     finite = True
+    # Closest approach recorded SEPARATELY per class label in force. One overall
+    # minimum would average the two regimes together and hide the very effect
+    # the scenario exists to show.
+    min_by_class: dict[str, float] = {}
+    range_at_relabel = None
 
     for i in range(ticks):
+        t_now = i * dt
+        if subj:
+            due = [r for r in relabels if float(r["at_s"]) <= t_now + 1e-9]
+            new_class = due[-1]["class"] if due else subj.get("class")
+            if new_class != subj_class:
+                subj_class = new_class
+                shield.set_subject(subj["x"], subj["y"], subj_class)
+                # Range at the instant the rule changed under the aircraft. The
+                # interesting case is when this is INSIDE the newly-binding ring:
+                # the vehicle was legally there a tick ago and is now in breach
+                # through no action of its own.
+                if range_at_relabel is None:
+                    range_at_relabel = math.hypot(st.x - subj["x"],
+                                                  st.y - subj["y"])
         raw = _pilot(sc["pilot"], st)
         d = shield.filter(st, raw)
         # Shield OFF flies the RAW action, so the violations found on `raw` are
@@ -144,8 +170,10 @@ def run_headless(sc: dict, defaults: dict) -> tuple[list[dict], dict]:
         finite = finite and all(math.isfinite(v) for v in
                                 (flown.vx, flown.vy, flown.vz_up, flown.yaw_rate))
         if subj:
-            min_range = min(min_range, math.hypot(st.x - subj["x"],
-                                                  st.y - subj["y"]))
+            r_now = math.hypot(st.x - subj["x"], st.y - subj["y"])
+            min_range = min(min_range, r_now)
+            key = subj_class or "*"
+            min_by_class[key] = min(min_by_class.get(key, math.inf), r_now)
         for c in corridors:
             off, _, _ = nearest_on_polyline(st.x, st.y, c.points())
             max_offset = max(max_offset, off)
@@ -163,6 +191,21 @@ def run_headless(sc: dict, defaults: dict) -> tuple[list[dict], dict]:
         "ended_safe": not rows[-1]["unsafe"],
         "min_range_to_subject": (None if min_range is math.inf
                                  else round(min_range, 3)),
+        # Per-label minima, and the labels flattened into gate-addressable
+        # fields so a scenario can assert on one regime without the gate syntax
+        # needing to grow a path language.
+        "min_range_by_class": {k: round(v, 3) for k, v in min_by_class.items()},
+        # Where it ended up, which is what "did the new rule take effect"
+        # actually asks. A minimum cannot answer it: after a re-label the
+        # minimum still records how close the vehicle was while the OLD rule
+        # was in force, and that is a fact about the past, not a breach.
+        "final_range_to_subject": (round(math.hypot(st.x - subj["x"],
+                                                    st.y - subj["y"]), 3)
+                                   if subj else None),
+        "range_at_reclassify": (None if range_at_relabel is None
+                                else round(range_at_relabel, 3)),
+        **{f"min_range_as_{k}": round(v, 3) for k, v in min_by_class.items()},
+        "subject_class_final": subj_class,
         "max_offset_from_corridor": (round(max_offset, 3) if corridors else None),
         "reached_goal": reached,
         "final": {"x": round(st.x, 2), "y": round(st.y, 2), "up": round(st.up, 2)},

@@ -1,0 +1,121 @@
+<svg width="1040" height="1180" viewBox="0 0 1040 1180" xmlns="http://www.w3.org/2000/svg">
+  <defs><marker id="a" markerWidth="10" markerHeight="8" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#7C8B96"/></marker></defs>
+  <rect width="1040" height="1180" fill="#F7F9FA"/>
+  <text x="40" y="46" font-size="19" fill="#1F2A33" font-weight="700" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs</text>
+  <text x="40" y="68" font-size="11.5" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Architecture v3 — NTUT AIoT Lab, Guardrail work packages. Supersedes v2 (2026-07-03).</text>
+  <text x="40" y="88" font-size="10.5" fill="#1A7484" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Every status below is read from the artefact that proves it, at build time. Generated 2026-09-02.</text>
+  <rect x="700" y="30" width="300" height="62" rx="4" fill="#FFFFFF" stroke="#D8E0E6"/>
+  <text x="714" y="48" font-size="9" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif" letter-spacing="1.4">OUR WORK PACKAGES</text>
+  <rect x="714" y="56" width="14" height="10" fill="#FFFFFF" stroke="#249DB2" stroke-width="1.5"/>
+  <text x="734" y="65" font-size="10" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">built + evidenced</text>
+  <rect x="714" y="72" width="14" height="10" fill="#FFFFFF" stroke="#6B7280" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text x="734" y="81" font-size="10" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">not ours / not built</text>
+  <text x="40" y="118" font-size="9.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif" letter-spacing="1.4">WP2 · PREFIX — TELL THE MODEL THE RULES FIRST</text>
+  <rect x="40" y="128" width="440" height="92" rx="4" fill="#FFFFFF" stroke="#249DB2" stroke-width="1.5"/>
+  <rect x="40" y="128" width="3.5" height="92" rx="2" fill="#249DB2"/>
+  <text x="54" y="148" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Constraint Compiler</text>
+  <text x="54" y="164" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">operator text -&gt; structured mission + rule summary</text>
+  <text x="54" y="182" font-size="11.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Consolas, monospace">Constraint Summary Pack · 4 rules</text>
+  <text x="54" y="197" font-size="10" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">the prompt renders FROM the pack, so they cannot disagree</text>
+  <text x="468" y="211" font-size="9" fill="#9AA6AF" font-weight="normal" text-anchor="end" font-family="Consolas, monospace">evidence 2026-09-01</text>
+  <text x="560" y="118" font-size="9.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif" letter-spacing="1.4">WP1 · THE RULE LANGUAGE</text>
+  <rect x="560" y="128" width="440" height="92" rx="4" fill="#FFFFFF" stroke="#249DB2" stroke-width="1.5"/>
+  <rect x="560" y="128" width="3.5" height="92" rx="2" fill="#249DB2"/>
+  <text x="574" y="148" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Policy DSL + IR</text>
+  <text x="574" y="164" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">YAML -&gt; validated, hashed policy</text>
+  <text x="574" y="182" font-size="11.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Consolas, monospace">6 constraint classes · valid_time on every rule</text>
+  <text x="574" y="197" font-size="10" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">reference implementation carries 2</text>
+  <text x="988" y="211" font-size="9" fill="#9AA6AF" font-weight="normal" text-anchor="end" font-family="Consolas, monospace">evidence 2026-09-01</text>
+  <rect x="560" y="236" width="440" height="88" rx="4" fill="#FFFFFF" stroke="#249DB2" stroke-width="1.5"/>
+  <rect x="560" y="236" width="3.5" height="88" rx="2" fill="#249DB2"/>
+  <text x="574" y="256" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Signed policy bundle</text>
+  <text x="574" y="272" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">ir.json + manifest.json + signature.txt</text>
+  <text x="574" y="290" font-size="11.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Consolas, monospace">signed bundle round-trips · 694 B</text>
+  <text x="574" y="305" font-size="10" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">reload refuses a tampered IR, a foreign manifest, a truncation</text>
+  <text x="988" y="315" font-size="9" fill="#9AA6AF" font-weight="normal" text-anchor="end" font-family="Consolas, monospace">evidence 2026-09-01</text>
+  <text x="40" y="250" font-size="9.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif" letter-spacing="1.4">PERCEPTION — NAMED BY A PHRASE, NOT A CLICK</text>
+  <rect x="40" y="260" width="440" height="74" rx="4" fill="#FFFFFF" stroke="#249DB2" stroke-width="1.5"/>
+  <rect x="40" y="260" width="3.5" height="74" rx="2" fill="#249DB2"/>
+  <text x="54" y="280" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">OWL-ViT open-vocabulary detector</text>
+  <text x="54" y="296" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">frame + text phrase -&gt; candidate boxes</text>
+  <text x="54" y="314" font-size="11.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Consolas, monospace">153M params · 3.6-5.2 Hz in flight</text>
+  <rect x="40" y="346" width="440" height="96" rx="4" fill="#FFFFFF" stroke="#249DB2" stroke-width="1.5"/>
+  <rect x="40" y="346" width="3.5" height="96" rx="2" fill="#249DB2"/>
+  <text x="54" y="366" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Target lock   ← NEW, requested 2026-09-02</text>
+  <text x="54" y="382" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">binds the controller to ONE instance of the named class</text>
+  <text x="54" y="400" font-size="11.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Consolas, monospace">frac_on_target 1.0</text>
+  <text x="54" y="415" font-size="10" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">yaw-compensated prediction · 0.12 gate · 1.8x size ratio</text>
+  <text x="468" y="433" font-size="9" fill="#9AA6AF" font-weight="normal" text-anchor="end" font-family="Consolas, monospace">evidence 2026-08-31</text>
+  <rect x="40" y="454" width="440" height="74" rx="4" fill="#FFFFFF" stroke="#249DB2" stroke-width="1.5"/>
+  <rect x="40" y="454" width="3.5" height="74" rx="2" fill="#249DB2"/>
+  <text x="54" y="474" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Target-state estimator + guidance</text>
+  <text x="54" y="490" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">constant-velocity smoothing -&gt; proportional control</text>
+  <text x="54" y="508" font-size="11.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Consolas, monospace">bearing -&gt; yaw · range -&gt; forward</text>
+  <rect x="40" y="556" width="440" height="84" rx="4" fill="#FFFFFF" stroke="#249DB2" stroke-width="1.5"/>
+  <rect x="40" y="556" width="3.5" height="84" rx="2" fill="#249DB2"/>
+  <text x="54" y="576" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Action source (swappable)</text>
+  <text x="54" y="592" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">any producer of the 4-D action contract, 10 Hz</text>
+  <text x="54" y="610" font-size="11.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Consolas, monospace">5 sources flown · P0 escape 0 in all five</text>
+  <text x="54" y="625" font-size="10" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">OpenVLA-7B · AerialVLA · QLoRA fine-tunes · BC policy · hand-written</text>
+  <text x="40" y="664" font-size="9.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif" letter-spacing="1.4">WP3 · SUFFIX — THE LAST WORD BEFORE THE AUTOPILOT</text>
+  <rect x="40" y="674" width="960" height="104" rx="4" fill="#FFFFFF" stroke="#1A7484" stroke-width="1.5"/>
+  <rect x="40" y="674" width="3.5" height="104" rx="2" fill="#1A7484"/>
+  <text x="54" y="694" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Suffix Safety Shield</text>
+  <text x="54" y="710" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">monitor (3 s lookahead)  -&gt;  repair operators  -&gt;  re-check the flown action  -&gt;  recovery heading  -&gt;  brake</text>
+  <text x="54" y="728" font-size="11.5" fill="#1A7484" font-weight="600" text-anchor="start" font-family="Consolas, monospace">P0 escape rate 0.0 · KPI-grade</text>
+  <text x="54" y="743" font-size="10" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">0 unmeasurable ticks · all five acceptance KPIs computed</text>
+  <text x="988" y="769" font-size="9" fill="#9AA6AF" font-weight="normal" text-anchor="end" font-family="Consolas, monospace">evidence 2026-09-01</text>
+  <text x="560" y="350" font-size="9.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif" letter-spacing="1.4">WP4 · PROVING IT</text>
+  <rect x="560" y="360" width="440" height="92" rx="4" fill="#FFFFFF" stroke="#249DB2" stroke-width="1.5"/>
+  <rect x="560" y="360" width="3.5" height="92" rx="2" fill="#249DB2"/>
+  <text x="574" y="380" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Scenario sweep harness</text>
+  <text x="574" y="396" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">scenario library scored with guardrail.kpi.compute</text>
+  <text x="574" y="414" font-size="11.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Consolas, monospace">12 pass · 0 fail · 1 known failure</text>
+  <text x="574" y="429" font-size="10" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">headless, no simulator, about one second</text>
+  <text x="988" y="443" font-size="9" fill="#9AA6AF" font-weight="normal" text-anchor="end" font-family="Consolas, monospace">evidence 2026-09-02</text>
+  <rect x="560" y="468" width="440" height="78" rx="4" fill="#FFFFFF" stroke="#249DB2" stroke-width="1.5"/>
+  <rect x="560" y="468" width="3.5" height="78" rx="2" fill="#249DB2"/>
+  <text x="574" y="488" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Test suite</text>
+  <text x="574" y="504" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">run per file; there is no pytest in this environment</text>
+  <text x="574" y="522" font-size="11.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Consolas, monospace">373 tests defined across 19 files</text>
+  <rect x="560" y="562" width="440" height="66" rx="4" fill="#FFFFFF" stroke="#249DB2" stroke-width="1.5"/>
+  <rect x="560" y="562" width="3.5" height="66" rx="2" fill="#249DB2"/>
+  <text x="574" y="582" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Determinism manifest</text>
+  <text x="574" y="598" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">code_revision · policy_hash · seed · sim_speedup · topology</text>
+  <text x="574" y="616" font-size="11.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Consolas, monospace">is_kpi_grade() refuses a run that cannot be reproduced</text>
+  <rect x="40" y="790" width="960" height="62" rx="4" fill="#FFFFFF" stroke="#249DB2" stroke-width="1.5"/>
+  <rect x="40" y="790" width="3.5" height="62" rx="2" fill="#249DB2"/>
+  <text x="54" y="810" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">MAVROS 2  /  MAVLink</text>
+  <text x="54" y="826" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">SET_POSITION_TARGET_LOCAL_NED in GUIDED mode — the canonical Year-1 bridge</text>
+  <rect x="40" y="866" width="960" height="62" rx="4" fill="#FFFFFF" stroke="#6B7280" stroke-width="1.5" stroke-dasharray="5 4"/>
+  <text x="54" y="886" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">ArduPilot</text>
+  <text x="54" y="902" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">inner loop 100–400 Hz · its own GeoFence / RTL / Land is the ultimate backstop, which the Shield pre-empts rather than replaces</text>
+  <text x="40" y="954" font-size="9.5" fill="#249DB2" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif" letter-spacing="1.4">WHERE IT RUNS — AND WHICH EVIDENCE COUNTS</text>
+  <rect x="40" y="964" width="440" height="104" rx="4" fill="#FFFFFF" stroke="#2C7F68" stroke-width="1.5"/>
+  <rect x="40" y="964" width="3.5" height="104" rx="2" fill="#2C7F68"/>
+  <text x="54" y="984" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">ArduPilot SITL + MAVROS 2</text>
+  <text x="54" y="1000" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">no renderer, no camera · stub pilot on a waypoint mission</text>
+  <text x="54" y="1018" font-size="11.5" fill="#2C7F68" font-weight="600" text-anchor="start" font-family="Consolas, monospace">canonical-hil · KPI-GRADE</text>
+  <text x="54" y="1033" font-size="10" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">every contractual figure in this project comes from here</text>
+  <text x="468" y="1059" font-size="9" fill="#9AA6AF" font-weight="normal" text-anchor="end" font-family="Consolas, monospace">evidence 2026-09-01</text>
+  <rect x="560" y="964" width="440" height="104" rx="4" fill="#FFFFFF" stroke="#B23F38" stroke-width="1.5"/>
+  <rect x="560" y="964" width="3.5" height="104" rx="2" fill="#B23F38"/>
+  <text x="574" y="984" font-size="13.5" fill="#1F2A33" font-weight="600" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Project AirSim (Unreal)</text>
+  <text x="574" y="1000" font-size="11" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">camera, depth, city scene, pedestrians and vehicles</text>
+  <text x="574" y="1018" font-size="11.5" fill="#B23F38" font-weight="600" text-anchor="start" font-family="Consolas, monospace">functional rail · NOT grade-eligible</text>
+  <text x="574" y="1033" font-size="10" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">all tracking evidence lives here, outside the contractual gate</text>
+  <text x="988" y="1059" font-size="9" fill="#9AA6AF" font-weight="normal" text-anchor="end" font-family="Consolas, monospace">evidence 2026-08-31</text>
+  <text x="40" y="1088" font-size="10.5" fill="#B23F38" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">This is the distinction v2 did not draw. It said "today: AirSim Blocks · later: SITL + HIL", and was still saying it on 2026-09-02.</text>
+  <text x="40" y="1104" font-size="10.5" fill="#6B7280" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">Closing the gap means feeding AirSim imagery to a Guardrail driven over MAVROS — the HIL_GPS / HIL_SENSOR bridge. Largest remaining item.</text>
+  <line x1="260.0" y1="322" x2="260.0" y2="258" stroke="#7C8B96" stroke-width="1.6" marker-end="url(#a)"/>
+  <line x1="260.0" y1="334" x2="260.0" y2="354" stroke="#7C8B96" stroke-width="1.6" marker-end="url(#a)"/>
+  <line x1="260.0" y1="442" x2="260.0" y2="462" stroke="#7C8B96" stroke-width="1.6" marker-end="url(#a)"/>
+  <line x1="260.0" y1="528" x2="260.0" y2="554" stroke="#7C8B96" stroke-width="1.6" marker-end="url(#a)"/>
+  <line x1="260.0" y1="640" x2="260.0" y2="672" stroke="#7C8B96" stroke-width="1.6" marker-end="url(#a)"/>
+  <line x1="520" y1="778" x2="520" y2="788" stroke="#7C8B96" stroke-width="1.6" marker-end="url(#a)"/>
+  <line x1="520" y1="852" x2="520" y2="864" stroke="#7C8B96" stroke-width="1.6" marker-end="url(#a)"/>
+  <line x1="560" y1="292" x2="492" y2="704" stroke="#249DB2" stroke-width="1.6" marker-end="url(#a)"/>
+  <text x="534.0" y="494.0" font-size="10" fill="#249DB2" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">rules in force</text>
+  <line x1="570" y1="452" x2="570" y2="684" stroke="#1A7484" stroke-width="1.6" marker-end="url(#a)" stroke-dasharray="4 4"/>
+  <text x="578.0" y="564.0" font-size="10" fill="#1A7484" font-weight="normal" text-anchor="start" font-family="Segoe UI, Arial, sans-serif">scores</text>
+</svg>

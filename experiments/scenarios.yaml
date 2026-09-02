@@ -164,6 +164,57 @@ scenarios:
       min_range_to_subject: { min: 9.99 }
       reached_goal: { equals: true }
 
+  - id: standoff-reclassified
+    why: >
+      THE ANSWER TO THE 2026-09-02 REVIEW, made measurable.
+
+      Prof. Lai's point was fair: BoT-SORT and ByteTrack associate detections
+      across frames better than we do, so "we track well" is not a claim worth
+      making. But a tracker must be given a BOX and cannot be given a NOUN. It
+      returns an ID; it never returns a CLASS.
+
+      The stand-off rule is written per class - 10 m from a pedestrian, 5 m from
+      anything else - so the policy needs to know the subject IS a person before
+      it can pick the rule. That is not a tracking-quality contest the
+      open-vocabulary detector might lose; it is a question a tracker cannot be
+      asked at all.
+
+      Here one object never moves and the policy is never edited. Only the class
+      word attached to it changes, twelve seconds in, and the enforced ring goes
+      from 5 m to 10 m. Both rules come from policies/sitl_pedestrian.yaml
+      exactly as it already shipped - nothing was added for this scenario, which
+      is the point: the capability was in the schema the whole time.
+    policy: policies/sitl_pedestrian.yaml
+    start: { x: 0.0, y: 0.0, up: 15.0 }
+    # The pilot's goal sits 6 m from the subject and it NEVER changes its mind.
+    # That is deliberate: once parked there it keeps asking to stay, so holding
+    # the aircraft out afterwards is the Shield working against a pilot that is
+    # still pulling in - not the mission conveniently wandering off.
+    pilot: { type: goto, to: [22.0, 0.0], speed: 4.0, up: 15.0 }
+    subject:
+      x: 22.0
+      y: 6.0
+      class: car
+      reclassify:
+        - { at_s: 10.0, class: pedestrian }
+    ticks: 400
+    shield: on
+    gates:
+      p0_violation_escape_rate: { max: 0.0 }
+      # While labelled a car only the 5 m rule binds, so 6 m is legal and the
+      # aircraft must actually GO there. Without this the scenario would pass on
+      # a flight that never approached, demonstrating nothing - the same
+      # reasoning that makes nfz-head-on-control gated to fail.
+      min_range_as_car: { max: 9.99 }
+      # It was inside 10 m when the label flipped: the rule changed under it.
+      range_at_reclassify: { max: 9.99 }
+      # And it recovered, against a pilot still asking to close.
+      final_range_to_subject: { min: 9.99 }
+      # The Shield had to act. Zero repairs would mean the range changed for
+      # some other reason.
+      repair_count: { min: 1 }
+      subject_class_final: { equals: pedestrian }
+
   - id: standoff-wedge
     expect: known_failure
     why: >
