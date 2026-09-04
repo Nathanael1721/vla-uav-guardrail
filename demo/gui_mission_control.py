@@ -37,8 +37,12 @@ except Exception:
     city_planner = None
 
 PYTHON = "C:/Users/natha/.conda/envs/vla-real/python.exe"
-UNREAL = ("C:/Program Files/Epic Games/UE_5.7/Engine/Binaries/Win64/"
-          "UnrealEditor.exe")
+# Engine resolved from the .uproject rather than hard-coded: the project moved
+# to UE 5.8 on 2026-09-03 and every launcher here still named 5.7, which would
+# have rebuilt its modules against the wrong engine. See tools/ue_engine.py.
+import sys as _sys; _sys.path.insert(0, str(ROOT))
+from tools.ue_engine import editor_exe as _editor_exe
+UNREAL = str(_editor_exe(ROOT / "PASBlocks" / "Blocks.uproject"))
 UPROJECT = ROOT / "PASBlocks" / "Blocks.uproject"
 FLIGHT_SCRIPT = "demo/aerialvla_pas_demo.py"
 # The ORIGINAL adapter, not our fine-tune. Measured: the fine-tune improved

@@ -17,8 +17,12 @@ param(
 
 $ROOT    = "D:\OneDrive\College\S2-TaipeiTech\Lab\VLA Drone"
 $PY      = "C:\Users\natha\.conda\envs\vla-real\python.exe"
-$UE      = "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe"
 $UPROJ   = "$ROOT\PASBlocks\Blocks.uproject"
+# Engine resolved from the .uproject, not hard-coded: the project moved to
+# UE 5.8 on 2026-09-03 and every launcher here still said 5.7, which would
+# have rebuilt its modules against the wrong engine. See tools/ue_engine.py.
+. "$ROOT/tools/Resolve-UnrealEngine.ps1"
+$UE      = Get-UnrealEditor -UProject $UPROJ
 $ADAPTER = "D:/models/aerialvla-lora/aero_vla"      # ORIGINAL, not our fine-tune
 $MAPS = @{ day      = "/Game/JapaneseCity/Maps/Demo_day"
            night    = "/Game/JapaneseCity/Maps/Demo_night"

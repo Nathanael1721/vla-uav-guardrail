@@ -68,8 +68,15 @@ C:\Users\natha\.conda\envs\vla-real\python.exe demo\follow_vlm.py --object "a ye
 
 The simulator must already be running. Start it with:
 
+
+> The engine version is **read from `PASBlocks/Blocks.uproject`** by the
+> launcher scripts (`tools/ue_engine.py`). The path below is spelled out only
+> because this is a copy-paste tutorial; if the project is migrated again, run
+> `python tools/ue_engine.py --editor` to get the current one rather than
+> trusting this line.
+
 ```powershell
-& "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe" "PASBlocks\Blocks.uproject" /Game/JapaneseCity/Maps/Demo_day -game -windowed -ResX=1280 -ResY=720
+& "C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" "PASBlocks\Blocks.uproject" /Game/JapaneseCity/Maps/Demo_day -game -windowed -ResX=1280 -ResY=720
 ```
 
 Wait until port 8989 answers — about 25 seconds. Then fly.

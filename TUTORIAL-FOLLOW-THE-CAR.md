@@ -54,8 +54,15 @@ into a Windows path (`C:/Program Files/Git/Game/...`), the map is not found, and
 the engine crashes on the fallback. This costs ten minutes to diagnose every
 time.
 
+
+> The engine version is **read from `PASBlocks/Blocks.uproject`** by the
+> launcher scripts (`tools/ue_engine.py`). The path below is spelled out only
+> because this is a copy-paste tutorial; if the project is migrated again, run
+> `python tools/ue_engine.py --editor` to get the current one rather than
+> trusting this line.
+
 ```powershell
-Start-Process "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe" -ArgumentList '"D:\OneDrive\College\S2-TaipeiTech\Lab\VLA Drone\PASBlocks\Blocks.uproject"','/Game/JapaneseCity/Maps/Demo_day','-game','-windowed','-ResX=1280','-ResY=720'
+Start-Process "C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" -ArgumentList '"D:\OneDrive\College\S2-TaipeiTech\Lab\VLA Drone\PASBlocks\Blocks.uproject"','/Game/JapaneseCity/Maps/Demo_day','-game','-windowed','-ResX=1280','-ResY=720'
 ```
 
 Wait until port 8989 answers — usually 20–60 s, longer on the first load of a map:

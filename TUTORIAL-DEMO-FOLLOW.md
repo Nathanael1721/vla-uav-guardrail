@@ -67,8 +67,15 @@ the car's position is used only to spawn it and, offline, to score.
 **PowerShell, not Git Bash.** Git Bash rewrites the `/Game/...` map argument into
 a Windows path, the map is not found, and the engine crashes on the fallback.
 
+
+> The engine version is **read from `PASBlocks/Blocks.uproject`** by the
+> launcher scripts (`tools/ue_engine.py`). The path below is spelled out only
+> because this is a copy-paste tutorial; if the project is migrated again, run
+> `python tools/ue_engine.py --editor` to get the current one rather than
+> trusting this line.
+
 ```powershell
-Start-Process "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe" -ArgumentList '"D:\OneDrive\College\S2-TaipeiTech\Lab\VLA Drone\PASBlocks\Blocks.uproject"','/Game/JapaneseCity/Maps/Demo_day','-game','-windowed','-ResX=1280','-ResY=720'
+Start-Process "C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe" -ArgumentList '"D:\OneDrive\College\S2-TaipeiTech\Lab\VLA Drone\PASBlocks\Blocks.uproject"','/Game/JapaneseCity/Maps/Demo_day','-game','-windowed','-ResX=1280','-ResY=720'
 ```
 
 Wait for it:

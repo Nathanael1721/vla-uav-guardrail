@@ -37,8 +37,10 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Py   = "C:\Users\natha\.conda\envs\vla-real\python.exe"
-$UE   = "C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe"
 $Proj = Join-Path $Root "PASBlocks\Blocks.uproject"
+# Engine read from the .uproject rather than hard-coded - see tools/ue_engine.py.
+. "$Root/tools/Resolve-UnrealEngine.ps1"
+$UE   = Get-UnrealEditor -UProject $Proj
 $Map  = "/Game/JapaneseCity/Maps/Demo_day"
 
 function Say($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }

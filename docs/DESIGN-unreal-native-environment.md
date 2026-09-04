@@ -1,7 +1,28 @@
 # Direction: build the scene in Unreal directly, instead of spawning into it
 
 **Raised:** 2026-09-02, by Nathan
-**Status:** recorded, **not started**, deliberately
+**Status:** recorded; the scripted path is now **proven** (2026-09-04), the
+placement work itself still deferred
+
+> **Update, 2026-09-04 — the central objection below is weaker than it was.**
+> This note argues the trade is visual fidelity *against* reproducibility, on the
+> assumption that authoring means hand-authoring in the editor. That was never
+> tested. It has now been: a Python commandlet duplicated the map, placed an
+> actor, saved, reloaded from disk and found it again at exactly the requested
+> transform — headless, in 37 seconds, with the original map byte-identical
+> afterwards. See `FINDING-the-level-can-be-scripted.md`.
+>
+> So the environment can be authored as **code**, with the level as build output
+> rather than source. Read the cost section below with that in mind: what remains
+> genuinely un-scriptable is judgement — whether a placement looks right, whether
+> the lighting reads — not the placement itself.
+>
+> Two other corrections to this note. The engine is **UE 5.8**, not 5.7: the
+> project was migrated on 2026-09-03 and eleven launcher scripts were left
+> pointing at 5.7, which would have rebuilt its modules against the wrong engine.
+> They now resolve the version from `Blocks.uproject` (`tools/ue_engine.py`). And
+> Unreal MCP was already wired up before any of this — it is live and speaking
+> the protocol.
 **Prompted by:** the scene looks noticeably worse than Unreal renders natively,
 and the added vehicles and pedestrians look "pasted on" rather than placed.
 

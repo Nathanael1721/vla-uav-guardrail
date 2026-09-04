@@ -1,0 +1,44 @@
+{
+  "_what": "Trial that a level edit can be made by script and survives a reload. See tools/ue_env_trial.py.",
+  "source_map": "/Game/JapaneseCity/Maps/Demo_day",
+  "target_map": "/Game/JapaneseCity/Maps/Demo_day_Env",
+  "engine": "5.8.1-56057345+++UE5+Release-5.8",
+  "steps": {
+    "duplicated": true,
+    "opened_copy": true,
+    "spawned": true,
+    "saved": true,
+    "reopened": true,
+    "found_after_reload": true
+  },
+  "actor": {
+    "label": "EnvTrial_Cube",
+    "class": "StaticMeshActor",
+    "location": [
+      1200.0,
+      -450.0,
+      300.0
+    ],
+    "rotation": [
+      -0.0,
+      0.0,
+      45.0
+    ]
+  },
+  "wanted": {
+    "location": [
+      1200.0,
+      -450.0,
+      300.0
+    ],
+    "rotation": [
+      0.0,
+      0.0,
+      45.0
+    ]
+  },
+  "max_location_error_cm": 0.0,
+  "max_rotation_error_deg": 0.0,
+  "transform_matches": true,
+  "ok": true
+}

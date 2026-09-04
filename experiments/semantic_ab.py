@@ -37,7 +37,12 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 PY = r"C:\Users\natha\.conda\envs\vla-real\python.exe"
-UE = r"C:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor.exe"
+# Engine resolved from the .uproject rather than hard-coded: the project moved
+# to UE 5.8 on 2026-09-03 and every launcher here still named 5.7, which would
+# have rebuilt its modules against the wrong engine. See tools/ue_engine.py.
+import sys as _sys; _sys.path.insert(0, str(ROOT))
+from tools.ue_engine import editor_exe as _editor_exe
+UE = str(_editor_exe(ROOT / "PASBlocks" / "Blocks.uproject"))
 UPROJ = str(ROOT / "PASBlocks" / "Blocks.uproject")
 MAP = "/Game/JapaneseCity/Maps/Demo_day"
 
