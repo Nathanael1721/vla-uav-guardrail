@@ -86,18 +86,86 @@ The mechanism now works and the class is right. The **flight still does not show
 the ring changing**, and the reason is not the Shield.
 
 Re-flown after the fix: the retarget fired, the class became `pedestrian`, safety
-held — and no stand-off rule bound, because the aircraft never got closer than
-**14.7 m** to the estimated subject. A 10 m ring cannot fire at 14.7 m.
+held — and no stand-off rule bound, because the position the Shield was **served**
+never came inside **14.7 m** (median 20.5 m). A 10 m ring cannot fire at 14.7 m.
 
-It stayed out there because it could not hold the target: `frac_on_target`
-**0.406** in the pedestrian phase — the box was on the wrong thing for most of
-it. That is exactly what the detector survey predicted. OWL-ViT scores our
-pedestrian meshes at **0.062** against the taxi's **0.182**; it is the measured
-weak point, and it is now the thing standing between this argument and a video.
+## Correction, 2026-09-07 — the reason I gave for that was not measured
 
-So the honest position for 18 September: the *capability* is real, tested and
-provable from the sweep, and the flight demonstrates the retarget but not the
-consequence. Closing that needs either better pedestrian assets or a stronger
-detector for the acquisition phase — which is precisely the two-rate design the
-detector survey already argued for, and the strongest evidence yet that it is
-worth building.
+The first version of this document explained the stand-off distance by saying the
+aircraft could not hold the target: *`frac_on_target` 0.406 in the pedestrian
+phase, exactly what the detector survey predicted.* That was wrong, and it was
+wrong in the way this project keeps catching: a number was quoted without
+checking what it had been computed against.
+
+`track_truth.score_rows` scored every detection against `tgt_x/tgt_y`, the only
+ground truth in the flight log — **the car**. After the retarget the subject was a
+pedestrian and the car was behind the aircraft, so all 319 remaining detections
+were compared to it. The give-away is in the numbers already published:
+
+| phase | scored | `frac_on_target` | median err | target out of shot |
+|---|---|---|---|---|
+| before retarget (ticks < 248) | 247 | **0.931** | 7.6 px | 17 |
+| after retarget (ticks ≥ 248) | 319 | **0.000** | 615.1 px | **319 of 319** |
+
+319 out of 319 is not a detector result; no detector is wrong every single frame.
+And the flight-wide 0.406 is approximately 248/567 — the fraction of the flight
+that happened *before* the subject changed. The figure measured where the retarget
+was, not how well anything was tracked.
+
+**So the honest statement is: post-retarget tracking is UNMEASURED.** Not good,
+not bad — never scored, because nothing logged where the pedestrians were. The
+detector survey's finding (OWL-ViT scores our pedestrian meshes 0.062 against the
+taxi's 0.182) stands on its own evidence and is a fair reason to *expect*
+difficulty. It is not evidence that difficulty occurred here.
+
+## What the artefact does support, and one thing nobody was looking at
+
+Re-read properly, the flight says something narrower and more useful.
+
+The estimator that feeds the Shield **rejected the measurements taken at the
+closest approach**. Between t+55.9 s and t+56.3 s the monocular range read 5 m
+while the served estimate held 24.7 m and the gate counter climbed on every tick.
+Four consecutive ticks — 0.4 s — where the *measured* range was inside the 10 m
+ring and the *served* range was outside it.
+
+Whether the aircraft was truly that close is still unknown, for the same reason as
+above. But the structural point does not depend on knowing:
+
+> A stand-off rule is only as good as the position it is told. Nothing in the KPI
+> set compared what the Shield was served against what was measured, so an
+> estimator holding a subject 20 m from where the camera said it was produced a
+> clean escape rate and a clean audit log.
+
+This is the same shape as the inert rule above. Zero violations, zero repairs, and
+in neither case did that mean the rule was working.
+
+## The fixes, and how each one fails loudly now
+
+| Defect | Fix | Where it now shows |
+|---|---|---|
+| Truth was the car, whatever the subject | `subject_truth_pts()` logs truth for the class in force; `truth: {class, pts}` per tick | `demo/follow_vlm.py` |
+| A detection with no truth was scored anyway | rows with no truth are counted as `det_unscorable`, never scored | `demo/track_truth.py` |
+| "Any person" was scored against one person | truth is a LIST; a box on any pedestrian answers the question that was asked | `truth_points()` |
+| Served range never compared to measured | `range_agreement` reports `ticks_raw_inside_est_outside` and the longest blind run | `metrics.json` |
+| Estimator counters mixed two tracks | `reset()` banks them; `resets` / `updates_total` / `gated_out_total` reported | `demo/target_state.py` |
+
+Pinned by tests in `tests/test_track_truth.py`, `tests/test_range_and_lock.py`
+and `tests/test_target_state.py`, including two that assert the numbers above
+directly against `demo/out/retarget_demo2` so this document cannot drift from the
+artefact it describes.
+
+## What 18 September can honestly claim
+
+The *capability* is real and provable from the sweep: `standoff-reclassified`
+moves the enforced ring 5 m → 10 m on a class change alone, and no tracker that
+returns an ID instead of a class can be asked to do it.
+
+The *flight* demonstrates the retarget — the phrase changes, the class changes,
+the policy re-binds — and does not yet demonstrate its consequence, because the
+aircraft never closed to 10 m of the position the Shield was given.
+
+Closing that needs the truth logging above (done, so the next flight is
+measurable at all), and then either better pedestrian assets or a stronger
+detector for the acquisition phase. That is still the two-rate design the
+detector survey argued for. What has changed is that the next flight will
+produce a number that means what it says.

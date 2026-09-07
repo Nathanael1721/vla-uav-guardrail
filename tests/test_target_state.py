@@ -217,6 +217,42 @@ def test_every_car_query_still_resolves_to_four_metres():
         assert sw(q)[0] == 4.0, f"{q!r} changed the width of past flights"
 
 
+# --- counters across a subject change --------------------------------------
+
+
+def test_reset_banks_the_counters_instead_of_dropping_them():
+    """`update()` re-initialises with `n_updates = 1`, so without banking, a
+    flight that retargeted reported post-retarget updates beside whole-flight
+    rejections: two numbers from different tracks in one dict. That pair read
+    as an estimator rejecting more than it accepted, which it was not."""
+    e = TargetState()
+    e.n_updates, e.n_rejected = 40, 7
+    e.reset()
+    assert e.n_updates == 0 and e.n_rejected == 0
+    e.n_updates, e.n_rejected = 3, 2
+    out = e.summary()
+    assert out["updates"] == 3 and out["gated_out"] == 2, out
+    assert out["resets"] == 1, out
+    assert out["updates_total"] == 43 and out["gated_out_total"] == 9, out
+
+
+def test_a_flight_that_never_retargeted_reports_the_same_keys_as_before():
+    """No reset, no extra keys - the 40-odd metrics.json on disk keep their
+    shape and nothing downstream has to learn a new field it will not see."""
+    e = TargetState()
+    assert set(e.summary()) == {"updates", "gated_out", "speed_mps"}
+
+
+def test_the_gate_arms_on_the_new_track_not_the_old_one():
+    """The gate is `n_updates >= 3`. After a reset the filter knows nothing, so
+    it must accept the first observations of the new subject unconditionally -
+    otherwise a retarget would gate out the very target it was pointed at."""
+    e = TargetState()
+    e.n_updates = 500
+    e.reset()
+    assert e.n_updates == 0
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

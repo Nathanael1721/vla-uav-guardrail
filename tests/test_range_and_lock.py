@@ -31,7 +31,8 @@ from follow_vlm import (PresenceMonitor, TargetLock,          # noqa: E402
                         implied_width_m, presence_verdict, range_from_depth,
                         search_sweep_rate, colour_match,
                         object_mask_from_depth, subject_width,
-                        SUBJECT_CLASS_CANON, SUBJECT_WIDTH_M)
+                        SUBJECT_CLASS_CANON, SUBJECT_WIDTH_M,
+                        range_agreement, subject_truth_pts)
 
 W, H = 400, 225
 
@@ -724,6 +725,97 @@ def test_retarget_schedule_parsing_rejects_what_it_cannot_fly():
         except ValueError:
             continue
         raise AssertionError(f"accepted {bad!r}")
+
+
+# --- what the Shield was TOLD versus what was MEASURED ---------------------
+
+
+class _Ring:
+    def __init__(self, cls, m):
+        self.subject_class, self.min_range_m = cls, m
+
+
+RULES = [_Ring("pedestrian", 10.0), _Ring("*", 5.0)]
+
+
+def _r(raw, est, cls="pedestrian"):
+    return {"rng_m": raw, "est": {"rng": est}, "truth": {"class": cls}}
+
+
+def test_the_widest_matching_rule_is_the_ring_that_counts():
+    """Both rules bind for a pedestrian, so the enforced ring is 10 m, not 5."""
+    out = range_agreement([_r(9.0, 25.0)], RULES)
+    assert out["ticks_raw_inside_est_outside"] == 1, out
+    # The same geometry against a car binds only the 5 m rule, and 9 m is
+    # outside it, so there is nothing blind about it.
+    assert range_agreement([_r(9.0, 25.0, "car")],
+                           RULES)["ticks_raw_inside_est_outside"] == 0
+
+
+def test_agreement_is_not_a_violation_count():
+    """Both inside the ring is a stand-off question, not a blindness one - the
+    Shield can see it and act."""
+    assert range_agreement([_r(4.0, 4.2)],
+                           RULES)["ticks_raw_inside_est_outside"] == 0
+
+
+def test_the_blind_run_is_consecutive_not_cumulative():
+    rows = [_r(9.0, 25.0), _r(9.0, 25.0), _r(20.0, 21.0),
+            _r(9.0, 25.0), _r(9.0, 25.0), _r(9.0, 25.0)]
+    out = range_agreement(rows, RULES)
+    assert out["ticks_raw_inside_est_outside"] == 5, out
+    assert out["longest_blind_run_ticks"] == 3, out
+
+
+def test_a_policy_with_no_standoff_reports_disabled_rather_than_zero():
+    """Zero blind ticks and no rule at all must not look the same. That
+    confusion is what let an inert 10 m rule fly a whole mission."""
+    assert range_agreement([_r(9.0, 25.0)], [])["enabled"] is False
+
+
+def test_the_flown_log_shows_the_gating_episode():
+    """Pinned against the artefact: demo/out/retarget_demo2 spent four
+    consecutive ticks with the measured range inside the 10 m ring while the
+    served estimate sat near 25 m. The rule could not have fired, and the
+    flight's escape rate of 0.0 said nothing about it."""
+    log = ROOT / "demo" / "out" / "retarget_demo2" / "flight_log.jsonl"
+    if not log.is_file():
+        return
+    import json
+    rows = [json.loads(l) for l in log.open(encoding="utf-8")]
+    for r in rows:                     # the log predates the `truth` field
+        r["truth"] = {"class": "pedestrian" if r["tick"] >= 248 else "car"}
+    out = range_agreement(rows, RULES)
+    assert out["ticks_raw_inside_est_outside"] == 4, out
+    assert out["longest_blind_run_ticks"] == 4, out
+
+
+class _Fig:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+
+
+class _People:
+    def __init__(self, *pts):
+        self.figures = [_Fig(*p) for p in pts]
+
+
+class _Car:
+    pos = (12.0, -3.0)
+
+
+def test_truth_follows_the_subject_class():
+    assert subject_truth_pts("car", _Car(), None) == [[12.0, -3.0]]
+    assert subject_truth_pts("pedestrian", _Car(),
+                             _People((1.0, 2.0), (3.0, 4.0))) == [[1.0, 2.0],
+                                                                  [3.0, 4.0]]
+
+
+def test_a_subject_with_no_truth_logs_nothing_rather_than_the_car():
+    """A van is not the scripted car. Returning the car here is precisely the
+    substitution that made a whole flight-half unreadable."""
+    assert subject_truth_pts("van", _Car(), _People((1.0, 2.0))) == []
+    assert subject_truth_pts("pedestrian", _Car(), None) == []
 
 
 if __name__ == "__main__":

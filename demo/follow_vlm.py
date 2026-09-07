@@ -58,6 +58,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
 from guardrail import kpi as kpi_mod                                # noqa: E402
 from guardrail.manifest import build_manifest, is_kpi_grade         # noqa: E402
+from guardrail.replay import verify_replay, write_replay           # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import (                                      # noqa: E402
     Action4D, AltitudeEnvelope, ObstacleClearance, PolygonFence,
@@ -66,6 +67,7 @@ from guardrail.models import (                                      # noqa: E402
 from shapely.geometry import Point                                  # noqa: E402
 
 import city_planner                                                 # noqa: E402
+import occ_bands                                                    # noqa: E402
 import city_traffic
 import track_truth
 from recorder import FrameRecorder
@@ -185,6 +187,91 @@ def subject_width(query: str) -> tuple[float, str | None]:
     if best is None:
         return SUBJECT_WIDTH_DEFAULT, None
     return SUBJECT_WIDTH_M[best], SUBJECT_CLASS_CANON.get(best, best)
+
+
+def range_agreement(rows, standoffs) -> dict:
+    """Does the range the Shield is SERVED agree with the range MEASURED?
+
+    The Shield enforces a stand-off against the estimator's output, never
+    against the raw per-frame range. That is deliberate - a single bad box
+    should not shove the aircraft - but it means a gated estimator can hold a
+    subject at 25 m while every recent measurement says 11 m, and nothing in the
+    KPI set can see it. A stand-off is only as good as the position it is told.
+
+    `ticks_raw_inside_est_outside` is the number that matters: ticks where the
+    measured range was inside the enforced ring while the served estimate was
+    outside it, so the rule COULD NOT have fired however correct it was. It is a
+    count of blind ticks, not of violations, and it should be reported even when
+    - especially when - the escape rate is zero.
+    """
+    if not standoffs:
+        return {"enabled": False}
+    rings = {}
+
+    def ring(cls):
+        if cls not in rings:
+            # Every rule whose class matches binds, so the enforced ring is the
+            # widest of them - the same arithmetic the Shield does.
+            m = [so.min_range_m for so in standoffs
+                 if so.subject_class == "*" or so.subject_class == cls]
+            rings[cls] = max(m) if m else None
+        return rings[cls]
+
+    diffs, blind, blind_run, worst_run = [], 0, 0, 0
+    for r in rows:
+        raw = r.get("rng_m")
+        est = (r.get("est") or {}).get("rng")
+        if raw is None or est is None:
+            blind_run = 0
+            continue
+        diffs.append(abs(float(est) - float(raw)))
+        cls = (r.get("truth") or {}).get("class")
+        rr = ring(cls)
+        if rr is not None and float(raw) < rr <= float(est):
+            blind += 1
+            blind_run += 1
+            worst_run = max(worst_run, blind_run)
+        else:
+            blind_run = 0
+    if not diffs:
+        return {"enabled": True, "n": 0}
+    d = sorted(diffs)
+    return {
+        "enabled": True, "n": len(d),
+        "abs_diff_median_m": round(d[len(d) // 2], 2),
+        "abs_diff_p90_m": round(d[min(len(d) - 1, int(0.90 * len(d)))], 2),
+        "abs_diff_max_m": round(d[-1], 2),
+        "ticks_raw_inside_est_outside": blind,
+        "longest_blind_run_ticks": worst_run,
+    }
+
+
+def subject_truth_pts(subject_class, car, people) -> list:
+    """Ground-truth positions for the subject class in force RIGHT NOW.
+
+    An empty list means "not logged for this subject", which
+    `track_truth.score_rows` counts as unscorable. That is the whole point of
+    this function: before it existed the flight log carried exactly one truth,
+    the car, and a flight that retargeted to a person went on being scored
+    against the car - producing a `frac_on_target` of 0.000 for the pedestrian
+    half that was read as a detector failure and was nothing of the kind.
+
+    A LIST for pedestrians, because "a person" does not name one person. The
+    detector was asked for a class, so a box on any pedestrian answers the
+    question that was actually put to it. Whether it stayed on the SAME person
+    is instance stability, which `TargetLock` measures separately - two
+    questions, two numbers, neither standing in for the other.
+
+    Only the scripted target car is truth for a vehicle. The parked decoys are
+    deliberately NOT included: a box on a parked lookalike is the failure this
+    project already flew once, and folding them in here would score it correct.
+    """
+    if subject_class == "pedestrian":
+        return ([[round(f.x, 2), round(f.y, 2)] for f in people.figures]
+                if people is not None else [])
+    if subject_class == "car" and car is not None:
+        return [[round(car.pos[0], 2), round(car.pos[1], 2)]]
+    return []
 
 
 # The depth stream is quantised to whole metres (see SemanticObs.get_depth),
@@ -1525,6 +1612,28 @@ async def fly(args) -> int:
                 f"The rule would never fire. Reachable classes: "
                 f"{', '.join(sorted(_reachable))}.")
     cmap = city_planner.load_occ(args.citymap)
+
+    # WHICH ALTITUDE IS THIS MAP TRUE FOR?
+    #
+    # The occupancy map is a 2-D projection of ONE altitude band, and every
+    # flight loaded occ_day.npz (6-14 m) whatever the policy permitted. That is
+    # correct for the car demos and not for this one: follow_pedestrian.yaml
+    # permits descent to 4 m, the band maps are not contiguous, and NOTHING maps
+    # 4-6 m. See docs/FINDING-the-map-was-true-for-the-wrong-altitude.md.
+    #
+    # For every policy flown so far this selects exactly the map that was being
+    # loaded anyway, so nothing about today's flights changes. What changes is
+    # that the aircraft now says which part of its permitted envelope is
+    # unmapped, instead of assuming the answer is none of it.
+    _alt = policy.by_type(AltitudeEnvelope)
+    if policy.by_type(ObstacleClearance) and _alt:
+        _sel = occ_bands.select_for_band(Path(args.citymap).parent,
+                                         _alt[0].alt_min_m, _alt[0].alt_max_m)
+        for _line in _sel["report"]:
+            print(_line)
+        if _sel["map"] is not None:
+            cmap = _sel["map"]
+
     smap = None
     if policy.by_type(ObstacleClearance) and cmap is not None:
         smap = {"occ": cmap["occ"], "res": cmap["res"],
@@ -2298,6 +2407,11 @@ async def fly(args) -> int:
                 "emitted_violations": [v.model_dump() for v in d.emitted_violations],
                 "tgt_x": (car.pos[0] if car else None),
                 "tgt_y": (car.pos[1] if car else None),
+                # Truth for the CURRENT subject, which `tgt_x/tgt_y` above is
+                # not once the flight has retargeted. Kept as its own field so
+                # older logs keep scoring exactly as they did.
+                "truth": {"class": subject_class,
+                          "pts": subject_truth_pts(subject_class, car, people)},
             })
 
             await drone.move_by_velocity_async(
@@ -2445,6 +2559,11 @@ async def fly(args) -> int:
         "start_heading_err_deg": (None if start_heading_err_deg is None
                                   else round(start_heading_err_deg, 2)),
         "frac_ticks_seen": round(sum(1 for r in rows if r["seen"]) / max(1, len(rows)), 3),
+        # Whether the position the Shield was SERVED agreed with the position
+        # that was MEASURED. A stand-off rule can only fire on what it is told,
+        # so a silent disagreement here is a rule that cannot act, and it looks
+        # exactly like a rule with nothing to do.
+        "range_agreement": range_agreement(rows, policy.by_type(SubjectStandoff)),
         # Which colour measurement actually ran. A fix that silently never
         # engages looks identical to one that works, so it is counted.
         "target_estimator": ({"enabled": True, **estimator.summary()}
@@ -2504,6 +2623,26 @@ async def fly(args) -> int:
         for r in reasons:
             print(f"[kpi]   - {r}")
     (out / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
+
+    # The replay bundle, written BY the flight rather than assembled later. The
+    # reason is measurable: of the 44 scored runs on disk, only 2 can still be
+    # bundled at all, because every other one was flown under a policy revision
+    # that no longer exists in `policies/`. A run that does not package itself
+    # while the policy is still in hand becomes unreconstructable the next time
+    # a rule is edited, and nobody notices until someone asks to re-derive a
+    # number.
+    try:
+        bundle_path = write_replay(out, policy, out / f"{args.tag}.replay.tar.gz",
+                                   changelog=f"flight {args.tag}")
+        ok, why = verify_replay(bundle_path)
+        print(f"[replay] {bundle_path.name} "
+              f"({bundle_path.stat().st_size // 1024} KiB) "
+              f"{'re-derives its own KPIs' if ok else 'FAILED verification'}")
+        for w in why:
+            print(f"[replay]   - {w}")
+    except Exception as exc:                                    # noqa: BLE001
+        # A packaging failure must never lose a flight that already flew.
+        print(f"[replay] not written: {type(exc).__name__}: {exc}")
 
     print(f"\n[report] ticks {len(traj)} | detector {metrics['det_hz']} Hz, "
           f"hit rate {metrics['det_hit_rate']} | target visible on "

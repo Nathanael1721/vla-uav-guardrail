@@ -76,6 +76,97 @@ STATE never became safe. Nothing in the KPI set could see that before
 `mean time to safe`, and the first sweep that ran found it. Fixed; recoveries now
 aim a margin inside the band and arrive in about twelve seconds.
 
+## Update, 2026-09-07 — three more closed, and one new defect class
+
+| Was | Now | Evidence |
+|---|---|---|
+| **7. Replay bundles** | **CLOSED** | `guardrail/replay.py`. `verify_replay()` reloads the policy from the archived IR and **recomputes the KPIs from the archived log**, so "replayable" means re-derivable rather than "the files are in one place". `demo/follow_vlm.py` and `sitl/run_sitl_demo.py` now write one per flight. |
+| **9. Body-frame vs world-frame `Action4D`** | **CLOSED** | `guardrail/frames.py` is the single boundary; `tests/test_frame_contract.py` checks our conversion against `vlaguard_common.body_to_local_ned` **by running theirs**, at eight headings. Both contracts are right in their own frame. |
+| **Report contradictions** (both) | **CLOSED** | `object_width_m` limitation marked resolved with its date; the control-loop gate paragraph now says which half was met and which was not. |
+
+**What closing item 7 immediately found.** Of the **44 scored runs on disk, only
+2 can be bundled at all** — every other one was flown under a policy revision no
+longer in `policies/`, so its numbers cannot be re-derived from this repository.
+That is not a bug in anything; it is what happens when the artefact is assembled
+later instead of by the run. Both remaining runs bundle and verify, and every
+future flight packages itself.
+
+**What closing item 9 found — corrected the same day.** The first version of
+this entry said the units differ from the reference: deg/s here, rad/s there, a
+factor of 57.3. That was wrong. Both are **rad/s**; the frame is the only
+difference, and it converts exactly.
+
+The real defect was inside our own package. `guardrail/models.py` declared
+`yaw_rate` as deg/s in a comment while all six sites that ENFORCE or produce it
+read radians — and two adapters had believed the comment and applied
+`math.radians()` to an already-radian value, dividing every commanded yaw by
+57.3 on the canonical rail.
+
+Nothing burned: the stub pilot that flies that rail has never commanded a
+non-zero yaw rate (0.0000 max across `sitl_shield_on`, `ros2_shield_on`,
+`sitl_ped_on`), so **no stored KPI figure changes**. Fixed in four files and
+pinned by tests that build a Shield and ask it, rather than reading a comment.
+See `docs/FINDING-the-contract-disagreed-with-itself-about-yaw.md`.
+
+I introduced the wrong version of this claim while closing the item, wrote a test
+that asserted it, and shipped it green beside `test_yaw_cap_compares_degrees_with_degrees`,
+which has pinned the opposite convention since 17 August. **A test that asserts a
+comment is not a test.**
+
+**A third scorer, found the same way.** `tools/deck/build_sept_deck.js` keeps its
+own copy of the tracking projection so slides are re-derived from the logs rather
+than from stored numbers. When the Python scorer learned that an empty `truth.pts`
+means UNSCORABLE, the JS copy kept falling through to `tgt_x/tgt_y` — the car. On
+the next pedestrian flight it would have printed **0.406 on target** on a slide
+while `metrics.json` beside it said **0.931**. Fixed, and the two are now compared
+against each other by `tests/test_deck_scorer_parity.py`, which runs the deck's
+own JavaScript under node on rows built in Python.
+
+**And item 3 was not the item it said it was.** The entry read
+"`follow_pedestrian.yaml` permits descent to 4 m but loads the 6-14 m map;
+`ground_2to4.npz` exists for that altitude and nothing chooses it" — filed as
+tidiness. Measured, both halves are wrong and the truth is worse:
+
+- `ground_2to4` ends at **exactly 4 m**, where the policy's band begins, so it
+  never applies to a 4-10 m flight and wiring it up would have changed nothing;
+- **nothing maps 4-6 m at all** — the four band maps are not contiguous, and the
+  hole is inside the band this policy permits;
+- neither map contains the other: **300 cells** are occupied at 2-4 m and clear
+  at 6-14 m, while the building at grid cell (64, 40) — the documented 9 m
+  collision — is in the cruise map and open ground at 2-4 m;
+- `ground_0to2` is **100 % occupied**; it is the ground plane, and unioning it in
+  would block every cell.
+
+`demo/occ_bands.py` now unions every band covering the policy's altitude envelope,
+refuses to union maps on different grids, rejects a band that is more than 90 %
+occupied, and **names the uncovered slices** on start-up. Closing it properly
+needs two map rebuilds (4-6 m, and 2-14 m as one band) and the simulator running.
+See `docs/FINDING-the-map-was-true-for-the-wrong-altitude.md` and
+`tests/test_occ_bands.py`.
+
+### A defect class, not a defect: silence that reads as success
+
+Three findings in six days share one shape, and it is worth naming because the
+next one will look like the last three.
+
+| What was silent | What it looked like |
+|---|---|
+| A stand-off rule bound to a class no phrase could produce | zero violations |
+| A scorer comparing every box to the car after the subject became a person | `frac_on_target` 0.406, read as a detector failure |
+| An estimator gating out the closest measurements | a clean escape rate |
+| A comment declaring deg/s while six sites enforced rad/s | two green test suites, opposite conventions |
+| A 2-D obstacle map true for one altitude band, loaded by a policy that flies below it | a map, correctly registered, for the wrong altitude |
+
+In each case the artefacts were **complete, consistent and wrong**, and in each
+case the check that would have caught it was cheap. The countermeasure now in
+the code is the same three times: make the silent case *say something* —
+`det_unscorable` for a detection with no truth, `range_agreement` for a served
+position the camera disagrees with, and a start-up refusal for a rule that can
+never bind.
+
+The habit this asks for is narrow enough to state: **a zero is a claim, and a
+claim needs the same checking as any other.**
+
 ## Open
 
 ### 1. Perception on the KPI-grade rail — WP4
@@ -129,7 +220,7 @@ The reference implementation emits a signed `tar.gz` (policy id, hash,
 generation, changelog, signature) and treats **WGS84 lat/lon as canonical**. We
 hash in memory and work in local metres. The DSL spec says WGS84.
 
-### 7. [PARTLY CLOSED 2026-09-01] Two named artefacts — WP2 / WP4
+### 7. [CLOSED 2026-09-07] Two named artefacts — WP2 / WP4
 
 The **Constraint Summary Pack** is now produced (`ConstraintCompiler.summary_pack()`,
 `write_summary_pack()`). **Replay bundles** (WP4) are still not: the signed
@@ -148,7 +239,7 @@ is never broken - and the mission never arrives. The gap is between "the action
 was repaired" and "the trajectory was sensible", and closing it needs a planner
 that can route AROUND a constraint rather than a filter that can only veto.
 
-### 9. Body-frame versus world-frame `Action4D` — WP1
+### 9. [CLOSED 2026-09-07] Body-frame versus world-frame `Action4D` — WP1
 
 Ours is world-frame (`vx` North, `vy` East); `vlaguard_common.Action4D` is
 body-frame. *"Both cannot be right, and no test compares them."* This is a
@@ -156,9 +247,10 @@ contract mismatch with the reference implementation, not a bug in either.
 
 ---
 
-## Report contradictions to fix before a reviewer finds them
+## [FIXED 2026-09-07] Report contradictions, before a reviewer finds them
 
-Both are inside `docs/MIDTERM-REPORT-Aug2026.md`:
+Both were inside `docs/MIDTERM-REPORT-Aug2026.md` and both are now corrected in
+place, marked with the date rather than silently rewritten:
 
 1. **`object_width_m`** is described as still hardcoded at 4.0 (limitation 5,
    with the 8x pedestrian error) *and* as derived per class (section 10.3). Only

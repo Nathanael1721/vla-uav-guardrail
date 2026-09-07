@@ -42,6 +42,7 @@ from guardrail.manifest import (TOPOLOGY_ARDUPILOT_SITL,               # noqa: E
                                 sim_speedup_from_mavlink)
 from guardrail.models import (AltitudeEnvelope, PolygonFence,
                               SubjectStandoff, XY)        # noqa: E402
+from guardrail.replay import verify_replay, write_replay               # noqa: E402
 from guardrail.vla_stub import StubVLA                                 # noqa: E402
 
 from shapely.geometry import Point                                     # noqa: E402
@@ -135,14 +136,25 @@ class MavlinkAdapter:
         return State(x=msg.x, y=msg.y, up=-msg.z)      # NED z-down -> up-positive
 
     def send_velocity(self, vx: float, vy: float, vz_up: float,
-                      yaw_rate_dps: float) -> None:
+                      yaw_rate_rad_s: float) -> None:
+        """Emit one velocity setpoint.  is the Action4D field.
+
+        It was named  and converted with math.radians() until
+        2026-09-07, on the strength of a comment in models.py that said the
+        contract carried degrees. It carries radians - shield.py enforces the
+        cap in radians - so the conversion divided every commanded yaw by 57.3.
+        Latent rather than harmful: the stub pilot this rail flies has never
+        commanded a non-zero yaw rate, so every stored KPI figure is unchanged.
+        MAVLink's SET_POSITION_TARGET_LOCAL_NED yaw_rate field is rad/s, which
+        is what makes pass-through correct here rather than merely simpler.
+        """
         self.m.mav.set_position_target_local_ned_send(
             0, self.m.target_system, self.m.target_component,
             mavutil.mavlink.MAV_FRAME_LOCAL_NED, VEL_YAWRATE_MASK,
             0, 0, 0,                       # position (ignored)
             vx, vy, -vz_up,                # velocity, NED
             0, 0, 0,                       # accel (ignored)
-            0, math.radians(yaw_rate_dps))
+            0, yaw_rate_rad_s)
 
     def land_disarm(self) -> None:
         self.m.set_mode(self.m.mode_mapping()["LAND"])
@@ -389,6 +401,20 @@ def main() -> int:
     kpi["manifest"] = manifest
     (out / "kpi.json").write_text(json.dumps(kpi, indent=2), encoding="utf-8")
     kpi_ok = kpi["p0_violation_escape_rate"] == 0.0
+
+    # These are the runs whose numbers are contractually reportable, so these
+    # are the ones that most need to stay re-derivable. Packaged here, while the
+    # policy that governed the flight is still the object in memory.
+    try:
+        rb = write_replay(out, policy, out / f"{out.name}.replay.tar.gz",
+                          changelog=f"sitl {out.name}")
+        ok, why = verify_replay(rb)
+        print(f"[replay]   {rb.name} "
+              f"{'re-derives its own KPIs' if ok else 'FAILED verification'}")
+        for w in why:
+            print(f"[replay]     - {w}")
+    except Exception as exc:                                    # noqa: BLE001
+        print(f"[replay]   not written: {type(exc).__name__}: {exc}")
 
     # ---- plot (if matplotlib present) ----
     try:

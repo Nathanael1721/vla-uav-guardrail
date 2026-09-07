@@ -54,11 +54,23 @@ This does **not** touch the KPI numbers: the canonical rail has no camera.
 **2 — Depth camera vs LiDAR.**
 Still undecided, and our position is that it is not yet the binding problem.
 Depth arrives as `16UC1` **quantised to whole metres** — fine for "is something
-close", useless for "hold 10.0 m". The cheaper first step is putting the missing
-obstacles into the map we already have. **And that step is now overdue:** the
-parked vehicles and pedestrians added on 31 August are *not* in
-`occ_day.npz`, which was last built on 25 August. They are visible to the camera
-and invisible to `ObstacleClearance`.
+close", useless for "hold 10.0 m".
+
+**Correction, 7 September — this item used to say something else.** It said the
+parked cars and pedestrians added on 31 August were missing from `occ_day.npz`
+and called it an overdue debt closed by a map rebuild. The fact is right and the
+framing was not: those are spawned at run time, per seed, after any map is built,
+so they are in no band map and a rebuild would only ever match one seed — and at
+the 8 m cruise this policy flies, a 1.5 m parked car is not a collision candidate
+anyway.
+
+The real gap is narrower and worse. The obstacle map is a **2-D projection of one
+altitude band**. `follow_pedestrian.yaml` permits descent to **4 m** and loads the
+6–14 m map, and the four band maps are not contiguous: **nothing maps 4–6 m at
+all**. `ground_2to4` would not have helped — it ends exactly where the policy's
+band begins. Measured: 300 cells are occupied at 2–4 m and clear at 6–14 m.
+`demo/occ_bands.py` now says this out loud on every start-up; closing it needs
+two map rebuilds with the simulator running.
 
 **3 — Multi-object / pedestrian policy rules undefined.**
 **Closed.** `SubjectStandoff` is a real constraint type with a `subject_class`
@@ -90,8 +102,14 @@ and I would like a decision on it rather than making one quietly.
 > ~1,8 Hz dari render kamera, sisanya JPEG di loop kontrol (sudah diperbaiki) —
 > **tapi jujur: gate 9,5 Hz masih belum tercapai, 0 dari 6 run**. Ini tidak
 > memengaruhi angka KPI karena rail kanonik tidak berkamera. (2) Depth vs LiDAR
-> belum diputuskan; depth terkuantisasi 1 meter. **Dan objek yang kami tambahkan
-> 31 Agustus belum masuk peta rintangan** — ini utang yang harus saya sebut.
+> belum diputuskan; depth terkuantisasi 1 meter. **Koreksi 7 September:** dulu
+> item ini bilang objek yang ditambahkan 31 Agustus belum masuk peta rintangan.
+> Faktanya benar, framing-nya salah — objek itu di-spawn saat runtime per seed,
+> jadi tidak akan pernah ada di peta mana pun, dan dari ketinggian jelajah 8 m
+> mobil parkir 1,5 m bukan kandidat tabrakan. Celah yang sebenarnya lebih sempit
+> dan lebih serius: peta rintangan itu **proyeksi 2-D satu pita ketinggian**, dan
+> **tidak ada peta sama sekali untuk 4–6 m** — padahal kebijakan mengizinkan
+> turun sampai 4 m.
 > (3) Aturan jarak per objek **selesai** — `SubjectStandoff`, terbang 14,95 m
 > lawan cincin 10 m. (4) Fusion sudah ada dan **terukur lebih buruk**; usulan
 > saya desain dua-laju. (5) Retraining warna **tidak disarankan**; Grounding DINO
@@ -118,20 +136,26 @@ and I would like a decision on it rather than making one quietly.
 > testing it against the map, which takes one command. Do not repeat it in the
 > meeting.
 >
-> What is genuinely undecided is narrower: `follow_pedestrian.yaml` permits
-> descent to **4 m** while loading the 6–14 m band map, and `ground_2to4.npz`
-> exists for that altitude with nothing selecting it.
+> What is genuinely undecided is narrower, and on **7 September** it turned out
+> to be narrower still and worse than this sentence said. `follow_pedestrian.yaml`
+> permits descent to **4 m** while loading the 6–14 m band map — and
+> `ground_2to4.npz` would not have helped, because it ends at exactly 4 m, where
+> the policy's band begins. **Nothing maps 4–6 m at all.** Measured: 300 cells
+> are occupied at 2–4 m and clear at 6–14 m. See
+> `docs/FINDING-the-map-was-true-for-the-wrong-altitude.md`.
 
 **Do not hide the back-off ladder row.** Saying it first is what makes the rest
 credible.
 
 > **Indonesia.** Enam dari delapan selesai. Dua belum: tangga back-off resolusi
-> baru sebagian, dan objek jalanan belum masuk peta rintangan. **Sebutkan dua ini
-> lebih dulu** — justru itu yang membuat sisanya dipercaya.
+> baru sebagian, dan — setelah koreksi 7 September — yang benar-benar terbuka
+> adalah **2 meter ketinggian (4–6 m) yang tidak dipetakan peta mana pun**, di
+> dalam pita yang diizinkan kebijakan. **Sebutkan dua ini lebih dulu** — justru
+> itu yang membuat sisanya dipercaya.
 
 ---
 
-# Part B — Per-slide script (14 slides, ~15 minutes)
+# Part B — Per-slide script (15 slides, ~16 minutes)
 
 Each slide: **hook** (one line to open with) → **say** (the paragraph) →
 **hold in reserve** (only if asked).
@@ -299,24 +323,77 @@ implementation's. See the Q&A.
 > Summary Pack — yang justru membongkar celah nyata: prompt ke pilot tidak pernah
 > menyebut aturan standoff 10 m yang ditegakkan Shield terhadapnya.
 
-### Slide 12 · Remaining work
+### Slide 12 · The review's question, flown ★★★
+
+**Hook.** "You asked what an open-vocabulary detector does that a tracker cannot.
+This is one flight, and the only thing that changes is a word."
+
+**Say.** At t+30 s the operator changes the phrase from *a yellow car* to
+*a person*. The class becomes `pedestrian`, a different rule binds, and the
+enforced stand-off moves from 5 m to 10 m. Same aircraft, same policy, same
+`policy_hash`. BoT-SORT and ByteTrack associate better than we do — that is not
+in dispute — but a tracker must be handed a BOX and returns an ID. It can never
+be handed a NOUN, so this question cannot be put to it at all.
+
+**Then say the hard part, before anyone asks.** Building this found the 10 m rule
+had never fired. It named the class `pedestrian`; the phrase produced `person`;
+the comparison is exact-string. Across a whole flight with a human subject it
+bound zero times and the 5 m catch-all applied instead. Nothing reported it,
+because *no violation is indistinguishable from no rule* — the rule was hashed,
+audited, and completely inert. It is now canonicalised, and a rule that no
+phrase can reach is a start-up refusal.
+
+**And the limit.** The video shows the retarget, not its consequence. The ring
+did not fire, because the position the Shield was **served** never came inside
+14.7 m. The capability is proven in the sweep (`standoff-reclassified`); the
+flight is not yet the proof.
+
+**Reserve — if asked why tracking after the retarget has no number.** Because it
+was never scored. The log carried one ground truth, the car, so the 319
+detections after the subject changed were being compared to an object behind the
+aircraft. That produced 0.000, which I first read as a detector failure. It was
+not; it was the scorer. Truth now follows the subject, and a detection with no
+truth is counted as unscorable rather than scored.
+
+> **ID.** Satu penerbangan, satu kebijakan. Di t+30 s operator hanya mengubah
+> **kata**: *a yellow car* → *a person*. Kelas berubah jadi `pedestrian`, aturan
+> yang mengikat berganti, dan jarak aman yang ditegakkan naik 5 m → 10 m. Pesawat
+> sama, kebijakan sama, hash sama. Tracker hanya bisa diberi KOTAK dan
+> mengembalikan ID — ia tidak bisa ditanya soal KELAS.
+>
+> Sampaikan sendiri bagian sulitnya: saat membangun ini, ketahuan aturan 10 m
+> **tidak pernah menyala sekali pun** — kebijakan menulis `pedestrian`, frasa
+> menghasilkan `person`, dan perbandingannya string persis. Nol pelanggaran tidak
+> bisa dibedakan dari tidak ada aturan. Sudah diperbaiki, dan sekarang aturan yang
+> tak terjangkau menolak lepas landas.
+>
+> Batasnya: video menunjukkan retarget, belum akibatnya. Cincin tidak menyala
+> karena posisi yang **disajikan** ke Shield tidak pernah lebih dekat dari 14,7 m.
+
+### Slide 13 · Remaining work
 **Hook.** "Ordered by what it contributes to acceptance, not by what is easy."
 **Say.** Perception on the KPI-grade rail is still the largest item: ArduPilot
 SITL has no renderer, so every tracking result sits outside the contractual gate.
-Then the rate gate the camera rail still misses. Then the scenery that is not in
-the obstacle map. Then replay bundles, the wedge, and the frame mismatch with the
-reference implementation.
+Then the rate gate the camera rail still misses. Then the two metres of
+altitude — 4 m to 6 m — that no obstacle map covers, inside a band this policy
+permits. Then the retarget flight that does not yet show the ring change, and
+the wedge.
+
+Replay bundles and the frame mismatch came off this list on 7 September, and
+that is worth saying out loud rather than quietly deleting them: the checklist
+said "no test compares them", so the test now runs the reference's own
+`body_to_local_ned` at eight headings and agrees with it.
 > **ID.** Diurutkan menurut kontribusi ke penerimaan kontrak, bukan menurut
 > kemudahan. Yang terbesar tetap perception di rail KPI.
 
-### Slide 13 · Deliverables
+### Slide 14 · Deliverables
 **Hook.** "Everything on these slides is reproducible from the repository."
 **Say.** Every figure is read from the artefacts at build time — nothing is typed
 onto a slide. Videos ship alongside rather than embedded.
 > **ID.** Setiap angka dibaca dari artefak saat build; tak ada yang diketik
 > manual ke slide.
 
-### Slide 14 · Closing
+### Slide 15 · Closing
 **Hook.** "Zero. And now we know what zero was not telling us."
 **Say.** P0 escape rate 0, measured on the canonical topology, zero unmeasurable
 ticks, across three configurations. All five acceptance KPIs are now computed —
@@ -460,12 +537,17 @@ rather say so than have it found.
 
 ### D8. "Are the parked cars and pedestrians protected by the Shield?"
 **Answer.** Partly, and the distinction is important. A pedestrian who is the
-*tracked subject* is protected by `SubjectStandoff` — that is the 10 m rule. But
-as scenery they are **not** in the occupancy map, which was last built on 25
-August, before they were added on the 31st. So `ObstacleClearance` cannot see
-them. That is a data gap, not a Shield defect — the Shield cannot protect against
-geometry that is not in its map — and closing it needs no new sensor, just a map
-rebuild. It is on the open list.
+*tracked subject* is protected by `SubjectStandoff` — that is the 10 m rule. As
+scenery they are in no occupancy map, because they are spawned at run time, per
+seed, after any map was built. At the 8 m cruise altitude this policy flies that
+costs nothing — a 1.5 m parked car is not a collision candidate from 8 m, and a
+2-D map of the 6–14 m band correctly does not contain it.
+
+What does cost something is that the same policy permits descent to **4 m**, and
+**no map covers 4–6 m at all**. Below 6 m the Shield is enforcing clearance
+against geometry sampled from an altitude the aircraft is not at. That is a data
+gap rather than a Shield defect — it cannot protect against what is not in its
+map — and the aircraft now says so on every start-up instead of assuming.
 > **ID.** Sebagian, dan bedanya penting. Pejalan kaki yang menjadi **subjek yang
 > dilacak** dilindungi `SubjectStandoff`. Tapi sebagai dekorasi mereka **belum**
 > masuk peta okupansi. Itu celah data, bukan cacat Shield.
@@ -514,6 +596,82 @@ and I did not want to make it twice.
 > yang ilegal. Hanya yang kedua ditanyakan "time to safe". Diukur dari aksi, satu
 > run melaporkan 21,9 detik padahal dwell tak-amannya 0,0.
 
+### D13. "Your slide says tracking after the retarget is *unmeasured*. Why not just measure it?"
+**Answer.** It will be, on the next flight — the instrumentation went in on
+7 September. It could not be measured on this one because the flight log carried
+exactly one ground truth, the target car, and after the subject became a person
+that truth was an object behind the aircraft. Scored against it, the 319 later
+detections came out 0.000 on target, and I first read that as the detector
+failing on pedestrians. It was the scorer. The give-away was that the same
+computation flagged 319 of 319 as "target out of shot" — no detector is wrong
+every single frame. Ground truth now follows the subject, and a detection with
+nothing to compare against is counted as unscorable rather than scored as wrong.
+> **ID.** Akan diukur di penerbangan berikutnya — instrumentasinya baru masuk
+> 7 September. Di penerbangan ini tidak bisa: log hanya memuat satu kebenaran
+> dasar, yaitu **mobil**, padahal subjeknya sudah jadi orang. Angka 0,000 itu
+> mengukur **alat ukurnya**, bukan detektornya.
+
+### D14. "If the escape rate was zero, what were you worried about?"
+**Answer.** That zero is a claim, and a claim needs checking like any other.
+Three times in six days the artefacts were complete, consistent and wrong: a rule
+bound to a class no phrase could produce fired zero times; a scorer compared every
+box to an object the aircraft had left behind; and the estimator that feeds the
+Shield rejected the measurements taken at the closest approach — four consecutive
+ticks where the camera said the subject was inside the 10 m ring and the served
+estimate said it was outside. In all three the honest reading of "no violations"
+was "nothing was watching". Each now has something that speaks up:
+`det_unscorable`, `range_agreement`, and a start-up refusal for an unreachable
+rule.
+> **ID.** Karena **nol itu sebuah klaim**, dan klaim perlu diperiksa. Tiga kali
+> dalam enam hari artefaknya lengkap, konsisten, dan salah — aturan mati,
+> alat ukur salah sasaran, dan estimator menolak pengukuran justru saat paling
+> dekat. Sekarang ketiganya bersuara, tidak diam.
+
+### D15. "Two of your corrections this week were about the obstacle map. Should I worry?"
+**Answer.** About the map, no. About how I was reporting it, yes, and it is fixed
+at the source. Twice I carried a claim forward from an older document instead of
+testing it against the map, which takes one command. The map itself was rebuilt
+over the flight band on 25 August and contains the obstacle in the documented
+collision. What testing it properly found on 7 September is real and was in
+nobody's notes: the map is a 2-D projection of ONE altitude band, the four bands
+are not contiguous, and **nothing maps 4–6 m** — inside the band this policy
+permits. The aircraft now prints that on every start-up rather than assuming.
+> **ID.** Soal petanya, tidak. Soal cara saya melaporkannya, ya — dua kali saya
+> membawa klaim lama tanpa mengujinya ke artefak. Yang ditemukan setelah diuji
+> justru nyata dan belum tercatat siapa pun: **tidak ada peta untuk 4–6 m**,
+> padahal kebijakan mengizinkan turun sampai 4 m.
+
+### D16. "You changed the yaw units on the flight rail. Did that move any KPI?"
+**Answer.** No, and I can show why rather than assert it. `Action4D.yaw_rate` is
+radians per second — that is what the Shield enforces at three sites and what the
+only live producer emits — but a comment in `models.py` said degrees, and two
+SITL adapters believed the comment and converted radians to radians a second
+time, dividing every commanded yaw by 57.3. It never reached a flight: the stub
+pilot on that rail has never commanded a non-zero yaw rate — 0.0000 maximum
+across all three KPI-grade runs — and zero divided by 57.3 is zero. Fixed in four
+files, and the test now builds a Shield and asks it instead of reading a comment.
+I introduced the wrong version of this claim myself earlier the same day; a test
+that asserts a comment is not a test.
+> **ID.** Tidak. `yaw_rate` itu rad/s — itu yang ditegakkan Shield — tapi komentar
+> di `models.py` menulis deg/s, dan dua adapter SITL mempercayainya lalu
+> mengonversi dua kali (bagi 57,3). Tidak pernah sampai ke penerbangan: pilot
+> stub di rail itu tidak pernah memerintahkan yaw ≠ 0 (maks 0,0000 di ketiga run
+> KPI). **Tidak ada angka KPI yang berubah.**
+
+### D17. "Can we reproduce a number from six months ago?"
+**Answer.** From today, yes — every flight now writes a replay bundle holding the
+episode, the policy that governed it, the determinism manifest and the KPI table,
+and `verify_replay()` recomputes the KPIs from the archived log and refuses the
+bundle if they disagree. Before today, mostly no, and that is the honest answer:
+of the 44 scored runs on disk only 2 can be bundled at all, because the rest were
+flown under policy revisions that no longer exist in the repository. That is
+exactly why the artefact has to be written by the run rather than assembled
+afterwards.
+> **ID.** Mulai hari ini bisa: setiap penerbangan menulis **replay bundle**
+> (episode + kebijakan + manifest + KPI), dan verifikasinya **menghitung ulang**
+> KPI dari log. Sebelum hari ini sebagian besar tidak bisa — dari 44 run hanya 2
+> yang masih bisa dipaketkan, karena kebijakannya sudah berubah.
+
 ---
 
 # Part E — Numbers to memorise
@@ -529,10 +687,19 @@ and I did not want to make it twice.
 | Altitude recovery, before the fix | **9.99973 m** at 30 s, never enters | the defect |
 | Altitude recovery, after | enters the band at **6.3 s** | the fix |
 | Constraint classes | **6** (reference implementation: 2) | corridor + valid_time new |
-| Scenario sweep | **12 scenarios, 11 pass, 1 known failure** | headless, ~1 s |
+| Scenario sweep | **13 scenarios, 12 pass, 1 known failure** | headless, ~1 s |
 | Delivered runs rescored | **42**, every P0 figure reproduced | no re-flying |
-| Test suite | **367 tests, 19 files** | all green |
+| Test suite | **439 tests, 23 files** | all green |
 | Camera-rail rate gate | **0 of 6** runs meet it | open item |
+| Retarget, class change in flight | `car` → `pedestrian` at **t+30.0 s** | ring 5 m → 10 m |
+| Tracking before the retarget | **0.931** on target, 7.6 px median | 247 detections |
+| Tracking after the retarget | **unmeasured** — no truth was logged | now fixed |
+| Closest served subject range, after | **14.7 m** (median 20.5) | why the ring never fired |
+| Ticks the camera said "inside", the estimate said "outside" | **4** consecutive | new `range_agreement` |
+| Altitude the pedestrian policy permits | **4–10 m** | map loaded covers 6–14 m |
+| Altitude no obstacle map covers | **4–6 m** | inside the permitted band |
+| Cells occupied at 2–4 m and clear at 6–14 m | **300** | neither map contains the other |
+| Adapters that converted rad/s to rad/s twice | **2**, both dormant | SITL yaw has always been 0.0 |
 | OWL-ViT | **153M** params, 0.68 GB | not "100M" |
 | Grounding DINO vs OWL-ViT on pedestrians | **0.327 vs 0.062** (5.2×) | but fails 4 Hz gate |
 

@@ -301,7 +301,11 @@ Three candidate remedies followed. Lowering Unreal's scalability settings had no
 
 Detector hit rate and ticks-held were 1.000 in all three, so this costs nothing in tracking quality. The recorder pulls camera frames over RPC at the record rate, forcing the simulator to render and serialise extra captures — which is why the **forward pass** moves with it, and why capture resolution never did.
 
-**The threshold is met on every scenario reported here** — Tracking 4.07 Hz, Distractors 4.56 Hz, No-fly zone 4.80 Hz, against a 4.0 Hz gate fixed before the runs, and with the recorder attached rather than removed for the measurement. det_hit_rate 1.000 and frac_ticks_seen 1.000 on both tracking scenarios in every configuration. The threshold exists to protect tracking quality, and tracking quality was never degraded.
+**The DETECTOR half of the threshold is met on every scenario reported here** — Tracking 4.07 Hz, Distractors 4.56 Hz, No-fly zone 4.80 Hz, against a 4.0 Hz gate fixed before the runs, and with the recorder attached rather than removed for the measurement. det_hit_rate 1.000 and frac_ticks_seen 1.000 on both tracking scenarios in every configuration.
+
+**The CONTROL-LOOP half is not met, and an earlier version of this paragraph said the threshold was met without saying which half.** The gate fixed before the runs was two numbers — detector ≥ 4.0 Hz *and* control loop ≥ 9.5 Hz — and the loop rates in the table above are 8.78 / 8.07 / 7.83 Hz. Zero of the recorded camera runs clear the loop gate. Corrected 2026-09-07; the detector figures are unchanged and were never the ones in question.
+
+What that costs is a longer gap between decisions than the design assumed: at 7.83 Hz the Shield still checks every action it emits, but a 3 s forecast is refreshed 22 % less often than the 10 Hz the lookahead was tuned for. It is a rate deficit, not a correctness one — no KPI figure in this report comes from the camera rail. The fix is the measurement/demonstration split proposed in 10.2, and until that is measured the honest statement is the one above.
 
 That was not true earlier in the period. It took the recording rate coming down off the critical path, and the obstacle map being rebuilt over the band the aircraft occupies, before the detector had enough of the GPU to clear it.
 
@@ -459,10 +463,15 @@ Each limitation below is measured rather than anticipated.
    commanding the pilot to hold 3 m against a 5 m rule — the aircraft spent 0 of
    501 ticks inside the ring, closest approach 9.7 m, P0 escape rate 0.0.
 
-5. **Range from apparent width assumes a car.** `implied_range_from_width()`
-   uses `object_width_m = 4.0`. Applied unchanged to a pedestrian of roughly
-   0.5 m width, it would report the subject at approximately eight times the true
-   distance.
+5. **[RESOLVED 2026-08-28] Range from apparent width assumed a car.**
+   `implied_range_from_width()` used `object_width_m = 4.0`. Applied unchanged to
+   a pedestrian of roughly 0.5 m width it would have reported the subject at
+   approximately eight times the true distance — which is why a pedestrian
+   demonstration was impossible before it was fixed. The width is now derived
+   from the query words per class (`SUBJECT_WIDTH_M`, `subject_width()`), as
+   section 10.3 states. Recorded here as resolved rather than deleted: this text
+   and 10.3 contradicted each other for a fortnight, and only one of them could
+   be true.
 
 6. **The learned VLA path cannot track a moving vehicle in real time.** Measured
    inference cost is 225 ms per token over 12 tokens, giving 2.7 s per decision

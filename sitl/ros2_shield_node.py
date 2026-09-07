@@ -373,7 +373,10 @@ class ShieldNode(Node):
         tw.linear.x = float(emitted.vy)
         tw.linear.y = float(emitted.vx)
         tw.linear.z = float(emitted.vz_up)
-        tw.angular.z = float(-math.radians(emitted.yaw_rate))  # CW dps -> CCW rad/s
+        # Action4D yaw_rate is rad/s CW; ENU Twist wants rad/s CCW, so this is a
+        # sign flip and nothing else. It applied math.radians() as well until
+        # 2026-09-07 - see run_sitl_demo.send_velocity for why that was wrong.
+        tw.angular.z = float(-emitted.yaw_rate)
         self.pub.publish(tw)
 
     # ---------------- wrap-up ---------------- #

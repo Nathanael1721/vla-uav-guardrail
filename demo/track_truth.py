@@ -1,4 +1,4 @@
-"""Was the box on the RIGHT car? Scored against ground truth.
+"""Was the box on the RIGHT thing? Scored against ground truth.
 
 WHY THIS EXISTS
 
@@ -23,6 +23,25 @@ the camera's field of view entirely and the controller followed a box anyway.
 
 The ground truth was in the flight log the whole time. Nothing here needs new
 instrumentation - only the arithmetic that was never done.
+
+WHAT THE 2026-09-07 RETARGET FLIGHT ADDED
+
+The first version scored every detection against `tgt_x/tgt_y`, which is the
+CAR - the only ground truth the flight log carried. That is correct for a flight
+whose subject never changes, and silently wrong for one that retargets: after
+the subject became a pedestrian, all 319 remaining detections were compared to a
+car that was by then behind the aircraft. Every one of them was flagged
+"target out of FOV", `frac_on_target` came out 0.000 for that half of the
+flight, and the flight-wide figure (0.406) was read as evidence that the
+detector could not hold a pedestrian. It was not evidence of anything: 0.406 is
+approximately 248/567, the fraction of the flight that happened BEFORE the
+subject changed.
+
+So a row now carries the truth for whatever the subject is at that tick, and a
+row whose subject has no logged truth is counted as UNSCORABLE rather than
+scored against the wrong object. Unscorable is reported. The one thing this
+module must never do again is return a number when it has nothing to compare
+against.
 """
 from __future__ import annotations
 
@@ -60,44 +79,88 @@ def project_target_cx(x: float, y: float, psi: float,
     return img_w * (0.5 + deg / hfov_deg), deg
 
 
+def truth_points(row: dict) -> Optional[list]:
+    """Where the CURRENT subject truly is, as a list of acceptable positions.
+
+    `None` means the subject's truth was not logged for this tick, and the row
+    is unscorable. That is a different answer from "the box was wrong", and
+    conflating the two is exactly the mistake this function exists to prevent.
+
+    A list because "a person" does not name one person. The detector was asked
+    for a class, so a box on any pedestrian is a correct answer to the question
+    that was actually put to it; instance stability is what `TargetLock`
+    measures, and it is a separate question with a separate number.
+    """
+    t = row.get("truth")
+    if isinstance(t, dict):
+        pts = [(float(a), float(b)) for a, b in (t.get("pts") or [])]
+        return pts or None
+    if row.get("tgt_x") is not None and row.get("tgt_y") is not None:
+        return [(float(row["tgt_x"]), float(row["tgt_y"]))]
+    return None
+
+
 def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
                on_target_px: float = ON_TARGET_PX) -> dict:
     """Tracking accuracy over a flight's per-tick rows.
 
     Rows are the flight-log records. A row counts only when it carries BOTH a
-    detection and a target position; ticks with no detection are the
-    liveness question, which `det_hit_rate` already answers.
+    detection and ground truth for the subject in force at that tick; ticks with
+    no detection are the liveness question, which `det_hit_rate` already
+    answers, and ticks with no truth are reported as `det_unscorable`.
     """
     errs: list[float] = []
     n_out_of_fov = 0
     n_scored = 0
+    n_unscorable = 0
 
     for r in rows:
         det = r.get("det")
-        if not det or r.get("tgt_x") is None or r.get("psi") is None:
+        if not det or r.get("psi") is None:
+            continue
+        pts = truth_points(r)
+        if not pts:
+            # A detection with nothing to compare it against. Counted, never
+            # scored: the flight-wide figure that read as a detector failure was
+            # 319 rows of exactly this.
+            n_unscorable += 1
             continue
         img_w = int(det.get("img_w") or 400)
-        cx_gt, deg = project_target_cx(r["x"], r["y"], r["psi"],
-                                       r["tgt_x"], r["tgt_y"], img_w, hfov_deg)
-        errs.append(abs(float(det["cx"]) - cx_gt))
-        if abs(deg) > hfov_deg / 2.0:
+        best = None
+        for tx, ty in pts:
+            cx_gt, deg = project_target_cx(r["x"], r["y"], r["psi"],
+                                           tx, ty, img_w, hfov_deg)
+            err = abs(float(det["cx"]) - cx_gt)
+            if best is None or err < best[0]:
+                best = (err, deg)
+        errs.append(best[0])
+        # Out of shot only if EVERY acceptable subject was out of shot - with
+        # one truth point this is the original test unchanged.
+        if all(abs(project_target_cx(r["x"], r["y"], r["psi"], tx, ty,
+                                     img_w, hfov_deg)[1]) > hfov_deg / 2.0
+               for tx, ty in pts):
             n_out_of_fov += 1
         n_scored += 1
 
     if not errs:
-        return {"det_scored": 0, "det_gt_err_px_median": None,
+        return {"det_scored": 0, "det_unscorable": n_unscorable,
+                "det_gt_err_px_median": None,
                 "det_gt_err_px_p95": None, "frac_on_target": None,
                 "n_det_with_target_out_of_fov": 0}
 
     s = sorted(errs)
     return {
         "det_scored": n_scored,
+        # Detections the log could not judge. A non-zero value here means
+        # `frac_on_target` describes only part of the flight, and any claim made
+        # from it has to say which part.
+        "det_unscorable": n_unscorable,
         "det_gt_err_px_median": round(s[len(s) // 2], 1),
         "det_gt_err_px_p95": round(s[min(len(s) - 1, int(0.95 * len(s)))], 1),
         # THE number. What fraction of the boxes the controller acted on were
-        # actually on the vehicle it was told to follow.
+        # actually on the subject it was told to follow.
         "frac_on_target": round(sum(1 for e in errs if e <= on_target_px) / len(errs), 3),
-        # The unambiguous failures: the target was not in shot, so whatever the
-        # detector found, it was not the target.
+        # The unambiguous failures: no acceptable subject was in shot, so
+        # whatever the detector found, it was not the subject.
         "n_det_with_target_out_of_fov": n_out_of_fov,
     }

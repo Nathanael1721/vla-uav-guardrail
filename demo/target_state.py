@@ -80,6 +80,14 @@ class TargetState:
         self.t_last_update: Optional[float] = None
         self.n_updates = 0
         self.n_rejected = 0
+        # Totals across resets. `n_updates` and `n_rejected` describe the
+        # CURRENT track only, because `update()` re-initialises the filter and
+        # sets `n_updates = 1`; without these the summary of a flight that
+        # retargeted reported post-retarget updates beside whole-flight
+        # rejections, two numbers from different flights sitting in one dict.
+        self.n_resets = 0
+        self._cum_updates = 0
+        self._cum_rejected = 0
 
     # ------------------------------------------------------------------ core --
 
@@ -204,13 +212,29 @@ class TargetState:
         return None if self.t_last_update is None else t - self.t_last_update
 
     def reset(self) -> None:
+        """Forget the track. Called when the SUBJECT changes, not on a miss.
+
+        The counters are banked rather than dropped, so a flight that
+        retargeted can still report what the whole flight did as well as what
+        the current track is doing.
+        """
+        self.n_resets += 1
+        self._cum_updates += self.n_updates
+        self._cum_rejected += self.n_rejected
+        self.n_updates = 0
+        self.n_rejected = 0
         self.x = None
         self.P = None
         self.t_last_update = None
 
     def summary(self) -> dict:
-        return {"updates": self.n_updates, "gated_out": self.n_rejected,
-                "speed_mps": round(self.speed(), 2)}
+        d = {"updates": self.n_updates, "gated_out": self.n_rejected,
+             "speed_mps": round(self.speed(), 2)}
+        if self.n_resets:
+            d.update(resets=self.n_resets,
+                     updates_total=self._cum_updates + self.n_updates,
+                     gated_out_total=self._cum_rejected + self.n_rejected)
+        return d
 
 
 def want_range_from_width(want_w_frac: float, object_width_m: float = 4.0,

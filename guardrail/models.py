@@ -41,7 +41,14 @@ class Action4D(BaseModel):
     vx: float = 0.0        # m/s, +North
     vy: float = 0.0        # m/s, +East
     vz_up: float = 0.0     # m/s, +up  (NED conversion happens at the sim adapter)
-    yaw_rate: float = 0.0  # deg/s, +clockwise seen from above
+    # RADIANS per second, +clockwise seen from above. Not degrees: this comment
+    # said deg/s until 2026-09-07 while every line that ENFORCES the cap read
+    # radians (shield.py converts with math.radians/math.degrees at three
+    # sites), and the only live producer - demo/follow_vlm.py's servo - emits a
+    # radian-scale value. Two of the four adapters believed the comment and
+    # applied math.radians() a second time; see
+    # docs/FINDING-the-contract-disagreed-with-itself-about-yaw.md.
+    yaw_rate: float = 0.0
 
 
 class State(BaseModel):

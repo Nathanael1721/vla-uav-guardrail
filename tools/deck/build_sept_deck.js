@@ -63,31 +63,96 @@ function videoMb(rel) {
 
 /* Tracking accuracy, recomputed here from the flight log rather than trusted:
  * the same projection demo/track_truth.py uses. Quoting a stored number would
- * reintroduce exactly the problem this period uncovered. */
-function trackAccuracy(tag) {
+ * reintroduce exactly the problem this period uncovered.
+ *
+ * It mirrors the Python including the 2026-09-07 fix, and it has to. Both
+ * versions first read `tgt_x/tgt_y`, which is the CAR. On a flight that
+ * retargets to a person that is the wrong object, every later detection scores
+ * as a miss, and this slide would report a detector failure that never
+ * happened. A row now carries `truth.pts` for whatever the subject is at that
+ * tick; a row without it is UNSCORABLE, counted and never scored. */
+function readRows(tag) {
   const p = path.join(REPO, "demo/out", tag, "flight_log.jsonl");
   if (!fs.existsSync(p)) return null;
-  const rows = fs.readFileSync(p, "utf8").split("\n").filter((l) => l.trim()).map(JSON.parse);
+  return fs.readFileSync(p, "utf8").split("\n").filter((l) => l.trim()).map(JSON.parse);
+}
+
+function truthPts(r) {
+  // Mirrors demo/track_truth.truth_points EXACTLY, including the early return:
+  // once a row carries a `truth` object it is authoritative, and an EMPTY
+  // `pts` means unscorable. Falling through to tgt_x/tgt_y here would score a
+  // pedestrian phase against the car again - the very defect this mirrors -
+  // and would put 0.406 back on a slide while metrics.json said 0.931.
+  if (r.truth && Array.isArray(r.truth.pts)) return r.truth.pts.length ? r.truth.pts : null;
+  if (r.tgt_x !== null && r.tgt_x !== undefined) return [[r.tgt_x, r.tgt_y]];
+  return null;
+}
+
+function scoreRows(rows) {
   const errs = [];
   let outOfFov = 0;
+  let unscorable = 0;
   for (const r of rows) {
-    if (!r.det || r.tgt_x === null || r.tgt_x === undefined || r.psi === undefined) continue;
+    if (!r.det || r.psi === undefined) continue;
+    const pts = truthPts(r);
+    if (!pts) { unscorable++; continue; }
     const W = r.det.img_w || 400;
-    let rel = Math.atan2(r.tgt_y - r.y, r.tgt_x - r.x) - r.psi;
-    rel = Math.atan2(Math.sin(rel), Math.cos(rel));
-    const deg = (rel * 180) / Math.PI;
-    errs.push(Math.abs(r.det.cx - W * (0.5 + deg / 90)));
-    if (Math.abs(deg) > 45) outOfFov++;
+    let best = null;
+    let allOut = true;
+    for (const pt of pts) {
+      let rel = Math.atan2(pt[1] - r.y, pt[0] - r.x) - r.psi;
+      rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+      const deg = (rel * 180) / Math.PI;
+      const e = Math.abs(r.det.cx - W * (0.5 + deg / 90));
+      if (best === null || e < best) best = e;
+      if (Math.abs(deg) <= 45) allOut = false;
+    }
+    errs.push(best);
+    if (allOut) outOfFov++;
   }
-  if (!errs.length) return null;
+  // A phase with nothing scorable still has something to say - how many
+  // detections could not be judged. Returning bare null here would throw that
+  // away and leave callers dereferencing nothing.
+  if (!errs.length) return { n: 0, unscorable, median: null, p95: null, onTarget: null, outOfFov: 0 };
   const s = errs.slice().sort((a, b) => a - b);
   return {
     n: errs.length,
+    unscorable,
     median: s[Math.floor(s.length / 2)],
     p95: s[Math.min(s.length - 1, Math.floor(0.95 * s.length))],
     onTarget: errs.filter((e) => e <= 100).length / errs.length,
     outOfFov,
   };
+}
+
+function trackAccuracy(tag) {
+  const rows = readRows(tag);
+  return rows === null ? null : scoreRows(rows);
+}
+
+/* The retarget flight, split at the tick the subject changed. Two numbers,
+ * because it IS two numbers: one phase has logged truth and one does not, and
+ * a single figure spanning both says nothing about either. */
+function retargetSplit(tag) {
+  const rows = readRows(tag);
+  if (!rows) return null;
+  const ev = (metrics(tag).retargets || [])[0];
+  if (!ev) return null;
+  return {
+    ev,
+    ticks: rows.length,
+    pre: scoreRows(rows.filter((r) => r.tick < ev.tick)),
+    post: scoreRows(rows.filter((r) => r.tick >= ev.tick)),
+  };
+}
+
+/* Findings written in this reporting period, counted rather than typed. */
+function findingsSince(prefix) {
+  const dir = path.join(REPO, "docs");
+  return fs.readdirSync(dir)
+    .filter((f) => f.startsWith("FINDING-") && f.endsWith(".md"))
+    .filter((f) => fs.readFileSync(path.join(dir, f), "utf8")
+      .includes("**Date:** " + prefix)).length;
 }
 
 const n = (v, d = 2) => (v === null || v === undefined ? "n/a" : Number(v).toFixed(d));
@@ -458,7 +523,33 @@ async function main() {
     badge(s, next() + 1);
   }
 
-  /* ── 12 · WHAT IS OPEN ──────────────────────────────────────────────── */
+  /* ── 12 · THE RETARGET, FLOWN ───────────────────────────────────────── */
+  {
+    const s = pres.addSlide();
+    heading(s, "The review's question, flown",
+      "One flight, one policy, one word changed");
+    const R = retargetSplit("retarget_demo2");
+    // pre/post can each come back all-unscorable, which is a REPORTABLE state
+    // and not an error: it is exactly what a correct scorer says about the
+    // pedestrian half of a flight whose truth was never logged. Read both
+    // counts and let the card say which it is, rather than dereferencing a
+    // number that is not there and killing the whole deck build.
+    const preN = R ? R.pre.n : 0;
+    const postAll = R ? R.post.n + R.post.unscorable : 0;
+    if (R && preN > 0) {
+      card(s, 0.55, 1.68, 4.35, 1.62, ic.walk, "What changed, and what did not",
+        `At t+${R.ev.t.toFixed(1)} s the operator changed a PHRASE: ${R.ev.from.object} -> ${R.ev.to.object}. The class became ${R.ev.to.class}, so a different rule bound and the enforced ring moved 5 m -> 10 m. Same aircraft, same policy, same hash. A tracker returns an ID, never a class, so it cannot be asked this question at all.`);
+      card(s, 5.10, 1.68, 4.35, 1.62, ic.warn, "A rule that was hashed and inert",
+        `Building it found the 10 m rule binding "pedestrian" while the phrase produced "person". Exact-string compare, so across a whole flight with a human subject it fired 0 times and the 5 m catch-all applied. No violation is indistinguishable from no rule. Synonyms are now canonicalised, and an unreachable rule is a start-up refusal.`);
+      card(s, 0.55, 3.44, 4.35, 1.62, ic.check, "Tracking, scored honestly",
+        `Before the retarget: ${pct(R.pre.onTarget)} on target, ${n(R.pre.median, 1)} px median over ${preN} detections. After it: UNMEASURED. The log carried one ground truth — the car — so the ${postAll} later detections were being compared to an object behind the aircraft. Truth now follows the subject.`);
+      card(s, 5.10, 3.44, 4.35, 1.62, ic.aim, "What the flight does not show yet",
+        "The ring did not fire: the position the Shield was SERVED never came inside 14.7 m, and a 10 m ring cannot fire at 14.7 m. The capability is proven in the sweep; the video shows the retarget but not its consequence. Stated as the open item it is.");
+    }
+    badge(s, next() + 1);
+  }
+
+  /* ── 13 · WHAT IS OPEN ──────────────────────────────────────────────── */
   {
     const s = pres.addSlide();
     heading(s, "Remaining work", "Ordered by contribution to acceptance");
@@ -470,10 +561,10 @@ async function main() {
        `Pre-registered at loop ≥ ${rg.gate.loop_hz_min} Hz and detector ≥ ${rg.gate.det_hz_min} Hz; ${rg.n_meeting_gate} of ${rg.n_runs} recorded runs meet it`],
       ["3", "Low-altitude policies select the cruise-band map",
        "follow_pedestrian.yaml permits descent to 4 m but loads the 6-14 m map; ground_2to4.npz exists and nothing chooses it"],
-      ["4", "Replay bundles (WP4)",
-       "The signed POLICY bundle exists; nothing yet packages a whole flight into one replayable artefact"],
-      ["5", "The wedge, and body-frame vs world-frame Action4D",
-       "A repaired action can still be a stuck mission; and our frame and the reference's disagree, with no test comparing them"],
+      ["4", "The retarget flight does not yet show the ring change",
+       "The aircraft never closed to 10 m of the position the Shield was served, so the rule had nothing to act on; needs stronger pedestrian acquisition"],
+      ["5", "The wedge: a repaired action can still be a stuck mission",
+       "A subject on the route makes every progressing heading also a closing one. The Shield holds and the mission never arrives; it needs a planner, not a filter"],
     ];
     let y = 1.82;
     items.forEach(([nn, t, b]) => {
@@ -507,7 +598,9 @@ async function main() {
     rows.push(["Meeting pack (EN + ID script, Q&A)", "docs/MEETING-PACK-Sept2026.md", "-"]);
     rows.push(["Scenario sweep results", "docs/data/scenario_sweep.json", "-"]);
     rows.push(["Remaining-work checklist", "docs/CHECKLIST-remaining-work.md", "-"]);
-    rows.push(["Findings this period", "docs/FINDING-*.md (9 documents)", "-"]);
+    rows.push(["Replay bundles (WP4)", "bundles/*.replay.tar.gz", "-"]);
+    rows.push(["Findings this period",
+      `docs/FINDING-*.md (${findingsSince("2026-09")} documents)`, "-"]);
     table(s, rows, [0.34, 0.48, 0.18], 0.55, 1.72, 0.42);
     s.addText("Every figure in this deck is read from demo/out/<tag>/metrics.json and kpi.json at build time; tracking accuracy is recomputed from the flight logs. Videos ship as separate files and are not embedded.", {
       x: 0.55, y: 3.72, w: 8.9, h: 0.6,

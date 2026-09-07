@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from track_truth import (HFOV_DEG, ON_TARGET_PX,          # noqa: E402
-                         project_target_cx, score_rows)
+                         project_target_cx, score_rows, truth_points)
 
 W = 400
 
@@ -135,6 +135,81 @@ def test_the_tolerance_is_wide_enough_for_a_correct_box():
     separates 'slightly off the centroid' from 'a different vehicle'."""
     assert ON_TARGET_PX == 100.0
     assert HFOV_DEG == 90.0
+
+
+# --- the subject can change mid-flight -------------------------------------
+#
+# These pin the fix for the defect that made a retarget flight unreadable: the
+# scorer compared every box to the car, including the 319 ticks after the
+# subject had become a pedestrian, and reported the result as one number.
+
+
+def _row(cx, x=0.0, y=0.0, psi=0.0, **kw):
+    r = {"x": x, "y": y, "psi": psi, "det": {"cx": cx, "img_w": W}}
+    r.update(kw)
+    return r
+
+
+def test_a_row_with_no_truth_for_its_subject_is_unscorable_not_wrong():
+    """The whole point. Nothing to compare against is not a failed comparison."""
+    out = score_rows([_row(200.0, truth={"class": "pedestrian", "pts": []})])
+    assert out["det_scored"] == 0, out
+    assert out["det_unscorable"] == 1, out
+    assert out["frac_on_target"] is None, out
+
+
+def test_old_logs_without_a_truth_field_score_exactly_as_before():
+    """Back-compatibility is load-bearing: 40-odd flights on disk have no
+    `truth` key, and their published figures must not move."""
+    r = _row(200.0, tgt_x=10.0, tgt_y=0.0)
+    assert truth_points(r) == [(10.0, 0.0)]
+    out = score_rows([r])
+    assert out["det_scored"] == 1 and out["frac_on_target"] == 1.0, out
+
+
+def test_any_member_of_the_class_counts_and_the_nearest_one_is_scored():
+    """`a person` names a class, not a person. A box on the second pedestrian
+    is a correct answer to the question that was asked."""
+    # +45 deg is the right edge (cx 400); dead ahead is cx 200.
+    row = _row(400.0, truth={"class": "pedestrian",
+                             "pts": [[10.0, 0.0], [10.0, 10.0]]})
+    out = score_rows([row])
+    assert out["frac_on_target"] == 1.0, out
+    assert out["det_gt_err_px_median"] == 0.0, out
+
+
+def test_out_of_shot_needs_every_candidate_out_of_shot():
+    """One subject behind the aircraft does not make the box wrong if another
+    is in front of it."""
+    behind, ahead = [-10.0, 0.0], [10.0, 0.0]
+    both = score_rows([_row(200.0, truth={"class": "pedestrian",
+                                          "pts": [behind, ahead]})])
+    assert both["n_det_with_target_out_of_fov"] == 0, both
+    only = score_rows([_row(200.0, truth={"class": "pedestrian",
+                                          "pts": [behind]})])
+    assert only["n_det_with_target_out_of_fov"] == 1, only
+
+
+def test_the_retarget_flight_on_disk_splits_the_way_the_finding_says():
+    """The measured claim, pinned against the artefact.
+
+    demo/out/retarget_demo2 retargeted at tick 248. Scored whole, it reads
+    0.406 - which is close to 248/567, the fraction of the flight BEFORE the
+    subject changed, and is a statement about the scorer rather than about the
+    detector. Scored on the half whose truth was actually logged, tracking was
+    0.931 with a 7.6 px median error."""
+    log = ROOT / "demo" / "out" / "retarget_demo2" / "flight_log.jsonl"
+    if not log.is_file():
+        return                                   # artefact not in this checkout
+    rows = [json.loads(l) for l in log.open(encoding="utf-8")]
+    pre = score_rows([r for r in rows if r["tick"] < 248])
+    post = score_rows([r for r in rows if r["tick"] >= 248])
+    assert pre["frac_on_target"] == 0.931, pre
+    assert pre["det_gt_err_px_median"] == 7.6, pre
+    # Every post-retarget detection was compared to a car that was behind the
+    # aircraft. 319 out of 319 - a number no detector produces.
+    assert post["frac_on_target"] == 0.0, post
+    assert post["n_det_with_target_out_of_fov"] == post["det_scored"] == 319, post
 
 
 if __name__ == "__main__":
