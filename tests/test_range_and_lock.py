@@ -30,7 +30,8 @@ from follow_vlm import (PresenceMonitor, TargetLock,          # noqa: E402
                         appearance, appearance_similarity,
                         implied_width_m, presence_verdict, range_from_depth,
                         search_sweep_rate, colour_match,
-                        object_mask_from_depth)
+                        object_mask_from_depth, subject_width,
+                        SUBJECT_CLASS_CANON, SUBJECT_WIDTH_M)
 
 W, H = 400, 225
 
@@ -594,6 +595,135 @@ def test_the_default_gate_is_the_measured_one():
     """A regression here would silently restore the behaviour that lost the car."""
     assert TargetLock().gate_frac == 0.12
     assert TargetLock().size_ratio == 1.8
+
+
+# --------------------------------------------------------------------------- #
+# mid-flight retarget - the 2026-09-02 review's question, made flyable
+# --------------------------------------------------------------------------- #
+
+def test_the_lock_forgets_the_old_instance_on_reset():
+    """A retarget changes the OBJECT, so the held width must not survive it.
+
+    Both gates compare against the instance being held. A car's 20-24 px width
+    kept after retargeting to a person would fail `_size_ok` on every candidate
+    forever, and the counters would cheerfully report the rejections.
+    """
+    lk = TargetLock()
+    lk.select([(200.0, 100.0, 60.0, 40.0, 0.9, W, H, 1.0)], W, 0.0, 100.0)
+    assert lk.cx is not None and lk.w is not None
+    lk.reset()
+    assert (lk.cx, lk.w, lk.last_yaw, lk.last_t) == (None, None, None, None)
+
+
+def test_reset_keeps_the_running_totals():
+    """A retarget does not un-happen the earlier ticks."""
+    lk = TargetLock()
+    lk.select([(200.0, 100.0, 60.0, 40.0, 0.9, W, H, 1.0)], W, 0.0, 100.0)
+    lk.select([(205.0, 100.0, 60.0, 40.0, 0.9, W, H, 1.0)], W, 0.0, 100.1)
+    before = lk.stats()
+    lk.reset()
+    assert lk.stats() == before
+
+
+def test_the_reset_is_what_keeps_the_switch_COUNT_honest():
+    """Measured, not assumed: the new target is adopted either way.
+
+    `select` falls back to the best-scoring candidate when the size gate empties
+    the shortlist, so a 20 px person IS taken after a 60 px car. What differs is
+    the bookkeeping - without a reset the adoption is flagged as a switch.
+
+    That matters because `n_switched` exists to catch the mission changing
+    target SILENTLY; a 13 s episode of following the wrong vehicle is why it was
+    added. An operator deliberately retargeting is the opposite of a silent
+    switch, and counting it as one would blind the metric to its own job.
+    """
+    car = (200.0, 100.0, 60.0, 40.0, 0.9, W, H, 1.0)
+    person = (210.0, 100.0, 20.0, 45.0, 0.8, W, H, 1.0)
+
+    lk = TargetLock()
+    lk.select([car], W, 0.0, 100.0)
+    got, switched = lk.select([person], W, 0.0, 100.1)
+    assert got[2] == 20.0, "the person is adopted even without a reset"
+    assert switched is True, "...but it is recorded as a switch"
+    assert lk.n_switched == 1 and lk.n_size_rejected == 1
+
+    lk2 = TargetLock()
+    lk2.select([car], W, 0.0, 100.0)
+    lk2.reset()
+    got2, switched2 = lk2.select([person], W, 0.0, 100.1)
+    assert got2[2] == 20.0
+    assert switched2 is False, "after a reset it is a clean acquisition"
+    assert lk2.n_switched == 0 and lk2.n_size_rejected == 0
+
+
+def test_every_human_synonym_arms_the_same_standoff_rule():
+    """REGRESSION for a rule that was present, hashed, audited - and inert.
+
+    `SubjectStandoff.binds()` compares class strings exactly. Policies name the
+    class "pedestrian"; the natural phrase is "a person". Before the canonical
+    map, "a person" produced the class "person", the 10 m rule written for
+    "pedestrian" never bound, and the 5 m catch-all applied instead.
+
+    Measured on the `retarget_demo` flight: two ticks of `standoff-any`, ZERO of
+    `standoff-pedestrian`, across a flight whose subject was a person. Nothing
+    reported it, because no violation is indistinguishable from no rule.
+    """
+    from guardrail import load_policy
+    from guardrail.models import SubjectStandoff
+    pol = load_policy(ROOT / "policies" / "follow_pedestrian.yaml")
+
+    def ring(phrase):
+        cls = subject_width(phrase)[1]
+        rules = [so for so in pol.by_type(SubjectStandoff) if so.binds(cls)]
+        return max((so.min_range_m for so in rules), default=None)
+
+    for phrase in ("a person", "a pedestrian", "a man", "a woman", "a human"):
+        assert ring(phrase) == 10.0, f"{phrase!r} did not arm the 10 m rule"
+    for phrase in ("a yellow car", "a taxi", "a white van"):
+        assert ring(phrase) == 5.0, f"{phrase!r} should get the catch-all"
+
+
+def test_every_width_word_maps_to_a_canonical_class():
+    """A word with no canonical class would fall back to itself and quietly
+    stop matching any policy rule - the same defect in a new place."""
+    missing = sorted(set(SUBJECT_WIDTH_M) - set(SUBJECT_CLASS_CANON))
+    assert not missing, f"no canonical class for: {missing}"
+
+
+def test_the_class_of_a_phrase_is_a_class_not_the_word_typed():
+    """The distinction the bug turned on."""
+    assert subject_width("a person")[1] == "pedestrian"
+    assert subject_width("a taxi")[1] == "car"
+    # width still comes from the specific word, because a taxi and a bus are
+    # not the same size even though both are vehicles
+    assert subject_width("a taxi")[0] != subject_width("a bus")[0]
+
+
+def test_an_unmatched_phrase_still_reports_no_class_rather_than_guessing():
+    w, cls = subject_width("a mysterious floating object")
+    assert cls is None and w == 4.0
+
+
+def test_retarget_schedule_parsing_rejects_what_it_cannot_fly():
+    """Parsed before take-off, so a typo is a start-up error rather than a
+    surprise twenty seconds into a recording."""
+    def parse(spec):
+        if ":" not in spec:
+            raise ValueError("not SECONDS:PHRASE")
+        when, _, phrase = spec.partition(":")
+        float(when)
+        if not phrase.strip():
+            raise ValueError("empty phrase")
+        return float(when), phrase.strip()
+
+    assert parse("25:a person") == (25.0, "a person")
+    assert parse("12.5: a person ") == (12.5, "a person")
+    for bad in ("a person", "abc:a person", "25:", "25:   "):
+        try:
+            parse(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad!r}")
 
 
 if __name__ == "__main__":

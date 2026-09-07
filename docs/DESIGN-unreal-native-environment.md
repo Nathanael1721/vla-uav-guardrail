@@ -96,12 +96,18 @@ A sensible split that keeps what the current approach is good at:
 2. Keep **spawning the few objects the mission depends on** — the tracked
    subject, any pedestrian used as a stand-off subject — from code with a seed.
    Those are the ones a KPI run has to be able to reproduce.
-3. **Rebuild the occupancy map from the new level**, and take the chance to close
-   the real map gap: tall street furniture at cruise height, which is what the
-   9 m flight struck at (48.3, −0.9).
+3. **Rebuild the occupancy map from the new level.** Any level edit invalidates
+   the map, so this is not optional housekeeping — it is the step that keeps
+   `ObstacleClearance` describing the world the aircraft is actually in.
 
-Point 3 is the one that turns a cosmetic task into a safety one, and it is the
-argument for doing this rather than skipping it.
+Point 3 is what keeps a cosmetic task from becoming a safety regression.
+
+> **Correction, 2026-09-07.** An earlier version of point 3 said the rebuild
+> would "close the real map gap: tall street furniture at cruise height". There
+> is no such gap. `occ_day.npz` was rebuilt over the 6–14 m band on 25 August and
+> the cell holding the 9 m collision at (48.3, −0.9) is occupied in it. The
+> reason to rebuild after editing a level is that the old map no longer matches
+> the level — not that something is missing from it today.
 
 ## Not to be confused with
 

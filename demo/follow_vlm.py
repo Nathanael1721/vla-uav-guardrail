@@ -61,6 +61,7 @@ from guardrail.manifest import build_manifest, is_kpi_grade         # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import (                                      # noqa: E402
     Action4D, AltitudeEnvelope, ObstacleClearance, PolygonFence,
+    SubjectStandoff,
 )
 from shapely.geometry import Point                                  # noqa: E402
 
@@ -134,12 +135,47 @@ SUBJECT_WIDTH_M = {
 }
 SUBJECT_WIDTH_DEFAULT = 4.0
 
+# The word the operator typed -> the class name a POLICY uses. These are two
+# different vocabularies and conflating them was a real, silent defect.
+#
+# `SubjectStandoff.binds()` compares class strings exactly. Policies name the
+# class "pedestrian"; the natural phrase is "a person". So a flight told to
+# follow "a person" produced the class "person", `binds("person")` returned
+# False against a rule written for "pedestrian", and the 10 m stand-off NEVER
+# ARMED - the 5 m catch-all applied instead. Measured on `retarget_demo`: two
+# ticks of `standoff-any`, zero of `standoff-pedestrian`, over a whole flight
+# where the subject was a person.
+#
+# Nothing reported it. The rule was present, hashed into policy_hash and written
+# to the audit log - and inert. That is the worst shape a safety defect can
+# take, and it turned on the operator happening to type one synonym rather than
+# another.
+#
+# Canonicalising here rather than loosening `binds()` keeps the policy side
+# exact: a rule still means one class, and the fuzziness lives where the human
+# words are.
+SUBJECT_CLASS_CANON = {
+    "pedestrian": "pedestrian", "person": "pedestrian", "human": "pedestrian",
+    "man": "pedestrian", "woman": "pedestrian",
+    "cyclist": "cyclist", "bicycle": "cyclist", "bike": "cyclist",
+    "motorcycle": "motorcycle", "motorbike": "motorcycle",
+    "scooter": "motorcycle",
+    "car": "car", "taxi": "car", "sedan": "car", "suv": "car",
+    "van": "van", "delivery": "van", "pickup": "van",
+    "truck": "truck", "lorry": "truck", "bus": "bus",
+}
+
 
 def subject_width(query: str) -> tuple[float, str | None]:
-    """Real width implied by the words, and the word it came from.
+    """Real width implied by the words, and the POLICY CLASS they select.
 
-    Returns the default with a None word when nothing matches, so the caller can
-    say so out loud rather than let a silent 4.0 look like a decision.
+    The second element used to be the matched word itself, which meant "a
+    person" and "a pedestrian" selected different classes and only the latter
+    armed a rule written for pedestrians. It is now the canonical class, so
+    every human synonym reaches the same rule. See SUBJECT_CLASS_CANON.
+
+    Returns the default with a None class when nothing matches, so the caller
+    can say so out loud rather than let a silent 4.0 look like a decision.
     """
     q = query.lower()
     best = None
@@ -148,7 +184,7 @@ def subject_width(query: str) -> tuple[float, str | None]:
             best = w
     if best is None:
         return SUBJECT_WIDTH_DEFAULT, None
-    return SUBJECT_WIDTH_M[best], best
+    return SUBJECT_WIDTH_M[best], SUBJECT_CLASS_CANON.get(best, best)
 
 
 # The depth stream is quantised to whole metres (see SemanticObs.get_depth),
@@ -740,6 +776,31 @@ class TargetLock:
         self.last_t = now
         return chosen, switched
 
+    def reset(self) -> None:
+        """Forget the held instance, for when the TARGET ITSELF changes.
+
+        Called on a mid-flight retarget. What it buys is a HONEST SWITCH COUNT,
+        not the ability to adopt the new target - measured, the lock adopts a
+        person after a car either way, because `select` falls back to the
+        best-scoring candidate when the size gate empties the shortlist.
+
+        The difference is what gets recorded. Without a reset the adoption is
+        flagged `switched=True` and lands in `n_switched` and `n_size_rejected`.
+        Those counters exist to catch the mission SILENTLY changing target - the
+        13 s episode of following the wrong vehicle is why they were added. An
+        operator deliberately retargeting is the opposite of that, and letting
+        it inflate the same counters would leave them unable to answer the
+        question they were built for.
+
+        The running totals are deliberately NOT cleared - they count what the
+        lock did across the whole flight, and a retarget does not un-happen the
+        earlier ticks.
+        """
+        self.cx = None
+        self.w = None
+        self.last_yaw = None
+        self.last_t = None
+
     def stats(self) -> dict:
         return {"locked": self.n_locked, "switched": self.n_switched,
                 "rejected_candidates": self.n_rejected,
@@ -1140,6 +1201,12 @@ class Grounder:
         self.log_path = log_path
         self._lock = threading.Lock()
         self._stop = False
+        # Bumped by retarget(). The worker builds its query list once, outside
+        # its loop, so re-assigning self.query alone would change nothing - the
+        # detector would keep asking for the old phrase while every other part
+        # of the system believed the target had changed. The counter is what
+        # makes the swap actually reach the model.
+        self._query_gen = 0
         self._seq = 0
         self._det = None          # (cx, cy, w, h, score, W, H, colour)
         self._app = None          # HSV histogram of the chosen box
@@ -1152,6 +1219,42 @@ class Grounder:
         self._n_seen = 0
         self._n_miss = 0
         self._thread = threading.Thread(target=self._worker, daemon=True)
+
+    def retarget(self, phrase: str) -> None:
+        """Point the detector at a different thing, without restarting anything.
+
+        This is the whole open-vocabulary argument in one method. A conventional
+        tracker must be handed a BOX and cannot be handed a NOUN; it returns an
+        id, never a class. Here the target changes because the WORDS changed -
+        no re-initialisation, no click, no retraining - and because the words
+        carry a class, the Shield can pick a different stand-off rule for it.
+
+        Everything tied to the OLD target has to go, and each for its own reason:
+
+          * `_det` / `_app` - a cached box on the previous object. Left in place,
+            the controller would keep steering at it for up to `drop_after`
+            seconds after the operator had asked for something else.
+          * `_t_det` - the freshness clock for that box. Not clearing it would
+            make a stale detection look current.
+          * the TargetLock - see TargetLock.reset; without it the new target is
+            still adopted, but recorded as a silent target SWITCH, which is the
+            one thing those counters exist to detect.
+          * `last`, in the worker - the jump-suppression memory. The new target
+            is somewhere else in frame by definition, so the old position would
+            veto every candidate that is actually correct.
+
+        `colour` is recomputed here because the colour gate reads it live on
+        every candidate; `queries` is rebuilt by the worker off `_query_gen`.
+        """
+        with self._lock:
+            self.query = phrase
+            self.colour = colour_word(phrase)
+            self._det = None
+            self._app = None
+            self._t_det = 0.0
+            self._query_gen += 1
+        if self.lock is not None:
+            self.lock.reset()
 
     def start(self):
         self._thread.start()
@@ -1168,8 +1271,19 @@ class Grounder:
         print(f"[grounder] {DETECTOR_ID} loaded in {time.time()-t0:.0f}s "
               f"(VRAM {torch.cuda.memory_allocated()/1e9:.2f} GB)", flush=True)
         queries = [[self.query]]
+        gen = self._query_gen
         last = None
         while not self._stop:
+            # Pick up a retarget. Cheap: an int compare per frame, and the
+            # rebuild only runs on the tick the phrase actually changed.
+            if self._query_gen != gen:
+                with self._lock:
+                    gen = self._query_gen
+                    queries = [[self.query]]
+                # The jump gate compares against where the OLD target was, so it
+                # would reject the new one on exactly the frames that matter.
+                last = None
+                print(f"[grounder] retargeted -> {queries[0][0]!r}", flush=True)
             img = self.obs.get_front_native()
             if img is None:
                 time.sleep(0.05)
@@ -1338,6 +1452,37 @@ async def fly(args) -> int:
     # from one phrase rather than two flags that can disagree.
     subject_class = subject_width(args.object)[1]
 
+
+    # Mid-flight retarget schedule: [(seconds, phrase), ...], soonest first.
+    # Parsed here, before anything flies, so a typo is a start-up error rather
+    # than a surprise twenty seconds into a recording.
+    retargets: list[tuple[float, str]] = []
+    for spec in (args.retarget or []):
+        if ":" not in spec:
+            raise SystemExit(f"--retarget {spec!r} is not SECONDS:PHRASE")
+        when, _, phrase = spec.partition(":")
+        try:
+            t_at = float(when)
+        except ValueError:
+            raise SystemExit(f"--retarget {spec!r}: {when!r} is not a number")
+        if not phrase.strip():
+            raise SystemExit(f"--retarget {spec!r} has an empty phrase")
+        retargets.append((t_at, phrase.strip()))
+    retargets.sort(key=lambda r: r[0])
+    # Declared at function scope, not inside the flight block: the block
+    # is conditional and metrics is written either way, so a declaration
+    # in there would be a NameError on any path that does not fly.
+    retarget_events: list[dict] = []
+    if retargets:
+        print("[retarget] schedule: " + ", ".join(
+            f"t+{t:.0f}s -> {p!r} (class "
+            f"{subject_width(p)[1] or 'unclassified'})" for t, p in retargets))
+
+    # Whether the width came from the operator or from the phrase. A retarget
+    # re-derives it from the new phrase, but must never overwrite a number the
+    # operator pinned by hand - they know something the word list does not.
+    args.object_width_pinned = args.object_width_m is not None
+
     if args.object_width_m is None:
         args.object_width_m, matched = subject_width(args.object)
         if matched:
@@ -1364,6 +1509,21 @@ async def fly(args) -> int:
             (out / f).unlink()
 
     policy = load_policy(args.policy)
+
+    # A stand-off rule naming a class no phrase can ever produce is inert: it is
+    # hashed, audited, and never fires. That is exactly how the 10 m pedestrian
+    # rule sat dead through a whole flight while "a person" produced the class
+    # "person" and the rule said "pedestrian". Nothing reported it, because
+    # there was nothing to report - no violation is indistinguishable from no
+    # rule. Check it before take-off, where it is cheap and loud.
+    _reachable = set(SUBJECT_CLASS_CANON.values())
+    for _so in policy.by_type(SubjectStandoff):
+        if _so.subject_class != "*" and _so.subject_class not in _reachable:
+            raise SystemExit(
+                f"policy rule {_so.id!r} binds subject_class "
+                f"{_so.subject_class!r}, which no --object phrase can produce. "
+                f"The rule would never fire. Reachable classes: "
+                f"{', '.join(sorted(_reachable))}.")
     cmap = city_planner.load_occ(args.citymap)
     smap = None
     if policy.by_type(ObstacleClearance) and cmap is not None:
@@ -1763,6 +1923,35 @@ async def fly(args) -> int:
                   f"{args.object_width_m:.2f} m subject)")
         while time.time() - t0 < args.max_s:
             tick += 1
+            # Retarget BEFORE the tick reads anything, so the whole tick - the
+            # detector query, the stand-off class, the log row - describes one
+            # target rather than half of each.
+            now_s = time.time() - t0
+            while retargets and now_s >= retargets[0][0]:
+                t_at, phrase = retargets.pop(0)
+                old_class, old_obj = subject_class, args.object
+                args.object = phrase
+                new_w, subject_class = subject_width(phrase)
+                # The range estimate is scaled by the subject's real width, so a
+                # 4 m car prior left on a 0.5 m person reports them ~8x too far
+                # away. Only override a width the user did not pin by hand.
+                if not args.object_width_pinned:
+                    args.object_width_m = new_w
+                if grounder is not None:
+                    grounder.retarget(phrase)
+                if estimator is not None:
+                    # The old track is a different object's position and
+                    # velocity. Carrying it would have the Shield hold a
+                    # stand-off from where the CAR was.
+                    estimator.reset()
+                ev = {"t": round(now_s, 3), "tick": tick,
+                      "scheduled_at_s": t_at,
+                      "from": {"object": old_obj, "class": old_class},
+                      "to": {"object": phrase, "class": subject_class,
+                             "object_width_m": round(args.object_width_m, 3)}}
+                retarget_events.append(ev)
+                print(f"[retarget] t+{now_s:.1f}s  {old_obj!r} ({old_class}) "
+                      f"-> {phrase!r} ({subject_class})", flush=True)
             kin = drone.get_ground_truth_kinematics()
             p = kin["pose"]["position"]
             yaw = quat_yaw(kin["pose"]["orientation"])
@@ -2247,6 +2436,11 @@ async def fly(args) -> int:
         # 13 s without anything noticing.
         "target_lock": ({"enabled": True, **lock.stats()} if lock is not None
                         else {"enabled": False}),
+        # Mid-flight target changes, with the class each one selected. This is
+        # what lets a reader check the claim the demo makes - that the enforced
+        # stand-off changed because the WORD changed - against the flight log
+        # rather than against the video.
+        "retargets": retarget_events,
         "det_hz": round((g["n_seen"] + g["n_miss"]) / max(1e-6, len(traj) * TICK), 2),
         "start_heading_err_deg": (None if start_heading_err_deg is None
                                   else round(start_heading_err_deg, 2)),
@@ -2351,6 +2545,13 @@ def main() -> int:
     ap.add_argument("--object", default="a white car",
                     help="what to follow, in words. This is the only thing that "
                          "tells the drone what its target is.")
+    ap.add_argument("--retarget", action="append", default=None,
+                    metavar="SECONDS:PHRASE",
+                    help="change the target mid-flight, e.g. "
+                         "--retarget 25:'a person'. Repeatable. A TIME schedule "
+                         "rather than a key press, so the flight is "
+                         "reproducible and can be replayed for a video. "
+                         "Absent, the flight behaves exactly as before.")
     ap.add_argument("--policy", default=str(ROOT / "policies" / "follow_car.yaml"))
     ap.add_argument("--citymap", default=str(ROOT / "demo" / "out" / "citymap" / "occ_day.npz"))
     ap.add_argument("--tag", default="vlmfollow")

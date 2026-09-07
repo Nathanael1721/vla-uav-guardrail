@@ -109,9 +109,21 @@ and I would like a decision on it rather than making one quietly.
 | MAVROS 2, then open the `canonical-hil` guard | **Done** |
 | Midterm report stating the failed gate honestly | **Done** |
 | Run the full 960×540 back-off ladder and record what was kept | **Partial** — the failing rung is recorded and the config was backed off; the comparison rungs were never run |
-| Add trees / street furniture / parked vehicles to `occ_day.npz` | **Still open — and now wider** |
+| Add trees / street furniture / parked vehicles to `occ_day.npz` | **Done, 25 Aug** — see the correction below |
 
-**Do not hide the last two.** Saying them first is what makes the rest credible.
+> **Correction, 2026-09-07.** This row said "still open — and now wider" and that
+> was wrong. `occ_day.npz` was rebuilt over the 6–14 m flight band on **25
+> August**, and the cell holding the documented 9 m collision at (48.3, −0.9) is
+> occupied in it. I carried the claim forward from the 19 August minutes without
+> testing it against the map, which takes one command. Do not repeat it in the
+> meeting.
+>
+> What is genuinely undecided is narrower: `follow_pedestrian.yaml` permits
+> descent to **4 m** while loading the 6–14 m band map, and `ground_2to4.npz`
+> exists for that altitude with nothing selecting it.
+
+**Do not hide the back-off ladder row.** Saying it first is what makes the rest
+credible.
 
 > **Indonesia.** Enam dari delapan selesai. Dua belum: tangga back-off resolusi
 > baru sebagian, dan objek jalanan belum masuk peta rintangan. **Sebutkan dua ini
