@@ -91,4 +91,11 @@ package-lock.json
 Thumbs.db
 desktop.ini
 *.swp
+# POLICY bundles are byte-derivable from the tracked YAML, so ignoring them
+# costs nothing - regenerate with python -m guardrail.bundle.
 bundles/*.tar.gz
+# REPLAY bundles are not. They wrap a flight log, and demo/out/ is ignored, so a
+# replay bundle cannot be rebuilt from a clone. WP4 names it as a deliverable;
+# ignoring it left the artefact existing in exactly one working tree. They are
+# ~100 KiB each, which is what an episode compresses to, and they are kept.
+!bundles/*.replay.tar.gz

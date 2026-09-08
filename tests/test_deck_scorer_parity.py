@@ -107,6 +107,9 @@ def _compare(rows, label):
         assert abs(js["median"] - py["det_gt_err_px_median"]) < 0.05, (label, js, py)
 
 
+SKIP = "SKIP"
+
+
 def test_the_deck_still_defines_both_functions():
     assert DECK.is_file()
     src = _js_functions()
@@ -131,7 +134,7 @@ def test_an_empty_truth_is_unscorable_in_BOTH_and_never_falls_back_to_the_car():
             for i in range(1, 6)]
     js = _run_js(rows)
     if not js:
-        return
+        return SKIP
     assert js["n"] == 0 and js["unscorable"] == 5, js
     assert js["onTarget"] is None, js
     _compare(rows, "empty-truth")
@@ -142,7 +145,7 @@ def test_an_all_unscorable_phase_does_not_kill_the_deck_build():
     with a TypeError and produced no .pptx at all."""
     js = _run_js([_row(200.0, 1, truth={"class": "van", "pts": []})])
     if not js:
-        return
+        return SKIP
     assert js is not None and js["unscorable"] == 1, js
     assert js["median"] is None and js["p95"] is None, js
 
@@ -163,7 +166,7 @@ def test_a_mixed_flight_agrees_end_to_end():
 def test_the_recorded_retarget_flight_agrees():
     log = ROOT / "demo" / "out" / "retarget_demo2" / "flight_log.jsonl"
     if not log.is_file():
-        return
+        return SKIP
     rows = [json.loads(line) for line in log.open(encoding="utf-8") if line.strip()]
     _compare(rows[:200], "retarget_demo2-head")
 
@@ -178,11 +181,17 @@ def test_the_js_has_no_length_guard_that_would_reintroduce_the_fallback():
 
 
 if __name__ == "__main__":
+    # A test that short-circuits on a missing fixture must NOT print PASS - on a
+    # clean clone demo/out/ is gitignored and those tests assert nothing. See
+    # tests/test_replay.py, where that hid 7 no-ops behind "8/8 passed".
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == SKIP:
+                skipped += 1
+                print(f"SKIP  {fn.__name__} (fixture missing)")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -190,5 +199,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

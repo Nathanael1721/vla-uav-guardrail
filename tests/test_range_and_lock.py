@@ -51,6 +51,9 @@ def _depth(bg=200.0, box=None, val=25.0):
 
 # ----------------------------------------------------------------- range
 
+SKIP = "SKIP"
+
+
 def test_range_reads_the_object_not_the_background():
     """The whole point of shrinking the sampling window."""
     d = _depth(bg=300.0, box=(180, 97, 220, 127), val=25.0)
@@ -780,7 +783,7 @@ def test_the_flown_log_shows_the_gating_episode():
     flight's escape rate of 0.0 said nothing about it."""
     log = ROOT / "demo" / "out" / "retarget_demo2" / "flight_log.jsonl"
     if not log.is_file():
-        return
+        return SKIP
     import json
     rows = [json.loads(l) for l in log.open(encoding="utf-8")]
     for r in rows:                     # the log predates the `truth` field
@@ -819,11 +822,17 @@ def test_a_subject_with_no_truth_logs_nothing_rather_than_the_car():
 
 
 if __name__ == "__main__":
+    # A test that short-circuits on a missing fixture must NOT print PASS - on a
+    # clean clone demo/out/ is gitignored and those tests assert nothing. See
+    # tests/test_replay.py, where that hid 7 no-ops behind "8/8 passed".
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == SKIP:
+                skipped += 1
+                print(f"SKIP  {fn.__name__} (fixture missing)")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -831,5 +840,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

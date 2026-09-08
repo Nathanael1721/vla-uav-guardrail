@@ -34,6 +34,9 @@ def _have() -> bool:
 
 # --- the arithmetic, independent of any file ------------------------------
 
+SKIP = "SKIP"
+
+
 def test_a_band_fully_inside_one_map_has_no_gap():
     b = [{"lo": 6.0, "hi": 14.0}]
     assert gaps(8.0, 10.0, b) == []
@@ -65,7 +68,7 @@ def test_overlapping_bands_do_not_manufacture_a_gap():
 
 def test_the_four_band_maps_are_on_disk_and_declared():
     if not _have():
-        return
+        return SKIP
     stems = {b["stem"] for b in available(MAPS)}
     assert stems <= set(BANDS), stems
     assert "occ_day_flightband_6to14" in stems and "ground_2to4" in stems
@@ -75,7 +78,7 @@ def test_the_pedestrian_policy_band_has_an_unmapped_slice():
     """THE finding. follow_pedestrian.yaml permits 4-10 m; ground_2to4 ends at
     exactly 4 m, so it never applies, and nothing maps 4-6 m."""
     if not _have():
-        return
+        return SKIP
     sel = select_for_band(MAPS, 4.0, 10.0)
     assert sel["gaps"] == [(4.0, 6.0)], sel["gaps"]
     assert [b["stem"] for b in sel["used"]] == ["occ_day_flightband_6to14"]
@@ -87,7 +90,7 @@ def test_neither_low_nor_cruise_map_contains_the_other():
     of structure the cruise map does not; the cruise map holds the building at
     (64, 40) — the documented 9 m collision — which is open at 2-4 m."""
     if not _have():
-        return
+        return SKIP
     band = np.load(MAPS / "occ_day_flightband_6to14.npz")["occ"].astype(bool)
     low = np.load(MAPS / "ground_2to4.npz")["occ"].astype(bool)
     assert int(band.sum()) == 2015 and int(low.sum()) == 1391
@@ -99,7 +102,7 @@ def test_the_ground_plane_is_rejected_rather_than_merged():
     """ground_0to2 is 100 % occupied. Unioned in, every cell is blocked and the
     Shield vetoes everything — which looks identical to a Shield working hard."""
     if not _have():
-        return
+        return SKIP
     sel = select_for_band(MAPS, 0.0, 3.0)
     assert [b["stem"] for b in sel["rejected"]] == ["ground_0to2"], sel["rejected"]
     assert [b["stem"] for b in sel["used"]] == ["ground_2to4"]
@@ -108,7 +111,7 @@ def test_the_ground_plane_is_rejected_rather_than_merged():
 
 def test_a_band_spanning_two_real_maps_unions_them():
     if not _have():
-        return
+        return SKIP
     sel = select_for_band(MAPS, 3.0, 10.0)
     stems = [b["stem"] for b in sel["used"]]
     assert stems == ["ground_2to4", "occ_day_flightband_6to14"], stems
@@ -119,7 +122,7 @@ def test_a_band_spanning_two_real_maps_unions_them():
 
 def test_the_merged_map_keeps_the_grid_the_planner_expects():
     if not _have():
-        return
+        return SKIP
     sel = select_for_band(MAPS, 3.0, 10.0)
     m = sel["map"]
     assert set(m) == {"occ", "height", "res", "ox", "oy", "N"}
@@ -131,7 +134,7 @@ def test_an_uncovered_band_returns_no_map_rather_than_the_nearest_one():
     """Returning the closest map would be the silent failure: a plausible grid,
     for the wrong altitude, with nothing saying so."""
     if not _have():
-        return
+        return SKIP
     sel = select_for_band(MAPS, 100.0, 120.0)
     assert sel["map"] is None and sel["gaps"] == [(100.0, 120.0)]
     assert any("no band map covers" in line for line in sel["report"])
@@ -139,7 +142,7 @@ def test_an_uncovered_band_returns_no_map_rather_than_the_nearest_one():
 
 def test_strict_raises_and_names_the_uncovered_slice():
     if not _have():
-        return
+        return SKIP
     try:
         select_for_band(MAPS, 4.0, 10.0, strict=True)
     except ValueError as exc:
@@ -152,7 +155,7 @@ def test_the_degenerate_threshold_sits_clear_of_the_real_maps():
     """0.90 has to be above every real map and below the ground plane, or the
     guard either fires on good data or never fires at all."""
     if not _have():
-        return
+        return SKIP
     fracs = {b["stem"]: float(np.load(b["path"])["occ"].astype(bool).mean())
              for b in available(MAPS)}
     assert fracs["ground_0to2"] == 1.0, fracs
@@ -162,11 +165,17 @@ def test_the_degenerate_threshold_sits_clear_of_the_real_maps():
 
 
 if __name__ == "__main__":
+    # A test that short-circuits on a missing fixture must NOT print PASS - on a
+    # clean clone demo/out/ is gitignored and those tests assert nothing. See
+    # tests/test_replay.py, where that hid 7 no-ops behind "8/8 passed".
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == SKIP:
+                skipped += 1
+                print(f"SKIP  {fn.__name__} (fixture missing)")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -174,5 +183,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

@@ -26,11 +26,19 @@ writing it now rather than after that day.
 
 INTEGRITY, HONESTLY DESCRIBED
 
-Every member is digested and the digests are listed in `replay.json`, which is
-itself digested into `signature.txt` beside the same placeholder signer
-`bundle.py` uses. This catches accidental corruption, a truncated download and a
-hand-edited log. It does not catch someone who rewrites the log AND the index,
-and it does not claim to — see the same note in `guardrail/bundle.py`.
+Every member in the archive is digested, the digests are listed in
+`replay.json`, and the index is digested into `signature.txt` beside the same
+placeholder signer `bundle.py` uses.
+
+**The signature is keyless.** `signature.txt` is `sha256(replay.json)`, so
+anyone who edits a member can recompute the index and then recompute the
+signature in one line, and the bundle reads as intact. This catches accidental
+corruption, a truncated download, a hand-edited log, and an archive that has
+picked up an extra file. It does not catch a deliberate, consistent forgery and
+cannot until there is a real key — which is an open question for the lab or
+ITRI, recorded the same way in `guardrail/bundle.py`. Stated here because a
+2026-09-08 review found a test in `tests/test_replay.py` claiming the opposite,
+passing only because the forgery it staged forgot to update the signature.
 """
 from __future__ import annotations
 
@@ -64,10 +72,25 @@ EPISODE_FILES = {
 # KPI fields compared on verification. Deliberately the contractual figures and
 # the counts they derive from, rather than every key: a bundle should not be
 # refused because a later version of `compute()` added a field.
+#
+# THE NAMES ARE CHECKED AGAINST `compute()` AT VERIFY TIME. The first version of
+# this tuple contained "p0_ticks" and "fail_safe_correctness", neither of which
+# is a key that `guardrail/kpi.py` ever emits — the real names are
+# `p0_violation_ticks` and `failsafe_trigger_correctness`. A `field not in
+# stored: continue` skipped both silently, so the grant's fail-safe KPI was
+# never re-derived and a bundle whose fail-safe figure had been edited from 1.0
+# to 0.10 verified clean. Two typos, no error, five fields compared where seven
+# were claimed. See `_unknown_fields()`.
 VERIFIED_KPI_FIELDS = (
-    "p0_violation_escape_rate", "p0_ticks", "p0_ticks_not_measurable",
-    "fail_safe_correctness", "mean_repair_magnitude_mps",
-    "max_repair_magnitude_mps", "mean_time_to_safe_s",
+    "p0_violation_escape_rate",
+    "p0_violation_ticks",
+    "p0_escapes",
+    "p0_ticks_not_measurable",
+    "failsafe_trigger_correctness",
+    "mean_repair_magnitude_mps",
+    "max_repair_magnitude_mps",
+    "mean_time_to_safe_s",
+    "max_time_to_safe_s",
 )
 
 
@@ -115,10 +138,19 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
 
     # The policy has to be the one that actually governed this flight. Without
     # this, any policy bundles with any episode and `verify_replay` still says
-    # yes, because the KPI recompute uses whatever priorities it is handed - so
-    # a bundle could ship a clean escape rate derived under rules the aircraft
-    # never flew under. The run's own manifest already records the hash.
+    # yes, because the KPI recompute uses whatever priorities it is handed - and
+    # it cannot notice, because `kpi.compute` treats an unknown rule_id as P0
+    # (guardrail/kpi.py), so substituting a foreign policy changes no KPI field
+    # at all. The run's own manifest records the hash that settles it.
+    #
+    # The guard used to be skipped entirely when manifest.json was absent, which
+    # EPISODE_FILES permits - and a real scored flight then bundled cleanly under
+    # each of the 26 other policies on disk. A run that carries KPI figures must
+    # carry the manifest that binds them to a policy; one that carries no figures
+    # may be bundled unbound, and says so in the index.
     run_manifest = members.get(EPISODE + "manifest.json")
+    has_kpi = (EPISODE + "kpi.json") in members
+    policy_binding = "manifest"
     if run_manifest is not None:
         flown = json.loads(run_manifest).get("policy_hash")
         if flown and flown != policy.policy_hash:
@@ -126,6 +158,16 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
                 f"{run.name} was flown under policy {flown}, but the policy "
                 f"passed here hashes to {policy.policy_hash}. A replay bundle "
                 f"must carry the policy that governed the episode.")
+        if not flown:
+            policy_binding = "unverified"
+    elif has_kpi:
+        raise ValueError(
+            f"{run.name} has kpi.json but no manifest.json, so nothing binds "
+            f"its KPI figures to a policy. Any policy would bundle and verify "
+            f"clean. Bundle the manifest, or bundle the episode without its "
+            f"KPI table.")
+    else:
+        policy_binding = "unverified"
 
     ir = json.dumps(policy.model_dump(mode="json"), sort_keys=True,
                     separators=(",", ":")).encode()
@@ -140,6 +182,10 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
         "policy_id": policy.policy_id,
         "policy_hash": policy.policy_hash,
         "changelog": changelog,
+        # "manifest" = the episode's own manifest agreed this policy governed it.
+        # "unverified" = nothing in the episode binds it to any policy; the
+        # bundle is still honest, and verify_replay says so out loud.
+        "policy_binding": policy_binding,
         "members": {k: _digest(v) for k, v in sorted(members.items())},
     }
     index_bytes = json.dumps(index, indent=2, sort_keys=True).encode()
@@ -170,8 +216,33 @@ def read_replay(path: str | Path) -> dict[str, Any]:
                 f"{path}: signature does not match the index; the bundle has "
                 f"been modified or truncated.")
         index = json.loads(index_bytes)
+        declared = index.get("members") or {}
+
+        # Everything the archive holds must be declared. Iterating the INDEX
+        # alone left an undeclared member neither digested nor rejected, while
+        # the docstring said "check every digest" - so a bundle could carry a
+        # second KPI table, another policy IR, or an operator's note that no
+        # digest and no signature ever covered.
+        in_archive = {m.name for m in tar.getmembers() if m.isfile()}
+        undeclared = sorted(in_archive - set(declared) - {INDEX_NAME,
+                                                          SIGNATURE_NAME})
+        if undeclared:
+            raise ValueError(
+                f"{path}: archive carries {len(undeclared)} member(s) the index "
+                f"does not declare, so nothing covers them: "
+                f"{', '.join(undeclared)}.")
+
+        # Required members are checked BEFORE use, so a bundle without the log
+        # says so instead of dying on a bare KeyError deep inside the parse -
+        # the same reason `_read` exists.
+        for req in (POLICY + "ir.json", EPISODE + "flight_log.jsonl"):
+            if req not in declared:
+                raise ValueError(
+                    f"{path}: the index does not declare {req!r}, which every "
+                    f"replay bundle must contain.")
+
         blobs: dict[str, bytes] = {}
-        for name, want in index["members"].items():
+        for name, want in declared.items():
             data = _read(tar, name)
             got = _digest(data)
             if got != want:
@@ -218,16 +289,37 @@ def verify_replay(path: str | Path) -> tuple[bool, list[str]]:
         return False, [f"episode flown under policy {flown}, bundle carries "
                        f"{got['policy'].policy_hash}"]
 
+    notes = []
+    if got["index"].get("policy_binding") != "manifest":
+        notes.append("policy binding UNVERIFIED: the episode carries no "
+                     "manifest recording which policy governed it, so the KPI "
+                     "recompute below is against a policy nothing confirms")
+
     stored = got["kpi"]
     if stored is None:
         # Honest, and not a failure: an episode may be bundled before it is
         # scored. Say so rather than passing silently.
-        return True, ["no kpi.json in the bundle; nothing to re-derive"]
+        return True, notes + ["no kpi.json in the bundle; nothing to re-derive"]
 
     fresh = compute(got["rows"], rule_priorities(got["policy"]), got["metrics"])
+
+    # A name in VERIFIED_KPI_FIELDS that neither side has is a typo in this
+    # module, not a property of the bundle - and skipping it silently is how
+    # two of the grant's KPIs went unchecked for a day. Fail loudly instead.
+    unknown = [f for f in VERIFIED_KPI_FIELDS
+               if f not in stored and f not in fresh]
+    if unknown:
+        return False, [f"VERIFIED_KPI_FIELDS names {len(unknown)} field(s) that "
+                       f"neither the stored table nor compute() produces, so "
+                       f"they were never compared: {', '.join(unknown)}"]
+
     bad = []
     for field in VERIFIED_KPI_FIELDS:
         if field not in stored:
+            # Present in compute() but not in this (older) stored table. Worth
+            # saying; not a mismatch.
+            notes.append(f"{field}: absent from the bundle's KPI table, so it "
+                         f"could not be re-derived")
             continue
         a, b = stored.get(field), fresh.get(field)
         if isinstance(a, float) and isinstance(b, float):
@@ -235,4 +327,4 @@ def verify_replay(path: str | Path) -> tuple[bool, list[str]]:
                 bad.append(f"{field}: bundle {a}, recomputed {b}")
         elif a != b:
             bad.append(f"{field}: bundle {a!r}, recomputed {b!r}")
-    return (not bad), bad
+    return (not bad), (bad if bad else notes)
