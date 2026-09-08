@@ -96,6 +96,7 @@ function truthPts(r) {
 
 function scoreRows(rows) {
   const errs = [];
+  const nulls = [];      // what a centre-constant detector scored on each row
   const cands = [];
   let outOfFov = 0;
   let unscorable = 0;
@@ -106,26 +107,39 @@ function scoreRows(rows) {
     const W = r.det.img_w || 400;
     let bestIn = null;
     let bestAny = null;
+    let nullIn = null;
     let nIn = 0;
     for (const pt of pts) {
       let rel = Math.atan2(pt[1] - r.y, pt[0] - r.x) - r.psi;
       rel = Math.atan2(Math.sin(rel), Math.cos(rel));
       const deg = (rel * 180) / Math.PI;
-      const e = Math.abs(r.det.cx - W * (0.5 + deg / 90));
+      const cxGt = W * (0.5 + deg / 90);
+      const e = Math.abs(r.det.cx - cxGt);
+      // The null model: a detector that emits the frame centre on every frame,
+      // never opening the image. Since the aircraft yaws to POINT AT what it is
+      // following, that constant scores close to the real detector - and on
+      // city_full it beats it - so a score means nothing without this beside
+      // it. No RNG, so the JS and the Python agree exactly on this one.
+      const eNull = Math.abs(W / 2 - cxGt);
       if (bestAny === null || e < bestAny) bestAny = e;
       // Only a subject actually IN SHOT may be credited with the box - the
       // Python does the same. Taking the min over all candidates let a row be
       // scored on target against a subject behind the aircraft.
-      if (Math.abs(deg) <= 45) { nIn++; if (bestIn === null || e < bestIn) bestIn = e }
+      if (Math.abs(deg) <= 45) {
+        nIn++;
+        if (bestIn === null || e < bestIn) bestIn = e;
+        if (nullIn === null || eNull < nullIn) nullIn = eNull;
+      }
     }
-    if (nIn > 0) { errs.push(bestIn); cands.push(nIn) }
-    else { errs.push(bestAny); cands.push(0); outOfFov++ }
+    if (nIn > 0) { errs.push(bestIn); nulls.push(nullIn); cands.push(nIn) }
+    else { errs.push(bestAny); nulls.push(null); cands.push(0); outOfFov++ }
   }
   // A phase with nothing scorable still has something to say - how many
   // detections could not be judged. Returning bare null here would throw that
   // away and leave callers dereferencing nothing.
   if (!errs.length) {
     return { n: 0, unscorable, median: null, p95: null, onTarget: null,
+             chance: null, onTarget25: null, chance25: null,
              candidates: null, outOfFov: 0 };
   }
   const s = errs.slice().sort((a, b) => a - b);
@@ -135,7 +149,12 @@ function scoreRows(rows) {
     unscorable,
     median: s[Math.floor(s.length / 2)],
     p95: s[Math.min(s.length - 1, Math.floor(0.95 * s.length))],
-    onTarget: errs.filter((e) => e <= 100).length / errs.length,
+    onTarget: errs.filter((e, i) => cands[i] > 0 && e <= 100).length / errs.length,
+    // The floor a zero-skill detector reaches on these same rows, and the
+    // margin over it - which is the part that is evidence.
+    chance: nulls.filter((e, i) => cands[i] > 0 && e !== null && e <= 100).length / errs.length,
+    onTarget25: errs.filter((e, i) => cands[i] > 0 && e <= 25).length / errs.length,
+    chance25: nulls.filter((e, i) => cands[i] > 0 && e !== null && e <= 25).length / errs.length,
     // How many acceptable subjects were in shot. 1 means the figure is
     // comparable with the single-target flights; more means it is not, and the
     // Python reports a chance floor beside it for that reason.
@@ -561,7 +580,7 @@ async function main() {
       card(s, 5.10, 1.68, 4.35, 1.62, ic.warn, "A rule that was hashed and inert",
         `Building it found the 10 m rule binding "pedestrian" while the phrase produced "person". Exact-string compare, so across a whole flight with a human subject it fired 0 times and the 5 m catch-all applied. No violation is indistinguishable from no rule. Synonyms are now canonicalised, and an unreachable rule is a start-up refusal.`);
       card(s, 0.55, 3.44, 4.35, 1.62, ic.check, "Tracking, scored honestly",
-        `Before the retarget: ${pct(R.pre.onTarget)} on target, ${n(R.pre.median, 1)} px median over ${preN} detections. After it: UNMEASURED. The log carried one ground truth — the car — so the ${postAll} later detections were being compared to an object behind the aircraft. Truth now follows the subject.`);
+        `Before the retarget: ${pct(R.pre.onTarget)} on target against a ${pct(R.pre.chance)} floor — a detector that just emits the frame centre scores that, because the aircraft points at what it follows. The margin is the evidence: ${pct(R.pre.onTarget - R.pre.chance)} here, ${pct(R.pre.onTarget25 - R.pre.chance25)} at a 25 px tolerance, over ${preN} detections at ${n(R.pre.median, 1)} px median. After the retarget: UNMEASURED — the log carried one ground truth, the car, so the ${postAll} later detections were compared to an object behind the aircraft.`);
       card(s, 5.10, 3.44, 4.35, 1.62, ic.aim, "What the flight does not show yet",
         "The ring did not fire: the position the Shield was SERVED never came inside 14.7 m, and a 10 m ring cannot fire at 14.7 m. The capability is proven in the sweep; the video shows the retarget but not its consequence. Stated as the open item it is.");
     }

@@ -201,6 +201,16 @@ class ObstacleClearance(ConstraintBase):
     soft_margin_m: float = Field(default=0.0, ge=0)
 
 
+# NOTE (2026-09-08): `soft_margin_m` below is declared, hashed into
+# policy_hash, set to 2.0 in every flown follow policy - and read by NOTHING.
+# The Shield reads a soft_margin_m at exactly one site, guardrail/shield.py's
+# ObstacleClearance repair, and that is ObstacleClearance's own field. So this
+# one is a knob that changes the reproducibility hash and no behaviour.
+#
+# Left in place rather than deleted: removing it would change policy_hash on
+# every stored run and orphan the two replay bundles, for a field that costs
+# nothing. Recorded here so the next reader does not spend an afternoon looking
+# for where it takes effect, and so nobody tunes it expecting an outcome.
 class SubjectStandoff(ConstraintBase):
     """Keep at least `min_range_m` from the SUBJECT being followed.
 

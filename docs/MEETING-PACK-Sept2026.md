@@ -691,13 +691,13 @@ afterwards.
 | Constraint classes | **6** (reference implementation: 2) | corridor + valid_time new |
 | Scenario sweep | **13 scenarios, 12 pass, 1 known failure** | headless, ~1 s |
 | Delivered runs rescored | **42**, every P0 figure reproduced | no re-flying |
-| Test suite | **455 tests, 23 files** | all green |
+| Test suite | **457 tests, 23 files** | all green |
 | Camera-rail rate gate | **0 of 6** runs meet it | open item |
 | Retarget, class change in flight | `car` → `pedestrian` at **t+30.0 s** | ring 5 m → 10 m |
-| Tracking before the retarget | **0.931** on target, 7.6 px median | 247 detections |
+| Tracking before the retarget | **0.915** on target (floor 0.830) | 247 detections, 7.6 px median |
 | Tracking after the retarget | **unmeasured** — no truth was logged | now fixed |
 | Closest served subject range, after | **14.7 m** (median 20.5) | why the ring never fired |
-| Ticks the camera said "inside", the estimate said "outside" | **4** consecutive | `retarget_demo2`, ticks 451-454 |
+| Ticks the camera said "inside", the estimate said "outside" | **0** | see the note |
 
 > **How that 4 is obtained.** `range_agreement` reads the enforced ring from the
 > row's subject class, and every log on disk predates the `truth` field - so on

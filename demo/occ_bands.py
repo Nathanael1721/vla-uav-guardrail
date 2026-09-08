@@ -183,7 +183,13 @@ def select_for_band(map_dir: str | Path, alt_min: float, alt_max: float,
         report.append(f"[occ] merged {len(used)} bands -> {int(merged.sum())} cells "
                       f"for the {alt_min:g}-{alt_max:g} m policy band")
 
-    holes = gaps(alt_min, alt_max, [b for b in bands if b not in rejected])
+    # Compare by STEM, not by dict. `rejected` holds {**b, "why": ...}, which
+    # never equals the plain dict in `bands`, so this filtered nothing: a band
+    # thrown out as the ground plane still counted as coverage, the module
+    # reported no hole where it had no usable map at all, and strict=True -
+    # whose whole job is to refuse a partially mapped band - accepted it.
+    _dead = {b["stem"] for b in rejected}
+    holes = gaps(alt_min, alt_max, [b for b in bands if b["stem"] not in _dead])
     for lo, hi in holes:
         report.append(f"[occ] *** {lo:g}-{hi:g} m of the permitted band has NO map. "
                       f"Obstacles there are invisible to ObstacleClearance.")

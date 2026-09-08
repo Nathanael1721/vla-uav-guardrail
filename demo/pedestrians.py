@@ -357,10 +357,21 @@ class Pedestrians:
                     print(f"[people] spawn failed ({type(exc).__name__}: {exc})")
 
         n_walk = sum(1 for f in self.figures if f.walker is not None)
+        self._report_pose_failures()
         print(f"[people] {len(self.figures)} figure(s) on pavements at "
               f"{TARGET_HEIGHT_M:.2f} m (scale {GLB_SCALE:.3f}), "
               f"{n_walk} walking, {len(self.figures) - n_walk} costing "
               f"nothing per tick")
+
+    def _report_pose_failures(self) -> None:
+        """Say how many poses the simulator refused. Counted since 2026-09-08,
+        and unread until 2026-09-08 - a hole in the ground truth that was being
+        tallied and never shown, which is the same as not tallying it."""
+        if self.n_pose_failures:
+            print(f"[people] *** {self.n_pose_failures} pose update(s) were "
+                  f"REFUSED by the simulator. Those figures are stale in the "
+                  f"logged ground truth, so tracking accuracy scored against "
+                  f"them is understated.")
 
     def update(self, t: float) -> None:
         """Move only the walkers. The standing majority is never touched."""
@@ -383,6 +394,13 @@ class Pedestrians:
                 continue                      # scenery must never fail a flight
             fig.x, fig.y, fig.heading = x, y, h
             self.n_updates += 1
+
+    def stats(self) -> dict:
+        """What the walkers actually did, for metrics.json."""
+        return {"figures": len(self.figures),
+                "walking": sum(1 for f in self.figures if f.walker is not None),
+                "pose_updates": self.n_updates,
+                "pose_failures": self.n_pose_failures}
 
     def destroy(self) -> None:
         # Report the RPC actually spent. A walker that silently never moved

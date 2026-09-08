@@ -147,6 +147,44 @@ needs two map rebuilds (4-6 m, and 2-14 m as one band) and the simulator running
 See `docs/FINDING-the-map-was-true-for-the-wrong-altitude.md` and
 `tests/test_occ_bands.py`.
 
+## Update, 2026-09-08 — three rounds of adversarial review, 51 findings
+
+Three waves of review were run against the 7 September work, each attacking the
+fix the previous one produced. 51 findings, every one reproduced by hand before
+being touched. The two that matter most:
+
+**The tracking metric could be passed by a constant.** `frac_on_target` asks
+whether the box was within 100 px of the subject — and because the aircraft yaws
+to point at what it follows, a "detector" that emits the frame centre and never
+opens the image scores **1.000 on `city_locked`** (margin 0.000) and **beats the
+real detector on `city_full`** (0.753 against 0.728). The detector IS better —
+median error 7.1 px against 11.6 — but the tolerance could not see it. Every
+figure now ships with the floor a zero-skill detector reaches on the same rows,
+plus a 25 px companion where the margin survives. Published figures moved:
+`city_kpi` 0.930 → 0.908, the retarget first half 0.931 → 0.915, because rows
+whose subject was out of shot stopped being credited.
+See `docs/FINDING-the-tracking-metric-a-constant-could-pass.md`.
+
+**The estimator was right and my metric was wrong.** `range_agreement` was
+written to catch a Shield being served a position the camera disagreed with, and
+reported four blind ticks on `retarget_demo2`. All four read a depth of 5.0 m
+while the aircraft was at 8.2 m — depth is slant range, so that is below the
+aircraft's own altitude and cannot be a ground subject. The estimator gated them
+out *because they were impossible*. The metric had no plausibility test, so its
+entire non-zero result was two bad detections. Now 0 blind ticks and 4
+`ticks_range_implausible`. The retraction is in
+`docs/FINDING-the-standoff-rule-that-never-armed.md`.
+
+Also closed this round: a bundle verifier that compared five fields while
+reporting seven and skipped its policy guard whenever a manifest was absent;
+tests that printed PASS when they had skipped, hiding 7 no-ops behind "8/8
+passed" on a clean clone; `mean_yaw_repair_dps` published in rad/s under a deg/s
+name across eight runs; eight sites asserting the yaw cap has never fired when it
+fires on 213 ticks across 8 runs; the report's corrections existing only in the
+`.md` while the delivered `.pdf`/`.docx`/`.html` said the opposite; separation
+metrics still measured to the car for a whole retarget flight; and the occupancy
+selector reporting full coverage for a band whose only map it had just rejected.
+
 ### A defect class, not a defect: silence that reads as success
 
 Three findings in six days share one shape, and it is worth naming because the
@@ -159,6 +197,9 @@ next one will look like the last three.
 | An estimator gating out the closest measurements | a clean escape rate |
 | A comment declaring deg/s while six sites enforced rad/s | two green test suites, opposite conventions |
 | A 2-D obstacle map true for one altitude band, loaded by a policy that flies below it | a map, correctly registered, for the wrong altitude |
+| A tracking tolerance so loose a constant scores the same | 1.000 on target |
+| A bundle verifier naming two fields that do not exist | a clean re-derivation |
+| Fixture-less tests returning early | "8/8 passed" |
 
 In each case the artefacts were **complete, consistent and wrong**, and in each
 case the check that would have caught it was cheap. The countermeasure now in

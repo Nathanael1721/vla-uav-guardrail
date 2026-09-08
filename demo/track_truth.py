@@ -17,6 +17,10 @@ reported rate is anti-correlated with actual correctness:
     demo_traffic     0.977          4.9 px    48.9 px    0 %         0
     city_demo        1.000          2.7 px    27.4 px    0 %         0
 
+(The `frac_on_target` figures those rows imply moved slightly on 2026-09-08 -
+city_kpi 0.930 -> 0.908, the retarget flight's first half 0.931 -> 0.915 - when
+rows whose subject was out of shot stopped being credited. See ON_TARGET_PX.)
+
 The flight with the BEST reported hit rate spent a quarter of its detections
 more than 100 px from the taxi, including 37 frames where the taxi was outside
 the camera's field of view entirely and the controller followed a box anyway.
@@ -81,7 +85,28 @@ HFOV_DEG = 90.0
 # "on target". At 400 px across a 90 deg view, 100 px is 22.5 deg - far wider
 # than any plausible box-centre error on the right vehicle (median is 3-8 px),
 # and narrow enough that a different vehicle in another lane fails it.
+#
+# THAT WIDTH IS ALSO WHY THE FIGURE ALONE PROVES LITTLE. The aircraft yaws to
+# point AT what it is following, so the subject sits near the frame centre, and
+# a detector that emits the centre on every frame - never opening the image -
+# scores almost the same. Measured on demo/out/city_full, in-shot rows only:
+#
+#     tolerance   real detector   centre constant   margin
+#        100 px       0.779            0.806        -0.027   <- constant WINS
+#         50 px       0.747            0.735        +0.011
+#         25 px       0.728            0.665        +0.063
+#         10 px       0.581            0.469        +0.112
+#
+# The real detector IS better - median error 7.1 px against the constant's 11.6 -
+# but 100 px cannot see it. So the 100 px figure is kept for continuity with the
+# forty-odd published flights, and it is never reported alone: the floor, the
+# margin over it, and a 25 px companion go with it.
 ON_TARGET_PX = 100.0
+
+# The discriminating tolerance. 25 px is 5.6 deg, still three times the median
+# error of a correct box, and it separates the detector from a constant by a
+# margin that survives.
+TIGHT_ON_TARGET_PX = 25.0
 
 
 def project_target_cx(x: float, y: float, psi: float,
@@ -132,6 +157,7 @@ def _score(rows, hfov_deg, on_target_px, cx_of):
     box rather than by a second implementation that could disagree with it.
     """
     errs: list[float] = []
+    creditable: list[bool] = []      # was any acceptable subject in frame at all
     cand_counts: list[int] = []
     n_out_of_fov = 0
     n_scored = 0
@@ -165,17 +191,27 @@ def _score(rows, hfov_deg, on_target_px, cx_of):
             # exists to catch exactly that - stayed silent, because the two
             # tests could be satisfied by different candidates.
             errs.append(min(e for e, _ in in_shot))
+            creditable.append(True)
             cand_counts.append(len(in_shot))
         else:
             # Nothing acceptable was in shot, so whatever the detector found, it
-            # was not the subject. Keep the smallest error for the distribution;
-            # it will be large, and it must not count as on target.
+            # was not the subject - and it must not be counted on target however
+            # small the pixel error comes out.
+            #
+            # "However small" is not hypothetical. ON_TARGET_PX is 100 px = 22.5
+            # deg, which is HALF the 45 deg half-FOV, so a subject up to 67.5 deg
+            # off the nose still lands within tolerance of a box at the frame
+            # edge. On demo/out/city_kpi all 12 out-of-shot rows scored inside
+            # the tolerance, and were counted in n_det_with_target_out_of_fov and
+            # in the frac_on_target numerator at once - the previous comment here
+            # asserted "it will be large", which the artefact refutes.
             errs.append(min(abs(cx - c) for c, _ in projected))
+            creditable.append(False)
             cand_counts.append(0)
             n_out_of_fov += 1
         n_scored += 1
 
-    return errs, cand_counts, n_out_of_fov, n_scored, n_unscorable
+    return errs, creditable, cand_counts, n_out_of_fov, n_scored, n_unscorable
 
 
 def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
@@ -194,7 +230,7 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
     class rather than an object.
     """
     rows = list(rows)
-    errs, cands, n_out_of_fov, n_scored, n_unscorable = _score(
+    errs, credit, cands, n_out_of_fov, n_scored, n_unscorable = _score(
         rows, hfov_deg, on_target_px, lambda r, w: float(r["det"]["cx"]))
 
     if not errs:
@@ -205,9 +241,35 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
                 "truth_candidates_median": None,
                 "n_det_with_target_out_of_fov": 0}
 
+    # TWO null models, because one of them was measured to be far too weak.
+    #
+    # `uniform` throws a box anywhere in the frame. `centre` puts it at the
+    # image centre on every frame - a detector that never opens the image and
+    # cannot tell a car from a wall. Since the aircraft YAWS TO POINT AT the
+    # subject, the subject's true cx is concentrated near the centre (measured
+    # mean cx/img_w = 0.51), so the constant detector is the stronger null by a
+    # wide margin, and on `city_full` it beats the real detector while sailing
+    # past the uniform floor. Quoting only the uniform floor would have let a
+    # score that is worse than a constant look like tracking.
+    #
+    # `frac_on_target_chance` reports the HARDER of the two, because a floor is
+    # only useful if it is the highest one a zero-skill detector can reach.
     rnd = random.Random(chance_seed)
-    chance, _, _, _, _ = _score(rows, hfov_deg, on_target_px,
-                                lambda r, w: rnd.uniform(0.0, float(w)))
+    e_uniform, c_uniform, _, _, _, _ = _score(
+        rows, hfov_deg, on_target_px, lambda r, w: rnd.uniform(0.0, float(w)))
+    e_centre, c_centre, _, _, _, _ = _score(
+        rows, hfov_deg, on_target_px, lambda r, w: float(w) / 2.0)
+
+    def _frac_at(es, cs, tol):
+        return sum(1 for e, ok in zip(es, cs) if ok and e <= tol) / len(es)
+
+    def _frac(es, cs):
+        return _frac_at(es, cs, on_target_px)
+
+    chance_uniform = _frac(e_uniform, c_uniform)
+    chance_centre = _frac(e_centre, c_centre)
+    tight_chance = max(_frac_at(e_uniform, c_uniform, TIGHT_ON_TARGET_PX),
+                       _frac_at(e_centre, c_centre, TIGHT_ON_TARGET_PX))
 
     s = sorted(errs)
     c = sorted(cands)
@@ -221,17 +283,32 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
         "det_gt_err_px_p95": round(s[min(len(s) - 1, int(0.95 * len(s)))], 1),
         # THE number. What fraction of the boxes the controller acted on were
         # actually on the subject it was told to follow.
-        "frac_on_target": round(sum(1 for e in errs if e <= on_target_px) / len(errs), 3),
-        # What a box thrown at random would have scored on these same rows. A
-        # single-subject flight sits near 0.13; twelve pedestrians lift the
-        # floor past 0.5, and a score that does not clear its own floor is not
-        # evidence of tracking.
-        "frac_on_target_chance": round(
-            sum(1 for e in chance if e <= on_target_px) / len(chance), 3),
-        # How many acceptable subjects were in shot, typically. 1 means the
-        # figure above is comparable with the single-target flights; more means
-        # it is not.
-        "truth_candidates_median": c[len(c) // 2],
+        "frac_on_target": round(_frac(errs, credit), 3),
+        # The floor: the best a detector with NO skill scores on these same rows,
+        # taken as the harder of two null models (see above). Measured on the
+        # flights in this repository it runs 0.47-0.55 even with a single
+        # subject, because the aircraft points at what it is following - so a
+        # score is evidence of tracking only by the margin it clears this.
+        "frac_on_target_chance": round(max(chance_uniform, chance_centre), 3),
+        "frac_on_target_chance_uniform": round(chance_uniform, 3),
+        "frac_on_target_chance_centre": round(chance_centre, 3),
+        # THE EVIDENCE, as opposed to the number. How far the detector clears
+        # the best a zero-skill detector manages on these same rows. Negative
+        # means a constant would have done better, which has happened.
+        "frac_on_target_margin": round(
+            _frac(errs, credit) - max(chance_uniform, chance_centre), 3),
+        # The same three at a tolerance tight enough to tell them apart.
+        "frac_on_target_25px": round(_frac_at(errs, credit, TIGHT_ON_TARGET_PX), 3),
+        "frac_on_target_25px_chance": round(tight_chance, 3),
+        "frac_on_target_25px_margin": round(
+            _frac_at(errs, credit, TIGHT_ON_TARGET_PX) - tight_chance, 3),
+        # How many acceptable subjects were in shot. Reported as a RANGE, not a
+        # median: a retarget flight is bimodal by construction - one subject
+        # before the switch, twelve after - and a median reports whichever mode
+        # holds one more row, so a single row could flip the reader's verdict on
+        # whether the figure above is comparable with a single-target flight.
+        "truth_candidates_min": c[0],
+        "truth_candidates_max": c[-1],
         # The unambiguous failures: no acceptable subject was in shot, so
         # whatever the detector found, it was not the subject.
         "n_det_with_target_out_of_fov": n_out_of_fov,

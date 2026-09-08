@@ -113,7 +113,10 @@ def test_it_reproduces_the_recorded_flights():
     """
     expect = {                      # flight: (median, p95, on_target, out_of_fov)
         "city_full":    (8.2, 216.8, 0.728, 37),
-        "city_kpi":     (3.6, 113.2, 0.930, 12),
+        # 0.908, not the 0.930 published before 2026-09-08: the 12 rows whose
+        # target was out of shot were being counted on target as well as out of
+        # shot, because a 100 px tolerance is half the 45 deg half-FOV.
+        "city_kpi":     (3.6, 113.2, 0.908, 12),
         "demo_traffic": (4.9,  48.9, 1.000,  0),
         "city_demo":    (2.7,  27.4, 1.000,  0),
     }
@@ -203,7 +206,21 @@ def test_a_subject_out_of_shot_can_never_be_credited_with_the_box():
     out = score_rows([_row(200.0, truth={"class": "pedestrian", "pts": [behind]})])
     assert out["n_det_with_target_out_of_fov"] == 1, out
     assert out["frac_on_target"] == 0.0, out
-    assert out["truth_candidates_median"] == 0, out
+    assert out["truth_candidates_max"] == 0, out
+
+
+def test_an_out_of_shot_row_close_in_pixels_is_still_not_on_target():
+    """The gap the in-shot filter left. ON_TARGET_PX is 100 px = 22.5 deg, HALF
+    the 45 deg half-FOV, so a subject up to 67.5 deg off the nose lands within
+    tolerance of a box at the frame edge. Those rows were counted in
+    n_det_with_target_out_of_fov AND in the frac_on_target numerator at once -
+    on demo/out/city_kpi, all twelve of them."""
+    # 50 deg off the nose: out of shot, but only 22 px from a box at the edge.
+    off = [10.0 * math.cos(math.radians(50.0)), 10.0 * math.sin(math.radians(50.0))]
+    out = score_rows([_row(400.0, truth={"class": "pedestrian", "pts": [off]})])
+    assert out["n_det_with_target_out_of_fov"] == 1, out
+    assert out["det_gt_err_px_median"] < ON_TARGET_PX, out    # close in pixels
+    assert out["frac_on_target"] == 0.0, out                  # and still not on target
 
 
 def test_a_zero_skill_detector_scores_its_own_chance_floor():
@@ -241,9 +258,32 @@ def test_a_real_flight_beats_its_chance_floor_by_a_wide_margin():
         return SKIP
     rows = [json.loads(x) for x in log.open(encoding="utf-8") if x.strip()]
     pre = score_rows([r for r in rows if r["tick"] < 248])
-    assert pre["frac_on_target"] == 0.931, pre
-    assert pre["frac_on_target_chance"] == 0.437, pre
-    assert pre["truth_candidates_median"] == 1, pre
+    assert pre["frac_on_target"] == 0.915, pre
+    # The floor is the HARDER of two null models, and the harder one here is a
+    # detector that emits the frame centre every tick - which scores 0.830 on
+    # this half, because the aircraft is pointing at the car. The margin, not
+    # the headline, is the evidence: +0.085 at 100 px, +0.150 at 25 px.
+    assert pre["frac_on_target_chance"] == 0.83, pre
+    assert pre["frac_on_target_margin"] == 0.085, pre
+    assert pre["frac_on_target_25px_margin"] == 0.15, pre
+    assert pre["truth_candidates_max"] == 1, pre
+
+
+def test_a_constant_detector_is_the_null_model_that_actually_bites():
+    """Why the floor is the harder of two nulls. A uniform draw ignores that the
+    aircraft YAWS TO POINT AT the subject, so the subject sits near the frame
+    centre and a detector that emits the centre every frame - never opening the
+    image - scores far above uniform. On demo/out/city_full it scores 0.753
+    against the real detector's 0.728: the constant WINS at this tolerance."""
+    log = ROOT / "demo" / "out" / "city_full" / "flight_log.jsonl"
+    if not log.is_file():
+        return SKIP
+    rows = [json.loads(x) for x in log.open(encoding="utf-8") if x.strip()]
+    out = score_rows(rows)
+    assert out["frac_on_target_chance_centre"] > out["frac_on_target_chance_uniform"]
+    assert out["frac_on_target_margin"] < 0, out
+    # And the tighter tolerance is where the detector's real advantage shows.
+    assert out["frac_on_target_25px_margin"] > 0, out
 
 
 def test_the_retarget_flight_on_disk_splits_the_way_the_finding_says():
@@ -260,7 +300,7 @@ def test_the_retarget_flight_on_disk_splits_the_way_the_finding_says():
     rows = [json.loads(l) for l in log.open(encoding="utf-8")]
     pre = score_rows([r for r in rows if r["tick"] < 248])
     post = score_rows([r for r in rows if r["tick"] >= 248])
-    assert pre["frac_on_target"] == 0.931, pre
+    assert pre["frac_on_target"] == 0.915, pre
     assert pre["det_gt_err_px_median"] == 7.6, pre
     # Every post-retarget detection was compared to a car that was behind the
     # aircraft. 319 out of 319 - a number no detector produces.

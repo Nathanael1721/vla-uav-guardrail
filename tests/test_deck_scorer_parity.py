@@ -212,6 +212,27 @@ def test_half_a_target_position_is_not_a_target_position():
     _compare(rows, "half-a-target")
 
 
+def test_the_chance_floor_agrees_too():
+    """The deck now prints the floor beside the score, so the floor has to be
+    the same number in both languages. It is the CENTRE-constant null, which
+    needs no RNG - that is why it ports exactly, and why the deck uses it rather
+    than the uniform draw."""
+    log = ROOT / "demo" / "out" / "retarget_demo2" / "flight_log.jsonl"
+    if not log.is_file():
+        return SKIP
+    rows = [json.loads(x) for x in log.open(encoding="utf-8") if x.strip()]
+    pre = [r for r in rows if r["tick"] < 248]
+    js = _run_js(pre)
+    if not js:
+        return SKIP
+    py = score_rows(pre)
+    # 5e-4, not 1e-6: the Python rounds these to three decimals on the way out,
+    # so exact equality would be comparing a rounded number to an unrounded one.
+    assert abs(js["chance"] - py["frac_on_target_chance_centre"]) < 5e-4, (js, py)
+    assert abs(js["onTarget25"] - py["frac_on_target_25px"]) < 5e-4, (js, py)
+    assert abs(js["chance25"] - py["frac_on_target_25px_chance"]) < 5e-4, (js, py)
+
+
 def test_the_candidate_count_agrees_too():
     """Added with the in-shot filter: both languages now report how many
     acceptable subjects were in frame, and a divergence there would mean the two
@@ -222,7 +243,7 @@ def test_the_candidate_count_agrees_too():
     if not js:
         return SKIP
     py = score_rows(rows)
-    assert js["candidates"] == py["truth_candidates_median"] == 1, (js, py)
+    assert js["candidates"] == py["truth_candidates_max"] == 1, (js, py)
 
 
 if __name__ == "__main__":

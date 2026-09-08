@@ -121,8 +121,22 @@ def rescore(run: Path, by_hash: dict) -> dict | None:
             # of them are.
             truth = r.get("truth") or {}
             pts = truth.get("pts") or []
-            if pts:
+            if len(pts) == 1:
                 sh.set_subject(pts[0][0], pts[0][1], truth.get("class"))
+            elif pts:
+                # More than one candidate means the subject was a CLASS, and the
+                # log does not record which member the tracker held. pts[0] is
+                # whichever decoy spawned first, so serving it would reconstruct
+                # `unsafe` - and therefore mean_time_to_safe_s, one of the
+                # grant's five KPIs - against an arbitrary bystander.
+                #
+                # The nearest member is the only defensible choice: it is the
+                # one a stand-off would bind hardest against, so it cannot
+                # UNDER-report unsafe time, and under-reporting is the direction
+                # that flatters.
+                bx, by = min(pts, key=lambda q: (q[0] - r["x"]) ** 2
+                                                + (q[1] - r["y"]) ** 2)
+                sh.set_subject(bx, by, truth.get("class"))
             elif r.get("tgt_x") is not None and r.get("tgt_y") is not None:
                 sh.set_subject(r["tgt_x"], r["tgt_y"], truth.get("class"))
             st = State(x=r["x"], y=r["y"], up=r["up"],

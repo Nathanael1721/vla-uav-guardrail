@@ -104,13 +104,25 @@ were compared to it. The give-away is in the numbers already published:
 
 | phase | scored | `frac_on_target` | median err | target out of shot |
 |---|---|---|---|---|
-| before retarget (ticks < 248) | 247 | **0.931** | 7.6 px | 17 |
+| before retarget (ticks < 248) | 247 | **0.915** | 7.6 px | 17 |
 | after retarget (ticks ≥ 248) | 319 | **0.000** | 615.1 px | **319 of 319** |
+
+*(The pre-retarget figure was published as 0.931 until 2026-09-08. It moved when
+rows whose subject was out of shot stopped being credited: a 100 px tolerance is
+half the 45 deg half-FOV, so a subject up to 67.5 deg off the nose could land
+within tolerance of a box at the frame edge and be counted both out of shot and
+on target. Seventeen rows here; all twelve of `city_kpi`'s.)*
+
+**And 0.915 is less evidence than it looks.** The aircraft yaws to point at what
+it is following, so the subject sits near the frame centre — and a detector that
+simply emits the frame centre every tick, never opening the image, scores
+**0.830** on this same half. The margin over that floor, +0.085, is the evidence;
+at a 25 px tolerance it is +0.150. Every result now carries its floor.
 
 319 out of 319 is not a detector result; no detector is wrong every single frame.
 
-And the flight-wide **0.406 is exactly 230/566**: 230 detections were on target,
-all 230 of them before the retarget, out of 566 scored. The figure is the
+And the flight-wide **0.399 is exactly 226/566**: 226 detections were on target,
+all 226 of them before the retarget, out of 566 scored. The figure is the
 pre-retarget successes diluted by the post-retarget rows — it measured where the
 retarget was, not how well anything was tracked.
 
@@ -125,33 +137,42 @@ detector survey's finding (OWL-ViT scores our pedestrian meshes 0.062 against th
 taxi's 0.182) stands on its own evidence and is a fair reason to *expect*
 difficulty. It is not evidence that difficulty occurred here.
 
-## What the artefact does support, and one thing nobody was looking at
+## The thing nobody was looking at — and the reason I first got it backwards
 
-Re-read properly, the flight says something narrower and more useful.
+**Retracted 2026-09-08.** This section used to report that the estimator feeding
+the Shield "rejected the measurements taken at the closest approach", and drew a
+structural moral from it: *a stand-off rule is only as good as the position it is
+told*. Four consecutive ticks, t+55.9 s to t+56.3 s, where the camera read 5 m
+and the served estimate held 24.7 m.
 
-The estimator that feeds the Shield **rejected the measurements taken at the
-closest approach**. Between t+55.9 s and t+56.3 s the monocular range read 5 m
-while the served estimate held 24.7 m. Four consecutive ticks — 0.37 s — where
-the *measured* range was inside the 10 m ring and the *served* range was outside
-it, and the estimator rejected every fresh measurement offered in that window:
-the gate counter rose 117 → 120 across it.
+**The estimator was right and the metric was wrong.** Depth is SLANT range along
+the camera ray, so for a subject on the ground it can never be less than the
+aircraft's own altitude. At those four ticks the aircraft was at **8.20–8.27 m**
+and the reading was **5.0 m** — geometrically impossible for a pedestrian. The
+estimator gated them out because they were impossible. That is the estimator
+doing its job.
 
-*(Corrected 2026-09-08: this said the counter "climbed on every tick". It
-climbed on two of the four — ticks 451 and 453 — because the detector runs at
-about 5 Hz against an 8 Hz control loop, so only those two carried a new
-measurement to reject. Every measurement offered was rejected; not every tick
-offered one.)*
+What was actually broken was `range_agreement`, the metric I wrote to catch the
+blindness: it accepted `rng_m` as "what the camera measured" with no plausibility
+test at all, so its **entire non-zero result on the only flight it is pinned
+against** was produced by two bad detections. It now rejects a range below the
+aircraft's altitude and counts those separately as `ticks_range_implausible`.
+Re-run on the same flight:
 
-Whether the aircraft was truly that close is still unknown, for the same reason as
-above. But the structural point does not depend on knowing:
+| | before | after |
+|---|---|---|
+| `ticks_raw_inside_est_outside` | 4 | **0** |
+| `ticks_range_implausible` | — | 4 |
 
-> A stand-off rule is only as good as the position it is told. Nothing in the KPI
-> set compared what the Shield was served against what was measured, so an
-> estimator holding a subject 20 m from where the camera said it was produced a
-> clean escape rate and a clean audit log.
+So the honest statement about this flight is the plainer one: **the estimator and
+the camera did not disagree anywhere that matters.** The structural point stands
+as a thing worth measuring — nothing compared the served position against the
+measured one, and now something does — but this flight is not an example of it,
+and I published it as one.
 
-This is the same shape as the inert rule above. Zero violations, zero repairs, and
-in neither case did that mean the rule was working.
+The failure is the same shape as every other in this document: a check that could
+not fail the way it was written, and a claim that outran it. A metric built to
+catch a credulous estimator was itself credulous.
 
 ## The fixes, and how each one fails loudly now
 

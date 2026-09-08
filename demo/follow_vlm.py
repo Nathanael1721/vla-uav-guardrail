@@ -212,16 +212,36 @@ def range_agreement(rows, standoffs) -> dict:
         if cls not in rings:
             # Every rule whose class matches binds, so the enforced ring is the
             # widest of them - the same arithmetic the Shield does.
+            # binds() lowercases both sides; matching case-sensitively here
+            # would silently fall back to the wider "*" catch-all for a policy
+            # whose class string is not already lowercase - the same silent
+            # substitution ticks_ring_unknown was added to eliminate, coming
+            # back through a different door.
+            low = (cls or "").lower()
             m = [so.min_range_m for so in standoffs
-                 if so.subject_class == "*" or so.subject_class == cls]
+                 if so.subject_class == "*" or so.subject_class.lower() == low]
             rings[cls] = max(m) if m else None
         return rings[cls]
 
     diffs, blind, blind_run, worst_run, unknown = [], 0, 0, 0, 0
+    implausible = 0
     for r in rows:
         raw = r.get("rng_m")
         est = (r.get("est") or {}).get("rng")
         if raw is None or est is None:
+            blind_run = 0
+            continue
+        # A depth reading below the aircraft's own altitude cannot be a range
+        # to anything on the ground: depth is SLANT range along the ray, so for
+        # a ground-level subject it is at least the altitude. Counting those as
+        # "the camera saw the subject closer than the estimate did" is how this
+        # metric produced its only non-zero result: all four blind ticks on
+        # retarget_demo2 read 5.0 m while the aircraft was at 8.2 m. The
+        # estimator gated them out because they were impossible, which is the
+        # estimator working, not a blind spot.
+        up = r.get("up")
+        if up is not None and float(raw) + 1.0 < float(up):
+            implausible += 1
             blind_run = 0
             continue
         diffs.append(abs(float(est) - float(raw)))
@@ -256,6 +276,9 @@ def range_agreement(rows, standoffs) -> dict:
         # identified and the tick could not be judged either way. A large value
         # here means the two counts above describe only part of the flight.
         "ticks_ring_unknown": unknown,
+        # Ticks whose measured range was below the aircraft's altitude and so
+        # could not be a ground subject. Reported, never counted as blindness.
+        "ticks_range_implausible": implausible,
     }
 
 
@@ -722,6 +745,24 @@ class PresenceMonitor:
         self._ref_hits = 0
         self.last_sim = None
         self.counts = {"PRESENT": 0, "ABSENT": 0, "UNSURE": 0}
+
+    def retarget(self, phrase: str) -> None:
+        """Point the monitor at a different subject.
+
+        `presence_verdict` reads the QUERY to decide what width and colour are
+        plausible, so a monitor left holding "a yellow car" judges a person
+        against a car's width band and a colour word the new subject does not
+        have. Until 2026-09-08 the retarget block updated the grounder, the
+        estimator, the lock, the class and the width prior - and not this - so a
+        person was judged as a car for the whole second half of the flight.
+
+        The appearance reference goes too: it is a histogram of the OLD
+        instance, and keeping it would make every new candidate look wrong.
+        """
+        self.query = phrase
+        self._ref = None
+        self._ref_hits = 0
+        self.last_sim = None
 
     def update(self, det, rng_m, app=None):
         verdict, why = presence_verdict(det, rng_m, self.query, self.colour_min)
@@ -1593,7 +1634,7 @@ async def fly(args) -> int:
         args.object_width_m, matched = subject_width(args.object)
         if matched:
             print(f"[subject]  width prior: {args.object_width_m:.2f} m "
-                  f"(from {matched!r} in {args.object!r})")
+                  f"(class {matched!r} from {args.object!r})")
         else:
             print(f"[subject]  WARNING no width known for {args.object!r}; "
                   f"falling back to {args.object_width_m:.2f} m, a car. If the "
@@ -1638,6 +1679,14 @@ async def fly(args) -> int:
             f"truth and score as unscorable. Pass --pedestrians N (the demo "
             f"uses 12), or follow something that is in the scene.")
 
+    # NOTE on ordering: both refusals below run AFTER fly() has unlinked the
+    # tag's previous flight_log.jsonl and detections.jsonl. That unlink predates
+    # them, so what used to be "wipe, then fly" is now "wipe, then refuse to
+    # fly" - a refused start-up destroys the last run's delivered artefacts
+    # under the same tag. Left as-is deliberately: moving the unlink after the
+    # checks would be a bigger change to the flight path than the fix is worth
+    # eleven days from a demo, and the replay bundle is the durable copy. Do not
+    # re-run a refused tag expecting its previous log to still be there.
     _reachable = set(SUBJECT_CLASS_CANON.values())
     for _so in policy.by_type(SubjectStandoff):
         if _so.subject_class != "*" and _so.subject_class not in _reachable:
@@ -1656,10 +1705,18 @@ async def fly(args) -> int:
     # permits descent to 4 m, the band maps are not contiguous, and NOTHING maps
     # 4-6 m. See docs/FINDING-the-map-was-true-for-the-wrong-altitude.md.
     #
-    # For every policy flown so far this selects exactly the map that was being
-    # loaded anyway, so nothing about today's flights changes. What changes is
-    # that the aircraft now says which part of its permitted envelope is
-    # unmapped, instead of assuming the answer is none of it.
+    # This DOES change what some flights load, and an earlier version of this
+    # comment claimed otherwise. Measured across the 8 policies carrying both an
+    # AltitudeEnvelope and an ObstacleClearance, 5 get a different grid:
+    #
+    #   follow_car / follow_car_nfz / follow_pedestrian   identical (2015 cells)
+    #   follow_car_gap  10-17 m   orbit_building 12-28 m  -> 2476 cells
+    #   rth_poly / semantic_conflict / urban_clearance    -> 2212 cells (15-55 m)
+    #
+    # That is the point rather than a regression: a policy cruising at 12-28 m
+    # was being checked against a map of the 6-14 m band. But it is a behaviour
+    # change on flights the tutorial runs, so it is stated here rather than
+    # asserted away.
     _alt = policy.by_type(AltitudeEnvelope)
     if policy.by_type(ObstacleClearance) and _alt:
         _sel = occ_bands.select_for_band(Path(args.citymap).parent,
@@ -1668,6 +1725,18 @@ async def fly(args) -> int:
             print(_line)
         if _sel["map"] is not None:
             cmap = _sel["map"]
+        elif cmap is not None:
+            # The selector answered "no band map covers this envelope". Keeping
+            # the default would fly the aircraft on precisely the wrong-altitude
+            # grid this module exists to prevent, while the printed line read
+            # like a refusal. Drop it: no map at all is honest, and
+            # ObstacleClearance is INERT without one (guardrail/models.py) rather
+            # than wrong.
+            print("[occ] *** no usable map for this altitude band, so "
+                  "ObstacleClearance will be INERT for this flight. It is "
+                  "better to fly with no obstacle map than with one built for "
+                  "an altitude the aircraft is not at.")
+            cmap = None
 
     smap = None
     if policy.by_type(ObstacleClearance) and cmap is not None:
@@ -1914,6 +1983,19 @@ async def fly(args) -> int:
                         walking=args.pedestrians_walking, seed=args.seed,
                         people_dir=args.people_dir, avoid=_samp)
                     people.spawn()
+                    # The start-up refusal checks the FLAG; this checks the
+                    # outcome. --pedestrians 12 with no baked GLB pack, no
+                    # building mask, or no clear pavement places nobody, and the
+                    # flight would then log truth.pts == [] on every tick of the
+                    # pedestrian phase - exactly what the refusal exists to
+                    # prevent, reached by a route it cannot see.
+                    if _ped_phrases and not people.figures:
+                        raise SystemExit(
+                            f"{_ped_phrases[0]!r} selects the pedestrian class "
+                            f"and --pedestrians is {args.pedestrians}, but "
+                            f"spawning placed NOBODY, so there is no ground "
+                            f"truth for that phase. See the [people] line above "
+                            f"for why.")
 
                 # Parked vehicles, allocated from the SAME kerb after the
                 # pedestrians have taken theirs. Passing their positions is
@@ -2083,6 +2165,14 @@ async def fly(args) -> int:
                     args.object_width_m = new_w
                 if grounder is not None:
                     grounder.retarget(phrase)
+                # The presence monitor holds the OLD subject's plausible-width
+                # band and colour word until told otherwise, so without this a
+                # person is judged against a car's width for the whole second
+                # half of the flight - the same "left pinned to the car across
+                # the retarget" defect already fixed for truth and for sep_*,
+                # in a third place.
+                if presence is not None:
+                    presence.retarget(phrase)
                 if estimator is not None:
                     # The old track is a different object's position and
                     # velocity. Carrying it would have the Shield hold a
@@ -2572,8 +2662,16 @@ async def fly(args) -> int:
     # detector locked. `truth_candidates_median` alongside says how many there
     # were, so the figure can be read for what it is.
     def _sep(r):
-        pts = (r.get("truth") or {}).get("pts") or []
-        if pts:
+        # Mirrors track_truth.truth_points, including its refusal: once a row
+        # carries a `truth` object it is authoritative, and an EMPTY pts means
+        # there is no separation to report. Falling through to tgt_x/tgt_y here
+        # measured the distance to the CAR for a pedestrian subject - the exact
+        # defect the comment above says this fixes, left in the fix itself.
+        truth = r.get("truth")
+        if truth is not None:
+            pts = truth.get("pts") or []
+            if not pts:
+                return None
             return min(math.hypot(r["x"] - tx, r["y"] - ty) for tx, ty in pts)
         if r.get("tgt_x") is not None and r.get("tgt_y") is not None:
             return math.hypot(r["x"] - r["tgt_x"], r["y"] - r["tgt_y"])
