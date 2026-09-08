@@ -598,6 +598,21 @@ and I did not want to make it twice.
 > yang ilegal. Hanya yang kedua ditanyakan "time to safe". Diukur dari aksi, satu
 > run melaporkan 21,9 detik padahal dwell tak-amannya 0,0.
 
+### D12b. "Why does the deck give tracking in pixels now instead of a percentage?"
+**Answer.** Because the percentage could be matched by a detector that never
+opens the image. The aircraft yaws to point at what it follows, so the subject
+sits near the frame centre, and "within 100 px" is a quarter of the frame — a
+constant that emits the centre scores 1.000 on our best flight and *beats* the
+real detector on another. The median pixel error does not have that problem: the
+detector wins on every flight on disk, against three different null models. The
+instance-lock slide reads better for it, not worse — 7.1 px to 1.9 px, against a
+null of 11.6 to 4.9.
+> **ID.** Karena persentasenya bisa disamai detektor yang **tidak pernah membuka
+> gambar**. Drone selalu menghadap subjek, jadi subjek ada di tengah frame, dan
+> "dalam 100 px" itu seperempat lebar frame — konstanta di tengah dapat 1.000 di
+> penerbangan terbaik kami, dan **mengalahkan** detektor asli di satu penerbangan
+> lain. Median error piksel tidak punya masalah itu.
+
 ### D13. "Your slide says tracking after the retarget is *unmeasured*. Why not just measure it?"
 **Answer.** It will be, on the next flight — the instrumentation went in on
 7 September. It could not be measured on this one because the flight log carried
@@ -691,10 +706,11 @@ afterwards.
 | Constraint classes | **6** (reference implementation: 2) | corridor + valid_time new |
 | Scenario sweep | **13 scenarios, 12 pass, 1 known failure** | headless, ~1 s |
 | Delivered runs rescored | **42**, every P0 figure reproduced | no re-flying |
-| Test suite | **457 tests, 23 files** | all green |
+| Test suite | **459 tests, 23 files** | all green |
 | Camera-rail rate gate | **0 of 6** runs meet it | open item |
 | Retarget, class change in flight | `car` → `pedestrian` at **t+30.0 s** | ring 5 m → 10 m |
-| Tracking before the retarget | **0.915** on target (floor 0.830) | 247 detections, 7.6 px median |
+| Tracking before the retarget | **7.1 px** median error, subject in shot | vs **14.9 px** for a centre-constant |
+| ...the same thing as a fraction | 0.915 on target | floor 0.895 — say the median instead |
 | Tracking after the retarget | **unmeasured** — no truth was logged | now fixed |
 | Closest served subject range, after | **14.7 m** (median 20.5) | why the ring never fired |
 | Ticks the camera said "inside", the estimate said "outside" | **0** | see the note |

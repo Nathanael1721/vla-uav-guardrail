@@ -259,14 +259,49 @@ def test_a_real_flight_beats_its_chance_floor_by_a_wide_margin():
     rows = [json.loads(x) for x in log.open(encoding="utf-8") if x.strip()]
     pre = score_rows([r for r in rows if r["tick"] < 248])
     assert pre["frac_on_target"] == 0.915, pre
-    # The floor is the HARDER of two null models, and the harder one here is a
-    # detector that emits the frame centre every tick - which scores 0.830 on
-    # this half, because the aircraft is pointing at the car. The margin, not
-    # the headline, is the evidence: +0.085 at 100 px, +0.150 at 25 px.
-    assert pre["frac_on_target_chance"] == 0.83, pre
-    assert pre["frac_on_target_margin"] == 0.085, pre
+    # THE FRACTION IS NOT THE EVIDENCE, and this pins how little of it there is.
+    # Against a null family that includes the best fixed column for this flight,
+    # the 100 px margin is +0.020 - two rows in a hundred. A fourth review found
+    # a constant that BEATS the detector outright on retarget_demo, so every
+    # floor invites a harder null and this one is only a lower bound.
+    assert pre["frac_on_target_chance"] == 0.895, pre
+    assert pre["frac_on_target_margin"] == 0.02, pre
     assert pre["frac_on_target_25px_margin"] == 0.15, pre
     assert pre["truth_candidates_max"] == 1, pre
+
+    # THE MEDIAN IS. 7.6 px against the best null's 14.9 - nearly twice as
+    # close, on a statistic that beats every null on every flight on disk.
+    assert pre["det_gt_err_px_median_in_shot"] == 7.1, pre
+    assert pre["det_gt_err_px_median_chance"] == 14.9, pre
+    assert (pre["det_gt_err_px_median_in_shot"]
+            < pre["det_gt_err_px_median_chance"] / 2.0)
+
+
+def test_the_median_beats_every_null_on_every_flight_and_the_fraction_does_not():
+    """Why the headline moved. The threshold count is within a whisker of a
+    lag-1 baseline everywhere - repeat your own last box and you score the same
+    - while the median separates cleanly on every flight with scored rows."""
+    out = ROOT / "demo" / "out"
+    if not out.is_dir():
+        return SKIP
+    checked = 0
+    for run in sorted(out.iterdir()):
+        log = run / "flight_log.jsonl"
+        if not log.is_file():
+            continue
+        rows = [json.loads(x) for x in log.open(encoding="utf-8") if x.strip()]
+        r = score_rows(rows)
+        if not r["det_scored"] or r["det_gt_err_px_median_chance"] is None:
+            continue
+        # Skip the halves the log cannot score - a retarget flight compared to
+        # the car is legitimately worse than a null, and says so.
+        if r["frac_in_shot"] < 0.5:
+            continue
+        checked += 1
+        assert r["det_gt_err_px_median_in_shot"] < r["det_gt_err_px_median_chance"], (
+            run.name, r["det_gt_err_px_median_in_shot"],
+            r["det_gt_err_px_median_chance"])
+    assert checked >= 5, checked
 
 
 def test_a_constant_detector_is_the_null_model_that_actually_bites():

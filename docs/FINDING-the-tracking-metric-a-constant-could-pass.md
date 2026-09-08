@@ -1,10 +1,11 @@
 # A detector that never opens the image scores 1.000 on our best flight
 
-**Date:** 2026-09-08
+**Date:** 2026-09-08, extended 2026-09-09
 **Found by:** the third round of adversarial review, pointed at the fix the
-second round produced.
-**Status:** fixed. Every tracking figure in the project now ships with the floor
-a zero-skill detector reaches on the same rows, and the published figures moved.
+second round produced — and then the fourth round, pointed at that fix.
+**Status:** fixed, after one wrong turn. The first answer was to publish a floor
+beside the score; the fourth review beat the floor. The headline is now the
+median pixel error, which no null on disk beats on any flight.
 
 ## The claim that was being made
 
@@ -77,29 +78,68 @@ in the `frac_on_target` numerator at the same time. All twelve of `city_kpi`'s
 out-of-shot rows were being credited. This is what moved the published figures:
 `city_kpi` 0.930 → **0.908**, the retarget first half 0.931 → **0.915**.
 
-**Every result carries its floor.** `frac_on_target_chance` is the harder of two
-null models — a uniform draw, and the centre constant — computed by the *same
-code path* on the *same rows*, so it cannot drift from the statistic it bounds.
-`frac_on_target_margin` is the difference, which is the actual evidence.
+**Every result carries its floor.** `frac_on_target_chance` is the hardest of a
+null *family* — a uniform draw, the centre constant, and the best fixed column
+for that flight — computed by the *same code path* on the *same rows*, so it
+cannot drift from the statistic it bounds. It is still only a lower bound on what
+a zero-skill detector could reach, which is the honest reason it is not the
+headline.
 
-**A tolerance that discriminates.** `frac_on_target_25px` and its own floor and
-margin, at 5.6° — still three times the median error of a correct box. Every
-flight has a positive margin there, including `city_full`.
+**A tolerance that discriminates — and then did not.** `frac_on_target_25px`
+was added at 5.6°, on the reasoning that it is several times the median error of
+a correct box. That reasoning is weaker than it looked: on the retarget flight
+25 px is 2.1× the median, not 3×, and **two flights have a negative margin even
+there**.
 
-The deck computes the floor too, in its own JavaScript, and prints it beside the
-score; `tests/test_deck_scorer_parity.py` runs the deck's function under node
-against the Python so the two cannot diverge. The centre-constant null needs no
-random draw, which is why it ports exactly.
+A fourth review then found the deeper problem. A fixed column at cx = 157 px
+BEATS the real detector on `retarget_demo` (0.777 against 0.759, turning a
++0.104 margin into −0.018), and a lag-1 baseline — emit the previous tick's box
+centre, never open the current image — erases the 25 px margin on `city_kpi`
+(+0.077 → −0.000). Every floor invites a harder null, because threshold counting
+at any robust tolerance puts most rows inside it for everybody.
+
+**So the headline moved to the median**, which was in the module from the start.
+Measured against three nulls on every flight with scored rows, the median beats
+all of them everywhere, while the fraction is within a whisker of lag-1:
+
+| flight | n | real | centre | best constant | lag-1 |
+|---|---|---|---|---|---|
+| `city_locked` | 521 | **2.3** | 5.3 | 4.7 | 2.5 |
+| `city_kpi` | 545 | **3.5** | 9.4 | 6.9 | 3.7 |
+| `city_full` | 525 | **7.1** | 11.6 | 10.1 | 7.4 |
+| `demo_traffic` | 548 | **4.9** | 7.7 | 7.7 | 5.6 |
+| `retarget_demo` | 505 | **18.7** | 36.1 | 33.1 | 20.2 |
+| `people_check` | 377 | **7.1** | 12.8 | 11.4 | 7.4 |
+
+`frac_on_target` is kept for continuity with the published flights and is no
+longer the evidence anywhere. The deck now prints the median against the
+centre-constant on all three slides that used to print the bare fraction —
+including the instance-lock comparison, which improves from a meaningless
+"72.8 % → 100 %" to **7.1 px → 1.9 px** against a null of 11.6 → 4.9.
+
+The deck computes the median and the centre-constant null in its own
+JavaScript; `tests/test_deck_scorer_parity.py` runs the deck's functions under
+node against the Python so the two cannot diverge. The centre-constant needs no
+random draw, which is why it ports exactly — and the deck names the null it
+compares against rather than calling it "the floor", because the Python's floor
+is the hardest of a family and calling both "chance" hid the deck printing a
+weaker one and a larger margin.
+
+**Both medians are computed over the same rows** — the in-shot ones.
+`det_gt_err_px_median` still spans every scored row, because that is what the
+published flights quote; `det_gt_err_px_median_in_shot` is the one to compare.
+Mixing them made `people_check` read 17.2 px against a null's 12.8 for about
+twenty minutes.
 
 ## What to say about tracking from now on
 
-Not *"0.915 on target"*. Either:
+Not *"0.915 on target"*. Say:
 
-> 0.915 on target against a 0.830 floor — a margin of 0.085, and 0.150 at a 25 px
-> tolerance — over 247 detections with a median error of 7.6 px.
+> Median error **7.1 px** with the subject in shot, against **14.9 px** for a
+> detector that emits the frame centre and never opens the image — over 247
+> detections, with the subject in frame on 93.1 % of them.
 
-or just the median error, which was always the honest number and never needed a
-floor.
+The fraction can follow as context, never as the claim.
 
 ## The pattern, for the fourth time this week
 

@@ -94,6 +94,12 @@ function truthPts(r) {
   return null;
 }
 
+function medOf(values, cands) {
+  const kept = values.filter((v, i) => cands[i] > 0 && v !== null)
+                     .slice().sort((a, b) => a - b);
+  return kept.length ? kept[Math.floor(kept.length / 2)] : null;
+}
+
 function scoreRows(rows) {
   const errs = [];
   const nulls = [];      // what a centre-constant detector scored on each row
@@ -139,7 +145,7 @@ function scoreRows(rows) {
   // away and leave callers dereferencing nothing.
   if (!errs.length) {
     return { n: 0, unscorable, median: null, p95: null, onTarget: null,
-             chance: null, onTarget25: null, chance25: null,
+             onTarget25: null, medianInShot: null, medianCentreNull: null,
              candidates: null, outOfFov: 0 };
   }
   const s = errs.slice().sort((a, b) => a - b);
@@ -150,15 +156,26 @@ function scoreRows(rows) {
     median: s[Math.floor(s.length / 2)],
     p95: s[Math.min(s.length - 1, Math.floor(0.95 * s.length))],
     onTarget: errs.filter((e, i) => cands[i] > 0 && e <= 100).length / errs.length,
-    // The floor a zero-skill detector reaches on these same rows, and the
-    // margin over it - which is the part that is evidence.
-    chance: nulls.filter((e, i) => cands[i] > 0 && e !== null && e <= 100).length / errs.length,
     onTarget25: errs.filter((e, i) => cands[i] > 0 && e <= 25).length / errs.length,
-    chance25: nulls.filter((e, i) => cands[i] > 0 && e !== null && e <= 25).length / errs.length,
-    // How many acceptable subjects were in shot. 1 means the figure is
-    // comparable with the single-target flights; more means it is not, and the
-    // Python reports a chance floor beside it for that reason.
-    candidates: c[Math.floor(c.length / 2)],
+    // THE comparison. Both medians over the SAME rows - the in-shot ones -
+    // against a detector that emits the frame centre and never opens the image.
+    //
+    // This is a MEDIAN, not a threshold count, because the count is not
+    // evidence: a fixed column beats the real detector outright on
+    // retarget_demo, and a lag-1 baseline that just repeats its own last box
+    // erases the 25 px margin on city_kpi. The median beats every null on every
+    // flight on disk. See demo/track_truth.py's docstring.
+    //
+    // Named after the null it uses rather than called "the floor": the Python
+    // takes the hardest of a whole family, and calling both "chance" hid the
+    // fact that the deck was printing a weaker one and a larger margin.
+    medianInShot: medOf(errs, cands),
+    medianCentreNull: medOf(nulls, cands),
+    // The LARGEST number of acceptable subjects ever in frame at once - the
+    // Python's truth_candidates_max. It was a median here and a max there, and
+    // the parity test compared the two against each other, passing only because
+    // its fixture was one row.
+    candidates: c[c.length - 1],
     outOfFov,
   };
 }
@@ -411,12 +428,13 @@ async function main() {
       if (!has(tag)) continue;
       const a = trackAccuracy(tag);
       if (!a) continue;
-      rows.push([label, n(metrics(tag).det_hit_rate, 3), pct(a.onTarget),
-        n(a.p95, 1) + " px", String(a.outOfFov)]);
+      rows.push([label, n(metrics(tag).det_hit_rate, 3),
+        n(a.medianInShot, 1) + " px", n(a.medianCentreNull, 1) + " px",
+        String(a.outOfFov)]);
     }
-    table(s, rows, [0.32, 0.17, 0.19, 0.16, 0.16], 0.55, 1.72, 0.42, [[1, 2]]);
-    card(s, 0.55, 4.0, 8.9, 1.2, ic.warn, "Why it mattered",
-      "det_hit_rate counts inferences that produced ANY box — a box on a parked lookalike scores like a box on the target. It is a detector-liveness rate. The flight with the best reported rate was the worst tracker, including frames where the target was outside the camera entirely. frac_on_target scores against the ground truth already present in every flight log.");
+    table(s, rows, [0.30, 0.16, 0.18, 0.20, 0.16], 0.55, 1.72, 0.42, [[1, 2]]);
+    card(s, 0.55, 4.0, 8.9, 1.2, ic.warn, "Why it mattered, twice",
+      "det_hit_rate counts inferences that produced ANY box — a box on a parked lookalike scores like a box on the target. It is a detector-liveness rate, and the flight with the best reported rate was the worst tracker. But the fraction that replaced it is barely better: at a 100 px tolerance a \"detector\" that emits the frame centre and never opens the image matches it, because the aircraft yaws to point at what it follows. So the column above is the MEDIAN pixel error against that same constant — a statistic the constant loses on every flight.");
     badge(s, next() + 1);
   }
 
@@ -428,8 +446,9 @@ async function main() {
     const after = trackAccuracy("lock_on") || trackAccuracy("city_locked");
     const rows = [["", "Lock off", "Lock on"]];
     if (before && after) {
-      rows.push(["Boxes on the correct vehicle", pct(before.onTarget), pct(after.onTarget)]);
-      rows.push(["Median error", n(before.median, 1) + " px", n(after.median, 1) + " px"]);
+      rows.push(["Median error, subject in shot", n(before.medianInShot, 1) + " px", n(after.medianInShot, 1) + " px"]);
+      rows.push(["...and what a centre-constant scores", n(before.medianCentreNull, 1) + " px", n(after.medianCentreNull, 1) + " px"]);
+      rows.push(["Median error, all scored rows", n(before.median, 1) + " px", n(after.median, 1) + " px"]);
       rows.push(["p95 error", n(before.p95, 1) + " px", n(after.p95, 1) + " px"]);
       rows.push(["Detections with target off-frame", String(before.outOfFov), String(after.outOfFov)]);
     }
@@ -580,7 +599,7 @@ async function main() {
       card(s, 5.10, 1.68, 4.35, 1.62, ic.warn, "A rule that was hashed and inert",
         `Building it found the 10 m rule binding "pedestrian" while the phrase produced "person". Exact-string compare, so across a whole flight with a human subject it fired 0 times and the 5 m catch-all applied. No violation is indistinguishable from no rule. Synonyms are now canonicalised, and an unreachable rule is a start-up refusal.`);
       card(s, 0.55, 3.44, 4.35, 1.62, ic.check, "Tracking, scored honestly",
-        `Before the retarget: ${pct(R.pre.onTarget)} on target against a ${pct(R.pre.chance)} floor — a detector that just emits the frame centre scores that, because the aircraft points at what it follows. The margin is the evidence: ${pct(R.pre.onTarget - R.pre.chance)} here, ${pct(R.pre.onTarget25 - R.pre.chance25)} at a 25 px tolerance, over ${preN} detections at ${n(R.pre.median, 1)} px median. After the retarget: UNMEASURED — the log carried one ground truth, the car, so the ${postAll} later detections were compared to an object behind the aircraft.`);
+        `Before the retarget: median error ${n(R.pre.medianInShot, 1)} px over ${preN} detections, against ${n(R.pre.medianCentreNull, 1)} px for a "detector" that emits the frame centre and never opens the image. That comparison is the evidence. The ${pct(R.pre.onTarget)} "on target" figure is not: at a 100 px tolerance the same constant nearly matches it, and on one flight in this repo a fixed column beats the real detector outright. After the retarget: UNMEASURED — the log carried one ground truth, the car, so the ${postAll} later detections were compared to an object behind the aircraft.`);
       card(s, 5.10, 3.44, 4.35, 1.62, ic.aim, "What the flight does not show yet",
         "The ring did not fire: the position the Shield was SERVED never came inside 14.7 m, and a 10 m ring cannot fire at 14.7 m. The capability is proven in the sweep; the video shows the retarget but not its consequence. Stated as the open item it is.");
     }

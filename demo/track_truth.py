@@ -64,12 +64,45 @@ and the median lands INSIDE it. `ON_TARGET_PX` was calibrated against a single
 target (median error on the right vehicle is 3-8 px) and that calibration does
 not survive a candidate set.
 
-Two changes make the number mean something again. Only candidates actually IN
-SHOT can be credited, because a box cannot be on a subject the camera cannot
-see. And every result carries `frac_on_target_chance` - the same computation
-over the same rows with the box centre replaced by a seeded uniform draw - so a
-reader can see the floor this flight's geometry sets. A score near its own
-chance level is not tracking, however high it looks.
+Only candidates actually IN SHOT can be credited, because a box cannot be on a
+subject the camera cannot see.
+
+AND THEN THE FLOOR TURNED OUT TO BE A RABBIT HOLE
+
+The first answer was to publish a chance floor beside the score. That was right
+as far as it went and it did not go far enough: a fourth review found a fixed
+column at cx=157 px that BEATS the real detector on `retarget_demo` (0.777
+against 0.759, flipping a +0.104 margin to -0.018), and a lag-1 baseline - emit
+the previous tick's box centre, never open the current image - that erases the
+25 px margin on `city_kpi` outright (+0.077 -> -0.000). Every floor invites a
+harder null, and threshold counting is what makes that possible: at any
+tolerance loose enough to be robust, most of the rows are inside it for
+everybody.
+
+SO THE HEADLINE IS THE MEDIAN, NOT THE FRACTION
+
+The median pixel error was in this module from the start and it is the statistic
+that actually separates. Measured against three nulls on every flight with
+scored rows:
+
+    flight            n  |  real  centre  bestK  lag1     frac@25px real vs lag1
+    city_locked     521  |   2.3     5.3    4.7   2.5     0.952 vs 0.935
+    city_kpi        545  |   3.5     9.4    6.9   3.7     0.831 vs 0.829
+    city_full       525  |   7.1    11.6   10.1   7.4     0.728 vs 0.726
+    demo_traffic    548  |   4.9     7.7    7.7   5.6     0.885 vs 0.870
+    retarget_demo   505  |  18.7    36.1   33.1  20.2     0.549 vs 0.539
+    people_check    377  |   7.1    12.8   11.4   7.4     0.825 vs 0.798
+
+The median beats every null on every flight; the fraction is within a whisker of
+lag-1 everywhere. `det_gt_err_px_median` is therefore what to quote, with
+`det_gt_err_px_median_chance` beside it, and `frac_on_target` is kept for
+continuity with forty-odd published flights while being marked for what it is: a
+threshold count a constant can nearly match.
+
+(Lag-1 is not strictly a zero-skill null - it reuses the detector's own last
+output - so it is reported as a persistence BASELINE rather than folded into the
+floor. It is included above because a statistic that cannot beat "do what you
+did last frame" is not measuring much.)
 """
 from __future__ import annotations
 
@@ -86,7 +119,8 @@ HFOV_DEG = 90.0
 # than any plausible box-centre error on the right vehicle (median is 3-8 px),
 # and narrow enough that a different vehicle in another lane fails it.
 #
-# THAT WIDTH IS ALSO WHY THE FIGURE ALONE PROVES LITTLE. The aircraft yaws to
+# THAT WIDTH IS ALSO WHY THE FIGURE ALONE PROVES LITTLE, AND WHY THE MEDIAN IS
+# THE HEADLINE INSTEAD - see the module docstring. The aircraft yaws to
 # point AT what it is following, so the subject sits near the frame centre, and
 # a detector that emits the centre on every frame - never opening the image -
 # scores almost the same. Measured on demo/out/city_full, in-shot rows only:
@@ -234,14 +268,32 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
         rows, hfov_deg, on_target_px, lambda r, w: float(r["det"]["cx"]))
 
     if not errs:
+        # Every key the populated branch returns, so a consumer never has to
+        # test which branch it got. This drifted twice: it kept emitting
+        # `truth_candidates_median` after that field was removed, and none of
+        # the fields added beside it.
         return {"det_scored": 0, "det_unscorable": n_unscorable,
-                "det_gt_err_px_median": None,
-                "det_gt_err_px_p95": None, "frac_on_target": None,
+                "det_gt_err_px_median": None, "det_gt_err_px_p95": None,
+                "det_gt_err_px_median_in_shot": None,
+                "det_gt_err_px_median_chance": None,
+                "det_gt_err_px_median_chance_centre": None,
+                "frac_on_target": None, "frac_in_shot": None,
                 "frac_on_target_chance": None,
-                "truth_candidates_median": None,
+                "frac_on_target_chance_uniform": None,
+                "frac_on_target_chance_centre": None,
+                "frac_on_target_margin": None,
+                "frac_on_target_25px": None, "frac_on_target_25px_chance": None,
+                "frac_on_target_25px_margin": None,
+                "truth_candidates_max": None,
                 "n_det_with_target_out_of_fov": 0}
 
-    # TWO null models, because one of them was measured to be far too weak.
+    # A FAMILY of null models, because each one that was added turned out to be
+    # beatable by the next. Uniform is the naive one; the centre constant
+    # exploits the fact that the aircraft yaws to POINT AT the subject; the
+    # swept constant finds the best fixed column for THIS flight, which on
+    # retarget_demo beats the real detector outright. The floor is the hardest
+    # of them, and it is still only a lower bound on what a zero-skill detector
+    # could reach - which is the honest reason the median is the headline.
     #
     # `uniform` throws a box anywhere in the frame. `centre` puts it at the
     # image centre on every frame - a detector that never opens the image and
@@ -255,10 +307,24 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
     # `frac_on_target_chance` reports the HARDER of the two, because a floor is
     # only useful if it is the highest one a zero-skill detector can reach.
     rnd = random.Random(chance_seed)
-    e_uniform, c_uniform, _, _, _, _ = _score(
-        rows, hfov_deg, on_target_px, lambda r, w: rnd.uniform(0.0, float(w)))
-    e_centre, c_centre, _, _, _, _ = _score(
-        rows, hfov_deg, on_target_px, lambda r, w: float(w) / 2.0)
+    nulls = {}
+    nulls["uniform"] = _score(rows, hfov_deg, on_target_px,
+                              lambda r, w: rnd.uniform(0.0, float(w)))[:2]
+    nulls["centre"] = _score(rows, hfov_deg, on_target_px,
+                             lambda r, w: float(w) / 2.0)[:2]
+    # The best fixed column for this flight, swept coarsely. Coarse on purpose:
+    # a finer sweep only lowers the reported margin further, and the point is
+    # made at this resolution.
+    best = None
+    for i in range(0, 41):
+        k = i / 40.0
+        cand = _score(rows, hfov_deg, on_target_px, lambda r, w, _k=k: _k * float(w))[:2]
+        f = sum(1 for e, ok in zip(cand[0], cand[1]) if ok and e <= on_target_px)
+        if best is None or f > best[0]:
+            best = (f, cand)
+    nulls["best_constant"] = best[1]
+    e_uniform, c_uniform = nulls["uniform"]
+    e_centre, c_centre = nulls["centre"]
 
     def _frac_at(es, cs, tol):
         return sum(1 for e, ok in zip(es, cs) if ok and e <= tol) / len(es)
@@ -268,8 +334,19 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
 
     chance_uniform = _frac(e_uniform, c_uniform)
     chance_centre = _frac(e_centre, c_centre)
-    tight_chance = max(_frac_at(e_uniform, c_uniform, TIGHT_ON_TARGET_PX),
-                       _frac_at(e_centre, c_centre, TIGHT_ON_TARGET_PX))
+    chance = max(_frac(es, cs) for es, cs in nulls.values())
+    tight_chance = max(_frac_at(es, cs, TIGHT_ON_TARGET_PX)
+                       for es, cs in nulls.values())
+
+    def _med(es, cs):
+        kept = sorted(e for e, ok in zip(es, cs) if ok)
+        return kept[len(kept) // 2] if kept else None
+
+    # Both medians over the SAME population: rows where a subject was in shot.
+    med_real = _med(errs, credit)
+    null_meds = [m for m in (_med(es, cs) for es, cs in nulls.values())
+                 if m is not None]
+    med_chance = min(null_meds) if null_meds else None
 
     s = sorted(errs)
     c = sorted(cands)
@@ -283,31 +360,56 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
         "det_gt_err_px_p95": round(s[min(len(s) - 1, int(0.95 * len(s)))], 1),
         # THE number. What fraction of the boxes the controller acted on were
         # actually on the subject it was told to follow.
+        # Kept for continuity with the published flights, and NOT the headline:
+        # a constant can nearly match it. Denominator is creditable rows, so it
+        # measures the detector rather than how often the subject was in frame -
+        # `frac_in_shot` is that second question, kept separate.
         "frac_on_target": round(_frac(errs, credit), 3),
-        # The floor: the best a detector with NO skill scores on these same rows,
-        # taken as the harder of two null models (see above). Measured on the
-        # flights in this repository it runs 0.47-0.55 even with a single
-        # subject, because the aircraft points at what it is following - so a
-        # score is evidence of tracking only by the margin it clears this.
-        "frac_on_target_chance": round(max(chance_uniform, chance_centre), 3),
+        "frac_in_shot": round(sum(1 for ok in credit if ok) / len(credit), 3),
+        # THE headline pair, and they are computed over the SAME rows - the
+        # in-shot ones. `det_gt_err_px_median` above spans every scored row
+        # including the out-of-shot ones, which is what the forty-odd published
+        # flights quote, so it is left alone; comparing it against a null
+        # measured on in-shot rows only would be comparing two different
+        # populations, and did on `people_check` (17.2 against 12.8) until this
+        # was split out.
+        "det_gt_err_px_median_in_shot": (None if med_real is None
+                                         else round(med_real, 1)),
+        "det_gt_err_px_median_chance": (None if med_chance is None
+                                        else round(med_chance, 1)),
+        # The centre-constant null on its own. Exposed because the deck computes
+        # this one in JavaScript - it needs no null family and no RNG, so the
+        # two languages can be pinned to the same number - and because naming
+        # the null a figure is compared against is worth more than a single
+        # unattributed "floor".
+        "det_gt_err_px_median_chance_centre": (
+            None if _med(*nulls["centre"]) is None
+            else round(_med(*nulls["centre"]), 1)),
+        # The floor: the best any of the null models scores on these same rows.
+        # Measured across the 34 flights with scored rows it ranges 0.045 to
+        # 1.000 and sits at exactly 1.000 on 22 of them - i.e. on most flights a
+        # zero-skill detector scores a perfect on-target fraction, which is the
+        # whole reason the median is the headline instead. (An earlier version
+        # of this comment quoted 0.47-0.55, which is the UNIFORM component's
+        # range, not this field's; no flight falls in it.)
+        "frac_on_target_chance": round(chance, 3),
         "frac_on_target_chance_uniform": round(chance_uniform, 3),
         "frac_on_target_chance_centre": round(chance_centre, 3),
         # THE EVIDENCE, as opposed to the number. How far the detector clears
         # the best a zero-skill detector manages on these same rows. Negative
         # means a constant would have done better, which has happened.
-        "frac_on_target_margin": round(
-            _frac(errs, credit) - max(chance_uniform, chance_centre), 3),
+        "frac_on_target_margin": round(_frac(errs, credit) - chance, 3),
         # The same three at a tolerance tight enough to tell them apart.
         "frac_on_target_25px": round(_frac_at(errs, credit, TIGHT_ON_TARGET_PX), 3),
         "frac_on_target_25px_chance": round(tight_chance, 3),
         "frac_on_target_25px_margin": round(
             _frac_at(errs, credit, TIGHT_ON_TARGET_PX) - tight_chance, 3),
-        # How many acceptable subjects were in shot. Reported as a RANGE, not a
-        # median: a retarget flight is bimodal by construction - one subject
-        # before the switch, twelve after - and a median reports whichever mode
-        # holds one more row, so a single row could flip the reader's verdict on
-        # whether the figure above is comparable with a single-target flight.
-        "truth_candidates_min": c[0],
+        # The largest number of acceptable subjects that was ever in frame at
+        # once. 1 means the score is comparable with a single-target flight;
+        # more means it is not, because scoring against a CLASS gets easier with
+        # every extra member. The minimum was dropped: the out-of-shot branch
+        # pushes a hard 0, so it only ever restated
+        # `n_det_with_target_out_of_fov > 0`.
         "truth_candidates_max": c[-1],
         # The unambiguous failures: no acceptable subject was in shot, so
         # whatever the detector found, it was not the subject.

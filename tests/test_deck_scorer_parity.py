@@ -49,7 +49,7 @@ def _js_functions() -> str:
     """
     src = DECK.read_text(encoding="utf-8")
     out = []
-    for name in ("function truthPts(", "function scoreRows("):
+    for name in ("function truthPts(", "function medOf(", "function scoreRows("):
         i = src.index(name)
         depth, j = 0, src.index("{", i)
         k = j
@@ -226,11 +226,19 @@ def test_the_chance_floor_agrees_too():
     if not js:
         return SKIP
     py = score_rows(pre)
-    # 5e-4, not 1e-6: the Python rounds these to three decimals on the way out,
-    # so exact equality would be comparing a rounded number to an unrounded one.
-    assert abs(js["chance"] - py["frac_on_target_chance_centre"]) < 5e-4, (js, py)
+    # The deck prints the MEDIAN against a named null, not a "floor" - the
+    # Python's floor is the hardest of a null family, the JS computed only the
+    # centre constant, and the previous version of this test asserted the JS
+    # against `frac_on_target_chance_CENTRE` rather than the published
+    # `frac_on_target_chance`. So it pinned the two apart: on envactor_check the
+    # deck printed a +0.022 margin where the module published +0.000, and this
+    # test passed.
+    #
+    # 0.05 px, not exact: the Python rounds these to one decimal on the way out.
+    assert abs(js["medianInShot"] - py["det_gt_err_px_median_in_shot"]) < 0.05, (js, py)
+    assert abs(js["medianCentreNull"]
+               - py["det_gt_err_px_median_chance_centre"]) < 0.05, (js, py)
     assert abs(js["onTarget25"] - py["frac_on_target_25px"]) < 5e-4, (js, py)
-    assert abs(js["chance25"] - py["frac_on_target_25px_chance"]) < 5e-4, (js, py)
 
 
 def test_the_candidate_count_agrees_too():
@@ -243,7 +251,25 @@ def test_the_candidate_count_agrees_too():
     if not js:
         return SKIP
     py = score_rows(rows)
+    # Both are the MAX now. The JS was a median and the Python a max, and this
+    # assertion compared one to the other - passing only because its fixture was
+    # a single row, where median and max coincide.
     assert js["candidates"] == py["truth_candidates_max"] == 1, (js, py)
+
+
+def test_the_candidate_count_agrees_on_a_flight_where_median_and_max_differ():
+    """The fixture that would have caught it: two in-shot subjects on one row,
+    one on the next. Median 1, max 2."""
+    rows = [_row(200.0, 1, truth={"class": "pedestrian",
+                                  "pts": [[10.0, 0.0], [10.0, 3.0]]}),
+            _row(200.0, 2, truth={"class": "pedestrian", "pts": [[10.0, 0.0]]}),
+            _row(200.0, 3, truth={"class": "pedestrian", "pts": [[10.0, 0.0]]})]
+    js = _run_js(rows)
+    if not js:
+        return SKIP
+    py = score_rows(rows)
+    assert py["truth_candidates_max"] == 2, py
+    assert js["candidates"] == py["truth_candidates_max"], (js, py)
 
 
 if __name__ == "__main__":
