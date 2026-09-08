@@ -28,12 +28,26 @@ deg/s and the reference's rad/s, a factor of 57.3 — because `guardrail/models.
 said so in a comment. The comment was wrong, and it had been wrong long enough
 for two of the four adapters to believe it and convert a radian value to radians
 a second time. `shield.py` enforces the cap in radians at three sites, and the
-only live producer (`demo/follow_vlm.py`'s servo, clipped to ±1.1) emits a
-radian-scale value. See
+only live producer (`demo/follow_vlm.py`'s servo) emits a radian-scale value —
+unclipped on both live tracking paths, and `retarget_demo` recorded 2.375 rad/s
+(136 °/s), well past the 45 °/s cap. See
 `docs/FINDING-the-contract-disagreed-with-itself-about-yaw.md`.
 
 So this module deliberately does NOT convert the yaw rate. The conversion that
 looked like the careful thing to do was the bug.
+
+WHO CALLS THIS
+
+Nothing in production, today. `from_body` and `to_body` are imported only by
+`tests/test_frame_contract.py`; `to_local_ned` documents what
+`sitl/run_sitl_demo.py` does without being called by it. That is deliberate and
+worth stating rather than leaving a reader to assume otherwise: the module
+exists so that when a body-frame producer IS wired in, it crosses here once,
+with tests, instead of a conversion appearing at the call site. It is not
+exported from `guardrail/__init__.py`, which lists only the core contract types
+- `bundle`, `kpi`, `manifest`, `compiler`, `projection` and `audit` are all
+absent from `__all__` too, so this follows the package's convention rather than
+departing from it.
 """
 from __future__ import annotations
 

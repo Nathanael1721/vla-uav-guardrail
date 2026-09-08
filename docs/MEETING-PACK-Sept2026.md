@@ -1,13 +1,15 @@
 # Meeting Pack — September 2026
 
-Companion to `docs/VLA-Guardrail-Sept2026.pptx` (14 slides). Bilingual:
+Companion to `docs/VLA-Guardrail-Sept2026.pptx` (15 slides). Bilingual:
 **English first, Bahasa Indonesia below each block.**
 
 Five parts:
 **A** answers to the 19 August items · **B** per-slide script ·
 **C** the 60-second story · **D** Q&A bank · **E** numbers to memorise
 
-Everything here was verified against the repository on 2026-09-01. Where an item
+Everything here was verified against the repository on 2026-09-01, and every
+figure was re-verified against the artefacts on 2026-09-08 by an adversarial
+review; corrections carry that date. Where an item
 is **not** done, it says so — those are the ones that get asked about.
 
 > **Dua bahasa.** Bagian Inggris untuk dibaca saat presentasi; bagian Indonesia
@@ -689,13 +691,23 @@ afterwards.
 | Constraint classes | **6** (reference implementation: 2) | corridor + valid_time new |
 | Scenario sweep | **13 scenarios, 12 pass, 1 known failure** | headless, ~1 s |
 | Delivered runs rescored | **42**, every P0 figure reproduced | no re-flying |
-| Test suite | **439 tests, 23 files** | all green |
+| Test suite | **455 tests, 23 files** | all green |
 | Camera-rail rate gate | **0 of 6** runs meet it | open item |
 | Retarget, class change in flight | `car` → `pedestrian` at **t+30.0 s** | ring 5 m → 10 m |
 | Tracking before the retarget | **0.931** on target, 7.6 px median | 247 detections |
 | Tracking after the retarget | **unmeasured** — no truth was logged | now fixed |
 | Closest served subject range, after | **14.7 m** (median 20.5) | why the ring never fired |
-| Ticks the camera said "inside", the estimate said "outside" | **4** consecutive | new `range_agreement` |
+| Ticks the camera said "inside", the estimate said "outside" | **4** consecutive | `retarget_demo2`, ticks 451-454 |
+
+> **How that 4 is obtained.** `range_agreement` reads the enforced ring from the
+> row's subject class, and every log on disk predates the `truth` field - so on
+> the raw artefact it cannot identify a ring, and since 2026-09-08 it reports
+> those ticks as `ticks_ring_unknown` instead of judging them against the 5 m
+> catch-all. Judging them against the catch-all is what it did before, which
+> returned ZERO blind ticks for the very episode it was built to describe. The 4
+> is measured by supplying the class the flight actually had - car before tick
+> 248, pedestrian after - which is what `tests/test_range_and_lock.py` pins.
+> Flights recorded from now on log the class and need no such supplying.
 | Altitude the pedestrian policy permits | **4–10 m** | map loaded covers 6–14 m |
 | Altitude no obstacle map covers | **4–6 m** | inside the permitted band |
 | Cells occupied at 2–4 m and clear at 6–14 m | **300** | neither map contains the other |

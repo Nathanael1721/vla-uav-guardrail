@@ -217,7 +217,7 @@ def range_agreement(rows, standoffs) -> dict:
             rings[cls] = max(m) if m else None
         return rings[cls]
 
-    diffs, blind, blind_run, worst_run = [], 0, 0, 0
+    diffs, blind, blind_run, worst_run, unknown = [], 0, 0, 0, 0
     for r in rows:
         raw = r.get("rng_m")
         est = (r.get("est") or {}).get("rng")
@@ -225,8 +225,17 @@ def range_agreement(rows, standoffs) -> dict:
             blind_run = 0
             continue
         diffs.append(abs(float(est) - float(raw)))
-        cls = (r.get("truth") or {}).get("class")
-        rr = ring(cls)
+        truth = r.get("truth")
+        if not truth or truth.get("class") is None:
+            # No class means no ring can be identified. Falling back to the "*"
+            # catch-all here would silently answer a question about the 10 m
+            # pedestrian ring using the 5 m one, and report zero blind ticks for
+            # a flight that had four - which is exactly what it did for every
+            # log written before the `truth` field existed.
+            unknown += 1
+            blind_run = 0
+            continue
+        rr = ring(truth["class"])
         if rr is not None and float(raw) < rr <= float(est):
             blind += 1
             blind_run += 1
@@ -243,6 +252,10 @@ def range_agreement(rows, standoffs) -> dict:
         "abs_diff_max_m": round(d[-1], 2),
         "ticks_raw_inside_est_outside": blind,
         "longest_blind_run_ticks": worst_run,
+        # Ticks whose subject class was not logged, so no ring could be
+        # identified and the tick could not be judged either way. A large value
+        # here means the two counts above describe only part of the flight.
+        "ticks_ring_unknown": unknown,
     }
 
 
@@ -267,6 +280,12 @@ def subject_truth_pts(subject_class, car, people) -> list:
     project already flew once, and folding them in here would score it correct.
     """
     if subject_class == "pedestrian":
+        # `people is None` is the DEFAULT (--pedestrians 0), and also what
+        # happens when the building mask or the baked GLB pack is missing. The
+        # flight then logs truth.pts == [] on every tick, the whole phase scores
+        # unscorable, and nothing says so - see the start-up check in main(),
+        # which refuses that combination the way an unreachable policy class is
+        # already refused.
         return ([[round(f.x, 2), round(f.y, 2)] for f in people.figures]
                 if people is not None else [])
     if subject_class == "car" and car is not None:
@@ -1603,6 +1622,22 @@ async def fly(args) -> int:
     # "person" and the rule said "pedestrian". Nothing reported it, because
     # there was nothing to report - no violation is indistinguishable from no
     # rule. Check it before take-off, where it is cheap and loud.
+    # A pedestrian flight with no pedestrians in it. `--pedestrians` defaults to
+    # 0, so a phrase that selects the pedestrian class would log truth.pts == []
+    # on every tick of that phase: the whole phase scores UNSCORABLE and the
+    # flight says nothing about it. Same shape as the inert stand-off rule
+    # below - the artefact looks complete and measures nothing - so it gets the
+    # same treatment, a start-up refusal where it is cheap and loud.
+    _phrases = [args.object] + [ph for _, ph in retargets]
+    _ped_phrases = [ph for ph in _phrases if subject_width(ph)[1] == "pedestrian"]
+    if _ped_phrases and args.pedestrians <= 0:
+        raise SystemExit(
+            f"{_ped_phrases[0]!r} selects the pedestrian class, but "
+            f"--pedestrians is {args.pedestrians}, so no pedestrian exists to "
+            f"be ground truth. Every tick of that phase would log an empty "
+            f"truth and score as unscorable. Pass --pedestrians N (the demo "
+            f"uses 12), or follow something that is in the scene.")
+
     _reachable = set(SUBJECT_CLASS_CANON.values())
     for _so in policy.by_type(SubjectStandoff):
         if _so.subject_class != "*" and _so.subject_class not in _reachable:
@@ -2524,8 +2559,27 @@ async def fly(args) -> int:
     alt_bad = (sum(1 for pt in traj
                    if pt["up"] < band[0].alt_min_m or pt["up"] > band[0].alt_max_m)
                if band else 0)
-    seps = [math.hypot(r["x"] - r["tgt_x"], r["y"] - r["tgt_y"])
-            for r in rows if r["tgt_x"] is not None]
+    # Separation to the SUBJECT, not to the car. `tgt_x/tgt_y` is the scripted
+    # vehicle for the whole flight, so on a retarget flight every one of these
+    # figures - and `frac_within_30m`, which feeds `mission_success` through
+    # guardrail/kpi.py - described the distance to an object that had stopped
+    # being the subject thirty seconds earlier. Same defect as the scorer's,
+    # thirty lines below the fix for it, and missed because the scorer was the
+    # thing being looked at.
+    #
+    # For a class subject this is the distance to the NEAREST member, which is
+    # the only thing the log can support: nothing records which pedestrian the
+    # detector locked. `truth_candidates_median` alongside says how many there
+    # were, so the figure can be read for what it is.
+    def _sep(r):
+        pts = (r.get("truth") or {}).get("pts") or []
+        if pts:
+            return min(math.hypot(r["x"] - tx, r["y"] - ty) for tx, ty in pts)
+        if r.get("tgt_x") is not None and r.get("tgt_y") is not None:
+            return math.hypot(r["x"] - r["tgt_x"], r["y"] - r["tgt_y"])
+        return None
+
+    seps = [s for s in (_sep(r) for r in rows) if s is not None]
     g = grounder.latest() if grounder else {"n_seen": 0, "n_miss": 0}
     metrics = {
         "tag": args.tag, "ticks": len(traj), "object": args.object,
@@ -2743,8 +2797,12 @@ def main() -> int:
                     help="max accepted jump from the predicted position, as a "
                          "fraction of image width")
     ap.add_argument("--pedestrians", type=int, default=0,
-                    help="how many decorative people to place on pavements near "
-                         "the route. They are scenery: nothing detects them and "
+                    help="how many people to place on pavements near the route. "
+                         "Scenery for the controller, but their positions are "
+                         "the GROUND TRUTH a pedestrian subject is scored "
+                         "against since 2026-09-07, so a pedestrian phrase "
+                         "without them is refused at start-up. "
+                         "Historically: they are scenery, nothing detects them and "
                          "no rule refers to them yet. Standing figures cost no "
                          "per-tick RPC at all. Default 0 so recorded flights are "
                          "unaffected.")

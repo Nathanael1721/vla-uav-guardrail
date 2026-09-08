@@ -13,6 +13,7 @@ module docstring and in docs/.
 """
 import json
 import math
+import random
 import sys
 from pathlib import Path
 
@@ -191,6 +192,58 @@ def test_out_of_shot_needs_every_candidate_out_of_shot():
     only = score_rows([_row(200.0, truth={"class": "pedestrian",
                                           "pts": [behind]})])
     assert only["n_det_with_target_out_of_fov"] == 1, only
+
+
+def test_a_subject_out_of_shot_can_never_be_credited_with_the_box():
+    """The two tests used to be satisfiable by DIFFERENT candidates: the error
+    was the min over all of them, while out-of-shot required all of them to be
+    out. So a row could be scored ON TARGET against a subject the camera could
+    not see, and the counter built to catch that stayed silent."""
+    behind = [-10.0, 0.0]                 # 180 deg off the nose
+    out = score_rows([_row(200.0, truth={"class": "pedestrian", "pts": [behind]})])
+    assert out["n_det_with_target_out_of_fov"] == 1, out
+    assert out["frac_on_target"] == 0.0, out
+    assert out["truth_candidates_median"] == 0, out
+
+
+def test_a_zero_skill_detector_scores_its_own_chance_floor():
+    """The defect that cost the multi-point path its meaning. Scoring against a
+    CLASS gets easier with every extra figure in the scene, and `ON_TARGET_PX`
+    was calibrated against a single target. Measured before the fix, a uniformly
+    random box scored 0.584 with twelve figures - and its median error, 71 px,
+    was INSIDE the 100 px tolerance.
+
+    The fix is not to make chance smaller; with a class it genuinely is easier.
+    It is to report the floor beside the score, so a number that carries no
+    signal cannot look like one."""
+    rng = random.Random(7)
+    for n_pts, tol in ((1, 0.05), (12, 0.05)):
+        rows = []
+        for _ in range(3000):
+            pts = [[rng.uniform(-60, 60), rng.uniform(-60, 60)]
+                   for _ in range(n_pts)]
+            rows.append({"x": rng.uniform(-60, 60), "y": rng.uniform(-60, 60),
+                         "psi": rng.uniform(-math.pi, math.pi),
+                         "det": {"cx": rng.uniform(0, W), "img_w": W},
+                         "truth": {"class": "pedestrian", "pts": pts}})
+        out = score_rows(rows)
+        assert abs(out["frac_on_target"] - out["frac_on_target_chance"]) < tol, \
+            (n_pts, out["frac_on_target"], out["frac_on_target_chance"])
+
+
+def test_a_real_flight_beats_its_chance_floor_by_a_wide_margin():
+    """The counterpart: the figure is only evidence when it clears the floor.
+    Pre-retarget tracking is 0.931 against a floor of 0.437 - the floor is high
+    because the aircraft points AT the subject, so a random box lands near it
+    often, and quoting 0.931 without it would overstate the result."""
+    log = ROOT / "demo" / "out" / "retarget_demo2" / "flight_log.jsonl"
+    if not log.is_file():
+        return SKIP
+    rows = [json.loads(x) for x in log.open(encoding="utf-8") if x.strip()]
+    pre = score_rows([r for r in rows if r["tick"] < 248])
+    assert pre["frac_on_target"] == 0.931, pre
+    assert pre["frac_on_target_chance"] == 0.437, pre
+    assert pre["truth_candidates_median"] == 1, pre
 
 
 def test_the_retarget_flight_on_disk_splits_the_way_the_finding_says():

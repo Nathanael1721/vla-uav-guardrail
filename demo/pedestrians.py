@@ -297,6 +297,9 @@ class Pedestrians:
         self.buildings = buildings
         self.avoid = list(avoid)
         self.n_updates = 0
+        # Counted, not swallowed: these figures are ground truth now, so a pose
+        # the simulator refused is a hole in the truth and has to be reportable.
+        self.n_pose_failures = 0
 
     def available(self) -> bool:
         return self.dir is not None
@@ -367,12 +370,19 @@ class Pedestrians:
             x, y, h = fig.walker.pose_at(t)
             if abs(x - fig.x) < 1e-4 and abs(y - fig.y) < 1e-4:
                 continue                      # no-op teleports are refused
-            fig.x, fig.y, fig.heading = x, y, h
+            # The pose is committed to fig.x/fig.y only AFTER the simulator has
+            # accepted it. These were decoration until 2026-09-07, when
+            # subject_truth_pts promoted them to the ground truth that
+            # frac_on_target is scored against - so a swallowed RPC failure used
+            # to move the truth without moving the mesh, and every later tick
+            # would score the detector against a person who was not there.
             try:
                 self.world.set_object_pose(fig.actual_name, _pose(x, y, h), True)
-                self.n_updates += 1
             except Exception:
-                pass                          # scenery must never fail a flight
+                self.n_pose_failures += 1
+                continue                      # scenery must never fail a flight
+            fig.x, fig.y, fig.heading = x, y, h
+            self.n_updates += 1
 
     def destroy(self) -> None:
         # Report the RPC actually spent. A walker that silently never moved

@@ -77,6 +77,9 @@ def _finite(a: Action4D) -> bool:
 # is named yaw_rate_max_dps and compared against the raw number, so the units
 # disagree by a factor of 57.3 -- in the direction that makes the cap unreachable.
 
+SKIP = "SKIP"
+
+
 def test_yaw_cap_compares_degrees_with_degrees():
     """Fixed 2026-08-17. The policy states the cap in DEGREES per second and the
     Action4D contract carries yaw_rate in RADIANS per second; the two were
@@ -100,25 +103,74 @@ def test_the_yaw_cap_now_fires_at_flight_scale():
     assert math.degrees(abs(d.emitted.yaw_rate)) <= 45.0 + 1e-6
 
 
-def test_F1_the_shield_still_does_not_edit_yaw_in_the_follow_demo():
-    """The property the follow demo's headline rests on: heading is the pilot's,
-    the track is the guardrail's.
+def test_F1_the_shield_owns_yaw_only_above_the_cap():
+    """What the follow demo's headline actually rests on, measured.
 
-    Fixing the unit above made a P1 rule live for the first time, which is
-    exactly the change that could have broken F1. Measured over all three demo
-    flights, the WORST yaw command anywhere is 11.8 dps - four times under the
-    45 dps cap - so the live rule is a no-op there. This asserts that margin
-    rather than trusting it, and will fail if either the cap or the controller's
-    yaw authority moves toward the other.
+    This test used to be called "...still does not edit yaw in the follow demo"
+    and asserted a hardcoded `worst_seen_dps = 11.8`, feeding the Shield four
+    synthetic rates derived from that constant. It never opened a flight log.
+    Its docstring claimed it "asserts that margin rather than trusting it"; it
+    trusted it completely, and the constant was wrong - measured across every
+    log on disk the worst commanded yaw is 136.1 dps, and the Shield edited yaw
+    on 213 ticks across 8 runs.
+
+    So F1 as originally stated is false and has been since the unit conversion
+    moved to the boundary on 2026-08-17. The property that IS true, and the one
+    the demo's claim should rest on, is bounded: the pilot owns heading right up
+    to the cap, and the Shield takes it only beyond. That is what is asserted
+    here - below the cap, untouched; above it, clamped to exactly the cap.
     """
     s = _shield()
-    worst_seen_dps = 11.8
-    for dps in (0.0, 5.0, worst_seen_dps, 2 * worst_seen_dps):
+    st = State(x=-20, y=-20, up=4)
+    for dps in (0.0, 5.0, 11.8, 44.9):
         yr = math.radians(dps)
-        d = s.filter(State(x=-20, y=-20, up=4), Action4D(vx=1.0, yaw_rate=yr))
+        d = s.filter(st, Action4D(vx=1.0, yaw_rate=yr))
         assert d.emitted.yaw_rate == yr, (
-            f"the Shield edited yaw at {dps} dps; F1 is broken and the follow "
-            f"demo's claim needs restating")
+            f"the Shield edited yaw at {dps} dps, which is under the 45 dps "
+            f"cap; the pilot must own heading below the cap")
+    for dps in (45.1, 63.0, 136.1):
+        d = s.filter(st, Action4D(vx=1.0, yaw_rate=math.radians(dps)))
+        assert abs(math.degrees(d.emitted.yaw_rate) - 45.0) < 1e-6, (
+            f"{dps} dps was not clamped to the 45 dps cap; the cap is inert "
+            f"again")
+
+
+def test_F1_the_recorded_flights_say_the_cap_fires():
+    """The half the old F1 test could not see, because it never read a log.
+
+    A property asserted about recorded flights has to be checked against them.
+    Skips when demo/out/ is absent, which is every clean clone."""
+    out = ROOT / "demo" / "out"
+    if not out.is_dir():
+        return SKIP
+    import json
+    edited = worst = 0
+    runs = 0
+    for run in sorted(out.iterdir()):
+        log = run / "flight_log.jsonl"
+        if not log.is_file():
+            continue
+        n = 0
+        for line in log.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            raw_a, em = r.get("raw") or {}, r.get("emitted") or {}
+            if "yaw_rate" not in raw_a or "yaw_rate" not in em:
+                continue
+            worst = max(worst, abs(raw_a["yaw_rate"]))
+            if abs(raw_a["yaw_rate"] - em["yaw_rate"]) > 1e-9:
+                n += 1
+        if n:
+            runs += 1
+            edited += n
+    if edited == 0 and worst == 0.0:
+        return SKIP                       # no camera-rail logs in this checkout
+    assert edited > 0, (
+        "no flight on disk has an edited yaw. Either the cap went inert again "
+        "or the logs changed; both need looking at, and the docs that say the "
+        "cap fires on 213 ticks would need correcting.")
+    assert math.degrees(worst) > 45.0, math.degrees(worst)
 
 
 # ------------------------------------------------------------------- 2. FUZZ

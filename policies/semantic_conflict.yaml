@@ -61,10 +61,17 @@ constraints:
     alt_max_m: 30
 
   # NOTE, and do not "fix" this here: yaw_rate_max_dps is named in degrees per
-  # second, but Action4D.yaw_rate is handed straight to move_by_velocity_async,
-  # which consumes rad/s. The VLA emits at most +/-1.1 rad/s scaled by yaw_gain
-  # 0.4, so |yaw_rate| never exceeds 0.44 and this threshold has never fired in
-  # any Project AirSim run in this repo.
+  # second, and Action4D.yaw_rate carries rad/s, which is also what
+  # move_by_velocity_async consumes. shield.py has converted at the boundary
+  # since 2026-08-17.
+  #
+  # CORRECTED 2026-09-08. This comment used to end "and this threshold has never
+  # fired in any Project AirSim run in this repo", on the premise that the VLA
+  # emits at most +/-0.44 rad/s. Both halves are false against the logs: the
+  # clip to +/-1.1 is in the lost-lock coast branch only, both live tracking
+  # paths are unclipped, and the recorded flights contain 213 YawClamp edits
+  # across 8 runs with a worst commanded 136.1 deg/s (2.375 rad/s, retarget_demo).
+  # The cap fires, and it should.
   #
   # That inertness is load-bearing for this experiment. Every other repair
   # operator passes yaw_rate through untouched (shield.py:517, :599, :657), so

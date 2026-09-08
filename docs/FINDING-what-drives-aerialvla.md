@@ -269,7 +269,9 @@ See `experiments/conditions_simultaneity.yaml` for the revised 8-flight matrix.
   spanning all four rule categories, plus a real flight:
   `experiments/verify_shield_yaw.py`. This is what licenses reading
   `emitted.yaw_rate == raw.yaw_rate` as "the VLA still owns the heading".
-* **`KinematicEnvelope.yaw_rate_max_dps` has never fired.** It is named in
+* **`KinematicEnvelope.yaw_rate_max_dps` has never fired.** *(Superseded
+  2026-08-17, corrected 2026-09-08: it has fired on 213 ticks across 8 runs
+  since the conversion moved to the boundary.)* It is named in
   degrees per second but compared against a value the simulator consumes as
   rad/s, which never exceeds ±0.44. Documented, deliberately not changed here —
   correcting it would alter every existing result in the repo and would make the

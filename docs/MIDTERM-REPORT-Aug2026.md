@@ -193,9 +193,18 @@ Policies are YAML, validated into a Pydantic model, and hashed to `policy_hash`.
 **Defect corrected this period.** `yaw_rate_max_dps` was specified in degrees per
 second and compared against a value carried in radians per second at three sites,
 making the effective cap 2578 °/s. The rule could never fire. Conversion now
-occurs at the boundary. The worst commanded yaw rate measured across the demo
-flights is 11.8 °/s against a 45 °/s cap, so no recorded flight changes behaviour
-as a result of the fix.
+occurs at the boundary.
+
+**Corrected 2026-09-08.** This paragraph used to end: *"The worst commanded yaw
+rate measured across the demo flights is 11.8 °/s against a 45 °/s cap, so no
+recorded flight changes behaviour as a result of the fix."* Measured across every
+flight log on disk, the worst commanded yaw is **136.1 °/s** (2.375 rad/s,
+`retarget_demo`) and the Shield edited yaw on **213 ticks across 8 runs** —
+`city_kpi`, `envactor2/3/_check/_white`, `people_check`, `retarget_demo`,
+`retarget_demo2`. The fix changed behaviour on every one of them, which is what a
+working cap is supposed to do. No KPI-grade figure moves: all 12 runs on the
+ArduPilot SITL and canonical-HIL topologies commanded exactly zero yaw across
+2 850 ticks.
 
 ---
 
@@ -303,7 +312,7 @@ Detector hit rate and ticks-held were 1.000 in all three, so this costs nothing 
 
 **The DETECTOR half of the threshold is met on every scenario reported here** — Tracking 4.07 Hz, Distractors 4.56 Hz, No-fly zone 4.80 Hz, against a 4.0 Hz gate fixed before the runs, and with the recorder attached rather than removed for the measurement. det_hit_rate 1.000 and frac_ticks_seen 1.000 on both tracking scenarios in every configuration.
 
-**The CONTROL-LOOP half is not met, and an earlier version of this paragraph said the threshold was met without saying which half.** The gate fixed before the runs was two numbers — detector ≥ 4.0 Hz *and* control loop ≥ 9.5 Hz — and the loop rates in the table above are 8.78 / 8.07 / 7.83 Hz. Zero of the recorded camera runs clear the loop gate. Corrected 2026-09-07; the detector figures are unchanged and were never the ones in question.
+**The CONTROL-LOOP half is not met, and an earlier version of this paragraph said the threshold was met without saying which half.** The gate fixed before the runs was two numbers — detector ≥ 4.0 Hz *and* control loop ≥ 9.5 Hz — and no recorded camera run clears the loop half. The rates measured in section 6.1 are 8.78 / 8.07 / 7.83 Hz; the table immediately above this paragraph, which is a different run set, gives 8.69 / 8.79 / 8.85 Hz. Both miss 9.5 Hz, which is the point, but the first version of this sentence attributed the 6.1 figures to the table above it. Corrected 2026-09-08. Corrected 2026-09-07; the detector figures are unchanged and were never the ones in question.
 
 What that costs is a longer gap between decisions than the design assumed: at 7.83 Hz the Shield still checks every action it emits, but a 3 s forecast is refreshed 22 % less often than the 10 Hz the lookahead was tuned for. It is a rate deficit, not a correctness one — no KPI figure in this report comes from the camera rail. The fix is the measurement/demonstration split proposed in 10.2, and until that is measured the honest statement is the one above.
 

@@ -770,6 +770,28 @@ def test_the_blind_run_is_consecutive_not_cumulative():
     assert out["longest_blind_run_ticks"] == 3, out
 
 
+def test_a_tick_with_no_subject_class_is_unjudged_not_judged_against_the_catch_all():
+    """The silent substitution. With no class the widest matching rule is the
+    5 m "*" catch-all, so a tick that was inside the 10 m pedestrian ring but
+    outside 5 m scored as fine - and every log written before the `truth` field
+    existed has no class, so the metric reported zero blind ticks for the very
+    episode it was built to describe."""
+    rows = [{"rng_m": 9.0, "est": {"rng": 25.0}}]          # no truth at all
+    out = range_agreement(rows, RULES)
+    assert out["ticks_raw_inside_est_outside"] == 0, out
+    assert out["ticks_ring_unknown"] == 1, out
+    # The same geometry WITH the class is the blind tick it always was.
+    assert range_agreement([_r(9.0, 25.0)], RULES)["ticks_raw_inside_est_outside"] == 1
+
+
+def test_an_unknown_class_breaks_a_blind_run_rather_than_extending_it():
+    rows = [_r(9.0, 25.0), {"rng_m": 9.0, "est": {"rng": 25.0}}, _r(9.0, 25.0)]
+    out = range_agreement(rows, RULES)
+    assert out["ticks_raw_inside_est_outside"] == 2, out
+    assert out["longest_blind_run_ticks"] == 1, out
+    assert out["ticks_ring_unknown"] == 1, out
+
+
 def test_a_policy_with_no_standoff_reports_disabled_rather_than_zero():
     """Zero blind ticks and no rule at all must not look the same. That
     confusion is what let an inert 10 m rule fly a whole mission."""

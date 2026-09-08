@@ -78,6 +78,7 @@ constraints:
     violation_action: repair
     speed_max_mps: 5.0
     climb_rate_max_mps: 2.0
-    # Named deg/s but compared against a rad/s value, so it never fires.
-    # Documented, not fixed here — see semantic_conflict.yaml.
+    # CORRECTED 2026-09-08: this said "so it never fires". It does - shield.py
+    # converts at the boundary and the recorded flights contain 213 YawClamp
+    # edits across 8 runs. See semantic_conflict.yaml.
     yaw_rate_max_dps: 45.0

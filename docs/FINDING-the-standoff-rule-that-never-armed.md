@@ -108,9 +108,16 @@ were compared to it. The give-away is in the numbers already published:
 | after retarget (ticks ≥ 248) | 319 | **0.000** | 615.1 px | **319 of 319** |
 
 319 out of 319 is not a detector result; no detector is wrong every single frame.
-And the flight-wide 0.406 is approximately 248/567 — the fraction of the flight
-that happened *before* the subject changed. The figure measured where the retarget
-was, not how well anything was tracked.
+
+And the flight-wide **0.406 is exactly 230/566**: 230 detections were on target,
+all 230 of them before the retarget, out of 566 scored. The figure is the
+pre-retarget successes diluted by the post-retarget rows — it measured where the
+retarget was, not how well anything was tracked.
+
+*(Corrected 2026-09-08: this read "approximately 248/567", which is 0.437 and
+7.7 % away. 248/567 is the fraction of TICKS before the retarget; the identity
+that actually holds is the one above, and it is the stronger statement because
+every on-target detection in the flight is pre-retarget.)*
 
 **So the honest statement is: post-retarget tracking is UNMEASURED.** Not good,
 not bad — never scored, because nothing logged where the pedestrians were. The
@@ -124,9 +131,16 @@ Re-read properly, the flight says something narrower and more useful.
 
 The estimator that feeds the Shield **rejected the measurements taken at the
 closest approach**. Between t+55.9 s and t+56.3 s the monocular range read 5 m
-while the served estimate held 24.7 m and the gate counter climbed on every tick.
-Four consecutive ticks — 0.4 s — where the *measured* range was inside the 10 m
-ring and the *served* range was outside it.
+while the served estimate held 24.7 m. Four consecutive ticks — 0.37 s — where
+the *measured* range was inside the 10 m ring and the *served* range was outside
+it, and the estimator rejected every fresh measurement offered in that window:
+the gate counter rose 117 → 120 across it.
+
+*(Corrected 2026-09-08: this said the counter "climbed on every tick". It
+climbed on two of the four — ticks 451 and 453 — because the detector runs at
+about 5 Hz against an 8 Hz control loop, so only those two carried a new
+measurement to reject. Every measurement offered was rejected; not every tick
+offered one.)*
 
 Whether the aircraft was truly that close is still unknown, for the same reason as
 above. But the structural point does not depend on knowing:

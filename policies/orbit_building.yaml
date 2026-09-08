@@ -76,9 +76,13 @@ constraints:
     violation_action: repair
     speed_max_mps: 5.0
     climb_rate_max_mps: 2.0
-    # Named deg/s but compared against a rad/s value, so it never fires. This is
-    # deliberate and documented, not an oversight: making it live would be the
-    # first time the Shield edits yaw, which would break the separation the whole
+    # CORRECTED 2026-09-08: this said "compared against a rad/s value, so it
+    # never fires". shield.py has converted at the boundary since 2026-08-17 and
+    # the cap DOES fire - 213 edits across 8 recorded runs. The paragraph below
+    # describes a state that ended three weeks before it was written.
+    #
+    # Historically: making it live would be the first time the Shield edits yaw,
+    # which would break the separation the whole
     # follow result rests on (0 yaw edits over 419 violation ticks). See
     # tests/test_guardrail_coverage.py, the KNOWN_DEFECT test, and
     # docs/FINDING-guardrail-coverage-aug2026.md.

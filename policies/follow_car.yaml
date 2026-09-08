@@ -66,7 +66,15 @@ constraints:
     # Named in deg/s, and the action carries rad/s. These were compared directly
     # at three sites in guardrail/shield.py, which made the effective cap
     # 45 rad/s = 2578 deg/s, so the rule could never fire. FIXED: the conversion
-    # now happens at the boundary. The worst yaw rate commanded across the demo
+    # now happens at the boundary.
+    #
+    # CORRECTED 2026-09-08: the next sentence used to read "the worst yaw rate
+    # commanded across the demo flights is 11.8 deg/s ... so no recorded flight
+    # changes behaviour". Measured across every log on disk the worst is
+    # 136.1 deg/s and the Shield edited yaw on 213 ticks in 8 runs. The 11.8
+    # figure appears in no artefact I can find.
+    #
+    # Historically: the worst yaw rate commanded across the demo
     # flights is 11.8 deg/s against this 45 deg/s cap, so no recorded flight
     # changes behaviour as a result of the fix.
     yaw_rate_max_dps: 45.0

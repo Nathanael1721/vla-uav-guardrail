@@ -42,10 +42,35 @@ row whose subject has no logged truth is counted as UNSCORABLE rather than
 scored against the wrong object. Unscorable is reported. The one thing this
 module must never do again is return a number when it has nothing to compare
 against.
+
+AND THE THING THAT COST THAT FIX ITS MEANING
+
+Scoring against a CLASS is not scoring against an object, and the first version
+of the multi-point path did not admit the difference. It took the minimum error
+over every logged figure, so the more pedestrians in the scene the easier the
+test became. Measured with a detector of literally zero skill - a uniformly
+random box centre:
+
+    truth points     1       2       4       8      12
+    frac_on_target  0.132   0.212   0.360   0.494   0.584
+    median err      393 px  275 px  176 px  102 px   71 px
+
+At twelve figures a random box beats the 100 px tolerance more often than not,
+and the median lands INSIDE it. `ON_TARGET_PX` was calibrated against a single
+target (median error on the right vehicle is 3-8 px) and that calibration does
+not survive a candidate set.
+
+Two changes make the number mean something again. Only candidates actually IN
+SHOT can be credited, because a box cannot be on a subject the camera cannot
+see. And every result carries `frac_on_target_chance` - the same computation
+over the same rows with the box centre replaced by a seeded uniform draw - so a
+reader can see the floor this flight's geometry sets. A score near its own
+chance level is not tracking, however high it looks.
 """
 from __future__ import annotations
 
 import math
+import random
 from typing import Iterable, Optional
 
 # The Chase/front camera's horizontal field of view, degrees. Matches the
@@ -100,16 +125,14 @@ def truth_points(row: dict) -> Optional[list]:
     return None
 
 
-def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
-               on_target_px: float = ON_TARGET_PX) -> dict:
-    """Tracking accuracy over a flight's per-tick rows.
+def _score(rows, hfov_deg, on_target_px, cx_of):
+    """The scoring loop. `cx_of(row)` supplies the box centre being judged.
 
-    Rows are the flight-log records. A row counts only when it carries BOTH a
-    detection and ground truth for the subject in force at that tick; ticks with
-    no detection are the liveness question, which `det_hit_rate` already
-    answers, and ticks with no truth are reported as `det_unscorable`.
+    Factored out so the chance floor is computed by THE SAME code with a random
+    box rather than by a second implementation that could disagree with it.
     """
     errs: list[float] = []
+    cand_counts: list[int] = []
     n_out_of_fov = 0
     n_scored = 0
     n_unscorable = 0
@@ -126,29 +149,68 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
             n_unscorable += 1
             continue
         img_w = int(det.get("img_w") or 400)
-        best = None
-        for tx, ty in pts:
-            cx_gt, deg = project_target_cx(r["x"], r["y"], r["psi"],
-                                           tx, ty, img_w, hfov_deg)
-            err = abs(float(det["cx"]) - cx_gt)
-            if best is None or err < best[0]:
-                best = (err, deg)
-        errs.append(best[0])
-        # Out of shot only if EVERY acceptable subject was out of shot - with
-        # one truth point this is the original test unchanged.
-        if all(abs(project_target_cx(r["x"], r["y"], r["psi"], tx, ty,
-                                     img_w, hfov_deg)[1]) > hfov_deg / 2.0
-               for tx, ty in pts):
+        cx = cx_of(r, img_w)
+
+        # Project every candidate once, then split them by whether the camera
+        # could see them at all.
+        projected = [project_target_cx(r["x"], r["y"], r["psi"], tx, ty,
+                                       img_w, hfov_deg) for tx, ty in pts]
+        in_shot = [(abs(cx - c), d) for c, d in projected
+                   if abs(d) <= hfov_deg / 2.0]
+
+        if in_shot:
+            # Credit only a subject that was actually in frame. Taking the min
+            # over ALL candidates let a row be scored ON TARGET against a
+            # subject behind the aircraft while the out-of-shot counter - which
+            # exists to catch exactly that - stayed silent, because the two
+            # tests could be satisfied by different candidates.
+            errs.append(min(e for e, _ in in_shot))
+            cand_counts.append(len(in_shot))
+        else:
+            # Nothing acceptable was in shot, so whatever the detector found, it
+            # was not the subject. Keep the smallest error for the distribution;
+            # it will be large, and it must not count as on target.
+            errs.append(min(abs(cx - c) for c, _ in projected))
+            cand_counts.append(0)
             n_out_of_fov += 1
         n_scored += 1
+
+    return errs, cand_counts, n_out_of_fov, n_scored, n_unscorable
+
+
+def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
+               on_target_px: float = ON_TARGET_PX,
+               chance_seed: int = 20260908) -> dict:
+    """Tracking accuracy over a flight's per-tick rows.
+
+    Rows are the flight-log records. A row counts only when it carries BOTH a
+    detection and ground truth for the subject in force at that tick; ticks with
+    no detection are the liveness question, which `det_hit_rate` already
+    answers, and ticks with no truth are reported as `det_unscorable`.
+
+    `frac_on_target_chance` is the same statistic computed with the box centre
+    replaced by a seeded uniform draw. It is the floor this flight's geometry
+    sets, and `frac_on_target` means nothing without it once the subject is a
+    class rather than an object.
+    """
+    rows = list(rows)
+    errs, cands, n_out_of_fov, n_scored, n_unscorable = _score(
+        rows, hfov_deg, on_target_px, lambda r, w: float(r["det"]["cx"]))
 
     if not errs:
         return {"det_scored": 0, "det_unscorable": n_unscorable,
                 "det_gt_err_px_median": None,
                 "det_gt_err_px_p95": None, "frac_on_target": None,
+                "frac_on_target_chance": None,
+                "truth_candidates_median": None,
                 "n_det_with_target_out_of_fov": 0}
 
+    rnd = random.Random(chance_seed)
+    chance, _, _, _, _ = _score(rows, hfov_deg, on_target_px,
+                                lambda r, w: rnd.uniform(0.0, float(w)))
+
     s = sorted(errs)
+    c = sorted(cands)
     return {
         "det_scored": n_scored,
         # Detections the log could not judge. A non-zero value here means
@@ -160,6 +222,16 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
         # THE number. What fraction of the boxes the controller acted on were
         # actually on the subject it was told to follow.
         "frac_on_target": round(sum(1 for e in errs if e <= on_target_px) / len(errs), 3),
+        # What a box thrown at random would have scored on these same rows. A
+        # single-subject flight sits near 0.13; twelve pedestrians lift the
+        # floor past 0.5, and a score that does not clear its own floor is not
+        # evidence of tracking.
+        "frac_on_target_chance": round(
+            sum(1 for e in chance if e <= on_target_px) / len(chance), 3),
+        # How many acceptable subjects were in shot, typically. 1 means the
+        # figure above is comparable with the single-target flights; more means
+        # it is not.
+        "truth_candidates_median": c[len(c) // 2],
         # The unambiguous failures: no acceptable subject was in shot, so
         # whatever the detector found, it was not the subject.
         "n_det_with_target_out_of_fov": n_out_of_fov,

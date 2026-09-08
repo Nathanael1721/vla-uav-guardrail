@@ -73,6 +73,12 @@ The widest yaw AerialVLA ever emits is ±1.1 rad/s = 63 °/s, which *should* be
 clamped. As a raw number `1.1 < 45`, so nothing fires. **The cap has never fired
 in any run in this repository.**
 
+> **Superseded 2026-08-17, corrected here 2026-09-08.** `shield.py` converts at
+> the boundary, and the cap has fired since: **213 ticks across 8 runs**, worst
+> commanded **136.1 °/s**. The sentence above was true when written and is quoted
+> in four other places that were not updated with it. Left in place as the record
+> of what was known; do not cite it as current.
+
 What makes this worth writing down is not the dead rule — it is that
 `test_yaw_rate_clamped` in `tests/test_shield.py` has been **green the whole
 time**. It passes `yaw_rate=90`, a degrees-scale number production never

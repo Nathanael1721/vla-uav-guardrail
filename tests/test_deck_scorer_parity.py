@@ -171,13 +171,58 @@ def test_the_recorded_retarget_flight_agrees():
     _compare(rows[:200], "retarget_demo2-head")
 
 
-def test_the_js_has_no_length_guard_that_would_reintroduce_the_fallback():
-    """A source-level tripwire for the specific edit that caused the drift, so a
-    future 'tidy-up' cannot silently restore it."""
-    src = _js_functions()
-    m = re.search(r"if \(r\.truth[^\n]*\n", src)
-    assert m, src
-    assert "Array.isArray(r.truth.pts)) return" in m.group(0), m.group(0)
+def test_a_truth_object_never_falls_through_to_the_car_in_either_language():
+    """The drift itself, tested by BEHAVIOUR rather than by matching the source
+    line. The first version of this test pinned the exact text of the guard, so
+    it failed the moment the guard was improved - a tripwire that fires on
+    correct changes trains people to delete it.
+
+    Three shapes are checked, because a review found the JS diverging on all
+    three: an empty `pts`, a null `pts`, and an absent `pts`. Each carries a
+    perfectly good `tgt_x`/`tgt_y` pointing at the car, and neither language may
+    use it."""
+    for pts in ([], None, "absent"):
+        truth = {"class": "pedestrian"}
+        if pts != "absent":
+            truth["pts"] = pts
+        rows = [_row(200.0, i, truth=truth) for i in range(1, 4)]
+        js = _run_js(rows)
+        if not js:
+            return SKIP
+        py = score_rows(rows)
+        assert js["n"] == 0 and js["unscorable"] == 3, (pts, js)
+        assert py["det_scored"] == 0 and py["det_unscorable"] == 3, (pts, py)
+
+
+def test_a_row_with_no_heading_is_skipped_in_both():
+    """JS tested `r.psi === undefined`, Python tests `is None`. A row whose psi
+    is explicitly null - which is what json.dumps writes for None - was skipped
+    by Python and SCORED by the JS, against a psi of null coerced to 0."""
+    rows = [_row(200.0, 1), _row(200.0, 2)]
+    rows[1]["psi"] = None
+    _compare(rows, "psi-null")
+
+
+def test_half_a_target_position_is_not_a_target_position():
+    """JS required only tgt_x; Python requires both. A row with tgt_x and a null
+    tgt_y scored in JS against a y of null coerced to 0 - a position on the
+    origin line that no vehicle was ever at."""
+    rows = [_row(200.0, 1, tgt=None)]
+    rows[0]["tgt_x"] = 10.0                 # y stays None
+    _compare(rows, "half-a-target")
+
+
+def test_the_candidate_count_agrees_too():
+    """Added with the in-shot filter: both languages now report how many
+    acceptable subjects were in frame, and a divergence there would mean the two
+    are crediting different candidates."""
+    rows = [_row(200.0, 1, truth={"class": "pedestrian",
+                                  "pts": [[10.0, 0.0], [-10.0, 0.0]]})]
+    js = _run_js(rows)
+    if not js:
+        return SKIP
+    py = score_rows(rows)
+    assert js["candidates"] == py["truth_candidates_median"] == 1, (js, py)
 
 
 if __name__ == "__main__":

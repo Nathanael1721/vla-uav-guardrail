@@ -19,6 +19,7 @@ radians a second time. So the tests below check the yaw contract against the cod
 that enforces it rather than against any comment, and check that the adapters
 agree with it. See `docs/FINDING-the-contract-disagreed-with-itself-about-yaw.md`.
 """
+import ast
 import importlib.util
 import math
 import re
@@ -195,21 +196,36 @@ def test_no_adapter_converts_the_yaw_rate_a_second_time():
     reached a flight only because the stub pilot this rail flies has never
     commanded a non-zero yaw rate.
 
-    Checked in the source because importing them needs pymavlink and rclpy,
-    which are not present in every environment that runs this suite. A
-    line-level check is enough: the defect was one call on one line.
+    Checked by PARSING the source rather than importing it, because importing
+    needs pymavlink and rclpy, which are not present in every environment that
+    runs this suite.
+
+    Parsed, not grepped. The first version matched text line by line and only
+    skipped lines beginning with "#", so it fired on the sentence inside
+    `send_velocity`'s own docstring explaining that the conversion had been
+    REMOVED. A tripwire that fires on a correct change trains people to delete
+    it, so this one looks for a real call node whose argument mentions yaw.
     """
     bad = []
     for rel in ADAPTERS:
         p = ROOT / rel
         if not p.is_file():
             continue
-        for i, line in enumerate(p.read_text(encoding="utf-8").splitlines(), 1):
-            if line.lstrip().startswith("#"):
+        tree = ast.parse(p.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
                 continue
-            if "yaw_rate" in line and re.search(r"math\.(radians|degrees)\s*\(", line):
-                bad.append(f"{rel}:{i}: {line.strip()}")
-    assert not bad, "yaw_rate is rad/s on both sides of these:\n" + "\n".join(bad)
+            fn = node.func
+            if not (isinstance(fn, ast.Attribute)
+                    and fn.attr in ("radians", "degrees")
+                    and isinstance(fn.value, ast.Name) and fn.value.id == "math"):
+                continue
+            names = {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+            names |= {n.attr for n in ast.walk(node) if isinstance(n, ast.Attribute)}
+            if any("yaw" in s for s in names):
+                bad.append(rel + ":" + str(node.lineno) +
+                           ": math." + fn.attr + "(...) on a yaw value")
+    assert not bad, "yaw_rate is rad/s on both sides of these: " + "; ".join(bad)
 
 
 def test_the_shield_is_allowed_to_convert_because_the_cap_is_in_degrees():

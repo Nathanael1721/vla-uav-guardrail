@@ -116,6 +116,12 @@ My recommendation is option 1, but the call is Prof. Lai's.
 
 ## Carry this into the same conversation
 
+> **Corrected 2026-09-08.** Both halves below are now wrong. `Action4D.yaw_rate`
+> is documented **rad/s** (the deg/s comment was the defect, fixed 2026-09-07),
+> and the cap has fired on **213 ticks across 8 runs** since the boundary
+> conversion landed on 2026-08-17. Kept as written because this note was sent to
+> the team; the correction goes beside it rather than over it.
+
 `Action4D.yaw_rate` is documented **deg/s** and every producer feeds **rad/s**.
 The consequence is that `yaw_rate_max_dps: 45.0` has **never fired in any run in
 this repository** — AerialVLA's widest output is 1.1 rad/s, which is 63 °/s and

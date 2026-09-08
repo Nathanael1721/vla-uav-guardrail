@@ -52,8 +52,17 @@ from typing import Optional
 
 import numpy as np
 
-# Altitude band each map file was built over, in metres AGL. The names encode it
-# and the builder takes --band-lo/--band-hi, but nothing ever read it back.
+# Altitude band each map file was built over, in metres AGL.
+#
+# The .npz files store only occ/res/origin_x/origin_y - no band - so this table
+# is the only place the mapping lives. Three of the four are corroborated by the
+# table in docs/FINDING-the-occupancy-map-was-looking-elsewhere.md, which records
+# occ_day and occ_day_flightband_6to14 as 6-14 m, occ_day_highband_15to55 as
+# 15-55 m and ground_2to4 as 2-4 m. `ground_0to2` is NOT in that table: its band
+# is read from its filename, and corroborated only by its contents - 100 % of
+# cells occupied, which is what a 0-2 m slice of a world with a ground plane in
+# it looks like and nothing else does. Said plainly because a filename is not a
+# receipt, and this project has been bitten by trusting one before.
 BANDS: dict[str, tuple[float, float]] = {
     "ground_0to2": (0.0, 2.0),
     "ground_2to4": (2.0, 4.0),

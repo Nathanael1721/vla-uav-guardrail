@@ -74,7 +74,10 @@ seconds and would have stayed below forever. The P0 escape rate was 0 throughout
 because the emitted action was legal every tick — the ACTION was fine and the
 STATE never became safe. Nothing in the KPI set could see that before
 `mean time to safe`, and the first sweep that ran found it. Fixed; recoveries now
-aim a margin inside the band and arrive in about twelve seconds.
+aim a margin inside the band and arrive in about six seconds.
+
+*(Corrected 2026-09-08: this said "about twelve seconds". The sweep measures
+**6.3 s**, which is what this commit's own meeting pack says in two places.)*
 
 ## Update, 2026-09-07 — three more closed, and one new defect class
 
@@ -82,7 +85,7 @@ aim a margin inside the band and arrive in about twelve seconds.
 |---|---|---|
 | **7. Replay bundles** | **CLOSED** | `guardrail/replay.py`. `verify_replay()` reloads the policy from the archived IR and **recomputes the KPIs from the archived log**, so "replayable" means re-derivable rather than "the files are in one place". `demo/follow_vlm.py` and `sitl/run_sitl_demo.py` now write one per flight. |
 | **9. Body-frame vs world-frame `Action4D`** | **CLOSED** | `guardrail/frames.py` is the single boundary; `tests/test_frame_contract.py` checks our conversion against `vlaguard_common.body_to_local_ned` **by running theirs**, at eight headings. Both contracts are right in their own frame. |
-| **Report contradictions** (both) | **CLOSED** | `object_width_m` limitation marked resolved with its date; the control-loop gate paragraph now says which half was met and which was not. |
+| **Report contradictions** (both) | **CLOSED**, source and rendered artefacts | `object_width_m` limitation marked resolved with its date; the control-loop gate paragraph now says which half was met and which was not. |
 
 **What closing item 7 immediately found.** Of the **44 scored runs on disk, only
 2 can be bundled at all** — every other one was flown under a policy revision no
@@ -247,7 +250,23 @@ contract mismatch with the reference implementation, not a bug in either.
 
 ---
 
-## [FIXED 2026-09-07] Report contradictions, before a reviewer finds them
+## [FIXED 2026-09-07 in the .md only] Report contradictions
+
+> **Correction, 2026-09-08 — and then closed.** "Corrected in place" was an
+> overclaim when written: only `docs/MIDTERM-REPORT-Aug2026.md` had been edited,
+> while the three RENDERED artefacts beside it — `.pdf`, `.docx` and `.html`, all
+> built 25 August — still carried both uncorrected sentences. Those are what a
+> reader outside this repository actually opens, so the correction had not
+> reached anybody.
+>
+> All three are now re-rendered from the corrected source through the existing
+> pipeline (`tools/report_to_html.py` then `tools/office_to_pdf.ps1`), and
+> verified by extracting the text of each and checking for the new wording.
+>
+> A third contradiction in the same file was found on 2026-09-08 and is corrected
+> there: it claimed the worst commanded yaw across the demo flights was 11.8 °/s
+> so "no recorded flight changes behaviour". The logs say 136.1 °/s and 213
+> edited ticks across 8 runs.
 
 Both were inside `docs/MIDTERM-REPORT-Aug2026.md` and both are now corrected in
 place, marked with the date rather than silently rewritten:

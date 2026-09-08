@@ -137,14 +137,18 @@ class MavlinkAdapter:
 
     def send_velocity(self, vx: float, vy: float, vz_up: float,
                       yaw_rate_rad_s: float) -> None:
-        """Emit one velocity setpoint.  is the Action4D field.
+        """Emit one velocity setpoint. `yaw_rate_rad_s` is the Action4D field.
 
-        It was named  and converted with math.radians() until
+        It was named `yaw_rate_dps` and converted with math.radians() until
         2026-09-07, on the strength of a comment in models.py that said the
         contract carried degrees. It carries radians - shield.py enforces the
         cap in radians - so the conversion divided every commanded yaw by 57.3.
         Latent rather than harmful: the stub pilot this rail flies has never
-        commanded a non-zero yaw rate, so every stored KPI figure is unchanged.
+        commanded a non-zero yaw rate on ANY of the 12 runs under demo/out/
+        whose topology is ardupilot-sitl-pymavlink or canonical-hil - 2850
+        ticks, max |yaw_rate| exactly 0.0 - so every stored KPI figure is
+        unchanged.
+
         MAVLink's SET_POSITION_TARGET_LOCAL_NED yaw_rate field is rad/s, which
         is what makes pass-through correct here rather than merely simpler.
         """

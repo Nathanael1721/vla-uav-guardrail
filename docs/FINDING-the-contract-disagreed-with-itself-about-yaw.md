@@ -33,12 +33,26 @@ enforces it:
 | `guardrail/shield.py:467` | `# Action4D contract carries yaw_rate in RADIANS per second` | enforcing |
 | `guardrail/shield.py:472,760` | `ymax = math.radians(k.yaw_rate_max_dps)` | enforcing |
 | `guardrail/shield.py:536` | `yaw_dps = math.degrees(abs(action.yaw_rate))` | enforcing |
-| `demo/follow_vlm.py` servo | `np.clip(yaw_gain * bearing, -1.1, 1.1)` — bearing in radians | the only live producer |
-| `sitl/run_sitl_demo.py:146` | `math.radians(yaw_rate_dps)` | **adapter, wrong** |
+| `demo/follow_vlm.py` servo | `yaw_gain * bearing` — bearing in radians | the only live producer |
+| `sitl/run_sitl_demo.py:145` | `math.radians(yaw_rate_dps)` | **adapter, wrong** |
 | `sitl/ros2_shield_node.py:376` | `-math.radians(emitted.yaw_rate)  # CW dps -> CCW rad/s` | **adapter, wrong** |
 
 Six sites read radians; one comment and two adapters read degrees. The comment
 was written once and believed twice.
+
+**Corrected 2026-09-08 — the table above missed a seventh site, and it was the
+only one that published a number.** `guardrail/kpi.py::_repair_magnitude`
+returned the raw rad/s yaw difference and `compute()` emitted it as
+**`mean_yaw_repair_dps`**, a name that says degrees. Eight runs had stored a
+figure 57.296× too small; all eight are corrected on disk (`city_kpi` 0.0536 →
+3.0710, and so on). The survey missed it because it was built from a grep of the
+sites that ENFORCE the cap, and this one only reports it — a partial survey
+presented as an exhaustive one, which is the same habit as the run-count below.
+
+**And the producer is not clipped.** The row above used to read
+`np.clip(yaw_gain * bearing, -1.1, 1.1)`. That clip is in the lost-lock COAST
+branch only; both live tracking paths are unclipped, and `retarget_demo`
+recorded **2.375 rad/s = 136.1 °/s**.
 
 Measured, with a Shield whose only rule is a 45 dps yaw cap:
 
@@ -58,16 +72,25 @@ dividing every commanded yaw by 57.3. On the canonical rail a 45 dps clamp would
 have reached the autopilot as **0.785 dps**.
 
 It never happened. The stub pilot that flies that rail has never commanded a
-non-zero yaw rate — checked across all three KPI-grade runs:
+non-zero yaw rate — checked across **all twelve** runs whose manifest topology is
+`ardupilot-sitl-pymavlink` or `canonical-hil`:
 
-| run | max \|emitted yaw_rate\| | max \|raw yaw_rate\| | ticks |
-|---|---|---|---|
-| `sitl_shield_on` | 0.0000 | 0.0000 | 223 |
-| `ros2_shield_on` | 0.0000 | 0.0000 | 224 |
-| `sitl_ped_on` | 0.0000 | 0.0000 | 1115 |
+| topology | runs | ticks | max \|raw\| | max \|emitted\| |
+|---|---|---|---|---|
+| `ardupilot-sitl-pymavlink` | 7 | 1 922 | 0.0000 | 0.0000 |
+| `canonical-hil` | 5 | 928 | 0.0000 | 0.0000 |
+| **total** | **12** | **2 850** | **0.0000** | **0.0000** |
 
 `0 / 57.3 = 0`. **Every stored KPI figure is unaffected**, and the fix changes no
 published number. The defect was latent, waiting for the first flight that turned.
+
+> **Corrected 2026-09-08.** This section first named three runs and called them
+> "all three KPI-grade runs". Both halves were wrong: there are twelve runs on
+> those topologies, and of the three named only `ros2_shield_on` is actually
+> `kpi_grade` — `sitl_shield_on` and `sitl_ped_on` both record `kpi_grade: false`
+> because `ardupilot-sitl-pymavlink` is not the grant's canonical topology. The
+> five KPI-grade runs are all `ros2_*`. The conclusion is unchanged and now rests
+> on 2 850 ticks instead of 562.
 
 ## One more inconsistency, deliberately left alone
 

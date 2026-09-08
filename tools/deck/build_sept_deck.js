@@ -79,48 +79,67 @@ function readRows(tag) {
 
 function truthPts(r) {
   // Mirrors demo/track_truth.truth_points EXACTLY, including the early return:
-  // once a row carries a `truth` object it is authoritative, and an EMPTY
-  // `pts` means unscorable. Falling through to tgt_x/tgt_y here would score a
-  // pedestrian phase against the car again - the very defect this mirrors -
-  // and would put 0.406 back on a slide while metrics.json said 0.931.
-  if (r.truth && Array.isArray(r.truth.pts)) return r.truth.pts.length ? r.truth.pts : null;
-  if (r.tgt_x !== null && r.tgt_x !== undefined) return [[r.tgt_x, r.tgt_y]];
+  // once a row carries a `truth` object it is authoritative, and an EMPTY or
+  // ABSENT `pts` means unscorable. Falling through to tgt_x/tgt_y here would
+  // score a pedestrian phase against the car again - the very defect this
+  // mirrors - and would put 0.406 back on a slide while metrics.json said
+  // 0.931. A review found three ways this had drifted from the Python: a null
+  // or absent `pts` still fell through to the car, the psi guard tested
+  // `undefined` where Python tests None, and only tgt_x was required where
+  // Python requires both. tests/test_deck_scorer_parity.py runs this function
+  // under node against the Python on the same rows.
+  if (r.truth) return (Array.isArray(r.truth.pts) && r.truth.pts.length) ? r.truth.pts : null;
+  if (r.tgt_x !== null && r.tgt_x !== undefined &&
+      r.tgt_y !== null && r.tgt_y !== undefined) return [[r.tgt_x, r.tgt_y]];
   return null;
 }
 
 function scoreRows(rows) {
   const errs = [];
+  const cands = [];
   let outOfFov = 0;
   let unscorable = 0;
   for (const r of rows) {
-    if (!r.det || r.psi === undefined) continue;
+    if (!r.det || r.psi === null || r.psi === undefined) continue;
     const pts = truthPts(r);
     if (!pts) { unscorable++; continue; }
     const W = r.det.img_w || 400;
-    let best = null;
-    let allOut = true;
+    let bestIn = null;
+    let bestAny = null;
+    let nIn = 0;
     for (const pt of pts) {
       let rel = Math.atan2(pt[1] - r.y, pt[0] - r.x) - r.psi;
       rel = Math.atan2(Math.sin(rel), Math.cos(rel));
       const deg = (rel * 180) / Math.PI;
       const e = Math.abs(r.det.cx - W * (0.5 + deg / 90));
-      if (best === null || e < best) best = e;
-      if (Math.abs(deg) <= 45) allOut = false;
+      if (bestAny === null || e < bestAny) bestAny = e;
+      // Only a subject actually IN SHOT may be credited with the box - the
+      // Python does the same. Taking the min over all candidates let a row be
+      // scored on target against a subject behind the aircraft.
+      if (Math.abs(deg) <= 45) { nIn++; if (bestIn === null || e < bestIn) bestIn = e }
     }
-    errs.push(best);
-    if (allOut) outOfFov++;
+    if (nIn > 0) { errs.push(bestIn); cands.push(nIn) }
+    else { errs.push(bestAny); cands.push(0); outOfFov++ }
   }
   // A phase with nothing scorable still has something to say - how many
   // detections could not be judged. Returning bare null here would throw that
   // away and leave callers dereferencing nothing.
-  if (!errs.length) return { n: 0, unscorable, median: null, p95: null, onTarget: null, outOfFov: 0 };
+  if (!errs.length) {
+    return { n: 0, unscorable, median: null, p95: null, onTarget: null,
+             candidates: null, outOfFov: 0 };
+  }
   const s = errs.slice().sort((a, b) => a - b);
+  const c = cands.slice().sort((a, b) => a - b);
   return {
     n: errs.length,
     unscorable,
     median: s[Math.floor(s.length / 2)],
     p95: s[Math.min(s.length - 1, Math.floor(0.95 * s.length))],
     onTarget: errs.filter((e) => e <= 100).length / errs.length,
+    // How many acceptable subjects were in shot. 1 means the figure is
+    // comparable with the single-target flights; more means it is not, and the
+    // Python reports a chance floor beside it for that reason.
+    candidates: c[Math.floor(c.length / 2)],
     outOfFov,
   };
 }
@@ -560,7 +579,7 @@ async function main() {
       ["2", "The camera rail still misses its own rate gate",
        `Pre-registered at loop ≥ ${rg.gate.loop_hz_min} Hz and detector ≥ ${rg.gate.det_hz_min} Hz; ${rg.n_meeting_gate} of ${rg.n_runs} recorded runs meet it`],
       ["3", "Low-altitude policies select the cruise-band map",
-       "follow_pedestrian.yaml permits descent to 4 m but loads the 6-14 m map; ground_2to4.npz exists and nothing chooses it"],
+       "follow_pedestrian.yaml permits descent to 4 m and loads the 6-14 m map; ground_2to4 ends at exactly 4 m so it never applies, and NOTHING maps 4-6 m"],
       ["4", "The retarget flight does not yet show the ring change",
        "The aircraft never closed to 10 m of the position the Shield was served, so the rule had nothing to act on; needs stronger pedestrian acquisition"],
       ["5", "The wedge: a repaired action can still be a stuck mission",

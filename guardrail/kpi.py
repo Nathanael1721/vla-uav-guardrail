@@ -94,9 +94,20 @@ def _repair_magnitude(row: dict) -> tuple[float, float] | None:
     """How far the Shield moved this action: (translational m/s, yaw deg/s).
 
     The two are returned APART and never summed into one norm. vx/vy/vz_up are
-    m/s and yaw_rate is deg/s, so a four-channel norm would be a quantity with
-    no unit - the same manoeuvre would score differently in rad/s. Reporting a
-    single tidy number would be the version that looks better and means less.
+    m/s and yaw_rate is RADIANS per second, so a four-channel norm would be a
+    quantity with no unit - the same manoeuvre would score differently in
+    degrees. Reporting a single tidy number would be the version that looks
+    better and means less.
+
+    The yaw difference is CONVERTED here, because the field it feeds is called
+    `mean_yaw_repair_dps` and a reader is entitled to take that name literally.
+    Until 2026-09-08 it was not converted: this docstring and the comment beside
+    `yaw_mags` both asserted the contract carried degrees, the value was the raw
+    rad/s difference, and eight runs published a figure 57.296x too small. It is
+    the seventh site of the same confusion and the only one that ever put a
+    number in front of anyone - which is why the survey in
+    docs/FINDING-the-contract-disagreed-with-itself-about-yaw.md, written from a
+    grep of the ENFORCING sites, did not contain it.
 
     Returns None when the row cannot answer, so the caller counts it as
     unmeasurable instead of as a zero-magnitude repair. A zero is a claim; a
@@ -126,7 +137,7 @@ def _repair_magnitude(row: dict) -> tuple[float, float] | None:
     if not all(math.isfinite(v) for v in (*rv.values(), *ev.values())):
         return None
     trans = math.sqrt(sum((ev[k] - rv[k]) ** 2 for k in ("vx", "vy", "vz_up")))
-    return trans, abs(ev["yaw_rate"] - rv["yaw_rate"])
+    return trans, math.degrees(abs(ev["yaw_rate"] - rv["yaw_rate"]))
 
 
 def _episodes(rows: list[dict], is_bad, prefix: str) -> dict[str, Any]:
@@ -239,7 +250,8 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
     n_p0_unknown = 0        # ... and the log predates the emitted re-check
     n_repairs = 0
     trans_mags: list[float] = []     # |emitted - raw| per repaired tick, m/s
-    yaw_mags: list[float] = []       # ... and deg/s, kept apart on purpose
+    yaw_mags: list[float] = []       # ... and deg/s (converted in
+                                     # _repair_magnitude), kept apart on purpose
     n_repair_unknown = 0             # repaired ticks whose log lacks an action
     by_level: dict[str, int] = {}
     by_category: dict[str, int] = {}

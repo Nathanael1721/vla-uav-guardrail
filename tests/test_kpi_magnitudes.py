@@ -24,6 +24,7 @@ the arithmetic:
 
 Each of those has a test below that fails if the easy version is written.
 """
+import math
 import sys
 from pathlib import Path
 
@@ -65,14 +66,21 @@ def test_yaw_is_reported_apart_and_never_folded_into_the_norm():
     """deg/s and m/s are different quantities.
 
     A pure yaw repair must show ZERO translational magnitude. If yaw were
-    included in the norm this reports 30.0, and the KPI would silently depend on
-    whether turn rate happened to be expressed in degrees or radians.
+    included in the norm this reports the turn rate, and the KPI would silently
+    depend on whether it happened to be expressed in degrees or radians.
+
+    And the NAME must be true: Action4D.yaw_rate is rad/s, the field is called
+    mean_yaw_repair_dps, so the conversion has to happen. It did not until
+    2026-09-08, and eight runs published a figure 57.296x too small - the input
+    below is half a radian per second and the answer is 28.6 deg/s, not 0.5.
     """
-    rows = [_row(0.0, raw={"yaw_rate": 30.0}, em={"yaw_rate": 0.0},
+    rows = [_row(0.0, raw={"yaw_rate": 0.5}, em={"yaw_rate": 0.0},
                  vio=True, reps=1)]
     res = K.compute(rows, {}, {})
     assert res["mean_repair_magnitude_mps"] == 0.0, res
-    assert abs(res["mean_yaw_repair_dps"] - 30.0) < 1e-6, res
+    # 1e-4, not 1e-6: compute() rounds this field to four decimals.
+    assert abs(res["mean_yaw_repair_dps"] - math.degrees(0.5)) < 1e-4, res
+    assert res["mean_yaw_repair_dps"] == 28.6479, res
 
 
 def test_the_denominator_is_repaired_ticks_not_all_ticks():

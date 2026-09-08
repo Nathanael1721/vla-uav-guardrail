@@ -109,9 +109,22 @@ def rescore(run: Path, by_hash: dict) -> dict | None:
             if r.get("x") is None or r.get("up") is None:
                 continue
             # A stand-off rule is inert until the Shield is told where the
-            # subject is, exactly as in flight.
-            if r.get("tgt_x") is not None and r.get("tgt_y") is not None:
-                sh.set_subject(r["tgt_x"], r["tgt_y"])
+            # subject is, exactly as in flight - and it binds PER CLASS, so the
+            # class has to come too. Without it only the "*" catch-all binds and
+            # the 10 m pedestrian ring can never fire during a rescore, which is
+            # the same inert-rule failure this project already flew once.
+            #
+            # Rows written from 2026-09-07 carry truth: {class, pts}; the class
+            # is what selects the rule and the first point is the subject the
+            # Shield was actually given. Older rows have only tgt_x/tgt_y, which
+            # is the car - correct for a flight that never retargeted, and all
+            # of them are.
+            truth = r.get("truth") or {}
+            pts = truth.get("pts") or []
+            if pts:
+                sh.set_subject(pts[0][0], pts[0][1], truth.get("class"))
+            elif r.get("tgt_x") is not None and r.get("tgt_y") is not None:
+                sh.set_subject(r["tgt_x"], r["tgt_y"], truth.get("class"))
             st = State(x=r["x"], y=r["y"], up=r["up"],
                        yaw_deg=r.get("yaw_deg", 0.0) or 0.0)
             r["unsafe"] = bool(sh.state_is_unsafe(st))
