@@ -189,6 +189,21 @@ def subject_width(query: str) -> tuple[float, str | None]:
     return SUBJECT_WIDTH_M[best], SUBJECT_CLASS_CANON.get(best, best)
 
 
+def _live_sep(state, subject_class, car, people):
+    """Distance to the SUBJECT right now, for the HUD and the console.
+
+    The same question `subject_truth_pts` answers for the log, asked live. It
+    existed only as `hypot(state - car.pos)` until 2026-09-09, so after a
+    retarget the video overlay and the tick line both reported the distance to a
+    car that had stopped being the subject - while the metrics twenty lines away
+    had already been fixed to follow it.
+    """
+    pts = subject_truth_pts(subject_class, car, people)
+    if not pts:
+        return None
+    return min(math.hypot(state.x - tx, state.y - ty) for tx, ty in pts)
+
+
 def range_agreement(rows, standoffs) -> dict:
     """Does the range the Shield is SERVED agree with the range MEASURED?
 
@@ -1520,6 +1535,15 @@ class Grounder:
                 # treated as fresh forever. The aircraft chased a box that was no
                 # longer there and the HUD kept reporting TARGET LOCKED.
                 self._t = time.time()
+                # Re-check the generation HERE, not only at the top of the loop.
+                # An inference takes about 287 ms, so a retarget landing inside
+                # that window would otherwise publish the OLD subject box under
+                # the NEW phrase - and hand it to lock.select() as the first
+                # sighting of the new target, which is the one sighting that
+                # sets the size gate for everything after it.
+                if self._query_gen != gen:
+                    self._n_miss += 1
+                    continue
                 if det is not None:
                     self._det = det
                     self._app = app
@@ -2120,9 +2144,27 @@ async def fly(args) -> int:
         # Servo on an ESTIMATE of the target rather than the latest box. See
         # demo/target_state.py for the measurements that forced this.
         estimator = TargetState() if args.target_estimator else None
-        want_range = (args.want_range if args.want_range > 0
-                      else want_range_from_width(args.want_width,
-                                                 args.object_width_m))
+        def _stand_off():
+            """The range the servo aims for, from the CURRENT subject width.
+
+            A function rather than a value because the subject can change
+            mid-flight. It was a value until 2026-09-09, computed once before
+            the loop - so a retarget updated `args.object_width_m` and left the
+            set-point derived from it, and the aircraft spent the whole
+            pedestrian half of the demo holding the CAR's 15.83 m.
+
+            That is the actual reason the 10 m ring never fired, and it was
+            reported for two days as a detector weakness. Measured on
+            demo/out/retarget_demo2: 54 of 319 post-retarget ticks sat within a
+            metre of 15.83 m, the closest served range was 14.68 m, and while
+            in that band the pilot was commanding -1.18 m/s. The aircraft was
+            holding station exactly as instructed.
+            """
+            return (args.want_range if args.want_range > 0
+                    else want_range_from_width(args.want_width,
+                                               args.object_width_m))
+
+        want_range = _stand_off()
 
         # --want-width is an ANGULAR target, so the stand-off it asks for scales
         # with the subject's real width. 0.16 was tuned against a 4 m car and
@@ -2134,13 +2176,21 @@ async def fly(args) -> int:
         # the subject is under the aircraft and out of frame, and the tracker
         # would be closing on something it can no longer see.
         blind_m = 0.86 * args.cruise_alt
-        if want_range < blind_m:
+
+        def _warn_blind():
+            if want_range >= blind_m:
+                return
             print(f"[flight] WARNING stand-off {want_range:.1f} m is inside the "
                   f"camera's near blind spot ({blind_m:.1f} m at {args.cruise_alt:.0f} m "
                   f"altitude): the subject leaves frame before the aircraft gets "
                   f"there. --want-width {args.want_width} was calibrated for a 4 m "
                   f"car; for a {args.object_width_m:.2f} m subject set --want-range "
                   f"directly, or fly lower.")
+            print(f"[flight]   (a SubjectStandoff wider than {blind_m:.1f} m keeps "
+                  f"the subject in frame anyway - the Shield stops the approach "
+                  f"before the blind spot does.)")
+
+        _warn_blind()
 
         last_est_seq = None
         if estimator is not None:
@@ -2163,6 +2213,19 @@ async def fly(args) -> int:
                 # away. Only override a width the user did not pin by hand.
                 if not args.object_width_pinned:
                     args.object_width_m = new_w
+                # THE SET-POINT, recomputed from the new width. Updating the
+                # width and not this is what made the pedestrian half of the
+                # demo hold the car's 15.83 m and never approach the 10 m ring.
+                # --want-width is an ANGULAR target, so the range it asks for
+                # scales with the subject's real width: 0.16 is 15.83 m for a
+                # 4 m car and 1.98 m for a 0.5 m person.
+                old_range = want_range
+                want_range = _stand_off()
+                if abs(want_range - old_range) > 0.05:
+                    print(f"[retarget]   stand-off {old_range:.2f} m -> "
+                          f"{want_range:.2f} m (--want-width {args.want_width} "
+                          f"against a {args.object_width_m:.2f} m subject)")
+                    _warn_blind()
                 if grounder is not None:
                     grounder.retarget(phrase)
                 # The presence monitor holds the OLD subject's plausible-width
@@ -2547,8 +2610,11 @@ async def fly(args) -> int:
                 # recorder thread: doing them here cost 32-40 ms a tick and drove
                 # the control loop from 10 Hz down to 7.4 Hz, which is what the
                 # video showed as lag.
-                sep = (math.hypot(state.x - car.pos[0], state.y - car.pos[1])
-                       if car else None)
+                # To the SUBJECT, not the car - the fourth site of this same
+                # defect, after the scorer, the metrics and the presence
+                # monitor. The HUD is what a viewer of the demo video reads, so
+                # it was the one that mattered most and the one nobody checked.
+                sep = _live_sep(state, subject_class, car, people)
                 recorder.set_hud({
                     "t": time.time() - t0, "sep": sep,
                     "brg": math.degrees(bearing), "fwd": fwd,
@@ -2559,8 +2625,8 @@ async def fly(args) -> int:
                     "fence_mode": fmode,
                 }, det if seen else None)
             if tick % 50 == 0:
-                sep = (math.hypot(state.x - car.pos[0], state.y - car.pos[1])
-                       if car else float("nan"))
+                sep = _live_sep(state, subject_class, car, people)
+                sep = float("nan") if sep is None else sep
                 print(f"  tick {tick}: pos=({state.x:6.1f},{state.y:6.1f},"
                       f"{state.up:4.1f}) {mode.upper():6} "
                       f"brg={math.degrees(bearing):+5.1f} fwd={fwd:4.1f} "
@@ -2659,7 +2725,7 @@ async def fly(args) -> int:
     #
     # For a class subject this is the distance to the NEAREST member, which is
     # the only thing the log can support: nothing records which pedestrian the
-    # detector locked. `truth_candidates_median` alongside says how many there
+    # detector locked. `truth_candidates_max` alongside says how many there
     # were, so the figure can be read for what it is.
     def _sep(r):
         # Mirrors track_truth.truth_points, including its refusal: once a row

@@ -1,5 +1,20 @@
 # The hit rate was not a hit rate
 
+> **Two corrections, 2026-09-09.** The `frac_on_target` figures below moved when
+> rows whose subject was out of shot stopped being credited: **city_kpi 0.930 →
+> 0.908**, and the retarget flight's first half 0.931 → 0.915.
+>
+> More importantly, `frac_on_target` is **no longer the evidence anywhere**. At a
+> 100 px tolerance a "detector" that emits the frame centre and never opens the
+> image scores 1.000 on `city_locked` and *beats* the real detector on
+> `city_full`. The instance-lock result quoted below as "0.728 → 1.000" is now
+> stated as **7.1 px → 1.9 px** median error against a null of 11.6 → 4.9, which
+> is the same result with the evidence left in. See
+> `docs/FINDING-the-tracking-metric-a-constant-could-pass.md`.
+>
+> The argument this document makes — that `det_hit_rate` measured liveness and
+> not correctness — is unaffected and still right.
+
 **Date:** 2026-08-31
 **Status:** metric added, lock fixed and enabled, flights re-measured.
 

@@ -93,8 +93,20 @@ scored rows:
     retarget_demo   505  |  18.7    36.1   33.1  20.2     0.549 vs 0.539
     people_check    377  |   7.1    12.8   11.4   7.4     0.825 vs 0.798
 
-The median beats every null on every flight; the fraction is within a whisker of
-lag-1 everywhere. `det_gt_err_px_median` is therefore what to quote, with
+The median beats every null on the six flights above; the fraction is within a
+whisker of lag-1 everywhere.
+
+**Not on every flight, and that is the metric working rather than failing.** On
+`envactor3` the real median is 203.1 px against the centre null's 35.6, and on
+`envactor_white` 56.6 against 47.3 - two flights where the box genuinely was
+nowhere near the subject, and the statistic says so. Their `frac_in_shot` is 0.17
+and 0.37, so the subject was rarely in frame at all.
+
+The first version of this claim said "every flight", and the test written to
+guard it skipped every flight with `frac_in_shot < 0.5` - which is precisely
+those two counterexamples. A filter that removes the cases that would falsify the
+claim is not a guard, and it is the fourth time this project has caught itself
+doing that. `det_gt_err_px_median` is therefore what to quote, with
 `det_gt_err_px_median_chance` beside it, and `frac_on_target` is kept for
 continuity with forty-odd published flights while being marked for what it is: a
 threshold count a constant can nearly match.
@@ -361,9 +373,17 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
         # THE number. What fraction of the boxes the controller acted on were
         # actually on the subject it was told to follow.
         # Kept for continuity with the published flights, and NOT the headline:
-        # a constant can nearly match it. Denominator is creditable rows, so it
-        # measures the detector rather than how often the subject was in frame -
-        # `frac_in_shot` is that second question, kept separate.
+        # a constant can nearly match it.
+        #
+        # The DENOMINATOR is every scored row, including the out-of-shot ones.
+        # That is deliberate now, and it was mis-described when it was written:
+        # a comment here claimed the denominator had been changed to creditable
+        # rows only, and it never was. Changing it would move forty-odd
+        # published figures for a statistic that is no longer the evidence, so
+        # the number stays as it has always been computed and `frac_in_shot`
+        # reports the other half separately. Read the two together: a low
+        # `frac_on_target` with a low `frac_in_shot` is a subject that was out
+        # of frame, not a detector that missed.
         "frac_on_target": round(_frac(errs, credit), 3),
         "frac_in_shot": round(sum(1 for ok in credit if ok) / len(credit), 3),
         # THE headline pair, and they are computed over the SAME rows - the

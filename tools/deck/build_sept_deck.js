@@ -420,7 +420,8 @@ async function main() {
   {
     const s = pres.addSlide();
     heading(s, "Correction", "A metric that measured the wrong thing");
-    const rows = [["Flight", "det_hit_rate", "frac_on_target", "p95 error", "Target off-frame"]];
+    const rows = [["Flight", "det_hit_rate", "Median error, in shot",
+                   "...what a centre-constant scores", "Target off-frame"]];
     for (const [tag, label] of [["city_full", "Populated city, no lock"],
                                 ["city_kpi", "Populated city (b)"],
                                 ["demo_traffic", "Distractors"],

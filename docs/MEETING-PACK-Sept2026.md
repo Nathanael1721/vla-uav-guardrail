@@ -706,7 +706,7 @@ afterwards.
 | Constraint classes | **6** (reference implementation: 2) | corridor + valid_time new |
 | Scenario sweep | **13 scenarios, 12 pass, 1 known failure** | headless, ~1 s |
 | Delivered runs rescored | **42**, every P0 figure reproduced | no re-flying |
-| Test suite | **459 tests, 23 files** | all green |
+| Test suite | **462 tests, 23 files** | all green |
 | Camera-rail rate gate | **0 of 6** runs meet it | open item |
 | Retarget, class change in flight | `car` → `pedestrian` at **t+30.0 s** | ring 5 m → 10 m |
 | Tracking before the retarget | **7.1 px** median error, subject in shot | vs **14.9 px** for a centre-constant |
@@ -715,15 +715,18 @@ afterwards.
 | Closest served subject range, after | **14.7 m** (median 20.5) | why the ring never fired |
 | Ticks the camera said "inside", the estimate said "outside" | **0** | see the note |
 
-> **How that 4 is obtained.** `range_agreement` reads the enforced ring from the
-> row's subject class, and every log on disk predates the `truth` field - so on
-> the raw artefact it cannot identify a ring, and since 2026-09-08 it reports
-> those ticks as `ticks_ring_unknown` instead of judging them against the 5 m
-> catch-all. Judging them against the catch-all is what it did before, which
-> returned ZERO blind ticks for the very episode it was built to describe. The 4
-> is measured by supplying the class the flight actually had - car before tick
-> 248, pedestrian after - which is what `tests/test_range_and_lock.py` pins.
-> Flights recorded from now on log the class and need no such supplying.
+> **Why that is zero, and what the "4" in earlier drafts was.** This row read
+> **4** until 2026-09-08. Those four ticks recorded a depth of 5.0 m while the
+> aircraft was at 8.2 m — below its own altitude, and depth is slant range, so
+> impossible for a subject on the ground. The estimator rejected them *because*
+> they were impossible; the metric had no plausibility test and counted its own
+> bad input as evidence that the Shield was being served a wrong position. They
+> are now reported separately as `ticks_range_implausible`, and the blind-tick
+> count for this flight is **0**.
+>
+> If asked: the metric is still worth having — nothing else compares the
+> position the Shield is served against the position the camera measured — but
+> this flight is not an example of it firing, and it was published as one.
 | Altitude the pedestrian policy permits | **4–10 m** | map loaded covers 6–14 m |
 | Altitude no obstacle map covers | **4–6 m** | inside the permitted band |
 | Cells occupied at 2–4 m and clear at 6–14 m | **300** | neither map contains the other |

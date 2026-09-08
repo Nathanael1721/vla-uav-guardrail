@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
+from target_state import want_range_from_width               # noqa: E402
 from follow_vlm import (PresenceMonitor, TargetLock,          # noqa: E402
                         appearance, appearance_similarity,
                         implied_width_m, presence_verdict, range_from_depth,
@@ -811,8 +812,73 @@ def test_the_flown_log_shows_the_gating_episode():
     for r in rows:                     # the log predates the `truth` field
         r["truth"] = {"class": "pedestrian" if r["tick"] >= 248 else "car"}
     out = range_agreement(rows, RULES)
-    assert out["ticks_raw_inside_est_outside"] == 4, out
-    assert out["longest_blind_run_ticks"] == 4, out
+    # RETRACTED 2026-09-08: this asserted 4 blind ticks. All four read a depth
+    # of 5.0 m while the aircraft was at 8.2 m - below its own altitude, so
+    # impossible for a ground subject. The estimator gated them out BECAUSE
+    # they were impossible; the metric had no plausibility test and counted its
+    # own bad input as evidence of blindness.
+    assert out["ticks_raw_inside_est_outside"] == 0, out
+    assert out["longest_blind_run_ticks"] == 0, out
+    assert out["ticks_range_implausible"] == 4, out
+
+
+def test_the_retarget_recomputes_the_servo_set_point():
+    """THE reason the 10 m ring never fired, pinned structurally.
+
+    `--want-width` is an ANGULAR target, so the range it asks for scales with
+    the subject's real width: 0.16 is 15.83 m against a 4 m car and 1.98 m
+    against a 0.5 m person. The retarget block updated `args.object_width_m`
+    and left `want_range` at the value derived from it before the loop, so the
+    pedestrian half of the demo held the CAR's stand-off. Measured on
+    demo/out/retarget_demo2: 54 of 319 post-retarget ticks within a metre of
+    15.83 m, closest served range 14.68 m, pilot commanding -1.18 m/s while
+    there. It was reported for two days as a detector weakness.
+
+    Checked by parsing rather than by running, because the block lives inside
+    fly()'s control loop and needs a simulator. The property is structural: the
+    retarget loop must assign want_range."""
+    import ast
+    src = (ROOT / "demo" / "follow_vlm.py").read_text(encoding="utf-8")
+    tree = ast.parse(src)
+
+    # Find the `while retargets and now_s >= retargets[0][0]:` loop.
+    block = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.While) and "retargets" in ast.dump(node.test):
+            block = node
+            break
+    assert block is not None, "the retarget loop was not found"
+
+    assigned = set()
+    for node in ast.walk(block):
+        if not isinstance(node, ast.Assign):
+            continue
+        for t in node.targets:
+            # Tuple targets too: `new_w, subject_class = subject_width(phrase)`
+            # is how the class is set, and walking only Name/Attribute missed it.
+            for leaf in ast.walk(t):
+                if isinstance(leaf, ast.Name):
+                    assigned.add(leaf.id)
+                elif isinstance(leaf, ast.Attribute):
+                    assigned.add(leaf.attr)
+    for name in ("want_range", "subject_class", "object_width_m", "object"):
+        assert name in assigned, (
+            f"the retarget block does not update {name!r}; it updates "
+            f"{sorted(assigned)}")
+
+
+def test_the_stand_off_a_width_asks_for_scales_with_the_subject():
+    """The arithmetic the block above has to respect."""
+    car = want_range_from_width(0.16, 4.0)
+    person = want_range_from_width(0.16, 0.5)
+    assert abs(car - 15.83) < 0.01, car
+    assert abs(person - 1.98) < 0.01, person
+    # And the point of the demo: the pedestrian set-point is INSIDE the 10 m
+    # ring, so the pilot drives in and the Shield is what stops it - while
+    # 10 m stays outside the camera's 6.9 m blind spot at 8 m altitude, so the
+    # subject remains in frame while the ring holds.
+    assert person < 10.0 < car
+    assert 10.0 > 0.86 * 8.0
 
 
 class _Fig:

@@ -57,7 +57,7 @@ started. What follows the table is what is genuinely still open.
 | Was | Now | Evidence |
 |---|---|---|
 | **2. 10 m pedestrian stand-off never flown** | **CLOSED, and already was** | Flown 2026-08-31 on the canonical rail: shield off 7.07 m / 2.3 s inside the ring, shield on 14.95 m / 0.0 s. This entry was stale when it was written. |
-| **3. Scenario sweep harness** | **CLOSED** | `experiments/sweep_scenarios.py` + `scenarios.yaml`. 12 scenarios, headless, ~1 s. 11 pass, 1 recorded known failure. |
+| **3. Scenario sweep harness** | **CLOSED** | `experiments/sweep_scenarios.py` + `scenarios.yaml`. **13** scenarios, headless, ~1 s. **12** pass, 1 recorded known failure. *(Was written as 12/11 when the harness had one scenario fewer; corrected 2026-09-09 against the harness output.)* |
 | **4. Two KPIs never measured** | **CLOSED** | `mean_repair_magnitude_mps` and `mean_time_to_safe_s` in `guardrail/kpi.py`; all 42 delivered runs rescored by `tools/rescore_kpis.py` with every stored P0 figure reproduced exactly. |
 | **5. Corridor and time-window constraints** | **CLOSED** | `Corridor` is the sixth constraint type; `valid_time` is a field on every rule. Both absent from the reference implementation too, so this is ahead of it rather than level. |
 | **6. Signed policy bundle and WGS84** | **CLOSED** | `guardrail/bundle.py` matches the reference layout byte-for-byte; `guardrail/projection.py` accepts lat/lon additively. `policies/wgs84_taipei.yaml` is the first geographic policy. |

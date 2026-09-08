@@ -80,14 +80,60 @@ correctly fall to the 5 m catch-all:
 | a person / a man / a woman / a human / a pedestrian | `pedestrian` | **10 m** |
 | a yellow car / a taxi | `car` | 5 m |
 
-## What is still not demonstrated
+## Why the ring never fired — the answer, found on the fifth review
 
-The mechanism now works and the class is right. The **flight still does not show
-the ring changing**, and the reason is not the Shield.
+The flight does not show the ring changing, and for two days this document said
+the reason was that the aircraft could not close on the subject, and pointed at
+the detector survey's measured weakness on pedestrian meshes.
 
-Re-flown after the fix: the retarget fired, the class became `pedestrian`, safety
-held — and no stand-off rule bound, because the position the Shield was **served**
-never came inside **14.7 m** (median 20.5 m). A 10 m ring cannot fire at 14.7 m.
+**That was wrong. The aircraft did not close because I told it not to.**
+
+`--want-width` is an ANGULAR target, so the stand-off it asks for scales with the
+subject's real width: 0.16 is **15.83 m** against a 4 m car and **1.98 m**
+against a 0.5 m person. The retarget block updated `args.object_width_m` — with a
+comment explaining that a car prior left on a person misreads the range eightfold
+— and never recomputed `want_range`, which is derived from it once before the
+control loop and read on every tick.
+
+So for the whole pedestrian half of the flight the servo was holding **the car's
+15.83 m**. Measured on `demo/out/retarget_demo2`:
+
+| | |
+|---|---|
+| post-retarget ticks with a served range | 319 |
+| within one metre of the car's 15.83 m set-point | **54 (17 %)** |
+| closest served range | **14.68 m** |
+| commanded `vx` while in that band | **−1.18 m/s** — actively backing off |
+| ticks ever inside the 10 m ring | **0** |
+
+The aircraft was station-keeping at the range it had been given. A 10 m ring
+cannot fire at 15.8 m, and nothing was going to make it, because the pilot was
+never asking to be closer.
+
+The comment two lines above the set-point had already worked this out — *"0.16
+was tuned against a 4 m car and gives 15.8 m; the same flag against a 0.5 m
+pedestrian asks for 2.0 m, which is not a small adjustment but a different
+mission"* — and the code did not act on it.
+
+## What the fix makes the demo do
+
+`want_range` is now recomputed on every retarget, and the flight prints the
+change. On the demo's own command line:
+
+| phase | set-point | what happens |
+|---|---|---|
+| `a yellow car` | 15.83 m | holds; the 5 m catch-all is never breached |
+| `a person` | **1.98 m** | the pilot drives IN |
+| | | **the 10 m pedestrian ring stops it at 10 m** |
+
+And 10 m is outside the camera's near blind spot (0.86 × 8 m = 6.9 m at cruise),
+so the subject stays in frame while the ring holds it. That is the demonstration
+the 2 September review asked for: one flight, one policy, one word changed, and
+the enforced distance moves because the class did.
+
+**This has not been flown yet.** The mechanism is fixed and pinned by a test that
+parses the retarget block and requires it to assign `want_range`; the flight is
+the next thing to do.
 
 ## Correction, 2026-09-07 — the reason I gave for that was not measured
 
@@ -147,7 +193,7 @@ and the served estimate held 24.7 m.
 
 **The estimator was right and the metric was wrong.** Depth is SLANT range along
 the camera ray, so for a subject on the ground it can never be less than the
-aircraft's own altitude. At those four ticks the aircraft was at **8.20–8.27 m**
+aircraft's own altitude. At those four ticks the aircraft was at **8.198–8.236 m**
 and the reading was **5.0 m** — geometrically impossible for a pedestrian. The
 estimator gated them out because they were impossible. That is the estimator
 doing its job.
@@ -199,8 +245,9 @@ The *flight* demonstrates the retarget — the phrase changes, the class changes
 the policy re-binds — and does not yet demonstrate its consequence, because the
 aircraft never closed to 10 m of the position the Shield was given.
 
-Closing that needs the truth logging above (done, so the next flight is
-measurable at all), and then either better pedestrian assets or a stronger
-detector for the acquisition phase. That is still the two-rate design the
-detector survey argued for. What has changed is that the next flight will
-produce a number that means what it says.
+Closing that needed the truth logging above (done, so the next flight is
+measurable at all) and the set-point fix (done, and it was the actual blocker).
+Better pedestrian assets and a stronger acquisition detector remain worth having
+- the detector survey's measured 0.062 on our pedestrian meshes is real - but
+they were never what stood between this argument and a video. A stale servo
+set-point was.

@@ -250,9 +250,9 @@ def test_a_zero_skill_detector_scores_its_own_chance_floor():
 
 def test_a_real_flight_beats_its_chance_floor_by_a_wide_margin():
     """The counterpart: the figure is only evidence when it clears the floor.
-    Pre-retarget tracking is 0.931 against a floor of 0.437 - the floor is high
+    Pre-retarget tracking is 0.915 against a floor of 0.895 - the floor is high
     because the aircraft points AT the subject, so a random box lands near it
-    often, and quoting 0.931 without it would overstate the result."""
+    often, and quoting 0.915 without it would overstate the result."""
     log = ROOT / "demo" / "out" / "retarget_demo2" / "flight_log.jsonl"
     if not log.is_file():
         return SKIP
@@ -285,6 +285,7 @@ def test_the_median_beats_every_null_on_every_flight_and_the_fraction_does_not()
     if not out.is_dir():
         return SKIP
     checked = 0
+    wins, losses = [], []
     for run in sorted(out.iterdir()):
         log = run / "flight_log.jsonl"
         if not log.is_file():
@@ -293,15 +294,34 @@ def test_the_median_beats_every_null_on_every_flight_and_the_fraction_does_not()
         r = score_rows(rows)
         if not r["det_scored"] or r["det_gt_err_px_median_chance"] is None:
             continue
-        # Skip the halves the log cannot score - a retarget flight compared to
-        # the car is legitimately worse than a null, and says so.
-        if r["frac_in_shot"] < 0.5:
-            continue
         checked += 1
-        assert r["det_gt_err_px_median_in_shot"] < r["det_gt_err_px_median_chance"], (
-            run.name, r["det_gt_err_px_median_in_shot"],
-            r["det_gt_err_px_median_chance"])
-    assert checked >= 5, checked
+        beats = (r["det_gt_err_px_median_in_shot"]
+                 < r["det_gt_err_px_median_chance"])
+        if beats:
+            wins.append(run.name)
+        else:
+            losses.append((run.name, r["det_gt_err_px_median_in_shot"],
+                           r["det_gt_err_px_median_chance"],
+                           r["frac_in_shot"]))
+
+    # NOT "beats every null on every flight". The first version of this test
+    # skipped every flight with frac_in_shot < 0.5 - which is exactly the two
+    # flights that would have falsified the claim it was written to guard. A
+    # filter that removes the counterexamples is not a guard.
+    #
+    # What is true, and what is asserted: the median SEPARATES. It beats the
+    # null on every flight where the subject was usually in frame, and on the
+    # two where it does not (envactor3 203.1 px against 35.6, envactor_white
+    # 56.6 against 47.3) the subject was in frame on 17 % and 37 % of rows and
+    # the box genuinely was nowhere near it. The statistic reporting a bad
+    # flight as bad is the statistic working.
+    assert checked >= 20, checked
+    assert len(wins) >= 15, (len(wins), losses)
+    for name, real, null, in_shot in losses:
+        assert in_shot < 0.5, (
+            f"{name} lost to the null ({real} px against {null}) on a flight "
+            f"whose subject was in frame {in_shot:.0%} of the time - that is "
+            f"not the known shape of this exception")
 
 
 def test_a_constant_detector_is_the_null_model_that_actually_bites():
@@ -328,7 +348,8 @@ def test_the_retarget_flight_on_disk_splits_the_way_the_finding_says():
     0.406 - which is close to 248/567, the fraction of the flight BEFORE the
     subject changed, and is a statement about the scorer rather than about the
     detector. Scored on the half whose truth was actually logged, tracking was
-    0.931 with a 7.6 px median error."""
+    0.915 with a 7.6 px median error (0.931 before out-of-shot rows
+    stopped being credited on 2026-09-08)."""
     log = ROOT / "demo" / "out" / "retarget_demo2" / "flight_log.jsonl"
     if not log.is_file():
         return                                   # artefact not in this checkout

@@ -87,13 +87,17 @@ headline.
 
 **A tolerance that discriminates — and then did not.** `frac_on_target_25px`
 was added at 5.6°, on the reasoning that it is several times the median error of
-a correct box. That reasoning is weaker than it looked: on the retarget flight
-25 px is 2.1× the median, not 3×, and **two flights have a negative margin even
-there**.
+a correct box. That much holds — on the retarget flight's first half 25 px is
+**3.5×** the in-shot median of 7.1 px — but **two flights have a negative margin
+even there** (`envactor3` −0.041, `envactor_white` −0.015).
 
-A fourth review then found the deeper problem. A fixed column at cx = 157 px
-BEATS the real detector on `retarget_demo` (0.777 against 0.759, turning a
-+0.104 margin into −0.018), and a lag-1 baseline — emit the previous tick's box
+*(An earlier version of this paragraph said "25 px is 2.1× the median, not 3×".
+That ratio is not produced by any artefact: 3.5× on the pre-retarget half this
+document quotes, 3.3× on its all-rows median, and 1.3× only on the whole of
+`retarget_demo`, a different flight.)*
+
+A fourth review then found the deeper problem. A fixed column at **cx = 158 px**
+BEATS the real detector on `retarget_demo`, and a lag-1 baseline — emit the previous tick's box
 centre, never open the current image — erases the 25 px margin on `city_kpi`
 (+0.077 → −0.000). Every floor invites a harder null, because threshold counting
 at any robust tolerance puts most rows inside it for everybody.
