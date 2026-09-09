@@ -205,6 +205,13 @@ def _score(rows, hfov_deg, on_target_px, cx_of):
     errs: list[float] = []
     creditable: list[bool] = []      # was any acceptable subject in frame at all
     cand_counts: list[int] = []
+    # The frame width each error was measured in. A PIXEL error is meaningless
+    # across a change of capture resolution - 7 px in a 400 px frame is the same
+    # ANGLE as 13.4 px in a 768 px frame - and this project is about to change
+    # that resolution. Carrying the width lets the same rows also be reported in
+    # degrees, which is the unit the servo actually works in and the only one
+    # comparable to the flights already published.
+    widths: list[int] = []
     n_out_of_fov = 0
     n_scored = 0
     n_unscorable = 0
@@ -221,6 +228,7 @@ def _score(rows, hfov_deg, on_target_px, cx_of):
             n_unscorable += 1
             continue
         img_w = int(det.get("img_w") or 400)
+        widths.append(img_w)
         cx = cx_of(r, img_w)
 
         # Project every candidate once, then split them by whether the camera
@@ -257,7 +265,8 @@ def _score(rows, hfov_deg, on_target_px, cx_of):
             n_out_of_fov += 1
         n_scored += 1
 
-    return errs, creditable, cand_counts, n_out_of_fov, n_scored, n_unscorable
+    return (errs, creditable, cand_counts, n_out_of_fov, n_scored,
+            n_unscorable, widths)
 
 
 def score_standoff_firings(rows: Iterable[dict], standoffs: Iterable,
@@ -357,8 +366,20 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
     class rather than an object.
     """
     rows = list(rows)
-    errs, credit, cands, n_out_of_fov, n_scored, n_unscorable = _score(
-        rows, hfov_deg, on_target_px, lambda r, w: float(r["det"]["cx"]))
+    (errs, credit, cands, n_out_of_fov, n_scored, n_unscorable,
+     widths) = _score(rows, hfov_deg, on_target_px,
+                      lambda r, w: float(r["det"]["cx"]))
+
+    def _deg(es, ws, cs):
+        """Median angular error over the in-shot rows, degrees.
+
+        err_px / img_w * hfov is exact for this pinhole model: the bearing is
+        linear in the column, which is the same assumption `project_target_cx`
+        and `servo()` already make.
+        """
+        kept = sorted(e / w * hfov_deg
+                      for e, w, ok in zip(es, ws, cs) if ok and w)
+        return round(kept[len(kept) // 2], 3) if kept else None
 
     if not errs:
         # Every key the populated branch returns, so a consumer never has to
@@ -370,6 +391,9 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
                 "det_gt_err_px_median_in_shot": None,
                 "det_gt_err_px_median_chance": None,
                 "det_gt_err_px_median_chance_centre": None,
+                "det_gt_err_deg_median_in_shot": None,
+                "det_gt_err_deg_median_chance_centre": None,
+                "frame_widths_seen": [],
                 "frac_on_target": None, "frac_in_shot": None,
                 "frac_on_target_chance": None,
                 "frac_on_target_chance_uniform": None,
@@ -405,6 +429,8 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
                               lambda r, w: rnd.uniform(0.0, float(w)))[:2]
     nulls["centre"] = _score(rows, hfov_deg, on_target_px,
                              lambda r, w: float(w) / 2.0)[:2]
+    _centre_full = _score(rows, hfov_deg, on_target_px,
+                          lambda r, w: float(w) / 2.0)
     # The best fixed column for this flight, swept coarsely. Coarse on purpose:
     # a finer sweep only lowers the reported margin further, and the point is
     # made at this resolution.
@@ -451,6 +477,21 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
         "det_unscorable": n_unscorable,
         "det_gt_err_px_median": round(s[len(s) // 2], 1),
         "det_gt_err_px_p95": round(s[min(len(s) - 1, int(0.95 * len(s)))], 1),
+        # THE SAME ROWS IN DEGREES, and the null beside it.
+        #
+        # Every pixel figure above is measured in the frame the flight happened
+        # to render at, and this project is changing that resolution: 400x225
+        # was never a throughput limit, it was continuity. A 7.0 px error in a
+        # 400 px frame and a 13.4 px error in a 768 px frame are THE SAME
+        # ANGLE, and only one of those two numbers looks like a regression.
+        # Degrees are also the unit the servo works in - `servo()` turns the
+        # column straight into a bearing - so this is the figure to quote from
+        # now on, and the pixel ones are kept for continuity with what is
+        # already published.
+        "det_gt_err_deg_median_in_shot": _deg(errs, widths, credit),
+        "det_gt_err_deg_median_chance_centre": _deg(
+            _centre_full[0], _centre_full[6], _centre_full[1]),
+        "frame_widths_seen": sorted(set(widths)),
         # THE number. What fraction of the boxes the controller acted on were
         # actually on the subject it was told to follow.
         # Kept for continuity with the published flights, and NOT the headline:

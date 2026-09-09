@@ -322,10 +322,39 @@
       "parent-link": "Frame",
       "capture-interval": 0.1,
       "capture-settings": [
+        // 768x432, RAISED FROM 400x225 ON 2026-09-10, and the reason is not
+        // "we have a bigger GPU now".
+        //
+        // OwlViTProcessor RESIZES EVERY INPUT TO 768x768 before inference
+        // (verified: image_processor.size == {height: 768, width: 768},
+        // do_center_crop False). Two consequences that had never been drawn:
+        //
+        //   1. The forward pass cost does not depend on this number at all.
+        //      Measured on the 4090, one query, median of 20: 400x225 -> 12.5
+        //      ms, 768x432 -> 12.6 ms, 1280x720 -> 12.6 ms. Flat.
+        //   2. A 400x225 frame was therefore being UPSCALED 1.9x into the
+        //      model. We were paying the full 768x768 forward pass on an image
+        //      carrying 400x225 of information, every tick, for a year.
+        //
+        // 768 is the width at which the model stops interpolating and starts
+        // seeing real pixels; beyond it the extra detail is thrown away by the
+        // same resize. So this is the largest USEFUL capture, not the largest
+        // affordable one. End to end offline it is also FASTER than what it
+        // replaces (30.7 ms against 35.2 ms), because upscaling 400x225 to
+        // 768x768 costs more than downscaling 768x432 to it.
+        //
+        // What it does NOT fix: a 0.5 m pedestrian subtends the same ANGLE
+        // either way, so it still lands on 0.48 of one 32x32 patch at 16 m.
+        // Detail is not size. Only a narrower FOV changes size, and that is a
+        // separate decision with its own blast radius - see
+        // docs/FINDING-the-subject-was-eight-pixels-wide.md.
+        //
+        // 16:9 is preserved exactly (400/225 and 768/432 are both 1.778), so
+        // nothing downstream sees a new aspect ratio.
         {
           "image-type": 0,
-          "width": 400,
-          "height": 225,
+          "width": 768,
+          "height": 432,
           "fov-degrees": 90,
           "capture-enabled": true,
           "streaming-enabled": false,
@@ -370,10 +399,22 @@
         // on cost a second full render target every 0.1 s on the same GPU that
         // runs the detector and draws the viewport. The game window came up
         // BLANK WHITE with both enabled.
+        // Raised WITH the Scene capture above, and it has to be: the
+        // detection box comes from the Scene image and indexes straight into
+        // this one, so a mismatch samples the wrong pixels silently. The
+        // comment above already said so; this is that comment being obeyed.
+        //
+        // There is a second reason to want it. An 8 px box at 400 wide holds
+        // ~8x4 depth pixels and the median through it is mostly BACKGROUND -
+        // measured on retarget_smooth, the served range missed the real
+        // pedestrian by 37 m while the box was on roughly the right column.
+        // At 768 the same subject covers ~15x8 px, which is enough for a
+        // median to find the subject rather than the road behind it. Whether
+        // that is enough is an open question, not a claim.
         {
           "image-type": 2,
-          "width": 400,
-          "height": 225,
+          "width": 768,
+          "height": 432,
           "fov-degrees": 90,
           "capture-enabled": true,
           "streaming-enabled": true,

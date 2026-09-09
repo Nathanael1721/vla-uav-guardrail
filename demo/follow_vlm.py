@@ -81,6 +81,58 @@ from semantic_demo import SemanticObs, quat_yaw                     # noqa: E402
 TICK = 0.1
 SIM_CONFIG_DIR = str(ROOT / "demo" / "pas_config")
 SCENE = "scene_semantic.jsonc"
+ROBOT_CONFIG = ROOT / "demo" / "pas_config" / "robot_semantic_quad.jsonc"
+
+
+def camera_hfov_deg(config_path=ROBOT_CONFIG, sensor: str = "FrontCamera",
+                    image_type: int = 0, default: float = 90.0) -> float:
+    """The detector camera's horizontal FOV, READ FROM THE SIM CONFIG.
+
+    It was a literal in six places, and in the one that mattered most it was
+    written as `math.radians(45.0)` - the HALF-angle, inlined, in the estimator
+    feed - while `servo()` three hundred lines away took `hfov_deg` as a
+    parameter. Change the camera and those two disagree silently: every bearing
+    the estimator is fed would be scaled wrong, the Shield would be served a
+    subject in the wrong direction, and nothing would raise. That is the exact
+    shape of the yaw-units defect this project has already published a finding
+    about, waiting to happen a second time.
+
+    Reading it here means the camera can be re-aimed by editing the config
+    alone, which is the whole point: narrowing the FOV is the only lever that
+    makes a 0.5 m subject bigger to the model, and it must not require six
+    correct edits to attempt.
+
+    Falls back to `default` with a warning rather than raising, because a
+    missing config must not stop a flight that would otherwise be correct - but
+    it says so, because a silent fallback is how the last one hid.
+    """
+    try:
+        raw = Path(config_path).read_text(encoding="utf-8")
+        # JSONC: strip // comments, keeping any inside strings alone. The
+        # comments in this file are all full-line or trailing, never in a
+        # string, so a line-wise strip is exact here.
+        stripped = chr(10).join(
+            (ln.split("//", 1)[0] if '"' not in ln.split("//", 1)[0] or
+             ln.strip().startswith("//") else ln)
+            for ln in raw.splitlines())
+        cfg = json.loads(stripped)
+        for sen in cfg.get("sensors", []):
+            if sen.get("id") != sensor:
+                continue
+            for cap in sen.get("capture-settings", []):
+                if int(cap.get("image-type", -1)) == image_type:
+                    return float(cap["fov-degrees"])
+    except Exception as exc:                                   # noqa: BLE001
+        print(f"[camera] WARNING could not read fov from {config_path}: "
+              f"{type(exc).__name__}: {exc}; using {default} deg", flush=True)
+        return float(default)
+    print(f"[camera] WARNING no {sensor} image-type {image_type} in "
+          f"{config_path}; using {default} deg", flush=True)
+    return float(default)
+
+
+# Resolved once, at import. Every bearing computation in this module uses it.
+CAMERA_HFOV_DEG = camera_hfov_deg()
 # Declared in that scene file. The simulator drives this actor along an uploaded
 # trajectory; see demo/env_actor_car.jsonc and demo/car_trajectory.py.
 ENV_CAR_NAME = "SemCarActor"
@@ -586,7 +638,7 @@ def range_from_depth(depth, det, shrink: float = 0.35):
     return float(np.median(good))
 
 
-def implied_width_m(det, rng_m: float, hfov_deg: float = 90.0):
+def implied_width_m(det, rng_m: float, hfov_deg: float = CAMERA_HFOV_DEG):
     """How wide the detected thing must physically be, given its range.
 
     A box is an angle. With a range, that angle becomes a size — and a size can
@@ -602,7 +654,7 @@ def implied_width_m(det, rng_m: float, hfov_deg: float = 90.0):
 
 
 def implied_range_from_width(det, object_width_m: float = 4.0,
-                            hfov_deg: float = 90.0):
+                            hfov_deg: float = CAMERA_HFOV_DEG):
     """Range implied by an apparent box width - the inverse of implied_width_m.
 
     The fallback for when depth is unusable. Noisier than depth (it inherits the
@@ -891,7 +943,7 @@ class TargetLock:
     taking it would be a silent target switch.
     """
 
-    def __init__(self, hfov_deg: float = 90.0, gate_frac: float = 0.12,
+    def __init__(self, hfov_deg: float = CAMERA_HFOV_DEG, gate_frac: float = 0.12,
                  hold_s: float = 2.0, size_ratio: float = 1.8):
         self.hfov_deg = hfov_deg
         # 0.12 of the width, not 0.28. The old value is 112 px on a 400 px
@@ -1647,7 +1699,7 @@ class Grounder:
 
 
 def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
-          speed_max: float, hfov_deg: float = 90.0):
+          speed_max: float, hfov_deg: float = CAMERA_HFOV_DEG):
     """Box in the image -> (yaw rate rad/s, forward speed m/s, bearing error rad).
 
     Bearing comes from the horizontal offset scaled by the real horizontal FOV,
@@ -2346,7 +2398,13 @@ async def fly(args) -> int:
             # the log are for scoring and must not reach this.
             if estimator is not None and det is not None and g["seq"] != last_est_seq:
                 last_est_seq = g["seq"]
-                b_meas = math.radians(45.0) * ((det[0] - det[5] / 2) / (det[5] / 2))
+                # CAMERA_HFOV_DEG / 2, not a literal 45.0. This line is
+                # servo()'s bearing formula written out a second time, and it
+                # is the one the ESTIMATOR is fed - so a camera change that
+                # missed it would send the Shield a subject in the wrong
+                # direction with nothing raising.
+                b_meas = (math.radians(CAMERA_HFOV_DEG / 2.0)
+                          * ((det[0] - det[5] / 2) / (det[5] / 2)))
                 r_meas = range_from_depth(obs.get_depth(), det) if have_depth else None
                 if r_meas is None:
                     r_meas = implied_range_from_width(det, args.object_width_m)

@@ -34,7 +34,8 @@ from follow_vlm import (PresenceMonitor, TargetLock,          # noqa: E402
                         object_mask_from_depth, subject_width,
                         SUBJECT_CLASS_CANON, SUBJECT_WIDTH_M,
                         range_agreement, subject_truth_pts,
-                        yaw_command, YAW_RATE_CAP, servo)
+                        yaw_command, YAW_RATE_CAP, servo,
+                        camera_hfov_deg, CAMERA_HFOV_DEG)
 
 W, H = 400, 225
 
@@ -908,6 +909,66 @@ def test_a_subject_with_no_truth_logs_nothing_rather_than_the_car():
     substitution that made a whole flight-half unreadable."""
     assert subject_truth_pts("van", _Car(), _People((1.0, 2.0))) == []
     assert subject_truth_pts("pedestrian", _Car(), None) == []
+
+
+def test_the_camera_geometry_has_one_source_and_it_tracks():
+    """The FOV must come from the sim config, and CHANGING the config must
+    change it. A constant with extra steps would pass a weaker test."""
+    import re, tempfile, pathlib
+    cfg = ROOT / "demo" / "pas_config" / "robot_semantic_quad.jsonc"
+    if not cfg.exists():
+        return SKIP
+    assert camera_hfov_deg(cfg) == CAMERA_HFOV_DEG, (
+        "the module constant disagrees with the config it claims to read")
+    raw = cfg.read_text(encoding="utf-8")
+    with tempfile.TemporaryDirectory() as d:
+        for want in (30, 45, 60):
+            out, n = re.subn(r'"fov-degrees": 90', f'"fov-degrees": {want}',
+                             raw, count=2)
+            assert n == 2, "FrontCamera's two captures no longer both read 90"
+            t = pathlib.Path(d) / "c.jsonc"
+            t.write_text(out, encoding="utf-8")
+            assert camera_hfov_deg(t) == float(want), (
+                f"config says {want}, reader returned {camera_hfov_deg(t)}")
+
+
+def test_every_bearing_site_uses_that_one_source():
+    """No literal half-angle anywhere that turns a column into a bearing.
+
+    `math.radians(45.0)` was inlined in the estimator feed while servo() took
+    hfov_deg as a parameter. A camera change would have scaled every estimator
+    bearing wrong and raised nothing - the same shape as the yaw-units defect
+    already published. Pinned to the source, because a comment saying "keep
+    these in step" is exactly what failed.
+    """
+    import ast, inspect
+    # Parsed, not grepped. The first version of this test matched the string
+    # anywhere in the source and failed on the DOCSTRING that explains the fix -
+    # a check that fires on its own explanation is a check nobody keeps.
+    tree = ast.parse(inspect.getsource(sys.modules["follow_vlm"]))
+    bad = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        fn = node.func
+        name = (fn.attr if isinstance(fn, ast.Attribute)
+                else fn.id if isinstance(fn, ast.Name) else "")
+        if name != "radians" or not node.args:
+            continue
+        a = node.args[0]
+        if isinstance(a, ast.Constant) and isinstance(a.value, (int, float)):
+            # A literal angle handed to radians(). 45 and 90 are the camera's
+            # half- and full-FOV; anything else here is some other geometry and
+            # is not this test's business.
+            if float(a.value) in (45.0, 90.0):
+                bad.append(f"line {node.lineno}: radians({a.value})")
+    assert not bad, (
+        "a literal camera half-FOV is back in follow_vlm.py, so a config "
+        f"change would not reach it: {bad}")
+    for fn in (servo, implied_width_m):
+        d = inspect.signature(fn).parameters["hfov_deg"].default
+        assert d == CAMERA_HFOV_DEG, (
+            f"{fn.__name__} defaults to {d}, not the camera's {CAMERA_HFOV_DEG}")
 
 
 def test_a_bearing_behind_the_aircraft_cannot_spin_it():
