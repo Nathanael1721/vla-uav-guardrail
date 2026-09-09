@@ -171,16 +171,38 @@ None of these is free, and the choice is the PI's:
 
 ## The re-flight, and what it uncovered
 
-`retarget_smooth`, same command line, both fixes in. **Closed-loop**, not
-replay.
+`retarget_smooth`, same parameters, same seed, same policy hash, both fixes in.
+**Closed-loop**, not replay.
 
-| | car before | car after | ped before | ped after |
-|---|---|---|---|---|
-| box error, in shot | 5.7 px | 5.4 px | 46.1 px | **7.0 px** |
-| ...centre-constant null | 16.9 | 15.1 | 43.2 | **5.9** |
-| median \|yaw\| | 3.0 dps | 2.8 dps | 11.5 dps | **1.7 dps** |
-| max \|yaw\| | 30.6 | 24.7 | **130.4** | **32.7** |
-| yaw sign flips | 2.4% | 3.2% | 6.6% | 4.1% |
+**The two flights are not the same length**, and the first version of this
+table did not say so: `retarget_fixed` ran 69.95 s and `retarget_smooth` ran the
+full 119.95 s of the `--max-s` default. Comparing whole flights compares
+different windows. On the **matched** window the pedestrian phases are 331 and
+333 ticks, which is as close as two live flights get:
+
+| pedestrian phase, t <= 70 s | before | after |
+|---|---|---|
+| ticks | 331 | 333 |
+| box error, in shot | 46.1 px | **3.9 px** |
+| ...centre-constant null | 43.2 | 3.6 |
+| median \|yaw\| | 11.5 dps | **1.3 dps** |
+| max \|yaw\| | **130.4** | **9.6** |
+| yaw sign flips | 6.6% | 4.8% |
+| closest a real person came | 9.43 m | **4.70 m** |
+| P0 ring silent while one was inside | 49/49 | **298/298** |
+
+*(An earlier version of this section quoted 1.7 dps median and 32.7 dps peak.
+Those are the whole-flight figures, and the extra 50 s they include is time the
+old flight never flew. The matched figures are better — 1.3 and 9.6 — and the
+point is that the number quoted has to name its window.)*
+
+Car phase, whole flight, for completeness:
+
+| | before | after |
+|---|---|---|
+| box error, in shot | 5.7 px (null 16.9) | 5.4 px (null 15.1) |
+| median \|yaw\| | 3.0 dps | 2.8 dps |
+| max \|yaw\| | 30.6 | 24.7 |
 
 **The car phase is undisturbed**, which was the main risk of both changes.
 
@@ -222,6 +244,11 @@ closest a REAL person came = 4.70 m   (tick 324)
 ticks a real person was inside the 10 m P0 ring : 516
 of those, ticks the P0 rule was SILENT          : 485
 ```
+
+On the **matched** 70 s window the ring fired on **0 of 298** such ticks — all
+31 true positives come from the extra 50 s. So against the flight it is being
+compared with, the aircraft got closer to people (9.43 m -> 4.70 m) and the P0
+rule saw none of it.
 
 **The Shield is not broken and the KPI is not lying about what it measures.**
 `p0_violation_escape_rate` is the fraction of *detected* P0 violations that
