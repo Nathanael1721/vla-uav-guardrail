@@ -22,7 +22,8 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from track_truth import (HFOV_DEG, ON_TARGET_PX,          # noqa: E402
-                         project_target_cx, score_rows, truth_points)
+                         project_target_cx, score_rows, truth_points,
+                         score_standoff_firings)
 
 W = 400
 
@@ -362,6 +363,91 @@ def test_the_retarget_flight_on_disk_splits_the_way_the_finding_says():
     # aircraft. 319 out of 319 - a number no detector produces.
     assert post["frac_on_target"] == 0.0, post
     assert post["n_det_with_target_out_of_fov"] == post["det_scored"] == 319, post
+
+
+# --------------------------------------------------------------------------
+# The stand-off ring: a firing count is not a result.
+# --------------------------------------------------------------------------
+
+class _Ring:
+    def __init__(self, rid, cls, rng):
+        self.id, self.subject_class, self.min_range_m = rid, cls, rng
+
+
+def _tick(n, x, y, pts, cls="pedestrian", fired=()):
+    return {"tick": n, "x": x, "y": y, "psi": 0.0,
+            "truth": {"class": cls, "pts": pts},
+            "violations": [{"rule_id": r} for r in fired]}
+
+
+def test_a_ring_that_fires_on_a_phantom_scores_zero():
+    """The exact shape of the 2026-09-09 flight, in four ticks.
+
+    The rule fires while the nearest real pedestrian is 16 m away, and stays
+    silent on the tick where one is genuinely at 6 m. The firing COUNT is 1 and
+    looks like the rule working; precision is 0.00 and recall is 0.00.
+    """
+    ring = _Ring("standoff-pedestrian", "pedestrian", 10.0)
+    rows = [_tick(1, 0, 0, [(16.0, 0.0)], fired=["standoff-pedestrian"]),
+            _tick(2, 0, 0, [(16.0, 0.0)]),
+            _tick(3, 0, 0, [(6.0, 0.0)]),
+            _tick(4, 0, 0, [(20.0, 0.0)])]
+    s = score_standoff_firings(rows, [ring])["standoff-pedestrian"]
+    assert (s["fires"], s["tp"], s["fp"], s["fn"]) == (1, 0, 1, 1), s
+    assert s["precision"] == 0.0 and s["recall"] == 0.0, s
+
+
+def test_a_ring_that_is_right_scores_right():
+    ring = _Ring("standoff-pedestrian", "pedestrian", 10.0)
+    rows = [_tick(1, 0, 0, [(6.0, 0.0)], fired=["standoff-pedestrian"]),
+            _tick(2, 0, 0, [(20.0, 0.0)])]
+    s = score_standoff_firings(rows, [ring])["standoff-pedestrian"]
+    assert (s["tp"], s["fp"], s["fn"]) == (1, 0, 0), s
+    assert s["precision"] == 1.0 and s["recall"] == 1.0, s
+
+
+def test_a_rule_that_never_bound_reports_no_score_not_a_perfect_one():
+    """An unbound rule scoring 1.000 is the defect this project keeps finding:
+    a zero that means "never ran" read as "never violated"."""
+    ring = _Ring("standoff-pedestrian", "pedestrian", 10.0)
+    rows = [_tick(1, 0, 0, [(3.0, 0.0)], cls="car")]
+    s = score_standoff_firings(rows, [ring])["standoff-pedestrian"]
+    assert s["bound_ticks"] == 0, s
+    assert s["precision"] is None and s["recall"] is None, s
+
+
+def test_a_tick_with_no_truth_is_unscorable_not_a_miss():
+    ring = _Ring("standoff-pedestrian", "pedestrian", 10.0)
+    rows = [{"tick": 1, "x": 0.0, "y": 0.0, "psi": 0.0,
+             "truth": {"class": "pedestrian", "pts": []}, "violations": []}]
+    s = score_standoff_firings(rows, [ring])["standoff-pedestrian"]
+    assert s["bound_ticks"] == 0 and s["fn"] == 0, s
+
+
+def test_the_catch_all_binds_to_every_class():
+    ring = _Ring("standoff-any", "*", 5.0)
+    rows = [_tick(1, 0, 0, [(3.0, 0.0)], cls="car"),
+            _tick(2, 0, 0, [(3.0, 0.0)], cls="pedestrian")]
+    s = score_standoff_firings(rows, [ring])["standoff-any"]
+    assert s["bound_ticks"] == 2 and s["fn"] == 2, s
+
+
+def test_the_recorded_flight_reproduces_the_retraction():
+    """The number that was reported to the PI as proof, scored.
+
+    Reported: "the 10 m pedestrian ring fired 6 times". True: 0 TP, 6 FP, 49 FN
+    - every firing against an estimate 6-12 m from any real person, and silence
+    on all 49 ticks where a real pedestrian was genuinely inside 10 m.
+    """
+    log = ROOT / "demo" / "out" / "retarget_fixed" / "flight_log.jsonl"
+    if not log.exists():
+        return SKIP
+    rows = [json.loads(l) for l in log.open(encoding="utf-8")]
+    s = score_standoff_firings(
+        rows, [_Ring("standoff-pedestrian", "pedestrian", 10.0)]
+    )["standoff-pedestrian"]
+    assert s["fires"] == 6 and s["tp"] == 0 and s["fn"] == 49, s
+    assert s["precision"] == 0.0, s
 
 
 if __name__ == "__main__":

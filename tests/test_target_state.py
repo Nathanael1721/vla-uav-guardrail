@@ -253,6 +253,117 @@ def test_the_gate_arms_on_the_new_track_not_the_old_one():
     assert e.n_updates == 0
 
 
+# --------------------------------------------------------------------------
+# The per-class speed prior, replayed from the flight that needed it.
+# --------------------------------------------------------------------------
+
+FLIGHT = ROOT / "demo" / "out" / "retarget_fixed" / "flight_log.jsonl"
+
+
+def _replay_pedestrian_phase(v_max):
+    """Feed the recorded post-retarget measurements through a fresh filter.
+
+    No simulator: the rows carry the aircraft pose, the box bearing and the
+    depth range, which is everything `update()` takes. The point of replaying a
+    REAL flight rather than a synthetic one is that the failure being guarded
+    against was not synthesisable - it needed a detector emitting boxes
+    scattered across a city block, which is what a 0.5 m subject at 8-13 px
+    produces and what no hand-written noise model was going to reproduce.
+    """
+    import json
+    rows = [json.loads(l) for l in FLIGHT.open(encoding="utf-8")]
+    seg = [r for r in rows if (r.get("truth") or {}).get("class") == "pedestrian"]
+    est = TargetState(v_max=v_max)
+    served, speeds, last_seq = 0, [], None
+    for r in seg:
+        det, rng, seq = r.get("det"), r.get("rng_m"), r.get("det_seq")
+        if det and rng and seq != last_seq:
+            last_seq = seq
+            est.update(r["t"], r["x"], r["y"], r["psi"],
+                       math.radians(r["bearing_deg"]), float(rng))
+        est.predict(r["t"])
+        if est.observe(r["t"], r["x"], r["y"], r["psi"]) is not None:
+            served += 1
+            speeds.append(est.speed())
+    return est, served, len(seg), (max(speeds) if speeds else 0.0)
+
+
+def test_a_pedestrian_is_never_credited_with_a_cars_speed():
+    """Without the prior this flight attributed 13.06 m/s to a person.
+
+    That is not a cosmetic number. Once the estimate had run away, the filter's
+    own 4-sigma gate rejected 149 of the next 154 measurements, so it coasted
+    the runaway velocity to the end of the flight and served the Shield a
+    position 6-12 m from any real person. All six firings of the 10 m stand-off
+    ring were against that phantom.
+    """
+    if not FLIGHT.exists():
+        print("SKIP  no recorded flight at demo/out/retarget_fixed")
+        return
+    _, _, _, fast = _replay_pedestrian_phase(None)
+    assert fast > 10.0, (
+        f"the flight this guards no longer diverges ({fast:.2f} m/s) - if that "
+        "is a real improvement, re-point this test at a flight that does, but "
+        "do not delete it: a guard whose failure case has vanished from the "
+        "fixtures stops guarding silently")
+    _, _, _, capped = _replay_pedestrian_phase(2.0)
+    assert capped <= 2.0 + 1e-6, f"clamp let {capped:.2f} m/s through"
+
+
+def test_the_clamp_keeps_the_estimate_usable_instead_of_coasting():
+    """Served on more than half the ticks, against under a fifth without it.
+
+    The clamp is not a cosmetic bound on a number nobody reads: capping the
+    velocity stops the divergence that makes the Mahalanobis gate reject
+    everything, so the filter keeps ACCEPTING measurements. Fewer than half the
+    ticks served means the controller is steering on coast, which is where the
+    yaw chaos came from.
+    """
+    if not FLIGHT.exists():
+        print("SKIP  no recorded flight at demo/out/retarget_fixed")
+        return
+    _, loose, n, _ = _replay_pedestrian_phase(None)
+    _, tight, _, _ = _replay_pedestrian_phase(2.0)
+    assert loose / n < 0.25, f"baseline served {loose}/{n}, expected the failure"
+    assert tight / n > 0.5, f"with the clamp served only {tight}/{n}"
+    assert tight > loose * 2, f"{loose} -> {tight} is not the measured improvement"
+
+
+def test_the_clamp_scales_the_pair_and_does_not_rotate_it():
+    """Clipping vx and vy separately would turn the target's heading, and the
+    heading is what the yaw servos on - a speed error is recoverable, a bearing
+    error steers the aircraft the wrong way."""
+    e = TargetState(v_max=2.0)
+    e.x = np.array([0.0, 0.0, 6.0, 8.0], float)     # 10 m/s at atan2(8,6)
+    e.P = np.eye(4)
+    e.t_last_update = 0.0
+    e._t_state = 0.0
+    e.n_updates = 5
+    before = math.atan2(e.x[3], e.x[2])
+    # one in-gate measurement, so the clamp is the only thing that moves it
+    e.update(0.1, 0.0, 0.0, 0.0, 0.0, 1.0)
+    assert e.speed() <= 2.0 + 1e-6
+    assert abs(math.atan2(e.x[3], e.x[2]) - before) < math.radians(20.0), (
+        "the clamp rotated the velocity - scale the pair, do not clip the axes")
+
+
+def test_no_ceiling_is_the_old_behaviour_exactly():
+    """Every caller that predates the prior must be bit-for-bit unaffected."""
+    a, b = TargetState(), TargetState(v_max=None)
+    for e in (a, b):
+        e.update(0.0, 0.0, 0.0, 0.0, 0.0, 20.0)
+        e.update(0.3, 0.0, 0.0, 0.0, 0.05, 22.0)
+        e.update(0.6, 0.0, 0.0, 0.0, 0.10, 25.0)
+    assert np.allclose(a.x, b.x)
+    assert "v_max_mps" not in a.summary(), (
+        "a filter with no ceiling must not advertise one")
+    c = TargetState(v_max=2.0)
+    c.update(0.0, 0.0, 0.0, 0.0, 0.0, 20.0)
+    assert c.summary()["clamped"] == 0, (
+        "report the counter even at zero - an unfired clamp and an uninstalled "
+        "one must not look the same in a summary")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

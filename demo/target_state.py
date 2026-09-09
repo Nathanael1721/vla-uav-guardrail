@@ -59,7 +59,7 @@ class TargetState:
 
     def __init__(self, accel_noise: float = 1.5, range_sigma_m: float = 1.5,
                  bearing_sigma_deg: float = 2.0, gate_sigma: float = 4.0,
-                 max_coast_s: float = 3.0):
+                 max_coast_s: float = 3.0, v_max: Optional[float] = None):
         # Process noise as an acceleration the target might apply between
         # updates. A car pulling away from a stop is around 1-2 m/s^2, and the
         # route's speed profile is built with lon_acc 1.2, so 1.5 covers it
@@ -74,6 +74,27 @@ class TargetState:
         self.b_sig = math.radians(float(bearing_sigma_deg))
         self.gate = float(gate_sigma)
         self.max_coast_s = float(max_coast_s)
+        # A PHYSICAL SPEED CEILING FOR THE CLASS BEING FOLLOWED.
+        #
+        # Nothing in a Kalman filter knows what it is tracking. Fed a handful of
+        # detections scattered over a city block - which is what a detector does
+        # when the subject is 0.5 m wide at 16 m - the constant-velocity model
+        # explains them by attributing enormous velocity, and it is not wrong to
+        # do so: the measurements really are that far apart. On the retarget
+        # flight it settled on 12.96 m/s for a PEDESTRIAN, then coasted that
+        # velocity forward and served the controller a position 6-12 m from any
+        # real person. All six firings of the 10 m stand-off ring on that flight
+        # were against that phantom, while the 49 ticks with a real pedestrian
+        # inside 10 m fired nothing.
+        #
+        # The prior is the one thing the filter cannot learn from the data and
+        # we already know: a person does not travel at 13 m/s. Applied as a
+        # POST-UPDATE CLAMP rather than as process noise or an extra gate,
+        # because it must not change which measurements are accepted - only what
+        # the filter is allowed to conclude from them. None means no ceiling,
+        # which is the behaviour every existing caller gets.
+        self.v_max = None if v_max is None else float(v_max)
+        self.n_clamped = 0
 
         self.x: Optional[np.ndarray] = None      # [x, y, vx, vy]
         self.P: Optional[np.ndarray] = None
@@ -156,6 +177,17 @@ class TargetState:
         K = self.P @ H.T @ Sinv
         self.x = self.x + K @ y
         self.P = (np.eye(4) - K @ H) @ self.P
+        if self.v_max is not None:
+            v = math.hypot(self.x[2], self.x[3])
+            if v > self.v_max:
+                # Scale the pair, do not clip each axis: clipping components
+                # separately rotates the velocity, and a heading error is worse
+                # here than a speed error - the bearing is what the yaw servos
+                # on. P is left alone deliberately; the clamp asserts a fact
+                # about the world, not a reduction in what the filter knows.
+                self.x[2] *= self.v_max / v
+                self.x[3] *= self.v_max / v
+                self.n_clamped += 1
         self.t_last_update = t
         self._t_state = t
         self.n_updates += 1
@@ -230,6 +262,12 @@ class TargetState:
     def summary(self) -> dict:
         d = {"updates": self.n_updates, "gated_out": self.n_rejected,
              "speed_mps": round(self.speed(), 2)}
+        if self.v_max is not None:
+            # Reported ALWAYS once a ceiling is set, including when it is zero.
+            # A clamp that never fires and a clamp that is not installed look
+            # identical in a summary that omits the field, and this project has
+            # published that confusion four times.
+            d.update(v_max_mps=round(self.v_max, 2), clamped=self.n_clamped)
         if self.n_resets:
             d.update(resets=self.n_resets,
                      updates_total=self._cum_updates + self.n_updates,

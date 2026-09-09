@@ -260,6 +260,87 @@ def _score(rows, hfov_deg, on_target_px, cx_of):
     return errs, creditable, cand_counts, n_out_of_fov, n_scored, n_unscorable
 
 
+def score_standoff_firings(rows: Iterable[dict], standoffs: Iterable,
+                           audit_rows: Optional[Iterable[dict]] = None) -> dict:
+    """Precision and recall of each SubjectStandoff ring, against ground truth.
+
+    A firing count on its own says NOTHING about whether the ring works. The
+    retarget flight of 2026-09-09 fired `standoff-pedestrian` six times and it
+    was reported as the demonstration the rule had finally armed. Scored here:
+
+        fires 6, TP 0, FP 6, FN 49, precision 0.00, recall 0.00
+
+    Every firing was against a diverged estimate 3.8-9.4 m away while the
+    nearest real pedestrian was 16.2-16.5 m away, and the 49 ticks where a real
+    pedestrian genuinely was inside 10 m fired nothing. The Shield was correct
+    throughout - it was answering the question honestly about a position that
+    was wrong - which is precisely why the count could not detect the failure
+    and this function had to exist.
+
+    **TP / FP / FN are about the WORLD, not about the Shield.** A tick is a
+    positive in truth when the nearest logged member of the ring's class really
+    is inside `min_range_m`. The Shield fires on the position it was SERVED. So
+    this measures the perception stack through the rule, which is the only
+    thing that makes the rule's output trustworthy to a reader.
+
+    Returns one entry per ring id, plus `scored_ticks`. Rings that never bound
+    (wrong class for this flight) report `bound_ticks: 0` and null rates rather
+    than a flattering 1.0 - an unbound rule has no score, and this project has
+    already published a zero that meant "never ran" as if it meant "never
+    violated".
+    """
+    rows = list(rows)
+    # The flight log carries the same per-tick `violations` list the audit does,
+    # so it is the default source: one artefact, no read-back of a file that may
+    # still be buffered, and it works on any archived flight log. `audit_rows`
+    # stays available for scoring a bundle whose audit is the only thing kept.
+    fired = {}
+    for a in (rows if audit_rows is None else audit_rows):
+        for v in (a.get("violations") or []):
+            rid = v.get("rule_id")
+            if rid:
+                fired.setdefault(rid, set()).add(a.get("tick"))
+
+    out = {"scored_ticks": 0}
+    scored = 0
+    for so in standoffs:
+        rid = getattr(so, "id", None)
+        if rid is None:
+            continue
+        want = getattr(so, "subject_class", "*")
+        rng = float(getattr(so, "min_range_m", 0.0))
+        hits = fired.get(rid, set())
+        tp = fp = fn = bound = 0
+        for r in rows:
+            cls = (r.get("truth") or {}).get("class")
+            if cls is None:
+                continue
+            if want != "*" and str(want).lower() != str(cls).lower():
+                continue          # this rule does not bind on this tick
+            pts = truth_points(r)
+            if pts is None:
+                continue          # no truth logged: unscorable, not a miss
+            bound += 1
+            near = min(math.hypot(r["x"] - px, r["y"] - py) for px, py in pts)
+            truly_inside = near < rng
+            did_fire = r.get("tick") in hits
+            if did_fire and truly_inside:
+                tp += 1
+            elif did_fire:
+                fp += 1
+            elif truly_inside:
+                fn += 1
+        scored = max(scored, bound)
+        rate = lambda n, d: None if d == 0 else round(n / d, 3)
+        out[rid] = {"min_range_m": rng, "subject_class": want,
+                    "bound_ticks": bound, "fires": tp + fp,
+                    "tp": tp, "fp": fp, "fn": fn,
+                    "precision": rate(tp, tp + fp),
+                    "recall": rate(tp, tp + fn)}
+    out["scored_ticks"] = scored
+    return out
+
+
 def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
                on_target_px: float = ON_TARGET_PX,
                chance_seed: int = 20260908) -> dict:

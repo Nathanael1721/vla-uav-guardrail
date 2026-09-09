@@ -1,9 +1,42 @@
 # The 10 m stand-off rule never armed, and nothing could have told us
 
-**Date:** 2026-09-07
+**Date:** 2026-09-07, retracted in part 2026-09-09
 **Found by:** flying the mid-mission retarget for the 18 September demo.
-**Status:** fixed, with regression tests. The demo itself is **not yet
-demonstrated in flight** — see the last section, which is the honest part.
+**Status:** the binding defect is fixed, with regression tests. **The rule is
+still not demonstrated.**
+
+> ## Retraction, 2026-09-09
+>
+> After the class-canonicalisation fix and the stand-off set-point fix, the
+> flight `retarget_fixed` fired `standoff-pedestrian` **six times**, and that
+> was reported — to the PI, verbally — as the demonstration this document says
+> is missing. **It was not.** Scored against the ground truth in the same
+> flight log:
+>
+> | | |
+> |---|---|
+> | fires | 6 |
+> | true positives | **0** |
+> | false positives | **6** |
+> | false negatives | **49** |
+> | precision / recall | **0.00 / 0.00** |
+>
+> All six fired against a diverged target estimate reporting 3.81–9.39 m while
+> the nearest real pedestrian was 16.23–16.53 m away. On the 49 ticks where a
+> real pedestrian genuinely was inside 10 m, the rule fired **nothing**. The
+> closest the aircraft really came to a person all flight was 9.43 m.
+>
+> The Shield was correct throughout. It answered honestly about the position it
+> was served, and the position was wrong by 6–12 m. **A rule cannot be more
+> right than its input**, and a firing count cannot tell you which it was —
+> which is why `track_truth.score_standoff_firings` now computes this table and
+> `metrics.json` carries it under `standoff_score` beside the count.
+>
+> The same scorer found a second one nobody had looked at: `standoff-any` (5 m)
+> fired twice on that flight, and both were false too.
+>
+> Root cause of the phantom, and its fix, are in
+> `FINDING-the-subject-was-eight-pixels-wide.md`.
 
 ## What happened
 

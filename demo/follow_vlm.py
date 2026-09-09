@@ -137,6 +137,61 @@ SUBJECT_WIDTH_M = {
 }
 SUBJECT_WIDTH_DEFAULT = 4.0
 
+# HOW FAST THE SUBJECT CAN POSSIBLY BE GOING, by policy class, m/s.
+#
+# The estimator is a constant-velocity filter and knows nothing about what it
+# is tracking. Fed detections scattered across a city block - which is what a
+# detector returns when the subject is 0.5 m wide and therefore 8-13 px in a
+# 400 px frame - it explains them with enormous velocity, and it is not wrong
+# to: the measurements really are that far apart. On the retarget flight it
+# settled on 12.96 m/s for a PEDESTRIAN, and once the estimate had run away its
+# own 4-sigma gate rejected every subsequent measurement (149 of 154), so it
+# coasted the runaway velocity to the end of the flight. All six firings of the
+# 10 m stand-off ring on that flight were against the resulting phantom, while
+# the 49 ticks with a real pedestrian inside 10 m fired nothing at all.
+#
+# Generous on purpose: these are ceilings that only a diverged track can reach,
+# not expected speeds. A pedestrian walks 1.4 and can run 6, but the subject is
+# also allowed to be on a moving pavement or briefly mis-associated, so 2.0
+# still permits every honest track while cutting the divergence off. Measured
+# on the recorded flight the clamp fires on 13 of 57 updates.
+#
+# None for a class not listed, which is the no-ceiling behaviour every caller
+# had before this existed.
+# THE PILOT'S OWN YAW CEILING, rad/s. Deliberately NOT the policy's.
+#
+# `follow_pedestrian.yaml` caps yaw at 45 dps (0.785 rad/s) and this is 63 dps,
+# so the Shield still repairs the pilot sometimes - twice on the retarget
+# flight. That gap is the design, not an oversight: the moment the pilot reads
+# the policy and pre-clips to it, the Shield stops being the thing that
+# enforces the limit and starts being a formality that never fires. What the
+# pilot owes is INTERNAL consistency, and it did not have it - the coast branch
+# clipped to 1.1 and the estimator branch clipped to nothing, so a bearing from
+# `TargetState.observe()` (which, unlike servo()'s, is not bounded by the field
+# of view and can point behind the aircraft) commanded 130.4 dps: the aircraft
+# spinning on the spot, and most of what "the tracking looks confused" was.
+#
+# servo() needs no cap and does not get one: its bearing is hfov/2 * off with
+# |off| <= 1, so at yaw_gain 1.2 it cannot exceed 0.94 rad/s by construction.
+# Adding a redundant clip there would hide that argument rather than record it.
+YAW_RATE_CAP = 1.1
+
+
+def yaw_command(gain: float, bearing: float) -> float:
+    """Proportional yaw, clipped to the pilot's own ceiling.
+
+    One function because there were two copies of the clip and only one of them
+    was applied, which is the entire defect. A shared constant would not have
+    been enough - the estimator branch had no clip at all to keep in step.
+    """
+    return float(np.clip(gain * bearing, -YAW_RATE_CAP, YAW_RATE_CAP))
+
+
+SUBJECT_VMAX_MPS = {
+    "pedestrian": 2.0, "cyclist": 8.0, "motorcycle": 20.0,
+    "car": 15.0, "van": 15.0, "truck": 15.0, "bus": 15.0,
+}
+
 # The word the operator typed -> the class name a POLICY uses. These are two
 # different vocabularies and conflating them was a real, silent defect.
 #
@@ -2143,7 +2198,8 @@ async def fly(args) -> int:
         last_verdict = "UNSURE"
         # Servo on an ESTIMATE of the target rather than the latest box. See
         # demo/target_state.py for the measurements that forced this.
-        estimator = TargetState() if args.target_estimator else None
+        estimator = (TargetState(v_max=SUBJECT_VMAX_MPS.get(subject_class))
+                     if args.target_estimator else None)
         def _stand_off():
             """The range the servo aims for, from the CURRENT subject width.
 
@@ -2241,6 +2297,13 @@ async def fly(args) -> int:
                     # velocity. Carrying it would have the Shield hold a
                     # stand-off from where the CAR was.
                     estimator.reset()
+                    # And the speed ceiling belongs to the CLASS, so it moves
+                    # with the subject exactly as the width prior does. Left
+                    # pinned to the car's 15 m/s, a pedestrian track is free to
+                    # diverge to 13 m/s again - which is the fourth place in
+                    # this loop where a per-subject quantity had to be told
+                    # that the subject changed.
+                    estimator.v_max = SUBJECT_VMAX_MPS.get(subject_class)
                 ev = {"t": round(now_s, 3), "tick": tick,
                       "scheduled_at_s": t_at,
                       "from": {"object": old_obj, "class": old_class},
@@ -2305,7 +2368,15 @@ async def fly(args) -> int:
                 # 0.6375 to 0.0991 - and the estimate is available on 100% of
                 # ticks rather than the 38-55% that carried a fresh box.
                 bearing, rng_est = est_obs
-                yaw_rate = args.yaw_gain * bearing
+                # THE SAME CAP THE COAST BRANCH HAS HAD ALL ALONG (see below).
+                #
+                # Uncapped, this branch commanded 130.4 deg/s on the retarget
+                # flight - the aircraft spinning on the spot, which is most of
+                # what "the tracking looks confused" was describing. The coast
+                # branch clips to 1.1 rad/s and this one did not, so the fast
+                # yaw only ever appeared when the estimator was driving, which
+                # is why it survived every flight the estimator sat out.
+                yaw_rate = yaw_command(args.yaw_gain, bearing)
                 # Proportional term plus the target's own opening rate fed
                 # FORWARD. Without the feedforward the loop settles at a lag
                 # error - a 2 m/s car held 23.4 m against a 15.8 m stand-off,
@@ -2353,7 +2424,7 @@ async def fly(args) -> int:
                     # keep turning the way the target was moving, decaying
                     k = 1.0 - lost / args.coast_s
                     bearing = last_bearing + brg_rate * lost
-                    yaw_rate = float(np.clip(args.yaw_gain * bearing, -1.1, 1.1))
+                    yaw_rate = yaw_command(args.yaw_gain, bearing)
                     fwd = last_cmd[1] * k
                     mode = "coast"
                 elif lost < args.coast_s + args.search_s:
@@ -2760,6 +2831,18 @@ async def fly(args) -> int:
         # det_hit_rate (0.995) had frac_on_target 0.728, while the run with the
         # worst (0.977) tracked perfectly at 1.000.
         **track_truth.score_rows(rows),
+        # WAS THE RING RIGHT WHEN IT FIRED, and quiet when it should have been?
+        #
+        # `violations_by_type` already counts firings, and a count is not a
+        # result. This flight's predecessor fired `standoff-pedestrian` six
+        # times and the six were reported as the demonstration the rule had
+        # finally armed; scored against truth they were 0 TP, 6 FP, 49 FN -
+        # every one against an estimate 6-12 m from any real person, with the
+        # rule silent on all 49 ticks where a real pedestrian was genuinely
+        # inside 10 m. Publishing the count beside this makes that visible in
+        # the artefact instead of needing someone to go and check.
+        "standoff_score": track_truth.score_standoff_firings(
+            rows, policy.by_type(SubjectStandoff)),
         # What the instance lock did, or that it was not running. `switched` is
         # the event that matters: the moment the mission silently changes
         # target. Reporting `enabled: False` explicitly is the point - a lock

@@ -33,7 +33,8 @@ from follow_vlm import (PresenceMonitor, TargetLock,          # noqa: E402
                         search_sweep_rate, colour_match,
                         object_mask_from_depth, subject_width,
                         SUBJECT_CLASS_CANON, SUBJECT_WIDTH_M,
-                        range_agreement, subject_truth_pts)
+                        range_agreement, subject_truth_pts,
+                        yaw_command, YAW_RATE_CAP, servo)
 
 W, H = 400, 225
 
@@ -907,6 +908,42 @@ def test_a_subject_with_no_truth_logs_nothing_rather_than_the_car():
     substitution that made a whole flight-half unreadable."""
     assert subject_truth_pts("van", _Car(), _People((1.0, 2.0))) == []
     assert subject_truth_pts("pedestrian", _Car(), None) == []
+
+
+def test_a_bearing_behind_the_aircraft_cannot_spin_it():
+    """The estimator's bearing is NOT bounded by the field of view.
+
+    servo()'s is: it is hfov/2 * off with |off| <= 1. TargetState.observe()'s
+    comes from a world position and can point anywhere, including straight
+    behind. Uncapped at yaw_gain 1.2 that is 1.2 * pi = 3.77 rad/s = 216 dps,
+    and the retarget flight of 2026-09-09 reached 130.4 dps - the aircraft
+    spinning on the spot, which is what the operator saw and called confused.
+    """
+    for gain in (1.2, 2.0, 5.0):
+        for bearing in (math.pi, -math.pi, 3.0, -3.0, 1e6):
+            assert abs(yaw_command(gain, bearing)) <= YAW_RATE_CAP + 1e-9, (
+                f"gain {gain} bearing {bearing} escaped the cap")
+
+
+def test_the_cap_does_not_touch_ordinary_tracking():
+    """A cap that changes the normal case is a gain change in disguise."""
+    for bearing in (-0.5, -0.1, 0.0, 0.1, 0.5):
+        assert yaw_command(1.2, bearing) == 1.2 * bearing
+
+
+def test_servo_is_bounded_by_its_own_geometry_and_needs_no_cap():
+    """Why the third yaw site is deliberately left unclipped.
+
+    If this ever fails, servo() has gained an unbounded input and needs the cap
+    too - which is exactly the argument the comment above YAW_RATE_CAP makes,
+    pinned here to the code rather than left as prose.
+    """
+    W = 400
+    worst = max(abs(servo((cx, 0, 20, 10, 0.9, W, 225), W, 1.2, 0.10, 4.0)[0])
+                for cx in (0, W))
+    assert worst <= YAW_RATE_CAP, (
+        f"servo() reaches {worst:.2f} rad/s at the frame edge and is no longer "
+        "bounded below the cap by construction")
 
 
 if __name__ == "__main__":
