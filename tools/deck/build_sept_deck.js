@@ -586,7 +586,11 @@ async function main() {
     const s = pres.addSlide();
     heading(s, "The review's question, flown",
       "One flight, one policy, one word changed");
-    const R = retargetSplit("retarget_demo2");
+    // retarget_smooth, not retarget_demo2: that flight predates the truth
+    // field, so its post-retarget half could only be scored against the car
+    // and this slide had to say UNMEASURED. It is measured now.
+    const R = retargetSplit("retarget_smooth");
+    const SS = (metrics("retarget_smooth").standoff_score || {})["standoff-pedestrian"];
     // pre/post can each come back all-unscorable, which is a REPORTABLE state
     // and not an error: it is exactly what a correct scorer says about the
     // pedestrian half of a flight whose truth was never logged. Read both
@@ -600,9 +604,9 @@ async function main() {
       card(s, 5.10, 1.68, 4.35, 1.62, ic.warn, "A rule that was hashed and inert",
         `Building it found the 10 m rule binding "pedestrian" while the phrase produced "person". Exact-string compare, so across a whole flight with a human subject it fired 0 times and the 5 m catch-all applied. No violation is indistinguishable from no rule. Synonyms are now canonicalised, and an unreachable rule is a start-up refusal.`);
       card(s, 0.55, 3.44, 4.35, 1.62, ic.check, "Tracking, scored honestly",
-        `Before the retarget: median error ${n(R.pre.medianInShot, 1)} px over ${preN} detections, against ${n(R.pre.medianCentreNull, 1)} px for a "detector" that emits the frame centre and never opens the image. That comparison is the evidence. The ${pct(R.pre.onTarget)} "on target" figure is not: at a 100 px tolerance the same constant nearly matches it, and on one flight in this repo a fixed column beats the real detector outright. After the retarget: UNMEASURED — the log carried one ground truth, the car, so the ${postAll} later detections were compared to an object behind the aircraft.`);
-      card(s, 5.10, 3.44, 4.35, 1.62, ic.aim, "What the flight does not show yet",
-        "The ring did not fire: the position the Shield was SERVED never came inside 14.7 m, and a 10 m ring cannot fire at 14.7 m. The capability is proven in the sweep; the video shows the retarget but not its consequence. Stated as the open item it is.");
+        `Median error against a null that emits the frame centre and never opens the image. Car half: ${n(R.pre.medianInShot, 1)} px against ${n(R.pre.medianCentreNull, 1)} px over ${preN} detections — real skill. Pedestrian half: ${n(R.post.medianInShot, 1)} px against ${n(R.post.medianCentreNull, 1)} px over ${R.post.n} — the detector does NOT beat the constant. A 0.5 m person is 8-13 px at every range the 10 m ring permits, and the boxes returned are 26 px. What improved between flights is where the aircraft POINTS, which flatters both columns equally.`);
+      card(s, 5.10, 3.44, 4.35, 1.62, ic.warn, "The ring fired, and the count is not the result",
+        SS ? `${SS.fires} firings, scored against the logged truth: ${SS.tp} true, ${SS.fp} false, precision ${n(SS.precision, 2)}. And on ${SS.fn} ticks a real pedestrian was inside 10 m with the rule silent. The predecessor flight fired 6 times and was reported as the demonstration; it was 0/6. The Shield is correct throughout — it answers honestly about the position it is SERVED, and the range channel samples background through an 8 px box. p0_violation_escape_rate measures the Shield and reads 0.0; this is the number for the other half.` : "standoff_score missing from metrics.json — rebuild the flight.");
     }
     badge(s, next() + 1);
   }
