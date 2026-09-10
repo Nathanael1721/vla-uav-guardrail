@@ -1,0 +1,44 @@
+# GitHub Pages configuration.
+#
+# Source is this folder on the `master` branch, not `main` — `main` carries the
+# upstream reference implementation and is deliberately left alone.
+#
+# Every .md already in this folder becomes a page automatically, which is the
+# point: the finding documents ARE the deliverable, and they should be readable
+# without cloning the repository.
+
+title: Guardrail
+description: >-
+  A safety layer for language-commanded UAVs. Declarative policy, enforced on
+  every command at 10 Hz — and an honest account of what the numbers do not say.
+
+theme: jekyll-theme-cayman
+
+# Cayman renders these two in the page header band.
+show_downloads: false
+
+plugins:
+  - jekyll-relative-links
+  - jekyll-optional-front-matter
+  - jekyll-titles-from-headings
+
+relative_links:
+  enabled: true
+  collections: false
+
+# Pages that exist as build products or raw data, not as reading material.
+exclude:
+  - data/
+  - "*.pptx"
+  - "*.docx"
+  - "*.pdf"
+  - video/
+
+# Markdown files here mostly have no front matter; jekyll-optional-front-matter
+# picks them up anyway and jekyll-titles-from-headings takes the title from the
+# first heading, so nothing needs editing to be published.
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default

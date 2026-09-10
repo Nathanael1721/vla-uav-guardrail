@@ -99,3 +99,16 @@ bundles/*.tar.gz
 # ignoring it left the artefact existing in exactly one working tree. They are
 # ~100 KiB each, which is what an episode compresses to, and they are kept.
 !bundles/*.replay.tar.gz
+
+# INTERNAL RECORDS, deliberately not published.
+#
+# This repository is public. `meeting notes/` names colleagues and records what
+# was said in project meetings, and CORRECTIONS-2026-09-02.md is a list of five
+# published numbers that need correcting - written to be sent to those people
+# first, not read by them on the internet.
+#
+# Removed from the whole history at first publication (2026-09-10), not merely
+# from HEAD: `git rm --cached` would have left them readable in every earlier
+# commit. The local files are still on disk; they are simply not tracked.
+meeting notes/
+docs/CORRECTIONS-2026-09-02.md
