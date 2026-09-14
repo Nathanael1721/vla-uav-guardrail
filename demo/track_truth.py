@@ -286,6 +286,14 @@ def score_standoff_firings(rows: Iterable[dict], standoffs: Iterable,
     was wrong - which is precisely why the count could not detect the failure
     and this function had to exist.
 
+    **Scope caveat, found 2026-09-14.** A tick is positive when ANY logged
+    member of the class is inside the ring, but SubjectStandoff protects only
+    the SUBJECT being followed. With 12 pedestrians in the scene most positives
+    are bystanders: on retarget_smooth 498 of 516 were outside the camera's
+    horizontal FOV. So `fn` measures system-level exposure of people the rule
+    never names, not the rule's recall on its own subject, and must not be read
+    as a wrong range estimate - see `tools/build_eval_data.py:ring_coverage`.
+
     **TP / FP / FN are about the WORLD, not about the Shield.** A tick is a
     positive in truth when the nearest logged member of the ring's class really
     is inside `min_range_m`. The Shield fires on the position it was SERVED. So

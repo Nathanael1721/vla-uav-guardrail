@@ -346,25 +346,27 @@ audited, and completely inert. It is now canonicalised, and a rule that no
 phrase can reach is a start-up refusal.
 
 **And the limit — this is the part to say slowly.** On `retarget_smooth` the
-ring DOES fire, 94 times. Scored against the logged truth: **31 true, 63 false,
-precision 0.33**, and on **485 ticks a real pedestrian was inside 10 m with the
-rule silent**. The predecessor flight fired 6 times and I reported those six as
-the demonstration you asked for. They were **0 true, 6 false** — every one
-against an estimate 6–12 m from any real person.
+ring fires 94 times; on **63 of them no real pedestrian was within 10 m**. The
+predecessor flight fired 6 times and I reported those six as the demonstration
+you asked for. They were **0 true, 6 false**.
 
-The Shield is not at fault in either flight. It answers honestly about the
-position it is **served**, and the position is wrong: a 0.5 m person is 8–13 px
-at every range the 10 m ring permits, so the depth sampled through that box is
-the road behind them. Median `|served range − real person|` is **37 m**.
+A real pedestrian came within 10 m on 516 ticks. *(Corrected 2026-09-14: an
+earlier version of this paragraph said the served position was "wrong by 37 m".
+It was measured against the wrong person.)* On **498 of the 516** that person was
+**outside the camera's field of view**, beside or behind the aircraft. The
+aircraft was following a different pedestrian about 45 m ahead, and the range
+estimate for that person was within a few metres. `SubjectStandoff` protects the
+subject only — nobody else.
 
 **Say the KPI consequence out loud, before anyone finds it.**
 `p0_violation_escape_rate` reads **0.0** on that flight, and
 `standoff-pedestrian` is a **P0** rule. The number is honest about what it
 measures — every P0 violation the Shield *detected*, it repaired — but it will
 be read as *the aircraft never violated a P0 rule*, and the aircraft came
-**4.70 m** from a person. The KPI measures the Shield; system P0 compliance
-depends equally on perception, and `standoff_score` in `metrics.json` is the
-first number this project has ever had for that half.
+**4.70 m** from a person. That person was a bystander the policy does not name
+and the forward camera could not see. The KPI measures the Shield; the gap is
+**policy scope and sensor coverage**, which is exactly what the open "real
+sensor" action item is for.
 
 **Reserve — if asked why tracking after the retarget used to have no number.**
 It was never scored: the log carried one ground truth, the car, so the 319
@@ -387,22 +389,22 @@ where the aircraft *points*, not what it sees.
 > tak terjangkau menolak lepas landas.
 >
 > Batasnya, dan ini bagian yang harus disampaikan pelan-pelan: di penerbangan
-> terbaru cincin **menyala 94 kali**, tapi hanya **31 benar, 63 salah**
-> (presisi 0,33) — dan pada **485 tick** ada pejalan kaki asli di dalam 10 m
-> sementara aturannya diam. Penerbangan sebelumnya menyala 6 kali dan saya
+> terbaru cincin **menyala 94 kali**, dan pada **63** di antaranya tidak ada
+> pejalan kaki asli dalam 10 m. Penerbangan sebelumnya menyala 6 kali dan saya
 > laporkan enam itu sebagai buktinya; ternyata **0 benar, 6 salah**.
 >
-> Shield-nya tidak salah. Ia menjawab jujur tentang posisi yang **disajikan**
-> kepadanya, dan posisi itulah yang keliru: orang 0,5 m hanya 8–13 px pada
-> setiap jarak yang diizinkan cincin 10 m, jadi kedalaman yang disampel lewat
-> kotak itu adalah jalan di belakangnya.
+> Pejalan kaki asli berada dalam 10 m pada 516 tick — tapi pada **498** di
+> antaranya orang itu **di luar pandangan kamera**, di samping atau belakang
+> drone. Drone sedang mengikuti orang lain ±45 m di depan, dan estimasi jaraknya
+> ke orang itu hanya meleset beberapa meter. `SubjectStandoff` hanya melindungi
+> subjek. *(Dikoreksi 14 Sept: versi sebelumnya menyebut posisi "salah 37 m" —
+> itu dibandingkan dengan orang yang salah.)*
 >
 > Dan konsekuensi KPI-nya, sampaikan sendiri sebelum ditemukan orang lain:
 > `p0_violation_escape_rate` terbaca **0,0** padahal drone sempat **4,70 m**
-> dari orang. Angka itu jujur tentang apa yang diukurnya — pelanggaran P0 yang
-> **terdeteksi** dan diperbaiki — tapi akan dibaca sebagai "tidak pernah
-> melanggar P0". KPI mengukur Shield; kepatuhan P0 sistem bergantung sama
-> besarnya pada persepsi.
+> dari orang — seorang bystander yang tidak disebut kebijakan dan tidak terlihat
+> kamera depan. Celahnya ada di **cakupan kebijakan dan sensor**, bukan di
+> estimasi jarak.
 
 ### Slide 13 · Remaining work
 **Hook.** "Ordered by what it contributes to acceptance, not by what is easy."
@@ -746,9 +748,9 @@ afterwards.
 | Tracking after the retarget | **unmeasured** — no truth was logged | now fixed |
 | Closest served subject range, after | **14.7 m** (median 20.5) | why the ring never fired *on `retarget_demo2`* |
 | `standoff-pedestrian` precision, `retarget_smooth` | **0.33** (31 TP / 63 FP) | 94 firings is not 94 results |
-| ...ticks a real person was inside 10 m and it stayed silent | **485** of 516 | the P0 rule's blind half |
-| Closest a real person came, `retarget_smooth` | **4.70 m** | while `p0_violation_escape_rate` read 0.0 |
-| `\|served range − real person\|`, pedestrian half | **37 m** median | depth through an 8 px box is the background |
+| ...ticks a real person was within 10 m | **516**, of which **498** outside the camera's view | a bystander, not the subject |
+| Closest a real person came, `retarget_smooth` | **4.70 m** | a bystander; `p0_violation_escape_rate` read 0.0 |
+| Served range vs the pedestrian under the box, ticks 340–700 | **43.3 m** vs **49.4 m** | estimate roughly right; the "37 m error" is retracted |
 | Ticks the camera said "inside", the estimate said "outside" | **0** | see the note |
 
 > **Why that is zero, and what the "4" in earlier drafts was.** This row read

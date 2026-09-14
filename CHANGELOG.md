@@ -14,6 +14,43 @@ shipped change and recorded as one.
 
 ---
 
+## [0.5.1] — 2026-09-14
+
+### Added
+- `tools/build_eval_data.py` → `docs/data/eval_sep2026.json`: every number the
+  September decks and the mid-evaluation report quote, computed once from the
+  artefacts, reusing `demo/track_truth.py` so there is one scorer.
+- A visibility breakdown of stand-off ring positives (in frame / outside the
+  horizontal FOV / under the nose), and a check of the served range against the
+  pedestrian under the detection box.
+
+### Retracted
+- **"The rule saw 31 of 516 because the position the Shield was served was wrong
+  by tens of metres"** — in the README, the Pages site, the 0.4.0 notes, the
+  meeting pack and the September deck. Two errors in one sentence:
+  - `standoff_score` counts a tick positive when *any* pedestrian is within
+    10 m. `SubjectStandoff` protects only the subject being followed. On **498 of
+    the 516** ticks the person inside 10 m was outside the camera's ±45°
+    horizontal field of view; 6 were under the nose; 12 were in frame.
+  - The "37 m served-range error" compared the subject's estimate with the
+    *nearest* pedestrian — a bystander beside the aircraft. Against the
+    pedestrian under the detection box (ticks 340–700) the estimate was 43.3 m
+    and that person 49.4 m away; against the nearest visible pedestrian the gap
+    is 1.8 m. The estimate was roughly right about the person being followed.
+- **"Depth sampled through an 8-pixel box is the background"** was an inference
+  from that comparison, never a measurement, and falls with it.
+
+### Still true
+- The ring fired 94 times; on 63 of them no real pedestrian was within 10 m.
+- The pedestrian-phase detector does not beat a centre constant (7.0 px against
+  5.9 px).
+- A real pedestrian came within 4.70 m of the aircraft while
+  `p0_violation_escape_rate` read 0.0. The gap it exposes is **policy scope**
+  (no rule protects non-subject pedestrians) and **sensor coverage** (a forward
+  camera cannot see beside the aircraft) — not a wrong range estimate.
+
+---
+
 ## [0.5.0] — 2026-09-10
 
 ### Added
@@ -87,11 +124,11 @@ shipped change and recorded as one.
   from a real person against the previous flight's 9.43 m.
 
 ### Known limitations
-- `p0_violation_escape_rate` reads 0.0 on a flight where a real pedestrian was
-  inside the 10 m **P0** ring on 516 ticks and the rule saw 31 of them. The KPI
-  is honest about what it measures — detected P0 violations that escaped repair
-  — but it measures the Shield, and system P0 compliance depends equally on
-  perception. `standoff_score` is the first number for that half.
+- `p0_violation_escape_rate` reads 0.0 on a flight where a real pedestrian came
+  within 10 m on 516 ticks and the stand-off rule fired on 31. *(Corrected in
+  0.5.1: 498 of the 516 were people outside the camera's view whom the
+  subject-only rule does not protect — a scope and coverage gap, not a range
+  error.)*
 
 ---
 

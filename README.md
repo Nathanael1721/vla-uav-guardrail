@@ -1,8 +1,8 @@
 # Guardrail — a safety layer for language-commanded UAVs
 
-[![version](https://img.shields.io/badge/version-0.5.0-blue)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.5.1-blue)](CHANGELOG.md)
 [![P0 escape rate](https://img.shields.io/badge/P0%20violation%20escape%20rate-0.0-brightgreen)](#the-kpi-and-what-it-does-not-say)
-[![tests](https://img.shields.io/badge/tests-458%20fast%20%2B%2017%20coverage-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-460%20fast%20%2B%2017%20coverage-brightgreen)](tests/)
 
 A vision-language model is told to *follow the yellow car*. It produces a
 velocity command. **Nothing in that pipeline knows what a no-fly zone is.**
@@ -39,8 +39,8 @@ decision = shield.step(state, raw_action)    # -> repaired action + audit record
 | `guardrail/` | the policy DSL (WP1), prefix compiler (WP2), Safety Shield (WP3), replay bundles (WP4) |
 | `demo/` | the flight controller, OWL-ViT grounder, target estimator, scene scripting, recorder |
 | `policies/` | 27 policies, hashed into every audit record |
-| `tests/` | 23 files, 458 fast tests plus a ~10 min coverage suite |
-| `docs/` | 28 finding documents — see below |
+| `tests/` | 23 files, 460 fast tests plus a ~10 min coverage suite |
+| `docs/` | 27 finding documents — see below |
 | `sitl/` | the ArduPilot SITL rail, which is the contractual KPI gate |
 
 ## The KPI, and what it does not say
@@ -51,18 +51,25 @@ flight recorded here.
 It is worth being exact about what that means, because it is easy to read as
 more than it is. The metric counts P0 violations the Shield **detected** that
 nonetheless reached the actuator. On the most recent flight it reads 0.0 while a
-real pedestrian was inside the 10 m P0 stand-off ring on 516 ticks and the rule
-saw 31 of them — because the position the Shield was *served* was wrong by tens
-of metres.
+real pedestrian came within 10 m of the aircraft on 516 ticks, and the 10 m
+stand-off rule fired on 31 of them.
 
-**The Shield was correct throughout.** It answers honestly about the position it
-is given. But system P0 compliance depends equally on perception, and until
-`standoff_score` there was no number for that half at all. Both are now
-published side by side.
+That gap is not what it first looks like. On **498 of those 516 ticks the person
+was outside the camera's field of view** — beside or behind the aircraft — and
+the rule, `SubjectStandoff`, protects only the **subject being followed**, one
+position per tick. The aircraft was following a different pedestrian roughly
+45 m ahead, and its range estimate for that person was within a few metres.
+Nothing in the policy protects the other pedestrians, and a forward camera could
+not have seen them.
+
+**The Shield was correct throughout.** What the zero cannot say is anything
+about people the policy does not name and the sensor cannot see. That is a gap
+in policy scope and sensor coverage, and `standoff_score` plus its visibility
+breakdown are published beside the KPI so it cannot be read as more than it is.
 
 ## The findings are the deliverable
 
-Twenty-eight documents in [`docs/`](docs/) record defects found and fixed, and
+Twenty-seven documents in [`docs/`](docs/) record defects found and fixed, and
 several record claims **retracted**. That is deliberate. The recurring failure
 in this project has a shape:
 

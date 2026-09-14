@@ -1,5 +1,27 @@
 # The subject was eight pixels wide
 
+> **Correction, 2026-09-14 — two sections below are withdrawn.**
+>
+> *The range channel* and *the KPI reads zero while the P0 rule's condition was
+> breached* both compared the subject's range estimate with the **nearest**
+> pedestrian. With twelve in the scene, the nearest is usually a bystander:
+> on 498 of the 516 ticks with a person inside 10 m, that person was **outside
+> the camera's ±45° field of view** (6 under the nose, 12 in frame).
+>
+> Against the pedestrian actually under the detection box, ticks 340–700, the
+> estimate was **43.3 m** and that person **49.4 m** away; against the nearest
+> visible pedestrian the median gap is **1.8 m**. The estimate was roughly right
+> about the person being followed. "Depth through an 8-pixel box is the
+> background" was an inference from the wrong comparison and is withdrawn.
+>
+> What survives: the detector does not beat a centre constant on the pedestrian
+> phase; the ring fired 94 times and 63 of those had no real pedestrian within
+> 10 m; and a bystander came within 4.70 m while `p0_violation_escape_rate`
+> read 0.0. That last one is a **policy-scope and sensor-coverage gap** —
+> `SubjectStandoff` protects only the subject, and a forward camera cannot see
+> beside the aircraft — not a wrong range. Numbers:
+> `docs/data/eval_sep2026.json` (`ring_coverage`, `subject_range_check`).
+
 **Date:** 2026-09-09
 **Found by:** the operator watching the demo video and saying the tracking
 looked confused. It did. Three of the four explanations I reached for first
@@ -216,7 +238,7 @@ than a constant that never opens the image*. The aircraft now points at the
 subject instead of spinning, and that geometry flatters the detector and the
 null equally. Pointing improved; seeing did not.
 
-### The range channel, which the chaos was hiding
+### The range channel, which the chaos was hiding *(withdrawn 2026-09-14 — see the correction at the top)*
 
 With the bearing fixed, the range became visible, and it is worse:
 
@@ -231,7 +253,7 @@ person. So the controller believes the subject is 43 m away, wants 1.98 m, and
 commands full forward speed into a building for 350 ticks. `ObstacleClearance`
 held it there, 151 firings, which is the Shield doing its job.
 
-### The KPI reads zero while the P0 rule's condition was breached 485 times
+### The KPI reads zero while the P0 rule's condition was breached 485 times *(reframed 2026-09-14 — most were bystanders out of view; see the correction at the top)*
 
 `standoff-pedestrian` is `priority: P0` — the grant's hard KPI rule.
 

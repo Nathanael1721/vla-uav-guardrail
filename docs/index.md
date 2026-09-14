@@ -16,7 +16,7 @@ refusing what it cannot.
 
 Built for the ITRI grant *Semantic-Spatial Translation and Safety-Constrained
 VLA for ArduPilot UAVs* (PI: Prof. Kuan-Ting Lai, NTUT).
-Version **0.5.0** — see the [changelog]({{ site.github.repository_url }}/blob/master/CHANGELOG.md).
+Version **0.5.1** — see the [changelog]({{ site.github.repository_url }}/blob/master/CHANGELOG.md).
 
 ---
 
@@ -25,21 +25,29 @@ Version **0.5.0** — see the [changelog]({{ site.github.repository_url }}/blob/
 The grant's hard KPI is **P0 violation escape rate = 0**. It is 0.0 on every
 flight recorded here.
 
-It is worth being exact, because it reads as more than it is. The metric counts
-P0 violations the Shield **detected** that nonetheless reached the actuator. On
-the most recent flight it reads 0.0 while a real pedestrian was inside the 10 m
-P0 stand-off ring on 516 ticks and the rule saw 31 of them — because the
-position the Shield was *served* was wrong by tens of metres.
+It is worth being exact, because it reads as more than it is. The metric counts P0 violations the Shield **detected** that
+nonetheless reached the actuator. On the most recent flight it reads 0.0 while a
+real pedestrian came within 10 m of the aircraft on 516 ticks, and the 10 m
+stand-off rule fired on 31 of them.
 
-The Shield was correct throughout. It answers honestly about the position it is
-given. But system P0 compliance depends equally on perception, and until
-`standoff_score` there was no number for that half at all.
+That gap is not what it first looks like. On **498 of those 516 ticks the person
+was outside the camera's field of view** — beside or behind the aircraft — and
+the rule, `SubjectStandoff`, protects only the **subject being followed**, one
+position per tick. The aircraft was following a different pedestrian roughly
+45 m ahead, and its range estimate for that person was within a few metres.
+Nothing in the policy protects the other pedestrians, and a forward camera could
+not have seen them.
+
+**The Shield was correct throughout.** What the zero cannot say is anything
+about people the policy does not name and the sensor cannot see. That is a gap
+in policy scope and sensor coverage, and `standoff_score` plus its visibility
+breakdown are published beside the KPI so it cannot be read as more than it is.
 
 ---
 
 ## The findings are the deliverable
 
-Twenty-eight documents here record defects found and fixed, and several record
+Twenty-seven documents here record defects found and fixed, and several record
 claims **retracted**. That is deliberate. The recurring failure in this project
 has one shape:
 
