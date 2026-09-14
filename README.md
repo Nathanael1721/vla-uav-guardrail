@@ -45,8 +45,9 @@ decision = shield.step(state, raw_action)    # -> repaired action + audit record
 
 ## The KPI, and what it does not say
 
-The grant's hard KPI is **P0 violation escape rate = 0**. It is 0.0 on every
-flight recorded here.
+The grant's hard KPI is **P0 violation escape rate = 0**. It is 0.0 on all 41
+shielded flights recorded here. The five deliberately unshielded control flights
+read 0.63 — they exist to fail, and they do.
 
 It is worth being exact about what that means, because it is easy to read as
 more than it is. The metric counts P0 violations the Shield **detected** that

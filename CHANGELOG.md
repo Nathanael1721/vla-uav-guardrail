@@ -40,6 +40,10 @@ shipped change and recorded as one.
 - **"Depth sampled through an 8-pixel box is the background"** was an inference
   from that comparison, never a measurement, and falls with it.
 
+- **"P0 escape rate is 0.0 on every flight recorded here"** (README, Pages). It
+  is 0.0 on all 41 shielded flights; the five unshielded control flights read
+  0.63, as they are designed to.
+
 ### Still true
 - The ring fired 94 times; on 63 of them no real pedestrian was within 10 m.
 - The pedestrian-phase detector does not beat a centre constant (7.0 px against

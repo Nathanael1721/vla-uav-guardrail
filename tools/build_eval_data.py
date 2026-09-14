@@ -102,7 +102,23 @@ def kpi_rail():
                   if json.loads(Path(f).read_text(encoding="utf-8")).get("kpi_grade"))
     n_all = len(glob.glob(str(ROOT / "demo/out/*/kpi.json")))
     say("flights with kpi.json / kpi_grade", f"{n_all} / {n_grade}")
-    return {"runs": runs, "flights_total": n_all, "flights_kpi_grade": n_grade}
+    # "0.0 on every flight" was published and is false: the unshielded control
+    # flights exist to FAIL. Count the two populations instead of asserting.
+    zero, controls, other = 0, [], []
+    for f in sorted(glob.glob(str(ROOT / "demo/out/*/kpi.json"))):
+        tag = Path(f).parent.name
+        rate = json.loads(Path(f).read_text(encoding="utf-8")).get("p0_violation_escape_rate")
+        if rate == 0.0:
+            zero += 1
+        elif tag.endswith("_off"):
+            controls.append({"tag": tag, "rate": rate})
+        else:
+            other.append({"tag": tag, "rate": rate})
+    say("escape rate 0.0 / unshielded controls / anything else",
+        f"{zero} / {len(controls)} / {other or 'none'}")
+    return {"runs": runs, "flights_total": n_all, "flights_kpi_grade": n_grade,
+            "flights_escape_zero": zero, "unshielded_controls": controls,
+            "flights_nonzero_unexplained": other}
 
 
 # ── the retarget flights: tracking, yaw, ring ───────────────────────────────
@@ -244,6 +260,16 @@ def retarget():
                                      ring_coverage(new))
     out["subject_range_check"] = say("ticks 340-700: estimate vs the followed person",
                                      subject_range_check(new))
+    # The two frames the decks and the report show, read from the log rather
+    # than from the HUD text burned into the image. The recorder writes one
+    # frame per 50 ms from mission start, so frame index = t x 20 (checked
+    # against the HUD clock: frame 450 reads 22.5 s, frame 1200 reads 60.0 s).
+    figs = {}
+    for key, t_want in (("car", 22.5), ("person", 60.0)):
+        r = min((x for x in new if x.get("det")), key=lambda x: abs(x["t"] - t_want))
+        figs[key] = {"t": t_want, "frame": int(round(t_want * 20)), "log_t": round(r["t"], 2),
+                     "class": r["truth"]["class"], "score": round(r["det"]["score"], 3)}
+    out["figure_frames"] = say("figure frames", figs)
     k_new = load_json("demo/out/retarget_smooth/kpi.json")
     out["p0_escape_after"] = say("p0_violation_escape_rate, retarget_smooth",
                                  k_new["p0_violation_escape_rate"])
@@ -324,8 +350,15 @@ def detector():
         return round(0.5 / rng / math.radians(hfov) * side / patch, 2)
     out["pedestrian_patches"] = say("0.5 m person, patches (b32@768 | v2-b16@960)", {
         f"{r}m": [patches(r), patches(r, 960, 16)] for r in (10, 16, 20)})
+    out["pedestrian_patches_by_hfov_16m"] = say("0.5 m person at 16 m, b32 patches by HFOV", {
+        f"{h}deg": patches(16, hfov=float(h)) for h in (90, 60, 45, 30)})
+    # The stand-off the servo asks for, from the function that computes it.
+    import follow_vlm as FV  # noqa: E402
+    out["standoff_setpoint_m"] = say("want_range_from_width(0.16, width)", {
+        "car_4.0m": round(FV.want_range_from_width(0.16, 4.0), 2),
+        "person_0.5m": round(FV.want_range_from_width(0.16, 0.5), 2)})
     out["pedestrian_px_400_capture"] = say("0.5 m person, px in 400-wide capture", {
-        f"{r}m": round(0.5 / r / math.radians(90.0) * 400, 1) for r in (8, 10, 16)})
+        f"{r}m": round(0.5 / r / math.radians(90.0) * 400, 1) for r in (8, 10, 16, 20)})
     return out
 
 
@@ -367,7 +400,45 @@ def repo(run_tests):
         out["tests_fast"] = {"passed": passed, "total": total, "per_file": per}
         say("fast tests", f"{passed}/{total}")
     # The ~10 min coverage suite is run separately and recorded as measured.
-    out["tests_coverage"] = {"passed": 17, "total": 17, "note": "test_guardrail_coverage.py, run 2026-09-09"}
+    out["tests_coverage"] = {"passed": 17, "total": 17, "note": "test_guardrail_coverage.py, run 2026-09-14"}
+    return out
+
+
+# ── simulation rails, counted from each flight's manifest ───────────────────
+def rails():
+    print(chr(10) + "[rails] flights per topology, and camera flights against the rate gates")
+    counts, cam, both = {}, 0, 0
+    for f in sorted(glob.glob(str(ROOT / "demo/out/*/manifest.json"))):
+        d = Path(f).parent
+        topo = json.loads(Path(f).read_text(encoding="utf-8")).get("topology")
+        counts[topo] = counts.get(topo, 0) + 1
+        mp, fl = d / "metrics.json", d / "flight_log.jsonl"
+        if not (mp.exists() and fl.exists()):
+            continue
+        det_hz = json.loads(mp.read_text(encoding="utf-8")).get("det_hz")
+        if det_hz is None:
+            continue
+        rows = [json.loads(l) for l in fl.open(encoding="utf-8")]
+        span = rows[-1]["t"] - rows[0]["t"]
+        loop_hz = len(rows) / span if span > 0 else 0.0
+        cam += 1
+        both += int(loop_hz >= 9.5 and det_hz >= 4.0)
+    say("flights per topology", counts)
+    say("camera flights / meeting loop>=9.5 and det>=4.0", f"{cam} / {both}")
+    return {"counts": counts, "camera_flights": cam, "camera_flights_meeting_both_gates": both}
+
+
+# ── the headless scenario sweep (WP4) ───────────────────────────────────────
+def sweep():
+    print("\n[sweep] experiments/scenarios.yaml, scored with guardrail.kpi.compute")
+    d = load_json("docs/data/scenario_sweep.json")
+    out = {"counts": d["_counts"], "results": [
+        {"id": r["id"], "status": r["status"],
+         "p0_violation_escape_rate": r["kpi"].get("p0_violation_escape_rate"),
+         "why": r["why"].split("\n")[0]} for r in d["results"]]}
+    say("counts", out["counts"])
+    for r in out["results"]:
+        say(f"  {r['id']}", f"{r['status']}  escape={r['p0_violation_escape_rate']}")
     return out
 
 
@@ -395,7 +466,7 @@ def main():
     data = {"generated": dt.date.today().isoformat(),
             "source": "tools/build_eval_data.py",
             "kpi": kpi_rail(), "retarget": retarget(), "lock": lock(),
-            "detector": detector(), "repo": repo(not args.no_tests),
+            "detector": detector(), "rails": rails(), "sweep": sweep(), "repo": repo(not args.no_tests),
             "unflown": unflown()}
     OUT.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"\nwrote {OUT.relative_to(ROOT)}")

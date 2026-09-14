@@ -77,30 +77,12 @@ function Convert-One {
         }
         ".html" {
             # Word opens HTML natively and keeps headings, tables and styling,
-            # so the report is authored once in Markdown, rendered to print HTML,
-            # and turned into BOTH required formats here. That avoids adding a
-            # Markdown library and python-docx for a job the installed Office
-            # already does.
-            Write-Host "==> Word (from HTML): $([System.IO.Path]::GetFileName($full))"
-            $docx = [System.IO.Path]::ChangeExtension($full, ".docx")
-            if (Test-Path -LiteralPath $docx) { Remove-Item -LiteralPath $docx -Force }
-            $app = New-Object -ComObject Word.Application
-            $app.Visible = $false
-            try {
-                $doc = $app.Documents.Open($full, $false, $false)
-                # 16 = wdFormatDocumentDefault (.docx). Saving to .docx first
-                # detaches the document from the HTML source, so the PDF is
-                # produced from the same content the .docx carries.
-                $doc.SaveAs([ref]$docx, [ref]16)
-                $doc.SaveAs([ref]$pdf, [ref]$WD_PDF)
-                $doc.Close($false)
-            } finally {
-                $app.Quit()
-                [void][System.Runtime.InteropServices.Marshal]::ReleaseComObject($app)
-            }
-            if (-not (Test-Path -LiteralPath $docx)) { throw "no .docx was written for $full" }
-            $d = Get-Item -LiteralPath $docx
-            Write-Host ("    {0,-52} {1,8:N2} MB" -f $d.Name, ($d.Length / 1MB))
+            # so a report is authored once in Markdown, rendered to print HTML,
+            # and turned into BOTH .docx and .pdf. The Word automation lives in
+            # its own script because in this OneDrive-synced repo it needs a
+            # work folder outside the sync, three short sessions and embedded
+            # figures - see the header of html_to_docx_pdf.ps1.
+            & (Join-Path $PSScriptRoot "html_to_docx_pdf.ps1") -Html $full
         }
         default { throw "unsupported extension '$ext' (expected .pptx, .docx or .html)" }
     }

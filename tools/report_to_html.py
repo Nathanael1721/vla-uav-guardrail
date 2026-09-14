@@ -13,12 +13,17 @@ Scope
 -----
 This handles the Markdown subset the report actually uses, and nothing else:
 ATX headings, pipe tables, fenced code, unordered lists, horizontal rules,
-paragraphs, and inline bold / italic / code. It is deliberately not a general
+paragraphs, inline bold / italic / code, and a figure line of the form
+`![caption](relative/path.png)` on its own. It is deliberately not a general
 Markdown implementation - an unsupported construct should look wrong
 immediately rather than be silently half-rendered.
 
 Usage:
     python tools/report_to_html.py docs/MIDTERM-REPORT-Aug2026.md
+    python tools/report_to_html.py docs/MID-EVALUATION-REPORT-Sep2026.md --style nathan
+
+`--style nathan` applies the nathan-deck design system used by the September
+2026 decks: Poppins, a teal-dark title band, teal section rules.
 """
 from __future__ import annotations
 
@@ -82,6 +87,26 @@ blockquote {
 blockquote p { margin: 0; }
 strong { font-weight: 600; }
 .subtitle { font-size: 12.5pt; color: #2B2B2B; margin: 0 0 5mm 0; font-weight: 400; }
+p.fig { text-align: center; margin: 3mm 0 4mm 0; }
+p.fig img { border: 0.5pt solid #E3E8EC; }
+span.cap { font-size: 8.5pt; color: #6B7280; font-style: italic; }
+"""
+
+# nathan-deck tokens: TEAL 249DB2, TEAL_DK 1A7484, TEAL_TINT EAF6F8, INK 2B2B2B,
+# GREY 6B7280, LINE E3E8EC, font Poppins. Appended after CSS so it only overrides.
+CSS_NATHAN = """
+body { font-family: "Poppins", "Segoe UI", sans-serif; font-size: 9.5pt; line-height: 1.55; color: #2B2B2B; }
+h1 { background: #1A7484; color: #FFFFFF; font-size: 22pt; padding: 7mm 6mm; margin: 0 0 4mm 0;
+     border-left: 3pt solid #249DB2; }
+h2 { color: #1A1A1A; font-size: 14pt; border-bottom: 1.5pt solid #249DB2; }
+h3 { color: #1A7484; font-size: 11pt; }
+th { background: #249DB2; border: 0.5pt solid #249DB2; }
+tr:nth-child(even) td { background: #EAF6F8; }
+blockquote { background: #EAF6F8; border-left: 2.5pt solid #249DB2; }
+code, pre { background: #EAF6F8; }
+/* Word wraps cell text in a paragraph with its own before/after spacing, which
+   doubled every row's height in the first render. */
+td, th { line-height: 1.2; mso-para-margin-top: 0; mso-para-margin-bottom: 0; padding: 1.2mm 2mm; }
 """
 
 
@@ -115,7 +140,7 @@ def cells(line: str) -> list[str]:
     return [c.strip() for c in line.split("|")]
 
 
-def render(md: str) -> str:
+def render(md: str, base: Path | None = None) -> str:
     lines = md.split("\n")
     out: list[str] = []
     i = 0
@@ -169,6 +194,30 @@ def render(md: str) -> str:
         if re.fullmatch(r"-{3,}", stripped):
             close_list()
             out.append("<hr>")
+            i += 1
+            continue
+
+        # Figure: `![caption](path)` alone on a line, optionally `{width=NNN}`.
+        # The src is written as an absolute path so Word can find the file;
+        # office_to_pdf.ps1 then embeds it, so the .docx does not depend on it.
+        m = re.fullmatch(r"!\[(.*?)\]\((.+?)\)(?:\{width=(\d+)\})?", stripped)
+        if m:
+            close_list()
+            src = Path(m.group(2))
+            if base is not None and not src.is_absolute():
+                src = (base / src).resolve()
+            if not src.exists():
+                raise FileNotFoundError(f"figure not found: {src}")
+            width = int(m.group(3) or 560)
+            # BOTH attributes. Given only a width, Word keeps the picture's
+            # natural height, so a 960x540 frame came out 420x540 - portrait,
+            # visibly squashed - in the first PDF of the mid-evaluation report.
+            from PIL import Image
+            with Image.open(src) as im:
+                height = round(width * im.height / im.width)
+            out.append(f'<p class="fig"><img src="{html.escape(src.as_uri())}" '
+                       f'width="{width}" height="{height}"><br>'
+                       f'<span class="cap">{inline(m.group(1))}</span></p>')
             i += 1
             continue
 
@@ -228,11 +277,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("source", help="the report .md")
     ap.add_argument("--out", default=None, help="output .html (default: alongside)")
+    ap.add_argument("--style", choices=("default", "nathan"), default="default")
     args = ap.parse_args()
 
     src = Path(args.source)
     md = src.read_text(encoding="utf-8")
-    body = render(md)
+    body = render(md, base=src.resolve().parent)
 
     title = "Midterm Report"
     m = re.search(r"^#\s+(.*)$", md, re.M)
@@ -242,7 +292,8 @@ def main() -> int:
     doc = (
         "<!DOCTYPE html>\n<html><head><meta charset=\"utf-8\">\n"
         f"<title>{html.escape(title)}</title>\n"
-        f"<style>{CSS}</style>\n</head><body>\n{body}\n</body></html>\n"
+        f"<style>{CSS}{CSS_NATHAN if args.style == 'nathan' else ''}</style>\n"
+        f"</head><body>\n{body}\n</body></html>\n"
     )
 
     dest = Path(args.out) if args.out else src.with_suffix(".html")

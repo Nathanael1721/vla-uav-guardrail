@@ -105,7 +105,31 @@
       }
     },
     "flights_total": 46,
-    "flights_kpi_grade": 5
+    "flights_kpi_grade": 5,
+    "flights_escape_zero": 41,
+    "unshielded_controls": [
+      {
+        "tag": "ros2_ped_off",
+        "rate": 0.630952
+      },
+      {
+        "tag": "ros2_shield_off",
+        "rate": 0.626506
+      },
+      {
+        "tag": "sitl_ped_off",
+        "rate": 0.626506
+      },
+      {
+        "tag": "sitl_ped_side_off",
+        "rate": 0.626506
+      },
+      {
+        "tag": "sitl_shield_off",
+        "rate": 0.626506
+      }
+    ],
+    "flights_nonzero_unexplained": []
   },
   "retarget": {
     "matched_window_s": 69.95,
@@ -236,6 +260,22 @@
       "est_range_m_median": 43.3,
       "person_under_box_range_m_median": 49.4,
       "est_minus_best_visible_person_m_median": 1.8
+    },
+    "figure_frames": {
+      "car": {
+        "t": 22.5,
+        "frame": 450,
+        "log_t": 22.55,
+        "class": "car",
+        "score": 0.108
+      },
+      "person": {
+        "t": 60.0,
+        "frame": 1200,
+        "log_t": 59.99,
+        "class": "pedestrian",
+        "score": 0.037
+      }
     },
     "p0_escape_after": 0.0,
     "retarget_event": {
@@ -393,15 +433,128 @@
         0.95
       ]
     },
+    "pedestrian_patches_by_hfov_16m": {
+      "90deg": 0.48,
+      "60deg": 0.72,
+      "45deg": 0.95,
+      "30deg": 1.43
+    },
+    "standoff_setpoint_m": {
+      "car_4.0m": 15.83,
+      "person_0.5m": 1.98
+    },
     "pedestrian_px_400_capture": {
       "8m": 15.9,
       "10m": 12.7,
-      "16m": 8.0
+      "16m": 8.0,
+      "20m": 6.4
     }
+  },
+  "rails": {
+    "counts": {
+      "projectairsim-single-host": 34,
+      "canonical-hil": 5,
+      "ardupilot-sitl-pymavlink": 7
+    },
+    "camera_flights": 34,
+    "camera_flights_meeting_both_gates": 1
+  },
+  "sweep": {
+    "counts": {
+      "pass": 12,
+      "fail": 0,
+      "known_failure": 1,
+      "skipped": 0
+    },
+    "results": [
+      {
+        "id": "nfz-head-on",
+        "status": "pass",
+        "p0_violation_escape_rate": 0.0,
+        "why": "Flown straight at a no-fly zone. The Shield must never let it in."
+      },
+      {
+        "id": "nfz-head-on-control",
+        "status": "pass",
+        "p0_violation_escape_rate": 0.173333,
+        "why": "The same flight unshielded. This scenario must FAIL its safety gate to be doing its job: if an unguarded run into a no-fly zone scores clean, the harness is measuring nothing and every other pass here is worthless."
+      },
+      {
+        "id": "altitude-floor-recovery",
+        "status": "pass",
+        "p0_violation_escape_rate": 0.0,
+        "why": "Starts below the floor. Recovery must climb, not freeze."
+      },
+      {
+        "id": "altitude-ceiling-hold",
+        "status": "pass",
+        "p0_violation_escape_rate": 0.0,
+        "why": "Commanded to climb through the ceiling for the whole flight."
+      },
+      {
+        "id": "speed-cap",
+        "status": "pass",
+        "p0_violation_escape_rate": 0.0,
+        "why": "A pilot asking for 20 m/s against a 4 m/s cap."
+      },
+      {
+        "id": "nonfinite-action",
+        "status": "pass",
+        "p0_violation_escape_rate": 0.0,
+        "why": "A NaN command, which is one division away from any detector reporting a zero-width box. NaN loses every comparison, so an unsanitised action is declared legal and passed straight through - the guardrail failing OPEN."
+      },
+      {
+        "id": "corridor-along",
+        "status": "pass",
+        "p0_violation_escape_rate": 0.0,
+        "why": "A clean run down the middle. Nothing should be touched."
+      },
+      {
+        "id": "corridor-drift-out",
+        "status": "pass",
+        "p0_violation_escape_rate": 0.0,
+        "why": "Aimed straight out of the side of the corridor."
+      },
+      {
+        "id": "corridor-curfew-in-hours",
+        "status": "pass",
+        "p0_violation_escape_rate": 0.0,
+        "why": "The scheduled fence is in force on a Monday morning and must bind."
+      },
+      {
+        "id": "corridor-curfew-out-of-hours",
+        "status": "pass",
+        "p0_violation_escape_rate": 0.0,
+        "why": "The same flight at 23:00. The fence is not in force, so the aircraft may fly through where it stood - and nothing may repair against it. A rule that still bends the action out of hours is enforcing a rule the policy says is off."
+      },
+      {
+        "id": "standoff-approach",
+        "status": "pass",
+        "p0_violation_escape_rate": 0.0,
+        "why": "Flown at a declared pedestrian who is NOT on the route. The 10 m ring must hold and the mission must still finish."
+      },
+      {
+        "id": "standoff-reclassified",
+        "status": "pass",
+        "p0_violation_escape_rate": 0.0,
+        "why": "THE ANSWER TO THE 2026-09-02 REVIEW, made measurable."
+      },
+      {
+        "id": "standoff-wedge",
+        "status": "known_failure",
+        "p0_violation_escape_rate": 0.0,
+        "why": "THE OPEN DEFECT, pinned here so it stops living only in a document. The subject sits exactly on the route, so every direction that makes progress also closes the range. The Shield never emits an illegal action - the P0 gate holds - but the mission wedges: the aircraft cannot get past the subject and never reaches its goal. Recorded on 2026-08-31 as the gap between \"the action was repaired\" and \"the trajectory was sensible\". When this scenario starts PASSING, the defect is fixed and the marker should come off."
+      }
+    ]
   },
   "repo": {
     "last_meeting": "2026-09-02",
     "commits_since_meeting": [
+      {
+        "date": "2026-09-14",
+        "sha": "9c21d63",
+        "subject": "Retract the \"wrong by tens of metres\" reading of the stand-off ring (0.5.1)"
+      },
       {
         "date": "2026-09-10",
         "sha": "c5d0573",
@@ -473,7 +626,7 @@
         "subject": "Answer the review's one real question, and correct a gap I invented"
       }
     ],
-    "commits_total": 51,
+    "commits_total": 52,
     "version": "0.5.1",
     "finding_docs": 27,
     "policies": 27,
@@ -509,7 +662,7 @@
     "tests_coverage": {
       "passed": 17,
       "total": 17,
-      "note": "test_guardrail_coverage.py, run 2026-09-09"
+      "note": "test_guardrail_coverage.py, run 2026-09-14"
     }
   },
   "unflown": {
