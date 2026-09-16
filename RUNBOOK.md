@@ -1,16 +1,16 @@
 # RUNBOOK — how to run every simulation yourself
 
-## ⚡ Fastest way: `fly.ps1` (launches sim + flies, one command)
+## ⚡ Fastest way: `scripts\fly.ps1` (launches sim + flies, one command)
 
 ```powershell
 cd "D:\OneDrive\College\S2-TaipeiTech\Lab\VLA Drone"
-.\fly.ps1                          # urban world, shield ON
-.\fly.ps1 -Shield off              # watch the violation
-.\fly.ps1 -Dynamic                 # NFZ appears mid-flight
-.\fly.ps1 -World mountains         # other worlds: blocks | mountains | zhangjiajie
-.\fly.ps1 -Command "fly to (10, 30) at 5 m/s altitude 18"
+.\scripts\fly.ps1                          # urban world, shield ON
+.\scripts\fly.ps1 -Shield off              # watch the violation
+.\scripts\fly.ps1 -Dynamic                 # NFZ appears mid-flight
+.\scripts\fly.ps1 -World mountains         # other worlds: blocks | mountains | zhangjiajie
+.\scripts\fly.ps1 -Command "fly to (10, 30) at 5 m/s altitude 18"
 ```
-Or just double-click **`fly.bat`**. It starts/restarts the right AirSim world,
+Or just double-click **`scripts\fly.bat`**. It starts/restarts the right AirSim world,
 waits for it, runs the mission, and pops the trajectory plot when done.
 No conda activate needed (uses the env's python directly).
 

@@ -42,6 +42,8 @@ decision = shield.step(state, raw_action)    # -> repaired action + audit record
 | `tests/` | 23 files, 460 fast tests plus a ~10 min coverage suite |
 | `docs/` | 27 finding documents — see below |
 | `sitl/` | the ArduPilot SITL rail, which is the contractual KPI gate |
+| `scripts/` | launcher scripts (`.ps1` / `.bat`) — see `scripts/README.md` for which backend each targets |
+| `reference/` | the grant's own PDFs; not this project's to edit |
 
 ## The KPI, and what it does not say
 
@@ -119,6 +121,13 @@ functional-rail evidence, not a contractual KPI figure.
 Pre-1.0 research software. See [`CHANGELOG.md`](CHANGELOG.md) for what changed
 and, as importantly, what was withdrawn. Current open items are in
 [`docs/CHECKLIST-remaining-work.md`](docs/CHECKLIST-remaining-work.md).
+
+## Contributing
+
+[`CONTRIBUTING.md`](CONTRIBUTING.md) — the definition of done for a change
+here: a regression test, a changelog entry, and (for a silent defect) a
+finding document. It also has the folder layout, so a new file has an
+obvious home instead of landing at the repo root.
 
 ## Licence and attribution
 

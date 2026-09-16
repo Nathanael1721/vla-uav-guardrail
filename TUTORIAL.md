@@ -12,7 +12,7 @@ Last verified end to end: 2026-08-14.
 Open **PowerShell** — not Git Bash, see §6 — in the project folder and run:
 
 ```powershell
-.\run_follow_vlm.ps1
+.\scripts\run_follow_vlm.ps1
 ```
 
 That is the whole demo. About 18 minutes. It starts the simulator, flies three
@@ -46,7 +46,7 @@ Measured on those three, re-flown 2026-08-11:
 ### The slide that makes it a result
 
 ```powershell
-.\run_follow_vlm.ps1 -Controls
+.\scripts\run_follow_vlm.ps1 -Controls
 ```
 
 Two extra flights. The important one changes **one word** — "a white car" to

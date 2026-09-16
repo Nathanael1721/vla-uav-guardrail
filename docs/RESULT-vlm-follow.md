@@ -114,7 +114,7 @@ and it survived swapping the brain.
 
 ## Running it
 
-See [TUTORIAL-FOLLOW-THE-CAR.md](../TUTORIAL-FOLLOW-THE-CAR.md), or:
+See [TUTORIAL-FOLLOW-THE-CAR.md](tutorials/TUTORIAL-FOLLOW-THE-CAR.md), or:
 
 ```powershell
 .\run_follow_vlm.ps1

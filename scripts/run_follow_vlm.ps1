@@ -99,7 +99,13 @@ param(
 # wrong.
 
 $ErrorActionPreference = "Stop"
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
+# Moved into scripts/ 2026-09-16; this file now lives one level below
+# the repo root, so $Root climbs one more directory than the script's
+# own location. Left as a bare Split-Path before, this would have quietly
+# pointed PASBlocks/, tools/ and demo/ at scripts/PASBlocks etc. and failed
+# the "not found" checks below with a confusing path - exactly the kind of
+# silent-until-run defect this project keeps finding elsewhere.
+$Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $Py   = "C:\Users\natha\.conda\envs\vla-real\python.exe"
 $Proj = Join-Path $Root "PASBlocks\Blocks.uproject"
 # Engine read from the .uproject rather than hard-coded - see tools/ue_engine.py.

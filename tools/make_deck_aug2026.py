@@ -185,7 +185,7 @@ _txt(s, 0.55, y + 2.00, 8.9, 0.7,
      "and offline, to score the flight.", 11, False, BODY)
 
 # ----------------------------------------------------------- 05 the demo --
-s, y = slide("The demo", "Two flights, one command.", ".\\run_follow_vlm.ps1")
+s, y = slide("The demo", "Two flights, one command.", ".\\scripts\\run_follow_vlm.ps1")
 _rect(s, 0.55, y, 4.35, 1.9, CARD)
 _txt(s, 0.75, y + 0.20, 3.95, 0.3, "1 \u00b7 Tracking, with stops", 13, True, INK)
 _txt(s, 0.75, y + 0.60, 3.95, 1.2,
@@ -363,7 +363,7 @@ _txt(s, 0.55, 3.05, 8.7, 1.3,
      12.5, False, LIGHT)
 _rect(s, 0.55, 4.60, 4.6, 0.02, TEAL, radius=False)
 _txt(s, 0.55, 4.75, 8.9, 0.4,
-     "Reproduce: .\\run_follow_vlm.ps1   \u00b7   TUTORIAL-DEMO-FOLLOW.md", 11, False, LIGHT)
+     "Reproduce: .\\scripts\\run_follow_vlm.ps1   \u00b7   docs/tutorials/TUTORIAL-DEMO-FOLLOW.md", 11, False, LIGHT)
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
 try:

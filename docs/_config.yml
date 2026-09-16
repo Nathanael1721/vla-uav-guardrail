@@ -33,6 +33,12 @@ exclude:
   - "*.docx"
   - "*.pdf"
   - video/
+  # Personal working notes, not the public deliverable: a live-demo script in
+  # Bahasa Indonesia, a solo learning roadmap, and presenter rehearsal notes
+  # (added here the same day they landed in this folder, 2026-09-16 cleanup).
+  - DEMO-SCRIPT.md
+  - LEARNING-ROADMAP.md
+  - PRESENTATION-CHEATSHEET-Sep2026.md
 
 # Markdown files here mostly have no front matter; jekyll-optional-front-matter
 # picks them up anyway and jekyll-titles-from-headings takes the title from the

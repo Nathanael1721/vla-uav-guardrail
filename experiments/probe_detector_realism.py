@@ -72,7 +72,7 @@ DETECTOR_ID = "google/owlvit-base-patch32"
 FLIGHTS = ["vlm_stopgo", "vlm_nfz_smooth"]
 QUERIES = ["an orange car", "a car", "a vehicle", "a truck", "a blue car"]
 
-# --det-thresh 0.008 in run_follow_vlm.ps1, colour_min the Grounder default.
+# --det-thresh 0.008 in scripts/run_follow_vlm.ps1, colour_min the Grounder default.
 LIVE_THRESH = 0.008
 LIVE_COLOUR_MIN = 0.10
 TOPK = 12
