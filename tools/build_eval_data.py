@@ -452,15 +452,21 @@ def unflown():
                            "flight_artefacts": sorted(p.name for p in res768.glob("*")) if res768.exists() else []},
         # Measured in the editor by hand over MCP (PASBlocks/ is gitignored, so
         # there is no artefact to recompute these from); see the second finding.
-        "citylife_level": {"status": "built, walking and car spacing verified in editor, not flown",
-                           "pedestrians": 40, "cars": 16,
+        "citylife_level": {"status": "built and flown 2026-09-22; det_hz gate met, loop gate not",
+                           "pedestrians": 40, "cars": 24,
                            "pedestrian_model": "City Sample Crowd, 6 variants (3 male, 3 female)",
                            "area_m": [200, 185],
-                           "car_routes_m": [684, 300],
-                           "car_min_gap_cm": [567, 1544],
-                           "car_min_gap_note": "in-engine, one ~45 s Simulate on 2026-09-22; "
-                                               "0 ticks under 4 m; no gap-keeping-off control "
-                                               "on the same meter",
+                           "car_routes_m": [684, 300, 328],
+                           "car_min_gap_cm": 430,
+                           "car_min_gap_note": "in-engine, ~1900 ticks of Simulate on "
+                                               "2026-09-22, 24 cars, 0 ticks under 4 m; no "
+                                               "gap-keeping-off control on the same meter",
+                           "flights": {"tag": "citylife_city", "seconds": 180,
+                                       "det_hz": 4.82, "loop_hz": 6.17,
+                                       "p0_violation_escape_rate": 0.0,
+                                       "note": "frac_on_target is not usable here: its "
+                                               "chance baseline is 1.000 with 40 pedestrians "
+                                               "in frame. Score the locked instance instead."},
                            "evidence": ["docs/FINDING-citylife-level.md",
                                         "docs/FINDING-crowd-pedestrians-and-traffic.md"]},
     }

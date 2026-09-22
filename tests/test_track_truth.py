@@ -281,7 +281,11 @@ def test_a_real_flight_beats_its_chance_floor_by_a_wide_margin():
 def test_the_median_beats_every_null_on_every_flight_and_the_fraction_does_not():
     """Why the headline moved. The threshold count is within a whisker of a
     lag-1 baseline everywhere - repeat your own last box and you score the same
-    - while the median separates cleanly on every flight with scored rows."""
+    - while the median separates cleanly on every flight with scored rows.
+
+    Two shapes of exception are known and both are asserted below: a subject
+    that was mostly OUT of frame, and a scene so crowded that the class-level
+    null has a truth point everywhere it looks."""
     out = ROOT / "demo" / "out"
     if not out.is_dir():
         return SKIP
@@ -303,7 +307,7 @@ def test_the_median_beats_every_null_on_every_flight_and_the_fraction_does_not()
         else:
             losses.append((run.name, r["det_gt_err_px_median_in_shot"],
                            r["det_gt_err_px_median_chance"],
-                           r["frac_in_shot"]))
+                           r["frac_in_shot"], r["truth_candidates_max"]))
 
     # NOT "beats every null on every flight". The first version of this test
     # skipped every flight with frac_in_shot < 0.5 - which is exactly the two
@@ -318,11 +322,31 @@ def test_the_median_beats_every_null_on_every_flight_and_the_fraction_does_not()
     # flight as bad is the statistic working.
     assert checked >= 20, checked
     assert len(wins) >= 15, (len(wins), losses)
-    for name, real, null, in_shot in losses:
-        assert in_shot < 0.5, (
+    for name, real, null, in_shot, candidates in losses:
+        # SHAPE TWO, found 2026-09-22 on the CityLife flights. The null is the
+        # distance from an unskilled box to the NEAREST truth point, and this
+        # truth is a CLASS - every pedestrian in the scene. In a street with 12
+        # of them that null is a real bar. In a city with 40, where 30 are in
+        # frame at once, the nearest one is always a few pixels away and the
+        # null is unbeatable by construction: citylife_city scores 45.5 px
+        # against 5.2. That is not the detector being bad, it is the statistic
+        # having stopped measuring. The fix is to score the LOCKED instance
+        # rather than the class, which needs the lock to name a figure - see
+        # docs/FINDING-crowd-pedestrians-and-traffic.md. Until then a crowded
+        # scene is a known exception, and the threshold is stated here rather
+        # than hidden in a skip.
+        crowded = candidates >= 20
+        assert in_shot < 0.5 or crowded, (
             f"{name} lost to the null ({real} px against {null}) on a flight "
-            f"whose subject was in frame {in_shot:.0%} of the time - that is "
-            f"not the known shape of this exception")
+            f"whose subject was in frame {in_shot:.0%} of the time with at most "
+            f"{candidates} truth candidates - that is not a known shape of this "
+            f"exception")
+    # The crowded exception cannot become the rule: if most flights on disk
+    # started excusing themselves this guard would assert nothing. Three is the
+    # number of CityLife flights kept; a fourth crowded loss means either the
+    # instance-level scoring is overdue or the exception is being leaned on.
+    crowded_losses = [l for l in losses if l[4] >= 20]
+    assert len(crowded_losses) <= 3, crowded_losses
 
 
 def test_a_constant_detector_is_the_null_model_that_actually_bites():

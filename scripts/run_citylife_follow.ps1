@@ -18,7 +18,9 @@
 param(
     [string]$Object  = "a person",      # the 10 m pedestrian rule, from t=0
     [int]$Seconds    = 180,
-    [int]$LevelPeds  = 16,              # Ped_00..Ped_15, by TAG (see below)
+    [int]$LevelPeds  = 40,              # Ped_00..Ped_39, by TAG (see below)
+    [double]$WantRange = 12.0,          # metres; 0 would derive it from --want-width
+    [double]$TruthPeriod = 0.5,         # s between pose polls; see the note below
     [string]$Tag     = "citylife_follow",
     [int]$SimWidth   = 960,
     [int]$SimHeight  = 540,
@@ -82,6 +84,17 @@ Say "following `"$Object`" for ${Seconds}s against $LevelPeds level pedestrians"
 # better than the chrome mannequins they replaced, so a low threshold is the
 # measured condition, not a thumb on the scale.
 #
+# --level-truth-period 0.5, not the 0.1 default: the simulator loops the names
+# on the game thread, so 40 names at 10 Hz is 400 game-thread round trips a
+# second and the control loop pays for every one of them. Measured: 4.04 Hz
+# loop at 0.1 s. Ground truth at 2 Hz is still finer than the 1.4 m/s subject
+# moves between polls.
+#
+# --want-range, not --want-width: 0.16 of frame width was calibrated for a 4 m
+# car, and on a 0.5 m person it asks for a 2 m stand-off - inside the camera's
+# 6.9 m blind spot at 8 m altitude, so the subject leaves frame before the
+# aircraft arrives. 12 m sits outside both that and the policy's 10 m ring.
+#
 # No --pedestrians and no --parked: the level already walks its own, and
 # spawning more would put two crowds in one street and spend RPC doing it.
 # --no-car for the same reason - the level drives eight.
@@ -91,11 +104,12 @@ $a = @("demo\follow_vlm.py",
        "--policy", "policies\follow_pedestrian.yaml",
        "--max-s", "$Seconds",
        "--det-thresh", "0.008",
-       "--want-width", "0.16",
+       "--want-range", "$WantRange",
        "--cruise-alt", "8",
        "--lock-target",
        "--no-car",
        "--level-peds", "$LevelPeds",
+       "--level-truth-period", "$TruthPeriod",
        "--save-view")
 & $Py @a
 

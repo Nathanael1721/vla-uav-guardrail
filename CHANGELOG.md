@@ -65,10 +65,45 @@ is `docs/FINDING-crowd-pedestrians-and-traffic.md`.
   LABEL, and labels do not exist in a `-game` build. The tags above are what
   make the intended names resolvable.
 
+#### Added, later the same day
+- Pedestrian crossings: the no-walk bands are cut by 600 cm at each painted
+  crosswalk, so the navmesh stays walkable across the carriageway. A
+  `NavLinkProxy` would need a struct-array write, which this toolset does not do
+  reliably. Measured: 3 of 40 figures mid-crossing, 0 anywhere else in a road.
+- 24 cars on three loops (a third, west of the corridor), each pedestrian on its
+  own `GlobalAnimRateScale` (0.93-1.07, 27 distinct values) so 40 people no
+  longer share a footfall, and the gap scan runs on every other tick.
+- Measured after all of it: nearest car-to-car **430 cm, 0 ticks under 4 m**
+  across 24 cars and ~1,900 ticks.
+
+#### Flown
+Four 180 s flights, `scripts/run_citylife_follow.ps1`:
+
+| run | truth | poll | det_hz | loop_hz | on target | chance |
+|---|---|---|---|---|---|---|
+| `citylife_follow` | 16 of 40 | 0.1 s | 5.82 | 5.29 | 0.063 | 0.571 |
+| `citylife_follow2` | 40 | 0.1 s | 7.60 | 4.04 | 0.739 | 0.922 |
+| `citylife_follow3` | 40 | 0.5 s | 4.63 | 6.89 | 0.721 | 0.811 |
+| `citylife_city` | 40 | 0.5 s | 4.82 | 6.17 | 0.821 | **1.000** |
+
+- `det_hz` clears its 4.0 Hz gate in all four; the control loop clears 9.5 Hz in
+  none, and neither did the reference flight on the old level (8.33 Hz).
+- `p0_violation_escape_rate` **0.0** in all four. Not KPI-grade: the topology is
+  `projectairsim-single-host` by construction.
+
+#### Retracted, about our own measurement
+- **`frac_on_target` no longer measures anything on this level.** Its chance
+  baseline - a box placed with no skill, scored against "any pedestrian" - is
+  **1.000** in the last flight, because 40 people fill the frame. The median
+  error says the same: 45.5 px against a chance of 5.2 px. Tracking claims about
+  CityLife have to be scored against the LOCKED instance (`target_lock`: 515
+  ticks held, 19 switches), not the class. `subject_truth_pts` returning every
+  pedestrian was right for 12 and is wrong for 40.
+
 #### Not measured
-- No flight yet. `det_hz`, the control loop and the real frame cost of 56 moving
-  actors need `-game` plus `scripts/run_citylife_follow.ps1`. Everything above
-  is Simulate-in-editor.
+- The control loop is under its gate (6.17-6.89 Hz vs 9.5) and the split between
+  "this level" and "the truth polling" is not separated: that needs the same
+  mission flown with `--level-peds 0` as a control.
 
 #### Earlier, 2026-09-21
 

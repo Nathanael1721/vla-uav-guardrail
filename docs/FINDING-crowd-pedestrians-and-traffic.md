@@ -401,21 +401,93 @@ Measured in Simulate, 45 s, after the change:
   nothing about `-game` throughput; it is an editor with a viewport, and the
   earlier 2.8 Hz was measured with the window in the background.
 
+## It was flown, four times, and the tracking score stopped meaning anything
+
+Four flights on 2026-09-22, `scripts/run_citylife_follow.ps1`, 180 s each,
+following `"a person"` with the level's own crowd as ground truth. The Unreal
+editor has to be closed first; the runner refuses to kill it.
+
+| run | truth | poll | ticks | det_hz | loop_hz | on target | chance | err px | sep min |
+|---|---|---|---|---|---|---|---|---|---|
+| `citylife_follow` (deleted, see below) | 16 of 40 | 0.1 s | 952 | 5.82 | 5.29 | 0.063 | 0.571 | 332.6 | 0.8 m |
+| `citylife_follow2` | 40 | 0.1 s | 728 | 7.60 | 4.04 | 0.739 | 0.922 | 30.7 | 4.0 m |
+| `citylife_follow3` | 40 | 0.5 s | 1239 | 4.63 | 6.89 | 0.721 | 0.811 | 16.0 | 4.5 m |
+| `citylife_city` (24 cars, crossings) | 40 | 0.5 s | 1110 | 4.82 | 6.17 | 0.821 | **1.000** | 45.5 | 5.7 m |
+
+**`det_hz` clears its 4.0 Hz gate in all four. The control loop clears 9.5 Hz in
+none of them** - and it did not in the reference flight either
+(`retarget_smooth`, 8.33 Hz, on the old level).
+
+Three things the table says that are worth more than the numbers:
+
+1. **The first run scored 0.063 because I asked for the wrong truth.** The
+   runner defaulted to 16 level pedestrians while the level walks 40, so the
+   subject the detector locked was not in the truth list and every tick scored
+   as a miss. The fix was a flag, not a model: `-LevelPeds 40`. A default that
+   silently describes a smaller world than the one being flown is exactly the
+   failure this repo keeps writing findings about.
+
+   **Its artefacts were then deleted.** The flight log is not wrong about what
+   the aircraft did; it is wrong about the world, because it carries truth for
+   16 figures out of 40. Anything that scores `demo/out/` - the eval generator,
+   `tests/test_track_truth.py` - would have read it as a detector that missed,
+   and produced a plausible, wrong number from a complete-looking artefact. The
+   row above is the record; the 887 MB of frames are not.
+2. **Polling the truth is not free.** 40 names at 10 Hz is 400 game-thread
+   round trips a second, and the control loop paid for it: 4.04 Hz at a 0.1 s
+   period against 6.89 Hz at 0.5 s. The runner now defaults to 0.5 s, which is
+   still finer than a 1.4 m/s subject moves between polls.
+3. **In a crowded city the class-level tracking score saturates.** `chance`
+   here is what a box placed with no skill scores against "any pedestrian", and
+   in the last run it is **1.000**: with 40 people in frame, anywhere you point
+   is on somebody. `frac_on_target` 0.821 against a chance of 1.000 is not a
+   good score, it is a meaningless one, and the median error tells the same
+   story - 45.5 px against a chance of 5.2 px. What still measures something is
+   instance-level: `target_lock` held one instance for 515 ticks and switched
+   19 times. **Any future tracking claim about this level has to be scored
+   against the LOCKED instance, not the class.** `tests/test_track_truth.py`
+   now states this as the second known shape of its exception, bounded to three
+   flights so the excuse cannot quietly become the rule. `subject_truth_pts` returns
+   every pedestrian, which was right for a scene with 12 and is wrong for one
+   with 40.
+
+The guardrail numbers are unaffected by that, because they do not use the
+class truth: `p0_violation_escape_rate` **0.0** in all four runs, 649 P0 ticks
+repaired in the last one, 1,070 repairs, no NFZ or altitude escape. None of it
+is KPI-grade - `topology` is `projectairsim-single-host`, so it is
+functional-rail evidence by construction.
+
+Artefacts: `demo/out/citylife_city/` (metrics, kpi, flight log, replay bundle,
+`citylife_city_demo.mp4`).
+
 ## Still not measured, still not done
 
-- **No flight yet.** Everything above is Simulate-in-editor. `det_hz`, the
-  control loop and the crowd's real frame cost need `-game` plus
-  `scripts/run_citylife_follow.ps1`.
-- `UpdateEffSpeed` still calls `GetAllActorsOfClass` per car per tick, and that
-  walks every actor in the world (about 5,900) before the 16-car loop. At 16
-  cars that is roughly 95,000 class tests a tick. It has not been profiled in
-  `-game`; caching the array in `BeginPlay` is the obvious fix if it shows up.
-- Nobody crosses a road: the no-walk bands split the pavements into islands.
-  `SM_jcGrdCrosswalkA` exists in the content and the junctions have crosswalk
-  markings painted, but no `NavLinkProxy` is placed, so a crossing is a path the
-  navmesh does not have.
+- **The control loop is under its gate.** 6.17-6.89 Hz against 9.5, with the
+  truth poll at 0.5 s. The reference flight on the old level managed 8.33, so
+  part of that is this level and part of it is the poll. Not separated yet:
+  fly the same mission with `--level-peds 0` for a control.
+- **Scored against the class, not the instance.** See the flight table above.
+- `UpdateEffSpeed` calls `GetAllActorsOfClass`, which walks every actor in the
+  world (about 5,900) before the per-car loop. It now runs on every OTHER tick,
+  which halves that, but at 24 cars it is still roughly 70,000 class tests a
+  tick. Caching the array in `BeginPlay` needs an array-of-object variable, and
+  this toolset's `add_object_variable` makes single references only.
+- ~~Nobody crosses a road~~ *Done 2026-09-22:* rather than place `NavLinkProxy`
+  actors - whose `PointLinks` is a struct array, and struct-array writes through
+  this toolset are unreliable - the no-walk bands are CUT. A 600 cm gap at each
+  painted crosswalk (1100 cm either side of a junction centre) leaves the
+  navmesh walkable straight across the carriageway, which is what a crossing is.
+  Five gaps on the demo corridor's two junctions; measured in Simulate, 3 of 40
+  figures were mid-crossing and 0 were anywhere else in a carriageway.
+  Nothing yields: a car drives through a crossing pedestrian, because
+  `BP_CityCar` does not look for them.
 - Eyebrows are absent from the crowd figures (they are a separate groom in
   Epic's pipeline). Unverified whether that reads at 10-20 m.
+- Cars do not yield at intersections, so two loops that CROSS drive through each
+  other. Loop C was moved a block west for that reason: loops A and B share
+  lanes but never cross, and a shared lane is fine because a car brakes for the
+  car it is following. Crossing traffic would need a priority rule that does not
+  exist.
 - The wheel components on `BP_CityCar` carry no mesh at all, so the "are the
   buggy tyres still there" question from the first pass is answered: they are
   not rendering anything.
