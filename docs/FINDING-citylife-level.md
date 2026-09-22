@@ -1,7 +1,8 @@
 # The city can hold its own traffic
 
-`/Game/CityLife/Maps/CityLife_Day` is a copy of `JapaneseCity/Demo_day` with 16 walking
-pedestrians and 8 driving cars built INTO the level. They cost no RPC and need no client:
+`/Game/CityLife/Maps/CityLife_Day` is a copy of `JapaneseCity/Demo_day` with walking
+pedestrians and driving cars built INTO the level (16 and 8 when this was written; 40 and 16
+since 2026-09-22, see [the follow-up](FINDING-crowd-pedestrians-and-traffic.md)). They cost no RPC and need no client:
 the drone's camera sees a moving city whether or not `demo/pedestrians.py` and
 `demo/city_traffic.py` ever run.
 
@@ -17,12 +18,18 @@ during, and after: `2e9f91a4…802efa83` all three times. It was never opened.
 
 | Actor | Count | Where it came from |
 |---|---|---|
-| `Ped_00…Ped_15`, tag `citylife.ped`, folder `CityLife/Peds` | 16 | pavement cells from `street.npz` |
-| `Car_00…Car_07`, tag `citylife.car`, folder `CityLife/Cars` | 8 | the `city_traffic.py` circuit |
-| `CityLife_NavBounds` (+ `RecastNavMesh-Default`) | 1 | corridor only, not the whole map |
+| `Ped_00…Ped_15`, tag `citylife.ped`, folder `CityLife/Peds` | 16 → 40 | pavement cells from `street.npz`; the later 24 from ground traces beside the junction grid |
+| `Car_00…Car_07`, tag `citylife.car`, folder `CityLife/Cars` | 8 → 16 | the `city_traffic.py` circuit; the later 8 on a second loop |
+| `CityLife_NavBounds` (+ `RecastNavMesh-Default`) | 1 | corridor only, not the whole map; widened to 200 × 185 m on 2026-09-22 |
 
-Names are load-bearing: `demo/pas_config/scene_guardrail.jsonc` sets
-`"segmentation": {"use-owner-name": true}`, so an actor's name IS its segmentation class.
+~~Names are load-bearing: `demo/pas_config/scene_guardrail.jsonc` sets
+`"segmentation": {"use-owner-name": true}`, so an actor's name IS its segmentation class.~~
+*Retracted 2026-09-22:* the plugin reads the actor's INTERNAL name
+(`GetOwner()->GetName()`), which for a placed Blueprint is `BP_CityPed_M1_C_1`. `Ped_00` is
+the editor LABEL, and a `-game` build has no labels. Each actor now also carries its intended
+name as a TAG, which is what `FindActor` - and therefore the simulator's pose lookup - will
+match. See
+[the follow-up](FINDING-crowd-pedestrians-and-traffic.md#the-name-a-segmentation-mask-carries-is-not-the-name-in-the-outliner).
 `Ped_NN` / `Car_NN` do not collide with the client-side `Person{k}` / `BgCar{i}`, so a
 flight that spawns both keeps two distinguishable sets.
 

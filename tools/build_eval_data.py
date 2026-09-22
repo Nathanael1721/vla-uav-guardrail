@@ -453,11 +453,14 @@ def unflown():
         # Measured in the editor by hand over MCP (PASBlocks/ is gitignored, so
         # there is no artefact to recompute these from); see the second finding.
         "citylife_level": {"status": "built, walking and car spacing verified in editor, not flown",
-                           "pedestrians": 16, "cars": 8,
+                           "pedestrians": 40, "cars": 16,
                            "pedestrian_model": "City Sample Crowd, 6 variants (3 male, 3 female)",
-                           "car_min_gap_cm": [621, 771],
-                           "car_min_gap_note": "in-engine, one ~40 s Simulate at ~2.8 ticks/s; "
-                                               "no gap-keeping-off control on the same meter",
+                           "area_m": [200, 185],
+                           "car_routes_m": [684, 300],
+                           "car_min_gap_cm": [567, 1544],
+                           "car_min_gap_note": "in-engine, one ~45 s Simulate on 2026-09-22; "
+                                               "0 ticks under 4 m; no gap-keeping-off control "
+                                               "on the same meter",
                            "evidence": ["docs/FINDING-citylife-level.md",
                                         "docs/FINDING-crowd-pedestrians-and-traffic.md"]},
     }

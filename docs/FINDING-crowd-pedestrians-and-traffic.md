@@ -239,3 +239,183 @@ bunch up", not as a distance.
   `CloseTicks`, `Ticks`. They cost a few float writes per tick and are what the in-engine meter
   above reads, so they stay until a flight has been measured.
 - `BP_CityPed_Ada` (the MetaHuman attempt) is still on disk, unused.
+
+---
+
+# Second pass, 2026-09-22: the figures had no hands, and the city was one street wide
+
+The first pass put crowd figures in the level. Flying it showed two faults and
+one limit: the people had no hands, their hair trailed behind their heads, and
+the whole environment was a single 80 x 10 m block of street.
+
+## The body was never there: `m_tal_nrw_base` is a 3-vertex stub
+
+`BP_CityPed_Human` drove `CharacterMesh0` with `m_tal_nrw_base` and dressed it
+in `Top`, `Bottom`, `Shoes` and `Head`. Nothing in that list is skin. The base
+mesh is **3 vertices at every one of its 4 LODs**, and its one material slot is
+named `M_Hide`, carrying `M_DebugPink`; an asset thumbnail of it renders empty.
+It is a pose driver, not a body - which is why the arms ended at the wrist,
+where the sleeves stop.
+
+Epic's own `BP_CrowdCharacter` pairs that stub with a second mesh, and so does
+`CrowdCharacterDataAsset`: every body definition carries `base`
+(`m_tal_nrw_base`) *and* `body` (`m_tal_nrw_body`, 10,648 vertices, real skin,
+hands included). We had only ever attached the first.
+
+Fixed by adding a `Body` SkeletalMeshComponent to the six variants and the
+template, parented under `CharacterMesh0`, and leader-posed in `BeginPlay`
+exactly like the clothes:
+
+| Component | Mesh | Skeleton |
+|---|---|---|
+| `CharacterMesh0` (leader) | `m_tal_nrw_base` / `f_tal_nrw_base` | `SK_Base` |
+| `Body` (new) | `m_tal_nrw_body` / `f_tal_nrw_body` | `metahuman_base_skel` |
+| `Head` | `m_001_nrw_FaceMesh` and siblings | `Face_Archetype_Skeleton` |
+| `Top` / `Bottom` / `Shoes` | garment meshes | `SK_Base` |
+
+**Leader pose does not require the same skeleton.** It maps bones by NAME. The
+face was already riding a different skeleton (`Face_Archetype_Skeleton`) and
+following correctly, which is the evidence that settled it before the body mesh
+was attached. `m_tal_nrw_body` is on `metahuman_base_skel` and follows too -
+verified walking in Simulate, hands visible and moving.
+
+There is no separate hand or glove mesh anywhere in the pack; searching for one
+is a dead end.
+
+## The hair was parented to the mesh, not to the head
+
+The `Hair` static mesh hung off `CharacterMesh0` with an identity relative
+transform and no socket, so it followed the component - the capsule, in effect -
+and not the `head` bone. Standing still that looks right; walking, the head bobs
+and turns and the hair does not, which reads as lag.
+
+`BeginPlay` now calls `AttachComponentToComponent(Hair, GetMesh(), "head",
+KeepWorld, KeepWorld, KeepWorld)`. `SK_Base` has no head SOCKET - Epic attaches
+to the bone named `head` directly - and the hair cards are authored in character
+space, so `KeepWorld` is what makes this work without hand-computing an offset:
+at `BeginPlay` the mesh is in its reference pose, the hair is already in the
+right place, and re-parenting under that rule keeps it there.
+
+## The name a segmentation mask carries is not the name in the outliner
+
+*Retraction.* `docs/FINDING-citylife-level.md` said "an actor's name IS its
+segmentation class" and treated `Ped_NN` / `Car_NN` as load-bearing. Half of
+that is right. The plugin's `GetSegmentationName` returns
+`mesh->GetOwner()->GetName()` - the INTERNAL object name. For a Blueprint placed
+in a level that is `BP_CityPed_M1_C_1`, never `Ped_00`, because `Ped_00` is the
+editor LABEL, and labels do not exist in a `-game` build at all.
+
+The same applies to the simulator's pose lookup: `WorldSimApi::getObjectPose`
+resolves a name through `UnrealHelpers::FindActor`, which matches
+`GetName().Contains(name)` **or an actor TAG**. So every pedestrian and car now
+carries its intended name as a tag (`Ped_00` to `Ped_39`, `Car_00` to
+`Car_15`), and `world.get_object_poses(["Ped_07", ...])` resolves. A miss is not
+silent: `getObjectPose` returns NaN for an actor it cannot find.
+
+## Ground truth for a level that owns its own crowd
+
+`demo/follow_vlm.py` scored pedestrians against `people.figures` - objects the
+CLIENT spawned and teleports. A level that walks its own figures has no such
+object, so `subject_truth_pts` returned `[]` on every tick and the whole
+pedestrian phase scored UNSCORABLE, with nothing saying so.
+
+`demo/level_actors.py` (new) asks the simulator instead:
+`World.get_object_poses(names)` returns global NED, which is what the flight log
+already uses. It duck-types `Pedestrians` closely enough to drop in
+(`figures`, `update`, `stats`, `destroy`), refuses the flight when no name
+resolves, keeps the last position on a NaN rather than teleporting truth to the
+origin, and throttles polling (`--level-truth-period`, default 0.1 s) because
+the simulator loops the names on the game thread. `tests/test_level_actors.py`
+covers all of that: 10 tests.
+
+`follow_vlm.py` gains `--level-peds N`, refuses it together with
+`--pedestrians`, and records where the truth came from in
+`metrics.json.pedestrian_truth`. `scripts/run_citylife_follow.ps1` runs the
+mission against the level's own crowd with no client-side scenery at all.
+
+## Corners: the aim point moves, so the heading does not jump
+
+`BP_CityCar` steered at `Route[Idx]` and switched waypoint inside
+`ArriveRadius`, so at a corner the target yaw stepped by up to 90 degrees and
+`RInterpTo` swung the car through it - a pivot, not a turn. The flat
+"40 % speed within 900 cm" rule braked the same distance out whatever the speed.
+
+New function `UpdateAim`, called from Tick right after `UpdateEffSpeed`:
+
+```
+blend    = 300 + 2.2 * CurSpeed          # lead-in distance, cm
+CornerF  = clamp(1 - dist_to_waypoint / blend, 0, 1)
+AimPt    = waypoint + normalize(next - waypoint) * (450 * CornerF)
+TargetSpeed = EffSpeed * (1 - 0.5 * CornerF)
+```
+
+Tick's look-at now reads `AimPt` and its `FInterpTo` reads `TargetSpeed`. The
+aim slides up to 4.5 m into the next leg as the car arrives, so the heading
+target moves continuously and the car arcs.
+
+**The first version of this deadlocked the whole fleet**, and the reason is
+worth keeping. `AimPt` was `waypoint + (next - waypoint) * 0.45 * CornerF` - a
+fraction of the WHOLE leg, which on a 170 m leg is a 75 m shortcut. Cars cut
+across the corner, piled into each other, and then the gap rule did the rest:
+every car saw another within 250 cm laterally and 0 cm ahead, so every car
+braked to a stop and stayed there. Two fixes, both kept:
+
+- the lead-in is a fixed distance (450 cm), not a fraction of the leg;
+- a car only brakes for cars **facing the same way**
+  (`dot(other.forward, my.forward) > 0.5`), and `EffSpeed` has a 60 cm/s floor.
+  At a corner two cars can each be geometrically "ahead" of the other; without
+  the heading gate that is a mutual stop with no way out.
+
+## The city was never one street wide
+
+The map is a modular grid: **66 junctions, 11 columns x 6 rows on an 82 m
+spacing**, about 1000 x 590 m of built road. The old circuit was a hand-typed
+80 x 10 m rectangle that touched none of them, and `tools/citylife_layout.py`
+only ever saw a 160 x 160 m window of occupancy data, which is why its pavement
+pool was 51 cells.
+
+Now, derived from that grid rather than typed:
+
+| | Before | Now |
+|---|---|---|
+| Car routes | one 80 x 10 m rectangle | two loops on the junction grid: 684 m and 300 m |
+| Cars | 8 | 16 |
+| Pedestrians | 16 | 40 |
+| Nav bounds | 48 x 104 m | 200 x 185 m |
+| No-walk bands | 2, hand-fitted to the old loop | 8 (3 N-S + 3 E-W carriageways + the original 2) |
+
+Lanes are offset 350 cm to the LEFT of travel from the junction centre line,
+because this is a Japanese city and its traffic keeps left; the two loops share
+streets in opposite directions 7 m apart, which is what makes them read as
+two-way traffic. Pavement positions come from tracing the ground 1000 cm either
+side of each centre line and keeping hits between 6 and 40 cm - the road tile's
+own sidewalk sits at z = 7-10, the carriageway at z = 0.
+
+Measured in Simulate, 45 s, after the change:
+
+- **40 pedestrians, 32 walking, 0 in any carriageway**, speeds spread 36-154 cm/s.
+- **16 cars, nearest other car 567-1544 cm, 0 ticks under 4 m**, each at or
+  under its own `SpeedCmS`, cars in corners at 64-70 % of it.
+- The editor world ticked at about 5.8 Hz during that run with 56 actors
+  driving, against 2.8 Hz measured in the first pass with 24. That number says
+  nothing about `-game` throughput; it is an editor with a viewport, and the
+  earlier 2.8 Hz was measured with the window in the background.
+
+## Still not measured, still not done
+
+- **No flight yet.** Everything above is Simulate-in-editor. `det_hz`, the
+  control loop and the crowd's real frame cost need `-game` plus
+  `scripts/run_citylife_follow.ps1`.
+- `UpdateEffSpeed` still calls `GetAllActorsOfClass` per car per tick, and that
+  walks every actor in the world (about 5,900) before the 16-car loop. At 16
+  cars that is roughly 95,000 class tests a tick. It has not been profiled in
+  `-game`; caching the array in `BeginPlay` is the obvious fix if it shows up.
+- Nobody crosses a road: the no-walk bands split the pavements into islands.
+  `SM_jcGrdCrosswalkA` exists in the content and the junctions have crosswalk
+  markings painted, but no `NavLinkProxy` is placed, so a crossing is a path the
+  navmesh does not have.
+- Eyebrows are absent from the crowd figures (they are a separate groom in
+  Epic's pipeline). Unverified whether that reads at 10-20 m.
+- The wheel components on `BP_CityCar` carry no mesh at all, so the "are the
+  buggy tyres still there" question from the first pass is answered: they are
+  not rendering anything.

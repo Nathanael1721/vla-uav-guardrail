@@ -1802,13 +1802,20 @@ async def fly(args) -> int:
     # same treatment, a start-up refusal where it is cheap and loud.
     _phrases = [args.object] + [ph for _, ph in retargets]
     _ped_phrases = [ph for ph in _phrases if subject_width(ph)[1] == "pedestrian"]
-    if _ped_phrases and args.pedestrians <= 0:
+    if _ped_phrases and args.pedestrians <= 0 and args.level_peds <= 0:
         raise SystemExit(
             f"{_ped_phrases[0]!r} selects the pedestrian class, but "
-            f"--pedestrians is {args.pedestrians}, so no pedestrian exists to "
-            f"be ground truth. Every tick of that phase would log an empty "
-            f"truth and score as unscorable. Pass --pedestrians N (the demo "
-            f"uses 12), or follow something that is in the scene.")
+            f"--pedestrians is {args.pedestrians} and --level-peds is "
+            f"{args.level_peds}, so no pedestrian exists to be ground truth. "
+            f"Every tick of that phase would log an empty truth and score as "
+            f"unscorable. Pass --pedestrians N (the demo uses 12) for "
+            f"client-spawned figures, --level-peds N in a level that walks its "
+            f"own, or follow something that is in the scene.")
+    if args.pedestrians > 0 and args.level_peds > 0:
+        raise SystemExit(
+            "--pedestrians and --level-peds both place pedestrians in the "
+            "truth, from two sources that do not know about each other. Pick "
+            "one: the client's baked figures, or the level's own.")
 
     # NOTE on ordering: both refusals below run AFTER fly() has unlinked the
     # tag's previous flight_log.jsonl and detections.jsonl. That unlink predates
@@ -2090,6 +2097,23 @@ async def fly(args) -> int:
                         car.spawn()
                 else:
                     car.spawn()
+
+        # TRUTH THAT THE LEVEL OWNS.
+        #
+        # CityLife_Day walks its own 16 pedestrians. Nothing here placed them,
+        # so nothing here knows where they are, and the whole pedestrian phase
+        # would log `truth.pts == []` - scored as unscorable, reported as
+        # nothing. `level_actors` asks the simulator instead, which is better
+        # evidence than the commanded position the client keeps for its own
+        # figures. It resolves by TAG, because a placed Blueprint is named
+        # after its class (`BP_CityPed_M1_C_1`) and `Ped_07` is only an editor
+        # label, which a -game build does not have.
+        if args.level_peds > 0:
+            import level_actors
+            people = level_actors.LevelActors(
+                world, level_actors.names(args.level_ped_prefix, args.level_peds),
+                kind="pedestrian", min_period_s=args.level_truth_period)
+            people.resolve()          # refuses the flight if none resolve
 
         # Scenery. Spawned once and, for all but a couple of them, never touched
         # again - a standing figure costs no per-tick RPC, so it cannot take
@@ -2909,6 +2933,14 @@ async def fly(args) -> int:
         # 13 s without anything noticing.
         "target_lock": ({"enabled": True, **lock.stats()} if lock is not None
                         else {"enabled": False}),
+        # WHERE THE PEDESTRIAN TRUTH CAME FROM. A figure the client spawned and
+        # a figure the level walks produce identical-looking numbers, and only
+        # one of them is a position the simulator was ASKED for rather than
+        # told. `nan_reads` is the number that matters: a name that stops
+        # resolving freezes its truth, and a frozen truth scores the detector
+        # wrong instead of unscorable.
+        "pedestrian_truth": (people.stats() if people is not None
+                             else {"source": "none"}),
         # Mid-flight target changes, with the class each one selected. This is
         # what lets a reader check the claim the demo makes - that the enforced
         # stand-off changed because the WORD changed - against the flight log
@@ -3115,6 +3147,20 @@ def main() -> int:
                     help="how many of them walk rather than stand. Each walker "
                          "is one teleport per tick, on the same budget the "
                          "detector uses.")
+    ap.add_argument("--level-peds", type=int, default=0,
+                    help="take pedestrian ground truth from N actors the LEVEL "
+                         "owns, tagged Ped_00.. (CityLife_Day walks 16). "
+                         "Mutually exclusive with --pedestrians, which spawns "
+                         "its own. Costs one pose RPC per poll instead of one "
+                         "teleport per walker per tick.")
+    ap.add_argument("--level-ped-prefix", default="Ped_",
+                    help="tag prefix for --level-peds; the level tags each "
+                         "figure with this plus a two-digit index.")
+    ap.add_argument("--level-truth-period", type=float, default=0.1,
+                    help="minimum seconds between pose polls for --level-peds. "
+                         "The simulator loops the names on the game thread, so "
+                         "16 names is 16 round trips; raise this if the control "
+                         "loop drops below its 9.5 Hz gate.")
     ap.add_argument("--people-dir", default=None,
                     help="baked figures from tools/bake_glb_poses.py; defaults "
                          "to VLA_PEOPLE_DIR or D:/models/quaternius_people/posed")

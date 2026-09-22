@@ -16,11 +16,67 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-09-22 — hands, hair, corners, and a city instead of a street
+
+The CityLife level lives in the gitignored `PASBlocks/`, so what reproduces it
+is `docs/FINDING-crowd-pedestrians-and-traffic.md`.
+
+#### Fixed
+- **The crowd figures had no hands.** `m_tal_nrw_base`, the mesh they were
+  built on, is a 3-vertex stub whose only material slot is called `M_Hide`: it
+  drives the pose and renders nothing. Epic pairs it with `m_tal_nrw_body`
+  (10,648 vertices, skin, hands), which was never attached. Added as a `Body`
+  component on all six variants and leader-posed like the clothes. Leader pose
+  matches bones by NAME, so the different skeleton (`metahuman_base_skel`) is
+  not an obstacle — the face already proved that.
+- **The hair trailed the head.** It was parented to the mesh COMPONENT with no
+  socket, so it followed the capsule and not the `head` bone. `BeginPlay` now
+  attaches it to that bone with `KeepWorld`, which preserves the authored
+  placement without computing an offset.
+- **Cars pivoted at corners.** New `UpdateAim` slides the aim point up to 4.5 m
+  into the next leg as the car arrives and scales the corner speed, so the
+  heading target moves continuously. Measured: cars corner at 64-70 % of their
+  own top speed and arc rather than turn on the spot.
+- **Gap keeping deadlocked the fleet** in the first version of that change: at
+  a corner two cars can each be "ahead" of the other, so both braked to zero and
+  stayed there. A car now only brakes for cars facing the same way, and
+  `EffSpeed` has a 60 cm/s floor.
+
+#### Added
+- The environment is a city rather than one street: **two car loops on the map's
+  own 82 m junction grid (684 m and 300 m), 16 cars, 40 pedestrians**, nav
+  bounds from 48 x 104 m to 200 x 185 m, and six new no-walk bands over the
+  carriageways. Lanes sit 350 cm left of each centre line, so the two loops read
+  as two-way traffic. Measured in Simulate: 32 of 40 walking, **0 in any
+  carriageway**, nearest car-to-car 567-1544 cm, **0 ticks under 4 m**.
+- `demo/level_actors.py` + `--level-peds` in `demo/follow_vlm.py`: ground truth
+  for actors the LEVEL owns, read back from the simulator with
+  `World.get_object_poses`. Without it a CityLife flight logs an empty truth on
+  every tick and scores unscorable while looking complete.
+  `tests/test_level_actors.py` covers it (10 tests).
+- `scripts/run_citylife_follow.ps1`: the follow mission against the level's own
+  crowd, with no client-side pedestrians, parked cars or scripted car.
+- Every pedestrian and car carries its name as an actor TAG.
+
+#### Retracted
+- **"Names are load-bearing: an actor's name IS its segmentation class"** in
+  `docs/FINDING-citylife-level.md`. The plugin reads `GetOwner()->GetName()`,
+  which for a placed Blueprint is `BP_CityPed_M1_C_1`. `Ped_00` is the editor
+  LABEL, and labels do not exist in a `-game` build. The tags above are what
+  make the intended names resolvable.
+
+#### Not measured
+- No flight yet. `det_hz`, the control loop and the real frame cost of 56 moving
+  actors need `-game` plus `scripts/run_citylife_follow.ps1`. Everything above
+  is Simulate-in-editor.
+
+#### Earlier, 2026-09-21
+
 The CityLife level lives in the gitignored `PASBlocks/`, so what reproduces it
 is `docs/FINDING-crowd-pedestrians-and-traffic.md`. Backup of the pre-change
 assets: `PASBlocks/_backup/citylife_2026-09-21/`.
 
-### Added
+#### Added
 - CityLife pedestrians are six City Sample Crowd variants (3 male, 3 female)
   instead of Manny. They reuse `BP_CityPed_Human`, built 2026-09-16 and never
   placed, and walk on the existing animation with no retarget because
@@ -33,7 +89,7 @@ assets: `PASBlocks/_backup/citylife_2026-09-21/`.
 - `citylife_level` in `docs/data/eval_sep2026.json` carries the pedestrian
   model, the car gap and the second finding.
 
-### Fixed
+#### Fixed
 - `M_CarPaint` did not compile (two empty texture samples), so every
   `MIC_Paint_*` rendered in the default grey. Textures assigned; three cars now
   carry Gold, Purple and Black next to the five `VehicleVarietyPack` bodies in
@@ -43,7 +99,7 @@ assets: `PASBlocks/_backup/citylife_2026-09-21/`.
   own body: `LeaderPoseComponent` on the template is a weak pointer to the CDO.
   It is now set in `BeginPlay`.
 
-### Retracted
+#### Retracted
 - **"Paint is set per instance from the eight `MIC_Paint_*`"** in
   `docs/FINDING-citylife-level.md`. The saved level referenced no
   `MIC_Paint_*`, and their parent material did not compile, so no car could
@@ -53,7 +109,7 @@ assets: `PASBlocks/_backup/citylife_2026-09-21/`.
   distance is not reliable. The same method reported 12 cm with gap keeping
   already on, while the in-engine meter read 621 cm minimum.
 
-### Not measured
+#### Not measured
 - OWL-ViT `a person` did not improve with the realistic figures (10 m up:
   Manny 0.062, crowd 0.054 / 0.105; 20 m up: 0.027 vs 0.012 / 0.013; n = 1
   per cell). The frame-rate cost of the crowd is unknown: the editor world ran
