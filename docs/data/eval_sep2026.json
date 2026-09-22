@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-14",
+  "generated": "2026-09-21",
   "source": "tools/build_eval_data.py",
   "kpi": {
     "runs": {
@@ -551,6 +551,26 @@
     "last_meeting": "2026-09-02",
     "commits_since_meeting": [
       {
+        "date": "2026-09-16",
+        "sha": "fbb0c84",
+        "subject": "Tidy the repo root, and write down what \"done\" means for a change"
+      },
+      {
+        "date": "2026-09-16",
+        "sha": "0a736db",
+        "subject": "Add a presenter cheatsheet for the two September decks"
+      },
+      {
+        "date": "2026-09-15",
+        "sha": "feeaa35",
+        "subject": "Record the CityLife level and why its pedestrians moved like robots"
+      },
+      {
+        "date": "2026-09-14",
+        "sha": "2457987",
+        "subject": "Build the September update deck, the mid-evaluation deck and report"
+      },
+      {
         "date": "2026-09-14",
         "sha": "9c21d63",
         "subject": "Retract the \"wrong by tens of metres\" reading of the stand-off ring (0.5.1)"
@@ -626,9 +646,9 @@
         "subject": "Answer the review's one real question, and correct a gap I invented"
       }
     ],
-    "commits_total": 52,
+    "commits_total": 56,
     "version": "0.5.1",
-    "finding_docs": 27,
+    "finding_docs": 28,
     "policies": 27,
     "test_files": 23,
     "tests_fast": {
@@ -672,10 +692,19 @@
       "flight_artefacts": []
     },
     "citylife_level": {
-      "status": "built, walking verified in editor, not flown",
+      "status": "built, walking and car spacing verified in editor, not flown",
       "pedestrians": 16,
       "cars": 8,
-      "evidence": "docs/FINDING-citylife-level.md"
+      "pedestrian_model": "City Sample Crowd, 6 variants (3 male, 3 female)",
+      "car_min_gap_cm": [
+        621,
+        771
+      ],
+      "car_min_gap_note": "in-engine, one ~40 s Simulate at ~2.8 ticks/s; no gap-keeping-off control on the same meter",
+      "evidence": [
+        "docs/FINDING-citylife-level.md",
+        "docs/FINDING-crowd-pedestrians-and-traffic.md"
+      ]
     }
   }
 }

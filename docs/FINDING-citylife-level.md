@@ -29,7 +29,9 @@ flight that spawns both keeps two distinguishable sets.
 ## The two Blueprints
 
 `BP_CityPed` (parent `Character`) walks on a NavMesh. `SKM_Manny` / `SKM_Quinn` with
-`ABP_CityPed_Manny` / `ABP_CityPed_Quinn`, `MaxWalkSpeed` 126-154, `DetourCrowdAIController`
+`ABP_CityPed_Manny` / `ABP_CityPed_Quinn` (since 2026-09-21 the placed figures are City Sample
+Crowd children of it, see [the follow-up](FINDING-crowd-pedestrians-and-traffic.md)),
+`MaxWalkSpeed` 126-154, `DetourCrowdAIController`
 so they avoid each other. `BeginPlay` records `HomeLocation` and starts a 1 s looping timer
 on the function `Roam`, which decides when and where the figure walks next and calls
 `SimpleMoveToLocation`. What `Roam` does now is in
@@ -43,9 +45,12 @@ with nodes the DSL can write.
 
 `BP_CityCar` (parent `Actor`, root `Body` = `SM_AutomotiveTP_Car`, `Movable`, `QueryOnly`)
 follows `Route` — a `TArray<FVector>`, not a spline — at `SpeedCmS` 250, wrapping on `Idx`
-and turning through `RInterpTo` so corners round rather than snap. Paint is set per
-instance from the eight `MIC_Paint_*`, deliberately fixed rather than random so the colour
-test in `city_traffic.py` keeps a stable ground truth.
+and turning through `RInterpTo` so corners round rather than snap. ~~Paint is set per
+instance from the eight `MIC_Paint_*`~~ *Retracted 2026-09-21:* the saved level held no
+`MIC_Paint_*` reference at all, and their parent `M_CarPaint` did not compile, so no paint
+instance could have shown its colour. Paint is now fixed per car, deliberately not random so
+the colour gate keeps a stable ground truth; see
+[the follow-up](FINDING-crowd-pedestrians-and-traffic.md#the-cars-were-silver-because-m_carpaint-did-not-compile).
 
 Variant B (`bUseNavMesh = false`, route following off Tick through `AddMovementInput`) is
 compiled into `BP_CityPed` and unused. It exists so a navmesh failure is a bool flip.
@@ -190,10 +195,16 @@ Measured, Simulate, two snapshots after 20 s warmup: **13 and 11 of 16 walking**
 
 ### What still looks artificial
 
-The figures are `SKM_Manny` / `SKM_Quinn`: chrome mannequins. Motion is now plausible; the
-people are not. The only other humans on disk are the Quaternius "Animated Men Pack"
-(`D:/models/quaternius_people/glb`, CC0, rigged, low-poly and stylised). Photoreal figures
-means MetaHuman or a Fab crowd pack, which is an asset decision, not a tuning one.
+*Superseded 2026-09-21.* This section said the figures were `SKM_Manny` / `SKM_Quinn`
+chrome mannequins and that photoreal people meant MetaHuman or a Fab crowd pack. A City
+Sample Crowd figure, `BP_CityPed_Human`, had in fact been built on 2026-09-16 and never
+placed. The 16 pedestrians are now six variants of it (3 male, 3 female), walking on the
+same animation with no retarget because `SK_Base` is registered compatible with
+`SK_Mannequin`. MetaHuman was tried and rejected for its per-figure pipeline cost. See
+[FINDING-crowd-pedestrians-and-traffic.md](FINDING-crowd-pedestrians-and-traffic.md).
+
+Still artificial: all 16 step in phase (no per-figure animation rate yet), and nobody
+crosses the road.
 
 ## Pedestrians are fenced off the carriageway, and the kerb is not what does it
 
@@ -290,10 +301,15 @@ Re-measured 2026-09-15 after the wheeled rebuild: every car's `CurSpeed` equals 
 `SpeedCmS` (390-560) except one braking into a corner (268 of 560), and `Wheel_FL` pitch
 differs car to car, so the wheels turn.
 
-**Open: cars do not keep their distance.** Each car holds its own speed on a shared route with
-no gap-keeping, so faster cars catch slower ones: in that same snapshot `BP_CityCar_C_2`, `_C_3`
-and `_C_4` (object names, not labels) sat within 4 m of each other on one leg. `BP_CityCar` is `QueryOnly` and moves with
-an unswept `SetActorLocation`, so they overlap rather than collide.
+**Cars do not keep their distance.** *Fixed 2026-09-21.* Each car held its own speed on a
+shared route with no gap-keeping, so faster cars caught slower ones: in that same snapshot
+`BP_CityCar_C_2`, `_C_3` and `_C_4` (object names, not labels) were read within 4 m of each
+other on one leg. `BP_CityCar` is `QueryOnly` and moves with an unswept `SetActorLocation`, so
+they overlap rather than collide. The "4 m" came from positions read one tool call at a time,
+and each call lets the game advance a frame, so read it as "they bunch up", not as a
+distance. `BP_CityCar` now limits its speed by the gap to the car ahead; measured inside the
+engine the nearest other car stays 621-771 cm away. See
+[FINDING-crowd-pedestrians-and-traffic.md](FINDING-crowd-pedestrians-and-traffic.md#cars-keep-their-distance).
 - `LogNavigation` has one warning — `Recreating dtNavMesh instance … maxTiles` — which is
   runtime regeneration doing its job, not a failure.
 - No `Blueprint Runtime Error` and no `Accessed None` in the log.

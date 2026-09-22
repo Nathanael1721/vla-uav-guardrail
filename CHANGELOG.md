@@ -14,6 +14,51 @@ shipped change and recorded as one.
 
 ---
 
+## [Unreleased]
+
+The CityLife level lives in the gitignored `PASBlocks/`, so what reproduces it
+is `docs/FINDING-crowd-pedestrians-and-traffic.md`. Backup of the pre-change
+assets: `PASBlocks/_backup/citylife_2026-09-21/`.
+
+### Added
+- CityLife pedestrians are six City Sample Crowd variants (3 male, 3 female)
+  instead of Manny. They reuse `BP_CityPed_Human`, built 2026-09-16 and never
+  placed, and walk on the existing animation with no retarget because
+  `SK_Base` is registered compatible with `SK_Mannequin`. Face RigLogic off,
+  face forced to LOD3, hair as cards instead of grooms. Measured: 12 and 15 of
+  16 walking, 0 in the carriageway.
+- Gap keeping in `BP_CityCar`: target speed falls with the square of
+  gap / (700 cm + 1.8 s x speed). Measured inside the engine: nearest other car
+  621-771 cm, 0 ticks under 4 m.
+- `citylife_level` in `docs/data/eval_sep2026.json` carries the pedestrian
+  model, the car gap and the second finding.
+
+### Fixed
+- `M_CarPaint` did not compile (two empty texture samples), so every
+  `MIC_Paint_*` rendered in the default grey. Textures assigned; three cars now
+  carry Gold, Purple and Black next to the five `VehicleVarietyPack` bodies in
+  their own paint. Six of eight colours are confirmed by measured hue in one frame; the
+  white truck and red sports car sat in shadow.
+- The crowd figure's clothes and head followed the template's mesh, not their
+  own body: `LeaderPoseComponent` on the template is a weak pointer to the CDO.
+  It is now set in `BeginPlay`.
+
+### Retracted
+- **"Paint is set per instance from the eight `MIC_Paint_*`"** in
+  `docs/FINDING-citylife-level.md`. The saved level referenced no
+  `MIC_Paint_*`, and their parent material did not compile, so no car could
+  have shown one.
+- **"Cars sat within 4 m of each other"**, same file. The positions were read
+  one tool call at a time, and each call lets the game advance a frame, so the
+  distance is not reliable. The same method reported 12 cm with gap keeping
+  already on, while the in-engine meter read 621 cm minimum.
+
+### Not measured
+- OWL-ViT `a person` did not improve with the realistic figures (10 m up:
+  Manny 0.062, crowd 0.054 / 0.105; 20 m up: 0.027 vs 0.012 / 0.013; n = 1
+  per cell). The frame-rate cost of the crowd is unknown: the editor world ran
+  at 2.8 ticks/s with or without the figures. Needs `-game` plus a flight.
+
 ## [0.5.1] — 2026-09-14
 
 ### Added
