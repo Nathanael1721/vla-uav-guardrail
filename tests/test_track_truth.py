@@ -23,7 +23,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 
 from track_truth import (HFOV_DEG, ON_TARGET_PX,          # noqa: E402
                          project_target_cx, score_rows, truth_points,
-                         score_standoff_firings)
+                         score_standoff_firings, load_rows)
 
 W = 400
 
@@ -278,28 +278,107 @@ def test_a_real_flight_beats_its_chance_floor_by_a_wide_margin():
             < pre["det_gt_err_px_median_chance"] / 2.0)
 
 
+def _irow(tick, x, y, psi, cx, pts, names=None, switched=False, seq=None,
+         img_w=768):
+    return {"tick": tick, "x": x, "y": y, "psi": psi,
+            "det_seq": tick if seq is None else seq,
+            "det": {"cx": cx, "img_w": img_w, "switched": switched},
+            "truth": {"class": "pedestrian", "pts": pts,
+                      **({"names": names} if names is not None else {})}}
+
+
+def test_the_frame_width_is_recovered_from_the_detections_file():
+    """Flight-log rows did not carry the width; at 768 px the scorer assumed
+    400 and a perfect box scored 184 px off. The width comes back by det_seq."""
+    import json as _json
+    import tempfile
+    from track_truth import fill_img_w
+    rows = [{"det_seq": 7, "det": {"cx": 384.0}}, {"det_seq": 8, "det": None},
+            {"det_seq": 9, "det": {"cx": 10.0, "img_w": 400}}]
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "detections.jsonl"
+        path.write_text(_json.dumps({"seq": 7, "det": {"img_w": 768}}) + "\n"
+                        + _json.dumps({"seq": 9, "det": {"img_w": 768}}) + "\n",
+                        encoding="utf-8")
+        assert fill_img_w(rows, path) == 1
+    assert rows[0]["det"]["img_w"] == 768
+    assert rows[2]["det"]["img_w"] == 400       # an explicit width is kept
+
+
+def test_a_box_dead_ahead_scores_zero_in_the_right_frame_width():
+    """The defect itself: the subject straight ahead at column 384 of 768."""
+    right = score_rows([_irow(1, 0.0, 0.0, 0.0, 384.0, [[20.0, 0.0]])])
+    wrong = score_rows([_irow(1, 0.0, 0.0, 0.0, 384.0, [[20.0, 0.0]], img_w=None)])
+    assert right["det_gt_err_px_median_in_shot"] == 0.0, right
+    assert wrong["det_gt_err_px_median_in_shot"] == 184.0, wrong
+
+
+def test_the_instance_scorer_follows_the_figure_the_lock_is_on():
+    """Two people in frame. The box sits on A; A walks away from the box and
+    B walks under it. The class score calls that on target, because the box is
+    on SOMEONE. The instance score does not, because it is not on A."""
+    from track_truth import score_instance
+    rows = [
+        _irow(1, 0, 0, 0, 384.0, [[20.0, 0.0], [20.0, 12.0]], ["A", "B"]),
+        _irow(2, 0, 0, 0, 384.0, [[20.0, -12.0], [20.0, 0.0]], ["A", "B"]),
+        _irow(3, 0, 0, 0, 384.0, [[20.0, -12.0], [20.0, 0.0]], ["A", "B"]),
+    ]
+    cls = score_rows(rows)
+    inst = score_instance(rows)
+    assert cls["det_gt_err_px_median_in_shot"] == 0.0
+    assert inst["det_gt_err_px_median_in_shot"] > 100.0, inst
+    assert inst["subjects"] == 1 and inst["reassociations"] == 0
+
+
+def test_a_lock_switch_reassociates_and_is_counted():
+    from track_truth import score_instance
+    rows = [
+        _irow(1, 0, 0, 0, 384.0, [[20.0, 0.0], [20.0, 12.0]], ["A", "B"]),
+        # the lock re-acquires on B: a NEW detection flagged switched
+        _irow(2, 0, 0, 0, 768 * (0.5 + 30.96 / 90.0), [[20.0, 0.0], [20.0, 12.0]],
+             ["A", "B"], switched=True),
+    ]
+    inst = score_instance(rows)
+    assert inst["reassociations"] == 1 and inst["subjects"] == 2, inst
+    assert inst["det_gt_err_px_median_in_shot"] < 1.0, inst
+
+
+def test_logs_without_names_are_not_instance_scorable():
+    from track_truth import score_instance
+    rows = [_irow(1, 0, 0, 0, 384.0, [[20.0, 0.0]])]
+    assert score_instance(rows) is None
+
+
 def test_the_median_beats_every_null_on_every_flight_and_the_fraction_does_not():
     """Why the headline moved. The threshold count is within a whisker of a
     lag-1 baseline everywhere - repeat your own last box and you score the same
     - while the median separates cleanly on every flight with scored rows.
 
     Two shapes of exception are known and both are asserted below: a subject
-    that was mostly OUT of frame, and a scene so crowded that the class-level
-    null has a truth point everywhere it looks."""
+    that was mostly OUT of frame, and a flight whose own presence check called
+    the box ABSENT on most ticks - the detector was on something else, and the
+    median says so."""
     out = ROOT / "demo" / "out"
     if not out.is_dir():
         return SKIP
     checked = 0
     wins, losses = [], []
+    presence_absent = {}
     for run in sorted(out.iterdir()):
         log = run / "flight_log.jsonl"
         if not log.is_file():
             continue
-        rows = [json.loads(x) for x in log.open(encoding="utf-8") if x.strip()]
+        # load_rows, not a bare read: it recovers each box's frame width, and
+        # without it every 768 px flight is scored as if it were 400 px wide.
+        rows = load_rows(run)
         r = score_rows(rows)
         if not r["det_scored"] or r["det_gt_err_px_median_chance"] is None:
             continue
         checked += 1
+        pres = [x.get("presence") for x in rows if x.get("det")]
+        if any(pres):
+            presence_absent[run.name] = (sum(1 for v in pres if v == "ABSENT")
+                                         / len(pres))
         beats = (r["det_gt_err_px_median_in_shot"]
                  < r["det_gt_err_px_median_chance"])
         if beats:
@@ -323,30 +402,28 @@ def test_the_median_beats_every_null_on_every_flight_and_the_fraction_does_not()
     assert checked >= 20, checked
     assert len(wins) >= 15, (len(wins), losses)
     for name, real, null, in_shot, candidates in losses:
-        # SHAPE TWO, found 2026-09-22 on the CityLife flights. The null is the
-        # distance from an unskilled box to the NEAREST truth point, and this
-        # truth is a CLASS - every pedestrian in the scene. In a street with 12
-        # of them that null is a real bar. In a city with 40, where 30 are in
-        # frame at once, the nearest one is always a few pixels away and the
-        # null is unbeatable by construction: citylife_city scores 45.5 px
-        # against 5.2. That is not the detector being bad, it is the statistic
-        # having stopped measuring. The fix is to score the LOCKED instance
-        # rather than the class, which needs the lock to name a figure - see
-        # docs/FINDING-crowd-pedestrians-and-traffic.md. Until then a crowded
-        # scene is a known exception, and the threshold is stated here rather
-        # than hidden in a skip.
-        crowded = candidates >= 20
-        assert in_shot < 0.5 or crowded, (
+        # SHAPE TWO: the flight's OWN presence check said the box was not the
+        # subject on most ticks. citylife_follow2 and _follow3 lose to the null
+        # (128.2 px against 31.9, 113.5 against 23.3) with somebody in frame
+        # 94 % and 81 % of the time - a crowd guarantees that - while their
+        # presence verdict called the box ABSENT on 61 % and 63 % of detected
+        # ticks: a "person" 2.9 m wide at 75 m, i.e. a building. The median
+        # reporting those flights as bad is the median working.
+        #
+        # This replaces a "crowded scene" exception written on 2026-09-22 from
+        # numbers scored in the wrong frame width (400 px assumed, 768 px real).
+        # With the width right the crowded flight it was written for,
+        # citylife_city, BEATS its null (9.2 px against 10.1) and needs no
+        # excuse; the two that lose were never crowd artefacts. An exception
+        # keyed on the crowd would have excused exactly the flights the
+        # detector got wrong.
+        absent = presence_absent.get(name)
+        assert in_shot < 0.5 or (absent is not None and absent > 0.5), (
             f"{name} lost to the null ({real} px against {null}) on a flight "
-            f"whose subject was in frame {in_shot:.0%} of the time with at most "
-            f"{candidates} truth candidates - that is not a known shape of this "
-            f"exception")
-    # The crowded exception cannot become the rule: if most flights on disk
-    # started excusing themselves this guard would assert nothing. Three is the
-    # number of CityLife flights kept; a fourth crowded loss means either the
-    # instance-level scoring is overdue or the exception is being leaned on.
-    crowded_losses = [l for l in losses if l[4] >= 20]
-    assert len(crowded_losses) <= 3, crowded_losses
+            f"whose subject was in frame {in_shot:.0%} of the time and whose "
+            f"presence check called the box ABSENT on "
+            f"{'unknown' if absent is None else f'{absent:.0%}'} of ticks - "
+            f"that is not a known shape of this exception")
 
 
 def test_a_constant_detector_is_the_null_model_that_actually_bites():

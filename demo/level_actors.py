@@ -145,6 +145,16 @@ class LevelActors:
         self._last_t = t
         self._poll()
 
+    def refresh(self) -> None:
+        """Poll now, outside the flight clock, without moving the throttle.
+
+        For reads taken before the mission clock starts (the start gate's "was
+        that the subject?" check). Going through `update(t)` there would record
+        a pre-mission time as the last poll, and the first ticks of the mission
+        - whose t restarts near zero - would all be skipped as too soon.
+        """
+        self._poll()
+
     def stats(self) -> dict:
         return {"source": "level", "kind": self.kind,
                 "figures": len(self.figures),
@@ -155,6 +165,64 @@ class LevelActors:
     def destroy(self) -> None:
         """The level owns these actors; destroying them is not ours to do."""
         print(f"[level] {self.n_calls} pose poll(s), {self.n_nan} NaN read(s)")
+
+
+class LevelCar:
+    """One car the LEVEL drives, standing in for the client's scripted car.
+
+    `follow_vlm` reads a subject car through a handful of attributes - `.pos` for
+    the truth row and the live separation, `.update(t)` once a tick, `.destroy()`
+    at the end, `.spec.desc_match` for the colour sanity check - and none of
+    them care who moves the car. So a car on a CityLife loop becomes the subject
+    by polling ONE tag, and the flight is scored against that one instance: a
+    crowd of look-alikes cannot saturate the null, because the truth list has a
+    single entry.
+
+    `actual_name` is None for the same reason the env-actor car's is: there is
+    nothing here for the client to teleport or destroy.
+    """
+
+    def __init__(self, world, tag: str, desc: Optional[str] = None,
+                 min_period_s: float = 0.1):
+        self.tag = tag
+        self.source = LevelActors(world, [tag], kind="car",
+                                  min_period_s=min_period_s)
+        self.pos = (0.0, 0.0)
+        self.heading = 0.0
+        self.actual_name = None
+        self.spec = _Spec(desc or tag)
+
+    def _sync(self) -> None:
+        if self.source.figures:
+            f = self.source.figures[0]
+            self.pos = (f.x, f.y)
+            self.heading = f.heading
+
+    def spawn(self) -> int:
+        """Resolve the tag. Refuses the flight if it does not resolve."""
+        n = self.source.resolve()
+        self._sync()
+        return n
+
+    def update(self, t: float) -> None:
+        self.source.update(t)
+        self._sync()
+
+    def refresh(self) -> None:
+        self.source.refresh()
+        self._sync()
+
+    def stats(self) -> dict:
+        return dict(self.source.stats(), tag=self.tag)
+
+    def destroy(self) -> None:
+        self.source.destroy()
+
+
+@dataclass
+class _Spec:
+    """The one field of `moving_car.CarSpec` the flight reads for a level car."""
+    desc_match: str
 
 
 def names(prefix: str, count: int, start: int = 0) -> List[str]:

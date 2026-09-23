@@ -438,6 +438,24 @@ def subject_truth_pts(subject_class, car, people) -> list:
     return []
 
 
+def subject_truth_names(subject_class, car, people):
+    """Names parallel to `subject_truth_pts`, or None when the source has none.
+
+    The class-level score asks "is the box on ANY pedestrian", which saturates in
+    a crowd. Following one NAME through the flight is what lets
+    `track_truth.instance_rows` ask "is the box on the one it locked".
+    """
+    if subject_class == "pedestrian":
+        if people is None:
+            return None
+        names = [getattr(f, "name", None) for f in people.figures]
+        return names if all(names) else None
+    if subject_class == "car" and car is not None:
+        tag = getattr(car, "tag", None)
+        return [tag] if tag else None
+    return None
+
+
 # The depth stream is quantised to whole metres (see SemanticObs.get_depth),
 # so a margin below 1 m is below the resolution of the signal it tests. A
 # 0.9 m true height difference quantises to 1 m about 90% of the time, which
@@ -751,6 +769,23 @@ def presence_verdict(det, rng_m, query: str, colour_min: float,
     if w_m is None:
         return "UNSURE", "no range — size not checked"
     return "PRESENT", f"{w_m:.1f} m wide at {rng_m:.0f} m"
+
+
+def presence_gate(det, rng_m, query: str, colour_min: float):
+    """(det or None, blocked, reason): may this detection steer the aircraft?
+
+    The presence verdict already names the ways a box is not the subject - wall
+    sized, the wrong colour, a width no such object has at that range - but it
+    was only ever consulted by the search branch. This is the same verdict put
+    in front of the controller: a box it calls ABSENT is handed on as None, so
+    the coast and search logic treat it exactly like a miss.
+    """
+    if det is None:
+        return None, False, ""
+    verdict, why = presence_verdict(det, rng_m, query, colour_min)
+    if verdict == "ABSENT":
+        return None, True, why
+    return det, False, ""
 
 
 def appearance(img, box, h_bins: int = 8, s_bins: int = 4):
@@ -1654,6 +1689,7 @@ class Grounder:
                 if det is not None:
                     self._det = det
                     self._app = app
+                    self._det_switched = bool(switched)
                     self._t_det = time.time()
                     self._n_seen += 1
                     last = (det[0], time.time())
@@ -1694,6 +1730,7 @@ class Grounder:
         with self._lock:
             return {"seq": self._seq, "t": self._t, "t_det": self._t_det,
                     "det": self._det, "app": self._app, "infer_ms": self._infer_ms,
+                    "switched": getattr(self, "_det_switched", False),
                     "pre_ms": self._pre_ms, "fwd_ms": self._fwd_ms,
                     "n_seen": self._n_seen, "n_miss": self._n_miss}
 
@@ -1816,6 +1853,19 @@ async def fly(args) -> int:
             "--pedestrians and --level-peds both place pedestrians in the "
             "truth, from two sources that do not know about each other. Pick "
             "one: the client's baked figures, or the level's own.")
+    # A car the LEVEL drives replaces the client's scripted one; with both, the
+    # truth row would describe one car and the camera would be looking at two.
+    if args.level_car:
+        if not args.no_car or args.traffic > 0:
+            raise SystemExit(
+                "--level-car takes the subject from the level, so the client "
+                "must not drive one of its own: pass --no-car and leave "
+                "--traffic at 0.")
+        if subject_class not in ("car", "van", "truck", "bus"):
+            raise SystemExit(
+                f"--level-car {args.level_car} is a vehicle, but {args.object!r} "
+                f"selects the class {subject_class!r}. The truth row would score "
+                f"a car against a box drawn on something else.")
 
     # NOTE on ordering: both refusals below run AFTER fly() has unlinked the
     # tag's previous flight_log.jsonl and detections.jsonl. That unlink predates
@@ -1920,6 +1970,11 @@ async def fly(args) -> int:
     people = None
     parked = None
     n_absent = 0
+    # Ticks whose detection the presence verdict called ABSENT and which were
+    # therefore NOT allowed to steer (see --presence-gates-control).
+    n_presence_blocked = 0
+    start_gate = {"enabled": False}
+    stage_ms = {"kin": [], "truth": [], "shield": [], "cmd": [], "work": []}
     # Initialised at function scope, not inside the `async with`. When the sim
     # fails to connect the block raises before its own initialisers run, and the
     # metrics section then dies with UnboundLocalError - which buries the real
@@ -2115,6 +2170,16 @@ async def fly(args) -> int:
                 kind="pedestrian", min_period_s=args.level_truth_period)
             people.resolve()          # refuses the flight if none resolve
 
+        # One car the level drives, as THE subject. Its truth is a single
+        # point, so the car mission is scored against one instance - a street
+        # full of other cars cannot saturate the null the way forty
+        # pedestrians did (docs/FINDING-crowd-pedestrians-and-traffic.md).
+        if args.level_car:
+            import level_actors
+            car = level_actors.LevelCar(world, args.level_car, desc=args.object,
+                                        min_period_s=args.level_truth_period)
+            car.spawn()               # refuses the flight if the tag is absent
+
         # Scenery. Spawned once and, for all but a couple of them, never touched
         # again - a standing figure costs no per-tick RPC, so it cannot take
         # anything from the detector. Default 0 so every recorded flight and every
@@ -2265,6 +2330,65 @@ async def fly(args) -> int:
             car_trajectory.start(env_car)
             print("[car] trajectory playback started with the mission clock")
 
+        # WAIT FOR THE SUBJECT, ON THE DETECTOR'S WORD.
+        #
+        # A level that drives its own traffic does not wait for the aircraft:
+        # the red car is somewhere on a 684 m loop when the flight begins. The
+        # mission clock therefore starts when the DETECTOR has produced N
+        # consecutive boxes that pass the colour gate and the presence checks -
+        # the same evidence the controller steers by. Ground truth is read
+        # afterwards only to REPORT whether that was the subject, never to
+        # decide when to go.
+        if args.start_when_seen > 0:
+            t_wait0 = time.time()
+            streak, last_gseq, first_ok = 0, -1, None
+            while time.time() - t_wait0 < args.start_timeout_s:
+                kin_w = drone.get_ground_truth_kinematics()
+                pw = kin_w["pose"]["position"]
+                obs.put_pose(pw["x"], pw["y"], quat_yaw(kin_w["pose"]["orientation"]))
+                gw = grounder.latest()
+                if gw["seq"] != last_gseq:
+                    last_gseq = gw["seq"]
+                    dw = gw["det"]
+                    fresh = gw["t_det"] and (time.time() - gw["t_det"]) < 1.0
+                    ok = False
+                    if dw is not None and fresh:
+                        rw = range_from_depth(obs.get_depth(), dw) if have_depth else None
+                        ok = presence_verdict(dw, rw, args.object,
+                                              args.colour_min)[0] != "ABSENT"
+                    streak = streak + 1 if ok else 0
+                    if ok and first_ok is None:
+                        first_ok = time.time() - t_wait0
+                    if streak >= args.start_when_seen:
+                        break
+                vz_w = float(np.clip((args.cruise_alt + pw["z"]) * args.alt_gain,
+                                     -args.climb_max, args.climb_max))
+                await drone.move_by_velocity_async(0.0, 0.0, -vz_w, duration=0.3,
+                                                   yaw_is_rate=True, yaw=0.0)
+                await asyncio.sleep(0.1)
+            waited = time.time() - t_wait0
+            start_gate = {"enabled": True, "needed": args.start_when_seen,
+                          "reached": streak >= args.start_when_seen,
+                          "wait_s": round(waited, 1),
+                          "first_candidate_s": (None if first_ok is None
+                                                else round(first_ok, 1))}
+            # Was it the subject? Truth answers that AFTER the decision.
+            if car is not None and hasattr(car, "refresh"):
+                car.refresh()
+                kin_w = drone.get_ground_truth_kinematics()
+                pw = kin_w["pose"]["position"]
+                dw = grounder.latest()["det"]
+                if dw is not None:
+                    tcx, tdeg = track_truth.project_target_cx(
+                        pw["x"], pw["y"], quat_yaw(kin_w["pose"]["orientation"]),
+                        car.pos[0], car.pos[1], int(dw[5]), CAMERA_HFOV_DEG)
+                    start_gate["subject_px_err"] = round(abs(float(dw[0]) - tcx), 1)
+                    start_gate["subject_in_shot"] = abs(tdeg) <= CAMERA_HFOV_DEG / 2
+                    start_gate["subject_range_m"] = round(math.hypot(
+                        car.pos[0] - pw["x"], car.pos[1] - pw["y"]), 1)
+            print(f"[start] {'subject acquired' if start_gate['reached'] else '*** TIMED OUT, no subject ***'}"
+                  f" after {waited:.0f} s: {start_gate}")
+
         t0, last_seen = time.time(), 0.0
         last_bearing, brg_rate, last_cmd, mode = 0.0, 0.0, (0.0, 0.0), "hold"
         # The presence verdict is computed further down the tick, so the search
@@ -2331,6 +2455,7 @@ async def fly(args) -> int:
                   f"{args.object_width_m:.2f} m subject)")
         while time.time() - t0 < args.max_s:
             tick += 1
+            _tk0 = time.time()
             # Retarget BEFORE the tick reads anything, so the whole tick - the
             # detector query, the stand-off class, the log row - describes one
             # target rather than half of each.
@@ -2388,11 +2513,14 @@ async def fly(args) -> int:
                 retarget_events.append(ev)
                 print(f"[retarget] t+{now_s:.1f}s  {old_obj!r} ({old_class}) "
                       f"-> {phrase!r} ({subject_class})", flush=True)
+            _ta = time.time()
             kin = drone.get_ground_truth_kinematics()
+            _ms_kin = (time.time() - _ta) * 1000
             p = kin["pose"]["position"]
             yaw = quat_yaw(kin["pose"]["orientation"])
             state = State(x=p["x"], y=p["y"], up=-p["z"])
             obs.put_pose(p["x"], p["y"], yaw)
+            _ta = time.time()
             if people is not None:
                 # Only the pacing few cost anything here; the standing majority
                 # is skipped without an RPC. Scenery is never allowed to fail a
@@ -2410,11 +2538,29 @@ async def fly(args) -> int:
                 # is a pure function of time and describes exactly the path that
                 # was uploaded, so the metrics and the simulator agree.
                 car.pos = car.pose_at(time.time() - t0)[:2]
+            _ms_truth = (time.time() - _ta) * 1000
 
             g = grounder.latest()
             # age against the last DETECTION, not the last inference
             det = g["det"]
+            det_raw = det
             age = (time.time() - g["t_det"]) if g["t_det"] else 1e9
+            # THE SYSTEM ALREADY KNEW, AND STEERED ANYWAY.
+            #
+            # On citylife_city the presence check called the box ABSENT on 83 %
+            # of ticks - "implies 2.9 m wide at 75 m; a person is 0.2-1.5 m" -
+            # and the controller servoed on it regardless, because the verdict
+            # only decided whether the search branch may creep forward. The
+            # video shows the result: a TARGET LOCKED box on a building facade
+            # while the people were in plain view. With the gate on, a box the
+            # verdict rejects is not a sighting: no estimator update, no servo,
+            # and the coast/search branches take over exactly as for a miss.
+            presence_blocked = False
+            if args.presence_gates_control and det is not None:
+                r_pre = range_from_depth(obs.get_depth(), det) if have_depth else None
+                det, presence_blocked, _ = presence_gate(det, r_pre, args.object,
+                                                         args.colour_min)
+                n_presence_blocked += int(presence_blocked)
             # FEED THE ESTIMATOR, ONCE PER NEW DETECTION.
             #
             # Only measurements go in: the box centre, the depth range, and the
@@ -2583,7 +2729,7 @@ async def fly(args) -> int:
             # aircraft would spiral away from a target it had already lost.
             orbit_fwd = fwd
             rng_m = range_from_depth(obs.get_depth(), det) if have_depth else None
-            verdict, why = presence.update(det, rng_m, g.get("app"))
+            verdict, why = presence.update(det_raw, rng_m, g.get("app"))
             # Carried to the next tick, where the search branch decides whether
             # creeping forward is justified. See --search-creep.
             last_verdict = verdict
@@ -2702,8 +2848,10 @@ async def fly(args) -> int:
             else:
                 shield.set_subject(None)
 
+            _ta = time.time()
             d = shield.filter(state, smooth)
             audit.log(tick, d)
+            _ms_shield = (time.time() - _ta) * 1000
             if d.touched:
                 n_touched += 1
             e = d.emitted
@@ -2733,7 +2881,11 @@ async def fly(args) -> int:
                 "det": (None if det is None else
                         {"cx": round(det[0], 1), "cy": round(det[1], 1),
                          "w": round(det[2], 1), "score": round(det[4], 4),
-                         "colour": round(det[7], 3)}),
+                         "colour": round(det[7], 3), "img_w": int(det[5]),
+                         # Was this box a re-acquisition by the instance lock?
+                         # The instance scorer re-associates the subject there.
+                         "switched": bool(g.get("switched"))}),
+                "presence_blocked": presence_blocked,
                 "bearing_deg": round(math.degrees(bearing), 2),
                 "raw": raw.model_dump(), "smooth": smooth.model_dump(),
                 "emitted": e.model_dump(),
@@ -2752,12 +2904,23 @@ async def fly(args) -> int:
                 # not once the flight has retargeted. Kept as its own field so
                 # older logs keep scoring exactly as they did.
                 "truth": {"class": subject_class,
-                          "pts": subject_truth_pts(subject_class, car, people)},
+                          "pts": subject_truth_pts(subject_class, car, people),
+                          # Names parallel to pts, when the source has them,
+                          # so an instance-level scorer can follow ONE figure.
+                          "names": subject_truth_names(subject_class, car, people)},
+                "ms": {"kin": round(_ms_kin, 1), "truth": round(_ms_truth, 1),
+                       "shield": round(_ms_shield, 1),
+                       "work": round((time.time() - _tk0) * 1000, 1)},
             })
+            stage_ms["kin"].append(_ms_kin)
+            stage_ms["truth"].append(_ms_truth)
+            stage_ms["shield"].append(_ms_shield)
 
+            _ta = time.time()
             await drone.move_by_velocity_async(
                 e.vx, e.vy, -e.vz_up, duration=0.3,
                 yaw_is_rate=True, yaw=e.yaw_rate)
+            stage_ms["cmd"].append((time.time() - _ta) * 1000)
             if recorder is not None:
                 # Hand over state only. The decode, draw and encode happen on the
                 # recorder thread: doing them here cost 32-40 ms a tick and drove
@@ -2784,7 +2947,21 @@ async def fly(args) -> int:
                       f"{state.up:4.1f}) {mode.upper():6} "
                       f"brg={math.degrees(bearing):+5.1f} fwd={fwd:4.1f} "
                       f"sep={sep:5.1f}m shield={'HIT' if d.touched else '-'}")
-            await asyncio.sleep(TICK)
+            # PACE TO A DEADLINE, NOT A NAP.
+            #
+            # This slept a full TICK after the tick's work, so the period was
+            # work + 100 ms and the loop could never reach its own 10 Hz:
+            # 8.33 Hz on retarget_smooth is ~20 ms of work plus the nap, and
+            # 4-7 Hz on the CityLife flights is the same nap on a heavier tick.
+            # The 9.5 Hz gate was being measured against a loop that was
+            # structurally unable to pass it. --legacy-tick-sleep restores the
+            # old pacing so recorded flights can be reproduced.
+            _work = time.time() - _tk0
+            stage_ms["work"].append(_work * 1000)
+            if args.legacy_tick_sleep:
+                await asyncio.sleep(TICK)
+            else:
+                await asyncio.sleep(max(0.0, TICK - _work))
 
         grounder.stop()
         for _ in range(600):
@@ -2941,6 +3118,21 @@ async def fly(args) -> int:
         # wrong instead of unscorable.
         "pedestrian_truth": (people.stats() if people is not None
                              else {"source": "none"}),
+        # The level car, when it is the subject: one tag, polled by name.
+        "car_truth": (car.stats() if car is not None and hasattr(car, "stats")
+                      else {"source": "client" if car is not None else "none"}),
+        # Detections the presence verdict refused to let steer.
+        "presence_gates_control": bool(args.presence_gates_control),
+        "presence_blocked_ticks": n_presence_blocked,
+        # When the mission clock started, and on what evidence.
+        "start_gate": start_gate,
+        # Where each tick's time went. `work` is the whole tick before pacing.
+        "stage_ms_median": {k: (round(float(np.median(v)), 1) if v else None)
+                            for k, v in stage_ms.items()},
+        "tick_pacing": "legacy-sleep" if args.legacy_tick_sleep else "deadline",
+        # Scored against ONE figure followed by name between lock switches,
+        # when the truth carries names. See track_truth.instance_rows.
+        "instance_score": track_truth.score_instance(rows),
         # Mid-flight target changes, with the class each one selected. This is
         # what lets a reader check the claim the demo makes - that the enforced
         # stand-off changed because the WORD changed - against the flight log
@@ -3153,6 +3345,26 @@ def main() -> int:
                          "Mutually exclusive with --pedestrians, which spawns "
                          "its own. Costs one pose RPC per poll instead of one "
                          "teleport per walker per tick.")
+    ap.add_argument("--level-car", default=None,
+                    help="take the SUBJECT car from the level: the actor tag of "
+                         "one car the level drives (e.g. Car_10). Needs "
+                         "--no-car. Scored against that one instance.")
+    ap.add_argument("--presence-gates-control", action="store_true",
+                    help="a detection the presence verdict calls ABSENT "
+                         "(implausible size, wall-sized, wrong colour) may not "
+                         "steer: it is treated as a miss. Off by default so "
+                         "recorded command lines keep their meaning.")
+    ap.add_argument("--start-when-seen", type=int, default=0,
+                    help="hover after take-off until the detector has produced "
+                         "N consecutive boxes that pass the colour and presence "
+                         "checks, then start the mission clock. 0 disables.")
+    ap.add_argument("--start-timeout-s", type=float, default=240.0,
+                    help="give up waiting for --start-when-seen after this long "
+                         "and fly anyway; the metrics say it timed out.")
+    ap.add_argument("--legacy-tick-sleep", action="store_true",
+                    help="sleep a whole TICK after each tick's work (the old "
+                         "pacing, which capped the loop below 10 Hz) instead "
+                         "of sleeping to a 0.1 s deadline.")
     ap.add_argument("--level-ped-prefix", default="Ped_",
                     help="tag prefix for --level-peds; the level tags each "
                          "figure with this plus a two-digit index.")

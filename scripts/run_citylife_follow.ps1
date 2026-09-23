@@ -10,6 +10,14 @@
 #     .\scripts\run_citylife_follow.ps1
 #     .\scripts\run_citylife_follow.ps1 -Seconds 300 -Tag citylife_long
 #
+# THE CAR MISSION. Follow one car the LEVEL drives, named by colour:
+#
+#     .\scripts\run_citylife_follow.ps1 -Object "a red car" -LevelCar Car_10 `
+#         -Seconds 240 -Tag citylife_redcar
+#
+# The truth is then that ONE car (by tag), so the tracking score has a single
+# subject and its null cannot saturate the way forty pedestrians did.
+#
 # WARNING: like every demo script here, this restarts the simulator, which kills
 # any process holding Blocks.uproject - INCLUDING an editor you have open. Close
 # the editor first. The match is on the .uproject, not the process name, so
@@ -22,6 +30,9 @@ param(
     [double]$WantRange = 12.0,          # metres; 0 would derive it from --want-width
     [double]$TruthPeriod = 0.5,         # s between pose polls; see the note below
     [string]$Tag     = "citylife_follow",
+    [string]$LevelCar = "",             # e.g. Car_10: follow a car the level drives
+    [int]$StartWhenSeen = 5,            # consecutive plausible boxes before t0; 0 = off
+    [double]$StartTimeout = 240,
     [int]$SimWidth   = 960,
     [int]$SimHeight  = 540,
     [switch]$SkipSim
@@ -98,23 +109,44 @@ Say "following `"$Object`" for ${Seconds}s against $LevelPeds level pedestrians"
 # No --pedestrians and no --parked: the level already walks its own, and
 # spawning more would put two crowds in one street and spend RPC doing it.
 # --no-car for the same reason - the level drives eight.
+# --presence-gates-control: a box the presence verdict rejects (a "person" 2.9 m
+# wide at 75 m, a wall-sized box, the wrong colour) may not steer. Without it the
+# aircraft chased building facades on citylife_city while its own check said
+# ABSENT on 83 % of ticks.
+#
+# --start-when-seen: the level's traffic does not wait for the aircraft, so the
+# mission clock starts when the DETECTOR has produced that many plausible boxes
+# in a row - the evidence the controller steers by - not when truth says so.
+#
+# Policy: follow_pedestrian.yaml for both missions. Besides the 10 m pedestrian
+# ring it carries the catch-all 5 m SubjectStandoff (subject_class "*"), which
+# is the rule that binds a car; the retarget demo followed its car under it.
 $a = @("demo\follow_vlm.py",
        "--object", $Object,
        "--tag", $Tag,
        "--policy", "policies\follow_pedestrian.yaml",
        "--max-s", "$Seconds",
        "--det-thresh", "0.008",
-       "--want-range", "$WantRange",
        "--cruise-alt", "8",
        "--lock-target",
        "--no-car",
+       "--presence-gates-control",
+       "--start-when-seen", "$StartWhenSeen",
+       "--start-timeout-s", "$StartTimeout",
        "--level-peds", "$LevelPeds",
        "--level-truth-period", "$TruthPeriod",
        "--save-view")
+if ($LevelCar) {
+    # A car: 0.16 of frame width is the calibration made for a 4 m car (15.8 m
+    # stand-off), and the subject's truth is the one tag.
+    $a += @("--level-car", $LevelCar, "--want-width", "0.16")
+} else {
+    $a += @("--want-range", "$WantRange")
+}
 & $Py @a
 
 Say "done. Read the result from the artefact, not the screen:"
-Write-Host "    demo\out\$Tag\metrics.json     -> det_hz, frac_on_target, pedestrian_truth"
+Write-Host "    demo\out\$Tag\metrics.json     -> det_hz, frac_on_target (+ _chance), instance_score, start_gate, stage_ms_median"
 Write-Host "    demo\out\$Tag\kpi.json         -> p0_violation_escape_rate must be 0.0"
 Write-Host "  then build the video:"
 Write-Host "    python tools\make_demo_video.py --tag $Tag --height 720"

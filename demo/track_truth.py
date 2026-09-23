@@ -118,8 +118,10 @@ did last frame" is not measuring much.)
 """
 from __future__ import annotations
 
+import json
 import math
 import random
+from pathlib import Path
 from typing import Iterable, Optional
 
 # The Chase/front camera's horizontal field of view, degrees. Matches the
@@ -565,3 +567,135 @@ def score_rows(rows: Iterable[dict], hfov_deg: float = HFOV_DEG,
         # whatever the detector found, it was not the subject.
         "n_det_with_target_out_of_fov": n_out_of_fov,
     }
+# --------------------------------------------------------------------------
+# THE FRAME WIDTH HAS TO TRAVEL WITH THE BOX.
+#
+# `_score` projects the truth into a frame `det["img_w"]` pixels wide and falls
+# back to 400 when the row does not say. Flight-log rows never said: only
+# detections.jsonl carried the width. That was harmless while the camera WAS
+# 400 px wide, and silently wrong from the first flight at 768 x 432 - every
+# CityLife flight. A subject dead ahead projects to column 200 of an assumed
+# 400 px frame while the detector's box sits at column 384 of the real one, so
+# a perfect box scored 184 px off and a box on junk could score on target.
+# Measured on citylife_follow3: reported 0.721 on target, 0.365 once the width
+# is right, against a null of 0.808.
+#
+# Rows written from 2026-09-23 carry `det.img_w`. For the ones before, the width
+# is recovered from detections.jsonl by `det_seq`.
+def fill_img_w(rows: list, detections_path) -> int:
+    """Copy each detection's frame width into the flight-log rows that lack it.
+
+    Returns how many rows were filled. Rows whose det_seq is not in the
+    detections file are left as they were, which keeps the old 400 px default
+    for flights that genuinely were 400 px wide.
+    """
+    path = Path(detections_path)
+    if not path.is_file():
+        return 0
+    widths = {}
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            d = json.loads(line)
+            det = d.get("det")
+            if det and det.get("img_w"):
+                widths[d.get("seq")] = int(det["img_w"])
+    n = 0
+    for r in rows:
+        det = r.get("det")
+        if det and not det.get("img_w") and r.get("det_seq") in widths:
+            det["img_w"] = widths[r["det_seq"]]
+            n += 1
+    return n
+
+
+def load_rows(run_dir) -> list:
+    """A flight's rows with the frame width recovered. Use this, not a bare read."""
+    run = Path(run_dir)
+    with (run / "flight_log.jsonl").open(encoding="utf-8") as fh:
+        rows = [json.loads(x) for x in fh if x.strip()]
+    fill_img_w(rows, run / "detections.jsonl")
+    return rows
+
+
+# --------------------------------------------------------------------------
+# SCORED AGAINST THE ONE IT LOCKED, NOT AGAINST THE CLASS.
+#
+# `truth_points` is a list because "a person" names a class, and in a street
+# with twelve people that is the right question. With forty, a box anywhere
+# lands near somebody: the null reached 1.000 on citylife_city. What the
+# mission actually needs is that the aircraft stays on ONE subject, and the
+# truth can answer that once it carries names.
+#
+# The subject is fixed at acquisition - the first scored row, and every row
+# where the instance lock re-acquired on a new detection - as the in-shot
+# figure whose projection lies nearest the box, and is then followed BY NAME.
+# That choice is made with the box, so the acquisition row is favourable by
+# construction; what the score then measures is whether the box STAYS on that
+# figure, which is the question a lock is for. `reassociations` says how often
+# the subject was re-chosen, and a high count means the lock did not hold.
+def _associate(rows, hfov_deg: float = HFOV_DEG):
+    """(rows rewritten to one figure each, metadata), or (None, None)."""
+    out, cur, last_seq, any_names = [], None, None, False
+    reassoc, subjects = 0, []
+    for r in rows:
+        t = r.get("truth") if isinstance(r.get("truth"), dict) else None
+        names = (t or {}).get("names")
+        pts = (t or {}).get("pts") or []
+        det = r.get("det")
+        if not names or len(names) != len(pts):
+            out.append(r)
+            continue
+        any_names = True
+        new_det = det is not None and r.get("det_seq") != last_seq
+        if det is not None:
+            last_seq = r.get("det_seq")
+        reacquire = new_det and bool(det.get("switched"))
+        if (cur is None or reacquire) and det is not None and r.get("psi") is not None:
+            img_w = int(det.get("img_w") or 400)
+            best = None
+            for n, (tx, ty) in zip(names, pts):
+                cx, deg = project_target_cx(r["x"], r["y"], r["psi"],
+                                            float(tx), float(ty), img_w, hfov_deg)
+                if abs(deg) > hfov_deg / 2.0:
+                    continue
+                e = abs(float(det["cx"]) - cx)
+                if best is None or e < best[0]:
+                    best = (e, n)
+            if best is not None and best[1] != cur:
+                if cur is not None:
+                    reassoc += 1
+                cur = best[1]
+                subjects.append(cur)
+        nt = dict(t)
+        if cur is not None and cur in names:
+            i = names.index(cur)
+            nt["pts"], nt["names"] = [pts[i]], [cur]
+        else:
+            nt["pts"], nt["names"] = [], []
+        nr = dict(r)
+        nr["truth"] = nt
+        out.append(nr)
+    if not any_names:
+        return None, None
+    return out, {"reassociations": reassoc, "subjects": len(set(subjects))}
+
+
+def instance_rows(rows, hfov_deg: float = HFOV_DEG) -> Optional[list]:
+    """Rows rewritten so `truth.pts` is the single figure the lock is on.
+
+    Returns None when no row carries `truth.names` (logs from before names were
+    recorded), so a caller can tell "not available" from "scored badly".
+    """
+    return _associate(list(rows), hfov_deg)[0]
+
+
+def score_instance(rows, hfov_deg: float = HFOV_DEG) -> Optional[dict]:
+    """`score_rows` over `instance_rows`: the same scorer, one subject at a time."""
+    inst, meta = _associate(list(rows), hfov_deg)
+    if inst is None:
+        return None
+    out = score_rows(inst, hfov_deg)
+    out.update(meta)
+    return out

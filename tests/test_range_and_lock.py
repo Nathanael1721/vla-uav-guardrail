@@ -35,7 +35,8 @@ from follow_vlm import (PresenceMonitor, TargetLock,          # noqa: E402
                         SUBJECT_CLASS_CANON, SUBJECT_WIDTH_M,
                         range_agreement, subject_truth_pts,
                         yaw_command, YAW_RATE_CAP, servo,
-                        camera_hfov_deg, CAMERA_HFOV_DEG)
+                        camera_hfov_deg, CAMERA_HFOV_DEG, presence_gate,
+                        subject_truth_names)
 
 W, H = 400, 225
 
@@ -251,6 +252,61 @@ def test_a_car_that_would_have_to_be_forty_metres_wide_reads_absent():
     far = presence_verdict(_det(200.0, bw=84.0, colour=0.5), 60.0, "a car", 0.10)
     assert near[0] == "PRESENT", near        # 84 px at 12 m is 4.0 m: a car
     assert far[0] == "ABSENT" and "wide" in far[1], far   # at 60 m it is 19.8 m
+
+
+def test_the_gate_refuses_a_person_the_verdict_already_rejected():
+    """The citylife_city shape: a 'person' box that implies 2.9 m at 75 m.
+    The verdict said ABSENT on 83 % of ticks and the aircraft steered on it
+    anyway; with the gate the box is handed on as None, i.e. a miss."""
+    det = _det(200.0, bw=16.0, colour=1.0)        # 16 px at 75 m = 4.7 m
+    got, blocked, why = presence_gate(det, 75.0, "a person", 0.10)
+    assert got is None and blocked and "wide" in why, (got, blocked, why)
+
+
+def test_the_gate_passes_a_plausible_subject_untouched():
+    det = _det(200.0, bw=40.0, colour=0.5)        # a car-sized box at 30 m
+    got, blocked, why = presence_gate(det, 30.0, "a red car", 0.10)
+    assert got is det and not blocked and why == ""
+
+
+def test_the_gate_refuses_the_wrong_colour():
+    det = _det(200.0, bw=40.0, colour=0.02)
+    got, blocked, why = presence_gate(det, 30.0, "a red car", 0.10)
+    assert got is None and blocked and "colour" in why
+
+
+def test_the_gate_does_not_invent_a_block_without_range():
+    """No depth means UNSURE, not ABSENT - the gate must not starve the
+    controller of every box whenever the depth stream is missing."""
+    det = _det(200.0, bw=40.0, colour=0.5)
+    got, blocked, _ = presence_gate(det, None, "a red car", 0.10)
+    assert got is det and not blocked
+
+
+def test_the_gate_on_no_detection_is_not_a_block():
+    got, blocked, _ = presence_gate(None, 30.0, "a red car", 0.10)
+    assert got is None and not blocked
+
+
+def test_truth_names_follow_the_source_or_say_none():
+    class _F:
+        def __init__(self, name, x, y):
+            self.name, self.x, self.y = name, x, y
+
+    class _People:
+        figures = [_F("Ped_00", 1.0, 2.0), _F("Ped_01", 3.0, 4.0)]
+
+    class _Car:
+        tag, pos = "Car_10", (5.0, 6.0)
+
+    assert subject_truth_names("pedestrian", None, _People()) == ["Ped_00", "Ped_01"]
+    assert subject_truth_names("car", _Car(), None) == ["Car_10"]
+    assert subject_truth_names("pedestrian", None, None) is None
+
+    class _Scripted:
+        pos = (5.0, 6.0)
+
+    assert subject_truth_names("car", _Scripted(), None) is None
 
 
 def test_without_range_it_says_unsure_rather_than_present():

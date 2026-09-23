@@ -136,6 +136,42 @@ def test_destroy_does_not_touch_the_level():
     assert w.calls == before        # no DestroyObject, no extra RPC
 
 
+def test_a_level_car_stands_in_for_the_scripted_car():
+    """`subject_truth_pts` reads `[car.pos[0], car.pos[1]]` - one point, so a
+    car mission is scored against one instance however many cars are around."""
+    w = FakeWorld({"Car_10": (37.5, -20.0, 0.0)})
+    car = LA.LevelCar(w, "Car_10", desc="a red car")
+    assert car.spawn() == 1
+    assert car.pos == (37.5, -20.0)
+    assert car.actual_name is None             # nothing to teleport or destroy
+    assert car.spec.desc_match == "a red car"
+    w.table["Car_10"] = (40.0, -20.0, 0.0)
+    car.update(1.0)
+    assert car.pos == (40.0, -20.0)
+    assert car.stats()["tag"] == "Car_10"
+
+
+def test_a_level_car_that_does_not_resolve_refuses_the_flight():
+    w = FakeWorld({})
+    car = LA.LevelCar(w, "Car_10")
+    try:
+        car.spawn()
+    except SystemExit as e:
+        assert "Car_10" in str(e)
+    else:
+        raise AssertionError("a car with no truth was accepted")
+
+
+def test_a_level_car_keeps_its_last_position_through_a_nan():
+    w = FakeWorld({"Car_10": (5.0, 6.0, 0.0)})
+    car = LA.LevelCar(w, "Car_10", min_period_s=0.0)
+    car.spawn()
+    w.table["Car_10"] = None
+    car.update(0.5)
+    assert car.pos == (5.0, 6.0)
+    assert car.stats()["nan_reads"] == 1
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
