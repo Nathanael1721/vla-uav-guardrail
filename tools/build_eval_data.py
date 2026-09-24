@@ -442,33 +442,103 @@ def sweep():
     return out
 
 
+def citylife_flights():
+    """Every CityLife flight, re-scored from its artefacts by track_truth.
+
+    `load_rows` recovers each box's frame width from detections.jsonl; the
+    2026-09-22 numbers were computed with the 400 px default on a 768 px camera.
+    Missing flights are skipped, not zero-filled.
+    """
+    out = {}
+    # The red-car flights in the order they were flown on 2026-09-23; each
+    # name says what that flight isolated (see the third part of
+    # docs/FINDING-crowd-pedestrians-and-traffic.md).
+    for tag in ("citylife_follow2", "citylife_follow3", "citylife_city",
+                "citylife_redcar_far", "citylife_redcar_pedpolicy",
+                "citylife_redcar_carpolicy", "citylife_redcar_ground", "citylife_redcar_high"):
+        run = ROOT / "demo/out" / tag
+        log = run / "flight_log.jsonl"
+        if not log.exists() or log.stat().st_size == 0:
+            continue
+        rows = T.load_rows(run)
+        cls = T.score_rows(rows)
+        inst = T.score_instance(rows)
+        m = {}
+        if (run / "metrics.json").exists():
+            m = json.loads((run / "metrics.json").read_text(encoding="utf-8"))
+        rec = {"object": m.get("object"), "ticks": len(rows),
+               "det_hz": m.get("det_hz"),
+               "p0_violation_escape_rate": m.get("p0_violation_escape_rate"),
+               "frac_on_target": cls.get("frac_on_target"),
+               "frac_on_target_chance": cls.get("frac_on_target_chance"),
+               "err_px_median_in_shot": cls.get("det_gt_err_px_median_in_shot"),
+               "err_px_median_chance": cls.get("det_gt_err_px_median_chance")}
+        if inst is not None:
+            rec["instance"] = {k: inst.get(k) for k in (
+                "frac_on_target", "frac_on_target_chance", "frac_in_shot",
+                "reassociations", "subjects")}
+        for k in ("start_gate", "stage_ms_median", "tick_pacing", "presence_blocked_ticks",
+                  "sep_min_m", "sep_mean_m", "target_lock"):
+            if k in m:
+                v = m[k]
+                if k == "start_gate" and isinstance(v, dict):
+                    v = {kk: vv for kk, vv in v.items() if kk != "truth_trace"}
+                rec[k] = v
+        out[tag] = rec
+        say(f"  {tag}", f"on target {rec['frac_on_target']} vs chance "
+                        f"{rec['frac_on_target_chance']}, escape {rec['p0_violation_escape_rate']}")
+    return out
+
+
 # ── built but not yet flown ─────────────────────────────────────────────────
 def unflown():
     print("\n[unflown] stated, not measured in flight")
-    res768 = ROOT / "demo/out/res768"
     out = {
-        "camera_768x432": {"status": "committed, not flown",
+        # Flown: every CityLife flight used it. Until commit 37514c3 the scorer
+        # assumed 400 px for them - see citylife_flights(). The record stays
+        # under `unflown` because three report builders read that key.
+        "camera_768x432": {"status": "flown: every CityLife flight used 768x432; until "
+                                     "commit 37514c3 (2026-09-23) the scorer assumed 400 px",
                            "evidence": "demo/pas_config/robot_semantic_quad.jsonc",
-                           "flight_artefacts": sorted(p.name for p in res768.glob("*")) if res768.exists() else []},
-        # Measured in the editor by hand over MCP (PASBlocks/ is gitignored, so
-        # there is no artefact to recompute these from); see the second finding.
-        "citylife_level": {"status": "built and flown 2026-09-22; det_hz gate met, loop gate not",
+                           "flight_artefacts": sorted(
+                               p.name for p in (ROOT / "demo/out").glob("citylife*")
+                               if (p / "detections.jsonl").exists())},
+        # Measured in the editor over MCP (PASBlocks/ is gitignored, so there
+        # is no artefact to recompute the traffic numbers from); see the third
+        # part of docs/FINDING-crowd-pedestrians-and-traffic.md and
+        # tools/citylife_mcp/verify_drive.py. The FLIGHT numbers are not typed
+        # here: citylife_flights() re-scores each flight from its own artefacts,
+        # in the right frame width - hand-typed copies are how 0.821 survived.
+        "citylife_level": {"status": "rebuilt 2026-09-23: keep-left, curvature follower, "
+                                     "yields, one red car; red-car mission flown",
                            "pedestrians": 40, "cars": 24,
                            "pedestrian_model": "City Sample Crowd, 6 variants (3 male, 3 female)",
                            "area_m": [200, 185],
-                           "car_routes_m": [684, 300, 328],
-                           "car_min_gap_cm": 430,
-                           "car_min_gap_note": "in-engine, ~1900 ticks of Simulate on "
-                                               "2026-09-22, 24 cars, 0 ticks under 4 m; no "
-                                               "gap-keeping-off control on the same meter",
-                           "flights": {"tag": "citylife_city", "seconds": 180,
-                                       "det_hz": 4.82, "loop_hz": 6.17,
-                                       "p0_violation_escape_rate": 0.0,
-                                       "note": "frac_on_target is not usable here: its "
-                                               "chance baseline is 1.000 with 40 pedestrians "
-                                               "in frame. Score the locked instance instead."},
+                           "drive_side": "left (read off the lane markings, 2026-09-23)",
+                           "car_routes_m": [616, 334, 288],
+                           "car_routes_note": "loops A/B/C, keep-left lane-centre paths from "
+                                              "tools/citylife_routes.py (408/224/192 points) "
+                                              "since 2026-09-23; citylife_city, _follow2 and "
+                                              "_follow3 were flown on the 2026-09-22 "
+                                              "right-hand loops",
+                           "car_min_gap_cm_2026_09_22": 430,
+                           "car_min_gap_2026_09_22_note": "in-engine, ~1900 ticks of Simulate, "
+                                                          "24 cars on the 2026-09-22 loops",
+                           "traffic_simulate_2026_09_23": {
+                               "minutes": 4, "cars": 24,
+                               "lane_error_max_cm": 10.1,
+                               "lateral_accel_max_mps2": 1.93,
+                               "car_min_gap_cm": 650,
+                               "stand_still_max_s": 22.3,
+                               "ped_yield_half_ticks": 780,
+                               "car_on_zebra_with_walking_ped_half_ticks": 5,
+                               "note": "counters kept inside each car; editor throttled "
+                                       "to ~3 fps; the 5 zebra ticks are not explained"},
+                           "flights": citylife_flights(),
                            "evidence": ["docs/FINDING-citylife-level.md",
-                                        "docs/FINDING-crowd-pedestrians-and-traffic.md"]},
+                                        "docs/FINDING-crowd-pedestrians-and-traffic.md",
+                                        "tools/citylife_routes.py",
+                                        "tools/citylife_mcp/"]},
     }
     say("camera 768x432 flight artefacts", out["camera_768x432"]["flight_artefacts"] or "none")
     say("CityLife level", out["citylife_level"]["status"])

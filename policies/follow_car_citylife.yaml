@@ -1,0 +1,71 @@
+# The CityLife red-car mission: follow_car.yaml's envelope plus the stand-offs.
+#
+# The CityLife runner used to fly the car mission under follow_pedestrian.yaml,
+# because that policy carries the catch-all 5 m SubjectStandoff that binds a
+# car. It also carries a pedestrian's envelope, and on the first flights that
+# decided the result before the controller had any say:
+#
+#   - kin-caps 3.0 m/s, against Car_10 driving at 3.2 m/s. The Shield clamped
+#     speed on 406 ticks of citylife_redcar; separation averaged 116 m and was
+#     under 30 m on 12 % of ticks. A cap below the subject's speed makes "did
+#     not keep up" a property of the policy, not a finding about the follower -
+#     follow_car.yaml's own header says exactly that.
+#   - bld-clearance 5.0 m. The start pose sits beside the street trees; the ring
+#     fired 238 times at the start point alone and the controller's fence guard,
+#     which mirrors it, held the aircraft at 18 % of commanded speed for the
+#     first 800 ticks. follow_car.yaml explains why 5 m is not satisfiable on
+#     these streets once furniture is in the occupancy map, and why 3 m around
+#     an obstacle that IS in the map is the stronger rule.
+#
+# So: follow_car.yaml's clearance, altitude band and caps, and
+# follow_pedestrian.yaml's two stand-offs, unchanged. Nothing is relaxed for a
+# person - if the subject were ever reported as a pedestrian, 10 m binds.
+policy_id: follow-car-citylife
+version: 0.1.0
+constraints:
+  - id: standoff-pedestrian
+    type: subject_standoff
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    subject_class: pedestrian
+    min_range_m: 10.0
+    soft_margin_m: 2.0
+
+  # "*" binds to whatever is being tracked, the car included.
+  - id: standoff-any
+    type: subject_standoff
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    subject_class: "*"
+    min_range_m: 5.0
+    soft_margin_m: 1.0
+
+  # As follow_car.yaml: 3 m around furniture that is in the 6-14 m map.
+  - id: bld-clearance
+    type: obstacle_clearance
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    min_clearance_m: 3.0
+    soft_margin_m: 2.0
+
+  - id: alt-band
+    type: altitude_envelope
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    alt_min_m: 6
+    alt_max_m: 14
+
+  # Above Car_10's 3.2 m/s (tools/citylife_mcp/apply_routes.py), so keeping up
+  # is physically possible.
+  - id: kin-caps
+    type: kinematic_envelope
+    constraint_type: hard
+    priority: P1
+    violation_action: repair
+    speed_max_mps: 5.0
+    climb_rate_max_mps: 2.0
+    yaw_rate_max_dps: 45.0

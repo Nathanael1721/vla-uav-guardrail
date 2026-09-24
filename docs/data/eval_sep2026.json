@@ -104,9 +104,9 @@
         "policy_hash": "sha256:68a4efd102869f5c"
       }
     },
-    "flights_total": 49,
+    "flights_total": 54,
     "flights_kpi_grade": 5,
-    "flights_escape_zero": 44,
+    "flights_escape_zero": 49,
     "unshielded_controls": [
       {
         "tag": "ros2_ped_off",
@@ -452,11 +452,11 @@
   },
   "rails": {
     "counts": {
-      "projectairsim-single-host": 37,
+      "projectairsim-single-host": 42,
       "canonical-hil": 5,
       "ardupilot-sitl-pymavlink": 7
     },
-    "camera_flights": 37,
+    "camera_flights": 42,
     "camera_flights_meeting_both_gates": 1
   },
   "sweep": {
@@ -550,6 +550,16 @@
   "repo": {
     "last_meeting": "2026-09-02",
     "commits_since_meeting": [
+      {
+        "date": "2026-09-23",
+        "sha": "37514c3",
+        "subject": "Score in the right frame width, let presence gate the controller, follow a level car"
+      },
+      {
+        "date": "2026-09-23",
+        "sha": "4c705d8",
+        "subject": "Fly the city, and find that the tracking score stopped measuring"
+      },
       {
         "date": "2026-09-22",
         "sha": "630091f",
@@ -656,36 +666,37 @@
         "subject": "Answer the review's one real question, and correct a gap I invented"
       }
     ],
-    "commits_total": 58,
+    "commits_total": 60,
     "version": "0.5.1",
     "finding_docs": 29,
-    "policies": 27,
-    "test_files": 24,
+    "policies": 28,
+    "test_files": 25,
     "tests_fast": {
-      "passed": 470,
-      "total": 470,
+      "passed": 518,
+      "total": 518,
       "per_file": {
         "test_bundle.py": "22/22",
         "test_check_contract.py": "2/2",
         "test_city_traffic.py": "34/34",
+        "test_citylife_routes.py": "22/22",
         "test_clearance.py": "13/13",
         "test_corridor.py": "24/24",
         "test_deck_scorer_parity.py": "13/13",
         "test_fenceguard.py": "23/23",
         "test_frame_contract.py": "13/13",
         "test_kpi_magnitudes.py": "18/18",
-        "test_level_actors.py": "10/10",
+        "test_level_actors.py": "13/13",
         "test_manifest.py": "34/34",
         "test_occ_bands.py": "14/14",
         "test_parked_cars.py": "9/9",
-        "test_range_and_lock.py": "73/73",
+        "test_range_and_lock.py": "91/91",
         "test_recorder.py": "5/5",
         "test_replay.py": "15/15",
         "test_shield.py": "31/31",
         "test_sitl_rails.py": "9/9",
         "test_sweep.py": "21/21",
         "test_target_state.py": "21/21",
-        "test_track_truth.py": "29/29",
+        "test_track_truth.py": "34/34",
         "test_two_view.py": "9/9",
         "test_vla_bridge.py": "28/28"
       }
@@ -698,12 +709,21 @@
   },
   "unflown": {
     "camera_768x432": {
-      "status": "committed, not flown",
+      "status": "flown: every CityLife flight used 768x432; until commit 37514c3 (2026-09-23) the scorer assumed 400 px",
       "evidence": "demo/pas_config/robot_semantic_quad.jsonc",
-      "flight_artefacts": []
+      "flight_artefacts": [
+        "citylife_city",
+        "citylife_follow2",
+        "citylife_follow3",
+        "citylife_redcar_carpolicy",
+        "citylife_redcar_far",
+        "citylife_redcar_ground",
+        "citylife_redcar_high",
+        "citylife_redcar_pedpolicy"
+      ]
     },
     "citylife_level": {
-      "status": "built and flown 2026-09-22; det_hz gate met, loop gate not",
+      "status": "rebuilt 2026-09-23: keep-left, curvature follower, yields, one red car; red-car mission flown",
       "pedestrians": 40,
       "cars": 24,
       "pedestrian_model": "City Sample Crowd, 6 variants (3 male, 3 female)",
@@ -711,24 +731,359 @@
         200,
         185
       ],
+      "drive_side": "left (read off the lane markings, 2026-09-23)",
       "car_routes_m": [
-        684,
-        300,
-        328
+        616,
+        334,
+        288
       ],
-      "car_min_gap_cm": 430,
-      "car_min_gap_note": "in-engine, ~1900 ticks of Simulate on 2026-09-22, 24 cars, 0 ticks under 4 m; no gap-keeping-off control on the same meter",
+      "car_routes_note": "loops A/B/C, keep-left lane-centre paths from tools/citylife_routes.py (408/224/192 points) since 2026-09-23; citylife_city, _follow2 and _follow3 were flown on the 2026-09-22 right-hand loops",
+      "car_min_gap_cm_2026_09_22": 430,
+      "car_min_gap_2026_09_22_note": "in-engine, ~1900 ticks of Simulate, 24 cars on the 2026-09-22 loops",
+      "traffic_simulate_2026_09_23": {
+        "minutes": 4,
+        "cars": 24,
+        "lane_error_max_cm": 10.1,
+        "lateral_accel_max_mps2": 1.93,
+        "car_min_gap_cm": 650,
+        "stand_still_max_s": 22.3,
+        "ped_yield_half_ticks": 780,
+        "car_on_zebra_with_walking_ped_half_ticks": 5,
+        "note": "counters kept inside each car; editor throttled to ~3 fps; the 5 zebra ticks are not explained"
+      },
       "flights": {
-        "tag": "citylife_city",
-        "seconds": 180,
-        "det_hz": 4.82,
-        "loop_hz": 6.17,
-        "p0_violation_escape_rate": 0.0,
-        "note": "frac_on_target is not usable here: its chance baseline is 1.000 with 40 pedestrians in frame. Score the locked instance instead."
+        "citylife_follow2": {
+          "object": "a person",
+          "ticks": 728,
+          "det_hz": 7.6,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.255,
+          "frac_on_target_chance": 0.802,
+          "err_px_median_in_shot": 128.2,
+          "err_px_median_chance": 31.9,
+          "sep_min_m": 4.0,
+          "sep_mean_m": 20.9,
+          "target_lock": {
+            "enabled": true,
+            "locked": 523,
+            "switched": 27,
+            "rejected_candidates": 108,
+            "size_rejected": 2026
+          }
+        },
+        "citylife_follow3": {
+          "object": "a person",
+          "ticks": 1239,
+          "det_hz": 4.63,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.365,
+          "frac_on_target_chance": 0.808,
+          "err_px_median_in_shot": 113.5,
+          "err_px_median_chance": 23.3,
+          "sep_min_m": 4.5,
+          "sep_mean_m": 22.0,
+          "target_lock": {
+            "enabled": true,
+            "locked": 551,
+            "switched": 20,
+            "rejected_candidates": 92,
+            "size_rejected": 2068
+          }
+        },
+        "citylife_city": {
+          "object": "a person",
+          "ticks": 1110,
+          "det_hz": 4.82,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 1.0,
+          "frac_on_target_chance": 1.0,
+          "err_px_median_in_shot": 9.2,
+          "err_px_median_chance": 10.1,
+          "sep_min_m": 5.7,
+          "sep_mean_m": 12.1,
+          "target_lock": {
+            "enabled": true,
+            "locked": 515,
+            "switched": 19,
+            "rejected_candidates": 105,
+            "size_rejected": 1647
+          }
+        },
+        "citylife_redcar_far": {
+          "object": "a red car",
+          "ticks": 2248,
+          "det_hz": 4.27,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.083,
+          "frac_on_target_chance": 0.097,
+          "err_px_median_in_shot": 180.3,
+          "err_px_median_chance": 145.9,
+          "instance": {
+            "frac_on_target": 0.083,
+            "frac_on_target_chance": 0.097,
+            "frac_in_shot": 0.262,
+            "reassociations": 0,
+            "subjects": 1
+          },
+          "start_gate": {
+            "enabled": true,
+            "needed": 5,
+            "reached": true,
+            "wait_s": 4.3,
+            "first_candidate_s": 3.4,
+            "inferences_judged": 18,
+            "inferences_with_plausible": 5,
+            "candidates_judged": 23,
+            "best_streak": 5,
+            "last_rejections": [
+              "implies 0.5 m wide at 5 m; a car is 1.0-8.0 m"
+            ],
+            "snapshots": 2,
+            "subject_px_err": 16.2,
+            "subject_in_shot": true,
+            "subject_range_m": 140.6
+          },
+          "stage_ms_median": {
+            "kin": 1.0,
+            "truth": 0.0,
+            "shield": 0.0,
+            "cmd": 1.0,
+            "work": 5.5
+          },
+          "tick_pacing": "deadline",
+          "presence_blocked_ticks": 761,
+          "sep_min_m": 2.6,
+          "sep_mean_m": 121.7,
+          "target_lock": {
+            "enabled": true,
+            "locked": 275,
+            "switched": 76,
+            "rejected_candidates": 73,
+            "size_rejected": 75
+          }
+        },
+        "citylife_redcar_pedpolicy": {
+          "object": "a red car",
+          "ticks": 2234,
+          "det_hz": 7.14,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.32,
+          "frac_on_target_chance": 0.25,
+          "err_px_median_in_shot": 57.3,
+          "err_px_median_chance": 105.1,
+          "instance": {
+            "frac_on_target": 0.32,
+            "frac_on_target_chance": 0.25,
+            "frac_in_shot": 0.505,
+            "reassociations": 0,
+            "subjects": 1
+          },
+          "start_gate": {
+            "enabled": true,
+            "needed": 5,
+            "reached": true,
+            "wait_s": 160.6,
+            "first_candidate_s": 159.7,
+            "inferences_judged": 698,
+            "inferences_with_plausible": 5,
+            "candidates_judged": 843,
+            "best_streak": 5,
+            "max_range_m": 45.0,
+            "plausible_but_too_far": 0,
+            "last_rejections": [],
+            "snapshots": 33,
+            "subject_px_err": 40.5,
+            "subject_in_shot": true,
+            "subject_range_m": 13.8
+          },
+          "stage_ms_median": {
+            "kin": 1.0,
+            "truth": 0.0,
+            "shield": 0.0,
+            "cmd": 1.0,
+            "work": 6.5
+          },
+          "tick_pacing": "deadline",
+          "presence_blocked_ticks": 858,
+          "sep_min_m": 2.4,
+          "sep_mean_m": 115.7,
+          "target_lock": {
+            "enabled": true,
+            "locked": 448,
+            "switched": 62,
+            "rejected_candidates": 70,
+            "size_rejected": 91
+          }
+        },
+        "citylife_redcar_carpolicy": {
+          "object": "a red car",
+          "ticks": 2234,
+          "det_hz": 7.03,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.418,
+          "frac_on_target_chance": 0.392,
+          "err_px_median_in_shot": 55.5,
+          "err_px_median_chance": 81.6,
+          "instance": {
+            "frac_on_target": 0.418,
+            "frac_on_target_chance": 0.392,
+            "frac_in_shot": 0.674,
+            "reassociations": 0,
+            "subjects": 1
+          },
+          "start_gate": {
+            "enabled": true,
+            "needed": 5,
+            "reached": true,
+            "wait_s": 152.8,
+            "first_candidate_s": 152.0,
+            "inferences_judged": 680,
+            "inferences_with_plausible": 5,
+            "candidates_judged": 852,
+            "best_streak": 5,
+            "max_range_m": 45.0,
+            "plausible_but_too_far": 1,
+            "last_rejections": [
+              "implies 0.5 m wide at 5 m; a car is 1.0-8.0 m"
+            ],
+            "snapshots": 31,
+            "subject_px_err": 54.2,
+            "subject_in_shot": true,
+            "subject_range_m": 13.1
+          },
+          "stage_ms_median": {
+            "kin": 1.0,
+            "truth": 0.0,
+            "shield": 0.0,
+            "cmd": 1.0,
+            "work": 5.3
+          },
+          "tick_pacing": "deadline",
+          "presence_blocked_ticks": 1268,
+          "sep_min_m": 0.7,
+          "sep_mean_m": 108.2,
+          "target_lock": {
+            "enabled": true,
+            "locked": 586,
+            "switched": 47,
+            "rejected_candidates": 48,
+            "size_rejected": 139
+          }
+        },
+        "citylife_redcar_ground": {
+          "object": "a red car",
+          "ticks": 2235,
+          "det_hz": 7.5,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.532,
+          "frac_on_target_chance": 0.414,
+          "err_px_median_in_shot": 39.0,
+          "err_px_median_chance": 84.9,
+          "instance": {
+            "frac_on_target": 0.533,
+            "frac_on_target_chance": 0.414,
+            "frac_in_shot": 0.762,
+            "reassociations": 0,
+            "subjects": 1
+          },
+          "start_gate": {
+            "enabled": true,
+            "needed": 5,
+            "reached": true,
+            "wait_s": 166.8,
+            "first_candidate_s": 37.0,
+            "inferences_judged": 760,
+            "inferences_with_plausible": 6,
+            "candidates_judged": 874,
+            "best_streak": 5,
+            "max_range_m": 45.0,
+            "plausible_but_too_far": 9,
+            "last_rejections": [
+              "implies 0.5 m wide at 5 m; a car is 1.0-8.0 m"
+            ],
+            "snapshots": 34,
+            "subject_px_err": 58.7,
+            "subject_in_shot": false,
+            "subject_range_m": 12.9
+          },
+          "stage_ms_median": {
+            "kin": 1.0,
+            "truth": 0.0,
+            "shield": 0.0,
+            "cmd": 1.0,
+            "work": 5.5
+          },
+          "tick_pacing": "deadline",
+          "presence_blocked_ticks": 1085,
+          "sep_min_m": 1.5,
+          "sep_mean_m": 88.5,
+          "target_lock": {
+            "enabled": true,
+            "locked": 420,
+            "switched": 91,
+            "rejected_candidates": 117,
+            "size_rejected": 258
+          }
+        },
+        "citylife_redcar_high": {
+          "object": "a red car",
+          "ticks": 2238,
+          "det_hz": 7.12,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.547,
+          "frac_on_target_chance": 0.487,
+          "err_px_median_in_shot": 20.0,
+          "err_px_median_chance": 37.6,
+          "instance": {
+            "frac_on_target": 0.547,
+            "frac_on_target_chance": 0.487,
+            "frac_in_shot": 0.617,
+            "reassociations": 0,
+            "subjects": 1
+          },
+          "start_gate": {
+            "enabled": true,
+            "needed": 5,
+            "reached": true,
+            "wait_s": 150.3,
+            "first_candidate_s": 149.5,
+            "inferences_judged": 684,
+            "inferences_with_plausible": 5,
+            "candidates_judged": 6,
+            "best_streak": 5,
+            "max_range_m": 45.0,
+            "plausible_but_too_far": 0,
+            "last_rejections": [],
+            "snapshots": 31,
+            "subject_px_err": 45.9,
+            "subject_in_shot": true,
+            "subject_range_m": 16.8
+          },
+          "stage_ms_median": {
+            "kin": 1.0,
+            "truth": 0.0,
+            "shield": 0.0,
+            "cmd": 1.0,
+            "work": 5.5
+          },
+          "tick_pacing": "deadline",
+          "presence_blocked_ticks": 864,
+          "sep_min_m": 2.2,
+          "sep_mean_m": 101.8,
+          "target_lock": {
+            "enabled": true,
+            "locked": 438,
+            "switched": 71,
+            "rejected_candidates": 71,
+            "size_rejected": 131
+          }
+        }
       },
       "evidence": [
         "docs/FINDING-citylife-level.md",
-        "docs/FINDING-crowd-pedestrians-and-traffic.md"
+        "docs/FINDING-crowd-pedestrians-and-traffic.md",
+        "tools/citylife_routes.py",
+        "tools/citylife_mcp/"
       ]
     }
   }

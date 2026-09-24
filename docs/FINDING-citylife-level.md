@@ -1,7 +1,7 @@
 # The city can hold its own traffic
 
 `/Game/CityLife/Maps/CityLife_Day` is a copy of `JapaneseCity/Demo_day` with walking
-pedestrians and driving cars built INTO the level (16 and 8 when this was written; 40 and 16
+pedestrians and driving cars built INTO the level (16 and 8 when this was written; 40 and 24
 since 2026-09-22, see [the follow-up](FINDING-crowd-pedestrians-and-traffic.md)). They cost no RPC and need no client:
 the drone's camera sees a moving city whether or not `demo/pedestrians.py` and
 `demo/city_traffic.py` ever run.
@@ -19,7 +19,7 @@ during, and after: `2e9f91a4…802efa83` all three times. It was never opened.
 | Actor | Count | Where it came from |
 |---|---|---|
 | `Ped_00…Ped_15`, tag `citylife.ped`, folder `CityLife/Peds` | 16 → 40 | pavement cells from `street.npz`; the later 24 from ground traces beside the junction grid |
-| `Car_00…Car_07`, tag `citylife.car`, folder `CityLife/Cars` | 8 → 16 | the `city_traffic.py` circuit; the later 8 on a second loop |
+| `Car_00…Car_07`, tag `citylife.car`, folder `CityLife/Cars` | 8 → 16 → 24 | the `city_traffic.py` circuit; then junction-grid loops; since 2026-09-23 three dense lane-centre loops (A 616 m, B 334 m, C 288 m) from `tools/citylife_routes.py` |
 | `CityLife_NavBounds` (+ `RecastNavMesh-Default`) | 1 | corridor only, not the whole map; widened to 200 × 185 m on 2026-09-22 |
 
 ~~Names are load-bearing: `demo/pas_config/scene_guardrail.jsonc` sets
@@ -51,8 +51,12 @@ not help. A named function graph plus `SetTimerByFunctionName` reaches the same 
 with nodes the DSL can write.
 
 `BP_CityCar` (parent `Actor`, root `Body` = `SM_AutomotiveTP_Car`, `Movable`, `QueryOnly`)
-follows `Route` — a `TArray<FVector>`, not a spline — at `SpeedCmS` 250, wrapping on `Idx`
-and turning through `RInterpTo` so corners round rather than snap. ~~Paint is set per
+follows `Route` — a `TArray<FVector>`, not a spline. *Since 2026-09-23* `Route` is the dense
+lane-centre polyline of the car's loop from `tools/citylife_routes.py`, with `RouteSpeed` and
+`RouteKappa` per point, driven by `DriveTick` (path-curvature feed-forward plus lateral/heading
+correction, so on an arc the yaw rate is v/R). Until then it steered at a waypoint - from
+2026-09-22 at an aim point `UpdateAim` slid into the next leg - at `SpeedCmS` 250 when the level
+was built, wrapping on `Idx` and turning through a fixed-rate `RInterpTo`. ~~Paint is set per
 instance from the eight `MIC_Paint_*`~~ *Retracted 2026-09-21:* the saved level held no
 `MIC_Paint_*` reference at all, and their parent `M_CarPaint` did not compile, so no paint
 instance could have shown its colour. Paint is now fixed per car, deliberately not random so
@@ -211,7 +215,8 @@ same animation with no retarget because `SK_Base` is registered compatible with
 [FINDING-crowd-pedestrians-and-traffic.md](FINDING-crowd-pedestrians-and-traffic.md).
 
 Still artificial: all 16 step in phase (no per-figure animation rate yet), and nobody
-crosses the road.
+crosses the road. *(Both fixed 2026-09-22: per-figure `GlobalAnimRateScale` and crosswalk
+gaps.)*
 
 ## Pedestrians are fenced off the carriageway, and the kerb is not what does it
 
@@ -242,7 +247,7 @@ eroded by `AgentRadius = 35`, figures keep clear of the boundary rather than hug
 
 Measured in Simulate, twice, minutes apart: **0 of 16 pedestrians inside the carriageway
 band**. The cost is deliberate - west and east pavements are now separate navmesh islands,
-so nobody crosses the road. Crossings would need `NavLinkProxy` actors at the crosswalks.
+so nobody crossed the road. *Since 2026-09-22* the bands are cut by 600 cm at each painted crosswalk (no `NavLinkProxy` needed), so figures cross. Since 2026-09-23 a car stops for a pedestrian on a crossing that lies on its own path.
 
 Note what this does NOT do: a navmesh governs pathing, not physics. A car sweep or a
 DetourCrowd shove could still push a capsule off the pavement, because `BP_CityCar` moves
@@ -264,7 +269,14 @@ at (+-120/-110, +-80, 51.1) - and a Tick that:
 - drops to 40% cruise within 900 cm of a waypoint, so corners are braked for,
 - spins every wheel by `speed x dt / radius` in degrees, wrapped at 360,
 - steers the front pair by the clamped yaw error (+-35 deg),
-- gives each car its own `SpeedCmS` (390-560), so the spacing in the convoy actually changes.
+- gives each car its own `SpeedCmS` (390-560 when written; `Car_10`, the red subject car, is set to 320 since 2026-09-23 so the drone can keep station), so the spacing in the convoy actually changes.
+
+*Superseded:* the 40 %/900 cm corner rule gave way to `UpdateAim`'s corner scaling on
+2026-09-22, and on 2026-09-23 this whole Tick was replaced by `DriveTick`. Each path point
+now carries a speed limit from 1.8 m/s^2 lateral acceleration with a 1.5 m/s^2 braking ramp;
+yaw follows path curvature with lateral/heading correction (L = 5 m, zeta = 0.9) in sub-steps
+of at most 50 ms; the front wheels steer by that curvature, still clamped to +-35 deg. The
+wheel spin is unchanged.
 
 `/Rover/SportsCar/SKM_SportsCar` is the richer option - it has `Phys_Wheel_*` bones and four
 dampers - but driving those bones needs an AnimBP or Control Rig for a vehicle skeleton, and
@@ -315,7 +327,7 @@ other on one leg. `BP_CityCar` is `QueryOnly` and moves with an unswept `SetActo
 they overlap rather than collide. The "4 m" came from positions read one tool call at a time,
 and each call lets the game advance a frame, so read it as "they bunch up", not as a
 distance. `BP_CityCar` now limits its speed by the gap to the car ahead; measured inside the
-engine the nearest other car stays 621-771 cm away. See
+engine the nearest other car measured 621-771 cm on 2026-09-21. Since 2026-09-23 a car stops 6.5 m (centre to centre) behind a queue, and a 4-min in-engine run (editor throttled to ~3 fps) measured a closest centre-to-centre approach of 650 cm. See
 [FINDING-crowd-pedestrians-and-traffic.md](FINDING-crowd-pedestrians-and-traffic.md#cars-keep-their-distance).
 - `LogNavigation` has one warning — `Recreating dtNavMesh instance … maxTiles` — which is
   runtime regeneration doing its job, not a failure.

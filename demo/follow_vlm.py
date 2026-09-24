@@ -726,8 +726,50 @@ def search_sweep_rate(elapsed_s: float, sweep_deg: float, period_s: float,
                          -cap, cap))
 
 
+# GROUND CONTACT.
+#
+# A car stands on the road. The ray through the bottom edge of its box
+# therefore meets the ground about where the depth image says the car is; for
+# something mounted in the air it meets the ground far BEYOND it. On
+# citylife_redcar (flight 4) the lock left the red car at the first junction
+# for a red traffic signal: 21 % red, ~35 px, and at ~40 m a plausible 3 m
+# "car" by width - every existing check passed it. By height it is not a car:
+# 4-5 m up at 40 m, its base ray reaches the ground near 70-80 m.
+#
+# FrontCamera is mounted pitched 20 deg down (robot_semantic_quad.jsonc, rpy
+# 0 -20 0); the body's own pitch adds to that, and it swings with every
+# acceleration, so it is read from the pose each tick rather than assumed.
+CAMERA_MOUNT_PITCH_DEG = -20.0
+GROUND_NOUNS = ("car", "truck", "bus", "van", "person")
+GROUND_RATIO_MAX = 1.5
+
+
+def quat_pitch(q: dict) -> float:
+    """Body pitch in radians from an NED quaternion; positive is nose UP."""
+    w, x, y, z = q["w"], q["x"], q["y"], q["z"]
+    return math.asin(max(-1.0, min(1.0, 2.0 * (w * y - z * x))))
+
+
+def ground_range_m(det, alt_m: float, body_pitch_rad: float,
+                   mount_pitch_deg: float = CAMERA_MOUNT_PITCH_DEG,
+                   hfov_deg: float = None):
+    """Radial distance at which the ray through the box's BOTTOM edge meets
+    flat ground at `alt_m` below the camera. None when that ray is within 2 deg
+    of the horizon (the intersection is too far to mean anything) or above it."""
+    if det is None or alt_m is None or alt_m <= 0:
+        return None
+    hfov = CAMERA_HFOV_DEG if hfov_deg is None else hfov_deg
+    cy, bh, W, H = float(det[1]), float(det[3]), float(det[5]), float(det[6])
+    f = (W / 2.0) / math.tan(math.radians(hfov) / 2.0)
+    below = math.atan((cy + bh / 2.0 - H / 2.0) / f)
+    depression = -(math.radians(mount_pitch_deg) + body_pitch_rad) + below
+    if depression < math.radians(2.0):
+        return None
+    return alt_m / math.sin(depression)
+
+
 def presence_verdict(det, rng_m, query: str, colour_min: float,
-                     frame_frac_max: float = 0.85):
+                     frame_frac_max: float = 0.85, ground=None):
     """PRESENT / ABSENT / UNSURE for the thing the operator named.
 
     Acknowledged limitation number two has always been that this system cannot
@@ -766,12 +808,19 @@ def presence_verdict(det, rng_m, query: str, colour_min: float,
         if not (lo <= w_m <= hi):
             return "ABSENT", (f"implies {w_m:.1f} m wide at {rng_m:.0f} m; "
                               f"a {noun} is {lo}-{hi} m")
+    # `ground` = (altitude m, body pitch rad); see GROUND CONTACT above.
+    if (ground is not None and noun in GROUND_NOUNS and rng_m is not None
+            and rng_m > 0):
+        r_g = ground_range_m(det, ground[0], ground[1])
+        if r_g is not None and r_g > GROUND_RATIO_MAX * rng_m:
+            return "ABSENT", (f"not on the ground: its base ray meets the road at "
+                              f"{r_g:.0f} m, it is {rng_m:.0f} m away")
     if w_m is None:
         return "UNSURE", "no range — size not checked"
     return "PRESENT", f"{w_m:.1f} m wide at {rng_m:.0f} m"
 
 
-def presence_gate(det, rng_m, query: str, colour_min: float):
+def presence_gate(det, rng_m, query: str, colour_min: float, ground=None):
     """(det or None, blocked, reason): may this detection steer the aircraft?
 
     The presence verdict already names the ways a box is not the subject - wall
@@ -782,10 +831,93 @@ def presence_gate(det, rng_m, query: str, colour_min: float):
     """
     if det is None:
         return None, False, ""
-    verdict, why = presence_verdict(det, rng_m, query, colour_min)
+    verdict, why = presence_verdict(det, rng_m, query, colour_min, ground=ground)
     if verdict == "ABSENT":
         return None, True, why
     return det, False, ""
+
+
+class Acquirer:
+    """Confirm a subject before the mission clock starts.
+
+    One plausible box is not a subject: `need` fresh inferences in a row must
+    each contain a candidate the presence verdict does not call ABSENT, and
+    each must be within `gate_frac` of the frame of the previous one - the
+    same continuity the TargetLock asks of a held instance. A candidate that
+    breaks continuity starts a new streak instead of extending the old one, so
+    two different plausible things flickering cannot add up to a sighting.
+
+    Every candidate is judged, not just the detector's top box: ranking by
+    score is exactly what let a stationary red object hide the car.
+
+    And it must be NEAR (`max_range_m`, 0 = no limit). citylife_redcar's second
+    flight acquired the right car at 140 m - 16 px, driving away at 3.2 m/s
+    from an aircraft capped at 4 m/s. A subject the follow cannot close on is
+    not a start. Range is the depth reading, or without one the range at which
+    the subject's width prior (`width_m`) would look this wide.
+    """
+
+    def __init__(self, need: int, query: str, colour_min: float,
+                 gate_frac: float = 0.12, max_range_m: float = 0.0,
+                 width_m: float = None, hfov_deg: float = CAMERA_HFOV_DEG):
+        self.need = need
+        self.query = query
+        self.colour_min = colour_min
+        self.gate_frac = gate_frac
+        self.max_range_m = max_range_m
+        self.width_m = width_m
+        self.hfov_deg = hfov_deg
+        self.n_too_far = 0
+        self.pick = None
+        self.streak = 0
+        self.best_streak = 0
+        self.n = 0                # fresh inferences judged
+        self.n_plausible = 0      # of those, with at least one plausible box
+        self.n_candidates = 0
+        self.first_plausible_n = None
+        self.last_reasons: list = []
+
+    def step(self, cands, rng_of, ground=None) -> bool:
+        """Judge one fresh inference. `rng_of(cand)` gives its range or None;
+        `ground` is (altitude, body pitch) for the ground-contact check.
+        Returns True once the subject is confirmed; `pick` is then it."""
+        self.n += 1
+        self.n_candidates += len(cands)
+        plaus, self.last_reasons = [], []
+        for c in cands:
+            rng = rng_of(c)
+            verdict, why = presence_verdict(c, rng, self.query, self.colour_min,
+                                            ground=ground)
+            if verdict == "ABSENT":
+                self.last_reasons.append(why)
+                continue
+            if self.max_range_m > 0:
+                if rng is None and self.width_m and float(c[2]) > 0:
+                    half = math.radians(self.hfov_deg / 2.0) * float(c[2]) / float(c[5])
+                    rng = self.width_m / (2.0 * math.tan(half))
+                if rng is not None and rng > self.max_range_m:
+                    self.n_too_far += 1
+                    self.last_reasons.append(f"plausible but {rng:.0f} m away "
+                                             f"(> {self.max_range_m:.0f} m)")
+                    continue
+            plaus.append(c)
+        if not plaus:
+            self.streak, self.pick = 0, None
+            return False
+        self.n_plausible += 1
+        if self.first_plausible_n is None:
+            self.first_plausible_n = self.n
+        cont = None
+        if self.pick is not None:
+            near = min(plaus, key=lambda c: abs(float(c[0]) - float(self.pick[0])))
+            if abs(float(near[0]) - float(self.pick[0])) <= self.gate_frac * float(near[5]):
+                cont = near
+        if cont is None:
+            self.pick, self.streak = plaus[0], 1
+        else:
+            self.pick, self.streak = cont, self.streak + 1
+        self.best_streak = max(self.best_streak, self.streak)
+        return self.streak >= self.need
 
 
 def appearance(img, box, h_bins: int = 8, s_bins: int = 4):
@@ -921,8 +1053,9 @@ class PresenceMonitor:
         self._ref_hits = 0
         self.last_sim = None
 
-    def update(self, det, rng_m, app=None):
-        verdict, why = presence_verdict(det, rng_m, self.query, self.colour_min)
+    def update(self, det, rng_m, app=None, ground=None):
+        verdict, why = presence_verdict(det, rng_m, self.query, self.colour_min,
+                                        ground=ground)
         # Appearance identity. Geometry can only say "consistent with a car";
         # this is the only check that can say "a DIFFERENT car-like thing".
         if verdict == "PRESENT" and app is not None and self.appear_min > 0:
@@ -1522,6 +1655,19 @@ class Grounder:
         self._fwd_ms = 0.0
         self._n_seen = 0
         self._n_miss = 0
+        # ACQUISITION. The jump gate and the instance lock both protect a
+        # subject the system already has. Before it has one they protect
+        # whatever happened to be seen first: on citylife_redcar a stationary
+        # red object 22 deg right of the nose was the first box, the jump gate
+        # then discarded every candidate more than 35 % of the frame away from
+        # it, the lock held it for 1,101 inferences, and the red car - never
+        # plausible-looking box number one - was not even a candidate for 300 s.
+        # While `acquiring`, neither applies and every colour-passing candidate
+        # is published; `commit()` ends it on the candidate the start gate
+        # confirmed, seeding the lock and the jump memory with it.
+        self.acquiring = False
+        self._cands: list = []
+        self._seed = None
         self._thread = threading.Thread(target=self._worker, daemon=True)
 
     def retarget(self, phrase: str) -> None:
@@ -1560,6 +1706,23 @@ class Grounder:
         if self.lock is not None:
             self.lock.reset()
 
+    def begin_acquire(self) -> None:
+        """Look for the subject without assuming where it is (see __init__)."""
+        with self._lock:
+            self.acquiring = True
+            self._det = None
+            self._t_det = 0.0
+        if self.lock is not None:
+            self.lock.reset()
+
+    def commit(self, cand) -> None:
+        """End acquisition. `cand` (an 8-tuple) becomes the held instance and
+        the jump gate's reference; None ends it with no seed, so tracking
+        starts from whatever is seen next - the historical behaviour."""
+        with self._lock:
+            self.acquiring = False
+            self._seed = cand
+
     def start(self):
         self._thread.start()
 
@@ -1588,6 +1751,16 @@ class Grounder:
                 # would reject the new one on exactly the frames that matter.
                 last = None
                 print(f"[grounder] retargeted -> {queries[0][0]!r}", flush=True)
+            if self._seed is not None:
+                with self._lock:
+                    seed, self._seed = self._seed, None
+                last = (float(seed[0]), time.time())
+                if self.lock is not None:
+                    self.lock.reset()
+                    yaw_s = (self.obs.pose[2] if getattr(self.obs, "pose", None)
+                             else 0.0)
+                    self.lock.select([seed], int(seed[5]), yaw_s, time.time())
+            acquiring = self.acquiring
             img = self.obs.get_front_native()
             if img is None:
                 time.sleep(0.05)
@@ -1637,7 +1810,8 @@ class Grounder:
                         break
                     x0, y0, x1, y1 = [float(v) for v in bx[i].tolist()]
                     cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
-                    if last is not None and (time.time() - last[1]) < 1.5:
+                    if (last is not None and not acquiring
+                            and (time.time() - last[1]) < 1.5):
                         if abs(cx - last[0]) > self.jump_frac * W:
                             continue          # too far from where it just was
                     cm = colour_match(img, (x0, y0, x1, y1), self.colour,
@@ -1654,7 +1828,7 @@ class Grounder:
                 # identical vehicles or nine city blocks those are different
                 # questions.
                 cands.sort(key=lambda c: -(c[4] * (0.25 + 0.75 * c[7])))
-                if self.lock is None:
+                if self.lock is None or acquiring:
                     det = cands[0]
                 else:
                     yaw_now = (self.obs.pose[2] if getattr(self.obs, "pose", None)
@@ -1677,6 +1851,7 @@ class Grounder:
                 # treated as fresh forever. The aircraft chased a box that was no
                 # longer there and the HUD kept reporting TARGET LOCKED.
                 self._t = time.time()
+                self._cands = list(cands)
                 # Re-check the generation HERE, not only at the top of the loop.
                 # An inference takes about 287 ms, so a retarget landing inside
                 # that window would otherwise publish the OLD subject box under
@@ -1718,6 +1893,13 @@ class Grounder:
                        # ground-truth reconstruction precisely because this was
                        # missing. Two extra numbers per tick is a cheap price.
                        "n_cands": len(cands),
+                       "acquiring": bool(acquiring),
+                       # While acquiring, every candidate: the start gate judges
+                       # all of them, so a failed gate must be explainable from
+                       # this file alone.
+                       "cands": ([[round(c[0], 1), round(c[1], 1), round(c[2], 1),
+                                   round(c[3], 1), round(c[4], 4), round(c[7], 3)]
+                                  for c in cands[:6]] if acquiring else None),
                        "runner_up": (None if len(cands) < 2 else
                                      {"cx": round(cands[1][0], 1),
                                       "w": round(cands[1][2], 1),
@@ -1732,7 +1914,8 @@ class Grounder:
                     "det": self._det, "app": self._app, "infer_ms": self._infer_ms,
                     "switched": getattr(self, "_det_switched", False),
                     "pre_ms": self._pre_ms, "fwd_ms": self._fwd_ms,
-                    "n_seen": self._n_seen, "n_miss": self._n_miss}
+                    "n_seen": self._n_seen, "n_miss": self._n_miss,
+                    "cands": list(self._cands)}
 
 
 def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
@@ -2341,7 +2524,21 @@ async def fly(args) -> int:
         # decide when to go.
         if args.start_when_seen > 0:
             t_wait0 = time.time()
-            streak, last_gseq, first_ok = 0, -1, None
+            acq = Acquirer(args.start_when_seen, args.object, args.colour_min,
+                           gate_frac=args.lock_gate,
+                           max_range_m=args.start_max_range_m,
+                           width_m=args.object_width_m)
+            grounder.begin_acquire()
+            last_gseq, first_ok, reached = -1, None, False
+            # A frame every 5 s, and at the first plausible sighting, so a gate
+            # that fails can be looked at rather than argued about.
+            gate_dir = out / "gate"
+            gate_dir.mkdir(parents=True, exist_ok=True)
+            n_snaps, next_snap = 0, 0.0
+            # Where the subject really was while we waited, every 2 s: REPORTED
+            # only (the decision never reads it), so a timed-out gate can say
+            # whether the car drove past the camera or never came.
+            truth_trace, next_truth = [], 0.0
             while time.time() - t_wait0 < args.start_timeout_s:
                 kin_w = drone.get_ground_truth_kinematics()
                 pw = kin_w["pose"]["position"]
@@ -2349,35 +2546,71 @@ async def fly(args) -> int:
                 gw = grounder.latest()
                 if gw["seq"] != last_gseq:
                     last_gseq = gw["seq"]
-                    dw = gw["det"]
-                    fresh = gw["t_det"] and (time.time() - gw["t_det"]) < 1.0
-                    ok = False
-                    if dw is not None and fresh:
-                        rw = range_from_depth(obs.get_depth(), dw) if have_depth else None
-                        ok = presence_verdict(dw, rw, args.object,
-                                              args.colour_min)[0] != "ABSENT"
-                    streak = streak + 1 if ok else 0
-                    if ok and first_ok is None:
+                    fresh = gw["t"] and (time.time() - gw["t"]) < 1.0
+                    dep_w = obs.get_depth() if have_depth else None
+                    had = acq.n_plausible
+                    if fresh:
+                        reached = acq.step(
+                            gw["cands"],
+                            lambda c: (range_from_depth(dep_w, c)
+                                       if dep_w is not None else None),
+                            ground=(-pw["z"], quat_pitch(kin_w["pose"]["orientation"])))
+                    if acq.n_plausible > had and first_ok is None:
                         first_ok = time.time() - t_wait0
-                    if streak >= args.start_when_seen:
+                    now_w = time.time() - t_wait0
+                    if now_w >= next_snap or (acq.n_plausible == 1 and had == 0):
+                        img_w = obs.get_front_native()
+                        if img_w is not None:
+                            try:
+                                img_w.save(gate_dir / f"gate_{now_w:06.1f}s.jpg", quality=85)
+                                n_snaps += 1
+                            except Exception:
+                                pass
+                        next_snap = now_w + 5.0
+                    if reached:
                         break
+                if (car is not None and hasattr(car, "refresh")
+                        and time.time() - t_wait0 >= next_truth):
+                    next_truth = time.time() - t_wait0 + 2.0
+                    try:
+                        car.refresh()
+                        yaw_t = quat_yaw(kin_w["pose"]["orientation"])
+                        dx, dy = car.pos[0] - pw["x"], car.pos[1] - pw["y"]
+                        brg = math.degrees(math.atan2(math.sin(math.atan2(dy, dx) - yaw_t),
+                                                      math.cos(math.atan2(dy, dx) - yaw_t)))
+                        truth_trace.append([round(time.time() - t_wait0, 1),
+                                            round(math.hypot(dx, dy), 1), round(brg, 1)])
+                    except Exception:
+                        pass
                 vz_w = float(np.clip((args.cruise_alt + pw["z"]) * args.alt_gain,
                                      -args.climb_max, args.climb_max))
                 await drone.move_by_velocity_async(0.0, 0.0, -vz_w, duration=0.3,
                                                    yaw_is_rate=True, yaw=0.0)
                 await asyncio.sleep(0.1)
             waited = time.time() - t_wait0
+            grounder.commit(acq.pick if reached else None)
             start_gate = {"enabled": True, "needed": args.start_when_seen,
-                          "reached": streak >= args.start_when_seen,
+                          "reached": reached,
                           "wait_s": round(waited, 1),
                           "first_candidate_s": (None if first_ok is None
-                                                else round(first_ok, 1))}
+                                                else round(first_ok, 1)),
+                          "inferences_judged": acq.n,
+                          "inferences_with_plausible": acq.n_plausible,
+                          "candidates_judged": acq.n_candidates,
+                          "best_streak": acq.best_streak,
+                          "max_range_m": args.start_max_range_m,
+                          "plausible_but_too_far": acq.n_too_far,
+                          "last_rejections": acq.last_reasons[:3],
+                          "snapshots": n_snaps,
+                          # [t_s, range_m, bearing_deg (+ right)]; in view when
+                          # |bearing| <= 45
+                          "truth_trace": truth_trace}
             # Was it the subject? Truth answers that AFTER the decision.
             if car is not None and hasattr(car, "refresh"):
                 car.refresh()
                 kin_w = drone.get_ground_truth_kinematics()
                 pw = kin_w["pose"]["position"]
-                dw = grounder.latest()["det"]
+                dw = acq.pick if reached else grounder.latest()["det"]
                 if dw is not None:
                     tcx, tdeg = track_truth.project_target_cx(
                         pw["x"], pw["y"], quat_yaw(kin_w["pose"]["orientation"]),
@@ -2528,6 +2761,12 @@ async def fly(args) -> int:
                 people.update(time.time() - t0)
             if traffic is not None:
                 traffic.update(time.time() - t0, tick)
+            elif car is not None and type(car).__name__ == "LevelCar":
+                # The level drives it; update() polls the simulator and throttles
+                # itself. It has no pose_at: nothing about its path is known in
+                # advance. Falling through to the branch below is what crashed
+                # citylife_redcar on its first tick.
+                car.update(time.time() - t0)
             elif car is not None and env_car is None and tick % 2 == 0:
                 # Only when the client owns the motion. With an env actor the
                 # simulator is already interpolating the uploaded trajectory,
@@ -2558,8 +2797,9 @@ async def fly(args) -> int:
             presence_blocked = False
             if args.presence_gates_control and det is not None:
                 r_pre = range_from_depth(obs.get_depth(), det) if have_depth else None
-                det, presence_blocked, _ = presence_gate(det, r_pre, args.object,
-                                                         args.colour_min)
+                det, presence_blocked, _ = presence_gate(
+                    det, r_pre, args.object, args.colour_min,
+                    ground=(state.up, quat_pitch(kin["pose"]["orientation"])))
                 n_presence_blocked += int(presence_blocked)
             # FEED THE ESTIMATOR, ONCE PER NEW DETECTION.
             #
@@ -2729,7 +2969,9 @@ async def fly(args) -> int:
             # aircraft would spiral away from a target it had already lost.
             orbit_fwd = fwd
             rng_m = range_from_depth(obs.get_depth(), det) if have_depth else None
-            verdict, why = presence.update(det_raw, rng_m, g.get("app"))
+            verdict, why = presence.update(
+                det_raw, rng_m, g.get("app"),
+                ground=(state.up, quat_pitch(kin["pose"]["orientation"])))
             # Carried to the next tick, where the search branch decides whether
             # creeping forward is justified. See --search-creep.
             last_verdict = verdict
@@ -3358,6 +3600,11 @@ def main() -> int:
                     help="hover after take-off until the detector has produced "
                          "N consecutive boxes that pass the colour and presence "
                          "checks, then start the mission clock. 0 disables.")
+    ap.add_argument("--start-max-range-m", type=float, default=0.0,
+                    help="the start gate only accepts a subject this close "
+                         "(depth, or the width prior without depth); 0 = any "
+                         "range. A far subject the aircraft cannot close on "
+                         "is not a start.")
     ap.add_argument("--start-timeout-s", type=float, default=240.0,
                     help="give up waiting for --start-when-seen after this long "
                          "and fly anyway; the metrics say it timed out.")

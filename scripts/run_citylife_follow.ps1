@@ -2,7 +2,7 @@
 #
 # The difference from run_retarget_demo.ps1 is what supplies the scene. There,
 # the client spawns everything it follows: baked GLB figures it teleports once
-# per tick, and a scripted car. Here the LEVEL walks 16 pedestrians and drives 8
+# per tick, and a scripted car. Here the LEVEL walks 40 pedestrians and drives 24
 # cars on its own, so the client spawns nothing, spends no per-tick RPC on
 # scenery, and reads ground truth back out of the simulator with
 # --level-peds (see demo/level_actors.py).
@@ -33,6 +33,8 @@ param(
     [string]$LevelCar = "",             # e.g. Car_10: follow a car the level drives
     [int]$StartWhenSeen = 5,            # consecutive plausible boxes before t0; 0 = off
     [double]$StartTimeout = 240,
+    [double]$StartMaxRange = 45,        # car mode: acquire only within this range
+    [double]$CruiseAlt = 0,             # 0 = the default, 8 m (see below)
     [int]$SimWidth   = 960,
     [int]$SimHeight  = 540,
     [switch]$SkipSim
@@ -108,7 +110,7 @@ Say "following `"$Object`" for ${Seconds}s against $LevelPeds level pedestrians"
 #
 # No --pedestrians and no --parked: the level already walks its own, and
 # spawning more would put two crowds in one street and spend RPC doing it.
-# --no-car for the same reason - the level drives eight.
+# --no-car for the same reason - the level drives its own 24.
 # --presence-gates-control: a box the presence verdict rejects (a "person" 2.9 m
 # wide at 75 m, a wall-sized box, the wrong colour) may not steer. Without it the
 # aircraft chased building facades on citylife_city while its own check said
@@ -118,16 +120,25 @@ Say "following `"$Object`" for ${Seconds}s against $LevelPeds level pedestrians"
 # mission clock starts when the DETECTOR has produced that many plausible boxes
 # in a row - the evidence the controller steers by - not when truth says so.
 #
-# Policy: follow_pedestrian.yaml for both missions. Besides the 10 m pedestrian
-# ring it carries the catch-all 5 m SubjectStandoff (subject_class "*"), which
-# is the rule that binds a car; the retarget demo followed its car under it.
+# Policy: follow_pedestrian.yaml for a person; follow_car_citylife.yaml for the
+# car. The car mission first flew under the pedestrian policy for its catch-all
+# 5 m stand-off, and inherited a 3.0 m/s cap against a 3.2 m/s car and a 5 m
+# clearance ring a mapped obstacle violates at the start point: it could not
+# keep up by construction. follow_car_citylife.yaml keeps both stand-offs and
+# takes follow_car.yaml's envelope (5 m/s, 3 m clearance, 6-14 m).
+$Policy = if ($LevelCar) { "policies\follow_car_citylife.yaml" } else { "policies\follow_pedestrian.yaml" }
+# Cruise altitude: 8 m for both missions. 12 m was flown (citylife_redcar_high)
+# and overshot the car policy's 14 m ceiling for 3.1 s (peak 14.32 m), each climb
+# during a phantom-wall repair (docs/FINDING-crowd-pedestrians-and-traffic.md,
+# third part), and the detector's hit rate fell from 0.71 to 0.32.
+if ($CruiseAlt -le 0) { $CruiseAlt = 8 }
 $a = @("demo\follow_vlm.py",
        "--object", $Object,
        "--tag", $Tag,
-       "--policy", "policies\follow_pedestrian.yaml",
+       "--policy", $Policy,
        "--max-s", "$Seconds",
        "--det-thresh", "0.008",
-       "--cruise-alt", "8",
+       "--cruise-alt", "$CruiseAlt",
        "--lock-target",
        "--no-car",
        "--presence-gates-control",
@@ -140,6 +151,10 @@ if ($LevelCar) {
     # A car: 0.16 of frame width is the calibration made for a 4 m car (15.8 m
     # stand-off), and the subject's truth is the one tag.
     $a += @("--level-car", $LevelCar, "--want-width", "0.16")
+    # Only a NEAR car is a start: acquired at 140 m it was 16 px, driving away
+    # at 3.2 m/s from an aircraft capped at 4 m/s, and was never closed on.
+    # The car passes the start point once a lap, so the gate waits for that.
+    $a += @("--start-max-range-m", "$StartMaxRange")
 } else {
     $a += @("--want-range", "$WantRange")
 }

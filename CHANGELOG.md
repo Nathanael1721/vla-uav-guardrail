@@ -16,6 +16,110 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-09-23 — the right frame width, the left side of the road, cars that yield, and the red car
+
+The level's logic is reproduced by `tools/citylife_routes.py` and
+`tools/citylife_mcp/` (it is gitignored); the write-up is the third part of
+`docs/FINDING-crowd-pedestrians-and-traffic.md`.
+
+#### Retracted
+- **The 2026-09-22 tracking columns, and "`frac_on_target` no longer measures
+  anything on this level".** `demo/track_truth.py` fell back to a 400 px frame
+  on a 768 x 432 camera. Re-scored with the width recovered from
+  `detections.jsonl`: `citylife_follow2` 0.255 on target against a null of 0.802
+  (in-shot median 128.2 px vs 31.9), `citylife_follow3` 0.365 against 0.808
+  (113.5 vs 23.3) - on those two the box was mostly NOT on a person, worse than
+  chance, which the video had shown and the numbers had not. `citylife_city`
+  1.000 against 1.000, median 9.2 px vs 10.1: at chance. "45.5 px against 5.2 px"
+  was an artefact of the width. `citylife_follow` cannot be re-scored (its log
+  is deleted), and none of these flights can be instance-scored (their logs
+  lack `truth.names`).
+- **"Lanes sit 350 cm left of each centre line"** (2026-09-22). They sat on the
+  RIGHT of travel - eastbound at X = 3750, the south half, with X = north and
+  Y = east - against the level's own keep-left lane markings.
+
+#### Fixed
+- The scorer's frame width: rows carry `det.img_w`, `track_truth.load_rows`
+  recovers it for older logs (commit 37514c3).
+- The controller steered on boxes its own presence check rejected.
+  `--presence-gates-control` (on in the CityLife runner) turns an ABSENT box into
+  a miss.
+- The control loop slept a full tick after its work, so it could never reach
+  10 Hz. It now sleeps to a 0.1 s deadline (`--legacy-tick-sleep` keeps the old
+  pacing): **9.31-9.37 Hz** on every red-car flight, against 4.04-6.89 Hz before
+  on the same level. Still under the 9.5 gate.
+- Cars keep left, on dense lane-centre polylines with filleted corners (loop A
+  616 m, B 334 m, C 288 m; 7 m and 13 m arcs; speed limit per point from
+  1.8 m/s^2 lateral acceleration and a 1.5 m/s^2 braking ramp).
+- **Cars turned by pivoting.** `UpdateAim` and the fixed-rate `RInterpTo` yaw are
+  replaced by `DriveTick`: path-curvature feed-forward plus lateral and heading
+  correction (L = 5 m, zeta = 0.9), frames cut into <= 50 ms sub-steps. Pure
+  pursuit was tried first in simulation and rejected (66 cm corner cut at
+  3.2 m/s^2). In Simulate: worst lane error **10.1 cm**, worst lateral
+  acceleration **1.93 m/s^2**.
+- Cars crept into stopped cars (a 60 cm/s floor) and ignored junctions and
+  pedestrians. Now they stop 6.5 m behind a queue, give way where their path
+  really crosses another loop's (loop B, at (4100, 4100) and (12300, -4100)), and
+  stop for a pedestrian on a crossing on their own path. In Simulate: closest
+  approach between any two cars **650 cm**, longest stand-still 22.3 s.
+- **The start gate could be captured by a distractor**: a red fire-hydrant sign
+  held the jump gate and the instance lock for 300 s and the car was never a
+  candidate. The gate now suspends both until it confirms a subject (`Acquirer`),
+  and accepts only one within 45 m.
+- **A level car crashed the flight loop** on its first tick
+  (`'LevelCar' object has no attribute 'pose_at'`).
+
+#### Added
+- `policies/follow_car_citylife.yaml`: the car mission's policy - both
+  stand-offs of `follow_pedestrian.yaml`, the envelope of `follow_car.yaml`. The
+  runner used the pedestrian policy, whose 3.0 m/s cap is below the car's
+  3.2 m/s.
+- A ground-contact check in `presence_verdict` for things that stand on the
+  road: the ray through a box's bottom edge must meet the road near the measured
+  range. A red traffic signal passed every other check as a car.
+- `tools/citylife_routes.py` (+ `follow_step`/`follow`, the reference the
+  Blueprint mirrors, `crossings_on`, `give_way_junctions`) and
+  `tests/test_citylife_routes.py` (22 tests); `tools/citylife_mcp/` -
+  `ue_rpc.py`, `drive_tick.py`, `rewire_tick.py`, `apply_routes.py`,
+  `one_red_car.py`, `verify_drive.py`.
+- Exactly one red car: `Car_04` and `Car_22` repainted blue and white; `Car_10`
+  drives loop A at 3.2 m/s.
+- `--level-car`, `--start-when-seen`, `--start-max-range-m`,
+  `--start-timeout-s` (`demo/follow_vlm.py`); gate snapshots and a truth trace in
+  `metrics.json`; the red-car mode of `scripts/run_citylife_follow.ps1`.
+
+#### Flown
+Six red-car flights, 240 s after the start gate
+(`-Object "a red car" -LevelCar Car_10`), each isolating one change:
+
+| run | on target (null) | median px (null) | in shot | within 30 m | outcome |
+|---|---|---|---|---|---|
+| `citylife_redcar_far` | 0.083 (0.097) | 180.3 (145.9) | 0.262 | 0.095 | success |
+| `citylife_redcar_pedpolicy` | 0.320 (0.250) | 57.3 (105.1) | 0.505 | 0.118 | success |
+| `citylife_redcar_carpolicy` | 0.418 (0.392) | 55.5 (81.6) | 0.674 | 0.256 | success |
+| `citylife_redcar_ground` | **0.532 (0.414)** | **39.0 (84.9)** | **0.762** | **0.314** | success |
+| `citylife_redcar_high` (12 m) | 0.547 (0.487) | 20.0 (37.6) | 0.617 | 0.247 | **fail** |
+
+(The first flight crashed and was deleted.) `p0_violation_escape_rate` 0.0 in
+all. The best flight held the car within 30 m for **48.8 s over 133 m of
+street**, then lost it where it turned the first corner. Video:
+`docs/video/citylife_redcar_ground.mp4`. The ground-contact check did not fire
+in that flight, so its improvement over `_carpolicy` is run-to-run variation.
+
+#### Found, not fixed
+- **Corners - a wall the Shield invented.** In `_carpolicy` and `_ground` the
+  aircraft stalled at the same junction entrance for 40-187 s: every obstacle
+  map the Guardrail loads covers only NED [-80, 78] m (the 25 August Demo_day
+  survey), and past its edge `Shield._distance_at` extrapolated a border building
+  into an ever-deeper wall (-35 m at the junction). The Shield swapped the
+  follower's +3 m/s north for 5 m/s south, in bursts.
+- **The aircraft left its altitude envelope** in `_high`: 3.1 s above the 14 m
+  ceiling, peak 14.32 m, while every command the Shield emitted asked it to
+  descend - each climb coincides with one of those 5 m/s phantom-wall reversals.
+  12 m cruise was reverted to 8 m.
+- 5 half-rate ticks in 4 min of Simulate where a car was on a zebra with a
+  walking pedestrian on it; cause not established.
+
 ### 2026-09-22 — hands, hair, corners, and a city instead of a street
 
 The CityLife level lives in the gitignored `PASBlocks/`, so what reproduces it
@@ -46,8 +150,10 @@ is `docs/FINDING-crowd-pedestrians-and-traffic.md`.
 - The environment is a city rather than one street: **two car loops on the map's
   own 82 m junction grid (684 m and 300 m), 16 cars, 40 pedestrians**, nav
   bounds from 48 x 104 m to 200 x 185 m, and six new no-walk bands over the
-  carriageways. Lanes sit 350 cm left of each centre line, so the two loops read
-  as two-way traffic. Measured in Simulate: 32 of 40 walking, **0 in any
+  carriageways. Lanes sat 350 cm from each centre line, so the two loops read
+  as two-way traffic. *(Corrected 2026-09-23: they sat on the RIGHT of travel,
+  eastbound at X = 3750, against the level's own keep-left lane markings - never
+  "left" as written here. Cars keep left since 2026-09-23.)* Measured in Simulate: 32 of 40 walking, **0 in any
   carriageway**, nearest car-to-car 567-1544 cm, **0 ticks under 4 m**.
 - `demo/level_actors.py` + `--level-peds` in `demo/follow_vlm.py`: ground truth
   for actors the LEVEL owns, read back from the simulator with
@@ -81,10 +187,14 @@ Four 180 s flights, `scripts/run_citylife_follow.ps1`:
 
 | run | truth | poll | det_hz | loop_hz | on target | chance |
 |---|---|---|---|---|---|---|
-| `citylife_follow` | 16 of 40 | 0.1 s | 5.82 | 5.29 | 0.063 | 0.571 |
-| `citylife_follow2` | 40 | 0.1 s | 7.60 | 4.04 | 0.739 | 0.922 |
-| `citylife_follow3` | 40 | 0.5 s | 4.63 | 6.89 | 0.721 | 0.811 |
-| `citylife_city` | 40 | 0.5 s | 4.82 | 6.17 | 0.821 | **1.000** |
+| `citylife_follow` | 16 of 40 | 0.1 s | 5.82 | 5.29 | ~~0.063~~ n/a | ~~0.571~~ n/a |
+| `citylife_follow2` | 40 | 0.1 s | 7.60 | 4.04 | ~~0.739~~ 0.255 | ~~0.922~~ 0.802 |
+| `citylife_follow3` | 40 | 0.5 s | 4.63 | 6.89 | ~~0.721~~ 0.365 | ~~0.811~~ 0.808 |
+| `citylife_city` | 40 | 0.5 s | 4.82 | 6.17 | ~~0.821~~ 1.000 | **1.000** |
+
+*(Corrected 2026-09-23: tracking columns re-scored with the frame width recovered from
+`detections.jsonl`; the first scoring fell back to 400 px on a 768 px camera.
+`citylife_follow` cannot be re-scored: its log is deleted.)*
 
 - `det_hz` clears its 4.0 Hz gate in all four; the control loop clears 9.5 Hz in
   none, and neither did the reference flight on the old level (8.33 Hz).

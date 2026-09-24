@@ -36,7 +36,8 @@ from follow_vlm import (PresenceMonitor, TargetLock,          # noqa: E402
                         range_agreement, subject_truth_pts,
                         yaw_command, YAW_RATE_CAP, servo,
                         camera_hfov_deg, CAMERA_HFOV_DEG, presence_gate,
-                        subject_truth_names)
+                        subject_truth_names, Acquirer, ground_range_m,
+                        presence_verdict)
 
 W, H = 400, 225
 
@@ -307,6 +308,130 @@ def test_truth_names_follow_the_source_or_say_none():
         pos = (5.0, 6.0)
 
     assert subject_truth_names("car", _Scripted(), None) is None
+
+
+def _acq(need=3):
+    return Acquirer(need, "a red car", 0.10, gate_frac=0.12)
+
+
+def test_acquisition_looks_past_a_stationary_distractor():
+    """citylife_redcar: a red object the presence check rejects (50 px at
+    > 78 m cannot be a car) sat first in every inference. The car, ranked
+    second, must still be found - every candidate is judged, not the top one."""
+    far = _det(566.0 * W / 768, bw=50.0 * W / 768, colour=0.41)
+    rng = {id(far): 120.0}
+    acq = _acq(3)
+    got = False
+    for k in range(3):
+        car = _det(150.0 + 4 * k, bw=40.0, colour=0.5)
+        rng[id(car)] = 30.0
+        got = acq.step([far, car], lambda c: rng[id(c)])
+    assert got and acq.pick[0] == 158.0, (got, acq.pick)
+    assert acq.best_streak == 3 and acq.n_plausible == 3
+
+
+def test_two_plausible_things_flickering_do_not_add_up():
+    """Continuity is required: plausible boxes that jump across the frame each
+    start a new streak, so they never make a sighting."""
+    acq = _acq(3)
+    for k in range(6):
+        x = 60.0 if k % 2 == 0 else 330.0
+        assert not acq.step([_det(x, bw=40.0, colour=0.5)], lambda c: 30.0)
+    assert acq.best_streak == 1
+
+
+def test_a_miss_resets_the_streak():
+    acq = _acq(3)
+    good = lambda c: 30.0                                    # noqa: E731
+    acq.step([_det(100.0)], good)
+    acq.step([_det(102.0)], good)
+    acq.step([], good)
+    assert acq.streak == 0 and acq.pick is None
+    assert not acq.step([_det(104.0)], good)
+
+
+def test_a_plausible_subject_too_far_away_is_not_a_start():
+    """citylife_redcar flight 2: the right car, at 140 m. Plausible - and still
+    not a start, because the aircraft cannot close on it."""
+    acq = Acquirer(2, "a red car", 0.10, max_range_m=45.0, width_m=4.0)
+    far = lambda c: 140.0                                    # noqa: E731
+    assert not acq.step([_det(100.0, bw=8.0)], far)
+    assert not acq.step([_det(101.0, bw=8.0)], far)
+    assert acq.n_too_far == 2 and acq.best_streak == 0
+    near = lambda c: 25.0                                    # noqa: E731
+    acq.step([_det(100.0, bw=40.0)], near)
+    assert acq.step([_det(102.0, bw=40.0)], near)
+
+
+def test_without_depth_the_width_prior_stands_in_for_range():
+    """A 4 m car 8 px wide in a 400 px, 90 deg frame is ~127 m away; 40 px is
+    ~25 m. With no depth the gate still refuses the far one."""
+    acq = Acquirer(1, "a red car", 0.10, max_range_m=45.0, width_m=4.0)
+    assert not acq.step([_det(100.0, bw=8.0)], lambda c: None)
+    assert acq.step([_det(100.0, bw=40.0)], lambda c: None)
+
+
+def _det_on_ray(depression_deg, body_pitch_deg=0.0, bh=20.0, bw=40.0, colour=0.5):
+    """A box whose BOTTOM edge lies on the ray `depression_deg` below the
+    horizon, for the FrontCamera mount (20 deg down) and this test frame."""
+    f = (W / 2.0) / math.tan(math.radians(CAMERA_HFOV_DEG) / 2.0)
+    below = math.radians(depression_deg) - math.radians(20.0 - body_pitch_deg)
+    v_bottom = H / 2.0 + f * math.tan(below)
+    return (200.0, v_bottom - bh / 2.0, bw, bh, 0.05, W, H, colour)
+
+
+def test_a_car_on_the_road_passes_the_ground_contact_check():
+    """9 m up, a car 25 m away: its base ray meets the road where it is."""
+    dep = math.degrees(math.atan2(9.0, 25.0))
+    det = _det_on_ray(dep)
+    r = math.hypot(9.0, 25.0)
+    assert abs(ground_range_m(det, 9.0, 0.0) - r) < 0.5
+    v, why = presence_verdict(det, r, "a red car", 0.10, ground=(9.0, 0.0))
+    assert v != "ABSENT", why
+
+
+def test_a_red_signal_in_the_air_is_not_a_car():
+    """citylife_redcar flight 4: a red traffic signal 4.5 m up, 40 m away,
+    wide enough to be a car. Its base ray meets the road near 80 m."""
+    dep = math.degrees(math.atan2(9.0 - 4.5, 40.0))
+    det = _det_on_ray(dep, bw=12.0)
+    r = math.hypot(4.5, 40.0)
+    v, why = presence_verdict(det, r, "a red car", 0.10, ground=(9.0, 0.0))
+    assert v == "ABSENT" and "ground" in why, (v, why)
+    # without the ground argument the old verdict stands - that was the defect
+    assert presence_verdict(det, r, "a red car", 0.10)[0] != "ABSENT"
+
+
+def test_body_pitch_is_accounted_for():
+    """Braking pitches the nose up 10 deg; the same car sits lower in the
+    image, and the check must still find it on the road."""
+    dep = math.degrees(math.atan2(9.0, 25.0))
+    det = _det_on_ray(dep, body_pitch_deg=10.0)
+    r = math.hypot(9.0, 25.0)
+    assert abs(ground_range_m(det, 9.0, math.radians(10.0)) - r) < 0.5
+    v, _ = presence_verdict(det, r, "a red car", 0.10, ground=(9.0, math.radians(10.0)))
+    assert v != "ABSENT"
+
+
+def test_near_the_horizon_the_ground_check_abstains():
+    det = _det_on_ray(1.0, bw=4.0)                      # ~2.4 m wide at 150 m
+    assert ground_range_m(det, 9.0, 0.0) is None
+    assert presence_verdict(det, 150.0, "a red car", 0.10, ground=(9.0, 0.0))[0] != "ABSENT"
+
+
+def test_things_that_do_not_stand_on_the_road_are_not_ground_checked():
+    dep = math.degrees(math.atan2(4.5, 40.0))
+    det = _det_on_ray(dep, bw=12.0)
+    v, _ = presence_verdict(det, 40.3, "a traffic light", 0.10, ground=(9.0, 0.0))
+    assert v != "ABSENT"
+
+
+def test_without_range_a_box_can_still_be_acquired():
+    """No depth is UNSURE, not ABSENT - the gate must not stall for ever when
+    the depth stream is missing."""
+    acq = _acq(2)
+    acq.step([_det(100.0)], lambda c: None)
+    assert acq.step([_det(101.0)], lambda c: None)
 
 
 def test_without_range_it_says_unsure_rather_than_present():
@@ -744,6 +869,29 @@ def test_every_human_synonym_arms_the_same_standoff_rule():
         assert ring(phrase) == 10.0, f"{phrase!r} did not arm the 10 m rule"
     for phrase in ("a yellow car", "a taxi", "a white van"):
         assert ring(phrase) == 5.0, f"{phrase!r} should get the catch-all"
+
+
+def test_the_citylife_car_policy_lets_the_aircraft_keep_up():
+    """citylife_redcar was flown under follow_pedestrian.yaml: a 3.0 m/s cap
+    against a car driving 3.2 m/s, so "did not keep up" was decided by the
+    policy. The car mission's policy must cap ABOVE the subject's speed, keep
+    the stand-off that binds a car, and use the car envelope's 3 m clearance."""
+    import re as _re
+    from guardrail import load_policy
+    from guardrail.models import (KinematicEnvelope, ObstacleClearance,
+                                  SubjectStandoff)
+    pol = load_policy(ROOT / "policies" / "follow_car_citylife.yaml")
+    src = (ROOT / "tools" / "citylife_mcp" / "apply_routes.py").read_text(encoding="utf-8")
+    subject_cms = float(_re.search(r"SUBJECT_SPEED = \"Car_10\", ([0-9.]+)", src).group(1))
+    cap = min(k.speed_max_mps for k in pol.by_type(KinematicEnvelope))
+    assert cap > subject_cms / 100.0 + 1.0, (cap, subject_cms)
+    car_rules = [so for so in pol.by_type(SubjectStandoff) if so.binds("car")]
+    assert car_rules and max(so.min_range_m for so in car_rules) == 5.0
+    ped = [so for so in pol.by_type(SubjectStandoff) if so.binds("pedestrian")]
+    assert max(so.min_range_m for so in ped) == 10.0      # nothing relaxed for a person
+    assert [c.min_clearance_m for c in pol.by_type(ObstacleClearance)] == [3.0]
+    runner = (ROOT / "scripts" / "run_citylife_follow.ps1").read_text(encoding="utf-8")
+    assert "follow_car_citylife.yaml" in runner
 
 
 def test_every_width_word_maps_to_a_canonical_class():

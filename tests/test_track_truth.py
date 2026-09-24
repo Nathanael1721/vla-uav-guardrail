@@ -349,10 +349,14 @@ def test_logs_without_names_are_not_instance_scorable():
     assert score_instance(rows) is None
 
 
-def test_the_median_beats_every_null_on_every_flight_and_the_fraction_does_not():
+def test_the_median_separates_where_the_fraction_does_not():
     """Why the headline moved. The threshold count is within a whisker of a
     lag-1 baseline everywhere - repeat your own last box and you score the same
-    - while the median separates cleanly on every flight with scored rows.
+    - while the median beats its null on most flights with scored rows. Where
+    it loses, the flight was bad (the two shapes below); and a win by a hair is
+    not tracking - citylife_city scores 9.2 px against a null of 10.1, which is
+    chance. (Renamed 2026-09-23 from "..._beats_every_null_on_every_flight...",
+    a name its own body contradicted.)
 
     Two shapes of exception are known and both are asserted below: a subject
     that was mostly OUT of frame, and a flight whose own presence check called
@@ -393,12 +397,15 @@ def test_the_median_beats_every_null_on_every_flight_and_the_fraction_does_not()
     # flights that would have falsified the claim it was written to guard. A
     # filter that removes the counterexamples is not a guard.
     #
-    # What is true, and what is asserted: the median SEPARATES. It beats the
-    # null on every flight where the subject was usually in frame, and on the
-    # two where it does not (envactor3 203.1 px against 35.6, envactor_white
-    # 56.6 against 47.3) the subject was in frame on 17 % and 37 % of rows and
-    # the box genuinely was nowhere near it. The statistic reporting a bad
-    # flight as bad is the statistic working.
+    # What is true, and what is asserted: the median beats its null on most
+    # flights, and where it loses the flight was bad. Among the flights up to
+    # 2026-09-22: envactor3 (203.1 px against 35.6) and envactor_white (56.6
+    # against 47.3), subject in frame on 17 % and 37 % of rows - shape one
+    # below; and citylife_follow2/3 (128.2 against 31.9, 113.5 against 23.3),
+    # somebody in frame most of the time but the box mostly not on a person -
+    # shape two below. A narrow win is not tracking either: citylife_city's
+    # 9.2 against 10.1 is chance. The statistic reporting a bad flight as bad
+    # is the statistic working.
     assert checked >= 20, checked
     assert len(wins) >= 15, (len(wins), losses)
     for name, real, null, in_shot, candidates in losses:
@@ -413,8 +420,11 @@ def test_the_median_beats_every_null_on_every_flight_and_the_fraction_does_not()
         # This replaces a "crowded scene" exception written on 2026-09-22 from
         # numbers scored in the wrong frame width (400 px assumed, 768 px real).
         # With the width right the crowded flight it was written for,
-        # citylife_city, BEATS its null (9.2 px against 10.1) and needs no
-        # excuse; the two that lose were never crowd artefacts. An exception
+        # citylife_city, scores 9.2 px against a null of 10.1 - numerically
+        # under it, so it counts as a win here, but that is chance, not
+        # tracking: its own presence check called the box ABSENT on 83 % of
+        # detected ticks. It needs no exception, and it is not a result
+        # either; the two that lose were never crowd artefacts. An exception
         # keyed on the crowd would have excused exactly the flights the
         # detector got wrong.
         absent = presence_absent.get(name)

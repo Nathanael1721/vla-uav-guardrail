@@ -124,6 +124,10 @@ worked until the parent compiled. The fix:
 `Car_05/06/07` (body slot 1 `CarPaint`) now carry Gold, Purple and Black. `Car_00-04` are the
 `VehicleVarietyPack` bodies in their own paint.
 
+*Since 2026-09-23* `Car_04` and `Car_22` (the red VVP sports cars) are TP bodies painted
+blue and white, so `Car_10` (TP body, `MIC_Paint_Red`, loop A at 3.2 m/s) is the only red
+car in the level. The hue table below is the 2026-09-21 frame.
+
 Hue measured from one overhead frame (5200 cm), OpenCV scale 0-179, median over a
 28 x 28 px box on each body, against `demo/follow_vlm.py` `COLOUR_HUE`:
 
@@ -159,6 +163,11 @@ EffSpeed = SpeedCmS * f * f
 It is IDM-lite: no explicit braking term, just a target speed that falls off with the square
 of the gap ratio. The move direction is now `GetActorForwardVector` rather than the normalised
 vector to the waypoint, so a car travels where its nose points and corners on its turn rate.
+
+*Superseded in part 2026-09-23:* `UpdateEffSpeed` still runs (every other tick), but it
+feeds `DriveTick`, not an `FInterpTo`, and a car ahead going the same way now stops the car
+6.5 m behind it, centre to centre. Heading follows the path's curvature, not a fixed turn
+rate. See the third part of this document.
 
 Every intermediate is latched into a member variable by an impure `Set`, because a pure node
 feeding several pins is re-evaluated at each pull, and inside a `ForEach` that makes the value
@@ -309,7 +318,7 @@ The same applies to the simulator's pose lookup: `WorldSimApi::getObjectPose`
 resolves a name through `UnrealHelpers::FindActor`, which matches
 `GetName().Contains(name)` **or an actor TAG**. So every pedestrian and car now
 carries its intended name as a tag (`Ped_00` to `Ped_39`, `Car_00` to
-`Car_15`), and `world.get_object_poses(["Ped_07", ...])` resolves. A miss is not
+`Car_15`; `Car_23` since the 24-car change later that day), and `world.get_object_poses(["Ped_07", ...])` resolves. A miss is not
 silent: `getObjectPose` returns NaN for an actor it cannot find.
 
 ## Ground truth for a level that owns its own crowd
@@ -334,6 +343,15 @@ covers all of that: 10 tests.
 mission against the level's own crowd with no client-side scenery at all.
 
 ## Corners: the aim point moves, so the heading does not jump
+
+*Superseded 2026-09-23.* `UpdateAim` is deleted, and the Tick below (corner-waypoint
+steering, fixed-rate `RInterpTo` yaw, `ArriveRadius`) is replaced by `DriveTick`:
+path-curvature feed-forward plus lateral/heading correction on dense lane-centre polylines
+from `tools/citylife_routes.py`. Of the two deadlock fixes below, the 450 cm lead-in went
+with `UpdateAim`; the heading gate survives, joined by a queue stop, junction give-way and
+pedestrian yield, and the 60 cm/s floor now applies only to a crossing car in the corridor.
+What follows is the 2026-09-22 model, kept as a record; the third part of this document
+describes the new one.
 
 `BP_CityCar` steered at `Route[Idx]` and switched waypoint inside
 `ArriveRadius`, so at a corner the target yaw stepped by up to 90 degrees and
@@ -376,7 +394,7 @@ pool was 51 cells.
 
 Now, derived from that grid rather than typed:
 
-| | Before | Now |
+| | Before | 2026-09-22 (first pass) |
 |---|---|---|
 | Car routes | one 80 x 10 m rectangle | two loops on the junction grid: 684 m and 300 m |
 | Cars | 8 | 16 |
@@ -384,8 +402,19 @@ Now, derived from that grid rather than typed:
 | Nav bounds | 48 x 104 m | 200 x 185 m |
 | No-walk bands | 2, hand-fitted to the old loop | 8 (3 N-S + 3 E-W carriageways + the original 2) |
 
-Lanes are offset 350 cm to the LEFT of travel from the junction centre line,
-because this is a Japanese city and its traffic keeps left; the two loops share
+Since later on 2026-09-22 there are 24 cars on three loops. Since 2026-09-23 the loops are
+dense lane-centre polylines from `tools/citylife_routes.py`: A 616 m / 408 points / four 7 m
+left-turn arcs, B 334 m / 224 points / four 13 m arcs, C 288 m / 192 points / 7 m arcs, each
+point with a speed limit from 1.8 m/s^2 lateral acceleration and a 1.5 m/s^2 braking ramp.
+
+~~Lanes are offset 350 cm to the LEFT of travel from the junction centre line,
+because this is a Japanese city and its traffic keeps left;~~ *Retracted
+2026-09-23:* the 2026-09-22 lanes sat 350 cm to the RIGHT of travel. UE axes here
+are X = north, Y = east, and the eastbound lane was at X = 3750, the south half of
+the road, so the cars drove on the right, against the level's own lane markings:
+on the western approach to junction (4100, 4100) the stop line and lane arrows are
+on the north half and point east, which is keep-left. Since 2026-09-23 cars keep
+left (`tools/citylife_routes.py`, `DRIVE_SIDE = "left"`). The two loops share
 streets in opposite directions 7 m apart, which is what makes them read as
 two-way traffic. Pavement positions come from tracing the ground 1000 cm either
 side of each centre line and keeping hits between 6 and 40 cm - the road tile's
@@ -401,18 +430,25 @@ Measured in Simulate, 45 s, after the change:
   nothing about `-game` throughput; it is an editor with a viewport, and the
   earlier 2.8 Hz was measured with the window in the background.
 
-## It was flown, four times, and the tracking score stopped meaning anything
+## It was flown, four times, and the first tracking scores were computed in the wrong frame width
 
 Four flights on 2026-09-22, `scripts/run_citylife_follow.ps1`, 180 s each,
 following `"a person"` with the level's own crowd as ground truth. The Unreal
 editor has to be closed first; the runner refuses to kill it.
 
-| run | truth | poll | ticks | det_hz | loop_hz | on target | chance | err px | sep min |
+| run | truth | poll | ticks | det_hz | loop_hz | on target | chance | median err px in shot (chance) | sep min |
 |---|---|---|---|---|---|---|---|---|---|
-| `citylife_follow` (deleted, see below) | 16 of 40 | 0.1 s | 952 | 5.82 | 5.29 | 0.063 | 0.571 | 332.6 | 0.8 m |
-| `citylife_follow2` | 40 | 0.1 s | 728 | 7.60 | 4.04 | 0.739 | 0.922 | 30.7 | 4.0 m |
-| `citylife_follow3` | 40 | 0.5 s | 1239 | 4.63 | 6.89 | 0.721 | 0.811 | 16.0 | 4.5 m |
-| `citylife_city` (24 cars, crossings) | 40 | 0.5 s | 1110 | 4.82 | 6.17 | 0.821 | **1.000** | 45.5 | 5.7 m |
+| `citylife_follow` (deleted, see below) | 16 of 40 | 0.1 s | 952 | 5.82 | 5.29 | ~~0.063~~ n/a | ~~0.571~~ n/a | ~~332.6~~ n/a | 0.8 m |
+| `citylife_follow2` | 40 | 0.1 s | 728 | 7.60 | 4.04 | 0.255 | 0.802 | 128.2 (31.9) | 4.0 m |
+| `citylife_follow3` | 40 | 0.5 s | 1239 | 4.63 | 6.89 | 0.365 | 0.808 | 113.5 (23.3) | 4.5 m |
+| `citylife_city` (24 cars, crossings) | 40 | 0.5 s | 1110 | 4.82 | 6.17 | 1.000 | **1.000** | 9.2 (10.1) | 5.7 m |
+
+Tracking columns re-scored 2026-09-23 with the frame width recovered from
+`detections.jsonl` (`track_truth.load_rows`). The first scoring fell back to a 400 px
+frame while the camera was 768 x 432, and gave 0.739 / 0.721 / 0.821 on target. The error
+column is now the in-shot median beside its null; the first version of this table showed
+the whole-flight median. `citylife_follow` was scored in the same wrong frame, and its log
+is deleted, so its struck figures cannot be re-scored and should not be quoted.
 
 **`det_hz` clears its 4.0 Hz gate in all four. The control loop clears 9.5 Hz in
 none of them** - and it did not in the reference flight either
@@ -420,7 +456,7 @@ none of them** - and it did not in the reference flight either
 
 Three things the table says that are worth more than the numbers:
 
-1. **The first run scored 0.063 because I asked for the wrong truth.** The
+1. **The first run asked for the wrong truth.** The
    runner defaulted to 16 level pedestrians while the level walks 40, so the
    subject the detector locked was not in the truth list and every tick scored
    as a miss. The fix was a flag, not a model: `-LevelPeds 40`. A default that
@@ -432,22 +468,34 @@ Three things the table says that are worth more than the numbers:
    16 figures out of 40. Anything that scores `demo/out/` - the eval generator,
    `tests/test_track_truth.py` - would have read it as a detector that missed,
    and produced a plausible, wrong number from a complete-looking artefact. The
-   row above is the record; the 887 MB of frames are not.
+   row above is the record; the 887 MB of frames are not. Its 0.063 was also
+   computed in a 400 px frame on a 768 px camera, like every CityLife score of that
+   day, and with the log deleted it cannot be re-scored: it says nothing about the
+   detector. The wrong truth list is established by the runner's default, not by
+   that number.
 2. **Polling the truth is not free.** 40 names at 10 Hz is 400 game-thread
    round trips a second, and the control loop paid for it: 4.04 Hz at a 0.1 s
    period against 6.89 Hz at 0.5 s. The runner now defaults to 0.5 s, which is
    still finer than a 1.4 m/s subject moves between polls.
-3. **In a crowded city the class-level tracking score saturates.** `chance`
-   here is what a box placed with no skill scores against "any pedestrian", and
-   in the last run it is **1.000**: with 40 people in frame, anywhere you point
-   is on somebody. `frac_on_target` 0.821 against a chance of 1.000 is not a
-   good score, it is a meaningless one, and the median error tells the same
-   story - 45.5 px against a chance of 5.2 px. What still measures something is
-   instance-level: `target_lock` held one instance for 515 ticks and switched
-   19 times. **Any future tracking claim about this level has to be scored
-   against the LOCKED instance, not the class.** `tests/test_track_truth.py`
-   now states this as the second known shape of its exception, bounded to three
-   flights so the excuse cannot quietly become the rule. `subject_truth_pts` returns
+3. **The tracking columns were first scored in the wrong frame width.**
+   `demo/track_truth.py` fell back to `img_w` = 400 while the camera was
+   768 x 432. Re-scored (table above): on `citylife_follow2` and `_follow3` the box
+   was mostly NOT on a person - 0.255 and 0.365 on target against nulls of 0.802
+   and 0.808, medians 128.2 and 113.5 px against 31.9 and 23.3 - worse than chance,
+   which the video had shown and the first numbers had not. On `citylife_city`
+   on-target and its null both saturate at 1.000 and the median, 9.2 px against
+   10.1, is at chance: there the class-level score cannot tell skill from chance.
+   The earlier 0.821 and "45.5 px against a chance of 5.2 px" were artefacts of the
+   width. These logs carry no `truth.names`, so no instance-level score exists for
+   them; `target_lock`'s 515 ticks held and 19 switches count the lock, not whether
+   it was on a person. **Any future tracking claim about this level has to be
+   scored against the LOCKED instance, not the class**: rows logged since
+   2026-09-23 carry names and `track_truth.score_instance` does that scoring.
+   `tests/test_track_truth.py` briefly excused these flights as a "crowded
+   scene"; that exception was written from the wrong-width numbers and has been
+   replaced. Its second known shape is now a flight whose own presence check
+   called the box ABSENT on most ticks (61 % and 63 % on `citylife_follow2` /
+   `_follow3`), and `citylife_city` is no longer excused. `subject_truth_pts` returns
    every pedestrian, which was right for a scene with 12 and is wrong for one
    with 40.
 
@@ -462,16 +510,22 @@ Artefacts: `demo/out/citylife_city/` (metrics, kpi, flight log, replay bundle,
 
 ## Still not measured, still not done
 
-- **The control loop is under its gate.** 6.17-6.89 Hz against 9.5, with the
-  truth poll at 0.5 s. The reference flight on the old level managed 8.33, so
-  part of that is this level and part of it is the poll. Not separated yet:
-  fly the same mission with `--level-peds 0` for a control.
-- **Scored against the class, not the instance.** See the flight table above.
+- ~~**The control loop is under its gate.**~~ *Found 2026-09-23 (commit 37514c3):*
+  every tick slept a full 0.1 s AFTER its work, so the period was work + 100 ms and
+  no flight - including the 8.33 Hz reference - could reach 10 Hz. It now sleeps to
+  a 0.1 s deadline and logs per-stage milliseconds; see the third part for the
+  measured rate.
+- **Scored against the class, not the instance.** For the 2026-09-22 flights it
+  cannot be done: their logs lack `truth.names`. The class-level numbers in the
+  table were re-scored in the correct frame width on 2026-09-23. Rows logged since
+  then carry names and `track_truth.score_instance` scores the locked figure.
 - `UpdateEffSpeed` calls `GetAllActorsOfClass`, which walks every actor in the
   world (about 5,900) before the per-car loop. It now runs on every OTHER tick,
   which halves that, but at 24 cars it is still roughly 70,000 class tests a
   tick. Caching the array in `BeginPlay` needs an array-of-object variable, and
-  this toolset's `add_object_variable` makes single references only.
+  this toolset's `add_object_variable` makes single references only. Since
+  2026-09-23 it also scans `BP_CityPed` when a crossing on the car's path is within
+  17 points ahead; that extra cost has not been measured.
 - ~~Nobody crosses a road~~ *Done 2026-09-22:* rather than place `NavLinkProxy`
   actors - whose `PointLinks` is a struct array, and struct-array writes through
   this toolset are unreliable - the no-walk bands are CUT. A 600 cm gap at each
@@ -479,15 +533,311 @@ Artefacts: `demo/out/citylife_city/` (metrics, kpi, flight log, replay bundle,
   navmesh walkable straight across the carriageway, which is what a crossing is.
   Five gaps on the demo corridor's two junctions; measured in Simulate, 3 of 40
   figures were mid-crossing and 0 were anywhere else in a carriageway.
-  Nothing yields: a car drives through a crossing pedestrian, because
-  `BP_CityCar` does not look for them.
+  ~~Nothing yields: a car drives through a crossing pedestrian, because
+  `BP_CityCar` does not look for them.~~ *Since 2026-09-23* a car stops for a
+  pedestrian on a crossing on its own path, measured along the path. In-engine
+  (Simulate, editor throttled to ~3 fps, 4 min) cars logged 780 pedestrian-yield
+  half-ticks, and 5 in which a car was on a zebra at > 50 cm/s with a MOVING
+  pedestrian on it; the cause is not established.
 - Eyebrows are absent from the crowd figures (they are a separate groom in
   Epic's pipeline). Unverified whether that reads at 10-20 m.
-- Cars do not yield at intersections, so two loops that CROSS drive through each
-  other. Loop C was moved a block west for that reason: loops A and B share
-  lanes but never cross, and a shared lane is fine because a car brakes for the
-  car it is following. Crossing traffic would need a priority rule that does not
-  exist.
+- ~~Cars do not yield at intersections, so two loops that CROSS drive through each
+  other.~~ *Since 2026-09-23* cars give way at junctions where their path crosses
+  another loop's, and loops A and B DO cross, at (4100, 4100) and (12300, -4100),
+  where loop B gives way. Loop C was moved a block west on 2026-09-22, when no
+  priority rule existed yet.
 - The wheel components on `BP_CityCar` carry no mesh at all, so the "are the
   buggy tyres still there" question from the first pass is answered: they are
   not rendering anything.
+
+---
+
+# Third pass, 2026-09-23: the cars drove on the wrong side, turned by pivoting, and yielded to nobody
+
+What the second pass left: cars that swung round corners rather than arcing,
+nothing that gave way at a junction or a crossing, a tracking score computed in
+the wrong frame width, and a flight in which the aircraft chased building
+facades while its own presence check said ABSENT. Asked for: natural turns,
+the loose ends closed, and a mission the drone can actually be judged on -
+follow the red car, still through the VLA, OWL-ViT and the guardrail.
+
+## The traffic drove on the wrong side, and a sentence here said it did not
+
+The second pass wrote that lanes sit "350 cm to the LEFT of travel ... because
+this is a Japanese city and its traffic keeps left". The intent was right; the
+geometry was not. In this level X is NORTH and Y is EAST, so the right-hand side
+of a heading (dX, dY) is (-dY, dX). The formula used for "left" put an
+eastbound car on the SOUTH half of the street - its right. Every car drove on
+the right, against the markings.
+
+The markings were read, not assumed: a top-down capture of the western approach
+to junction (4100, 4100) shows the stop line and the lane arrows (straight;
+straight-and-right) on the NORTH half of the carriageway, pointing east.
+Eastbound traffic keeps north, i.e. left. `tools/citylife_routes.py` now has
+`DRIVE_SIDE = "left"` read off that image, and a test that right-hand geometry
+reproduces exactly the lanes the 2026-09-22 cars drove, which is how we know
+they were on the wrong side.
+
+Keeping left changes more than the side. Loop A turns left at every corner, so
+it now runs INSIDE its block on 7 m arcs (616 m a lap, was 684 m on the lane
+rectangle); loop B turns right, so it runs outside on 13 m arcs (334 m) - and
+B's right turns now cross the oncoming lane, which is A's. The loops that were
+built "never to cross" cross at two junctions, (4100, 4100) and (12300, -4100).
+That is ordinary traffic, and it is the reason the cars had to learn to give
+way (below).
+
+## Why the corners looked wrong, and what a car does now
+
+`BP_CityCar` steered its body with a fixed-rate `RInterpTo` toward an aim point
+(`UpdateAim`, second pass). The yaw rate therefore had nothing to do with the
+path or the speed: the car turned at whatever rate the interpolator allowed,
+and the corner speed came from the distance to a waypoint, not from how sharp
+the turn was. A car moves along an arc and turns at v/R.
+
+So the path became geometry, computed offline and tested
+(`tools/citylife_routes.py`, `tests/test_citylife_routes.py`): each loop is a
+dense lane-centre polyline, a point every 150 cm, whose corners are circular
+fillets (7 m for a turn toward your own kerb, 13 m across the oncoming lane,
+both checked to stay inside the carriageway and the junction box), with a speed
+limit per point from 1.8 m/s^2 lateral acceleration and a 1.5 m/s^2 braking
+ramp, and a curvature per point.
+
+How to follow it was decided in Python before any Blueprint was written, with
+`follow_step` as the reference the Blueprint mirrors node for node:
+
+| follower | worst off-lane | worst v^2 kappa |
+|---|---|---|
+| pure pursuit, look-ahead 2.5 m + 0.6 s | 66 cm | 3.2 m/s^2 |
+| curvature feed-forward + correction, segment advanced 120 cm early | 90-102 cm | 4.6 m/s^2 |
+| same, advanced only when a point is PASSED | 5 cm | 2.3 m/s^2 |
+| same, heading error against the arc TANGENT, not the chord | **4.7 cm** | **1.85 m/s^2** |
+
+(Loops A-C at 60 Hz, L = 5 m; at 10 Hz the last row is 19 cm and 2.0 m/s^2.) Pure pursuit turns
+early because its look-ahead point enters the arc before the car does. The law
+kept is
+
+    kappa = kappa_path - e_y / L^2 - 2 zeta e_psi / L,   L = 5 m, zeta = 0.9
+
+a second-order correction in DISTANCE, so its behaviour does not depend on speed
+or frame rate; on an arc the feed-forward alone turns the car at exactly v/R.
+The front wheels are steered 2.7 m x kappa (radians, small-angle), capped at 35 degrees.
+
+`DriveTick` replaces the old Tick chain (154 nodes of it, and `UpdateAim`, were
+deleted). Measured INSIDE the engine - counters each car keeps, because an
+outside snapshot of 24 cars takes 70 editor calls and is not a snapshot:
+
+| Simulate run | worst off-lane | worst v^2 kappa |
+|---|---|---|
+| first DriveTick | 63 cm | 2.52 m/s^2 (pinned at the curvature clamp) |
+| with frames cut into <= 50 ms sub-steps | **10.1 cm** | **1.93 m/s^2** |
+
+The first run was wrong for a reason Python then reproduced exactly: the editor
+hitches, and one 0.5 s frame at the end of an arc drives 1.8 m on the wrong
+curvature. `follow` (the sub-stepping frame loop) and a test with every 20th
+frame at 0.5 s now pin that down.
+
+## Giving way
+
+`UpdateEffSpeed` (every other tick, it walks every car) now decides three
+limits, and `DriveTick` shrinks the stop distances by the distance driven in
+every sub-step, so a slow frame cannot carry a car past a stop line before the
+next measurement:
+
+- **Queue.** Stop 6.5 m centre to centre behind a car going my way, on a
+  2.5 m/s^2 ramp. The old rule never went below 60 cm/s and so crept into a
+  stopped car. A car NOT going my way counts only inside my 2.5 m corridor: a
+  "within 9 m" allowance meant for curves once caught oncoming cars in the
+  other lane and held the subject at 0.6 m/s.
+- **Junction.** Wait at the box edge while a non-parallel car is inside the
+  box. Where my path crosses another loop's and I am the one turning across
+  (`give_way_junctions`: only loop B, only at the two real crossings), also wait
+  for a non-parallel car within 20 m of the box. A car already inside a box
+  never waits, so the waiting condition always clears: no deadlock by
+  construction. Giving way at every far turn was tried first; it held loop B at
+  (4100, -4100), where its path never meets A's, behind a queue that was itself
+  waiting.
+- **Crossing.** Stop 6.5 m short of a crossing on MY PATH - measured along the
+  path by index (`crossings_on`), because a car about to turn left must stop
+  for the crossing round the corner, not the one straight ahead that it never
+  reaches (the first version did exactly that). The pedestrian scan runs only
+  within 25 m of such a crossing.
+
+Pedestrians roam to random nav points and the crossings are nav, so a figure
+sometimes stops ON a zebra, idles 2-6 s or sticks; one froze a junction for
+33 s. A standing pedestrian therefore holds a car for 6 s at most; a walking
+one holds it as long as it walks.
+
+Measured in Simulate, 4 minutes, 24 cars (editor throttled to about 3 fps):
+
+- worst lane error 10.1 cm, worst lateral acceleration 1.93 m/s^2;
+- **closest approach between any two cars 650 cm** centre to centre - the
+  queue distance; no car went through another;
+- longest stand-still 22.3 s (a loop-B car queued at its give-way junction), no deadlock;
+- 780 half-rate ticks of cars waiting for pedestrians, and **5 where a car was
+  on a zebra, moving, with a walking pedestrian on it**. Not zero, and the cause
+  is not established. The likely one is that the figures do not look: they step
+  out in front of a car already inside its braking distance. It is reported, not
+  fixed.
+
+## Exactly one red car
+
+Three cars on loop A were red: `Car_10` (the TP body in `MIC_Paint_Red`) and
+`Car_04`, `Car_22` (the Vehicle Variety Pack sports car, red by default).
+"Follow the red car" with three is ambiguous and the colour gate cannot choose.
+`Car_04` is now a blue TP car and `Car_22` a white one
+(`tools/citylife_mcp/one_red_car.py`). Paint hue, OpenCV scale, from each paint's
+`PaintColor`: Red 0, Orange 18, Gold 22.5, Yellow 26, Green 71, Cyan 92, Blue 112,
+Purple 152; the gate's red band is 0-10 and 170-179, so Red is the only paint in
+it. `Car_10` drives loop A at 3.2 m/s, under the aircraft's 4 m/s `--speed-max`.
+
+## The red-car mission: six flights, and what each one isolated
+
+`scripts/run_citylife_follow.ps1 -Object "a red car" -LevelCar Car_10`. The
+steering input is still only where OWL-ViT puts the box; the VLA follow loop,
+the colour gate, the instance lock and the Guardrail Shield are the same ones
+the pedestrian mission uses. Ground truth is the one car, by tag, so the score
+has a single subject and its null cannot saturate the way forty pedestrians
+did.
+
+| run | what it isolated | start | on target (null) | median err px in shot (null) | in shot | within 30 m | outcome |
+|---|---|---|---|---|---|---|---|
+| (first, deleted) | the start gate as written | timed out after 300 s | - | - | - | - | crashed |
+| `citylife_redcar_far` | acquisition mode, any range | 4 s, car at **140 m** | 0.083 (0.097) | 180.3 (145.9) | 0.262 | 0.095 | success |
+| `citylife_redcar_pedpolicy` | acquire only within 45 m | 161 s, 13.8 m | 0.320 (0.250) | 57.3 (105.1) | 0.505 | 0.118 | success |
+| `citylife_redcar_carpolicy` | the car's own policy | 153 s, 13.1 m | 0.418 (0.392) | 55.5 (81.6) | 0.674 | 0.256 | success |
+| `citylife_redcar_ground` | + ground-contact check | 167 s, 12.9 m | **0.532 (0.414)** | **39.0 (84.9)** | **0.762** | **0.314** | success |
+| `citylife_redcar_high` | cruise 12 m instead of 8 | 150 s, 16.8 m | 0.547 (0.487) | 20.0 (37.6) | 0.617 | 0.247 | **fail** |
+
+All 240 s after the start gate; `p0_violation_escape_rate` 0.0 in every one;
+control loop 9.31-9.37 Hz; detector 7.0-7.5 Hz except `_far` (4.27). "Outcome"
+is the KPI file's verdict, and `_high` failed it on altitude (below). Scores are
+`track_truth` at the real 768 px width, instance-level (one subject), so the
+null is meaningful. None of it is KPI-grade: the topology is
+`projectairsim-single-host`.
+
+What the best flight (`_ground`, video `docs/video/citylife_redcar_ground.mp4`)
+actually did: it held the red car **continuously within 30 m for 48.8 s from
+acquisition, median 19.4 m behind it, over 133 m of street**. Then the car
+turned left at junction (4100, 12300) and the aircraft did not. For the rest of
+the flight it searched, found the car again when it came round the loop, and
+lost it again. `_carpolicy` and `_high` show the same shape (47.5 s / 127 m and
+46.6 s / 135 m). **Following along a street works; following round a corner
+does not yet.**
+
+### What each failure was
+
+1. **The gate was captured by a fire-hydrant sign.** The first flight waited
+   300 s and never saw the car. `detections.jsonl` shows one box for all 1,227
+   inferences: a stationary red object 22 deg right of the nose, which the
+   gate snapshot later showed to be a red 消火栓 (fire hydrant) sign on the
+   kerb. The presence check rejected it every time (50 px at > 78 m is no
+   car), which is right - but the Grounder's jump gate then dropped every
+   candidate more than 35 % of the frame away from it, and the instance lock
+   held it for 1,101 inferences. The car was never even a candidate. Before a
+   subject is acquired there is nothing to be continuous WITH, so the gate
+   now runs the Grounder in acquisition mode: no jump gate, no lock, every
+   colour-passing candidate published, each judged by the presence verdict,
+   N sightings in a row that stay pixel-continuous (`Acquirer`), and the lock
+   seeded on the one confirmed. The same flight then crashed on its first
+   tick: the truth update fell through to `car.pose_at`, which a scripted car
+   has and a level car does not. Its artefacts were deleted, as with
+   `citylife_follow`: an empty flight log would be scored as a flight.
+2. **A car at 140 m is not a start.** `_far` acquired the right car in 4 s - at
+   140 m, 16 px, driving away at 3.2 m/s from an aircraft that then flew at
+   most 4 m/s. It never closed. The gate now accepts only a subject within
+   45 m (depth, or the width prior without depth); the car passes the start
+   point once a lap, so the gate waits for that pass (~150-170 s).
+3. **The policy decided the result before the controller did.** `_pedpolicy`
+   flew under `follow_pedestrian.yaml` for its 5 m catch-all stand-off, and
+   inherited a person's envelope: a 3.0 m/s cap against a 3.2 m/s car (the
+   Shield clamped speed on 406 ticks) and a 5 m clearance ring that a mapped
+   obstacle 4.99 m from the start point violates (238 violations there; the
+   controller's fence guard held the aircraft at 18 % of commanded speed for
+   the first 800 ticks). `policies/follow_car_citylife.yaml` keeps both stand-offs and takes
+   `follow_car.yaml`'s envelope: 5 m/s, 3 m clearance, 6-14 m.
+4. **A red traffic signal passed for a red car.** In `_carpolicy` the lock
+   left the car at the first junction for a red signal: 21 % red, ~35 px,
+   plausible by width at ~40 m. It is not on the ground, and a car is: the
+   ray through the bottom of its box meets the road about where the depth
+   image says it is, while a signal 4-5 m up meets the road near twice as far.
+   `presence_verdict` now checks that for things that stand on the road
+   (car, truck, bus, van, person), with the camera's 20 deg mount and the
+   body's pitch read from the pose each tick. `_ground` is the best flight on
+   every tracking number, but **the check never fired in it** (no tick gives
+   it as the reason), so that improvement over `_carpolicy` is run-to-run
+   variation - traffic, pedestrians, where the car was when the gate opened -
+   and not the check. Its corner loss has a different cause, next.
+5. **At the corner the Shield held the aircraft against a wall that is not
+   there.** In `_carpolicy` and `_ground` the aircraft stopped at the same
+   place, the entrance to junction (4100, 12300), NED y = 111-114 m, for ~187 s
+   and ~40 s of broken-up ticks respectively. The repair text says why:
+   `bld-clearance: dist -35.06m < 3.0m -> push (-1.00,-0.03) at 5.00 m/s` -
+   the obstacle map put the aircraft 35 m INSIDE an obstacle. Every map the
+   Guardrail loads (`demo/out/citymap/*.npz`) is 80 x 80 cells of 2 m, NED
+   [-80, 78] m: the Demo_day survey of 25 August, which never covered where
+   CityLife's loops go. Beyond the edge `Shield._distance_at` extrapolates
+   `edge value - distance past the edge`, and the edge cell at (48, 78) is a
+   building, so everything north of x = 47 past the edge reads as ever-deeper
+   inside it. The Shield swapped the follower's +3 m/s north for 5 m/s south,
+   in bursts, and the aircraft oscillated between x = 40 and 47. (This part
+   was first written up as the aircraft pressing into a corner tree and a
+   signal pole, which the chase camera happened to show; the sim logged no
+   collision there, and the repair text rules it out.)
+6. **At 12 m the aircraft left its altitude envelope.** It overshot the car
+   policy's 14 m ceiling for 3.1 s, peaking at **14.32 m**, although every
+   command the Shield emitted was compliant (P0 escapes 0) and asked to
+   DESCEND (vz -0.5 to -1.2 m/s throughout) - so the KPI file calls the flight
+   a fail. Each climb coincides with a phantom-wall repair of point 5: a 5 m/s
+   reversal of horizontal velocity, which pitches the airframe hard, and the
+   pitch climbs it. The detector's hit rate also fell from 0.71 to 0.32 at the
+   extra height, so 12 m was reverted to 8.
+
+### Still open
+
+- **Corners.** Two causes: the phantom wall of point 5, and a controller with
+  no memory of where the car went - the estimator predicts along the last
+  velocity (straight) for 3 s, then coast and search fly along the nose.
+- **The maps do not cover the city**, and the Shield's off-map extrapolation
+  turns a building on the map border into an endless wall (point 5).
+- **A repair can reverse the aircraft at full speed** (point 6).
+- The ground-contact check is untested against its own false-reject rate in
+  flight: `_ground` logged no rejection by it, and offline, without the body
+  pitch the logs do not carry, it cannot be evaluated.
+
+### The control loop reaches 9.3 Hz
+
+Every red-car flight ran at 9.31-9.37 Hz with a median 5.3-6.5 ms of work per tick, on
+the same level where the 2026-09-22 flights managed 4.04-6.89 Hz. Nothing about
+the level changed: the loop slept a full 0.1 s AFTER its work (commit
+37514c3), so no flight - including the 8.33 Hz reference - could reach 10 Hz.
+It now sleeps to a deadline. 9.3 is still under the 9.5 gate: the period is
+~107 ms, and the extra ~7 ms is outside every timed stage - the likely cause
+is the 15.6 ms default timer granularity of `asyncio.sleep` on Windows, which is
+not measured yet.
+
+## The level is rebuilt from scripts, because it is not in git
+
+Everything above lives in `PASBlocks/`, which is gitignored. The record is the
+scripts that build it, run in order through the editor's MCP endpoint
+(`tools/citylife_mcp/`): `drive_tick.py` (variables, `DriveTick`,
+`UpdateEffSpeed`), `rewire_tick.py` (EventGraph: Tick -> UpdateEffSpeed ->
+DriveTick -> wheels; the old chain deleted), `apply_routes.py` (per-car path,
+speeds, curvatures, junction flags, crossings, placement) and `one_red_car.py`;
+`verify_drive.py` reads the counters. That was tested the hard way: the first
+build was lost (below) and the second was produced from these scripts alone.
+
+## Toolset traps met on the way
+
+- **A full disk turns into a locked file.** `D:` filled while the editor was
+  saving. The save failed, and every save after it failed too, with
+  `MoveFile ... Error Code 32` - the editor itself kept the package files open.
+  `save_assets` still answered `saved: true`; the files on disk kept their old
+  date. The complete new packages were sitting in `PASBlocks/Saved/*.tmp`. Only
+  a restart releases the handles. Check the file date, not the return value.
+- A new Blueprint variable is invisible to the object API until it is
+  instance-editable: `set_properties` refuses it by name.
+- `write_graph_dsl`: `(Transformation|SetActorRotation x)` binds x to the
+  target pin and fails; pass `:NewRotation`. Another actor's getter needs
+  `:self actor`.
+- A function call node's `type_id` reads back as `|Name`, while `create_node`
+  wants `CallFunction|Name`.
