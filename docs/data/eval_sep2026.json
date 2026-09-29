@@ -1,5 +1,5 @@
 {
-  "generated": "2026-09-23",
+  "generated": "2026-09-29",
   "source": "tools/build_eval_data.py",
   "kpi": {
     "runs": {
@@ -104,9 +104,9 @@
         "policy_hash": "sha256:68a4efd102869f5c"
       }
     },
-    "flights_total": 54,
+    "flights_total": 65,
     "flights_kpi_grade": 5,
-    "flights_escape_zero": 49,
+    "flights_escape_zero": 60,
     "unshielded_controls": [
       {
         "tag": "ros2_ped_off",
@@ -452,12 +452,12 @@
   },
   "rails": {
     "counts": {
-      "projectairsim-single-host": 42,
+      "projectairsim-single-host": 53,
       "canonical-hil": 5,
       "ardupilot-sitl-pymavlink": 7
     },
-    "camera_flights": 42,
-    "camera_flights_meeting_both_gates": 1
+    "camera_flights": 53,
+    "camera_flights_meeting_both_gates": 7
   },
   "sweep": {
     "counts": {
@@ -550,6 +550,11 @@
   "repo": {
     "last_meeting": "2026-09-02",
     "commits_since_meeting": [
+      {
+        "date": "2026-09-24",
+        "sha": "82295b1",
+        "subject": "Keep left, turn on arcs, give way, and chase the red car to its first corner"
+      },
       {
         "date": "2026-09-23",
         "sha": "37514c3",
@@ -666,20 +671,20 @@
         "subject": "Answer the review's one real question, and correct a gap I invented"
       }
     ],
-    "commits_total": 60,
+    "commits_total": 61,
     "version": "0.5.1",
     "finding_docs": 29,
     "policies": 28,
-    "test_files": 25,
+    "test_files": 27,
     "tests_fast": {
-      "passed": 518,
-      "total": 518,
+      "passed": 553,
+      "total": 553,
       "per_file": {
         "test_bundle.py": "22/22",
         "test_check_contract.py": "2/2",
         "test_city_traffic.py": "34/34",
         "test_citylife_routes.py": "22/22",
-        "test_clearance.py": "13/13",
+        "test_clearance.py": "16/16",
         "test_corridor.py": "24/24",
         "test_deck_scorer_parity.py": "13/13",
         "test_fenceguard.py": "23/23",
@@ -689,7 +694,7 @@
         "test_manifest.py": "34/34",
         "test_occ_bands.py": "14/14",
         "test_parked_cars.py": "9/9",
-        "test_range_and_lock.py": "91/91",
+        "test_range_and_lock.py": "100/100",
         "test_recorder.py": "5/5",
         "test_replay.py": "15/15",
         "test_shield.py": "31/31",
@@ -697,8 +702,10 @@
         "test_sweep.py": "21/21",
         "test_target_state.py": "21/21",
         "test_track_truth.py": "34/34",
+        "test_trail.py": "18/18",
         "test_two_view.py": "9/9",
-        "test_vla_bridge.py": "28/28"
+        "test_vla_bridge.py": "28/28",
+        "test_voxel_map.py": "5/5"
       }
     },
     "tests_coverage": {
@@ -715,15 +722,23 @@
         "citylife_city",
         "citylife_follow2",
         "citylife_follow3",
+        "citylife_ped_final",
         "citylife_redcar_carpolicy",
         "citylife_redcar_far",
+        "citylife_redcar_final1",
+        "citylife_redcar_final2",
+        "citylife_redcar_final3",
+        "citylife_redcar_final4",
         "citylife_redcar_ground",
         "citylife_redcar_high",
-        "citylife_redcar_pedpolicy"
+        "citylife_redcar_pedpolicy",
+        "citylife_redcar_trail",
+        "citylife_redcar_trail2",
+        "citylife_redcar_trail3"
       ]
     },
     "citylife_level": {
-      "status": "rebuilt 2026-09-23: keep-left, curvature follower, yields, one red car; red-car mission flown",
+      "status": "rebuilt 2026-09-23: keep-left, curvature follower, yields, one red car; 2026-09-29: its own obstacle map, the on-the-zebra stop, and the red-car mission flown with trail follow",
       "pedestrians": 40,
       "cars": 24,
       "pedestrian_model": "City Sample Crowd, 6 variants (3 male, 3 female)",
@@ -751,6 +766,39 @@
         "car_on_zebra_with_walking_ped_half_ticks": 5,
         "note": "counters kept inside each car; editor throttled to ~3 fps; the 5 zebra ticks are not explained"
       },
+      "traffic_simulate_2026_09_29": {
+        "minutes": 4.4,
+        "cars": 24,
+        "lane_error_max_cm": 10.3,
+        "lateral_accel_max_mps2": 1.93,
+        "car_min_gap_cm": 650,
+        "stand_still_max_s": 42.0,
+        "stand_still_note": "loop B waiting to give way at its junctions (every car stopped > 8 s had Conflict set when polled)",
+        "ped_yield_half_ticks": 1528,
+        "car_on_zebra_with_walking_ped_half_ticks": 4,
+        "on_zebra_emergency_stops_half_ticks": 14,
+        "emergency_stops_above_50cms": 0,
+        "walking_ped_within_4m_at_speed": 0
+      },
+      "obstacle_map": {
+        "path": "demo/out/citymap_citylife (gitignored; rebuilt by demo/build_voxel_map.py)",
+        "ned_x_m": [
+          -140,
+          218
+        ],
+        "ned_y_m": [
+          -60,
+          138
+        ],
+        "res_m": 2.0,
+        "cells_6to14": 6021,
+        "cells_15to55": 6020,
+        "cells_2to4": 5043,
+        "street_cells": 10642,
+        "canopy_cells": 415,
+        "regression_cells_compared": 5600,
+        "regression_cells_disagreeing": 0
+      },
       "flights": {
         "citylife_follow2": {
           "object": "a person",
@@ -761,6 +809,11 @@
           "frac_on_target_chance": 0.802,
           "err_px_median_in_shot": 128.2,
           "err_px_median_chance": 31.9,
+          "loop_hz": 4.04,
+          "longest_within_30m": {
+            "s": 72.6,
+            "m_flown": 93.0
+          },
           "sep_min_m": 4.0,
           "sep_mean_m": 20.9,
           "target_lock": {
@@ -769,7 +822,9 @@
             "switched": 27,
             "rejected_candidates": 108,
             "size_rejected": 2026
-          }
+          },
+          "frac_within_30m": 0.832,
+          "start_heading_err_deg": null
         },
         "citylife_follow3": {
           "object": "a person",
@@ -780,6 +835,11 @@
           "frac_on_target_chance": 0.808,
           "err_px_median_in_shot": 113.5,
           "err_px_median_chance": 23.3,
+          "loop_hz": 6.88,
+          "longest_within_30m": {
+            "s": 118.4,
+            "m_flown": 112.0
+          },
           "sep_min_m": 4.5,
           "sep_mean_m": 22.0,
           "target_lock": {
@@ -788,7 +848,9 @@
             "switched": 20,
             "rejected_candidates": 92,
             "size_rejected": 2068
-          }
+          },
+          "frac_within_30m": 0.757,
+          "start_heading_err_deg": null
         },
         "citylife_city": {
           "object": "a person",
@@ -799,6 +861,11 @@
           "frac_on_target_chance": 1.0,
           "err_px_median_in_shot": 9.2,
           "err_px_median_chance": 10.1,
+          "loop_hz": 6.16,
+          "longest_within_30m": {
+            "s": 180.0,
+            "m_flown": 78.0
+          },
           "sep_min_m": 5.7,
           "sep_mean_m": 12.1,
           "target_lock": {
@@ -807,7 +874,9 @@
             "switched": 19,
             "rejected_candidates": 105,
             "size_rejected": 1647
-          }
+          },
+          "frac_within_30m": 1.0,
+          "start_heading_err_deg": null
         },
         "citylife_redcar_far": {
           "object": "a red car",
@@ -824,6 +893,11 @@
             "frac_in_shot": 0.262,
             "reassociations": 0,
             "subjects": 1
+          },
+          "loop_hz": 9.38,
+          "longest_within_30m": {
+            "s": 22.7,
+            "m_flown": 15.0
           },
           "start_gate": {
             "enabled": true,
@@ -860,7 +934,9 @@
             "switched": 76,
             "rejected_candidates": 73,
             "size_rejected": 75
-          }
+          },
+          "frac_within_30m": 0.095,
+          "start_heading_err_deg": null
         },
         "citylife_redcar_pedpolicy": {
           "object": "a red car",
@@ -877,6 +953,11 @@
             "frac_in_shot": 0.505,
             "reassociations": 0,
             "subjects": 1
+          },
+          "loop_hz": 9.3,
+          "longest_within_30m": {
+            "s": 17.4,
+            "m_flown": 17.0
           },
           "start_gate": {
             "enabled": true,
@@ -913,7 +994,9 @@
             "switched": 62,
             "rejected_candidates": 70,
             "size_rejected": 91
-          }
+          },
+          "frac_within_30m": 0.118,
+          "start_heading_err_deg": null
         },
         "citylife_redcar_carpolicy": {
           "object": "a red car",
@@ -930,6 +1013,11 @@
             "frac_in_shot": 0.674,
             "reassociations": 0,
             "subjects": 1
+          },
+          "loop_hz": 9.31,
+          "longest_within_30m": {
+            "s": 47.5,
+            "m_flown": 137.0
           },
           "start_gate": {
             "enabled": true,
@@ -968,7 +1056,9 @@
             "switched": 47,
             "rejected_candidates": 48,
             "size_rejected": 139
-          }
+          },
+          "frac_within_30m": 0.256,
+          "start_heading_err_deg": null
         },
         "citylife_redcar_ground": {
           "object": "a red car",
@@ -985,6 +1075,11 @@
             "frac_in_shot": 0.762,
             "reassociations": 0,
             "subjects": 1
+          },
+          "loop_hz": 9.31,
+          "longest_within_30m": {
+            "s": 48.8,
+            "m_flown": 146.0
           },
           "start_gate": {
             "enabled": true,
@@ -1023,7 +1118,9 @@
             "switched": 91,
             "rejected_candidates": 117,
             "size_rejected": 258
-          }
+          },
+          "frac_within_30m": 0.314,
+          "start_heading_err_deg": null
         },
         "citylife_redcar_high": {
           "object": "a red car",
@@ -1040,6 +1137,11 @@
             "frac_in_shot": 0.617,
             "reassociations": 0,
             "subjects": 1
+          },
+          "loop_hz": 9.32,
+          "longest_within_30m": {
+            "s": 46.6,
+            "m_flown": 145.0
           },
           "start_gate": {
             "enabled": true,
@@ -1076,7 +1178,755 @@
             "switched": 71,
             "rejected_candidates": 71,
             "size_rejected": 131
-          }
+          },
+          "frac_within_30m": 0.247,
+          "start_heading_err_deg": null
+        },
+        "citylife_redcar_trail": {
+          "object": "a red car",
+          "ticks": 2399,
+          "det_hz": 6.91,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.779,
+          "frac_on_target_chance": 0.688,
+          "err_px_median_in_shot": 13.9,
+          "err_px_median_chance": 27.0,
+          "instance": {
+            "frac_on_target": 0.779,
+            "frac_on_target_chance": 0.688,
+            "frac_in_shot": 0.879,
+            "reassociations": 0,
+            "subjects": 1
+          },
+          "loop_hz": 9.99,
+          "longest_within_30m": {
+            "s": 103.4,
+            "m_flown": 305.0
+          },
+          "start_gate": {
+            "enabled": true,
+            "needed": 5,
+            "reached": true,
+            "wait_s": 175.5,
+            "first_candidate_s": 20.7,
+            "inferences_judged": 770,
+            "inferences_with_plausible": 11,
+            "candidates_judged": 1045,
+            "best_streak": 5,
+            "max_range_m": 45.0,
+            "plausible_but_too_far": 13,
+            "last_rejections": [],
+            "snapshots": 36,
+            "subject_px_err": 33.6,
+            "subject_in_shot": true,
+            "subject_range_m": 14.0
+          },
+          "stage_ms_median": {
+            "kin": 1.0,
+            "truth": 0.0,
+            "shield": 0.0,
+            "cmd": 1.5,
+            "work": 7.5
+          },
+          "tick_pacing": "absolute-deadline",
+          "presence_blocked_ticks": 891,
+          "sep_min_m": 7.5,
+          "sep_mean_m": 63.7,
+          "target_lock": {
+            "enabled": true,
+            "locked": 564,
+            "switched": 36,
+            "rejected_candidates": 37,
+            "size_rejected": 169
+          },
+          "frac_within_30m": 0.436,
+          "trail": {
+            "enabled": true,
+            "ticks": 2039,
+            "points": 16,
+            "restarts": 3
+          },
+          "collisions": {
+            "measured": true,
+            "pre_t0": 1,
+            "mission": 1,
+            "mission_objects": [
+              "BP_jcRoad22mA_a73_16"
+            ],
+            "mission_first": [
+              {
+                "t_conn": 463.31,
+                "object": "BP_jcRoad22mA_a73_16",
+                "penetration_m": 0,
+                "impact": {
+                  "x": 201.32760620117188,
+                  "y": -13.006977081298828,
+                  "z": -1.907348590179936e-08
+                },
+                "t": 254.39
+              }
+            ]
+          },
+          "off_map_ticks": 0,
+          "timer_resolution_ms": 1.16,
+          "start_heading_err_deg": null
+        },
+        "citylife_redcar_trail2": {
+          "object": "a red car",
+          "ticks": 2398,
+          "det_hz": 6.88,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.447,
+          "frac_on_target_chance": 0.309,
+          "err_px_median_in_shot": 36.2,
+          "err_px_median_chance": 93.5,
+          "instance": {
+            "frac_on_target": 0.447,
+            "frac_on_target_chance": 0.309,
+            "frac_in_shot": 0.59,
+            "reassociations": 0,
+            "subjects": 1
+          },
+          "loop_hz": 9.99,
+          "longest_within_30m": {
+            "s": 59.0,
+            "m_flown": 147.0
+          },
+          "start_gate": {
+            "enabled": true,
+            "needed": 5,
+            "reached": true,
+            "wait_s": 195.7,
+            "first_candidate_s": 168.6,
+            "inferences_judged": 819,
+            "inferences_with_plausible": 6,
+            "candidates_judged": 1110,
+            "best_streak": 5,
+            "max_range_m": 45.0,
+            "plausible_but_too_far": 2,
+            "last_rejections": [
+              "implies 0.5 m wide at 5 m; a car is 1.0-8.0 m",
+              "implies 0.7 m wide at 5 m; a car is 1.0-8.0 m"
+            ],
+            "snapshots": 39,
+            "subject_px_err": 46.2,
+            "subject_in_shot": true,
+            "subject_range_m": 13.6
+          },
+          "stage_ms_median": {
+            "kin": 1.0,
+            "truth": 0.0,
+            "shield": 0.0,
+            "cmd": 1.0,
+            "work": 6.5
+          },
+          "tick_pacing": "absolute-deadline",
+          "presence_blocked_ticks": 1023,
+          "sep_min_m": 1.7,
+          "sep_mean_m": 99.6,
+          "target_lock": {
+            "enabled": true,
+            "locked": 256,
+            "switched": 75,
+            "rejected_candidates": 81,
+            "size_rejected": 166
+          },
+          "frac_within_30m": 0.282,
+          "trail": {
+            "enabled": true,
+            "ticks": 1237,
+            "lookout_ticks": 507,
+            "refused_away_from_subject": 45,
+            "breadcrumbs_laid": 82,
+            "points_at_end": 3,
+            "restarts": 10,
+            "stop_short_m": 5.0
+          },
+          "collisions": {
+            "measured": true,
+            "pre_t0": 1,
+            "mission": 0,
+            "after_mission": 2525,
+            "after_mission_objects": [
+              "SM_jctHedgeC_137"
+            ],
+            "mission_objects": [],
+            "mission_first": []
+          },
+          "off_map_ticks": 0,
+          "presence_block_reasons": {
+            "implied width": 876,
+            "not on the ground": 135,
+            "wall-sized": 12
+          },
+          "timer_resolution_ms": 1.51,
+          "start_heading_err_deg": null
+        },
+        "citylife_redcar_trail3": {
+          "object": "a red car",
+          "ticks": 2390,
+          "det_hz": 4.04,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.059,
+          "frac_on_target_chance": 0.094,
+          "err_px_median_in_shot": 237.7,
+          "err_px_median_chance": 123.8,
+          "instance": {
+            "frac_on_target": 0.059,
+            "frac_on_target_chance": 0.094,
+            "frac_in_shot": 0.221,
+            "reassociations": 0,
+            "subjects": 1
+          },
+          "loop_hz": 9.96,
+          "longest_within_30m": {
+            "s": 26.4,
+            "m_flown": 19.0
+          },
+          "start_gate": {
+            "enabled": true,
+            "needed": 5,
+            "reached": true,
+            "wait_s": 1.3,
+            "first_candidate_s": 0.4,
+            "inferences_judged": 5,
+            "inferences_with_plausible": 5,
+            "candidates_judged": 8,
+            "best_streak": 5,
+            "max_range_m": 45.0,
+            "plausible_but_too_far": 0,
+            "last_rejections": [
+              "implies 0.5 m wide at 5 m; a car is 1.0-8.0 m"
+            ],
+            "snapshots": 1,
+            "subject_px_err": 24.6,
+            "subject_in_shot": true,
+            "subject_range_m": 43.9
+          },
+          "stage_ms_median": {
+            "kin": 0.5,
+            "truth": 0.0,
+            "shield": 0.0,
+            "cmd": 1.0,
+            "work": 5.7
+          },
+          "tick_pacing": "absolute-deadline",
+          "presence_blocked_ticks": 1522,
+          "sep_min_m": 2.3,
+          "sep_mean_m": 119.4,
+          "target_lock": {
+            "enabled": true,
+            "locked": 538,
+            "switched": 54,
+            "rejected_candidates": 49,
+            "size_rejected": 62
+          },
+          "frac_within_30m": 0.111,
+          "trail": {
+            "enabled": true,
+            "ticks": 1378,
+            "lookout_ticks": 741,
+            "refused_away_from_subject": 140,
+            "breadcrumbs_laid": 53,
+            "points_at_end": 26,
+            "restarts": 5,
+            "stop_short_m": 5.0
+          },
+          "collisions": {
+            "measured": true,
+            "pre_t0": 1,
+            "mission": 0,
+            "after_mission": 1,
+            "after_mission_objects": [
+              "BP_jcRoadCross22mA_a95_22"
+            ],
+            "mission_objects": [],
+            "mission_first": []
+          },
+          "off_map_ticks": 0,
+          "obstacle_map_loaded": true,
+          "presence_block_reasons": {
+            "implied width": 1433,
+            "not on the ground": 89
+          },
+          "ground_check_waiver": {
+            "measured": true,
+            "have_depth": true,
+            "waived_detections": 103,
+            "rescued_detections": 4
+          },
+          "timer_resolution_ms": 2.37,
+          "start_heading_err_deg": 1.75
+        },
+        "citylife_redcar_final1": {
+          "object": "a red car",
+          "ticks": 2397,
+          "det_hz": 7.12,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.361,
+          "frac_on_target_chance": 0.357,
+          "err_px_median_in_shot": 21.4,
+          "err_px_median_chance": 29.0,
+          "instance": {
+            "frac_on_target": 0.361,
+            "frac_on_target_chance": 0.357,
+            "frac_in_shot": 0.494,
+            "reassociations": 0,
+            "subjects": 1
+          },
+          "loop_hz": 9.99,
+          "longest_within_30m": {
+            "s": 12.8,
+            "m_flown": 18.0
+          },
+          "start_gate": {
+            "enabled": true,
+            "needed": 5,
+            "reached": true,
+            "wait_s": 172.8,
+            "first_candidate_s": 172.0,
+            "inferences_judged": 780,
+            "inferences_with_plausible": 5,
+            "candidates_judged": 984,
+            "best_streak": 5,
+            "max_range_m": 45.0,
+            "plausible_but_too_far": 3,
+            "last_rejections": [
+              "implies 0.5 m wide at 5 m; a car is 1.0-8.0 m"
+            ],
+            "snapshots": 35,
+            "subject_px_err": 49.1,
+            "subject_in_shot": true,
+            "subject_range_m": 13.2
+          },
+          "stage_ms_median": {
+            "kin": 1.0,
+            "truth": 0.0,
+            "shield": 0.0,
+            "cmd": 1.0,
+            "work": 7.0
+          },
+          "tick_pacing": "absolute-deadline",
+          "presence_blocked_ticks": 805,
+          "sep_min_m": 1.0,
+          "sep_mean_m": 102.3,
+          "target_lock": {
+            "enabled": true,
+            "locked": 308,
+            "switched": 46,
+            "rejected_candidates": 45,
+            "size_rejected": 65
+          },
+          "frac_within_30m": 0.091,
+          "trail": {
+            "enabled": true,
+            "ticks": 565,
+            "lookout_ticks": 417,
+            "refused_away_from_subject": 33,
+            "breadcrumbs_laid": 31,
+            "points_at_end": 1,
+            "restarts": 14,
+            "stop_short_m": 5.0
+          },
+          "collisions": {
+            "measured": true,
+            "pre_t0": 1,
+            "mission": 0,
+            "after_mission": 1,
+            "after_mission_objects": [
+              "BP_jcRoad22mA_a68_11"
+            ],
+            "mission_objects": [],
+            "mission_first": []
+          },
+          "off_map_ticks": 0,
+          "obstacle_map_loaded": true,
+          "presence_block_reasons": {
+            "implied width": 693,
+            "not on the ground": 112
+          },
+          "ground_check_waiver": {
+            "measured": true,
+            "have_depth": true,
+            "waived_detections": 24,
+            "rescued_detections": 0
+          },
+          "timer_resolution_ms": 2.08,
+          "start_heading_err_deg": 1.75
+        },
+        "citylife_redcar_final2": {
+          "object": "a red car",
+          "ticks": 2400,
+          "det_hz": 3.82,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.619,
+          "frac_on_target_chance": 0.57,
+          "err_px_median_in_shot": 13.6,
+          "err_px_median_chance": 30.1,
+          "instance": {
+            "frac_on_target": 0.619,
+            "frac_on_target_chance": 0.57,
+            "frac_in_shot": 0.7,
+            "reassociations": 0,
+            "subjects": 1
+          },
+          "loop_hz": 10.0,
+          "longest_within_30m": {
+            "s": 20.8,
+            "m_flown": 35.0
+          },
+          "start_gate": {
+            "enabled": true,
+            "needed": 5,
+            "reached": true,
+            "wait_s": 1.1,
+            "first_candidate_s": 0.0,
+            "inferences_judged": 5,
+            "inferences_with_plausible": 5,
+            "candidates_judged": 20,
+            "best_streak": 5,
+            "max_range_m": 45.0,
+            "plausible_but_too_far": 0,
+            "last_rejections": [
+              "implies 0.5 m wide at 5 m; a car is 1.0-8.0 m"
+            ],
+            "snapshots": 1,
+            "subject_px_err": 15.9,
+            "subject_in_shot": true,
+            "subject_range_m": 43.9
+          },
+          "stage_ms_median": {
+            "kin": 1.0,
+            "truth": 0.0,
+            "shield": 0.0,
+            "cmd": 1.1,
+            "work": 7.0
+          },
+          "tick_pacing": "absolute-deadline",
+          "presence_blocked_ticks": 1084,
+          "sep_min_m": 6.4,
+          "sep_mean_m": 97.2,
+          "target_lock": {
+            "enabled": true,
+            "locked": 459,
+            "switched": 60,
+            "rejected_candidates": 61,
+            "size_rejected": 109
+          },
+          "frac_within_30m": 0.088,
+          "trail": {
+            "enabled": true,
+            "ticks": 619,
+            "lookout_ticks": 334,
+            "refused_away_from_subject": 21,
+            "breadcrumbs_laid": 43,
+            "points_at_end": 2,
+            "restarts": 12,
+            "stop_short_m": 5.0
+          },
+          "collisions": {
+            "measured": true,
+            "pre_t0": 1,
+            "mission": 0,
+            "after_mission": 1,
+            "after_mission_objects": [
+              "BP_jcRoad22mA_a79_22"
+            ],
+            "mission_objects": [],
+            "mission_first": []
+          },
+          "off_map_ticks": 93,
+          "obstacle_map_loaded": true,
+          "presence_block_reasons": {
+            "not on the ground": 93,
+            "implied width": 991
+          },
+          "ground_check_waiver": {
+            "measured": true,
+            "have_depth": true,
+            "waived_detections": 66,
+            "rescued_detections": 0
+          },
+          "timer_resolution_ms": 2.26,
+          "start_heading_err_deg": 1.57
+        },
+        "citylife_redcar_final3": {
+          "object": "a red car",
+          "ticks": 2400,
+          "det_hz": 3.83,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.261,
+          "frac_on_target_chance": 0.24,
+          "err_px_median_in_shot": 99.2,
+          "err_px_median_chance": 108.1,
+          "instance": {
+            "frac_on_target": 0.261,
+            "frac_on_target_chance": 0.24,
+            "frac_in_shot": 0.517,
+            "reassociations": 0,
+            "subjects": 1
+          },
+          "loop_hz": 10.0,
+          "longest_within_30m": {
+            "s": 35.5,
+            "m_flown": 50.0
+          },
+          "start_gate": {
+            "enabled": true,
+            "needed": 5,
+            "reached": true,
+            "wait_s": 2.0,
+            "first_candidate_s": 1.2,
+            "inferences_judged": 11,
+            "inferences_with_plausible": 5,
+            "candidates_judged": 11,
+            "best_streak": 5,
+            "max_range_m": 45.0,
+            "plausible_but_too_far": 0,
+            "last_rejections": [],
+            "snapshots": 2,
+            "subject_px_err": 22.7,
+            "subject_in_shot": true,
+            "subject_range_m": 43.9
+          },
+          "stage_ms_median": {
+            "kin": 1.0,
+            "truth": 0.0,
+            "shield": 0.0,
+            "cmd": 1.0,
+            "work": 6.0
+          },
+          "tick_pacing": "absolute-deadline",
+          "presence_blocked_ticks": 1042,
+          "sep_min_m": 5.0,
+          "sep_mean_m": 88.3,
+          "target_lock": {
+            "enabled": true,
+            "locked": 352,
+            "switched": 98,
+            "rejected_candidates": 108,
+            "size_rejected": 179
+          },
+          "frac_within_30m": 0.195,
+          "trail": {
+            "enabled": true,
+            "ticks": 845,
+            "lookout_ticks": 508,
+            "refused_away_from_subject": 155,
+            "breadcrumbs_laid": 54,
+            "points_at_end": 7,
+            "restarts": 9,
+            "stop_short_m": 5.0
+          },
+          "collisions": {
+            "measured": true,
+            "pre_t0": 1,
+            "mission": 0,
+            "after_mission": 1,
+            "after_mission_objects": [
+              "BP_CityCar_C_1"
+            ],
+            "mission_objects": [],
+            "mission_first": []
+          },
+          "off_map_ticks": 0,
+          "obstacle_map_loaded": true,
+          "presence_block_reasons": {
+            "implied width": 908,
+            "not on the ground": 99,
+            "wall-sized": 35
+          },
+          "ground_check_waiver": {
+            "measured": true,
+            "have_depth": true,
+            "waived_detections": 49,
+            "rescued_detections": 4
+          },
+          "timer_resolution_ms": 2.27,
+          "start_heading_err_deg": 1.75
+        },
+        "citylife_redcar_final4": {
+          "object": "a red car",
+          "ticks": 2400,
+          "det_hz": 7.18,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 0.231,
+          "frac_on_target_chance": 0.204,
+          "err_px_median_in_shot": 121.0,
+          "err_px_median_chance": 144.5,
+          "instance": {
+            "frac_on_target": 0.231,
+            "frac_on_target_chance": 0.204,
+            "frac_in_shot": 0.505,
+            "reassociations": 0,
+            "subjects": 1
+          },
+          "loop_hz": 10.0,
+          "longest_within_30m": {
+            "s": 33.4,
+            "m_flown": 71.0
+          },
+          "start_gate": {
+            "enabled": true,
+            "needed": 5,
+            "reached": true,
+            "wait_s": 182.1,
+            "first_candidate_s": 45.6,
+            "inferences_judged": 818,
+            "inferences_with_plausible": 6,
+            "candidates_judged": 1151,
+            "best_streak": 5,
+            "max_range_m": 45.0,
+            "plausible_but_too_far": 19,
+            "last_rejections": [],
+            "snapshots": 36,
+            "subject_px_err": 38.5,
+            "subject_in_shot": true,
+            "subject_range_m": 13.7
+          },
+          "stage_ms_median": {
+            "kin": 1.0,
+            "truth": 0.0,
+            "shield": 0.0,
+            "cmd": 1.0,
+            "work": 6.0
+          },
+          "tick_pacing": "absolute-deadline",
+          "presence_blocked_ticks": 971,
+          "sep_min_m": 0.7,
+          "sep_mean_m": 109.5,
+          "target_lock": {
+            "enabled": true,
+            "locked": 360,
+            "switched": 86,
+            "rejected_candidates": 93,
+            "size_rejected": 166
+          },
+          "frac_within_30m": 0.255,
+          "trail": {
+            "enabled": true,
+            "ticks": 828,
+            "lookout_ticks": 414,
+            "refused_away_from_subject": 21,
+            "breadcrumbs_laid": 57,
+            "points_at_end": 7,
+            "restarts": 10,
+            "stop_short_m": 5.0
+          },
+          "collisions": {
+            "measured": true,
+            "pre_t0": 1,
+            "mission": 0,
+            "after_mission": 1,
+            "after_mission_objects": [
+              "BP_jcRoad22mC_a67_16"
+            ],
+            "mission_objects": [],
+            "mission_first": []
+          },
+          "off_map_ticks": 0,
+          "obstacle_map_loaded": true,
+          "presence_block_reasons": {
+            "implied width": 861,
+            "not on the ground": 99,
+            "wall-sized": 11
+          },
+          "ground_check_waiver": {
+            "measured": true,
+            "have_depth": true,
+            "waived_detections": 78,
+            "rescued_detections": 4
+          },
+          "timer_resolution_ms": 2.49,
+          "start_heading_err_deg": 1.75
+        },
+        "citylife_ped_final": {
+          "object": "a person",
+          "ticks": 1798,
+          "det_hz": 4.03,
+          "p0_violation_escape_rate": 0.0,
+          "frac_on_target": 1.0,
+          "frac_on_target_chance": 1.0,
+          "err_px_median_in_shot": 12.0,
+          "err_px_median_chance": 7.4,
+          "instance": {
+            "frac_on_target": 0.58,
+            "frac_on_target_chance": 0.478,
+            "frac_in_shot": 0.981,
+            "reassociations": 12,
+            "subjects": 12
+          },
+          "loop_hz": 9.99,
+          "longest_within_30m": {
+            "s": 179.9,
+            "m_flown": 91.0
+          },
+          "start_gate": {
+            "enabled": true,
+            "needed": 5,
+            "reached": true,
+            "wait_s": 1.3,
+            "first_candidate_s": 0.0,
+            "inferences_judged": 8,
+            "inferences_with_plausible": 8,
+            "candidates_judged": 81,
+            "best_streak": 5,
+            "max_range_m": 0.0,
+            "plausible_but_too_far": 0,
+            "last_rejections": [
+              "implies 4.4 m wide at 66 m; a person is 0.2-1.5 m",
+              "implies 2.8 m wide at 54 m; a person is 0.2-1.5 m",
+              "implies 3.1 m wide at 53 m; a person is 0.2-1.5 m"
+            ],
+            "snapshots": 1
+          },
+          "stage_ms_median": {
+            "kin": 1.0,
+            "truth": 0.0,
+            "shield": 1.0,
+            "cmd": 1.0,
+            "work": 7.3
+          },
+          "tick_pacing": "absolute-deadline",
+          "presence_blocked_ticks": 1281,
+          "sep_min_m": 5.0,
+          "sep_mean_m": 10.7,
+          "target_lock": {
+            "enabled": true,
+            "locked": 689,
+            "switched": 26,
+            "rejected_candidates": 209,
+            "size_rejected": 2010
+          },
+          "frac_within_30m": 1.0,
+          "trail": {
+            "enabled": false
+          },
+          "collisions": {
+            "measured": true,
+            "pre_t0": 1,
+            "mission": 0,
+            "after_mission": 40,
+            "after_mission_objects": [
+              "BP_CityCar_C_8"
+            ],
+            "mission_objects": [],
+            "mission_first": []
+          },
+          "off_map_ticks": 0,
+          "obstacle_map_loaded": true,
+          "presence_block_reasons": {
+            "implied width": 1242,
+            "not on the ground": 39
+          },
+          "ground_check_waiver": {
+            "measured": true,
+            "have_depth": true,
+            "waived_detections": 115,
+            "rescued_detections": 17
+          },
+          "timer_resolution_ms": 2.5,
+          "start_heading_err_deg": 1.75
         }
       },
       "evidence": [
@@ -1085,6 +1935,67 @@
         "tools/citylife_routes.py",
         "tools/citylife_mcp/"
       ]
+    },
+    "trail_follow_demo_day": {
+      "demo_follow": {
+        "frac_within_30m": 1.0,
+        "sep_mean_m": 17.3,
+        "frac_on_target": null,
+        "frac_on_target_chance": null,
+        "interventions": 0,
+        "loop_hz": 8.38,
+        "trail": null,
+        "p0_violation_escape_rate": 0.0
+      },
+      "demo_follow_nose": {
+        "frac_within_30m": 1.0,
+        "sep_mean_m": 16.9,
+        "frac_on_target": 1.0,
+        "frac_on_target_chance": 0.974,
+        "interventions": 0,
+        "loop_hz": 10.0,
+        "trail": {
+          "enabled": false,
+          "ticks": 0,
+          "points": 0,
+          "restarts": 0
+        },
+        "p0_violation_escape_rate": 0.0
+      },
+      "demo_follow_trail": {
+        "frac_within_30m": 1.0,
+        "sep_mean_m": 17.3,
+        "frac_on_target": 1.0,
+        "frac_on_target_chance": 0.961,
+        "interventions": 0,
+        "loop_hz": 10.0,
+        "trail": {
+          "enabled": true,
+          "ticks": 461,
+          "points": 54,
+          "restarts": 0
+        },
+        "p0_violation_escape_rate": 0.0
+      },
+      "demo_follow_trail2": {
+        "frac_within_30m": 1.0,
+        "sep_mean_m": 17.3,
+        "frac_on_target": 1.0,
+        "frac_on_target_chance": 0.961,
+        "interventions": 0,
+        "loop_hz": 10.0,
+        "trail": {
+          "enabled": true,
+          "ticks": 421,
+          "lookout_ticks": 0,
+          "refused_away_from_subject": 0,
+          "breadcrumbs_laid": 53,
+          "points_at_end": 53,
+          "restarts": 0,
+          "stop_short_m": 0.0
+        },
+        "p0_violation_escape_rate": 0.0
+      }
     }
   }
 }

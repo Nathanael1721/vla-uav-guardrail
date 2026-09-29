@@ -358,10 +358,13 @@ def test_the_median_separates_where_the_fraction_does_not():
     chance. (Renamed 2026-09-23 from "..._beats_every_null_on_every_flight...",
     a name its own body contradicted.)
 
-    Two shapes of exception are known and both are asserted below: a subject
-    that was mostly OUT of frame, and a flight whose own presence check called
+    Three shapes of exception are known and all are asserted below: a subject
+    that was mostly OUT of frame; a flight whose own presence check called
     the box ABSENT on most ticks - the detector was on something else, and the
-    median says so."""
+    median says so; and a crowd flight whose ONE-figure score beats its own
+    null, where the class-level null is the distance to the nearest of forty
+    people and measures the crowd's density, not the detector."""
+    from track_truth import score_instance
     out = ROOT / "demo" / "out"
     if not out.is_dir():
         return SKIP
@@ -388,9 +391,13 @@ def test_the_median_separates_where_the_fraction_does_not():
         if beats:
             wins.append(run.name)
         else:
+            inst = score_instance(rows)
+            inst_margin = (None if not inst or inst.get("frac_on_target") is None
+                           or inst.get("frac_on_target_chance") is None
+                           else inst["frac_on_target"] - inst["frac_on_target_chance"])
             losses.append((run.name, r["det_gt_err_px_median_in_shot"],
                            r["det_gt_err_px_median_chance"],
-                           r["frac_in_shot"], r["truth_candidates_max"]))
+                           r["frac_in_shot"], r["truth_candidates_max"], inst_margin))
 
     # NOT "beats every null on every flight". The first version of this test
     # skipped every flight with frac_in_shot < 0.5 - which is exactly the two
@@ -408,7 +415,7 @@ def test_the_median_separates_where_the_fraction_does_not():
     # is the statistic working.
     assert checked >= 20, checked
     assert len(wins) >= 15, (len(wins), losses)
-    for name, real, null, in_shot, candidates in losses:
+    for name, real, null, in_shot, candidates, inst_margin in losses:
         # SHAPE TWO: the flight's OWN presence check said the box was not the
         # subject on most ticks. citylife_follow2 and _follow3 lose to the null
         # (128.2 px against 31.9, 113.5 against 23.3) with somebody in frame
@@ -427,8 +434,18 @@ def test_the_median_separates_where_the_fraction_does_not():
         # either; the two that lose were never crowd artefacts. An exception
         # keyed on the crowd would have excused exactly the flights the
         # detector got wrong.
+        #
+        # SHAPE THREE (2026-09-29, citylife_ped_final: 12.0 px against 7.4):
+        # a crowd, where the class-level null is the distance from the frame
+        # centre to the NEAREST of up to forty figures - it measures how dense
+        # the crowd is. Only for a flight that carries per-figure truth, and
+        # only if the score against the ONE figure followed beats its own null
+        # by at least 0.05: a detector on facades cannot pass that, which is
+        # what the rejected 09-22 crowd exception could not say.
         absent = presence_absent.get(name)
-        assert in_shot < 0.5 or (absent is not None and absent > 0.5), (
+        crowd_ok = (candidates is not None and candidates > 1
+                    and inst_margin is not None and inst_margin >= 0.05)
+        assert in_shot < 0.5 or (absent is not None and absent > 0.5) or crowd_ok, (
             f"{name} lost to the null ({real} px against {null}) on a flight "
             f"whose subject was in frame {in_shot:.0%} of the time and whose "
             f"presence check called the box ABSENT on "

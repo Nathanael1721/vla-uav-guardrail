@@ -442,6 +442,34 @@ def sweep():
     return out
 
 
+def _loop_hz(rows):
+    if len(rows) < 2 or rows[-1]["t"] <= rows[0]["t"]:
+        return None
+    return round((len(rows) - 1) / (rows[-1]["t"] - rows[0]["t"]), 2)
+
+
+def _longest_within(rows, radius_m=30.0):
+    """Longest continuous stretch with the subject within `radius_m` of the
+    aircraft, from the row's own truth: seconds and metres flown."""
+    import math
+    best = (0.0, 0.0)
+    start = None
+    for i, r in enumerate(rows + [None]):
+        pts = ((r or {}).get("truth") or {}).get("pts") or []
+        near = bool(pts) and min(math.hypot(r["x"] - a, r["y"] - b) for a, b in pts) <= radius_m
+        if near and start is None:
+            start = i
+        elif not near and start is not None:
+            a, b = start, i - 1
+            dur = rows[b]["t"] - rows[a]["t"]
+            path = sum(math.hypot(rows[k + 1]["x"] - rows[k]["x"], rows[k + 1]["y"] - rows[k]["y"])
+                       for k in range(a, b))
+            if dur > best[0]:
+                best = (dur, path)
+            start = None
+    return {"s": round(best[0], 1), "m_flown": round(best[1], 0)}
+
+
 def citylife_flights():
     """Every CityLife flight, re-scored from its artefacts by track_truth.
 
@@ -453,9 +481,17 @@ def citylife_flights():
     # The red-car flights in the order they were flown on 2026-09-23; each
     # name says what that flight isolated (see the third part of
     # docs/FINDING-crowd-pedestrians-and-traffic.md).
+    # The fourth pass (2026-09-24..29) adds the trail-follow flights: _trail
+    # (first version), _trail2 and _trail3 (each exposing a defect fixed after
+    # it), _final1.._final4 (_final1 exposed the chase throttle fixed before
+    # _final3/_final4), and the pedestrian
+    # mission on the CityLife obstacle map.
     for tag in ("citylife_follow2", "citylife_follow3", "citylife_city",
                 "citylife_redcar_far", "citylife_redcar_pedpolicy",
-                "citylife_redcar_carpolicy", "citylife_redcar_ground", "citylife_redcar_high"):
+                "citylife_redcar_carpolicy", "citylife_redcar_ground", "citylife_redcar_high",
+                "citylife_redcar_trail", "citylife_redcar_trail2", "citylife_redcar_trail3",
+                "citylife_redcar_final1", "citylife_redcar_final2",
+                "citylife_redcar_final3", "citylife_redcar_final4", "citylife_ped_final"):
         run = ROOT / "demo/out" / tag
         log = run / "flight_log.jsonl"
         if not log.exists() or log.stat().st_size == 0:
@@ -477,8 +513,13 @@ def citylife_flights():
             rec["instance"] = {k: inst.get(k) for k in (
                 "frac_on_target", "frac_on_target_chance", "frac_in_shot",
                 "reassociations", "subjects")}
+        rec["loop_hz"] = _loop_hz(rows)
+        rec["longest_within_30m"] = _longest_within(rows)
         for k in ("start_gate", "stage_ms_median", "tick_pacing", "presence_blocked_ticks",
-                  "sep_min_m", "sep_mean_m", "target_lock"):
+                  "sep_min_m", "sep_mean_m", "target_lock", "frac_within_30m",
+                  "trail", "collisions", "off_map_ticks", "obstacle_map_loaded",
+                  "presence_block_reasons", "ground_check_waiver", "timer_resolution_ms",
+                  "start_heading_err_deg"):
             if k in m:
                 v = m[k]
                 if k == "start_gate" and isinstance(v, dict):
@@ -510,7 +551,9 @@ def unflown():
         # here: citylife_flights() re-scores each flight from its own artefacts,
         # in the right frame width - hand-typed copies are how 0.821 survived.
         "citylife_level": {"status": "rebuilt 2026-09-23: keep-left, curvature follower, "
-                                     "yields, one red car; red-car mission flown",
+                                     "yields, one red car; 2026-09-29: its own obstacle "
+                                     "map, the on-the-zebra stop, and the red-car mission "
+                                     "flown with trail follow",
                            "pedestrians": 40, "cars": 24,
                            "pedestrian_model": "City Sample Crowd, 6 variants (3 male, 3 female)",
                            "area_m": [200, 185],
@@ -534,6 +577,30 @@ def unflown():
                                "car_on_zebra_with_walking_ped_half_ticks": 5,
                                "note": "counters kept inside each car; editor throttled "
                                        "to ~3 fps; the 5 zebra ticks are not explained"},
+                           # Final DriveTick (nearest-ahead latch, per-crossing
+                           # release), 2026-09-29; v1-v3 in the FINDING's fourth part.
+                           "traffic_simulate_2026_09_29": {
+                               "minutes": 4.4, "cars": 24,
+                               "lane_error_max_cm": 10.3,
+                               "lateral_accel_max_mps2": 1.93,
+                               "car_min_gap_cm": 650,
+                               "stand_still_max_s": 42.0,
+                               "stand_still_note": "loop B waiting to give way at its "
+                                                   "junctions (every car stopped > 8 s had "
+                                                   "Conflict set when polled)",
+                               "ped_yield_half_ticks": 1528,
+                               "car_on_zebra_with_walking_ped_half_ticks": 4,
+                               "on_zebra_emergency_stops_half_ticks": 14,
+                               "emergency_stops_above_50cms": 0,
+                               "walking_ped_within_4m_at_speed": 0},
+                           "obstacle_map": {
+                               "path": "demo/out/citymap_citylife (gitignored; rebuilt by "
+                                       "demo/build_voxel_map.py)",
+                               "ned_x_m": [-140, 218], "ned_y_m": [-60, 138], "res_m": 2.0,
+                               "cells_6to14": 6021, "cells_15to55": 6020, "cells_2to4": 5043,
+                               "street_cells": 10642, "canopy_cells": 415,
+                               "regression_cells_compared": 5600,
+                               "regression_cells_disagreeing": 0},
                            "flights": citylife_flights(),
                            "evidence": ["docs/FINDING-citylife-level.md",
                                         "docs/FINDING-crowd-pedestrians-and-traffic.md",
@@ -542,6 +609,34 @@ def unflown():
     }
     say("camera 768x432 flight artefacts", out["camera_768x432"]["flight_artefacts"] or "none")
     say("CityLife level", out["citylife_level"]["status"])
+    out["trail_follow_demo_day"] = demo_day_trail_ab()
+    return out
+
+
+def demo_day_trail_ab():
+    """DEMO 1 (yellow car, turn route) with and without --trail-follow, flown
+    2026-09-25 (_nose, _trail) and 2026-09-29 (_trail2, the finished
+    controller), against the August reference demo_follow."""
+    out = {}
+    for tag in ("demo_follow", "demo_follow_nose", "demo_follow_trail", "demo_follow_trail2"):
+        run = ROOT / "demo/out" / tag
+        mf = run / "metrics.json"
+        if not mf.exists():
+            continue
+        m = json.loads(mf.read_text(encoding="utf-8"))
+        rows = []
+        log = run / "flight_log.jsonl"
+        if log.exists():
+            rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines() if line]
+        out[tag] = {"frac_within_30m": m.get("frac_within_30m"),
+                    "sep_mean_m": m.get("sep_mean_m"),
+                    "frac_on_target": m.get("frac_on_target"),
+                    "frac_on_target_chance": m.get("frac_on_target_chance"),
+                    "interventions": m.get("interventions"),
+                    "loop_hz": _loop_hz(rows),
+                    "trail": m.get("trail"),
+                    "p0_violation_escape_rate": m.get("p0_violation_escape_rate")}
+    say("trail follow, Demo_day DEMO 1", {k: (v["frac_within_30m"], v["loop_hz"]) for k, v in out.items()})
     return out
 
 

@@ -841,3 +841,329 @@ build was lost (below) and the second was produced from these scripts alone.
   `:self actor`.
 - A function call node's `type_id` reads back as `|Name`, while `create_node`
   wants `CallFunction|Name`.
+
+# Fourth pass, 2026-09-24 to 09-29: a map of this city, a trail to follow, and three reviews
+
+What the third pass left: every red-car flight lost the car at its first
+corner; the maps the Shield checks clearance against were Demo_day's, not
+CityLife's; the control loop ran at 9.3 Hz against a 9.5 Hz gate; nothing
+recorded a collision; a car already on a zebra drove on whoever stepped out.
+Asked for: finish the remaining bugs, keep testing the new level, and track
+the vehicle the way the Demo_day demos did.
+
+## The phantom wall was the Shield extrapolating a map that ended too soon
+
+Point 5 of the third pass. Every obstacle map under `demo/out/citymap/` is the
+160 m cube surveyed on Demo_day on 25 August: NED [-80, 78] m. CityLife's loop A
+runs to y = 123 and x = 205. Past the edge `Shield._distance_at` returned
+`edge value - distance past the edge`, and where the edge cell is a building
+that is a wall reaching to infinity, deeper the further one flies - the
+junction entrance at (47.2, 112.7) read **-35.16 m**, "35 m inside a building".
+
+Two changes, and the first one was wrong in a way a review caught:
+
+- **The bound.** Off the map the distance now lies between `v - off` and
+  `v + off` (the field is 1-Lipschitz) and takes `off - res/2` once past a
+  built-on border: a border building extends past the edge as far as it
+  reaches into the map, not to infinity. The first version, `max(v - off,
+  off)`, jumped from inside-the-building to +off at the last cell centre, so
+  the half cell of building beyond it read as clear and a push "out" through
+  it counted as receding. `tests/test_clearance.py` pins both.
+  Against HEAD, `test_check_contract`'s sampled monitor answers changed on
+  **12 of 28,800** states, every one a forecast that leaves the map: 7 lose a
+  phantom `bld-clearance` violation, 5 keep their rules with a different
+  distance in the text. The fixture now also pins the four policies it never
+  covered, `follow_car_citylife.yaml` among them.
+- **The map.** `demo/build_voxel_map.py` takes any rectangle and cuts several
+  bands from one voxel query. The simulator's indexing, read from
+  `WorldSimApi::createVoxelGrid`, is `idx = i + nx*(k + nz*j)` with cell
+  centres at `centre + (i - n//2)*res`; on a cube the wrong reshape still
+  returns the right shape, so `tests/test_voxel_map.py` builds a non-cubic grid
+  with the simulator's own formula and checks a block lands where it is.
+  `demo/out/citymap_citylife/` covers NED x -140..218, y -60..138 (180 x 100
+  cells of 2 m): 6-14 m band 6,021 cells occupied (33.5 %), 15-55 m 6,020,
+  2-4 m 5,043, the 0-2 m slice 100 % (the ground, rejected as before); street
+  mask 10,642 cells, 415 of them canopy. **Regression:** the old +-80 m cube
+  rebuilt through the new code, in the same simulator session, agrees with the
+  rectangle on all **5,600 overlapping cells**. The spawn (35, -20) and the
+  old phantom point (47.2, 112.7) are free. `run_citylife_follow.ps1` now
+  refuses to fly without this map (before it starts a simulator).
+
+On the new map 12.5-13.7 % of each loop's lane points lie within 3 m of
+something at 6-14 m: 9 m runs just past most junctions, where kerbside trees
+and signal arms overhang the lane. Those are real, and the Shield steering
+round them is the Shield working.
+
+## Following the car's trail, not its bearing
+
+The follow flew every horizontal command along the nose, and the nose at the
+car, so at a corner it cut across toward a car that had already turned; once
+the car was out of sight the estimator predicted it straight on for 3 s and
+coast and search carried the aircraft straight past the junction.
+`demo/trail.py` (+ `--trail-follow`, on in the car runner) keeps breadcrumbs
+of the ESTIMATOR's position after each accepted update - no ground truth - and:
+
+- **track:** forward is toward a carrot 10 m along the trail; speed is the same
+  stand-off law, the yaw stays on the car. On a straight street the two
+  coincide. A trail direction pointing away from the estimated subject (an old
+  leg after a re-acquisition) is refused and the nose wins.
+- **coast/search:** fly the trail to the last sighting and look 8 m past it
+  along the car's last direction; the search sweep is centred there instead of
+  integrated from wherever the nose was. A car last seen MOVING is followed on
+  past the sighting at its measured speed; one last seen STOPPED is held off
+  at the follow's own stand-off. Never nearer the last sighting than the
+  camera's blind spot plus 2 m (6.9 m at 8 m altitude: the 20 deg-down camera
+  cannot see the road closer than that).
+- **prediction is not evidence:** for up to 3 s after the last accepted box the
+  estimator serves a constant-velocity guess; once that guess is half a second
+  stale the aircraft does not close on the last MEASURED position past the
+  blind spot plus 2 m.
+- "stopped" is measured from the displacement of accepted positions over 2 s,
+  not the filter's velocity, which keeps the pre-stop speed for seconds.
+- the estimator, the trail and the stop test take only FRESH detections (see
+  round 4 below); a trail steers nothing until it is 8 m long; a jump of more
+  than 30 m restarts it; a retarget clears it.
+
+The flights below found three of these the hard way and four review rounds
+found the rest; `tests/test_trail.py` has 18 tests, `test_range_and_lock.py`
+covers the blind spot and the stop measure.
+
+## The loop reaches 10.0 Hz: the pacing lost every timer round-up
+
+The 9.3 Hz was blamed on Windows' 15.6 ms timer. Probed in the flight
+environment (Python 3.10, proactor loop), that is half of it: a 1 ms
+`asyncio.sleep` takes 15.5 ms by default and 2.5 ms under `timeBeginPeriod(1)`,
+but a loop that steps an ABSOLUTE deadline reaches 10.0 Hz even at 15.6 ms,
+because a late tick is repaid by the next one's shorter sleep. The loop slept
+`TICK - work` from each tick's own start, so every round-up was lost for good.
+Both are fixed (a stall longer than a tick restarts the deadline rather than
+bursting). Measured: **9.99-10.0 Hz** on every flight since, against 8.38 Hz on
+the August Demo_day reference and 9.31-9.37 on the third pass. The metric
+`timer_resolution_ms` now times the wait the loop actually does
+(`asyncio.sleep`), in both arms of `--coarse-timer`.
+
+## Collisions are recorded
+
+The plugin logged every contact to the simulator's own log; the client never
+subscribed to `collision_info`. It does now, and `metrics.json` splits the
+reports at the mission clock: before t0 (take-off, the start-gate hover), the
+mission, and after it (the descent and the landing). Every flight since shows
+one contact before t0 and none in the mission; the landings touch a road tile,
+and one (`citylife_redcar_trail2`) came down in a hedge - 2,525 contact
+reports, all after the mission. `off_map_ticks` counts ticks flown off the
+obstacle map (0 on every flight) and is null, not 0, when no map was loaded.
+
+## The ground-contact check rejected the car it was built to protect
+
+`citylife_redcar_trail` (below) lost the car after its second corner with the
+presence gate blocking **891 of 2,399 ticks**. The gate's reason was not
+logged; reconstructed offline from `detections.jsonl`, 146 of the 176 blocked
+inferences pass every check except ground contact, and 34 of those boxes were
+ON the red car. The check's inputs are fragile exactly at a corner: a ray a
+few degrees below the horizon, a box bottom a few pixels off, and a body pitch
+read now for a frame 150-250 ms old. Now:
+
+- the gate's reason is logged per tick and counted by rule
+  (`presence_block_reasons`), with pitch and roll per row;
+- a box that lands where the estimator predicts the subject (6 deg, 35 % range)
+  is not asked to prove it stands on the road - but only while a box that
+  PASSED the ground check, with the check actually evaluated, fed the estimate
+  in the last 3 s, so a signal beside a stopped car cannot be waved in and
+  hold the estimate on itself;
+- `ground_check_waiver` in metrics.json counts, per fresh detection, the boxes
+  waived and those the check would have REFUSED (`rescued_detections`), and
+  says whether it could arm at all (`measured`, `have_depth`).
+
+## The zebra
+
+A car already on a crossing (path index from 3 points before it to 4 after)
+now stops where it is for a pedestrian in its own path - 3 m either side, from
+1 m behind its centre to 9 m ahead - under the 6 s rule for one standing
+still. It took four versions; each of the first three was broken in a way a
+review found and an emulation of the Blueprint reproduced:
+
+1. the 6 s release used `StopRun`, which DriveTick zeroes at 10 cm/s, so it
+   re-armed after a centimetre and held the car as long as the figure idled;
+   and the window closed the moment the car's centre passed the crossing's
+   path point, cancelling a stop half-way through braking;
+2. its own clock (`StillRun`) was shared by every crossing in the window, so a
+   release earned at one zebra carried over to the next, 7-16 path points on;
+3. latching the crossing LAST in array order (not path order) re-armed the
+   near crossing from the far one's figure, and a crossing behind the car
+   could take the latch and hold the car for good.
+
+Now the latch is the nearest crossing AHEAD with a standing figure, a release
+exempts only the crossing it was earned at (`StillDone`, forgotten when that
+crossing leaves the window), and a figure anywhere in the crossing's box
+counts in both windows. Before pushing it to the level, an emulation of the
+final logic (UpdateEffSpeed every other tick, DriveTick sub-steps, the real
+loop A and B paths) gave: two idle figures 7, 15 and 16 points apart - two
+separate 6.1 s stops at 60, 30 and 5 fps; a figure toggling still/moving every
+1, 4 or 5 s in the box behind a car waiting at the next line - one 6.1 s stop,
+the same as with no such figure; a walker stepping out from the car's side as
+it reaches the zebra - an emergency stop on the zebra, released after 3 s.
+
+Measured in Simulate, 4.4 min per version (one sample each; the pedestrians
+roam at random, so single counts are noisy):
+
+| | 09-23 | v1 | v2 | v3 | **final** |
+|---|---|---|---|---|---|
+| PedViol: moving figure on the zebra, car > 50 cm/s (0-2 points) | 5 | 9 | 29 * | 15 | **4** |
+| on-the-zebra emergency stops (half-rate ticks) | - | 32 | 37 | 105 | **14** |
+| ...of them still above 50 cm/s | - | 2 | 2 | 2 | **0** |
+| PedClose: moving figure within 4 m ahead at > 50 cm/s | - | - | 2 | 2 | **0** |
+| closest two cars | 650 cm | 621 | 581 | 513 | **650** |
+| longest stand-still | 22.3 s | 19.0 | 38.3 | 66.7 | **42.0** |
+
+\* v2 counted over a wider window, so it does not compare. The longest
+stand-stills in v2-final are loop B waiting to give way at its two junctions
+(polled in Simulate: every car stopped over 8 s had `Conflict` set and its
+stop at the box edge); the pedestrian rule is not what holds them, but cars
+pausing on zebras near the box make loop A's gaps rarer. PedClose also counts
+a figure stepping out inside braking distance (1.3 m from 3.2 m/s), so it is
+read beside the emergency stops, not as a pass/fail gate.
+
+## The missions
+
+All on the finished level and the CityLife obstacle map, 240 s after the start
+gate (180 s for the pedestrian), `p0_violation_escape_rate` 0.0 and altitude
+escape 0.0 s in every one, no collision reported during any mission. Video:
+`docs/video/citylife_redcar_trail.mp4`, `citylife_ped_final.mp4`,
+`demo_follow_trail2.mp4` (gitignored, like the others).
+
+### The red car
+
+`scripts/run_citylife_follow.ps1 -Object "a red car" -LevelCar Car_10`, now
+with `--trail-follow` and the policy's 5 m/s. `_ground` is the third pass's best
+flight, without the trail, for comparison. "Estimate on the car" is the share
+of ticks the estimator served a position within max(10 m, 30 %) of the car's
+true range - whether the thing being followed was the car at all.
+
+| run | start (wait, range) | det Hz | loop Hz | within 30 m | longest < 30 m | on target (null) | in shot | estimate on the car |
+|---|---|---|---|---|---|---|---|---|
+| `_ground` (09-23, no trail) | 167 s, 12.9 m | 7.5 | 9.31 | 0.314 | 48.8 s / 146 m | 0.532 (0.414) | 0.761 | 0.55 |
+| `_trail` (first version) | 176 s, 14.0 m | 6.91 | 9.99 | **0.436** | **103.4 s / 305 m** | **0.779 (0.688)** | **0.879** | **0.74** |
+| `_trail2` | 196 s, 13.6 m | 6.88 | 9.99 | 0.282 | 59.0 s / 147 m | 0.447 (0.309) | 0.59 | 0.36 |
+| `_trail3` | 1 s, 43.9 m | 4.04 | 9.96 | 0.111 | 26.4 s / 19 m | 0.059 (0.094) | 0.221 | 0.11 |
+| `_final1` | 173 s, 13.2 m | 7.12 | 9.99 | 0.091 | 12.8 s / 18 m | 0.361 (0.357) | 0.494 | 0.15 |
+| `_final2` | 1 s, 43.9 m | 3.82 | 10.00 | 0.088 | 20.8 s / 35 m | 0.619 (0.57) | 0.7 | 0.33 |
+| `_final3` | 2 s, 43.9 m | 3.83 | 10.00 | 0.195 | 35.5 s / 50 m | 0.261 (0.24) | 0.517 | 0.26 |
+| `_final4` | 182 s, 13.7 m | 7.18 | 10.00 | 0.255 | 33.4 s / 71 m | 0.231 (0.204) | 0.505 | 0.25 |
+
+What the trail does when the car is the thing being followed: `_trail` held it
+within 30 m for **103.4 s over 305 m, through two corners** - the corner every
+earlier flight lost it at, and the next one - against 48.8 s / 146 m on a
+straight street before. It lost the car after the second corner with 34 of the
+car's own boxes refused by the ground-contact check (fixed since). `_final4`
+followed it round the first corner too (t = 53-67 s).
+
+What each other flight isolated, and what was changed after it:
+
+- `_trail2`: the car stopped at a zebra, its boxes were lost, and the aircraft
+  closed on the estimator's prediction into the camera's blind spot (the
+  estimate read 4.9 m/s for a stationary car: the held box was being re-fed).
+  Fixed: fresh detections only, a measured stop test, the blind-spot floor.
+- `_trail3`: a four-point trail from 40 m gave the lookout a heading 119 deg
+  off and the aircraft turned away. Fixed: a trail steers nothing under 8 m.
+- `_final1`: a moving car pulled away from 13 to 25 m while the prediction
+  window's cap throttled the chase to 1.4 m/s. Fixed: the cap only for a car
+  measured stopped. `_final3` and `_final4` flew with that fix.
+
+**What the table says about the rest.** The last column orders the flights
+almost exactly as the within-30 m column does. Across the seven trail flights
+the estimator served the car on **36 %** of its ticks (2,568 of 7,226); on
+`_trail`, 74 %. On the others it was following other red things - boxes that
+pass the colour gate, the size check, the ground check and the instance lock -
+including false detections 130-180 m away that re-seeded the estimate at its
+15 m/s speed clamp after a loss. In `_final4` the aircraft chased one of those
+while the real car stood at a zebra 25 m away, and flew directly over it
+(0.7 m horizontally, 8 m up; no contact). The red-car mission in this level is
+now limited by **whose box it is**, not by what the controller does with it at
+a corner. A second confound: the three flights whose gate fired within 2 s of
+the simulator starting (the car happened to be passing) ran the detector at
+3.8-4.0 Hz against 6.9-7.5 for the rest - the level is still streaming in
+its first minutes.
+
+### The pedestrian
+
+`-Object "a person" -Seconds 180 -Tag citylife_ped_final`: within 30 m of a
+pedestrian 100 % of the time, mean 10.7 m. Instance-level on target **0.58
+against a null of 0.48**, 12 re-associations between figures; the class-level
+score is 1.00 against 1.00, meaningless in a crowd. Its box-to-nearest-figure median (12.0 px)
+loses to the null (7.4 px) for the same reason - the null is the distance to
+the nearest of ~40 people - and `test_track_truth` now names that shape,
+allowed only with per-figure truth and a one-figure margin of at least 0.05. The 10 m pedestrian ring
+**fired 0 times** while some pedestrian was within 10 m on 839 ticks: it stands
+off the TRACKED subject, which the aircraft held at ~12 m; the others are not
+its business. The landing came down on a car (40 contact reports, after the
+mission).
+
+### Demo_day: vehicle tracking as before
+
+DEMO 1 of `scripts/run_follow_vlm.ps1` (yellow car, turn route), 70 s:
+
+| run | within 30 m | mean separation | on target (null) | Shield interventions | loop Hz |
+|---|---|---|---|---|---|
+| `demo_follow` (August reference) | 1.0 | 17.3 m | - | 0 | 8.38 |
+| `demo_follow_nose` (09-25, no trail) | 1.0 | 16.9 m | 1.0 (0.974) | 0 | 10.0 |
+| `demo_follow_trail` (09-25, first trail) | 1.0 | 17.3 m | 1.0 (0.961) | 0 | 10.0 |
+| `demo_follow_trail2` (09-29, finished) | 1.0 | 17.3 m | 1.0 (0.961) | 0 | 10.0 |
+
+The trail changes nothing where the nose-follow already worked.
+
+## Three reviews, and what they found
+
+Each round: independent finders per area, each finding checked by three
+skeptics (trace it, reproduce it, judge its consequence), majority rules.
+Several rounds lost agents to the session limit; findings their verifiers never
+reached were checked by hand against the code before being acted on.
+
+What changed because of them, beyond the zebra above:
+
+- **Round 1** (one of three finders finished): the runner's teardown left a
+  simulator running on a throw or Ctrl+C; the zebra release defect 1.
+- **Round 2** (six finders): the trail pointed BACK at the last sighting once
+  past it (3/3), so search oscillated there; a retarget kept the old
+  subject's trail; `remaining()` ignored the street before the first
+  breadcrumb; nothing stopped the trail direction pointing away from the
+  subject; the coast approach could enter the stand-off ring with the
+  Shield's subject unset; the zebra window closing mid-stop (high).
+- **Round 3**: the first off-map bound read the half cell of a border building
+  as clear; `off_map_ticks` read 0 with no map at all; `start_heading_err_deg`
+  was measured and then reset to null before any metric read it (every
+  metrics.json since it was added); the ground-check waiver could let a red
+  signal beside a stopped car capture the estimate; the timer metric measured
+  `time.sleep`, which Python 3.11 no longer ties to the timer it was checking;
+  landing contacts were bucketed as mission collisions; `--from-voxels` wrote
+  to Demo_day's map folder by default.
+- **Round 4** (39 agents, all verified): the estimator was re-fed the Grounder's
+  HELD box - up to 8 s old - on every inference that found nothing, paired
+  with the current pose (this is what laid breadcrumbs 15-190 m from the car
+  and put a stopped car's estimate at 4.9 m/s in `_trail2`); the prediction
+  window's cap parked the aircraft short of junctions; the waiver's anchor
+  lapsed in steady tracking; `verify_drive`'s "not measured" path could never
+  run; a failed flight left the previous run's metrics.json as its result.
+
+Rejected by the skeptics (and not acted on): a fixture coverage gap that
+predates this work; `--from-voxels` overwriting as operator error (fixed
+anyway); PedClose blind at 3-4 points before the zebra; two claims about the
+stop test that did not reproduce.
+
+## Still open
+
+- **Target identity in CityLife.** The estimator follows the wrong red thing on
+  most ticks of most flights (above). Candidates, none built: an appearance
+  embedding checked against the confirmed subject before an estimator update;
+  refusing to re-seed a lapsed estimate from a box far from the last sighting;
+  a range ceiling on re-acquisition like the start gate's 45 m.
+- **Loop B waits up to 42 s to give way** at its two junctions, behind loop A's
+  13 cars; cars pausing on zebras near the box make the gaps rarer.
+- **The pedestrian ring binds only to the tracked subject**; 839 ticks with a
+  different pedestrian inside 10 m went unguarded by design, and the policy
+  has no rule for "any pedestrian".
+- The start gate can fire while the simulator is still streaming (3.8 Hz
+  detector); the runner should wait for the level to settle first.
+- PedClose does not see a figure stepping onto the near half of the zebra at 3-4
+  path points (review, rejected as low; documented instead).
+- `D:` filled up during this pass (a WSL disk image and a Steam update, not
+  the project); frames are now written to `C:` through a junction.

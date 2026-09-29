@@ -91,6 +91,7 @@ param(
     [int]$SimHeight = 540,
     [switch]$SkipSim,
     [switch]$Controls,
+    [switch]$TrailFollow,               # fly the car's trail, not the nose (demo/trail.py)
     [switch]$NoVideo
 )
 # Flight durations are per-demo and set at the call sites below: the tracking run
@@ -154,6 +155,7 @@ function Fly($tag, $obj, $policy, $secs, $stopS, $traffic, [switch]$NoCar, [swit
     if ($traffic -gt 0) { $a += @("--traffic", "$traffic", "--traffic-mode", "demo", "--lock-target") }
     if ($NoCar)  { $a += "--no-car" }
     if ($Record) { $a += "--save-view" }
+    if ($TrailFollow) { $a += "--trail-follow" }
     & $Py @a
 }
 

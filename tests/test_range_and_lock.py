@@ -37,7 +37,9 @@ from follow_vlm import (PresenceMonitor, TargetLock,          # noqa: E402
                         yaw_command, YAW_RATE_CAP, servo,
                         camera_hfov_deg, CAMERA_HFOV_DEG, presence_gate,
                         subject_truth_names, Acquirer, ground_range_m,
-                        presence_verdict)
+                        presence_verdict, agrees_with_estimate,
+                        block_reason_key, collisions_summary, quat_roll,
+                        quat_pitch, camera_blind_m, measured_speed)
 
 W, H = 400, 225
 
@@ -1209,6 +1211,82 @@ def test_servo_is_bounded_by_its_own_geometry_and_needs_no_cap():
     assert worst <= YAW_RATE_CAP, (
         f"servo() reaches {worst:.2f} rad/s at the frame edge and is no longer "
         "bounded below the cap by construction")
+
+
+# --- 2026-09-24: the gate rejected the tracked car; what it now logs -------
+
+def test_a_box_where_the_estimate_is_agrees_and_one_elsewhere_does_not():
+    """The ground-contact check is waived only for a box on the ESTIMATED
+    subject: within 6 deg of its predicted bearing and, with depth, within 35 %
+    of its predicted range. citylife_redcar_trail lost the car after the second
+    corner with 34 of its own boxes rejected by that check."""
+    pred = (math.radians(2.0), 30.0)
+    assert agrees_with_estimate(math.radians(5.0), 32.0, pred)
+    assert agrees_with_estimate(math.radians(5.0), None, pred)       # no depth
+    assert not agrees_with_estimate(math.radians(10.0), 30.0, pred)  # bearing
+    assert not agrees_with_estimate(math.radians(2.0), 45.0, pred)   # range
+    assert not agrees_with_estimate(math.radians(2.0), 30.0, None)   # no estimate
+
+
+def test_agreement_wraps_the_bearing():
+    pred = (math.radians(179.0), 20.0)
+    assert agrees_with_estimate(math.radians(-179.0), 20.0, pred)
+
+
+def test_every_presence_rejection_is_counted_by_its_rule():
+    assert block_reason_key("not on the ground: its base ray meets the road at 70 m, "
+                            "it is 40 m away") == "not on the ground"
+    assert block_reason_key("implies 7.2 m wide at 157 m; a car is 1.4-3.0 m")         == "implied width"
+    assert block_reason_key("colour 0.04 < 0.10") == "colour"
+    assert block_reason_key("box is 90% of frame - a wall, not an object") == "wall-sized"
+    assert block_reason_key("something new") == "other"
+    assert block_reason_key(None) == "other"
+
+
+def test_collisions_split_take_off_mission_and_landing():
+    ev = [{"t_conn": 5.0, "object": "pad"}, {"t_conn": 60.0, "object": "pole"},
+          {"t_conn": 400.0, "object": "road"}]
+    c = collisions_summary(ev, True, 50.0, 300.0)
+    assert (c["pre_t0"], c["mission"], c["after_mission"]) == (1, 1, 1)
+    assert c["mission_objects"] == ["pole"] and c["after_mission_objects"] == ["road"]
+    assert c["mission_first"][0]["t"] == 10.0
+
+
+def test_collisions_not_subscribed_is_not_zero():
+    assert collisions_summary([], False, 0.0, 10.0) == {"measured": False}
+
+
+def test_collisions_before_the_gate_opened_are_all_pre_t0():
+    c = collisions_summary([{"t_conn": 5.0, "object": "pad"}], True, None, None)
+    assert (c["pre_t0"], c["mission"], c["after_mission"]) == (1, 0, 0)
+
+
+def test_roll_and_pitch_read_their_own_axes():
+    h = math.radians(10.0) / 2.0
+    roll_q = {"w": math.cos(h), "x": math.sin(h), "y": 0.0, "z": 0.0}
+    pitch_q = {"w": math.cos(h), "x": 0.0, "y": math.sin(h), "z": 0.0}
+    assert abs(math.degrees(quat_roll(roll_q)) - 10.0) < 1e-9
+    assert abs(quat_pitch(roll_q)) < 1e-9
+    assert abs(math.degrees(quat_pitch(pitch_q)) - 10.0) < 1e-9
+    assert abs(quat_roll(pitch_q)) < 1e-9
+
+
+def test_the_blind_spot_under_the_nose_is_about_seven_metres_at_eight():
+    """The FrontCamera, 20 deg down with a 90 deg horizontal field on a 16:9
+    frame, cannot see the ground nearer than ~6.9 m from 8 m up - where the
+    coast approach parked citylife_redcar_trail2 over a stopped car."""
+    b = camera_blind_m(8.0)
+    assert 6.5 < b < 7.3, b
+    assert abs(camera_blind_m(16.0) - 2 * b) < 1e-9
+
+
+def test_stopped_is_measured_from_positions_not_the_filter():
+    moving = [(0.1 * k, 0.32 * k, 0.0) for k in range(21)]      # 3.2 m/s
+    assert abs(measured_speed(moving) - 3.2) < 1e-9
+    stopped = moving + [(2.0 + 0.1 * k, 6.4, 0.0) for k in range(1, 25)]
+    assert measured_speed(stopped) < 1.0
+    assert measured_speed(moving[:5]) is None                     # < 1 s of it
+    assert measured_speed([]) is None
 
 
 if __name__ == "__main__":

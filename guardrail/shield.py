@@ -362,13 +362,54 @@ class Shield:
              + float(d[i0, j1]) * (1 - ti) * tj
              + float(d[i1, j1]) * ti * tj)
         if off > 0.0:
-            # |d(q) - d(edge)| <= off (1-Lipschitz), and d(q) >= off because
-            # every obstacle is inside the map -> conservative bound. The second
-            # half only holds where the clamped edge value is POSITIVE; a signed
-            # field can be negative if the map border itself is built on.
-            lo = v - off
-            return max(lo, off) if v > 0.0 else lo
+            # |d(q) - d(edge)| <= off (1-Lipschitz), so d(q) lies in
+            # [v - off, v + off]. Within that band take the value of a map
+            # whose border obstacles extend past the edge exactly as far as
+            # they reach into it, and no further: off - res/2 once past a
+            # built-on border (the cell's own half-width), v + off while still
+            # inside its overhang. Continuous with the inside at off = 0, so
+            # the half cell between the last cell centre and the map's edge
+            # reads as the building it is part of.
+            #
+            # It used to apply only where the edge value was positive, and
+            # return `v - off` otherwise - so a building on the map BORDER
+            # became a wall reaching out to infinity, deeper the further one
+            # flew. On CityLife, whose loops run 30-120 m past this 160 m
+            # map, that read the entrance of a junction as 35 m inside a
+            # building, and the clearance repair - its push sized from that
+            # 35 m "depth", so at the 5 m/s cap - replaced a +3 m/s follow
+            # with a 5 m/s reversal for up to 187 s (citylife_redcar_ground,
+            # _carpolicy); at 12 m those reversals pitched the airframe
+            # through its 14 m ceiling (_high). Off the map is UNKNOWN, not
+            # solid; `off_map()` reports it, and the cure is a map that
+            # covers the flight.
+            #
+            # The first fix, max(v - off, off), ended the infinite wall but
+            # jumped from v (inside a border building) to +off at the last
+            # cell centre, so the half cell of building beyond it read as
+            # clear and a push "out" through it counted as receding (found in
+            # review, 2026-09-24).
+            return max(v - off, min(v + off, off - 0.5 * self._res))
         return v
+
+    @property
+    def has_obstacle_map(self) -> bool:
+        """Is there a distance field at all? Without one ObstacleClearance
+        is inert and `off_map()` is False everywhere - a caller counting
+        off-map ticks must say so rather than report 0."""
+        return self._dist is not None
+
+    def off_map(self, x: float, y: float) -> bool:
+        """True where (x, y) lies outside the obstacle map (more than half a
+        cell past its edge). The clearance rule cannot see anything there, so
+        a caller should report it rather than let it pass as clear."""
+        d = self._dist
+        if d is None:
+            return False
+        n, m = d.shape
+        fi = (x - self._ox) / self._res
+        fj = (y - self._oy) / self._res
+        return not (-0.5 <= fi <= n - 0.5 and -0.5 <= fj <= m - 0.5)
 
     def _away_dir(self, x: float, y: float, probe_r: float) -> tuple[float, float]:
         """Unit vector along the local gradient of the distance field, i.e.

@@ -62,10 +62,14 @@ def main() -> int:
     ap.add_argument("--cruise", default="occ_day_flightband_6to14",
                     help="occupancy over the flight band, for the canopy count")
     ap.add_argument("--out", default="street")
+    ap.add_argument("--dir", default=str(CITYMAP),
+                    help="the map folder to read the bands from and write to "
+                         "(demo/out/citymap_citylife for CityLife)")
     args = ap.parse_args()
+    citymap = Path(args.dir)
 
     def load(name):
-        p = CITYMAP / f"{name}.npz"
+        p = citymap / f"{name}.npz"
         if not p.is_file():
             raise SystemExit(f"missing {p}. Build it with:\n"
                              f"    python demo/build_voxel_map.py --out {name} "
@@ -80,7 +84,7 @@ def main() -> int:
     street = ((B == 0) & (G == 0)).astype(np.uint8)
     canopy = int((street.astype(bool) & (F == 1)).sum())
 
-    out = CITYMAP / f"{args.out}.npz"
+    out = citymap / f"{args.out}.npz"
     np.savez_compressed(
         out, street=street, res=tall["res"],
         origin_x=tall["origin_x"], origin_y=tall["origin_y"])

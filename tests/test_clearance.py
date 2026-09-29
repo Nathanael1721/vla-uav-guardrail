@@ -109,6 +109,57 @@ def test_no_freeze_on_a_building_footprint():
     assert _step_dist(sh, st, d.emitted) > sh._distance_at(st.x, st.y)
 
 
+def test_a_building_on_the_map_border_is_not_a_wall_to_infinity():
+    """citylife_redcar_ground/_carpolicy: past this 160 m map's edge the field
+    extrapolated `edge value - distance past the edge`, and the edge cell at
+    (48, 78) is a building - so (47.2, 112.7), the entrance of a CityLife
+    junction, read -35.16 m and the clearance repair reversed a +3 m/s follow
+    at 5 m/s for up to 187 s. Off the map the bound is the distance to the last
+    cell centre, less that cell's half-width."""
+    sh, cm = _city_shield()
+    edge_y = cm["oy"] + (cm["occ"].shape[1] - 1) * cm["res"]
+    d = sh._distance_at(47.2, 112.7)
+    assert d >= 112.7 - edge_y - cm["res"] / 2 - 1e-6, d
+    # and nothing is repaired when the aircraft flies on, off the map
+    st = State(x=45.0, y=110.0, up=8.0)
+    dec = sh.filter(st, Action4D(vx=3.0, vy=0.5, vz_up=0.0))
+    assert not any(r.operator == "ClearanceFix" for r in dec.repairs), dec.repairs
+
+
+def test_the_half_cell_past_a_border_building_is_still_the_building():
+    """Between the last cell centre and the map's edge, a border building
+    must read as inside - and the field must not jump there. The first off-map
+    fix returned +off from the last centre on, so (78.2, 0) read clear inside
+    a building and a push out through it counted as receding (review,
+    2026-09-24)."""
+    occ = np.zeros((N, N), np.uint8)
+    occ[77:, 30:50] = 1                      # 3 rows deep on the North border
+    sh = _shield(occ)
+    inside = sh._distance_at(78.0, 0.0)
+    assert inside < 0.0
+    for x in (78.1, 78.5, 78.9):
+        d = sh._distance_at(x, 0.0)
+        assert d < 0.0, (x, d)                # still inside the building
+        assert abs(d - inside) <= (x - 78.0) + 1e-9, (x, d)   # 1-Lipschitz
+    far = sh._distance_at(140.0, 0.0)          # 62 m past it: not a wall
+    assert far > 50.0, far
+    free = sh._distance_at(90.0, -70.0)        # off a FREE stretch of edge
+    assert free >= (90.0 - 78.0) - RES / 2 - 1e-9, free
+
+
+def test_off_the_map_is_reported_not_passed_as_clear():
+    occ = np.zeros((N, N), np.uint8)
+    sh = _shield(occ)
+    assert not sh.off_map(0.0, 0.0)
+    assert not sh.off_map(OX, OY)                        # on the first cell
+    assert sh.off_map(0.0, OY + N * RES + 5.0)           # past the far edge
+    assert sh.off_map(OX - 5.0, 0.0)
+    no_map = Shield(Policy(policy_id="none", constraints=[]), lookahead_s=3.0, dt=0.5)
+    assert not no_map.off_map(500.0, 500.0)              # no map: nothing to be off
+    # ...which is why a caller must be able to tell "no map" from "on the map"
+    assert sh.has_obstacle_map and not no_map.has_obstacle_map
+
+
 # ------------------------------------------------------------ the repair chain
 
 def test_geofence_tangent_is_re_repaired_for_clearance():

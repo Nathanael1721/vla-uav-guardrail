@@ -16,6 +16,95 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-09-29 — a map of this city, a trail to follow, 10 Hz, and four reviews
+
+The write-up is the fourth part of
+`docs/FINDING-crowd-pedestrians-and-traffic.md`.
+
+#### Retracted
+- **"The corner stall was the aircraft pressing into a tree and a signal
+  pole"** was already corrected before the 09-23 commit; the phantom wall it
+  describes is now fixed at both ends (below).
+- **"9.3 Hz is the Windows 15.6 ms timer"** (09-23). Half of it: the pacing
+  slept `TICK - work` from each tick's own start, so every timer round-up was
+  lost. An absolute deadline alone reaches 10.0 Hz at 15.6 ms.
+- **`start_heading_err_deg: null` in every metrics.json since it was added.**
+  It was measured and then reset to None before any metric read it.
+
+#### Fixed
+- **The Shield's phantom wall.** Off the obstacle map `_distance_at`
+  extrapolated a border building into a wall to infinity (-35.16 m at a
+  CityLife junction entrance). The distance off the map now stays within
+  [v - off, v + off] and a border building extends past the edge only as far as
+  it reaches into the map. Against HEAD, 12 of 28,800 sampled monitor answers
+  in `test_check_contract` change, all on forecasts that leave the map; the
+  fixture now also pins four policies it never covered.
+- **The control loop: 9.99-10.0 Hz** on every flight (was 9.31-9.37 on the red
+  car, 8.38 on the August Demo_day reference): absolute-deadline pacing plus
+  `timeBeginPeriod(1)`; `timer_resolution_ms` measures the wait the loop does.
+- **The estimator was re-fed the Grounder's held box** - up to 8 s old - on
+  every inference that found nothing, paired with the current pose. It now
+  takes each detection once, fresh.
+- **The ground-contact check rejected the car it protects** (34 boxes on the
+  red car through a corner). A box on the estimated subject is exempt, while a
+  ground-checked box fed the estimate in the last 3 s.
+- **A car on a zebra drove on whoever stepped out.** It now stops where it is
+  for a pedestrian in its own path. Final Simulate, 4.4 min: 14 emergency-stop
+  ticks, none above 50 cm/s; walking figure within 4 m at speed 0; closest two
+  cars 650 cm (the design value).
+- The runner fails loudly: a failed flight no longer points at the previous
+  run's metrics.json, a throw or Ctrl+C stops the simulator, the map check
+  runs before any simulator starts, and the teardown kills only the `-game`
+  process.
+
+#### Added
+- `demo/trail.py` + `--trail-follow` (on in the car runner): fly where the
+  subject DROVE - breadcrumbs from the estimator, a carrot along them in
+  track, the last sighting and the subject's last direction in coast and
+  search, never nearer a stopped subject than the follow's stand-off and never
+  nearer anything than the camera's blind spot plus 2 m.
+- `demo/build_voxel_map.py`: any rectangle, several bands from one query, raw
+  voxels saved (`--from-voxels`); `demo/out/citymap_citylife/` for CityLife
+  (180 x 100 cells; the +-80 m cube rebuilt through it agrees on all 5,600
+  overlapping cells). `build_street_mask.py --dir`.
+- Evidence in metrics.json: `collisions` (the simulator's contact reports,
+  split into before t0, mission and after it), `off_map_ticks` (null with no
+  map), `trail`, `presence_block_reasons`, `ground_check_waiver`,
+  `timer_resolution_ms`; per tick `gate_why`, `pitch_deg`, `roll_deg`, `trail`.
+- `tests/test_trail.py` (18), `tests/test_voxel_map.py` (5), new cases in
+  `test_clearance.py` and `test_range_and_lock.py` (100).
+- `test_track_truth`'s median test knows a third losing shape: a crowd flight
+  (`citylife_ped_final`, 12.0 px against 7.4) where the class-level null is the
+  distance to the nearest of ~40 figures. Allowed only with per-figure truth
+  and a one-figure score at least 0.05 over its own null (0.58 vs 0.48); it
+  excuses no other flight. Suite: 553/553.
+
+#### Flown
+Seven red-car flights with the trail (240 s each), a pedestrian flight on the
+CityLife map (180 s), and DEMO 1 on Demo_day with and without the trail.
+`p0_violation_escape_rate` 0.0 and no collision during any mission.
+
+| red car | within 30 m | longest < 30 m | estimate on the car |
+|---|---|---|---|
+| `_ground` (09-23, no trail) | 0.314 | 48.8 s / 146 m | 0.55 |
+| `_trail` | **0.436** | **103.4 s / 305 m, two corners** | **0.74** |
+| `_trail2` / `_trail3` / `_final1..4` | 0.088-0.282 | 12.8-59.0 s | 0.11-0.36 |
+
+Each of `_trail2`, `_trail3` and `_final1` exposed a defect fixed after it (see
+the FINDING). Pedestrian: within 30 m 1.00, instance on target 0.58 against a
+null of 0.48. Demo_day DEMO 1: within 30 m 1.00 with and without the trail,
+mean separation 16.9-17.3 m, loop 10.0 Hz (8.38 in August).
+
+#### Found, not fixed
+- **Which red thing.** Across the seven trail flights the estimator served
+  the car on 36 % of its ticks (74 % on `_trail`); the mission in this level is
+  limited by target identity, not by the corner.
+- Loop B waits up to 42 s to give way at its junctions.
+- The 10 m pedestrian ring binds only to the tracked subject (839 ticks with
+  another pedestrian inside 10 m, by design).
+- The start gate can fire while the level is still streaming (detector at
+  3.8 Hz instead of 7).
+
 ### 2026-09-23 — the right frame width, the left side of the road, cars that yield, and the red car
 
 The level's logic is reproduced by `tools/citylife_routes.py` and

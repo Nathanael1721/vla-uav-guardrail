@@ -37,6 +37,8 @@ param(
     [double]$CruiseAlt = 0,             # 0 = the default, 8 m (see below)
     [int]$SimWidth   = 960,
     [int]$SimHeight  = 540,
+    [switch]$NoTrail,                   # car mode: fly along the nose, as before 09-24
+    [switch]$KeepSim,                   # leave the simulator running afterwards
     [switch]$SkipSim
 )
 
@@ -60,6 +62,15 @@ function Test-SimUp { (Test-NetConnection 127.0.0.1 -Port 8989 -WarningAction Si
 function Stop-OurSim {
     Get-CimInstance Win32_Process -Filter "Name='UnrealEditor.exe'" |
         Where-Object { $_.CommandLine -like '*Blocks.uproject*' } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
+
+# The teardown's kill: only the -game simulator. An editor opened on the project
+# DURING the flight (to look at a car, say) is somebody's work, and the start-up
+# guard below only protects the one that was open before.
+function Stop-OurGameSim {
+    Get-CimInstance Win32_Process -Filter "Name='UnrealEditor.exe'" |
+        Where-Object { $_.CommandLine -like '*Blocks.uproject*' -and $_.CommandLine -like '*-game*' } |
         ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 }
 
@@ -87,7 +98,29 @@ if ($editors.Count -gt 0 -and -not $SkipSim) {
     throw "editor open - refusing to kill it without being asked"
 }
 
+# THE MAP OF THIS LEVEL, not Demo_day's. Every map under demo\out\citymap is the
+# 160 m cube surveyed on Demo_day; CityLife's loops run 30-120 m past it, and off
+# that map the Shield read a junction entrance as 35 m inside a building. Built by
+# build_voxel_map.py over NED x -140..220, y -60..140 (the FINDING's fourth part).
+# Refuse to fly without it rather than fall back to the wrong level's map - and
+# refuse BEFORE starting a simulator, not after, or the throw leaves it running.
+$CityMap = Join-Path $Root "demo\out\citymap_citylife\occ_day.npz"
+if (-not (Test-Path $CityMap)) {
+    throw ("no CityLife obstacle map at $CityMap. With the sim running CityLife_Day: " +
+           "python demo\build_voxel_map.py --x-min -140 --x-max 220 --y-min -60 --y-max 140 " +
+           "--out-dir demo\out\citymap_citylife --bands ground_0to2:0:2,ground_2to4:2:4," +
+           "occ_day_flightband_6to14:6:14,occ_day_highband_15to55:15:55 " +
+           "--alias occ_day=occ_day_flightband_6to14; then " +
+           "python demo\build_street_mask.py --dir demo\out\citymap_citylife")
+}
+
 if ($SkipSim -and -not (Test-SimUp)) { throw "-SkipSim given but nothing on 8989" }
+
+# Everything from here runs under try/finally: a -game simulator left running
+# keeps simulating. The one left up after the 2026-09-23 flights logged 12 349
+# pedestrian contacts overnight, which read like evidence from the flight until
+# the timestamps were checked. A throw or a Ctrl+C must not leave one behind.
+try {
 if (-not $SkipSim) { Start-Sim }
 
 Say "following `"$Object`" for ${Seconds}s against $LevelPeds level pedestrians"
@@ -146,6 +179,7 @@ $a = @("demo\follow_vlm.py",
        "--start-timeout-s", "$StartTimeout",
        "--level-peds", "$LevelPeds",
        "--level-truth-period", "$TruthPeriod",
+       "--citymap", $CityMap,
        "--save-view")
 if ($LevelCar) {
     # A car: 0.16 of frame width is the calibration made for a 4 m car (15.8 m
@@ -155,13 +189,46 @@ if ($LevelCar) {
     # at 3.2 m/s from an aircraft capped at 4 m/s, and was never closed on.
     # The car passes the start point once a lap, so the gate waits for that.
     $a += @("--start-max-range-m", "$StartMaxRange")
+    # Fly the car's TRAIL, not the nose: at a corner the nose points across the
+    # corner block at a car that has already turned (demo/trail.py).
+    if (-not $NoTrail) { $a += @("--trail-follow") }
+    # The policy's speed cap, not the controller's 4 m/s default. At 4 m/s
+    # against a 3.2 m/s car the follow closes at 0.8 m/s, so the 15-25 m a
+    # corner costs takes 20-30 s to win back; citylife_redcar_trail was still
+    # 40 m behind when the car turned the third corner, and lost it there.
+    $a += @("--speed-max", "5.0")
 } else {
     $a += @("--want-range", "$WantRange")
 }
+# A metrics.json left by an EARLIER flight under this tag would otherwise be
+# what the closing lines point at when this one fails before writing its own.
+Remove-Item (Join-Path $Root "demo\out\$Tag\metrics.json") -ErrorAction SilentlyContinue
 & $Py @a
+$rc = $LASTEXITCODE
+}
+finally {
+    if (-not $KeepSim -and -not $SkipSim) {
+        Stop-OurGameSim
+        Say "simulator stopped (pass -KeepSim to leave it running)"
+    }
+}
+
+$metrics = Join-Path $Root "demo\out\$Tag\metrics.json"
+if ($rc -ne 0 -or -not (Test-Path $metrics)) {
+    Write-Host ""
+    Write-Host "  *** FLIGHT FAILED (exit $rc)." -ForegroundColor Red
+    if (Test-Path $metrics) {
+        # follow_vlm writes metrics.json before the KPI, manifest and report
+        # steps, so a failure after it leaves a PARTIAL file (no kpi fields).
+        Write-Host "  $metrics is PARTIAL: written before the failure, no KPI fields." -ForegroundColor Red
+    } else {
+        Write-Host "  No metrics.json was written for $Tag; read the console above." -ForegroundColor Red
+    }
+    exit $(if ($rc) { $rc } else { 1 })
+}
 
 Say "done. Read the result from the artefact, not the screen:"
-Write-Host "    demo\out\$Tag\metrics.json     -> det_hz, frac_on_target (+ _chance), instance_score, start_gate, stage_ms_median"
+Write-Host "    demo\out\$Tag\metrics.json     -> det_hz, frac_on_target (+ _chance), instance_score, start_gate, stage_ms_median, collisions, off_map_ticks, trail"
 Write-Host "    demo\out\$Tag\kpi.json         -> p0_violation_escape_rate must be 0.0"
 Write-Host "  then build the video:"
 Write-Host "    python tools\make_demo_video.py --tag $Tag --height 720"

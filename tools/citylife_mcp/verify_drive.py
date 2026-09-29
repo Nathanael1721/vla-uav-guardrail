@@ -15,8 +15,16 @@
   pedTicks    half-rate ticks spent waiting for a pedestrian on a crossing
   stopRunMax  longest continuous stand-still (s): a deadlock grows without bound
   pedViol     half-rate ticks driving over a crossing at > 50 cm/s while a
-              MOVING pedestrian is on the zebra: must be 0
+              MOVING pedestrian is anywhere on the zebra. A gate until
+              2026-09-24; now context - a car already on the crossing drives on
+              past a pedestrian in the other lane by design
   pedStill    the same past a pedestrian standing still, allowed after 6 s
+  eStops      half-rate ticks of the emergency stop for a pedestrian in the
+              car's own path once it is already on the zebra (2026-09-24)
+  pedCorr     those of them still above 50 cm/s, i.e. while braking
+  pedClose    half-rate ticks above 50 cm/s with a MOVING pedestrian in the
+              car's own path within 4 m of its centre. Includes figures that
+              step out inside braking distance, so not a pass/fail gate
 
 These are read from the car itself, not sampled from outside: an outside
 snapshot of 24 cars takes about 70 editor calls, each of which lets the game
@@ -58,6 +66,10 @@ OT = "editor_toolset.toolsets.object.ObjectTools."
 PROPS = ["eyMax", "alatMax", "minEver", "closeTicks", "yieldTicks", "pedTicks",
          "stopRunMax", "stopRun", "curSpeed", "speedCmS", "ticks", "idx",
          "pedViol", "pedPassStill"]
+# Read on their own: get_properties refuses the WHOLE call if one name is
+# unknown, so asking for these alongside the rest made a BP_CityCar that
+# predates them unreadable instead of "not measured" (review round 4).
+NEW = ["eStops", "pedCorr", "pedClose"]
 
 
 def T(_tool, **kw):
@@ -71,6 +83,10 @@ def run():
             continue
         tag = [t for t in T(AC + "get_tags", actor=a) if t.startswith("Car_")][0]
         p = json.loads(T(OT + "get_properties", instance=a, properties=PROPS))
+        try:
+            p.update(json.loads(T(OT + "get_properties", instance=a, properties=NEW)))
+        except RuntimeError:
+            pass
         loc = T(AC + "get_actor_transform", actor=a)
         p["x"] = round(loc["location"]["x"])
         p["y"] = round(loc["location"]["y"])
@@ -109,6 +125,17 @@ def main():
                   min(c["minEver"] for c in vals), max(c["stopRunMax"] for c in vals),
                   sum(c["yieldTicks"] for c in vals), sum(c["pedTicks"] for c in vals),
                   sum(c["pedViol"] for c in vals), sum(c["pedPassStill"] for c in vals)))
+        new = ("eStops", "pedCorr", "pedClose")
+        if not all(isinstance(c.get(k), (int, float)) for c in vals for k in new):
+            # A BP_CityCar that predates drive_tick.py's 2026-09-24 pass has no
+            # such counters; a 0 printed for them would read as a pass.
+            print("on-the-zebra counters NOT MEASURED: BP_CityCar predates "
+                  "drive_tick.py (run it, then Simulate again)")
+        else:
+            print("on-the-zebra emergency stops %d half-rate ticks, %d of them still above 50 cm/s; "
+                  "pedestrian within 4 m ahead at speed (incl. step-outs): %d" % (
+                      sum(c["eStops"] for c in vals), sum(c["pedCorr"] for c in vals),
+                      sum(c["pedClose"] for c in vals)))
 
 
 if __name__ == "__main__":

@@ -38,6 +38,43 @@ now decides three speeds:
              A pedestrian standing still counts only for the first 6 s of the
              wait: roaming figures pick random nav points, the crossings are
              nav, and one that idles or sticks there froze a junction for 33 s.
+             Closer than 3 points (the car is already on the zebra) the stop
+             line is behind it, and it used to drive on whoever stepped out:
+             5 half-rate ticks in 4 min of Simulate (2026-09-23). Now a
+             pedestrian in the car's own path - 3 m either side of its centre
+             line, from 1 m behind its centre to 9 m ahead - stops it where it
+             is (StopCm 0), under the same 6 s rule for one standing still.
+             A pedestrian elsewhere on the zebra does not: the car is on the
+             crossing already, and stopping there blocks it for everyone.
+             "On the zebra" runs from 3 points before the crossing's path point
+             to 4 after it (CAhead >= NPts-4): the zebra reaches 3 m past its
+             centre line, and CAhead wraps to NPts-1 the moment the car's
+             centre passes that point - which cancelled a stop half-way through
+             its braking (found in review, 2026-09-24).
+             THE 6 s RULE HAS ITS OWN CLOCK, StillRun: time spent stopped
+             while a standing pedestrian is in the way, reset only when none
+             is. It used StopRun, which DriveTick zeroes the moment the car
+             reaches 10 cm/s - so the release after 6 s re-armed after about
+             a centimetre of creep and held the car for as long as the figure
+             idled (found in review, 2026-09-24). The clock belongs to the
+             crossing that armed it (StillC): a release earned at one zebra
+             used to carry over to the next, 7-16 path points on, and the car
+             drove over an idle figure there without stopping (same review).
+             "Armed it" means the NEAREST crossing with a standing figure
+             (CA2: path points ahead, negative once past it), and a figure
+             anywhere in the crossing's box counts, in both windows: latching
+             the last crossing in array order re-armed the near one's stop
+             from the far one's figure, and the narrower path box on the
+             zebra threw away the 6 s already waited (review round 3).
+             Crossings AHEAD win the latch (a crossing behind the car ranks
+             after every one ahead: toggling figures behind a car waiting at
+             the next line flipped the latch and held it for good), and a
+             release exempts only the crossing it was earned at (StillDone,
+             forgotten once that crossing leaves the window) - with crossings
+             7 points apart the release at one still carried to the next
+             (review round 4).
+             PedViol and PedPassStill count only at CAhead 0-2, the window
+             they had when the baseline of 5 was measured.
 
 StopCm and GapCm are measured every other tick and then shrunk by the distance
 driven in every DriveTick sub-step, so a slow frame rate does not let a car run
@@ -56,7 +93,16 @@ AlatMax (worst v^2 kappa, cm/s^2), MinEver (closest approach to another car),
 YieldTicks, PedTicks, StopRunMax (longest stand-still, s), PedViol (half-rate
 ticks a car drove over a crossing at > 50 cm/s with a MOVING pedestrian on the
 zebra - must stay 0) and PedPassStill (the same with a pedestrian standing still,
-which the 6 s rule allows).
+which the 6 s rule allows). Since 2026-09-24 PedViol is CONTEXT, not a gate:
+it still counts a moving pedestrian ANYWHERE on the zebra, as it did when the 5
+were measured, and a car already on the crossing now drives on past one in the
+other lane by design. PedClose counts half-rate ticks a car was above
+50 cm/s with a MOVING pedestrian in its own path within 4 m of its centre
+(about 2 m past its bumper). It is not a pass/fail gate: a figure that steps
+out inside the car's braking distance (1.3 m from 3.2 m/s) counts too, while
+the car brakes as hard as it can - read it beside EStops. EStops counts half-rate ticks of the
+on-the-zebra emergency stop and PedCorr those still above 50 cm/s (braking,
+0.8 s from 3.2 m/s); each counts once per tick, however many figures.
 """
 import json
 
@@ -81,7 +127,12 @@ NEW_VARS = [
     ("CIdx", "int", None), ("CAhead", "int", None), ("NSub", "int", None),
     ("SubDt", "float", None), ("PedSpd", "float", None),
     ("PedViol", "int", None), ("PedPassStill", "int", None),
-    ("PedTicks", "int", None),
+    ("PedTicks", "int", None), ("EStops", "int", None), ("PedCorr", "int", None),
+    ("PedClose", "int", None), ("StillRun", "float", None),
+    ("StillC", "int", None), ("StillCPrev", "int", None),
+    ("CA2", "int", None), ("StillBest", "int", None), ("StillDone", "int", None),
+    ("Exempt", "bool", None),
+    ("StillSeen", "bool", None), ("EHit", "bool", None), ("CloseHit", "bool", None),
     ("InBox", "bool", None), ("HasJ", "bool", None), ("Conflict", "bool", None),
 ]
 
@@ -207,10 +258,25 @@ EFF = """(fn UpdateEffSpeed ()
     (if {Conflict}
       (Variables|Default|SetStopCm (- {JEdge} 300.0))
       (Variables|Default|SetYieldTicks (+ {YieldTicks} 1)))
+    (if (< {Ticks} 3)
+      (Variables|Default|SetStillDone -1)
+      (Variables|Default|SetStillCPrev -1))
+    (Variables|Default|SetStillSeen false)
+    (Variables|Default|SetStillBest 99999)
+    (Variables|Default|SetEHit false)
+    (Variables|Default|SetCloseHit false)
     (for _c {Crossings}
       (Variables|Default|SetCIdx (Math|Float|Truncate (.z _c)))
       (Variables|Default|SetCAhead (Math|Integer|%(Integer) (+ (- {CIdx} {Idx}) {NPts}) {NPts}))
-      (if (<= {CAhead} 17)
+      (Variables|Default|SetCA2 {CAhead})
+      (if (> {CAhead} 17)
+        (Variables|Default|SetCA2 (+ 1000 (- {NPts} {CAhead}))))
+      (if (and (== {CIdx} {StillDone})
+               (and (> {CAhead} 17) (< {CAhead} (- {NPts} 4))))
+        (Variables|Default|SetStillDone -1))
+      (Variables|Default|SetExempt (or (== {CIdx} {StillDone})
+                                       (and (== {CIdx} {StillCPrev}) (>= {StillRun} 6.0))))
+      (if (or (<= {CAhead} 17) (>= {CAhead} (- {NPts} 4)))
         (Variables|Default|SetTmpE (- (Utilities|Array|Get(acopy) {Route} (Math|Integer|%(Integer) (+ {CIdx} 1) {NPts}))
                                       (Utilities|Array|Get(acopy) {Route} {CIdx})))
         (Variables|Default|SetOFwd (Math|Vector|Normalize (Math|Vector|MakeVector (.x {TmpE}) (.y {TmpE}) 0.0)))
@@ -222,16 +288,48 @@ EFF = """(fn UpdateEffSpeed ()
                    (< (Math|Float|Absolute(Float)
                         (- (* (.y {TmpE}) (.x {OFwd})) (* (.x {TmpE}) (.y {OFwd})))) 800.0))
             (Variables|Default|SetPedSpd (Math|Vector|VectorLengthXY (Transformation|GetVelocity :self _p)))
-            (if (>= {CAhead} 3)
-              (if (or (> {PedSpd} 20.0) (< {StopRun} 6.0))
+            (if (< {PedSpd} 20.0)
+              (Variables|Default|SetStillSeen true)
+              (if (< {CA2} {StillBest})
+                (Variables|Default|SetStillBest {CA2})
+                (Variables|Default|SetStillC {CIdx})))
+            (if (and (>= {CAhead} 3) (<= {CAhead} 17))
+              (if (or (> {PedSpd} 20.0) (not {Exempt}))
                 (Variables|Default|SetStopCm (Math|Float|Min(Float) {StopCm} (- (* 150.0 {CAhead}) 650.0)))
                 (Variables|Default|SetPedTicks (+ {PedTicks} 1)))
               (else
-                (if (> {CurSpeed} 50.0)
+                (Variables|Default|SetTmpD (- (Transformation|GetActorLocation :self _p) {DbgMe}))
+                (Variables|Default|SetTmpA (Math|Vector|DotProduct {TmpD} {DbgFwd}))
+                (if (and (> {TmpA} -100.0)
+                         (and (< {TmpA} 900.0)
+                              (< (Math|Float|Absolute(Float) (Math|Vector|DotProduct {TmpD} {Rgt})) 300.0)))
+                  (if (or (> {PedSpd} 20.0) (not {Exempt}))
+                    (Variables|Default|SetStopCm 0.0)
+                    (Variables|Default|SetEHit true)
+                    (if (and (> {PedSpd} 20.0) (< {TmpA} 400.0))
+                      (Variables|Default|SetCloseHit true))))
+                (if (and (<= {CAhead} 2) (> {CurSpeed} 50.0))
                   (if (> {PedSpd} 20.0)
                     (Variables|Default|SetPedViol (+ {PedViol} 1))
                     (else
                       (Variables|Default|SetPedPassStill (+ {PedPassStill} 1)))))))))))
+    (if {StillSeen}
+      (if (not (== {StillC} {StillCPrev}))
+        (Variables|Default|SetStillRun 0.0)
+        (Variables|Default|SetStillCPrev {StillC}))
+      (if (< {CurSpeed} 10.0)
+        (Variables|Default|SetStillRun (+ {StillRun} (* 2.0 {Dt}))))
+      (if (>= {StillRun} 6.0)
+        (Variables|Default|SetStillDone {StillCPrev}))
+      (else
+        (Variables|Default|SetStillRun 0.0)
+        (Variables|Default|SetStillCPrev -1)))
+    (if {EHit}
+      (Variables|Default|SetEStops (+ {EStops} 1))
+      (if (> {CurSpeed} 50.0)
+        (Variables|Default|SetPedCorr (+ {PedCorr} 1))))
+    (if (and {CloseHit} (> {CurSpeed} 50.0))
+      (Variables|Default|SetPedClose (+ {PedClose} 1)))
     (if (< {Ticks} 3)
       (Variables|Default|SetMinEver 99999.0))
     (Variables|Default|SetMinEver (Math|Float|Min(Float) {MinEver} {MinNow}))

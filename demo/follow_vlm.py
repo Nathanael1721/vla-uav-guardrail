@@ -74,6 +74,7 @@ from recorder import FrameRecorder
 import car_trajectory
 import pedestrians as people_mod
 from target_state import TargetState, want_range_from_width
+import trail as trail_mod
 import moving_car                                                   # noqa: E402
 from aerialvla_demo import RateLimiter                              # noqa: E402
 from semantic_demo import SemanticObs, quat_yaw                     # noqa: E402
@@ -309,6 +310,39 @@ def _live_sep(state, subject_class, car, people):
     if not pts:
         return None
     return min(math.hypot(state.x - tx, state.y - ty) for tx, ty in pts)
+
+
+def collisions_summary(events, subscribed: bool, t0_since_connect,
+                       t_end_since_connect=None) -> dict:
+    """The simulator's contact reports, split at the mission clock.
+
+    Contacts before t0 are take-off and the start-gate hover (the launch pad,
+    the aircraft settling); contacts after the last mission tick are the
+    landing (the first flight to record them logged its touchdown on a road
+    tile as a "mission" collision); the ones between are the follow's.
+    `measured` is False when the topic could not be subscribed, so that a 0 is
+    not mistaken for a clean flight.
+    """
+    if not subscribed:
+        return {"measured": False}
+    cut = float("inf") if t0_since_connect is None else t0_since_connect
+    end = float("inf") if t_end_since_connect is None else t_end_since_connect
+    pre = [e for e in events if e["t_conn"] < cut]
+    mis = [e for e in events if cut <= e["t_conn"] <= end]
+    post = [e for e in events if e["t_conn"] > end]
+    return {
+        "measured": True,
+        "pre_t0": len(pre),
+        "mission": len(mis),
+        "after_mission": len(post),
+        "after_mission_objects": sorted({str(e.get("object")) for e in post}),
+        "mission_objects": sorted({str(e.get("object")) for e in mis}),
+        # First few, whole, for a reader who wants to find them in the video.
+        "mission_first": [
+            {**e, "t": (None if t0_since_connect is None
+                        else round(e["t_conn"] - t0_since_connect, 2))}
+            for e in mis[:10]],
+    }
 
 
 def range_agreement(rows, standoffs) -> dict:
@@ -818,6 +852,68 @@ def presence_verdict(det, rng_m, query: str, colour_min: float,
     if w_m is None:
         return "UNSURE", "no range — size not checked"
     return "PRESENT", f"{w_m:.1f} m wide at {rng_m:.0f} m"
+
+
+def camera_blind_m(alt_m: float, img_w: int = 768, img_h: int = 432,
+                   mount_pitch_deg: float = CAMERA_MOUNT_PITCH_DEG,
+                   hfov_deg: float = None) -> float:
+    """Horizontal distance from the aircraft inside which the ground is below
+    the bottom of the FrontCamera frame: 6.9 m at 8 m altitude. A subject the
+    follow closes to within this is out of view however good the detector."""
+    hfov = CAMERA_HFOV_DEG if hfov_deg is None else hfov_deg
+    half_v = math.atan(math.tan(math.radians(hfov) / 2.0) * img_h / img_w)
+    low = -math.radians(mount_pitch_deg) + half_v
+    return max(0.0, alt_m) / math.tan(low) if low > 0 else float("inf")
+
+
+def measured_speed(hist, span_s: float = 2.0, min_span_s: float = 1.0):
+    """Speed from the displacement of accepted estimator positions over the
+    last `span_s` - a measurement, where the filter's velocity is a model that
+    keeps the pre-stop speed for seconds after a car stops. `hist` is a list of
+    (t, x, y), oldest first. None until `min_span_s` of history exists."""
+    if not hist:
+        return None
+    t1, x1, y1 = hist[-1]
+    old = [h for h in hist if t1 - h[0] <= span_s]
+    t0_, x0, y0 = old[0]
+    if t1 - t0_ < min_span_s:
+        return None
+    return math.hypot(x1 - x0, y1 - y0) / (t1 - t0_)
+
+
+def quat_roll(q: dict) -> float:
+    """Body roll in radians from an NED quaternion; positive is right wing DOWN."""
+    w, x, y, z = q["w"], q["x"], q["y"], q["z"]
+    return math.atan2(2.0 * (w * x + y * z), 1.0 - 2.0 * (x * x + y * y))
+
+
+def agrees_with_estimate(b_box: float, r_box, pred, bearing_tol_deg: float = 6.0,
+                         range_tol: float = 0.35) -> bool:
+    """Does a box sit where the estimator predicts the subject is?
+
+    `pred` is TargetState.observe()'s (bearing rad, range m) or None. Bearing
+    within `bearing_tol_deg`, and - when the box has a depth range - range
+    within `range_tol` of the prediction. No prediction, no agreement."""
+    if pred is None:
+        return False
+    b_pred, r_pred = pred
+    db = (b_box - b_pred + math.pi) % (2.0 * math.pi) - math.pi
+    if abs(math.degrees(db)) > bearing_tol_deg:
+        return False
+    if r_box is not None and r_pred > 0 and abs(r_box - r_pred) > range_tol * r_pred:
+        return False
+    return True
+
+
+def block_reason_key(why: str) -> str:
+    """The rule a presence rejection came from, for counting."""
+    w = (why or "").lower()
+    for key, marker in (("not on the ground", "not on the ground"),
+                        ("implied width", "implies"), ("colour", "colour"),
+                        ("wall-sized", "of frame")):
+        if marker in w:
+            return key
+    return "other"
 
 
 def presence_gate(det, rng_m, query: str, colour_min: float, ground=None):
@@ -2156,6 +2252,31 @@ async def fly(args) -> int:
     # Ticks whose detection the presence verdict called ABSENT and which were
     # therefore NOT allowed to steer (see --presence-gates-control).
     n_presence_blocked = 0
+    # Ticks whose horizontal command followed the subject's trail rather than
+    # the nose (see --trail-follow), and ticks flown off the obstacle map, where
+    # the clearance rule is blind (Shield.off_map).
+    n_trail_ticks = 0
+    n_trail_lookout = 0         # coast/search ticks steered by the lookout
+    n_trail_against = 0         # trail directions refused: away from the subject
+    n_off_map = 0
+    # Why the presence gate refused each box it refused (by rule), and how often
+    # the ground-contact check was waived for a box on the estimated subject.
+    # The gate's reason was discarded until 2026-09-24, so a gate rejecting the
+    # real car read exactly like a detector that had missed it.
+    block_reasons = {}
+    n_ground_skipped = 0        # boxes that agreed with the estimate (waived)
+    n_ground_rescued = 0        # ...of those, inferences the check would have refused
+    have_depth = False
+    t_ground_ok = 0.0           # last estimator update from a ground-checked box
+    # Every contact the SIMULATOR reported, from the robot's collision_info
+    # topic. Nothing listened to it before 2026-09-24, so a flight could scrape
+    # a pole and the artefact would say nothing - a zero nobody measured. The
+    # plugin logged every contact to the simulator's own log; the client did not.
+    collisions = []
+    collisions_subscribed = False
+    t_connect = time.time()
+    t0 = None                   # the mission clock; set once the gate opens
+    t_mission_end = None        # ...and when its loop ended
     start_gate = {"enabled": False}
     stage_ms = {"kin": [], "truth": [], "shield": [], "cmd": [], "work": []}
     # Initialised at function scope, not inside the `async with`. When the sim
@@ -2163,6 +2284,16 @@ async def fly(args) -> int:
     # metrics section then dies with UnboundLocalError - which buries the real
     # error under a confusing one. A failed flight should report zeros.
     tick = 0
+    # The same for everything the metrics and the teardown read that is only
+    # built once connected (review, 2026-09-24: a failed connect raised
+    # NameError on `estimator` in the metrics and on `recorder` in `finally`).
+    estimator = None
+    lock = None
+    trail = None
+    trail_stop_short = 0.0
+    recorder = None
+    view_dir = None
+    start_heading_err_deg = None
     nfz_hold_ticks = 0
     guard_hold_ticks = 0        # any hold: fence OR building
 
@@ -2209,6 +2340,26 @@ async def fly(args) -> int:
                   f"showing the Chase camera, not the depth stream")
 
         drone = Drone(client, world, "Drone1")
+        t_connect = time.time()
+
+        def _on_collision(_, m):
+            # Only real contacts. `t` is seconds since connect; the metrics
+            # split it at the mission clock's t0 later, so take-off scrapes on
+            # the launch pad are not counted against the follow.
+            if isinstance(m, dict) and m.get("has_collided", True):
+                collisions.append({
+                    "t_conn": round(time.time() - t_connect, 2),
+                    "object": m.get("object_name"),
+                    "penetration_m": m.get("penetration_depth"),
+                    "impact": m.get("impact_point"),
+                })
+        try:
+            client.subscribe(drone.robot_info["collision_info"], _on_collision)
+            collisions_subscribed = True
+            print("[collide] subscribed to the robot's collision_info topic")
+        except Exception as exc:
+            print(f"[collide] *** could not subscribe to collision_info "
+                  f"({type(exc).__name__}: {exc}) - contacts will NOT be counted")
         client.subscribe(drone.sensors["FrontCamera"]["scene_camera"],
                          lambda _, m: obs.put_front(m))
         client.subscribe(drone.sensors["DownCamera"]["scene_camera"],
@@ -2623,16 +2774,41 @@ async def fly(args) -> int:
                   f" after {waited:.0f} s: {start_gate}")
 
         t0, last_seen = time.time(), 0.0
+        tick_deadline = None        # the pacing's running deadline, see below
+        # Where the subject was last MEASURED to be, and how fast it was then
+        # measured to move (displacement of accepted positions over 2 s).
+        acc_hist = []
+        last_acc = None
+        last_meas_speed = None
         last_bearing, brg_rate, last_cmd, mode = 0.0, 0.0, (0.0, 0.0), "hold"
         # The presence verdict is computed further down the tick, so the search
         # logic uses the PREVIOUS tick's. That is the honest signal anyway: it is
         # what the system last knew about whether the object is really out there.
-        start_heading_err_deg = None
+        # (start_heading_err_deg was reset to None here, AFTER the rotate had
+        # measured it, so every metrics.json carried null - found in review,
+        # 2026-09-24. The function-scope initialiser covers an early abort.)
         last_verdict = "UNSURE"
         # Servo on an ESTIMATE of the target rather than the latest box. See
         # demo/target_state.py for the measurements that forced this.
         estimator = (TargetState(v_max=SUBJECT_VMAX_MPS.get(subject_class))
                      if args.target_estimator else None)
+        # WHERE THE SUBJECT DROVE (--trail-follow; demo/trail.py).
+        #
+        # Built from the estimator's own position after each accepted update,
+        # so it carries no ground truth. Needs the estimator: the box servo has
+        # no position to lay a breadcrumb at.
+        trail = (trail_mod.Trail(spacing_m=1.5, max_len_m=120.0)
+                 if args.trail_follow and estimator is not None else None)
+        if args.trail_follow and trail is None:
+            print("[trail] *** --trail-follow needs the target estimator; "
+                  "flying along the nose")
+
+        def _trail_stop_short():
+            # How far short of the last sighting a coast approach stops: the
+            # policy's own stand-off for this class of subject (0 if none binds).
+            return max((so.min_range_m for so in policy.by_type(SubjectStandoff)
+                        if so.binds(subject_class)), default=0.0)
+        trail_stop_short = _trail_stop_short()
         def _stand_off():
             """The range the servo aims for, from the CURRENT subject width.
 
@@ -2738,6 +2914,17 @@ async def fly(args) -> int:
                     # this loop where a per-subject quantity had to be told
                     # that the subject changed.
                     estimator.v_max = SUBJECT_VMAX_MPS.get(subject_class)
+                if trail is not None:
+                    # Where the CAR drove is not where the new subject went;
+                    # coast, search and the forward direction would otherwise
+                    # follow the old subject's breadcrumbs (review, 2026-09-24).
+                    trail.clear()
+                    trail_stop_short = _trail_stop_short()
+                # ...and so is where it was last measured, and how fast.
+                acc_hist.clear()
+                last_acc = None
+                last_meas_speed = None
+                t_ground_ok = 0.0     # no box of the NEW subject is ground-checked yet
                 ev = {"t": round(now_s, 3), "tick": tick,
                       "scheduled_at_s": t_at,
                       "from": {"object": old_obj, "class": old_class},
@@ -2795,19 +2982,99 @@ async def fly(args) -> int:
             # verdict rejects is not a sighting: no estimator update, no servo,
             # and the coast/search branches take over exactly as for a miss.
             presence_blocked = False
+            gate_why = None
+            ground_skipped = False
+            ground_rescued = False
+            ground_ok_now = False
+            pitch_now = quat_pitch(kin["pose"]["orientation"])
+            # Is this tick's box a NEW detection? Decided before the gate and
+            # consumed here whatever the gate says: a detection refused on its
+            # own tick and passed on a later one - pitch and the depth behind
+            # the held box both change - was fed seconds late with the
+            # aircraft's current pose (review round 4). The estimator, the
+            # trail and the waiver's counters act only on fresh ones.
+            fresh_det = bool(det is not None and g["t_det"]
+                             and g["t_det"] != last_est_seq)
+            if fresh_det:
+                last_est_seq = g["t_det"]
             if args.presence_gates_control and det is not None:
                 r_pre = range_from_depth(obs.get_depth(), det) if have_depth else None
-                det, presence_blocked, _ = presence_gate(
-                    det, r_pre, args.object, args.colour_min,
-                    ground=(state.up, quat_pitch(kin["pose"]["orientation"])))
+                ground = (state.up, pitch_now)
+                # THE CAR BEING TRACKED IS NOT A DISTRACTOR.
+                #
+                # The ground-contact check exists to keep a red signal from
+                # CAPTURING the lock. On citylife_redcar_trail it rejected the
+                # tracked car itself - 34 inferences with the box on the car,
+                # every other check passing - through the second corner, where
+                # the follow then fell 40 m behind and lost it. Its inputs are
+                # fragile exactly there: a small-angle ray, a box bottom a few
+                # pixels off, and a body pitch read NOW for a frame captured
+                # 150-250 ms ago during braking and banking. A box that lands
+                # where the estimator already predicts the subject (bearing,
+                # and range when depth has one) is continuity, not capture, so
+                # it is not asked to prove it stands on the road. With no
+                # estimate - acquisition, or after 3 s unseen - it still is.
+                #
+                # And only while the estimate is itself anchored on the road:
+                # a box that PASSED the ground check must have fed it within
+                # the last 3 s. Otherwise a red signal beside a stopped car
+                # could be waived in, pull the estimate onto itself, and keep
+                # the waiver for as long as it stood there - the capture this
+                # check exists to stop (found in review, 2026-09-24).
+                det_in = det
+                if (estimator is not None and r_pre is not None
+                        and time.time() - t_ground_ok < 3.0):
+                    pred = estimator.observe(time.time(), state.x, state.y, yaw)
+                    b_box = (math.radians(CAMERA_HFOV_DEG / 2.0)
+                             * ((det[0] - det[5] / 2) / (det[5] / 2)))
+                    if agrees_with_estimate(b_box, r_pre, pred):
+                        ground, ground_skipped = None, True
+                        if fresh_det:                         # per detection
+                            n_ground_skipped += 1
+                det, presence_blocked, gate_why = presence_gate(
+                    det, r_pre, args.object, args.colour_min, ground=ground)
                 n_presence_blocked += int(presence_blocked)
+                if presence_blocked:
+                    k = block_reason_key(gate_why)
+                    block_reasons[k] = block_reasons.get(k, 0) + 1
+                elif ground_skipped:
+                    # A RESCUE is a box the ground check would have refused
+                    # and the waiver let through; agreement alone is not one.
+                    _, _, why_g = presence_gate(
+                        det_in, r_pre, args.object, args.colour_min,
+                        ground=(state.up, pitch_now))
+                    if block_reason_key(why_g) == "not on the ground":
+                        ground_rescued = True
+                        if fresh_det:                         # per detection
+                            n_ground_rescued += 1
+                    elif (ground_range_m(det_in, state.up, pitch_now) is not None
+                          and block_reason_key(why_g) != "not on the ground"):
+                        # An agreeing box that would ALSO have passed the
+                        # ground check keeps the anchor fresh: in steady
+                        # tracking every box agrees, and the anchor used to
+                        # lapse every 3 s for want of a non-agreeing one
+                        # (review round 4).
+                        ground_ok_now = True
+                elif (r_pre is not None and ground is not None
+                      and plausible_noun(args.object) in GROUND_NOUNS
+                      and ground_range_m(det_in, state.up, pitch_now) is not None):
+                    # Passed WITH the ground check actually evaluated: near the
+                    # horizon ground_range_m gives up and the verdict never
+                    # tests contact, and such a box must not arm the waiver
+                    # (review, 2026-09-24).
+                    ground_ok_now = True
             # FEED THE ESTIMATOR, ONCE PER NEW DETECTION.
             #
             # Only measurements go in: the box centre, the depth range, and the
             # aircraft's own pose. No target ground truth, ever - tgt_x/tgt_y in
             # the log are for scoring and must not reach this.
-            if estimator is not None and det is not None and g["seq"] != last_est_seq:
-                last_est_seq = g["seq"]
+            # A FRESH detection, not a fresh inference: the Grounder keeps its
+            # last box for up to 8 s through inferences that find nothing, and
+            # keying this on `seq` re-fed that box with the aircraft's CURRENT
+            # pose on every one of them - breadcrumbs laid 15-190 m from the
+            # car, an estimate at 4.9 m/s for a car standing still
+            # (citylife_redcar_trail2; found in review, 2026-09-24).
+            if estimator is not None and det is not None and fresh_det:
                 # CAMERA_HFOV_DEG / 2, not a literal 45.0. This line is
                 # servo()'s bearing formula written out a second time, and it
                 # is the one the ESTIMATOR is fed - so a camera change that
@@ -2819,8 +3086,20 @@ async def fly(args) -> int:
                 if r_meas is None:
                     r_meas = implied_range_from_width(det, args.object_width_m)
                 if r_meas:
-                    estimator.update(time.time(), state.x, state.y, yaw,
-                                     b_meas, float(r_meas))
+                    accepted = estimator.update(time.time(), state.x, state.y,
+                                                yaw, b_meas, float(r_meas))
+                    if accepted and ground_ok_now:
+                        t_ground_ok = time.time()
+                    if accepted:
+                        acc_hist.append((time.time(), float(estimator.x[0]),
+                                         float(estimator.x[1])))
+                        del acc_hist[:-40]
+                        last_acc = (float(estimator.x[0]), float(estimator.x[1]))
+                        _v = measured_speed(acc_hist)
+                        if _v is not None:
+                            last_meas_speed = _v
+                    if accepted and trail is not None:
+                        trail.add(float(estimator.x[0]), float(estimator.x[1]))
 
             est_obs = (estimator.observe(time.time(), state.x, state.y, yaw)
                        if estimator is not None else None)
@@ -2857,6 +3136,24 @@ async def fly(args) -> int:
                 fwd = float(np.clip((rng_est - want_range) * args.range_gain + ff,
                                     -0.4 * args.speed_max, args.speed_max))
                 fwd *= max(0.0, math.cos(bearing))
+                # PREDICTION IS NOT EVIDENCE. For up to 3 s after the last
+                # accepted box the estimator serves a constant-velocity guess;
+                # when the car has in fact stopped, closing on that guess flew
+                # citylife_redcar_trail2 from 14.8 m to 1.7 m of a stationary
+                # car, into the camera's blind spot, in TRACK mode. Once the
+                # estimate is half a second stale, do not advance nearer the
+                # last MEASURED position than the blind spot plus 2 m - for a
+                # subject MEASURED to have stopped. Applied to a moving car it
+                # throttled the chase to 1.4 m/s whenever updates paused, since
+                # following a car puts the aircraft ~10-13 m from where the car
+                # last WAS (citylife_redcar_final1: 13 m -> 25 m behind in 8 s,
+                # then lost; review round 4 had flagged it).
+                if (last_acc is not None and estimator.t_last_update is not None
+                        and last_meas_speed is not None and last_meas_speed < 1.0
+                        and time.time() - estimator.t_last_update > 0.5):
+                    r_last = math.hypot(last_acc[0] - state.x, last_acc[1] - state.y)
+                    floor = camera_blind_m(state.up) + 2.0
+                    fwd = min(fwd, max(0.0, 0.5 * (r_last - floor)))
                 if last_seen:
                     dt = max(1e-3, time.time() - last_seen)
                     brg_rate = 0.6 * brg_rate + 0.4 * ((bearing - last_bearing) / dt)
@@ -2880,6 +3177,40 @@ async def fly(args) -> int:
                 # coasts on what the target was doing, then searches, and only
                 # then gives up.
                 seen = False
+                # With a trail: where to look (a little past the last sighting,
+                # along the subject's last direction of travel) and how much
+                # street is left to fly to reach that sighting. None without.
+                look_b = (trail_mod.lookout(trail, state.x, state.y, yaw)
+                          if trail is not None else None)
+                trail_rem = (trail.remaining(state.x, state.y)
+                             if look_b is not None else 0.0)
+                # How much is left to the last sighting, and how far short of
+                # it to stop. The Shield has no subject while the estimator is
+                # silent, so its ring is not held: the controller keeps out of
+                # it. Straight-line distance as well as along the trail - at a
+                # corner the carrot cuts across, and the along-trail figure
+                # alone let the approach end inside the ring (review,
+                # 2026-09-24). And a subject last seen STOPPED is probably
+                # still there: the follow's own stand-off, not the policy's
+                # minimum. Approaching a stopped car to 5 m put it in the
+                # camera's 6.9 m blind spot under the nose, and
+                # citylife_redcar_trail2 never saw it again.
+                # "Stopped" is MEASURED - displacement of accepted positions -
+                # not the filter's velocity, which kept 1.5-5 m/s for seconds
+                # after the car stood still (review, 2026-09-24). Never stop
+                # nearer than the camera's blind spot plus 2 m either way.
+                subject_stopped = (last_meas_speed is not None
+                                   and last_meas_speed < 1.0)
+                if look_b is not None:
+                    _end = trail.end()
+                    d_end = math.hypot(_end[0] - state.x, _end[1] - state.y)
+                    left = min(trail_rem, d_end)
+                    floor = camera_blind_m(state.up) + 2.0
+                    stop_at = (max(trail_stop_short, want_range, floor)
+                               if subject_stopped
+                               else max(trail_stop_short, floor))
+                else:
+                    d_end = left = stop_at = 0.0
                 if not last_seen:
                     # Never acquired yet. Sweep — do not sit still waiting for a
                     # target to wander into frame. This was the failure mode the
@@ -2892,8 +3223,23 @@ async def fly(args) -> int:
                     # keep turning the way the target was moving, decaying
                     k = 1.0 - lost / args.coast_s
                     bearing = last_bearing + brg_rate * lost
-                    yaw_rate = yaw_command(args.yaw_gain, bearing)
                     fwd = last_cmd[1] * k
+                    if look_b is not None:
+                        # Not "keep doing what it was doing": that carried the
+                        # aircraft straight past the junction the car had
+                        # turned at. Fly the trail to the last sighting, and
+                        # look where the car was heading from there.
+                        bearing = look_b
+                        # ...but stop the policy's stand-off short of it: the
+                        # estimator has nothing, so the Shield has no subject
+                        # and its ring is not being held. A car stopped behind
+                        # a tree is still there. And an aircraft that was
+                        # BACKING OFF keeps backing - the approach may not turn
+                        # a retreat into a closing run (review, 2026-09-24).
+                        if last_cmd[1] >= 0.0:
+                            fwd = trail_mod.approach_speed(
+                                max(0.0, left - stop_at), max(last_cmd[1], 1.0))
+                    yaw_rate = yaw_command(args.yaw_gain, bearing)
                     mode = "coast"
                 elif lost < args.coast_s + args.search_s:
                     # A BOUNDED SWEEP AROUND THE LAST BEARING, AND KEEP MOVING.
@@ -2924,6 +3270,15 @@ async def fly(args) -> int:
                     if args.search_legacy_spin:
                         side = 1.0 if last_bearing >= 0 else -1.0
                         yaw_rate, bearing = side * args.search_rate, 0.0
+                    elif look_b is not None:
+                        # The same sweep, but CLOSED on the lookout bearing
+                        # instead of integrated open-loop from wherever the
+                        # nose happened to be when the coast ended - so it is
+                        # centred down the street the subject went into.
+                        w = 2.0 * math.pi / max(0.5, args.search_period_s)
+                        bearing = look_b + math.radians(args.search_sweep_deg) \
+                            * math.sin(w * (lost - args.coast_s))
+                        yaw_rate = yaw_command(args.yaw_gain, bearing)
                     else:
                         yaw_rate = search_sweep_rate(lost - args.coast_s,
                                                      args.search_sweep_deg,
@@ -2934,6 +3289,29 @@ async def fly(args) -> int:
                     # and the aircraft must not go wandering up the street.
                     fwd = (abs(last_cmd[1]) * args.search_creep
                            if last_verdict != "ABSENT" else 0.0)
+                    if look_b is not None:
+                        if last_cmd[1] < 0.0 or (subject_stopped and d_end <= stop_at):
+                            # Never creep up on a subject last seen STOPPED -
+                            # it is probably still there - and never turn a
+                            # retreat into an advance. A subject last seen
+                            # MOVING has left the last sighting: once the
+                            # approach is done, creep on along its direction
+                            # (review, 2026-09-24: zeroing it here parked the
+                            # aircraft short of the junction mouth).
+                            fwd = 0.0
+                        elif not subject_stopped:
+                            # Last seen MOVING: go where it went, at the speed
+                            # it was measured going (at least 1.5 m/s), down its
+                            # trail and on along its last direction - whatever
+                            # the presence verdict, which only says the held
+                            # box has dropped. Scaling this from the last
+                            # command crept at 0.3 m/s, because the prediction
+                            # window's cap had already slowed that command,
+                            # and parked the aircraft ~9 m short of the
+                            # junction mouth in every emulated corner (review
+                            # round 4).
+                            fwd = max(fwd, min(args.speed_max,
+                                               max(last_meas_speed or 0.0, 1.5)))
                     mode = "search"
                 else:
                     # Only NOW is a full rotation the right answer. The bounded
@@ -3026,7 +3404,53 @@ async def fly(args) -> int:
                 # range error be corrected, just slowly.
                 orbit_fwd = float(np.clip(fwd, -args.orbit_radial_max,
                                           args.orbit_radial_max))
-            cvx, cvy = orbit_fwd * math.cos(yaw), orbit_fwd * math.sin(yaw)
+            # WHICH WAY "FORWARD" IS.
+            #
+            # Along the nose, and the nose is on the subject - so at a corner
+            # the aircraft cut straight across toward a car that had already
+            # turned, into the corner block. With a trail, forward is toward a
+            # carrot on the subject's own track instead: the same speed (the
+            # stand-off law above decides it), the yaw still on the subject, but
+            # the path the car drove. On a straight street the two coincide.
+            # Backing off (a negative forward) stays along the nose, and the
+            # orbit and the scan rotation keep their own geometry.
+            ux, uy = math.cos(yaw), math.sin(yaw)
+            trail_row = None
+            if (trail is not None and orbit_fwd > 0.0 and not args.orbit_speed
+                    and mode in ("track", "coast", "search")):
+                tdir = trail_mod.direction(trail, state.x, state.y,
+                                           args.trail_lookahead_m)
+                # NEVER AWAY FROM THE SUBJECT. While the estimator serves a
+                # position, a trail direction pointing away from it (more than
+                # 90 deg off the line of sight) is an old leg - a re-acquisition
+                # behind the trail's end, a car come back round the loop - and
+                # following it would fly the aircraft away at stand-off speed
+                # (review, 2026-09-24). The nose, which is on the subject, wins.
+                if (tdir is not None and est_obs is not None
+                        and estimator is not None and estimator.x is not None):
+                    lx = float(estimator.x[0]) - state.x
+                    ly = float(estimator.x[1]) - state.y
+                    if lx * tdir[0] + ly * tdir[1] < 0.0:
+                        tdir = None
+                        n_trail_against += 1
+                if tdir is not None:
+                    ux, uy = tdir
+                    n_trail_ticks += 1
+                    end = trail.end()
+                    trail_row = {"n": len(trail),
+                                 "dir_deg": round(math.degrees(math.atan2(uy, ux)), 1),
+                                 "end": [round(end[0], 1), round(end[1], 1)]}
+            if mode in ("coast", "search") and look_b is not None:
+                # The lookout bearing and the approach are the trail acting too,
+                # on ticks where the direction above may not (a zero forward
+                # command at the end of the approach, an ABSENT verdict).
+                n_trail_lookout += 1
+                trail_row = dict(trail_row or {}, look_deg=round(math.degrees(look_b), 1),
+                                 rem=round(trail_rem, 1), d_end=round(d_end, 1),
+                                 stop_at=round(stop_at, 1), stopped=subject_stopped,
+                                 v_meas=(None if last_meas_speed is None
+                                         else round(last_meas_speed, 2)))
+            cvx, cvy = orbit_fwd * ux, orbit_fwd * uy
             if args.orbit_speed and mode == "track":
                 cvx += -args.orbit_speed * math.sin(yaw)
                 cvy += args.orbit_speed * math.cos(yaw)
@@ -3097,6 +3521,16 @@ async def fly(args) -> int:
             if d.touched:
                 n_touched += 1
             e = d.emitted
+            # Off the obstacle map the clearance rule sees nothing - not
+            # "clear", unknown. Counted so a flight that left the map says so.
+            off_map = (shield.off_map(state.x, state.y)
+                       if shield.has_obstacle_map else None)
+            if off_map:
+                n_off_map += 1
+                if n_off_map == 1:
+                    print(f"[map] *** t={time.time() - t0:.1f}s: the aircraft is "
+                          f"OFF the obstacle map at ({state.x:.1f}, {state.y:.1f}); "
+                          "building clearance is not being checked here")
 
             traj.append({"x": state.x, "y": state.y, "up": state.up,
                          "touched": d.touched})
@@ -3108,6 +3542,7 @@ async def fly(args) -> int:
                 "fence_d": (round(fdist, 2) if fdist is not None else None),
                 "fence_scale": round(fscale, 3), "fence_hold": fblocked,
                 "fence_mode": fmode,
+                "trail": trail_row, "off_map": off_map,
                 "est": (None if estimator is None else
                         {"served": est_obs is not None,
                          "rng": None if est_obs is None else round(est_obs[1], 2),
@@ -3128,6 +3563,11 @@ async def fly(args) -> int:
                          # The instance scorer re-associates the subject there.
                          "switched": bool(g.get("switched"))}),
                 "presence_blocked": presence_blocked,
+                "gate_why": gate_why if presence_blocked else None,
+                "ground_skip": ground_skipped,
+                "ground_rescue": ground_rescued,
+                "pitch_deg": round(math.degrees(pitch_now), 2),
+                "roll_deg": round(math.degrees(quat_roll(kin["pose"]["orientation"])), 2),
                 "bearing_deg": round(math.degrees(bearing), 2),
                 "raw": raw.model_dump(), "smooth": smooth.model_dump(),
                 "emitted": e.model_dump(),
@@ -3198,13 +3638,29 @@ async def fly(args) -> int:
             # The 9.5 Hz gate was being measured against a loop that was
             # structurally unable to pass it. --legacy-tick-sleep restores the
             # old pacing so recorded flights can be reproduced.
+            #
+            # ...and to an ABSOLUTE deadline. `TICK - work` was relative to each
+            # tick's own start, so every sleep's round-up to the OS timer (15.6
+            # ms by default on Windows) was lost for good: 9.31-9.37 Hz on every
+            # red-car flight. Stepping a running deadline by TICK lets a late
+            # tick be repaid by the next one's shorter sleep. A stall of more
+            # than a whole tick is not repaid - that would be a burst of
+            # back-to-back commands - the deadline restarts from now instead.
             _work = time.time() - _tk0
             stage_ms["work"].append(_work * 1000)
             if args.legacy_tick_sleep:
                 await asyncio.sleep(TICK)
             else:
-                await asyncio.sleep(max(0.0, TICK - _work))
+                _now = time.time()
+                tick_deadline = (_tk0 if tick_deadline is None
+                                 else tick_deadline) + TICK
+                if tick_deadline < _now - TICK:
+                    tick_deadline = _now
+                await asyncio.sleep(max(0.0, tick_deadline - _now))
 
+        # The mission window closes here, plus the last command's 0.3 s: what
+        # the simulator reports after that is the descent and the landing.
+        t_mission_end = time.time() + 0.3
         grounder.stop()
         for _ in range(600):
             kin = drone.get_ground_truth_kinematics()
@@ -3366,12 +3822,48 @@ async def fly(args) -> int:
         # Detections the presence verdict refused to let steer.
         "presence_gates_control": bool(args.presence_gates_control),
         "presence_blocked_ticks": n_presence_blocked,
+        "presence_block_reasons": block_reasons,
+        # Detections that agreed with the estimate and so were not asked to
+        # prove they stand on the road, and - the number that matters - those
+        # the ground check would have REFUSED. `measured` is False when the
+        # waiver could never arm (no presence gating, no depth, no ground
+        # noun): then the zeros mean nothing.
+        "ground_check_waiver": {
+            "measured": bool(args.presence_gates_control and have_depth
+                             and plausible_noun(args.object) in GROUND_NOUNS),
+            "have_depth": bool(have_depth),
+            "waived_detections": n_ground_skipped,
+            "rescued_detections": n_ground_rescued},
         # When the mission clock started, and on what evidence.
         "start_gate": start_gate,
         # Where each tick's time went. `work` is the whole tick before pacing.
         "stage_ms_median": {k: (round(float(np.median(v)), 1) if v else None)
                             for k, v in stage_ms.items()},
-        "tick_pacing": "legacy-sleep" if args.legacy_tick_sleep else "deadline",
+        "tick_pacing": "legacy-sleep" if args.legacy_tick_sleep else "absolute-deadline",
+        # The OS timer the pacing sleeps on. 15.6 ms is the Windows default,
+        # which rounds every 0.1 s deadline up and held the loop at 9.3 Hz.
+        "timer_resolution_ms": TIMER_RESOLUTION_MS,
+        # Ticks whose forward command followed the subject's trail (--trail-follow).
+        "trail": ({"enabled": True, "ticks": n_trail_ticks,
+                   "lookout_ticks": n_trail_lookout,
+                   "refused_away_from_subject": n_trail_against,
+                   "breadcrumbs_laid": trail.n_added,
+                   "points_at_end": len(trail), "restarts": trail.n_restarts,
+                   "stop_short_m": trail_stop_short}
+                  if trail is not None else {"enabled": False}),
+        # Ticks flown where the obstacle map had nothing to say.
+        # null when there was no obstacle map at all: then clearance was
+        # checked nowhere, and 0 would read as "stayed on the map".
+        "off_map_ticks": n_off_map if shield.has_obstacle_map else None,
+        "obstacle_map_loaded": bool(shield.has_obstacle_map),
+        # Contacts the SIMULATOR reported. `measured: False` means the topic
+        # could not be subscribed, and then 0 is not a result.
+        "collisions": collisions_summary(
+            collisions, collisions_subscribed,
+            None if t0 is None else t0 - t_connect,
+            (t_mission_end - t_connect) if t_mission_end is not None
+            else ((t0 - t_connect + rows[-1]["t"] + 0.3) if (t0 is not None and rows)
+                  else None)),
         # Scored against ONE figure followed by name between lock switches,
         # when the truth carries names. See track_truth.instance_rows.
         "instance_score": track_truth.score_instance(rows),
@@ -3411,7 +3903,10 @@ async def fly(args) -> int:
 
         "params": {"yaw_gain": args.yaw_gain, "want_width": args.want_width,
                    "speed_max": args.speed_max, "cruise_alt": args.cruise_alt,
-                   "alt_gain": args.alt_gain, "det_thresh": args.det_thresh},
+                   "alt_gain": args.alt_gain, "det_thresh": args.det_thresh,
+                   "trail_follow": bool(args.trail_follow),
+                   "trail_lookahead_m": args.trail_lookahead_m,
+                   "citymap": str(args.citymap) if getattr(args, "citymap", None) else None},
     }
     (out / "metrics.json").write_text(json.dumps(metrics, indent=1), encoding="utf-8")
 
@@ -3502,6 +3997,66 @@ async def fly(args) -> int:
             print("[report] *** the depth mask never engaged - the colour gate "
                   "is still measuring the background ***")
     return 0
+
+
+# THE OS TIMER THE TICK SLEEPS ON.
+#
+# The loop sleeps to a 0.1 s deadline, and on Windows that sleep - asyncio's
+# proactor wait under Python 3.10 - wakes on the system timer, 15.6 ms by
+# default. Every deadline rounds UP to the next timer tick, so no tick was ever
+# shorter than ~0.107 s: 9.31-9.37 Hz on every red-car flight, against a
+# 9.5 Hz gate, with the work itself taking a fraction of the budget.
+# timeBeginPeriod(1) asks for 1 ms for the life of this process and is undone
+# on exit. The resolution actually obtained is MEASURED, not assumed, because
+# Windows 11 may decline it (for a process it considers invisible), and the
+# metrics report that measurement.
+TIMER_RESOLUTION_MS = None
+
+
+def _measure_sleep_ms(n: int = 20) -> float:
+    """Median wall time of `asyncio.sleep(0.001)` on a fresh event loop - the
+    wait the tick pacing actually does. Not time.sleep: from Python 3.11 that
+    uses a high-resolution timer and ignores timeBeginPeriod, so it would read
+    ~1 ms whether or not the loop's own waits were fine (review, 2026-09-24)."""
+    async def _probe():
+        ts = []
+        for _ in range(n):
+            a = time.perf_counter()
+            await asyncio.sleep(0.001)
+            ts.append((time.perf_counter() - a) * 1000.0)
+        return ts
+    loop = asyncio.new_event_loop()
+    try:
+        ts = loop.run_until_complete(_probe())
+    finally:
+        loop.close()
+    return round(float(np.median(ts)), 2)
+
+
+def _fine_timer_begin():
+    global TIMER_RESOLUTION_MS
+    if sys.platform != "win32":
+        TIMER_RESOLUTION_MS = _measure_sleep_ms()
+        return None
+    try:
+        import ctypes
+        winmm = ctypes.WinDLL("winmm")
+        ok = winmm.timeBeginPeriod(1) == 0      # TIMERR_NOERROR
+    except Exception as exc:                    # noqa: BLE001
+        print(f"[timer] timeBeginPeriod unavailable ({type(exc).__name__})")
+        winmm, ok = None, False
+    TIMER_RESOLUTION_MS = _measure_sleep_ms()
+    print(f"[timer] 1 ms timer {'requested' if ok else 'NOT granted'}; "
+          f"a 1 ms sleep measures {TIMER_RESOLUTION_MS} ms")
+    return winmm if ok else None
+
+
+def _fine_timer_end(winmm) -> None:
+    if winmm is not None:
+        try:
+            winmm.timeEndPeriod(1)
+        except Exception:                       # noqa: BLE001
+            pass
 
 
 def main() -> int:
@@ -3608,6 +4163,23 @@ def main() -> int:
     ap.add_argument("--start-timeout-s", type=float, default=240.0,
                     help="give up waiting for --start-when-seen after this long "
                          "and fly anyway; the metrics say it timed out.")
+    ap.add_argument("--coarse-timer", action="store_true",
+                    help="do NOT ask Windows for a 1 ms timer: the loop then "
+                         "sleeps on the default 15.6 ms tick, as every flight "
+                         "before 2026-09-24 did. For the A/B.")
+    ap.add_argument("--trail-follow", action="store_true",
+                    help="fly the subject's TRAIL rather than along the nose: "
+                         "the forward command points at a carrot on the path "
+                         "the estimator saw the subject take, and a lost "
+                         "subject is looked for past its last sighting, along "
+                         "its last direction. Built for corners, where the "
+                         "nose-on follow cut toward a car that had already "
+                         "turned and then coasted straight past the junction. "
+                         "Needs the target estimator. See demo/trail.py.")
+    ap.add_argument("--trail-lookahead-m", type=float, default=10.0,
+                    help="how far along the trail the carrot sits ahead of the "
+                         "aircraft's projection onto it. A 90 degree corner is "
+                         "cut by roughly 0.3x this.")
     ap.add_argument("--legacy-tick-sleep", action="store_true",
                     help="sleep a whole TICK after each tick's work (the old "
                          "pacing, which capped the loop below 10 Hz) instead "
@@ -3860,7 +4432,20 @@ def main() -> int:
         # which would also change where the flight writes.
         ap.error("--live-view needs --save-view: the window draws the frames "
                  "the recorder produces, and without it none are captured")
-    return asyncio.run(fly(args))
+    if args.coarse_timer:
+        # The A/B arm still measures what it got: a null here would leave the
+        # comparison without its control (review, 2026-09-24).
+        global TIMER_RESOLUTION_MS
+        TIMER_RESOLUTION_MS = _measure_sleep_ms()
+        print(f"[timer] coarse (default) timer; a 1 ms asyncio sleep measures "
+              f"{TIMER_RESOLUTION_MS} ms")
+        fine = None
+    else:
+        fine = _fine_timer_begin()
+    try:
+        return asyncio.run(fly(args))
+    finally:
+        _fine_timer_end(fine)
 
 
 if __name__ == "__main__":
