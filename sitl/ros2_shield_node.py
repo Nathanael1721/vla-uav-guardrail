@@ -12,6 +12,19 @@ Bring-up (GUIDED/arm/takeoff) and landing run through mavros services.
 Run (after `source /opt/ros/jazzy/setup.bash`):
 
     ~/venv-ros/bin/python sitl/ros2_shield_node.py --shield on [--dynamic]
+    ~/venv-ros/bin/python sitl/ros2_shield_node.py --bundle bundles/fase3-sim-demo-v0.1.1.tar.gz
+
+TOPOLOGY. One desktop running ArduPilot SITL + MAVROS 2 + this node is the
+grant's `dev` topology - not `hil`, which puts the VLA and the Shield on a
+Jetson Orin, and which the grant reserves for reported KPI numbers. Runs before
+2026-10-06 were stamped `canonical-hil`; that label is read as `dev` now.
+
+POLICY. `--bundle` flies the signed bundle (guardrail/bundle.py): the policy
+the run used is then the issued artefact, not whatever the YAML says today.
+`--policy` (or the default YAML) stays as the fallback and is recorded as
+unsigned. The source and its signature status go into metrics.json, kpi.json
+and the replay bundle, and the policy hash is logged at start-up so the stub
+node's own policy (sitl/ros2_vla_stub_node.py) can be compared against it.
 """
 from __future__ import annotations
 
@@ -35,13 +48,15 @@ from rcl_interfaces.srv import GetParameters
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from guardrail import Action4D, AuditLogger, Shield, State, load_policy   # noqa: E402
+from guardrail import Action4D, AuditLogger, Shield, State             # noqa: E402
+from guardrail.bundle import load_for_flight                              # noqa: E402
 from guardrail.compiler import ConstraintCompiler                         # noqa: E402
 from guardrail.geometry import fence_polygon                              # noqa: E402
 from guardrail.kpi import compute_from_dir                                # noqa: E402
 from guardrail.manifest import (TOPOLOGY_ARDUPILOT_SITL,                  # noqa: E402
-                                TOPOLOGY_CANONICAL_HIL, build_manifest,
+                                TOPOLOGY_DEV, build_manifest,
                                 is_kpi_grade)
+from guardrail.replay import verify_replay, write_replay                  # noqa: E402
 from guardrail.models import (AltitudeEnvelope, PolygonFence,
                               SubjectStandoff, XY)           # noqa: E402
 
@@ -61,14 +76,31 @@ DYNAMIC_FENCE = PolygonFence(
 class ShieldNode(Node):
     def __init__(self, shield_on: bool, dynamic: bool, out: Path,
                  subject=None, subject_class: str = "pedestrian",
-                 policy_path=None) -> None:
+                 policy_path=None, bundle_path=None,
+                 allow_unverified_bundle: bool = False) -> None:
         super().__init__("safety_shield")
         self.shield_on = shield_on
         self.dynamic = dynamic
         self.out = out
 
-        self.policy = load_policy(policy_path or
-                                  ROOT / "policies" / "sim_demo_policy.yaml")
+        # The signed bundle when one is given; otherwise the YAML, recorded as
+        # unsigned. Refuses before take-off, never mid-air.
+        # Both at once is refused, as in run_sitl_demo.py: passing the YAML
+        # through (instead of dropping it when a bundle is given) lets
+        # load_for_flight say so rather than silently pick one.
+        self.policy, self.policy_source = load_for_flight(
+            bundle_path,
+            policy_path or (None if bundle_path else
+                            ROOT / "policies" / "sim_demo_policy.yaml"),
+            allow_unverified=allow_unverified_bundle)
+        # Logged at start-up so the stub node's policy can be compared with
+        # this one: in the ros2_ped_* runs the two nodes read different files
+        # and nothing showed it (audit card WP1-23).
+        self.get_logger().info(
+            f"policy {self.policy.policy_id} v{self.policy.version} "
+            f"{self.policy.policy_hash} from {self.policy_source['kind']} "
+            f"{self.policy_source['path']} - signature "
+            f"{self.policy_source['signature']}")
         compiler = ConstraintCompiler(self.policy)
         self.mission = compiler.parse_command("fly to the northeast pad at 6 m/s")
         (out / "prompt.yaml").write_text(compiler.build_prompt(self.mission),
@@ -101,9 +133,10 @@ class ShieldNode(Node):
         self.mav_connected = False
         self.traj: list[dict] = []
         self.rows: list[dict] = []
-        # Evidence that this really is the grant's canonical topology, gathered
-        # from the live system rather than asserted. build_manifest() refuses
-        # canonical-hil without it, and fcu_connected is the load-bearing part:
+        # Evidence that this really is the grant's dev topology (SITL behind
+        # MAVROS 2), gathered from the live system rather than asserted.
+        # build_manifest() refuses `dev` without it, and fcu_connected is the
+        # load-bearing part:
         # MAVROS comes up happily with nothing on the other end and publishes
         # connected: false forever, so a node can fly a whole mission into the
         # void and look healthy.
@@ -215,7 +248,7 @@ class ShieldNode(Node):
                 # the real number in double_value=1.0. Believing the type field
                 # read a speedup of zero - which would mean time had stopped -
                 # and, because is_kpi_grade() only checks != 1.0, would have
-                # quietly failed every canonical run with a nonsense reason.
+                # quietly failed every MAVROS run with a nonsense reason.
                 #
                 # So take whichever field actually carries a value. Both empty
                 # means not populated yet; keep polling.
@@ -475,7 +508,7 @@ class ShieldNode(Node):
 
         metrics = {
             "tag": self.out.name,
-            "topology": TOPOLOGY_CANONICAL_HIL,
+            "topology": TOPOLOGY_DEV,
             "ticks": len(self.rows),
             "shield": "on" if self.shield_on else "off",
             "reached": self.reached,
@@ -493,17 +526,23 @@ class ShieldNode(Node):
             # Kept here rather than in the manifest: the manifest is exactly six
             # fields by the grant's definition and stays that way.
             "hil_evidence": self.hil_evidence,
+            # Where the policy came from: a signed bundle (and whether its
+            # signature verified) or a YAML file, which is unsigned. Beside the
+            # manifest for the same six-field reason.
+            "policy_source": self.policy_source,
         }
         (self.out / "flight_log.jsonl").write_text(
             "".join(json.dumps(r) + "\n" for r in self.rows), encoding="utf-8")
         (self.out / "metrics.json").write_text(json.dumps(metrics, indent=2),
                                                encoding="utf-8")
 
-        # This is the rail the grant names for contractual KPI figures, so it is
-        # the one allowed to claim canonical-hil - and only on the evidence
-        # gathered above. If MAVROS never reported a connected flight
+        # This rail is the grant's `dev` topology: ArduPilot SITL behind MAVROS
+        # 2 on one desktop. It may claim that label only on the evidence
+        # gathered above; if MAVROS never reported a connected flight
         # controller, build_manifest() refuses and the run is recorded as what
-        # it actually was.
+        # it actually was. It is NOT `hil` - the grant's KPI configuration puts
+        # the VLA and the Shield on a Jetson Orin - so is_kpi_grade() refuses
+        # it unless the PI's written waiver is recorded (DEV_KPI_WAIVER).
         # READ, never assert. None here fails the KPI gate, which is correct:
         # a speedup nobody measured is not evidence of real-time flight.
         speedup = self.sim_speedup
@@ -513,10 +552,10 @@ class ShieldNode(Node):
                 policy_hash=self.policy.policy_hash,
                 model_id="guardrail.vla_stub.StubVLA",
                 seed=0, scene_path=None, sim_speedup=speedup,
-                topology=TOPOLOGY_CANONICAL_HIL,
+                topology=TOPOLOGY_DEV,
                 hil_evidence=self.hil_evidence)
         except ValueError as e:
-            self.get_logger().warn(f"not canonical HIL: {e}")
+            self.get_logger().warn(f"not the dev topology: {e}")
             manifest = build_manifest(
                 policy_hash=self.policy.policy_hash,
                 model_id="guardrail.vla_stub.StubVLA",
@@ -534,8 +573,27 @@ class ShieldNode(Node):
         kpi_res["kpi_grade"] = graded
         kpi_res["kpi_grade_reasons"] = why
         kpi_res["manifest"] = manifest
+        kpi_res["policy_source"] = self.policy_source
         (self.out / "kpi.json").write_text(json.dumps(kpi_res, indent=2),
                                            encoding="utf-8")
+
+        # The replay bundle, packaged while the policy that governed the flight
+        # (including any hot-applied rule) is still the object in memory. This
+        # rail wrote none until 2026-10-06 (audit card X-09), so its five stored
+        # runs can be re-derived only from loose files.
+        try:
+            rb = write_replay(self.out, self.policy,
+                              self.out / f"{self.out.name}.replay.tar.gz",
+                              changelog=f"ros2 {self.out.name}",
+                              policy_source=self.policy_source)
+            ok, notes = verify_replay(rb)
+            self.get_logger().info(
+                f"[replay] {rb.name} "
+                f"{'re-derives its own KPIs' if ok else 'FAILED verification'}")
+            for n_ in notes:
+                self.get_logger().info(f"[replay]   - {n_}")
+        except Exception as exc:                                # noqa: BLE001
+            self.get_logger().warn(f"[replay] not written: {type(exc).__name__}: {exc}")
         self.get_logger().info(
             f"P0 escape rate {kpi_res['p0_violation_escape_rate']} | "
             f"NFZ {nfz_s:.1f}s | alt {alt_s:.1f}s | interventions {self.n_touched}")
@@ -549,6 +607,8 @@ class ShieldNode(Node):
 | Path | vla_stub node -> /vla/action_4d -> shield node -> mavros -> ArduPilot SITL |
 | ROS 2 | Jazzy · rclpy · MAVROS 2 |
 | Policy | `{self.policy.policy_id}` `{self.policy.policy_hash}` |
+| Policy source | {self.policy_source['kind']} `{self.policy_source['path']}` - signature **{self.policy_source['signature']}** |
+| Topology | `{manifest['topology']}` |
 | Target reached | {'yes' if self.reached else 'NO'} |
 | Ticks | {len(self.traj)} |
 | Shield interventions | {self.n_touched} |
@@ -567,7 +627,16 @@ def main() -> None:
     ap.add_argument("--dynamic", action="store_true")
     ap.add_argument("--tag", default=None)
     ap.add_argument("--policy", default=None,
-                    help="policy YAML; defaults to policies/sim_demo_policy.yaml")
+                    help="policy YAML; defaults to policies/sim_demo_policy.yaml. "
+                         "Recorded as UNSIGNED.")
+    ap.add_argument("--bundle", default=None,
+                    help="signed policy bundle (python -m guardrail.bundle "
+                         "POLICY.yaml). Refused unless its signature verifies.")
+    ap.add_argument("--allow-unverified-bundle", action="store_true",
+                    help="fly a bundle whose signature is not verified (unsigned, "
+                         "or a key the trust store does not list), recording "
+                         "that it was not; a bad or stripped signature is "
+                         "refused regardless")
     ap.add_argument("--subject", default=None, metavar="X,Y",
                     help="declare a subject at this NED position so "
                          "subject_standoff rules bind. DECLARED, not perceived - "
@@ -586,7 +655,8 @@ def main() -> None:
         subject = tuple(float(v) for v in args.subject.split(","))
     node = ShieldNode(args.shield == "on", args.dynamic, out,
                       subject=subject, subject_class=args.subject_class,
-                      policy_path=args.policy)
+                      policy_path=args.policy, bundle_path=args.bundle,
+                      allow_unverified_bundle=args.allow_unverified_bundle)
     try:
         node.bring_up()
         node.start_mission()

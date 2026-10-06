@@ -1,0 +1,657 @@
+{
+  "schema": "guardrail.paraphrases.validation/1",
+  "store_digest": "2b2b5788d9a021cc",
+  "validator_digest": "80d3096159a8a0de",
+  "probes_digest": "1aec28f44872c919",
+  "places_source": "guardrail.compiler.PLACES",
+  "command": "python -m guardrail.paraphraser validate",
+  "sources": 14,
+  "paraphrases": 112,
+  "accepted": 112,
+  "identity_null_refused": 14,
+  "mutants": 3979,
+  "mutants_refused": 3979,
+  "mutants_by_class": {
+    "bound": {
+      "generated": 278,
+      "refused": 278
+    },
+    "colour-rebind": {
+      "generated": 8,
+      "refused": 8
+    },
+    "conditional": {
+      "generated": 244,
+      "refused": 244
+    },
+    "drop-sentence": {
+      "generated": 187,
+      "refused": 187
+    },
+    "exception": {
+      "generated": 244,
+      "refused": 244
+    },
+    "hedge": {
+      "generated": 244,
+      "refused": 244
+    },
+    "narrow": {
+      "generated": 17,
+      "refused": 17
+    },
+    "negate-modal": {
+      "generated": 44,
+      "refused": 44
+    },
+    "negate-verb": {
+      "generated": 190,
+      "refused": 190
+    },
+    "negation": {
+      "generated": 84,
+      "refused": 84
+    },
+    "number": {
+      "generated": 526,
+      "refused": 526
+    },
+    "number-word": {
+      "generated": 4,
+      "refused": 4
+    },
+    "override": {
+      "generated": 112,
+      "refused": 112
+    },
+    "permission": {
+      "generated": 13,
+      "refused": 13
+    },
+    "phase": {
+      "generated": 200,
+      "refused": 200
+    },
+    "place-role": {
+      "generated": 7,
+      "refused": 7
+    },
+    "polarity": {
+      "generated": 24,
+      "refused": 24
+    },
+    "post-prohibit": {
+      "generated": 439,
+      "refused": 439
+    },
+    "swap": {
+      "generated": 368,
+      "refused": 368
+    },
+    "unit": {
+      "generated": 586,
+      "refused": 586
+    },
+    "vertical": {
+      "generated": 56,
+      "refused": 56
+    },
+    "widen": {
+      "generated": 8,
+      "refused": 8
+    },
+    "zone-drop": {
+      "generated": 48,
+      "refused": 48
+    },
+    "zone-rename": {
+      "generated": 48,
+      "refused": 48
+    }
+  },
+  "mutation_recall_note": "recall on the mutation classes mutants() generates, and on no other class: a kind of meaning change nobody wrote a mutation for is not measured here (see probes)",
+  "null_validators": {
+    "accept_all_but_exact_copy": {
+      "stored_accepted": 112,
+      "mutants_refused": 0,
+      "note": "Accepts anything that is not word-for-word the source."
+    },
+    "digits_multiset": {
+      "stored_accepted": 110,
+      "mutants_refused": 816,
+      "note": "Accepts when the multiset of digit strings is unchanged."
+    },
+    "slot_word_bag": {
+      "stored_accepted": 51,
+      "mutants_refused": 3472,
+      "note": "Accepts when the SETS of digits, units, quoted ids and a fixed list of"
+    }
+  },
+  "probes": {
+    "review_2026_10_06": {
+      "status": "DEV SET - written by the independent reviewer of 2026-10-06 (scratchpad rv_para/adv.py + faithful.py) and USED to tune the validator the same day. A regression test, not an estimate.",
+      "meaning_changing": 28,
+      "false_accepts": 0,
+      "faithful": 30,
+      "false_refusals": 3,
+      "false_accept_texts": [],
+      "false_refusal_texts": [
+        "go to the point x=40, y=40 at 6 m/s, altitude 20",
+        "follow someone walking",
+        "fly to the pad in the northeast at 6 m/s"
+      ]
+    },
+    "heldout_2026_10_06": {
+      "status": "HELD-OUT - written on 2026-10-06 by the agent fixing the validator, after reading the review and BEFORE changing any code, and never used to tune it. Measured once before the changes and once after. Same author as the code, so not independent of its blind spots.",
+      "meaning_changing": 30,
+      "false_accepts": 5,
+      "faithful": 30,
+      "false_refusals": 2,
+      "false_accept_texts": [
+        "follow a dark red car",
+        "follow the person who is running",
+        "Stay out of zone 'nfz-square'. Hold altitude between 10 m and 20 m. Max speed 4 m/s; descend under 2 m/s; turn under 45 deg/s.",
+        "Fly between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s. Keep at least 10 m from pedestrians in the street and at least 5 m from your target.",
+        "Stay between 6 m and 14 m altitude, max speed 5 m/s, climb under 2 m/s, turn under 45 deg/s. Keep at least 3 m from buildings, at least 10 m from adult pedestrians and at least 5 m from whatever you follow."
+      ],
+      "false_refusal_texts": [
+        "stick with a red car",
+        "Zone 'nfz-school' is off-limits Mon-Fri 07:30-17:30. Do not leave corridor 'corridor-survey-route'; stay within 20 m of its centerline and between 10 m and 20 m. Keep speed at most 4 m/s, climb rate under 2 m/s and turn rate under 45 deg/s."
+      ]
+    }
+  },
+  "per_source": [
+    {
+      "source_key": "csp_corridor_survey",
+      "file": "csp_corridor_survey.json",
+      "kind": "csp_nl",
+      "source_text": "Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.63,
+        "median": 0.736,
+        "max": 0.935
+      },
+      "mutants": 461,
+      "mutants_refused": 461,
+      "survivors": []
+    },
+    {
+      "source_key": "csp_corridor_survey_out_of_hours",
+      "file": "csp_corridor_survey_out_of_hours.json",
+      "kind": "csp_nl",
+      "source_text": "Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.4,
+        "median": 0.465,
+        "max": 0.936
+      },
+      "mutants": 368,
+      "mutants_refused": 368,
+      "survivors": []
+    },
+    {
+      "source_key": "csp_follow_car_citylife",
+      "file": "csp_follow_car_citylife.json",
+      "kind": "csp_nl",
+      "source_text": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.789,
+        "median": 0.825,
+        "max": 0.895
+      },
+      "mutants": 463,
+      "mutants_refused": 463,
+      "survivors": []
+    },
+    {
+      "source_key": "csp_follow_car_citylife_nfz",
+      "file": "csp_follow_car_citylife_nfz.json",
+      "kind": "csp_nl",
+      "source_text": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Never enter zone 'nfz-frontage'. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.758,
+        "median": 0.903,
+        "max": 0.928
+      },
+      "mutants": 517,
+      "mutants_refused": 517,
+      "survivors": []
+    },
+    {
+      "source_key": "csp_follow_pedestrian",
+      "file": "csp_follow_pedestrian.json",
+      "kind": "csp_nl",
+      "source_text": "Stay between 4 m and 10 m altitude. Keep at least 5 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 3 m/s, climb rate below 1.5 m/s and turn rate below 45 deg/s.",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.596,
+        "median": 0.846,
+        "max": 0.877
+      },
+      "mutants": 463,
+      "mutants_refused": 463,
+      "survivors": []
+    },
+    {
+      "source_key": "csp_sim_demo_policy",
+      "file": "csp_sim_demo_policy.json",
+      "kind": "csp_nl",
+      "source_text": "Stay between 10 m and 20 m altitude. Never enter zone 'nfz-square'. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.618,
+        "median": 0.75,
+        "max": 0.907
+      },
+      "mutants": 347,
+      "mutants_refused": 347,
+      "survivors": []
+    },
+    {
+      "source_key": "csp_sitl_pedestrian",
+      "file": "csp_sitl_pedestrian.json",
+      "kind": "csp_nl",
+      "source_text": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.51,
+        "median": 0.87,
+        "max": 0.898
+      },
+      "mutants": 440,
+      "mutants_refused": 440,
+      "survivors": []
+    },
+    {
+      "source_key": "csp_wgs84_taipei",
+      "file": "csp_wgs84_taipei.json",
+      "kind": "csp_nl",
+      "source_text": "Stay between 5 m and 80 m altitude. Never enter zone 'nfz-school-yard' (in force Mon-Fri 07:30-17:30). Keep speed at or below 12 m/s, climb rate below 4 m/s and turn rate below 60 deg/s.",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.395,
+        "median": 0.489,
+        "max": 0.88
+      },
+      "mutants": 417,
+      "mutants_refused": 417,
+      "survivors": []
+    },
+    {
+      "source_key": "task_fly_forward_avoid_restricted",
+      "file": "task_fly_forward_avoid_restricted.json",
+      "kind": "task",
+      "source_text": "fly forward and avoid restricted areas",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.375,
+        "median": 0.857,
+        "max": 0.9
+      },
+      "mutants": 68,
+      "mutants_refused": 68,
+      "survivors": [],
+      "parser_reading": null
+    },
+    {
+      "source_key": "task_fly_to_40_40",
+      "file": "task_fly_to_40_40.json",
+      "kind": "task",
+      "source_text": "fly to (40, 40) at 6 m/s altitude 20",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.182,
+        "median": 0.429,
+        "max": 0.688
+      },
+      "mutants": 120,
+      "mutants_refused": 120,
+      "survivors": [],
+      "parser_reading": {
+        "reference": [
+          40.0,
+          40.0,
+          20.0,
+          6.0
+        ],
+        "n": 8,
+        "same_mission": 6,
+        "same_only_by_default": 0,
+        "null_identity_same_mission": true,
+        "rows": [
+          {
+            "text": "head to (40, 40) at 6 m/s, holding altitude 20",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": true,
+            "mission": [
+              40.0,
+              40.0,
+              20.0,
+              6.0
+            ]
+          },
+          {
+            "text": "go to point (40, 40) at an altitude of 20, moving at 6 m/s",
+            "parsed": true,
+            "same_mission": false,
+            "speed_read": true,
+            "alt_read": false,
+            "mission": [
+              40.0,
+              40.0,
+              15.0,
+              6.0
+            ]
+          },
+          {
+            "text": "travel to (40, 40) at altitude 20 and a speed of 6 m/s",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": true,
+            "mission": [
+              40.0,
+              40.0,
+              20.0,
+              6.0
+            ]
+          },
+          {
+            "text": "make your way to (40, 40), cruising at 6 m/s at altitude 20",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": true,
+            "mission": [
+              40.0,
+              40.0,
+              20.0,
+              6.0
+            ]
+          },
+          {
+            "text": "Please fly to (40, 40) at 6 m/s and an altitude of 20.",
+            "parsed": true,
+            "same_mission": false,
+            "speed_read": true,
+            "alt_read": false,
+            "mission": [
+              40.0,
+              40.0,
+              15.0,
+              6.0
+            ]
+          },
+          {
+            "text": "Could you take the drone to coordinates (40, 40), at altitude 20 and 6 m/s?",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": true,
+            "mission": [
+              40.0,
+              40.0,
+              20.0,
+              6.0
+            ]
+          },
+          {
+            "text": "Your destination is (40, 40); fly there at 6 m/s, altitude 20.",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": true,
+            "mission": [
+              40.0,
+              40.0,
+              20.0,
+              6.0
+            ]
+          },
+          {
+            "text": "Proceed to (40, 40) - keep to 6 m/s and stay at altitude 20.",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": true,
+            "mission": [
+              40.0,
+              40.0,
+              20.0,
+              6.0
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "source_key": "task_fly_to_northeast_pad",
+      "file": "task_fly_to_northeast_pad.json",
+      "kind": "task",
+      "source_text": "fly to the northeast pad at 6 m/s",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.308,
+        "median": 0.5,
+        "max": 1.0
+      },
+      "mutants": 102,
+      "mutants_refused": 102,
+      "survivors": [],
+      "parser_reading": {
+        "reference": [
+          30.0,
+          30.0,
+          15.0,
+          6.0
+        ],
+        "n": 8,
+        "same_mission": 8,
+        "same_only_by_default": 0,
+        "null_identity_same_mission": true,
+        "rows": [
+          {
+            "text": "take yourself over to the northeast pad, holding a steady 6 m/s throughout",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": false,
+            "mission": [
+              30.0,
+              30.0,
+              15.0,
+              6.0
+            ]
+          },
+          {
+            "text": "reach the northeast pad, cruising at a constant 6 m/s the entire way",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": false,
+            "mission": [
+              30.0,
+              30.0,
+              15.0,
+              6.0
+            ]
+          },
+          {
+            "text": "travel at 6 m/s until you reach the northeast pad",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": false,
+            "mission": [
+              30.0,
+              30.0,
+              15.0,
+              6.0
+            ]
+          },
+          {
+            "text": "go to the northeast pad, flying at 6 m/s the whole way",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": false,
+            "mission": [
+              30.0,
+              30.0,
+              15.0,
+              6.0
+            ]
+          },
+          {
+            "text": "Could you please fly over to the northeast pad at 6 m/s?",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": false,
+            "mission": [
+              30.0,
+              30.0,
+              15.0,
+              6.0
+            ]
+          },
+          {
+            "text": "Your destination is the northeast pad; get there at 6 m/s.",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": false,
+            "mission": [
+              30.0,
+              30.0,
+              15.0,
+              6.0
+            ]
+          },
+          {
+            "text": "Please proceed to the northeast pad, keeping your speed at 6 m/s.",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": false,
+            "mission": [
+              30.0,
+              30.0,
+              15.0,
+              6.0
+            ]
+          },
+          {
+            "text": "Take the drone to the northeast pad and hold 6 m/s on the way.",
+            "parsed": true,
+            "same_mission": true,
+            "speed_read": true,
+            "alt_read": false,
+            "mission": [
+              30.0,
+              30.0,
+              15.0,
+              6.0
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "source_key": "task_fly_to_the_waypoint_120_m_ahead_at",
+      "file": "task_fly_to_the_waypoint_120_m_ahead_at.json",
+      "kind": "task",
+      "source_text": "Fly to the waypoint 120 m ahead at cruise altitude.",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.273,
+        "median": 0.471,
+        "max": 0.75
+      },
+      "mutants": 86,
+      "mutants_refused": 86,
+      "survivors": [],
+      "parser_reading": null
+    },
+    {
+      "source_key": "task_follow_a_person",
+      "file": "task_follow_a_person.json",
+      "kind": "task",
+      "source_text": "follow a person",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.333,
+        "median": 0.75,
+        "max": 0.846
+      },
+      "mutants": 52,
+      "mutants_refused": 52,
+      "survivors": [],
+      "parser_reading": null
+    },
+    {
+      "source_key": "task_follow_a_red_car",
+      "file": "task_follow_a_red_car.json",
+      "kind": "task",
+      "source_text": "follow a red car",
+      "n": 8,
+      "accepted": 8,
+      "refused": [],
+      "identity_refused": true,
+      "novelty": {
+        "min": 0.2,
+        "median": 0.625,
+        "max": 0.75
+      },
+      "mutants": 75,
+      "mutants_refused": 75,
+      "survivors": [],
+      "parser_reading": null
+    }
+  ]
+}

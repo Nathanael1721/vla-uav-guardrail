@@ -1,0 +1,12 @@
+{
+  "_doc": "Public keys whose signatures guardrail.bundle accepts, keyed by the signed_by identity. Data, not code: swapping the signing authority (lab CA or ITRI CA, the PI's decision) means adding its key here and signing with it. Private keys never go in git.",
+  "signers": {
+    "lab-dev:ed25519:6ec75b535ef5c533": {
+      "algorithm": "ed25519",
+      "authority": "lab-dev",
+      "note": "lab DEVELOPMENT key - not a CA. Replace with the CA the PI names (lab or ITRI) before final delivery.",
+      "public_key_hex": "2f52e0132113fe9d457fb30766b12a2e95b0d90b8beb18043bcbe880fdf20ffe",
+      "registered": "2026-10-06"
+    }
+  }
+}

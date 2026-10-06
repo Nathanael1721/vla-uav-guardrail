@@ -9,6 +9,20 @@ it with the nathan-deck style and export Word + PDF:
     python tools/build_mideval_report.py
     python tools/report_to_html.py docs/MID-EVALUATION-REPORT-Sep2026.md --style nathan
     powershell -File tools/office_to_pdf.ps1 -Path docs/MID-EVALUATION-REPORT-Sep2026.html
+
+CORRECTED 2026-10-06, IN THE GENERATOR ONLY. The report this wrote in September
+was delivered, so it is not regenerated silently; its corrections go into the
+final report's correction note. What changed here, so a rebuild cannot print
+the old claims again:
+  * topology: the desktop ArduPilot SITL + MAVROS 2 rail is the grant's `dev`
+    topology, not "canonical HIL" - the grant takes KPI figures from `hil`
+    (Jetson Orin). Runs stored as `canonical-hil` are counted as `dev`.
+  * WP2: the Constraint Summary Pack is generated and saved; no VLA reads it.
+  * WP4: a headless scenario sweep, replay bundles and manifests exist; the
+    grant's stress-testing harness and its hil campaign do not - "Partial".
+  * fail-safe trigger correctness: the grant's target is >= 0.99, not 1.0.
+  * the P0 escape figure is one of five acceptance KPIs, measured on dev-
+    topology demo and SITL flights, not on Stress Testing runs in hil.
 """
 from __future__ import annotations
 
@@ -46,6 +60,9 @@ def main():
     loop_lo, loop_hi = min(x["loop_hz"] for x in fl), max(x["loop_hz"] for x in fl)
     ow, gd = D["bench"]["owlvit"], D["bench"]["gdino"]
     ctrl = E["kpi"]["unshielded_controls"]
+    # Rail counts under today's topology names: a stored "canonical-hil" is the
+    # grant's "dev". Both keys are summed so an older eval file still counts.
+    n_dev = RA["counts"].get("dev", 0) + RA["counts"].get("canonical-hil", 0)
     fc, fp = R["figure_frames"]["car"], R["figure_frames"]["person"]
 
     md = f"""# Guardrail — Mid-Evaluation Progress Report
@@ -58,9 +75,9 @@ Advisor: · Author: · Numbers generated {E["generated"]} by `tools/build_eval_d
 
 ## 1. Summary
 
-- **The contractual gate is cleared.** The grant's canonical topology — ArduPilot SITL driven over MAVROS 2 on ROS 2 Jazzy — produces KPI-grade runs, {E["kpi"]["flights_kpi_grade"]} of them.
-- **All five acceptance KPIs are measured**, not inferred: mission success, P0 violation escape rate, fail-safe trigger correctness, mean repair magnitude and mean time to safe.
-- **P0 violation escape rate is 0.0 on all {E["kpi"]["flights_escape_zero"]} shielded flights.** The {len(ctrl)} deliberately unshielded control flights read {f2(ctrl[0]["rate"])}, which is what they exist to show.
+- **The Guardrail flies ArduPilot through MAVROS 2.** {E["kpi"]["flights_kpi_grade"]} runs on ArduPilot SITL driven over MAVROS 2 on ROS 2 Jazzy met the run gate as it stood at flight time. That one-desktop configuration is the grant's `dev` topology; the grant takes contractual KPI figures from `hil` (VLA and Shield on a Jetson Orin), so these runs are evidence, and count as KPI figures only under a written waiver from the PI.
+- **The five acceptance KPIs are computed** on those dev-topology runs - mission success, P0 violation escape rate, fail-safe trigger correctness, mean repair magnitude and mean time to safe - not yet in Stress Testing runs in the hil topology. The other work-package KPIs are not measured yet.
+- **P0 violation escape rate was 0.0 on {E["kpi"]["flights_escape_zero"]} shielded demo and SITL flights.** These are not contract KPI figures, and P0 escape is one of five acceptance KPIs. The {len(ctrl)} deliberately unshielded control flights read {f2(ctrl[0]["rate"])}, which is what they exist to show.
 - **Perception is the open half.** Tracking runs on Project AirSim, a functional rail outside the contractual gate; the pedestrian detector does not beat a centre-constant null; and no rule protects pedestrians other than the one being followed.
 - **{len(G["commits_since_meeting"])} changes since the 2 September meeting**, including four silent defects found and fixed, a steadier tracker, and two published claims corrected (Section 8).
 
@@ -69,9 +86,9 @@ Advisor: · Author: · Numbers generated {E["generated"]} by `tools/build_eval_d
 | Work package | Deliverable | Status | Evidence |
 |---|---|---|---|
 | WP1 | Policy DSL and intermediate representation | Built | Six constraint types, `valid_time` on every rule, signed policy bundle |
-| WP2 | Prefix constraint compiler | Built | Constraint summary pack rendered into the model prompt |
-| WP3 | Suffix Safety Shield | KPI-grade | {E["kpi"]["flights_kpi_grade"]} canonical-HIL runs |
-| WP4 | Stress testing and evidence | Built | {n_scen}-scenario sweep, replay bundles, per-flight manifests |
+| WP2 | Prefix constraint compiler | Partial | Constraint summary pack is generated and saved; no VLA reads it yet |
+| WP3 | Suffix Safety Shield | Built, dev topology | {E["kpi"]["flights_kpi_grade"]} ArduPilot SITL + MAVROS 2 runs (`dev`, not `hil`) |
+| WP4 | Stress testing and evidence | Partial | {n_scen}-scenario headless sweep, replay bundles, per-flight manifests; the stress-testing harness and the hil campaign do not exist yet |
 
 The five KPIs are named in the grant. They are computed by one function, `guardrail.kpi.compute`, used identically by the flights, the scenario sweep and the replay verifier.
 
@@ -79,7 +96,7 @@ The five KPIs are named in the grant. They are computed by one function, `guardr
 |---|---|---|
 | Mission success | The mission reached its goal | — |
 | P0 violation escape rate | Detected P0 violations that reached the actuator | 0 |
-| Fail-safe trigger correctness | The fail-safe fired when, and only when, it should | 1.0 |
+| Fail-safe trigger correctness | The fail-safe fired when, and only when, it should | ≥ 0.99 |
 | Mean repair magnitude | Average size of a Shield correction, m/s | — |
 | Mean time to safe | Time from an unsafe state back to a safe one, s | — |
 
@@ -93,7 +110,7 @@ The action source is deliberately swappable. OpenVLA-7B, AerialVLA, a behaviour-
 |---|---|---|---|
 | Project AirSim (Unreal) | {RA["counts"].get("projectairsim-single-host", 0)} | Yes | No |
 | ArduPilot SITL · pymavlink | {RA["counts"].get("ardupilot-sitl-pymavlink", 0)} | No | No |
-| ArduPilot SITL · MAVROS 2 · ROS 2 Jazzy | {RA["counts"].get("canonical-hil", 0)} | No | **Yes** |
+| ArduPilot SITL · MAVROS 2 · ROS 2 Jazzy (grant: `dev`) | {n_dev} | No | Only under a PI waiver |
 
 ## 4. Progress by work package
 
@@ -108,15 +125,15 @@ The action source is deliberately swappable. OpenVLA-7B, AerialVLA, a behaviour-
 | `SubjectStandoff` | Minimum distance from the followed subject, selected by class |
 | `Corridor` | Keep-in route with width and altitude band |
 
-Every rule may carry `valid_time`. The policy hash is written into every audit record, and a signed bundle refuses a tampered IR, a foreign manifest or a truncation on reload.
+Every rule may carry `valid_time`. The policy hash is written into every audit record, and a signed bundle refuses a tampered IR, a foreign manifest or a truncation on reload. (Corrected 2026-10-06: until then the bundle's "signature" was a placeholder; it is now an Ed25519 signature from a lab development key, pending the PI's choice of signing authority.)
 
 ### WP2 — Prefix constraint compiler
 
-Operator text is compiled into a structured mission and a constraint summary pack. The prompt is rendered from the pack, so the rules the model is told and the rules the Shield enforces come from the same object.
+Operator text is compiled into a structured mission and a constraint summary pack, rendered from the same policy object the Shield enforces. The pack is generated and saved; no VLA reads it yet, so the prefix half of the guardrail has not yet constrained a model.
 
 ### WP3 — Suffix Safety Shield
 
-Each tick the Shield predicts the next 3 s, checks every rule, applies the smallest legal repair, re-checks the repaired action, and falls back to a recovery heading or a brake. On the canonical rail its fail-safe trigger correctness is {f1(on["failsafe_trigger_correctness"])} and its mean repair magnitude {f2(on["mean_repair_magnitude_mps"])} m/s (maximum {f2(on["max_repair_magnitude_mps"])} m/s).
+Each tick the Shield predicts the next 3 s, checks every rule, applies the smallest legal repair, re-checks the repaired action, and falls back to a recovery heading or a brake. On the ArduPilot SITL + MAVROS 2 rail (`dev` topology) its fail-safe trigger correctness is {f1(on["failsafe_trigger_correctness"])} and its mean repair magnitude {f2(on["mean_repair_magnitude_mps"])} m/s (maximum {f2(on["max_repair_magnitude_mps"])} m/s).
 
 ### WP4 — Stress testing and evidence
 
@@ -130,7 +147,9 @@ The headless scenario sweep scores every scenario with `guardrail.kpi.compute`: 
 
 Every flight writes a manifest (code revision, detector weights hash, policy hash, seed, simulator speed-up, topology). A replay bundle re-derives the flight's KPIs from its own log. Tests: **{tf["passed"]}/{tf["total"]} fast** and **{tc["passed"]}/{tc["total"]} coverage**, both run on {E["generated"]}.
 
-## 5. KPI results — canonical HIL
+## 5. KPI results — dev topology (ArduPilot SITL + MAVROS 2)
+
+These runs are the grant's `dev` configuration, not `hil`; they are evidence of the Shield's behaviour and become contractual figures only under a written PI waiver.
 
 | KPI | No-fly zone | Dynamic no-fly zone | Pedestrian stand-off | Unshielded control |
 |---|---|---|---|---|
@@ -144,7 +163,7 @@ Every flight writes a manifest (code revision, detector weights hash, policy has
 
 With the Shield on, the aircraft never entered an unsafe state, so mean time to safe has no episodes to average; it is measured on the control run.
 
-![Canonical HIL, same no-fly-zone mission. Left, shield off: straight through the zone. Right, shield on: the path skirts it and still reaches the goal.](img/mideval/hil_nfz_off_on.png){{width=500}}
+![ArduPilot SITL + MAVROS 2 (dev topology), same no-fly-zone mission. Left, shield off: straight through the zone. Right, shield on: the path skirts it and still reaches the goal.](img/mideval/hil_nfz_off_on.png){{width=500}}
 
 On the pedestrian stand-off run the 10 m rule moved the closest approach from **{f2(poff["standoff_min_range_m"])} m** with the Shield off to **{f2(ped["standoff_min_range_m"])} m** with it on, time inside the ring from {f1(poff["standoff_s"])} s to {f1(ped["standoff_s"])} s, and the escape rate from {f2(poff["p0_violation_escape_rate"])} to {f1(ped["p0_violation_escape_rate"])}. The pedestrian's position on this rail is **declared**, not detected: ArduPilot SITL has no camera.
 
@@ -217,7 +236,7 @@ The full record is in `CHANGELOG.md` and the {G["finding_docs"]} finding documen
 - **Bystanders.** No rule protects pedestrians other than the subject, and a forward camera cannot see beside the aircraft: a bystander came within {f2(af["closest_real_m"])} m while the P0 escape rate read {f1(R["p0_escape_after"])}.
 - **Pedestrian detection.** {f1(af["box_err_px_median"])} px median error against a {f1(af["box_err_px_null_centre"])} px centre-constant null over the whole pedestrian phase.
 - **Rates.** {RA["camera_flights_meeting_both_gates"]} of {RA["camera_flights"]} camera flights meet both the 9.5 Hz loop gate and the 4.0 Hz detector gate.
-- **Tracking is not KPI-grade.** The camera rail and the contractual rail are different simulators.
+- **Tracking is not KPI-grade.** The camera rail (Project AirSim) and the ArduPilot rail are different simulators, and neither is the grant's hil topology.
 - **Not yet flown.** The 768×432 camera and the CityLife scene.
 - **Known failure.** A subject exactly on the route wedges the mission (`standoff-wedge`).
 
@@ -251,7 +270,7 @@ The full record is in `CHANGELOG.md` and the {G["finding_docs"]} finding documen
 | 16 July | OpenVLA-7B and AerialVLA flown through the Shield |
 | 3 August | Obstacle clearance becomes a P0 rule |
 | 19 August | Midterm review; Guardrail confirmed as the primary deliverable |
-| 25 August | Canonical-HIL KPI gate cleared |
+| 25 August | First ArduPilot SITL + MAVROS 2 runs through the Shield (dev topology) |
 | 1 September | All five acceptance KPIs measured |
 | 10 September | Version 0.5.0 published |
 """

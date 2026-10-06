@@ -1,0 +1,94 @@
+{
+  "schema": "guardrail.paraphrases/1",
+  "source_key": "csp_corridor_survey",
+  "kind": "csp_nl",
+  "source_text": "Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+  "source_id": "src-355c71360c05a745",
+  "source_sha256": "355c71360c05a745a4be189a4274087d55b07d5c067c845ce3f3c6eea235a209",
+  "backend": "stored",
+  "origin": {
+    "renderer": "guardrail.compiler.ConstraintCompiler.compile_csp natural_language_prompt, compile_csp(now=None)",
+    "also_serves": "build_prompt's rendering of the same rule set (matched by rule set, StoredBackend.lookup)",
+    "policy": "policies/corridor_survey.yaml",
+    "policy_hash": "sha256:5a0e507fe15678551b887141eb85c904030c088d89cf90f916c82649f17b770d",
+    "frozen": "2026-10-06"
+  },
+  "provenance": {
+    "generator": "claude-opus-5-5 (agent, 2026-10-06)",
+    "prompt": "You are writing free-form paraphrases for the Paraphraser service of the\nconstrained-VLA guardrail (ITRI ICL subcontract; WP4 per-paraphrase robustness).\n\nSource (csp_nl): \"Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.\"\n\nWrite K=8 paraphrases of the source. Make them genuinely varied in\nvocabulary, word order, politeness, verbosity and indirect phrasing. Each paraphrase is one or more complete sentences.\n\nEvery paraphrase must keep every mission slot: the target object and its\ncolour, every number with its unit, its bound (at least / at most / between /\nat) and the thing it limits, every named zone, corridor or place (identifiers\nverbatim), whether a zone is to be kept out of or stayed inside, the direction\nwords, and the action (fly to / follow / avoid). Do not add a rule, number,\nobject, zone or direction the source does not contain, and do not drop one.\nReturn one paraphrase per line.",
+    "task_instruction": "Generate the free-form set yourself now (you are an LLM): for every instruction used in experiments/scenarios.yaml and the city follow missions (grep demo/ and scripts/ for the instruction strings), write K=8 genuinely varied free-form paraphrases (vocabulary, word order, politeness, verbosity, indirect phrasing), store them with provenance {generator: \"claude-opus-5-5 (agent, 2026-10-06)\", prompt: <the exact instruction you followed>, date}, and run the validator over them.",
+    "date": "2026-10-06",
+    "seed": null,
+    "note": "written in-session by the agent, which has no sampling seed to record; seeds apply to the DRAW from this set (paraphrase(..., seed)), not to its authoring. 10 of the 96 were rewritten after review: 1 refused by the validator (an added 'find' action), 2 for too little variety, and 7 that narrowed the stand-off wildcard 'anything you are following' to a person, car or vehicle, refused once the validator was taught that narrowing (docs/DESIGN-paraphraser.md).",
+    "generated_from": "Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+    "rekeyed": "2026-10-06: re-keyed from build_prompt's rendering (rule-type order) to compile_csp's (risk order, Prefix Compiler PDF p3) - the same sentences; the texts were not re-generated. Ids were re-derived with the text in the key."
+  },
+  "paraphrases": [
+    {
+      "index": 0,
+      "paraphrase_id": "pp-fb581120aff14d01",
+      "text": "Keep out of zone 'nfz-school' on weekdays from 07:30 to 17:30. Fly only inside corridor 'corridor-survey-route', no more than 20 m off its centerline and between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s.",
+      "text_sha256": "fe45276e4be68878346c47d30ca2a0019f9891f8e73371d37124d334aa751936",
+      "form": "sentences",
+      "style": "terse"
+    },
+    {
+      "index": 1,
+      "paraphrase_id": "pp-fb54939dfd3bc009",
+      "text": "Please stay out of zone 'nfz-school' entirely while it is in force, Monday to Friday between 07:30 and 17:30. Could you also remain inside corridor 'corridor-survey-route', keeping within 20 m of its centerline and between 10 m and 20 m in height? And please hold your speed to 4 m/s or less, your climb rate below 2 m/s and your turn rate below 45 deg/s.",
+      "text_sha256": "adc0a35605ab86ccccef440b023db3b0835293734b6f88e00cb105c8a5a72a6b",
+      "form": "sentences",
+      "style": "polite"
+    },
+    {
+      "index": 2,
+      "paraphrase_id": "pp-c3708aee63b3b37b",
+      "text": "Your speed limit is 4 m/s, your climb rate must stay below 2 m/s and your turn rate below 45 deg/s. Remain between 10 m and 20 m and never leave corridor 'corridor-survey-route', drifting no more than 20 m from its centerline. From Monday to Friday, 07:30 to 17:30, zone 'nfz-school' is off-limits.",
+      "text_sha256": "b0e6eb3c8c431547e3ef15d7ea8815eacb1f53ec59f5674db146a1a85805fc44",
+      "form": "sentences",
+      "style": "reordered"
+    },
+    {
+      "index": 3,
+      "paraphrase_id": "pp-b5f6528b72c4c451",
+      "text": "Constraints in force: entry into zone 'nfz-school' is prohibited Monday through Friday, 07:30-17:30; the aircraft shall remain inside corridor 'corridor-survey-route', not more than 20 m from its centerline and between 10 m and 20 m; speed shall not exceed 4 m/s, climb rate shall remain below 2 m/s, and turn rate shall remain below 45 deg/s.",
+      "text_sha256": "4a43b2a6ba32746746d99a3c9c7e84ddd209236c65201d5046333ad814a0b86e",
+      "form": "sentences",
+      "style": "formal"
+    },
+    {
+      "index": 4,
+      "paraphrase_id": "pp-31910159bab95123",
+      "text": "On weekdays from 07:30 to 17:30, don't fly into zone 'nfz-school'. Stick to corridor 'corridor-survey-route': stay within 20 m of the middle of it and somewhere from 10 m to 20 m up. Keep your speed at 4 m/s max, climbs under 2 m/s and turns under 45 deg/s.",
+      "text_sha256": "8cfcd264d2e0e383eab9052f0d627b1d2203d49b43c9f7bf551df434e9442b1d",
+      "form": "sentences",
+      "style": "casual",
+      "revision": "2026-10-06 review: 'don't go anywhere near' was stricter than 'never enter'"
+    },
+    {
+      "index": 5,
+      "paraphrase_id": "pp-512c54c6d43b52b9",
+      "text": "This survey flight has three rules. First, the school zone 'nfz-school' must never be entered while its window is active, which is Monday to Friday from 07:30 until 17:30. Second, the aircraft has to stay inside corridor 'corridor-survey-route', which means keeping within 20 m of its centerline and between 10 m and 20 m in altitude. Third, speed is capped at 4 m/s, climb rate must be below 2 m/s and turn rate must be below 45 deg/s.",
+      "text_sha256": "5790220802cce9693912ce4a685322849a230eb7dc8f1f43c2f68ac4f218c51e",
+      "form": "sentences",
+      "style": "verbose"
+    },
+    {
+      "index": 6,
+      "paraphrase_id": "pp-e68d2dbc0ee1f671",
+      "text": "Between 07:30 and 17:30 on weekdays, zone 'nfz-school' is a place you must never enter. At all times, you are to remain in corridor 'corridor-survey-route', between 10 m and 20 m and no further than 20 m from its centerline, with your speed at or under 4 m/s, your climb rate under 2 m/s and your turn rate under 45 deg/s.",
+      "text_sha256": "39a8bd0e4ac1b72a429ea51981d2a77c5ad21bb07721f6cb8b2b0509f34cbf5d",
+      "form": "sentences",
+      "style": "indirect",
+      "revision": "2026-10-06 review: 'if you notice you are heading toward it ... turn away. Otherwise, remain in corridor ...' made the corridor, the band and all three kinematic limits conditional and added an instruction; the validator of the day accepted it"
+    },
+    {
+      "index": 7,
+      "paraphrase_id": "pp-1dd0c674c19189e5",
+      "text": "No entry: zone 'nfz-school', Mon-Fri 07:30-17:30. Stay in corridor 'corridor-survey-route', ≤ 20 m from centerline, 10 m to 20 m altitude. Speed ≤ 4 m/s, climb < 2 m/s, turn < 45 deg/s.",
+      "text_sha256": "c743963b15021d7c7d11a65a39ae4ca3586d57a29e843075fc542bfdce526686",
+      "form": "sentences",
+      "style": "terse, symbols"
+    }
+  ]
+}

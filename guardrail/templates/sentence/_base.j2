@@ -1,0 +1,14 @@
+{#- One rule, one sentence, for the model rather than the reviewer.
+
+    Every sentence is the child template's core clause, then the qualifiers,
+    then one full stop. The qualifiers come AFTER the core so that a HARD rule
+    with no window renders byte for byte what the 2026-09-01 f-string compiler
+    did (tests/test_csp.py pins that), and a rule WITH a window reads as the old
+    sentence plus its schedule instead of a permanent ban - the defect the
+    2026-10-05 audit found (WP2-05: nfz-school is Mon-Fri only). A soft rule
+    gains " (soft limit)", a deliberate change from the old text, which gave
+    it the same "Never" as a hard rule (no shipped fixture has a soft rule).
+
+    Grant: Prefix Compiler PDF p5, "Always-emitted, templated, never free-form."
+-#}
+{% block core %}{% endblock %}{% if window %} (in force {{ window }}){% endif %}{% if soft %} (soft limit){% endif %}{% if show_priority %} [{{ priority }}]{% endif %}.

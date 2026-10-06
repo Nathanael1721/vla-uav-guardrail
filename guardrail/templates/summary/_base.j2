@@ -1,0 +1,10 @@
+{#- The compressed form of a rule, for P1_summary / P2_summary.
+
+    The grant's worked example (Prefix Compiler PDF p2) summarises P1 as
+    "altitude limited to 5-120m AGL; cruise speed <= 12 m/s." - a clause per
+    rule, joined with "; ". The schedule is kept: a summary that drops the time
+    window says the rule is permanent, which is the defect the long form had.
+    ASCII "<=" rather than the grant's U+2264, so the token counter's byte bound
+    stays tight and every tokenizer sees the same characters.
+-#}
+{% block core %}{% endblock %}{% if window %} ({{ window }}){% endif %}{% if soft %} (soft){% endif %}

@@ -57,6 +57,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
 from guardrail import kpi as kpi_mod                                # noqa: E402
+from guardrail.bundle import load_for_flight                        # noqa: E402
 from guardrail.manifest import build_manifest, is_kpi_grade         # noqa: E402
 from guardrail.replay import verify_replay, write_replay           # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
@@ -83,6 +84,8 @@ TICK = 0.1
 SIM_CONFIG_DIR = str(ROOT / "demo" / "pas_config")
 SCENE = "scene_semantic.jsonc"
 ROBOT_CONFIG = ROOT / "demo" / "pas_config" / "robot_semantic_quad.jsonc"
+# The YAML a flight falls back to when neither --policy nor --bundle is given.
+DEFAULT_POLICY = ROOT / "policies" / "follow_car.yaml"
 
 
 def camera_hfov_deg(config_path=ROBOT_CONFIG, sensor: str = "FrontCamera",
@@ -2924,13 +2927,24 @@ async def fly(args) -> int:
     random.seed(args.seed)
     np.random.seed(args.seed & 0xFFFFFFFF)
 
+    # The signed bundle when --bundle is given (refused unless its signature
+    # verifies, or --allow-unverified-bundle records that it did not); else the
+    # YAML, recorded as unsigned. Audit card ARCH-29: every flight used to read
+    # YAML, so no run could show which issued policy was in force.
+    # Loaded BEFORE the output folder is cleared: a refused bundle (or --bundle
+    # with --policy) used to delete the previous run's flight log first and
+    # leave its manifest, kpi.json and metrics.json describing a log that was
+    # gone (2026-10-06 review).
+    policy, policy_source = load_for_flight(
+        args.bundle,
+        args.policy or (None if args.bundle else DEFAULT_POLICY),
+        allow_unverified=args.allow_unverified_bundle)
+
     out = ROOT / "demo" / "out" / args.tag
     out.mkdir(parents=True, exist_ok=True)
     for f in ("flight_log.jsonl", "detections.jsonl"):
         if (out / f).exists():
             (out / f).unlink()
-
-    policy = load_policy(args.policy)
 
     # A stand-off rule naming a class no phrase can ever produce is inert: it is
     # hashed, audited, and never fires. That is exactly how the 10 m pedestrian
@@ -3078,6 +3092,8 @@ async def fly(args) -> int:
               f"brake from {args.fence_brake:.0f} m, hold at {args.fence_standoff:.0f} m")
 
     print(f"[policy]  {policy.policy_id} {policy.policy_hash}")
+    print(f"[policy]  from {policy_source['kind']} {policy_source['path']} - "
+          f"signature {policy_source['signature']}")
     print(f"[follow]  query = {args.object!r}")
     print("[follow]  the ONLY steering input is where the detector puts the box; "
           "no target coordinates reach the controller")
@@ -5282,6 +5298,10 @@ async def fly(args) -> int:
                    "trail_follow": bool(args.trail_follow),
                    "trail_lookahead_m": args.trail_lookahead_m,
                    "citymap": str(args.citymap) if getattr(args, "citymap", None) else None},
+        # Where the policy came from - a signed bundle and whether it verified,
+        # or a YAML file, which is unsigned. Beside the manifest, which is the
+        # grant's six fields and stays so.
+        "policy_source": policy_source,
     }
     (out / "metrics.json").write_text(json.dumps(metrics, indent=1), encoding="utf-8")
 
@@ -5299,6 +5319,7 @@ async def fly(args) -> int:
     kpis["kpi_grade"] = graded
     kpis["kpi_grade_reasons"] = reasons
     kpis["manifest"] = manifest
+    kpis["policy_source"] = policy_source
     (out / "kpi.json").write_text(json.dumps(kpis, indent=1), encoding="utf-8")
     metrics["kpi_grade"] = graded
     metrics["p0_violation_escape_rate"] = kpis["p0_violation_escape_rate"]
@@ -5328,7 +5349,8 @@ async def fly(args) -> int:
     # number.
     try:
         bundle_path = write_replay(out, policy, out / f"{args.tag}.replay.tar.gz",
-                                   changelog=f"flight {args.tag}")
+                                   changelog=f"flight {args.tag}",
+                                   policy_source=policy_source)
         ok, why = verify_replay(bundle_path)
         print(f"[replay] {bundle_path.name} "
               f"({bundle_path.stat().st_size // 1024} KiB) "
@@ -5446,7 +5468,17 @@ def main() -> int:
                          "rather than a key press, so the flight is "
                          "reproducible and can be replayed for a video. "
                          "Absent, the flight behaves exactly as before.")
-    ap.add_argument("--policy", default=str(ROOT / "policies" / "follow_car.yaml"))
+    ap.add_argument("--policy", default=None,
+                    help="policy YAML (default policies/follow_car.yaml); "
+                         "recorded as UNSIGNED")
+    ap.add_argument("--bundle", default=None,
+                    help="signed policy bundle (python -m guardrail.bundle "
+                         "POLICY.yaml); refused unless its signature verifies")
+    ap.add_argument("--allow-unverified-bundle", action="store_true",
+                    help="fly a bundle whose signature is not verified (unsigned, "
+                         "or a key the trust store does not list), recorded as "
+                         "unverified; a bad or stripped signature is refused "
+                         "regardless")
     ap.add_argument("--citymap", default=str(ROOT / "demo" / "out" / "citymap" / "occ_day.npz"))
     ap.add_argument("--tag", default="vlmfollow")
     ap.add_argument("--max-s", type=float, default=120.0)

@@ -1,0 +1,436 @@
+{
+  "_doc": [
+    "Policy identity lock. One id@version names exactly one content hash, forever: change a policy's content and you must raise its version and lock the new pair. Entries are never rewritten - old ones are how a stored run's hash stays traceable after the policy moves on.",
+    "policy_hash is the 64-hex SHA-256 over the None-free canonical IR (hash_scheme). legacy_hashes are the 16-hex forms the same content carried under earlier code, so manifests written before 2026-10-06 still resolve: legacy16-exclude-none (runs up to 2026-08-31; it is also the first 16 hex of policy_hash), legacy16-valid-time (4950be1, 2026-09-01, a window of hours), legacy16-include-defaults (445bdbe 2026-09-01 to 2026-10-06).",
+    "derived lists policies that exist only mid-flight (a hot-applied rule bumps generation and the hash), with the recipe to rebuild them.",
+    "ir_schema pins what every IR field means when omitted; see guardrail.models.ir_schema_defaults and tests/test_policy_hash.py.",
+    "Maintain with: python -m guardrail.bundle lock [--update]. Checked by tests/test_policy_hash.py."
+  ],
+  "derived": [
+    {
+      "base": "fase3-sim-demo@0.1.1",
+      "flown_by": [
+        "demo/out/ros2_shield_on_dynamic",
+        "demo/out/sitl_shield_on_dynamic"
+      ],
+      "generations": 1,
+      "hot_apply": [
+        {
+          "id": "nfz-dynamic",
+          "margin_m": 1.0,
+          "type": "polygon_fence",
+          "vertices": [
+            {
+              "x": 23,
+              "y": 6
+            },
+            {
+              "x": 31,
+              "y": 6
+            },
+            {
+              "x": 31,
+              "y": 14
+            },
+            {
+              "x": 23,
+              "y": 14
+            }
+          ]
+        }
+      ],
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:77d64d2e5e94ac39",
+        "legacy16-include-defaults": "sha256:2729888759a8b62f",
+        "legacy16-valid-time": "sha256:52f788b783c04e66"
+      },
+      "name": "fase3-sim-demo@0.1.1+nfz-dynamic",
+      "policy_hash": "sha256:77d64d2e5e94ac39a433050a113932dacbc5f7491e4fce0f43cc24f16605b473",
+      "source": "DYNAMIC_FENCE in sitl/ros2_shield_node.py and sitl/run_sitl_demo.py, hot-applied at t = 8 s by --dynamic"
+    }
+  ],
+  "hash_scheme": "sha256-canonical-v2",
+  "ir_schema": {
+    "defaults": {
+      "AltitudeEnvelope": {
+        "alt_max_m": "<required>",
+        "alt_min_m": "<required>",
+        "constraint_type": "hard",
+        "id": "<required>",
+        "priority": "P0",
+        "type": "<required>",
+        "valid_time": "<absent>",
+        "violation_action": "repair"
+      },
+      "Corridor": {
+        "altitude_ceiling_m": 1000.0,
+        "altitude_floor_m": 0.0,
+        "centerline": "<required>",
+        "constraint_type": "hard",
+        "id": "<required>",
+        "priority": "P0",
+        "type": "<required>",
+        "valid_time": "<absent>",
+        "violation_action": "repair",
+        "width_m": "<required>"
+      },
+      "KinematicEnvelope": {
+        "climb_rate_max_mps": "<required>",
+        "constraint_type": "hard",
+        "id": "<required>",
+        "priority": "P0",
+        "speed_max_mps": "<required>",
+        "type": "<required>",
+        "valid_time": "<absent>",
+        "violation_action": "repair",
+        "yaw_rate_max_dps": "<required>"
+      },
+      "ObstacleClearance": {
+        "constraint_type": "hard",
+        "id": "<required>",
+        "min_clearance_m": "<required>",
+        "priority": "P0",
+        "soft_margin_m": 0.0,
+        "type": "<required>",
+        "valid_time": "<absent>",
+        "violation_action": "repair"
+      },
+      "Origin": {
+        "lat": "<required>",
+        "lon": "<required>"
+      },
+      "Policy": {
+        "constraints": "<required>",
+        "generation": 0,
+        "origin": "<absent>",
+        "policy_id": "<required>",
+        "version": "0.1.0"
+      },
+      "PolygonFence": {
+        "altitude_ceiling_m": 1000.0,
+        "altitude_floor_m": 0.0,
+        "constraint_type": "hard",
+        "id": "<required>",
+        "margin_m": 1.0,
+        "priority": "P0",
+        "type": "<required>",
+        "valid_time": "<absent>",
+        "vertices": "<required>",
+        "violation_action": "repair"
+      },
+      "Recurrence": {
+        "days": [
+          "Mon",
+          "Tue",
+          "Wed",
+          "Thu",
+          "Fri",
+          "Sat",
+          "Sun"
+        ],
+        "end_time": "23:59",
+        "start_time": "00:00"
+      },
+      "SubjectStandoff": {
+        "constraint_type": "hard",
+        "id": "<required>",
+        "min_range_m": "<required>",
+        "priority": "P0",
+        "soft_margin_m": 0.0,
+        "subject_class": "*",
+        "type": "<required>",
+        "valid_time": "<absent>",
+        "violation_action": "repair"
+      },
+      "ValidTime": {
+        "recurrence": "<absent>"
+      },
+      "XY": {
+        "x": "<required>",
+        "y": "<required>"
+      }
+    },
+    "locked_on": "2026-10-06",
+    "version": "2.0.0"
+  },
+  "policies": {
+    "corridor-survey@0.1.0": {
+      "file": "corridor_survey.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:5a0e507fe1567855",
+        "legacy16-include-defaults": "sha256:82cfcb5dd7749b5c",
+        "legacy16-valid-time": "sha256:124fd28facfd80b1"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:5a0e507fe15678551b887141eb85c904030c088d89cf90f916c82649f17b770d"
+    },
+    "edge-nfz-patrol@0.1.0": {
+      "file": "edge_patrol.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:e6903b303840f120",
+        "legacy16-include-defaults": "sha256:8e3eaef43dcd2b98",
+        "legacy16-valid-time": "sha256:90458ef3e6f73273"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:e6903b303840f120c880e60b91c3fea44c2c923b3a320060c68f5895c60e1c68"
+    },
+    "fase3-demo@0.1.0": {
+      "file": "demo_policy.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:714e1db183a19108",
+        "legacy16-include-defaults": "sha256:5cbb2ba7d48e7dcf",
+        "legacy16-valid-time": "sha256:d01bc7e38a38ad83"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:714e1db183a191083567b919ffd49aa0eecce05833d4d0945cff567b77c2d988"
+    },
+    "fase3-sim-demo@0.1.1": {
+      "file": "sim_demo_policy.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:8a311f9d22d22600",
+        "legacy16-include-defaults": "sha256:9a3782ae46925a46",
+        "legacy16-valid-time": "sha256:ac147ecd9a6e012e"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:8a311f9d22d2260000eb2b24775c3e6cbfeb70416c8299b3354e47227a2476af"
+    },
+    "fase3-urban-demo@0.1.0": {
+      "file": "urban_demo_policy.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:c93b635572d11b0f",
+        "legacy16-include-defaults": "sha256:ad90cada67503bad",
+        "legacy16-valid-time": "sha256:82b303fce657a924"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:c93b635572d11b0f2332aa625dbc5966ab3b087f0f91899812dc4594240242db"
+    },
+    "follow-car-citylife-nfz@0.1.0": {
+      "file": "follow_car_citylife_nfz.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:e50644313d185db5",
+        "legacy16-include-defaults": "sha256:3988652aaa7f1ecf",
+        "legacy16-valid-time": "sha256:a92ae96bf0335fec"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:e50644313d185db5e8917ffa720a2b8dc83f452fe2d5538190adc55667ef63c3"
+    },
+    "follow-car-citylife@0.1.0": {
+      "file": "follow_car_citylife.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:4f7ebad65201bcd0",
+        "legacy16-include-defaults": "sha256:ad3b363e11fa73cf",
+        "legacy16-valid-time": "sha256:f5b22f7d5fa3a724"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:4f7ebad65201bcd0445f3bba6ccc9f9cece5ecb76308501830636e91dc5f7188"
+    },
+    "follow-car-gap@0.1.0": {
+      "file": "follow_car_gap.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:70565b9a03394595",
+        "legacy16-include-defaults": "sha256:eeb7dc09d9328f5c",
+        "legacy16-valid-time": "sha256:a19277cb7e6433fe"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:70565b9a03394595193e36e5e5422de2105b3ec70fba04173d1b68f31f8f4530"
+    },
+    "follow-car-nfz@0.1.0": {
+      "file": "follow_car_nfz.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:5826eccda2af83d5",
+        "legacy16-include-defaults": "sha256:b90798c98947e8fe",
+        "legacy16-valid-time": "sha256:13eff20edad3ee57"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:5826eccda2af83d511b537130865d8ea566eb1af1c41395cda97d854ee986282"
+    },
+    "follow-car@0.1.0": {
+      "file": "follow_car.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:979c982866fe38ef",
+        "legacy16-include-defaults": "sha256:d4d7eb4156146fb8",
+        "legacy16-valid-time": "sha256:45978ddb4b1d80c2"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:979c982866fe38ef506b23a92c48823b038c62adccd39c6ab4da8cd0ba57ad9f"
+    },
+    "follow-pedestrian@0.1.0": {
+      "file": "follow_pedestrian.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:fefde27c34af37b8",
+        "legacy16-include-defaults": "sha256:083fbd16d33505c3",
+        "legacy16-valid-time": "sha256:0cd1f1ec06781a4a"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:fefde27c34af37b8e6ff2cc2292c7c7963e540cfa6f020f5bd4e676bfea2ca39"
+    },
+    "gui-high-test@0.1.0": {
+      "file": "gui_high_test.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:71acc4d0ef62b7c9",
+        "legacy16-include-defaults": "sha256:1105edde6dc46a14",
+        "legacy16-valid-time": "sha256:5eff91ceb2fff250"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:71acc4d0ef62b7c9e12265c607c3cb7d4af545e301dd89f4e16a168adc1fc9b5"
+    },
+    "gui-mission@0.1.0": {
+      "file": "gui_policy.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:6ecb934e9ac1b6d4",
+        "legacy16-include-defaults": "sha256:49a0559e4fd68417",
+        "legacy16-valid-time": "sha256:b3c804554016df22"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:6ecb934e9ac1b6d4ad08d91619a150caf8a1abe0d478094b32cd8c28cd931055"
+    },
+    "orbit-building@0.1.0": {
+      "file": "orbit_building.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:b94223dce2ed42ef",
+        "legacy16-include-defaults": "sha256:aef51adc73a066e6",
+        "legacy16-valid-time": "sha256:48a0ba1f70986726"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:b94223dce2ed42ef897b58e1f2297c624e425c3d96dced0eb631e8d1fc4dc3f3"
+    },
+    "poly-test@0.1.0": {
+      "file": "poly_test.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:8afa2bc6059bc8d3",
+        "legacy16-include-defaults": "sha256:aabb2f702489e626",
+        "legacy16-valid-time": "sha256:21e7d48b236919a3"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:8afa2bc6059bc8d351eea8e1fae83f360fe07621ea66f726e2f7015e4393a940"
+    },
+    "random-scenario@0.1.0": {
+      "known_defect": "9 files with different content share this one policy_id and version, so `random-scenario@0.1.0` names no single policy. They are generated scenario policies (hard_*/hp_* and random_scenario.yaml). Each file is pinned below so a content change is still caught; the fix is a distinct policy_id per file, which changes their hashes and is left to whoever owns policies/*.yaml. Recorded 2026-10-06.",
+      "locked_on": "2026-10-06",
+      "shared_by_files": {
+        "hard_11.yaml": {
+          "legacy_hashes": {
+            "legacy16-exclude-none": "sha256:e8fbedd09a32de70",
+            "legacy16-include-defaults": "sha256:9c4145f64f5606f4",
+            "legacy16-valid-time": "sha256:a5b65f50d8b88113"
+          },
+          "policy_hash": "sha256:e8fbedd09a32de70a2d2cbb34e0343d9a4a41bb3676ecfa5d6dfef055c3ab2af"
+        },
+        "hard_21.yaml": {
+          "legacy_hashes": {
+            "legacy16-exclude-none": "sha256:453348b882d155ea",
+            "legacy16-include-defaults": "sha256:6d3343be3f91f672",
+            "legacy16-valid-time": "sha256:f2909a2fe307641f"
+          },
+          "policy_hash": "sha256:453348b882d155ea7acd19ae84d9e8ca214acc6bc26b693c40c817725bc53987"
+        },
+        "hard_3.yaml": {
+          "legacy_hashes": {
+            "legacy16-exclude-none": "sha256:93cb817f15dcf05a",
+            "legacy16-include-defaults": "sha256:d4854a845806ff70",
+            "legacy16-valid-time": "sha256:8b9e791160433ecf"
+          },
+          "policy_hash": "sha256:93cb817f15dcf05a0e38ffb7ba0aa27bee1b7a152875b1abfafca74ff9b297c9"
+        },
+        "hp_14.yaml": {
+          "legacy_hashes": {
+            "legacy16-exclude-none": "sha256:e69b769ac522ed8b",
+            "legacy16-include-defaults": "sha256:7965197d2b868f0d",
+            "legacy16-valid-time": "sha256:2fb3b735d57935a6"
+          },
+          "policy_hash": "sha256:e69b769ac522ed8b16b27974b7d5b7966f240323fdf87bbce099eec3b80eeb8c"
+        },
+        "hp_30.yaml": {
+          "legacy_hashes": {
+            "legacy16-exclude-none": "sha256:d01acc72c9b883ac",
+            "legacy16-include-defaults": "sha256:f46516910ee2048d",
+            "legacy16-valid-time": "sha256:d3fc975295ffbc32"
+          },
+          "policy_hash": "sha256:d01acc72c9b883ac40a3a1fb3d1cfc97002a93dd408f6e7324831a431c184ca8"
+        },
+        "hp_42.yaml": {
+          "legacy_hashes": {
+            "legacy16-exclude-none": "sha256:4961629f34dd5900",
+            "legacy16-include-defaults": "sha256:e67828e90d30cc6f",
+            "legacy16-valid-time": "sha256:247237b8308122da"
+          },
+          "policy_hash": "sha256:4961629f34dd5900c125503a6d6b88fc76af871867916b6cac0fa6d12d875791"
+        },
+        "hp_5.yaml": {
+          "legacy_hashes": {
+            "legacy16-exclude-none": "sha256:e3a006271d60c6a6",
+            "legacy16-include-defaults": "sha256:ae86f86195ac70ba",
+            "legacy16-valid-time": "sha256:f0a07721b8f8dec4"
+          },
+          "policy_hash": "sha256:e3a006271d60c6a62ab0e4995fc49906e313b79ee4c7be30dd7f6e0512ed7ce5"
+        },
+        "hp_8.yaml": {
+          "legacy_hashes": {
+            "legacy16-exclude-none": "sha256:f6245bbf61ad1f97",
+            "legacy16-include-defaults": "sha256:7e816c692e5f9a42",
+            "legacy16-valid-time": "sha256:f89c158ff04ebed2"
+          },
+          "policy_hash": "sha256:f6245bbf61ad1f974bcdcf80135724ab1701cc0b4b6dafac4054b9d47fd6ce20"
+        },
+        "random_scenario.yaml": {
+          "legacy_hashes": {
+            "legacy16-exclude-none": "sha256:7d5534e50d9d302b",
+            "legacy16-include-defaults": "sha256:77f77064ebdac71d",
+            "legacy16-valid-time": "sha256:bad691b688e0a6b5"
+          },
+          "policy_hash": "sha256:7d5534e50d9d302bb4b8c5b88d65159cbf271e686c487be578d5691fbcb10516"
+        }
+      }
+    },
+    "rth-poly-demo@0.1.0": {
+      "file": "rth_poly.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:776daf142f811924",
+        "legacy16-include-defaults": "sha256:15fe48cb186caf43",
+        "legacy16-valid-time": "sha256:aafa5a3ae0ffbd9f"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:776daf142f81192470a4bc58cae1bee7790b8a6ad645fdd63c6625c3e98974be"
+    },
+    "semantic-conflict@0.1.0": {
+      "file": "semantic_conflict.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:79fb476a67d1d205",
+        "legacy16-include-defaults": "sha256:09c1c862a4ffe76e",
+        "legacy16-valid-time": "sha256:defe1e2da93a825d"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:79fb476a67d1d205444861bf9cbeb45fb98878813ecf5627fe71a31c3f625694"
+    },
+    "sitl-pedestrian-standoff@0.1.0": {
+      "file": "sitl_pedestrian.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:68a4efd102869f5c",
+        "legacy16-include-defaults": "sha256:339bd27dd4086fab",
+        "legacy16-valid-time": "sha256:74be3c34bc54e9f8"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:68a4efd102869f5cf4819b4a2d67e3ee84579a8160b72ecc6d27856d2a2c1259"
+    },
+    "urban-clearance-patrol@0.1.0": {
+      "file": "urban_clearance.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:d81796e79514d4e1",
+        "legacy16-include-defaults": "sha256:998b55e324b2ad71",
+        "legacy16-valid-time": "sha256:35309321a3e660c1"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:d81796e79514d4e1511f873895ca4800118de1a97bf0f67ed726e367ab63ee5b"
+    },
+    "wgs84-taipei-demo@0.1.0": {
+      "file": "wgs84_taipei.yaml",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:ed22f684e37fc324",
+        "legacy16-include-defaults": "sha256:655046b8ad011bdb",
+        "legacy16-valid-time": "sha256:655046b8ad011bdb"
+      },
+      "locked_on": "2026-10-06",
+      "policy_hash": "sha256:ed22f684e37fc3241d3668fa24a2616d8df8aa276d6810ec7961f5d01f15efd5"
+    }
+  }
+}

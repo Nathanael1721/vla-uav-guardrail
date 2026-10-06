@@ -1,0 +1,15 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: valid_time start_time 25:99
+# currently: refused
+policy_id: neg-time
+version: 0.1.0
+constraints:
+  - id: alt
+    type: altitude_envelope
+    alt_min_m: 5
+    alt_max_m: 30
+    valid_time:
+      recurrence:
+        days: [Mon]
+        start_time: "25:99"
+        end_time: "06:00"

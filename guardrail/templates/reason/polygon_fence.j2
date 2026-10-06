@@ -1,0 +1,6 @@
+{#- Why a keep-out zone matters to THIS mission (relevance_explanations,
+    Prefix Compiler PDF p5 KPI 4). The grant's example is "mission target is
+    within 200m of polygon": a distance from the mission to the geometry.
+    Distances are to the zone's margin ring, the boundary the Shield enforces.
+-#}
+{% if crosses %}the straight path from ({{ sx|g }}, {{ sy|g }}) to the target ({{ tx|g }}, {{ ty|g }}) crosses this zone{% else %}this zone is {{ d_path|m }} m from the straight path to the target and {{ d_target|m }} m from the target itself{% endif %}; cruise altitude {{ alt|g }} m is {{ "inside" if in_band else "outside" }} its {{ floor|g }}-{{ ceil|g }} m band{% if time_fact %}; {{ time_fact }}{% endif %}

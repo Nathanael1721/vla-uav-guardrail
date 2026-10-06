@@ -1,0 +1,11 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: a polygon fence with two vertices
+# currently: refused
+policy_id: neg-two-vertex
+version: 0.1.0
+constraints:
+  - id: nfz
+    type: polygon_fence
+    vertices:
+      - { x: 0, y: 0 }
+      - { x: 10, y: 10 }

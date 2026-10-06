@@ -1,0 +1,116 @@
+# CI smoke pipeline.
+#
+# Grant, Stress Testing, Outputs: "CI smoke pipeline - GitHub Actions or
+# similar", and Test scheduling: the smoke profile runs "per build (CI)".
+# Until 2026-10-06 this repository had no .github directory at all (audit card
+# WP4-06): every test ran when somebody remembered to run it.
+#
+# WHAT RUNS
+#
+#   1. Standalone test files that run in full on a clean checkout. Each is its
+#      own runner (`python tests/test_x.py` prints "N/M passed" and exits
+#      non-zero on a failure); there is no pytest dependency.
+#      tests/test_replay.py is NOT listed: its fixtures live under demo/out/
+#      (gitignored), so on a clean clone it runs 2 of its 20 tests and SKIPs
+#      18, and a green tick there would be mostly silence (measured on a
+#      simulated clean clone, 2026-10-06).
+#   2. The smoke profile of the stress harness (experiments/profiles/smoke.yaml,
+#      ~50 scenarios x 1 seed). Known failures and tracked episodes are
+#      reported and do not fail the job; a new failure, a pinned defect that
+#      starts passing, a refused run (exit 2) or a run that scored nothing
+#      (exit 3) does.
+#
+# NOT YET RUN ON GITHUB. This file was written and checked locally; nothing has
+# been pushed. Two things to check on the first run:
+#   * Some smoke gates sit close to their thresholds (closest approach 1.003 m
+#     against the 1 m margin ring in high-speed-near-edge). Linux floating point
+#     could move a cell across a gate; if one flips, re-measure it, do not
+#     loosen the gate.
+#   * The listed tests depend on files other work in progress is changing
+#     (e.g. tests/test_bundle.py needs the .gitignore key patterns). Commit
+#     them together, or the first run fails for reasons unrelated to the code.
+#
+# WHAT DOES NOT RUN HERE, AND WHY
+#
+#   Tests that need flight artefacts under demo/out/ (gitignored, ~3 GB), the
+#   simulators, WSL, ROS 2, ArduPilot SITL or a GPU. Most of those report SKIP
+#   on a clean clone rather than PASS; they are run on the lab machine. The
+#   smoke profile here is the headless backend: functional evidence, never
+#   KPI-grade (its manifests say `headless-kinematic`).
+#
+# The three jobs are the interpreters the project actually uses: 3.10 (the
+# OpenVLA flight environment imports guardrail from source), 3.11 (the grant's
+# floor, pyproject's requires-python), and 3.11 WITHOUT `cryptography`, which
+# is the vla-drone environment - optional imports must keep holding there.
+
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  guardrail:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: "3.10"
+            extras: "cryptography"
+          - python: "3.11"
+            extras: "cryptography"
+          - python: "3.11"
+            extras: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # jinja2 is named explicitly because requirements.txt does not list it yet,
+      # although guardrail/compiler.py's build_prompt() and summary_pack() need
+      # it (pyproject.toml declares it core; tests/test_bundle.py calls
+      # build_prompt). Drop it from this line once requirements.txt has it.
+      - name: Install the guardrail's dependencies
+        run: python -m pip install -r requirements.txt jinja2 ${{ matrix.extras }}
+
+      - name: Standalone test files
+        run: |
+          fail=0
+          for t in \
+              tests/test_scenario_spec.py \
+              tests/test_sweep.py \
+              tests/test_shield.py \
+              tests/test_corridor.py \
+              tests/test_clearance.py \
+              tests/test_check_contract.py \
+              tests/test_guardrail_coverage.py \
+              tests/test_kpi_magnitudes.py \
+              tests/test_manifest.py \
+              tests/test_bundle.py \
+              tests/test_frame_contract.py; do
+            echo "::group::$t"
+            if ! python "$t"; then
+              echo "::error file=$t::$t failed"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit $fail
+
+      - name: Smoke profile (stress harness, headless)
+        run: >
+          python experiments/sweep_scenarios.py --profile smoke
+          --out ci-smoke/sweep.json --runs ci-smoke/episodes
+
+      - name: Keep the smoke results and episode bundles
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-py${{ matrix.python }}${{ matrix.extras == '' && '-nosigning' || '' }}
+          path: ci-smoke/
+          if-no-files-found: warn

@@ -1,5 +1,50 @@
 # Remaining work, against the grant and the meeting record
 
+> **Superseded 2026-10-05 by `docs/AUDIT-KONTRAK-2026-10-05.md` and the tracker
+> (`tracker/`).** This list was last updated on 2026-09-09. It shows two open
+> items. The audit, which checked every grant obligation against the
+> repository, found 136 items: 6 done, 56 partial, 39 missing, 35 built
+> differently. Use the audit for what is open. This file stays as a record, with
+> these corrections made on 2026-10-06:
+>
+> - **Item 9 is not closed.** `Action4D` is still world frame (vx North, vy East;
+>   `guardrail/models.py:41-43`). The grant locks body frame (Architecture
+>   constraints p.2). `guardrail/frames.py` converts exactly, but at the 5 Oct
+>   audit nothing outside the tests called it. The item was closed by writing down the
+>   reason, not by matching the grant (tracker cards ARCH-04, WP2-17).
+> - **Item 6 (in the table below) overstated the bundle.** It said `bundle.py` "matches the
+>   reference layout byte-for-byte". Only the tar.gz container layout matches.
+>   The rule fields and the hash length differ, and neither repo's loader
+>   accepts the other's bundle (tracker card WP1-05).
+> - **Items 3 and 7 are reopened.** The 13-scenario sweep is a headless
+>   regression sweep, not the grant's stress harness. At the audit, six of the
+>   seven WP4 outputs on the Stress Testing page did not exist. The CSP is
+>   generated and saved, but no flown VLA has read it. The five SITL + MAVROS 2
+>   runs have no replay bundle (tracker cards WP4-21, WP2-12).
+> - **"Not in scope" was wrong on two lines.** The GCS (Mission Planner via
+>   mavlink-router) is a locked architecture item and ours to build (tracker
+>   card ARCH-10). The final KPI report needs the hil topology, a Jetson Orin
+>   running the VLA + Shield (ARCH-12). That is a gate, not a stretch goal.
+> - **"Canonical topology" / `canonical-hil`** in this file means the desktop
+>   SITL + MAVROS 2 rail. That is the grant's *dev* topology, not its canonical
+>   KPI configuration (tracker card ARCH-13). "KPI-grade" below is the
+>   project's own rule as it stood then, under which five runs passed. Since
+>   6 Oct the manifest labels that rail `dev`, reads stored `canonical-hil`
+>   runs as `dev`, and `is_kpi_grade()` refuses a dev run unless the PI grants
+>   a written waiver (question PQ1). Today no run is KPI-grade
+>   (`docs/data/kpi_rollup_2026-10-06.md`).
+> - **The ≥ 99 % fail-safe target** (paragraph below) is in the grant itself:
+>   Stress Testing p.3 and p.6.
+> - Missing from the list entirely:
+>   - the escalation FSM (Loiter / RTL / Land);
+>   - the ArduPilot GeoFence backstop;
+>   - the Paraphraser;
+>   - the gRPC harness;
+>   - a Gazebo run;
+>   - the WP1, WP2 and WP4 KPIs;
+>   - the hil topology;
+>   - the signed final report.
+
 **Date:** 2026-08-28, updated 2026-09-01 (see the update section below)
 **Sources:** the grant deliverables as restated in `docs/scope-clarification.md`,
 the work-package status table in `docs/MIDTERM-REPORT-Aug2026.md`, and the
@@ -28,9 +73,9 @@ in this repository.
 | **The KPI is measured, not inferred** | `emitted_violations` records the Shield's re-check of the flown action. All six canonical runs now report `p0_ticks_not_measurable: 0`. See `docs/FINDING-the-kpi-was-never-measured.md`. |
 | **Object width derived per class** | `implied_range_from_width()` assumed 4.0 m (a car), which would report a 0.5 m pedestrian at roughly 8x their true distance. |
 
-Current measured position, canonical topology, `code_revision 4bafc63fab21`:
+Current measured position, desktop SITL + MAVROS 2 (labelled `canonical-hil` in the code until 6 Oct; the grant's *dev* topology), `code_revision 4bafc63fab21`:
 
-| | P0 escape | P0 ticks | unmeasurable | fail-safe | KPI-grade |
+| | P0 escape | P0 ticks | unmeasurable | fail-safe | KPI-grade (rule of the time; no since 6 Oct) |
 |---|---|---|---|---|---|
 | shield off | 0.626506 | 52 | 0 | 0.0 | yes |
 | shield on | **0.0** | 134 | 0 | 1.0 | yes |
@@ -57,11 +102,11 @@ started. What follows the table is what is genuinely still open.
 | Was | Now | Evidence |
 |---|---|---|
 | **2. 10 m pedestrian stand-off never flown** | **CLOSED, and already was** | Flown 2026-08-31 on the canonical rail: shield off 7.07 m / 2.3 s inside the ring, shield on 14.95 m / 0.0 s. This entry was stale when it was written. |
-| **3. Scenario sweep harness** | **CLOSED** | `experiments/sweep_scenarios.py` + `scenarios.yaml`. **13** scenarios, headless, ~1 s. **12** pass, 1 recorded known failure. *(Was written as 12/11 when the harness had one scenario fewer; corrected 2026-09-09 against the harness output.)* |
+| **3. Scenario sweep harness** | **REOPENED 2026-10-06** (was CLOSED) | `experiments/sweep_scenarios.py` + `scenarios.yaml`. **13** scenarios, headless, ~1 s. **12** pass, 1 recorded known failure. *(Was written as 12/11 when the harness had one scenario fewer; corrected 2026-09-09 against the harness output.)* This is a regression sweep. The grant's stress harness also needs ScenarioSpec models, sweep configs per nightly profile, a gRPC RPC harness, episode exporters, a KPI auto-report generator and a CI smoke pipeline (Stress Testing p.6-7). None of those existed at the 5 Oct audit. |
 | **4. Two KPIs never measured** | **CLOSED** | `mean_repair_magnitude_mps` and `mean_time_to_safe_s` in `guardrail/kpi.py`; all 42 delivered runs rescored by `tools/rescore_kpis.py` with every stored P0 figure reproduced exactly. |
 | **5. Corridor and time-window constraints** | **CLOSED** | `Corridor` is the sixth constraint type; `valid_time` is a field on every rule. Both absent from the reference implementation too, so this is ahead of it rather than level. |
-| **6. Signed policy bundle and WGS84** | **CLOSED** | `guardrail/bundle.py` matches the reference layout byte-for-byte; `guardrail/projection.py` accepts lat/lon additively. `policies/wgs84_taipei.yaml` is the first geographic policy. |
-| **7. Constraint Summary Pack** | **CLOSED** (replay bundles still open) | `ConstraintCompiler.summary_pack()`. It also fixed a real gap: `build_prompt` emitted only fences, altitude and speed, so the pilot was never told about the 10 m stand-off the Shield enforces against it. |
+| **6. Signed policy bundle and WGS84** | **PARTIAL** (was CLOSED; corrected 2026-10-06) | `guardrail/bundle.py` writes the same tar.gz container layout as the reference (IR, manifest, signature). *Was: "matches the reference layout byte-for-byte".* It does not. The rule fields and the hash length differ (ours is cut to 16 hex digits), and neither loader accepts the other's bundle. Probe on 2026-10-06: our `load_bundle` raised 4 validation errors on the reference demo bundle; the reference loader raised 6 and 4 on two of ours. The signature is a placeholder. `guardrail/projection.py` accepts lat/lon additively. `policies/wgs84_taipei.yaml` is the first geographic policy. |
+| **7. Constraint Summary Pack** | **REOPENED 2026-10-06** (was CLOSED; replay bundles still open) | `ConstraintCompiler.summary_pack()`. It also fixed a real gap: `build_prompt` emitted only fences, altitude and speed, so the pilot was never told about the 10 m stand-off the Shield enforces against it. Against the grant it was partial at the 5 Oct audit. The pack was a plain dict with no CSP schema. There was no filter / risk-grade / truncate / token-budget pipeline (Prefix Compiler p.3-4). No flown VLA has read it: the stub and BC pilots take the mission and policy, not the prompt. |
 
 **Two KPI results worth quoting.** Shield ON: zero unsafe-position episodes.
 Shield OFF: 4.1 s to get out. Mean repair magnitude 3.5–4.1 m/s on the shielded
@@ -83,8 +128,8 @@ aim a margin inside the band and arrive in about six seconds.
 
 | Was | Now | Evidence |
 |---|---|---|
-| **7. Replay bundles** | **CLOSED** | `guardrail/replay.py`. `verify_replay()` reloads the policy from the archived IR and **recomputes the KPIs from the archived log**, so "replayable" means re-derivable rather than "the files are in one place". `demo/follow_vlm.py` and `sitl/run_sitl_demo.py` now write one per flight. |
-| **9. Body-frame vs world-frame `Action4D`** | **CLOSED** | `guardrail/frames.py` is the single boundary; `tests/test_frame_contract.py` checks our conversion against `vlaguard_common.body_to_local_ned` **by running theirs**, at eight headings. Both contracts are right in their own frame. |
+| **7. Replay bundles** | **PARTIAL** (was CLOSED; corrected 2026-10-06) | `guardrail/replay.py`. `verify_replay()` reloads the policy from the archived IR and **recomputes the KPIs from the archived log**, so "replayable" means re-derivable rather than "the files are in one place". `demo/follow_vlm.py` and `sitl/run_sitl_demo.py` now write one per flight. At the 5 Oct audit the ROS 2 Shield node (`sitl/ros2_shield_node.py`) did not, so none of the five SITL + MAVROS 2 runs has a replay bundle. The node gained a replay writer on 6 Oct; the five runs have not been re-flown. |
+| **9. Body-frame vs world-frame `Action4D`** | **NOT CLOSED** (was CLOSED; corrected 2026-10-06) | `guardrail/frames.py` converts between the frames; `tests/test_frame_contract.py` checks our conversion against `vlaguard_common.body_to_local_ned` **by running theirs**, at eight headings. The conversion is right, but nothing outside the tests calls it. `Action4D` is still world frame, and the grant locks body frame (Architecture constraints p.2). "Both contracts are right in their own frame" wrote the mismatch down; it did not remove it. |
 | **Report contradictions** (both) | **CLOSED**, source and rendered artefacts | `object_width_m` limitation marked resolved with its date; the control-loop gate paragraph now says which half was met and which was not. |
 
 **What closing item 7 immediately found.** Of the **44 scored runs on disk, only
@@ -240,7 +285,7 @@ and three things stand between here and there:
 
 Cheapest item with the most direct line to the meeting.
 
-### 3. [CLOSED 2026-09-01] Scenario sweep harness — WP4
+### 3. [CLOSED 2026-09-01, REOPENED 2026-10-06: a regression sweep, not the grant's stress harness] Scenario sweep harness — WP4
 
 `MIDTERM-REPORT-Aug2026.md` states verbatim: **"Scenario sweep harness not
 built."** The KPI machinery exists per-flight; nothing sweeps a scenario library.
@@ -264,7 +309,7 @@ The reference implementation emits a signed `tar.gz` (policy id, hash,
 generation, changelog, signature) and treats **WGS84 lat/lon as canonical**. We
 hash in memory and work in local metres. The DSL spec says WGS84.
 
-### 7. [CLOSED 2026-09-07] Two named artefacts — WP2 / WP4
+### 7. [CLOSED 2026-09-07, REOPENED 2026-10-06: no VLA reads the CSP; the five SITL + MAVROS 2 runs have no replay bundle] Two named artefacts — WP2 / WP4
 
 The **Constraint Summary Pack** is now produced (`ConstraintCompiler.summary_pack()`,
 `write_summary_pack()`). **Replay bundles** (WP4) are still not: the signed
@@ -283,11 +328,28 @@ is never broken - and the mission never arrives. The gap is between "the action
 was repaired" and "the trajectory was sensible", and closing it needs a planner
 that can route AROUND a constraint rather than a filter that can only veto.
 
-### 9. [CLOSED 2026-09-07] Body-frame versus world-frame `Action4D` — WP1
+### 9. [NOT CLOSED — the 2026-09-07 closure is withdrawn, 2026-10-06] Body-frame versus world-frame `Action4D` — WP1
 
 Ours is world-frame (`vx` North, `vy` East); `vlaguard_common.Action4D` is
 body-frame. *"Both cannot be right, and no test compares them."* This is a
 contract mismatch with the reference implementation, not a bug in either.
+
+*Corrected 2026-10-06:* a test now compares them (`tests/test_frame_contract.py`),
+and `guardrail/frames.py` converts exactly. But the mismatch is with the grant
+too, not only the reference: Architecture constraints p.2 locks
+`a = (vx, vy, vz, yaw_rate) # body-frame velocities`. `Action4D` is still world
+frame, and nothing outside the tests calls the conversion. The item stays open
+until the Shield's input contract is body frame, or every backend goes through
+the one boundary (tracker cards ARCH-04, WP2-17).
+
+### 10. [OPEN, added 2026-10-06] Mission Planner via mavlink-router — architecture
+
+The grant locks "GCS: Mission Planner via mavlink-router fan-out (parallel to
+MAVROS), not as a serial bottleneck" (Grant overview p.3; Architecture
+constraints p.3). Nothing in `sitl/` or `guardrail/` sets it up. This list used
+to file it as out of scope (tracker card ARCH-10).
+
+For everything else that is open, see `docs/AUDIT-KONTRAK-2026-10-05.md`.
 
 ---
 
@@ -331,11 +393,22 @@ comfortably. This is pre-existing and unrelated to the Shield.
 - **Training a VLA.** The grant names it optional; the VLA is a pluggable
   external dependency. *"The word 'VLA' names the technology we CONSTRAIN — not
   a thing we build."*
-- **Obstacle avoidance, navigation, CV, GCS, dynamic-NFZ sourcing** — Prof.
-  Lai's team owns the application layer. The Shield enforces *policy* geometry.
+- **Obstacle avoidance, navigation, CV, dynamic-NFZ sourcing** — the
+  application layer. The Shield enforces *policy* geometry. *(Corrected
+  2026-10-06: this line also listed the GCS and said "Prof. Lai's team owns the
+  application layer". That came from the June two-team split, which is
+  obsolete: NTUT, one team, executes WP1-WP4. The GCS is moved to open
+  item 10 above.)*
 - **Modifying the core flight stack.** ROS, MAVLink, ArduPilot's built-in
-  GeoFence and PX4 stay as they are.
-- **Hardware flight.** A stretch goal, explicitly not a contractual gate.
+  GeoFence and PX4 stay as they are. (Configuring ArduPilot's GeoFence as the
+  final backstop is in scope: the grant names it, and it is not done yet.)
+- ~~**Hardware flight.** A stretch goal, explicitly not a contractual gate.~~
+  *Withdrawn 2026-10-06.* The final KPI report needs the *hil* topology, with
+  a Jetson Orin running the VLA + Shield (Architecture constraints p.4;
+  Stress Testing p.1). The Orin is needed for that gate even without flying.
+  The *flight* topology is named for the final demos, and the grant says all
+  three topologies are first-class. Tracker cards ARCH-12 and ARCH-14; whether
+  either may be waived is a question for the PI.
 - **Colour-tracking retraining**, proposed at the meeting — it would remove the
   open-vocabulary language interface the grant title depends on. Recommend
   declining.

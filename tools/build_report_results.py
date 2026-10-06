@@ -10,6 +10,13 @@ the report does too, and the two cannot drift apart.
 This rewrites everything between the `## 6. Results` heading and the next `## `
 heading, in place. Nothing else in the file is touched.
 
+CORRECTED 2026-10-06 (generator only; the delivered August report is not
+regenerated silently). Section 6.5 called the desktop ArduPilot SITL + MAVROS 2
+rail "the grant's canonical topology" and its runs "the first KPI-grade runs".
+The grant calls that rail `dev` and takes KPI figures from `hil` (Jetson Orin);
+stored `canonical-hil` labels are now shown as `dev`, and the grade column is
+today's guardrail.manifest.is_kpi_grade(), not a string comparison.
+
 Usage:
     python tools/build_report_results.py
 """
@@ -21,6 +28,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+from guardrail.manifest import is_kpi_grade, normalize_topology   # noqa: E402
+
 REPORT = ROOT / "docs" / "MIDTERM-REPORT-Aug2026.md"
 STUDY = ROOT / "docs" / "data" / "chase_resolution_study.json"
 
@@ -256,9 +266,9 @@ def build() -> str:
                               json.loads((d / "manifest.json").read_text(encoding="utf-8"))))
         return rows_
 
-    canonical, pymav = _rail("ros2"), _rail("sitl")
+    mavros, pymav = _rail("ros2"), _rail("sitl")
 
-    if canonical or pymav:
+    if mavros or pymav:
         out += ["### 6.5 The same Guardrail over ArduPilot", "",
                 "The results above run on Project AirSim. The same Guardrail package "
                 "also flies over **ArduPilot SITL** — real flight code, real MAVLink. "
@@ -266,25 +276,24 @@ def build() -> str:
                 "adapter beneath them does, which is the architecture rule this "
                 "project claims.", ""]
 
-    if canonical:
-        man = canonical[-1][3]
-        out += ["#### The grant's canonical topology", "",
-                "`vla_stub → /vla/action_4d → shield node → MAVROS 2 → ArduPilot SITL`. "
-                "This is the configuration the grant names for contractual KPI "
-                "figures, and these are **the first KPI-grade runs this project has "
-                "produced**.", "",
-                "| Configuration | P0 escape rate | Time in zone | Interventions | Outcome | KPI-grade |",
+    if mavros:
+        man = mavros[-1][3]
+        out += ["#### Through MAVROS 2: the grant's `dev` topology", "",
+                "`vla_stub → /vla/action_4d → shield node → MAVROS 2 → ArduPilot SITL`, "
+                "all on one desktop. The grant calls this configuration `dev` and "
+                "does not use it for reported KPI numbers; those come from `hil`, "
+                "with the VLA and the Shield on a Jetson Orin. These runs are "
+                "therefore evidence that the Guardrail works through MAVROS 2, and "
+                "count as KPI figures only under a written waiver from the PI.", "",
+                "| Configuration | P0 escape rate | Time in zone | Interventions | Outcome | KPI-grade today |",
                 "|---|---|---|---|---|---|"]
-        for label, k, m, mn in canonical:
-            grade = ("yes" if mn["topology"] == "canonical-hil"
-                     and not mn["code_revision"].endswith(("-dirty", "-unknown"))
-                     else "no")
+        for label, k, m, mn in mavros:
+            grade = "yes" if is_kpi_grade(mn, {})[0] else "no"
             out.append(f"| {label} | {f3(k['p0_violation_escape_rate'])} | "
                        f"{f1(m['nfz_s'])} s | {m['interventions']} | {k['outcome']} | "
                        f"{grade} |")
         out += ["",
-                "The disabled run is grade-eligible and **fails**, which is the point "
-                "of a control: its numbers may be quoted, and what they say is that "
+                "The disabled run **fails**, which is the point of a control: "
                 "without the Guardrail 62.7 % of ticks flew a P0 violation and the "
                 "aircraft spent 3.7 s inside the zone. With the Guardrail, on the same "
                 "rail and the same policy, both are zero.", "",
@@ -296,10 +305,14 @@ def build() -> str:
                 "Determinism manifest, all six fields resolved:", "",
                 "| Field | Value |", "|---|---|"]
         for kk, vv in man.items():
-            out.append(f"| `{kk}` | `{vv}` |")
-        ev = canonical[-1][2].get("hil_evidence", {})
+            cell = f"`{vv}`"
+            if kk == "topology" and normalize_topology(vv) != vv:
+                cell = f"`{normalize_topology(vv)}` (stored as `{vv}`)"
+            out.append(f"| `{kk}` | {cell} |")
+        ev = mavros[-1][2].get("hil_evidence", {})
         out += ["",
-                "`canonical-hil` is not a label the caller may simply assert. "
+                "`dev` is not a label the caller may simply assert (runs before "
+                "2026-10-06 recorded it as `canonical-hil`). "
                 "`build_manifest()` requires evidence that every link of the chain was "
                 "live — a ROS 2 distribution, a MAVROS node on the graph, and a flight "
                 "controller reporting connected — because MAVROS starts happily with "

@@ -27,18 +27,38 @@ writing it now rather than after that day.
 INTEGRITY, HONESTLY DESCRIBED
 
 Every member in the archive is digested, the digests are listed in
-`replay.json`, and the index is digested into `signature.txt` beside the same
-placeholder signer `bundle.py` uses.
+`replay.json`, and the index is digested into `signature.txt`.
 
-**The signature is keyless.** `signature.txt` is `sha256(replay.json)`, so
-anyone who edits a member can recompute the index and then recompute the
-signature in one line, and the bundle reads as intact. This catches accidental
-corruption, a truncated download, a hand-edited log, and an archive that has
-picked up an extra file. It does not catch a deliberate, consistent forgery and
-cannot until there is a real key — which is an open question for the lab or
-ITRI, recorded the same way in `guardrail/bundle.py`. Stated here because a
-2026-09-08 review found a test in `tests/test_replay.py` claiming the opposite,
-passing only because the forgery it staged forgot to update the signature.
+Since 2026-10-06 that digest is also SIGNED, with the same Ed25519 lab key and
+trust store `guardrail/bundle.py` uses for policy bundles: line 2 of
+`signature.txt` is a detached signature over the exact `replay.json` bytes. A
+consistent forgery - edit a member, recompute the index, recompute the digest -
+now fails, because the forger cannot recompute the signature.
+
+Bundles written before that date, and any written on a machine without the key
+or without `cryptography`, are KEYLESS: `signature.txt` is `sha256(replay.json)`
+and nothing more, so a consistent forgery passes them. They still verify,
+because four tracked bundles are in that format and refusing them would orphan
+the episodes they hold - but `verify_replay` says "signature UNSIGNED" out
+loud every time. A 2026-09-08 review found a test in `tests/test_replay.py`
+claiming keyless protection the format never had; the honest limit is still
+asserted for the keyless format, and the keyed one is tested to refuse the same
+forgery.
+
+Reading is not writing: a keyed bundle is VERIFIED on any interpreter,
+`cryptography` or not, through the pure-Python RFC 8032 verifier in
+`guardrail/bundle.py`. A keyed bundle whose Ed25519 line is dropped while its
+signer's identity stays is refused as a stripped signature. Dropping the line
+AND swapping the identity for the keyless placeholder still reads as keyless:
+that downgrade is loud, not refusable, for the reason above.
+
+POLICY IDENTITY
+
+The archived IR is `Policy.canonical_bytes()` and the index records the
+64-hex `policy_hash`. The episode's own manifest may carry an older 16-hex
+form (any run flown before 2026-10-06); it binds as long as it is one of the
+forms `Policy.hash_form` recognises, and the form is written into the index
+as `flown_hash_form` rather than glossed over.
 """
 from __future__ import annotations
 
@@ -50,11 +70,15 @@ import tarfile
 from pathlib import Path
 from typing import Any
 
-from .bundle import _SIGNED_BY, manifest_for
+from .bundle import (LEGACY_PLACEHOLDER_SIGNER, SIG_BAD, SIG_VERIFIED,
+                     _resolve_signer, manifest_for, parse_signature,
+                     signature_text, verify_signature)
 from .kpi import compute, rule_priorities
 from .models import Policy
 
 INDEX_NAME = "replay.json"
+# The keyless legacy signer, kept under its old name for importers.
+_SIGNED_BY = LEGACY_PLACEHOLDER_SIGNER
 SIGNATURE_NAME = "signature.txt"
 EPISODE = "episode/"
 POLICY = "policy/"
@@ -116,12 +140,18 @@ def _read(tar: tarfile.TarFile, name: str) -> bytes:
 
 
 def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
-                 changelog: str = "initial") -> Path:
+                 changelog: str = "initial", *, signer="auto",
+                 policy_source: dict | None = None) -> Path:
     """Package a finished flight directory and its policy into one archive.
 
     The policy is stored as the same canonical IR `bundle.py` hashes, so the
     policy inside a replay bundle and the policy inside a policy bundle are the
     same bytes and reload through the same path.
+
+    `signer` follows `bundle.write_bundle`: "auto" signs with the lab key when
+    present and writes a KEYLESS bundle otherwise. `policy_source` - where the
+    flight got its policy (a verified bundle, or a YAML file and therefore
+    unsigned) - is copied into the index when the flight supplies it.
     """
     run, out = Path(run_dir), Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -151,9 +181,11 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
     run_manifest = members.get(EPISODE + "manifest.json")
     has_kpi = (EPISODE + "kpi.json") in members
     policy_binding = "manifest"
+    flown = flown_form = None
     if run_manifest is not None:
         flown = json.loads(run_manifest).get("policy_hash")
-        if flown and flown != policy.policy_hash:
+        flown_form = policy.hash_form(flown) if flown else None
+        if flown and flown_form is None:
             raise ValueError(
                 f"{run.name} was flown under policy {flown}, but the policy "
                 f"passed here hashes to {policy.policy_hash}. A replay bundle "
@@ -169,18 +201,24 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
     else:
         policy_binding = "unverified"
 
-    ir = json.dumps(policy.model_dump(mode="json"), sort_keys=True,
-                    separators=(",", ":")).encode()
-    members[POLICY + "ir.json"] = ir
+    sgn = _resolve_signer(signer)
+    members[POLICY + "ir.json"] = policy.canonical_bytes()
     members[POLICY + "manifest.json"] = json.dumps(
-        manifest_for(policy, changelog), indent=2, sort_keys=True).encode()
+        manifest_for(policy, changelog,
+                     signed_by=sgn.identity if sgn else None),
+        indent=2, sort_keys=True).encode()
 
     index = {
         "kind": "vla-guardrail-replay",
-        "version": 1,
+        # 2: canonical v2 IR, 64-hex policy_hash, optional Ed25519 signature.
+        "version": 2,
         "run": run.name,
         "policy_id": policy.policy_id,
         "policy_hash": policy.policy_hash,
+        # The hash the EPISODE recorded, and which form it is in. A run flown
+        # before 2026-10-06 carries a 16-hex legacy form of the same policy.
+        "flown_policy_hash": flown,
+        "flown_hash_form": flown_form,
         "changelog": changelog,
         # "manifest" = the episode's own manifest agreed this policy governed it.
         # "unverified" = nothing in the episode binds it to any policy; the
@@ -188,8 +226,10 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
         "policy_binding": policy_binding,
         "members": {k: _digest(v) for k, v in sorted(members.items())},
     }
+    if policy_source is not None:
+        index["policy_source"] = policy_source
     index_bytes = json.dumps(index, indent=2, sort_keys=True).encode()
-    signature = f"{_digest(index_bytes)} {_SIGNED_BY}\n".encode()
+    signature = signature_text(_digest(index_bytes), sgn, index_bytes)
 
     with open(out, "wb") as fh:
         with gzip.GzipFile(fileobj=fh, mode="wb", mtime=0, filename="") as gz:
@@ -201,20 +241,30 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
     return out
 
 
-def read_replay(path: str | Path) -> dict[str, Any]:
-    """Open a bundle, check every digest, and return its parts.
+def read_replay(path: str | Path,
+                trust_store: str | Path | dict | None = None) -> dict[str, Any]:
+    """Open a bundle, check every digest and the signature, and return its parts.
 
     Raises `ValueError` on the first member whose bytes do not match the index,
-    naming it. Returns `{"index", "policy", "rows", "metrics", "kpi",
-    "manifest"}`.
+    naming it, and on an Ed25519 signature that is present and wrong. Returns
+    `{"index", "policy", "hash_form", "signature", "rows", "metrics", "kpi",
+    "manifest"}`; `signature` is `{"status", "signed_by", "detail"}` with one
+    of the statuses defined in `guardrail/bundle.py`.
     """
     with tarfile.open(path, "r:gz") as tar:
         index_bytes = _read(tar, INDEX_NAME)
-        sig = _read(tar, SIGNATURE_NAME).decode().split()
-        if not sig or sig[0] != _digest(index_bytes):
+        digest, signed_by, sig_hex = parse_signature(
+            _read(tar, SIGNATURE_NAME).decode())
+        if not digest or digest != _digest(index_bytes):
             raise ValueError(
                 f"{path}: signature does not match the index; the bundle has "
                 f"been modified or truncated.")
+        status, detail = verify_signature(signed_by, sig_hex, index_bytes,
+                                          trust_store)
+        if status == SIG_BAD:
+            raise ValueError(
+                f"{path}: signature check failed - {detail}. The index was "
+                f"rewritten after signing.")
         index = json.loads(index_bytes)
         declared = index.get("members") or {}
 
@@ -258,38 +308,53 @@ def read_replay(path: str | Path) -> dict[str, Any]:
     # model_validate, not load_policy: the IR is already projected and
     # validated, exactly as load_bundle does it.
     policy = Policy.model_validate(_json(POLICY + "ir.json"))
-    if policy.policy_hash != index["policy_hash"]:
+    form = policy.hash_form(index.get("policy_hash"))
+    if form is None:
         raise ValueError(
             f"{path}: the policy rebuilt from ir.json hashes to "
-            f"{policy.policy_hash}, but the index says {index['policy_hash']}.")
+            f"{policy.policy_hash}, but the index says {index.get('policy_hash')}"
+            f" - under no form this code knows.")
     rows = [json.loads(line) for line
             in blobs[EPISODE + "flight_log.jsonl"].decode("utf-8").splitlines()
             if line.strip()]
-    return {"index": index, "policy": policy, "rows": rows,
+    return {"index": index, "policy": policy, "hash_form": form,
+            "signature": {"status": status, "signed_by": signed_by,
+                          "detail": detail},
+            "rows": rows,
             "metrics": _json(EPISODE + "metrics.json", {}),
             "kpi": _json(EPISODE + "kpi.json"),
             "manifest": _json(EPISODE + "manifest.json")}
 
 
-def verify_replay(path: str | Path) -> tuple[bool, list[str]]:
+def verify_replay(path: str | Path,
+                  trust_store: str | Path | dict | None = None
+                  ) -> tuple[bool, list[str]]:
     """Can the bundle still produce the numbers it ships? `(ok, reasons)`.
 
-    Digests, the policy round-trip, and then the part that earns the name: the
-    KPIs are recomputed from the archived log and compared to the archived KPI
-    table. `True` with an empty list means a reader can re-derive every
-    contractual figure in the bundle from the bundle alone.
+    Digests, the signature, the policy round-trip, and then the part that earns
+    the name: the KPIs are recomputed from the archived log and compared to the
+    archived KPI table. `True` with an empty list means a reader can re-derive
+    every contractual figure in the bundle from the bundle alone AND its
+    signature verified against a trusted key. Any weaker signature status is
+    reported as a note, never passed over in silence.
     """
     try:
-        got = read_replay(path)
+        got = read_replay(path, trust_store)
     except (ValueError, KeyError, tarfile.TarError, OSError) as exc:
         return False, [str(exc)]
 
     flown = (got["manifest"] or {}).get("policy_hash")
-    if flown and flown != got["policy"].policy_hash:
+    if flown and not got["policy"].matches_hash(flown):
         return False, [f"episode flown under policy {flown}, bundle carries "
                        f"{got['policy'].policy_hash}"]
 
     notes = []
+    sig = got["signature"]
+    if sig["status"] != SIG_VERIFIED:
+        notes.append(
+            f"signature {sig['status'].upper()}: {sig['detail']}"
+            + (" - a keyless digest catches accident, not a consistent forgery"
+               if sig["status"] == "unsigned" else ""))
     if got["index"].get("policy_binding") != "manifest":
         notes.append("policy binding UNVERIFIED: the episode carries no "
                      "manifest recording which policy governed it, so the KPI "

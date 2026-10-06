@@ -1,0 +1,12 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: speed_max_mps is .inf
+# currently: ACCEPTED
+# finding: an infinite cap passes `gt=0` and is no cap at all, while the policy still lists a kinematic envelope
+policy_id: neg-inf-speed
+version: 0.1.0
+constraints:
+  - id: kin
+    type: kinematic_envelope
+    speed_max_mps: .inf
+    climb_rate_max_mps: 2
+    yaw_rate_max_dps: 45

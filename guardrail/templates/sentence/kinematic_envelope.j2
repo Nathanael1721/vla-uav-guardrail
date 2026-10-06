@@ -1,0 +1,4 @@
+{% extends "sentence/_base.j2" %}
+{#- deg/s here because people write turn rates that way; Action4D.yaw_rate is
+    rad/s and the action-set check converts (compiler.action_violations). -#}
+{% block core %}Keep speed at or below {{ r.speed_max_mps|g }} m/s, climb rate below {{ r.climb_rate_max_mps|g }} m/s and turn rate below {{ r.yaw_rate_max_dps|g }} deg/s{% endblock %}

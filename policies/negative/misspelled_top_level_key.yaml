@@ -1,0 +1,10 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: `contraints:` instead of `constraints:`
+# currently: refused
+policy_id: neg-misspelled-top
+version: 0.1.0
+contraints:
+  - id: alt
+    type: altitude_envelope
+    alt_min_m: 5
+    alt_max_m: 30

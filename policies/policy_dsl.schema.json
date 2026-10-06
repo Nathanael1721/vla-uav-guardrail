@@ -1,0 +1,630 @@
+{
+  "$defs": {
+    "AltitudeEnvelope": {
+      "description": "Stay between alt_min and alt_max (meters above ground).",
+      "properties": {
+        "alt_max_m": {
+          "title": "Alt Max M",
+          "type": "number"
+        },
+        "alt_min_m": {
+          "title": "Alt Min M",
+          "type": "number"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "type": {
+          "const": "altitude_envelope",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "brake"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "alt_min_m",
+        "alt_max_m"
+      ],
+      "title": "AltitudeEnvelope",
+      "type": "object"
+    },
+    "Corridor": {
+      "description": "Stay INSIDE a 3-D corridor: centerline polyline, width, altitude band.\n\nThe inverse of PolygonFence, and the first keep-IN rule in this file. A\nfence says \"not here\"; a corridor says \"only here\", which is what a delivery\nor survey mission is actually authorised to do.\n\nNamed in the reference DSL taxonomy (`policy-dsl.md`: \"Centerline polyline +\nwidth + AGL bounds\") and implemented in neither repository until now -\n`packages/policy-dsl/src/policy_dsl/models.py` carries only PolygonFence and\nAltitudeEnvelope.\n\nDistance is measured to the centerline SEGMENTS, never to its vertices; see\n`geometry.nearest_on_polyline` for why that distinction has already cost\nthis project one flight.\n\nThe altitude band is part of the corridor rather than delegated to\nAltitudeEnvelope, because a corridor is a tube: \"inside the width but above\nthe ceiling\" is outside the corridor, and expressing that with a separate\nglobal envelope would make it apply everywhere else too.",
+      "properties": {
+        "altitude_ceiling_m": {
+          "default": 1000.0,
+          "title": "Altitude Ceiling M",
+          "type": "number"
+        },
+        "altitude_floor_m": {
+          "default": 0.0,
+          "title": "Altitude Floor M",
+          "type": "number"
+        },
+        "centerline": {
+          "items": {
+            "$ref": "#/$defs/XY"
+          },
+          "minItems": 2,
+          "title": "Centerline",
+          "type": "array"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "type": {
+          "const": "corridor",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "brake"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        },
+        "width_m": {
+          "exclusiveMinimum": 0,
+          "title": "Width M",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "centerline",
+        "width_m"
+      ],
+      "title": "Corridor",
+      "type": "object"
+    },
+    "KinematicEnvelope": {
+      "description": "Caps on how fast the vehicle may move/climb/turn.",
+      "properties": {
+        "climb_rate_max_mps": {
+          "exclusiveMinimum": 0,
+          "title": "Climb Rate Max Mps",
+          "type": "number"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "speed_max_mps": {
+          "exclusiveMinimum": 0,
+          "title": "Speed Max Mps",
+          "type": "number"
+        },
+        "type": {
+          "const": "kinematic_envelope",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "brake"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        },
+        "yaw_rate_max_dps": {
+          "exclusiveMinimum": 0,
+          "title": "Yaw Rate Max Dps",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "speed_max_mps",
+        "climb_rate_max_mps",
+        "yaw_rate_max_dps"
+      ],
+      "title": "KinematicEnvelope",
+      "type": "object"
+    },
+    "ObstacleClearance": {
+      "description": "Keep at least `min_clearance_m` away from every MAPPED obstacle\n(surveyed buildings in the city occupancy grid).\n\nUnlike the other three, this rule cannot be evaluated from the policy file\nalone \u2014 it needs the occupancy map, which is handed to the Shield at\nconstruction time (`Shield(..., obstacle_map=...)`). With no map the rule\nis INERT: it never fires and never raises. Distance is measured in the\nhorizontal plane only; buildings are treated as infinitely tall columns,\nwhich is the conservative reading of a 2-D occupancy grid.\n\nsoft_margin_m widens the band the repair operator tapers speed over\n([0, min_clearance_m + soft_margin_m]); it never raises a violation on its\nown \u2014 hence \"slows, does not block\".",
+      "properties": {
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "min_clearance_m": {
+          "exclusiveMinimum": 0,
+          "title": "Min Clearance M",
+          "type": "number"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "soft_margin_m": {
+          "default": 0.0,
+          "minimum": 0,
+          "title": "Soft Margin M",
+          "type": "number"
+        },
+        "type": {
+          "const": "obstacle_clearance",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "brake"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "min_clearance_m"
+      ],
+      "title": "ObstacleClearance",
+      "type": "object"
+    },
+    "Origin": {
+      "description": "The anchor a lat/lon policy is projected about. See guardrail/projection.py.",
+      "properties": {
+        "lat": {
+          "maximum": 90.0,
+          "minimum": -90.0,
+          "title": "Lat",
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180.0,
+          "minimum": -180.0,
+          "title": "Lon",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lat",
+        "lon"
+      ],
+      "title": "Origin",
+      "type": "object"
+    },
+    "PolygonFence": {
+      "description": "Keep-OUT no-fly zone. Violated when a (predicted) position is inside.",
+      "properties": {
+        "altitude_ceiling_m": {
+          "default": 1000.0,
+          "title": "Altitude Ceiling M",
+          "type": "number"
+        },
+        "altitude_floor_m": {
+          "default": 0.0,
+          "title": "Altitude Floor M",
+          "type": "number"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "margin_m": {
+          "default": 1.0,
+          "title": "Margin M",
+          "type": "number"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "type": {
+          "const": "polygon_fence",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "vertices": {
+          "items": {
+            "$ref": "#/$defs/XY"
+          },
+          "minItems": 3,
+          "title": "Vertices",
+          "type": "array"
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "brake"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "vertices"
+      ],
+      "title": "PolygonFence",
+      "type": "object"
+    },
+    "Recurrence": {
+      "description": "A weekly schedule: which days, and a clock window within them.\n\n`start_time` / `end_time` are \"HH:MM\" local. A window that ends before it\nstarts WRAPS past midnight (\"22:00\"-\"06:00\"), which is the common case for a\nnight-flight restriction and would otherwise be inexpressible.",
+      "properties": {
+        "days": {
+          "items": {
+            "enum": [
+              "Mon",
+              "Tue",
+              "Wed",
+              "Thu",
+              "Fri",
+              "Sat",
+              "Sun"
+            ],
+            "type": "string"
+          },
+          "title": "Days",
+          "type": "array"
+        },
+        "end_time": {
+          "default": "23:59",
+          "title": "End Time",
+          "type": "string"
+        },
+        "start_time": {
+          "default": "00:00",
+          "title": "Start Time",
+          "type": "string"
+        }
+      },
+      "title": "Recurrence",
+      "type": "object"
+    },
+    "SubjectStandoff": {
+      "description": "Keep at least `min_range_m` from the SUBJECT being followed.\n\nAsked for at the 2026-08-19 review: \"hold 10 m from a person, and different\npolicies for different objects\". Until now that was `--want-range`, a\ncommand-line flag on the controller - which meant it was not hashed into\n`policy_hash`, not written to the audit log, and not enforced by the Shield.\nIt was a setpoint the pilot was asked to aim for, not a rule it was held to,\nand the difference is the whole point of the project.\n\nLike ObstacleClearance this cannot be evaluated from the policy file alone:\nthe Shield has no idea where the subject is. The perception stack supplies it\nonce per tick through `Shield.set_subject()`. With no subject set the rule is\nINERT - it never fires and never raises - because a standoff rule with\nnothing to stand off from has no opinion, and inventing one would be worse\nthan silence.\n\n`subject_class` selects which rule applies to what: \"pedestrian\" binds only\nwhen the tracked subject is a pedestrian, \"*\" binds to anything. That is what\nmakes \"different policies for different objects\" expressible rather than a\nsingle global number.\n\nDistance is horizontal only, matching ObstacleClearance. Altitude is governed\nby AltitudeEnvelope, and mixing the two would make a rule that a legal climb\ncould violate.",
+      "properties": {
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "min_range_m": {
+          "exclusiveMinimum": 0,
+          "title": "Min Range M",
+          "type": "number"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "soft_margin_m": {
+          "default": 0.0,
+          "minimum": 0,
+          "title": "Soft Margin M",
+          "type": "number"
+        },
+        "subject_class": {
+          "default": "*",
+          "title": "Subject Class",
+          "type": "string"
+        },
+        "type": {
+          "const": "subject_standoff",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "brake"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "min_range_m"
+      ],
+      "title": "SubjectStandoff",
+      "type": "object"
+    },
+    "ValidTime": {
+      "description": "When a rule is in force. `recurrence` absent means always.",
+      "properties": {
+        "recurrence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Recurrence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ValidTime",
+      "type": "object"
+    },
+    "XY": {
+      "properties": {
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "XY",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "A validated policy bundle (the 'IR' in miniature).",
+  "properties": {
+    "constraints": {
+      "items": {
+        "discriminator": {
+          "mapping": {
+            "altitude_envelope": "#/$defs/AltitudeEnvelope",
+            "corridor": "#/$defs/Corridor",
+            "kinematic_envelope": "#/$defs/KinematicEnvelope",
+            "obstacle_clearance": "#/$defs/ObstacleClearance",
+            "polygon_fence": "#/$defs/PolygonFence",
+            "subject_standoff": "#/$defs/SubjectStandoff"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/PolygonFence"
+          },
+          {
+            "$ref": "#/$defs/AltitudeEnvelope"
+          },
+          {
+            "$ref": "#/$defs/KinematicEnvelope"
+          },
+          {
+            "$ref": "#/$defs/ObstacleClearance"
+          },
+          {
+            "$ref": "#/$defs/SubjectStandoff"
+          },
+          {
+            "$ref": "#/$defs/Corridor"
+          }
+        ]
+      },
+      "title": "Constraints",
+      "type": "array"
+    },
+    "generation": {
+      "default": 0,
+      "title": "Generation",
+      "type": "integer"
+    },
+    "origin": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Origin"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "policy_id": {
+      "title": "Policy Id",
+      "type": "string"
+    },
+    "version": {
+      "default": "0.1.0",
+      "title": "Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "policy_id",
+    "constraints"
+  ],
+  "title": "Policy",
+  "type": "object",
+  "x-hash-scheme": "sha256-canonical-v2",
+  "x-ir-schema-version": "2.0.0"
+}

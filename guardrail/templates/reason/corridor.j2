@@ -1,0 +1,3 @@
+{#- A keep-IN corridor binds everywhere (outside it is forbidden), so its
+    relevance is where the mission's ends sit relative to it, never "how far". -#}
+the mission start is {{ "inside" if start_in else "outside" }} and the target is {{ "inside" if target_in else "outside" }} this keep-in corridor (half-width {{ hw|g }} m); cruise altitude {{ alt|g }} m is {{ "inside" if alt_in_band else "outside" }} its {{ floor|g }}-{{ ceil|g }} m band{% if time_fact %}; {{ time_fact }}{% endif %}

@@ -4,3 +4,4 @@ pydantic>=2,<3
 pyyaml
 shapely
 numpy
+jinja2

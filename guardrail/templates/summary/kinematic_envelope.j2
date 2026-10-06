@@ -1,0 +1,2 @@
+{% extends "summary/_base.j2" %}
+{% block core %}speed <= {{ r.speed_max_mps|g }} m/s, climb <= {{ r.climb_rate_max_mps|g }} m/s, turn <= {{ r.yaw_rate_max_dps|g }} deg/s{% endblock %}

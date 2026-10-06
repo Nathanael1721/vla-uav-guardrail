@@ -15,6 +15,16 @@ Run inside WSL (SITL listening on tcp:127.0.0.1:5760):
     ~/venv-ap/bin/python run_sitl_demo.py --shield on
     ~/venv-ap/bin/python run_sitl_demo.py --shield off
     ~/venv-ap/bin/python run_sitl_demo.py --shield on --dynamic
+    ~/venv-ap/bin/python run_sitl_demo.py --bundle ../bundles/fase3-sim-demo-v0.1.1.tar.gz
+
+Policy note: `--bundle` flies the signed policy bundle (guardrail/bundle.py) and
+refuses one whose signature does not verify, unless `--allow-unverified-bundle`
+says to fly it recorded as unverified. This venv has no `cryptography`; the
+signature is checked by the pure-Python RFC 8032 verifier in guardrail/bundle.py
+instead, so "verified" means the same here as on Windows. `--policy`
+(default policies/sim_demo_policy.yaml) is the YAML fallback, recorded as
+unsigned. Either way the source lands in metrics.json, kpi.json and the replay
+bundle.
 
 Frames note: SITL has no camera — that stays AirSim's job (perception rail vs
 functional rail, same split the grant makes).
@@ -33,7 +43,8 @@ from pymavlink import mavutil
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from guardrail import AuditLogger, Shield, State, load_policy          # noqa: E402
+from guardrail import AuditLogger, Shield, State                       # noqa: E402
+from guardrail.bundle import load_for_flight                           # noqa: E402
 from guardrail.compiler import ConstraintCompiler                      # noqa: E402
 from guardrail.geometry import fence_polygon                           # noqa: E402
 from guardrail.kpi import compute_from_dir                             # noqa: E402
@@ -145,7 +156,8 @@ class MavlinkAdapter:
         cap in radians - so the conversion divided every commanded yaw by 57.3.
         Latent rather than harmful: the stub pilot this rail flies has never
         commanded a non-zero yaw rate on ANY of the 12 runs under demo/out/
-        whose topology is ardupilot-sitl-pymavlink or canonical-hil - 2850
+        whose topology is ardupilot-sitl-pymavlink or (stored as canonical-hil,
+        read as dev since 2026-10-06) the MAVROS rail - 2850
         ticks, max |yaw_rate| exactly 0.0 - so every stored KPI figure is
         unchanged.
 
@@ -168,7 +180,17 @@ class MavlinkAdapter:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--command", default="fly to the northeast pad at 6 m/s")
-    ap.add_argument("--policy", default=str(ROOT / "policies" / "sim_demo_policy.yaml"))
+    ap.add_argument("--policy", default=None,
+                    help="policy YAML (default policies/sim_demo_policy.yaml); "
+                         "recorded as UNSIGNED")
+    ap.add_argument("--bundle", default=None,
+                    help="signed policy bundle; refused unless its signature "
+                         "verifies")
+    ap.add_argument("--allow-unverified-bundle", action="store_true",
+                    help="fly a bundle whose signature is not verified (unsigned, "
+                         "or a key the trust store does not list), recorded as "
+                         "unverified; a bad or stripped signature is refused "
+                         "regardless")
     ap.add_argument("--shield", choices=["on", "off"], default="on")
     ap.add_argument("--dynamic", action="store_true")
     ap.add_argument("--subject", default=None, metavar="X,Y",
@@ -187,16 +209,26 @@ def main() -> int:
 
     shield_on = args.shield == "on"
     tag = args.tag or (f"sitl_shield_{args.shield}" + ("_dynamic" if args.dynamic else ""))
+
+    # The signed bundle when one is given, else the YAML (recorded unsigned).
+    # Both at once is refused: a run with two candidate policies has none.
+    # Loaded BEFORE the output folder is touched, so a refused run leaves an
+    # earlier run of the same tag exactly as it was.
+    policy, policy_source = load_for_flight(
+        args.bundle,
+        args.policy or (None if args.bundle
+                        else ROOT / "policies" / "sim_demo_policy.yaml"),
+        allow_unverified=args.allow_unverified_bundle)
     out = ROOT / "demo" / "out" / tag
     out.mkdir(parents=True, exist_ok=True)
-
-    policy = load_policy(args.policy)
     compiler = ConstraintCompiler(policy)
     mission = compiler.parse_command(args.command)
     (out / "prompt.yaml").write_text(compiler.build_prompt(mission), encoding="utf-8")
     print(f"[compiler] target=({mission.target_x:.0f},{mission.target_y:.0f}) "
           f"alt={mission.cruise_alt_m:.0f}m speed_pref={mission.speed_pref_mps:.0f}m/s")
     print(f"[policy]   {policy.policy_id}  {policy.policy_hash}")
+    print(f"[policy]   from {policy_source['kind']} {policy_source['path']} - "
+          f"signature {policy_source['signature']}")
 
     vla = StubVLA(mission)
     shield = Shield(policy, lookahead_s=3.0, dt=0.5)
@@ -376,6 +408,8 @@ def main() -> int:
         "alt_violation_s": round(alt_seconds, 2),
         "interventions": n_touched,
         "brakes": n_braked,
+        # Beside the manifest, which is the grant's six fields and stays so.
+        "policy_source": policy_source,
     }
     (out / "flight_log.jsonl").write_text(
         "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
@@ -403,6 +437,7 @@ def main() -> int:
     kpi["kpi_grade"] = graded
     kpi["kpi_grade_reasons"] = why
     kpi["manifest"] = manifest
+    kpi["policy_source"] = policy_source
     (out / "kpi.json").write_text(json.dumps(kpi, indent=2), encoding="utf-8")
     kpi_ok = kpi["p0_violation_escape_rate"] == 0.0
 
@@ -411,7 +446,8 @@ def main() -> int:
     # policy that governed the flight is still the object in memory.
     try:
         rb = write_replay(out, policy, out / f"{out.name}.replay.tar.gz",
-                          changelog=f"sitl {out.name}")
+                          changelog=f"sitl {out.name}",
+                          policy_source=policy_source)
         ok, why = verify_replay(rb)
         print(f"[replay]   {rb.name} "
               f"{'re-derives its own KPIs' if ok else 'FAILED verification'}")
@@ -460,6 +496,7 @@ def main() -> int:
 | Adapter | MAVLink SET_POSITION_TARGET_LOCAL_NED @ 10 Hz |
 | Command | `{args.command}` |
 | Policy | `{policy.policy_id}` `{policy.policy_hash}` |
+| Policy source | {policy_source['kind']} `{policy_source['path']}` - signature **{policy_source['signature']}** |
 | Target reached | {'yes' if reached else 'NO'} |
 | Ticks | {len(traj)} |
 | Shield interventions | {n_touched} |

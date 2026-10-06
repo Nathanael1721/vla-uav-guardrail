@@ -1,0 +1,14 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: a self-intersecting (bow-tie) fence: vertex order crosses itself
+# currently: ACCEPTED
+# finding: the grant's ingest pipeline names self-intersection as a geometry check; a bow-tie's 'inside' depends on the fill rule, so the zone enforced is not the zone drawn
+policy_id: neg-bowtie
+version: 0.1.0
+constraints:
+  - id: nfz-bowtie
+    type: polygon_fence
+    vertices:
+      - { x: 0, y: 0 }
+      - { x: 10, y: 10 }
+      - { x: 10, y: 0 }
+      - { x: 0, y: 10 }

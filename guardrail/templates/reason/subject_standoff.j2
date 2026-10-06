@@ -1,0 +1,3 @@
+{#- The subject's position is perception's job, so the mission fact available
+    at compile time is whether the task asks to follow anything at all. -#}
+{% if follow %}the mission text asks to follow a subject, so this binds to {{ who }}{% else %}the mission text does not ask to follow anything; this binds to {{ who }} only if one is tracked{% endif %}; the subject's position comes from perception at run time{% if time_fact %}; {{ time_fact }}{% endif %}

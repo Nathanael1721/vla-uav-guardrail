@@ -1,0 +1,3 @@
+{% extends "sentence/_base.j2" %}
+{#- Keep-IN tube: half-width is the tolerance either side of the centerline. -#}
+{% block core %}Stay inside corridor '{{ r.id }}', within {{ r.half_width_m|g }} m of its centerline and between {{ r.altitude_floor_m|g }} m and {{ r.altitude_ceiling_m|g }} m{% endblock %}

@@ -1,0 +1,10 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: alt_max_m below alt_min_m
+# currently: refused
+policy_id: neg-inverted-alt
+version: 0.1.0
+constraints:
+  - id: alt
+    type: altitude_envelope
+    alt_min_m: 30
+    alt_max_m: 5

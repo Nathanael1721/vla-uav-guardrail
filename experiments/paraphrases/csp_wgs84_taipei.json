@@ -1,0 +1,89 @@
+{
+  "schema": "guardrail.paraphrases/1",
+  "source_key": "csp_wgs84_taipei",
+  "kind": "csp_nl",
+  "source_text": "Stay between 5 m and 80 m altitude. Never enter zone 'nfz-school-yard' (in force Mon-Fri 07:30-17:30). Keep speed at or below 12 m/s, climb rate below 4 m/s and turn rate below 60 deg/s.",
+  "source_id": "src-51a1ed0309f7dea8",
+  "source_sha256": "51a1ed0309f7dea820b22e68c9fd324b38fa4479b25a9769eb3fd698bdb74a06",
+  "backend": "stored",
+  "origin": {
+    "renderer": "guardrail.compiler.ConstraintCompiler.compile_csp natural_language_prompt, compile_csp(now=None)",
+    "policy": "policies/wgs84_taipei.yaml",
+    "policy_hash": "sha256:ed22f684e37fc3241d3668fa24a2616d8df8aa276d6810ec7961f5d01f15efd5",
+    "frozen": "2026-10-06"
+  },
+  "provenance": {
+    "generator": "claude-opus-5-5 (agent, 2026-10-06)",
+    "prompt": "You are writing free-form paraphrases for the Paraphraser service of the\nconstrained-VLA guardrail (ITRI ICL subcontract; WP4 per-paraphrase robustness).\n\nSource (csp_nl): \"Stay between 5 m and 80 m altitude. Never enter zone 'nfz-school-yard' (in force Mon-Fri 07:30-17:30). Keep speed at or below 12 m/s, climb rate below 4 m/s and turn rate below 60 deg/s.\"\n\nWrite K=8 paraphrases of the source. Make them genuinely varied in\nvocabulary, word order, politeness, verbosity and indirect phrasing. Each paraphrase is one or more complete sentences.\n\nEvery paraphrase must keep every mission slot: the target object and its\ncolour, every number with its unit, its bound (at least / at most / between /\nat) and the thing it limits, every named zone, corridor or place (identifiers\nverbatim), whether a zone is to be kept out of or stayed inside, the direction\nwords, and the action (fly to / follow / avoid). Do not add a rule, number,\nobject, zone or direction the source does not contain, and do not drop one.\nReturn one paraphrase per line.",
+    "task_instruction": "Generate the free-form set yourself now (you are an LLM): for every instruction used in experiments/scenarios.yaml and the city follow missions (grep demo/ and scripts/ for the instruction strings), write K=8 genuinely varied free-form paraphrases (vocabulary, word order, politeness, verbosity, indirect phrasing), store them with provenance {generator: \"claude-opus-5-5 (agent, 2026-10-06)\", prompt: <the exact instruction you followed>, date}, and run the validator over them.",
+    "date": "2026-10-06",
+    "seed": null,
+    "note": "written in the review-fix pass of 2026-10-06, after the validator changes and by the agent that made them: validator-aware authoring, so acceptance is weak evidence"
+  },
+  "paraphrases": [
+    {
+      "index": 0,
+      "paraphrase_id": "pp-45d4651aab4bbc47",
+      "text": "Hold altitude between 5 m and 80 m. Keep out of zone 'nfz-school-yard' on weekdays from 07:30 to 17:30. Max speed 12 m/s; climb under 4 m/s; turn under 60 deg/s.",
+      "text_sha256": "9f8ebfb31a8ceff95d9c2d320c471bdff044b7cde0c0505022e00ca991a2709d",
+      "form": "sentences",
+      "style": "terse"
+    },
+    {
+      "index": 1,
+      "paraphrase_id": "pp-3bdcd46f2318e642",
+      "text": "Please keep your altitude between 5 m and 80 m. Please stay out of zone 'nfz-school-yard' while it is in force, Monday to Friday between 07:30 and 17:30. And please hold your speed to 12 m/s or less, your climb rate below 4 m/s and your turn rate below 60 deg/s.",
+      "text_sha256": "589814189a19e0a82625b427a7a8d5f3cdbbbe7d03ca66c44365795c46dadb59",
+      "form": "sentences",
+      "style": "polite"
+    },
+    {
+      "index": 2,
+      "paraphrase_id": "pp-f808254c10c934fc",
+      "text": "Speed tops out at 12 m/s, climb rate stays below 4 m/s and turn rate stays below 60 deg/s. From Monday to Friday, 07:30 to 17:30, zone 'nfz-school-yard' is off-limits. Altitude: no lower than 5 m and no higher than 80 m.",
+      "text_sha256": "8011d3c51630fe4f44e5dc4c9c25fd22d7f651be7d13b2464be9fe92d58dde49",
+      "form": "sentences",
+      "style": "reordered"
+    },
+    {
+      "index": 3,
+      "paraphrase_id": "pp-95932783a87dd1b8",
+      "text": "Constraints in force: altitude shall remain between 5 m and 80 m; entry into zone 'nfz-school-yard' is prohibited Monday through Friday, 07:30-17:30; speed shall not exceed 12 m/s, climb rate shall remain below 4 m/s, and turn rate shall remain below 60 deg/s.",
+      "text_sha256": "2c2d955f60f51044cf96d779fa2ec7af54a41ebd9e972045b529e599143a3373",
+      "form": "sentences",
+      "style": "formal"
+    },
+    {
+      "index": 4,
+      "paraphrase_id": "pp-c65c28a07599e8f5",
+      "text": "Keep it somewhere from 5 m up to 80 m high, don't fly into zone 'nfz-school-yard' on weekdays between 07:30 and 17:30, keep your speed at 12 m/s max, climb slower than 4 m/s and turn slower than 60 deg/s.",
+      "text_sha256": "5cf72f8ccfb98894a9474be0d225c26e596d9e85bd8f71c71753f280ea0479cf",
+      "form": "sentences",
+      "style": "casual"
+    },
+    {
+      "index": 5,
+      "paraphrase_id": "pp-e0d3919a334e7d78",
+      "text": "This flight has three rules. First, the altitude must stay at least 5 m and at most 80 m. Second, the school yard zone 'nfz-school-yard' must never be entered while its window is active, which is Monday to Friday from 07:30 until 17:30. Third, speed is capped at 12 m/s, climb rate must be below 4 m/s and turn rate must be below 60 deg/s.",
+      "text_sha256": "52b21cc3db009e885afe73db02919a4434da182db13ea1fe0f7c2b063f607a9b",
+      "form": "sentences",
+      "style": "verbose"
+    },
+    {
+      "index": 6,
+      "paraphrase_id": "pp-867c833a48a5527b",
+      "text": "The band you have to fly in runs from 5 m to 80 m of altitude. Zone 'nfz-school-yard' is closed to you on weekdays from 07:30 to 17:30, so never go in there during those hours. Speed must not go above 12 m/s, climb rate must stay under 4 m/s and turn rate under 60 deg/s.",
+      "text_sha256": "9a7be18a788f0e34e73311eafcc88e656f94f74b9767bdee30708f5e1f3a84bb",
+      "form": "sentences",
+      "style": "indirect"
+    },
+    {
+      "index": 7,
+      "paraphrase_id": "pp-c552b051157c5d3f",
+      "text": "Alt 5 m to 80 m. No entry: zone 'nfz-school-yard', Mon-Fri 07:30-17:30. Speed ≤ 12 m/s, climb < 4 m/s, turn < 60 deg/s.",
+      "text_sha256": "b38082a6f14a851a15985ee95592865f428e6c65da9a3266110f77ca2bedb987",
+      "form": "sentences",
+      "style": "terse, symbols"
+    }
+  ]
+}

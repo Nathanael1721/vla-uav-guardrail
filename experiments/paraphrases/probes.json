@@ -1,0 +1,649 @@
+{
+  "schema": "guardrail.paraphrases.probes/1",
+  "what": "Hand-written (source, candidate, meaning_changed) triples, scored by `python -m guardrail.paraphraser validate` into validation_report.json (probes). A false accept is a meaning change the validator let through; a false refusal is a faithful paraphrase it refused. Labels are the writer's judgement and are kept as written, including ones this unit disputes (docs/DESIGN-paraphraser.md).",
+  "sets": {
+    "review_2026_10_06": {
+      "status": "DEV SET - written by the independent reviewer of 2026-10-06 (scratchpad rv_para/adv.py + faithful.py) and USED to tune the validator the same day. A regression test, not an estimate.",
+      "measured_before_tuning": {
+        "false_accepts": "17/28",
+        "false_refusals": "13/30",
+        "validator": "guardrail/paraphraser.py as reviewed (validator_digest dcacf8e12e8f3f1d)"
+      },
+      "probes": [
+        {
+          "source": "follow a red car",
+          "candidate": "do not follow a red car",
+          "meaning_changed": true,
+          "label": "negated action"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "stop following a red car",
+          "meaning_changed": true,
+          "label": "stop action"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "never track a red car",
+          "meaning_changed": true,
+          "label": "never action"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow the car that is parked next to the red one",
+          "meaning_changed": true,
+          "label": "colour moved to other object"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow a red car, or any car if you see no red one",
+          "meaning_changed": true,
+          "label": "colour/obj widened"
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "fly forward and do not avoid restricted areas",
+          "meaning_changed": true,
+          "label": "double-neg polarity restricted"
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "fly ahead, and never steer clear of restricted areas",
+          "meaning_changed": true,
+          "label": "double-neg polarity restricted2"
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "It is not forbidden to enter zone 'nfz-square'. Hold altitude between 10 m and 20 m. Max speed 4 m/s; climb under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true,
+          "label": "permission zone"
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Do not stay out of zone 'nfz-square'. Hold altitude between 10 m and 20 m. Max speed 4 m/s; climb under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true,
+          "label": "do not stay out"
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "You are allowed to enter zone 'nfz-square'. Hold altitude between 10 m and 20 m. Max speed 4 m/s; climb under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true,
+          "label": "you may enter"
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep out of zone 'nfz-square' unless the operator says otherwise. Hold altitude between 10 m and 20 m. Max speed 4 m/s; climb under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true,
+          "label": "unless exception zone"
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep out of zone 'nfz-square'. Hold altitude between 10 m and 20 m. A speed below 4 m/s is not allowed; climb under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true,
+          "label": "post negation bound"
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep out of zone 'nfz-square'. An altitude between 10 m and 20 m is forbidden. Max speed 4 m/s; climb under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true,
+          "label": "post negation band"
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep out of zone 'nfz-square'. Hold altitude between 10 m and 20 m. Max vertical speed 4 m/s; climb under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true,
+          "label": "vertical speed (tag superset)"
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep out of zone 'nfz-square'. Hold altitude between 10 m and 20 m. While climbing, max speed 4 m/s; climb under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true,
+          "label": "speed only when climbing"
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep out of zone 'nfz-square'. Near the zone only, hold altitude between 10 m and 20 m. Max speed 4 m/s; climb under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true,
+          "label": "scope: only near the zone"
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep out of zone 'nfz-square'. Generally hold altitude between 10 m and 20 m. Max speed 4 m/s; climb under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true,
+          "label": "generally hedge"
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep out of zone 'nfz-square'. Hold altitude between 10 m and 20 m. Max speed 4 m/s unless you are behind schedule; climb under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true,
+          "label": "unless hedge speed"
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
+          "candidate": "Fly between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s. Stay within 10 m of pedestrians and at least 5 m from your target.",
+          "meaning_changed": true,
+          "label": "standoff from pedestrian -> to pedestrian"
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
+          "candidate": "Fly between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s. Keep at least 10 m from whatever you are following and at least 5 m from pedestrians.",
+          "meaning_changed": true,
+          "label": "standoff subject swapped to pedestrian"
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "fly to a spot far away from the northeast pad at 6 m/s",
+          "meaning_changed": true,
+          "label": "goto from place"
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "fly to the northeast pad at 6 m/s and come straight back",
+          "meaning_changed": true,
+          "label": "goto then return"
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "fly to the northeast pad at about 6 m/s",
+          "meaning_changed": true,
+          "label": "approx speed"
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "fly to the northeast pad at up to 6 m/s",
+          "meaning_changed": true,
+          "label": "speed up to"
+        },
+        {
+          "source": "fly to (40, 40) at 6 m/s altitude 20",
+          "candidate": "fly to (40, 40) at 6 m/s, below altitude 20",
+          "meaning_changed": true,
+          "label": "alt below"
+        },
+        {
+          "source": "fly to (40, 40) at 6 m/s altitude 20",
+          "candidate": "fly to (40, 40) at 6 m/s at a height of 20 ft",
+          "meaning_changed": true,
+          "label": "alt changed to 'height 20 ft'"
+        },
+        {
+          "source": "fly to (40, 40) at 6 m/s altitude 20",
+          "candidate": "fly to (40, 40) at 20 m/s altitude 6",
+          "meaning_changed": true,
+          "label": "swap x y"
+        },
+        {
+          "source": "fly to (40, 40) at 6 m/s altitude 20",
+          "candidate": "go to the point x=40, y=40 at 6 m/s, altitude 20",
+          "meaning_changed": false,
+          "label": "coords as words"
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "do not fly forward, and avoid restricted areas",
+          "meaning_changed": true,
+          "label": "fwd -> not forward"
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "head straight on while keeping clear of no-fly zones",
+          "meaning_changed": false,
+          "label": "faithful: keep clear"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "keep the red car in sight and follow it",
+          "meaning_changed": false,
+          "label": "faithful: follow"
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "please take the drone over to the northeast pad, flying at six metres a second",
+          "meaning_changed": false,
+          "label": "faithful: pad"
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Zone 'nfz-square' is a no-go area. Keep between 10 and 20 metres of altitude. Don't exceed 4 m/s of speed, 2 m/s of climb or 45 deg/s of turn.",
+          "meaning_changed": false,
+          "label": "faithful csp"
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Never enter zone 'nfz-square'. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Zone 'nfz-square' is a no-go area. Keep between 10 and 20 metres of altitude. Don't exceed 4 m/s of speed, 2 m/s of climb or 45 deg/s of turn.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Never enter zone 'nfz-square'. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "'nfz-square' is a no-fly zone, so never enter it. Fly at 10 to 20 m altitude. Speed must not go above 4 m/s; climb must stay below 2 m/s; turning must stay below 45 deg/s.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Never enter zone 'nfz-square'. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Do not enter the 'nfz-square' zone. Your altitude has to be at least 10 m and at most 20 m. Limit speed to 4 m/s, climb rate to under 2 m/s and turn rate to under 45 deg/s.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Never enter zone 'nfz-square'. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Avoid zone 'nfz-square' at all times. Altitude: 10-20 m. Max speed 4 m/s, max climb rate below 2 m/s, max turn rate below 45 deg/s.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Never enter zone 'nfz-square'. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Under no circumstances fly into zone 'nfz-square'. Remain between 10 m and 20 m above ground, going no faster than 4 m/s, climbing slower than 2 m/s and turning slower than 45 deg/s.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Fly between 10 m and 20 m high. Don't go faster than 4 m/s, climb slower than 2 m/s and turn slower than 45 deg/s. Stay 10 m or more from pedestrians and 5 m or more from whatever you're following.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Altitude 10 to 20 m; speed up to 4 m/s; climb rate less than 2 m/s; turn rate less than 45 deg/s. Keep a minimum of 10 m between you and any pedestrian, and a minimum of 5 m between you and the thing you are following.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Hold 10-20 m altitude. Keep speed at most 4 m/s, climb under 2 m/s and turn under 45 deg/s. Never get closer than 10 m to a pedestrian or 5 m to your target.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "On weekdays between 07:30 and 17:30, zone 'nfz-school' must not be entered. Stay within corridor 'corridor-survey-route': at most 20 m from its centerline, at an altitude of 10 m to 20 m. Speed at most 4 m/s, climb below 2 m/s, turn below 45 deg/s.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "From Monday to Friday, 7:30 am to 5:30 pm, keep out of zone 'nfz-school'. Never leave corridor 'corridor-survey-route'; keep within 20 m of its centerline and between 10 m and 20 m in altitude. Do not exceed 4 m/s; climb below 2 m/s; turn below 45 deg/s.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Stay at 6 to 14 m altitude. Don't exceed 5 m/s, climb slower than 2 m/s and turn slower than 45 deg/s. Keep 3 m or more from buildings, 10 m or more from pedestrians and 5 m or more from what you are following.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Altitude between 6 m and 14 m. Speed no more than 5 m/s. Climb rate under 2 m/s. Turn rate under 45 deg/s. At least 3 m from any building, 10 m from any pedestrian, 5 m from whatever you're following.",
+          "meaning_changed": false
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "keep following the red car",
+          "meaning_changed": false
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "go after a red car",
+          "meaning_changed": false
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "stay behind a red car and follow it",
+          "meaning_changed": false
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow someone walking",
+          "meaning_changed": false
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a human",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "fly at 6 m/s to the northeast pad",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "head for the northeast pad at a speed of 6 m/s",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "fly to the pad in the northeast at 6 m/s",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "fly straight and avoid any restricted area",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "move forward but stay out of restricted zones",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "go forward, never entering a restricted area",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly to (40, 40) at 6 m/s altitude 20",
+          "candidate": "fly to (40, 40) at 6 m/s and 20 m altitude",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly to (40, 40) at 6 m/s altitude 20",
+          "candidate": "go to position (40, 40) at 6 m/s with an altitude of 20 m",
+          "meaning_changed": false
+        }
+      ]
+    },
+    "heldout_2026_10_06": {
+      "status": "HELD-OUT - written on 2026-10-06 by the agent fixing the validator, after reading the review and BEFORE changing any code, and never used to tune it. Measured once before the changes and once after. Same author as the code, so not independent of its blind spots.",
+      "measured_before_changes": {
+        "false_accepts": "11/30",
+        "false_refusals": "2/30",
+        "validator": "validator_digest dcacf8e12e8f3f1d"
+      },
+      "probes": [
+        {
+          "source": "follow a red car",
+          "candidate": "follow a red car only until it turns left",
+          "meaning_changed": true
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "watch a red car from a distance",
+          "meaning_changed": true
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow any car, preferably a red one",
+          "meaning_changed": true
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow a dark red car",
+          "meaning_changed": true
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a person riding a bicycle",
+          "meaning_changed": true
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow the person who is running",
+          "meaning_changed": true
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "fly toward the northeast pad at 6 m/s but stop halfway",
+          "meaning_changed": true
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "fly to the northeast pad at 6 m/s, then land",
+          "meaning_changed": true
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "fly to the northeast pad at no more than 6 m/s",
+          "meaning_changed": true
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "fly past the northeast pad at 6 m/s",
+          "meaning_changed": true
+        },
+        {
+          "source": "fly to (40, 40) at 6 m/s altitude 20",
+          "candidate": "fly to (40, 40) at 6 m/s, climbing to altitude 20 only at the end",
+          "meaning_changed": true
+        },
+        {
+          "source": "fly to (40, 40) at 6 m/s altitude 20",
+          "candidate": "fly to (40, -40) at 6 m/s altitude 20",
+          "meaning_changed": true
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "fly forward and avoid restricted areas when convenient",
+          "meaning_changed": true
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "fly forward into the restricted areas",
+          "meaning_changed": true
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "fly forward; restricted areas may be crossed if necessary",
+          "meaning_changed": true
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Zone 'nfz-square' is closed only during the day; hold altitude between 10 m and 20 m; max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Stay out of zone 'nfz-square'. Hold altitude between 10 m and 20 m. Max speed 4 m/s; climb under 2 m/s; turn under 45 deg/s, except in an emergency.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Stay out of zone 'nfz-square' if you can. Hold altitude between 10 m and 20 m. Max speed 4 m/s; climb under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Stay out of zone 'nfz-square'. Hold altitude between 10 m and 20 m. Max speed 4 m/s; climb under 2 m/s; turns of 45 deg/s or more are fine.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Stay out of zone 'nfz-square'. Hold altitude between 10 m and 20 m. Max speed 4 m/s; descend under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
+          "candidate": "Fly between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s. Keep at least 10 m from pedestrians in the street and at least 5 m from your target.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
+          "candidate": "Fly between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s. Keep at least 10 m from pedestrians, and close to within 5 m of your target.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
+          "candidate": "Fly between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s. Keep at least 10 m from pedestrians and at least 5 m from your target when it stops.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep out of zone 'nfz-school' at weekends from 07:30 to 17:30. Fly only inside corridor 'corridor-survey-route', no more than 20 m off its centerline and between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep out of zone 'nfz-school' on weekdays from 07:30 to 17:30. Fly inside or near corridor 'corridor-survey-route', no more than 20 m off its centerline and between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep out of zone 'nfz-school' on weekdays from 07:30 to 17:30. Fly only inside corridor 'corridor-survey-route', at least 20 m off its centerline and between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep out of zone 'nfz-school' on weekdays from 07:30 to 17:30. Fly only inside corridor 'corridor-survey-route', no more than 20 m off its centerline and between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s - the speed cap is advisory.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Stay between 6 m and 14 m altitude. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 3 m from any building. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
+          "candidate": "Stay between 6 m and 14 m altitude, max speed 5 m/s, climb under 2 m/s, turn under 45 deg/s. Buildings may be approached closer than 3 m; keep at least 10 m from pedestrians and at least 5 m from whatever you follow.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Stay between 6 m and 14 m altitude. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 3 m from any building. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
+          "candidate": "Stay between 6 m and 14 m altitude, max speed 5 m/s, climb under 2 m/s, turn under 45 deg/s. Keep at least 3 m from buildings, at least 10 m from adult pedestrians and at least 5 m from whatever you follow.",
+          "meaning_changed": true
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "You can fly into zone 'nfz-square' briefly. Hold altitude between 10 m and 20 m. Max speed 4 m/s; climb under 2 m/s; turn under 45 deg/s.",
+          "meaning_changed": true
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "please keep following a red car",
+          "meaning_changed": false
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "stick with a red car",
+          "meaning_changed": false
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "your mission: follow a red car",
+          "meaning_changed": false
+        },
+        {
+          "source": "follow a person",
+          "candidate": "keep tracking a person",
+          "meaning_changed": false
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a human being",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "proceed to the northeast pad at a speed of 6 m/s",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "at 6 m/s, fly to the northeast pad",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "navigate to the northeast pad, speed 6 m/s",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly to (40, 40) at 6 m/s altitude 20",
+          "candidate": "fly to the point (40, 40) at a speed of 6 m/s and altitude 20",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly to (40, 40) at 6 m/s altitude 20",
+          "candidate": "at altitude 20 and 6 m/s, go to (40, 40)",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "keep flying forward and stay away from restricted areas",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "fly ahead, avoiding restricted areas",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "go forward and don't enter any restricted area",
+          "meaning_changed": false
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Do not enter zone 'nfz-square'. Your altitude must be between 10 m and 20 m. Your speed must not exceed 4 m/s, your climb rate must be under 2 m/s and your turn rate must be under 45 deg/s.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Three rules: zone 'nfz-square' is off-limits; altitude stays from 10 m to 20 m; speed is at most 4 m/s with climb rate under 2 m/s and turn rate under 45 deg/s.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Avoid zone 'nfz-square'. Fly no lower than 10 m and no higher than 20 m. Speed: 4 m/s maximum. Climb rate: less than 2 m/s. Turn rate: less than 45 deg/s.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Never enter zone 'nfz-square'. Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Entering zone 'nfz-square' is not allowed. Stay in the 10 m to 20 m altitude range. Do not go faster than 4 m/s, and keep climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
+          "candidate": "Stay between 10 m and 20 m altitude, never faster than 4 m/s, climbing at less than 2 m/s and turning at less than 45 deg/s. Pedestrians: keep at least 10 m away. Whatever you are following: keep at least 5 m away.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
+          "candidate": "Hold an altitude of 10 m to 20 m. Speed at most 4 m/s; climb rate under 2 m/s; turn rate under 45 deg/s. Never come within 10 m of a pedestrian or within 5 m of what you are following.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
+          "candidate": "Keep your height between 10 m and 20 m and your speed no higher than 4 m/s; keep climb rate under 2 m/s and turn rate under 45 deg/s; leave at least 10 m to any pedestrian and at least 5 m to whatever you are following.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Monday to Friday, 07:30-17:30, do not enter zone 'nfz-school'. Remain inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Speed no more than 4 m/s, climb under 2 m/s, turn under 45 deg/s.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Zone 'nfz-school' is off-limits Mon-Fri 07:30-17:30. Do not leave corridor 'corridor-survey-route'; stay within 20 m of its centerline and between 10 m and 20 m. Keep speed at most 4 m/s, climb rate under 2 m/s and turn rate under 45 deg/s.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 6 m and 14 m altitude. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 3 m from any building. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
+          "candidate": "Keep altitude between 6 m and 14 m. Do not exceed 5 m/s in speed; climb rate under 2 m/s; turn rate under 45 deg/s. Stay at least 3 m from any building, at least 10 m from any pedestrian and at least 5 m from whatever you are following.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Stay between 6 m and 14 m altitude. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 3 m from any building. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
+          "candidate": "Altitude must stay between 6 m and 14 m, speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep 3 m or more from buildings, 10 m or more from pedestrians, and 5 m or more from the thing you are following.",
+          "meaning_changed": false
+        },
+        {
+          "source": "Fly to the waypoint 120 m ahead at cruise altitude.",
+          "candidate": "go to the waypoint 120 m ahead, holding cruise altitude",
+          "meaning_changed": false
+        },
+        {
+          "source": "Fly to the waypoint 120 m ahead at cruise altitude.",
+          "candidate": "the waypoint 120 m in front of you is the goal; fly to it at cruise altitude",
+          "meaning_changed": false
+        },
+        {
+          "source": "Never enter zone 'nfz-frontage'. Stay between 6 m and 14 m altitude. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s. Keep at least 3 m from any building. Keep at least 10 m away from any pedestrian. Keep at least 5 m away from anything you are following.",
+          "candidate": "Never fly into zone 'nfz-frontage'. Keep altitude between 6 m and 14 m. Speed at most 5 m/s, climb rate under 2 m/s, turn rate under 45 deg/s. Keep at least 3 m from buildings, at least 10 m from pedestrians and at least 5 m from whatever you are following.",
+          "meaning_changed": false
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "head forward and keep clear of restricted airspace",
+          "meaning_changed": false
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow the red car",
+          "meaning_changed": false
+        },
+        {
+          "source": "follow a person",
+          "candidate": "please follow a person",
+          "meaning_changed": false
+        }
+      ]
+    }
+  }
+}

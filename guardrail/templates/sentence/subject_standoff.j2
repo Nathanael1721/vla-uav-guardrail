@@ -1,0 +1,3 @@
+{% extends "sentence/_base.j2" %}
+{#- "*" binds to whatever is being followed, so it is worded that way. -#}
+{% block core %}Keep at least {{ r.min_range_m|g }} m away from {% if r.subject_class == "*" %}anything you are following{% else %}any {{ r.subject_class }}{% endif %}{% endblock %}

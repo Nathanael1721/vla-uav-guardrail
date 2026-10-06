@@ -1,0 +1,89 @@
+# Packaging for the guardrail package only (Policy DSL, Prefix Compiler,
+# Safety Shield, KPI/replay/manifest tooling under guardrail/).
+#
+# WHY this file exists: the grant locks "Python 3.11+" for the non-VLA stack
+# (Policy DSL p1, Prefix Compiler p1, Safety Shield p1, Stress Testing p1), and
+# until 2026-10-06 nothing in the repo stated it, so a reader had only the
+# README's "Python 3.10" line to go on. requires-python below is that lock,
+# written where pip enforces it.
+#
+# What is deliberately NOT packaged: demo/ (Project AirSim flight scripts,
+# OWL-ViT detector), training/, tools/, sitl/, experiments/ and the OpenVLA /
+# AerialVLA code. Those run from the source tree in their own environments;
+# docs/DESIGN-python-versions.md lists which environment runs what, and why the
+# OpenVLA flight environment (vla-real) stays on Python 3.10.20. vla-real
+# imports guardrail from the source tree (sys.path), not from an install, so the
+# >=3.11 floor here does not block it; that 3.10 use is a recorded deviation,
+# not something this file hides.
+#
+# The core dependency list must stay identical to requirements.txt (the file
+# the conda envs were built from). Two lists that drift apart are two answers
+# to "what does the guardrail need"; keep them in step. tests/test_env_pins.py
+# checks both that and that every third-party import in guardrail/ is declared
+# here.
+
+[build-system]
+# >=64: reads [tool.setuptools.dynamic] version-from-file and supports
+# PEP 660 editable installs (pip install -e .).
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vla-drone-guardrail"
+dynamic = ["version"]
+description = "Guardrail layer for a VLA-piloted drone: Policy DSL, Prefix Compiler, Safety Shield, replay and KPI tooling (ITRI ICL subcontract)."
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2,<3",
+    "pyyaml",
+    "shapely",
+    "numpy",
+    # guardrail/compiler.py renders every rule sentence and the CSP text from
+    # guardrail/templates/*.j2 ("NL template renderer - Jinja2 templates +
+    # Python function", Prefix Compiler p6). build_prompt() and summary_pack()
+    # need it, so it is core, not an extra. requirements.txt must list it too.
+    "jinja2",
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+[project.optional-dependencies]
+# Policy-bundle signing (Ed25519). Optional because the vla-drone env
+# (Python 3.11) has no cryptography wheel installed and must still import the
+# package; signing code has to guard the import and say "signing unavailable"
+# rather than fail at import time.
+signing = ["cryptography"]
+# guardrail/api.py (hot-apply HTTP endpoint) imports fastapi at module level
+# and uvicorn when it starts the server. Nothing in the Shield's import path
+# needs them.
+api = ["fastapi", "uvicorn"]
+# guardrail/csp.py OpenVLATokenCounter: exact OpenVLA (Llama-2 SentencePiece)
+# token counts from the model's tokenizer.json. Imported lazily; the default
+# TableTokenCounter is pure Python and needs nothing.
+tokens = ["tokenizers"]
+
+[tool.setuptools]
+# Explicit, so setuptools' flat-layout discovery can never pick up demo/,
+# tools/ or training/ as packages. Two VLA-slot occupants ship in the package
+# but are not promised by an install: guardrail/vla_bc.py (imports torch at
+# module level and training.features from the repo's training/ folder) works
+# only from the source tree inside the VLA env, and
+# vla_backends.AeroVLABackend is an unfilled stub (its model load is a
+# commented-out TODO); once filled it will need torch/transformers from the
+# VLA env, which an install does not promise either.
+packages = ["guardrail"]
+
+[tool.setuptools.package-data]
+# The Jinja2 rule templates are loaded from the package directory at run time
+# (compiler.TEMPLATE_DIR); a wheel without them imports fine and then fails on
+# the first build_prompt(). csp.schema.json is the published CSP contract
+# (Prefix Compiler outputs table), checked for drift by tests/test_csp.py.
+guardrail = ["templates/**/*.j2", "csp.schema.json"]
+
+[tool.setuptools.dynamic]
+# One version string for the whole repo: VERSION (also read by
+# tools/add_update.py and tools/build_eval_data.py). No second copy here.
+version = { file = "VERSION" }

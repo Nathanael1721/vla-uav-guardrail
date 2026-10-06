@@ -1,0 +1,804 @@
+{
+ "generated": "2026-10-06T05:28:20Z",
+ "command": "python tools/wp1_roundtrip_kpi.py",
+ "code_revision": "1d097869f152-dirty",
+ "python": "3.10.20",
+ "cryptography_available": true,
+ "signature_verifier": "cryptography",
+ "hash_scheme": "sha256-canonical-v2",
+ "kpi": {
+  "round_trip": "29/29",
+  "tamper_refusal": "29/29",
+  "negative_refusal": "14/25",
+  "negative_accepted": [
+   "bowtie_polygon.yaml",
+   "collinear_polygon.yaml",
+   "duplicate_rule_id.yaml",
+   "duplicate_yaml_key.yaml",
+   "empty_constraints.yaml",
+   "empty_policy_id.yaml",
+   "infinite_speed_cap.yaml",
+   "misspelled_rule_key.yaml",
+   "nan_altitude.yaml",
+   "negative_margin.yaml",
+   "non_semver_version.yaml"
+  ]
+ },
+ "null_accept_everything": {
+  "round_trip": "29/29",
+  "tamper_refusal": "0/29",
+  "negative_refusal": "0/25",
+  "why": "a reader that verifies nothing passes every round trip; only the refusal columns separate it from a real one"
+ },
+ "round_trip": {
+  "n": 29,
+  "passed": 29,
+  "rate": 1.0,
+  "signatures": {
+   "verified": 29
+  },
+  "tamper_refusal": {
+   "run": 29,
+   "refused": 29,
+   "rate": 1.0
+  },
+  "rows": [
+   {
+    "file": "corridor_survey.yaml",
+    "policy_id": "corridor-survey",
+    "version": "0.1.0",
+    "policy_hash": "sha256:5a0e507fe15678551b887141eb85c904030c088d89cf90f916c82649f17b770d",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "corridor_survey.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "demo_policy.yaml",
+    "policy_id": "fase3-demo",
+    "version": "0.1.0",
+    "policy_hash": "sha256:714e1db183a191083567b919ffd49aa0eecce05833d4d0945cff567b77c2d988",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "demo_policy.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "edge_patrol.yaml",
+    "policy_id": "edge-nfz-patrol",
+    "version": "0.1.0",
+    "policy_hash": "sha256:e6903b303840f120c880e60b91c3fea44c2c923b3a320060c68f5895c60e1c68",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "edge_patrol.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "follow_car.yaml",
+    "policy_id": "follow-car",
+    "version": "0.1.0",
+    "policy_hash": "sha256:979c982866fe38ef506b23a92c48823b038c62adccd39c6ab4da8cd0ba57ad9f",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "follow_car.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "follow_car_citylife.yaml",
+    "policy_id": "follow-car-citylife",
+    "version": "0.1.0",
+    "policy_hash": "sha256:4f7ebad65201bcd0445f3bba6ccc9f9cece5ecb76308501830636e91dc5f7188",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "follow_car_citylife.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "follow_car_citylife_nfz.yaml",
+    "policy_id": "follow-car-citylife-nfz",
+    "version": "0.1.0",
+    "policy_hash": "sha256:e50644313d185db5e8917ffa720a2b8dc83f452fe2d5538190adc55667ef63c3",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "follow_car_citylife_nfz.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "follow_car_gap.yaml",
+    "policy_id": "follow-car-gap",
+    "version": "0.1.0",
+    "policy_hash": "sha256:70565b9a03394595193e36e5e5422de2105b3ec70fba04173d1b68f31f8f4530",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "follow_car_gap.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "follow_car_nfz.yaml",
+    "policy_id": "follow-car-nfz",
+    "version": "0.1.0",
+    "policy_hash": "sha256:5826eccda2af83d511b537130865d8ea566eb1af1c41395cda97d854ee986282",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "follow_car_nfz.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "follow_pedestrian.yaml",
+    "policy_id": "follow-pedestrian",
+    "version": "0.1.0",
+    "policy_hash": "sha256:fefde27c34af37b8e6ff2cc2292c7c7963e540cfa6f020f5bd4e676bfea2ca39",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "follow_pedestrian.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "gui_high_test.yaml",
+    "policy_id": "gui-high-test",
+    "version": "0.1.0",
+    "policy_hash": "sha256:71acc4d0ef62b7c9e12265c607c3cb7d4af545e301dd89f4e16a168adc1fc9b5",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "gui_high_test.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "gui_policy.yaml",
+    "policy_id": "gui-mission",
+    "version": "0.1.0",
+    "policy_hash": "sha256:6ecb934e9ac1b6d4ad08d91619a150caf8a1abe0d478094b32cd8c28cd931055",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "gui_policy.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "hard_11.yaml",
+    "policy_id": "random-scenario",
+    "version": "0.1.0",
+    "policy_hash": "sha256:e8fbedd09a32de70a2d2cbb34e0343d9a4a41bb3676ecfa5d6dfef055c3ab2af",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "hard_11.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "hard_21.yaml",
+    "policy_id": "random-scenario",
+    "version": "0.1.0",
+    "policy_hash": "sha256:453348b882d155ea7acd19ae84d9e8ca214acc6bc26b693c40c817725bc53987",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "hard_21.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "hard_3.yaml",
+    "policy_id": "random-scenario",
+    "version": "0.1.0",
+    "policy_hash": "sha256:93cb817f15dcf05a0e38ffb7ba0aa27bee1b7a152875b1abfafca74ff9b297c9",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "hard_3.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "hp_14.yaml",
+    "policy_id": "random-scenario",
+    "version": "0.1.0",
+    "policy_hash": "sha256:e69b769ac522ed8b16b27974b7d5b7966f240323fdf87bbce099eec3b80eeb8c",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "hp_14.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "hp_30.yaml",
+    "policy_id": "random-scenario",
+    "version": "0.1.0",
+    "policy_hash": "sha256:d01acc72c9b883ac40a3a1fb3d1cfc97002a93dd408f6e7324831a431c184ca8",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "hp_30.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "hp_42.yaml",
+    "policy_id": "random-scenario",
+    "version": "0.1.0",
+    "policy_hash": "sha256:4961629f34dd5900c125503a6d6b88fc76af871867916b6cac0fa6d12d875791",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "hp_42.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "hp_5.yaml",
+    "policy_id": "random-scenario",
+    "version": "0.1.0",
+    "policy_hash": "sha256:e3a006271d60c6a62ab0e4995fc49906e313b79ee4c7be30dd7f6e0512ed7ce5",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "hp_5.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "hp_8.yaml",
+    "policy_id": "random-scenario",
+    "version": "0.1.0",
+    "policy_hash": "sha256:f6245bbf61ad1f974bcdcf80135724ab1701cc0b4b6dafac4054b9d47fd6ce20",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "hp_8.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "orbit_building.yaml",
+    "policy_id": "orbit-building",
+    "version": "0.1.0",
+    "policy_hash": "sha256:b94223dce2ed42ef897b58e1f2297c624e425c3d96dced0eb631e8d1fc4dc3f3",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "orbit_building.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "poly_test.yaml",
+    "policy_id": "poly-test",
+    "version": "0.1.0",
+    "policy_hash": "sha256:8afa2bc6059bc8d351eea8e1fae83f360fe07621ea66f726e2f7015e4393a940",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "poly_test.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "random_scenario.yaml",
+    "policy_id": "random-scenario",
+    "version": "0.1.0",
+    "policy_hash": "sha256:7d5534e50d9d302bb4b8c5b88d65159cbf271e686c487be578d5691fbcb10516",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "random_scenario.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "rth_poly.yaml",
+    "policy_id": "rth-poly-demo",
+    "version": "0.1.0",
+    "policy_hash": "sha256:776daf142f81192470a4bc58cae1bee7790b8a6ad645fdd63c6625c3e98974be",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "rth_poly.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "semantic_conflict.yaml",
+    "policy_id": "semantic-conflict",
+    "version": "0.1.0",
+    "policy_hash": "sha256:79fb476a67d1d205444861bf9cbeb45fb98878813ecf5627fe71a31c3f625694",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "semantic_conflict.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "sim_demo_policy.yaml",
+    "policy_id": "fase3-sim-demo",
+    "version": "0.1.1",
+    "policy_hash": "sha256:8a311f9d22d2260000eb2b24775c3e6cbfeb70416c8299b3354e47227a2476af",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "sim_demo_policy.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "sitl_pedestrian.yaml",
+    "policy_id": "sitl-pedestrian-standoff",
+    "version": "0.1.0",
+    "policy_hash": "sha256:68a4efd102869f5cf4819b4a2d67e3ee84579a8160b72ecc6d27856d2a2c1259",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "sitl_pedestrian.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "urban_clearance.yaml",
+    "policy_id": "urban-clearance-patrol",
+    "version": "0.1.0",
+    "policy_hash": "sha256:d81796e79514d4e1511f873895ca4800118de1a97bf0f67ed726e367ab63ee5b",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "urban_clearance.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "urban_demo_policy.yaml",
+    "policy_id": "fase3-urban-demo",
+    "version": "0.1.0",
+    "policy_hash": "sha256:c93b635572d11b0f2332aa625dbc5966ab3b087f0f91899812dc4594240242db",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "urban_demo_policy.tampered.tar.gz: policy_hash mismatch"
+   },
+   {
+    "file": "wgs84_taipei.yaml",
+    "policy_id": "wgs84-taipei-demo",
+    "version": "0.1.0",
+    "policy_hash": "sha256:ed22f684e37fc3241d3668fa24a2616d8df8aa276d6810ec7961f5d01f15efd5",
+    "same_hash": true,
+    "same_canonical_ir": true,
+    "same_model_dump": true,
+    "same_rule_count": true,
+    "signature": "verified",
+    "ok": true,
+    "tamper": "refused",
+    "tamper_reason": "wgs84_taipei.tampered.tar.gz: policy_hash mismatch"
+   }
+  ]
+ },
+ "negative_corpus": {
+  "n": 25,
+  "refused": 14,
+  "rate": 0.56,
+  "accepted_findings": [
+   {
+    "file": "bowtie_polygon.yaml",
+    "defect": "a self-intersecting (bow-tie) fence: vertex order crosses itself",
+    "finding": "the grant's ingest pipeline names self-intersection as a geometry check; a bow-tie's 'inside' depends on the fill rule, so the zone enforced is not the zone drawn"
+   },
+   {
+    "file": "collinear_polygon.yaml",
+    "defect": "a zero-area fence: all vertices on one line",
+    "finding": "a fence with no interior protects nothing while looking like a rule"
+   },
+   {
+    "file": "duplicate_rule_id.yaml",
+    "defect": "two rules share the id `nfz`",
+    "finding": "audit records, KPI priorities (kpi.rule_priorities is a dict keyed by id) and hot-apply all address rules by id; a duplicate makes one of them unaddressable and can give a P0 rule the other's priority"
+   },
+   {
+    "file": "duplicate_yaml_key.yaml",
+    "defect": "the same key twice in one rule (alt_max_m: 30, then alt_max_m: 300)",
+    "finding": "PyYAML keeps the LAST value without a word, so a reviewer reading the first sees 30 m while 300 m is enforced"
+   },
+   {
+    "file": "empty_constraints.yaml",
+    "defect": "constraints: [] - a policy with no rules",
+    "finding": "the reference requires at least one rule (PolicyDoc min_length=1); an empty policy loads, hashes and 'passes' every flight"
+   },
+   {
+    "file": "empty_policy_id.yaml",
+    "defect": "policy_id is an empty string",
+    "finding": "every artefact records policy_id; an empty one identifies nothing"
+   },
+   {
+    "file": "infinite_speed_cap.yaml",
+    "defect": "speed_max_mps is .inf",
+    "finding": "an infinite cap passes `gt=0` and is no cap at all, while the policy still lists a kinematic envelope"
+   },
+   {
+    "file": "misspelled_rule_key.yaml",
+    "defect": "a fence field is misspelled (altitude_cieling_m), so the intended 40 m ceiling is dropped and the default 1000 m applies",
+    "finding": "an extra key is ignored, so the zone silently covers 0-1000 m instead of 0-40 m and nothing reports the typo"
+   },
+   {
+    "file": "nan_altitude.yaml",
+    "defect": "alt_max_m is .nan",
+    "finding": "NaN fails every comparison, including the alt_max > alt_min validator's negation, so the band loads; at run time every in-band test is False"
+   },
+   {
+    "file": "negative_margin.yaml",
+    "defect": "margin_m is -20 on a 10 m fence",
+    "finding": "a negative safety ring shrinks the zone inward past nothing - here it erases the zone entirely"
+   },
+   {
+    "file": "non_semver_version.yaml",
+    "defect": "version: banana",
+    "finding": "the grant requires a semver version; the version lock compares strings, so nothing orders 'banana' against 0.1.0"
+   }
+  ],
+  "rows": [
+   {
+    "file": "bad_priority.yaml",
+    "defect": "priority P5 (only P0-P2 exist)",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "bad_time_window.yaml",
+    "defect": "valid_time start_time 25:99",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "bad_violation_action.yaml",
+    "defect": "violation_action: ignore",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "bad_weekday.yaml",
+    "defect": "valid_time days: [Funday]",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "bowtie_polygon.yaml",
+    "defect": "a self-intersecting (bow-tie) fence: vertex order crosses itself",
+    "verdict": "ACCEPTED",
+    "reason": null,
+    "declared": "ACCEPTED",
+    "declared_matches": true,
+    "finding": "the grant's ingest pipeline names self-intersection as a geometry check; a bow-tie's 'inside' depends on the fill rule, so the zone enforced is not the zone drawn"
+   },
+   {
+    "file": "collinear_polygon.yaml",
+    "defect": "a zero-area fence: all vertices on one line",
+    "verdict": "ACCEPTED",
+    "reason": null,
+    "declared": "ACCEPTED",
+    "declared_matches": true,
+    "finding": "a fence with no interior protects nothing while looking like a rule"
+   },
+   {
+    "file": "duplicate_rule_id.yaml",
+    "defect": "two rules share the id `nfz`",
+    "verdict": "ACCEPTED",
+    "reason": null,
+    "declared": "ACCEPTED",
+    "declared_matches": true,
+    "finding": "audit records, KPI priorities (kpi.rule_priorities is a dict keyed by id) and hot-apply all address rules by id; a duplicate makes one of them unaddressable and can give a P0 rule the other's priority"
+   },
+   {
+    "file": "duplicate_yaml_key.yaml",
+    "defect": "the same key twice in one rule (alt_max_m: 30, then alt_max_m: 300)",
+    "verdict": "ACCEPTED",
+    "reason": null,
+    "declared": "ACCEPTED",
+    "declared_matches": true,
+    "finding": "PyYAML keeps the LAST value without a word, so a reviewer reading the first sees 30 m while 300 m is enforced"
+   },
+   {
+    "file": "empty_constraints.yaml",
+    "defect": "constraints: [] - a policy with no rules",
+    "verdict": "ACCEPTED",
+    "reason": null,
+    "declared": "ACCEPTED",
+    "declared_matches": true,
+    "finding": "the reference requires at least one rule (PolicyDoc min_length=1); an empty policy loads, hashes and 'passes' every flight"
+   },
+   {
+    "file": "empty_policy_id.yaml",
+    "defect": "policy_id is an empty string",
+    "verdict": "ACCEPTED",
+    "reason": null,
+    "declared": "ACCEPTED",
+    "declared_matches": true,
+    "finding": "every artefact records policy_id; an empty one identifies nothing"
+   },
+   {
+    "file": "fence_ceiling_below_floor.yaml",
+    "defect": "a fence whose ceiling is below its floor",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "infinite_speed_cap.yaml",
+    "defect": "speed_max_mps is .inf",
+    "verdict": "ACCEPTED",
+    "reason": null,
+    "declared": "ACCEPTED",
+    "declared_matches": true,
+    "finding": "an infinite cap passes `gt=0` and is no cap at all, while the policy still lists a kinematic envelope"
+   },
+   {
+    "file": "inverted_altitude_band.yaml",
+    "defect": "alt_max_m below alt_min_m",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "latlon_without_origin.yaml",
+    "defect": "lat/lon vertices with no origin to project about",
+    "verdict": "refused",
+    "reason": "ValueError: policy uses lat/lon coordinates but declares no `origin: {lat, lon}`. Refusing to guess: an assumed origin places every rule somewhere plaus",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "misspelled_rule_key.yaml",
+    "defect": "a fence field is misspelled (altitude_cieling_m), so the intended 40 m ceiling is dropped and the default 1000 m applies",
+    "verdict": "ACCEPTED",
+    "reason": null,
+    "declared": "ACCEPTED",
+    "declared_matches": true,
+    "finding": "an extra key is ignored, so the zone silently covers 0-1000 m instead of 0-40 m and nothing reports the typo"
+   },
+   {
+    "file": "misspelled_top_level_key.yaml",
+    "defect": "`contraints:` instead of `constraints:`",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "nan_altitude.yaml",
+    "defect": "alt_max_m is .nan",
+    "verdict": "ACCEPTED",
+    "reason": null,
+    "declared": "ACCEPTED",
+    "declared_matches": true,
+    "finding": "NaN fails every comparison, including the alt_max > alt_min validator's negation, so the band loads; at run time every in-band test is False"
+   },
+   {
+    "file": "negative_margin.yaml",
+    "defect": "margin_m is -20 on a 10 m fence",
+    "verdict": "ACCEPTED",
+    "reason": null,
+    "declared": "ACCEPTED",
+    "declared_matches": true,
+    "finding": "a negative safety ring shrinks the zone inward past nothing - here it erases the zone entirely"
+   },
+   {
+    "file": "negative_speed_cap.yaml",
+    "defect": "speed_max_mps is negative",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "non_semver_version.yaml",
+    "defect": "version: banana",
+    "verdict": "ACCEPTED",
+    "reason": null,
+    "declared": "ACCEPTED",
+    "declared_matches": true,
+    "finding": "the grant requires a semver version; the version lock compares strings, so nothing orders 'banana' against 0.1.0"
+   },
+   {
+    "file": "not_a_mapping.yaml",
+    "defect": "the document is a YAML list, not a mapping",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "origin_out_of_range.yaml",
+    "defect": "origin latitude 95",
+    "verdict": "refused",
+    "reason": "ValueError: origin lat 95.0 out of range",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "string_for_number.yaml",
+    "defect": "speed_max_mps: fast",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "two_vertex_fence.yaml",
+    "defect": "a polygon fence with two vertices",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   },
+   {
+    "file": "unknown_rule_type.yaml",
+    "defect": "a rule type the DSL does not define (circle_fence)",
+    "verdict": "refused",
+    "reason": "ValidationError: 1 validation error for Policy",
+    "declared": "refused",
+    "declared_matches": true,
+    "finding": null
+   }
+  ]
+ },
+ "version_lock_problems": [],
+ "schema": {
+  "path": "policies/policy_dsl.schema.json",
+  "current": true,
+  "definitions": 10
+ },
+ "schema_validation": {
+  "run": true,
+  "n": 29,
+  "passed": 29,
+  "failures": []
+ },
+ "stored_runs": {
+  "n": 76,
+  "matched_before": 34,
+  "matched_after": 76,
+  "after_by_form": {
+   "legacy16-exclude-none": 42,
+   "legacy16-include-defaults": 34
+  },
+  "unmatched_after": [],
+  "mavros_dev_five": {
+   "ros2_ped_off": {
+    "policy_hash": "sha256:68a4efd102869f5c",
+    "matched_before": false,
+    "matched_after": true,
+    "form": "legacy16-exclude-none",
+    "policy": "sitl_pedestrian.yaml"
+   },
+   "ros2_ped_on": {
+    "policy_hash": "sha256:68a4efd102869f5c",
+    "matched_before": false,
+    "matched_after": true,
+    "form": "legacy16-exclude-none",
+    "policy": "sitl_pedestrian.yaml"
+   },
+   "ros2_shield_off": {
+    "policy_hash": "sha256:8a311f9d22d22600",
+    "matched_before": false,
+    "matched_after": true,
+    "form": "legacy16-exclude-none",
+    "policy": "sim_demo_policy.yaml"
+   },
+   "ros2_shield_on": {
+    "policy_hash": "sha256:8a311f9d22d22600",
+    "matched_before": false,
+    "matched_after": true,
+    "form": "legacy16-exclude-none",
+    "policy": "sim_demo_policy.yaml"
+   },
+   "ros2_shield_on_dynamic": {
+    "policy_hash": "sha256:77d64d2e5e94ac39",
+    "matched_before": false,
+    "matched_after": true,
+    "form": "legacy16-exclude-none",
+    "policy": "fase3-sim-demo@0.1.1+nfz-dynamic"
+   }
+  },
+  "before_means": "Policy.policy_hash as computed by the code before 2026-10-06 (16 hex over model_dump() with nulls), against every policies/*.yaml",
+  "after_means": "guardrail.manifest.resolve_run_policy over guardrail.bundle.policy_candidates(): the 64-hex hash, every legacy 16-hex form, and the hot-applied derivations in policies/policy.lock.json"
+ }
+}

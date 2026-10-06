@@ -16,6 +16,128 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-06 — ten work packages toward the grant's locked spec
+
+Ten packages taken from the re-verified audit, built in parallel on disjoint
+files, then each challenged by an adversarial reviewer (tests reverted or
+mutated on purpose) and fixed. Nothing here was flown; no simulator, SITL or
+GPU model was started.
+
+#### Added
+- **Shield speed: a compiled fence index** (`guardrail/ir.py`). Each fence's
+  margin ring is built once and a shapely STRtree answers which fences a
+  forecast can reach. At the grant's 50-rule load (48 fences), on this desktop:
+  `_check` near a fence 14-33 ms -> 0.13-0.26 ms median; `filter()` near a
+  fence 172 ms median (p99 255 ms) -> 0.55-1.0 ms (p99 1.0-1.8 ms), against the
+  grant's 5 ms check and 100 ms tick. `Shield.history` keeps the last 50 ticks
+  (Safety Shield, sliding-window buffer). `experiments/bench_shield_50rules.py`
+  reproduces the numbers. Not measured on a Jetson Orin.
+- **Typed Constraint Summary Pack** (`guardrail/csp.py`, `guardrail/templates/`,
+  `guardrail/csp.schema.json`). The 14 locked fields; time and region
+  filtering; risk grading 0.5/0.3/0.2; P0 always kept, P1/P2 cut by risk inside
+  a configurable 256-token budget; `CSPBudgetExceeded` when P0 alone is over;
+  per-rule reasons; Jinja2 sentence templates; the action-set adapter; coarse
+  and fine geometry with `geometry_ref`. `ConstraintCompiler.compile_csp()`
+  returns it; `build_prompt()` keeps all its keys.
+- **The CSP can reach a VLA**: `demo/real_vla_demo.py --csp on|off` (default
+  off) puts the CSP before OpenVLA's instruction, logs the exact prompt, its
+  token count, CSP hash and policy hash per inference, and refuses a prompt
+  over budget before the model loads. 54-106 OpenVLA tokens over 29/29
+  policies. Not yet flown.
+- **Paraphraser** (`guardrail/paraphraser.py`, `experiments/paraphrases/`):
+  112 free-form paraphrases (14 instruction sets x 8), generated once by
+  claude-opus-5-5 with the prompt recorded, a seeded template fallback, and a
+  validator that refuses a paraphrase changing a mission slot. Measured false
+  accepts: 0/28 on the review set, 5/30 on a held-out set it was never tuned
+  on.
+- **Escalation state machine** (`guardrail/fsm.py`): Normal -> Brake -> Loiter
+  -> RTL -> Land with the grant's defaults (N=3 violations in T=5 s, theta
+  2.0 m lateral / 0.5 m vertical, T_recover 2 s), the mapping from
+  violation_action, hard/soft and priority, and the fail-safe trigger
+  correctness scorer with its always-trigger and never-trigger nulls. Pure
+  module; not yet wired into the Shield.
+- **Stress harness groundwork** (`guardrail/scenario_spec.py`,
+  `experiments/profiles/`): ScenarioSpec and ScenarioEvent copied field for
+  field from the Stress Testing page, expected-outcome and expected-fail-safe
+  labels, seeds, a smoke profile (52 scenarios x 1 seed) and a nightly profile
+  (211 x 3 seeds), stressors for all five Shield smoke-matrix rows plus wind,
+  gusts, start jitter and GPS dropout, and a six-field manifest per episode.
+  Smoke: 52 episodes in 15.9 s; nightly: 633 episodes in 223 s; both headless
+  and never KPI-grade. `.github/workflows/tests.yml` (never run on GitHub).
+- **Policy identity** (`guardrail/models.py`, `guardrail/bundle.py`):
+  Ed25519-signed bundles (lab development key; private half gitignored),
+  pure-Python verification so the 3.11 and SITL environments verify without
+  `cryptography`, `issued_at` in the manifest, `policies/policy.lock.json`
+  pinning one hash per `policy_id@version`, `--bundle` on
+  `sitl/ros2_shield_node.py`, `sitl/run_sitl_demo.py` and `demo/follow_vlm.py`,
+  `tools/wp1_roundtrip_kpi.py` with 25 negative policies, and
+  `policies/policy_dsl.schema.json`.
+- **KPIs from logs on disk** (`guardrail/kpi.py`, `tools/kpi_report.py`):
+  repair success with the theta cap, mission success that requires the goal
+  and no P0 unsafe position, repair count per episode and family, false
+  triggers, and a rollup that never prints a zero for "not measurable".
+  `docs/data/kpi_rollup_2026-10-06.md` covers 742 episodes, 0 KPI-grade.
+- `pyproject.toml` for the guardrail package (requires Python >= 3.11);
+  `sitl/setup_sitl.sh` pins ArduPilot to Copter-4.5.7 (2a3dc4b7) and gains a
+  read-only `--verify`. `docs/DESIGN-python-versions.md` records what runs
+  where.
+- Design notes: `docs/DESIGN-{escalation-fsm,paraphraser,policy-identity,
+  prefix-compiler,python-versions}.md`.
+
+#### Changed
+- `Policy.policy_hash` is the full 64-hex SHA-256 over canonical JSON with
+  None omitted (`sha256-canonical-v2`), so adding an optional field no longer
+  moves every hash. Old 16-hex forms still verify: stored manifests traceable
+  to a policy 34/76 -> 76/76.
+- The topology label `canonical-hil` is now written as the grant's word,
+  `dev`. `is_kpi_grade()` refuses `dev` runs without a written PI waiver, so
+  stored KPI-grade runs go from 5 to 0 until the hil runs exist.
+- Time-windowed rules now carry their window in the prompt ("in force
+  Mon-Fri 07:30-17:30") and drop out of the CSP outside it; before, the
+  model was told they were permanent.
+- `load_bundle` refuses unsigned bundles unless `require_signature=False`.
+- README, `docs/index.md`, `docs/scope-clarification.md`,
+  `docs/prof-repo-study.md`, `docs/CHECKLIST-remaining-work.md` (now marked
+  superseded by the 5 Oct audit) and the progress note no longer state the
+  claims retracted below.
+
+#### Fixed
+- `demo/real_vla_demo.py` sent OpenVLA's forward/right deltas straight into
+  North/East: facing East, "forward" flew North. They are rotated at the
+  capture heading now, and the loop reads the heading from the pose.
+- A stripped or forged bundle signature could read as "unsigned" or
+  "unverifiable here" and fly with `--allow-unverified-bundle`; both are now
+  refused as bad-signature.
+- A Shield-off control arm's counterfactual repairs scored as a measured
+  repair success of 0.0; they now read `shield off`.
+- `setup_sitl.sh --verify` reported PIN OK for an edited file inside a
+  submodule, and for a crashed `git status`.
+- `--backend sitl` in the sweep passed an option the SITL scripts reject.
+
+#### Retracted
+- "canonical HIL" for the desktop SITL + MAVROS 2 rail: it is the grant's
+  `dev` topology. KPI numbers count from `hil` (Jetson Orin) runs.
+- "P0 escape 0.0 on all 41 shielded flights" as the contract KPI: the 41 are
+  34 Project AirSim + 4 SITL/pymavlink + 3 SITL/MAVROS 2 flights, and none is
+  a contract KPI figure.
+- Fail-safe trigger correctness target "1.0": the grant says >= 99 %.
+- The in-flight detector rate on the five flights the mid-evaluation quoted:
+  3.76-5.22 Hz -> 2.77-4.31 Hz, recomputed over the mission.
+- "11713/11713 repairs converged" as the grant's repair success KPI: it is the
+  Shield's own re-check; theta could not be applied to the 7660
+  theta-governed ticks because no log records a repair size in metres.
+
+#### Tests
+- New: `test_ir` 14, `test_csp` 65, `test_real_vla_prompt` 43,
+  `test_paraphraser` 82, `test_fsm` 95, `test_scenario_spec` 29,
+  `test_policy_hash` 24, `test_wp1_roundtrip_kpi` 6, `test_kpi_report` 31,
+  `test_env_pins` 34. Extended: `test_shield` 39, `test_sweep` 63,
+  `test_kpi_magnitudes` 65, `test_bundle` 51, `test_manifest` 39,
+  `test_replay` 22.
+- Full suite on Python 3.10: 1408 of 1408 over 53 test files. On 3.11 the
+  guardrail package's tests pass; the demo tests that need `cv2` or
+  `projectairsim` cannot run there.
+
 ### 2026-10-05 (later) — a tracker website, and an update log on it
 
 Record: the tracker's own Updates page (`tracker/data/updates.json`, entry #15).

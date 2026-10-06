@@ -1,0 +1,19 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: two rules share the id `nfz`
+# currently: ACCEPTED
+# finding: audit records, KPI priorities (kpi.rule_priorities is a dict keyed by id) and hot-apply all address rules by id; a duplicate makes one of them unaddressable and can give a P0 rule the other's priority
+policy_id: neg-duplicate-id
+version: 0.1.0
+constraints:
+  - id: nfz
+    type: polygon_fence
+    vertices:
+      - { x: 0, y: 0 }
+      - { x: 10, y: 0 }
+      - { x: 10, y: 10 }
+      - { x: 0, y: 10 }
+  - id: nfz
+    type: altitude_envelope
+    priority: P2
+    alt_min_m: 5
+    alt_max_m: 30

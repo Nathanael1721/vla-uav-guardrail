@@ -1,0 +1,3 @@
+{#- The policy file has no buildings; the Shield gets them from the occupancy
+    map at run time. Saying so is the honest reason, not a placeholder. -#}
+applies along the whole {{ length|m }} m path; building positions come from the runtime occupancy map, which this CSP does not carry{% if time_fact %}; {{ time_fact }}{% endif %}

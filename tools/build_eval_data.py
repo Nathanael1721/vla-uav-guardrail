@@ -32,8 +32,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "docs" / "data" / "eval_sep2026.json"
 sys.path.insert(0, str(ROOT / "demo"))
+sys.path.insert(0, str(ROOT))
 
 import track_truth as T  # noqa: E402
+from guardrail.bundle import policy_candidates  # noqa: E402
+from guardrail.manifest import (is_kpi_grade, normalize_topology,  # noqa: E402
+                                resolve_run_policy)
 
 LAST_MEETING = "2026-09-02"
 # retarget_fixed ran 69.95 s and retarget_smooth 119.95 s. Before/after figures
@@ -67,16 +71,27 @@ def nearest(r):
 
 # ── KPI-grade rail ──────────────────────────────────────────────────────────
 def kpi_rail():
-    print("\n[kpi] canonical-hil rail (ArduPilot SITL over MAVROS 2)")
+    # The grant's `dev` topology: one desktop, ArduPilot SITL over MAVROS 2.
+    # These runs were stamped "canonical-hil" until 2026-10-06; the label is
+    # read under today's name and both are recorded.
+    print("\n[kpi] dev-topology rail (desktop ArduPilot SITL over MAVROS 2; "
+          "stored label canonical-hil)")
     runs = {}
+    cands = policy_candidates()
     for tag in ("ros2_shield_off", "ros2_shield_on", "ros2_shield_on_dynamic",
                 "ros2_ped_off", "ros2_ped_on"):
         k = load_json(f"demo/out/{tag}/kpi.json")
         m = load_json(f"demo/out/{tag}/metrics.json")
         man = load_json(f"demo/out/{tag}/manifest.json")
+        stored_topo = m.get("topology") or man.get("topology")
+        pol, form, label = resolve_run_policy(man, cands)
         runs[tag] = {
-            "topology": m.get("topology") or man.get("topology"),
+            "topology": normalize_topology(stored_topo),
+            "topology_stored": stored_topo,
+            # As written at flight time, and under today's gate (which refuses
+            # `dev` without a recorded PI waiver). Both, so neither hides.
             "kpi_grade": k.get("kpi_grade"),
+            "kpi_grade_now": is_kpi_grade(man, m)[0],
             "shield": m.get("shield"),
             "ticks": k.get("ticks"),
             "mission_success": k.get("mission_success"),
@@ -93,6 +108,10 @@ def kpi_rail():
             "standoff_min_range_m": m.get("standoff_min_range_m"),
             "subject_position_source": (m.get("subject") or {}).get("position_source"),
             "policy_hash": man.get("policy_hash"),
+            # Which policy on disk that hash resolves to, and under which hash
+            # form (the five matched NO policy before 2026-10-06).
+            "policy_resolves_to": label,
+            "policy_hash_form": form,
         }
         say(tag, {x: runs[tag][x] for x in (
             "kpi_grade", "p0_violation_escape_rate", "mean_repair_magnitude_mps",
@@ -101,7 +120,15 @@ def kpi_rail():
     n_grade = sum(1 for f in glob.glob(str(ROOT / "demo/out/*/kpi.json"))
                   if json.loads(Path(f).read_text(encoding="utf-8")).get("kpi_grade"))
     n_all = len(glob.glob(str(ROOT / "demo/out/*/kpi.json")))
-    say("flights with kpi.json / kpi_grade", f"{n_all} / {n_grade}")
+    n_grade_now = 0
+    for f in glob.glob(str(ROOT / "demo/out/*/kpi.json")):
+        mp = Path(f).parent / "manifest.json"
+        if mp.is_file():
+            n_grade_now += int(is_kpi_grade(
+                json.loads(mp.read_text(encoding="utf-8")),
+                json.loads(Path(f).read_text(encoding="utf-8")))[0])
+    say("flights with kpi.json / kpi_grade as stored / under today's gate",
+        f"{n_all} / {n_grade} / {n_grade_now}")
     # "0.0 on every flight" was published and is false: the unshielded control
     # flights exist to FAIL. Count the two populations instead of asserting.
     zero, controls, other = 0, [], []
@@ -117,6 +144,7 @@ def kpi_rail():
     say("escape rate 0.0 / unshielded controls / anything else",
         f"{zero} / {len(controls)} / {other or 'none'}")
     return {"runs": runs, "flights_total": n_all, "flights_kpi_grade": n_grade,
+            "flights_kpi_grade_now": n_grade_now,
             "flights_escape_zero": zero, "unshielded_controls": controls,
             "flights_nonzero_unexplained": other}
 
@@ -408,11 +436,17 @@ def repo(run_tests):
 # ── simulation rails, counted from each flight's manifest ───────────────────
 def rails():
     print(chr(10) + "[rails] flights per topology, and camera flights against the rate gates")
-    counts, cam, both = {}, 0, 0
+    counts, stored_counts, cam, both = {}, {}, 0, 0
     for f in sorted(glob.glob(str(ROOT / "demo/out/*/manifest.json"))):
         d = Path(f).parent
-        topo = json.loads(Path(f).read_text(encoding="utf-8")).get("topology")
+        # Under today's names: a stored "canonical-hil" counts as "dev". The
+        # labels as written are kept too (`counts_as_stored`), so a reader of an
+        # older eval file - tools/deck/build_mideval_deck.js reads
+        # counts["canonical-hil"] - can see why that key is now absent.
+        stored = json.loads(Path(f).read_text(encoding="utf-8")).get("topology")
+        topo = normalize_topology(stored)
         counts[topo] = counts.get(topo, 0) + 1
+        stored_counts[stored] = stored_counts.get(stored, 0) + 1
         mp, fl = d / "metrics.json", d / "flight_log.jsonl"
         if not (mp.exists() and fl.exists()):
             continue
@@ -430,8 +464,10 @@ def rails():
         cam += 1
         both += int(loop_hz >= 9.5 and det_hz >= 4.0)
     say("flights per topology", counts)
+    say("flights per topology, labels as stored", stored_counts)
     say("camera flights / meeting loop>=9.5 and det>=4.0", f"{cam} / {both}")
-    return {"counts": counts, "camera_flights": cam, "camera_flights_meeting_both_gates": both}
+    return {"counts": counts, "counts_as_stored": stored_counts,
+            "camera_flights": cam, "camera_flights_meeting_both_gates": both}
 
 
 # ── the headless scenario sweep (WP4) ───────────────────────────────────────

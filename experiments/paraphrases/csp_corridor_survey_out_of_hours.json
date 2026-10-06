@@ -1,0 +1,89 @@
+{
+  "schema": "guardrail.paraphrases/1",
+  "source_key": "csp_corridor_survey_out_of_hours",
+  "kind": "csp_nl",
+  "source_text": "Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+  "source_id": "src-6e21ce7c87b865b8",
+  "source_sha256": "6e21ce7c87b865b81c5da44ca713c7b0fefbb4a57581469561ec99d39aeb21a4",
+  "backend": "stored",
+  "origin": {
+    "renderer": "guardrail.compiler.ConstraintCompiler.compile_csp natural_language_prompt, compile_csp(now=2026-09-05T09:00:00)",
+    "policy": "policies/corridor_survey.yaml",
+    "policy_hash": "sha256:5a0e507fe15678551b887141eb85c904030c088d89cf90f916c82649f17b770d",
+    "frozen": "2026-10-06"
+  },
+  "provenance": {
+    "generator": "claude-opus-5-5 (agent, 2026-10-06)",
+    "prompt": "You are writing free-form paraphrases for the Paraphraser service of the\nconstrained-VLA guardrail (ITRI ICL subcontract; WP4 per-paraphrase robustness).\n\nSource (csp_nl): \"Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.\"\n\nWrite K=8 paraphrases of the source. Make them genuinely varied in\nvocabulary, word order, politeness, verbosity and indirect phrasing. Each paraphrase is one or more complete sentences.\n\nEvery paraphrase must keep every mission slot: the target object and its\ncolour, every number with its unit, its bound (at least / at most / between /\nat) and the thing it limits, every named zone, corridor or place (identifiers\nverbatim), whether a zone is to be kept out of or stayed inside, the direction\nwords, and the action (fly to / follow / avoid). Do not add a rule, number,\nobject, zone or direction the source does not contain, and do not drop one.\nReturn one paraphrase per line.",
+    "task_instruction": "Generate the free-form set yourself now (you are an LLM): for every instruction used in experiments/scenarios.yaml and the city follow missions (grep demo/ and scripts/ for the instruction strings), write K=8 genuinely varied free-form paraphrases (vocabulary, word order, politeness, verbosity, indirect phrasing), store them with provenance {generator: \"claude-opus-5-5 (agent, 2026-10-06)\", prompt: <the exact instruction you followed>, date}, and run the validator over them.",
+    "date": "2026-10-06",
+    "seed": null,
+    "note": "written in the review-fix pass of 2026-10-06, after the validator changes and by the agent that made them: validator-aware authoring, so acceptance is weak evidence"
+  },
+  "paraphrases": [
+    {
+      "index": 0,
+      "paraphrase_id": "pp-f44652c6c06a3175",
+      "text": "Fly only inside corridor 'corridor-survey-route', no more than 20 m off its centerline and between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s.",
+      "text_sha256": "324999267d6bbbff4234876d439826a70c1545379197cf9aa344b0e1071e5013",
+      "form": "sentences",
+      "style": "terse"
+    },
+    {
+      "index": 1,
+      "paraphrase_id": "pp-c010365170292cdc",
+      "text": "Could you please keep the aircraft inside corridor 'corridor-survey-route' the whole time? Please don't drift more than 20 m from its centerline, and hold it between 10 m and 20 m in height. Kindly also keep your speed to 4 m/s or less, your climb rate under 2 m/s and your turn rate under 45 deg/s.",
+      "text_sha256": "9062a6b2f3fcddc5dddee13ba786c6853ba58dc08edc741297694ce783f892e2",
+      "form": "sentences",
+      "style": "polite"
+    },
+    {
+      "index": 2,
+      "paraphrase_id": "pp-7102cecc4090c721",
+      "text": "Your speed limit is 4 m/s, your climb rate must stay below 2 m/s and your turn rate below 45 deg/s. Remain between 10 m and 20 m and never leave corridor 'corridor-survey-route', drifting no more than 20 m from its centerline.",
+      "text_sha256": "d6049b3bb73fb25e715df0f4374ade73ace0f03f3b01cd4d5939eb71648c67e2",
+      "form": "sentences",
+      "style": "reordered"
+    },
+    {
+      "index": 3,
+      "paraphrase_id": "pp-76ead2cb4837fcd0",
+      "text": "Operational constraint: the aircraft is confined to corridor 'corridor-survey-route', with a lateral deviation of at most 20 m from its centerline and an altitude between 10 m and 20 m. Ground speed is limited to 4 m/s, vertical rate to below 2 m/s and turn rate to below 45 deg/s.",
+      "text_sha256": "ba750699f2f6bf4cb15259c56fe02c4cd881d63b47753af0102aa543d48132bd",
+      "form": "sentences",
+      "style": "formal"
+    },
+    {
+      "index": 4,
+      "paraphrase_id": "pp-a574a6d9c00b2e5f",
+      "text": "Stick to corridor 'corridor-survey-route': stay within 20 m of the middle of it and somewhere from 10 m to 20 m up. Keep your speed at 4 m/s max, climbs under 2 m/s and turns under 45 deg/s.",
+      "text_sha256": "65de47493ce179858525f78f945f21fc26b2914ab161a77284f416326b186847",
+      "form": "sentences",
+      "style": "casual"
+    },
+    {
+      "index": 5,
+      "paraphrase_id": "pp-2f088386cff4f290",
+      "text": "This survey flight has two rules. First, the aircraft has to stay inside corridor 'corridor-survey-route', which means keeping within 20 m of its centerline and between 10 m and 20 m in altitude. Second, speed is capped at 4 m/s, climb rate must be below 2 m/s and turn rate must be below 45 deg/s.",
+      "text_sha256": "1e48cd9389b276ad768d8345046d6c13bab5b7c89a95f68e28a9280b8b3b61c4",
+      "form": "sentences",
+      "style": "verbose"
+    },
+    {
+      "index": 6,
+      "paraphrase_id": "pp-fb1ec69b45189530",
+      "text": "What matters most is that you never leave corridor 'corridor-survey-route', never stray more than 20 m from its centerline and always fly between 10 m and 20 m. Beyond that, your speed must not go above 4 m/s, your climb rate must stay under 2 m/s and your turn rate under 45 deg/s.",
+      "text_sha256": "0ee43a2699d2dc2c12f5be4a2de1b773d901b5ee5643649feb55e458fc448cff",
+      "form": "sentences",
+      "style": "indirect"
+    },
+    {
+      "index": 7,
+      "paraphrase_id": "pp-7416aa29bebc2490",
+      "text": "Stay in corridor 'corridor-survey-route', ≤ 20 m from centerline, 10 m to 20 m altitude. Speed ≤ 4 m/s, climb < 2 m/s, turn < 45 deg/s.",
+      "text_sha256": "8320514a52eff0c7c3047b129458dc159ecdae256261a45dad3dd5dcbd82c3b1",
+      "form": "sentences",
+      "style": "terse, symbols"
+    }
+  ]
+}

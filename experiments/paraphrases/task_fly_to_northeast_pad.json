@@ -1,0 +1,88 @@
+{
+  "schema": "guardrail.paraphrases/1",
+  "source_key": "task_fly_to_northeast_pad",
+  "kind": "task",
+  "source_text": "fly to the northeast pad at 6 m/s",
+  "source_id": "src-6894d0d3fe8b7bc0",
+  "source_sha256": "6894d0d3fe8b7bc0297878035db68bf32d953ab0f7963f720de064217fa8035d",
+  "backend": "stored",
+  "origin": {
+    "renderer": "mission text",
+    "frozen": "2026-10-06",
+    "seen_in": "sitl/ros2_shield_node.py:73 (the KPI rail's mission), demo/run_demo.py:90, sitl/run_sitl_demo.py:170"
+  },
+  "provenance": {
+    "generator": "claude-opus-5-5 (agent, 2026-10-06)",
+    "prompt": "You are writing free-form paraphrases for the Paraphraser service of the\nconstrained-VLA guardrail (ITRI ICL subcontract; WP4 per-paraphrase robustness).\n\nSource (task): \"fly to the northeast pad at 6 m/s\"\n\nWrite K=8 paraphrases of the source. Make them genuinely varied in\nvocabulary, word order, politeness, verbosity and indirect phrasing. Half of them (form: verb_phrase) must be a bare verb phrase that reads correctly after \"What action should the robot take to ...?\" (OpenVLA's prompt frame, demo/real_vla_demo.py:124); the other half (form: utterance) are free operator utterances.\n\nEvery paraphrase must keep every mission slot: the target object and its\ncolour, every number with its unit, its bound (at least / at most / between /\nat) and the thing it limits, every named zone, corridor or place (identifiers\nverbatim), whether a zone is to be kept out of or stayed inside, the direction\nwords, and the action (fly to / follow / avoid). Do not add a rule, number,\nobject, zone or direction the source does not contain, and do not drop one.\nReturn one paraphrase per line.",
+    "task_instruction": "Generate the free-form set yourself now (you are an LLM): for every instruction used in experiments/scenarios.yaml and the city follow missions (grep demo/ and scripts/ for the instruction strings), write K=8 genuinely varied free-form paraphrases (vocabulary, word order, politeness, verbosity, indirect phrasing), store them with provenance {generator: \"claude-opus-5-5 (agent, 2026-10-06)\", prompt: <the exact instruction you followed>, date}, and run the validator over them.",
+    "date": "2026-10-06",
+    "seed": null,
+    "note": "written in-session by the agent, which has no sampling seed to record; seeds apply to the DRAW from this set (paraphrase(..., seed)), not to its authoring. 10 of the 96 were rewritten after review: 1 refused by the validator (an added 'find' action), 2 for too little variety, and 7 that narrowed the stand-off wildcard 'anything you are following' to a person, car or vehicle, refused once the validator was taught that narrowing (docs/DESIGN-paraphraser.md)."
+  },
+  "paraphrases": [
+    {
+      "index": 0,
+      "paraphrase_id": "pp-0a90bf54754d857e",
+      "text": "take yourself over to the northeast pad, holding a steady 6 m/s throughout",
+      "text_sha256": "b506f2d207d6e3669fb0d67fcd284b3294d291e47c67307a3ba97c975db4e9c9",
+      "form": "verb_phrase",
+      "style": "verb phrase, reordered"
+    },
+    {
+      "index": 1,
+      "paraphrase_id": "pp-41c497937e3621cb",
+      "text": "reach the northeast pad, cruising at a constant 6 m/s the entire way",
+      "text_sha256": "689011b4d001706b11e04aabb6c504a7e4379570fc7681482f761c9cdcca3475",
+      "form": "verb_phrase",
+      "style": "verb phrase"
+    },
+    {
+      "index": 2,
+      "paraphrase_id": "pp-fabf7c3aff077521",
+      "text": "travel at 6 m/s until you reach the northeast pad",
+      "text_sha256": "7ee39f91b4020da5160eeb3e4e01af06afa3f6bc14ff5514cf41e6e1cf0fa1e9",
+      "form": "verb_phrase",
+      "style": "verb phrase, reordered"
+    },
+    {
+      "index": 3,
+      "paraphrase_id": "pp-109624eb204fe2a2",
+      "text": "go to the northeast pad, flying at 6 m/s the whole way",
+      "text_sha256": "8664e5c5b2ae53e287608c28919e43ac7daff14b2d20275a1f714b5a5462303e",
+      "form": "verb_phrase",
+      "style": "verb phrase, verbose"
+    },
+    {
+      "index": 4,
+      "paraphrase_id": "pp-75b161d2f88d4cfa",
+      "text": "Could you please fly over to the northeast pad at 6 m/s?",
+      "text_sha256": "62bf9fe90a512031fe9fc50f7cfa0cf5e83db0231ebcf8220fef41d6b8c33770",
+      "form": "utterance",
+      "style": "polite question"
+    },
+    {
+      "index": 5,
+      "paraphrase_id": "pp-ecff4b4cd6070173",
+      "text": "Your destination is the northeast pad; get there at 6 m/s.",
+      "text_sha256": "f7c72ebf22de0cf7e16d3632afc9b911cbd4941558c3977b6f642979cccf9382",
+      "form": "utterance",
+      "style": "indirect"
+    },
+    {
+      "index": 6,
+      "paraphrase_id": "pp-f137baa32f31ea6a",
+      "text": "Please proceed to the northeast pad, keeping your speed at 6 m/s.",
+      "text_sha256": "76a5e6c80c982b4055e67e52260d542f393c6a9023be1ed8cd55e9bb2798730e",
+      "form": "utterance",
+      "style": "formal"
+    },
+    {
+      "index": 7,
+      "paraphrase_id": "pp-4e903cb0f1a65656",
+      "text": "Take the drone to the northeast pad and hold 6 m/s on the way.",
+      "text_sha256": "92a3197798b08dea147c5e68118824bbfd6241bee53f9b73a23d73926c6ba9fa",
+      "form": "utterance",
+      "style": "casual"
+    }
+  ]
+}

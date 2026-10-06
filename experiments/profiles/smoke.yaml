@@ -1,0 +1,83 @@
+# Smoke profile: the per-build sweep config.
+#
+# Grant, Stress Testing, "Test scheduling":
+#   Smoke | per build (CI) | ~50 scenarios x 1 seed each | sim_speedup 1.0 (KPI-grade)
+# and Safety Shield, "Test matrix": "Every release runs this matrix in Stress
+# Testing's smoke set" - high-speed near-edge, sudden NFZ, time-window switch
+# instant, three simultaneous violations, GPS noise / latency. Each of the five
+# has at least one family below.
+#
+# WHAT THIS REPRODUCES AND WHAT IT DOES NOT
+#
+# The SCOPE (scenario count, one seed, the matrix) is the grant's. The RAIL is
+# not: this runs on the headless kinematic backend, whose manifest says
+# `headless-kinematic` with a measured sim_speedup in the hundreds, so
+# `is_kpi_grade` refuses every episode. A smoke run here is functional evidence
+# that the Shield's behaviour has not regressed, never a contractual KPI number.
+#
+# HOW THE COUNT IS MADE
+#
+# The 13 scenarios of the original library run whole. Every stress family is
+# cut down to a few cells with `sweep_overrides` (values the family really
+# sweeps - an override for a parameter it does not sweep is refused), and
+# sampled families draw one approach angle (`samples_per_family: 1`). Before
+# anything runs, experiments/sweep_scenarios.py refuses the profile (exit 2) if
+# the expanded count falls outside `expected_cells` or if any two cells fly the
+# same episode (guardrail.scenario_spec.duplicate_cells, which compares
+# behaviour only - not ids, descriptions, gates or labels).
+#
+#   python experiments/sweep_scenarios.py --profile smoke
+
+profile: smoke
+cadence: per build (CI)
+grant_scope: "~50 scenarios x 1 seed each"
+grant_sim_speedup: "1.0 (KPI-grade) - NOT met: headless backend, measured speedup >> 1"
+library: experiments/scenarios.yaml
+seeds: [1001]
+samples_per_family: 1
+families: all
+expected_cells: [40, 60]
+sweep_overrides:
+  dyn-nfz-spawn-ahead:
+    vehicle_speed_mps: [4]
+    ahead_m: [3, 12]
+  time-window-closes-mid-run:
+    clock: ["2026-09-07T17:30:50"]
+  time-window-opens-on-vehicle:
+    clock: ["2026-09-07T07:29:55", "2026-09-07T07:29:56"]
+  high-speed-near-edge:
+    pass_y: [23.2, 23.5]
+    ask_mps: [20]
+    edge_deg: [0, 90]
+  near-edge-at-12mps:
+    pass_y: [40.5, 41.1]
+    ask_mps: [12, 20]
+  three-simultaneous-violations:
+    start_up: [3.0, 9.0]
+    ask_mps: [11]
+  gps-noise-within-margin:
+    pass_y: [23.6]
+    sigma: [0.3]
+    latency: [0, 2]
+  gps-noise-beyond-margin:
+    pass_y: [23.6]
+    sigma: [2.0]
+    latency: [5, 10]
+  gps-dropout:
+    lane_y: [15.0, 23.6]
+    window: [[6.0, 11.0]]
+  wind-within-authority:
+    wind_speed_mps: [2]
+    wind_dir_deg: [0, 270]
+  wind-beyond-authority:
+    lane_y: [15.0]
+  wind-gusts:
+    wind_speed_mps: [2]
+  standoff-approach-angles:
+    offset_m: [7, 12]
+    subject_class: [pedestrian]
+  corridor-drift-angles:
+    drift_deg: [-60, 0, 60]
+    ask_mps: [8]
+  altitude-recovery-depth:
+    start_up: [0.5, 9.5, 30.0]

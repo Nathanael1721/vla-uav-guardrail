@@ -1,0 +1,88 @@
+{
+  "schema": "guardrail.paraphrases/1",
+  "source_key": "task_fly_to_the_waypoint_120_m_ahead_at",
+  "kind": "task",
+  "source_text": "Fly to the waypoint 120 m ahead at cruise altitude.",
+  "source_id": "src-239282a4e1b1411f",
+  "source_sha256": "239282a4e1b1411f7ee63594737d4e8120566e0c85ca496bf31316ad60457f58",
+  "backend": "stored",
+  "origin": {
+    "renderer": "mission.task_prompt",
+    "frozen": "2026-10-06",
+    "seen_in": "experiments/scenarios.yaml: dyn-nfz-spawn-ahead"
+  },
+  "provenance": {
+    "generator": "claude-opus-5-5 (agent, 2026-10-06)",
+    "prompt": "You are writing free-form paraphrases for the Paraphraser service of the\nconstrained-VLA guardrail (ITRI ICL subcontract; WP4 per-paraphrase robustness).\n\nSource (task): \"Fly to the waypoint 120 m ahead at cruise altitude.\"\n\nWrite K=8 paraphrases of the source. Make them genuinely varied in\nvocabulary, word order, politeness, verbosity and indirect phrasing. Half of them (form: verb_phrase) must be a bare verb phrase that reads correctly after \"What action should the robot take to ...?\" (OpenVLA's prompt frame, demo/real_vla_demo.py:124); the other half (form: utterance) are free operator utterances.\n\nEvery paraphrase must keep every mission slot: the target object and its\ncolour, every number with its unit, its bound (at least / at most / between /\nat) and the thing it limits, every named zone, corridor or place (identifiers\nverbatim), whether a zone is to be kept out of or stayed inside, the direction\nwords, and the action (fly to / follow / avoid). Do not add a rule, number,\nobject, zone or direction the source does not contain, and do not drop one.\nReturn one paraphrase per line.",
+    "task_instruction": "Generate the free-form set yourself now (you are an LLM): for every instruction used in experiments/scenarios.yaml and the city follow missions (grep demo/ and scripts/ for the instruction strings), write K=8 genuinely varied free-form paraphrases (vocabulary, word order, politeness, verbosity, indirect phrasing), store them with provenance {generator: \"claude-opus-5-5 (agent, 2026-10-06)\", prompt: <the exact instruction you followed>, date}, and run the validator over them.",
+    "date": "2026-10-06",
+    "seed": null,
+    "note": "written in-session by the agent, which has no sampling seed to record; seeds apply to the DRAW from this set (paraphrase(..., seed)), not to its authoring. 10 of the 96 were rewritten after review: 1 refused by the validator (an added 'find' action), 2 for too little variety, and 7 that narrowed the stand-off wildcard 'anything you are following' to a person, car or vehicle, refused once the validator was taught that narrowing (docs/DESIGN-paraphraser.md)."
+  },
+  "paraphrases": [
+    {
+      "index": 0,
+      "paraphrase_id": "pp-fff9d06cc2122728",
+      "text": "head to the waypoint 120 m straight ahead, holding cruise altitude",
+      "text_sha256": "d8d526f8721536ceda9d0fad56c82e3ed28d6a591300a462abcbf1846966a33d",
+      "form": "verb_phrase",
+      "style": "verb phrase, terse"
+    },
+    {
+      "index": 1,
+      "paraphrase_id": "pp-dd602448ca095b3a",
+      "text": "fly to the waypoint lying 120 m ahead of you and hold cruise altitude on the way",
+      "text_sha256": "0a56f8bb87da0b8b821624e52b8e32f3060c44083546712b7d1179339b253e02",
+      "form": "verb_phrase",
+      "style": "verb phrase, verbose"
+    },
+    {
+      "index": 2,
+      "paraphrase_id": "pp-061b32269a3a09c8",
+      "text": "make your way to the waypoint 120 metres in front of you at cruising altitude",
+      "text_sha256": "a2d3565d54eff9e960bda8454ac3494bd9c8aa35ce62cba58b67bfac556bfefc",
+      "form": "verb_phrase",
+      "style": "verb phrase"
+    },
+    {
+      "index": 3,
+      "paraphrase_id": "pp-8a01d1a460272f8a",
+      "text": "go to the waypoint 120 m forward, staying at cruise altitude",
+      "text_sha256": "ea8ae88d9dec96428243031bdf1bc52dac6fa14f27db1324eb7b0d2cf0445776",
+      "form": "verb_phrase",
+      "style": "verb phrase"
+    },
+    {
+      "index": 4,
+      "paraphrase_id": "pp-ae84531e47ae6cbb",
+      "text": "Please fly to the waypoint 120 m ahead and keep to cruise altitude.",
+      "text_sha256": "c60c308007d4ac62bcef48b19e2f540cd8ee302168a3c66d229b8c4430bf401a",
+      "form": "utterance",
+      "style": "polite"
+    },
+    {
+      "index": 5,
+      "paraphrase_id": "pp-f4a52be96b121c2e",
+      "text": "The waypoint 120 m ahead is your destination; fly there at cruise altitude.",
+      "text_sha256": "8768d4dbf1a98c6a240022b1db5717da11b11837d483a440d800c459ad93b4e5",
+      "form": "utterance",
+      "style": "indirect"
+    },
+    {
+      "index": 6,
+      "paraphrase_id": "pp-f95d385f38aa6403",
+      "text": "Could you take the drone to the waypoint 120 m ahead, at cruise height?",
+      "text_sha256": "4f78091693cfebaada22dfc7f4a3b682be47de6d47e981609826392321c4b19f",
+      "form": "utterance",
+      "style": "polite question"
+    },
+    {
+      "index": 7,
+      "paraphrase_id": "pp-e4d0a5b1b458c475",
+      "text": "At cruise altitude, proceed to the waypoint sitting 120 m directly ahead.",
+      "text_sha256": "9f57cead5c25ff2c10c08ab19ae6e532d685ba686e6fa581c2ce0a49f4b44201",
+      "form": "utterance",
+      "style": "reordered, formal"
+    }
+  ]
+}

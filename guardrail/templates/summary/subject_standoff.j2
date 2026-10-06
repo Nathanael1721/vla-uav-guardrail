@@ -1,0 +1,2 @@
+{% extends "summary/_base.j2" %}
+{% block core %}>= {{ r.min_range_m|g }} m from {% if r.subject_class == "*" %}any followed subject{% else %}any {{ r.subject_class }}{% endif %}{% endblock %}

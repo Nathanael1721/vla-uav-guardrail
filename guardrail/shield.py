@@ -30,12 +30,15 @@ either predicted-clean, actively recovering, or a full stop.
 from __future__ import annotations
 
 import math
+import time
+from collections import deque
+from typing import NamedTuple
 
 import numpy as np
 from pydantic import BaseModel
 
-from .geometry import (fence_polygon, nearest_on_polyline, point_in_fence,
-                       push_out_direction)
+from .geometry import nearest_on_polyline, point_in_fence, push_out_direction
+from .ir import FenceRecord, PolicyIR
 from .models import (
     Action4D,
     AltitudeEnvelope,
@@ -105,6 +108,12 @@ _CLEAR_DECEL_MPS2 = 3.0
 # push can aim into a fence), so the chain is iterated to a fixed point instead
 # of being treated as a one-way pipeline whose last stage is never re-repaired.
 _REPAIR_PASSES = 3
+
+# Length of the sliding window of recent ticks. Safety Shield page, node
+# architecture: "Sliding-window buffer - last 50 actions + predicted
+# trajectory", feeding the violation checker. 50 ticks is 5 s at the 10 Hz
+# monitor rate, the same span as the grant's lookahead.
+HISTORY_LEN = 50
 
 
 def _dedupe(repairs: list["Repair"]) -> list["Repair"]:
@@ -245,6 +254,22 @@ class ShieldDecision(BaseModel):
         return bool(self.emitted_violations)
 
 
+class TickRecord(NamedTuple):
+    """One entry of the Shield's sliding window: where the vehicle was and what
+    the Shield decided. The predicted trajectory the spec puts beside it is
+    recomputable from these two (`Shield.forecast(rec.state,
+    rec.decision.emitted)`), so it is not paid for on every tick.
+
+    `elapsed_ms` is how long that `filter()` call took, wall clock. The grant
+    budgets the monitor at 100 ms per tick (Safety Shield page) and no flight
+    rail recorded the Shield's share of it (audit card WP3-13); measuring it
+    here, once, means a rail only has to log `history[-1].elapsed_ms` rather
+    than wrap its own timer around a call it might later move."""
+    state: State
+    decision: ShieldDecision
+    elapsed_ms: float
+
+
 class Shield:
     def __init__(self, policy: Policy, lookahead_s: float = 3.0, dt: float = 0.5,
                  obstacle_map: dict | None = None, now=None):
@@ -264,10 +289,15 @@ class Shield:
         self.lookahead_s = lookahead_s
         self.dt = dt
         self._now = now
-        # Pre-build shapely polygons once (grant: pre-compute at ingest,
-        # never rebuild per tick).
-        self._all_fences = [(f, fence_polygon(f))
-                            for f in policy.by_type(PolygonFence)]
+        # Compile the fences once (grant: pre-compute at ingest, never rebuild
+        # per tick): authored polygon, margin ring and an STRtree over the
+        # rings. See guardrail/ir.py. The comment that stood here said the
+        # same thing about the polygons, while geometry.point_in_fence went on
+        # rebuilding the margin ring on every point test - 384 buffer() calls
+        # in one 50-rule check, most of its 14-33 ms.
+        self._ir = PolicyIR.from_policy(policy)
+        # The last HISTORY_LEN ticks, oldest first; see `history`.
+        self._window: deque[TickRecord] = deque(maxlen=HISTORY_LEN)
         self._all_alts = policy.by_type(AltitudeEnvelope)
         self._all_kins = policy.by_type(KinematicEnvelope)
         self._all_clear = policy.by_type(ObstacleClearance)
@@ -331,11 +361,62 @@ class Shield:
 
     @property
     def _fences(self) -> list:
-        """Same gating, but the entries are (rule, prebuilt polygon) pairs."""
+        """Same gating, but the entries are (rule, prebuilt polygon) pairs.
+        Kept for readers of the old shape; the Shield itself walks
+        `_fence_records`, which also carries the margin ring."""
+        return [(r.rule, r.polygon) for r in self._fence_records(self._ir)]
+
+    def _fence_records(self, ir: PolicyIR) -> list[FenceRecord]:
+        """The compiled fences in force right now, in policy order.
+
+        Reads the clock exactly once, at the point the old `_fences` property
+        did, so a caller injecting a clock that advances per call sees the same
+        rule set as before the IR existed."""
         if self._now is None:
-            return self._all_fences
+            return ir.fences
         when = self._now()
-        return [(f, p) for f, p in self._all_fences if f.active_at(when)]
+        return [r for r in ir.fences if r.rule.active_at(when)]
+
+    @staticmethod
+    def _fence_candidates(ir: PolicyIR, state: State, poses) -> set[int]:
+        """Indices of the fences the forecast `poses` could touch.
+
+        The query box is the bounding box of the current position and every
+        forecast pose, so a fence left out cannot contain any point the fence
+        rule will test - the index changes what is LOOKED AT, never what is
+        found (guardrail/ir.py, "Exactness"). The current position is added
+        explicitly because the already-inside test reads `state.x` itself, not
+        a pose: today the first pose is t = 0 and the two coincide, but a
+        forecast that ever starts one step ahead would otherwise drop the very
+        fence the vehicle is sitting in. A NaN anywhere (an infinite vx makes
+        the t = 0 pose NaN) falls back to every fence inside the IR."""
+        xs = [state.x] + [p.x for _, p in poses]
+        ys = [state.y] + [p.y for _, p in poses]
+        return {r.index for r in ir.fences_for_points(xs, ys)}
+
+    def forecast(self, state: State, action: Action4D) -> list[tuple[float, State]]:
+        """The predicted trajectory the fence and altitude rules judge: (t, pose)
+        pairs over the lookahead. Public so the sliding window's "predicted
+        trajectory" can be rebuilt for any entry - see TickRecord."""
+        return list(self._predict(state, action))
+
+    @property
+    def history(self) -> tuple[TickRecord, ...]:
+        """The sliding window: the last HISTORY_LEN ticks through `filter()`,
+        oldest first.
+
+        The grant's node design puts this buffer in front of the checker. No
+        rule in this DSL reads past actions yet, so today it is a record, not
+        an input - it lets a caller (the HUD, an audit writer, a future
+        oscillation rule) see what the Shield did over the last 5 s without
+        keeping a second copy that could disagree with it. Every return path of
+        `filter()` appends, the brake and rescue branches included."""
+        return tuple(self._window)
+
+    @property
+    def ir(self) -> PolicyIR:
+        """The compiled fence IR the monitor is querying (read-only view)."""
+        return self._ir
 
     # ---------------- obstacle distance field ---------------- #
 
@@ -637,9 +718,15 @@ class Shield:
                             f"{t:.1f}s, below min {so.min_range_m}m"))]
         return []
 
-    def _check_fence(self, f, poly, state: State, action: Action4D) -> list[Violation]:
-        """Trend-aware for the already-inside case."""
-        if point_in_fence(state.x, state.y, state.up, f, poly):
+    def _check_fence(self, f, poly, state: State, action: Action4D,
+                     poses=None, buffered=None) -> list[Violation]:
+        """Trend-aware for the already-inside case.
+
+        `poses` is `action`'s forecast when the caller already has it (`_check`
+        computes it once for every fence instead of once per fence), and
+        `buffered` the fence's prebuilt margin ring. Both default to computing
+        them here, which is what this method always did."""
+        if point_in_fence(state.x, state.y, state.up, f, poly, buffered):
             ox, oy = push_out_direction(state.x, state.y, poly)
             escaping = (action.vx * ox + action.vy * oy) > 0.1
             if not escaping:
@@ -647,8 +734,8 @@ class Shield:
                     rule_id=f.id, category="geofence", predicted_at_s=0.0,
                     detail="currently INSIDE zone and not escaping")]
             return []      # while inside, predictive entry checks are moot
-        for t, p in self._predict(state, action):
-            if point_in_fence(p.x, p.y, p.up, f, poly):
+        for t, p in (poses if poses is not None else self._predict(state, action)):
+            if point_in_fence(p.x, p.y, p.up, f, poly, buffered):
                 return [Violation(
                     rule_id=f.id, category="geofence", predicted_at_s=t,
                     detail=f"predicted pos ({p.x:.1f},{p.y:.1f}) inside NFZ at t+{t:.1f}s")]
@@ -765,8 +852,19 @@ class Shield:
         if self._subject is not None:
             for so in self._standoffs:
                 found += self._check_standoff(so, state, action)
-        for f, poly in self._fences:
-            found += self._check_fence(f, poly, state, action)
+        ir = self._ir                       # one IR for the whole check, even
+        recs = self._fence_records(ir)      # if hot_apply swaps it meanwhile
+        if recs:
+            # One forecast for every fence (it was rebuilt per fence), and only
+            # the fences the forecast's bounding box reaches. Policy order is
+            # kept, so the violation list - which test_check_contract.py hashes
+            # - comes out in the same order as the old walk over all of them.
+            poses = list(self._predict(state, action))
+            near = self._fence_candidates(ir, state, poses)
+            for r in recs:
+                if r.index in near:
+                    found += self._check_fence(r.rule, r.polygon, state, action,
+                                               poses, r.buffered)
         for c in self._corridors:
             found += self._check_corridor(c, state, action)
         if self._dist is not None and self._clear:
@@ -994,8 +1092,25 @@ class Shield:
         vx, vy = a.vx, a.vy
         cap = min((k.speed_max_mps for k in self._kins), default=4.0)
 
-        for f, poly in self._fences:
-            if point_in_fence(state.x, state.y, state.up, f, poly):
+        # The fences the CURRENT (vx, vy) can reach, recomputed whenever an
+        # earlier fence in the loop has changed the velocity. A single query up
+        # front would be wrong: an escape or slide off one fence can point the
+        # forecast at a fence the raw action never reached, and the old walk
+        # over every fence would then have repaired against it. Skipping a
+        # fence outside the current forecast's box is exactly the old loop's
+        # `if not hit: continue`, decided without the per-pose tests.
+        ir = self._ir
+        near_for = poses = near = None
+        for rec in self._fence_records(ir):
+            if near_for != (vx, vy):
+                probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
+                poses = list(self._predict(state, probe))
+                near = self._fence_candidates(ir, state, poses)
+                near_for = (vx, vy)
+            if rec.index not in near:
+                continue
+            f, poly, ring = rec.rule, rec.polygon, rec.buffered
+            if point_in_fence(state.x, state.y, state.up, f, poly, ring):
                 ox, oy = push_out_direction(state.x, state.y, poly)
                 # FLOOR the exit speed, never assign it.
                 #
@@ -1018,7 +1133,7 @@ class Shield:
                 spd = min(2.0, cap)
                 out_now = vx * ox + vy * oy          # outward speed commanded
                 probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
-                if not self._check_fence(f, poly, state, probe):
+                if not self._check_fence(f, poly, state, probe, poses, ring):
                     # The monitor is content, so this action IS escaping - but
                     # it forgives anything above 0.1 m/s, which would leave a
                     # crawl. Raise the outward component to the floor and leave
@@ -1038,9 +1153,10 @@ class Shield:
                                               f"(commanded {out_now:+.2f})")))
                 continue
 
-            probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
-            hit = any(point_in_fence(p.x, p.y, p.up, f, poly)
-                      for _, p in self._predict(state, probe))
+            # `poses` is the forecast of the current (vx, vy): it was rebuilt
+            # above the moment the velocity last changed.
+            hit = any(point_in_fence(p.x, p.y, p.up, f, poly, ring)
+                      for _, p in poses)
             if not hit:
                 continue
 
@@ -1367,11 +1483,26 @@ class Shield:
         which rules were active when."""
         self.policy.constraints.append(fence)
         self.policy.generation += 1
-        self._all_fences.append((fence, fence_polygon(fence)))
+        # Rebuild the IR AFTER the bump, so it records the generation and hash
+        # it actually indexes. One attribute assignment: a filter() running on
+        # the control thread holds either the old IR or the new one, never a
+        # tree that is half rebuilt.
+        self._ir = self._ir.with_fence(fence, self.policy)
 
     # ---------------- the public entry point ---------------- #
 
     def filter(self, state: State, raw: Action4D) -> ShieldDecision:
+        """One monitor tick: check, repair, re-check, and the brake/rescue
+        fallbacks. Every decision, whichever branch produced it, goes into the
+        sliding window (`history`) before it is returned, with the time the
+        decision took."""
+        t0 = time.perf_counter()
+        decision = self._decide(state, raw)
+        elapsed_ms = (time.perf_counter() - t0) * 1e3
+        self._window.append(TickRecord(state.model_copy(), decision, elapsed_ms))
+        return decision
+
+    def _decide(self, state: State, raw: Action4D) -> ShieldDecision:
         # Finiteness first: every check below is a comparison, and NaN loses them
         # all, so an unsanitised action would be declared legal and passed
         # straight through. See _sanitise().

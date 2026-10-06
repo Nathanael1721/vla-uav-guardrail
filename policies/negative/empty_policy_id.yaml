@@ -1,0 +1,11 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: policy_id is an empty string
+# currently: ACCEPTED
+# finding: every artefact records policy_id; an empty one identifies nothing
+policy_id: ''
+version: 0.1.0
+constraints:
+  - id: alt
+    type: altitude_envelope
+    alt_min_m: 5
+    alt_max_m: 30

@@ -451,6 +451,181 @@ def test_escape_speed_is_monotonic_in_the_commanded_speed():
             prev = got
 
 
+# ------------------------------- 50-rule speed and the sliding window (WP3-23)
+#
+# The grant's monitor budget is <= 5 ms per query with 50 active rules inside a
+# 100 ms tick (Policy DSL page, acceptance KPIs; Safety Shield page, "Violation
+# checking"). Measured before guardrail/ir.py on the 50-rule bench policy:
+# `_check` 14-33 ms in clear sky and ~33 ms among the fences, `filter()` median
+# ~170 ms near a fence (experiments/bench_shield_50rules.py). The first two
+# tests pin the two CAUSES structurally, so they cannot pass by luck on a fast
+# machine; the third pins the budget itself. Every test from here down fails
+# on the pre-IR shield.py (63351 rings rebuilt in 40 ticks, 19200 fence tests
+# in 50 clear-sky checks, median _check 34 ms, and no `history`/`forecast`).
+
+def _fifty():
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "experiments"))
+    import bench_shield_50rules as B
+    return B
+
+
+def _count_calls(owner, name):
+    """Wrap owner.name with a call counter; returns (counter, restore)."""
+    orig = getattr(owner, name)
+    box = {"n": 0}
+
+    def wrapped(*a, **kw):
+        box["n"] += 1
+        return orig(*a, **kw)
+    setattr(owner, name, wrapped)
+    return box, lambda: setattr(owner, name, orig)
+
+
+def test_a_50_rule_tick_never_rebuilds_a_margin_ring():
+    """geometry.point_in_fence used to call poly.buffer(margin) on every point
+    test - 30-45 us each, up to 384 per check. The ring is now built once per
+    fence, at compile time, so a whole filter() near the fences builds none."""
+    from shapely.geometry.base import BaseGeometry
+    B = _fifty()
+    sh = Shield(B.fifty_rule_policy(), lookahead_s=3.0, dt=0.5)
+    pairs = B.samples("near", 40, seed=1)
+    box, restore = _count_calls(BaseGeometry, "buffer")
+    try:
+        for st, a in pairs:
+            sh.filter(st, a)
+    finally:
+        restore()
+    assert box["n"] == 0, f"{box['n']} margin rings rebuilt during 40 ticks"
+
+
+def test_fences_out_of_the_forecasts_reach_are_not_tested():
+    """In clear sky no fence can be reached, so no point-in-fence test should
+    run at all. The old loop ran 48 x (1 + 7) of them per check regardless."""
+    import guardrail.shield as S
+    B = _fifty()
+    sh = Shield(B.fifty_rule_policy(), lookahead_s=3.0, dt=0.5)
+    box, restore = _count_calls(S, "point_in_fence")
+    try:
+        for st, a in B.samples("clear", 50, seed=2):
+            sh._check(st, a)
+        clear = box["n"]
+        box["n"] = 0
+        for st, a in B.samples("near", 50, seed=2):
+            sh._check(st, a)
+        near = box["n"]
+    finally:
+        restore()
+    assert clear == 0, f"{clear} fence tests in clear sky"
+    # ...and the index must not have switched the fences OFF: near them, the
+    # tests still run (the equivalence with the old loop is tests/test_ir.py).
+    assert near > 0, "no fence was tested beside a fence"
+
+
+def test_the_50_rule_monitor_fits_the_grant_budget():
+    """Median _check <= 5 ms and p99 filter() <= 100 ms at the grant's load, on
+    the samples where both used to fail worst (1-8 m outside a fence's margin,
+    flying at it). Desktop numbers; the margin is ~40x, so a loaded machine
+    still passes and a return of the per-fence loop does not."""
+    import statistics
+    import time
+    B = _fifty()
+    sh = Shield(B.fifty_rule_policy(), lookahead_s=3.0, dt=0.5)
+    pairs = B.samples("near", 200, seed=3)
+    ms_check, ms_filter = [], []
+    for st, a in pairs:
+        t0 = time.perf_counter()
+        sh._check(st, a)
+        ms_check.append((time.perf_counter() - t0) * 1e3)
+    for st, a in pairs[:100]:
+        t0 = time.perf_counter()
+        sh.filter(st, a)
+        ms_filter.append((time.perf_counter() - t0) * 1e3)
+    med = statistics.median(ms_check)
+    p99 = sorted(ms_filter)[98]
+    assert med <= 5.0, f"_check median {med:.2f} ms > 5 ms at 50 rules"
+    assert p99 <= 100.0, f"filter() p99 {p99:.1f} ms > the 100 ms tick at 50 rules"
+
+
+def test_history_keeps_the_last_50_ticks_oldest_first():
+    """The grant's node design: 'Sliding-window buffer - last 50 actions'."""
+    from guardrail.shield import HISTORY_LEN
+    assert HISTORY_LEN == 50
+    s = make_shield()
+    assert s.history == ()
+    for i in range(60):
+        s.filter(State(x=-40.0 + i * 0.1, y=-20, up=4), Action4D(vx=2.0))
+    h = s.history
+    assert len(h) == 50
+    assert abs(h[0].state.x - (-40.0 + 10 * 0.1)) < 1e-9      # ticks 10..59 kept
+    assert abs(h[-1].state.x - (-40.0 + 59 * 0.1)) < 1e-9
+
+
+def test_history_records_the_brake_and_rescue_branches_too():
+    """filter() has four return paths. A window filled only by the passthrough
+    would go silent exactly on the ticks worth looking back at."""
+    from guardrail.models import KinematicEnvelope, Policy, PolygonFence
+    caps = KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=4.0,
+                             climb_rate_max_mps=2.0, yaw_rate_max_dps=60.0)
+    two = Policy(policy_id="two", constraints=[
+        caps,
+        PolygonFence(id="A", type="polygon_fence", margin_m=1.0, vertices=[
+            {"x": 6, "y": -5}, {"x": 20, "y": -5}, {"x": 20, "y": 5}, {"x": 6, "y": 5}]),
+        PolygonFence(id="B", type="polygon_fence", margin_m=1.0, vertices=[
+            {"x": -3, "y": -16}, {"x": 3, "y": -16}, {"x": 3, "y": -10}, {"x": -3, "y": -10}]),
+    ])
+    s = Shield(two)
+    d = s.filter(State(x=0, y=0, up=5), Action4D(vx=4.0))     # slide A -> B -> brake
+    assert d.braked and s.history[-1].decision is d
+    overlap = Policy(policy_id="ov", constraints=[
+        caps,
+        PolygonFence(id="a", type="polygon_fence", margin_m=2.0, vertices=[
+            {"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 20}, {"x": 0, "y": 20}]),
+        PolygonFence(id="b", type="polygon_fence", margin_m=1.0, vertices=[
+            {"x": 15, "y": 5}, {"x": 35, "y": 5}, {"x": 35, "y": 25}, {"x": 15, "y": 25}]),
+    ])
+    s = Shield(overlap)
+    d = s.filter(State(x=16, y=10, up=10), Action4D())         # inside both
+    assert any(r.operator == "ClearanceEscape" for r in d.repairs), d.repairs
+    assert s.history[-1].decision is d and len(s.history) == 1
+
+
+def test_history_is_a_record_not_an_alias():
+    """The window keeps a COPY of the state: a caller reusing one State object
+    for the next tick must not rewrite what the window says happened."""
+    s = make_shield()
+    st = State(x=-20, y=-20, up=4)
+    d = s.filter(st, Action4D(vx=1.0))
+    st.x = 999.0
+    assert s.history[-1].state.x == -20 and s.history[-1].decision is d
+
+
+def test_forecast_is_the_trajectory_the_rules_judge():
+    s = make_shield()
+    poses = s.forecast(State(x=0, y=0, up=4), Action4D(vx=2.0))
+    assert [t for t, _ in poses] == [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
+    assert poses[-1][1].x == 6.0
+
+
+def test_every_tick_in_the_window_carries_its_own_time():
+    """WP3-13: no flight rail logged the Shield's share of the 100 ms tick.
+    Each window entry now carries it. Zero is refused - it would read the same
+    as "never timed" - and each figure must fit inside a stopwatch held around
+    the same call, so it is that call's time and not a stale or shared one."""
+    import time
+    s = make_shield()
+    cases = [(State(x=-20, y=-20, up=4), Action4D(vx=2.0)),          # passthrough
+             (State(x=-20, y=-20, up=4), Action4D(vx=9.0)),          # speed clamp
+             (State(x=4.0, y=15, up=4), Action4D(vx=3.0)),           # fence slide
+             (State(x=15.0, y=15.0, up=4), Action4D())]              # inside NFZ
+    for st, a in cases:
+        t0 = time.perf_counter()
+        s.filter(st, a)
+        outer = (time.perf_counter() - t0) * 1e3
+        ms = s.history[-1].elapsed_ms
+        assert math.isfinite(ms) and 0.0 < ms <= outer, (ms, outer)
+    assert len(s.history) == len(cases)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

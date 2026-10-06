@@ -20,11 +20,25 @@ Version **0.5.1** — see the [changelog]({{ site.github.repository_url }}/blob/
 
 ---
 
-## The KPI, and what it does not say
+## P0 escape on the recorded flights, and what it does not say
 
-The grant's hard KPI is **P0 violation escape rate = 0**. It is 0.0 on all 41
-shielded flights recorded here. The five deliberately unshielded control flights
-read 0.63 — they exist to fail, and they do.
+**P0 violation escape rate** (target 0) is one of the five acceptance KPIs the
+grant lists, and the only one with a hard limit. It was 0.0 on the 41 shielded
+flights counted for the 14 Sept mid-evaluation: 34 on Project AirSim, 4 on
+ArduPilot SITL over pymavlink, 3 on ArduPilot SITL over MAVROS 2. The five
+deliberately unshielded control flights read 0.63 — they exist to fail, and
+they do.
+
+**These are not contract KPI figures.** The grant takes every reported KPI from
+a Stress Testing run in the *hil* topology, where a Jetson Orin runs the VLA and
+the Shield (grant pages *Stress Testing* p.1, *Architecture constraints* p.4).
+None of these flights came from a stress harness, and all of them ran on one
+desktop. The three MAVROS 2 flights are what the grant calls the *dev*
+topology; the Project AirSim and pymavlink flights are not even that. Several
+of the other KPIs the
+grant names have no number yet; see the
+[contract audit](AUDIT-KONTRAK-2026-10-05.md) and the
+[corrections to the mid-evaluation report](CORRECTION-2026-10-06-mid-evaluation-and-deck.md).
 
 It is worth being exact, because it reads as more than it is. The metric counts P0 violations the Shield **detected** that
 nonetheless reached the actuator. On the most recent flight it reads 0.0 while a
@@ -81,8 +95,10 @@ has one shape:
 
 ### Reports and status
 
-- [Midterm report, August 2026](MIDTERM-REPORT-Aug2026.md)
-- [Remaining work](CHECKLIST-remaining-work.md)
+- [Contract audit, 5 October 2026](AUDIT-KONTRAK-2026-10-05.md) (in Indonesian): the current list of open grant items
+- [Corrections to the mid-evaluation report and deck, 6 October 2026](CORRECTION-2026-10-06-mid-evaluation-and-deck.md)
+- [Midterm report, August 2026](MIDTERM-REPORT-Aug2026.md) (some claims are corrected in the note above)
+- [Remaining work, to 9 September 2026](CHECKLIST-remaining-work.md) (superseded by the audit)
 
 ---
 
@@ -107,9 +123,16 @@ decision = shield.step(state, raw_action)    # -> repaired action + audit record
 
 Every flight writes a manifest: code revision, detector weights hash, policy
 hash, random seed, sim speed-up and topology. A run whose working tree was dirty
-says so, and says that checking out that commit will not reproduce it. Only
-`canonical-hil` runs are `kpi_grade: true`; everything else is labelled
-functional-rail evidence, not a contractual KPI figure.
+says so, and says that checking out that commit will not reproduce it.
+
+Until 6 Oct only runs on the desktop ArduPilot SITL + MAVROS 2 rail could be
+`kpi_grade: true`, and the manifest labelled that rail `canonical-hil`. Five
+runs passed that rule. In the grant's terms the rail is the *dev* topology, and
+the grant takes reported KPIs from *hil* runs only. Since 6 Oct the manifest
+labels the rail `dev`, reads stored `canonical-hil` runs as `dev`, and
+`is_kpi_grade()` refuses a dev run unless the PI grants a written waiver (open
+question PQ1). So today no run is KPI-grade (`docs/data/kpi_rollup_2026-10-06.md`).
+Everything else is labelled functional-rail evidence.
 
 [Browse the source]({{ site.github.repository_url }}/tree/master) ·
 [All documents]({{ site.github.repository_url }}/tree/master/docs)

@@ -1,8 +1,12 @@
 """
-Geometry helpers — the only file that imports shapely.
+Geometry helpers — with guardrail/ir.py, the only guardrail files that import
+shapely.
 
 Keeps geometric truth in one place (the grant's 'single rule-evaluation code
-path' invariant, scaled down).
+path' invariant, scaled down). ir.py does not add a second rule: it builds
+`fence_polygon(f).buffer(f.margin_m)` once per fence and hands that ring back to
+`point_in_fence` here, so the containment test itself still lives only in this
+file.
 """
 from __future__ import annotations
 
@@ -16,13 +20,24 @@ def fence_polygon(fence: PolygonFence) -> Polygon:
 
 
 def point_in_fence(x: float, y: float, up: float, fence: PolygonFence,
-                   poly: Polygon | None = None) -> bool:
+                   poly: Polygon | None = None,
+                   buffered: Polygon | None = None) -> bool:
     """True when the point violates the fence: inside the (margin-buffered)
-    polygon AND within its altitude band."""
+    polygon AND within its altitude band.
+
+    `buffered` is the margin ring built ONCE (guardrail/ir.py compiles it per
+    fence). Without it the ring is rebuilt here on every call - correct, and
+    what every caller did until 2026-10-06, but at 30-45 us a call it was most
+    of the Shield's time: one 50-rule check could make 384 of these (48 fences x
+    the current pose and 7 forecast poses). The rebuild path is
+    kept for callers holding only a fence, and gives the same answer because
+    buffer() is a pure function of (polygon, margin)."""
     if not (fence.altitude_floor_m <= up <= fence.altitude_ceiling_m):
         return False
-    poly = poly if poly is not None else fence_polygon(fence)
-    return poly.buffer(fence.margin_m).contains(Point(x, y))
+    if buffered is None:
+        poly = poly if poly is not None else fence_polygon(fence)
+        buffered = poly.buffer(fence.margin_m)
+    return buffered.contains(Point(x, y))
 
 
 def nearest_on_polyline(x: float, y: float,

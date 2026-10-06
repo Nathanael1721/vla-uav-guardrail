@@ -1,0 +1,11 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: priority P5 (only P0-P2 exist)
+# currently: refused
+policy_id: neg-priority
+version: 0.1.0
+constraints:
+  - id: alt
+    type: altitude_envelope
+    priority: P5
+    alt_min_m: 5
+    alt_max_m: 30

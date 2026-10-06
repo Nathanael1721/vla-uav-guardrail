@@ -23,9 +23,10 @@ sys.path.insert(0, str(ROOT))
 
 from guardrail import kpi as K                                        # noqa: E402
 from guardrail.manifest import (MAX_HEADING_ERR_DEG, MIN_DET_HZ,      # noqa: E402
-                                TOPOLOGY_CANONICAL_HIL,
-                                TOPOLOGY_PROJECTAIRSIM, build_manifest,
-                                is_kpi_grade, sim_speedup_from_scene)
+                                TOPOLOGY_CANONICAL_HIL, TOPOLOGY_DEV,
+                                TOPOLOGY_HIL, TOPOLOGY_PROJECTAIRSIM,
+                                build_manifest, is_kpi_grade,
+                                normalize_topology, sim_speedup_from_scene)
 
 SCENE = ROOT / "demo" / "pas_config" / "scene_semantic.jsonc"
 GOOD_METRICS = {"det_hz": 4.5, "start_heading_err_deg": 1.5}
@@ -334,21 +335,79 @@ def test_a_disconnected_flight_controller_is_not_canonical_hil():
     raise AssertionError("a disconnected FCU was accepted as canonical HIL")
 
 
-def test_canonical_hil_with_evidence_is_accepted_and_kpi_grade():
-    """And when the evidence is there it must actually pass, or the gate can
-    never be met and the field is decorative."""
-    from guardrail.manifest import TOPOLOGY_CANONICAL_HIL
-    # A REAL canonical run: ArduPilot SITL, so no Project AirSim scene file and
+def _dev_run():
+    # A REAL MAVROS run: ArduPilot SITL, so no Project AirSim scene file and
     # the speedup read from the flight controller instead of from a scene.
-    # This used to lean on _man()'s default scene_path, which is our own
-    # Project AirSim scene - the very thing this topology is not.
-    m = build_manifest(policy_hash="sha256:deadbeefdeadbeef",
-                       model_id="google/owlvit-base-patch32", seed=42,
-                       scene_path=None, sim_speedup=1.0,
-                       topology=TOPOLOGY_CANONICAL_HIL, hil_evidence=GOOD_HIL)
-    assert m["topology"] == TOPOLOGY_CANONICAL_HIL
-    ok, why = is_kpi_grade({**m, "code_revision": "abc123abc123"}, GOOD_METRICS)
+    return build_manifest(policy_hash="sha256:deadbeefdeadbeef",
+                          model_id="google/owlvit-base-patch32", seed=42,
+                          scene_path=None, sim_speedup=1.0,
+                          topology=TOPOLOGY_DEV, hil_evidence=GOOD_HIL)
+
+
+def test_a_dev_run_with_evidence_is_accepted_but_not_kpi_grade_without_a_waiver():
+    """ARCH-13. This test used to assert the opposite - that our desktop
+    SITL + MAVROS 2 rail, then labelled `canonical-hil`, IS KPI-grade. The
+    grant calls that configuration `dev` and says it is not used for reported
+    KPI numbers; those come from `hil` (Jetson Orin). Until the PI waives that
+    in writing, the gate says so instead of quietly passing."""
+    m = _dev_run()
+    assert m["topology"] == "dev"
+    ok, why = is_kpi_grade({**m, "code_revision": "abc123abc123"}, GOOD_METRICS,
+                           dev_waiver="")
+    assert not ok
+    assert len(why) == 1 and "'hil'" in why[0] and "waiver" in why[0], why
+
+
+def test_with_a_recorded_waiver_the_dev_gate_can_actually_be_met():
+    """And when the waiver exists it must pass, or the gate can never be met
+    and the field is decorative."""
+    ok, why = is_kpi_grade({**_dev_run(), "code_revision": "abc123abc123"},
+                           GOOD_METRICS, dev_waiver="PI email 2026-10-14 (test)")
     assert ok, why
+
+
+def test_the_legacy_label_is_written_as_dev_and_read_as_dev():
+    """Five stored runs say `canonical-hil`. They are read under today's name,
+    never rewritten, and no code path emits the old label again."""
+    assert TOPOLOGY_CANONICAL_HIL == TOPOLOGY_DEV == "dev"
+    assert normalize_topology("canonical-hil") == "dev"
+    m = build_manifest(policy_hash="sha256:deadbeefdeadbeef",
+                       model_id="guardrail.vla_stub.StubVLA", seed=0,
+                       scene_path=None, sim_speedup=1.0,
+                       topology="canonical-hil", hil_evidence=GOOD_HIL)
+    assert m["topology"] == "dev", m
+    stored = {**m, "topology": "canonical-hil", "code_revision": "abc123abc123"}
+    ok, why = is_kpi_grade(stored, GOOD_METRICS, dev_waiver="")
+    assert not ok and "read as 'dev'" in why[0], why
+
+
+def test_no_rail_here_may_claim_hil_or_flight():
+    """Both need a Jetson Orin, which no rail in this repository runs."""
+    for topo in (TOPOLOGY_HIL, "flight"):
+        try:
+            build_manifest(policy_hash="sha256:deadbeefdeadbeef",
+                           model_id="guardrail.vla_stub.StubVLA", seed=0,
+                           scene_path=None, sim_speedup=1.0, topology=topo,
+                           hil_evidence=GOOD_HIL)
+        except ValueError as e:
+            assert "Orin" in str(e), e
+            continue
+        raise AssertionError(f"{topo!r} was claimed by a desktop rail")
+
+
+def test_a_hil_manifest_draws_no_topology_objection():
+    """The grant's KPI topology is not refused by the gate itself."""
+    m = {**_dev_run(), "topology": "hil", "code_revision": "abc123abc123"}
+    ok, why = is_kpi_grade(m, GOOD_METRICS, dev_waiver="")
+    assert ok, why
+
+
+def test_no_flight_entry_point_writes_the_old_label():
+    """`canonical-hil` may be READ (old manifests); it must not be written."""
+    for rel in ("sitl/ros2_shield_node.py", "sitl/run_sitl_demo.py",
+                "demo/follow_vlm.py"):
+        src = (ROOT / rel).read_text(encoding="utf-8")
+        assert '"canonical-hil"' not in src and "TOPOLOGY_CANONICAL_HIL" not in src, rel
 
 
 def test_a_code_only_pilot_is_pinned_by_its_source_not_left_unresolved():

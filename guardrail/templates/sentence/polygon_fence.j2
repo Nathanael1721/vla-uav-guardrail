@@ -1,0 +1,3 @@
+{% extends "sentence/_base.j2" %}
+{#- Keep-OUT zone. The id stays quoted so a paraphraser cannot fold it into the prose. -#}
+{% block core %}Never enter zone '{{ r.id }}'{% endblock %}

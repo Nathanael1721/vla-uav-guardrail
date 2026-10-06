@@ -1,0 +1,12 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: lat/lon vertices with no origin to project about
+# currently: refused
+policy_id: neg-no-origin
+version: 0.1.0
+constraints:
+  - id: nfz
+    type: polygon_fence
+    vertices:
+      - { lat: 25.04, lon: 121.53 }
+      - { lat: 25.05, lon: 121.53 }
+      - { lat: 25.05, lon: 121.54 }

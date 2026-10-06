@@ -1,0 +1,11 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: version: banana
+# currently: ACCEPTED
+# finding: the grant requires a semver version; the version lock compares strings, so nothing orders 'banana' against 0.1.0
+policy_id: neg-semver
+version: banana
+constraints:
+  - id: alt
+    type: altitude_envelope
+    alt_min_m: 5
+    alt_max_m: 30

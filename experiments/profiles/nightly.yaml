@@ -1,0 +1,40 @@
+# Nightly KPI profile: the nightly sweep config.
+#
+# Grant, Stress Testing, "Test scheduling":
+#   Nightly KPI | nightly | ~200 scenarios x 3 seeds | sim_speedup 1.0 (KPI-grade, HIL topology)
+# "The smoke and nightly KPI runs are reproducible at sim_speedup=1.0 and feed
+# the final KPI report."
+#
+# WHAT THIS REPRODUCES AND WHAT IT DOES NOT
+#
+# The scope - every family's full parameter_sweep, three drawn approach angles
+# per sampled family, three seeds - is the grant's. The topology is not: on the
+# headless backend no episode is KPI-grade, so nothing from this profile may
+# feed the final KPI report until the same library runs on the HIL rail
+# (ArduPilot SITL + MAVROS 2) at sim_speedup 1.0. The broad sweep (~3000 x 5
+# seeds, functional rail) has no profile yet.
+#
+# THE THREE SEEDS
+#
+# A seed changes an episode only if it draws something: GPS noise, gusts, a
+# drawn wind direction, start jitter. Most families here are deterministic, so
+# their three seeds are identical by construction; the sweep counts episodes
+# that consumed a seed and those that did not, so three repeats of a
+# deterministic flight are never presented as spread. It also prints how many
+# episodes had distinct KPI tables at all.
+#
+# Before anything runs, the sweep refuses this profile (exit 2) if its count
+# leaves `expected_cells` or if two of its cells fly the same episode.
+#
+#   python experiments/sweep_scenarios.py --profile nightly
+
+profile: nightly
+cadence: nightly
+grant_scope: "~200 scenarios x 3 seeds"
+grant_sim_speedup: "1.0 (KPI-grade, HIL topology) - NOT met: headless backend, measured speedup >> 1"
+library: experiments/scenarios.yaml
+seeds: [1001, 1002, 1003]
+samples_per_family: 3
+families: all
+expected_cells: [170, 240]
+sweep_overrides: {}

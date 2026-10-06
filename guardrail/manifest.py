@@ -44,17 +44,48 @@ from typing import Any
 
 UNRESOLVED = "unresolved"
 
-# Our rail is NOT the grant's canonical HIL topology (ArduPilot SITL + MAVROS 2 on
-# the dev compose). The field exists so the difference can never be blurred, so
-# the value the flight scripts pass is fixed and this module refuses the HIL name.
+# THE GRANT'S THREE TOPOLOGIES, BY THE GRANT'S NAMES (Architecture constraints;
+# reference vlaguard_common/manifest.py `Topology`: dev | hil | flight):
+#
+#   dev     one desktop: simulator + ArduPilot SITL + MAVROS 2 + VLA + Shield.
+#           "Not used for reported KPI numbers" (reference
+#           docs/03-simulation/topologies.md).
+#   hil     the VLA and the Shield on a Jetson Orin, talking to the simulator
+#           host over the network - the grant's "canonical KPI configuration".
+#   flight  the Orin on a real ArduPilot airframe.
+#
+# Until 2026-10-06 this file called our desktop SITL + MAVROS 2 rail
+# "canonical-hil" and is_kpi_grade() treated it as the KPI topology. It is the
+# grant's `dev`: one PC, no Orin. Five runs carry the old label; they are read
+# as `dev` (LEGACY_TOPOLOGY_LABELS), never rewritten.
+TOPOLOGY_DEV = "dev"
+TOPOLOGY_HIL = "hil"
+TOPOLOGY_FLIGHT = "flight"
+# The old constant name, kept so importers do not break. It now MEANS dev, and
+# a manifest built with it says "dev".
+TOPOLOGY_CANONICAL_HIL = TOPOLOGY_DEV
+LEGACY_TOPOLOGY_LABELS = {"canonical-hil": TOPOLOGY_DEV}
+
+# Our functional rails, which are none of the three.
 TOPOLOGY_PROJECTAIRSIM = "projectairsim-single-host"
-TOPOLOGY_CANONICAL_HIL = "canonical-hil"
 # ArduPilot SITL driven straight over pymavlink (sitl/run_sitl_demo.py). Real
-# flight code and a real MAVLink path, but NOT the grant's canonical topology,
-# which also requires MAVROS 2. Naming it separately keeps the difference from
-# being blurred in either direction: these runs are not Project AirSim, and they
-# are not yet KPI-grade either.
+# flight code and a real MAVLink path, but not even the grant's dev topology,
+# which runs MAVROS 2. Naming it separately keeps the difference from being
+# blurred in either direction.
 TOPOLOGY_ARDUPILOT_SITL = "ardupilot-sitl-pymavlink"
+
+# The PI's written decision that `dev` runs may carry contractual KPI figures
+# (question PQ1 in the 2026-10-06 plan), or None while there is none. When the
+# answer arrives, set this to a citation ("PI email 2026-10-xx: ...") and
+# is_kpi_grade() will accept evidence-backed dev runs, naming the waiver in the
+# reasons. Until then a dev run is never KPI-grade: the grant reserves KPI
+# figures for hil, and a constant that says otherwise is the drift this replaced.
+DEV_KPI_WAIVER: str | None = None
+
+
+def normalize_topology(label: str | None) -> str | None:
+    """Read a stored topology label under today's names (old manifests too)."""
+    return LEGACY_TOPOLOGY_LABELS.get(label, label) if label else label
 
 MIN_DET_HZ = 2.0
 MAX_HEADING_ERR_DEG = 10.0
@@ -231,12 +262,14 @@ def sim_speedup_from_scene(scene_path: str | Path) -> float | None:
 
 
 def check_hil_evidence(ev: dict | None) -> list[str]:
-    """What is missing before a run may call itself canonical HIL. Empty = nothing.
+    """What is missing before a run may call itself `dev`. Empty = nothing.
 
-    The grant's canonical topology is ArduPilot SITL driven through MAVROS 2, so
-    the evidence has to show all three links of that chain were live: a ROS 2
-    distribution, the MAVROS node itself, and a flight controller reporting
-    connected. A run that merely imported rclpy has not demonstrated any of it.
+    (The name predates the relabel; the evidence is the MAVROS chain.) The
+    grant's dev topology is ArduPilot SITL driven through MAVROS 2 on one
+    desktop, so the evidence has to show all three links of that chain were
+    live: a ROS 2 distribution, the MAVROS node itself, and a flight controller
+    reporting connected. A run that merely imported rclpy has not demonstrated
+    any of it.
 
     `fcu_connected` is the load-bearing one. MAVROS starts happily with nothing
     on the other end of the serial or UDP link and publishes `connected: false`
@@ -291,12 +324,25 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
     `sim_speedup_from_mavlink()`. Never pass a literal: the whole reason this
     field is derived rather than declared is that a hand-written 1.0 is exactly
     the number a broken run would also carry.
+
+    `topology` is stored under today's name: the legacy "canonical-hil" is
+    accepted as input and written as "dev".
     """
-    if topology == TOPOLOGY_CANONICAL_HIL:
-        # The guard opens on EVIDENCE, never on the caller's word. Claiming the
-        # canonical topology is claiming KPI-grade eligibility, so the caller
-        # must show it was actually talking to a flight controller through
-        # MAVROS 2 - a fact only a live connection can produce.
+    topology = normalize_topology(topology)
+    if topology in (TOPOLOGY_HIL, TOPOLOGY_FLIGHT):
+        # No rail in this repository runs the VLA and the Shield on a Jetson
+        # Orin, so nothing here can honestly produce these labels. Refused
+        # outright rather than gated on a dict the caller assembles.
+        raise ValueError(
+            f"{topology!r} is the grant's Jetson Orin topology and no rail in "
+            f"this repository runs it; a desktop ArduPilot SITL + MAVROS 2 run "
+            f"is {TOPOLOGY_DEV!r}.")
+    if topology == TOPOLOGY_DEV:
+        # The guard opens on EVIDENCE, never on the caller's word. `dev` is the
+        # one label that becomes KPI-eligible if the PI grants the waiver
+        # (DEV_KPI_WAIVER), so the caller must show it was actually talking to
+        # a flight controller through MAVROS 2 - a fact only a live connection
+        # can produce.
         #
         # The evidence is checked here and recorded in the run's metrics.json,
         # not in the manifest: the manifest is exactly six fields by the grant's
@@ -304,25 +350,25 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
         missing = check_hil_evidence(hil_evidence)
         if missing:
             raise ValueError(
-                "canonical-hil is the grant's ArduPilot SITL + MAVROS 2 topology "
+                "dev is the grant's desktop ArduPilot SITL + MAVROS 2 topology "
                 "and may not be claimed without evidence of it: "
                 + "; ".join(missing))
         # A scene file is itself evidence, and it contradicts the claim.
         #
-        # The canonical rail is ArduPilot SITL: there is no Project AirSim scene
+        # The dev rail here is ArduPilot SITL: there is no Project AirSim scene
         # in it, which is precisely why `sim_speedup` may be passed in for a
         # rail with no scene file (see below). So a caller handing over BOTH a
-        # scene path and the canonical topology is describing two different
+        # scene path and the MAVROS topology is describing two different
         # stacks at once, and the honest answer is to refuse rather than to
         # believe the half that flatters the run.
         #
         # Without this the evidence check was the only gate, and evidence is a
         # dict the caller assembles. Our own Project AirSim scene passed
-        # straight through and got stamped `canonical-hil`, which is the one
-        # label the grant reads as KPI-grade.
+        # straight through and got stamped with the MAVROS label, the one this
+        # module treats as waiver-eligible.
         if scene_path is not None:
             raise ValueError(
-                "canonical-hil is the ArduPilot SITL + MAVROS 2 topology and has "
+                "dev here is the ArduPilot SITL + MAVROS 2 topology and has "
                 f"no simulator scene file, but scene_path={str(scene_path)!r} was "
                 f"given. A run with a Project AirSim scene is "
                 f"{TOPOLOGY_PROJECTAIRSIM!r}, whatever evidence accompanies it.")
@@ -338,23 +384,43 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
     }
 
 
-def is_kpi_grade(manifest: dict, metrics: dict) -> tuple[bool, list[str]]:
+def is_kpi_grade(manifest: dict, metrics: dict,
+                 dev_waiver: str | None = None) -> tuple[bool, list[str]]:
     """May this run's numbers be quoted as contractual KPIs?
 
     Every check below exists because the corresponding failure already happened
     and produced a number that looked fine.
+
+    Topology: the grant's Stress Testing page says every reported KPI comes
+    from a run "executed in the canonical HIL topology", and its Architecture
+    constraints make that `hil` (Jetson Orin). `dev` - our desktop SITL +
+    MAVROS 2 rail, including runs stored as "canonical-hil" - qualifies only
+    under a written PI waiver, passed here or recorded in DEV_KPI_WAIVER.
     """
     reasons: list[str] = []
+    waiver = dev_waiver if dev_waiver is not None else DEV_KPI_WAIVER
 
     if manifest.get("sim_speedup") != 1.0:
         reasons.append(
             f"sim_speedup is {manifest.get('sim_speedup')}, and 1.0 is mandatory "
             f"for a KPI-bearing run")
 
-    if manifest.get("topology") != TOPOLOGY_CANONICAL_HIL:
+    stored = manifest.get("topology")
+    topo = normalize_topology(stored)
+    shown = repr(stored) if stored == topo else f"{stored!r} (read as {topo!r})"
+    if topo == TOPOLOGY_HIL:
+        pass
+    elif topo == TOPOLOGY_DEV:
+        if not waiver:
+            reasons.append(
+                f"topology is {shown}: the grant's desktop configuration, which "
+                f"it does not use for reported KPI numbers - those come from "
+                f"{TOPOLOGY_HIL!r} (Jetson Orin). A dev run counts only under a "
+                f"written PI waiver, and none is recorded (PQ1)")
+    else:
         reasons.append(
-            f"topology is {manifest.get('topology')!r}, not the grant's "
-            f"{TOPOLOGY_CANONICAL_HIL!r}: functional-rail evidence, not a "
+            f"topology is {shown}, not the grant's {TOPOLOGY_HIL!r} (nor a "
+            f"waivable {TOPOLOGY_DEV!r}): functional-rail evidence, not a "
             f"contractual KPI number")
 
     for field in ("code_revision", "vla_model_hash", "policy_hash"):
@@ -388,3 +454,43 @@ def is_kpi_grade(manifest: dict, metrics: dict) -> tuple[bool, list[str]]:
             f"frame at all is then luck, and the run is not comparable")
 
     return (not reasons), reasons
+
+
+def policy_source_record(kind: str, path: str | None, policy_hash: str,
+                         **extra) -> dict[str, Any]:
+    """Where a flight's policy came from, in one shape for every entry point.
+
+    Written beside the manifest (metrics.json, kpi.json, the replay index), not
+    into it: the manifest is the grant's six fields and stays six. `kind` is
+    "bundle" (then `signature` says whether it verified) or "yaml" - which is
+    always `signature: "unsigned"`, because a YAML file carries none.
+    """
+    rec = {"kind": kind, "path": path, "loaded_policy_hash": policy_hash}
+    if kind == "yaml":
+        rec["signature"] = "unsigned"
+        rec["signature_detail"] = ("loaded from YAML, not from a signed bundle; "
+                                   "the policy hash identifies it but nothing "
+                                   "attests who issued it")
+    rec.update(extra)
+    return rec
+
+
+def resolve_run_policy(manifest: dict, candidates) -> tuple[Any, str | None,
+                                                            str | None]:
+    """The policy a stored run flew under: `(policy, hash_form, label)`.
+
+    `candidates` is `[(label, Policy), ...]`, normally
+    `guardrail.bundle.policy_candidates()` - every policy file plus the
+    hot-applied derivations the lock records. Every identity form is tried:
+    the 64-hex hash and each 16-hex legacy form (`Policy.hash_form`). Returns
+    `(None, None, None)` when nothing matches; the caller must report that run
+    as unverifiable rather than pick the nearest policy.
+    """
+    recorded = (manifest or {}).get("policy_hash")
+    if not recorded or UNRESOLVED in str(recorded):
+        return None, None, None
+    for label, pol in candidates:
+        form = pol.hash_form(recorded)
+        if form is not None:
+            return pol, form, label
+    return None, None, None
