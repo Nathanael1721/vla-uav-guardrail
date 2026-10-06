@@ -82,6 +82,12 @@ class FrameRecorder(threading.Thread):
         # and was actually a name collision.
         self._stop_evt = threading.Event()
         self.n_written = 0
+        # The flight time (hud["t"]) each written frame was stamped with, by
+        # frame index. Mapping frames to the 10 Hz log by index / achieved_hz
+        # drifts by seconds over a flight - the recorder keeps writing through
+        # the landing and skips late slots - and a frame redrawn from the log
+        # (tools/rerender_policy_hud.py) needs the row it actually showed.
+        self.frame_t: list = []
         self.n_late = 0          # arrived more than half a period after the slot
         self.n_skipped = 0       # no HUD yet, so nothing to stamp
         self.n_empty = 0         # both cameras returned nothing
@@ -221,6 +227,8 @@ class FrameRecorder(threading.Thread):
                     if self.t_first_write is None:
                         self.t_first_write = now
                     self.n_written += 1
+                    _ht = hud.get("t")
+                    self.frame_t.append(None if _ht is None else round(float(_ht), 3))
                 else:
                     self.n_empty += 1
             except Exception:
@@ -304,6 +312,7 @@ class FrameRecorder(threading.Thread):
             "empty_captures": self.n_empty,
             "failed": self.n_failed,
             "stale_frames_cleared": self.n_cleared,
+            "frame_t": self.frame_t,
         }
         # State the shortfall rather than leaving it to be inferred from two
         # numbers a reader has to divide.

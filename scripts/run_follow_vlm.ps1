@@ -74,6 +74,15 @@
 .PARAMETER Controls
     Also fly the two control conditions (wrong colour word, and no car present).
 
+.PARAMETER Identity
+    Fly with the 2026-09-29 target identity: every candidate judged physically,
+    a strict instance lock, re-acquisition only through a gate, and a landing
+    site chosen before the descent (--identity --land-site). Off by default so
+    the measured demos above reproduce.
+
+.PARAMETER Only1
+    Fly DEMO 1 only (the tracking regression), under the tag -Tag1.
+
 .EXAMPLE
     .\run_follow_vlm.ps1
     .\run_follow_vlm.ps1 -Controls
@@ -92,6 +101,9 @@ param(
     [switch]$SkipSim,
     [switch]$Controls,
     [switch]$TrailFollow,               # fly the car's trail, not the nose (demo/trail.py)
+    [switch]$Identity,                  # --identity --land-site (see .PARAMETER Identity)
+    [switch]$Only1,                     # DEMO 1 only
+    [string]$Tag1 = "demo_follow",      # its tag
     [switch]$NoVideo
 )
 # Flight durations are per-demo and set at the call sites below: the tracking run
@@ -156,6 +168,7 @@ function Fly($tag, $obj, $policy, $secs, $stopS, $traffic, [switch]$NoCar, [swit
     if ($NoCar)  { $a += "--no-car" }
     if ($Record) { $a += "--save-view" }
     if ($TrailFollow) { $a += "--trail-follow" }
+    if ($Identity) { $a += @("--identity", "--land-site") }
     & $Py @a
 }
 
@@ -165,7 +178,12 @@ if ($SkipSim -and -not (Test-SimUp)) { throw "-SkipSim given but nothing on 8989
 
 Say "DEMO 1: follow `"$Object`" - no fence, pure tracking"
 Say "        measured 100% of the flight within 30 m, on two separate flights"
-Fly "demo_follow" $Object "policies\follow_car.yaml" 70 8 0 -Record
+Fly $Tag1 $Object "policies\follow_car.yaml" 70 8 0 -Record
+if ($Only1) {
+    if (-not $NoVideo) { & $Py "tools\make_demo_video.py" "--tag" $Tag1 "--height" "$RecordHeight" }
+    Stop-OurSim
+    return
+}
 
 # --want-width is COUPLED to --cruise-alt. It is an angular stand-off, so the
 # same value is a much larger ground distance from higher up. 0.10 suits the 9 m

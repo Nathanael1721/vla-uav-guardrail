@@ -286,16 +286,18 @@ def test_gain_is_the_only_way_to_reach_the_outer_phrases():
     assert strong.max_bearing_deg == 90.0
 
 
-def test_deadband_is_a_third_of_the_frame():
+def test_deadband_is_a_quarter_of_the_frame():
     """The quantisation cost, in pixels. At hfov 90 the straight-ahead band is
-    |bearing| <= 15 deg = |cx - W/2| <= W/6, so the target crosses 133 of 400
+    |bearing| <= 15 deg = |cx - W/2| <= f*tan(15 deg) (pinhole since
+    2026-09-29; W/6 under the old linear map), so the target crosses ~107 of 400
     columns with the commanded action bit-identical — where servo() would have
     moved the yaw command continuously across the same span."""
     br = VLABridge("an orange car")
-    assert abs(br.deadband_px(W) - W / 6.0) < 1e-9
+    f = (W / 2.0) / math.tan(math.radians(90.0) / 2.0)
+    assert abs(br.deadband_px(W) - f * math.tan(math.radians(15.0))) < 1e-9
     same = [cx for cx in range(0, W + 1)
             if br.phrase_for(_det(cx)) == vla_bridge.STRAIGHT_AHEAD]
-    assert len(same) >= W // 3
+    assert len(same) >= int(2 * br.deadband_px(W))       # ~107 of 400 columns
     # servo() at the edge of that band already commands real yaw, the phrase
     # path commands a constant: 1.2 * radians(15) = 0.314 rad/s vs -0.035
     _yaw_edge, _f, brg = servo(_det(W / 2 + W / 6), W, 1.2, 0.10, 4.0)

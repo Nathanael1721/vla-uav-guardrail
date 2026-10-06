@@ -134,6 +134,35 @@ def camera_hfov_deg(config_path=ROBOT_CONFIG, sensor: str = "FrontCamera",
 
 # Resolved once, at import. Every bearing computation in this module uses it.
 CAMERA_HFOV_DEG = camera_hfov_deg()
+
+# PIXEL -> ANGLE, IN ONE PLACE (demo/camera_model.py).
+#
+# Every bearing and every box width used to be `hfov/2 * offset/(W/2)`, a LINEAR
+# map. The camera is a pinhole: at 90 deg HFOV the two agree only at the centre
+# and the edges, differ by ~4 deg in between, and the linear map made every
+# physical width ~21 % small (found 2026-09-29). `--linear-bearing` restores it,
+# for reproducing flights recorded before the change.
+import camera_model as _cam  # noqa: E402
+LINEAR_BEARING = False
+
+
+def box_bearing(cx: float, img_w: float, hfov_deg: float = None) -> float:
+    """Angle (rad) of image column `cx` off the nose; positive right."""
+    hfov = CAMERA_HFOV_DEG if hfov_deg is None else hfov_deg
+    if LINEAR_BEARING:
+        return math.radians(hfov / 2.0) * ((cx - img_w / 2.0) / (img_w / 2.0))
+    return _cam.pixel_bearing(cx, img_w, hfov)
+
+
+def box_half_angle(bw: float, img_w: float, hfov_deg: float = None,
+                   cx: float = None) -> float:
+    """Half the angle (rad) a box of width `bw` px subtends, centred on `cx`
+    (the frame centre when not given)."""
+    hfov = CAMERA_HFOV_DEG if hfov_deg is None else hfov_deg
+    if LINEAR_BEARING:
+        return math.radians(hfov / 2.0) * (bw / img_w)
+    c = img_w / 2.0 if cx is None else cx
+    return _cam.box_angular_width(c, bw, img_w, hfov) / 2.0
 # Declared in that scene file. The simulator drives this actor along an uploaded
 # trajectory; see demo/env_actor_car.jsonc and demo/car_trajectory.py.
 ENV_CAR_NAME = "SemCarActor"
@@ -244,6 +273,12 @@ SUBJECT_VMAX_MPS = {
     "pedestrian": 2.0, "cyclist": 8.0, "motorcycle": 20.0,
     "car": 15.0, "van": 15.0, "truck": 15.0, "bus": 15.0,
 }
+
+# Height of a subject's box centre above the road (m), by CANONICAL class, for
+# projecting a predicted position into the frame (Grounder._prior_at). Keyed
+# like SUBJECT_VMAX_MPS: a test on "person" never matched, because the class
+# is canonicalised to "pedestrian" (re-review, 2026-09-30).
+SUBJECT_CENTRE_UP_M = {"pedestrian": 0.9, "cyclist": 0.9, "motorcycle": 0.8}
 
 # The word the operator typed -> the class name a POLICY uses. These are two
 # different vocabularies and conflating them was a real, silent defect.
@@ -701,7 +736,7 @@ def implied_width_m(det, rng_m: float, hfov_deg: float = CAMERA_HFOV_DEG):
     if det is None or rng_m is None or rng_m <= 0:
         return None
     bw, W = float(det[2]), float(det[5])
-    half = math.radians(hfov_deg / 2.0) * (bw / W)
+    half = box_half_angle(bw, W, hfov_deg, float(det[0]))
     return 2.0 * rng_m * math.tan(half)
 
 
@@ -718,7 +753,7 @@ def implied_range_from_width(det, object_width_m: float = 4.0,
     bw, W = float(det[2]), float(det[5])
     if bw <= 0 or W <= 0:
         return None
-    half = math.radians(hfov_deg / 2.0) * (bw / W)
+    half = box_half_angle(bw, W, hfov_deg, float(det[0]))
     if half <= 1e-4:
         return None
     return (object_width_m / 2.0) / math.tan(half)
@@ -973,14 +1008,19 @@ class Acquirer:
         self.first_plausible_n = None
         self.last_reasons: list = []
 
-    def step(self, cands, rng_of, ground=None) -> bool:
+    def step(self, cands, rng_of, ground=None, tiers=None) -> bool:
         """Judge one fresh inference. `rng_of(cand)` gives its range or None;
-        `ground` is (altitude, body pitch) for the ground-contact check.
+        `ground` is (altitude, body pitch) for the ground-contact check;
+        `tiers` (identity mode) is each candidate's tier, and only "ok" ones
+        may start a subject - a SOFT box may continue a track, never begin one.
         Returns True once the subject is confirmed; `pick` is then it."""
         self.n += 1
         self.n_candidates += len(cands)
         plaus, self.last_reasons = [], []
-        for c in cands:
+        for i, c in enumerate(cands):
+            if tiers is not None and i < len(tiers) and tiers[i] != "ok":
+                self.last_reasons.append(f"identity: {tiers[i]}")
+                continue
             rng = rng_of(c)
             verdict, why = presence_verdict(c, rng, self.query, self.colour_min,
                                             ground=ground)
@@ -989,7 +1029,8 @@ class Acquirer:
                 continue
             if self.max_range_m > 0:
                 if rng is None and self.width_m and float(c[2]) > 0:
-                    half = math.radians(self.hfov_deg / 2.0) * float(c[2]) / float(c[5])
+                    half = box_half_angle(float(c[2]), float(c[5]), self.hfov_deg,
+                                          float(c[0]))
                     rng = self.width_m / (2.0 * math.tan(half))
                 if rng is not None and rng > self.max_range_m:
                     self.n_too_far += 1
@@ -1014,6 +1055,270 @@ class Acquirer:
             self.pick, self.streak = cont, self.streak + 1
         self.best_streak = max(self.best_streak, self.streak)
         return self.streak >= self.need
+
+
+class Reacquirer:
+    """Take the subject back after the estimate has lapsed - only on evidence.
+
+    The old path had no such step: the TargetLock adopted the best-scoring box
+    after 2 s, and the estimator's gate, widened by seconds of prediction,
+    let a box 110 m away re-seed it. That is how citylife_redcar_trail ended
+    with TARGET LOCKED on a red pedestrian signal (2026-09-29).
+
+    Here a candidate counts only if it is identity "ok", has a map point `P`
+    within `max_range_m` (horizontal), and is WITHIN REACH of the last
+    measured position: |P - P_last| <= reach_base_m + v_r * dt, where
+    v_r = clip(1.5 x the last measured speed, 3, 12) m/s and dt is the time
+    since that measurement. `need` inferences in a row must each have one,
+    each within `step_m` + v_r * (time between them) of the previous pick.
+
+    WHEN NOTHING CONSTRAINS WHERE IT IS - no anchor (the start, a retarget),
+    or a reach grown past `reach_cap_m` after a long loss - the candidate must
+    also be SEEN MOVING. The pipeline replay (tools/replay_pipeline.py) found
+    the one thing the physical rules cannot reject: a red fire-hydrant sign on
+    a stand at the kerb by the launch point, car-wide by depth and on the
+    street, which seeded the estimate twice on citylife_redcar_far. Its map
+    point jitters 3 m between frames (1 m depth quantisation, road behind the
+    box), so first-to-last displacement cannot tell it from a car. The test is
+    therefore over at least 2 x `need` sightings: the median point of the
+    second half of the streak must lie `motion_m` from the median of the
+    first. A car at 3.2 m/s does it by ~3.5 m; the sign's medians move < 1 m.
+
+    The evidence is kept for a TIME, not a count (review, 2026-09-29): with a
+    cap of 3 x `need` sightings the slowest subject that could pass was
+    motion_m / (7.5 inference gaps) - 1.47 m/s at the start gate's 5.5 Hz,
+    so a walker at 1.3 m/s was blacklisted as a sign. A streak may now grow
+    until it passes; only one that has spanned `static_after_s` seconds
+    without moving marks its place STATIC, and a static place is forgotten
+    after `static_ttl_s` - people wait at kerbs and cars at red lights.
+
+    AND THE BAR RISES WITH THE JITTER. A growing streak re-tests on every
+    sighting, and a fixed 2 m bar let a standing sign with 1.5 m of map-point
+    jitter through on 186 of 200 simulated minutes (re-review, 2026-09-30).
+    The displacement must exceed motion_m + `motion_k` standard errors of the
+    half-median difference, the jitter measured from the streak's own
+    successive differences (which a steady speed does not inflate).
+
+    A FAR LEAD IS FLOWN TOWARD, NOT TAKEN. On citylife_redcar_id3 (2026-09-30)
+    the car turned out of view at 15 m and then stood at a red light 52 m
+    away, in plain view: every one of its boxes was OK and within reach, and
+    every one was refused "too far" (65 times) while the junction planner held
+    elsewhere. A candidate refused for range ALONE - OK, ranged, within reach
+    of an anchor, not a static place - is kept as `far`; `far_lead` returns
+    its place once `far_need` of them agree (each within step_m + v_r dt of
+    the last) inside `far_window_s`. The search then closes the range, and the
+    ordinary gate, at <= max_range_m, is what may commit to it.
+    """
+
+    def __init__(self, need: int = 4, max_range_m: float = 45.0,
+                 reach_base_m: float = 10.0, step_m: float = 3.0,
+                 v_min: float = 3.0, v_max: float = 12.0,
+                 motion_m: float = 2.0, reach_cap_m: float = 60.0,
+                 static_m: float = 3.0, static_after_s: float = 5.0,
+                 static_ttl_s: float = 30.0, trace_max: int = 80,
+                 motion_k: float = 3.0, static_after_min_s: float = 8.0,
+                 far_need: int = 3, far_window_s: float = 3.0):
+        self.need = need
+        self.max_range_m = max_range_m
+        self.reach_base_m = reach_base_m
+        self.step_m = step_m
+        self.v_min, self.v_max = v_min, v_max
+        self.motion_m = motion_m
+        self.reach_cap_m = reach_cap_m
+        self.static_m = static_m
+        # at least static_after_min_s: a slow walker with the noise-aware bar
+        # needs ~5.5 s to pass, and must not be marked static first
+        self.static_after_s = max(static_after_s, static_after_min_s)
+        self.motion_k = motion_k
+        self.static_ttl_s = static_ttl_s
+        self.trace_max = trace_max
+        self.far_need = far_need
+        self.far_window_s = far_window_s
+        self.far: list = []             # candidates refused for range alone, (t, x, y)
+        self.static: list = []          # places seen not to move, (x, y, t)
+        self.anchor = None
+        self.pick = None
+        self.pick_feat = None
+        self.pick_t = None
+        self.first_P = None
+        self.trace: list = []           # the streak's map points, (t, x, y)
+        self.streak = 0
+        self.best_streak = 0
+        self.n = 0
+        self.n_candidates = 0
+        self.refused: dict = {}
+
+    def v_reach(self) -> float:
+        v = (self.anchor or {}).get("v")
+        return float(np.clip(1.5 * (v or 0.0), self.v_min, self.v_max))
+
+    def reach_m(self, t: float):
+        """How far from the anchor the subject may be at `t`; None = no anchor."""
+        if self.anchor is None or self.anchor.get("P") is None:
+            return None
+        return self.reach_base_m + self.v_reach() * max(0.0, t - float(self.anchor["t"]))
+
+    def start(self, anchor: dict | None) -> None:
+        """anchor = {t, P (x, y), v (measured m/s or None)}; None = no anchor."""
+        self.anchor = anchor
+        self.pick = self.pick_feat = self.pick_t = self.first_P = None
+        self.trace = []
+        self.streak = 0
+        self.far = []
+
+    def far_lead(self, t: float):
+        """(x, y) of a far candidate seen `far_need` times, consistently, within
+        the last `far_window_s` before `t`; else None (class docstring)."""
+        recent = [q for q in self.far if t - q[0] <= self.far_window_s]
+        if len(recent) < self.far_need:
+            return None
+        vr = self.v_reach()
+        run = recent[-self.far_need:]
+        for (ta, xa, ya), (tb, xb, yb) in zip(run, run[1:]):
+            if math.hypot(xb - xa, yb - ya) > self.step_m + vr * max(0.0, tb - ta):
+                return None
+        return run[-1][1], run[-1][2]
+
+    def _refuse(self, why: str) -> None:
+        self.refused[why] = self.refused.get(why, 0) + 1
+
+    def _reset_streak(self) -> None:
+        self.streak, self.pick, self.pick_feat, self.first_P = 0, None, None, None
+        self.trace = []
+
+    def _halves(self):
+        if len(self.trace) < 2 * self.need:
+            return None
+        h = len(self.trace) // 2
+        xy = np.asarray([(q[1], q[2]) for q in self.trace])
+        return np.median(xy[:h], axis=0), np.median(xy[h:], axis=0)
+
+    def moved_m(self):
+        """Half-median displacement over the streak, or None if too short."""
+        hv = self._halves()
+        if hv is None:
+            return None
+        a, b = hv
+        return float(math.hypot(b[0] - a[0], b[1] - a[1]))
+
+    def motion_bar_m(self):
+        """The displacement a streak must show to count as moving: motion_m
+        plus motion_k standard errors of the half-median difference. The
+        per-axis jitter is from successive differences (their spread, not
+        their mean, so a steady speed does not raise it); a median of n
+        samples has a standard error of ~1.2533 sigma / sqrt(n)."""
+        if len(self.trace) < 3:
+            return self.motion_m
+        xy = np.asarray([(q[1], q[2]) for q in self.trace])
+        d = np.diff(xy, axis=0)
+        sigma = float(np.sqrt(np.mean(np.var(d, axis=0))) / math.sqrt(2.0))
+        n_half = max(1, len(self.trace) // 2)
+        se_diff = math.sqrt(2.0) * 1.2533 * sigma / math.sqrt(n_half)
+        return self.motion_m + self.motion_k * se_diff
+
+    def heading(self):
+        """Direction of that displacement (rad, NED yaw) when it clears the
+        motion bar, else None - a streak's own measure of where it went."""
+        hv = self._halves()
+        if hv is None:
+            return None
+        a, b = hv
+        if math.hypot(b[0] - a[0], b[1] - a[1]) < self.motion_bar_m():
+            return None
+        return math.atan2(b[1] - a[1], b[0] - a[0])
+
+    def step(self, cands, tiers, feats, t_cap: float) -> bool:
+        """One fresh inference's candidates (with their tiers and features)
+        captured at `t_cap`. True once `need` in a row agree (and, when
+        nothing constrains the place, the subject has been seen moving);
+        `pick` is then the last of them and `pick_feat` its features."""
+        self.n += 1
+        self.n_candidates += len(cands)
+        vr = self.v_reach()
+        reach = self.reach_m(t_cap)
+        ok = []
+        far = []
+        for i, c in enumerate(cands):
+            tier = tiers[i] if i < len(tiers) else None
+            f = feats[i] if i < len(feats) else None
+            if tier != "ok":
+                self._refuse("not ok")
+                continue
+            P = (f or {}).get("P")
+            if P is None:
+                self._refuse("no range")
+                continue
+            rng_h = (f or {}).get("rng_h")
+            if rng_h is not None and rng_h > self.max_range_m:
+                self._refuse("too far")
+                # range the only fault? then it is a lead to fly toward
+                if (reach is not None
+                        and math.hypot(P[0] - self.anchor["P"][0],
+                                       P[1] - self.anchor["P"][1]) <= reach
+                        and not any(math.hypot(P[0] - s[0], P[1] - s[1]) <= self.static_m
+                                    and t_cap - s[2] <= self.static_ttl_s
+                                    for s in self.static)):
+                    far.append(P)
+                continue
+            if reach is not None:
+                A = self.anchor["P"]
+                if math.hypot(P[0] - A[0], P[1] - A[1]) > reach:
+                    self._refuse("out of reach")
+                    continue
+            if any(math.hypot(P[0] - s[0], P[1] - s[1]) <= self.static_m
+                   and t_cap - s[2] <= self.static_ttl_s for s in self.static):
+                self._refuse("static")
+                continue
+            ok.append((c, f))
+        if far:
+            # the one nearest the last lead (else the anchor) continues it
+            ref = (self.far[-1][1:] if self.far else self.anchor["P"])
+            P = min(far, key=lambda q: math.hypot(q[0] - ref[0], q[1] - ref[1]))
+            self.far.append((float(t_cap), float(P[0]), float(P[1])))
+            del self.far[:-20]
+        if not ok:
+            self._reset_streak()
+            return False
+        cont = None
+        if self.pick_feat is not None and self.pick_t is not None:
+            Q = self.pick_feat["P"]
+            lim = self.step_m + vr * max(0.0, t_cap - self.pick_t)
+            near = min(ok, key=lambda o: math.hypot(o[1]["P"][0] - Q[0],
+                                                    o[1]["P"][1] - Q[1]))
+            if math.hypot(near[1]["P"][0] - Q[0], near[1]["P"][1] - Q[1]) <= lim:
+                cont = near
+            else:
+                self._refuse("discontinuous")
+        if cont is None:
+            # Nearest to the anchor starts the streak (the likeliest to be it).
+            if self.anchor is not None and self.anchor.get("P") is not None:
+                A = self.anchor["P"]
+                ok.sort(key=lambda o: math.hypot(o[1]["P"][0] - A[0],
+                                                 o[1]["P"][1] - A[1]))
+            self.pick, self.pick_feat = ok[0]
+            self.first_P = self.pick_feat["P"]
+            self.trace = []
+            self.streak = 1
+        else:
+            self.pick, self.pick_feat = cont
+            self.streak += 1
+        self.trace.append((float(t_cap), float(self.pick_feat["P"][0]),
+                           float(self.pick_feat["P"][1])))
+        del self.trace[:-self.trace_max]
+        self.pick_t = t_cap
+        self.best_streak = max(self.best_streak, self.streak)
+        if self.streak < self.need:
+            return False
+        if self.motion_m > 0 and (reach is None or reach > self.reach_cap_m):
+            moved = self.moved_m()
+            if moved is None or moved < self.motion_bar_m():
+                if self.trace[-1][0] - self.trace[0][0] >= self.static_after_s:
+                    P = np.median(np.asarray([(q[1], q[2]) for q in self.trace]), axis=0)
+                    self.static.append((float(P[0]), float(P[1]), float(t_cap)))
+                    self._refuse("static")
+                    self._reset_streak()
+                return False
+        return True
 
 
 def appearance(img, box, h_bins: int = 8, s_bins: int = 4):
@@ -1261,8 +1566,13 @@ class TargetLock:
         if self.cx is None or self.last_yaw is None:
             return None
         d = math.atan2(math.sin(yaw - self.last_yaw), math.cos(yaw - self.last_yaw))
-        px_per_rad = img_w / math.radians(self.hfov_deg)
-        return self.cx - d * px_per_rad
+        if LINEAR_BEARING:
+            px_per_rad = img_w / math.radians(self.hfov_deg)
+            return self.cx - d * px_per_rad
+        # The held object's bearing turns by -d; project that back through the
+        # pinhole (a linear px-per-rad over-predicts near the frame edge).
+        b = box_bearing(self.cx, img_w, self.hfov_deg) - d
+        return _cam.bearing_to_cx(b, img_w, self.hfov_deg)
 
     def select(self, candidates, img_w: int, yaw: float, now: float):
         """Pick the candidate that is the held instance. `candidates` are the
@@ -1308,6 +1618,93 @@ class TargetLock:
         self.last_yaw = yaw
         self.last_t = now
         return chosen, switched
+
+    def seed(self, cand, yaw: float, now: float) -> None:
+        """Hold `cand` from now on (start gate or re-acquisition commit)."""
+        self.cx = float(cand[0])
+        self.w = float(cand[2]) if len(cand) > 2 else None
+        self.last_yaw = yaw
+        self.last_t = now
+
+    def select_strict(self, cands, tiers, feats, img_w: int, yaw: float,
+                      now: float, prior: dict | None = None,
+                      soft_gate_frac: float = 0.06, world_ok_m: float = 10.0,
+                      world_soft_m: float = 6.0):
+        """The identity-mode selection: (index into `cands` or None, why).
+
+        select() can never answer "none of these": with nothing near the
+        prediction it takes the best-scoring candidate and calls it a switch,
+        and once the hold lapses every candidate is "the first". On
+        citylife_redcar_trail that is how a red pedestrian signal became
+        TARGET LOCKED 110 m from the car (2026-09-29). Here:
+
+          * nothing is adopted that was not seeded by commit()/seed() - with
+            no held instance and no estimator prior the answer is None;
+          * HARD candidates are never chosen; an OK one must lie within
+            `gate_frac` of the frame of the prediction, a SOFT one within
+            `soft_gate_frac` (a car half behind a truck is a SOFT sliver, so
+            it may continue a track, never jump to a new place);
+          * `prior` (from the estimator, projected at the frame's capture
+            pose: {cx, P, tol_m}) stands in for the lock's own prediction
+            once that is stale, and when a candidate has a map point the
+            point must also lie within `world_ok_m` / `world_soft_m` (+ tol)
+            of the predicted one. A SOFT candidate needs that point.
+        """
+        if not cands:
+            return None, "no candidates"
+        fresh = self.last_t is not None and (now - self.last_t) <= self.hold_s
+        ref = self._predict(img_w, yaw) if fresh else None
+        if ref is not None and not math.isfinite(ref):
+            ref = None
+        prior_P, tol = None, 0.0
+        if prior is not None:
+            prior_P = prior.get("P")
+            tol = float(prior.get("tol_m") or 0.0)
+            if ref is None and prior.get("cx") is not None \
+                    and math.isfinite(prior["cx"]):
+                ref = float(prior["cx"])
+        if ref is None:
+            return None, "no held instance"
+        best = {"ok": None, "soft": None}
+        for i, c in enumerate(cands):
+            tier = tiers[i] if tiers else "ok"
+            if tier == "hard":
+                continue
+            # Size is asked of OK boxes only: a SOFT one is typically the
+            # sliver of a car half behind a truck, a third of its width.
+            if fresh and tier == "ok" and not self._size_ok(c):
+                self.n_size_rejected += 1
+                continue
+            d = abs(float(c[0]) - ref)
+            gate = (self.gate_frac if tier == "ok" else soft_gate_frac) * img_w
+            if d > gate:
+                continue
+            P = (feats[i] or {}).get("P") if feats else None
+            if prior_P is not None:
+                if P is None:
+                    if tier != "ok":
+                        continue
+                else:
+                    lim = (world_ok_m if tier == "ok" else world_soft_m) + tol
+                    if math.hypot(P[0] - prior_P[0], P[1] - prior_P[1]) > lim:
+                        continue
+            key = "ok" if tier == "ok" else "soft"
+            if best[key] is None or d < best[key][0]:
+                best[key] = (d, i)
+        pick = best["ok"] or best["soft"]
+        if pick is None:
+            self.n_rejected += len(cands)
+            return None, "nothing where the subject should be"
+        c = cands[pick[1]]
+        self.cx = float(c[0])
+        if pick is best["ok"]:
+            # ...and a sliver's width must not become the size the whole car
+            # is then compared against when it comes out from behind.
+            self.w = float(c[2]) if len(c) > 2 else None
+        self.last_yaw = yaw
+        self.last_t = now
+        self.n_locked += 1
+        return pick[1], None
 
     def reset(self) -> None:
         """Forget the held instance, for when the TARGET ITSELF changes.
@@ -1385,6 +1782,55 @@ class FenceGuard:
         # drivable, and 461 low structures that had been blocked became free, so
         # detours over rooftops started scoring as legal road again.
         self.street = street_mask
+        # Which hazard set the last gate() verdict: "fence", "obstacle" or None.
+        # The HUD used to infer it from whether the POLICY had a fence, so with
+        # a fence declared anywhere a building hold read "NFZ AHEAD", and the
+        # nfz-hold count took building holds too. Recorded here, where the
+        # verdict is made, instead.
+        self.last_cause: str | None = None
+        # The zones grown by the stand-off plus a metre, as one shape, for
+        # clear_aim(). Built once: the policy's zones do not move in flight.
+        self._aim_keepout = None
+        if self.polys:
+            from shapely.ops import unary_union
+            self._aim_keepout = unary_union(self.polys).buffer(stand_off_m + 1.0)
+
+    def clear_aim(self, x: float, y: float, ux: float, uy: float,
+                  ahead_m: float) -> tuple[float, float] | None:
+        """Re-aim a forward direction whose aim point lies in a zone's band.
+
+        The aim point is `ahead_m` along (ux, uy). Where it falls inside a
+        zone, its margin or the controller's stand-off from it, the direction
+        returned points instead at the nearest point just outside that band
+        (stand-off + 1 m); None when the aim point is already clear.
+
+        Without this a zone beside the subject's path cannot be passed. The
+        trail carrot sits on the car's own lane, and on
+        follow_car_citylife_nfz.yaml that lane is inside the band: every
+        direction alongside the zone pointed into the stand-off, gate() held
+        or slide() edged sideways, and a kinematic replay with this guard's
+        real gate/slide left the drone 43 m behind the car at the next corner
+        against 16 m unfenced (review, 2026-10-03). Aiming at the band's edge
+        makes the motion PARALLEL to the zone, which gate() does not brake.
+        The extra metre puts that line where the obstacle map is clear on the
+        CityLife zone (x = 40: 3.70 m minimum beside it, against 3.23 m at the
+        bare stand-off line). Where the nearest legal point is behind the
+        aircraft - a zone spanning the whole street - the direction reverses
+        and the aircraft holds short, which is the rule's answer there.
+        """
+        if self._aim_keepout is None:
+            return None
+        from shapely.geometry import Point
+        from shapely.ops import nearest_points
+        a = Point(x + ux * ahead_m, y + uy * ahead_m)
+        if not self._aim_keepout.contains(a):
+            return None
+        q = nearest_points(self._aim_keepout.boundary, a)[0]
+        dx, dy = q.x - x, q.y - y
+        n = math.hypot(dx, dy)
+        if n < 1e-6:
+            return None
+        return dx / n, dy / n
 
     def clearance(self, px: float, py: float, cap_m: float) -> float:
         """Distance to the nearest mapped obstacle, searched no further than `cap_m`.
@@ -1474,12 +1920,15 @@ class FenceGuard:
         """
         from shapely.geometry import Point
         o_scale, o_d, o_blocked = self._obstacle_gate(x, y, vx, vy)
+        o_cause = "obstacle" if o_scale < 1.0 else None
         if not self.polys:
+            self.last_cause = o_cause
             return o_scale, o_d, o_blocked
         p = Point(x, y)
         d = min(poly.distance(p) for poly in self.polys)
         speed = math.hypot(vx, vy)
         if speed < 1e-3:
+            self.last_cause = "fence" if d <= self.stand_off_m else None
             return 1.0, d, d <= self.stand_off_m
 
         # Brake for a predicted INCURSION, not for a shrinking distance.
@@ -1510,17 +1959,21 @@ class FenceGuard:
                 break
         if d_min > self.stand_off_m:
             # Fence clear; the buildings may still have something to say.
+            self.last_cause = o_cause
             return (o_scale, d if o_d is None else o_d, o_blocked)
         # It does close inside the stand-off somewhere ahead; how urgently is
         # still governed by how far away the fence is right now.
         if d <= self.stand_off_m:
+            self.last_cause = "fence"
             return 0.0, d, True
         if d >= self.brake_m:
+            self.last_cause = o_cause
             return min(1.0, o_scale), d, o_blocked
         k = (d - self.stand_off_m) / (self.brake_m - self.stand_off_m)
         f_scale = float(np.clip(k, 0.0, 1.0))
         # Whichever hazard is more urgent governs. Taking the minimum cannot
         # relax the fence behaviour that the fenced policies are tested on.
+        self.last_cause = "fence" if f_scale <= o_scale else "obstacle"
         return min(f_scale, o_scale), d, (k < 0.35) or o_blocked
 
     # reach_m stays 14. The detour around follow_car_gap.yaml's fence is 15.0 m
@@ -1651,6 +2104,9 @@ class FenceGuard:
         return bx, by, best_cost
 
 
+_OVERLAY = None          # policy_hud.OverlayCache, made on first use
+
+
 def annotate(img, det, hud: dict):
     """Draw what the drone is actually seeing and deciding, for the demo.
 
@@ -1662,36 +2118,73 @@ def annotate(img, det, hud: dict):
     im = img.copy()
     d = ImageDraw.Draw(im)
     W, H = im.size
+    # The policy indicator (demo/policy_hud.py) when the loop supplied one;
+    # without it the frame is drawn exactly as before, so old flights re-render
+    # the same.
+    pol = hud.get("policy")
+    if pol is not None:
+        from policy_hud import font
+        f_tag = font(int(13 * W / 1280))
     if det is not None:
         cx, cy, bw, bh = det[0], det[1], det[2], det[3]
         x0, y0, x1, y1 = cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2
-        d.rectangle([x0, y0, x1, y1], outline=(0, 255, 0), width=2)
-        d.line([(cx, 0), (cx, H)], fill=(0, 255, 0, 90))
+        # Box colour says how much the identity check believes it: green for a
+        # box that passed every test, amber for one only allowed to continue a
+        # track it agrees with (a car half hidden behind a truck).
+        col = (255, 200, 0) if hud.get("tier") == "soft" else (0, 255, 0)
+        d.rectangle([x0, y0, x1, y1], outline=col, width=2)
+        d.line([(cx, 0), (cx, H)], fill=col + (90,))
         tag = f"{hud['query']}  p={det[4]:.3f}"
         if len(det) > 7:
             tag += f"  colour={det[7]:.2f}"
-        d.text((max(2, x0), max(2, y0 - 11)), tag, fill=(0, 255, 0))
+        if pol is None:
+            d.text((max(2, x0), max(2, y0 - 11)), tag, fill=col)
+        else:
+            # The identity tier by its display name (REJECT / DOUBTFUL / OK),
+            # never the stored "hard" / "soft" - see identity.TIER_LABEL.
+            if hud.get("tier"):
+                from identity import TIER_LABEL
+                tag += f"  {TIER_LABEL.get(hud['tier'], hud['tier'])}"
+            d.text((max(2, x0), max(2, y0 - 16 * W / 1280)), tag, fill=col, font=f_tag)
     d.line([(W / 2, H / 2 - 8), (W / 2, H / 2 + 8)], fill=(255, 255, 255))
     d.line([(W / 2 - 8, H / 2), (W / 2 + 8, H / 2)], fill=(255, 255, 255))
+    _obstacle = hud.get("fence_kind") == "obstacle"
+    _what = "OBSTACLE" if _obstacle else "NFZ"
+    _what_lc = "obstacle" if _obstacle else "no-fly zone"
     lines = [
         f"t {hud['t']:5.1f}s   alt {hud['alt']:4.1f} m",
         f"bearing {hud['brg']:+6.1f}deg   fwd {hud['fwd']:+4.1f} m/s",
         (f"separation {hud['sep']:5.1f} m" if hud.get("sep") is not None
          else "separation n/a"),
-        ("NFZ - SKIRTING AROUND" if hud.get("fence_mode") == "skirt"
-         else "NFZ AHEAD - HOLDING" if hud.get("fence_hold")
-         else (f"no-fly zone {hud['fence_d']:.0f} m ahead"
+        # "NFZ" only when a no-fly POLYGON caused it. With none declared the
+        # guard holds for buildings, and the HUD used to call that an NFZ too -
+        # in the reference video "NFZ AHEAD - HOLDING" at a building corner.
+        (f"{_what} - SKIRTING AROUND" if hud.get("fence_mode") == "skirt"
+         else f"{_what} AHEAD - HOLDING" if hud.get("fence_hold")
+         else (f"{_what_lc} {hud['fence_d']:.0f} m ahead"
                if hud.get("fence_d") is not None and hud["fence_d"] < 20
                else "GUARDRAIL: correcting" if hud["shield"] else "GUARDRAIL: clear")),
-        {"track": "TARGET LOCKED", "coast": "COASTING on last motion",
-         "search": "SEARCHING ...", "scan": "SCANNING for target"}.get(
+        hud.get("mode_label") or {
+            "track": "TARGET LOCKED", "coast": "COASTING on last motion",
+            "search": "SEARCHING ...", "scan": "SCANNING for target"}.get(
             hud.get("mode"), "SCANNING for target"),
     ]
+    if pol is not None:
+        # The guardrail line moves to the banner and the rule panel, which
+        # say which rule and why; the flight lines get a legible size.
+        # Drawn at 5 Hz and pasted in between (policy_hud.OverlayCache): drawn
+        # on every 20 Hz frame it took the detector from 2.89 to 2.43 Hz.
+        global _OVERLAY
+        if _OVERLAY is None:
+            from policy_hud import OverlayCache
+            _OVERLAY = OverlayCache()
+        _OVERLAY.draw(im, pol, [lines[0], lines[1], lines[2], lines[4]])
+        return im
     for i, ln in enumerate(lines):
         d.text((6, 6 + 11 * i), ln,
                fill=((255, 90, 90) if ("HOLDING" in ln or "correcting" in ln)
                      else (120, 220, 255) if "SKIRTING" in ln
-                     else (255, 200, 90) if "no-fly zone" in ln
+                     else (255, 200, 90) if ("no-fly zone" in ln or "obstacle" in ln)
                      else (255, 255, 255)))
     return im
 
@@ -1710,7 +2203,8 @@ class Grounder:
     def __init__(self, obs: SemanticObs, query: str, thresh: float = 0.02,
                  jump_frac: float = 0.35, log_path: Path | None = None,
                  colour_min: float = 0.10, lock: "TargetLock | None" = None,
-                 colour_mask: bool = True, legacy_sat: bool = False):
+                 colour_mask: bool = True, legacy_sat: bool = False,
+                 identity: dict | None = None):
         # Measure the colour on the object's pixels rather than the whole box.
         # `mask_stats` records which path actually ran, because a fix that
         # silently never engages is the failure mode to watch for here - the
@@ -1764,7 +2258,58 @@ class Grounder:
         self.acquiring = False
         self._cands: list = []
         self._seed = None
+        # IDENTITY (demo/identity.py; 2026-09-29). None keeps every behaviour
+        # above exactly. A dict {thresholds, street, hfov} makes each candidate
+        # carry its physical description and a tier - "hard" (not the named
+        # thing: dropped), "soft" (unlikely: may continue a track, never start
+        # one) or "ok" - and makes the lock strict (TargetLock.select_strict):
+        # it answers None rather than adopting the best-scoring box.
+        self.identity = identity
+        self._prior = None          # estimator snapshot, see set_prior()
+        self._cand_tiers: list = []
+        self._cand_feats: list = []
+        self._det_tier = None
+        self._det_feat = None
+        self._det_cap = None        # capture meta of the published box
+        self._lock_why = None
+        self.id_counts = {"ok": 0, "soft": 0, "hard": 0}
+        self.id_rules: dict = {}    # "hard:<rule>" / "soft:<rule>" -> candidates
+        self.pose_src: dict = {}    # where each inference's pose came from
+        self.depth_src: dict = {}   # ...and its depth
         self._thread = threading.Thread(target=self._worker, daemon=True)
+
+    def set_prior(self, snap: dict | None) -> None:
+        """The estimator's latest state for the strict lock: {t, x, y, vx, vy,
+        t_upd} (t = when x/y hold, t_upd = its last measurement), or None when
+        there is no estimate the lock may lean on (lapse, re-acquisition)."""
+        self._prior = snap
+
+    def _prior_at(self, pose, W: int, H: int, t_cap):
+        """The prior projected into THIS frame: {cx or None, P, tol_m}.
+
+        Through the real camera (camera_model.world_to_pixel: the 20 deg mount
+        and the body's pitch and roll at capture), at the subject's centre
+        height. The level-camera shortcut bearing_to_cx(azimuth) put a near,
+        off-axis subject 20-45 px too far out - most of the SOFT gate
+        (review, 2026-09-29)."""
+        pr = self._prior
+        if pr is None or pose is None or pose.get("up") is None:
+            return None
+        tq = t_cap if t_cap is not None else time.time()
+        dt = max(0.0, tq - pr["t"])
+        n = pr["x"] + pr["vx"] * dt
+        e = pr["y"] + pr["vy"] * dt
+        age = max(0.0, tq - pr.get("t_upd", pr["t"]))
+        hfov = (self.identity or {}).get("hfov", CAMERA_HFOV_DEG)
+        uv = _cam.world_to_pixel(n, e, float(pr.get("up", 0.75)), pose["x"], pose["y"],
+                                 pose["up"], W, H, hfov, pose["yaw"],
+                                 pose.get("pitch") or 0.0, pose.get("roll") or 0.0)
+        # In the frame, both ways: behind or under the aircraft a point still
+        # projects to a column (re-review, 2026-09-30), and a prior there must
+        # not steer the lock - the subject is in the blind spot.
+        cx = (float(uv[0]) if uv is not None and -0.1 * W <= uv[0] <= 1.1 * W
+              and -0.1 * H <= uv[1] <= 1.05 * H else None)
+        return {"cx": cx, "P": (n, e), "tol_m": min(10.0, 2.0 * age)}
 
     def retarget(self, phrase: str) -> None:
         """Point the detector at a different thing, without restarting anything.
@@ -1798,6 +2343,12 @@ class Grounder:
             self._det = None
             self._app = None
             self._t_det = 0.0
+            # ...and the candidate list: a re-acquisition started for the NEW
+            # phrase would otherwise step on the OLD phrase's boxes (review,
+            # 2026-09-29).
+            self._cands, self._cand_tiers, self._cand_feats = [], [], []
+            self._lock_why = None
+            self._inf_cap = None
             self._query_gen += 1
         if self.lock is not None:
             self.lock.reset()
@@ -1811,13 +2362,26 @@ class Grounder:
         if self.lock is not None:
             self.lock.reset()
 
-    def commit(self, cand) -> None:
+    def begin_reacquire(self) -> None:
+        """The subject was lost for good (estimate lapsed): publish every
+        candidate again, hold nothing, and let the caller's gate decide
+        (see Reacquirer). Same as begin_acquire, plus no estimator prior."""
+        self._prior = None
+        self.begin_acquire()
+
+    def commit(self, cand, yaw: float = None) -> None:
         """End acquisition. `cand` (an 8-tuple) becomes the held instance and
         the jump gate's reference; None ends it with no seed, so tracking
-        starts from whatever is seen next - the historical behaviour."""
+        starts from whatever is seen next - the historical behaviour.
+
+        `yaw` is the aircraft's yaw when `cand`'s frame was CAPTURED. The lock
+        predicts where the held box moves from the yaw change since then;
+        seeding it with the yaw of the moment the worker picked the seed up,
+        ~0.5 s later while the aircraft was turning toward the candidate,
+        put the prediction ~60 px off (review, 2026-09-29)."""
         with self._lock:
             self.acquiring = False
-            self._seed = cand
+            self._seed = None if cand is None else (cand, yaw)
 
     def start(self):
         self._thread.start()
@@ -1849,23 +2413,38 @@ class Grounder:
                 print(f"[grounder] retargeted -> {queries[0][0]!r}", flush=True)
             if self._seed is not None:
                 with self._lock:
-                    seed, self._seed = self._seed, None
+                    (seed, seed_yaw), self._seed = self._seed, None
                 last = (float(seed[0]), time.time())
                 if self.lock is not None:
                     self.lock.reset()
-                    yaw_s = (self.obs.pose[2] if getattr(self.obs, "pose", None)
+                    yaw_s = (seed_yaw if seed_yaw is not None else
+                             self.obs.pose[2] if getattr(self.obs, "pose", None)
                              else 0.0)
-                    self.lock.select([seed], int(seed[5]), yaw_s, time.time())
+                    if self.identity is not None:
+                        self.lock.seed(seed, yaw_s, time.time())
+                    else:
+                        self.lock.select([seed], int(seed[5]), yaw_s, time.time())
             acquiring = self.acquiring
-            img = self.obs.get_front_native()
+            # THE FRAME, AND THE POSE AND DEPTH OF THAT FRAME. get_front_capture
+            # pairs the image with the pose interpolated at its capture and the
+            # depth frame nearest it in time (None beyond 70 ms); before
+            # 2026-09-29 a box met whatever depth had arrived last and, in the
+            # control loop, the pose of the tick that consumed it.
+            meta = None
+            if hasattr(self.obs, "get_front_capture"):
+                img, meta = self.obs.get_front_capture()
+            else:
+                img = self.obs.get_front_native()
             if img is None:
                 time.sleep(0.05)
                 continue
-            # One depth frame per inference, not per candidate box. It indexes
-            # straight into the scene image because both captures are configured
-            # at the same resolution and the same field of view - the same
-            # property range_from_depth already relies on.
-            dep = self.obs.get_depth() if self.colour_mask else None
+            cap_pose = meta.get("pose") if meta else None
+            pose_src = cap_pose.get("src", "ring") if cap_pose else "none"
+            self.pose_src[pose_src] = self.pose_src.get(pose_src, 0) + 1
+            t_cap = meta.get("t_cap") if meta else None
+            # When the frame was CAPTURED (sim stamp through the pose ring),
+            # not when it arrived: see SemanticObs.get_front_capture.
+            t_capture = (meta.get("t_capture") or t_cap) if meta else None
             W, H = img.size
             # Split, because the total alone cannot say WHY it is slow. Offline
             # on an idle GPU this whole block is 66 ms (26.7 CPU preprocessing,
@@ -1895,6 +2474,29 @@ class Grounder:
                 out, threshold=0.0,
                 target_sizes=torch.tensor([[H, W]]).to("cuda"))[0]
             sc, bx = res["scores"], res["boxes"]
+            # One depth frame per inference, not per candidate box. It indexes
+            # straight into the scene image because both captures are configured
+            # at the same resolution and the same field of view - the same
+            # property range_from_depth already relies on.
+            #
+            # THE CAPTURE'S OWN DEPTH, OR NONE. Paired after the forward pass,
+            # when the depth frame of this capture (10 Hz, same moment) has
+            # usually arrived; the newest frame instead - the old fallback - is
+            # by construction further off, and at 0.5 rad/s of yaw 200 ms is
+            # ~38 px: the range window lands off a 30 px car (review,
+            # 2026-09-29). With no depth within 70 ms the box gets no range
+            # (identity: SOFT "no range") and colour is measured on the whole box.
+            dep_dt = (meta or {}).get("depth_dt_ms")
+            if meta is not None and meta.get("depth") is not None:
+                dep, dep_src = meta["depth"], "capture"
+            elif meta is not None and hasattr(self.obs, "depth_near"):
+                dep, dep_dt = self.obs.depth_near(meta.get("stamp"), t_cap)
+                dep_src = "capture-late" if dep is not None else "none-unpaired"
+            elif self.colour_mask or self.identity is not None:
+                dep, dep_src, dep_dt = self.obs.get_depth(), "latest", None
+            else:
+                dep, dep_src, dep_dt = None, "none", None
+            self.depth_src[dep_src] = self.depth_src.get(dep_src, 0) + 1
             det, switched, cands = None, False, []
             if len(sc):
                 # Score every plausible box, do not just take the detector's top
@@ -1916,7 +2518,37 @@ class Grounder:
                     if self.colour is not None and cm < self.colour_min:
                         continue              # right shape, wrong colour
                     cands.append((cx, cy, x1 - x0, y1 - y0, s, W, H, cm))
-            if cands:
+            id_all, tiers, feats, det_tier, det_feat, lock_why = [], [], [], None, None, None
+            if cands and self.identity is not None:
+                # Every candidate described and judged, and the HARD ones out.
+                ranked = []
+                for c in cands:
+                    tier, why, f = self._judge(c, dep, cap_pose, W, H)
+                    id_all.append((c, tier, why, f))
+                    if tier != "hard":
+                        ranked.append((c, tier, f))
+                # OK before SOFT, then score-and-colour as before.
+                ranked.sort(key=lambda r: (r[1] != "ok",
+                                           -(r[0][4] * (0.25 + 0.75 * r[0][7]))))
+                cands = [r[0] for r in ranked]
+                tiers = [r[1] for r in ranked]
+                feats = [r[2] for r in ranked]
+                if cands and self.lock is not None and not acquiring:
+                    yaw_c = (cap_pose["yaw"] if cap_pose else
+                             (self.obs.pose[2] if getattr(self.obs, "pose", None)
+                              else 0.0))
+                    k, lock_why = self.lock.select_strict(
+                        cands, tiers, feats, W, yaw_c, time.time(),
+                        prior=self._prior_at(cap_pose, W, H, t_capture))
+                    if k is not None:
+                        det, det_tier, det_feat = cands[k], tiers[k], feats[k]
+                elif cands and self.lock is None and not acquiring:
+                    det, det_tier, det_feat = cands[0], tiers[0], feats[0]
+                    if det_tier != "ok":
+                        det, det_tier, det_feat = None, None, None
+                # While acquiring nothing is published as THE box: the caller's
+                # gate judges every candidate and commits one.
+            elif cands:
                 # Rank by score-and-colour, then let the instance lock decide
                 # WHICH of the survivors is the one we were already following.
                 # Ranking alone answers "is this the right kind of thing"; it has
@@ -1936,6 +2568,17 @@ class Grounder:
                 app = appearance(img, (x0[0], x0[1],
                                        det[0] + det[2] / 2, det[1] + det[3] / 2))
             with self._lock:
+                # A retarget that landed inside this inference: nothing of it may
+                # be published - not the box, and not the candidate list either,
+                # which a re-acquisition for the NEW phrase would step on (the
+                # candidates were even judged under the new noun's rules).
+                if self._query_gen != gen:
+                    # select() may have seeded the lock with the OLD phrase's
+                    # box after retarget() reset it (re-review, 2026-09-30)
+                    if self.lock is not None:
+                        self.lock.reset()
+                    self._n_miss += 1
+                    continue
                 self._seq += 1
                 self._infer_ms = ms
                 self._pre_ms = pre_ms
@@ -1948,20 +2591,26 @@ class Grounder:
                 # longer there and the HUD kept reporting TARGET LOCKED.
                 self._t = time.time()
                 self._cands = list(cands)
-                # Re-check the generation HERE, not only at the top of the loop.
-                # An inference takes about 287 ms, so a retarget landing inside
-                # that window would otherwise publish the OLD subject box under
-                # the NEW phrase - and hand it to lock.select() as the first
-                # sighting of the new target, which is the one sighting that
-                # sets the size gate for everything after it.
-                if self._query_gen != gen:
-                    self._n_miss += 1
-                    continue
+                self._cand_tiers = list(tiers)
+                self._cand_feats = list(feats)
+                self._lock_why = lock_why
+                self._inf_cap = {"t_cap": t_cap, "t_capture": t_capture, "pose": cap_pose}
+                # (The generation is re-checked at the top of this block, not
+                # only at the top of the loop: an inference takes ~287 ms, and a
+                # retarget inside it would otherwise publish the OLD subject box
+                # under the NEW phrase - the first sighting of the new target,
+                # which sets the size gate for everything after it.)
                 if det is not None:
                     self._det = det
                     self._app = app
                     self._det_switched = bool(switched)
                     self._t_det = time.time()
+                    self._det_tier = det_tier
+                    self._det_feat = det_feat
+                    self._det_cap = {"t_cap": t_cap, "t_capture": t_capture,
+                                     "pose": cap_pose,
+                                     "depth_src": dep_src,
+                                     "depth_dt_ms": dep_dt}
                     self._n_seen += 1
                     last = (det[0], time.time())
                 else:
@@ -2001,8 +2650,59 @@ class Grounder:
                                       "w": round(cands[1][2], 1),
                                       "score": round(cands[1][4], 4),
                                       "colour": round(cands[1][7], 3)})}
+                if self.identity is not None:
+                    # EVERY candidate, HARD ones included, with what it was
+                    # judged on - so a tier can be re-derived offline and a
+                    # lock decision explained from this file alone.
+                    rec["t_cap"] = None if t_cap is None else round(t_cap, 3)
+                    rec["t_capture"] = None if t_capture is None else round(t_capture, 3)
+                    rec["stamp"] = (meta or {}).get("stamp")
+                    rec["pose_src"] = pose_src
+                    rec["depth_src"] = dep_src
+                    rec["depth_dt_ms"] = dep_dt
+                    rec["pose_cap"] = (None if cap_pose is None else
+                                       {k: round(float(cap_pose[k]), 4)
+                                        for k in ("x", "y", "up", "yaw", "pitch",
+                                                  "roll") if cap_pose.get(k) is not None})
+                    rec["tier"] = det_tier
+                    rec["lock_why"] = lock_why
+                    rec["id"] = [_id_record(c, tier, why, f)
+                                 for c, tier, why, f in id_all]
                 with self.log_path.open("a", encoding="utf-8") as fh:
                     fh.write(json.dumps(rec) + "\n")
+
+    def _judge(self, c, dep, pose, W, H):
+        """(tier, reasons, features) of one candidate. No capture pose, no
+        verdict beyond SOFT: a box cannot be placed without knowing where the
+        camera was."""
+        import identity as _id
+        if pose is None or pose.get("up") is None:
+            tier, why, f = "soft", ["no capture pose"], {}
+        else:
+            r = range_from_depth(dep, c) if dep is not None else None
+            # (A box cut off by the bottom of the frame has no bottom edge:
+            # features_for sets bottom_clipped and leaves bottom_h None.)
+            f = _id.features_for(c, r, pose, W, H,
+                                 self.identity.get("hfov", CAMERA_HFOV_DEG),
+                                 self.identity.get("street"))
+            tier, hard, soft = _id.classify_split(f, self.query,
+                                                  self.identity.get("thresholds"))
+            why = hard + soft if tier == "hard" else soft if tier == "soft" else []
+        self.id_counts[tier] = self.id_counts.get(tier, 0) + 1
+        # Each reason under the tier of the RULE that produced it: a HARD box
+        # also carries SOFT reasons, which only ever demote (review, 09-29).
+        if pose is None or pose.get("up") is None:
+            by = (("soft", why),)
+        else:
+            by = (("hard", hard), ("soft", soft if tier != "ok" else []))
+        seen = set()
+        for rule_tier, reasons in by:
+            for w in reasons:
+                k = f"{rule_tier}:{identity_rule_key(w)}"
+                if k not in seen:
+                    seen.add(k)
+                    self.id_rules[k] = self.id_rules.get(k, 0) + 1
+        return tier, why, f
 
     def latest(self) -> dict:
         with self._lock:
@@ -2011,7 +2711,45 @@ class Grounder:
                     "switched": getattr(self, "_det_switched", False),
                     "pre_ms": self._pre_ms, "fwd_ms": self._fwd_ms,
                     "n_seen": self._n_seen, "n_miss": self._n_miss,
-                    "cands": list(self._cands)}
+                    "cands": list(self._cands),
+                    "cand_tiers": list(self._cand_tiers),
+                    "cand_feats": list(self._cand_feats),
+                    "tier": self._det_tier, "feat": self._det_feat,
+                    "cap": self._det_cap, "lock_why": self._lock_why,
+                    "inf_cap": getattr(self, "_inf_cap", None)}
+
+
+def identity_rule_key(reason: str) -> str:
+    """The rule an identity reason string came from, for counting."""
+    w = (reason or "").lower()
+    far = w.startswith("far:")
+    for key, marker in (("bottom", "above the"), ("off-street", "off the street"),
+                        ("frame", "of the frame"), ("no-range", "no range"),
+                        ("no-pose", "no capture pose"), ("aspect", "aspect"),
+                        ("score", "score"), ("h-px", "px tall")):
+        if marker in w:
+            return ("far-" if far else "") + key
+    if "wide >" in w:
+        return "width-max"
+    if "wide <" in w:
+        return "width-min"
+    return "other"
+
+
+def _id_record(c, tier, why, f) -> dict:
+    """One candidate for detections.jsonl: the box, the verdict, and the
+    features it was reached on (rounded; P as [north, east, up])."""
+    def r(v, n=2):
+        return None if v is None else round(float(v), n)
+    P = (f or {}).get("P")
+    return {"cx": r(c[0], 1), "cy": r(c[1], 1), "w": r(c[2], 1), "h": r(c[3], 1),
+            "score": r(c[4], 4), "colour": r(c[7], 3), "tier": tier, "why": why,
+            "r": r((f or {}).get("r")), "rng_h": r((f or {}).get("rng_h")),
+            "width_m": r((f or {}).get("width_m")),
+            "aspect": r((f or {}).get("aspect")),
+            "bottom_h": r((f or {}).get("bottom_h")),
+            "off_street_m": r((f or {}).get("off_street_m")),
+            "P": None if P is None else [r(v) for v in P]}
 
 
 def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
@@ -2024,8 +2762,7 @@ def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
     accelerate; too large means too close, so back off.
     """
     cx, _cy, bw, _bh, _s, W, _H = det[:7]
-    off = (cx - W / 2) / (W / 2)                 # -1 left .. +1 right
-    bearing = math.radians(hfov_deg / 2.0) * off
+    bearing = box_bearing(cx, W, hfov_deg)
     yaw_rate = yaw_gain * bearing
     w_frac = bw / W
     err = (want_w_frac - w_frac) / max(1e-3, want_w_frac)
@@ -2033,6 +2770,97 @@ def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
     # do not charge forward while the target is far off to one side
     fwd *= max(0.0, math.cos(bearing))
     return yaw_rate, fwd, bearing
+
+
+async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
+                               pind=None, recorder=None, t0=None, query="") -> dict:
+    """Fly at cruise altitude, through the Shield, to a cell demo/landing.py
+    calls landable, before the vertical descent.
+
+    The descent used to start wherever the mission ended: in a hedge on
+    citylife_redcar_trail2, on a parked car on citylife_ped_final. Returns what
+    was chosen and whether it was reached, for metrics.json."""
+    info = {"enabled": True}
+    try:
+        import landing as landing_mod
+        map_dir = Path(args.citymap).parent
+        # The car lanes and the street grid landing.py knows are CityLife's
+        # (tools/citylife_routes.py). On any other level they would mark the
+        # wrong cells as carriageway, so there the site is judged on the maps
+        # alone (no lane rule, no pavement preference) and the record says so.
+        citylife = map_dir.name == "citymap_citylife"
+        maps = (landing_mod.load_landing_maps(map_dir) if citylife else
+                landing_mod.load_landing_maps(map_dir, lane_paths={}, road_grid={}))
+        info["lanes_known"] = citylife
+        kin = drone.get_ground_truth_kinematics()
+        p = kin["pose"]["position"]
+        x0, y0 = float(p["x"]), float(p["y"])
+        r = landing_mod.choose_site(maps, x0, y0, prefer="pavement" if citylife else None)
+    except Exception as exc:
+        info["error"] = f"{type(exc).__name__}: {exc}"
+        print(f"[land] *** no landing site chosen ({info['error']}); descending here")
+        return info
+    info.update(start=[round(x0, 2), round(y0, 2)], here_landable=r["here_landable"],
+                reasons_here=r["reasons_rejected_here"],
+                site=(None if r["site"] is None else [round(v, 2) for v in r["site"]]),
+                path_m=(None if r.get("path_m") is None else round(r["path_m"], 1)),
+                crosses_building=r.get("crosses_building"),
+                lanes_checked=r.get("lanes_checked"))
+    if r["site"] is None:
+        print("[land] *** no landable cell within reach; descending here")
+        return info
+    sx, sy = r["site"]
+    print(f"[land] landing site ({sx:.1f}, {sy:.1f}), {info['path_m']} m away"
+          f"{'' if not r['reasons_rejected_here'] else ' - here: ' + '; '.join(r['reasons_rejected_here'][:2])}")
+    shield.set_subject(None)
+    t_end, reached, n_touched = time.time() + timeout_s, False, 0
+    while time.time() < t_end:
+        kin = drone.get_ground_truth_kinematics()
+        p = kin["pose"]["position"]
+        up = -p["z"]
+        dx, dy = sx - p["x"], sy - p["y"]
+        d = math.hypot(dx, dy)
+        if d < 0.8:
+            reached = True
+            break
+        v = min(3.0, 0.6 * d)
+        vz = float(np.clip((args.cruise_alt - up) * args.alt_gain,
+                           -args.climb_max, args.climb_max))
+        dec = shield.filter(State(x=p["x"], y=p["y"], up=up),
+                            Action4D(vx=v * dx / d, vy=v * dy / d, vz_up=vz,
+                                     yaw_rate=0.0))
+        n_touched += int(dec.touched)
+        if pind is not None and recorder is not None:
+            # The flight to the landing site goes through the Shield, so the
+            # indicator stays live for it rather than freezing on the last
+            # mission tick.
+            try:
+                st = State(x=float(p["x"]), y=float(p["y"]), up=up)
+                pol = pind.update(time.time() - t0, dec, st,
+                                  clearance_m=(shield.clearance_at(st.x, st.y)
+                                               if shield.has_obstacle_map else None),
+                                  off_map=shield.off_map(st.x, st.y),
+                                  yaw_rad=quat_yaw(kin["pose"]["orientation"]))
+                recorder.set_hud({
+                    "t": time.time() - t0, "sep": None, "brg": 0.0, "fwd": v,
+                    "alt": up, "shield": dec.touched, "query": query, "mode": "land",
+                    "mode_label": f"LANDING - to site, {d:.0f} m", "tier": None,
+                    "policy": pol}, None)
+            except Exception as exc:                            # noqa: BLE001
+                print(f"[hud] landing indicator stopped: {type(exc).__name__}: {exc}")
+                pind = None
+        e = dec.emitted
+        await drone.move_by_velocity_async(e.vx, e.vy, -e.vz_up, duration=0.3,
+                                           yaw_is_rate=True, yaw=e.yaw_rate)
+        await asyncio.sleep(0.1)
+    await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.3)
+    kin = drone.get_ground_truth_kinematics()
+    p = kin["pose"]["position"]
+    ok, why = landing_mod.is_landable(maps, float(p["x"]), float(p["y"]))
+    info.update(reached=reached, shield_touched=n_touched,
+                final=[round(float(p["x"]), 2), round(float(p["y"]), 2)],
+                final_landable=bool(ok), final_reasons=why)
+    return info
 
 
 async def fly(args) -> int:
@@ -2232,6 +3060,19 @@ async def fly(args) -> int:
                        street_mask=street)
 
     audit = AuditLogger(out / "audit.jsonl", policy)   # the POLICY, so a hot-applied rule restamps the hash
+
+    # On-screen policy indicator (demo/policy_hud.py): the rules in force, the
+    # aircraft's distance to each limit and a banner whenever the Shield acts -
+    # the audit trail above, made visible in the demo video.
+    pind = None
+    pind_error = None
+    if not args.no_policy_hud:
+        from policy_hud import PolicyIndicator, render_base_map
+        _bm = smap if smap is not None else (
+            {"occ": cmap["occ"], "res": cmap["res"], "ox": cmap["ox"], "oy": cmap["oy"]}
+            if cmap is not None else None)
+        pind = PolicyIndicator(policy, base_map=render_base_map(_bm, street),
+                               fence_near_m=args.fence_brake)
     if fence.polys:
         print(f"[fence] {len(fence.polys)} no-fly zone(s) known to the controller: "
               f"brake from {args.fence_brake:.0f} m, hold at {args.fence_standoff:.0f} m")
@@ -2257,6 +3098,7 @@ async def fly(args) -> int:
     # the clearance rule is blind (Shield.off_map).
     n_trail_ticks = 0
     n_trail_lookout = 0         # coast/search ticks steered by the lookout
+    n_far_approach = 0          # search ticks steered toward a far lead (Reacquirer)
     n_trail_against = 0         # trail directions refused: away from the subject
     n_off_map = 0
     # Why the presence gate refused each box it refused (by rule), and how often
@@ -2268,6 +3110,27 @@ async def fly(args) -> int:
     n_ground_rescued = 0        # ...of those, inferences the check would have refused
     have_depth = False
     t_ground_ok = 0.0           # last estimator update from a ground-checked box
+    # IDENTITY AND RE-ACQUISITION (--identity; 2026-09-29). See Reacquirer and
+    # TargetLock.select_strict for why the old path could end TARGET LOCKED on
+    # a red pedestrian signal 110 m from the car.
+    id_cfg = None
+    reacq = None                # a Reacquirer while the subject is being re-found
+    last_reacq_seq = None
+    lock_events = []            # lapses and re-acquisitions, with where and why
+    reacq_refused = {}          # every Reacquirer's refusals, over the flight
+    t_meas_last = None          # identity: last accepted measurement / commit
+    t_meas_last_cap = None      # ...its capture time, for an anchor without an estimator
+    subject_committed = False   # identity: a subject is held (gate or reacquire)
+    v_prior = None              # the speed measured before the last re-acquisition
+    pending_seed = None         # the start gate's pick, until the estimator exists
+    t_ok_last = 0.0             # last estimator update from an identity-OK box
+    n_soft_fed = 0              # SOFT boxes that continued the track
+    n_soft_refused = 0          # ...and those refused (no fresh track to continue)
+    det_latency = []            # capture -> consumed, ms, per fresh detection
+    planner = None              # demo/search.py, after coast + search
+    plan_row = None
+    last_heading = None         # the subject's measured direction of travel
+    landing_info = {"enabled": False}
     # Every contact the SIMULATOR reported, from the robot's collision_info
     # topic. Nothing listened to it before 2026-09-24, so a flight could scrape
     # a pole and the artefact would say nothing - a zero nobody measured. The
@@ -2276,6 +3139,7 @@ async def fly(args) -> int:
     collisions_subscribed = False
     t_connect = time.time()
     t0 = None                   # the mission clock; set once the gate opens
+    det_n_at_t0 = 0             # detector inferences before t0 (see det_hz)
     t_mission_end = None        # ...and when its loop ended
     start_gate = {"enabled": False}
     stage_ms = {"kin": [], "truth": [], "shield": [], "cmd": [], "work": []}
@@ -2295,6 +3159,7 @@ async def fly(args) -> int:
     view_dir = None
     start_heading_err_deg = None
     nfz_hold_ticks = 0
+    n_fence_aim = 0          # ticks the forward aim was moved out of a zone's band
     guard_hold_ticks = 0        # any hold: fence OR building
 
     presence = PresenceMonitor(args.object, args.colour_min)
@@ -2398,7 +3263,8 @@ async def fly(args) -> int:
                     print(f"[view] live window open at {args.live_height}p "
                           f"(drone view | chase view)")
             except Exception as exc:
-                print(f"[view] no Chase camera in this config ({type(exc).__name__})")
+                print(f"[view] no Chase camera in this config "
+                      f"({type(exc).__name__}: {exc})")
 
         if not args.no_car:
             # Any FIXED route gets the two stops, not just --straight. The
@@ -2643,11 +3509,42 @@ async def fly(args) -> int:
                   f"with others ***")
 
         lock = TargetLock(gate_frac=args.lock_gate) if args.lock_target else None
+        if args.identity:
+            # Each candidate judged physically (demo/identity.py) with the pose
+            # and depth of its own frame; the lock made strict. It needs a lock.
+            import identity as identity_mod
+            _th = identity_mod.load_thresholds(args.identity_thresholds or None)
+            _sp = Path(args.citymap).parent / "street.npz"
+            _sd = identity_mod.StreetDistance.load(_sp) if _sp.is_file() else None
+            if _sd is None:
+                print(f"[identity] *** no street mask at {_sp}: the off-street "
+                      f"rules cannot fire")
+            id_cfg = {"thresholds": _th, "street": _sd, "hfov": CAMERA_HFOV_DEG,
+                      "hash": identity_mod.thresholds_hash(_th),
+                      "path": str(args.identity_thresholds or
+                                  identity_mod.DEFAULT_THRESHOLDS)}
+            if lock is None:
+                lock = TargetLock(gate_frac=args.lock_gate)
+            print(f"[identity] ON - thresholds {id_cfg['hash']}, strict lock, "
+                  f"re-acquire after {args.lapse_s:.1f} s unseen")
+        if args.search_planner:
+            try:
+                import search as search_mod
+                planner = search_mod.SearchPlanner(
+                    search_mod.junctions_from_routes(),
+                    Path(args.citymap).parent / "street.npz")
+                print(f"[search] junction planner ON "
+                      f"({len(planner.junctions)} junctions)")
+            except Exception as exc:
+                planner = None
+                print(f"[search] *** junction planner unavailable "
+                      f"({type(exc).__name__}: {exc}); scanning in place")
         grounder = Grounder(obs, args.object, thresh=args.det_thresh,
                             log_path=out / "detections.jsonl",
                             colour_min=args.colour_min, lock=lock,
                             colour_mask=args.colour_mask,
-                            legacy_sat=args.colour_legacy_sat)
+                            legacy_sat=args.colour_legacy_sat,
+                            identity=id_cfg)
         grounder.start()
         for _ in range(600):                      # wait for the detector to load
             if grounder.latest()["seq"] > 0:
@@ -2679,6 +3576,20 @@ async def fly(args) -> int:
                            gate_frac=args.lock_gate,
                            max_range_m=args.start_max_range_m,
                            width_m=args.object_width_m)
+            # With identity the START is decided in the world, like a
+            # re-acquisition with no anchor: OK boxes, one object by its map
+            # point, within the start range, and SEEN MOVING - the red
+            # fire-hydrant sign by the launch point is none of the physical
+            # rules' business and all of this one's. The pixel Acquirer still
+            # runs, for its counters.
+            acq_w = None
+            _ic = {}
+            if id_cfg is not None:
+                acq_w = Reacquirer(need=args.start_when_seen,
+                                   max_range_m=(args.start_max_range_m
+                                                if args.start_max_range_m > 0
+                                                else args.reacq_max_range_m))
+                acq_w.start(None)
             grounder.begin_acquire()
             last_gseq, first_ok, reached = -1, None, False
             # A frame every 5 s, and at the first plausible sighting, so a gate
@@ -2691,16 +3602,32 @@ async def fly(args) -> int:
             # whether the car drove past the camera or never came.
             truth_trace, next_truth = [], 0.0
             while time.time() - t_wait0 < args.start_timeout_s:
+                _tw = time.time()
                 kin_w = drone.get_ground_truth_kinematics()
                 pw = kin_w["pose"]["position"]
-                obs.put_pose(pw["x"], pw["y"], quat_yaw(kin_w["pose"]["orientation"]))
+                _qw = kin_w["pose"]["orientation"]
+                obs.put_pose_full((_tw + time.time()) / 2.0, pw["x"], pw["y"], -pw["z"],
+                                  quat_yaw(_qw), quat_pitch(_qw), quat_roll(_qw),
+                                  stamp=kin_w.get("time_stamp"))
                 gw = grounder.latest()
                 if gw["seq"] != last_gseq:
                     last_gseq = gw["seq"]
                     fresh = gw["t"] and (time.time() - gw["t"]) < 1.0
                     dep_w = obs.get_depth() if have_depth else None
                     had = acq.n_plausible
-                    if fresh:
+                    if fresh and id_cfg is not None:
+                        # The range of each candidate's OWN frame, and its tier:
+                        # only an identity-OK box may start the mission.
+                        _fr = {id(c): (f or {}).get("r")
+                               for c, f in zip(gw["cands"], gw["cand_feats"])}
+                        acq.step(gw["cands"], lambda c: _fr.get(id(c)),
+                                 ground=None, tiers=gw["cand_tiers"])
+                        _ic = gw.get("inf_cap") or {}
+                        reached = acq_w.step(gw["cands"], gw["cand_tiers"],
+                                             gw["cand_feats"],
+                                             _ic.get("t_capture") or _ic.get("t_cap")
+                                             or time.time())
+                    elif fresh:
                         reached = acq.step(
                             gw["cands"],
                             lambda c: (range_from_depth(dep_w, c)
@@ -2739,7 +3666,16 @@ async def fly(args) -> int:
                                                    yaw_is_rate=True, yaw=0.0)
                 await asyncio.sleep(0.1)
             waited = time.time() - t_wait0
-            grounder.commit(acq.pick if reached else None)
+            _start_pick = (acq_w.pick if acq_w is not None else acq.pick)
+            grounder.commit(_start_pick if reached else None,
+                            yaw=((_ic.get("pose") or {}).get("yaw") if acq_w is not None
+                                 else None))
+            if acq_w is not None and reached:
+                # Seeded into the estimator once it exists (below): committing
+                # the lock alone left a flight whose car hid for 2 s before the
+                # first OK box with no lock, no estimate and no re-acquisition
+                # for the rest of the mission (review, 2026-09-29).
+                pending_seed = (acq_w.pick_feat, dict(_ic))
             start_gate = {"enabled": True, "needed": args.start_when_seen,
                           "reached": reached,
                           "wait_s": round(waited, 1),
@@ -2753,6 +3689,14 @@ async def fly(args) -> int:
                           "plausible_but_too_far": acq.n_too_far,
                           "last_rejections": acq.last_reasons[:3],
                           "snapshots": n_snaps,
+                          "identity_gate": (None if acq_w is None else
+                                            {"refused": dict(acq_w.refused),
+                                             "best_streak": acq_w.best_streak,
+                                             "static_places": [[round(v, 1) for v in sp[:2]]
+                                                               for sp in acq_w.static],
+                                             "pick_P": (None if acq_w.pick_feat is None
+                                                        else [round(v, 1) for v in
+                                                              acq_w.pick_feat["P"][:2]])}),
                           # [t_s, range_m, bearing_deg (+ right)]; in view when
                           # |bearing| <= 45
                           "truth_trace": truth_trace}
@@ -2761,7 +3705,7 @@ async def fly(args) -> int:
                 car.refresh()
                 kin_w = drone.get_ground_truth_kinematics()
                 pw = kin_w["pose"]["position"]
-                dw = acq.pick if reached else grounder.latest()["det"]
+                dw = _start_pick if reached else grounder.latest()["det"]
                 if dw is not None:
                     tcx, tdeg = track_truth.project_target_cx(
                         pw["x"], pw["y"], quat_yaw(kin_w["pose"]["orientation"]),
@@ -2774,6 +3718,12 @@ async def fly(args) -> int:
                   f" after {waited:.0f} s: {start_gate}")
 
         t0, last_seen = time.time(), 0.0
+        # Detector inferences made BEFORE the mission clock started (the start
+        # gate can wait minutes). det_hz must not count them: it did, dividing
+        # them by mission time only, and reported 6.9-7.5 Hz for flights whose
+        # detector ran at 3.5-3.9 Hz during the mission (found 2026-09-29).
+        _g0 = grounder.latest()
+        det_n_at_t0 = _g0["n_seen"] + _g0["n_miss"]
         tick_deadline = None        # the pacing's running deadline, see below
         # Where the subject was last MEASURED to be, and how fast it was then
         # measured to move (displacement of accepted positions over 2 s).
@@ -2802,6 +3752,64 @@ async def fly(args) -> int:
         if args.trail_follow and trail is None:
             print("[trail] *** --trail-follow needs the target estimator; "
                   "flying along the nose")
+
+        def _take_subject(pf, ic):
+            """A subject committed by the start gate or a re-acquisition: the
+            estimator seeded from the committing sighting at its capture pose,
+            and the flight's own memory of the subject moved to it - the last
+            measured position, its history, speed, heading and trail. Left on
+            the pre-loss track, a second loss soon after anchored the reach on
+            the old place and refused the car where it really was (review,
+            2026-09-29). Returns (seeded, P)."""
+            nonlocal last_acc, last_meas_speed, last_heading, t_ok_last
+            nonlocal t_meas_last, subject_committed, v_prior, t_meas_last_cap
+            cp = (ic or {}).get("pose")
+            t_c = (ic or {}).get("t_capture") or (ic or {}).get("t_cap") or time.time()
+            seeded = False
+            if estimator is not None:
+                estimator.reset()
+                if (cp is not None and pf.get("rng_h") is not None
+                        and pf.get("bearing") is not None):
+                    b0 = pf["bearing"] - cp["yaw"]
+                    b0 = math.atan2(math.sin(b0), math.cos(b0))
+                    seeded = bool(estimator.update(t_c, cp["x"], cp["y"], cp["yaw"],
+                                                   b0, float(pf["rng_h"])))
+            if seeded:
+                P0 = (float(estimator._xu[0]), float(estimator._xu[1]))
+            elif pf.get("P") is not None:
+                P0 = (float(pf["P"][0]), float(pf["P"][1]))
+            else:
+                P0 = None
+            if last_meas_speed is not None:
+                v_prior = last_meas_speed
+            last_meas_speed = None          # a streak's ~3 m jitter is no speed
+            last_heading = None
+            acc_hist.clear()
+            if P0 is not None:
+                last_acc = P0
+                acc_hist.append((time.time(), P0[0], P0[1]))
+                if trail is not None:       # the breadcrumbs to here are unknown
+                    trail.clear()
+                    trail.add(P0[0], P0[1])
+            t_ok_last = time.time()
+            t_meas_last = time.time()
+            t_meas_last_cap = t_c
+            subject_committed = True
+            return seeded, P0
+
+        def _retire(r, why):
+            """Fold a finished Reacquirer's refusals into the flight's total and
+            return them for its event record."""
+            for k_, v_ in r.refused.items():
+                reacq_refused[k_] = reacq_refused.get(k_, 0) + v_
+            return {"refused": dict(r.refused), "n": r.n, "best_streak": r.best_streak,
+                    "static_places": [[round(v, 1) for v in q[:2]] for q in r.static],
+                    "ended": why}
+
+        if pending_seed is not None:
+            _seeded0, _P0 = _take_subject(*pending_seed)
+            lock_events.append({"t": 0.0, "event": "acquired", "seeded": bool(_seeded0),
+                                "P": None if _P0 is None else [round(v, 1) for v in _P0]})
 
         def _trail_stop_short():
             # How far short of the last sighting a coast approach stops: the
@@ -2858,6 +3866,13 @@ async def fly(args) -> int:
         _warn_blind()
 
         last_est_seq = None
+        if id_cfg is not None and not start_gate.get("reached"):
+            # Strict lock and nothing committed: nothing would ever be held.
+            # Find the subject by the re-acquisition gate instead (no anchor).
+            reacq = Reacquirer(need=args.reacq_need, max_range_m=args.reacq_max_range_m)
+            reacq.start(None)
+            grounder.begin_reacquire()
+            lock_events.append({"t": 0.0, "event": "acquire", "anchor": None})
         if estimator is not None:
             print(f"[flight] target estimator ON, stand-off {want_range:.1f} m "
                   f"(from --want-width {args.want_width} and a "
@@ -2865,6 +3880,10 @@ async def fly(args) -> int:
         while time.time() - t0 < args.max_s:
             tick += 1
             _tk0 = time.time()
+            mode_label = None       # HUD state text when not the default
+            det_tier = None         # identity tier of the steering box
+            plan_dir = None         # the junction planner's flight direction
+            plan_row = None
             # Retarget BEFORE the tick reads anything, so the whole tick - the
             # detector query, the stand-off class, the log row - describes one
             # target rather than half of each.
@@ -2924,7 +3943,25 @@ async def fly(args) -> int:
                 acc_hist.clear()
                 last_acc = None
                 last_meas_speed = None
+                last_heading = None   # the old subject's direction is not this one's
+                v_prior = None
                 t_ground_ok = 0.0     # no box of the NEW subject is ground-checked yet
+                if id_cfg is not None:
+                    # The strict lock holds nothing of the new subject; only the
+                    # re-acquisition gate may start one (no anchor: new subject).
+                    if reacq is not None:
+                        lock_events.append({"t": round(now_s, 2), "event": "reacq_abandoned",
+                                            **_retire(reacq, "retarget")})
+                    subject_committed = False
+                    t_meas_last = None
+                    t_meas_last_cap = None
+                    last_reacq_seq = grounder.latest()["seq"]
+                    reacq = Reacquirer(need=args.reacq_need,
+                                       max_range_m=args.reacq_max_range_m)
+                    reacq.start(None)
+                    grounder.begin_reacquire()
+                    lock_events.append({"t": round(now_s, 2), "event": "retarget",
+                                        "anchor": None})
                 ev = {"t": round(now_s, 3), "tick": tick,
                       "scheduled_at_s": t_at,
                       "from": {"object": old_obj, "class": old_class},
@@ -2940,6 +3977,12 @@ async def fly(args) -> int:
             yaw = quat_yaw(kin["pose"]["orientation"])
             state = State(x=p["x"], y=p["y"], up=-p["z"])
             obs.put_pose(p["x"], p["y"], yaw)
+            # The full pose, into the ring get_front_capture reads: stamped
+            # mid-RPC, and with the sim's own time_stamp when it has one.
+            _qk = kin["pose"]["orientation"]
+            obs.put_pose_full(_ta + _ms_kin / 2000.0, p["x"], p["y"], -p["z"], yaw,
+                              quat_pitch(_qk), quat_roll(_qk),
+                              stamp=kin.get("time_stamp"))
             _ta = time.time()
             if people is not None:
                 # Only the pacing few cost anything here; the standing majority
@@ -2997,7 +4040,111 @@ async def fly(args) -> int:
                              and g["t_det"] != last_est_seq)
             if fresh_det:
                 last_est_seq = g["t_det"]
-            if args.presence_gates_control and det is not None:
+            if id_cfg is not None:
+                det_tier = g.get("tier") if det is not None else None
+                _c0 = g.get("cap") or {}
+                if fresh_det and (_c0.get("t_capture") or _c0.get("t_cap")):
+                    det_latency.append((time.time() - (_c0.get("t_capture") or _c0["t_cap"]))
+                                       * 1000.0)
+                if estimator is None and fresh_det and reacq is None:
+                    # NO ESTIMATOR: the fresh held box is the measurement, so
+                    # the flight's memory of the subject follows IT - else a
+                    # lapse anchored on the place of the commit, 60+ m behind
+                    # a car followed for 20 s, and refused the car for good as
+                    # "out of reach" (re-review, 2026-09-30). SOFT boxes only
+                    # continue a track with an OK box in the last 3 s, as the
+                    # estimator path has it.
+                    _now = time.time()
+                    _P = (g.get("feat") or {}).get("P")
+                    if det_tier == "ok" or _now - t_ok_last < 3.0:
+                        if det_tier == "ok":
+                            t_ok_last = _now
+                        t_meas_last = _now
+                        if _P is not None:
+                            t_meas_last_cap = (_c0.get("t_capture") or _c0.get("t_cap") or _now)
+                            acc_hist.append((_now, float(_P[0]), float(_P[1])))
+                            del acc_hist[:-40]
+                            last_acc = (float(_P[0]), float(_P[1]))
+                            _v = measured_speed(acc_hist)
+                            if _v is not None:
+                                last_meas_speed = _v
+                            _h0 = [h for h in acc_hist if acc_hist[-1][0] - h[0] <= 2.0][0]
+                            if acc_hist[-1][0] - _h0[0] >= 1.0:
+                                _dx, _dy = acc_hist[-1][1] - _h0[1], acc_hist[-1][2] - _h0[2]
+                                if math.hypot(_dx, _dy) > 1.0:
+                                    last_heading = math.atan2(_dy, _dx)
+                # RE-ACQUISITION: judge each NEW inference's candidates; the box
+                # the grounder publishes meanwhile is nobody's (it holds none).
+                if reacq is not None:
+                    det, fresh_det = None, False
+                    if g["seq"] != last_reacq_seq and g.get("inf_cap"):
+                        last_reacq_seq = g["seq"]
+                        ic = g["inf_cap"]
+                        t_ic = ic.get("t_capture") or ic.get("t_cap") or time.time()
+                        if reacq.step(g["cands"], g["cand_tiers"], g["cand_feats"], t_ic):
+                            pick, pf, cp = reacq.pick, reacq.pick_feat, ic.get("pose")
+                            grounder.commit(pick, yaw=(cp or {}).get("yaw"))
+                            _hd = reacq.heading()
+                            seeded, _P0 = _take_subject(pf, ic)
+                            if _hd is not None:
+                                last_heading = _hd
+                            ev = {"t": round(time.time() - t0, 2), "event": "reacquired",
+                                  "after_s": round(time.time() - t0 - lock_events[-1]["t"], 2)
+                                  if lock_events else None,
+                                  "P": [round(v, 1) for v in pf["P"][:2]],
+                                  "rng_h": round(pf["rng_h"], 1) if pf.get("rng_h") else None,
+                                  "seeded": bool(seeded), "streak": reacq.streak,
+                                  **_retire(reacq, "reacquired")}
+                            lock_events.append(ev)
+                            print(f"[identity] t+{ev['t']:.1f}s RE-ACQUIRED at "
+                                  f"{ev['P']} ({ev['rng_h']} m)", flush=True)
+                            reacq = None
+                # LAPSE: no accepted measurement for lapse_s. The estimate is
+                # a guess by now; nothing may re-seed it except the gate above.
+                # Keyed on the flight's own clock of accepted measurements and
+                # commits, not on the estimator: with the estimator never
+                # seeded (or --no-target-estimator) the old test could never
+                # fire, and the flight sat with nothing held for good.
+                elif (subject_committed and t_meas_last is not None
+                      and time.time() - t_meas_last > args.lapse_s):
+                    have_est = estimator is not None and estimator._xu is not None
+                    P_a = ((float(estimator._xu[0]), float(estimator._xu[1]))
+                           if have_est else last_acc)
+                    anchor = (None if P_a is None else
+                              {"t": (estimator.t_last_update if have_est
+                                     and estimator.t_last_update is not None
+                                     else (t_meas_last_cap if t_meas_last_cap is not None
+                                           else t_meas_last)),
+                               "P": P_a,
+                               "v": (last_meas_speed if last_meas_speed is not None
+                                     else v_prior)})
+                    if estimator is not None:
+                        estimator.reset()
+                    subject_committed = False
+                    reacq = Reacquirer(need=args.reacq_need,
+                                       max_range_m=args.reacq_max_range_m)
+                    reacq.start(anchor)
+                    grounder.begin_reacquire()
+                    det, fresh_det = None, False
+                    lock_events.append({"t": round(time.time() - t0, 2), "event": "lapse",
+                                        "P": (None if anchor is None else
+                                              [round(v, 1) for v in anchor["P"]]),
+                                        "v": (None if anchor is None or anchor["v"] is None
+                                              else round(anchor["v"], 2))})
+                    print(f"[identity] t+{time.time() - t0:.1f}s subject LOST "
+                          f"(> {args.lapse_s:.1f} s unseen) - re-acquiring", flush=True)
+                if reacq is None and estimator is not None and estimator._xu is not None:
+                    xu = estimator._xu
+                    grounder.set_prior({"t": estimator.t_last_update,
+                                        "x": float(xu[0]), "y": float(xu[1]),
+                                        "vx": float(xu[2]), "vy": float(xu[3]),
+                                        "t_upd": estimator.t_last_update,
+                                        # the subject's centre height, for the
+                                        # projection into the frame
+                                        "up": SUBJECT_CENTRE_UP_M.get(subject_class, 0.75)})
+                else:
+                    grounder.set_prior(None)
+            if args.presence_gates_control and det is not None and id_cfg is None:
                 r_pre = range_from_depth(obs.get_depth(), det) if have_depth else None
                 ground = (state.up, pitch_now)
                 # THE CAR BEING TRACKED IS NOT A DISTRACTOR.
@@ -3025,8 +4172,7 @@ async def fly(args) -> int:
                 if (estimator is not None and r_pre is not None
                         and time.time() - t_ground_ok < 3.0):
                     pred = estimator.observe(time.time(), state.x, state.y, yaw)
-                    b_box = (math.radians(CAMERA_HFOV_DEG / 2.0)
-                             * ((det[0] - det[5] / 2) / (det[5] / 2)))
+                    b_box = box_bearing(det[0], det[5])
                     if agrees_with_estimate(b_box, r_pre, pred):
                         ground, ground_skipped = None, True
                         if fresh_det:                         # per detection
@@ -3080,14 +4226,42 @@ async def fly(args) -> int:
                 # is the one the ESTIMATOR is fed - so a camera change that
                 # missed it would send the Shield a subject in the wrong
                 # direction with nothing raising.
-                b_meas = (math.radians(CAMERA_HFOV_DEG / 2.0)
-                          * ((det[0] - det[5] / 2) / (det[5] / 2)))
-                r_meas = range_from_depth(obs.get_depth(), det) if have_depth else None
+                b_meas = box_bearing(det[0], det[5])
+                t_meas, x_m, y_m, yaw_m = time.time(), state.x, state.y, yaw
+                feed = True
+                r_meas = None
+                if id_cfg is not None:
+                    # AT CAPTURE: the frame's own pose and time, and the range
+                    # and bearing identity measured from them (pinhole, pitch
+                    # and roll included, horizontal range).
+                    cap = g.get("cap") or {}
+                    feat = g.get("feat") or {}
+                    cp = cap.get("pose")
+                    if cp is not None:
+                        t_meas = cap.get("t_capture") or cap.get("t_cap") or t_meas
+                        x_m, y_m, yaw_m = cp["x"], cp["y"], cp["yaw"]
+                    if feat.get("rng_h") is not None and cp is not None:
+                        r_meas = float(feat["rng_h"])
+                        b_meas = feat["bearing"] - yaw_m
+                        b_meas = math.atan2(math.sin(b_meas), math.cos(b_meas))
+                    if g.get("tier") != "ok":
+                        # SOFT: may CONTINUE a live track only.
+                        est_age = (t_meas - estimator.t_last_update
+                                   if estimator.t_last_update is not None else 1e9)
+                        feed = est_age < 1.5 and time.time() - t_ok_last < 3.0
+                        n_soft_fed += int(feed)
+                        n_soft_refused += int(not feed)
+                elif have_depth:
+                    r_meas = range_from_depth(obs.get_depth(), det)
                 if r_meas is None:
                     r_meas = implied_range_from_width(det, args.object_width_m)
-                if r_meas:
-                    accepted = estimator.update(time.time(), state.x, state.y,
-                                                yaw, b_meas, float(r_meas))
+                if r_meas and feed:
+                    accepted = estimator.update(t_meas, x_m, y_m,
+                                                yaw_m, b_meas, float(r_meas))
+                    if accepted and id_cfg is not None and g.get("tier") == "ok":
+                        t_ok_last = time.time()
+                    if accepted and id_cfg is not None:
+                        t_meas_last = time.time()
                     if accepted and ground_ok_now:
                         t_ground_ok = time.time()
                     if accepted:
@@ -3098,6 +4272,11 @@ async def fly(args) -> int:
                         _v = measured_speed(acc_hist)
                         if _v is not None:
                             last_meas_speed = _v
+                        if len(acc_hist) >= 2 and acc_hist[-1][0] - acc_hist[0][0] >= 1.0:
+                            _h0 = [h for h in acc_hist if acc_hist[-1][0] - h[0] <= 2.0][0]
+                            _dx, _dy = acc_hist[-1][1] - _h0[1], acc_hist[-1][2] - _h0[2]
+                            if math.hypot(_dx, _dy) > 1.0:
+                                last_heading = math.atan2(_dy, _dx)
                     if accepted and trail is not None:
                         trail.add(float(estimator.x[0]), float(estimator.x[1]))
 
@@ -3160,7 +4339,14 @@ async def fly(args) -> int:
                 last_seen, last_bearing = time.time(), bearing
                 last_cmd = (yaw_rate, fwd)
                 mode, seen = "track", True
-            elif det is not None and age < args.det_max_age:
+                if id_cfg is not None:
+                    # TARGET LOCKED only on a fresh identity-OK box; otherwise
+                    # say that the aircraft is flying on the estimate.
+                    if det is None or age > 0.6:
+                        mode_label = "TRACKING (PREDICTED)"
+                    elif det_tier == "soft":
+                        mode_label = "TRACKING (PARTLY HIDDEN)"
+            elif det is not None and age < args.det_max_age and reacq is None:
                 yaw_rate, fwd, bearing = servo(
                     det, det[5], args.yaw_gain, args.want_width, args.speed_max)
                 # remember what it was doing, so a gap can be coasted through
@@ -3313,6 +4499,40 @@ async def fly(args) -> int:
                             fwd = max(fwd, min(args.speed_max,
                                                max(last_meas_speed or 0.0, 1.5)))
                     mode = "search"
+                elif planner is not None and last_acc is not None:
+                    # ON ITS STREETS, NOT IN PLACE (demo/search.py). The scan
+                    # below rotated at zero speed wherever the aircraft stood -
+                    # against a building corner in citylife_redcar_trail while
+                    # the car drove on. Pursue to the next junction the way the
+                    # car was going, look down each exit, then hold over it.
+                    t_plan = lost - args.coast_s - args.search_s
+                    cmd = planner.step(t_plan, (state.x, state.y),
+                                       {"p": last_acc, "heading": last_heading,
+                                        "speed": last_meas_speed,
+                                        "stopped": subject_stopped})
+                    tx, ty = cmd["target_xy"]
+                    dxp, dyp = tx - state.x, ty - state.y
+                    dist = math.hypot(dxp, dyp)
+                    look = cmd["look_heading_rad"]
+                    if 0.0 < cmd.get("sweep_deg", 0.0) < 180.0 and not cmd.get("rotate_rad_s"):
+                        w = 2.0 * math.pi / max(0.5, args.search_period_s)
+                        look += math.radians(cmd["sweep_deg"]) * math.sin(w * t_plan)
+                    bearing = math.atan2(math.sin(look - yaw), math.cos(look - yaw))
+                    yaw_rate = yaw_command(args.yaw_gain, bearing)
+                    fwd = (min(cmd["speed_cap_mps"], args.speed_max, 0.5 * dist)
+                           if dist > 1.0 else 0.0)
+                    plan_dir = (dxp / dist, dyp / dist) if dist > 1e-3 else None
+                    mode = "plan"
+                    mode_label = {"pursue": "PURSUING down its street",
+                                  "dwell": f"WATCHING {str(cmd.get('exit') or '').upper()} EXIT",
+                                  "hold": "HOLDING OVER JUNCTION",
+                                  "standoff": "WAITING AT STAND-OFF"}.get(
+                                      cmd["mode"], "SEARCHING ...")
+                    plan_row = {"mode": cmd["mode"], "t": round(t_plan, 1),
+                                "target": [round(tx, 1), round(ty, 1)],
+                                "look_deg": round(math.degrees(look), 1),
+                                "junction": cmd.get("junction"),
+                                "exit": cmd.get("exit")}
                 else:
                     # Only NOW is a full rotation the right answer. The bounded
                     # sweep has already had `search_s` to re-find something near
@@ -3325,6 +4545,34 @@ async def fly(args) -> int:
                     yaw_rate = side * args.search_rate * 0.6
                     fwd, bearing = 0.0, 0.0
                     mode = "scan"
+
+            if reacq is not None:
+                if reacq.pick_feat is not None and reacq.streak > 0:
+                    # Keep the candidate being confirmed in frame, and wait.
+                    Pk = reacq.pick_feat["P"]
+                    b_k = math.atan2(Pk[1] - state.y, Pk[0] - state.x) - yaw
+                    bearing = math.atan2(math.sin(b_k), math.cos(b_k))
+                    yaw_rate = yaw_command(args.yaw_gain, bearing)
+                    fwd = min(fwd, 1.0)
+                    mode_label = f"RE-ACQUIRING {reacq.streak}/{reacq.need}"
+                elif (far_xy := reacq.far_lead(time.time())) is not None:
+                    # CLOSE THE RANGE ON A FAR LEAD (Reacquirer docstring): the
+                    # only thing wrong with it is its distance. Nose on it,
+                    # forward only once the nose is on it, and stop short of
+                    # the gate's range - the gate decides from there.
+                    dxf, dyf = far_xy[0] - state.x, far_xy[1] - state.y
+                    dist_f = math.hypot(dxf, dyf)
+                    b_f = math.atan2(dyf, dxf) - yaw
+                    bearing = math.atan2(math.sin(b_f), math.cos(b_f))
+                    yaw_rate = yaw_command(args.yaw_gain, bearing)
+                    gap_f = dist_f - 0.8 * reacq.max_range_m
+                    fwd = (min(args.speed_max, max(0.0, 0.5 * gap_f))
+                           * max(0.0, math.cos(bearing)))
+                    plan_dir = None                    # along the nose
+                    n_far_approach += 1
+                    mode_label = f"APPROACHING {dist_f:.0f} m"
+                elif mode_label is None:
+                    mode_label = "SEARCHING ..."
 
             # altitude hold, in the controller where it belongs — the Shield is a
             # constraint filter, not a regulator
@@ -3450,6 +4698,18 @@ async def fly(args) -> int:
                                  stop_at=round(stop_at, 1), stopped=subject_stopped,
                                  v_meas=(None if last_meas_speed is None
                                          else round(last_meas_speed, 2)))
+            if mode == "plan" and plan_dir is not None:
+                ux, uy = plan_dir
+            # Keep the aim out of the zones' bands (FenceGuard.clear_aim), so a
+            # zone beside the car's lane is passed alongside, not stopped at.
+            fence_aim = False
+            if orbit_fwd > 0.0 and not args.orbit_speed:
+                _aim = fence.clear_aim(state.x, state.y, ux, uy,
+                                       args.trail_lookahead_m)
+                if _aim is not None:
+                    ux, uy = _aim
+                    fence_aim = True
+                    n_fence_aim += 1
             cvx, cvy = orbit_fwd * ux, orbit_fwd * uy
             if args.orbit_speed and mode == "track":
                 cvx += -args.orbit_speed * math.sin(yaw)
@@ -3480,7 +4740,11 @@ async def fly(args) -> int:
                     # `nfz_s`, which is measured separately and was never
                     # affected - this is a reported number being wrong, not a
                     # verdict being wrong.
-                    if fence.polys:
+                    #
+                    # ...and `fence.polys` was the wrong test too: with a fence
+                    # declared anywhere, a building hold a block away from it
+                    # still counted. gate() now says which hazard held.
+                    if fence.last_cause == "fence":
                         nfz_hold_ticks += 1
                 sx, sy, scost = fence.slide(state.x, state.y, cvx, cvy)
                 if sx or sy:
@@ -3518,6 +4782,28 @@ async def fly(args) -> int:
             d = shield.filter(state, smooth)
             audit.log(tick, d)
             _ms_shield = (time.time() - _ta) * 1000
+            pol = None
+            if pind is not None and pind_error is None:
+                try:
+                    pol = pind.update(
+                        time.time() - t0, d, state, subject_xy=shield.subject,
+                        subject_class=shield.subject_class,
+                        clearance_m=(shield.clearance_at(state.x, state.y)
+                                     if shield.has_obstacle_map else None),
+                        off_map=shield.off_map(state.x, state.y),
+                        # A re-aimed tick IS the controller routing round
+                        # the zone, even when gate() saw nothing to brake.
+                        fence_cause=("fence" if fence_aim and fmode in ("clear", "near")
+                                     else fence.last_cause),
+                        fence_mode=("skirt" if fence_aim and fmode in ("clear", "near")
+                                    else fmode),
+                        est_xy=shield.subject, yaw_rad=yaw)
+                except Exception as exc:                      # noqa: BLE001
+                    # A display fault must never cost the flight: the loop
+                    # goes on with the plain HUD, and metrics.json says why.
+                    pind_error = f"{type(exc).__name__}: {exc}"
+                    print(f"[hud] policy indicator stopped: {pind_error}")
+                    pol = None
             if d.touched:
                 n_touched += 1
             e = d.emitted
@@ -3542,6 +4828,8 @@ async def fly(args) -> int:
                 "fence_d": (round(fdist, 2) if fdist is not None else None),
                 "fence_scale": round(fscale, 3), "fence_hold": fblocked,
                 "fence_mode": fmode,
+                "fence_cause": fence.last_cause,
+                "fence_aim": fence_aim,
                 "trail": trail_row, "off_map": off_map,
                 "est": (None if estimator is None else
                         {"served": est_obs is not None,
@@ -3563,6 +4851,16 @@ async def fly(args) -> int:
                          # The instance scorer re-associates the subject there.
                          "switched": bool(g.get("switched"))}),
                 "presence_blocked": presence_blocked,
+                "tier": det_tier,
+                "lock_why": g.get("lock_why") if id_cfg is not None else None,
+                "reacq": (None if reacq is None else
+                          {"streak": reacq.streak, "n": reacq.n,
+                           "far": len(reacq.far)}),
+                "plan": plan_row,
+                "est_xy": (None if estimator is None or est_obs is None
+                           or estimator.x is None else
+                           [round(float(estimator.x[0]), 2),
+                            round(float(estimator.x[1]), 2)]),
                 "gate_why": gate_why if presence_blocked else None,
                 "ground_skip": ground_skipped,
                 "ground_rescue": ground_rescued,
@@ -3621,7 +4919,11 @@ async def fly(args) -> int:
                     "fence_d": fdist, "fence_hold": fblocked,
                     "presence": verdict, "rng_m": rng_m,
                     "fence_mode": fmode,
-                }, det if seen else None)
+                    "fence_kind": (fence.last_cause
+                                   or ("fence" if fence.polys else "obstacle")),
+                    "mode_label": mode_label, "tier": det_tier,
+                    "policy": pol,
+                }, det if seen and (id_cfg is None or age < 0.6) else None)
             if tick % 50 == 0:
                 sep = _live_sep(state, subject_class, car, people)
                 sep = float("nan") if sep is None else sep
@@ -3662,9 +4964,28 @@ async def fly(args) -> int:
         # the simulator reports after that is the descent and the landing.
         t_mission_end = time.time() + 0.3
         grounder.stop()
-        for _ in range(600):
+        _hud_live = recorder is not None and pind is not None and pind_error is None
+        if args.land_site:
+            landing_info = await _fly_to_landing_site(
+                drone, shield, args, pind=pind if _hud_live else None,
+                recorder=recorder if _hud_live else None, t0=t0, query=args.object)
+        for _k in range(600):
             kin = drone.get_ground_truth_kinematics()
             up = -kin["pose"]["position"]["z"]
+            if _hud_live and _k % 5 == 0:
+                # The descent is flown without the Shield and below the policy
+                # band by design; say so instead of leaving the last mission
+                # tick's verdicts on screen.
+                _p = kin["pose"]["position"]
+                _st = State(x=float(_p["x"]), y=float(_p["y"]), up=up)
+                recorder.set_hud({
+                    "t": time.time() - t0, "sep": None, "brg": 0.0, "fwd": 0.0,
+                    "alt": up, "shield": False, "query": args.object, "mode": "land",
+                    "mode_label": "LANDING - descending", "tier": None,
+                    "policy": pind.ended(_st, "MISSION ENDED - DESCENDING TO LAND (Shield not in this loop)",
+                                         quat_yaw(kin["pose"]["orientation"]),
+                                         t=time.time() - t0),
+                }, None)
             if up <= 1.2:
                 break
             await drone.move_by_velocity_async(
@@ -3703,7 +5024,8 @@ async def fly(args) -> int:
                 # to get the real capture rate. Deriving fps from the flight log
                 # is wrong because the recorder outlives the mission clock.
                 s = recorder.write_sidecar(Path(view_dir) / "recorder.json")
-                print(f"[view] recorder: {s}")
+                print("[view] recorder: "
+                      f"{ {k: v for k, v in s.items() if k != 'frame_t'} }")
             if grounder is not None:
                 grounder.stop()
             try:
@@ -3820,7 +5142,12 @@ async def fly(args) -> int:
         "car_truth": (car.stats() if car is not None and hasattr(car, "stats")
                       else {"source": "client" if car is not None else "none"}),
         # Detections the presence verdict refused to let steer.
-        "presence_gates_control": bool(args.presence_gates_control),
+        # With --identity the presence gate does not run (identity replaces
+        # it); reporting it on with 0 blocked read as "ran and blocked
+        # nothing" (review, 2026-09-29).
+        "presence_gates_control": bool(args.presence_gates_control and id_cfg is None),
+        "presence_superseded_by": ("identity" if id_cfg is not None
+                                   and args.presence_gates_control else None),
         "presence_blocked_ticks": n_presence_blocked,
         "presence_block_reasons": block_reasons,
         # Detections that agreed with the estimate and so were not asked to
@@ -3829,7 +5156,7 @@ async def fly(args) -> int:
         # waiver could never arm (no presence gating, no depth, no ground
         # noun): then the zeros mean nothing.
         "ground_check_waiver": {
-            "measured": bool(args.presence_gates_control and have_depth
+            "measured": bool(args.presence_gates_control and have_depth and id_cfg is None
                              and plausible_noun(args.object) in GROUND_NOUNS),
             "have_depth": bool(have_depth),
             "waived_detections": n_ground_skipped,
@@ -3872,7 +5199,44 @@ async def fly(args) -> int:
         # stand-off changed because the WORD changed - against the flight log
         # rather than against the video.
         "retargets": retarget_events,
-        "det_hz": round((g["n_seen"] + g["n_miss"]) / max(1e-6, len(traj) * TICK), 2),
+        # IDENTITY (--identity): what the candidates were judged to be, by
+        # which rules, and what the strict lock and the estimator did with it.
+        "identity": ({"enabled": True, "thresholds_hash": id_cfg["hash"],
+                      "thresholds_path": id_cfg["path"],
+                      "street_distance": id_cfg["street"] is not None,
+                      "candidates": dict(grounder.id_counts) if grounder else None,
+                      "by_rule": dict(sorted(grounder.id_rules.items()))
+                      if grounder else None,
+                      "soft_fed": n_soft_fed, "soft_refused": n_soft_refused,
+                      "pose_src": dict(grounder.pose_src) if grounder else None,
+                      "depth_src": dict(grounder.depth_src) if grounder else None,
+                      "det_latency_ms_median": (round(float(np.median(det_latency)), 1)
+                                                if det_latency else None)}
+                     if id_cfg is not None else {"enabled": False}),
+        "reacquisition": ({"events": lock_events,
+                           "lapses": sum(1 for e in lock_events if e["event"] == "lapse"),
+                           "reacquired": sum(1 for e in lock_events
+                                             if e["event"] == "reacquired"),
+                           # every episode's refusals (each event carries its own)
+                           "refused_by": {k: reacq_refused.get(k, 0)
+                                          + (reacq.refused.get(k, 0) if reacq else 0)
+                                          for k in set(reacq_refused)
+                                          | set(reacq.refused if reacq else {})},
+                           "refused_by_active": (dict(reacq.refused) if reacq is not None
+                                                 else None),
+                           "far_approach_ticks": n_far_approach,
+                           "active_at_end": reacq is not None}
+                          if id_cfg is not None else None),
+        # Is the ESTIMATE on the subject? The number the controller flies on.
+        "estimate_on_subject": track_truth.score_estimate(rows),
+        "search_planner": planner is not None,
+        "landing": landing_info,
+        # Inferences DURING the mission over mission time. The old figure put
+        # the start gate's inferences over mission time too (see t0 above).
+        "det_hz": (round((g["n_seen"] + g["n_miss"] - det_n_at_t0)
+                         / max(1e-6, rows[-1]["t"]), 2) if rows else None),
+        "det_hz_all_inferences_over_mission_s_legacy": round(
+            (g["n_seen"] + g["n_miss"]) / max(1e-6, len(traj) * TICK), 2),
         "start_heading_err_deg": (None if start_heading_err_deg is None
                                   else round(start_heading_err_deg, 2)),
         "frac_ticks_seen": round(sum(1 for r in rows if r["seen"]) / max(1, len(rows)), 3),
@@ -3889,7 +5253,7 @@ async def fly(args) -> int:
                          **(grounder.mask_stats if grounder else {})}
                         if grounder else {"enabled": bool(args.colour_mask)}),
         "mode_frac": {m: round(sum(1 for r in rows if r.get("mode") == m) / max(1, len(rows)), 3)
-                      for m in ("track", "coast", "search", "scan")},
+                      for m in ("track", "coast", "search", "plan", "scan")},
         "sep_min_m": round(min(seps), 1) if seps else None,
         "sep_mean_m": round(float(np.mean(seps)), 1) if seps else None,
         "sep_end_m": round(seps[-1], 1) if seps else None,
@@ -3900,6 +5264,17 @@ async def fly(args) -> int:
         "frac_absent": round(n_absent / max(1, len(traj)), 3),
         "nfz_hold_ticks": nfz_hold_ticks,
         "guard_hold_ticks": guard_hold_ticks,
+        "fence_aim_ticks": n_fence_aim,
+        # What the on-screen indicator showed: per-flight totals and how many
+        # ticks each banner level was up (latched), so a video's claims can be
+        # checked against the log. Its "held" is ticks with fence_mode "hold"
+        # (any cause) and its p0_escapes is guardrail/kpi.py's definition; it is
+        # NOT nfz_hold_ticks above, which counts gate blocks by a fence
+        # including the ticks on which slide() then skirted.
+        "policy_hud": (None if pind is None else
+                       {"counts": dict(pind.counts),
+                        "banner_ticks": dict(pind.banner_ticks),
+                        "error": pind_error}),
 
         "params": {"yaw_gain": args.yaw_gain, "want_width": args.want_width,
                    "speed_max": args.speed_max, "cruise_alt": args.cruise_alt,
@@ -4163,6 +5538,32 @@ def main() -> int:
     ap.add_argument("--start-timeout-s", type=float, default=240.0,
                     help="give up waiting for --start-when-seen after this long "
                          "and fly anyway; the metrics say it timed out.")
+    ap.add_argument("--identity", action="store_true",
+                    help="judge every detector candidate physically (demo/identity.py: "
+                         "width, aspect, bottom height, distance from the street, at "
+                         "the pose and depth of its own frame), make the instance lock "
+                         "strict, and re-acquire a lost subject only through a gate "
+                         "(4 OK sightings in a row, <= 45 m, within reach of where it "
+                         "was last measured). Off keeps the pre-2026-09-29 behaviour.")
+    ap.add_argument("--identity-thresholds", default="",
+                    help="rule values (default demo/identity_thresholds.json)")
+    ap.add_argument("--lapse-s", type=float, default=3.0,
+                    help="with --identity: seconds without an accepted measurement "
+                         "after which the estimate is dropped and re-acquisition starts")
+    ap.add_argument("--reacq-need", type=int, default=4)
+    ap.add_argument("--reacq-max-range-m", type=float, default=45.0)
+    ap.add_argument("--search-planner", action="store_true",
+                    help="after coast + search, pursue the subject's street to the next "
+                         "junction and watch it (demo/search.py) instead of rotating "
+                         "in place")
+    ap.add_argument("--land-site", action="store_true",
+                    help="at the end, fly (through the Shield) to a landable pavement "
+                         "cell chosen by demo/landing.py before descending")
+    ap.add_argument("--linear-bearing", action="store_true",
+                    help="use the pre-2026-09-29 LINEAR pixel->angle map for every "
+                         "bearing and box width, to reproduce older flights. The "
+                         "camera is a pinhole; the linear map is off by up to ~4 deg "
+                         "and makes physical widths ~21%% small.")
     ap.add_argument("--coarse-timer", action="store_true",
                     help="do NOT ask Windows for a 1 ms timer: the loop then "
                          "sleeps on the default 15.6 ms tick, as every flight "
@@ -4399,6 +5800,9 @@ def main() -> int:
                     help="height of each panel in the live window (default 480). "
                          "Independent of --record-height: the window can be "
                          "small without shrinking the recorded frames.")
+    ap.add_argument("--no-policy-hud", action="store_true",
+                    help="draw the old one-line guardrail HUD instead of the "
+                         "policy indicator (rule panel, Shield banner, map)")
     ap.add_argument("--save-view", action="store_true",
                     help="record the third-person (Chase) camera to "
                          "demo/out/<tag>/tps/ for the demo video")
@@ -4432,6 +5836,8 @@ def main() -> int:
         # which would also change where the flight writes.
         ap.error("--live-view needs --save-view: the window draws the frames "
                  "the recorder produces, and without it none are captured")
+    global LINEAR_BEARING
+    LINEAR_BEARING = bool(args.linear_bearing)
     if args.coarse_timer:
         # The A/B arm still measures what it got: a null here would leave the
         # comparison without its control (review, 2026-09-24).

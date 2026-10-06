@@ -578,6 +578,43 @@ def test_the_recorded_flight_reproduces_the_retraction():
     assert s["precision"] == 0.0, s
 
 
+def test_a_subject_behind_the_camera_scores_finite_json_in_both_projections():
+    """The pinhole puts a subject at or behind the beam at +-inf, and the
+    out-of-shot branch used that column as the error: one such row made the
+    median and p95 inf and `json.dumps(..., allow_nan=False)` raise. The branch
+    now measures on the linear map's column in both modes, so the metrics are
+    finite, and linear-mode numbers are the ones every flight published."""
+    import track_truth as tt
+    beam = [0.0, 10.0]                    # exactly +90 deg: pinhole +inf
+    behind = [-10.0, -0.5]                # ~-177 deg: pinhole -inf
+    ahead = [10.0, 0.0]                   # dead ahead, in shot
+    rows = [_row(200.0, truth={"class": "car", "pts": [beam]}),
+            _row(10.0, truth={"class": "car", "pts": [behind]}),
+            _row(200.0, truth={"class": "car", "pts": [ahead]})]
+    old = tt.PROJECTION
+    try:
+        tt.PROJECTION = "pinhole"
+        assert project_target_cx(0.0, 0.0, 0.0, *beam, W)[0] == math.inf
+        assert project_target_cx(0.0, 0.0, 0.0, *behind, W)[0] == -math.inf
+        pin = score_rows(rows)
+        json.dumps(pin, allow_nan=False)          # raised ValueError before
+        tt.PROJECTION = "linear"
+        lin = score_rows(rows)
+        json.dumps(lin, allow_nan=False)
+    finally:
+        tt.PROJECTION = old
+    assert pin["n_det_with_target_out_of_fov"] == 2, pin
+    for k in ("det_gt_err_px_median", "det_gt_err_px_p95"):
+        assert math.isfinite(pin[k]), (k, pin[k])
+        # Out-of-shot rows are measured identically; the in-shot row is dead
+        # ahead, where the two maps agree - so here the two modes coincide.
+        assert pin[k] == lin[k], (k, pin[k], lin[k])
+    # Linear-mode values, by hand (errors 0, 400 and ~597 px): +90 deg is
+    # column 400 * (0.5 + 90/90) = 600, 400 px from a box at 200 - the median.
+    assert lin["det_gt_err_px_median"] == 400.0, lin
+    assert pin["frac_on_target"] == lin["frac_on_target"] == round(1 / 3, 3), pin
+
+
 if __name__ == "__main__":
     # A test that short-circuits on a missing fixture must NOT print PASS - on a
     # clean clone demo/out/ is gitignored and those tests assert nothing. See

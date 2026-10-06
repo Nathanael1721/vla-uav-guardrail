@@ -68,6 +68,8 @@ docs/*.pdf
 docs/*.docx
 docs/*.html
 docs/video/
+# Share packs (copies of decks, PDFs, videos) assembled for a recipient.
+docs/share/
 demo/**/*.mp4
 
 # --- Python -----------------------------------------------------------------
@@ -99,6 +101,15 @@ bundles/*.tar.gz
 # ignoring it left the artefact existing in exactly one working tree. They are
 # ~100 KiB each, which is what an episode compresses to, and they are kept.
 !bundles/*.replay.tar.gz
+# SIGNING KEYS. The lab's Ed25519 development key signs policy and replay
+# bundles (guardrail/bundle.py). Its PUBLIC half is tracked in
+# policies/keys/trusted_signers.json so any clone can verify; the PRIVATE half
+# must never be committed - a key in a public repository signs for anyone.
+# Every private-key spelling is ignored, not just the one file we write today.
+policies/keys/*.pem
+policies/keys/*.key
+policies/keys/*private*
+*.ed25519
 
 # INTERNAL RECORDS, deliberately not published.
 #
@@ -112,3 +123,23 @@ bundles/*.tar.gz
 # commit. The local files are still on disk; they are simply not tracked.
 meeting notes/
 docs/CORRECTIONS-2026-09-02.md
+# Grant tracker: the personal board and working files (tracker/README.md).
+tracker/data/state.json
+tracker/data/_*
+tracker/data/.state.*
+# Internal working records, kept local for the same reason as the meeting
+# notes: the Indonesian working log and system overview, the grant audit and
+# its data, drafts of questions for the PI, corrections owed to the funder,
+# and presenter cheat sheets. The public site is built separately from
+# reviewed material.
+docs/WORKLOG.md
+docs/GAMBARAN-SISTEM.md
+docs/AUDIT-KONTRAK-*.md
+docs/data/grant_audit_*.json
+docs/PI-DECISIONS-*.md
+docs/CORRECTION-*.md
+docs/PRESENTATION-CHEATSHEET-*.md
+# The local tracker's content (the full audit board, its update log) and its
+# screenshots. The tracker code is tracked; its data stays on this machine.
+tracker/data/
+docs/img/tracker/

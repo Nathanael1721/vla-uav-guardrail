@@ -43,6 +43,8 @@ so they avoid each other. `BeginPlay` records `HomeLocation` and starts a 1 s lo
 on the function `Roam`, which decides when and where the figure walks next and calls
 `SimpleMoveToLocation`. What `Roam` does now is in
 [They walked like robots](#they-walked-like-robots-and-the-animation-was-not-why).
+*Since 2026-09-29 the figures walk routes instead (`bUseNavMesh` false, so no Roam timer
+starts); see [`Roam` paced](#roam-paced-never-paused-and-mostly-failed).*
 
 The plan for `Roam` was a latent `AIMoveTo` re-armed from its own `OnSuccess`/`OnFail`.
 That needs a custom event, and **the graph DSL cannot write custom events** — `(event Roam …)`
@@ -174,6 +176,15 @@ Measured after: intermediate speeds (75, 95, 133 cm/s) appear in snapshots, whic
 direct-velocity mover never produces.
 
 ### `Roam` paced, never paused, and mostly failed
+
+*Superseded 2026-09-29.* The 40 placed figures no longer roam. Each walks a closed tour
+over a pavement graph whose only road-crossing edges are the zebras
+(`tools/citylife_peds.py`), waits at the kerb for the walk phase of the signal plan and a
+4 s gap in the traffic, and crosses without stopping; `BP_CityPed.EventTick` is written by
+`tools/citylife_mcp/ped_walk.py` and the graph described below is kept, as found, in
+`tools/citylife_mcp/ped_roam_v1.dsl` (`ped_walk --roam` restores it). Why and how it was
+measured: the fifth part of
+[FINDING-crowd-pedestrians-and-traffic.md](FINDING-crowd-pedestrians-and-traffic.md).
 
 The old `Roam` re-pathed the instant a figure stopped, to a random point within 12 m of its
 SPAWN, so a figure walked a few metres, turned round, and walked back, with no pause ever.

@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="935" viewBox="0 0 820 935" font-family="Segoe UI, Arial, sans-serif">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#bdbdbd"/></marker></defs>
+<rect width="820" height="935" fill="#1b1b1b"/>
+<rect x="20" y="20" width="250" height="70" rx="4" fill="#3a2d8f" stroke="#6d5ce0" stroke-width="1.5"/>
+<text x="145.0" y="52.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">Policy DSL (YAML)</text>
+<text x="145.0" y="74.0" text-anchor="middle" font-size="14" fill="#cfc6ff">fence, altitude, stand-off</text>
+<path d="M145,90 L145,124" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="20" y="126" width="250" height="70" rx="4" fill="#3a2d8f" stroke="#6d5ce0" stroke-width="1.5"/>
+<text x="145.0" y="158.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">Policy IR + bundle</text>
+<text x="145.0" y="180.0" text-anchor="middle" font-size="14" fill="#cfc6ff">hashed and versioned</text>
+<path d="M145,196 L145,230" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="20" y="232" width="250" height="70" rx="4" fill="#3a2d8f" stroke="#6d5ce0" stroke-width="1.5"/>
+<text x="145.0" y="264.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">Constraint Summary Pack</text>
+<text x="145.0" y="286.0" text-anchor="middle" font-size="14" fill="#cfc6ff">prompt prefix for the VLA</text>
+<rect x="550" y="20" width="250" height="70" rx="4" fill="#0f4a3a" stroke="#1f8a6a" stroke-width="1.5"/>
+<text x="675.0" y="52.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">Camera + depth</text>
+<text x="675.0" y="74.0" text-anchor="middle" font-size="14" fill="#7fe0bf">pose at capture time</text>
+<path d="M675,90 L675,124" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="550" y="126" width="250" height="70" rx="4" fill="#0f4a3a" stroke="#1f8a6a" stroke-width="1.5"/>
+<text x="675.0" y="158.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">OWL-ViT detector</text>
+<text x="675.0" y="180.0" text-anchor="middle" font-size="14" fill="#7fe0bf">phrase -&gt; candidate boxes</text>
+<path d="M675,196 L675,230" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="550" y="232" width="250" height="70" rx="4" fill="#0f4a3a" stroke="#1f8a6a" stroke-width="1.5"/>
+<text x="675.0" y="264.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">Identity + strict lock</text>
+<text x="675.0" y="286.0" text-anchor="middle" font-size="14" fill="#7fe0bf">drop REJECT, lock one car</text>
+<path d="M675,302 L675,336" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="550" y="338" width="250" height="70" rx="4" fill="#0f4a3a" stroke="#1f8a6a" stroke-width="1.5"/>
+<text x="675.0" y="370.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">Estimator + Reacquirer</text>
+<text x="675.0" y="392.0" text-anchor="middle" font-size="14" fill="#7fe0bf">lapse 3 s, re-seed on proof</text>
+<rect x="185" y="450" width="450" height="70" rx="4" fill="#3d3d3d" stroke="#6a6a6a" stroke-width="1.5"/>
+<text x="410.0" y="482.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">Pilot (swappable)</text>
+<text x="410.0" y="504.0" text-anchor="middle" font-size="14" fill="#c8c8c8">OpenVLA-7B or follow controller</text>
+<path d="M230,302 L230,448" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<text x="262" y="380" text-anchor="start" font-size="14" fill="#d8d8d8">prefix</text>
+<path d="M585,408 L585,448" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<text x="596" y="432" text-anchor="start" font-size="14" fill="#d8d8d8">target</text>
+<path d="M410,520 L410,554" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="185" y="556" width="450" height="70" rx="4" fill="#3d3d3d" stroke="#6a6a6a" stroke-width="1.5"/>
+<text x="410.0" y="588.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">Action4D command</text>
+<text x="410.0" y="610.0" text-anchor="middle" font-size="14" fill="#c8c8c8">vx, vy, vz, yaw rate at 10 Hz</text>
+<path d="M410,626 L410,660" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="185" y="662" width="450" height="70" rx="4" fill="#3a2d8f" stroke="#6d5ce0" stroke-width="1.5"/>
+<text x="410.0" y="694.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">Safety Shield</text>
+<text x="410.0" y="716.0" text-anchor="middle" font-size="14" fill="#cfc6ff">predict, check, repair, brake</text>
+<path d="M120,302 L120,697 L183,697" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<text x="80" y="520" text-anchor="middle" font-size="14" fill="#d8d8d8">rules</text>
+<path d="M760,408 L760,697 L637,697" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<text x="785" y="520" text-anchor="middle" font-size="14" fill="#d8d8d8">subject</text>
+<path d="M260,732 L260,760 L120,760 L120,788" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="20" y="790" width="200" height="70" rx="4" fill="#3d3d3d" stroke="#6a6a6a" stroke-width="1.5"/>
+<text x="120.0" y="822.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">KPI + audit log</text>
+<text x="120.0" y="844.0" text-anchor="middle" font-size="14" fill="#c8c8c8">replay bundle</text>
+<path d="M410,732 L410,788" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="240" y="790" width="340" height="70" rx="4" fill="#3d3d3d" stroke="#6a6a6a" stroke-width="1.5"/>
+<text x="410.0" y="822.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">ArduPilot via MAVROS 2</text>
+<text x="410.0" y="844.0" text-anchor="middle" font-size="14" fill="#c8c8c8">SITL (KPI rail) or Project AirSim</text>
+<path d="M560,732 L560,760 L700,760 L700,788" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="600" y="790" width="200" height="70" rx="4" fill="#0e4b57" stroke="#249db2" stroke-width="1.5"/>
+<text x="700.0" y="822.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">Policy HUD (3 Oct)</text>
+<text x="700.0" y="844.0" text-anchor="middle" font-size="14" fill="#9fe3ef">rule status, Shield banner</text>
+<path d="M580,825 L590,825 L590,880 L810,880 L810,55 L802,55" fill="none" stroke="#bdbdbd" stroke-width="1.6" stroke-dasharray="6,5" marker-end="url(#a)"/>
+<rect x="24" y="907" width="16" height="16" rx="3" fill="#3a2d8f" stroke="#6d5ce0"/>
+<text x="50" y="920" text-anchor="start" font-size="15" fill="#d8d8d8">guardrail (contract core)</text>
+<rect x="315" y="907" width="16" height="16" rx="3" fill="#0f4a3a" stroke="#1f8a6a"/>
+<text x="341" y="920" text-anchor="start" font-size="15" fill="#d8d8d8">perception</text>
+<rect x="471" y="907" width="16" height="16" rx="3" fill="#3d3d3d" stroke="#6a6a6a"/>
+<text x="497" y="920" text-anchor="start" font-size="15" fill="#d8d8d8">pilot and autopilot</text>
+</svg>

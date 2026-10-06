@@ -422,8 +422,11 @@ def test_near_the_horizon_the_ground_check_abstains():
 
 
 def test_things_that_do_not_stand_on_the_road_are_not_ground_checked():
+    # 8 px, not 12: with pinhole widths (2026-09-29) 12 px at 40 m implies
+    # 2.4 m, past a traffic light's plausible 2.0 m - this test is about the
+    # ground check, not the width check.
     dep = math.degrees(math.atan2(4.5, 40.0))
-    det = _det_on_ray(dep, bw=12.0)
+    det = _det_on_ray(dep, bw=8.0)
     v, _ = presence_verdict(det, 40.3, "a traffic light", 0.10, ground=(9.0, 0.0))
     assert v != "ABSENT"
 
@@ -1136,6 +1139,54 @@ def test_the_camera_geometry_has_one_source_and_it_tracks():
             t.write_text(out, encoding="utf-8")
             assert camera_hfov_deg(t) == float(want), (
                 f"config says {want}, reader returned {camera_hfov_deg(t)}")
+
+
+def test_no_linear_pixel_to_angle_map_outside_its_one_helper():
+    """The camera is a pinhole (demo/camera_model.py). Every bearing and box
+    width was `radians(hfov/2) * (cx - W/2)/(W/2)` - off by ~4 deg mid-frame
+    and ~21 % small on widths - and it lived in six places. It may appear now
+    only inside the two helpers that keep it for `--linear-bearing`.
+
+    Parsed, not grepped: any `radians(<something> / 2...)` product in a
+    function other than box_bearing/box_half_angle is flagged."""
+    import ast, inspect
+    src = inspect.getsource(sys.modules["follow_vlm"])
+    tree = ast.parse(src)
+    allowed = {"box_bearing", "box_half_angle", "camera_blind_m", "ground_range_m",
+               "TargetLock._predict"}
+    bad = []
+
+    class V(ast.NodeVisitor):
+        def __init__(self):
+            self.stack = []
+
+        def visit_FunctionDef(self, node):
+            self.stack.append(node.name)
+            self.generic_visit(node)
+            self.stack.pop()
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+        def visit_ClassDef(self, node):
+            self.stack.append(node.name)
+            self.generic_visit(node)
+            self.stack.pop()
+
+        def visit_BinOp(self, node):
+            if isinstance(node.op, ast.Mult):
+                for side in (node.left, node.right):
+                    if (isinstance(side, ast.Call)
+                            and getattr(side.func, "attr", getattr(side.func, "id", "")) == "radians"
+                            and side.args and isinstance(side.args[0], ast.BinOp)
+                            and isinstance(side.args[0].op, ast.Div)):
+                        where = ".".join(self.stack[-2:]) if len(self.stack) > 1 else (self.stack[-1] if self.stack else "<module>")
+                        name = self.stack[-1] if self.stack else "<module>"
+                        if name not in allowed and where not in allowed:
+                            bad.append(f"line {node.lineno} in {where}")
+            self.generic_visit(node)
+
+    V().visit(tree)
+    assert not bad, f"a linear pixel->angle product is back: {bad}"
 
 
 def test_every_bearing_site_uses_that_one_source():

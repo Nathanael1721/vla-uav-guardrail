@@ -4,8 +4,32 @@
     {
       "name": "training-dashboard",
       "runtimeExecutable": "C:\\Users\\natha\\.conda\\envs\\vla-drone\\python.exe",
-      "runtimeArgs": ["training/dashboard.py"],
+      "runtimeArgs": [
+        "training/dashboard.py"
+      ],
       "port": 8085
+    },
+    {
+      "name": "grant-tracker",
+      "runtimeExecutable": "C:/Users/natha/.conda/envs/vla-real/python.exe",
+      "runtimeArgs": [
+        "tracker/serve.py",
+        "--port",
+        "8765"
+      ],
+      "port": 8765
+    },
+    {
+      "name": "grant-tracker-e2e",
+      "runtimeExecutable": "C:/Users/natha/.conda/envs/vla-real/python.exe",
+      "runtimeArgs": [
+        "tracker/serve.py",
+        "--port",
+        "8766",
+        "--state",
+        "C:/Users/natha/AppData/Local/Temp/claude/D--OneDrive-College-S2-TaipeiTech-Lab-VLA-Drone/b55be76a-a840-4098-ad3f-198de66a78a2/scratchpad/e2e_state.json"
+      ],
+      "port": 8766
     }
   ]
 }

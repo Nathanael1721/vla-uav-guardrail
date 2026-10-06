@@ -32,12 +32,24 @@ param(
     [string]$Tag     = "citylife_follow",
     [string]$LevelCar = "",             # e.g. Car_10: follow a car the level drives
     [int]$StartWhenSeen = 5,            # consecutive plausible boxes before t0; 0 = off
-    [double]$StartTimeout = 240,
-    [double]$StartMaxRange = 45,        # car mode: acquire only within this range
+    [double]$StartTimeout = 330,        # red lights lengthen the car's lap (2026-09-29)
+    [double]$StartMaxRange = 30,        # car mode: acquire only within this range.
+                                        # 45 m let every flight start at 43.9 m,
+                                        # the car 20 px wide and driving away.
     [double]$CruiseAlt = 0,             # 0 = the default, 8 m (see below)
     [int]$SimWidth   = 960,
     [int]$SimHeight  = 540,
     [switch]$NoTrail,                   # car mode: fly along the nose, as before 09-24
+    [switch]$Identity,                  # --identity for a person mission too (see below)
+    [switch]$NoIdentity,                # the pre-2026-09-29 selection (no identity
+                                        # tiers, lenient lock, no re-acquire gate,
+                                        # no junction planner, no landing site)
+    # Frames go to C: through a junction: D: is nearly full, and a flight's
+    # frames are 1-2 GB. Empty string = write under demo\out as before.
+    [string]$OffloadRoot = "C:\Users\natha\vla_drone_offload\demo_out",
+    [string]$PolicyFile = "",          # override the rule set, e.g.
+                                        # policies\follow_car_citylife_nfz.yaml
+    [switch]$NoPolicyHud,               # the old one-line HUD (A/B of the indicator's cost)
     [switch]$KeepSim,                   # leave the simulator running afterwards
     [switch]$SkipSim
 )
@@ -159,7 +171,19 @@ Say "following `"$Object`" for ${Seconds}s against $LevelPeds level pedestrians"
 # clearance ring a mapped obstacle violates at the start point: it could not
 # keep up by construction. follow_car_citylife.yaml keeps both stand-offs and
 # takes follow_car.yaml's envelope (5 m/s, 3 m clearance, 6-14 m).
+# --identity: every candidate judged physically at its own frame's pose and
+# depth (demo/identity.py), a strict lock, and a lost subject re-acquired only
+# through a gate - citylife_redcar_trail ended TARGET LOCKED on a red
+# pedestrian signal 110 m from the car without them. --land-site: descend on a
+# pavement cell, not wherever the mission ended (a hedge, a parked car).
 $Policy = if ($LevelCar) { "policies\follow_car_citylife.yaml" } else { "policies\follow_pedestrian.yaml" }
+# -PolicyFile swaps the rule set only (the CityLife no-fly zone, 2026-10-03);
+# everything else about the mission stays as above.
+if ($PolicyFile) {
+    $pf = if ([IO.Path]::IsPathRooted($PolicyFile)) { $PolicyFile } else { Join-Path $Root $PolicyFile }
+    if (-not (Test-Path $pf)) { throw "no policy at $PolicyFile" }
+    $Policy = $PolicyFile
+}
 # Cruise altitude: 8 m for both missions. 12 m was flown (citylife_redcar_high)
 # and overshot the car policy's 14 m ceiling for 3.1 s (peak 14.32 m), each climb
 # during a phantom-wall repair (docs/FINDING-crowd-pedestrians-and-traffic.md,
@@ -181,7 +205,22 @@ $a = @("demo\follow_vlm.py",
        "--level-truth-period", "$TruthPeriod",
        "--citymap", $CityMap,
        "--save-view")
+if ($NoPolicyHud) { $a += @("--no-policy-hud") }
+# --identity was tuned on the red-car flights only (tools/replay_identity.py).
+# For people it supersedes the presence gate's 0.2-1.5 m width test, and the
+# first pedestrian flight under it (citylife_ped_id, 2026-09-30) followed
+# person boxes ranged on the facades behind them, 40-130 m out: within 30 m
+# 0.972, but its estimate within 6 m of anybody on 46 % of ticks. Until the
+# person rules are tuned the same way, a person mission flies the
+# presence-gated selection; -Identity forces identity for it.
+if (-not $NoIdentity) {
+    if ($LevelCar -or $Identity) { $a += @("--identity") }
+    $a += @("--land-site")
+}
 if ($LevelCar) {
+    # After the coast and the search sweep: pursue the car's street to the next
+    # junction and watch it (demo/search.py), not rotate in place.
+    if (-not $NoIdentity) { $a += @("--search-planner") }
     # A car: 0.16 of frame width is the calibration made for a 4 m car (15.8 m
     # stand-off), and the subject's truth is the one tag.
     $a += @("--level-car", $LevelCar, "--want-width", "0.16")
@@ -203,6 +242,63 @@ if ($LevelCar) {
 # A metrics.json left by an EARLIER flight under this tag would otherwise be
 # what the closing lines point at when this one fails before writing its own.
 Remove-Item (Join-Path $Root "demo\out\$Tag\metrics.json") -ErrorAction SilentlyContinue
+if ($OffloadRoot) {
+    $viewLink = Join-Path $Root "demo\out\$Tag\view"
+    $viewDest = Join-Path $OffloadRoot "$Tag\view"
+    # Get-Item on the link itself, not Test-Path. Test-Path is True for a
+    # junction whose target was deleted (the offload folder cleared to make
+    # room), so nothing was recreated, follow_vlm's mkdir of view\tps failed,
+    # and its handler printed "no Chase camera": a whole flight with no frames.
+    $view = Get-Item -Force -LiteralPath $viewLink -ErrorAction SilentlyContinue
+    if (-not $view) {
+        New-Item -ItemType Directory -Force (Split-Path $viewLink) | Out-Null
+        New-Item -ItemType Directory -Force $viewDest | Out-Null
+        New-Item -ItemType Junction -Path $viewLink -Target $viewDest | Out-Null
+        Say "frames -> $viewDest (junction)"
+    } elseif ($view.LinkType) {
+        # Windows PowerShell 5.1 returns Target as string[], 7 as a string.
+        $target = @($view.Target)[0]
+        if (-not [IO.Path]::IsPathRooted($target)) {
+            $target = Join-Path (Split-Path $viewLink) $target
+        }
+        if (-not (Test-Path -LiteralPath $target)) {
+            New-Item -ItemType Directory -Force $target | Out-Null
+            Say "frames -> $target (junction; its target was missing, recreated)"
+        } else {
+            Say "frames -> $target (junction)"
+        }
+        $under = [IO.Path]::GetFullPath($OffloadRoot).TrimEnd('\') + '\'
+        if (-not [IO.Path]::GetFullPath($target).StartsWith($under, [StringComparison]::OrdinalIgnoreCase)) {
+            Write-Warning "$viewLink points at $target, outside -OffloadRoot $OffloadRoot. The frames go there."
+        }
+    } else {
+        # A real folder: a flight from before the offload, or one run with
+        # -OffloadRoot "". Only files or links count as content - follow_vlm
+        # makes view\tps and view\fpv before the first frame, so a flight that
+        # failed early leaves those two empty folders and nothing else.
+        $content = @(Get-ChildItem -Force -Recurse -LiteralPath $viewLink |
+                     Where-Object { -not $_.PSIsContainer -or $_.LinkType })
+        if ($content.Count -eq 0) {
+            Remove-Item -Recurse -Force -LiteralPath $viewLink
+            New-Item -ItemType Directory -Force $viewDest | Out-Null
+            New-Item -ItemType Junction -Path $viewLink -Target $viewDest | Out-Null
+            Say "frames -> $viewDest (junction; replaced an empty view folder)"
+        } else {
+            # Never delete frames here, and never send them to D: silently: the
+            # 13 CityLife flights offloaded so far wrote 1.3-1.7 GB each
+            # (measured 2026-09-30) and D: had 2.3 GB free that day. The FLIGHT
+            # still deletes them: FrameRecorder clears view\tps and view\fpv of
+            # *.jpg when it starts (demo/recorder.py, _clear), so "nothing was
+            # deleted" would be true only until then, and the warning says so.
+            $free = (Get-PSDrive (Split-Path -Qualifier $viewLink).TrimEnd(':')).Free / 1GB
+            Write-Warning ("$viewLink is a real folder that already holds frames, so this " +
+                           "flight writes to $(Split-Path -Qualifier $viewLink) ($('{0:N1}' -f $free) GB free; " +
+                           "a flight is 1-2 GB), not to $viewDest, and its recorder deletes the old " +
+                           "tps/fpv frames there when it starts. To keep them, stop this run (Ctrl+C) " +
+                           "and move the folder's contents to $viewDest, or fly under a new -Tag.")
+        }
+    }
+}
 & $Py @a
 $rc = $LASTEXITCODE
 }

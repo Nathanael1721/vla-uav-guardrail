@@ -321,7 +321,8 @@ def detector():
         span = rows[-1]["t"] - rows[0]["t"]
         m = load_json(f"demo/out/{tag}/metrics.json")
         flights[tag] = {"loop_hz": round(len(rows) / span, 2) if span > 0 else None,
-                        "det_hz": m.get("det_hz"),
+                        "det_hz": det_hz_mission(rows, m),
+                        "det_hz_reported": m.get("det_hz"),
                         "pre_ms_median": round(med(pre), 1) if pre else None,
                         "fwd_ms_median": round(med(fwd), 1) if fwd else None}
         say(f"in flight: {tag}", flights[tag])
@@ -415,10 +416,15 @@ def rails():
         mp, fl = d / "metrics.json", d / "flight_log.jsonl"
         if not (mp.exists() and fl.exists()):
             continue
-        det_hz = json.loads(mp.read_text(encoding="utf-8")).get("det_hz")
-        if det_hz is None:
+        m_ = json.loads(mp.read_text(encoding="utf-8"))
+        if m_.get("det_hz") is None:
             continue
         rows = [json.loads(l) for l in fl.open(encoding="utf-8")]
+        if not rows:
+            continue
+        det_hz = det_hz_mission(rows, m_)
+        if det_hz is None:
+            continue
         span = rows[-1]["t"] - rows[0]["t"]
         loop_hz = len(rows) / span if span > 0 else 0.0
         cam += 1
@@ -440,6 +446,24 @@ def sweep():
     for r in out["results"]:
         say(f"  {r['id']}", f"{r['status']}  escape={r['p0_violation_escape_rate']}")
     return out
+
+
+def det_hz_mission(rows, m):
+    """Detector inferences per second DURING the mission.
+
+    metrics.json's `det_hz` was, until 2026-09-29, (every inference since the
+    detector loaded) / (ticks x 0.1 s): the start gate's minutes of inferences
+    counted, and a loop below 10 Hz shrank the denominator - citylife_follow2
+    reported 7.60 Hz for a detector that ran at 3.06. A metrics.json written
+    since carries `det_hz_all_inferences_over_mission_s_legacy` and a correct
+    `det_hz`; for the older ones the rate is recomputed from the flight log:
+    the inference seq numbers the ticks consumed, over the ticks' own span."""
+    if m and "det_hz_all_inferences_over_mission_s_legacy" in m:
+        return m.get("det_hz")
+    seqs = [r["det_seq"] for r in rows if r.get("det_seq") is not None]
+    if len(seqs) < 2 or len(rows) < 2 or rows[-1]["t"] <= rows[0]["t"]:
+        return None
+    return round((max(seqs) - min(seqs)) / (rows[-1]["t"] - rows[0]["t"]), 2)
 
 
 def _loop_hz(rows):
@@ -503,7 +527,8 @@ def citylife_flights():
         if (run / "metrics.json").exists():
             m = json.loads((run / "metrics.json").read_text(encoding="utf-8"))
         rec = {"object": m.get("object"), "ticks": len(rows),
-               "det_hz": m.get("det_hz"),
+               "det_hz": det_hz_mission(rows, m),
+               "det_hz_reported": m.get("det_hz"),
                "p0_violation_escape_rate": m.get("p0_violation_escape_rate"),
                "frac_on_target": cls.get("frac_on_target"),
                "frac_on_target_chance": cls.get("frac_on_target_chance"),

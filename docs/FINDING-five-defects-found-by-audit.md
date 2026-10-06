@@ -155,9 +155,12 @@ Suite **231** (215 + 16 coverage), up from 220. One re-flight with 12
 pedestrians and 5 walkers: 0 of 12 off-street, `det_hit_rate` 1.000,
 `frac_ticks_seen` 1.000, `sep_end` 16.7 m, Shield interventions 0, P0 escape
 rate 0.0 with `p0_ticks_not_measurable` 0 - measured for the first time.
-`det_hz` 4.41 unrecorded, clearing the 4.0 gate.
+`det_hz` ~~4.41 unrecorded, clearing the 4.0 gate~~ 3.53 over the mission
+(corrected 2026-09-29: the reported figure counted inferences over ticks x 0.1 s
+with a loop below 10 Hz), which does not clear 4.0.
 
-`det_hz` on RECORDED runs spans 3.43-4.07 and does not reliably clear 4.0. That
+`det_hz` on RECORDED runs spans ~~3.43-4.07~~ (reported; over the mission
+alone lower still, see the correction above) and does not reliably clear 4.0. That
 is unchanged by this work - the lowest reading, 3.43, is `people_control`, flown
 before any of it - and remains open.
 

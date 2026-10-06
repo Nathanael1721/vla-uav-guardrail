@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="790" height="840" viewBox="0 0 790 840" font-family="Segoe UI, Arial, sans-serif">
+<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#bdbdbd"/></marker></defs>
+<rect width="790" height="840" fill="#1b1b1b"/>
+<rect x="210" y="20" width="420" height="68" rx="4" fill="#3d3d3d" stroke="#6a6a6a" stroke-width="1.5"/>
+<text x="420.0" y="51.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">Camera frame</text>
+<text x="420.0" y="73.0" text-anchor="middle" font-size="14" fill="#c8c8c8">pose and depth at capture time</text>
+<path d="M420.0,88 L420.0,124" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="210" y="126" width="420" height="68" rx="4" fill="#3d3d3d" stroke="#6a6a6a" stroke-width="1.5"/>
+<text x="420.0" y="157.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">OWL-ViT detector</text>
+<text x="420.0" y="179.0" text-anchor="middle" font-size="14" fill="#c8c8c8">prompt "a red car", up to 12 boxes</text>
+<path d="M420.0,194 L420.0,230" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="210" y="232" width="420" height="68" rx="4" fill="#0f4a3a" stroke="#1f8a6a" stroke-width="1.5"/>
+<text x="420.0" y="263.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">1. Physical identity</text>
+<text x="420.0" y="285.0" text-anchor="middle" font-size="14" fill="#7fe0bf">width, bottom height, street -&gt; tier</text>
+<path d="M630,266 L642,266" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="644" y="232" width="132" height="68" rx="4" fill="#3d3d3d" stroke="#6a6a6a" stroke-width="1.5"/>
+<text x="710.0" y="263.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">REJECT</text>
+<text x="710.0" y="285.0" text-anchor="middle" font-size="14" fill="#c8c8c8">never steers</text>
+<path d="M420.0,300 L420.0,336" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="210" y="338" width="420" height="68" rx="4" fill="#0f4a3a" stroke="#1f8a6a" stroke-width="1.5"/>
+<text x="420.0" y="369.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">2. Strict lock</text>
+<text x="420.0" y="391.0" text-anchor="middle" font-size="14" fill="#7fe0bf">OK, or DOUBTFUL near the prediction?</text>
+<path d="M320,406 L320,440 L180,440 L180,474" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<text x="350" y="434" text-anchor="middle" font-size="14" fill="#d8d8d8">yes</text>
+<path d="M520,406 L520,440 L590,440 L590,474" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<text x="572" y="434" text-anchor="middle" font-size="14" fill="#d8d8d8">no, for 3 s</text>
+<rect x="20" y="476" width="340" height="68" rx="4" fill="#3d3d3d" stroke="#6a6a6a" stroke-width="1.5"/>
+<text x="190.0" y="507.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">Estimator update</text>
+<text x="190.0" y="529.0" text-anchor="middle" font-size="14" fill="#c8c8c8">car position at capture time</text>
+<path d="M190,544 L190,580" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="20" y="582" width="340" height="68" rx="4" fill="#3d3d3d" stroke="#6a6a6a" stroke-width="1.5"/>
+<text x="190.0" y="613.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">Controller + Safety Shield</text>
+<text x="190.0" y="635.0" text-anchor="middle" font-size="14" fill="#c8c8c8">follow at stand-off</text>
+<rect x="420" y="476" width="340" height="68" rx="4" fill="#0f4a3a" stroke="#1f8a6a" stroke-width="1.5"/>
+<text x="590.0" y="507.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">3. Lapse</text>
+<text x="590.0" y="529.0" text-anchor="middle" font-size="14" fill="#7fe0bf">estimate dropped, search starts</text>
+<path d="M590,544 L590,580" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="420" y="582" width="340" height="68" rx="4" fill="#0f4a3a" stroke="#1f8a6a" stroke-width="1.5"/>
+<text x="590.0" y="613.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">4. Reacquirer</text>
+<text x="590.0" y="635.0" text-anchor="middle" font-size="14" fill="#7fe0bf">4 OK in a row, &lt;= 45 m, in reach</text>
+<path d="M420,616 L390,616 L390,510 L362,510" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<path d="M560,650 L560,686" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<text x="500" y="674" text-anchor="middle" font-size="14" fill="#d8d8d8">too far</text>
+<rect x="420" y="688" width="340" height="68" rx="4" fill="#0f4a3a" stroke="#1f8a6a" stroke-width="1.5"/>
+<text x="590.0" y="719.0" text-anchor="middle" font-size="17" font-weight="600" fill="#f0f0f0">5. Far lead</text>
+<text x="590.0" y="741.0" text-anchor="middle" font-size="14" fill="#7fe0bf">fly closer, the gate decides</text>
+<path d="M660,688 L660,652" fill="none" stroke="#bdbdbd" stroke-width="1.6" marker-end="url(#a)"/>
+<rect x="24" y="787" width="16" height="16" rx="3" fill="#0f4a3a" stroke="#1f8a6a"/>
+<text x="50" y="800" text-anchor="start" font-size="15" fill="#d8d8d8">new (29-30 Sept)</text>
+<rect x="234" y="787" width="16" height="16" rx="3" fill="#3d3d3d" stroke="#6a6a6a"/>
+<text x="260" y="800" text-anchor="start" font-size="15" fill="#d8d8d8">existing / unchanged</text>
+</svg>

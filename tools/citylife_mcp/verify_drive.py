@@ -70,6 +70,8 @@ PROPS = ["eyMax", "alatMax", "minEver", "closeTicks", "yieldTicks", "pedTicks",
 # unknown, so asking for these alongside the rest made a BP_CityCar that
 # predates them unreadable instead of "not measured" (review round 4).
 NEW = ["eStops", "pedCorr", "pedClose"]
+# drive_signals.py (2026-09-29): the signal rules' own counters.
+SIG = ["redViol", "zebraWait", "sigHolds", "sneaks", "lateHold", "boxStill"]
 
 
 def T(_tool, **kw):
@@ -85,6 +87,10 @@ def run():
         p = json.loads(T(OT + "get_properties", instance=a, properties=PROPS))
         try:
             p.update(json.loads(T(OT + "get_properties", instance=a, properties=NEW)))
+        except RuntimeError:
+            pass
+        try:
+            p.update(json.loads(T(OT + "get_properties", instance=a, properties=SIG)))
         except RuntimeError:
             pass
         loc = T(AC + "get_actor_transform", actor=a)
@@ -136,6 +142,17 @@ def main():
                   "pedestrian within 4 m ahead at speed (incl. step-outs): %d" % (
                       sum(c["eStops"] for c in vals), sum(c["pedCorr"] for c in vals),
                       sum(c["pedClose"] for c in vals)))
+        sig = ("redViol", "zebraWait", "sigHolds", "sneaks", "lateHold", "boxStill")
+        if not all(isinstance(c.get(k), (int, float)) for c in vals for k in sig):
+            print("signal counters NOT MEASURED: UpdateEffSpeed predates drive_signals.py")
+        else:
+            # zebraWait / sigHolds are half-rate ticks; boxStill is seconds.
+            print("signals: RedViol %d, ZebraWait %d half-rate ticks, signal holds %d, "
+                  "sneaks %d, late holds %d, stood in a box %.1f s (worst car %.1f s)" % (
+                      sum(c["redViol"] for c in vals), sum(c["zebraWait"] for c in vals),
+                      sum(c["sigHolds"] for c in vals), sum(c["sneaks"] for c in vals),
+                      sum(c["lateHold"] for c in vals), sum(c["boxStill"] for c in vals),
+                      max(c["boxStill"] for c in vals)))
 
 
 if __name__ == "__main__":

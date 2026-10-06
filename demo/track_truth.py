@@ -157,6 +157,21 @@ ON_TARGET_PX = 100.0
 TIGHT_ON_TARGET_PX = 25.0
 
 
+# "linear" (the map every published score used) or "pinhole" (the camera).
+# The CONTROLLER moved to pinhole on 2026-09-29; the SCORER stays linear by
+# default so every published tracking number and the tests that pin them stay
+# reproducible. The two differ by up to ~30 px off-centre at 768 px against a
+# 100 px tolerance; the pinhole re-score of the CityLife flights is recorded in
+# docs/WORKLOG.md. Set PROJECTION = "pinhole" to score with the camera model.
+PROJECTION = "linear"
+
+
+def _linear_cx(deg: float, img_w: float, hfov_deg: float) -> float:
+    """The LINEAR map's column for a bearing of `deg` off the nose. Finite for
+    every bearing, which the pinhole's is not (see _score's out-of-shot branch)."""
+    return img_w * (0.5 + deg / hfov_deg)
+
+
 def project_target_cx(x: float, y: float, psi: float,
                       tgt_x: float, tgt_y: float,
                       img_w: int, hfov_deg: float = HFOV_DEG):
@@ -166,15 +181,26 @@ def project_target_cx(x: float, y: float, psi: float,
     informative case, because it means the target is not in shot at all and any
     box the detector produced is on something else.
 
-    A pinhole approximation: a bearing of `b` degrees off the nose lands at
-    `img_w * (0.5 + b / hfov)`. Validated against the `bearing_deg` the flight
-    log already records, which it reproduces to a few degrees - well inside the
-    100 px (22.5 deg) tolerance being judged.
+    A pinhole: a bearing of `b` off the nose lands at `W/2 + f*tan(b)` with
+    f = (W/2)/tan(hfov/2), and at +-inf at or beyond +-90 deg. Until 2026-09-29
+    this was the LINEAR `img_w * (0.5 + b / hfov)`, which is exact only at the
+    centre and the edges and puts an off-centre target up to ~30 px (768 wide)
+    from where the camera images it - the same error the controller had.
+    Which one runs is `PROJECTION` (see above; linear by default).
+
+    The +-inf is deliberate - no column images such a target - and the scorer
+    never turns it into an error: _score measures out-of-shot rows on the
+    linear map's column (see there).
     """
     rel = math.atan2(tgt_y - y, tgt_x - x) - psi
     rel = math.atan2(math.sin(rel), math.cos(rel))       # wrap to (-pi, pi]
     deg = math.degrees(rel)
-    return img_w * (0.5 + deg / hfov_deg), deg
+    if PROJECTION == "linear":
+        return _linear_cx(deg, img_w, hfov_deg), deg
+    if abs(rel) >= math.pi / 2:
+        return math.copysign(math.inf, rel), deg
+    f = (img_w / 2.0) / math.tan(math.radians(hfov_deg) / 2.0)
+    return img_w / 2.0 + f * math.tan(rel), deg
 
 
 def truth_points(row: dict) -> Optional[list]:
@@ -196,6 +222,36 @@ def truth_points(row: dict) -> Optional[list]:
     if row.get("tgt_x") is not None and row.get("tgt_y") is not None:
         return [(float(row["tgt_x"]), float(row["tgt_y"]))]
     return None
+
+
+def score_estimate(rows, near_m: float = 6.0) -> Optional[dict]:
+    """Is the ESTIMATE the controller flies on actually on the subject?
+
+    The box scorers ask whether a DETECTION was on the subject. The aircraft
+    steers on the target estimator, which can sit on a pedestrian signal for
+    seconds after the box has moved on (citylife_redcar_trail: on the car
+    36 % of estimator ticks across seven flights, found 2026-09-29). Over the
+    rows whose estimate was served (`est_xy`) and whose truth is logged:
+    `on_subject_frac` is the share within `near_m` of a truth point. None when
+    no row carries both.
+    """
+    n = on = 0
+    errs = []
+    for r in rows:
+        e = r.get("est_xy")
+        pts = truth_points(r)
+        if not e or not pts:
+            continue
+        d = min(math.hypot(e[0] - a, e[1] - b) for a, b in pts)
+        n += 1
+        on += int(d <= near_m)
+        errs.append(d)
+    if not n:
+        return None
+    errs.sort()
+    return {"ticks": n, "on_subject_frac": round(on / n, 3), "near_m": near_m,
+            "err_median_m": round(errs[n // 2], 2),
+            "err_p90_m": round(errs[min(n - 1, int(0.9 * n))], 2)}
 
 
 def _score(rows, hfov_deg, on_target_px, cx_of):
@@ -261,7 +317,17 @@ def _score(rows, hfov_deg, on_target_px, cx_of):
             # the tolerance, and were counted in n_det_with_target_out_of_fov and
             # in the frac_on_target numerator at once - the previous comment here
             # asserted "it will be large", which the artefact refutes.
-            errs.append(min(abs(cx - c) for c, _ in projected))
+            #
+            # Measured on the LINEAR map's column in both projection modes. A
+            # column outside the frame has no camera meaning to be faithful
+            # to, and the pinhole's is +-inf for a subject at or behind the
+            # beam (and 10^5 px just short of it): one such row made the
+            # median and p95 inf and the metrics invalid JSON (found in
+            # review, 2026-09-30). The linear column is finite and monotone
+            # for every bearing, and it is the column every published score
+            # used, so linear-mode numbers do not move.
+            errs.append(min(abs(cx - _linear_cx(d, img_w, hfov_deg))
+                            for _c, d in projected))
             creditable.append(False)
             cand_counts.append(0)
             n_out_of_fov += 1

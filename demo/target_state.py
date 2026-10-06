@@ -96,8 +96,10 @@ class TargetState:
         self.v_max = None if v_max is None else float(v_max)
         self.n_clamped = 0
 
-        self.x: Optional[np.ndarray] = None      # [x, y, vx, vy]
+        self.x: Optional[np.ndarray] = None      # [x, y, vx, vy], at the last predict()
         self.P: Optional[np.ndarray] = None
+        self._xu: Optional[np.ndarray] = None    # the posterior at t_last_update
+        self._Pu: Optional[np.ndarray] = None
         self.t_last_update: Optional[float] = None
         self.n_updates = 0
         self.n_rejected = 0
@@ -123,13 +125,20 @@ class TargetState:
         R = J @ np.diag([self.r_sig ** 2, self.b_sig ** 2]) @ J.T
         return z, R
 
-    def predict(self, t: float) -> None:
-        """Advance the estimate to time `t`. Safe to call every control tick."""
-        if self.x is None or self.t_last_update is None:
-            return
-        dt = t - getattr(self, "_t_state", self.t_last_update)
-        if dt <= 0:
-            return
+    def _propagate(self, x, P, dt, step_s: float = 0.1):
+        """(x, P) carried forward by dt seconds under the model, in sub-steps of
+        at most `step_s`. The process noise below is the piecewise-constant-
+        acceleration form, which does not compose: one step over dt grows the
+        position variance as dt^4, a chain of 0.1 s steps far more slowly. The
+        filter was tuned - and its gate measured - propagating once per 0.1 s
+        control tick, so that is kept here."""
+        n = max(1, int(math.ceil(dt / step_s - 1e-9)))
+        h = dt / n
+        for _ in range(n):
+            x, P = self._propagate1(x, P, h)
+        return x, P
+
+    def _propagate1(self, x, P, dt):
         F = np.array([[1, 0, dt, 0], [0, 1, 0, dt], [0, 0, 1, 0], [0, 0, 0, 1]], float)
         # Continuous white-acceleration model discretised over dt.
         q = self.q ** 2
@@ -140,9 +149,32 @@ class TargetState:
             [d3 / 2, 0, d2, 0],
             [0, d3 / 2, 0, d2],
         ], float)
-        self.x = F @ self.x
-        self.P = F @ self.P @ F.T + Q
-        self._t_state = t
+        return F @ x, F @ P @ F.T + Q
+
+    def _adopt_injected(self) -> None:
+        """A state set directly on `x`/`P`/`t_last_update` (tests, replays)
+        becomes the posterior."""
+        if (self._xu is None and self.x is not None and self.P is not None
+                and self.t_last_update is not None):
+            self._xu, self._Pu = self.x.copy(), self.P.copy()
+
+    def predict(self, t: float) -> None:
+        """Set `x`/`P` to the estimate at time `t`. Safe to call every tick.
+
+        It never moves the POSTERIOR (`_xu`, `_Pu` at `t_last_update`): that is
+        what a measurement is folded into, at the time it was CAPTURED. It used
+        to predict in place, so a box captured 0.2-0.3 s before the tick was
+        folded into a state already advanced to the tick - a 1 m error at
+        3.2 m/s, every update (found 2026-09-29)."""
+        self._adopt_injected()
+        if self._xu is None or self.t_last_update is None:
+            return
+        dt = t - self.t_last_update
+        if dt <= 0:
+            self.x, self.P = self._xu.copy(), self._Pu.copy()
+        else:
+            self.x, self.P = self._propagate(self._xu, self._Pu, dt)
+        self._t_state = max(t, self.t_last_update)
 
     def update(self, t: float, drone_x: float, drone_y: float, yaw: float,
                bearing: float, rng: float) -> bool:
@@ -153,15 +185,22 @@ class TargetState:
         over forgetting everything between frames.
         """
         z, R = self._measure(drone_x, drone_y, yaw, bearing, rng)
-        if self.x is None:
+        self._adopt_injected()
+        if self._xu is None:
             self.x = np.array([z[0], z[1], 0.0, 0.0], float)
             self.P = np.diag([R[0, 0], R[1, 1], 4.0, 4.0])
+            self._xu, self._Pu = self.x.copy(), self.P.copy()
             self.t_last_update = t
             self._t_state = t
             self.n_updates = 1
             return True
 
-        self.predict(t)
+        # From the last posterior to the capture time of THIS measurement (a
+        # measurement older than the posterior is folded in at dt = 0).
+        dt = max(0.0, t - self.t_last_update)
+        self.x, self.P = (self._propagate(self._xu, self._Pu, dt) if dt > 0
+                          else (self._xu.copy(), self._Pu.copy()))
+        t = max(t, self.t_last_update)
         H = np.array([[1, 0, 0, 0], [0, 1, 0, 0]], float)
         y = z - H @ self.x
         S = H @ self.P @ H.T + R
@@ -188,6 +227,7 @@ class TargetState:
                 self.x[2] *= self.v_max / v
                 self.x[3] *= self.v_max / v
                 self.n_clamped += 1
+        self._xu, self._Pu = self.x.copy(), self.P.copy()
         self.t_last_update = t
         self._t_state = t
         self.n_updates += 1
@@ -257,6 +297,8 @@ class TargetState:
         self.n_rejected = 0
         self.x = None
         self.P = None
+        self._xu = None
+        self._Pu = None
         self.t_last_update = None
 
     def summary(self) -> dict:

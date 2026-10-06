@@ -16,6 +16,447 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-05 (later) — a tracker website, and an update log on it
+
+Record: the tracker's own Updates page (`tracker/data/updates.json`, entry #15).
+
+#### Added
+- `tracker/`: a local website that explains the project against the grant and tracks it. It is served by `tracker/serve.py` (Python standard library, 127.0.0.1:8765, HTTP Range so videos seek) and started with `tracker/start_tracker.bat`. It has seven pages in English, Indonesian and Traditional Chinese:
+  - an overview;
+  - clickable diagrams of the pipeline as built and as the grant specifies it;
+  - the grant's work packages, KPIs, topologies and timeline;
+  - a kanban board of the 148 audit items;
+  - examples with what they do and do not show;
+  - a glossary;
+  - an Updates page.
+- Board state (column, notes, history) is written to `tracker/data/state.json`. The file is gitignored as personal.
+- Updates page: a versioned log, `tracker/data/updates.json`, maintained with `tools/add_update.py` (`new`, `add`, `check`, `list`, `extract`).
+  - `seq` numbers the site's updates.
+  - `version` copies a CHANGELOG release, or `<release>+<date>` for unreleased work, so no project release is invented.
+  - It holds 15 entries: 12 backfilled from this file's sections, one from git for the 14-16 Sept work this file does not cover, and the two 2026-10-05 entries.
+- Board activity: card moves and note edits with their times, from the board state.
+
+#### Fixed (found while designing, each shown failing before the fix)
+- `/data//_batches.json` and `/data/./_batches.json` served the site's working files. The hidden-file check ran on the raw path, and the static handler normalises it afterwards; the check now runs on the normalised path.
+- A non-numeric `Content-Length` on a board save dropped the connection. It now gets a 400.
+- A failed board write (a file held by OneDrive) left a temp file behind and dropped the connection. The temp file is now removed, the answer is a JSON 500, and the page keeps the board in the browser.
+
+#### Fixed (found in the screenshots taken for this entry)
+- Checklist: each column head was meant to stay at the top of the page while scrolling. The board scrolls sideways, so the head stuck 56 px down inside its own column instead and covered the first card. The board now scrolls in its own box (the window height minus 160 px, at least 360 px), and the heads stick to the top of that box.
+- Updates timeline: releases a day apart (0.2.0 to 0.5.0, 7 to 10 Sept) printed their labels over each other. Each label now sits on the lowest free row, up to four rows.
+
+#### Tests
+- `tests/test_tracker_serve.py`: 15 cases, all pass.
+- `tests/test_add_update.py`: 20 cases, all pass. One of them runs `check` on the real log.
+- Full suite: 847 of 847 pass, over 43 test files. `python tools/add_update.py check` reports 0 problems.
+- Checked in a browser against a second server on port 8766 with a scratch board file, so the real `tracker/data/state.json` was not touched:
+  - the content API returns 148 cards and 15 updates, with no load error;
+  - a board save reads back, a video answers a byte range with 206, and hidden working files answer 404;
+  - moving a card and writing a note show on Board activity as 1 move and 1 note;
+  - the Release filter shows 6 entries, and a link to one update (`#updates?v=12`) opens it;
+  - all seven pages fit a 375 px phone screen, and requests go only to the local server.
+- Screenshots in `docs/img/tracker/`: 27 desktop views (nine pages or states in three languages) and three phone views.
+
+### 2026-10-05 — the grant audit, and claims corrected against it
+
+Record in Indonesian: `docs/AUDIT-KONTRAK-2026-10-05.md`. Data: `docs/data/grant_audit_2026-10-05.json`.
+
+#### Found
+- Every obligation in the seven grant pages (`reference/*.pdf`) was audited, with the PI's reference design docs as the detailed spec: 136 items.
+  - Result: 6 done, 56 partial, 39 missing, 35 drift (built differently from the grant, or a claim about it does not match).
+  - Method: five auditors (WP1 to WP4, and architecture), each challenged by a skeptical verifier, and a completeness critic who reread every page.
+- Final-gate items with no artefact:
+  - perception-rail integration;
+  - the KPI report from stress testing in the hil topology;
+  - the Paraphraser (a Q3 deliverable);
+  - the stress-test harness;
+  - the signed final report.
+- Prefix Compiler: the CSP is built but never put in any VLA's prompt, and its two KPIs were never measured.
+- WP3 Shield:
+  - There is no escalation beyond Brake (no Loiter, RTL or Land) and no ArduPilot GeoFence backstop.
+  - `fail-safe trigger correctness` in `guardrail/kpi.py` restates the escape KPI.
+  - `mean time to safe` has no Shield-on value.
+  - The stored KPI numbers (runs of 28 to 31 Aug) were not re-measured after the Shield changes of 1 and 29 Sept.
+- Deviations from the locked spec:
+  - a 3 s lookahead against the grant's 5 s;
+  - world-frame actions against the locked body frame;
+  - `violation_action` limited to repair and brake;
+  - no spatial index (14 to 36 ms per check with 50 polygon rules, against a 5 ms budget).
+- `docs/CHECKLIST-remaining-work.md` (last updated 8 Sept) is out of date: it lists two open items.
+
+#### Retracted
+- "The P0-escape count on screen is the contract KPI" (`docs/GAMBARAN-SISTEM.md`, 3 Oct). The HUD uses the KPI's definition. But a Project AirSim flight is not a contractual KPI number: the grant takes KPIs only from stress-test runs in the hil topology.
+- "Most compliance is done by a pilot that knows the rules, and the Shield is the backstop, exactly as the contract designs it" (`docs/GAMBARAN-SISTEM.md` and the `demo/policy_hud.py` docstring). In the grant, upstream compliance comes from the Prefix Compiler's CSP in the VLA prompt, and the backstop behind the Shield is ArduPilot's GeoFence. FenceGuard is our addition.
+- "Gazebo: no artefacts in the repository" (`docs/GAMBARAN-SISTEM.md`). The scripts exist (`sitl/setup_gazebo.sh`, `sitl/run_gazebo_demo.sh`); no run was kept.
+- "The city demos may use a hand-written pilot because the contract makes the VLA backend swappable" (`docs/GAMBARAN-SISTEM.md`). The clause covers VLA backends that output the 4-D action, and it names stubs only for unit tests. The text now says the demos test the Shield, not a constrained VLA.
+
+#### Changed
+- `docs/GAMBARAN-SISTEM.md` (and its PDF) corrected as above. The `demo/policy_hud.py` docstring was reworded.
+
+### 2026-10-03 — the policy on screen, a no-fly zone in the city, and the share pack
+
+Record in Indonesian: `docs/WORKLOG.md` (the 2026-10-03 entry). Asked for at
+the 2026-09-30 meeting: show on screen when a guardrail rule acts, and send the
+material for ITRI's monthly report.
+
+#### Flown
+Red car (`Car_10`), 240 s, `--identity`:
+
+| | policy | cruise | within 30 m | estimate on the car | zone entered | min clearance | detector (mission) |
+|---|---|---|---|---|---|---|---|
+| `citylife_redcar_nfz1` | NFZ | 8 m | 0.977 | 0.998 | no | 3.24 m | 2.20 Hz |
+| `citylife_redcar_alt10` | default | 10 m | 0.987 | 0.997 | - | 3.21 m | 2.43 Hz |
+| `citylife_redcar_alt10_nohud` | default, old HUD | 10 m | 0.994 | 1.000 | - | - | 2.89 Hz |
+| `citylife_redcar_nfz2` | NFZ, cached overlay | 10 m | **0.985** | **1.000** | **no** | 3.25 m | 2.79 Hz |
+
+- P0 was 0 on every flight, the Shield made 0 corrections, and there were no
+  mission collisions.
+- Beside the zone the drone flew x 37.9-41.4. `clear_aim` re-aimed it on 91
+  ticks, and it was 21.2 m behind the car at the first corner (24.1 m on
+  nfz1, against 42.7 m in the no-re-aim replay).
+- At 10 m cruise the altitude stayed 10.0-10.6 m against the 14 m ceiling.
+- Drawing the overlay on every 20 Hz frame cost the detector (2.89 -> 2.43
+  Hz, flown A/B). `OverlayCache` draws it at 5 Hz and pastes the tiles in
+  between, which brings it back to 2.79 Hz.
+- All of today's flights ran the detector slower than the 30 Sept flights,
+  including the old-HUD one (2.89 vs 3.26 Hz in the mission; start-gate rates
+  are equal). OBS Studio and Mission Planner were running today and were not
+  on 30 Sept. This is suspected, not tested.
+
+#### Added
+- **`demo/policy_hud.py`: the policy indicator.**
+  - One row per rule in the loaded policy, with its limit, the value the Shield
+    itself measures (the estimator's subject, its obstacle distance field) and
+    a status: idle / OK / NEAR / AVOID (the controller steering round it) /
+    HOLD / ACTING (the Shield repaired the command) / BREACH (past the limit,
+    or a P0 still violated by the command actually sent) / BRAKE.
+  - A banner for the most important event of the last 1.5 s, ranked by event.
+  - A north-up map with the zones, the aircraft's track and the target
+    estimate.
+  - Running counts. The P0-escape count uses `guardrail/kpi.py`'s definition.
+  - On by default in `demo/follow_vlm.py`; `--no-policy-hud` restores the old
+    line. It stays live for the Shield-filtered flight to the landing site and
+    says plainly that the vertical descent is outside the Shield.
+  - Its totals are written to `metrics.json` as `policy_hud`.
+- **`policies/follow_car_citylife_nfz.yaml`**: a part-width no-fly zone on the
+  red car's first leg (x 45-62, y 62-92). `run_citylife_follow.ps1
+  -PolicyFile` selects it.
+- **`FenceGuard.clear_aim()`.** A forward aim point that falls inside a zone's
+  band (polygon + margin + stand-off) is moved to the band's edge plus 1 m, so
+  a zone beside the subject's path is passed alongside. Without it, a kinematic
+  replay with the real gate/slide/Shield left the drone 42.7 m behind the car
+  at the next corner (16.1 m with no zone); with it, 18.7 m, with the zone never
+  entered. `fence_aim_ticks` in metrics.
+- `FenceGuard.last_cause` ("fence" / "obstacle"), logged per tick as
+  `fence_cause`.
+- `Shield.subject`, `Shield.subject_class`, `Shield.clearance_at()`:
+  read-only views for the indicator.
+- `frame_t` in `recorder.json`: the flight time each frame showed.
+- `tools/rerender_policy_hud.py` redraws the indicator onto a recorded flight
+  from its own log. It warns when the obstacle map is newer than the flight.
+- `tools/deck/build_flowcharts.py` draws the tracking and whole-system
+  flowcharts as SVG and PNG (`docs/img/flowchart_*`).
+- `docs/GAMBARAN-SISTEM.md`: system overview in Indonesian.
+- `demo/identity.TIER_LABEL`: the identity tiers are shown as REJECT /
+  DOUBTFUL / OK. The stored values stay hard / soft / ok.
+
+#### Changed
+- The identity tiers are relabelled everywhere a reader sees them: the deck
+  builder, the progress note, the HUD box label and the flowcharts. At the
+  meeting, "HARD / SOFT" was heard as manoeuvre types, and the grant's Policy
+  DSL already uses hard/soft for rule types.
+- `nfz_hold_ticks` counts only holds a fence caused. With a fence declared
+  anywhere, building holds used to count too.
+- The legacy HUD names the hazard from `last_cause` rather than from whether
+  the policy has a fence.
+
+#### Fixed (found by a three-lens review with verification, before any flight)
+- The banner named the first repair operator, so a P0 escape could read as
+  "backing off from target". It now names the last operator acting for the
+  violated rules' kind, and an escape outranks everything.
+- A controller hold masked Shield repairs, on both the row and the banner.
+- No state for "past the limit": rows showed NEAR, and the banner said "all
+  rules satisfied".
+- Rules the Shield repaired for, but that were not violated by the raw command,
+  were not marked.
+- Off the obstacle map, clearance read as OK.
+- The stand-off binding test differed from `SubjectStandoff.binds`.
+- Zone distance ignored the margin and the altitude band.
+- The minimap was shifted half a cell.
+- The zone warning distance was hard-coded.
+- A display exception could abort a flight.
+- The HUD froze through the landing.
+- `frame_t` flooded the console.
+- `-PolicyFile` refused absolute paths.
+- Re-renders reused stale frames.
+
+#### Share pack
+`docs/share/2026-09-30-ITRI/` (gitignored). It holds:
+- the 30 Sept deck as shown (14 slides; tiers relabelled; flowcharts
+  redrawn) and its PDF;
+- the 16 Sept deck and its PDF;
+- the 30 Sept follow video and the before/after clip;
+- the 24 Sept reference flight, re-encoded from 166 MB to 22 MB with the same
+  duration;
+- the flowcharts;
+- the progress note;
+- a README with the cover note and six corrections.
+
+#### Tests
+`tests/test_policy_hud.py` 36/36 (with `OverlayCache`). Full suite 812/812.
+
+### 2026-09-30 — a re-review, pedestrians that no longer get lost, and the red car flown
+
+Record in Indonesian: `docs/WORKLOG.md` (the 2026-09-30 entries).
+
+#### Flown
+The red-car mission with `--identity`. The reference flight
+(`citylife_redcar_trail`) ended TARGET LOCKED on a pedestrian signal.
+
+| | within 30 m | estimate on the car | lapses / re-acquired |
+|---|---|---|---|
+| `citylife_redcar_id1` | **0.992** | **1.000** | 0 / 0 |
+| `citylife_redcar_id2` | **0.980** | **1.000** | 0 / 0 |
+| `citylife_redcar_id3` | 0.495 | **0.996** | 2 / 1 |
+| `citylife_redcar_id4` (after both fixes) | **0.970** | **1.000** | 0 / 0 |
+| before (7 trail/final flights) | 0.088-0.436 | 0.013-0.697 (as flown) | - |
+
+"Estimate on the car" is the share of ticks with a served estimate that sit
+within 6 m of the car. P0 was 0 on every flight, and no flight collided
+during its mission. On `_id3` the estimate never moved to anything else. It
+lost the car twice. The first time it re-acquired it in 1.35 s. The second
+time it saw the car standing at a light 52 m away but never took it back,
+because re-acquisition stops at 45 m. That is fixed below.
+
+#### Retracted / corrected
+- **The identity gate did not pass held out.** Re-run after the bottom-clip
+  guard moved into `identity.features_for` (thresholds unchanged, hash
+  `567a2c79dc53`): leave-one-flight-out, 15.2 % of true boxes are not OK,
+  over the 15 % gate; in-sample 14.1 % meets it. The 09-29 entry is
+  corrected in place.
+- **The replay's "old" arm was not what flew.** It reset and re-seeded after
+  3 s. Against the estimator as flown the replay reads 22.9 % -> 94.5 % on
+  the car, and 210 of 241 wrong first accepts after a gap -> 0 of 12 wrong
+  seeds. The 09-29 entry is corrected in place.
+- **Pinhole rescore:** `_final1`, `_final3` and `_carpolicy` (a tie) fall
+  below chance; `_trail3` and `_far` were below it already.
+- **"Nobody standing on a zebra"** (09-29, Simulate 1) was measured between
+  two samples of positions only; the per-read check (state and speed) found
+  six figures on zebras in WALK - the pure-node bug below.
+
+#### Fixed
+- **Pedestrians crossed from the kerb in WALK, with no walk-phase or gap
+  test.** A `bind` of a pure node is re-evaluated at every use in Blueprint;
+  the point's kind was read after `SetIdx` and so was the NEXT point's.
+  Latched into `NKind`; the DSL evaluator in `tests/test_drive_signals_dsl.py`
+  now re-evaluates pure binds the same way, and a test runs the old graph
+  into the bug.
+- **Half the pedestrians froze after ~30 minutes.** Stuck 3 s short of a
+  pavement node a figure SKIPPED to the next point; from off its line that
+  point was often round a building corner, so it stalled, skipped, stalled,
+  until a kerb node sent it to WAIT tens of metres from its zebra, then
+  across, through a building, for ever (CROSS had no stuck rule). At
+  t = 1933 s, 25 of 40 figures were off their routes while every zebra
+  counter read clean. Now a stall within 300 cm of the point is arriving;
+  anywhere else the figure keeps its target and steps aside, alternating
+  sides; after six detours it is set down on the point. Pavement nodes are
+  spread +-25 cm per figure so opposite streams no longer meet dead
+  head-on. Simulate over 30 minutes: 0 figures off route at
+  t = 1972 s, 0 set-downs.
+- **Re-review of the drone side (10 of 11 findings confirmed):** without an
+  estimator the lapse anchored where the subject was committed (Reacquirer
+  then refused the car as out of reach for good), and SOFT boxes kept the
+  lapse clock alive indefinitely; the pedestrian centre height never applied
+  ("person" vs the canonical "pedestrian"); a retarget during an inference
+  could re-seed the lock with the old subject; `_prior_at` gave a column to
+  a point behind or under the aircraft; the Reacquirer's fixed 2 m motion bar
+  let a sign with 1.5 m of map-point jitter through on 186 of 200 seeded
+  runs (now 2 m + 3 standard errors: 0 of 200, a car still 200 of 200);
+  `_pooled_reproduced` could count the `_pooled` row as a flight. Logs:
+  `depth_dt_ms` of the depth actually paired, `t_capture` and `stamp` per
+  detection.
+
+- **A car in plain view beyond the re-acquisition range was never taken
+  back** (`_id3`, 65 "too far" refusals of OK boxes within reach). A
+  candidate refused for its range alone is now a far lead: after three
+  consistent sightings the search flies toward it (HUD "APPROACHING") until
+  the ordinary gate can judge it. The gate still decides.
+  `reacquisition.far_approach_ticks` counts the ticks. Replayed on `_id3`'s
+  own candidates after the second loss, it fires at t = 126 s, 4.3 m from
+  the car, with the drone 51 m away. `_id4` never lost the car, so the
+  steering has not flown yet.
+- **Landing sites were chosen with no room for drift.** `_id3` reached the
+  nearest cell that passed and touched down 0.67 m off it, 2.94 m from an
+  obstacle that needs 3.0 m. A site to fly to now keeps every clearance
+  1 m wider (`SITE_MARGIN_M`), and the bare rules are tried only when no such
+  cell is in reach. Staying put needs the rules alone: the first version
+  also asked it of the hover point and sent `citylife_ped_id` 25 m into a
+  crowd, where the Shield held it.
+
+- **Both replays swept in the new flights.** `tools/replay_identity.py`
+  globbed every `citylife_redcar_*`, so the `_id1..4` flights, whose boxes
+  the identity rules had chosen, entered the tuning set and the pipeline
+  replay (28,796 -> 37,551 ticks). A flight flown with `--identity` is now
+  left out. Both replays reproduce their published numbers exactly, and the
+  far-lead change moves neither.
+
+#### Changed
+- **`run_citylife_follow.ps1` passes `--identity` only for the car
+  mission** (`-Identity` forces it for a person). The identity rules were
+  tuned on car flights only. For people they supersede the presence gate's
+  0.2-1.5 m width test, and on `citylife_ped_id` person boxes ranged on the
+  facades behind them (40-130 m) pulled the estimate within 6 m of anyone on
+  only 46 % of ticks. A person-width SOFT rule was tried and withdrawn: it
+  demoted 41 % of the boxes near people, with labels too loose to tune it
+  on. `--land-site` stays on for both missions.
+
+#### Known limitations
+- **Range to a person comes from depth, and a thin box measures the
+  background.** The presence gate blocks those boxes, 1,502 of 1,788 ticks
+  on `citylife_ped_0930`. That flight was within 30 m 98.2 %, where the
+  09-23 flight managed 100 %. Its pedestrians walk their routes now instead
+  of pacing. The proposed fixes are the nearest surface in the box or the
+  ground ray through the box bottom. Neither is done.
+- **`run_follow_vlm.ps1 -Identity` (Demo_day) has no start gate.** Acquiring
+  with no anchor means waiting to see the car move, which took 7.1 s. All of
+  the 6.4 % outside 30 m fell in the catch-up after it (t = 8.1-12.5 s). The
+  default Demo_day run, without `-Identity`, is unchanged.
+- At the zebra where loop A turns north (y = -3000 on junction (4100, -4100))
+  a figure can wait at the kerb for minutes (194 s longest, 8 of 40 figures
+  over 100 s in 33 minutes). The likely cause (inferred, not measured):
+  loop A's turning platoon uses the whole 8 s walk window, and the figures
+  yield to cars. The fix is pedestrian priority
+  on the car side, and it is not done.
+
+#### Added
+- `verify_peds.py`: `off_route` (a figure more than 5 m from its own leg),
+  `detours`, `teleports`, and per-figure reasons for any figure on a zebra
+  that is not crossing.
+- `docs/video/citylife_redcar_identity.mp4`: `citylife_redcar_id1`, the
+  first-person view with the HUD beside the chase camera (262 s, 1920x540
+  H.264, 23.6 MB). The duration is checked against the master.
+- Tests: 793 in the suite (41 files).
+
+### 2026-09-29 (evening) — the lock that could not let go, lights that change, people who wait
+
+Day-by-day record in Indonesian: `docs/WORKLOG.md`. The write-ups are
+`docs/FINDING-the-lock-that-could-not-let-go.md` and the fifth part of
+`docs/FINDING-crowd-pedestrians-and-traffic.md`.
+
+#### Retracted
+- **Every `det_hz` published before today is inflated.** metrics.json divided
+  EVERY inference since the detector loaded - including minutes of start-gate
+  waiting - by ticks x 0.1 s, which is shorter than the mission whenever the
+  loop ran below 10 Hz. Recomputed from the flight logs (the inference seq
+  numbers the ticks consumed, over the ticks' own span):
+  `citylife_follow2` 7.60 -> **3.06**, `citylife_follow3` 4.63 -> 3.18,
+  `citylife_city` 4.82 -> 2.96, `people_final` 4.04 -> 3.26,
+  `fixed_kpi` 4.41 -> 3.53, `city_kpi` 5.15 -> 4.06, and on the red car
+  6.88-7.50 -> 3.46-3.99. So:
+  - "`det_hz` clears its 4.0 Hz gate in all four" (09-23, the four
+    `citylife_follow*`/`_city` flights) is wrong: none of the three whose logs
+    survive does (2.96-3.18); `citylife_follow`'s log is deleted.
+  - "The start gate can fire while the level is still streaming (detector at
+    3.8 Hz instead of 7)" (09-29, morning) is wrong. Every red-car flight ran
+    its detector at 3.5-4.0 Hz during the mission; the "7" was the gate's
+    inferences counted over mission time. There is no streaming effect.
+  - `docs/FINDING-decorative-pedestrians.md` (4.04 "clears 4.0") and
+    `docs/FINDING-five-defects-found-by-audit.md` (4.41) inherit the same
+    error. `tools/build_eval_data.py` now recomputes the rate for old flights
+    (`det_hz_mission`) and keeps the reported one as `det_hz_reported`.
+- **The tracking score's projection was linear, the camera is a pinhole.**
+  `track_truth.project_target_cx` mapped angle to pixel linearly (off by up to
+  ~4 deg between centre and edge). Re-scored with the pinhole
+  (`PROJECTION = "pinhole"`), the red-car flights' `frac_on_target` moves by
+  less than 0.02, but the chance floor rises by 0.02-0.05, so the margin over
+  chance shrinks everywhere. Three flights drop below it: `_final1` (0.356 vs
+  0.373), `_final3` (0.274 vs 0.288) and `_carpolicy` (0.442 vs 0.443, a
+  tie). `_trail3` (0.059 vs 0.094) and `_far` (0.083 vs 0.097) were below it
+  already on the linear score. (A first draft of this entry named only
+  `_final3` and `_trail3`, and `_trail3` as a new casualty.) The default
+  stays linear so published numbers reproduce; the table is in the WORKLOG.
+
+#### Fixed
+- **The drone locked onto a red pedestrian signal 110 m from the car**
+  (`citylife_redcar_trail`, t = 180 s). Three causes, three fixes:
+  - `TargetLock` could not say "none of these": with nothing near its
+    prediction it took the best-scoring box. `select_strict` (with
+    `--identity`) answers None instead; only a start gate or a re-acquisition
+    seeds it.
+  - The ground check only rejected box bottoms above ~2.7 m; a kerbside signal
+    at 2-3 m passed. Every candidate is now judged physically at its OWN
+    frame's pose and depth (`demo/identity.py`: width, aspect, bottom height,
+    distance from the street; HARD / SOFT / OK). Thresholds grid-searched on
+    the 12 flights: in-sample 86.4 % of wrong boxes not OK, 14.1 % of true
+    ones, 0.3 % of true ones HARD. Leave-one-flight-out, 86.5 % / **15.2 %** /
+    0.6 %: the held-out true-box rate is just over the 15 % gate, which only
+    the in-sample figure meets. (Drafts said 15.4 % and "passed"; the 15.4
+    predates the bottom-clip guard moving into `identity.features_for`.)
+  - After a loss the estimator's gate widened until a far box could re-seed
+    it. Now the estimate lapses after 3 s and only `Reacquirer` restarts it:
+    4 OK sightings in a row, <= 45 m, within reach of the last measured
+    position, and - when nothing constrains where it is - seen MOVING (the
+    replay found a red fire-hydrant sign by the launch point seeding it).
+  Replayed open-loop on the 12 recorded red-car flights with the same boxes
+  (`tools/replay_pipeline.py`, pooled integers): the estimate is on the car on
+  **94.5 %** of the ticks it is served, against 22.9 % for the estimator as
+  flown, and **0 of 12** seeds (7 starts, 5 re-acquisitions) are on something
+  else, where the flown estimator's first accepted box after a gap was
+  wrong after 210 of 241 gaps. It is served on 7.6 % of the ticks (flown:
+  45.1 %), because the replay only has the box the old lock picked - a car
+  the old lock passed over is not in the log. Earlier drafts compared
+  against an "old" arm that reset and re-seeded, which the flown code never
+  did (95.5 % vs 22.4 %, 0 of 18 vs 260 of 293).
+- **Bearings used a linear pixel-to-angle map** (up to ~4 deg off; physical
+  widths ~21 % small). One pinhole model, `demo/camera_model.py`, everywhere;
+  `--linear-bearing` reproduces older flights, and an AST test keeps the
+  linear formula out.
+- **A detection met the tick's pose and the latest depth frame**, 0.2-0.4 s
+  after its image was captured. `SemanticObs.get_front_capture` now pairs it
+  with the pose interpolated at capture (sim stamps when both sides have
+  them) and the nearest depth frame (none beyond 70 ms), and the estimator
+  folds each measurement in at its capture time (posterior kept at the last
+  update; `predict` no longer moves it).
+- **"NFZ AHEAD - HOLDING" at a building.** The HUD says OBSTACLE unless a
+  no-fly polygon caused the hold; TARGET LOCKED only on a fresh identity-OK
+  box, else TRACKING (PREDICTED) / RE-ACQUIRING n/4 / PURSUING ....
+- **Search after a loss rotated in place** (the reference flight, against a
+  building corner). `--search-planner`: pursue the car's street to the next
+  junction, watch each exit, hold over it (`demo/search.py`).
+- **Landings in a hedge and on a parked car.** `--land-site` flies, through
+  the Shield, to a pavement cell `demo/landing.py` calls landable first.
+- **Cars waited with their front half on the zebra** (give-way target
+  JEdge - 300 put the nose 1170 cm from the junction centre, inside the
+  800-1400 band). They now stop at a line 1730 cm out, 100 cm behind it.
+- **The runner started flights at 43.9 m.** `-StartMaxRange` 45 -> 30 and
+  `-StartTimeout` 240 -> 330 (red lights lengthen the car's lap).
+
+#### Added
+- **Traffic signals that change and are obeyed.** `BP_SignalController`
+  switches 258 of the 292 heads (27 vehicle, 231 pedestrian) by a fixed-time
+  plan (`tools/citylife_signals.py`: green 20 / yellow 3 / all-red 2 s per
+  axis, 50 s cycle, offsets spread by grid index); `BP_CityCar.UpdateEffSpeed`
+  obeys the same plan (`tools/citylife_mcp/drive_signals.py`, a node-for-node
+  port of `tools/citylife_traffic_model.py`, which held RedViol 0, ZebraWait 0,
+  MinGap 650 cm over 30 simulated minutes at 3/10/30 fps). Simulate, ~7 min:
+  RedViol 0, ZebraWait 0, MinGap 650 cm, longest stand-still 78 s. (That
+  ZebraWait could not have fired; see 2026-09-30.)
+- **Pedestrians with somewhere to go.** 40 figures walk closed tours over a
+  pavement graph whose only road-crossing edges are the zebras
+  (`tools/citylife_peds.py`), wait at the kerb for the walk phase and a 4 s
+  gap, and cross without stopping (`tools/citylife_mcp/ped_walk.py`;
+  `--roam` restores the old graph, saved in `ped_roam_v1.dsl`). Simulate:
+  51 crossings started, kerb wait max 42 s, nobody standing on a zebra.
+  (The zebra check was too loose, and two pedestrian bugs were behind it;
+  see 2026-09-30.)
+- Metrics: `identity`, `reacquisition`, `estimate_on_subject`
+  (`track_truth.score_estimate`), `landing`, per-tick `tier`, `lock_why`,
+  `reacq`, `plan`, `est_xy`; `detections.jsonl` logs every candidate with its
+  features and tier.
+- Tools: `tools/replay_identity.py`, `tools/replay_pipeline.py`,
+  `tools/citylife_mcp/{inspect_signals,signals,drive_signals,ped_walk,
+  verify_signals,verify_peds}.py`; survey `docs/data/citylife_signals.json`.
+
 ### 2026-09-29 — a map of this city, a trail to follow, 10 Hz, and four reviews
 
 The write-up is the fourth part of

@@ -17,7 +17,7 @@ flags and no figures:
 
 | | control (0) | populated (8, 3 walking) | gate |
 |---|---|---|---|
-| `det_hz` | 3.43 | **4.04** | ≥ 4.0 |
+| `det_hz` | ~~3.43~~ 2.87 | ~~**4.04**~~ 3.26 | ≥ 4.0 |
 | `det_hit_rate` | 1.000 | **1.000** | no fall |
 | `frac_ticks_seen` | 1.000 | **1.000** | no fall |
 | `sep_end_m` | 16.8 | **16.7** | — |
@@ -28,7 +28,9 @@ Suite unchanged at 214 passing.
 
 Standing figures cost nothing after they spawn — no per-tick RPC at all. Three
 walkers cost 540 pose updates across a 70 s flight, and `det_hz` still came out
-*above* the empty control. The honest reading is that run-to-run variance
+*above* the empty control. (*Corrected 2026-09-29:* `det_hz` in metrics.json counted every inference since the detector loaded - start-gate waiting included - over ticks x 0.1 s, which is shorter than the mission whenever the loop ran below 10 Hz. Over the mission alone the two flights ran
+the detector at 2.87 (`people_control`) and 3.26 Hz (`people_final`): the populated
+flight is still the faster one, but neither clears the 4.0 gate.) The honest reading is that run-to-run variance
 (measured spread 3.4–4.8 Hz) is larger than anything the figures contribute.
 
 ## Three failures worth keeping

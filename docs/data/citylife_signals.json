@@ -1,0 +1,6506 @@
+{
+ "surveyed": "2026-09-29, tools/citylife_mcp/inspect_signals.py (read-only), CityLife_Day",
+ "note": "Every signal head is its own StaticMeshActor (no instancing). Lamps are material slots 1 and 2 of the mesh (slot 0 = housing MI_jctTrafficLightBase). Mesh default slots: A [base, Red, Green]; B/C [base, Green, Red]; D [base, Green]; E [base, Green_b]; F [base, Red]. Level overrides: most B heads [None, Green_b, Red_b] or [None, Red_b, Green_b]; E [None, Red_b]. The *_b materials use the walker pictogram textures (T_jctTrafficLight_L_Gb/Rb, Emissive 2 on Red_b) - B/E are the PEDESTRIAN heads; A/C/D/F carry the vehicle lamps. All lamps are lit at once today: nothing switches them. Heads stand ~830 cm to the side and ~1530 cm along the approach from each junction centre (4100 + k*8200 cm), i.e. just behind the zebras at 1100 +- 300 cm.",
+ "mesh_default_slots": {
+  "A": [
+   "MI_jctTrafficLightBase",
+   "MI_jctTrafficLight_Red",
+   "MI_jctTrafficLight_Green"
+  ],
+  "B": [
+   "MI_jctTrafficLightBase",
+   "MI_jctTrafficLight_Green",
+   "MI_jctTrafficLight_Red"
+  ],
+  "C": [
+   "MI_jctTrafficLightBase",
+   "MI_jctTrafficLight_Green",
+   "MI_jctTrafficLight_Red"
+  ],
+  "D": [
+   "MI_jctTrafficLightBase",
+   "MI_jctTrafficLight_Green"
+  ],
+  "E": [
+   "MI_jctTrafficLightBase",
+   "MI_jctTrafficLight_Green_b"
+  ],
+  "F": [
+   "MI_jctTrafficLightBase",
+   "MI_jctTrafficLight_Red"
+  ]
+ },
+ "materials_dir": "/Game/JapaneseCity/Materials/Props/",
+ "lamp_materials": {
+  "Red": "T_jctTrafficLight_L_R (parent default emissive)",
+  "Red_b": "T_jctTrafficLight_L_Rb, Emissive 2",
+  "Yellow": "T_jctTrafficLight_L_Y",
+  "Green": "T_jctTrafficLight_L_G, Emissive 0.6",
+  "Green_b": "T_jctTrafficLight_L_Gb"
+ },
+ "counts": {
+  "B": 198,
+  "E": 30,
+  "F": 34,
+  "A": 30
+ },
+ "n_junctions": 66,
+ "heads": [
+  {
+   "label": "SM_jctTrafficLightB_1945",
+   "kind": "B",
+   "loc_cm": [
+    -5630,
+    -3265,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -4100.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1946",
+   "kind": "B",
+   "loc_cm": [
+    -10760,
+    -4925,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -12300.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1947",
+   "kind": "B",
+   "loc_cm": [
+    2570,
+    -3265,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    4100.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1948",
+   "kind": "B",
+   "loc_cm": [
+    -2560,
+    -4925,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -4100.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1949",
+   "kind": "B",
+   "loc_cm": [
+    -5630,
+    4935,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -4100.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1950",
+   "kind": "B",
+   "loc_cm": [
+    -10760,
+    3275,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -12300.0,
+    4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1951",
+   "kind": "B",
+   "loc_cm": [
+    2570,
+    4935,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    4100.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1952",
+   "kind": "B",
+   "loc_cm": [
+    -2560,
+    3275,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -4100.0,
+    4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1953",
+   "kind": "B",
+   "loc_cm": [
+    -3270,
+    -2575,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -4100.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1954",
+   "kind": "B",
+   "loc_cm": [
+    -4930,
+    2575,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -4100.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1955",
+   "kind": "B",
+   "loc_cm": [
+    -3270,
+    -10775,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -4100.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1956",
+   "kind": "B",
+   "loc_cm": [
+    -4930,
+    -5625,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -4100.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1957",
+   "kind": "B",
+   "loc_cm": [
+    4930,
+    -2575,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    4100.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1958",
+   "kind": "B",
+   "loc_cm": [
+    3270,
+    2575,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    4100.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1959",
+   "kind": "B",
+   "loc_cm": [
+    4930,
+    -10775,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    4100.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1960",
+   "kind": "B",
+   "loc_cm": [
+    3270,
+    -5625,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    4100.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1961",
+   "kind": "B",
+   "loc_cm": [
+    -5630,
+    13135,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -4100.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1962",
+   "kind": "B",
+   "loc_cm": [
+    -10760,
+    11475,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -12300.0,
+    12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1964",
+   "kind": "B",
+   "loc_cm": [
+    -2560,
+    11475,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -4100.0,
+    12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1965",
+   "kind": "B",
+   "loc_cm": [
+    -3270,
+    5625,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -4100.0,
+    4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1966",
+   "kind": "B",
+   "loc_cm": [
+    -4930,
+    10775,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -4100.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1967",
+   "kind": "B",
+   "loc_cm": [
+    4930,
+    13825,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    4100.0,
+    12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1968",
+   "kind": "B",
+   "loc_cm": [
+    4930,
+    5625,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    4100.0,
+    4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1969",
+   "kind": "B",
+   "loc_cm": [
+    3270,
+    10775,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    4100.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1970",
+   "kind": "B",
+   "loc_cm": [
+    -5630,
+    -11465,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -4100.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightB_1971",
+   "kind": "B",
+   "loc_cm": [
+    2570,
+    -11465,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    4100.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1972",
+   "kind": "B",
+   "loc_cm": [
+    -3270,
+    -18975,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -4100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1973",
+   "kind": "B",
+   "loc_cm": [
+    -4930,
+    -13825,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -4100.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1974",
+   "kind": "B",
+   "loc_cm": [
+    4930,
+    -18975,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    4100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1975",
+   "kind": "B",
+   "loc_cm": [
+    3270,
+    -13825,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    4100.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1976",
+   "kind": "B",
+   "loc_cm": [
+    -22030,
+    -3265,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -20500.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1977",
+   "kind": "B",
+   "loc_cm": [
+    -22030,
+    4935,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -20500.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1978",
+   "kind": "B",
+   "loc_cm": [
+    -27160,
+    3275,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -28700.0,
+    4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1979",
+   "kind": "B",
+   "loc_cm": [
+    -19670,
+    -2575,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -20500.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1980",
+   "kind": "B",
+   "loc_cm": [
+    -19670,
+    -10775,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -20500.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1981",
+   "kind": "B",
+   "loc_cm": [
+    -21330,
+    -5625,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -20500.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1982",
+   "kind": "B",
+   "loc_cm": [
+    -11470,
+    -2575,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -12300.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1983",
+   "kind": "B",
+   "loc_cm": [
+    -13130,
+    2575,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -12300.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1984",
+   "kind": "B",
+   "loc_cm": [
+    -11470,
+    -10775,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -12300.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1985",
+   "kind": "B",
+   "loc_cm": [
+    -13130,
+    -5625,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -12300.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1986",
+   "kind": "B",
+   "loc_cm": [
+    -22030,
+    13135,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -20500.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1987",
+   "kind": "B",
+   "loc_cm": [
+    -27160,
+    11475,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -28700.0,
+    12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1988",
+   "kind": "B",
+   "loc_cm": [
+    -19670,
+    13825,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -20500.0,
+    12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1989",
+   "kind": "B",
+   "loc_cm": [
+    -19670,
+    5625,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -20500.0,
+    4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1990",
+   "kind": "B",
+   "loc_cm": [
+    -13130,
+    18975,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -12300.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1991",
+   "kind": "B",
+   "loc_cm": [
+    -11470,
+    5625,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -12300.0,
+    4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1992",
+   "kind": "B",
+   "loc_cm": [
+    -13130,
+    10775,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -12300.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1993",
+   "kind": "B",
+   "loc_cm": [
+    -27160,
+    -13125,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -28700.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1994",
+   "kind": "B",
+   "loc_cm": [
+    -19670,
+    -18975,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -20500.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1995",
+   "kind": "B",
+   "loc_cm": [
+    -11470,
+    -18975,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -12300.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1996",
+   "kind": "B",
+   "loc_cm": [
+    -13130,
+    -13825,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -12300.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1997",
+   "kind": "B",
+   "loc_cm": [
+    -35360,
+    -4925,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -36900.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1998",
+   "kind": "B",
+   "loc_cm": [
+    -35360,
+    3275,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -36900.0,
+    4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_1999",
+   "kind": "B",
+   "loc_cm": [
+    -29530,
+    2575,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -28700.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2000",
+   "kind": "B",
+   "loc_cm": [
+    -27870,
+    -10775,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -28700.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2001",
+   "kind": "B",
+   "loc_cm": [
+    -29530,
+    -5625,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -28700.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2002",
+   "kind": "B",
+   "loc_cm": [
+    -35360,
+    11475,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -36900.0,
+    12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2003",
+   "kind": "B",
+   "loc_cm": [
+    -29530,
+    18975,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -28700.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2004",
+   "kind": "B",
+   "loc_cm": [
+    -29530,
+    10775,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -28700.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2005",
+   "kind": "B",
+   "loc_cm": [
+    10770,
+    -3265,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    12300.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2006",
+   "kind": "B",
+   "loc_cm": [
+    5640,
+    -4925,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    4100.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2007",
+   "kind": "B",
+   "loc_cm": [
+    18970,
+    -3265,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    20500.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2008",
+   "kind": "B",
+   "loc_cm": [
+    13840,
+    -4925,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    12300.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2009",
+   "kind": "B",
+   "loc_cm": [
+    10770,
+    4935,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    12300.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2010",
+   "kind": "B",
+   "loc_cm": [
+    5640,
+    3275,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    4100.0,
+    4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2011",
+   "kind": "B",
+   "loc_cm": [
+    13840,
+    3275,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    12300.0,
+    4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2012",
+   "kind": "B",
+   "loc_cm": [
+    13130,
+    -2575,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    12300.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2013",
+   "kind": "B",
+   "loc_cm": [
+    11470,
+    2575,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    12300.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2014",
+   "kind": "B",
+   "loc_cm": [
+    11470,
+    -5625,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    12300.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2015",
+   "kind": "B",
+   "loc_cm": [
+    21330,
+    -2575,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    20500.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2016",
+   "kind": "B",
+   "loc_cm": [
+    19670,
+    2575,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    20500.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2017",
+   "kind": "B",
+   "loc_cm": [
+    21330,
+    -10775,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    20500.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2018",
+   "kind": "B",
+   "loc_cm": [
+    5640,
+    11475,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    4100.0,
+    12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2019",
+   "kind": "B",
+   "loc_cm": [
+    18970,
+    13135,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    20500.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2020",
+   "kind": "B",
+   "loc_cm": [
+    11470,
+    18975,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    12300.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2021",
+   "kind": "B",
+   "loc_cm": [
+    13130,
+    5625,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    12300.0,
+    4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2022",
+   "kind": "B",
+   "loc_cm": [
+    11470,
+    10775,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    12300.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2023",
+   "kind": "B",
+   "loc_cm": [
+    19670,
+    10775,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    20500.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2024",
+   "kind": "B",
+   "loc_cm": [
+    10770,
+    -11465,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    12300.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2025",
+   "kind": "B",
+   "loc_cm": [
+    18970,
+    -11465,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    20500.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2026",
+   "kind": "B",
+   "loc_cm": [
+    13840,
+    -13125,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    12300.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2027",
+   "kind": "B",
+   "loc_cm": [
+    11470,
+    -13825,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    12300.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2028",
+   "kind": "B",
+   "loc_cm": [
+    35370,
+    -3265,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    36900.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2029",
+   "kind": "B",
+   "loc_cm": [
+    27170,
+    4935,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    28700.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2030",
+   "kind": "B",
+   "loc_cm": [
+    30240,
+    3275,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    28700.0,
+    4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2031",
+   "kind": "B",
+   "loc_cm": [
+    27870,
+    2575,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    28700.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2032",
+   "kind": "B",
+   "loc_cm": [
+    29530,
+    -10775,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    28700.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2033",
+   "kind": "B",
+   "loc_cm": [
+    27870,
+    -5625,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    28700.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2034",
+   "kind": "B",
+   "loc_cm": [
+    37730,
+    -2575,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    36900.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2035",
+   "kind": "B",
+   "loc_cm": [
+    36070,
+    -5625,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    36900.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2036",
+   "kind": "B",
+   "loc_cm": [
+    27170,
+    13135,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    28700.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2037",
+   "kind": "B",
+   "loc_cm": [
+    22040,
+    11475,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    20500.0,
+    12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2038",
+   "kind": "B",
+   "loc_cm": [
+    35370,
+    13135,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    36900.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2039",
+   "kind": "B",
+   "loc_cm": [
+    29530,
+    5625,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    28700.0,
+    4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2040",
+   "kind": "B",
+   "loc_cm": [
+    37730,
+    13825,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    36900.0,
+    12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2041",
+   "kind": "B",
+   "loc_cm": [
+    37730,
+    5625,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    36900.0,
+    4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2042",
+   "kind": "B",
+   "loc_cm": [
+    36070,
+    10775,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    36900.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2043",
+   "kind": "B",
+   "loc_cm": [
+    22040,
+    -13125,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    20500.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightB_2044",
+   "kind": "B",
+   "loc_cm": [
+    29530,
+    -18975,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    28700.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2045",
+   "kind": "B",
+   "loc_cm": [
+    27870,
+    -13825,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    28700.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2046",
+   "kind": "B",
+   "loc_cm": [
+    37730,
+    -18975,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    36900.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2047",
+   "kind": "B",
+   "loc_cm": [
+    36070,
+    -13825,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    36900.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2048",
+   "kind": "B",
+   "loc_cm": [
+    38440,
+    -4925,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    36900.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2049",
+   "kind": "B",
+   "loc_cm": [
+    -27160,
+    -4925,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -28700.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2050",
+   "kind": "B",
+   "loc_cm": [
+    -18960,
+    -13125,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -20500.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2051",
+   "kind": "B",
+   "loc_cm": [
+    -18960,
+    -4925,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -20500.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2052",
+   "kind": "B",
+   "loc_cm": [
+    -18960,
+    3275,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -20500.0,
+    4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2053",
+   "kind": "B",
+   "loc_cm": [
+    -18960,
+    11475,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -20500.0,
+    12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2054",
+   "kind": "B",
+   "loc_cm": [
+    -18960,
+    19675,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -20500.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2055",
+   "kind": "B",
+   "loc_cm": [
+    -10760,
+    -13125,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -12300.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2056",
+   "kind": "B",
+   "loc_cm": [
+    -2560,
+    -13125,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -4100.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2057",
+   "kind": "B",
+   "loc_cm": [
+    13840,
+    11475,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    12300.0,
+    12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2058",
+   "kind": "B",
+   "loc_cm": [
+    22040,
+    -4925,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    20500.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2059",
+   "kind": "B",
+   "loc_cm": [
+    22040,
+    3275,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    20500.0,
+    4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2060",
+   "kind": "B",
+   "loc_cm": [
+    30240,
+    -13125,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    28700.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2061",
+   "kind": "B",
+   "loc_cm": [
+    30240,
+    -4925,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    28700.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2062",
+   "kind": "B",
+   "loc_cm": [
+    30240,
+    11475,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    28700.0,
+    12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2063",
+   "kind": "B",
+   "loc_cm": [
+    38440,
+    -13125,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    36900.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2064",
+   "kind": "B",
+   "loc_cm": [
+    38440,
+    3275,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    36900.0,
+    4100.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2065",
+   "kind": "B",
+   "loc_cm": [
+    38440,
+    11475,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    36900.0,
+    12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2066",
+   "kind": "B",
+   "loc_cm": [
+    38440,
+    19675,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    36900.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2067",
+   "kind": "B",
+   "loc_cm": [
+    5640,
+    -13125,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    4100.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2068",
+   "kind": "B",
+   "loc_cm": [
+    5640,
+    19675,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    4100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2069",
+   "kind": "B",
+   "loc_cm": [
+    -30050,
+    -11465,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -28700.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -1350,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2070",
+   "kind": "B",
+   "loc_cm": [
+    -30050,
+    -3265,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -28700.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -1350,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2071",
+   "kind": "B",
+   "loc_cm": [
+    -30050,
+    4935,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -28700.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -1350,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2072",
+   "kind": "B",
+   "loc_cm": [
+    -30050,
+    13135,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -28700.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -1350,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2073",
+   "kind": "B",
+   "loc_cm": [
+    -22050,
+    -11465,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -20500.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2074",
+   "kind": "B",
+   "loc_cm": [
+    -13850,
+    -19665,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -12300.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2075",
+   "kind": "B",
+   "loc_cm": [
+    -13850,
+    -11465,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -12300.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2076",
+   "kind": "B",
+   "loc_cm": [
+    -13850,
+    -3265,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -12300.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2077",
+   "kind": "B",
+   "loc_cm": [
+    -13850,
+    4935,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -12300.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2078",
+   "kind": "B",
+   "loc_cm": [
+    -13850,
+    13135,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -12300.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2079",
+   "kind": "B",
+   "loc_cm": [
+    -5650,
+    -19665,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -4100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2080",
+   "kind": "B",
+   "loc_cm": [
+    2550,
+    -19665,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    4100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2081",
+   "kind": "B",
+   "loc_cm": [
+    10750,
+    -19665,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    12300.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2082",
+   "kind": "B",
+   "loc_cm": [
+    10750,
+    13135,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    12300.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2083",
+   "kind": "B",
+   "loc_cm": [
+    27150,
+    -11465,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    28700.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2084",
+   "kind": "B",
+   "loc_cm": [
+    27150,
+    -3265,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    28700.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2085",
+   "kind": "B",
+   "loc_cm": [
+    35350,
+    -19665,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    36900.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2086",
+   "kind": "B",
+   "loc_cm": [
+    35350,
+    -11465,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    36900.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2087",
+   "kind": "B",
+   "loc_cm": [
+    35350,
+    4935,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    36900.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -1550,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2088",
+   "kind": "B",
+   "loc_cm": [
+    -29530,
+    -13835,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -28700.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1535
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2089",
+   "kind": "B",
+   "loc_cm": [
+    -21330,
+    -13835,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -20500.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1535
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2090",
+   "kind": "B",
+   "loc_cm": [
+    -21330,
+    2565,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -20500.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1535
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2091",
+   "kind": "B",
+   "loc_cm": [
+    -21330,
+    10765,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -20500.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1535
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2092",
+   "kind": "B",
+   "loc_cm": [
+    19670,
+    -13835,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    20500.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1535
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2093",
+   "kind": "B",
+   "loc_cm": [
+    19670,
+    -5635,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    20500.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1535
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2094",
+   "kind": "B",
+   "loc_cm": [
+    27870,
+    -13835,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    28700.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1535
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2095",
+   "kind": "B",
+   "loc_cm": [
+    27870,
+    10765,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    28700.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1535
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2096",
+   "kind": "B",
+   "loc_cm": [
+    36070,
+    2565,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    36900.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1535
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2097",
+   "kind": "B",
+   "loc_cm": [
+    44270,
+    -5635,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    45100.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1535
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2098",
+   "kind": "B",
+   "loc_cm": [
+    -27870,
+    -2575,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -28700.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2099",
+   "kind": "B",
+   "loc_cm": [
+    -27870,
+    5625,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -28700.0,
+    4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2100",
+   "kind": "B",
+   "loc_cm": [
+    -27870,
+    13825,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -28700.0,
+    12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2101",
+   "kind": "B",
+   "loc_cm": [
+    -3270,
+    13825,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -4100.0,
+    12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2102",
+   "kind": "B",
+   "loc_cm": [
+    13130,
+    -10775,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    12300.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2103",
+   "kind": "B",
+   "loc_cm": [
+    13130,
+    13825,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    12300.0,
+    12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2104",
+   "kind": "B",
+   "loc_cm": [
+    29530,
+    -2575,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    28700.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2105",
+   "kind": "B",
+   "loc_cm": [
+    29530,
+    13825,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    28700.0,
+    12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2106",
+   "kind": "B",
+   "loc_cm": [
+    37730,
+    -10775,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    36900.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2107",
+   "kind": "B",
+   "loc_cm": [
+    -30230,
+    -19665,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -28700.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2108",
+   "kind": "B",
+   "loc_cm": [
+    -22030,
+    -19665,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -20500.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2109",
+   "kind": "B",
+   "loc_cm": [
+    18970,
+    -19665,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    20500.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2110",
+   "kind": "B",
+   "loc_cm": [
+    27170,
+    -19665,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    28700.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1530,
+    835
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2111",
+   "kind": "B",
+   "loc_cm": [
+    -27160,
+    19675,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -28700.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2112",
+   "kind": "B",
+   "loc_cm": [
+    -10760,
+    19675,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -12300.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2113",
+   "kind": "B",
+   "loc_cm": [
+    -2560,
+    19675,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -4100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2114",
+   "kind": "B",
+   "loc_cm": [
+    13840,
+    19675,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    12300.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2115",
+   "kind": "B",
+   "loc_cm": [
+    22040,
+    19675,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    20500.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2116",
+   "kind": "B",
+   "loc_cm": [
+    30240,
+    19675,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    28700.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1540,
+    -825
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2117",
+   "kind": "B",
+   "loc_cm": [
+    -36070,
+    -10775,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -36900.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2118",
+   "kind": "B",
+   "loc_cm": [
+    -36070,
+    5625,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -36900.0,
+    4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2119",
+   "kind": "B",
+   "loc_cm": [
+    -36070,
+    -2575,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -36900.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2120",
+   "kind": "B",
+   "loc_cm": [
+    -36070,
+    13825,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -36900.0,
+    12300.0
+   ],
+   "rel_cm": [
+    830,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2121",
+   "kind": "B",
+   "loc_cm": [
+    44270,
+    -13825,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    45100.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2122",
+   "kind": "B",
+   "loc_cm": [
+    44270,
+    10775,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    45100.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2123",
+   "kind": "B",
+   "loc_cm": [
+    44270,
+    2575,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    45100.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2124",
+   "kind": "B",
+   "loc_cm": [
+    44270,
+    18975,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    45100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -830,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_0",
+   "kind": "E",
+   "loc_cm": [
+    -30265,
+    -21356,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -28700.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1565,
+    -856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_1",
+   "kind": "E",
+   "loc_cm": [
+    -22065,
+    -21356,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -20500.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1565,
+    -856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_2",
+   "kind": "E",
+   "loc_cm": [
+    -13865,
+    -21356,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -12300.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1565,
+    -856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_3",
+   "kind": "E",
+   "loc_cm": [
+    -5665,
+    -21356,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -4100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1565,
+    -856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_4",
+   "kind": "E",
+   "loc_cm": [
+    2535,
+    -21356,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    4100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1565,
+    -856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_5",
+   "kind": "E",
+   "loc_cm": [
+    10735,
+    -21356,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    12300.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1565,
+    -856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_6",
+   "kind": "E",
+   "loc_cm": [
+    18935,
+    -21356,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    20500.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1565,
+    -856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_7",
+   "kind": "E",
+   "loc_cm": [
+    27135,
+    -21356,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    28700.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1565,
+    -856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_8",
+   "kind": "E",
+   "loc_cm": [
+    35335,
+    -21356,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    36900.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1565,
+    -856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_9",
+   "kind": "E",
+   "loc_cm": [
+    43535,
+    -21356,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    45100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -1565,
+    -856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_10",
+   "kind": "E",
+   "loc_cm": [
+    38453,
+    21356,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    36900.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1553,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_11",
+   "kind": "E",
+   "loc_cm": [
+    30253,
+    21356,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    28700.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1553,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_12",
+   "kind": "E",
+   "loc_cm": [
+    22053,
+    21356,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    20500.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1553,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_13",
+   "kind": "E",
+   "loc_cm": [
+    13853,
+    21356,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    12300.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1553,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_14",
+   "kind": "E",
+   "loc_cm": [
+    5653,
+    21356,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    4100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1553,
+    856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_15",
+   "kind": "E",
+   "loc_cm": [
+    -2547,
+    21356,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -4100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1553,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_16",
+   "kind": "E",
+   "loc_cm": [
+    -10747,
+    21356,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -12300.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1553,
+    856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_17",
+   "kind": "E",
+   "loc_cm": [
+    -18947,
+    21356,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -20500.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1553,
+    856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_18",
+   "kind": "E",
+   "loc_cm": [
+    -27147,
+    21356,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -28700.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1553,
+    856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_19",
+   "kind": "E",
+   "loc_cm": [
+    -35347,
+    21356,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -36900.0,
+    20500.0
+   ],
+   "rel_cm": [
+    1553,
+    856
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightE_20",
+   "kind": "E",
+   "loc_cm": [
+    -37758,
+    13858,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -36900.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -858,
+    1558
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_21",
+   "kind": "E",
+   "loc_cm": [
+    -37758,
+    5658,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -36900.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -858,
+    1558
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_22",
+   "kind": "E",
+   "loc_cm": [
+    -37758,
+    -2542,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -36900.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -858,
+    1558
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_23",
+   "kind": "E",
+   "loc_cm": [
+    -37758,
+    -10742,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -36900.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -858,
+    1558
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_24",
+   "kind": "E",
+   "loc_cm": [
+    -37758,
+    -18942,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -36900.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -858,
+    1558
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_25",
+   "kind": "E",
+   "loc_cm": [
+    45953,
+    -13852,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    45100.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    853,
+    -1552
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_26",
+   "kind": "E",
+   "loc_cm": [
+    45953,
+    -5652,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    45100.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    853,
+    -1552
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_27",
+   "kind": "E",
+   "loc_cm": [
+    45953,
+    2548,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    45100.0,
+    4100.0
+   ],
+   "rel_cm": [
+    853,
+    -1552
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_28",
+   "kind": "E",
+   "loc_cm": [
+    45953,
+    10748,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    45100.0,
+    12300.0
+   ],
+   "rel_cm": [
+    853,
+    -1552
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightE_29",
+   "kind": "E",
+   "loc_cm": [
+    45953,
+    18948,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    45100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    853,
+    -1552
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_30",
+   "kind": "F",
+   "loc_cm": [
+    -29551,
+    -21356,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -28700.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -851,
+    -856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_31",
+   "kind": "F",
+   "loc_cm": [
+    -21351,
+    -21356,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -20500.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -851,
+    -856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_32",
+   "kind": "F",
+   "loc_cm": [
+    -13151,
+    -21356,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -12300.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -851,
+    -856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_33",
+   "kind": "F",
+   "loc_cm": [
+    -4951,
+    -21356,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -4100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -851,
+    -856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_34",
+   "kind": "F",
+   "loc_cm": [
+    3249,
+    -21356,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    4100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -851,
+    -856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_35",
+   "kind": "F",
+   "loc_cm": [
+    11449,
+    -21356,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    12300.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -851,
+    -856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_36",
+   "kind": "F",
+   "loc_cm": [
+    19649,
+    -21356,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    20500.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -851,
+    -856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_37",
+   "kind": "F",
+   "loc_cm": [
+    27849,
+    -21356,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    28700.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -851,
+    -856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_38",
+   "kind": "F",
+   "loc_cm": [
+    36049,
+    -21356,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    36900.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -851,
+    -856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_39",
+   "kind": "F",
+   "loc_cm": [
+    44249,
+    -21356,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    45100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -851,
+    -856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_40",
+   "kind": "F",
+   "loc_cm": [
+    37739,
+    21356,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    36900.0,
+    20500.0
+   ],
+   "rel_cm": [
+    839,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_41",
+   "kind": "F",
+   "loc_cm": [
+    29539,
+    21356,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    28700.0,
+    20500.0
+   ],
+   "rel_cm": [
+    839,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_42",
+   "kind": "F",
+   "loc_cm": [
+    21339,
+    21356,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    20500.0,
+    20500.0
+   ],
+   "rel_cm": [
+    839,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_43",
+   "kind": "F",
+   "loc_cm": [
+    13139,
+    21356,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    12300.0,
+    20500.0
+   ],
+   "rel_cm": [
+    839,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_44",
+   "kind": "F",
+   "loc_cm": [
+    4939,
+    21356,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    4100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    839,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_45",
+   "kind": "F",
+   "loc_cm": [
+    -3261,
+    21356,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -4100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    839,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_46",
+   "kind": "F",
+   "loc_cm": [
+    -11461,
+    21356,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -12300.0,
+    20500.0
+   ],
+   "rel_cm": [
+    839,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_47",
+   "kind": "F",
+   "loc_cm": [
+    -19661,
+    21356,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -20500.0,
+    20500.0
+   ],
+   "rel_cm": [
+    839,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_48",
+   "kind": "F",
+   "loc_cm": [
+    -27861,
+    21356,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -28700.0,
+    20500.0
+   ],
+   "rel_cm": [
+    839,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_49",
+   "kind": "F",
+   "loc_cm": [
+    -36061,
+    21356,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -36900.0,
+    20500.0
+   ],
+   "rel_cm": [
+    839,
+    856
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_50",
+   "kind": "F",
+   "loc_cm": [
+    -37758,
+    13144,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -36900.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -858,
+    844
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightF_51",
+   "kind": "F",
+   "loc_cm": [
+    -37758,
+    4944,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -36900.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -858,
+    844
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightF_52",
+   "kind": "F",
+   "loc_cm": [
+    -37758,
+    -3256,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -36900.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -858,
+    844
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightF_53",
+   "kind": "F",
+   "loc_cm": [
+    -37758,
+    -11456,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -36900.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -858,
+    844
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightF_54",
+   "kind": "F",
+   "loc_cm": [
+    -37758,
+    -19656,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -36900.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -858,
+    844
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightF_55",
+   "kind": "F",
+   "loc_cm": [
+    45953,
+    -13138,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    45100.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    853,
+    -838
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightF_56",
+   "kind": "F",
+   "loc_cm": [
+    45953,
+    -4938,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    45100.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    853,
+    -838
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightF_57",
+   "kind": "F",
+   "loc_cm": [
+    45953,
+    3262,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    45100.0,
+    4100.0
+   ],
+   "rel_cm": [
+    853,
+    -838
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightF_58",
+   "kind": "F",
+   "loc_cm": [
+    45953,
+    11462,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    45100.0,
+    12300.0
+   ],
+   "rel_cm": [
+    853,
+    -838
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightF_59",
+   "kind": "F",
+   "loc_cm": [
+    45953,
+    19662,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    45100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    853,
+    -838
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightF_60",
+   "kind": "F",
+   "loc_cm": [
+    -37186,
+    -20837,
+    0
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -36900.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    -286,
+    -337
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightF_61",
+   "kind": "F",
+   "loc_cm": [
+    -37386,
+    20977,
+    0
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -36900.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -486,
+    477
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightF_62",
+   "kind": "F",
+   "loc_cm": [
+    45554,
+    20897,
+    0
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    45100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    454,
+    397
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightF_63",
+   "kind": "F",
+   "loc_cm": [
+    45554,
+    -21083,
+    0
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    45100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    454,
+    -583
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_64",
+   "kind": "B",
+   "loc_cm": [
+    36049,
+    18952,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    36900.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -851,
+    -1548
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_65",
+   "kind": "B",
+   "loc_cm": [
+    27849,
+    18952,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    28700.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -851,
+    -1548
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_66",
+   "kind": "B",
+   "loc_cm": [
+    19649,
+    18952,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    20500.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -851,
+    -1548
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_68",
+   "kind": "B",
+   "loc_cm": [
+    -4961,
+    18952,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -4100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -861,
+    -1548
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_69",
+   "kind": "B",
+   "loc_cm": [
+    -21352,
+    18952,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -20500.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -852,
+    -1548
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_70",
+   "kind": "B",
+   "loc_cm": [
+    -35242,
+    -13151,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -36900.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    1658,
+    -851
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_71",
+   "kind": "B",
+   "loc_cm": [
+    -27846,
+    -18982,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -28700.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    854,
+    1518
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_72",
+   "kind": "B",
+   "loc_cm": [
+    13154,
+    -18982,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    12300.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    854,
+    1518
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_73",
+   "kind": "B",
+   "loc_cm": [
+    21366,
+    -18982,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    20500.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    866,
+    1518
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_74",
+   "kind": "B",
+   "loc_cm": [
+    43593,
+    -11453,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    45100.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -1507,
+    847
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_75",
+   "kind": "B",
+   "loc_cm": [
+    43593,
+    -3253,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    45100.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -1507,
+    847
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_76",
+   "kind": "B",
+   "loc_cm": [
+    43593,
+    4947,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    45100.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -1507,
+    847
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_77",
+   "kind": "B",
+   "loc_cm": [
+    43593,
+    13147,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    45100.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -1507,
+    847
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightA_78",
+   "kind": "A",
+   "loc_cm": [
+    -35376,
+    -21325,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -36900.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    1524,
+    -825
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_79",
+   "kind": "A",
+   "loc_cm": [
+    -27176,
+    -21325,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -28700.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    1524,
+    -825
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_80",
+   "kind": "A",
+   "loc_cm": [
+    -18976,
+    -21325,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -20500.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    1524,
+    -825
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_81",
+   "kind": "A",
+   "loc_cm": [
+    -10776,
+    -21325,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -12300.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    1524,
+    -825
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_82",
+   "kind": "A",
+   "loc_cm": [
+    -2576,
+    -21325,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    -4100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    1524,
+    -825
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_83",
+   "kind": "A",
+   "loc_cm": [
+    5624,
+    -21325,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    4100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    1524,
+    -825
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_84",
+   "kind": "A",
+   "loc_cm": [
+    13824,
+    -21325,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    12300.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    1524,
+    -825
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_85",
+   "kind": "A",
+   "loc_cm": [
+    22024,
+    -21325,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    20500.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    1524,
+    -825
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_86",
+   "kind": "A",
+   "loc_cm": [
+    30224,
+    -21325,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    28700.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    1524,
+    -825
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_87",
+   "kind": "A",
+   "loc_cm": [
+    38424,
+    -21325,
+    10
+   ],
+   "yaw": 90.0,
+   "junction_cm": [
+    36900.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    1524,
+    -825
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_88",
+   "kind": "A",
+   "loc_cm": [
+    -37730,
+    -13853,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -36900.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1553
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightA_89",
+   "kind": "A",
+   "loc_cm": [
+    -37730,
+    -5653,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -36900.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1553
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightA_90",
+   "kind": "A",
+   "loc_cm": [
+    -37730,
+    2547,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -36900.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -830,
+    -1553
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightA_91",
+   "kind": "A",
+   "loc_cm": [
+    -37730,
+    10747,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -36900.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -830,
+    -1553
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightA_92",
+   "kind": "A",
+   "loc_cm": [
+    -37730,
+    18947,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    -36900.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -830,
+    -1553
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightA_93",
+   "kind": "A",
+   "loc_cm": [
+    -30257,
+    21335,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -28700.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -1557,
+    835
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_94",
+   "kind": "A",
+   "loc_cm": [
+    -22057,
+    21335,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -20500.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -1557,
+    835
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_95",
+   "kind": "A",
+   "loc_cm": [
+    -13857,
+    21335,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -12300.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -1557,
+    835
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_96",
+   "kind": "A",
+   "loc_cm": [
+    -5657,
+    21335,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    -4100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -1557,
+    835
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_97",
+   "kind": "A",
+   "loc_cm": [
+    2543,
+    21335,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    4100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -1557,
+    835
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_98",
+   "kind": "A",
+   "loc_cm": [
+    10743,
+    21335,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    12300.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -1557,
+    835
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_99",
+   "kind": "A",
+   "loc_cm": [
+    18943,
+    21335,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    20500.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -1557,
+    835
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_100",
+   "kind": "A",
+   "loc_cm": [
+    27143,
+    21335,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    28700.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -1557,
+    835
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_101",
+   "kind": "A",
+   "loc_cm": [
+    35343,
+    21335,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    36900.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -1557,
+    835
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_102",
+   "kind": "A",
+   "loc_cm": [
+    43543,
+    21335,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    45100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -1557,
+    835
+   ],
+   "override_slots": []
+  },
+  {
+   "label": "SM_jctTrafficLightA_103",
+   "kind": "A",
+   "loc_cm": [
+    45930,
+    13817,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    45100.0,
+    12300.0
+   ],
+   "rel_cm": [
+    830,
+    1517
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green",
+    "MI_jctTrafficLight_Red"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightA_104",
+   "kind": "A",
+   "loc_cm": [
+    45930,
+    5617,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    45100.0,
+    4100.0
+   ],
+   "rel_cm": [
+    830,
+    1517
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green",
+    "MI_jctTrafficLight_Red"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightA_105",
+   "kind": "A",
+   "loc_cm": [
+    45930,
+    -2583,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    45100.0,
+    -4100.0
+   ],
+   "rel_cm": [
+    830,
+    1517
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green",
+    "MI_jctTrafficLight_Red"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightA_106",
+   "kind": "A",
+   "loc_cm": [
+    45930,
+    -10783,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    45100.0,
+    -12300.0
+   ],
+   "rel_cm": [
+    830,
+    1517
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green",
+    "MI_jctTrafficLight_Red"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightA_107",
+   "kind": "A",
+   "loc_cm": [
+    45930,
+    -18983,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    45100.0,
+    -20500.0
+   ],
+   "rel_cm": [
+    830,
+    1517
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green",
+    "MI_jctTrafficLight_Red"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2125",
+   "kind": "B",
+   "loc_cm": [
+    21342,
+    13825,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    20500.0,
+    12300.0
+   ],
+   "rel_cm": [
+    842,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2126",
+   "kind": "B",
+   "loc_cm": [
+    21330,
+    5614,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    20500.0,
+    4100.0
+   ],
+   "rel_cm": [
+    830,
+    1514
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2127",
+   "kind": "B",
+   "loc_cm": [
+    -11458,
+    13825,
+    10
+   ],
+   "yaw": -180.0,
+   "junction_cm": [
+    -12300.0,
+    12300.0
+   ],
+   "rel_cm": [
+    842,
+    1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2128",
+   "kind": "B",
+   "loc_cm": [
+    3220,
+    18975,
+    10
+   ],
+   "yaw": 0,
+   "junction_cm": [
+    4100.0,
+    20500.0
+   ],
+   "rel_cm": [
+    -880,
+    -1525
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Red_b",
+    "MI_jctTrafficLight_Green_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2129",
+   "kind": "B",
+   "loc_cm": [
+    2562,
+    13129,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    4100.0,
+    12300.0
+   ],
+   "rel_cm": [
+    -1538,
+    829
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  },
+  {
+   "label": "SM_jctTrafficLightB_2130",
+   "kind": "B",
+   "loc_cm": [
+    18921,
+    4939,
+    10
+   ],
+   "yaw": -90.0,
+   "junction_cm": [
+    20500.0,
+    4100.0
+   ],
+   "rel_cm": [
+    -1579,
+    839
+   ],
+   "override_slots": [
+    "None",
+    "MI_jctTrafficLight_Green_b",
+    "MI_jctTrafficLight_Red_b"
+   ]
+  }
+ ]
+}

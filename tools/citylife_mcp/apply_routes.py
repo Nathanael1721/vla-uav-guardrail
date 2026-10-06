@@ -19,6 +19,12 @@ given. Per car it writes, through the editor's MCP endpoint:
                                     the distance to it along its own path
   Idx, transform                    the car is placed ON its path, facing along
                                     it, cars of one loop evenly spaced
+  JExit / JOff                      per Junctions entry: the exit lane point level
+                                    with the centre (z = exit yaw, deg), and the
+                                    start of the junction's NS green (s) - what
+                                    UpdateEffSpeed's signal rules read
+                                    (drive_signals.py; citylife_traffic_model
+                                    .jexit_rows, citylife_signals.offset)
 
 Arrays are written as [] first and then in full: resizing a non-empty array
 property and filling it in one write is the case this toolset handles badly.
@@ -136,6 +142,8 @@ def run():
             "routeKappa": L["kappa"],
             "junctions": [{"x": j[0], "y": j[1], "z": j[2]} for j in L["junctions"]],
             "crossings": [{"x": q[0], "y": q[1], "z": q[2]} for q in L["crossings"]],
+            "jExit": [{"x": e[0], "y": e[1], "z": e[2]} for e in L["jexit"]],
+            "jOff": L["joff"],
         }
         T(OT + "set_properties", instance=a, values=json.dumps({k: [] for k in full}))
         T(OT + "set_properties", instance=a, values=json.dumps(full))
@@ -149,15 +157,27 @@ def run():
           worldspace=True)
         back = json.loads(T(OT + "get_properties", instance=a,
                             properties=["route", "routeSpeed", "routeKappa", "junctions",
-                                        "crossings", "idx", "speedCmS"]))
+                                        "crossings", "idx", "speedCmS", "jExit", "jOff"]))
         done[car] = [c["loop"], len(back["route"]), len(back["routeSpeed"]), len(back["routeKappa"]),
-                     len(back["junctions"]), len(back["crossings"]), back["idx"], back["speedCmS"]]
+                     len(back["junctions"]), len(back["crossings"]), back["idx"], back["speedCmS"],
+                     len(back["jExit"]), len(back["jOff"])]
     return {"cars": done}
 '''
 
 
+def with_signal_rows(data: dict) -> dict:
+    """Add each loop's JExit rows and junction offsets (see the docstring)."""
+    from tools import citylife_signals as S
+    from tools.citylife_traffic_model import jexit_rows
+    rows = jexit_rows(data)
+    for k, L in data["loops"].items():
+        L["jexit"] = [[round(x, 1), round(y, 1), yaw] for x, y, yaw in rows[k]]
+        L["joff"] = [S.offset(j[0], j[1]) for j in L["junctions"]]
+    return data
+
+
 def main():
-    data = plan()
+    data = with_signal_rows(plan())
     if "--dry-run" in sys.argv:
         for car, c in sorted(data["cars"].items()):
             print(car, c)
@@ -173,7 +193,8 @@ def main():
             continue
         loop = data["loops"][row[0]]
         want = [len(loop["route"])] * 3 + [len(loop["junctions"]), len(loop["crossings"])]
-        if row[1:6] != want or row[6] != data["cars"][car]["idx"]:
+        if (row[1:6] != want or row[6] != data["cars"][car]["idx"]
+                or row[8:10] != [len(loop["junctions"])] * 2):
             bad[car] = (row, want)
     for car, row in sorted(res["cars"].items()):
         print(car, row)

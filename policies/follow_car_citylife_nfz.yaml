@@ -1,0 +1,115 @@
+# The CityLife red-car mission with a no-fly zone on the car's own street.
+#
+# follow_car_citylife.yaml plus one polygon_fence. Without a fence the city
+# flights could not show the one thing a guardrail is for: a rule the mission
+# would break if it could. The 2026-09-30 meeting asked to see exactly that on
+# screen (demo/policy_hud.py draws it), and no CityLife policy had a zone.
+#
+# WHERE. Car_10 drives loop A, and its first leg runs east along the street on
+# x = 41 m (lane centre x = 44.5 m, keep-left) from the start junction at
+# y = -41 to the corner at y = 123. On all four 30 Sept flights the drone
+# followed it down this leg within the first 50 s of the mission, so the zone
+# is met early, while tracking is at its best - on a flight that loses the car
+# before y = 60 it is not met at all, and the HUD then shows no zone events.
+# The zone covers the north side of that street for 30 m: the north lane edge,
+# the pavement and the building frontage, x 45..62, y 62..92 (a frontage the
+# operator may not overfly - privacy, an entrance, a work site; the policy does
+# not need a reason, only a polygon).
+#
+# WHY A PART-WIDTH ZONE. follow_car_nfz.yaml (Demo_day) fenced a whole corridor
+# and showed that the rule is absolute and that it ends the mission: the drone is
+# pinned at the boundary while the car drives away. On CityLife the car's lap is
+# about 225 s, so a pinned drone would not see it again within a flight. Here
+# the rule costs the drone its preferred line, behind the car in the car's lane,
+# and not the car: with the 1 m margin and the controller's 3 m stand-off the
+# drone must keep to x <= 41 for 30 m, about 3.5 m south of where it flies on the
+# unfenced flights (x 42-45).
+#
+# Passing needed a controller change. The trail carrot sits on the car's lane,
+# INSIDE that band, so every direction alongside the zone pointed into the
+# stand-off: gate() held and slide() edged sideways. A kinematic replay with the
+# real FenceGuard gate/slide and Shield put the drone 42.7 m behind the car at
+# the corner, against 16.1 m with no zone (review, 2026-10-03). FenceGuard
+# .clear_aim now moves an aim point that falls in the band to the band's edge
+# plus 1 m (x = 40), so the motion is parallel to the zone; the same replay ends
+# 18.7 m behind, zone never entered, 2 Shield ticks. Clearance on that line, as
+# the Shield's own distance field reads it (Shield.clearance_at): 3.70-8.92 m
+# for every y from 55 to 99. At the bare stand-off line, x = 41, it dips to
+# 2.77 m at y = 60, and the car's own lane is worse still (an obstacle over it at
+# y = 54-62).
+#
+# WHAT SHOULD BE SEEN. NO-FLY ZONE AHEAD - ROUTING AROUND IT (blue, AVOID) while
+# the controller re-aims or slides south, possibly first OBSTACLE CLOSE for the
+# obstacle over the car's lane just before the zone; APPROACHING NO-FLY ZONE
+# while it is within the 12 m brake distance and nothing else is happening; the
+# map shows the drone passing beside the red polygon. If the controller finds no
+# way past, it holds at the boundary (HOLD) and the Shield is the backstop
+# (ACTING). The zone is never to be entered: nfz_entered in metrics.json, and
+# fence_aim_ticks says how often the re-aim acted.
+#
+# FLOWN 2026-10-03. citylife_redcar_nfz1 (8 m) and citylife_redcar_nfz2 (10 m):
+# - zone entered on 0 ticks;
+# - beside it at x 37.9-41.4 (nfz2), re-aimed on 91 ticks;
+# - 21.2 m (nfz2) and 24.1 m (nfz1) behind the car at the first corner;
+# - within 30 m 0.985 / 0.977;
+# - 0 Shield corrections.
+policy_id: follow-car-citylife-nfz
+version: 0.1.0
+constraints:
+  - id: nfz-frontage
+    type: polygon_fence
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    vertices:
+      - {x: 45, y: 62}
+      - {x: 62, y: 62}
+      - {x: 62, y: 92}
+      - {x: 45, y: 92}
+    altitude_floor_m: 0
+    altitude_ceiling_m: 60
+    margin_m: 1.0
+
+  # The rest is follow_car_citylife.yaml, unchanged; see its header.
+  - id: standoff-pedestrian
+    type: subject_standoff
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    subject_class: pedestrian
+    min_range_m: 10.0
+    soft_margin_m: 2.0
+
+  - id: standoff-any
+    type: subject_standoff
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    subject_class: "*"
+    min_range_m: 5.0
+    soft_margin_m: 1.0
+
+  - id: bld-clearance
+    type: obstacle_clearance
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    min_clearance_m: 3.0
+    soft_margin_m: 2.0
+
+  - id: alt-band
+    type: altitude_envelope
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    alt_min_m: 6
+    alt_max_m: 14
+
+  - id: kin-caps
+    type: kinematic_envelope
+    constraint_type: hard
+    priority: P1
+    violation_action: repair
+    speed_max_mps: 5.0
+    climb_rate_max_mps: 2.0
+    yaw_rate_max_dps: 45.0

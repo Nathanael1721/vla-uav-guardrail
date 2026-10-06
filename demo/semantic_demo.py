@@ -90,6 +90,16 @@ class SemanticObs:
         self.pose = (0.0, 0.0, 0.0)
         self._n_front = 0
         self._n_decode = 0
+        # CAPTURE TIME. A box is found in a frame captured some 0.1-0.3 s
+        # before the tick that acts on it, and the aircraft has moved and
+        # turned since. The front frame's arrival time, a short ring of depth
+        # frames and a ring of full poses let a detection be paired with the
+        # depth and the pose OF ITS OWN FRAME (2026-09-29; it used the tick's).
+        import collections
+        self._front_t = None
+        self._depth_ring = collections.deque(maxlen=6)     # (t_arrival, stamp, msg)
+        # (t_wall, x, y, up, yaw, pitch, roll, sim_stamp_ns or None)
+        self._pose_ring = collections.deque(maxlen=120)
 
     @staticmethod
     def _decode(msg):
@@ -106,8 +116,10 @@ class SemanticObs:
             (224, 224), resample=Image.BICUBIC)
 
     def put_front(self, msg):
+        import time as _time
         with self.lock:
             self._front_msg = msg
+            self._front_t = _time.time()
             self._n_front += 1
 
     def put_down(self, msg):
@@ -115,12 +127,122 @@ class SemanticObs:
             self._down_msg = msg
 
     def put_depth(self, msg):
+        import time as _time
         with self.lock:
             self._depth_msg = msg
+            self._depth_ring.append((_time.time(), (msg or {}).get("time_stamp"), msg))
 
     def put_pose(self, x, y, yaw):
         with self.lock:
             self.pose = (x, y, yaw)
+
+    def put_pose_full(self, t, x, y, up, yaw, pitch=0.0, roll=0.0, stamp=None):
+        """Record the aircraft's full pose at wall time `t` (the control loop
+        calls this every tick with the kinematics it already fetched); `stamp`
+        is the kinematics' own sim time_stamp (ns) when it carries one."""
+        with self.lock:
+            self.pose = (x, y, yaw)
+            self._pose_ring.append((t, x, y, up, yaw, pitch, roll,
+                                    None if stamp is None else float(stamp)))
+
+    def pose_at(self, t, stamp=None):
+        """Pose dict at wall time `t` - or, when `stamp` is given and the ring
+        carries sim stamps, at that sim time, which is exact where arrival time
+        is not (it includes render and transport latency). Interpolated between
+        the two ring entries around it, yaw the short way round; the nearest
+        end outside the ring (src "ring-edge"); None when the ring is empty."""
+        import math as _m
+        with self.lock:
+            ring = list(self._pose_ring)
+        if not ring:
+            return None
+        keys = ("t", "x", "y", "up", "yaw", "pitch", "roll")
+        k, q, src = 0, t, "ring"
+        if stamp is not None and all(r[7] is not None for r in ring):
+            k, q, src = 7, float(stamp), "ring-stamp"
+        if q is None:
+            return None
+        if q <= ring[0][k]:
+            return dict(zip(keys, ring[0]), src="ring-edge")
+        if q >= ring[-1][k]:
+            return dict(zip(keys, ring[-1]), src="ring-edge")
+        for a, b in zip(ring, ring[1:]):
+            if a[k] <= q <= b[k]:
+                f = 0.0 if b[k] == a[k] else (q - a[k]) / (b[k] - a[k])
+                out = {kk: a[i] + f * (b[i] - a[i]) for i, kk in enumerate(keys)}
+                dy = _m.atan2(_m.sin(b[4] - a[4]), _m.cos(b[4] - a[4]))
+                out["yaw"] = a[4] + f * dy
+                out["src"] = src
+                return out
+        return dict(zip(keys, ring[-1]), src="ring-edge")
+
+    def depth_near(self, stamp, t_cap, max_dt_s: float = 0.07):
+        """(depth map, dt ms) for the depth frame nearest a front frame - by
+        sim time_stamp when both carry one, else by arrival time - or
+        (None, dt ms) when the nearest is more than `max_dt_s` away; (None,
+        None) with no depth frame at all. Callable again after an inference,
+        when the capture's own depth frame has usually arrived."""
+        with self.lock:
+            ring = list(self._depth_ring)
+        best, best_dt = None, None
+        for t_arr, d_stamp, d_msg in ring:
+            if stamp is not None and d_stamp is not None:
+                dt = abs(float(d_stamp) - float(stamp)) / 1e9      # ns -> s
+            elif t_cap is not None:
+                dt = abs(t_arr - t_cap)
+            else:
+                continue
+            if best_dt is None or dt < best_dt:
+                best, best_dt = d_msg, dt
+        if best is None:
+            return None, None
+        dt_ms = round(best_dt * 1000.0, 1)
+        return (self._decode_depth(best) if best_dt <= max_dt_s else None), dt_ms
+
+    def wall_at_stamp(self, stamp):
+        """Wall time at which the aircraft's kinematics carried sim time
+        `stamp` (ns): interpolated inside the pose ring, extrapolated at 1:1
+        from its nearest end outside it; None without stamps."""
+        if stamp is None:
+            return None
+        with self.lock:
+            ring = [(r[0], r[7]) for r in self._pose_ring if r[7] is not None]
+        if not ring:
+            return None
+        q = float(stamp)
+        if q <= ring[0][1]:
+            return ring[0][0] + (q - ring[0][1]) / 1e9
+        if q >= ring[-1][1]:
+            return ring[-1][0] + (q - ring[-1][1]) / 1e9
+        for (ta, sa), (tb, sb) in zip(ring, ring[1:]):
+            if sa <= q <= sb:
+                f = 0.0 if sb == sa else (q - sa) / (sb - sa)
+                return ta + f * (tb - ta)
+        return ring[-1][0] + (q - ring[-1][1]) / 1e9
+
+    def get_front_capture(self, max_depth_dt_s: float = 0.07):
+        """(front image at native resolution, meta) for one detector input.
+
+        meta = {t_cap: the frame's ARRIVAL wall time; t_capture: the wall time
+        it was CAPTURED - from its sim stamp mapped through the pose ring when
+        both carry stamps, else t_cap (arrival lags capture by the transport
+        latency, which at 3.2 m/s put every measurement ~0.26 m behind);
+        stamp; pose: pose_at the capture; depth / depth_dt_ms: depth_near().}
+        The image is decoded exactly as get_front_native does."""
+        with self.lock:
+            msg, t_cap = self._front_msg, self._front_t
+        img = self._decode_front(msg)
+        if img is None:
+            return None, None
+        stamp = (msg or {}).get("time_stamp")
+        depth, dt_ms = self.depth_near(stamp, t_cap, max_depth_dt_s)
+        t_capture = self.wall_at_stamp(stamp)
+        if t_capture is None or t_cap is None or abs(t_capture - t_cap) > 2.0:
+            t_capture = t_cap                   # no stamps, or clocks disagree
+        meta = {"t_cap": t_cap, "t_capture": t_capture, "stamp": stamp,
+                "pose": self.pose_at(t_cap, stamp) if t_cap is not None else None,
+                "depth": depth, "depth_dt_ms": dt_ms}
+        return img, meta
 
     def get_obs(self):
         with self.lock:
@@ -164,10 +286,14 @@ class SemanticObs:
         real pixels — a 4.5 m car at 22 m range is only ~29 px wide, and there is
         none to spare.
         """
-        import cv2
-        from PIL import Image
         with self.lock:
             msg = self._front_msg
+        return self._decode_front(msg)
+
+    @staticmethod
+    def _decode_front(msg):
+        import cv2
+        from PIL import Image
         if not msg or "data" not in msg or not len(msg["data"]):
             return None
         buf = np.frombuffer(msg["data"], dtype=np.uint8)
@@ -195,6 +321,9 @@ class SemanticObs:
         """
         with self.lock:
             msg = self._depth_msg
+        return self._decode_depth(msg)
+
+    def _decode_depth(self, msg):
         if not msg:
             return None
         try:

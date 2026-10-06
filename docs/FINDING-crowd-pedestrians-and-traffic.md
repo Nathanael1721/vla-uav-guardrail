@@ -450,7 +450,9 @@ column is now the in-shot median beside its null; the first version of this tabl
 the whole-flight median. `citylife_follow` was scored in the same wrong frame, and its log
 is deleted, so its struck figures cannot be re-scored and should not be quoted.
 
-**`det_hz` clears its 4.0 Hz gate in all four. The control loop clears 9.5 Hz in
+~~**`det_hz` clears its 4.0 Hz gate in all four.**~~ *Corrected 2026-09-29:* `det_hz` in metrics.json counted every inference since the detector loaded - start-gate waiting included - over ticks x 0.1 s, which is shorter than the mission whenever the loop ran below 10 Hz. Recomputed from the flight logs over the mission alone the detector ran at
+**3.06 / 3.18 / 2.96 Hz** on `_follow2` / `_follow3` / `_city` - none clears 4.0
+(`citylife_follow`'s log is deleted). **The control loop clears 9.5 Hz in
 none of them** - and it did not in the reference flight either
 (`retarget_smooth`, 8.33 Hz, on the old level).
 
@@ -709,7 +711,9 @@ did.
 | `citylife_redcar_high` | cruise 12 m instead of 8 | 150 s, 16.8 m | 0.547 (0.487) | 20.0 (37.6) | 0.617 | 0.247 | **fail** |
 
 All 240 s after the start gate; `p0_violation_escape_rate` 0.0 in every one;
-control loop 9.31-9.37 Hz; detector 7.0-7.5 Hz except `_far` (4.27). "Outcome"
+control loop 9.31-9.37 Hz; detector ~~7.0-7.5 Hz except `_far` (4.27)~~
+**3.5-4.0 Hz on every one** (corrected 2026-09-29: the reported `det_hz` counted the
+start gate's inferences over mission time only). "Outcome"
 is the KPI file's verdict, and `_high` failed it on altitude (below). Scores are
 `track_truth` at the real 768 px width, instance-level (one subject), so the
 null is meaningful. None of it is KPI-grade: the topology is
@@ -1079,10 +1083,14 @@ including false detections 130-180 m away that re-seeded the estimate at its
 while the real car stood at a zebra 25 m away, and flew directly over it
 (0.7 m horizontally, 8 m up; no contact). The red-car mission in this level is
 now limited by **whose box it is**, not by what the controller does with it at
-a corner. A second confound: the three flights whose gate fired within 2 s of
+a corner. ~~A second confound: the three flights whose gate fired within 2 s of
 the simulator starting (the car happened to be passing) ran the detector at
 3.8-4.0 Hz against 6.9-7.5 for the rest - the level is still streaming in
-its first minutes.
+its first minutes.~~ *Retracted 2026-09-29:* there is no such confound. The
+"6.9-7.5" were the gate's minutes of inferences divided by mission time; over
+the mission alone every red-car flight ran its detector at 3.5-4.0 Hz, and the
+three quick-gate flights only looked different because they had no wait to
+inflate.
 
 ### The pedestrian
 
@@ -1161,9 +1169,201 @@ stop test that did not reproduce.
 - **The pedestrian ring binds only to the tracked subject**; 839 ticks with a
   different pedestrian inside 10 m went unguarded by design, and the policy
   has no rule for "any pedestrian".
-- The start gate can fire while the simulator is still streaming (3.8 Hz
-  detector); the runner should wait for the level to settle first.
+- ~~The start gate can fire while the simulator is still streaming (3.8 Hz
+  detector); the runner should wait for the level to settle first.~~ Retracted
+  2026-09-29: a `det_hz` artefact (see above), not streaming.
 - PedClose does not see a figure stepping onto the near half of the zebra at 3-4
   path points (review, rejected as low; documented instead).
 - `D:` filled up during this pass (a WSL disk image and a Steam update, not
   the project); frames are now written to `C:` through a junction.
+
+# Fifth pass, 2026-09-29 (evening): lights that change, a line behind the zebra, and people who wait
+
+Asked for: "the environment does not always look like real life" - specifically the
+traffic lights with the zebras, and how the pedestrians behave. Day-by-day record
+(Indonesian): `docs/WORKLOG.md`. The drone side of the same day is
+[FINDING-the-lock-that-could-not-let-go.md](FINDING-the-lock-that-could-not-let-go.md).
+
+## What the level had
+
+A read-only survey (`tools/citylife_mcp/inspect_signals.py`, output
+`docs/data/citylife_signals.json`) found **292 signal heads, every one its own
+StaticMeshActor**, whose lamps are material slots 1 and 2 of the mesh (slot 0 is the
+housing). The `*_b` lamp materials carry the walker pictogram, so B (198) and E (30)
+are pedestrian heads, A (30) and F (34) vehicle-style. Nothing switched them: every
+head showed red and green at once, and no car read any of them.
+
+Cars waiting at a junction stopped with their **front half on the zebra**: the
+give-way target `JEdge - 300` put the car's centre 1400 cm from the junction centre
+and its nose at 1170, inside the painted band at 800-1400. The pedestrians roamed:
+random 14 m hops, a pause wherever they stopped - on a zebra too - and no look at the
+cars.
+
+## Written in Python first, measured, then ported
+
+Three models came first, each with its own tests, so the Blueprint only had to mirror
+something already measured:
+
+- **`tools/citylife_signals.py`** - one fixed-time plan for every junction: green 20,
+  yellow 3, all-red 2 s per axis (a 50 s cycle), offsets `(11 i + 23 j) mod 50` so
+  neighbours do not switch in step. Walkers may start in the first 8 s of the
+  PARALLEL green, never while their road can be green.
+- **`tools/citylife_traffic_model.py`** - `UpdateEffSpeed` and `DriveTick` in Python,
+  legacy and with signals. 30 simulated minutes, all 24 cars, 3 / 10 / 30 fps:
+
+  | mode | RedViol | ZebraWait | MinGap | longest stand-still | Car_10 lap |
+  |---|---|---|---|---|---|
+  | signals | 0 / 0 / 0 | 0 s | 650 cm | 63 / 46 / 64 s | 248 s |
+  | legacy | - | 750 / 729 / 633 s | 356-638 cm | 93 / 89 / 88 s | 201 s |
+
+  The stop line is 1730 cm out (zebra edge 1400 + 100 + half a car 230). Several
+  rules in the brief failed when measured and were changed there, each documented in
+  the model: give-way counts oncoming cars only, the box-conflict test exempts the
+  platoon leader turning ahead, the keep-box-clear rule looks at the exit lane only
+  for a car slower than 150 cm/s (without the speed test five loop-B cars stood over
+  120 s), and a turner held for a whole green may "sneak" in the first 1.5 s of
+  yellow.
+- **`tools/citylife_peds.py`** - a pavement graph whose only road-crossing edges are
+  the zebras, 40 closed tours, and a WALK / WAIT / CROSS rule: wait at the kerb for the
+  walk phase AND a 4 s gap, cross without stopping. 300 s: WalkViol 0, GapViol 0,
+  ZebraIdleS 0, CarOverlap 0. The level only has five usable zebras, all around
+  junction (4100, 4100), so the graph is one crossing network plus island blocks.
+
+## In the level
+
+| | script | what it builds |
+|---|---|---|
+| lamps | `tools/citylife_mcp/signals.py` | `BP_SignalController`: a 0.25 s timer computes each of 258 heads' state from game time (the plan's arithmetic) and calls `SetMaterial` only on a change; yellow shows in the green position (the heads have two lamp slots); a head shows the axis of the junction leg it stands on |
+| cars | `tools/citylife_mcp/drive_signals.py` + `eff_signals.dsl` | `UpdateEffSpeed` ported node for node from the model; per car `JExit` / `JOff` from `apply_routes.py`; the other car's speed through a one-line `SpeedOf` function |
+| people | `tools/citylife_mcp/ped_walk.py` | per figure `Route` + `WOff`, `bUseNavMesh` false; `EventTick` as the state machine (walk, pause, wait, cross; a stuck figure skips a node) |
+
+Two DSL traps worth keeping: a Blueprint cannot read another instance's variable of
+its OWN class through the DSL (`Class|BPCityCar|GetCurSpeed` exists only in other
+classes, the self-class getter has no target pin), and a bool named `bUseNavMesh` is
+`Variables|Default|GetUseNavMesh` although `read_graph_dsl` prints `(|GetbUseNavMesh)`.
+
+## Measured in Simulate (~7 min of game time, ~3 fps in the editor)
+
+| counter | value |
+|---|---|
+| RedViol (a moving car's centre past its line-point during red) | **0** |
+| ZebraWait (stopped by a junction rule with the nose on the zebra) | **0** |
+| closest two cars | **650 cm** |
+| longest stand-still | 78 s |
+| stood inside a junction box | 0.7 s |
+| on-the-zebra emergency stops / above 50 cm/s | 1 / 1 |
+| lamp controller vs the plan, all 258 heads, three reads | **0 mismatches** |
+| pedestrians on routes / crossings started | 40 / 51 |
+| longest kerb wait | 41.7 s (model p90 43.6, max 69.9) |
+| figures standing on a zebra between reads | 0 |
+
+*Three of these checks could not fail: ZebraWait, the lamp comparison and the
+zebra count. See "Re-measured, 2026-09-30" below. The zebra count hid a real
+bug.*
+
+The first Simulate read RedViol 35. It was the counter, not the cars: a car standing
+exactly at its line flipped the sign of its distance to the line by millimetres. The
+counter now uses the model's 5 cm tolerance and counts only a moving car.
+
+`docs/img/citylife_signals_junction_4100_4100_low.png` shows it: cars stopped behind
+the zebras, a figure waiting at the kerb, a red lamp lit.
+
+## Re-measured, 2026-09-30: three checks that could not fail, and two pedestrian bugs
+
+A review of the checks above found three that could not report the fault they
+exist for:
+
+- **ZebraWait could never exceed 0.** It was tested inside the held branch,
+  where a car's front is always at least 50 cm short of the zebra; the one
+  rule that can leave a front on it (the box rule's late target) sets its
+  hold elsewhere. Now tested after both branches: 5 half-rate ticks in the
+  second Simulate, 0 in the later ones.
+- **The lamp check read only the slot the plan lights.** An undriven head
+  shows red AND green; it passed whenever the plan said red or green. Now
+  both slots are compared, and a head missing from the controller or never
+  updated is reported apart. Every run since: all sampled heads pass (43 of 43, then 33 of 33).
+- **"Standing on a zebra" compared positions between two reads.** A figure
+  can walk on a zebra and never stand. Now each read checks state and speed:
+  in the second Simulate it found **six figures on zebras in WALK**.
+
+**The six figures were real.** A Blueprint `bind` of a pure node is
+re-evaluated at every use. The graph read the kind of the point reached AFTER
+`SetIdx` had moved the index, so a figure arriving at its kerb took the EXIT's
+kind and walked across with no walk-phase and no gap test. The kind is now
+latched into a variable (`NKind`) before the index moves. The DSL evaluator
+in `tests/test_drive_signals_dsl.py` re-evaluates pure binds the same way, and
+a test runs the old graph into the bug. Next Simulate: 1 figure-read on a
+zebra not crossing in 6 reads, then 0 in 10.
+
+**Then the figures got lost.** Left running, the same Simulate read clean on
+every zebra counter at t = 1933 s, but 20 of 40 figures were in CROSS and the
+median figure had moved 1.8 m between reads. 25 of 40 were more than 5 m from
+their own route, frozen against building facades, some 55 m from the zebra
+they were "crossing". The stuck rule did it:
+
+1. A figure stalled for 3 s - two figures on the same node line meeting dead
+   head-on, which collision capsules cannot slide out of, or a post.
+2. It **skipped** to its next point. From off its line, that point was often
+   round a building corner: it stalled again and skipped again.
+3. At a kerb node the rule sent it to WAIT where it stood, tens of metres
+   from its zebra.
+4. In the walk phase it went to CROSS, straight at the exit, through a
+   building. CROSS had no stuck rule, so it stayed there.
+
+Now a stall within 300 cm of the point is arriving (a crowd at a kerb stands
+on the spot itself). Anywhere else the figure keeps its target and steps
+aside for 1 s, alternating sides, then tries again. After six detours it is
+set down on the point, so no figure can freeze for good. The index moves only
+at the point it names. Pavement nodes are also spread +-25 cm per figure so
+opposing streams do not meet dead head-on. The street mask allows no more:
+at +50 cm four nodes already leave it. `verify_peds.py` gained the check
+that was missing, `off_route`. On the frozen snapshot it reports 25 of 40.
+
+| after the fix | t = 676 s | t = 1972 s |
+|---|---|---|
+| figures off route | **0** (120 figure-reads) | **0** (120) |
+| set down after six detours | 0 | 0 |
+| detours | 210 | 553 |
+| crossings started | 100 | 294 |
+| median move between reads | 65.9 m | 69.9 m |
+| cars: RedViol / ZebraWait / pedestrian violations | 0 / 0 / 0 | 0 / 0 / 0 |
+
+Figures waited at kerbs, crossed and walked on for the whole 33 minutes. The
+cars stayed clean: RedViol 0, ZebraWait 0, no pedestrian violation, closest
+pair 650 cm, longest stand-still 56 s.
+
+**Still open: very long kerb waits at one zebra.** The longest kerb wait was
+194 s, and 8 of 40 figures waited over 100 s at least once. All four
+figures waiting at the time of the probe stood at the zebra where loop A
+turns north, at y = -3000 on junction (4100, -4100). The likely cause, inferred
+from where they stood and not yet measured: red lights bunch loop A's 13 cars
+into platoons. The platoon is released on the same green that
+opens that zebra's 8 s walk window, and here pedestrians yield to cars (the
+4 s gap), not the other way round, so the turning platoon uses up the window
+cycle after cycle. The real fix is pedestrian priority on the car side:
+turning cars wait for a figure WAITING in its walk phase. That changes a
+car safety rule (`eff_signals.dsl`) and is left for its own
+model-then-Simulate pass.
+
+## What it costs the drone
+
+Car_10 now stops at up to eight signalled junctions a lap, each wait up to ~27 s: its
+lap is ~248 s instead of ~201, so `run_citylife_follow.ps1` waits up to 330 s for the
+start. A car standing at a red light is also exactly the case the follow's "subject
+stopped" stand-off exists for.
+
+## Still open
+
+- Only 27 heads carry vehicle lamps, none at the junctions loops A-C drive through:
+  there the cars stop for a light only the pedestrian heads show. Placing vehicle heads
+  there is a level-art job.
+- The F heads (34 single lamps at kerb corners) keep their static material; which axis
+  each serves could not be decided from position.
+- Only five zebras are usable (the other two lead outside the nav bounds), so most
+  figures' tours never cross a road.
+- Figures yield to cars, not the other way round: at the zebra loop A turns across
+  (y = -3000, junction (4100, -4100)) a kerb wait can reach minutes (194 s). Pedestrian
+  priority for turning cars is the fix (see "Re-measured, 2026-09-30").
+- Pavement lanes are spread only +-25 cm: the street mask leaves the pavement at +50 cm
+  in places, so figures still meet near head-on and step aside (553 detours in 33 min,
+  none ending in a set-down).

@@ -347,6 +347,23 @@ def test_the_clamp_scales_the_pair_and_does_not_rotate_it():
         "the clamp rotated the velocity - scale the pair, do not clip the axes")
 
 
+def test_a_measurement_is_folded_in_at_its_capture_time():
+    """The control loop predicts to NOW every tick, then feeds a box captured
+    0.2-0.3 s earlier. The posterior must not have moved: the measurement
+    belongs at its capture time (2026-09-29; it used to be folded into a state
+    already advanced to the tick)."""
+    e = TargetState()
+    e.update(0.0, 0.0, 0.0, 0.0, 0.0, 20.0)
+    e.update(1.0, 0.0, 0.0, 0.0, 0.0, 23.0)
+    e.update(2.0, 0.0, 0.0, 0.0, 0.0, 26.0)          # ~3 m/s north
+    e.observe(2.8, 0.0, 0.0, 0.0)                    # the tick predicts ahead
+    assert e.t_last_update == 2.0
+    e.update(2.5, 0.0, 0.0, 0.0, 0.0, 27.5)          # captured at 2.5
+    assert e.t_last_update == 2.5
+    e.predict(2.5)
+    assert abs(e.x[0] - 27.5) < 0.6, e.x
+
+
 def test_no_ceiling_is_the_old_behaviour_exactly():
     """Every caller that predates the prior must be bit-for-bit unaffected."""
     a, b = TargetState(), TargetState(v_max=None)

@@ -1100,6 +1100,23 @@ class Shield:
         self._subject = (float(x), float(y))
         self._subject_class = subject_class
 
+    # Read-only views for the on-screen policy indicator (demo/policy_hud.py),
+    # so the HUD shows the stand-off and clearance the Shield is actually
+    # enforcing - the estimator's subject, not ground truth - rather than a
+    # second computation that could disagree with it.
+    @property
+    def subject(self) -> tuple[float, float] | None:
+        return self._subject
+
+    @property
+    def subject_class(self) -> str | None:
+        return self._subject_class
+
+    def clearance_at(self, x: float, y: float) -> float:
+        """Metres to the nearest mapped obstacle as the clearance rule reads it;
+        inf without a map."""
+        return self._distance_at(x, y)
+
     @staticmethod
     def _cap_sparing_radial(a: Action4D, ux: float, uy: float,
                             keep: float, cap: float) -> Action4D:

@@ -1,0 +1,32 @@
+{
+  "aspect_min": 0.9,
+  "bottom_max": 1.5,
+  "far_aspect_min": 1.4,
+  "far_h_px_max": 12.0,
+  "far_off_street": 2.0,
+  "frame_frac_max": 0.85,
+  "min_depression_deg": 3.0,
+  "near_far_m": 60.0,
+  "off_street_hard": 4.0,
+  "person_bottom_max": 1.5,
+  "person_off_street_hard": 3.0,
+  "score_min": 0.015,
+  "width_max": 8.0,
+  "width_min": 1.2,
+  "note": "Written by tools/replay_identity.py. Grid-searched to maximise the off-car not-OK rate subject to on-car not-OK <= 15 % and on-car HARD <= 3 %, on geometric labels from the capture-time pose. Pooled in-sample: off not-OK 86.4 %, off HARD 38.1 %, on not-OK 14.1 %, on HARD 0.3 %. Leave-one-flight-out pooled: off not-OK 86.5 %, on not-OK 15.2 %, on HARD 0.6 %. See demo/out/identity_replay/report.md.",
+  "tuned_on": [
+    "citylife_redcar_carpolicy",
+    "citylife_redcar_far",
+    "citylife_redcar_final1",
+    "citylife_redcar_final2",
+    "citylife_redcar_final3",
+    "citylife_redcar_final4",
+    "citylife_redcar_ground",
+    "citylife_redcar_high",
+    "citylife_redcar_pedpolicy",
+    "citylife_redcar_trail",
+    "citylife_redcar_trail2",
+    "citylife_redcar_trail3"
+  ],
+  "hash": "567a2c79dc53"
+}

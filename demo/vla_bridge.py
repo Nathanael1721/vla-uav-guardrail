@@ -103,9 +103,10 @@ yaw_gain 1.2 a 15 deg error commands 0.314 rad/s and a 1 deg error commands
 0.021 rad/s. The phrase path has three levels inside the FOV and no gradient at
 all within a level. The resulting deadband, at hfov 90 and W = 400:
 
-    |bearing| <= 15 deg  ->  |cx - W/2| <= W/6 = 66.7 px
+    |bearing| <= 15 deg  ->  |cx - W/2| <= f*tan(15 deg) = 53.6 px
+                             (W/6 = 66.7 px under the pre-2026-09-29 linear map)
 
-The target can traverse 133 px — one third of the frame width — with the
+The target can traverse 107 px — about a quarter of the frame width — with the
 commanded action completely unchanged. At 20 m range that is 20*tan(15deg) =
 5.4 m of lateral movement before the command moves at all, which is also about
 one inference period of travel for a 2 m/s car. Static targets never leave the
@@ -311,8 +312,10 @@ def bearing_from_box(det, hfov_deg: float = DEFAULT_HFOV_DEG) -> float:
     together over a sweep of cx and hfov, so a change to one fails on the other.
     """
     cx, _cy, _bw, _bh, _s, W, _H = det[:7]
-    off = (cx - W / 2) / (W / 2)                 # -1 left .. +1 right
-    return math.radians(hfov_deg / 2.0) * off
+    # Pinhole, like servo() since 2026-09-29 (demo/camera_model.py). Written
+    # out rather than imported, for the same import-graph reason as before.
+    f = (W / 2.0) / math.tan(math.radians(hfov_deg) / 2.0)
+    return math.atan((cx - W / 2.0) / f)
 
 
 class VLABridge:
@@ -399,16 +402,23 @@ class VLABridge:
     def deadband_px(self, img_w: int) -> float:
         """Pixel half-width of the straight-ahead band: no command change inside.
 
-        At hfov 90 and W = 400 this is 66.7 px, so the target sweeps 133 px —
-        a third of the frame — with the commanded action bit-identical. servo()
-        would have moved the yaw command continuously across the same span.
+        At hfov 90 and W = 400 this is 53.6 px (f*tan 15 deg; 66.7 px under the
+        linear map used before 2026-09-29), so the target sweeps 107 px - about
+        a quarter of the frame - with the commanded action bit-identical.
+        servo() would have moved the yaw command continuously across the same
+        span.
 
         Clamped at W/2: a narrow FOV or a gain below 1 can put the whole frame
         inside the band, and the honest report of that is "the entire image",
         not a pixel count wider than the image.
         """
-        half = self.max_bearing_deg
-        return min(img_w / 2.0, img_w / 2.0 * (15.0 / half))
+        # Pinhole since 2026-09-29, like bearing_from_box: the band edge is the
+        # column whose bearing, times the gain, reaches 15 deg.
+        lim_raw = 15.0 / max(1e-9, self.bearing_gain)
+        if lim_raw >= self.hfov_deg / 2.0:
+            return img_w / 2.0
+        f = (img_w / 2.0) / math.tan(math.radians(self.hfov_deg) / 2.0)
+        return min(img_w / 2.0, f * math.tan(math.radians(lim_raw)))
 
     def phrase_for(self, det) -> str | None:
         """Detection -> compass phrase, or None when there is no detection.
