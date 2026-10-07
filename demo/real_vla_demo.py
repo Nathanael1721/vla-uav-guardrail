@@ -69,8 +69,10 @@ index, the state at capture and the raw 7-DoF action. `vla_run.json` adds what a
 re-run of the model needs and the step lines do not carry: model id, unnorm key,
 the image preprocessing and the library versions. With the frames kept beside
 it, a run can be replayed offline against a different prompt — which is how the
-CSP's effect on the model can be measured on identical frames (that replay
-tool, tools/prefix_eval.py, is not written yet).
+CSP's effect on the model can be measured on identical frames:
+tools/prefix_eval.py replays a run's kept frames under the off, csp and a
+length-matched neutral prompt (tested with stand-in models; the GPU run on
+recorded frames has not been made yet).
 
 What `--csp on` does NOT show by itself: base OpenVLA was never trained on rule
 text, so whether the sentences change its actions at all is the measurement this
@@ -96,6 +98,20 @@ Run (vla-real env, model downloaded, AirSim NH running):
     python demo/real_vla_demo.py --csp on --tag real_vla_csp
 Inspect the exact prompt without the model or the sim (tokenizer file only):
     python demo/real_vla_demo.py --csp on --print-prompt
+
+A STORED PARAPHRASE AS THE INSTRUCTION (--paraphrase-seed / --paraphrase-index)
+
+The per-paraphrase robustness KPI (WP4) needs the pilot to read a paraphrase
+instead of the canonical wording, traceably. `--paraphrase-index i` flies item i
+of the stored set for `--instruction` (experiments/paraphrases/, served through
+guardrail.paraphraser so every item is re-validated against the source);
+`--paraphrase-seed s` flies the first item of the seed-s draw. Only items of
+form `verb_phrase` are flown by default: OpenVLA's frame is "What action should
+the robot take to {instruction}?", and an `utterance` ("Please fly forward,
+...") would make the run measure a grammar mismatch as well as the rewording.
+`--paraphrase-allow-utterance` flies one anyway and records the confound. The
+record (`Paraphrase.to_record()` plus `form`) goes into vla_run.json beside the
+canonical instruction. Without either flag the instruction is flown as typed.
 """
 from __future__ import annotations
 
@@ -118,7 +134,7 @@ from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
 from guardrail.compiler import (DEFAULT_BUDGET_TOKENS,              # noqa: E402
                                 ConstraintCompiler, Mission)
 from guardrail.csp import (CSP, CSPBudgetExceeded,                  # noqa: E402
-                           OpenVLATokenCounter, csp_hash,
+                           OpenVLATokenCounter, csp_content_hash, csp_hash,
                            openvla_token_counter)
 from guardrail.frames import from_body                              # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
@@ -204,6 +220,53 @@ def compile_flight_csp(policy: Policy, mission: Mission, now: datetime | None = 
     """
     return ConstraintCompiler(policy).compile_csp(mission, now=now,
                                                   budget_tokens=budget_tokens)
+
+
+def paraphrased_instruction(instruction: str, *, seed: int | None = None,
+                            index: int | None = None, store_dir=None,
+                            allow_utterance: bool = False) -> tuple[str, dict | None]:
+    """(the instruction to fly, the paraphrase record or None).
+
+    No seed and no index: the instruction as typed, record None. Otherwise a
+    stored paraphrase of it, drawn through guardrail.paraphraser.paraphrase
+    (so it is validated against the source on every use): item `index` of the
+    stored set, or the first item of the `seed` draw. A non-`verb_phrase`
+    item is refused unless `allow_utterance`, because OpenVLA's question frame
+    expects a verb phrase (see the module docstring). Raises
+    paraphraser.UnknownSource when no stored set covers the instruction: a run
+    asked to fly a paraphrase never falls back to the canonical text.
+    """
+    if seed is None and index is None:
+        return instruction, None
+    from guardrail import paraphraser as P
+    src = P.normalise_source(instruction)
+    size = P.get_backend("stored", store_dir).size(src)
+    draw = P.paraphrase(src, n=size, seed=0 if seed is None else seed,
+                        backend="stored", store_dir=store_dir)
+    if index is not None:
+        hit = [pp for pp in draw if pp.index == index]
+        if not hit:
+            raise ValueError(f"--paraphrase-index {index}: the stored set for "
+                             f"{src!r} has indices {sorted(pp.index for pp in draw)}")
+        pick = hit[0]
+    else:
+        ok = [pp for pp in draw
+              if allow_utterance or pp.provenance.get("form") == "verb_phrase"]
+        if not ok:
+            raise ValueError(f"the stored set for {src!r} has no verb_phrase item")
+        pick = ok[0]
+    form = pick.provenance.get("form")
+    if form != "verb_phrase" and not allow_utterance:
+        raise ValueError(
+            f"stored paraphrase {pick.index} of {src!r} is form {form!r}, not "
+            f"'verb_phrase': in OpenVLA's 'What action should the robot take to "
+            f"...?' frame it would test grammar as well as wording. Pick a "
+            f"verb_phrase item, or pass --paraphrase-allow-utterance to record "
+            f"the confound.")
+    rec = dict(pick.to_record(), form=form,
+               grammar_confound=form != "verb_phrase",
+               store_file=pick.provenance.get("store_file"))
+    return pick.text, rec
 
 
 def build_openvla_prompt(instruction: str, csp: str | None = None) -> str:
@@ -312,6 +375,10 @@ def prompt_record(instruction: str, policy: Policy, csp: CSP | None,
         "csp_tokens": None,             # CSP text tokenized alone, no BOS
         "csp_overhead_tokens": None,    # prompt(on) - prompt(off): in-context cost
         "csp_hash": None if csp is None else csp_hash(csp),
+        # Every CSP field but the issue stamp. This demo compiles without a
+        # clock, so `issued_at` (and with it csp_hash) differs between two runs
+        # of the same flight; the content hash is what matches them.
+        "csp_content_hash": None if csp is None else csp_content_hash(csp),
         "csp_issued_at": None if csp is None else csp.issued_at,
         "csp_file": None,               # set once the CSP is written beside the run
         # The compiler's own accounting (its counter, its budget), and what it
@@ -849,6 +916,14 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--no-frames", action="store_true",
                     help="do not keep the camera frames (the step log still "
                          "records frame index, state and raw action)")
+    ap.add_argument("--paraphrase-seed", type=int, default=None,
+                    help="fly the first verb_phrase item of this seed's draw from "
+                         "the stored paraphrase set of --instruction")
+    ap.add_argument("--paraphrase-index", type=int, default=None,
+                    help="fly item N of the stored paraphrase set of --instruction")
+    ap.add_argument("--paraphrase-allow-utterance", action="store_true",
+                    help="allow a non-verb_phrase item (the grammar confound is "
+                         "recorded)")
     ap.add_argument("--print-prompt", action="store_true",
                     help="print the exact prompt record and exit: no model, no sim "
                          "(reads OpenVLA's tokenizer.json only, if present)")
@@ -857,10 +932,13 @@ def main(argv: list[str] | None = None) -> int:
 
     policy = load_policy(args.policy)
     mission = ConstraintCompiler(policy).parse_command(DEFAULT_MISSION)
+    instruction, para = paraphrased_instruction(
+        args.instruction, seed=args.paraphrase_seed, index=args.paraphrase_index,
+        allow_utterance=args.paraphrase_allow_utterance)
 
     # PREFLIGHT, before the multi-minute model load and before anything is
     # written: compile the CSP, build and count the prompt, refuse if it fails.
-    prompts = FlightPrompt(args.instruction, policy, mission, csp_on,
+    prompts = FlightPrompt(instruction, policy, mission, csp_on,
                            tokenizer=load_openvla_tokenizer(),
                            csp_budget=args.csp_budget)
     prec, refusal = check_prompt(prompts)
@@ -868,6 +946,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.print_prompt:
         shown = dict(prec) if prec is not None else {"csp": args.csp}
         shown["refused"] = refusal
+        shown["paraphrase"] = para
         print(json.dumps(shown, indent=2, ensure_ascii=False))
         return _PRINT_EXIT[None if refusal is None else refusal["kind"]]
 
@@ -890,7 +969,9 @@ def main(argv: list[str] | None = None) -> int:
     shield = Shield(policy, lookahead_s=3.0, dt=0.5)    # no clock: see CSP_CLOCK
     audit = AuditLogger(out / "audit.jsonl", policy)   # the POLICY, so a hot-applied rule restamps the hash
     print(f"[policy] {policy.policy_id} {policy.policy_hash}")
-    print(f"[task]   instruction = {args.instruction!r} | csp {args.csp}")
+    print(f"[task]   instruction = {instruction!r} | csp {args.csp}"
+          + ("" if para is None else
+             f" | paraphrase {para['paraphrase_id']} ({para['form']}) of {args.instruction!r}"))
 
     # load the model BEFORE opening the control connection (load takes minutes)
     vla = OpenVLABackend(prompts, scale=args.scale, out=out, frames_dir=frames_dir)
@@ -915,6 +996,9 @@ def main(argv: list[str] | None = None) -> int:
         "lateral_sign": LATERAL_SIGN,
         "dv_h": args.dv_h, "dv_z": args.dv_z, "tick_s": TICK, "max_s": MAX_S,
         "policy_path": args.policy, "instruction": args.instruction,
+        # What OpenVLA was actually given, and where it came from: equal to
+        # `instruction` unless a stored paraphrase was flown.
+        "instruction_flown": instruction, "paraphrase": para,
         "mission": mission.model_dump(), "frames_dir": frames_dir, "csp_dir": csp_dir,
         "csp_clock": CSP_CLOCK_NOTE, "csp_budget_tokens": args.csp_budget,
         "preprocess": preprocess_note(libs.get("Pillow")),
@@ -1003,7 +1087,7 @@ def main(argv: list[str] | None = None) -> int:
         ax.set_xlabel("East (m)")
         ax.set_ylabel("North (m)")
         ax.set_title(f"REAL VLA (OpenVLA-7B) through the guardrail | CSP {args.csp}\n"
-                     f"instruction: {args.instruction!r}\n"
+                     f"instruction: {instruction!r}\n"
                      f"NFZ time {nfz_s:.1f}s | shield interventions {n_touched}")
         ax.legend(loc="upper left", fontsize=9)
         ax.set_aspect("equal")

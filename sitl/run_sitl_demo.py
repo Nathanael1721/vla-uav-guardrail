@@ -28,6 +28,25 @@ bundle.
 
 Frames note: SITL has no camera — that stays AirSim's job (perception rail vs
 functional rail, same split the grant makes).
+
+Records (since 2026-10-06, the same as the ROS 2 rail): every row carries
+`unsafe` / `unsafe_rules`, policy_hash + generation, the Shield's own time
+(shield_ms) and the declared subject; every policy generation and its CSP is
+written (guardrail.replay.EpisodeRecord), the audit log is fresh per episode,
+the autopilot's own version (AUTOPILOT_VERSION) goes into metrics.json, the
+seed is an argument, and with the Shield on the escalation FSM requests its
+modes through pymavlink. This rail stays world-frame in-process (StubVLA and
+the Shield share one process); the grant's body-frame ROS interface is
+sitl/ros2_shield_node.py.
+
+Since 2026-10-07, as on the ROS 2 rail: the Shield looks 5 s ahead at 0.1 s
+(the grant's 50 poses); every row carries the episode id and `flown`; the
+episode ends with a mission_end event; the GeoFence parameters are read back
+from the autopilot (FENCE_ALT_MAX raised above the policy's ceiling if
+needed); a KPI-grade run whose replay bundle is not signed is demoted; and
+this rail runs the one escalation FSM, its Shield built without one
+(guardrail.replay.rail_shield), with each audit record carrying the rail's FSM
+verdict and the episode id (guardrail.replay.audit_tick).
 """
 from __future__ import annotations
 
@@ -42,25 +61,47 @@ from pymavlink import mavutil
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "sitl"))
 
-from guardrail import AuditLogger, Shield, State                       # noqa: E402
+from guardrail import AuditLogger, State                               # noqa: E402
 from guardrail.bundle import load_for_flight                           # noqa: E402
 from guardrail.compiler import ConstraintCompiler                      # noqa: E402
+from guardrail.fsm import (FAILSAFE_STATES, EscalationFSM, FSMConfig,  # noqa: E402
+                           tick_input_from_decision)
 from guardrail.geometry import fence_polygon                           # noqa: E402
 from guardrail.kpi import compute_from_dir                             # noqa: E402
 from guardrail.manifest import (TOPOLOGY_ARDUPILOT_SITL,               # noqa: E402
+                                ardupilot_version_from_mavlink,
                                 build_manifest, is_kpi_grade,
                                 sim_speedup_from_mavlink)
 from guardrail.models import (AltitudeEnvelope, PolygonFence,
                               SubjectStandoff, XY)        # noqa: E402
-from guardrail.replay import verify_replay, write_replay               # noqa: E402
+from guardrail.models import Action4D                                  # noqa: E402
+from guardrail.replay import (EpisodeRecord, audit_tick,               # noqa: E402
+                              episode_row_fields, flown_fields,
+                              kpi_evidence_grade, rail_shield,
+                              verify_replay, write_replay)
 from guardrail.vla_stub import StubVLA                                 # noqa: E402
+from mavlink_adapter_node import (fence_alt_plan,                      # noqa: E402
+                                  policy_ceiling_m)
 
 from shapely.geometry import Point                                     # noqa: E402
 
 TICK = 0.1
 MAX_S = 120
 REACH_M = 2.0
+# The grant's Safety Shield horizon: 5 s at 10 Hz, 50 future poses (3 s at
+# 0.5 s until 2026-10-07), as on the ROS 2 rail.
+LOOKAHEAD_S = 5.0
+LOOKAHEAD_DT_S = 0.1
+FENCE_PARAMS = ("FENCE_ENABLE", "FENCE_ALT_MAX", "FENCE_ACTION", "FENCE_TYPE",
+                "AVOID_ENABLE")
+# The FSM's theta horizon on this rail: the velocity proxy, as on the ROS 2
+# rail, until shield.py reports a per-operator magnitude (see
+# docs/DESIGN-escalation-fsm.md). At 0.1 s theta cannot fire here.
+PROXY_HORIZON_S = 0.1
+# After the FSM entered RTL / Land, how long to keep recording.
+FAILSAFE_GRACE_S = 40.0
 
 DYNAMIC_AT_S = 8.0
 DYNAMIC_FENCE = PolygonFence(
@@ -88,6 +129,55 @@ class MavlinkAdapter:
         self.m.mav.request_data_stream_send(
             self.m.target_system, self.m.target_component,
             mavutil.mavlink.MAV_DATA_STREAM_ALL, 10, 1)
+
+    def read_param(self, name: str, timeout: float = 3.0) -> float | None:
+        """One autopilot parameter, as the autopilot holds it, or None."""
+        self.m.mav.param_request_read_send(self.m.target_system,
+                                           self.m.target_component,
+                                           name.encode(), -1)
+        t0 = time.time()
+        while time.time() - t0 < timeout:
+            msg = self.m.recv_match(type="PARAM_VALUE", blocking=True,
+                                    timeout=timeout)
+            if msg is not None and msg.param_id.strip("\x00") == name:
+                return float(msg.param_value)
+        return None
+
+    def set_param(self, name: str, value: float) -> float | None:
+        """Set a REAL32 parameter and return the value read back."""
+        self.m.mav.param_set_send(self.m.target_system, self.m.target_component,
+                                  name.encode(), float(value),
+                                  mavutil.mavlink.MAV_PARAM_TYPE_REAL32)
+        time.sleep(0.5)
+        return self.read_param(name)
+
+    def autopilot_fence(self, policy, cruise_alt_m: float) -> dict:
+        """The GeoFence backstop as the autopilot holds it; FENCE_ALT_MAX is
+        raised above the policy's ceiling if it sits below it (the same rule
+        as the ROS 2 rail, sitl/mavlink_adapter_node.fence_alt_plan)."""
+        vals = {n: self.read_param(n) for n in FENCE_PARAMS}
+        ceiling, src = policy_ceiling_m(policy, cruise_alt_m)
+        plan = fence_alt_plan(ceiling, vals["FENCE_ALT_MAX"])
+        raised_from = None
+        # SITL only (SIM_SPEEDUP answers): a hardware autopilot's GeoFence is
+        # GCS-set and a change would persist; there it is recorded, not fixed.
+        is_sitl = (self.read_param("SIM_SPEEDUP") or 0.0) > 0.0
+        if plan["raise_to"] is not None and vals["FENCE_ALT_MAX"] is not None \
+                and is_sitl:
+            got = self.set_param("FENCE_ALT_MAX", plan["raise_to"])
+            if got is not None:
+                raised_from, vals["FENCE_ALT_MAX"] = vals["FENCE_ALT_MAX"], got
+        enabled = vals["FENCE_ENABLE"]
+        return {**vals, "source": "PARAM_VALUE (pymavlink)",
+                "policy_ceiling_m": ceiling, "policy_ceiling_source": src,
+                "fence_alt_max_raised_from": raised_from,
+                "raise_allowed": is_sitl,
+                "backstop_active": None if enabled is None else enabled >= 1.0,
+                "stricter_than_policy": (
+                    None if vals["FENCE_ALT_MAX"] is None or ceiling is None
+                    else not fence_alt_plan(ceiling, vals["FENCE_ALT_MAX"])["ok"]),
+                "note": "this rail uploads no polygons; only the altitude "
+                        "fence applies (the ROS 2 rail uploads the zones)"}
 
     def _ack(self, cmd: int, timeout: float = 3.0) -> bool:
         t0 = time.time()
@@ -204,6 +294,13 @@ def main() -> int:
     ap.add_argument("--subject-class", default="pedestrian",
                     help="which subject_standoff rule binds (default pedestrian)")
     ap.add_argument("--url", default="tcp:127.0.0.1:5760")
+    ap.add_argument("--seed", type=int, default=0,
+                    help="recorded in the manifest (WP4-12). StubVLA draws no "
+                         "random numbers.")
+    ap.add_argument("--fsm-config", default=None,
+                    help="escalation FSM thresholds YAML (guardrail.fsm.FSMConfig)")
+    ap.add_argument("--no-fsm", action="store_true",
+                    help="do not run the escalation FSM (the pre-2026-10-06 rail)")
     ap.add_argument("--tag", default=None)
     args = ap.parse_args()
 
@@ -223,7 +320,17 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     compiler = ConstraintCompiler(policy)
     mission = compiler.parse_command(args.command)
-    (out / "prompt.yaml").write_text(compiler.build_prompt(mission), encoding="utf-8")
+    # The episode record FIRST: it moves an earlier run's audit and
+    # generation files aside, and writes generation 0's policy and CSP.
+    rec = EpisodeRecord(out, policy, mission, lookahead_s=LOOKAHEAD_S)
+    try:
+        (out / "prompt.yaml").write_text(compiler.build_prompt(mission),
+                                         encoding="utf-8")
+    except ImportError as exc:
+        # ~/venv-ap has no jinja2 (sitl/setup_sitl.sh pins it); say so in the
+        # record instead of dying before take-off.
+        rec.event("prompt_failed", error=f"{type(exc).__name__}: {exc}")
+        print(f"[compiler] prompt.yaml not written: {exc}")
     print(f"[compiler] target=({mission.target_x:.0f},{mission.target_y:.0f}) "
           f"alt={mission.cruise_alt_m:.0f}m speed_pref={mission.speed_pref_mps:.0f}m/s")
     print(f"[policy]   {policy.policy_id}  {policy.policy_hash}")
@@ -231,11 +338,14 @@ def main() -> int:
           f"signature {policy_source['signature']}")
 
     vla = StubVLA(mission)
-    shield = Shield(policy, lookahead_s=3.0, dt=0.5)
+    # No escalation FSM inside the Shield: this rail runs THE FSM below, fed
+    # with the autopilot's state (guardrail.replay.rail_shield).
+    shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
     # The POLICY, not a snapshot of its hash. This rail hot-applies a fence
     # mid-flight, and AuditLogger reads the hash live so records written after
     # that carry the generation that was actually in force.
-    audit = AuditLogger(out / "audit.jsonl", policy)
+    audit = AuditLogger(out / "audit.jsonl", policy,
+                        episode_id=str(rec.episode_id))
 
     subject = None
     if args.subject:
@@ -256,6 +366,23 @@ def main() -> int:
                   f"'{args.subject_class}' in this policy - the ring is inert")
 
     link = MavlinkAdapter(args.url)
+    # The autopilot's own name for itself (ARCH-31), read before take-off.
+    autopilot = ardupilot_version_from_mavlink(link.m)
+    print(f"[mavlink]  autopilot: "
+          f"{autopilot['ardupilot_version'] if autopilot else 'NOT READ'}")
+    rec.event("autopilot_version", **(autopilot or {"ardupilot_version": None}))
+    ap_fence = link.autopilot_fence(policy, mission.cruise_alt_m)
+    rec.event("autopilot_fence", **ap_fence)
+    print(f"[fence]    ENABLE {ap_fence['FENCE_ENABLE']}  ALT_MAX "
+          f"{ap_fence['FENCE_ALT_MAX']}"
+          + (f" (raised from {ap_fence['fence_alt_max_raised_from']})"
+             if ap_fence["fence_alt_max_raised_from"] is not None else "")
+          + f"  AVOID_ENABLE {ap_fence['AVOID_ENABLE']}")
+    fsm = (EscalationFSM(FSMConfig.from_yaml(args.fsm_config) if args.fsm_config
+                         else FSMConfig())
+           if shield_on and not args.no_fsm else None)
+    fsm_fault = None
+    failsafe_t = None
     link.prepare(mission.cruise_alt_m)
     print(f"[flight]   shield={'ON' if shield_on else 'OFF'} — mission start")
 
@@ -266,6 +393,7 @@ def main() -> int:
     t0 = time.time()
     tick = 0
     reached = False
+    end_why = "time cap"
     while time.time() - t0 < MAX_S:
         tick += 1
         now = time.time() - t0
@@ -274,7 +402,9 @@ def main() -> int:
             continue
 
         if args.dynamic and spawn_t is None and now >= DYNAMIC_AT_S:
-            shield.hot_apply(DYNAMIC_FENCE)
+            # As a dynamic_nfz where the Shield enforces the grant's
+            # mid-flight update model (guardrail.replay.EpisodeRecord.apply_zone).
+            rec.apply_zone(shield, DYNAMIC_FENCE, t=now)
             # No restamp needed: AuditLogger holds the policy and reads the hash
             # at log time. Assigning here raised AttributeError once policy_hash
             # became a read-only property, which killed every --dynamic run at
@@ -286,6 +416,7 @@ def main() -> int:
         dist = math.hypot(mission.target_x - state.x, mission.target_y - state.y)
         if dist < REACH_M:
             reached = True
+            end_why = "target reached"
             print(f"[flight]   target reached at tick {tick} (t={now:.1f}s)")
             break
 
@@ -300,7 +431,41 @@ def main() -> int:
         # clean - the opposite of what the A/B is for.
         decision = shield.filter(state, raw)
         emitted = decision.emitted if shield_on else raw
-        audit.log(tick, decision)
+        extra = episode_row_fields(shield, state, policy, rec.episode_id)
+
+        # Escalation FSM (Shield on only); modes through pymavlink.
+        fsm_out, setpoint = None, "pass"
+        if fsm is not None and fsm_fault is None:
+            try:
+                in_failsafe = fsm.state in FAILSAFE_STATES
+                landed = in_failsafe and not link.m.motors_armed()
+                fsm_out = fsm.step(tick_input_from_decision(
+                    now, decision, policy, horizon_s=PROXY_HORIZON_S,
+                    home_reached=(in_failsafe
+                                  and math.hypot(state.x, state.y) < REACH_M),
+                    landed=landed,
+                    stop_illegal=shield.state_is_unsafe(state)))
+                setpoint = fsm_out.setpoint
+                if fsm_out.transition:
+                    rec.event("fsm_transition", t=now,
+                              **{k: fsm_out.record[k] for k in (
+                                  "fsm_state_before", "fsm_state_after",
+                                  "transition", "edge", "reason")})
+                if fsm_out.set_mode:
+                    link.m.set_mode(link.m.mode_mapping()[fsm_out.set_mode])
+                    rec.event("mode_request", t=now, mode=fsm_out.set_mode,
+                              why=fsm_out.reason)
+                if fsm_out.state in FAILSAFE_STATES and failsafe_t is None:
+                    failsafe_t = now
+            except ValueError as exc:
+                fsm_fault = str(exc)
+                rec.event("fsm_fault", t=now, error=fsm_fault)
+                link.m.set_mode(link.m.mode_mapping()["LOITER"])
+                print(f"[fsm]      input refused, LOITER: {exc}")
+        if fsm_fault is not None:
+            setpoint = "none"
+        # After the FSM stepped, with its verdict: one state machine on record.
+        audit_tick(audit, tick, decision, fsm_out=fsm_out, fsm_fault=fsm_fault)
         if shield_on and decision.touched:
             n_touched += 1
             n_braked += int(decision.braked)
@@ -324,31 +489,57 @@ def main() -> int:
             "raw": raw.model_dump(),
             "emitted": emitted.model_dump(),
             "violations": [v.model_dump() for v in decision.violations],
-            # The check on what was FLOWN - what guardrail/kpi.py counts a P0
-            # escape from. Without it every P0 tick scores "not measurable" and
-            # the rate falls back to an inference that cannot return non-zero.
+            # `flown` and `emitted_violations`: what was FLOWN and the check
+            # on it - what guardrail/kpi.py counts a P0 escape from. Without
+            # it every P0 tick scores "not measurable" and the rate falls back
+            # to an inference that cannot return non-zero.
             #
-            # Which list depends on the arm of the A/B:
+            # guardrail.replay.flown_fields decides, the same on both rails:
             #   shield ON  -> `decision.emitted` flew, so its re-check applies.
             #   shield OFF -> `raw` flew unmodified, so the violations already
             #                 found on `raw` ARE the flown action's violations.
             #                 That is what earns the control run its escape rate
             #                 rather than scoring it clean.
-            "emitted_violations": [
-                v.model_dump() for v in
-                (decision.emitted_violations if shield_on else decision.violations)
-            ],
+            #   Brake      -> the zero action flew; standing still is checked.
+            #   none       -> nothing was sent (a fault): nothing escaped.
+            **flown_fields(shield, state, decision, shield_on=shield_on,
+                           setpoint=setpoint),
             "repairs": [r.model_dump() for r in decision.repairs] if shield_on else [],
             "braked": bool(shield_on and decision.braked),
             "touched": touched_now,
+            "setpoint": setpoint,
+            **extra,
+            **({"tgt_x": subject[0], "tgt_y": subject[1]} if subject else {}),
+            **({"fsm_state_before": fsm_out.before.value,
+                "fsm_state_after": fsm_out.state.value,
+                "fsm_edge": fsm_out.edge, "set_mode": fsm_out.set_mode,
+                "failsafe": bool(fsm_out.transition
+                                 and fsm_out.state in FAILSAFE_STATES)}
+               if fsm_out is not None else {}),
         })
-        link.send_velocity(emitted.vx, emitted.vy, emitted.vz_up, emitted.yaw_rate)
+        flown = {"pass": emitted, "brake": Action4D(), "none": None}[setpoint]
+        if flown is not None:
+            link.send_velocity(flown.vx, flown.vy, flown.vz_up, flown.yaw_rate)
+        if fsm is not None and (fsm.terminal or (
+                failsafe_t is not None and now - failsafe_t > FAILSAFE_GRACE_S)):
+            end_why = "escalation FSM ended the mission"
+            print(f"[fsm]      {fsm.state.value}: the autopilot has the aircraft")
+            break
         time.sleep(TICK)
 
-    link.land_disarm()
+    # The episode is complete only with this event (guardrail.replay refuses
+    # an episode without it as unfinished).
+    rec.end(end_why, t=time.time() - t0)
+    if fsm is None or not (fsm.terminal or fsm.state in FAILSAFE_STATES):
+        link.land_disarm()      # mission end, not a fail-safe
 
     # ---- KPI ----
-    fences = [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
+    # Every keep-out zone with vertices, incl. the dynamic_nfz the hot-applied
+    # zone becomes where the Shield enforces the grant's update model.
+    fences = [(f, fence_polygon(f)) for f in policy.constraints
+              if getattr(f, "type", "") in ("polygon_fence", "circle_fence",
+                                            "dynamic_nfz")
+              and getattr(f, "vertices", None)]
 
     def _active(f, p) -> bool:
         if f.id == DYNAMIC_FENCE.id:
@@ -395,8 +586,14 @@ def main() -> int:
     # expressed in the other's units.
     metrics = {
         "tag": tag,
+        "episode_id": rec.episode_id,
         "topology": TOPOLOGY_ARDUPILOT_SITL,
         "ticks": len(rows),
+        "ticks_flown": sum(1 for r in rows if r.get("flown")),
+        "ticks_not_flown": sum(1 for r in rows if r.get("flown") is False),
+        "shield_lookahead": {"horizon_s": LOOKAHEAD_S, "dt_s": LOOKAHEAD_DT_S,
+                             "poses": int(round(LOOKAHEAD_S / LOOKAHEAD_DT_S))},
+        "autopilot_fence": ap_fence,
         "shield": args.shield,
         "reached": reached,
         "frac_within_30m": 1.0 if reached else 0.0,
@@ -408,6 +605,18 @@ def main() -> int:
         "alt_violation_s": round(alt_seconds, 2),
         "interventions": n_touched,
         "brakes": n_braked,
+        "seed": args.seed,
+        "shield_ms_max": max((r["shield_ms"] for r in rows
+                              if isinstance(r.get("shield_ms"), (int, float))),
+                             default=None),
+        "fsm": (dict(fsm.summary(), fault=fsm_fault,
+                     theta_basis={"source": "velocity proxy",
+                                  "horizon_s": PROXY_HORIZON_S})
+                if fsm is not None else None),
+        "generations": rec.generations,
+        # The autopilot as it named itself, beside the manifest (ARCH-31).
+        "autopilot": autopilot,
+        "ardupilot_version": autopilot["ardupilot_version"] if autopilot else None,
         # Beside the manifest, which is the grant's six fields and stays so.
         "policy_source": policy_source,
     }
@@ -421,7 +630,7 @@ def main() -> int:
     manifest = build_manifest(
         policy_hash=policy.policy_hash,
         model_id="guardrail.vla_stub.StubVLA",
-        seed=0,
+        seed=args.seed,
         scene_path=None,
         topology=TOPOLOGY_ARDUPILOT_SITL,
         sim_speedup=sim_speedup_from_mavlink(link.m),
@@ -438,23 +647,42 @@ def main() -> int:
     kpi["kpi_grade_reasons"] = why
     kpi["manifest"] = manifest
     kpi["policy_source"] = policy_source
-    (out / "kpi.json").write_text(json.dumps(kpi, indent=2), encoding="utf-8")
+    kpi["episode_id"] = rec.episode_id
+    kpi_path = out / "kpi.json"
+    kpi_path.write_text(json.dumps(kpi, indent=2), encoding="utf-8")
     kpi_ok = kpi["p0_violation_escape_rate"] == 0.0
 
     # These are the runs whose numbers are contractually reportable, so these
     # are the ones that most need to stay re-derivable. Packaged here, while the
     # policy that governed the flight is still the object in memory.
+    rb_path = out / f"{out.name}.replay.tar.gz"
     try:
-        rb = write_replay(out, policy, out / f"{out.name}.replay.tar.gz",
-                          changelog=f"sitl {out.name}",
+        rb = write_replay(out, policy, rb_path, changelog=f"sitl {out.name}",
                           policy_source=policy_source)
-        ok, why = verify_replay(rb)
+        # NOT `why`: that name holds the KPI-grade reasons, which report.md
+        # and the [kpi] line print below. Reusing it (as this block did until
+        # 2026-10-06) printed the replay notes as the reasons a run was not
+        # KPI-grade, while kpi.json said something else.
+        ok, replay_notes = verify_replay(rb)
         print(f"[replay]   {rb.name} "
               f"{'re-derives its own KPIs' if ok else 'FAILED verification'}")
-        for w in why:
+        for w in replay_notes:
             print(f"[replay]     - {w}")
+        # KPI evidence needs a SIGNED bundle; a graded run with a keyless one
+        # is demoted and kpi.json + the bundle rewritten to say so.
+        graded2, why2 = kpi_evidence_grade(graded, why, rb)
+        if graded2 != graded:
+            graded, why = graded2, why2
+            kpi["kpi_grade"], kpi["kpi_grade_reasons"] = graded, why
+            kpi_path.write_text(json.dumps(kpi, indent=2), encoding="utf-8")
+            write_replay(out, policy, rb_path, changelog=f"sitl {out.name}",
+                         policy_source=policy_source)
     except Exception as exc:                                    # noqa: BLE001
         print(f"[replay]   not written: {type(exc).__name__}: {exc}")
+        if graded:
+            graded, why = False, why + [f"no replay bundle: {exc}"]
+            kpi["kpi_grade"], kpi["kpi_grade_reasons"] = graded, why
+            kpi_path.write_text(json.dumps(kpi, indent=2), encoding="utf-8")
 
     # ---- plot (if matplotlib present) ----
     try:

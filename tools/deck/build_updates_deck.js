@@ -24,6 +24,11 @@ const FPV = path.join(REPO, "demo/out/retarget_smooth/view/fpv");
 
 const f1 = (v) => Number(v).toFixed(1);
 const f2 = (v) => Number(v).toFixed(2);
+// CityLife flights re-scored by tools/build_eval_data.py; 0 means not flown.
+const cityFlown = Object.keys(((E.unflown || {}).citylife_level || {}).flights || {}).length;
+// Read off the artefacts, like the report's Section 7: a next-step row must
+// not ask to fly what the cards beside it say has flown.
+const camFlown = (((E.unflown || {}).camera_768x432 || {}).flight_artefacts || []).length;
 
 /* The recorder writes one frame per 50 ms from mission start, so frame = t x 20
  * (checked against the HUD clock: frame 450 reads t 22.5 s, 1200 reads 60.0 s). */
@@ -82,7 +87,7 @@ async function main() {
       ["Action item", "Status", "Evidence"],
       ["Scenario a tracker cannot run", "Done", "Phrase retarget, ring 5 m → 10 m"],
       ["Architecture diagram + lock layer", "Done", "architecture-v3"],
-      ["More realistic pedestrians", "Built, not flown", `CityLife: ${U.citylife_level.pedestrians} walking, ${U.citylife_level.cars} driving`],
+      ["More realistic pedestrians", cityFlown ? `Flown, ${cityFlown} flights` : "Built, not flown", `CityLife: ${U.citylife_level.pedestrians} walking, ${U.citylife_level.cars} driving`],
       ["Correct five quoted numbers", "Written", "Delivery pending"],
       ["Gazebo SITL", "Open", "—"],
       ["Real sensor (camera / LiDAR)", "Open", "Now motivated — slide 06"],
@@ -189,7 +194,7 @@ async function main() {
     H.table(s, rows2, { x: 5.15, y: 1.95, w: 4.3, rh: 0.42, colFrac: [0.5, 0.5], emph: [[2, 1]] });
     s.addText([
       { text: "One OWL-ViT patch is 32 px. The person fills under half.", options: { breakLine: true } },
-      { text: `768×432 costs nothing offline — committed, not yet flown. In flight the GPU forward pass runs ${D.contention.gpu_forward_x[0]}–${D.contention.gpu_forward_x[1]}× slower.` },
+      { text: `768×432 costs nothing offline — ${camFlown ? `flown on ${camFlown} flights` : "committed, not yet flown"}. In flight the GPU forward pass runs ${D.contention.gpu_forward_x[0]}–${D.contention.gpu_forward_x[1]}× slower.` },
     ], { x: 0.55, y: 3.85, w: 8.9, h: 0.85, fontSize: 11, color: GREY, fontFace: FF, lineSpacingMultiple: 1.3 });
     H.source(s, "Model input is resized to 768×768 regardless of capture size. Offline: median of 20, 2026-09-10.");
     H.badge(s, page);
@@ -201,12 +206,12 @@ async function main() {
     H.heading(s, "Scene and publication", "CityLife and the Release");
     const cw = 4.35, ch = 1.5, x0 = 0.55, y0 = 1.72;
     H.card(s, x0, y0, cw, ch, ic.walk, "CityLife level",
-      `${U.citylife_level.pedestrians} walking, ${U.citylife_level.cars} driving. Verified in editor, not flown.`);
+      `${U.citylife_level.pedestrians} walking, ${U.citylife_level.cars} driving. ` + (cityFlown ? `Flown: ${cityFlown} flights.` : "Verified in editor, not flown."));
     H.card(s, x0 + cw + 0.2, y0, cw, ch, ic.git, "Public release",
       "v0.5.0 on GitHub + Pages. v0.5.1 correction local.");
     const tf = REPO_F.tests_fast;
     H.card(s, x0, y0 + ch + 0.2, cw, ch, ic.ok, "Tests",
-      `${tf.passed}/${tf.total} fast, ${REPO_F.tests_coverage.passed}/${REPO_F.tests_coverage.total} coverage.`);
+      `${tf.passed}/${tf.total} fast (run ${tf.measured || E.generated}), ${REPO_F.tests_coverage.passed}/${REPO_F.tests_coverage.total} coverage.`);
     H.card(s, x0 + cw + 0.2, y0 + ch + 0.2, cw, ch, ic.data, "One numbers file",
       "Decks and report read the same JSON.");
     H.source(s, `${REPO_F.commits_since_meeting.length} commits since 2 September. Scene details: docs/FINDING-citylife-level.md.`);
@@ -218,10 +223,11 @@ async function main() {
     const s = pres.addSlide(); s.background = { color: WHITE }; page++;
     H.heading(s, "Before and after 18 September", "Next Steps");
     const steps = [
-      ["Fly 768×432 and CityLife", "Confirm the offline cost holds under load."],
+      (camFlown && cityFlown) ? ["Measure 768×432 under load", "Compare the in-flight cost with the offline one."]
+        : [`Fly ${[camFlown ? "" : "768×432", cityFlown ? "" : "CityLife"].filter(Boolean).join(" and ")}`, "Confirm the offline cost holds under load."],
       ["Choose a narrower FOV", `45°: ${f2(D.pedestrian_patches_by_hfov_16m["45deg"])} patches at 16 m, not ${f2(D.pedestrian_patches_by_hfov_16m["90deg"])}.`],
       ["Cover bystanders", "A rule for any pedestrian, and a wider sensor."],
-      ["Gazebo SITL", "Second physics front-end on the KPI rail."],
+      ["Gazebo Harmonic rail", "Mid-term item: scripts exist; keep a run."],
       ["Send the five corrections", "Before the midterm report is filed."],
     ];
     steps.forEach(([t, b], i) => {
@@ -242,7 +248,7 @@ async function main() {
     s.addText("Tracking is steady and honestly scored, with bystander coverage still open.", {
       x: 0.55, y: 1.5, w: 8.6, h: 1.7, fontSize: 26, color: WHITE, fontFace: FF, bold: true, lineSpacingMultiple: 1.15,
     });
-    s.addText(`P0 escape rate is 0.0 on all ${E.kpi.flights_escape_zero} shielded flights. It says nothing about people the policy does not name.`, {
+    s.addText(`P0 escape was 0.0 on ${E.kpi.flights_escape_zero} shielded demo and SITL flights (dev and perception rails, not contract KPI figures). It says nothing about people the policy does not name.`, {
       x: 0.55, y: 3.4, w: 8.2, h: 0.8, fontSize: 13, color: TEAL_TINT, fontFace: FF, lineSpacingMultiple: 1.3,
     });
   }

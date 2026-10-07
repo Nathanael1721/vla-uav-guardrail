@@ -1,5 +1,24 @@
 # Meeting Pack — September 2026
 
+> **Superseded (corrected 2026-10-06).** This is the presenter pack for the
+> September meeting, kept as a record. Three things in it no longer hold:
+>
+> - **Topology.** The desktop ArduPilot SITL + MAVROS 2 rail it calls
+>   "canonical" is the grant's **dev** topology. The grant takes reported KPI
+>   figures from Stress Testing runs in the **hil** topology (VLA + Shield on a
+>   Jetson Orin); the PI decided on 6 Oct that the KPI campaign runs there.
+>   The lines below are reworded to say "desktop rail (dev topology)".
+> - **KPIs.** P0 escape rate (target 0) is one of five acceptance KPIs, not
+>   "the hard KPI" (withdrawn wording); the five were computed on the dev-topology runs, and the
+>   fail-safe target is ≥ 99 %. See
+>   `docs/CORRECTION-2026-10-06-mid-evaluation-and-deck.md`.
+> - **Team.** One team (ours) executes WP1-WP4; the ground station (Mission
+>   Planner via mavlink-router) is ours to build (tracker card ARCH-10).
+>
+> The detector rates quoted here were metrics.json's `det_hz`, which counted
+> the start-gate wait; the mission rates are lower (CHANGELOG.md, 2026-09-29
+> evening, Retracted).
+
 Companion to `docs/VLA-Guardrail-Sept2026.pptx` (15 slides). Bilingual:
 **English first, Bahasa Indonesia below each block.**
 
@@ -26,18 +45,19 @@ is **not** done, it says so — those are the ones that get asked about.
 |---|---|---|---|
 | 1 | Nathan: write and submit the midterm report + demo video | **Done** | `docs/MIDTERM-REPORT-Aug2026.pdf`, `docs/VLA-Guardrail-Midterm-Aug2026.pptx` |
 | 2 | Nathan: add a pedestrian 3D model; extend to multi-object tracking | **Done, and flown** | 12 pedestrians + 12 parked vehicles + moving traffic; `demo/out/city_locked` |
-| 3 | Nathan: evaluate and attempt ArduPilot–MAVLink SITL with ROS | **Done, beyond what was asked** | MAVROS 2 on ROS 2 Jazzy; `canonical-hil` topology; KPI-grade runs |
+| 3 | Nathan: evaluate and attempt ArduPilot–MAVLink SITL with ROS | **Done, beyond what was asked** | MAVROS 2 on ROS 2 Jazzy; desktop rail (dev topology; stored label `canonical-hil`) |
 | 4 | Speaker 1: confirm phase-1 disbursement | Not ours | — |
 
 **Say it like this.** *"All three of my action items are closed. The SITL one
-went further than the minutes asked: it is not just running, it is the topology
-the grant's KPI gate requires, so the numbers I am about to show are contractual
-numbers rather than demo numbers."*
+went further than the minutes asked: it runs the Guardrail through MAVROS 2 on
+ArduPilot SITL, all on one desktop, the grant's dev topology."* *(Corrected
+2026-10-06: the September text said this was the topology the KPI gate requires
+and the numbers contractual; reported KPIs come from the hil topology.)*
 
 > **Indonesia.** Ketiga tugas saya selesai. Yang SITL melampaui permintaan
-> notulen: bukan sekadar jalan, tapi sudah memakai topologi yang disyaratkan
-> gate KPI dalam kontrak — jadi angka yang saya tunjukkan adalah angka
-> kontraktual, bukan angka demo.
+> notulen: Guardrail berjalan lewat MAVROS 2 di ArduPilot SITL, semuanya di satu
+> desktop (topologi dev). *[Dikoreksi 6 Okt: angka KPI resmi datang dari
+> topologi hil, Jetson Orin.]*
 
 ## A2. The five AI-flagged open items
 
@@ -49,9 +69,9 @@ the meeting. The rest was Python doing JPEG encoding on the control loop; that
 half is fixed (recording moved to its own thread).
 **But be honest:** the pre-registered gate was loop ≥ 9.5 Hz and detector
 ≥ 4.0 Hz, and **0 of 6 recorded camera runs meet it** — loop 7.45–8.03 Hz,
-detector 3.68–5.15 Hz. The 1280×720 rung was formally rejected and the config
+detector rates as then stored (mission rates are lower). The 1280×720 rung was formally rejected and the config
 backed off to 960×540, but the remaining rungs of the ladder were never recorded.
-This does **not** touch the KPI numbers: the canonical rail has no camera.
+This does **not** touch the SITL numbers: the desktop SITL rail (dev topology) has no camera.
 
 **2 — Depth camera vs LiDAR.**
 Still undecided, and our position is that it is not yet the binding problem.
@@ -78,7 +98,7 @@ two map rebuilds with the simulator running.
 **Closed.** `SubjectStandoff` is a real constraint type with a `subject_class`
 field: 10 m for a pedestrian, 5 m for anything else. It is hashed into
 `policy_hash`, written to the audit log, and enforced by the Shield — not a
-command-line flag. Flown on the canonical rail: **shield off, closest approach
+command-line flag. Flown on the desktop SITL + MAVROS 2 rail (dev topology): **shield off, closest approach
 7.07 m and 2.3 s inside the ring; shield on, 14.95 m and 0.0 s.**
 
 **4 — No concrete route for ViT↔VLA fusion.**
@@ -103,7 +123,7 @@ and I would like a decision on it rather than making one quietly.
 > **Indonesia — ringkasan lima item.** (1) Penyebab latensi **sudah terukur**:
 > ~1,8 Hz dari render kamera, sisanya JPEG di loop kontrol (sudah diperbaiki) —
 > **tapi jujur: gate 9,5 Hz masih belum tercapai, 0 dari 6 run**. Ini tidak
-> memengaruhi angka KPI karena rail kanonik tidak berkamera. (2) Depth vs LiDAR
+> memengaruhi angka SITL karena rail SITL desktop (topologi dev) tidak berkamera. (2) Depth vs LiDAR
 > belum diputuskan; depth terkuantisasi 1 meter. **Koreksi 7 September:** dulu
 > item ini bilang objek yang ditambahkan 31 Agustus belum masuk peta rintangan.
 > Faktanya benar, framing-nya salah — objek itu di-spawn saat runtime per seed,
@@ -171,7 +191,7 @@ midterm report could not have found."
 > **ID.** "Perkembangan sejak laporan midterm — dan satu temuan yang tidak
 > mungkin ditemukan oleh laporan midterm."
 
-### Slide 2 · The hard KPI is measured, not inferred
+### Slide 2 · P0 escape rate is measured, not inferred
 **Hook.** "The headline number did not change. What changed is that it is now a
 measurement."
 **Say.** The P0 escape rate was previously *inferred* — from whether the Shield
@@ -181,7 +201,7 @@ the KPI exists to catch: a Shield that repairs an illegal action into a
 different illegal action. The Shield now re-checks the action it actually flew
 and records the result. Re-checked by hand, the old numbers were right — but the
 measurement was not.
-**Reserve.** `p0_ticks_not_measurable` is 0 on all canonical runs; older logs
+**Reserve.** `p0_ticks_not_measurable` is 0 on all dev-topology SITL runs; older logs
 that predate the field are counted separately rather than assumed clean.
 > **ID.** Angka utama tidak berubah; yang berubah, sekarang ia hasil
 > **pengukuran**, bukan kesimpulan. Dulu escape rate disimpulkan dari "apakah
@@ -242,7 +262,7 @@ so most of the scene is static — and static costs nothing per tick.
 > sama dengan detektor. Jalan sungguhan lebih banyak kendaraan parkir daripada
 > yang bergerak — jadi pilihan realistis dan pilihan murah kebetulan sama.
 
-### Slide 7 · Five of five KPIs now measured ★
+### Slide 7 · Five acceptance KPIs computed (dev topology) ★
 **Hook.** "The grant names five acceptance KPIs. Until this period we computed
 three."
 **Say.** Mean repair magnitude and mean time to safe had no number anywhere — not
@@ -347,8 +367,8 @@ phrase can reach is a start-up refusal.
 
 **And the limit — this is the part to say slowly.** On `retarget_smooth` the
 ring fires 94 times; on **63 of them no real pedestrian was within 10 m**. The
-predecessor flight fired 6 times and I reported those six as the demonstration
-you asked for. They were **0 true, 6 false**.
+predecessor flight's six firings were reported as the demonstration you asked
+for. They were **0 true, 6 false**.
 
 A real pedestrian came within 10 m on 516 ticks. *(Corrected 2026-09-14: an
 earlier version of this paragraph said the served position was "wrong by 37 m".
@@ -431,8 +451,9 @@ onto a slide. Videos ship alongside rather than embedded.
 
 ### Slide 15 · Closing
 **Hook.** "Zero. And now we know what zero was not telling us."
-**Say.** P0 escape rate 0, measured on the canonical topology, zero unmeasurable
-ticks, across three configurations. All five acceptance KPIs are now computed —
+**Say.** P0 escape rate 0, measured on the desktop SITL + MAVROS 2 rail (dev
+topology), zero unmeasurable ticks, across three configurations. The five
+acceptance KPIs are computed on those runs —
 and the two added this period found a defect that a perfect escape rate could
 never have shown.
 > **ID.** Nol — dan sekarang kami tahu apa yang **tidak** diberitahukan oleh nol
@@ -498,10 +519,11 @@ it found the altitude recovery that never arrived.
 > sejam ia menemukan pemulihan altitude yang tak pernah sampai.
 
 ### D2. "Why is the perception work outside the KPI gate?"
-**Answer.** Because ArduPilot SITL has no renderer. The KPI gate requires the
-canonical topology — ArduPilot plus MAVROS 2 — and the camera lives in Project
-AirSim. So the tracking numbers are real measurements on a functional rail, but
-they are not contractual numbers, and I do not present them as such. Closing it
+**Answer.** Because ArduPilot SITL has no renderer. The SITL rail is ArduPilot
+plus MAVROS 2 on one desktop (the grant's dev topology; reported KPIs come from
+the hil topology), and the camera lives in Project AirSim. So the tracking
+numbers are real measurements on a functional rail, but they are not contract
+KPI figures, and I do not present them as such. Closing it
 means feeding AirSim imagery to a Guardrail driven over MAVROS: the
 `HIL_GPS`/`HIL_SENSOR` bridge. That is the single largest remaining item.
 > **ID.** Karena ArduPilot SITL tidak punya renderer, sedangkan kamera ada di
@@ -565,10 +587,10 @@ quietly, so I excluded it from the benchmark and am raising it here.
 the runs; **zero of six recorded camera runs meet it** — loop 7.45 to 8.03 Hz. I
 rejected the 1280×720 configuration on that basis and backed off to 960×540, but
 I have not run the rest of the ladder. It does not affect the KPI numbers,
-because the canonical rail carries no camera — but it is an open item and I would
+because the desktop SITL rail carries no camera — but it is an open item and I would
 rather say so than have it found.
 > **ID.** Tidak. Gate-nya loop ≥ 9,5 Hz; **nol dari enam** run memenuhinya. Tidak
-> memengaruhi angka KPI karena rail kanonik tanpa kamera — tapi ini item terbuka
+> memengaruhi angka SITL karena rail SITL desktop tanpa kamera — tapi ini item terbuka
 > dan lebih baik saya sebut sendiri.
 
 ### D8. "Are the parked cars and pedestrians protected by the Shield?"
@@ -729,7 +751,7 @@ afterwards.
 
 | Figure | Value | Where |
 |---|---|---|
-| P0 violation escape rate, shield ON | **0.0** | canonical rail, 3 configs |
+| P0 violation escape rate, shield ON | **0.0** | desktop SITL rail (dev), 3 configs |
 | P0 escape rate, shield OFF (control) | **0.626506** | proves the A/B can fail |
 | Mean repair magnitude, shield ON | **4.07 m/s** (max 7.21) | new this period |
 | Mean time to safe, shield ON | **0 episodes** — never unsafe | new this period |

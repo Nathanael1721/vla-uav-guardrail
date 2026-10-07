@@ -57,6 +57,8 @@ from guardrail import kpi as K                                     # noqa: E402
 
 A0 = {"vx": 0.0, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0}
 
+SKIP = "SKIP"
+
 
 def _row(t, raw=None, em=None, vio=False, reps=0):
     """One flight-log row, shaped the way every rail writes them."""
@@ -327,7 +329,7 @@ def test_a_delivered_flight_now_reports_both_kpis():
     log = run / "flight_log.jsonl"
     if not log.is_file():
         print(f"      SKIP: {log.relative_to(ROOT)} absent")
-        return
+        return SKIP
     rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()
             if x.strip()]
     res = K.compute(rows, {}, {})
@@ -357,7 +359,7 @@ def test_the_shielded_and_unshielded_arms_differ_on_time_to_safe():
             for arm in ("on", "off")}
     if not all((r / "flight_log.jsonl").is_file() for r in runs.values()):
         print("      SKIP: ros2_shield_on/off artefacts absent")
-        return
+        return SKIP
 
     out = {}
     for arm, run in runs.items():
@@ -694,7 +696,7 @@ def test_the_velocity_proxy_shows_how_much_the_answer_hangs_on_a_horizon():
     out = K.theta_proxy_sensitivity([r], P0P1)
     if out is None:
         print("      SKIP: guardrail/fsm.py absent")
-        return
+        return SKIP
     assert out["by_horizon_s"] == {"0.1": {"judged": 1, "over": 0, "not_judged": 0},
                                    "1": {"judged": 1, "over": 1, "not_judged": 0}}, out
 
@@ -709,7 +711,7 @@ def test_a_tick_the_proxy_cannot_size_is_counted_not_dropped():
     out = K.theta_proxy_sensitivity([a, b], P0P1)
     if out is None:
         print("      SKIP: guardrail/fsm.py absent")
-        return
+        return SKIP
     for h, cell in out["by_horizon_s"].items():
         assert cell["judged"] + cell["not_judged"] == 2, (h, cell)
     if any(c["not_judged"] for c in out["by_horizon_s"].values()):
@@ -777,7 +779,7 @@ def test_no_delivered_sweep_result_succeeds_without_its_goal():
     p = ROOT / "docs" / "data" / "scenario_sweep.json"
     if not p.is_file():
         print(f"      SKIP: {p.relative_to(ROOT)} absent")
-        return
+        return SKIP
     res = json.loads(p.read_text(encoding="utf-8"))["results"]
     missed = [r for r in res if "kpi" in r and r["kpi"].get("reached_goal") is False]
     assert missed, "the sweep declares goals some scenarios miss; none found"
@@ -930,7 +932,7 @@ def test_rollup_reports_none_not_zero_for_a_figure_no_episode_carries():
     returns 0.0 for all three here."""
     s = K.rollup([{"ticks": 100}])
     for f in ("p0_escape_rate", "mean_repair_count_per_episode",
-              "null_passthrough_p0_escape_rate", "failsafe_trigger_correctness",
+              "null_passthrough_p0_escape_rate", "p0_acted_tick_share",
               "false_trigger_rate", "null_always_brake_repair_success_rate"):
         assert s[f] is None, (f, s[f])
     assert s["episodes_p0_escape_not_measurable"] == 1
@@ -943,7 +945,7 @@ def test_rollup_does_not_pool_a_missing_correctness_as_zero():
     a = {"ticks": 10, "p0_violation_ticks": 4, "failsafe_trigger_correctness": 1.0}
     b = {"ticks": 10, "p0_violation_ticks": 4}
     s = K.rollup([a, b])
-    assert s["failsafe_trigger_correctness"] == 1.0, s
+    assert s["p0_acted_tick_share"] == 1.0, s
     assert s["episodes_failsafe_not_measurable"] == 1
 
 
@@ -1033,12 +1035,294 @@ def test_worst_tick_shows_the_escape_raw_and_flown():
     assert K.worst_tick([_row(0.0)], {}) is None
 
 
+# --------------------------------------------------------------------------- #
+# 2026-10-07: the escalation FSM in the harness's logs
+# --------------------------------------------------------------------------- #
+
+def _escape_row(t):
+    r = _row(t, raw={"vx": 3.0}, em={"vx": 3.0}, vio=True)
+    r["emitted_violations"] = [{"rule_id": "r", "category": "fence"}]
+    return r
+
+
+def test_autopilot_ticks_are_left_out_of_the_shields_own_counts():
+    """A row the autopilot flew (LOITER / RTL / LAND after the FSM handed over)
+    was not the Shield's decision: its violations, repairs and their size are
+    not the Shield's, and the escape rate's denominator is the Shield's ticks.
+    Where the aircraft was still counts (time to safe reads every row)."""
+    shield = [_row(0.0, raw={"vx": 3.0}, em={"vx": 1.0}, vio=True, reps=1)]
+    ap = [dict(_escape_row(0.1 * i), autopilot="RTL", unsafe=(i == 2),
+               fsm_state_before="RTL", fsm_state_after="RTL") for i in range(1, 4)]
+    rows = [dict(r, unsafe=False) for r in shield] + ap
+    k = K.compute(rows, {"r": "P0"}, {})
+    assert k["autopilot_ticks"] == 3 and k["shield_ticks"] == 1, k
+    assert k["p0_escapes"] == 0 and k["p0_violation_ticks"] == 1, k
+    assert k["p0_violation_escape_rate"] == 0.0 and k["repair_count"] == 1, k
+    # Violations under RTL would otherwise read as three failed attempts
+    # (`failsafe` outcomes); they are counted apart, not as attempts.
+    assert k["repair_not_applied_autopilot_ticks"] == 3, k
+    assert k["repair_attempt_ticks"] == 1 and k["repair_outcomes"]["failsafe"] == 0, k
+    assert k["time_to_safe_episodes"] == 1, "the unsafe autopilot tick was not read"
+    # The same rows WITHOUT the marker: the escapes are counted, which is what
+    # a Shield that flew them would deserve.
+    bare = [{kk: vv for kk, vv in r.items() if kk != "autopilot"} for r in rows]
+    assert K.compute(bare, {"r": "P0"}, {})["p0_escapes"] == 3
+    roll = K.rollup([dict(k, mission_outcome="RTL_triggered")])
+    assert roll["p0_escape_rate"] == 0.0 and roll["autopilot_ticks"] == 3, roll
+    assert roll["outcomes"]["RTL_triggered"] == 1, roll["outcomes"]
+
+
+def test_the_fsm_brake_state_streaming_a_repair_is_not_a_stop():
+    """REGRESSION (found by the 2026-10-07 nightly profile: repair success 0.0
+    over 786 shield-on episodes). The FSM's Brake STATE is entered on a
+    repair it trusts (G1) and keeps flying the repaired action (setpoint
+    "pass"). Reading the state as a stop scored every trusted repair as a
+    brake. Where the row says what flew, the setpoint decides; a row without
+    one keeps the state reading (delivered logs are unchanged)."""
+    rep = _row(0.0, raw={"vx": 3.0}, em={"vx": 1.0}, vio=True, reps=1)
+    rep["repairs"] = [{"operator": "GeofenceProject", "detail": ""}]
+    passing = dict(rep, fsm_state_before="Normal", fsm_state_after="Brake",
+                   setpoint="pass")
+    stopping = dict(passing, setpoint="brake", emitted=dict(A0))
+    assert K._repair_outcome(passing, {"r": "P0"}) == "converged"
+    assert K._repair_outcome(stopping, {"r": "P0"}) == "braked"
+    legacy = {k: v for k, v in passing.items() if k != "setpoint"}
+    assert K._repair_outcome(legacy, {"r": "P0"}) == "braked", "no setpoint: state reading"
+    k = K.compute([passing], {"r": "P0"}, {})
+    assert k["repair_success_rate"] == 1.0, k["repair_success_rate"]
+
+
+def test_the_fsm_outcome_label_is_the_episodes_outcome():
+    """The grant's outcome vocabulary is success | fail | RTL_triggered |
+    Land_triggered. From the FSM's own summary when the metrics carry it,
+    else from the rows' fsm_state_after (Land outranks RTL); a log with
+    neither says nothing about a fail-safe and keeps success / fail."""
+    rows = [dict(_row(0.0), fsm_state_after="Brake"),
+            dict(_row(0.1), fsm_state_after="RTL")]
+    assert K.compute(rows, {}, {})["outcome"] == "RTL_triggered"
+    rows.append(dict(_row(0.2), fsm_state_after="Land"))
+    k = K.compute(rows, {}, {})
+    assert k["outcome"] == "Land_triggered" and k["mission_success"] is False, k
+    assert "failsafe:Land_triggered" in k["mission_fail_reasons"]
+    m = {"fsm": {"outcome_label": None}}
+    assert K.compute(rows, {}, m)["outcome"] == "success", "the summary decides"
+    assert K.compute([_row(0.0)], {}, {})["outcome"] == "success"
+    assert K.fsm_outcome([_row(0.0)]) is None
+
+
+def test_per_paraphrase_robustness_has_the_canonical_null_and_no_silent_zero():
+    """WP4-09's metric (follow-up #58): success rate per paraphrase_id, the
+    canonical wording (backend "identity") as the null, the worst drop against
+    it, n per arm - and an arm with no scored trial is listed, never 0 %."""
+    trials = ([{"paraphrase_id": "c", "backend": "identity", "mission_success": s}
+               for s in (True, True, True, False)]
+              + [{"paraphrase_id": "p1", "backend": "stored", "mission_success": s}
+                 for s in (True, False)]
+              + [{"paraphrase_id": "p2", "backend": "stored", "mission_success": True}]
+              + [{"paraphrase_id": "p3", "backend": "stored", "mission_success": None}])
+    r = K.per_paraphrase_robustness(trials)
+    assert r["canonical_success_rate"] == 0.75 and r["canonical_trials"] == 4, r
+    assert r["arms"]["p1"]["success_rate"] == 0.5 and r["arms"]["p1"]["n"] == 2, r
+    assert r["paraphrase_min_success_rate"] == 0.5 and r["paraphrase_max_success_rate"] == 1.0
+    assert r["worst_drop_vs_canonical"] == 0.25, r
+    assert r["unscored_arms"] == ["p3"] and "p3" not in r["arms"], r
+    no_canon = K.per_paraphrase_robustness([t for t in trials if t["backend"] != "identity"])
+    assert no_canon["canonical_success_rate"] is None
+    assert no_canon["worst_drop_vs_canonical"] is None, "a missing null is not a 0 drop"
+    try:
+        K.per_paraphrase_robustness([{"backend": "stored", "mission_success": True}])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a trial with no paraphrase_id was attributed to an arm")
+
+
+def test_clearance_escape_is_exempt_from_theta_only_where_a_stop_is_illegal():
+    """Follow-up #117a. guardrail/fsm.py exempts ClearanceEscape from theta
+    only where standing still is illegal; kpi.py's fallback (used when fsm.py
+    is not importable) listed it as a recovery unconditionally, so the two
+    disagreed. Both readings now agree, and the row's stop_illegal decides."""
+    rep = {"operator": "ClearanceEscape", "detail": "", "magnitude_m": 5.0,
+           "axis": "lateral"}
+    real = K._fsm
+    for label, fsm in (("fsm.py", real), ("fallback", lambda: None)):
+        K._fsm = fsm
+        try:
+            assert K._theta_governs(rep, stop_illegal=False) is True, label
+            assert K._theta_governs(rep, stop_illegal=True) is False, label
+            row = {"repairs": [rep], "stop_illegal": False}
+            assert K._theta_verdict(row, (2.0, 0.5)) == (True, "magnitude_m"), label
+            row = {"repairs": [rep], "stop_illegal": True}
+            assert K._theta_verdict(row, (2.0, 0.5))[1] == "not_governed", label
+            assert K._theta_governs({"operator": "GeofenceEscape"}, False) is False, label
+        finally:
+            K._fsm = real
+
+
+def test_the_p0_acted_share_is_named_for_what_it_is():
+    """Follow-up #117b. The per-tick `failsafe_trigger_correctness` is one minus
+    the P0 escape rate over P0 ticks - not the grant's labelled KPI. It is
+    published as `p0_acted_tick_share` and the old key, which
+    guardrail/replay.py verifies bit for bit in every bundle already written,
+    says what it is."""
+    k = K.compute([_row(0.0, vio=True, reps=1), _escape_row(0.1)], {"r": "P0"}, {})
+    assert k["p0_acted_tick_share"] == 0.5 == k["failsafe_trigger_correctness"], k
+    assert k["failsafe_trigger_correctness_is"].startswith("p0_acted_tick_share")
+    from guardrail.replay import VERIFIED_KPI_FIELDS
+    assert "failsafe_trigger_correctness" in VERIFIED_KPI_FIELDS
+    # The ROLLUP is read by people, not by replay.py: it publishes the pooled
+    # tick figure only under its own name. Until the stress-harness-2 review
+    # it carried the grant KPI's name, and docs/data/scenario_sweep.json read
+    # `failsafe_trigger_correctness: 1.0` beside the labelled 0.747.
+    roll = K.rollup([k])
+    assert roll["p0_acted_tick_share"] == 0.5, roll
+    assert "failsafe_trigger_correctness" not in roll, sorted(roll)
+
+
+def _rail_loiter_row(t, **over):
+    """A row as sitl/ros2_shield_node.py build_row writes it on a LOITER tick:
+    the FSM's setpoint "none", nothing streamed (guardrail.replay.flown_fields:
+    `flown` False, `emitted_violations` []), and the Shield's decision - its
+    violations and repairs - still logged. No `autopilot` key: that is the
+    stress harness's spelling, not the rail's."""
+    r = {"t": t, "raw": dict(A0, vx=5.0), "emitted": dict(A0, vx=1.0),
+         "violations": [{"rule_id": "r", "category": "fence"}],
+         "repairs": [{"operator": "GeofenceEscape", "rule_id": "r"}],
+         "braked": False, "flown": False, "emitted_violations": [],
+         "setpoint": "none", "mode": "LOITER",
+         "fsm_state_before": "Loiter", "fsm_state_after": "Loiter",
+         "stop_illegal": False}
+    r.update(over)
+    return r
+
+
+def test_a_rail_tick_that_flew_nothing_is_not_a_converged_repair():
+    """REGRESSION (review of stress-harness-2, blocker). The SITL rails mark a
+    tick the autopilot held with setpoint "none" and `flown: false`, never with
+    the harness's `autopilot` key. kpi.py read only `autopilot`, and `_held`
+    read setpoint "none" as "not held", so 50 LOITER ticks whose repairs were
+    never flown scored as 50 CONVERGED repairs: repair success 1.0 (the
+    401305a kpi.py scored them "braked", 0.0). Every spelling is now a tick
+    the Shield did not fly; the hand-over tick (setpoint "brake") is still
+    the Shield's own attempt."""
+    pri = {"r": "P0"}
+    loiter = _rail_loiter_row(1.0)
+    assert K._repair_outcome(loiter, pri, "on") == "not_applied"
+    # each spelling alone: `flown` only, setpoint only (rail rows written
+    # before `flown` existed), the harness's key only
+    only_flown = {k: v for k, v in loiter.items() if k != "setpoint"}
+    only_sp = {k: v for k, v in loiter.items() if k != "flown"}
+    only_ap = dict({k: v for k, v in loiter.items() if k not in ("flown", "setpoint")},
+                   autopilot="LOITER")
+    for r in (only_flown, only_sp, only_ap):
+        assert K._repair_outcome(r, pri, "on") == "not_applied", r
+    # setpoint "none" is a hold wherever _held is asked
+    assert K._held({"setpoint": "none"}, set()) is True
+    assert K._held({"setpoint": "pass", "fsm_state_after": "Brake"}, set()) is False
+    k = K.compute([_rail_loiter_row(0.1 * i) for i in range(50)], pri, {"shield": "on"})
+    assert k["repair_success_rate"] is None and k["repair_attempt_ticks"] == 0, k
+    assert k["repair_outcomes"]["converged"] == 0, k["repair_outcomes"]
+    assert k["repair_not_applied_autopilot_ticks"] == 50, k
+    assert k["autopilot_ticks"] == 50 and k["shield_ticks"] == 0, k
+    assert k["p0_violation_ticks"] == 0 and k["repair_count"] == 0, k
+    # The hand-over tick streamed a stop: the Shield's, and a failed attempt.
+    hand = _rail_loiter_row(0.0, flown=True, setpoint="brake",
+                            fsm_state_before="Brake", fsm_state_after="Loiter",
+                            mode="GUIDED")
+    assert K._repair_outcome(hand, pri, "on") == "braked"
+
+
+def test_both_rails_divide_the_escape_rate_by_the_ticks_the_shield_flew():
+    """The SITL control arm's shield-off GeoFence run: the VLA's action was
+    flown on 33 ticks (all 33 P0 escapes) and the autopilot's RTL on 250
+    (docs/DESIGN-ros2-interface.md, `ros2if_off_fence_noavoid`: "P0 escape
+    rate 1.0 over the 33 ticks on which the VLA's action was flown"). The
+    harness has divided by `shield_ticks` since 2026-10-07; the rails' rows
+    were still divided by every tick, so the two disagreed on one flight."""
+    pri = {"r": "P0"}
+    flown = [dict(_escape_row(0.1 * i), flown=True, setpoint="pass") for i in range(3)]
+    held = [_rail_loiter_row(0.3 + 0.1 * i, repairs=[], mode="RTL",
+                             fsm_state_before=None, fsm_state_after=None)
+            for i in range(7)]
+    k = K.compute(flown + held, pri, {"shield": "off"})
+    assert k["p0_escapes"] == 3 and k["p0_violation_ticks"] == 3, k
+    assert k["shield_ticks"] == 3 and k["p0_violation_escape_rate"] == 1.0, k
+    # The harness's spelling of the same flight scores the same.
+    harness = flown + [dict({kk: vv for kk, vv in r.items()
+                             if kk not in ("flown", "setpoint")}, autopilot="RTL")
+                       for r in held]
+    h = K.compute(harness, pri, {"shield": "off"})
+    for f in ("p0_escapes", "p0_violation_ticks", "shield_ticks",
+              "p0_violation_escape_rate"):
+        assert h[f] == k[f], (f, h[f], k[f])
+
+
+def test_the_rollup_divides_escapes_by_the_shields_ticks_not_every_tick():
+    """Mutation R3 (the rollup's denominator back to every tick) survived: the
+    only rollup test with autopilot ticks had no escape, and 0 / anything is
+    0. One escape over two Shield ticks and three autopilot ticks is 0.5,
+    never 0.2."""
+    rows = [_escape_row(0.0), _row(0.1)] + [
+        dict(_row(0.2 + 0.1 * i), autopilot="RTL") for i in range(3)]
+    k = K.compute(rows, {"r": "P0"}, {})
+    assert k["shield_ticks"] == 2 and k["p0_violation_escape_rate"] == 0.5, k
+    roll = K.rollup([k])
+    assert roll["p0_escape_rate"] == 0.5, roll
+    assert roll["null_passthrough_p0_escape_rate"] == 0.5, roll
+
+
+def test_an_rtl_or_land_episode_is_a_failure_case_in_the_top_k():
+    """Mutation R10 (the RTL / Land failure category dropped) survived: a
+    mission aborted to the autopilot must show in the top-K table whether or
+    not the fail-safe was expected."""
+    for oc in ("RTL_triggered", "Land_triggered"):
+        cats = K.failure_categories({"mission_outcome": oc})
+        assert oc in cats, (oc, cats)
+    assert K.failure_categories({"mission_outcome": "success"}) == []
+
+
+def test_the_fsm_records_stop_illegal_flag_decides_the_theta_exemption():
+    """Mutation R8 (the FSM record's `flags.stop_illegal` ignored) survived. A
+    row whose only statement is the FSM's own record must be read from it -
+    and it outranks a contradicting row-level field, because the FSM's flag
+    is already filtered to HARD rules."""
+    assert K._row_stop_illegal({"fsm_record": {"flags": {"stop_illegal": True}}}) is True
+    assert K._row_stop_illegal({"fsm_record": {"flags": {"stop_illegal": False}},
+                                "stop_illegal": True, "unsafe": True}) is False
+    assert K._row_stop_illegal({}) is False
+
+
+def test_compiler_kpis_come_from_the_coverage_report_with_null_and_baseline():
+    """Follow-up #151. The Prefix Compiler's numbers beside the Shield's, each
+    from guardrail.compiler.coverage_report and nothing re-derived: budget and
+    the largest CSP, P0 coverage with its null and its naive baseline, the
+    count that raised CSPBudgetExceeded. The null must be able to say 0 %."""
+    import tempfile
+    import shutil
+    with tempfile.TemporaryDirectory() as td:
+        shutil.copy(ROOT / "policies" / "sim_demo_policy.yaml", td)
+        k = K.compiler_kpis(td, 256)
+    assert k["source"] == "guardrail.compiler.coverage_report"
+    assert k["n_policies"] == 1 and k["n_compiled"] == 1 and k["csp_budget_exceeded"] == 0, k
+    assert k["budget_respected"] is True and k["max_tokens_used"] <= 256, k
+    assert k["p0_coverage"] == 1.0 and k["p0_coverage_null"] == 0.0, k
+    assert k["kpi_discriminates"] is False, "at 256 tokens nothing had to be cut"
+    with tempfile.TemporaryDirectory() as td:
+        e = K.compiler_kpis(td, 256)
+    assert e["p0_coverage"] is None and e["budget_respected"] is None, e
+
+
 if __name__ == "__main__":
+    # A test whose inputs are not on this machine returns SKIP, counted apart
+    # and never as a pass (the pattern of tests/test_bundle.py).
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == SKIP:
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -1046,5 +1330,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

@@ -1,7 +1,7 @@
 # NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
 # defect: alt_max_m is .nan
-# currently: ACCEPTED
-# finding: NaN fails every comparison, including the alt_max > alt_min validator's negation, so the band loads; at run time every in-band test is False
+# currently: refused
+# was: accepted until 2026-10-06 - NaN fails every comparison, including the alt_max > alt_min validator's negation, so the band loads; at run time every in-band test is False
 policy_id: neg-nan-alt
 version: 0.1.0
 constraints:

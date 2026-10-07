@@ -14,14 +14,36 @@ generation, policy_hash ("SHA-256 over the canonicalised IR, post-merge,
 pre-sign"), signed_by ("Lab CA or ITRI CA reference") and changelog; its worked
 example adds issued_at.
 
-THE LAYOUT IS THE REFERENCE'S, DELIBERATELY
+THE CONTAINER IS THE REFERENCE'S; THE CONTENTS NOW CROSS-LOAD
 
 `packages/policy-dsl/src/policy_dsl/ingest.py` writes `ir.json`,
-`manifest.json`, `signature.txt`, member mtimes pinned to 0. Matching that is
-worth more than any improvement: the two halves of the same grant must be able
-to read each other's bundles. The first line of `signature.txt` is still the
-reference's `<policy_hash> <signed_by>`; what changed on 2026-10-06 is that a
-second line now carries a real signature.
+`manifest.json`, `signature.txt`, member mtimes pinned to 0, and so does this
+module. The first line of `signature.txt` is the reference's `<policy_hash>
+<signed_by>`; since 2026-10-06 a second line carries a real signature.
+
+Matching the container is NOT matching the contents, and until 2026-10-06 this
+docstring implied it was: neither loader accepted the other's bundle (audit card
+WP1-05). The two IRs differ - the reference stores its authored document
+(grant field names, `geometry:` blocks, every default written out), this code
+stores its own IR - so the same policy hashes differently. Now:
+
+  * reading: `check_bundle` accepts a reference bundle. Its ir.json must be
+    exactly what `Policy.reference_ir()` rebuilds, and its hash is recognised
+    as the named form REFERENCE_FORM (`hash_form`);
+  * writing: `write_bundle(..., ir_form="reference")` ships `reference_ir()`
+    and the reference's hash, which the reference loader reads (checked with
+    its own code in tests/test_policy_dsl_grant_form.py where its 3.11
+    environment exists). Only policies the reference can represent qualify:
+    WGS84 polygon fences without a margin ring and altitude envelopes, no
+    schedules (`Policy.reference_problems`).
+
+A reference-form bundle is an EXCHANGE format, not a flight artefact. Its IR
+writes every default out, so the policy rebuilt from it has a third hash -
+neither the manifest's nor the source policy's (the source policy recognises
+the manifest's hash as REFERENCE_FORM). The flight loaders (`load_bundle`,
+`load_for_flight`) refuse it; `check_bundle` reads it.
+
+docs/DESIGN-policy-dsl-grant-form.md lists what still differs.
 
 THE SIGNATURE (2026-10-06)
 
@@ -42,14 +64,16 @@ no line of this module changes. The private key never enters git
 
 VERIFYING EVERYWHERE, SIGNING WHERE THE KEY IS
 
-`cryptography` is an optional import: the SITL flight venvs in WSL
-(sitl/setup_ros2.sh and sitl/setup_sitl.sh never install it) and the 3.11
-`vla-drone` environment do not have it. The first cut of this release answered
-that with the status "unverifiable-here", which meant two of the three flight
-rails could never verify a signature - every --bundle there was refused, or
-flown under --allow-unverified-bundle with a forged signature reading the same
-as a real one (2026-10-06 review). So verification now has a pure-Python
-fallback (RFC 8032, `py_ed25519_verify` below). Verifying handles only public
+`cryptography` is an optional import. Neither WSL setup script installs it
+(sitl/setup_ros2.sh, sitl/setup_sitl.sh): ~/venv-ap has none, ~/venv-ros sees
+cryptography 41.0.7 only through the system site-packages, and the 3.11
+`vla-drone` environment has none. The first cut of this release answered a
+missing library with the status "unverifiable-here", which meant a flight rail
+without it could never verify a signature - every --bundle there was refused,
+or flown under --allow-unverified-bundle with a forged signature reading the
+same as a real one (2026-10-06 review). So verification now has a pure-Python
+fallback (RFC 8032, `py_ed25519_verify` below), and no environment depends on
+which site-packages it happens to see. Verifying handles only public
 data, so a big-integer implementation leaks nothing; signing still needs
 `cryptography` and the private key, and is never done any other way for a
 real key.
@@ -85,7 +109,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .models import (HASH_SCHEME, IR_SCHEMA_VERSION, Policy, _prune_nulls,
+from .models import (HASH_SCHEME, IR_SCHEMA_VERSION, PRIOR_SCHEME_V2,
+                     REFERENCE_FORM, Policy, _prune_nulls, canonical_json,
                      load_policy)
 
 try:                                    # optional: see "VERIFYING EVERYWHERE"
@@ -539,19 +564,39 @@ def _issued_at(value=None) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+IR_FORMS = ("ours", "reference")
+
+
+def _ir_for(policy: Policy, ir_form: str) -> tuple[bytes, str, str]:
+    """(ir.json bytes, policy_hash, hash scheme name) for one IR form."""
+    if ir_form == "ours":
+        return policy.canonical_bytes(), policy.policy_hash, HASH_SCHEME
+    if ir_form == "reference":
+        ref = policy.reference_ir()
+        if ref is None:
+            raise ValueError(
+                f"{policy.policy_id}: the reference implementation cannot "
+                f"represent this policy: " + "; ".join(policy.reference_problems()))
+        return canonical_json(ref), policy.reference_hash(), REFERENCE_FORM
+    raise ValueError(f"ir_form must be one of {IR_FORMS}, not {ir_form!r}")
+
+
 def manifest_for(policy: Policy, changelog: str = "initial", *,
                  issued_at: str | None = None,
-                 signed_by: str | None = None) -> dict[str, Any]:
+                 signed_by: str | None = None,
+                 ir_form: str = "ours") -> dict[str, Any]:
     """The bundle's identity card: the grant's six fields, plus how the hash was
     made (`hash_scheme`, `ir_schema_version`) and, for a published bundle, when
     it was issued. `issued_at=None` leaves the key out (a replay bundle embeds a
-    policy it did not issue)."""
+    policy it did not issue). `ir_form="reference"` describes a bundle whose
+    ir.json is the reference implementation's document (see _ir_for)."""
+    _, digest, scheme = _ir_for(policy, ir_form)
     m = {
         "policy_id": policy.policy_id,
         "version": policy.version,
         "generation": policy.generation,
-        "policy_hash": policy.policy_hash,
-        "hash_scheme": HASH_SCHEME,
+        "policy_hash": digest,
+        "hash_scheme": scheme,
         "ir_schema_version": IR_SCHEMA_VERSION,
         "signed_by": signed_by or UNSIGNED,
         "changelog": changelog,
@@ -559,6 +604,10 @@ def manifest_for(policy: Policy, changelog: str = "initial", *,
     if issued_at is not None:
         m["issued_at"] = issued_at
     return m
+
+
+def _same_instant(a: str, b: str) -> bool:
+    return _issued_at(a) == _issued_at(b)
 
 
 def _add(tar: tarfile.TarFile, name: str, data: bytes) -> None:
@@ -588,25 +637,39 @@ def _read(tar: tarfile.TarFile, name: str) -> bytes:
 
 def write_bundle(policy: Policy, out_path: str | Path,
                  changelog: str = "initial", *, issued_at=None,
-                 signer="auto") -> Path:
+                 signer="auto", ir_form: str = "ours") -> Path:
     """Write a tar.gz containing the canonical IR, the manifest and the signature.
 
     `ir.json` is `policy.canonical_bytes()` - the bytes `policy_hash` digests,
     not a prettier rendering of them - so `sha256(ir.json)` IS the hash.
+    `ir_form="reference"` writes the reference implementation's document and
+    hash instead, so its loader can read the bundle (see the module docstring).
 
     `signer`: "auto" signs with the lab key when this machine has it (and
     writes an honestly UNSIGNED bundle when it does not); a `Signer` or a key
     path signs with that key; None writes unsigned on purpose.
+
+    The issue time: a policy that WRITES `issued_at` (the grant's form) carries
+    it into the manifest; an explicit `issued_at` that names another instant is
+    refused, because the bundle would then contradict the document it ships.
     """
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     sgn = _resolve_signer(signer)
 
-    ir_bytes = policy.canonical_bytes()
+    if policy.issued_at is not None:
+        if issued_at is not None and not _same_instant(issued_at, policy.issued_at):
+            raise ValueError(
+                f"{policy.policy_id}: the policy says issued_at {policy.issued_at}, "
+                f"the bundle was asked for {issued_at}; a bundle may not contradict "
+                f"the document it carries")
+        issued_at = policy.issued_at
+    ir_bytes, digest, _ = _ir_for(policy, ir_form)
     manifest = manifest_for(policy, changelog, issued_at=_issued_at(issued_at),
-                            signed_by=sgn.identity if sgn else UNSIGNED)
+                            signed_by=sgn.identity if sgn else UNSIGNED,
+                            ir_form=ir_form)
     manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True).encode()
-    signature = signature_text(policy.policy_hash, sgn, manifest_bytes)
+    signature = signature_text(digest, sgn, manifest_bytes)
 
     # Reproducibility needs all three of these, and the first two are not
     # enough on their own:
@@ -653,9 +716,16 @@ class BundleCheck:
         return self.signature == SIG_VERIFIED
 
     def source_record(self) -> dict:
-        """What a flight writes about where its policy came from."""
+        """What a flight writes about where its policy came from.
+
+        `declared_policy_hash` is the hash the bundle's manifest (and its
+        signature) names; `loaded_policy_hash` is the hash of the policy
+        object rebuilt from it. They are equal for every bundle this project
+        writes in its own form, and for the legacy forms `hash_form` names the
+        relation. Both are recorded so a run never has to infer one."""
         return {"kind": "bundle", "path": str(self.path),
                 "loaded_policy_hash": self.policy.policy_hash,
+                "declared_policy_hash": self.manifest.get("policy_hash"),
                 "hash_form": self.hash_form,
                 "issued_at": self.manifest.get("issued_at"),
                 "signed_by": self.signed_by,
@@ -685,27 +755,46 @@ def check_bundle(path: str | Path,
     manifest = json.loads(manifest_bytes)
     declared = manifest.get("policy_hash")
 
-    # model_validate, not load_policy: the IR is already projected and
-    # validated, and running it back through the lat/lon loader would be a
-    # second chance to move the geometry.
-    policy = Policy.model_validate(json.loads(ir_bytes))
+    # model_validate, not load_policy: the IR is the validated document, and
+    # the YAML loader's file handling has no business here. Geographic points
+    # are projected again by the model, deterministically, in the same frame.
+    # Since 2026-10-06 the model refuses an unknown key outright (it used to
+    # drop it, and the hash comparison below was what caught that).
+    try:
+        policy = Policy.model_validate(json.loads(ir_bytes))
+    except ValueError as exc:
+        first = str(exc).strip().splitlines()
+        raise ValueError(
+            f"{p.name}: ir.json holds content this code cannot represent as a "
+            f"policy IR, refusing rather than enforcing a different policy: "
+            f"{' / '.join(first[:3])}") from None
 
     digest = "sha256:" + hashlib.sha256(ir_bytes).hexdigest()
     if declared == digest:
-        # The bytes are what was hashed. Now prove the OBJECT is too: pydantic
-        # ignores unknown keys, so an IR with an extra field hashes correctly
-        # and then rebuilds into a different policy than the one signed.
-        if policy.policy_hash != declared:
+        # The bytes are what was hashed. Now prove the OBJECT is too: an IR
+        # whose bytes are fine can still rebuild into a different policy (a
+        # non-canonical encoding, a coerced value).
+        if policy.policy_hash == declared:
+            form = HASH_SCHEME
+        elif policy.reference_hash() == declared:
+            # The reference implementation's bundle (WP1-05). `declared` is
+            # the SHA-256 of the archived bytes (checked just above) AND of
+            # canonical_json(reference_ir()), the document rebuilt from the
+            # model - so the two byte strings are the same and nothing in
+            # ir.json went unread. A separate byte comparison stood here until
+            # 2026-10-07; it could not fail without a SHA-256 collision, and
+            # a check that cannot fail is not kept as if it were one.
+            form = REFERENCE_FORM
+        else:
             raise ValueError(
                 f"{p.name}: ir.json hashes to the manifest's policy_hash, but "
                 f"rebuilds to {policy.policy_hash}: it holds content this code "
                 f"cannot represent (an unknown key, or a non-canonical "
                 f"encoding). Refusing rather than enforcing a different policy.")
-        form = HASH_SCHEME
     else:
         # A bundle written before 2026-10-06: 16-hex hash over the old dump.
         form = policy.hash_form(declared)
-        if form == HASH_SCHEME:
+        if form in (HASH_SCHEME, PRIOR_SCHEME_V2, REFERENCE_FORM):
             # Same policy, different bytes: someone re-serialised ir.json. The
             # object is right but the artefact no longer is what was hashed and
             # signed, and a reader checking it with sha256sum would be told no.
@@ -731,6 +820,13 @@ def check_bundle(path: str | Path,
                 f"The {form} hash cannot see it; refusing rather than "
                 f"enforcing a different policy than the one archived.")
 
+    # A bundle is a release of a DSL-valid policy: the same lint load_policy
+    # runs (duplicate ids, no rules, conflicting hard limits, ...).
+    lint = policy.lint()
+    if lint:
+        raise ValueError(f"{p.name}: the policy in this bundle does not pass the "
+                         f"DSL lint: " + "; ".join(lint))
+
     sig_hash, signed_by, sig_hex = parse_signature(sig_text)
     if sig_hash != declared:
         raise ValueError(
@@ -750,8 +846,33 @@ def check_bundle(path: str | Path,
                        signature=status, signed_by=signed_by, detail=detail)
 
 
+def _refuse_for_flight(chk: BundleCheck, name: str) -> None:
+    """What no flight loader accepts from a bundle, whatever its signature.
+
+    1. A rule the Shield would not enforce as written (models.
+       _refuse_unenforced: a declarable-only type, MSL, a derived frame).
+    2. A bundle in the reference implementation's IR form. It is an EXCHANGE
+       format: its ir.json writes every default out (scope, layer,
+       altitude_ref, margin 0) and spells `repair` as `project_fix`, so the
+       policy rebuilt from it hashes to a THIRD value - neither the manifest's
+       hash nor the source policy's. A run flown from it would record a
+       loaded_policy_hash that resolves to no policy (2026-10-07 review).
+       Re-issue it in this project's form to fly it."""
+    from .models import _refuse_unenforced
+    if chk.hash_form == REFERENCE_FORM:
+        raise ValueError(
+            f"{name}: a bundle in the reference implementation's IR form "
+            f"({REFERENCE_FORM}) is an exchange format, not a flight artefact: "
+            f"the policy rebuilt from it hashes to {chk.policy.policy_hash[:23]}..., "
+            f"not the manifest's {str(chk.manifest.get('policy_hash'))[:23]}..., "
+            f"so a run could not be traced back to it. Write the bundle in this "
+            f"project's form (`python -m guardrail.bundle POLICY`) to fly it.")
+    _refuse_unenforced(chk.policy, name)
+
+
 def load_bundle(path: str | Path, *, require_signature: bool = True,
-                trust_store: str | Path | dict | None = None) -> Policy:
+                trust_store: str | Path | dict | None = None,
+                runtime: bool = True) -> Policy:
     """Load a bundle, rebuild the Policy, and REFUSE it if it is not the policy
     that was issued.
 
@@ -765,12 +886,23 @@ def load_bundle(path: str | Path, *, require_signature: bool = True,
     instead when the status must be recorded, which it should be. A bad or
     stripped signature raises ValueError either way.
 
-    The default changed on 2026-10-06 (it used to accept the placeholder
-    signer). A caller that writes a bundle and reads it straight back on a
-    machine without the lab key - tools/build_deck_data.py does - gets an
-    UNSIGNED bundle and must say `require_signature=False` explicitly.
+    `runtime=True` (the default) applies the same flight gate as
+    `load_policy` and `load_for_flight`: a bundle holding a rule the Shield
+    would not enforce (a declarable-only type, MSL, a derived frame), or one
+    in the reference's exchange form, is refused. Until 2026-10-07 this
+    function skipped that gate, so a bundle with a dynamic_nfz loaded here and
+    the Shield then ignored the zone without a word - and
+    guardrail/scenario_spec.py loads its `bundle_path` scenarios through it.
+    `runtime=False` returns the declaration, for tools that only read it.
+
+    The signature default changed on 2026-10-06 (it used to accept the
+    placeholder signer). A caller that writes a bundle and reads it straight
+    back on a machine without the lab key - tools/build_deck_data.py does -
+    gets an UNSIGNED bundle and must say `require_signature=False` explicitly.
     """
     chk = check_bundle(path, trust_store)
+    if runtime:
+        _refuse_for_flight(chk, Path(path).name)
     if require_signature and not chk.verified:
         raise BundleSignatureError(
             f"{Path(path).name}: signature {chk.signature}: {chk.detail}. "
@@ -797,6 +929,15 @@ def load_for_flight(bundle: str | Path | None = None,
     `source` is written by the caller beside the manifest - metrics.json,
     kpi.json, the replay index - and its `loaded_policy_hash` is the hash at
     take-off, before any mid-flight hot-apply.
+
+    Both paths refuse a policy holding a rule the Shield would not enforce (a
+    declarable-only class, an MSL altitude, a derived frame;
+    `Policy.flight_problems`), the bundle path also refuses the reference's
+    exchange form (`_refuse_for_flight`), and both record as `runtime_notes`
+    the breach actions the Shield cannot complete on its own (a flight mode
+    it only requests, a soft rule's action capped at brake) and a start
+    inside a hard keep-out zone (`Policy.runtime_notes`), so a run never reads
+    as having honoured something it did not.
     """
     from .manifest import policy_source_record
     if bundle and yaml_path:
@@ -804,6 +945,7 @@ def load_for_flight(bundle: str | Path | None = None,
                          "run with two candidate policies cannot say which flew")
     if bundle:
         chk = check_bundle(bundle, trust_store)
+        _refuse_for_flight(chk, Path(bundle).name)
         if not chk.verified and not allow_unverified:
             raise BundleSignatureError(
                 f"{Path(bundle).name}: signature {chk.signature}: {chk.detail}. "
@@ -812,11 +954,16 @@ def load_for_flight(bundle: str | Path | None = None,
         rec = chk.source_record()
         if not chk.verified:
             rec["accepted_unverified"] = True
-        return chk.policy, rec
-    if yaml_path is None:
-        raise ValueError("no policy given: pass a bundle or a YAML file")
-    pol = load_policy(yaml_path)
-    return pol, policy_source_record("yaml", str(yaml_path), pol.policy_hash)
+        pol = chk.policy
+    else:
+        if yaml_path is None:
+            raise ValueError("no policy given: pass a bundle or a YAML file")
+        pol = load_policy(yaml_path)
+        rec = policy_source_record("yaml", str(yaml_path), pol.policy_hash)
+    notes = pol.runtime_notes()
+    if notes:
+        rec["runtime_notes"] = notes
+    return pol, rec
 
 
 # --------------------------------------------------------------------------- #
@@ -828,7 +975,11 @@ def lock_key(policy: Policy) -> str:
 
 
 def _entry(policy: Policy) -> dict:
+    """A new lock entry. `hash_scheme` names the canonical scheme its
+    policy_hash was made under; entries written before 2026-10-07 carry none
+    and are under the lock's top-level `hash_scheme` (v2) - see its `_doc`."""
     return {"policy_hash": policy.policy_hash,
+            "hash_scheme": HASH_SCHEME,
             "legacy_hashes": policy.legacy_hashes()}
 
 
@@ -840,6 +991,40 @@ def load_lock(path: str | Path | None = None) -> dict:
 def _policy_files(policies_dir: str | Path | None = None) -> list[Path]:
     d = Path(policies_dir) if policies_dir else ROOT / "policies"
     return sorted(d.glob("*.yaml"))
+
+
+# What a lock entry says about a policy's content, given its recorded hash.
+_PINNED, _RECORD_NEW_FORM, _CHANGED = "pinned", "record-new-form", "changed"
+
+
+def _pin_status(pol: Policy, ent: dict) -> str:
+    """Whether a lock entry (or one file's pin inside a shared entry) still
+    pins `pol`'s content.
+
+    An entry is never rewritten, so an entry locked under an earlier
+    full-length hash scheme keeps that hash. Hash scheme v3 (2026-10-06)
+    changed the bytes of geographic policies only; for those the entry also
+    carries `hashes: {<scheme>: <hash>}`, added by `lock --update` and never
+    replacing the original. Same content under a newer scheme is not a
+    content change - but it is reported until the new form is recorded, so the
+    lock always names the hash a current bundle carries."""
+    rec = ent.get("policy_hash")
+    if rec == pol.policy_hash:
+        return _PINNED
+    if pol.hash_form(rec) in pol.prior_hashes():
+        later = (ent.get("hashes") or {}).get(HASH_SCHEME)
+        if later is None:
+            return _RECORD_NEW_FORM
+        return _PINNED if later == pol.policy_hash else _CHANGED
+    return _CHANGED
+
+
+def _new_form_msg(name: str, key: str, ent: dict, pol: Policy) -> str:
+    return (f"{name}: {key} is locked under {pol.hash_form(ent['policy_hash'])} "
+            f"({ent['policy_hash'][:23]}...); the same content hashes to "
+            f"{pol.policy_hash[:23]}... under {HASH_SCHEME}, not yet recorded - "
+            f"run `python -m guardrail.bundle lock --update` (additive: the old "
+            f"hash stays)")
 
 
 def ir_schema_drift(locked: dict, current: dict | None = None) -> list[str]:
@@ -913,7 +1098,9 @@ def check_lock(policies_dir: str | Path | None = None,
     seen_shared: dict[str, set[str]] = {}
     for f in _policy_files(policies_dir):
         try:
-            pol = load_policy(f)
+            # runtime=False: the lock is about identity, not flyability; a
+            # declarable-only policy still has a version and a hash.
+            pol = load_policy(f, runtime=False)
         except Exception as exc:                          # noqa: BLE001
             problems.append(f"{f.name}: does not load ({type(exc).__name__}: {exc})")
             continue
@@ -928,11 +1115,16 @@ def check_lock(policies_dir: str | Path | None = None,
             # A known identity collision (several files, one id@version). Each
             # file is pinned on its own so a content change is still caught.
             seen_shared.setdefault(key, set()).add(f.name)
-            want = (shared.get(f.name) or {}).get("policy_hash")
+            pin = shared.get(f.name)
+            want = (pin or {}).get("policy_hash")
             if want is None:
                 problems.append(f"{f.name}: claims {key}, already shared by "
                                 f"{sorted(shared)}; give it its own policy_id")
-            elif want != pol.policy_hash:
+                continue
+            status = _pin_status(pol, pin)
+            if status == _RECORD_NEW_FORM:
+                problems.append(_new_form_msg(f.name, key, pin, pol))
+            elif status == _CHANGED:
                 problems.append(f"{f.name}: content changed under {key} "
                                 f"({want[:23]} -> {pol.policy_hash[:23]})")
             continue
@@ -941,7 +1133,10 @@ def check_lock(policies_dir: str | Path | None = None,
                             f"{ent['file']} - two files must not share an "
                             f"identity")
             continue
-        if ent.get("policy_hash") != pol.policy_hash:
+        status = _pin_status(pol, ent)
+        if status == _RECORD_NEW_FORM:
+            problems.append(_new_form_msg(f.name, key, ent, pol))
+        elif status == _CHANGED:
             problems.append(
                 f"{f.name}: content changed but version did not - {key} is "
                 f"locked to {str(ent.get('policy_hash'))[:23]}..., the file now "
@@ -981,10 +1176,37 @@ def update_lock(policies_dir: str | Path | None = None,
             if model not in pinned:
                 pinned[model] = fields
                 added.append(f"ir_schema:{model}")
+                continue
+            # A NEW field whose omission means "absent" is the one change
+            # ir_schema_drift allows unannounced; recording it here keeps the
+            # pin a complete list of the model's fields, so a later change to
+            # its default is reported as a change. Existing pins are never
+            # altered.
+            for name, val in sorted(fields.items()):
+                if name not in pinned[model] and val == "<absent>":
+                    pinned[model][name] = val
+                    added.append(f"ir_schema:{model}.{name}")
+        irs = lock["ir_schema"]
+        if irs.get("version") != IR_SCHEMA_VERSION:
+            # The pin's label follows the schema it now pins; the old label is
+            # kept, as every other lock record is.
+            irs.setdefault("previous_versions", []).append(irs.get("version"))
+            irs["version"] = IR_SCHEMA_VERSION
+            added.append(f"ir_schema:version {IR_SCHEMA_VERSION}")
     for f in _policy_files(policies_dir):
-        pol = load_policy(f)
+        pol = load_policy(f, runtime=False)
         key = lock_key(pol)
         if key in entries:
+            # The one addition an existing entry may receive: the current
+            # scheme's hash of UNCHANGED content (see _pin_status).
+            ent = entries[key]
+            if "shared_by_files" in ent:
+                pin = (ent.get("shared_by_files") or {}).get(f.name)
+            else:
+                pin = ent
+            if pin and _pin_status(pol, pin) == _RECORD_NEW_FORM:
+                pin.setdefault("hashes", {})[HASH_SCHEME] = pol.policy_hash
+                added.append(f"{key}:{HASH_SCHEME}")
             continue
         entries[key] = {"file": f.name, "locked_on": day, **_entry(pol)}
         added.append(key)
@@ -1028,7 +1250,7 @@ def policy_candidates(policies_dir: str | Path | None = None,
     by_key: dict[str, Policy] = {}
     for f in _policy_files(policies_dir):
         try:
-            pol = load_policy(f)
+            pol = load_policy(f, runtime=False)
         except Exception:                                 # noqa: BLE001
             continue
         out.append((f.name, pol))
@@ -1046,18 +1268,178 @@ def policy_candidates(policies_dir: str | Path | None = None,
 # Published schema (WP1-16)
 # --------------------------------------------------------------------------- #
 
-def policy_json_schema() -> dict:
-    """The IR's JSON Schema - the grant's "DSL JSON Schema export", named
-    `policy_dsl.schema.json` as in the reference package.
-
-    It describes the canonical IR (local metres, post-projection), which is
-    what a bundle ships. Authored YAML may also use lat/lon plus an origin;
-    that form is accepted by load_policy() and projected before validation.
-    """
+def ir_json_schema() -> dict:
+    """The canonical IR's JSON Schema: exactly what a bundle's `ir.json` may
+    hold - this project's field names, a geographic point as {lat, lon}, a
+    metre point as {x, y}, unknown keys refused. Published inside
+    policy_dsl.schema.json as `$defs/CanonicalIR` (see policy_json_schema)."""
     schema = Policy.model_json_schema()
+    # The model requires x/y because the Shield reads them; the IR stores a
+    # geographic point WITHOUT them (they are derived at load). So a point is
+    # one frame or the other, never neither.
+    xy = schema.get("$defs", {}).get("XY")
+    if xy is not None:
+        xy.pop("required", None)
+        xy["anyOf"] = [{"required": ["x", "y"]}, {"required": ["lat", "lon"]}]
+        xy["description"] = (
+            "A point: {x, y} metres (x = North, y = East of the frame origin), "
+            "or {lat, lon} WGS84 - the canonical form of a geographic point.")
+    # A DERIVED field (exclude=True: circle_fence's polygon) is never in the IR
+    # and is refused when authored, so the published contract does not offer it.
+    from .models import ir_models
+    for cls in ir_models():
+        d = schema.get("$defs", {}).get(cls.__name__)
+        for name, f in cls.model_fields.items():
+            if f.exclude and d is not None:
+                d.get("properties", {}).pop(name, None)
+    return schema
+
+
+def _authoring_rule_def(cls, d_ir: dict) -> dict:
+    """One rule model in the authoring form: the IR's fields, the grant's
+    names for them (GRANT_ALIASES), and the grant's `geometry:` block
+    (GRANT_GEOMETRY) - built from the same tables `_normalise_rule` reads, so
+    the schema and the loader cannot disagree about which names exist.
+
+    Encoded as the loader enforces it: a required field may come under any of
+    its names or inside `geometry`; two names for one field, or one key
+    inside and beside `geometry`, is refused (`not: {required: [...]}`)."""
+    import copy
+    ir_props = d_ir.get("properties", {})
+    props = copy.deepcopy(ir_props)
+    aliases = dict(cls.GRANT_ALIASES)
+    rules: list[dict] = []
+    for grant, ours in sorted(aliases.items()):
+        if ours in ir_props:
+            s = copy.deepcopy(ir_props[ours])
+            s["description"] = f"The grant's name for `{ours}`; give one of the two."
+            s.pop("title", None)
+            props[grant] = s
+            rules.append({"not": {"required": [grant, ours]}})
+    geom = sorted(cls.GRANT_GEOMETRY)
+    if geom:
+        gprops = {k: copy.deepcopy(ir_props[aliases.get(k, k)])
+                  for k in geom if aliases.get(k, k) in ir_props}
+        gdef: dict = {"type": "object", "additionalProperties": False,
+                      "properties": gprops,
+                      "description": ("The grant's geometry block. Keys omitted "
+                                      "here take the reference's defaults: "
+                                      "altitude band 0-200 m and, for a fence, "
+                                      "no margin ring.")}
+        pairs = [[k, ours] for k, ours in aliases.items() if k in geom and ours in geom]
+        if pairs:
+            gdef["allOf"] = [{"not": {"required": p}} for p in pairs]
+        props["geometry"] = gdef
+        for k in geom:
+            for top in sorted({k, aliases.get(k, k)}):
+                rules.append({"not": {"required": [top, "geometry"],
+                                      "properties": {"geometry": {"required": [k]}}}})
+    for r in d_ir.get("required", []):
+        if r in ("id", "type"):
+            continue
+        options = [{"required": [r]}]
+        options += [{"required": [g]} for g, o in sorted(aliases.items()) if o == r]
+        options += [{"required": ["geometry"],
+                     "properties": {"geometry": {"required": [k]}}}
+                    for k in geom if aliases.get(k, k) == r]
+        rules.append(options[0] if len(options) == 1 else {"anyOf": options})
+    out = {k: v for k, v in d_ir.items() if k not in ("properties", "required")}
+    out["properties"] = props
+    out["required"] = [r for r in d_ir.get("required", []) if r in ("id", "type")]
+    if rules:
+        out["allOf"] = rules
+    return out
+
+
+def _prefix_refs(node, prefix: str):
+    """Rewrite every `#/$defs/X` reference to `#/$defs/<prefix>X`."""
+    if isinstance(node, list):
+        return [_prefix_refs(v, prefix) for v in node]
+    if isinstance(node, dict):
+        out = {}
+        for k, v in node.items():
+            if k == "$ref" and isinstance(v, str) and v.startswith("#/$defs/"):
+                out[k] = "#/$defs/" + prefix + v[len("#/$defs/"):]
+            elif k == "mapping" and isinstance(v, dict):
+                out[k] = {mk: ("#/$defs/" + prefix + mv[len("#/$defs/"):]
+                               if isinstance(mv, str) and mv.startswith("#/$defs/") else mv)
+                          for mk, mv in v.items()}
+            else:
+                out[k] = _prefix_refs(v, prefix)
+        return out
+    return node
+
+
+IR_DEF_PREFIX = "IR."
+
+
+def policy_json_schema() -> dict:
+    """The grant's "DSL JSON Schema export", named `policy_dsl.schema.json` as
+    in the reference package: the published contract for external tooling.
+
+    The grant (Policy DSL page): the DSL is "the hand-authored surface form
+    ... what an operator (or an external GIS tool) writes", and the Pydantic
+    JSON Schema export of it is the published contract. So the ROOT of this
+    schema is the AUTHORING form: the grant's names (`altitude_min_m`,
+    `speed_max`, ...), `geometry:` blocks, `issued_at`, `layers_merged`,
+    lat/lon with or without an `origin` - and this project's own names, which
+    keep loading. Until 2026-10-07 the root described the canonical IR only,
+    and it rejected the grant's own example document (review finding).
+
+    The canonical IR - what a bundle's ir.json holds, this project's names
+    only - is published beside it as `$defs/CanonicalIR` (its own models under
+    `$defs/IR.<Model>`), so a reader can validate either. Every canonical IR
+    is also a valid authoring document.
+
+    JSON Schema checks the document's shape. The DSL checks more than a shape
+    can say - polygon validity, unique ids, conflicting hard limits - and
+    `load_policy` remains the authority; tools/wp1_roundtrip_kpi.py reports
+    how much of the negative corpus the schema alone refuses. A YAML timestamp
+    (`issued_at: 2026-04-28T09:00:00Z` unquoted) is validated as its ISO text,
+    which is how the loader reads it.
+    """
+    from .models import ir_models
+    ir = ir_json_schema()
+    defs = ir.get("$defs", {})
+    root = {k: v for k, v in ir.items() if k != "$defs"}
+    out_defs: dict = {}
+    for cls in ir_models():
+        d = defs.get(cls.__name__)
+        if d is None:
+            continue
+        if getattr(cls, "GRANT_ALIASES", None) is not None and "type" in cls.model_fields:
+            out_defs[cls.__name__] = _authoring_rule_def(cls, d)
+        else:
+            out_defs[cls.__name__] = d
+    for name, d in defs.items():
+        out_defs.setdefault(name, d)
+        out_defs[IR_DEF_PREFIX + name] = _prefix_refs(d, IR_DEF_PREFIX)
+    canonical = _prefix_refs(root, IR_DEF_PREFIX)
+    canonical["title"] = "CanonicalIR"
+    canonical["description"] = (
+        "The canonical IR: what a bundle's ir.json holds and policy_hash "
+        "digests. This project's field names only; a geographic point as "
+        "{lat, lon}, a metre point as {x, y}.")
+    out_defs["CanonicalIR"] = canonical
+    schema = dict(root)
+    # At least one rule: the lint refuses an empty policy at every DSL entry
+    # point (load_policy, the merge, check_bundle), so no document either form
+    # describes may have none.
+    for doc in (schema, canonical):
+        doc["properties"] = dict(doc["properties"])
+        doc["properties"]["constraints"] = {**doc["properties"]["constraints"],
+                                            "minItems": 1}
+    schema["title"] = "Policy DSL (authoring form)"
+    schema["description"] = (
+        "A policy as an operator or GIS tool writes it: the grant's form "
+        "(geometry blocks, altitude_min_m / altitude_max_m, speed_max, "
+        "issued_at, layers_merged, WGS84 with or without origin) or this "
+        "project's earlier form. $defs/CanonicalIR is the bundle IR.")
+    schema["$defs"] = out_defs
     schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"
     schema["x-ir-schema-version"] = IR_SCHEMA_VERSION
     schema["x-hash-scheme"] = HASH_SCHEME
+    schema["x-canonical-ir"] = {"$ref": "#/$defs/CanonicalIR"}
     return schema
 
 
@@ -1073,24 +1455,43 @@ def write_schema(out: str | Path | None = None) -> Path:
 # CLI
 # --------------------------------------------------------------------------- #
 
+def _release_check(pol: Policy, source: str) -> str | None:
+    """Why `pol` may not be published under its id@version, or None."""
+    ent = (load_lock().get("policies") or {}).get(lock_key(pol))
+    if ent and "policy_hash" in ent and _pin_status(pol, ent) == _CHANGED:
+        return (f"{lock_key(pol)} is locked to {ent['policy_hash']}, but {source} "
+                f"hashes to {pol.policy_hash}: raise its version.")
+    return None
+
+
 def _main(argv: list[str] | None = None) -> int:
-    """Emit a bundle from a policy file, or one of four maintenance commands.
+    """Emit a bundle from a policy file, or one of six other commands.
 
         python -m guardrail.bundle policies/wgs84_taipei.yaml -m "initial"
+        python -m guardrail.bundle POLICY --ir-form reference   # the reference reads it
         python -m guardrail.bundle verify bundles/wgs84-taipei-demo-v0.1.0.tar.gz
+        python -m guardrail.bundle merge reg.yaml site.yaml mission.yaml -o out.tar.gz
+        python -m guardrail.bundle export POLICY [--origin LAT,LON] [-o out.yaml]
         python -m guardrail.bundle schema          # policies/policy_dsl.schema.json
         python -m guardrail.bundle lock [--update] # policies/policy.lock.json
         python -m guardrail.bundle keygen          # lab dev key, once per lab
 
+    `merge` is the grant's layer merge (regulation, site, mission - pass them in
+    that order); `export` writes a policy in the grant's own form (WGS84,
+    `geometry:` blocks, grant field names).
+
     Bundles are build products, not source: they are byte-derivable from the
     policy (given the issue time), so `bundles/*.tar.gz` is gitignored here
-    exactly as it is in the reference repository.
+    exactly as it is in the reference repository. A bundle carries the
+    declaration as written, so a declarable-only rule may be bundled; the
+    flight loaders refuse it (`load_for_flight`).
     """
     import argparse
     import sys
 
     argv = list(sys.argv[1:] if argv is None else argv)
-    cmd = argv[0] if argv and argv[0] in ("schema", "keygen", "verify", "lock") else None
+    cmds = ("schema", "keygen", "verify", "lock", "merge", "export")
+    cmd = argv[0] if argv and argv[0] in cmds else None
 
     if cmd == "schema":
         ap = argparse.ArgumentParser(prog="python -m guardrail.bundle schema")
@@ -1143,39 +1544,94 @@ def _main(argv: list[str] | None = None) -> int:
         print(f"{len(_policy_files())} policies, {len(problems)} problem(s)")
         return 1 if problems else 0
 
-    ap = argparse.ArgumentParser(prog="python -m guardrail.bundle")
-    ap.add_argument("policy")
+    if cmd == "export":
+        import yaml as _yaml
+        ap = argparse.ArgumentParser(prog="python -m guardrail.bundle export")
+        ap.add_argument("policy")
+        ap.add_argument("-o", "--out", default=None)
+        ap.add_argument("--origin", default=None,
+                        help="LAT,LON of the local frame's (0, 0), for a metre "
+                             "policy that states no origin")
+        a = ap.parse_args(argv[1:])
+        pol = load_policy(a.policy, runtime=False)
+        org = tuple(float(v) for v in a.origin.split(",")) if a.origin else None
+        try:
+            doc = pol.to_grant_form(origin=org)
+        except ValueError as exc:
+            print(f"REFUSED  {exc}")
+            return 2
+        text = _yaml.safe_dump(doc, sort_keys=False, allow_unicode=False)
+        if a.out:
+            Path(a.out).write_text(text, encoding="utf-8", newline="\n")
+            print(f"{a.out}  grant form of {pol.policy_id} v{pol.version}")
+        else:
+            print(text, end="")
+        ext = pol.grant_form_extensions()
+        if ext:
+            print(f"# kept beyond the grant's form: {', '.join(ext)}", file=sys.stderr)
+        return 0
+
+    ap = argparse.ArgumentParser(prog="python -m guardrail.bundle" +
+                                 (" merge" if cmd == "merge" else ""))
+    if cmd == "merge":
+        ap.add_argument("policy", nargs="+")
+        ap.add_argument("--policy-id", default=None)
+        ap.add_argument("--version", default=None)
+    else:
+        ap.add_argument("policy")
     ap.add_argument("-o", "--out")
     ap.add_argument("-m", "--changelog", default="initial")
     ap.add_argument("--issued-at", default=None,
-                    help="ISO-8601; default SOURCE_DATE_EPOCH, else now")
+                    help="ISO-8601; default the policy's own issued_at, else "
+                         "SOURCE_DATE_EPOCH, else now")
     ap.add_argument("--key", default=None, help="signing key (default: lab key)")
     ap.add_argument("--unsigned", action="store_true",
                     help="write an explicitly UNSIGNED bundle")
-    args = ap.parse_args(argv)
+    ap.add_argument("--ir-form", choices=IR_FORMS, default="ours",
+                    help="'reference': ship the reference implementation's IR "
+                         "and hash, so its loader reads the bundle")
+    args = ap.parse_args(argv[1:] if cmd == "merge" else argv)
 
-    pol = load_policy(args.policy)
-    # A bundle is a release: refuse to publish content under a version the lock
-    # already gives to different content.
-    ent = (load_lock().get("policies") or {}).get(lock_key(pol))
-    if ent and "policy_hash" in ent and ent["policy_hash"] != pol.policy_hash:
-        print(f"REFUSED  {lock_key(pol)} is locked to {ent['policy_hash']}, but "
-              f"{args.policy} hashes to {pol.policy_hash}: raise its version.")
-        return 2
-    if ent is None:
-        print(f"WARNING  {lock_key(pol)} is not in policies/policy.lock.json")
+    if cmd == "merge":
+        from .models import load_layered
+        try:
+            pol = load_layered(args.policy, policy_id=args.policy_id,
+                               version=args.version, runtime=False)
+        except ValueError as exc:
+            print(f"REFUSED  {exc}")
+            return 2
+    else:
+        pol = load_policy(args.policy, runtime=False)
+        # A bundle is a release: refuse to publish content under a version the
+        # lock already gives to different content.
+        why = _release_check(pol, args.policy)
+        if why:
+            print(f"REFUSED  {why}")
+            return 2
+        if (load_lock().get("policies") or {}).get(lock_key(pol)) is None:
+            print(f"WARNING  {lock_key(pol)} is not in policies/policy.lock.json")
     out = Path(args.out) if args.out else (
         ROOT / "bundles" / f"{pol.policy_id}-v{pol.version}.tar.gz")
     signer = None if args.unsigned else (args.key or "auto")
-    p = write_bundle(pol, out, args.changelog, issued_at=args.issued_at,
-                     signer=signer)
+    try:
+        p = write_bundle(pol, out, args.changelog, issued_at=args.issued_at,
+                         signer=signer, ir_form=args.ir_form)
+    except ValueError as exc:
+        print(f"REFUSED  {exc}")
+        return 2
     chk = check_bundle(p)               # never ship one that will not reload
     print(f"{p}  {p.stat().st_size} bytes")
     print(f"  policy_id   {chk.policy.policy_id}")
     print(f"  version     {chk.policy.version}  generation {chk.policy.generation}")
-    print(f"  policy_hash {chk.policy.policy_hash}")
+    print(f"  policy_hash {chk.manifest.get('policy_hash')}  ({chk.hash_form})")
     print(f"  issued_at   {chk.manifest.get('issued_at')}")
     print(f"  rules       {len(chk.policy.constraints)}")
+    if chk.policy.layers_merged:
+        print(f"  layers      {', '.join(chk.policy.layers_merged)}")
+    gaps = chk.policy.flight_problems()
+    if gaps:
+        print(f"  NOT FLYABLE {len(gaps)} problem(s): "
+              + "; ".join(gaps))
     print(f"  signature   {chk.signature.upper()}  - {chk.detail}")
     return 0
 

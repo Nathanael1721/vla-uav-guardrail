@@ -1,0 +1,5 @@
+# colcon output, if the workspace is built in place (run_ros2_demo.sh builds
+# into ~/guardrail_ws instead).
+build/
+install/
+log/

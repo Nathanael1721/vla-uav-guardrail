@@ -294,6 +294,75 @@ def test_a_heading_away_from_the_fence_is_never_braked():
     assert scale == 1.0 and not blocked
 
 
+# ------------------------------- the Shield's zones, not a copy (WP3-22, 2026-10-07)
+
+def test_the_guard_measures_the_shields_own_zones():
+    """FenceGuard used to build its own rings (fence_polygon(f).buffer(margin))
+    at construction. It now reads the Shield's compiled ones: the same
+    objects, so the controller and the rule checker can never disagree about
+    where a zone is."""
+    from shapely.geometry import Point
+    from guardrail import Shield
+    pol = load_policy(GAP)
+    sh = Shield(pol, escalation=False)
+    g = FenceGuard(pol, shield=sh)
+    rings = [r.buffered for r in sh.zones_now()]
+    assert len(rings) >= 1 and all(a is b for a, b in zip(g.polys, rings))
+    for x, y in ((30.0, -10.0), (47.0, 2.0), (0.0, 0.0)):
+        d = min(p.distance(Point(x, y)) for p in g.polys)
+        assert abs(d - sh.fence_distance(x, y)) < 1e-12
+
+
+def test_a_zone_hot_applied_mid_flight_is_seen_by_the_guard():
+    """A copy made at construction never saw a zone that arrived later: the
+    controller flew at it and only the Shield turned it away."""
+    from guardrail import Action4D, Shield, State
+    from guardrail.models import DynamicNFZ
+    pol = load_policy(GAP)
+    sh = Shield(pol, escalation=False)
+    g = FenceGuard(pol, shield=sh)
+    assert g.gate(10.0, -40.0, *NORTH)[0] == 1.0             # clear road ahead
+    sh.filter(State(x=10.0, y=-40.0, up=10.0), Action4D())
+    sh.hot_apply(DynamicNFZ.model_validate({
+        "id": "spawned", "type": "dynamic_nfz", "margin_m": 1.0,
+        "vertices": [{"x": 5, "y": -34}, {"x": 15, "y": -34},
+                     {"x": 15, "y": -30}, {"x": 5, "y": -30}]}))
+    scale, dist, _ = g.gate(10.0, -40.0, *NORTH)
+    assert scale < 1.0 and dist is not None and dist < g.brake_m, (scale, dist)
+    assert g.last_cause == "fence"
+    sh.expire_nfz("spawned")
+    assert g.gate(10.0, -40.0, *NORTH)[0] == 1.0
+
+
+def test_a_zone_outside_its_window_is_not_a_reason_to_brake():
+    from datetime import datetime
+    from guardrail import Shield
+    from guardrail.models import Policy
+    pol = Policy.model_validate({"policy_id": "w", "constraints": [{
+        "id": "yard", "type": "polygon_fence", "margin_m": 1.0,
+        "vertices": [{"x": 5, "y": -34}, {"x": 15, "y": -34},
+                     {"x": 15, "y": -30}, {"x": 5, "y": -30}],
+        "valid_time": {"recurrence": {"start_time": "07:30", "end_time": "17:30"}}}]})
+    for hhmm, braked in (("12:00", True), ("18:00", False)):
+        when = datetime(2026, 10, 7, int(hhmm[:2]), int(hhmm[3:]))
+        g = FenceGuard(pol, shield=Shield(pol, now=lambda w=when: w, escalation=False))
+        assert (g.gate(10.0, -40.0, *NORTH)[0] < 1.0) is braked, hhmm
+
+
+def test_no_private_zone_geometry_is_left_in_the_controller():
+    """The grant allows one rule-evaluation code path (Safety Shield page).
+    demo/follow_vlm.py kept two more: FenceGuard's own margin rings
+    (`fence_polygon(f).buffer(f.margin_m)` over `policy.by_type(PolygonFence)`)
+    and the end-of-flight NFZ dwell count, which walked the policy's polygons
+    again. Both now read the Shield (`zones_now()`, `rule_status()`)."""
+    src = (ROOT / "demo" / "follow_vlm.py").read_text(encoding="utf-8")
+    for code in ("from guardrail.geometry import fence_polygon",
+                 "by_type(PolygonFence)", "fence_polygon(f))",
+                 "self.polys = [fence_polygon"):
+        assert code not in src, code
+    assert "self.shield.zones_now()" in src and "shield.rule_status(State(" in src
+
+
 # --------------------------------------------------------------------- runner
 
 

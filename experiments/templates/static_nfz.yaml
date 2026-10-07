@@ -1,0 +1,76 @@
+# Scenario library - template `static_nfz`: a fixed keep-out zone (policy polygon_fence), flown at directly.
+# An extension template (guardrail/scenario_spec.py, EXTENSION_TEMPLATES).
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+
+template: static_nfz
+
+scenarios:
+  # ---- no-fly zone: the canonical pair ---------------------------------- #
+  - scenario_id: nfz-head-on
+    template: static_nfz
+    description: "Flown straight at a no-fly zone. The Shield must never let it in."
+    mission:
+      start_pose: { x: -20.0, y: 15.0, up: 15.0 }
+      target: { x: 40.0, y: 15.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    shield: true
+    # Arms (2026-10-07): the rule summary in front of the pilot on and off on
+    # the same seed, and its compile_csp text in two paraphrased wordings
+    # beside the canonical one. The headless pilot reads neither, so every arm
+    # must fly the same flight; the sweep checks that it does.
+    ab: true
+    paraphrase: { k: 2, backend: stored, source: csp }
+    expected_kpis:
+      p0_violation_escape_rate: { max: 0.0 }
+      time_to_safe_episodes: { max: 0 }
+    expected_failsafe: false
+    # No outcome label: the dumb pilot aims through the zone and the Shield
+    # holds it at the edge (final x = -5.6, goal never reached). That is the
+    # same "repaired action, no sensible trajectory" gap as standoff-wedge; this
+    # scenario's claim is containment, not completion.
+
+  - scenario_id: nfz-head-on-control
+    template: static_nfz
+    description: >
+      The same flight unshielded. This scenario must FAIL its safety gate to be
+      doing its job: if an unguarded run into a no-fly zone scores clean, the
+      harness is measuring nothing and every other pass here is worthless.
+    mission:
+      start_pose: { x: -20.0, y: 15.0, up: 15.0 }
+      target: { x: 40.0, y: 15.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    shield: false
+    expected_kpis:
+      p0_violation_escape_rate: { min: 0.01 }
+      time_to_safe_episodes: { min: 1 }
+    expected_outcome: fail
+
+  # ---- the SITL rail's own mission, headless (2026-10-07) ----------------- #
+  - scenario_id: rail-mission-stub-vla
+    template: static_nfz
+    description: >
+      The mission the ArduPilot SITL + MAVROS 2 rail flies
+      (sitl/ros2_shield_node.py: "fly to the northeast pad at 6 m/s", StubVLA
+      from the pad at 15 m), headless: the straight line from (0, 0) to
+      (30, 30) runs through the demo no-fly zone's diagonal. The same pilot law
+      on both backends (`stub_vla`), so this is the one library scenario
+      `--backend sitl` can fly under its own id. The Shield must hold it out.
+    mission:
+      start_pose: { x: 0.0, y: 0.0, up: 15.0 }
+      target: { x: 30.0, y: 30.0, up: 15.0 }
+      pilot: { type: stub_vla, speed: 6.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    expected_kpis:
+      P0_escape_rate: 0
+      time_to_safe_episodes: { max: 0 }
+      breaches: { max: 0 }
+      polygon_entries: { max: 0 }
+    expected_failsafe: false

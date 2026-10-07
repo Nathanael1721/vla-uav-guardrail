@@ -55,7 +55,7 @@ from guardrail.models import (Action4D, AltitudeEnvelope,            # noqa: E40
                               KinematicEnvelope, ObstacleClearance,
                               Policy, PolygonFence, State,
                               SubjectStandoff)
-from guardrail.shield import Shield                                 # noqa: E402
+from guardrail.shield import Shield, as_dynamic_nfz                 # noqa: E402
 from legacy_fence_loop import LegacyFenceShield                     # noqa: E402
 
 POLICIES = sorted((ROOT / "policies").glob("*.yaml"))
@@ -182,6 +182,21 @@ def _vdump(vs):
     return [v.model_dump() for v in vs]
 
 
+# Repair fields that are RECORD, not behaviour: the size of the correction an
+# operator reports for the escalation FSM's theta (added 2026-10-07). The
+# frozen old loop (tests/legacy_fence_loop.py) cannot report them, so the
+# equivalence compares everything else - the emitted action, every violation,
+# every operator and its detail, braked, the re-check.
+_RECORD_ONLY = ("magnitude_m", "axis", "recovery")
+
+
+def _ddump(d):
+    out = d.model_dump()
+    out["repairs"] = [{k: v for k, v in r.items() if k not in _RECORD_ONLY}
+                      for r in out["repairs"]]
+    return out
+
+
 def _call(fn, *args):
     """(result, None) or (None, "ExcType: message"). A crash is an answer too:
     `_check` called directly with a NaN action raises inside the clearance
@@ -196,11 +211,15 @@ def _call(fn, *args):
 
 def compare(new: Shield, old: Shield, pairs, tally: Tally, label: str,
             hot_apply_at: int | None = None, hot_fence: PolygonFence | None = None,
-            nonfinite_every: int = 0):
+            nonfinite_every: int = 0, tick_clock=None):
     for i, (st, a, subj) in enumerate(pairs):
         if hot_apply_at is not None and i == hot_apply_at:
-            new.hot_apply(hot_fence.model_copy(deep=True))
-            old.hot_apply(hot_fence.model_copy(deep=True))
+            # Mid-run, so the grant's hot-applicable form (a polygon_fence is
+            # locked once the mission has started; see test_shield.py).
+            new.hot_apply(as_dynamic_nfz(hot_fence))
+            old.hot_apply(as_dynamic_nfz(hot_fence))
+        if tick_clock is not None:
+            tick_clock.advance()
         bad = bool(nonfinite_every) and i % nonfinite_every == nonfinite_every - 1
         if bad:
             a = Action4D(vx=float("nan") if i % 2 else float("inf"), vy=a.vy,
@@ -219,8 +238,8 @@ def compare(new: Shield, old: Shield, pairs, tally: Tally, label: str,
             tally.raised += en is not None
         (dn, en), (do, eo) = _call(new.filter, st, a), _call(old.filter, st, a)
         tally.note(f"{label}#{i} filter",
-                   (dn.model_dump() if en is None else en),
-                   (do.model_dump() if eo is None else eo))
+                   (_ddump(dn) if en is None else en),
+                   (_ddump(do) if eo is None else eo))
         tally.raised += en is not None
         if dn is not None:
             tally.geofence += any(v.category == "geofence" for v in dn.violations)
@@ -236,24 +255,37 @@ def compare(new: Shield, old: Shield, pairs, tally: Tally, label: str,
 
 def _shields(pol: Policy, smap, cls_new=Shield, now_new=None, now_old=None,
              lookahead_s=3.0, dt=0.5):
+    # No escalation FSM on either side: this file is about which fences are
+    # looked at and what the repairs do (the FSM is tests/test_fsm.py and
+    # tests/test_shield.py).
     m = smap if pol.by_type(ObstacleClearance) else None
     return (cls_new(pol.model_copy(deep=True), lookahead_s=lookahead_s, dt=dt,
-                    obstacle_map=m, now=now_new),
+                    obstacle_map=m, now=now_new, escalation=False),
             LegacyFenceShield(pol.model_copy(deep=True), lookahead_s=lookahead_s,
-                              dt=dt, obstacle_map=m, now=now_old))
+                              dt=dt, obstacle_map=m, now=now_old, escalation=False))
 
 
-def _ticking_clock(start: datetime, step: timedelta):
-    """A clock that ADVANCES on every read. If the new Shield read the clock a
-    different number of times, or in a different order, than the old one, the
-    two would see different rule sets and the comparison would catch it."""
-    state = {"t": start}
+class _TickClock:
+    """A clock that advances once per SAMPLE (the harness calls advance()),
+    not per read.
 
-    def now():
-        t = state["t"]
-        state["t"] = t + step
-        return t
-    return now
+    Until 2026-10-07 this clock advanced on every read, to catch a Shield that
+    read the clock a different number of times than the old loop. The Shield
+    now reads it once per tick on purpose (guardrail/shield.py, _Schedule), so
+    read counts are no longer equal by design; what must still agree is the
+    rule set at each tick, which a per-sample clock compares."""
+
+    def __init__(self, start: datetime, step: timedelta):
+        self.t, self.step, self._first = start, step, True
+
+    def advance(self):
+        if self._first:
+            self._first = False
+        else:
+            self.t = self.t + self.step
+
+    def __call__(self):
+        return self.t
 
 
 # ------------------------------------------------------------------ IR units
@@ -424,14 +456,17 @@ def test_indexed_shield_decides_exactly_as_the_old_fence_loop():
     new, old = _shields(pol, smap, lookahead_s=5.0, dt=0.1)
     compare(new, old, _pairs(pol, 120, "overlap-5s"), t, "overlap-5s")
 
-    # A clock that advances 7 minutes per READ, from a Friday afternoon across
-    # the end of corridor_survey's 07:30-17:30 school window.
+    # A clock that advances 7 minutes per SAMPLE, from a Friday afternoon
+    # across the end of corridor_survey's 07:30-17:30 school window. No sample
+    # falls in the minute 17:30:00-17:30:59, where the old whole-minute window
+    # and the Shield's to-the-second one disagree on purpose (test_shield.py).
     for name in ("corridor_survey.yaml",):
         pol = load_policy(ROOT / "policies" / name)
         start, step = datetime(2026, 10, 9, 16, 0), timedelta(minutes=7)
-        new, old = _shields(pol, smap, now_new=_ticking_clock(start, step),
-                            now_old=_ticking_clock(start, step))
-        compare(new, old, _pairs(pol, 200, name + "@clock"), t, name + "@clock")
+        clk = _TickClock(start, step)
+        new, old = _shields(pol, smap, now_new=clk, now_old=clk)
+        compare(new, old, _pairs(pol, 200, name + "@clock"), t, name + "@clock",
+                tick_clock=clk)
 
     assert t.mismatched == 0, (
         f"{t.mismatched}/{t.compared} answers differ; first: {t.first_mismatch}")
@@ -496,13 +531,17 @@ def test_the_current_position_is_always_in_the_query_box():
     # the trend test, and every forecast pose is already past the ring.
     pol = load_policy(ROOT / "policies" / "demo_policy.yaml")
     st, a = State(x=15.0, y=10.0, up=4.0), Action4D(vx=0.0, vy=40.0)
-    new, old = NewAhead(pol.model_copy(deep=True)), OldAhead(pol.model_copy(deep=True))
+    # 3 s at 0.5 s: the first pose (dropped above) is then 0.5 s ahead, past the
+    # zone's far side, which is what this test needs (the default is now the
+    # grant's 5 s at 0.1 s, whose first pose is still inside).
+    new = NewAhead(pol.model_copy(deep=True), lookahead_s=3.0, dt=0.5, escalation=False)
+    old = OldAhead(pol.model_copy(deep=True), lookahead_s=3.0, dt=0.5, escalation=False)
     poses = new.forecast(st, a)
     assert poses[0][0] > 0 and all(p.y > 24.0 for _, p in poses)
     want = _vdump(old._check(st, a))
     assert any(v["detail"].startswith("currently INSIDE") for v in want), want
     assert _vdump(new._check(st, a)) == want
-    assert new.filter(st, a).model_dump() == old.filter(st, a).model_dump()
+    assert _ddump(new.filter(st, a)) == _ddump(old.filter(st, a))
 
 
 def test_a_slide_that_turns_into_a_second_fence_is_still_repaired():
@@ -524,8 +563,111 @@ def test_a_slide_that_turns_into_a_second_fence_is_still_repaired():
     near = new._fence_candidates(new.ir, st, new.forecast(st, a))
     assert [new.ir.fences[i].rule.id for i in sorted(near)] == ["A"], near
     dn, do = new.filter(st, a), old.filter(st, a)
-    assert dn.model_dump() == do.model_dump()
+    assert _ddump(dn) == _ddump(do)
     assert any(r.detail.startswith("B:") for r in dn.repairs), dn.repairs
+
+
+# ------------------------------------------------- multi-scale geometry (WP2-16)
+
+def test_every_zone_carries_a_coarse_ring_that_contains_it():
+    """The IR's coarse scale must CONTAIN the authored polygon (a coarse
+    keep-out zone that cut a corner would describe a smaller zone than the
+    Shield enforces), have at most COARSE_MAX_VERTICES vertices, and be the
+    one guardrail/compiler.py's multiscale_geometry computes for itself, so
+    the compiler can read it from the IR instead."""
+    from shapely.geometry import Polygon as _P
+    from guardrail.compiler import multiscale_geometry
+    from guardrail.ir import COARSE_MAX_VERTICES
+    n = 0
+    for path in POLICIES:
+        pol = load_policy(path)
+        ir = PolicyIR.from_policy(pol)
+        comp = multiscale_geometry(pol)
+        for rec in ir.fences:
+            geo = ir.multiscale[rec.rule.id]
+            fine, coarse = _P(geo["fine"]), _P(geo["coarse"])
+            assert len(geo["coarse"]) <= COARSE_MAX_VERTICES, (path.name, rec.rule.id)
+            assert coarse.buffer(1e-6).contains(fine), (path.name, rec.rule.id)
+            theirs = _P(comp[rec.rule.id]["coarse"])
+            assert coarse.symmetric_difference(theirs).area <= 1e-6 * max(fine.area, 1.0), \
+                (path.name, rec.rule.id, geo["coarse"], comp[rec.rule.id]["coarse"])
+            minx, miny, maxx, maxy = fine.bounds
+            assert geo["bbox"] == [(minx, miny), (maxx, miny), (maxx, maxy), (minx, maxy)]
+            n += 1
+        for c in pol.constraints:
+            if c.type == "corridor":
+                assert ir.multiscale[c.id] == {"fine": [(float(x), float(y))
+                                                        for x, y in c.points()]}
+    assert n >= 40, n
+
+
+def test_a_geometry_ref_names_one_scale_of_one_generation():
+    pol = load_policy(ROOT / "policies" / "demo_policy.yaml")
+    ir = PolicyIR.from_policy(pol)
+    ref = ir.geometry_ref("coarse", "nfz-square")
+    assert ref == f"coarse:nfz-square@v{pol.version}/g{pol.generation}"
+    assert ir.resolve_geometry_ref(ref) == ir.multiscale["nfz-square"]["coarse"]
+    for bad in ("coarse:nfz-square@v9.9.9/g0", "coarse:nfz-square@v0.1.0/g7",
+                "nope", "medium:nfz-square@v0.1.0/g0"):
+        try:
+            ir.resolve_geometry_ref(bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"{bad!r} resolved")
+    sh = Shield(pol)
+    sh.filter(State(x=-20.0, y=-20.0, up=4.0), Action4D())
+    sh.hot_apply(as_dynamic_nfz(_square("hot", 100, 100, 5)))
+    try:
+        sh.ir.resolve_geometry_ref(ref)       # minted for generation 0
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a generation-0 ref resolved against generation 1")
+    assert sh.ir.resolve_geometry_ref(sh.ir.geometry_ref("fine", "hot"))[0] == (100.0, 100.0)
+
+
+def test_a_circle_fence_compiles_to_a_ring_that_holds_the_whole_disc():
+    from guardrail.models import CircleFence
+    c = CircleFence.model_validate({"id": "disc", "type": "circle_fence",
+                                    "center": {"x": 10.0, "y": -5.0}, "radius_m": 20.0,
+                                    "margin_m": 0.0})
+    ir = PolicyIR.from_policy(Policy(policy_id="c", constraints=[c]))
+    rec = ir.fences[0]
+    from shapely.geometry import Point
+    for k in range(720):
+        ang = 2 * math.pi * k / 720
+        p = Point(10.0 + 19.999 * math.cos(ang), -5.0 + 19.999 * math.sin(ang))
+        assert rec.buffered.contains(p), k
+    sh = Shield(Policy(policy_id="c", constraints=[c]))
+    assert sh.state_is_unsafe(State(x=10.0 + 19.9, y=-5.0, up=10.0))
+    assert not sh.state_is_unsafe(State(x=10.0 + 20.2, y=-5.0, up=10.0))
+
+
+def test_a_moving_zone_is_left_out_of_the_tree_and_always_returned():
+    """The tree holds where a zone was compiled; a moving zone will be
+    elsewhere, so a box query must never drop it."""
+    from guardrail.models import DynamicNFZ
+    z = DynamicNFZ.model_validate({"id": "mv", "type": "dynamic_nfz",
+                                   "vertices": [{"x": 0, "y": 0}, {"x": 4, "y": 0},
+                                                {"x": 4, "y": 4}],
+                                   "motion": {"vx_mps": 1.0}})
+    ir = PolicyIR.from_policy(Policy(policy_id="m", constraints=[_square("s", 50, 50, 5), z]))
+    assert [r.rule.id for r in ir.fences if r.moving] == ["mv"]
+    assert [r.rule.id for r in ir.fences_in_box(-500, -500, -499, -499)] == ["mv"]
+    assert [r.rule.id for r in ir.fences_in_box(51, 51, 52, 52)] == ["s", "mv"]
+
+
+def test_an_event_recompiles_only_the_zone_it_changed():
+    """The grant's hot path re-derives "the affected spatial-index entries":
+    after a spawn every other zone keeps its compiled record (no re-buffer)."""
+    pol = _overlap_policy()
+    sh = Shield(pol)
+    before = {r.rule.id: r.buffered for r in sh.ir.fences}
+    sh.hot_apply(as_dynamic_nfz(_square("hot", 100, 100, 5)))
+    after = {r.rule.id: r.buffered for r in sh.ir.fences}
+    assert set(after) == set(before) | {"hot"}
+    assert all(after[k] is before[k] for k in before)
 
 
 if __name__ == "__main__":

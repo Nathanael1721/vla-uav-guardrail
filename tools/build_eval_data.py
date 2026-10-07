@@ -3,9 +3,10 @@ Build docs/data/eval_sep2026.json: every number the September decks and the
 mid-evaluation report quote, computed once, from the artefacts.
 
 Why one file. The September deck once printed a tracking figure the report did
-not, and a hand-typed "fired 6 times" reached a meeting pack before anyone
-scored it. So nothing in the new decks or the report is typed by hand: they
-read this file, and this script reads the flight logs, the KPI files and the
+not, and a hand-typed stand-off count (withdrawn in 0.5.0: "fired 6 times")
+reached a meeting pack before anyone scored it. So nothing in the new decks or
+the report is typed by hand: they read this file, and this script reads the
+flight logs, the KPI files and the
 benchmark JSON. It reuses `demo/track_truth.py` rather than re-implementing any
 scoring, so there is exactly one scorer.
 
@@ -15,6 +16,29 @@ numbers are what the artefacts say.
 Usage:
     python tools/build_eval_data.py            # everything, including tests
     python tools/build_eval_data.py --no-tests # skip running the test suites
+
+Run it under the `pas` env (shapely + cv2 + PIL + projectairsim): under another
+env it still exits 0 but import errors count as failed tests.
+
+`--no-tests` does not invent or drop the test count. It carries the previous
+file's `repo.tests_fast` forward with `carried_forward: true` and the date it
+was `measured`, because the report and deck generators print that count and
+must not print it as today's.
+
+`--as-of DATE` (default 2026-09-14, the mid-evaluation report's date) scopes
+every count that grows with time to the artefacts that existed then: flights
+whose manifest.json was written on or before DATE (manifests carry no date
+field; the file's modification time is the flight's), and the repository
+facts (commits, version, finding documents, policies, test files) at the last
+commit on or before DATE. The September report and decks read this file, so
+until the review of 2026-10-06 a rebuild printed October counts under a
+September title: 71 shielded flights and "2 of 63 measurable", where the
+corrected September figures are 41 and "0 of 34 (33 measurable)"
+(docs/CORRECTION-2026-10-06-mid-evaluation-and-deck.md rows A3 and A15).
+`--as-of none` counts everything on disk. Fixed-flight sections (the five
+dev-topology runs, retarget, lock, detector) name their flights and are
+unaffected; the test count is never re-measured for a past date - it is
+carried forward with the date it was measured.
 """
 from __future__ import annotations
 
@@ -40,6 +64,55 @@ from guardrail.manifest import (is_kpi_grade, normalize_topology,  # noqa: E402
                                 resolve_run_policy)
 
 LAST_MEETING = "2026-09-02"
+# The mid-evaluation report's date: the default cut-off (see --as-of above).
+SEPT_CUTOFF = "2026-09-14"
+# Set by main(): None = everything on disk, else a datetime.date.
+AS_OF: dt.date | None = None
+
+
+def _git(*a) -> str:
+    return subprocess.run(["git", "-C", str(ROOT), *a], capture_output=True,
+                          text=True, encoding="utf-8").stdout.strip()
+
+
+def cutoff_revision() -> str | None:
+    """The last master commit on or before AS_OF (None without a cut-off)."""
+    if AS_OF is None:
+        return None
+    return _git("rev-list", "-1", "--before", f"{AS_OF.isoformat()} 23:59:59", "master") or None
+
+
+def eval_at_cutoff() -> dict | None:
+    """This file as committed at the cut-off revision: the RECORD of what was
+    measured and typed then (the test count run that day, the camera and
+    CityLife status). A hand-typed status or a test count cannot be
+    recomputed for a past date; it can be read back from the commit."""
+    rev = cutoff_revision()
+    if not rev:
+        return None
+    raw = _git("show", f"{rev}:docs/data/eval_sep2026.json")
+    try:
+        return json.loads(raw) if raw else None
+    except json.JSONDecodeError:
+        return None
+
+
+def within_cutoff(run_dir) -> bool:
+    """Was this flight on disk by the end of AS_OF? Judged by its manifest's
+    modification time; a run with no manifest has no date and is counted
+    only when there is no cut-off."""
+    if AS_OF is None:
+        return True
+    mp = Path(run_dir) / "manifest.json"
+    if not mp.is_file():
+        return False
+    end = dt.datetime.combine(AS_OF + dt.timedelta(days=1), dt.time()).timestamp()
+    return mp.stat().st_mtime < end
+
+
+def _kpi_files():
+    return [f for f in sorted(glob.glob(str(ROOT / "demo/out/*/kpi.json")))
+            if within_cutoff(Path(f).parent)]
 # retarget_fixed ran 69.95 s and retarget_smooth 119.95 s. Before/after figures
 # are only comparable over the window both flights actually flew.
 MATCHED_WINDOW_S = 69.95
@@ -117,11 +190,11 @@ def kpi_rail():
             "kpi_grade", "p0_violation_escape_rate", "mean_repair_magnitude_mps",
             "mean_time_to_safe_s", "failsafe_trigger_correctness", "nfz_s",
             "standoff_min_range_m")})
-    n_grade = sum(1 for f in glob.glob(str(ROOT / "demo/out/*/kpi.json"))
+    n_grade = sum(1 for f in _kpi_files()
                   if json.loads(Path(f).read_text(encoding="utf-8")).get("kpi_grade"))
-    n_all = len(glob.glob(str(ROOT / "demo/out/*/kpi.json")))
+    n_all = len(_kpi_files())
     n_grade_now = 0
-    for f in glob.glob(str(ROOT / "demo/out/*/kpi.json")):
+    for f in _kpi_files():
         mp = Path(f).parent / "manifest.json"
         if mp.is_file():
             n_grade_now += int(is_kpi_grade(
@@ -129,10 +202,10 @@ def kpi_rail():
                 json.loads(Path(f).read_text(encoding="utf-8")))[0])
     say("flights with kpi.json / kpi_grade as stored / under today's gate",
         f"{n_all} / {n_grade} / {n_grade_now}")
-    # "0.0 on every flight" was published and is false: the unshielded control
+    # Retracted (0.4.x): "0.0 on every flight". It is false: the unshielded control
     # flights exist to FAIL. Count the two populations instead of asserting.
     zero, controls, other = 0, [], []
-    for f in sorted(glob.glob(str(ROOT / "demo/out/*/kpi.json"))):
+    for f in _kpi_files():
         tag = Path(f).parent.name
         rate = json.loads(Path(f).read_text(encoding="utf-8")).get("p0_violation_escape_rate")
         if rate == 0.0:
@@ -269,7 +342,7 @@ def retarget():
     m_new = load_json("demo/out/retarget_smooth/metrics.json")
     out["standoff_score_after"] = say("standoff_score, retarget_smooth",
                                       m_new["standoff_score"]["standoff-pedestrian"])
-    # The flight that was reported as "fired six times". Its metrics predate
+    # The flight behind the withdrawn "fired six times" (0.5.0). Its metrics predate
     # the scorer, so the rule list is rebuilt from the policy that governed it.
     sys.path.insert(0, str(ROOT))
     from guardrail import load_policy  # noqa: E402
@@ -392,22 +465,50 @@ def detector():
 
 
 # ── repository facts ────────────────────────────────────────────────────────
-def repo(run_tests):
+def _previous_tests_fast(path=None):
+    """The last measured fast-test count, from the file this run replaces."""
+    p = Path(path) if path else OUT
+    if not p.is_file():
+        return None
+    prev = json.loads(p.read_text(encoding="utf-8"))
+    tf = (prev.get("repo") or {}).get("tests_fast")
+    if not tf:
+        return None
+    out = dict(tf)
+    out.setdefault("measured", prev.get("generated"))
+    out["carried_forward"] = True
+    out["note"] = ("not re-run by this build (--no-tests); measured on "
+                   f"{out['measured']}")
+    return out
+
+
+def repo(run_tests, previous=None):
     print("\n[repo]")
     git = lambda *a: subprocess.run(["git", "-C", str(ROOT), *a], capture_output=True,
                                     text=True, encoding="utf-8").stdout.strip()
-    since = [l.split("|", 2) for l in git("log", "--since", LAST_MEETING,
+    if AS_OF is None:
+        until, rev = [], "master"
+        version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        tree = git("ls-files").splitlines()
+    else:
+        # Everything read off the last commit on or before the cut-off.
+        stamp = f"{AS_OF.isoformat()} 23:59:59"
+        until = ["--until", stamp]
+        rev = git("rev-list", "-1", "--before", stamp, "master") or "master"
+        version = git("show", f"{rev}:VERSION")
+        tree = git("ls-tree", "-r", "--name-only", rev).splitlines()
+    since = [l.split("|", 2) for l in git("log", "--since", LAST_MEETING, *until,
                                           "--format=%ad|%h|%s", "--date=short",
                                           "master").splitlines() if l]
     out = {"last_meeting": LAST_MEETING,
+           "as_of_revision": rev if AS_OF is not None else None,
            "commits_since_meeting": [{"date": d, "sha": h, "subject": s} for d, h, s in since],
-           "commits_total": int(git("rev-list", "--count", "master") or 0),
-           "version": (ROOT / "VERSION").read_text(encoding="utf-8").strip(),
+           "commits_total": int(git("rev-list", "--count", rev) or 0),
+           "version": version,
            # Tracked only: an untracked draft is not a published finding.
-           "finding_docs": len([p for p in git("ls-files", "docs/").splitlines()
-                                if re.match(r"docs/FINDING-.*\.md$", p)]),
-           "policies": len(glob.glob(str(ROOT / "policies/*.yaml"))),
-           "test_files": len(glob.glob(str(ROOT / "tests/test_*.py")))}
+           "finding_docs": len([p for p in tree if re.match(r"docs/FINDING-.*\.md$", p)]),
+           "policies": len([p for p in tree if re.match(r"policies/[^/]+\.yaml$", p)]),
+           "test_files": len([p for p in tree if re.match(r"tests/test_[^/]+\.py$", p)])}
     say("commits since last meeting", len(since))
     say("commits total", out["commits_total"])
     say("version / finding docs / policies / test files",
@@ -426,8 +527,29 @@ def repo(run_tests):
                 p, t = int(m.group(1)), int(m.group(2))
                 passed += p; total += t
                 per[Path(f).name] = f"{p}/{t}"
-        out["tests_fast"] = {"passed": passed, "total": total, "per_file": per}
+        out["tests_fast"] = {"passed": passed, "total": total, "per_file": per,
+                             "measured": dt.date.today().isoformat(),
+                             "python": sys.version.split()[0]}
         say("fast tests", f"{passed}/{total}")
+    else:
+        prev = _previous_tests_fast(previous)
+        old = eval_at_cutoff()
+        old_tf = ((old or {}).get("repo") or {}).get("tests_fast")
+        if old_tf:
+            # The count measured on or before the cut-off, as committed then.
+            prev = dict(old_tf)
+            prev.setdefault("measured", old.get("generated"))
+            prev["carried_forward"] = True
+            prev["note"] = (f"as recorded at {cutoff_revision()[:7]} "
+                            f"(measured {prev['measured']}); not re-run")
+        if prev is not None:
+            # A count measured after the cut-off is still the only one there
+            # is; it is labelled, never presented as the cut-off date's.
+            prev["after_cutoff"] = bool(AS_OF is not None and prev.get("measured")
+                                        and prev["measured"] > AS_OF.isoformat())
+            out["tests_fast"] = prev
+            say("fast tests (carried forward, not re-run)",
+                f"{prev['passed']}/{prev['total']} measured {prev['measured']}")
     # The ~10 min coverage suite is run separately and recorded as measured.
     out["tests_coverage"] = {"passed": 17, "total": 17, "note": "test_guardrail_coverage.py, run 2026-09-14"}
     return out
@@ -436,13 +558,15 @@ def repo(run_tests):
 # ── simulation rails, counted from each flight's manifest ───────────────────
 def rails():
     print(chr(10) + "[rails] flights per topology, and camera flights against the rate gates")
-    counts, stored_counts, cam, both = {}, {}, 0, 0
+    counts, stored_counts, cam, both, cam_all = {}, {}, 0, 0, 0
     for f in sorted(glob.glob(str(ROOT / "demo/out/*/manifest.json"))):
         d = Path(f).parent
+        if not within_cutoff(d):
+            continue
         # Under today's names: a stored "canonical-hil" counts as "dev". The
         # labels as written are kept too (`counts_as_stored`), so a reader of an
-        # older eval file - tools/deck/build_mideval_deck.js reads
-        # counts["canonical-hil"] - can see why that key is now absent.
+        # older eval file can see why that key is now absent. The deck and
+        # report generators read counts["dev"] (falling back to the old key).
         stored = json.loads(Path(f).read_text(encoding="utf-8")).get("topology")
         topo = normalize_topology(stored)
         counts[topo] = counts.get(topo, 0) + 1
@@ -456,6 +580,7 @@ def rails():
         rows = [json.loads(l) for l in fl.open(encoding="utf-8")]
         if not rows:
             continue
+        cam_all += 1
         det_hz = det_hz_mission(rows, m_)
         if det_hz is None:
             continue
@@ -465,9 +590,15 @@ def rails():
         both += int(loop_hz >= 9.5 and det_hz >= 4.0)
     say("flights per topology", counts)
     say("flights per topology, labels as stored", stored_counts)
-    say("camera flights / meeting loop>=9.5 and det>=4.0", f"{cam} / {both}")
+    # `cam` counts only flights with a MEASURABLE mission rate (a one-tick log
+    # has no time span); say so, so "N of cam" is read as "of N measurable".
+    say("camera flights / measurable / meeting loop>=9.5 and det>=4.0", f"{cam_all} / {cam} / {both}")
+    # `camera_flights` keeps its meaning (the measurable ones, the denominator
+    # of the both-gates count); `camera_flights_all` adds the unmeasurable,
+    # so "0 of 34 (33 measurable)" can be printed as the correction states it.
     return {"counts": counts, "counts_as_stored": stored_counts,
-            "camera_flights": cam, "camera_flights_meeting_both_gates": both}
+            "camera_flights": cam, "camera_flights_all": cam_all,
+            "camera_flights_meeting_both_gates": both}
 
 
 # ── the headless scenario sweep (WP4) ───────────────────────────────────────
@@ -554,7 +685,7 @@ def citylife_flights():
                 "citylife_redcar_final3", "citylife_redcar_final4", "citylife_ped_final"):
         run = ROOT / "demo/out" / tag
         log = run / "flight_log.jsonl"
-        if not log.exists() or log.stat().st_size == 0:
+        if not log.exists() or log.stat().st_size == 0 or not within_cutoff(run):
             continue
         rows = T.load_rows(run)
         cls = T.score_rows(rows)
@@ -604,7 +735,7 @@ def unflown():
                            "evidence": "demo/pas_config/robot_semantic_quad.jsonc",
                            "flight_artefacts": sorted(
                                p.name for p in (ROOT / "demo/out").glob("citylife*")
-                               if (p / "detections.jsonl").exists())},
+                               if (p / "detections.jsonl").exists() and within_cutoff(p))},
         # Measured in the editor over MCP (PASBlocks/ is gitignored, so there
         # is no artefact to recompute the traffic numbers from); see the third
         # part of docs/FINDING-crowd-pedestrians-and-traffic.md and
@@ -668,6 +799,21 @@ def unflown():
                                         "tools/citylife_routes.py",
                                         "tools/citylife_mcp/"]},
     }
+    old = (eval_at_cutoff() or {}).get("unflown") if AS_OF is not None else None
+    if old:
+        # As of a past date the hand-typed status records are the ones
+        # committed then (on 2026-09-14: 16 pedestrians and 8 cars, "not
+        # flown"), not today's; the flights and artefacts are still read off
+        # disk under the same cut-off.
+        for key in ("camera_768x432", "citylife_level"):
+            if key in old:
+                rec = dict(old[key])
+                if key == "camera_768x432":
+                    rec["flight_artefacts"] = out[key]["flight_artefacts"]
+                else:
+                    rec["flights"] = out[key]["flights"]
+                rec["record_as_of"] = cutoff_revision()
+                out[key] = rec
     say("camera 768x432 flight artefacts", out["camera_768x432"]["flight_artefacts"] or "none")
     say("CityLife level", out["citylife_level"]["status"])
     out["trail_follow_demo_day"] = demo_day_trail_ab()
@@ -682,7 +828,7 @@ def demo_day_trail_ab():
     for tag in ("demo_follow", "demo_follow_nose", "demo_follow_trail", "demo_follow_trail2"):
         run = ROOT / "demo/out" / tag
         mf = run / "metrics.json"
-        if not mf.exists():
+        if not mf.exists() or not within_cutoff(run):
             continue
         m = json.loads(mf.read_text(encoding="utf-8"))
         rows = []
@@ -701,17 +847,45 @@ def demo_day_trail_ab():
     return out
 
 
-def main():
+def main(argv=None):
+    global AS_OF
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-tests", action="store_true")
-    args = ap.parse_args()
+    ap.add_argument("--out", default=str(OUT),
+                    help="where to write (default docs/data/eval_sep2026.json)")
+    ap.add_argument("--as-of", default=SEPT_CUTOFF,
+                    help="count only flights and commits on or before this date "
+                         f"(default {SEPT_CUTOFF}, the mid-evaluation report); 'none' = all")
+    args = ap.parse_args(argv)
+    AS_OF = None if args.as_of.lower() == "none" else dt.date.fromisoformat(args.as_of)
+    # A count of today's tests says nothing about a past date: with a cut-off
+    # the suite is never run, its last measured count is carried forward.
+    run_tests = not args.no_tests and AS_OF is None
+    out = Path(args.out)
+    print(f"as of: {AS_OF.isoformat() if AS_OF else 'everything on disk'}")
     data = {"generated": dt.date.today().isoformat(),
+            "as_of": AS_OF.isoformat() if AS_OF else None,
             "source": "tools/build_eval_data.py",
             "kpi": kpi_rail(), "retarget": retarget(), "lock": lock(),
-            "detector": detector(), "rails": rails(), "sweep": sweep(), "repo": repo(not args.no_tests),
+            "detector": detector(), "rails": rails(), "sweep": sweep(),
+            # The test count is carried forward from the file being replaced
+            # (or the default one, for a new --out), never invented.
+            "repo": repo(run_tests, previous=out if out.is_file() else OUT),
             "unflown": unflown()}
-    OUT.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"\nwrote {OUT.relative_to(ROOT)}")
+    write_keeping_line_endings(out, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    print(f"\nwrote {out}")
+
+
+def write_keeping_line_endings(path, text):
+    """Write `text` with the line ending the file already has (CRLF stays
+    CRLF, LF stays LF; a new file gets LF). The repo has mixed endings, and a
+    regenerated artefact that flips them is a whole-file diff that hides the
+    few values that actually changed (repo-line-endings memory)."""
+    path = Path(path)
+    nl = "\n"
+    if path.is_file() and b"\r\n" in path.read_bytes():
+        nl = "\r\n"
+    path.write_text(text, encoding="utf-8", newline=nl)
 
 
 if __name__ == "__main__":

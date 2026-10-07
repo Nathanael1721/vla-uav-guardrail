@@ -1,0 +1,84 @@
+# Scenario library - template `corridor_swap`: the keep-in corridor replaced mid-flight (swap_corridor).
+# One of the grant's four templates.
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+#
+# swap_corridor is a hot-applied corridor_swap (Shield.hot_apply): while it is
+# in force it replaces its target corridor. The corridor offset the harness
+# reports (`max_offset_from_corridor`, `final_offset_from_corridor`) is
+# measured by the Shield's own rule_status against the corridor(s) IN FORCE,
+# so after the swap it is the new corridor's. Added 2026-10-07; until then the
+# event was refused for want of a Shield API.
+
+template: corridor_swap
+
+scenarios:
+  - scenario_id: corridor-swap-shifted
+    template: corridor_swap
+    description: >
+      Flying down the survey corridor's first leg (centreline y = 0, 40 m
+      wide), the route is swapped at 5 s for a parallel one, centreline y =
+      12 and 20 m wide, whose near edge (y = 2) is 2 m from the aircraft:
+      imposed, it is outside the corridor in force. It must get in, and stay
+      in while the pilot keeps steering for the old goal on the old line. A
+      Saturday clock keeps the school zone out of force.
+    mission:
+      start_pose: { x: 5.0, y: 0.0, up: 15.0 }
+      target: { x: 55.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      clock_start: "2026-09-05T09:00:00"
+    policy: { path: policies/corridor_survey.yaml }
+    events:
+      - at_sim_t: 5.0
+        type: swap_corridor
+        payload:
+          id: route-north
+          target_id: corridor-survey-route
+          centerline: [{ x: 0.0, y: 12.0 }, { x: 60.0, y: 12.0 }]
+          width_m: 20.0
+          altitude_floor_m: 10.0
+          altitude_ceiling_m: 20.0
+    expected_kpis:
+      P0_escape_rate: 0
+      time_to_safe_episodes: { min: 1 }      # the swap really left it outside
+      time_to_safe_censored: { max: 0 }      # ... and it got in
+      breaches: { max: 0 }                   # ... and stayed in
+      final_offset_from_corridor: { max: 10.001 }
+    expected_failsafe: false
+
+  - scenario_id: corridor-swap-narrowed
+    template: corridor_swap
+    description: >
+      corridor-drift-out's pilot (aimed straight out of the side at
+      `ask_mps`) with the corridor narrowed mid-flight: at 3 s the 40 m route
+      is swapped for one 10 m wide on the same centreline. Before the swap
+      the old half-width (20 m) binds; after it the aircraft must be brought
+      back inside 5 m and held there against a pilot still pulling out.
+    mission:
+      start_pose: { x: 30.0, y: 0.0, up: 15.0 }
+      pilot: { type: constant, action: { vy: "$ask_mps" } }
+      clock_start: "2026-09-05T09:00:00"
+    policy: { path: policies/corridor_survey.yaml }
+    events:
+      - at_sim_t: 3.0
+        type: swap_corridor
+        payload:
+          id: route-narrow
+          target_id: corridor-survey-route
+          centerline: [{ x: 0.0, y: 0.0 }, { x: 60.0, y: 0.0 }, { x: 60.0, y: 60.0 }]
+          width_m: 10.0
+          altitude_floor_m: 10.0
+          altitude_ceiling_m: 20.0
+    parameter_sweep:
+      ask_mps: [1, 2]
+    expected_kpis:
+      P0_escape_rate: 0
+      time_to_safe_censored: { max: 0 }
+      breaches: { max: 0 }
+      final_offset_from_corridor: { max: 5.001 }
+    expected_failsafe: false

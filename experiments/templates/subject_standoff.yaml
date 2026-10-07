@@ -1,0 +1,175 @@
+# Scenario library - template `subject_standoff`: range from a declared subject, per class.
+# An extension template (guardrail/scenario_spec.py, EXTENSION_TEMPLATES).
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+
+template: subject_standoff
+
+scenarios:
+  # ---- subject stand-off ------------------------------------------------- #
+  - scenario_id: standoff-approach
+    template: subject_standoff
+    description: >
+      Flown at a declared pedestrian who is NOT on the route. The 10 m ring must
+      hold and the mission must still finish.
+    mission:
+      start_pose: { x: 0.0, y: 0.0, up: 15.0 }
+      target: { x: 40.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      subject: { x: 20.0, y: 14.0, class: pedestrian }
+    policy: { path: policies/sitl_pedestrian.yaml }
+    shield: true
+    expected_kpis:
+      p0_violation_escape_rate: { max: 0.0 }
+      min_range_to_subject: { min: 9.99 }
+      reached_goal: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false
+
+  - scenario_id: standoff-reclassified
+    template: subject_standoff
+    expect: known_failure
+    description: >
+      KNOWN FAILURE since the escalation FSM was wired into the Shield
+      (measured 2026-10-07): a FALSE fail-safe through edge X6. When the label
+      flips at 10 s the aircraft is inside the new 10 m ring (imposed);
+      StandoffRecover pushes it out against a pilot still pulling in and is
+      0.15 m short when the position has been illegal for T = 5 s, and X6
+      sends the aircraft to RTL. Every gate still holds (it ends 21 m from the
+      subject, after RTL); the labels do not: outcome fail and no fail-safe
+      expected, flew RTL_triggered. X6 tests duration, not progress.
+
+      THE ANSWER TO THE 2026-09-02 REVIEW, made measurable.
+
+      Prof. Lai's point was fair: BoT-SORT and ByteTrack associate detections
+      across frames better than we do, so "we track well" is not a claim worth
+      making. But a tracker must be given a BOX and cannot be given a NOUN. It
+      returns an ID; it never returns a CLASS.
+
+      The stand-off rule is written per class - 10 m from a pedestrian, 5 m from
+      anything else - so the policy needs to know the subject IS a person before
+      it can pick the rule. That is not a tracking-quality contest the
+      open-vocabulary detector might lose; it is a question a tracker cannot be
+      asked at all.
+
+      Here one object never moves and the policy is never edited. Only the class
+      word attached to it changes, twelve seconds in, and the enforced ring goes
+      from 5 m to 10 m. Both rules come from policies/sitl_pedestrian.yaml
+      exactly as it already shipped - nothing was added for this scenario, which
+      is the point: the capability was in the schema the whole time.
+    mission:
+      start_pose: { x: 0.0, y: 0.0, up: 15.0 }
+      # The pilot's goal sits 6 m from the subject and it NEVER changes its mind.
+      # That is deliberate: once parked there it keeps asking to stay, so holding
+      # the aircraft out afterwards is the Shield working against a pilot that is
+      # still pulling in - not the mission conveniently wandering off.
+      target: { x: 22.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      subject:
+        x: 22.0
+        y: 6.0
+        class: car
+        reclassify:
+          - { at_s: 10.0, class: pedestrian }
+    policy: { path: policies/sitl_pedestrian.yaml }
+    ticks: 400
+    shield: true
+    expected_kpis:
+      p0_violation_escape_rate: { max: 0.0 }
+      # While labelled a car only the 5 m rule binds, so 6 m is legal and the
+      # aircraft must actually GO there. Without this the scenario would pass on
+      # a flight that never approached, demonstrating nothing - the same
+      # reasoning that makes nfz-head-on-control gated to fail.
+      min_range_as_car: { max: 9.99 }
+      # It was inside 10 m when the label flipped: the rule changed under it.
+      range_at_reclassify: { max: 9.99 }
+      # And it recovered, against a pilot still asking to close.
+      final_range_to_subject: { min: 9.99 }
+      # The Shield had to act. Zero repairs would mean the range changed for
+      # some other reason.
+      repair_count: { min: 1 }
+      subject_class_final: { equals: pedestrian }
+    # The goal is inside the 10 m ring once the label flips, so NOT reaching it
+    # is the rule working: an arrival would be the breach.
+    expected_outcome: fail
+    expected_failsafe: false
+
+  - scenario_id: standoff-wedge
+    template: subject_standoff
+    expect: known_failure
+    description: >
+      THE OPEN DEFECT, pinned here so it stops living only in a document.
+      The subject sits exactly on the route, so every direction that makes
+      progress also closes the range. The Shield never emits an illegal action -
+      the P0 gate holds - but the mission wedges: the aircraft cannot get past
+      the subject and never reaches its goal. Recorded on 2026-08-31 as the gap
+      between "the action was repaired" and "the trajectory was sensible".
+      When this scenario starts PASSING, the defect is fixed and the marker
+      should come off.
+    mission:
+      start_pose: { x: 0.0, y: 0.0, up: 15.0 }
+      target: { x: 40.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      subject: { x: 20.0, y: 0.0, class: pedestrian }
+    policy: { path: policies/sitl_pedestrian.yaml }
+    shield: true
+    expected_kpis:
+      p0_violation_escape_rate: { max: 0.0 }
+      min_range_to_subject: { min: 9.99 }
+      reached_goal: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false
+
+  # ---- the old library's rule types, at many geometries ------------------- #
+  - scenario_id: standoff-approach-angles
+    template: subject_standoff
+    description: >
+      standoff-approach from drawn directions, with the declared subject 7, 9
+      or 12 m off the route as a pedestrian (10 m ring) or a car (5 m ring). At
+      7 and 9 m the pedestrian ring crosses the route and the Shield has to
+      take the aircraft round it; the car ring never does. Either way the
+      binding ring must hold and the mission must finish.
+    mission:
+      start_pose: { x: 0.0, y: 0.0, up: 15.0 }
+      target: { x: 40.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      subject: { x: 20.0, y: "$offset_m", class: "$subject_class" }
+      rotate_deg: "$approach_deg"
+    policy: { path: policies/sitl_pedestrian.yaml }
+    ticks: 400
+    parameter_sweep:
+      offset_m: [7, 9, 12]
+      subject_class: [pedestrian, car]
+    parameter_sample:
+      approach_deg: { uniform: [0, 360] }
+    expected_kpis:
+      P0_escape_rate: 0
+      time_to_safe_episodes: { max: 0 }
+      breaches: { max: 0 }
+      reached_goal: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false
+    known_failures:
+      - params: { offset_m: 7, subject_class: pedestrian }
+        description: >
+          False fail-safe through N-in-T and the Loiter timeout (measured
+          2026-10-07, all three nightly variants): taking the aircraft round a
+          pedestrian ring that crosses the route, the violation of the ring
+          flickers on and off, three onsets inside T = 5 s count as N-in-T
+          (G2: Brake -> Loiter), ArduPilot's LOITER holds the aircraft while
+          the pilot keeps asking to fly through the ring, and the operator's
+          30 s Loiter timeout (G5) sends it home. Never unsafe, P0 clean; the
+          goal is not reached and RTL fires though the repair was holding.
+      - params: { offset_m: 9, subject_class: pedestrian }
+        description: >
+          False fail-safe through theta and the Loiter timeout (measured
+          2026-10-07, all three nightly variants): the first StandoffHold
+          moves the forecast 2.1 m, over the grant's 2.0 m lateral theta, so
+          the FSM abandons projection (X1 then G3: Brake -> Loiter); LOITER
+          holds, the pilot keeps asking, and the 30 s timeout (G5) sends the
+          aircraft home. Never unsafe, P0 clean.

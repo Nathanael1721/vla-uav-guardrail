@@ -42,9 +42,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tools"))
 
 from guardrail import load_policy                                  # noqa: E402
-from guardrail.bundle import load_bundle, write_bundle             # noqa: E402
+from guardrail.bundle import (_issued_at, check_bundle,             # noqa: E402
+                             write_bundle)
 from guardrail.models import Action4D, State                       # noqa: E402
 from guardrail.shield import Shield                                # noqa: E402
 
@@ -163,19 +165,50 @@ def constraint_inventory() -> dict:
     }
 
 
-def bundle_facts() -> dict:
+def bundle_issue_time(pol) -> str:
+    """ONE issue time for both bundles a deck build writes of `pol`.
+
+    Since 2026-10-06 the manifest carries `issued_at` (second resolution), so
+    two writes that straddle a second boundary differ in the manifest and in
+    the signature over it, and "byte-identical under a different name" read
+    False for a reason that has nothing to do with the archive. The first fix
+    pinned a constant, 2026-01-01T00:00:00Z: a made-up date in deck data that
+    the public site serves, and one that write_bundle refuses for any policy
+    that writes its own `issued_at` (the grant form). So: the policy's own
+    `issued_at` when it has one, else this build's clock read once (or
+    SOURCE_DATE_EPOCH, guardrail.bundle's reproducible-build rule), and the
+    same value passed to both writes."""
+    return _issued_at(pol.issued_at) if pol.issued_at else _issued_at()
+
+
+def bundle_facts(policies: list[Path] | None = None) -> dict:
+    """What a policy bundle weighs and contains, measured by writing one.
+
+    The bundle is read back with `check_bundle`, which always enforces
+    integrity (hash, canonical IR, signature line naming this hash) and REPORTS
+    the signature status instead of refusing an unsigned bundle. Until
+    2026-10-06 this called `load_bundle(tmp)`; that default now refuses
+    anything not signed by a trusted key, so on a machine without the lab key
+    (or without `cryptography`, e.g. the 3.11 env) the whole deck build died
+    with BundleSignatureError. The status is recorded beside the facts, so a
+    deck can never show an unsigned bundle as a signed one.
+    """
     out = {}
-    for name in ("wgs84_taipei", "corridor_survey"):
-        p = ROOT / "policies" / f"{name}.yaml"
-        if not p.is_file():
+    paths = policies or [ROOT / "policies" / f"{n}.yaml"
+                         for n in ("wgs84_taipei", "corridor_survey")]
+    for p in paths:
+        name = Path(p).stem
+        if not Path(p).is_file():
             continue
         pol = load_policy(p)
+        when = bundle_issue_time(pol)
         tmp = Path(tempfile.mkdtemp()) / f"{name}.tar.gz"
-        write_bundle(pol, tmp, changelog="deck build")
-        back = load_bundle(tmp)                 # never quote one that will not reload
+        write_bundle(pol, tmp, changelog="deck build", issued_at=when)
+        chk = check_bundle(tmp)                 # never quote one that will not reload
+        back = chk.policy
         # Reproducibility, demonstrated rather than asserted.
         tmp2 = Path(tempfile.mkdtemp()) / "other-name.tar.gz"
-        write_bundle(pol, tmp2, changelog="deck build")
+        write_bundle(pol, tmp2, changelog="deck build", issued_at=when)
         out[name] = {
             "policy_id": pol.policy_id,
             "policy_hash": back.policy_hash,
@@ -184,6 +217,12 @@ def bundle_facts() -> dict:
             "byte_identical_under_a_different_name":
                 tmp.read_bytes() == tmp2.read_bytes(),
             "geographic": pol.origin is not None,
+            # "verified" only where this machine holds the lab key and can
+            # check it; "unsigned" elsewhere. A fact about this build, not a
+            # property of the policy.
+            "signature": chk.signature,
+            "signed_by": chk.signed_by,
+            "issued_at": chk.manifest.get("issued_at"),
         }
     return out
 
@@ -198,19 +237,29 @@ def sweep_summary() -> dict:
             "known_failures": known}
 
 
-def loop_rates() -> dict:
+def loop_rates(out_root: Path | None = None) -> dict:
     """The pre-registered rate gate, and whether the camera rail meets it.
 
     Derived from the flight logs rather than read from metrics.json, which does
     not carry a loop rate for the newer runs. Reported because it is still NOT
     met, and a deck that omitted it would be quietly selective.
+
+    The detector rate is the MISSION rate, from `build_eval_data.det_hz_mission`
+    (the one implementation). Until 2026-10-06 this read metrics.json's
+    `det_hz`, which before 2026-09-29 counted every inference since the
+    detector loaded over ticks x 0.1 s and so ran high (CHANGELOG.md,
+    2026-09-29 evening, Retracted): city_locked 3.76 against a mission rate of
+    2.77. The stored value is kept as `det_hz_reported`, never as `det_hz`.
     """
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from build_eval_data import det_hz_mission       # noqa: E402
+    out_root = Path(out_root) if out_root else ROOT / "demo" / "out"
     gate = {"loop_hz_min": 9.5, "det_hz_min": 4.0}
     rows = []
     for tag in ("city_locked", "city_kpi", "city_full", "city_people",
                 "demo_traffic", "demo_nfz"):
-        log = ROOT / "demo" / "out" / tag / "flight_log.jsonl"
-        met = ROOT / "demo" / "out" / tag / "metrics.json"
+        log = out_root / tag / "flight_log.jsonl"
+        met = out_root / tag / "metrics.json"
         if not log.is_file() or not met.is_file():
             continue
         recs = [json.loads(x) for x in
@@ -221,7 +270,8 @@ def loop_rates() -> dict:
         rows.append({
             "tag": tag,
             "loop_hz": round(len(recs) / span, 2) if span else None,
-            "det_hz": m.get("det_hz"),
+            "det_hz": det_hz_mission(recs, m),
+            "det_hz_reported": m.get("det_hz"),
         })
     met_gate = [r for r in rows
                 if (r["loop_hz"] or 0) >= gate["loop_hz_min"]
@@ -230,7 +280,13 @@ def loop_rates() -> dict:
             "n_runs": len(rows)}
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    import argparse
+    ap = argparse.ArgumentParser(description="Write the September deck's "
+                                             "generated numbers.")
+    ap.add_argument("--out", default=str(ROOT / "docs" / "data" /
+                                         "deck_sept_extra.json"))
+    args = ap.parse_args(argv)
     data = {
         "_what": "Numbers the September deck's new slides read. Generated, "
                  "never typed onto a slide. See the module docstring.",
@@ -240,10 +296,11 @@ def main() -> int:
         "sweep": sweep_summary(),
         "rate_gate": loop_rates(),
     }
-    out = ROOT / "docs" / "data" / "deck_sept_extra.json"
+    out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    print(f"wrote {out.relative_to(ROOT)}")
+    from build_eval_data import write_keeping_line_endings  # noqa: E402
+    write_keeping_line_endings(out, json.dumps(data, indent=2) + "\n")
+    print(f"wrote {out}")
     a = data["altitude_recovery"]
     print(f"  altitude model vs live Shield: max error "
           f"{a['_model_vs_live_max_error_m']} m")
@@ -255,6 +312,13 @@ def main() -> int:
           f"(reference impl: {data['constraints']['reference_impl_n_types']})")
     print(f"  rate gate: {data['rate_gate']['n_meeting_gate']} of "
           f"{data['rate_gate']['n_runs']} camera runs meet it")
+    for name, b in data["bundles"].items():
+        print(f"  bundle {name}: {b['bytes']} B, signature {b['signature']}, "
+              f"byte-identical under another name: "
+              f"{b['byte_identical_under_a_different_name']}")
+    # Every status the sweep file counts, `tracked` included: a status line
+    # that prints only pass/fail/known_failure hides tracked episodes.
+    print(f"  sweep counts: {data['sweep'].get('counts')}")
     return 0
 
 

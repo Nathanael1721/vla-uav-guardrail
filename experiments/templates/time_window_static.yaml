@@ -1,0 +1,49 @@
+# Scenario library - template `time_window_static`: a scheduled rule at a FIXED time of day (no switch during the run).
+# An extension template (guardrail/scenario_spec.py, EXTENSION_TEMPLATES).
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+
+template: time_window_static
+
+scenarios:
+  - scenario_id: corridor-curfew-in-hours
+    template: time_window_static
+    description: "The scheduled fence is in force on a Monday morning and must bind."
+    mission:
+      start_pose: { x: 60.0, y: 0.0, up: 15.0 }
+      target: { x: 60.0, y: 55.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      clock_start: "2026-09-07T09:00:00"     # Monday, inside 07:30-17:30
+    policy: { path: policies/corridor_survey.yaml }
+    shield: true
+    expected_kpis:
+      p0_violation_escape_rate: { max: 0.0 }
+      ended_safe: { equals: true }
+    expected_failsafe: false
+    # No outcome label, for the same reason as nfz-head-on: the fence sits
+    # across the route and the dumb pilot never moves off (60, 0).
+
+  - scenario_id: corridor-curfew-out-of-hours
+    template: time_window_static
+    description: >
+      The same flight at 23:00. The fence is not in force, so the aircraft may
+      fly through where it stood - and nothing may repair against it. A rule
+      that still bends the action out of hours is enforcing a rule the policy
+      says is off.
+    mission:
+      start_pose: { x: 60.0, y: 0.0, up: 15.0 }
+      target: { x: 60.0, y: 55.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      clock_start: "2026-09-07T23:00:00"
+    policy: { path: policies/corridor_survey.yaml }
+    shield: true
+    expected_kpis:
+      p0_violation_escape_rate: { max: 0.0 }
+      reached_goal: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false

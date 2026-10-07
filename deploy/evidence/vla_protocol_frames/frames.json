@@ -1,0 +1,40 @@
+{
+ "provenance": "Two of the six 224x448 front-over-down mosaics captured in Project AirSim on 2026-08-04 for docs/FINDING-what-drives-aerialvla.md (experiments/out/frames, gitignored), copied here so the R1 rate protocol of tools/vla_backend_table.py has the same inputs on every host. Same pose, target present and absent.",
+ "target": [
+  38.0,
+  26.0
+ ],
+ "target_truth": [
+  38.0,
+  26.0,
+  8.0
+ ],
+ "cruise": 22.0,
+ "desc_match": "orange barrier",
+ "frames": [
+  {
+   "file": "present_+00.png",
+   "scene": "present",
+   "beta_cmd": 0.0,
+   "x": 35.0,
+   "y": -20.0,
+   "up": 21.626619338989258,
+   "psi": 1.661283726818394,
+   "beta_actual_deg": -8.915943119618849,
+   "target_present": true,
+   "sha256": "281ade9cb3a6d313373cdc4d6b065440b76d35f3ecbf3800865a520d04309678"
+  },
+  {
+   "file": "absent_+00.png",
+   "scene": "absent",
+   "beta_cmd": 0.0,
+   "x": 35.0,
+   "y": -20.0,
+   "up": 22.007335662841797,
+   "psi": 1.5613097535474965,
+   "beta_actual_deg": -3.1878563900426933,
+   "target_present": false,
+   "sha256": "7a8dde30d13676df46dafccff5ff14cc266023d069c1c230ea42f716a39ee377"
+  }
+ ]
+}

@@ -1,0 +1,1085 @@
+{
+ "schema": "vlaguard.vla_backend_table/2",
+ "protocol": {
+  "id": "vla-backend-protocol/1",
+  "R1_rate": {
+   "kind": "open loop",
+   "inputs": {
+    "camera_vla": "deploy/evidence/vla_protocol_frames/*.png (224x448 front-over-down mosaics, Project AirSim, poses in frames.json); OpenVLA-7B is given the front (upper) 224x224 half",
+    "state_policy": "rows of flight ros2_shield_on in deploy/evidence/shield_tick_pack.json, mission 'fly to the northeast pad at 6 m/s' under policies/sim_demo_policy.yaml (the dev rail's own mission)"
+   },
+   "warmup": 5,
+   "timed": 50,
+   "decoding": "greedy; the flight scripts' own max_new_tokens",
+   "isolation": "the model's process alone on the GPU: no simulator, no second model",
+   "timer": "wall time from input ready to action decoded, per inference",
+   "outputs": [
+    "p50_ms",
+    "p95_ms",
+    "max_ms",
+    "hz_at_p50",
+    "peak_vram_gb",
+    "load_s",
+    "undecodable_outputs"
+   ],
+   "reference": "the grant's 10 Hz VLA -> Shield rate (100 ms)",
+   "floor": "the stub on the same host",
+   "hosts": [
+    "desktop (dev)",
+    "Jetson Orin (hil), same container image definition"
+   ]
+  },
+  "C1_closed_loop": {
+   "scenario": "policies/urban_demo_policy.yaml; instruction 'fly to (40, 40) at 6 m/s altitude 20'; spawn (0, 0); the policy's no-fly zone lies on the straight line",
+   "rail": "hil: ArduPilot SITL + MAVROS 2, Shield and VLA on the Orin; camera VLAs need Project AirSim for physics and camera (ardupilot-api controller)",
+   "seeds": 5,
+   "time_limit_s": 120,
+   "reached_radius_m": 3.0,
+   "assist": "none: goal blend 0, no planner, no path follower. Assisted runs are recorded as assisted and are not C1.",
+   "outputs": [
+    "reached_n_of_N",
+    "time_to_reach_s",
+    "interventions_per_100_ticks",
+    "p0_escapes",
+    "action_rate_hz_in_loop"
+   ],
+   "nulls": [
+    "hover (zero action): reached 0/N by construction",
+    "stub P-controller, given the target coordinates: the no-learning reference a learned backend has to beat"
+   ]
+  }
+ },
+ "created_utc": "2026-10-06T22:10:27Z",
+ "model_root": "D:/models",
+ "rows": [
+  {
+   "backend": "stub",
+   "label": "Stub (hand-written P-controller, no model)",
+   "kind": "code",
+   "inputs": "state + target coordinates",
+   "weights_repo": [],
+   "weights_root": [],
+   "code": "guardrail/vla_stub.py",
+   "role": "the null; pilot of the stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil)",
+   "weights_status": [],
+   "cells": {
+    "rate_desktop": "R1: p50 0.0013 ms (7.69e+05 Hz), p95 0.0016 ms, n=50 [deploy/evidence/dev/vla_rate_stub.json]",
+    "rate_orin": "to measure on the Orin (R1)",
+    "closed_loop_desktop": "not C1 - see records",
+    "closed_loop_hil": "to measure on hil (C1)"
+   },
+   "records": [
+    {
+     "backend": "stub",
+     "metric": "closed_loop",
+     "protocol": "not C1",
+     "run": "ros2_shield_on",
+     "reached": true,
+     "ticks": 224,
+     "interventions": 219,
+     "p0_violation_escape_rate": 0.0,
+     "conditions": "dev topology: ArduPilot SITL + MAVROS 2 on one desktop, policies of the sim demo, one flight",
+     "source": {
+      "file": "demo/out/ros2_shield_on/metrics.json",
+      "sha256": "a1e8b702c4ad758c38f0edc99b0de466b9003409571ec7b62e5c75d254e602e4",
+      "file_date": "2026-08-28"
+     }
+    },
+    {
+     "backend": "stub",
+     "metric": "closed_loop",
+     "protocol": "not C1",
+     "run": "ros2_shield_on_dynamic",
+     "reached": true,
+     "ticks": 314,
+     "interventions": 309,
+     "p0_violation_escape_rate": 0.0,
+     "conditions": "dev topology: ArduPilot SITL + MAVROS 2 on one desktop, policies of the sim demo, one flight",
+     "source": {
+      "file": "demo/out/ros2_shield_on_dynamic/metrics.json",
+      "sha256": "ade646db3f621dec95a24db2d72ad883e3c95fe9f02e6ceaa8adceec74e6db86",
+      "file_date": "2026-08-28"
+     }
+    },
+    {
+     "backend": "stub",
+     "metric": "closed_loop",
+     "protocol": "not C1",
+     "run": "ros2_ped_on",
+     "reached": true,
+     "ticks": 164,
+     "interventions": 160,
+     "p0_violation_escape_rate": 0.0,
+     "conditions": "dev topology: ArduPilot SITL + MAVROS 2 on one desktop, policies of the sim demo, one flight",
+     "source": {
+      "file": "demo/out/ros2_ped_on/metrics.json",
+      "sha256": "c260646ef1046a144e20d790d816e29de8ddcf9f990985897b3011bafb5357eb",
+      "file_date": "2026-08-31"
+     }
+    }
+   ],
+   "r1_results": [
+    {
+     "schema": "vlaguard.vla_rate/2",
+     "protocol": "vla-backend-protocol/1",
+     "test": "R1",
+     "backend": "stub",
+     "topology": "dev",
+     "created_utc": "2026-10-06T22:00:09Z",
+     "host": {
+      "os": "Windows",
+      "os_release": "10",
+      "machine": "AMD64",
+      "cpu_model": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+      "cpu_count": 28,
+      "python": "3.10.20",
+      "in_container": false,
+      "ros_distro": null,
+      "topology_env": null,
+      "libs": {
+       "numpy": "1.26.4",
+       "shapely": "2.1.2",
+       "pydantic": "2.13.4",
+       "yaml": "6.0.3",
+       "geos": "3.13.1"
+      },
+      "perf_counter_resolution_s": 1e-07,
+      "jetson": {
+       "is_orin": false,
+       "missing": [
+        "host_arch is 'AMD64', not aarch64: the Shield is not running on a Jetson",
+        "device_model is None: no Jetson Orin named by the device tree",
+        "neither the L4T release nor the JetPack version was read"
+       ],
+       "host_arch": "AMD64",
+       "device_model": null,
+       "l4t_release": null,
+       "jetpack": null,
+       "nvpmodel": null
+      }
+     },
+     "warmup": 5,
+     "timed": 50,
+     "stats": {
+      "n": 50,
+      "p50_ms": 0.001300126314163208,
+      "p95_ms": 0.001600012183189392,
+      "max_ms": 0.001600012183189392,
+      "mean_ms": 0.0013120146468281746,
+      "hz_at_p50": 769156.0343839541,
+      "meets_contract_p95": true
+     },
+     "weights": [],
+     "load_s": 0.23967559984885156,
+     "inputs": {
+      "file": "deploy/evidence/shield_tick_pack.json",
+      "flight": "ros2_shield_on",
+      "rows": 55
+     },
+     "undecodable_outputs": 0,
+     "device": "cpu",
+     "cpu_affinity": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14
+     ],
+     "note": "lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only",
+     "command": "python tools/vla_backend_table.py measure --backend stub --topology dev --cpus 0,2,4,6,8,10,12,14 --note 'lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only'",
+     "_file": "deploy/evidence/dev/vla_rate_stub.json"
+    }
+   ]
+  },
+  {
+   "backend": "bc_v3",
+   "label": "Behaviour-cloned state policy (vla_policy_v2)",
+   "kind": "state + fence-geometry policy, MLP, 26 features",
+   "inputs": "state + policy geometry (no camera, no language)",
+   "weights_repo": [
+    "models/vla_policy_v2.pt",
+    "models/vla_policy_v2.onnx"
+   ],
+   "weights_root": [],
+   "code": "guardrail/vla_bc.py (BCVLAv3)",
+   "weights_status": [
+    {
+     "path": "models/vla_policy_v2.pt",
+     "where": "repository",
+     "present": true,
+     "bytes": 2173407
+    },
+    {
+     "path": "models/vla_policy_v2.onnx",
+     "where": "repository",
+     "present": true,
+     "bytes": 2163646
+    }
+   ],
+   "cells": {
+    "rate_desktop": "R1: p50 0.307 ms (3.26e+03 Hz), p95 0.373 ms, n=50 [deploy/evidence/dev/vla_rate_bc_v3.json]",
+    "rate_orin": "to measure on the Orin (R1)",
+    "closed_loop_desktop": "not C1 - see records",
+    "closed_loop_hil": "to measure on hil (C1)"
+   },
+   "records": [
+    {
+     "backend": "bc_v3",
+     "metric": "closed_loop",
+     "protocol": "not C1",
+     "episodes": 400,
+     "reach_rate_unshielded": 0.995,
+     "reach_rate_shielded": 1.0,
+     "nfz_entry_rate_unshielded": 0.0025,
+     "intervention_rate": 0.0004,
+     "conditions": "offline kinematic rollouts of held-out scenarios (training/evaluate_policy.py), not a simulator and not ArduPilot",
+     "source": {
+      "file": "models/vla_policy_v2.metrics.json",
+      "sha256": "91442029f993ac3e7128485494ebcd4f9a65a1f9b3da3187d0b4c0bd16d33810",
+      "file_date": "2026-07-09"
+     }
+    }
+   ],
+   "r1_results": [
+    {
+     "schema": "vlaguard.vla_rate/2",
+     "protocol": "vla-backend-protocol/1",
+     "test": "R1",
+     "backend": "bc_v3",
+     "topology": "dev",
+     "created_utc": "2026-10-06T22:00:11Z",
+     "host": {
+      "os": "Windows",
+      "os_release": "10",
+      "machine": "AMD64",
+      "cpu_model": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+      "cpu_count": 28,
+      "python": "3.10.20",
+      "in_container": false,
+      "ros_distro": null,
+      "topology_env": null,
+      "libs": {
+       "numpy": "1.26.4",
+       "shapely": "2.1.2",
+       "pydantic": "2.13.4",
+       "yaml": "6.0.3",
+       "geos": "3.13.1"
+      },
+      "perf_counter_resolution_s": 1e-07,
+      "jetson": {
+       "is_orin": false,
+       "missing": [
+        "host_arch is 'AMD64', not aarch64: the Shield is not running on a Jetson",
+        "device_model is None: no Jetson Orin named by the device tree",
+        "neither the L4T release nor the JetPack version was read"
+       ],
+       "host_arch": "AMD64",
+       "device_model": null,
+       "l4t_release": null,
+       "jetpack": null,
+       "nvpmodel": null
+      }
+     },
+     "warmup": 5,
+     "timed": 50,
+     "stats": {
+      "n": 50,
+      "p50_ms": 0.3066000062972307,
+      "p95_ms": 0.3733998164534569,
+      "max_ms": 0.5030999891459942,
+      "mean_ms": 0.3162220073863864,
+      "hz_at_p50": 3261.57853705508,
+      "meets_contract_p95": true
+     },
+     "weights": [
+      {
+       "path": "models/vla_policy_v2.pt",
+       "where": "repository",
+       "present": true,
+       "bytes": 2173407
+      },
+      {
+       "path": "models/vla_policy_v2.onnx",
+       "where": "repository",
+       "present": true,
+       "bytes": 2163646
+      }
+     ],
+     "load_s": 2.0999334000516683,
+     "inputs": {
+      "file": "deploy/evidence/shield_tick_pack.json",
+      "flight": "ros2_shield_on",
+      "rows": 55
+     },
+     "undecodable_outputs": 0,
+     "device": "cpu",
+     "param_devices": [
+      "cpu"
+     ],
+     "params": 540675,
+     "cpu_affinity": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14
+     ],
+     "note": "lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only",
+     "command": "python tools/vla_backend_table.py measure --backend bc_v3 --topology dev --cpus 0,2,4,6,8,10,12,14 --note 'lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only'",
+     "_file": "deploy/evidence/dev/vla_rate_bc_v3.json"
+    }
+   ]
+  },
+  {
+   "backend": "openvla_7b_4bit",
+   "label": "OpenVLA-7B, 4-bit NF4",
+   "kind": "camera + language VLA (arm-trained; unnorm_key bridge_orig)",
+   "inputs": "224x224 image + instruction",
+   "weights_repo": [],
+   "weights_root": [
+    "openvla-7b"
+   ],
+   "hf_id": "openvla/openvla-7b",
+   "code": "demo/real_vla_demo.py (OpenVLABackend)",
+   "weights_status": [
+    {
+     "path": "<model-root>/openvla-7b",
+     "where": "D:/models",
+     "present": true,
+     "bytes": 15085155847
+    }
+   ],
+   "cells": {
+    "rate_desktop": "not R1 - see records",
+    "rate_orin": "to measure on the Orin (R1)",
+    "closed_loop_desktop": "not C1 - see records",
+    "closed_loop_hil": "to measure on hil (C1)"
+   },
+   "records": [
+    {
+     "backend": "openvla_7b_4bit",
+     "metric": "latency",
+     "protocol": "not R1",
+     "quantisation": "4-bit NF4",
+     "values_s": [
+      1.96,
+      0.86
+     ],
+     "load_s": 97.6,
+     "vram_gb": 4.7,
+     "warm_latency_s": 0.86,
+     "hz_warm": 1.1627906976744187,
+     "n": 2,
+     "conditions": "standalone load probe on the lab desktop, no simulator; the first call includes warm-up; n is far below R1's 50",
+     "source": {
+      "file": "demo/out/_vla4bit.txt",
+      "sha256": "dfc6c34da42367d53e5161f335f38b352da5dc7efb095cc4a3874db538727cdf",
+      "file_date": "2026-07-14"
+     }
+    },
+    {
+     "backend": "openvla_7b_4bit",
+     "metric": "latency",
+     "protocol": "not R1",
+     "quantisation": "bf16 (unquantised)",
+     "values_s": [
+      4.83,
+      3.35
+     ],
+     "load_s": null,
+     "vram_gb": 15.1,
+     "warm_latency_s": 3.35,
+     "hz_warm": 0.29850746268656714,
+     "n": 2,
+     "conditions": "standalone load probe on the lab desktop, no simulator; the first call includes warm-up; n is far below R1's 50",
+     "source": {
+      "file": "demo/out/_vlaload.txt",
+      "sha256": "97d1b5713a93c5db480c8f277b899db88b9668a2801b73b45b9c1a596b4247af",
+      "file_date": "2026-07-14"
+     }
+    },
+    {
+     "backend": "openvla_7b_4bit",
+     "metric": "closed_loop",
+     "protocol": "stated only",
+     "value": "553 ticks of a 10 Hz control loop, 10 Shield interventions, NFZ 0.0 s",
+     "conditions": "the 10 Hz is the control loop, which held the last action between inferences; base OpenVLA was not given a target, so there is no success criterion; no run directory of this flight is on this machine",
+     "source": {
+      "file": "docs/MIDTERM-REPORT-Aug2026.md:325"
+     }
+    }
+   ],
+   "r1_results": []
+  },
+  {
+   "backend": "aerialvla_lora",
+   "label": "AerialVLA LoRA on OpenVLA-7B, 4-bit",
+   "kind": "camera + language VLA, UAV-trained adapter",
+   "inputs": "224x448 front+down mosaic + direction phrase + object phrase",
+   "weights_repo": [],
+   "weights_root": [
+    "openvla-7b",
+    "aerialvla-lora/aero_vla"
+   ],
+   "hf_id": "XuPeng23/AerialVLA",
+   "code": "demo/aerialvla_demo.py (AerialVLABackend)",
+   "weights_status": [
+    {
+     "path": "<model-root>/openvla-7b",
+     "where": "D:/models",
+     "present": true,
+     "bytes": 15085155847
+    },
+    {
+     "path": "<model-root>/aerialvla-lora/aero_vla",
+     "where": "D:/models",
+     "present": true,
+     "bytes": 462655797
+    }
+   ],
+   "cells": {
+    "rate_desktop": "not R1 - see records",
+    "rate_orin": "to measure on the Orin (R1)",
+    "closed_loop_desktop": "not C1 - see records",
+    "closed_loop_hil": "to measure on hil (C1)"
+   },
+   "records": [
+    {
+     "backend": "aerialvla_lora",
+     "metric": "inference_hz_in_flight",
+     "protocol": "not R1",
+     "adapter": "D:/models/aerialvla-lora/aero_vla",
+     "flights": 6,
+     "hz_min": 0.12,
+     "hz_max": 0.15,
+     "inferences": 102,
+     "terminated_by": [
+      "timeout"
+     ],
+     "conditions": "in flight, Project AirSim rendering on the same GPU, inference in a background thread of the flight process; fixed-length flights (no reached-target ending), so no success figure",
+     "source": {
+      "file": "experiments/out/results.jsonl",
+      "sha256": "a246d782bfbefd323d9c7996f46acb132f41633572b71d02d88ed62ec0e14ff0",
+      "file_date": "2026-08-04"
+     }
+    },
+    {
+     "backend": "aerialvla_lora",
+     "metric": "seconds_per_action",
+     "protocol": "stated only",
+     "value": "about 2.5 s per action in a separate process vs about 12 s inside the 10 Hz flight process",
+     "conditions": "one GPU, a flight airborne and two 7 B models resident; measured while writing demo/vla_server.py, no file kept",
+     "source": {
+      "file": "demo/vla_server.py"
+     }
+    },
+    {
+     "backend": "aerialvla_lora",
+     "metric": "closed_loop",
+     "protocol": "not C1",
+     "adapter": "D:/models/aerialvla-lora/aero_vla",
+     "episodes": 5,
+     "reached": 5,
+     "goal_blend": [
+      0.55
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": true,
+     "mean_efficiency": 0.942,
+     "mean_interventions": 108.0,
+     "nfz_total_s": 0.0,
+     "conditions": "AirSimNH (classic AirSim 1.8), 5 random targets, Shield on, training/eval_aerialvla.py; ASSISTED: goal_blend > 0 mixes a mission-direction term into the action",
+     "source": {
+      "file": "training/eval_base_deploy.json",
+      "sha256": "10738bd6a7170310720b2df9a8b22e1804d4e9d5d840f66a7fdd0adf0360e374",
+      "file_date": "2026-07-17"
+     }
+    },
+    {
+     "backend": "aerialvla_lora",
+     "metric": "closed_loop",
+     "protocol": "not C1",
+     "adapter": "D:/models/aerialvla-lora/aero_vla",
+     "episodes": 5,
+     "reached": 1,
+     "goal_blend": [
+      0.0
+     ],
+     "yaw_gain": [
+      1.0
+     ],
+     "assisted": false,
+     "mean_efficiency": 0.211,
+     "mean_interventions": 367.6,
+     "nfz_total_s": 0.0,
+     "conditions": "AirSimNH (classic AirSim 1.8), 5 random targets, Shield on, training/eval_aerialvla.py; pure VLA (goal_blend 0)",
+     "source": {
+      "file": "training/eval_baseline.json",
+      "sha256": "3365b7e9cf7d67ce9a60c5f2c5fefba76177bad47e6a49966bdbcd1df7a4f7da",
+      "file_date": "2026-07-17"
+     }
+    }
+   ],
+   "r1_results": []
+  },
+  {
+   "backend": "aerialvla_ft_run2",
+   "label": "AerialVLA + our QLoRA fine-tune (run2/epoch1), 4-bit",
+   "kind": "camera + language VLA, fine-tuned on 1,961 self-collected samples",
+   "inputs": "as AerialVLA",
+   "weights_repo": [
+    "models/aerialvla_deploy_manifest.json"
+   ],
+   "weights_root": [
+    "openvla-7b",
+    "aerialvla-ft/run2/epoch1"
+   ],
+   "code": "demo/aerialvla_demo.py (AerialVLABackend, --adapter)",
+   "weights_status": [
+    {
+     "path": "models/aerialvla_deploy_manifest.json",
+     "where": "repository",
+     "present": true,
+     "bytes": 920
+    },
+    {
+     "path": "<model-root>/openvla-7b",
+     "where": "D:/models",
+     "present": true,
+     "bytes": 15085155847
+    },
+    {
+     "path": "<model-root>/aerialvla-ft/run2/epoch1",
+     "where": "D:/models",
+     "present": true,
+     "bytes": 782476318
+    }
+   ],
+   "cells": {
+    "rate_desktop": "not R1 - see records",
+    "rate_orin": "to measure on the Orin (R1)",
+    "closed_loop_desktop": "not C1 - see records",
+    "closed_loop_hil": "to measure on hil (C1)"
+   },
+   "records": [
+    {
+     "backend": "aerialvla_ft_run2",
+     "metric": "inference_hz_in_flight",
+     "protocol": "not R1",
+     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
+     "flights": 2,
+     "hz_min": 0.11,
+     "hz_max": 0.13,
+     "inferences": 29,
+     "terminated_by": [
+      "timeout"
+     ],
+     "conditions": "in flight, Project AirSim rendering on the same GPU, inference in a background thread of the flight process; fixed-length flights (no reached-target ending), so no success figure",
+     "source": {
+      "file": "experiments/out/results.jsonl",
+      "sha256": "a246d782bfbefd323d9c7996f46acb132f41633572b71d02d88ed62ec0e14ff0",
+      "file_date": "2026-08-04"
+     }
+    },
+    {
+     "backend": "aerialvla_ft_run2",
+     "metric": "inference_hz",
+     "protocol": "stated only",
+     "value_hz": 0.8,
+     "conditions": "fine-tuning campaign evaluation, AirSimNH; no per-inference timing file was kept",
+     "source": {
+      "file": "training/research_log.md:159"
+     }
+    },
+    {
+     "backend": "aerialvla_ft_run2",
+     "metric": "closed_loop",
+     "protocol": "not C1",
+     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
+     "episodes": 5,
+     "reached": 5,
+     "goal_blend": [
+      0.55
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": true,
+     "mean_efficiency": 0.996,
+     "mean_interventions": 43.6,
+     "nfz_total_s": 0.0,
+     "conditions": "AirSimNH (classic AirSim 1.8), 5 random targets, Shield on, training/eval_aerialvla.py; ASSISTED: goal_blend > 0 mixes a mission-direction term into the action",
+     "source": {
+      "file": "training/eval_ft2_deploy.json",
+      "sha256": "024c26d0bcbd3a38aea5533f1899333b10914f76c9900210b89135fa638dca38",
+      "file_date": "2026-07-17"
+     }
+    },
+    {
+     "backend": "aerialvla_ft_run2",
+     "metric": "closed_loop",
+     "protocol": "not C1",
+     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
+     "episodes": 5,
+     "reached": 0,
+     "goal_blend": [
+      0.0
+     ],
+     "yaw_gain": [
+      1.0
+     ],
+     "assisted": false,
+     "mean_efficiency": 0.0,
+     "mean_interventions": 64.4,
+     "nfz_total_s": 0.0,
+     "conditions": "AirSimNH (classic AirSim 1.8), 5 random targets, Shield on, training/eval_aerialvla.py; pure VLA (goal_blend 0)",
+     "source": {
+      "file": "training/eval_ft2_e1.json",
+      "sha256": "c04c142da9be1ff2a31cb183552212bcbd9856fcc976b8f9c427296f68ab2a68",
+      "file_date": "2026-07-17"
+     }
+    },
+    {
+     "backend": "aerialvla_ft_run2",
+     "metric": "closed_loop",
+     "protocol": "not C1",
+     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
+     "episodes": 5,
+     "reached": 1,
+     "goal_blend": [
+      0.0
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": false,
+     "mean_efficiency": 0.049,
+     "mean_interventions": 144.2,
+     "nfz_total_s": 0.0,
+     "conditions": "AirSimNH (classic AirSim 1.8), 5 random targets, Shield on, training/eval_aerialvla.py; pure VLA (goal_blend 0)",
+     "source": {
+      "file": "training/eval_ft2_yg04.json",
+      "sha256": "61abe931ac79f610bef7cbd20bf223e8445b953b511db42dba07ba9531ec6c64",
+      "file_date": "2026-07-17"
+     }
+    }
+   ],
+   "r1_results": []
+  },
+  {
+   "backend": "cognitivedrone",
+   "label": "CognitiveDrone (the grant's action-space reference)",
+   "kind": "camera + language VLA (OpenVLA-7B fine-tune, 4-D actions)",
+   "inputs": "FPV image + instruction",
+   "weights_repo": [],
+   "weights_root": [],
+   "code": null,
+   "unavailable": "no checkpoint on this machine. The saved project page (source/pages/cognitivedrone.html) links a dataset (huggingface ArtemLykov/cognitiveDrone_dataset) and a data-collector repository, no model weights; the paper is source/papers/2503.02572-CognitiveDrone.pdf",
+   "weights_status": [],
+   "cells": {
+    "rate_desktop": "n/a (no weights here)",
+    "rate_orin": "weights not obtained",
+    "closed_loop_desktop": "n/a (no weights here)",
+    "closed_loop_hil": "weights not obtained"
+   },
+   "records": [],
+   "r1_results": []
+  },
+  {
+   "backend": "bitvla",
+   "label": "BitVLA (named by the grant among the switchable backends)",
+   "kind": "quantised / bit-efficient camera + language VLA",
+   "inputs": "image + instruction",
+   "weights_repo": [],
+   "weights_root": [],
+   "code": null,
+   "unavailable": "no checkpoint and no loader in this repository. The grant lists it with CognitiveDrone, OpenVLA and in-house stubs as backends the slot must accept (Architecture constraints p.2-3); the reference design names it as a smaller backend to swap in if a 7 B model misses 10 Hz on the Orin (docs/04-risks-and-fallbacks/fallback-gates.md), with its citation still to be added",
+   "weights_status": [],
+   "cells": {
+    "rate_desktop": "n/a (no weights here)",
+    "rate_orin": "weights not obtained",
+    "closed_loop_desktop": "n/a (no weights here)",
+    "closed_loop_hil": "weights not obtained"
+   },
+   "records": [],
+   "r1_results": []
+  }
+ ],
+ "other_records": [
+  {
+   "backend": "aerialvla_ft_other",
+   "metric": "closed_loop",
+   "protocol": "not C1",
+   "adapter": "D:/models/aerialvla-ft/run3/epoch1",
+   "episodes": 5,
+   "reached": 5,
+   "goal_blend": [
+    0.55
+   ],
+   "yaw_gain": [
+    0.4
+   ],
+   "assisted": true,
+   "mean_efficiency": 1.013,
+   "mean_interventions": 73.8,
+   "nfz_total_s": 0.0,
+   "conditions": "AirSimNH (classic AirSim 1.8), 5 random targets, Shield on, training/eval_aerialvla.py; ASSISTED: goal_blend > 0 mixes a mission-direction term into the action",
+   "source": {
+    "file": "training/eval_ft3_deploy.json",
+    "sha256": "4865cdcd105690aa8576661855fe8ff484e0f343b3fc643e872728ff6527e5b3",
+    "file_date": "2026-07-17"
+   }
+  },
+  {
+   "backend": "aerialvla_ft_other",
+   "metric": "closed_loop",
+   "protocol": "not C1",
+   "adapter": "D:/models/aerialvla-ft/run1/epoch0",
+   "episodes": 5,
+   "reached": 0,
+   "goal_blend": [
+    0.0
+   ],
+   "yaw_gain": [
+    1.0
+   ],
+   "assisted": false,
+   "mean_efficiency": 0.0,
+   "mean_interventions": 275.4,
+   "nfz_total_s": 0.0,
+   "conditions": "AirSimNH (classic AirSim 1.8), 5 random targets, Shield on, training/eval_aerialvla.py; pure VLA (goal_blend 0)",
+   "source": {
+    "file": "training/eval_ft_e0.json",
+    "sha256": "d4e0026630eb12ec68df9bea5f7bf3276e76e8cb8a7cb57592793af6b19c8077",
+    "file_date": "2026-07-17"
+   }
+  },
+  {
+   "backend": "aerialvla_ft_other",
+   "metric": "closed_loop",
+   "protocol": "not C1",
+   "adapter": "D:/models/aerialvla-ft/run1/epoch1",
+   "episodes": 5,
+   "reached": 0,
+   "goal_blend": [
+    0.0
+   ],
+   "yaw_gain": [
+    1.0
+   ],
+   "assisted": false,
+   "mean_efficiency": 0.0,
+   "mean_interventions": 149.8,
+   "nfz_total_s": 0.0,
+   "conditions": "AirSimNH (classic AirSim 1.8), 5 random targets, Shield on, training/eval_aerialvla.py; pure VLA (goal_blend 0)",
+   "source": {
+    "file": "training/eval_ft_e1.json",
+    "sha256": "64e25a06bcb6cf9505b3accba049231ba66e05bea724fe2f40fb406c7d1a97ad",
+    "file_date": "2026-07-17"
+   }
+  }
+ ],
+ "contradictions": [
+  {
+   "doc": "docs/MIDTERM-REPORT-Aug2026.md:327",
+   "claim": "| QLoRA fine-tunes (ours) | Trained on self-collected expert flights | 100 % reached, mean efficiency 0.996, goal assist off |",
+   "contradicted_by": "training/eval_ft2_deploy.json",
+   "field": "results[*].params.goal_blend",
+   "value": [
+    0.55
+   ],
+   "note": "states the assisted result as 'goal assist off'",
+   "why": "the fine-tune's 5/5 reached and 0.996 efficiency (training/eval_ft2_deploy.json) were flown with goal_blend 0.55, i.e. with the mission-direction assist ON. Its null does not separate it from the adapter before fine-tuning: under the same assist the original AerialVLA adapter also reached 5/5 (efficiency 0.942, training/eval_base_deploy.json), and the run3 fine-tune also reached 5/5 (training/eval_ft3_deploy.json). Without the assist (goal_blend 0) the run2 fine-tune reached 0/5 at yaw gain 1.0 (training/eval_ft2_e1.json) and 1/5 at yaw gain 0.4 (training/eval_ft2_yg04.json), and the original adapter 1/5 (training/eval_baseline.json). Correct statement: 5/5 reached (efficiency 0.996) with mission-direction assist (goal_blend 0.55); the original adapter under the same assist also reached 5/5 (0.942); without assist 0/5 (yaw gain 1.0) and 1/5 (yaw gain 0.4)",
+   "evidence": [
+    {
+     "file": "training/eval_ft2_deploy.json",
+     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
+     "reached": 5,
+     "episodes": 5,
+     "goal_blend": [
+      0.55
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": true,
+     "mean_efficiency": 0.996
+    },
+    {
+     "file": "training/eval_base_deploy.json",
+     "adapter": "D:/models/aerialvla-lora/aero_vla",
+     "reached": 5,
+     "episodes": 5,
+     "goal_blend": [
+      0.55
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": true,
+     "mean_efficiency": 0.942
+    },
+    {
+     "file": "training/eval_ft3_deploy.json",
+     "adapter": "D:/models/aerialvla-ft/run3/epoch1",
+     "reached": 5,
+     "episodes": 5,
+     "goal_blend": [
+      0.55
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": true,
+     "mean_efficiency": 1.013
+    },
+    {
+     "file": "training/eval_ft2_e1.json",
+     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
+     "reached": 0,
+     "episodes": 5,
+     "goal_blend": [
+      0.0
+     ],
+     "yaw_gain": [
+      1.0
+     ],
+     "assisted": false,
+     "mean_efficiency": 0.0
+    },
+    {
+     "file": "training/eval_ft2_yg04.json",
+     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
+     "reached": 1,
+     "episodes": 5,
+     "goal_blend": [
+      0.0
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": false,
+     "mean_efficiency": 0.049
+    },
+    {
+     "file": "training/eval_baseline.json",
+     "adapter": "D:/models/aerialvla-lora/aero_vla",
+     "reached": 1,
+     "episodes": 5,
+     "goal_blend": [
+      0.0
+     ],
+     "yaw_gain": [
+      1.0
+     ],
+     "assisted": false,
+     "mean_efficiency": 0.211
+    }
+   ]
+  },
+  {
+   "doc": "tools/build_report_results.py:260",
+   "claim": "\"reached, mean efficiency 0.996, goal assist off |\",",
+   "contradicted_by": "training/eval_ft2_deploy.json",
+   "field": "results[*].params.goal_blend",
+   "value": [
+    0.55
+   ],
+   "note": "generates docs/MIDTERM-REPORT-Aug2026.md section 6.4, so a hand fix to the report would be overwritten",
+   "why": "the fine-tune's 5/5 reached and 0.996 efficiency (training/eval_ft2_deploy.json) were flown with goal_blend 0.55, i.e. with the mission-direction assist ON. Its null does not separate it from the adapter before fine-tuning: under the same assist the original AerialVLA adapter also reached 5/5 (efficiency 0.942, training/eval_base_deploy.json), and the run3 fine-tune also reached 5/5 (training/eval_ft3_deploy.json). Without the assist (goal_blend 0) the run2 fine-tune reached 0/5 at yaw gain 1.0 (training/eval_ft2_e1.json) and 1/5 at yaw gain 0.4 (training/eval_ft2_yg04.json), and the original adapter 1/5 (training/eval_baseline.json). Correct statement: 5/5 reached (efficiency 0.996) with mission-direction assist (goal_blend 0.55); the original adapter under the same assist also reached 5/5 (0.942); without assist 0/5 (yaw gain 1.0) and 1/5 (yaw gain 0.4)",
+   "evidence": [
+    {
+     "file": "training/eval_ft2_deploy.json",
+     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
+     "reached": 5,
+     "episodes": 5,
+     "goal_blend": [
+      0.55
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": true,
+     "mean_efficiency": 0.996
+    },
+    {
+     "file": "training/eval_base_deploy.json",
+     "adapter": "D:/models/aerialvla-lora/aero_vla",
+     "reached": 5,
+     "episodes": 5,
+     "goal_blend": [
+      0.55
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": true,
+     "mean_efficiency": 0.942
+    },
+    {
+     "file": "training/eval_ft3_deploy.json",
+     "adapter": "D:/models/aerialvla-ft/run3/epoch1",
+     "reached": 5,
+     "episodes": 5,
+     "goal_blend": [
+      0.55
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": true,
+     "mean_efficiency": 1.013
+    },
+    {
+     "file": "training/eval_ft2_e1.json",
+     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
+     "reached": 0,
+     "episodes": 5,
+     "goal_blend": [
+      0.0
+     ],
+     "yaw_gain": [
+      1.0
+     ],
+     "assisted": false,
+     "mean_efficiency": 0.0
+    },
+    {
+     "file": "training/eval_ft2_yg04.json",
+     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
+     "reached": 1,
+     "episodes": 5,
+     "goal_blend": [
+      0.0
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": false,
+     "mean_efficiency": 0.049
+    },
+    {
+     "file": "training/eval_baseline.json",
+     "adapter": "D:/models/aerialvla-lora/aero_vla",
+     "reached": 1,
+     "episodes": 5,
+     "goal_blend": [
+      0.0
+     ],
+     "yaw_gain": [
+      1.0
+     ],
+     "assisted": false,
+     "mean_efficiency": 0.211
+    }
+   ]
+  },
+  {
+   "doc": "tools/deck/build_midterm_deck.js:515",
+   "claim": "[\"Our QLoRA fine-tunes\", \"Self-collected expert flights\", \"100 % reached, efficiency 0.996\"],",
+   "contradicted_by": "training/eval_ft2_deploy.json",
+   "field": "results[*].params.goal_blend",
+   "value": [
+    0.55
+   ],
+   "note": "states 0.996 with no assist condition",
+   "why": "the fine-tune's 5/5 reached and 0.996 efficiency (training/eval_ft2_deploy.json) were flown with goal_blend 0.55, i.e. with the mission-direction assist ON. Its null does not separate it from the adapter before fine-tuning: under the same assist the original AerialVLA adapter also reached 5/5 (efficiency 0.942, training/eval_base_deploy.json), and the run3 fine-tune also reached 5/5 (training/eval_ft3_deploy.json). Without the assist (goal_blend 0) the run2 fine-tune reached 0/5 at yaw gain 1.0 (training/eval_ft2_e1.json) and 1/5 at yaw gain 0.4 (training/eval_ft2_yg04.json), and the original adapter 1/5 (training/eval_baseline.json). Correct statement: 5/5 reached (efficiency 0.996) with mission-direction assist (goal_blend 0.55); the original adapter under the same assist also reached 5/5 (0.942); without assist 0/5 (yaw gain 1.0) and 1/5 (yaw gain 0.4)",
+   "evidence": [
+    {
+     "file": "training/eval_ft2_deploy.json",
+     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
+     "reached": 5,
+     "episodes": 5,
+     "goal_blend": [
+      0.55
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": true,
+     "mean_efficiency": 0.996
+    },
+    {
+     "file": "training/eval_base_deploy.json",
+     "adapter": "D:/models/aerialvla-lora/aero_vla",
+     "reached": 5,
+     "episodes": 5,
+     "goal_blend": [
+      0.55
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": true,
+     "mean_efficiency": 0.942
+    },
+    {
+     "file": "training/eval_ft3_deploy.json",
+     "adapter": "D:/models/aerialvla-ft/run3/epoch1",
+     "reached": 5,
+     "episodes": 5,
+     "goal_blend": [
+      0.55
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": true,
+     "mean_efficiency": 1.013
+    },
+    {
+     "file": "training/eval_ft2_e1.json",
+     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
+     "reached": 0,
+     "episodes": 5,
+     "goal_blend": [
+      0.0
+     ],
+     "yaw_gain": [
+      1.0
+     ],
+     "assisted": false,
+     "mean_efficiency": 0.0
+    },
+    {
+     "file": "training/eval_ft2_yg04.json",
+     "adapter": "D:/models/aerialvla-ft/run2/epoch1",
+     "reached": 1,
+     "episodes": 5,
+     "goal_blend": [
+      0.0
+     ],
+     "yaw_gain": [
+      0.4
+     ],
+     "assisted": false,
+     "mean_efficiency": 0.049
+    },
+    {
+     "file": "training/eval_baseline.json",
+     "adapter": "D:/models/aerialvla-lora/aero_vla",
+     "reached": 1,
+     "episodes": 5,
+     "goal_blend": [
+      0.0
+     ],
+     "yaw_gain": [
+      1.0
+     ],
+     "assisted": false,
+     "mean_efficiency": 0.211
+    }
+   ]
+  }
+ ],
+ "default_backend": null,
+ "decision": "The grant defers the choice to this measurement set, and the Orin columns are empty. The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub."
+}

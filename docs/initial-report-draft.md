@@ -1,6 +1,16 @@
 # Initial Report (Draft) — Guardrail Framework for Constraint-Aware VLA UAV Control
 NTUT AIoT Lab · for mid-year review · draft v1, 2026-07-03
 
+> **Superseded (corrected 2026-10-06).** Kept as the July record. Two things
+> in it no longer hold. **Team:** the June two-team split is obsolete; one team
+> (ours, NTUT) executes WP1-WP4, so the ground station (Mission Planner via
+> mavlink-router, parallel to MAVROS) is ours to build (tracker card ARCH-10),
+> not Prof. Lai's team's. **Prefix Compiler:** in the grant, WP2 turns the
+> policy bundle and mission context into a Constraint Summary Pack (CSP) for the
+> VLA prompt; parsing operator text into a mission is not part of WP2. The CSP
+> is generated and saved (`ConstraintCompiler.compile_csp`); no flown VLA has
+> read it yet. Current status: `docs/AUDIT-KONTRAK-2026-10-05.md`.
+
 > Mid-year deliverable per 2026-06-23 agreement: architecture diagram + initial
 > report + Guardrail concept. Full demo not required — but a working prototype
 > already exists and is summarized in §4.

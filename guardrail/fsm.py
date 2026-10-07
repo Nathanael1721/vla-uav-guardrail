@@ -15,9 +15,10 @@ This module is the missing half, as a PURE state machine: no ROS, no MAVLink,
 no geometry, no clock. Each monitor tick it takes what the Shield did and what
 the autopilot reports, and returns the FSM state, the mode to request, the
 setpoint to stream, a reason, and an audit record. That keeps every transition
-unit-testable on any machine. The integration (shield.py, ros2_shield_node.py)
-is a later wave, specified call site by call site in
-`docs/DESIGN-escalation-fsm.md`.
+unit-testable on any machine. Since 2026-10-07 `guardrail/shield.py` owns one
+per Shield and feeds it on every filter() tick (ShieldDecision.fsm_state_after,
+.set_mode, .command; docs/DESIGN-shield-enforcement.md). The rails' own wiring
+is specified call site by call site in `docs/DESIGN-escalation-fsm.md`.
 
 WHAT IS COPIED FROM THE GRANT, EXACTLY
 
@@ -564,10 +565,12 @@ def magnitude_from_actions(raw: Any, emitted: Any, horizon_s: float,
 # the smallest change that satisfies the rule. Theta is metres of position
 # correction, and the PI's reference never applies it to a speed cap (its
 # repair stack has no kinematic operator). Sanitise is the finiteness
-# contract, and Brake is the fallback itself. Any OTHER operator without a
-# magnitude is refused, so a new operator cannot slip past the cap as a zero.
+# contract, and Brake is the fallback itself. SoftRelax (shield.py) is the
+# record that a soft rule was given up; the position change is in the operators
+# beside it. Any OTHER operator without a magnitude is refused, so a new
+# operator cannot slip past the cap as a zero.
 NO_POSITION_MAGNITUDE = frozenset({"SpeedClamp", "ClimbClamp", "YawClamp",
-                                   "Sanitise", "Brake"})
+                                   "Sanitise", "Brake", "SoftRelax"})
 # The clamps that change vx / vy / vz, and so the proxy's delta-v. YawClamp
 # changes only yaw_rate, which the proxy does not measure.
 VELOCITY_CLAMPS = frozenset({"SpeedClamp", "ClimbClamp"})
@@ -647,9 +650,11 @@ def magnitude_from_repairs(repairs: Iterable[Any], stop_illegal: bool = False) -
     Recovery operators are left out of the sum and named in
     `recovery_exempt`. A magnitude they carry is still validated.
 
-    guardrail/shield.py's `Repair` has neither field yet. Until it does, this
-    raises on the first position operator, and the caller must choose the
-    velocity proxy explicitly (`horizon_s`).
+    Since 2026-10-07 guardrail/shield.py's `Repair` carries both fields on
+    every position operator. A repair that arrives without them (an older
+    log, another implementation) still raises here on the first position
+    operator, and the caller must then choose the velocity proxy explicitly
+    (`horizon_s`).
     """
     lat = vert = 0.0
     exempt: list[str] = []
@@ -920,9 +925,14 @@ class FSMConfig:
         """Hash of the thresholds in force, written into every audit record, so
         a trigger count can be traced to the N / T / theta that produced it.
         All 64 hex digits, as policy_hash now keeps (models.py), and over the
-        canonical (float) values, so `T: 5` and `T: 5.0` hash the same."""
-        blob = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
-        return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+        canonical (float) values, so `T: 5` and `T: 5.0` hash the same.
+        Computed once per (frozen) config: the Shield writes it every tick."""
+        d = self.__dict__.get("_digest")
+        if d is None:
+            blob = json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":"))
+            d = "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
+            object.__setattr__(self, "_digest", d)
+        return d
 
 
 @dataclass(frozen=True)
@@ -1406,6 +1416,24 @@ def _blocked_stop_illegal(braked: bool, emitted_violations: Any) -> bool:
 _RESCUE_NOTE = "ClearanceEscape where a stop is legal: read as not converged (p4)"
 
 
+def _still_enforced(policy: Any, emitted_violations: Any, relaxed: Any) -> list:
+    """The emitted action's violations that the Shield was meant to enforce.
+
+    Two kinds are left out, both on purpose: a `monitor_only` rule is flown as
+    commanded by definition (shield.py records it and never repairs it), and a
+    soft rule the repair chain gave up to satisfy the others is listed in the
+    decision's `relaxed`. Counting either as a non-converged repair would read
+    a decision the Shield made deliberately as one it failed to make."""
+    ev = list(emitted_violations or [])
+    if not ev:
+        return []
+    gone = set(relaxed or [])
+    ids = [str(_field(v, "rule_id") or "") for v in ev]
+    monitor = {h.rule_id for h in rules_from_policy(policy, list(dict.fromkeys(ids)))
+               if h.effective_action == "monitor_only"}
+    return [v for v, i in zip(ev, ids) if i not in gone and i not in monitor]
+
+
 def tick_input_from_decision(t: float, decision: Any, policy: Any,
                              horizon_s: float | None = None,
                              *, rtl_failed: bool = False, home_reached: bool = False,
@@ -1425,8 +1453,8 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
     Theta's magnitude has two possible sources, and nothing picks one
     silently (`repair_magnitude`):
       horizon_s=None   per-operator `magnitude_m` (`magnitude_from_repairs`),
-                       the grant's schema. It raises while shield.py's
-                       Repair lacks the field.
+                       the grant's schema (shield.py fills it since
+                       2026-10-07; a repair without it raises).
       horizon_s=h      the velocity proxy |dv| * h (`magnitude_from_actions`),
                        measured from the CLAMPED raw action. `caps` defaults
                        to the policy's kinematic caps.
@@ -1441,14 +1469,16 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
     vios = list(getattr(decision, "violations", None) or [])
     repairs = list(getattr(decision, "repairs", None) or [])
     braked = bool(getattr(decision, "braked", False))
-    ev = getattr(decision, "emitted_violations", None)
-    if braked or ev:
+    hits = _hits_from_violations(policy, vios)
+    ev = _still_enforced(policy, getattr(decision, "emitted_violations", None),
+                         getattr(decision, "relaxed", None))
+    if not any(h.effective_action != "monitor_only" for h in hits):
+        outcome = "clean"
+    elif braked or ev:
         outcome = "blocked"
     elif repairs:
         outcome = "repaired"
     else:
-        outcome = "clean"
-    if not vios:
         outcome = "clean"
     stop = _resolve_stop_illegal(stop_illegal, policy)
     if outcome == "repaired" and _rescued(repairs):
@@ -1463,7 +1493,6 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
             note = f"{note}; {_RESCUE_NOTE}" if note else _RESCUE_NOTE
     if stop is None:
         stop = outcome == "blocked" and _blocked_stop_illegal(braked, ev)
-    hits = _hits_from_violations(policy, vios)
     mag = None
     if outcome == "repaired":
         if caps is None and horizon_s is not None:
@@ -1511,8 +1540,11 @@ def tick_input_from_row(row: Mapping[str, Any], policy: Any = None,
     t = float(row["t"])
     if not hits:
         return TickInput(t=t, outcome="clean")
+    if not any(h.effective_action != "monitor_only" for h in hits):
+        return TickInput(t=t, outcome="clean", violations=hits)
     stop = _row_stop_illegal(row, policy)
-    braked, ev = bool(row.get("braked")), row.get("emitted_violations")
+    braked = bool(row.get("braked"))
+    ev = _still_enforced(policy, row.get("emitted_violations"), row.get("relaxed"))
     if braked or ev:
         return TickInput(t=t, outcome="blocked", violations=hits,
                          stop_illegal=(stop if stop is not None

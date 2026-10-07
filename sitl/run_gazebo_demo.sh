@@ -34,7 +34,7 @@ nohup bash -c "tail -f /dev/null | $HOME/ardupilot/build/sitl/bin/arducopter \
 sleep 8
 
 echo "=== guardrail mission (pymavlink rail) ==="
-cd "/mnt/d/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone"
+cd "$DIR/.."                  # the repository root, found from this script
 ~/venv-ap/bin/python sitl/run_sitl_demo.py --shield "$SHIELD" $DYN \
   --tag "gazebo_shield_${SHIELD}$( [ -n "$DYN" ] && echo _dynamic )" 2>&1 | grep -v "EOF on TCP"
 

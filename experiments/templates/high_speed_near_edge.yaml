@@ -1,0 +1,98 @@
+# Scenario library - template `high_speed_near_edge`: Safety Shield test matrix: high-speed near-edge.
+# An extension template (guardrail/scenario_spec.py, EXTENSION_TEMPLATES).
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+
+template: high_speed_near_edge
+
+scenarios:
+  # ---- Shield matrix: "High-speed near-edge" ----------------------------- #
+  - scenario_id: high-speed-near-edge
+    template: high_speed_near_edge
+    description: >
+      Lateral projection under a tight margin, at the 4 m/s cap of the demo
+      policy: a pilot asking 8 or 20 m/s (capped to 4) flies past a face of
+      the square no-fly zone on a line 0.2, 0.5 or 0.8 m INSIDE its 1 m
+      margin ring (pass_y 23.2-23.8; the ring is at 24), on all four faces
+      (rotation about the zone's centre). Every cell has to be projected
+      sideways by the fence rule, not only slowed by the speed cap: lines at
+      or outside the ring (24-28, the first version) touched only the cap,
+      measured 2026-10-06. The four faces are geometric copies of one another
+      on a square zone; they are kept because their repair counts differ
+      (float jitter in the iterated repair), and the sweep's distinct-
+      signature count says how many really differ. It must never enter the
+      ring, never exceed the cap, and still get past. The 12 m/s case is
+      near-edge-at-12mps below.
+    mission:
+      start_pose: { x: -30.0, y: "$pass_y", up: 15.0 }
+      target: { x: 60.0, y: "$pass_y", up: 15.0 }
+      pilot: { type: goto, speed: "$ask_mps" }
+      rotate_deg: "$edge_deg"
+      rotate_about: { x: 15.0, y: 15.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    ticks: 400
+    parameter_sweep:
+      pass_y: [23.2, 23.5, 23.8]
+      ask_mps: [8, 20]
+      edge_deg: [0, 90, 180, 270]
+    expected_kpis:
+      P0_escape_rate: 0
+      time_to_safe_episodes: { max: 0 }
+      breaches: { max: 0 }
+      max_speed_flown: { max: 4.001 }
+      reached_goal: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false
+
+  - scenario_id: near-edge-at-12mps
+    template: high_speed_near_edge
+    description: >
+      The matrix row's "high-speed", which the 4 m/s demo policy cannot fly:
+      policies/wgs84_taipei.yaml caps at 12 m/s, so a pilot asking 8, 12 or
+      20 m/s really flies 8-12 m/s - 1.2 m per 0.1 s tick - past the
+      school-yard zone's north face (y 40.3) on a line 0.2, 0.5 or 0.8 m
+      inside its 1 m margin ring, or exactly on it (41.3). No scenario clock,
+      so the zone's weekday curfew is in force (absent clock = every rule
+      active). It must never enter the ring, never exceed 12 m/s, and still
+      get past. One face only: the zone is not square (78 x 80.6 m), so a
+      rotation would move the line relative to the face it meets.
+    mission:
+      start_pose: { x: -70.0, y: "$pass_y", up: 15.0 }
+      target: { x: 70.0, y: "$pass_y", up: 15.0 }
+      pilot: { type: goto, speed: "$ask_mps" }
+    policy: { path: policies/wgs84_taipei.yaml }
+    ticks: 400
+    parameter_sweep:
+      pass_y: [40.5, 40.8, 41.1, 41.3]
+      ask_mps: [8, 12, 20]
+    expected_kpis:
+      P0_escape_rate: 0
+      time_to_safe_episodes: { max: 0 }
+      breaches: { max: 0 }
+      max_speed_flown: { max: 12.001 }
+      reached_goal: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false
+    known_failures:
+      - params: { pass_y: 40.5, ask_mps: 12 }
+        description: &edgeflicker >
+          The escalation FSM stops the pass (measured 2026-10-07): sliding
+          along the zone's face at 8-12 m/s, 1.2 m per tick, the violation of
+          the margin ring flickers on and off; three onsets inside T = 5 s
+          count as N-in-T (G2: Brake -> Loiter), and with the pilot still
+          asking to fly the line the hard rule is never clear, so the 30 s
+          Loiter timeout (G5) sends the aircraft home - or, in the 40 s run,
+          it is still loitering at the end. Never inside the polygon, P0
+          clean; the goal is not reached, and where RTL fires it is a false
+          trigger. The other eight cells pass with the FSM on.
+      - params: { pass_y: 40.8, ask_mps: 12 }
+        description: *edgeflicker
+      - params: { pass_y: 40.8, ask_mps: 8 }
+        description: *edgeflicker
+      - params: { pass_y: 41.1, ask_mps: 8 }
+        description: *edgeflicker

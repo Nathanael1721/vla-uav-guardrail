@@ -43,10 +43,10 @@ from guardrail.bundle import (LOCK_PATH, SCHEMA_PATH, check_lock,   # noqa: E402
                               policy_candidates, policy_json_schema,
                               update_lock)
 from guardrail.manifest import resolve_run_policy                   # noqa: E402
-from guardrail.models import (HASH_SCHEME, AltitudeEnvelope,        # noqa: E402
-                              Constraint, Corridor, KinematicEnvelope,
-                              ObstacleClearance, Policy, PolygonFence,
-                              SubjectStandoff, canonical_json,
+from guardrail.models import (HASH_SCHEME, PRIOR_SCHEME_V2,         # noqa: E402
+                              AltitudeEnvelope, Constraint, Corridor,
+                              KinematicEnvelope, ObstacleClearance, Policy,
+                              PolygonFence, SubjectStandoff, canonical_json,
                               ir_schema_defaults, load_policy)
 
 POLICIES = ROOT / "policies"
@@ -64,9 +64,29 @@ SEPT_SIM_DEMO = "sha256:9a3782ae46925a46"
 DYNAMIC_RUNS = "sha256:77d64d2e5e94ac39"
 
 
+# Fields the grant-form change (2026-10-06, later the same day) added to the
+# IR. Every one is None for any policy the old code could have held, so the old
+# formula's dump of that era simply did not have them; a geographic point then
+# held x/y only.
+GRANT_FORM_FIELDS = frozenset({"scope", "layer", "altitude_ref", "issued_at",
+                               "layers_merged"})
+
+
+def _era_dump(node):
+    """model_dump() as the schema of 2026-09-01..2026-10-06 produced it."""
+    if isinstance(node, list):
+        return [_era_dump(v) for v in node]
+    if isinstance(node, dict):
+        point = "x" in node and "y" in node
+        return {k: _era_dump(v) for k, v in node.items()
+                if not (k in GRANT_FORM_FIELDS and v is None)
+                and not (point and k in ("lat", "lon"))}
+    return node
+
+
 def _old_policy_hash(pol) -> str:
-    """The pre-2026-10-06 property body, verbatim."""
-    canon = json.dumps(pol.model_dump(), sort_keys=True, separators=(",", ":"))
+    """The pre-2026-10-06 property body, verbatim, over that era's dump."""
+    canon = json.dumps(_era_dump(pol.model_dump()), sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(canon.encode()).hexdigest()[:16]
 
 
@@ -129,11 +149,16 @@ def test_the_old_formula_is_exactly_the_include_defaults_legacy_form():
 
 def test_the_short_hash_is_the_july_hash():
     """For the None-free schema of July/August, old 16-hex and new 64-hex are
-    the same SHA-256 over the same bytes, one truncated."""
+    the same SHA-256 over the same bytes, one truncated. For a geographic
+    policy that holds for the v2 form (projected metres), which is what every
+    old era hashed; v3 stores lat/lon instead (2026-10-06)."""
     for f in _policy_files():
         pol = load_policy(f)
-        assert pol.policy_hash_short == pol.legacy_hashes()["legacy16-exclude-none"], f.name
+        full = pol.prior_hashes().get(PRIOR_SCHEME_V2, pol.policy_hash)
+        assert full[:len("sha256:") + 16] == pol.legacy_hashes()["legacy16-exclude-none"], f.name
         assert pol.policy_hash.startswith(pol.policy_hash_short)
+        assert (pol.policy_hash_short == pol.legacy_hashes()["legacy16-exclude-none"]) \
+            == (not pol.is_geographic), f.name
     demo = load_policy(DEMO)
     assert demo.policy_hash_short == JULY_SIM_DEMO, demo.policy_hash_short
     assert demo.hash_form(JULY_SIM_DEMO) == "legacy16-exclude-none"
@@ -329,14 +354,44 @@ def test_a_content_change_inside_the_shared_identity_is_still_caught():
 
 
 def test_the_lock_carries_old_and_new_hash_for_every_policy():
-    """X-09: record the old -> new pairs so a stored run's hash is greppable."""
+    """X-09: record the old -> new pairs so a stored run's hash is greppable.
+    An entry locked under an earlier full-length scheme keeps that hash and
+    carries the current one in `hashes` (wgs84_taipei, scheme v3)."""
     lock = load_lock()["policies"]
     for f in _policy_files():
         pol = load_policy(f)
         ent = lock[lock_key(pol)]
         ent = ent["shared_by_files"][f.name] if "shared_by_files" in ent else ent
-        assert ent["policy_hash"] == pol.policy_hash, f.name
+        if ent["policy_hash"] != pol.policy_hash:
+            assert pol.hash_form(ent["policy_hash"]) == PRIOR_SCHEME_V2, f.name
+            assert ent["hashes"][HASH_SCHEME] == pol.policy_hash, f.name
         assert ent["legacy_hashes"] == pol.legacy_hashes(), f.name
+
+
+def test_a_prior_scheme_entry_must_record_the_current_form():
+    """The lock may not silently accept a v2 hash for a policy whose current
+    hash it has never seen: until `lock --update` records the v3 form, it is a
+    problem, and the update only ADDS that form (mutant: _pin_status treating
+    any prior-form match as pinned)."""
+    d = _copy_policies()
+    lock_path = d / "lock.json"
+    lock = load_lock()
+    key = "wgs84-taipei-demo@0.1.0"
+    del lock["policies"][key]["hashes"]
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    problems = check_lock(d, load_lock(lock_path))
+    assert any("wgs84_taipei.yaml" in x and "not yet recorded" in x for x in problems), problems
+    added = update_lock(d, lock_path, locked_on="2026-10-06")
+    assert added == [f"{key}:{HASH_SCHEME}"], added
+    new = load_lock(lock_path)["policies"][key]
+    assert new["policy_hash"] == lock["policies"][key]["policy_hash"], "the old hash was rewritten"
+    assert check_lock(d, load_lock(lock_path)) == []
+    # A WRONG current form is a content change, not something to record.
+    bad = load_lock(lock_path)
+    bad["policies"][key]["hashes"][HASH_SCHEME] = "sha256:" + "0" * 64
+    assert any("content changed but version did not" in x
+               for x in check_lock(d, bad)), check_lock(d, bad)
+    shutil.rmtree(d, ignore_errors=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -407,6 +462,41 @@ def test_a_new_ir_model_is_reported_until_the_lock_pins_it():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_a_new_lock_entry_names_its_scheme_and_pins_stay_complete():
+    """Shown failing before 2026-10-07: `_entry()` recorded no hash scheme, so
+    an entry locked after the v3 change would carry a v3 hash under the lock's
+    top-level v2 label; and the pins of models that existed before 2.1.0 did
+    not list the fields 2.1.0 added, so the pin was not the model's field set.
+
+    A new field defaulting to None is the one change allowed silently; `lock
+    --update` records it in the pin (adding), never altering an existing pin."""
+    d = _copy_policies()
+    f = d / DEMO.name
+    f.write_text(f.read_text(encoding="utf-8")
+                 .replace("alt_max_m: 20", "alt_max_m: 25")
+                 .replace("version: 0.1.1", "version: 0.2.0"), encoding="utf-8")
+    lock = load_lock()
+    del lock["ir_schema"]["defaults"]["PolygonFence"]["scope"]   # as before the re-pin
+    margin_pin = lock["ir_schema"]["defaults"]["PolygonFence"]["margin_m"]
+    lock_path = d / "lock.json"
+    lock_path.write_text(json.dumps(lock), encoding="utf-8")
+    assert not any("scope" in x for x in check_lock(d, load_lock(lock_path))), \
+        "a new absent field is allowed without a report"
+    added = update_lock(d, lock_path, locked_on="2026-10-07")
+    assert added == ["ir_schema:PolygonFence.scope", "fase3-sim-demo@0.2.0"], added
+    new = load_lock(lock_path)
+    assert new["policies"]["fase3-sim-demo@0.2.0"]["hash_scheme"] == HASH_SCHEME
+    assert "hash_scheme" not in new["policies"]["fase3-sim-demo@0.1.1"], \
+        "an old entry is never rewritten; it stays under the top-level scheme"
+    assert new["ir_schema"]["defaults"]["PolygonFence"]["scope"] == "<absent>"
+    assert new["ir_schema"]["defaults"]["PolygonFence"]["margin_m"] == margin_pin
+    shutil.rmtree(d, ignore_errors=True)
+    # The real lock: every pin lists exactly its model's fields.
+    pinned = load_lock()["ir_schema"]["defaults"]
+    assert {m: set(fs) for m, fs in pinned.items()} == \
+        {m: set(fs) for m, fs in ir_schema_defaults().items()}
+
+
 def test_the_schema_walk_finds_a_constraint_type_nobody_listed():
     """The pin used to cover a hand-written tuple of eleven classes. A new rule
     type in the Constraint union - with a nested model of its own - must be
@@ -460,14 +550,24 @@ def test_every_policy_validates_against_the_published_schema():
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     for f in _policy_files():
         jsonschema.validate(load_policy(f).canonical_ir(), schema)
-    # And it says no to something: a rule with a negative speed cap.
-    bad = load_policy(DEMO).canonical_ir()
-    bad["constraints"][2]["speed_max_mps"] = -1.0
-    try:
-        jsonschema.validate(bad, schema)
-    except jsonschema.ValidationError:
-        return
-    raise AssertionError("the published schema accepted a negative speed cap")
+    # A grant-form document's IR (WGS84 points, no x/y) validates too.
+    ref = ROOT / "kuanting-vla-uav-guardrail" / "bundles" / "itri-icl-2026-demo.yaml"
+    if ref.is_file():
+        jsonschema.validate(load_policy(ref, runtime=False).canonical_ir(), schema)
+    # And it says no: a negative speed cap, a misspelt key, a point in no frame.
+    bad_cap = load_policy(DEMO).canonical_ir()
+    bad_cap["constraints"][2]["speed_max_mps"] = -1.0
+    typo = load_policy(DEMO).canonical_ir()
+    typo["constraints"][0]["altitude_cieling_m"] = 40.0
+    nowhere = load_policy(DEMO).canonical_ir()
+    nowhere["constraints"][0]["vertices"][0] = {"x": 1.0}
+    for name, bad in (("negative speed cap", bad_cap), ("misspelt key", typo),
+                      ("half a point", nowhere)):
+        try:
+            jsonschema.validate(bad, schema)
+        except jsonschema.ValidationError:
+            continue
+        raise AssertionError(f"the published schema accepted a {name}")
 
 
 if __name__ == "__main__":

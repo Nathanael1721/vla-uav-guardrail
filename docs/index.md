@@ -34,35 +34,25 @@ a Stress Testing run in the *hil* topology, where a Jetson Orin runs the VLA and
 the Shield (grant pages *Stress Testing* p.1, *Architecture constraints* p.4).
 None of these flights came from a stress harness, and all of them ran on one
 desktop. The three MAVROS 2 flights are what the grant calls the *dev*
-topology; the Project AirSim and pymavlink flights are not even that. Several
-of the other KPIs the
-grant names have no number yet; see the
-[contract audit](AUDIT-KONTRAK-2026-10-05.md) and the
-[corrections to the mid-evaluation report](CORRECTION-2026-10-06-mid-evaluation-and-deck.md).
+topology; the Project AirSim flights are the perception rail, and the pymavlink
+flights a direct-MAVLink variant of the desktop rail. The KPI campaign for the
+final report runs in the *hil* topology: the VLA and the Shield on a Jetson
+Orin, which is being set up, with the same code later moving onto the drone.
+Tools for the work-package KPIs (policy round-trip, CSP token budget and
+coverage, repair success with the grant's theta cap) were added on 6 Oct; the
+changelog lists what changed in the earlier figures.
 
-It is worth being exact, because it reads as more than it is. The metric counts P0 violations the Shield **detected** that
-nonetheless reached the actuator. On the most recent flight it reads 0.0 while a
-real pedestrian came within 10 m of the aircraft on 516 ticks, and the 10 m
-stand-off rule fired on 31 of them.
-
-That gap is not what it first looks like. On **498 of those 516 ticks the person
-was outside the camera's field of view** — beside or behind the aircraft — and
-the rule, `SubjectStandoff`, protects only the **subject being followed**, one
-position per tick. The aircraft was following a different pedestrian roughly
-45 m ahead, and its range estimate for that person was within a few metres.
-Nothing in the policy protects the other pedestrians, and a forward camera could
-not have seen them.
-
-**The Shield was correct throughout.** What the zero cannot say is anything
-about people the policy does not name and the sensor cannot see. That is a gap
-in policy scope and sensor coverage, and `standoff_score` plus its visibility
-breakdown are published beside the KPI so it cannot be read as more than it is.
+What the metric counts: P0 violations the Shield **detected** that still reached
+the actuator. It covers the rules in the policy. The stand-off rule,
+`SubjectStandoff`, protects the **subject being followed**; other pedestrians
+are outside that rule's scope, so `standoff_score` and its visibility breakdown
+(which pedestrians were in the camera's view) are published beside the KPI.
 
 ---
 
 ## The findings are the deliverable
 
-Twenty-seven documents here record defects found and fixed, and several record
+The finding documents here record defects found and fixed, and several record
 claims **retracted**. That is deliberate. The recurring failure in this project
 has one shape:
 
@@ -86,19 +76,27 @@ has one shape:
   — a bundle checker naming two fields nothing emits, one of them a grant KPI.
 - [The contract disagreed with itself about yaw](FINDING-the-contract-disagreed-with-itself-about-yaw.md)
   — a comment saying deg/s over six sites enforcing rad/s.
+- [Facing East, "forward" flew North](FINDING-forward-flew-north.md)
+  — a camera VLA's body-frame output written straight into a North/East action.
+- [A stripped signature read as "unsigned"](FINDING-a-stripped-signature-read-as-unsigned.md)
+  — the weakest signature status became a way around the strongest check.
 
 ### Design notes
 
+- [The Prefix Compiler and its CSP](DESIGN-prefix-compiler.md)
+- [The escalation state machine](DESIGN-escalation-fsm.md)
+- [Policy identity and signed bundles](DESIGN-policy-identity.md)
+- [The Paraphraser](DESIGN-paraphraser.md)
+- [Python versions, environments, and the ArduPilot pin](DESIGN-python-versions.md)
 - [The HIL perception bridge](DESIGN-hil-perception-bridge.md)
 - [The orbit-building task](DESIGN-orbit-building-task.md)
 - [A native Unreal environment](DESIGN-unreal-native-environment.md)
 
 ### Reports and status
 
-- [Contract audit, 5 October 2026](AUDIT-KONTRAK-2026-10-05.md) (in Indonesian): the current list of open grant items
-- [Corrections to the mid-evaluation report and deck, 6 October 2026](CORRECTION-2026-10-06-mid-evaluation-and-deck.md)
-- [Midterm report, August 2026](MIDTERM-REPORT-Aug2026.md) (some claims are corrected in the note above)
-- [Remaining work, to 9 September 2026](CHECKLIST-remaining-work.md) (superseded by the audit)
+- [Midterm report, August 2026](MIDTERM-REPORT-Aug2026.md) (as delivered; figures corrected since are listed in the changelog)
+- [Remaining work, to 9 September 2026](CHECKLIST-remaining-work.md) (superseded)
+- [Project AirSim setup, with ArduPilot and Mission Planner](projectairsim-setup.md)
 
 ---
 
@@ -130,8 +128,9 @@ Until 6 Oct only runs on the desktop ArduPilot SITL + MAVROS 2 rail could be
 runs passed that rule. In the grant's terms the rail is the *dev* topology, and
 the grant takes reported KPIs from *hil* runs only. Since 6 Oct the manifest
 labels the rail `dev`, reads stored `canonical-hil` runs as `dev`, and
-`is_kpi_grade()` refuses a dev run unless the PI grants a written waiver (open
-question PQ1). So today no run is KPI-grade (`docs/data/kpi_rollup_2026-10-06.md`).
+`is_kpi_grade()` refuses a dev run unless a written PI waiver is recorded. The
+PI decided on 6 Oct that no waiver will be requested: KPI runs move to the
+*hil* topology on a Jetson Orin. So today no run is KPI-grade (`docs/data/kpi_rollup_2026-10-06.md`).
 Everything else is labelled functional-rail evidence.
 
 [Browse the source]({{ site.github.repository_url }}/tree/master) ·

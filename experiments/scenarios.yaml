@@ -5,6 +5,16 @@
 # every guarantee this project makes rests on the handful of missions somebody
 # thought to fly by hand.
 #
+# ONE FILE PER TEMPLATE (since 2026-10-07)
+#
+# The grant's Stress Testing page lists the scenario library as "YAML files
+# (one per template)". The families now live in experiments/templates/, one
+# file per template, listed under `templates:` below; this file keeps the
+# defaults and the order. guardrail/scenario_spec.py (Library) loads it and
+# refuses a template file that holds another template's family, a second file
+# for one template, or a file not named after its template. The text of every
+# family moved verbatim; only its file changed.
+#
 # THE SCHEMA (since 2026-10-06)
 #
 # Every entry is a ScenarioSpec (guardrail/scenario_spec.py), the Pydantic model
@@ -20,8 +30,11 @@
 #                    Shield's job is to survive a bad one. A clever pilot that
 #                    never asks for anything illegal tests nothing.
 #   policy           { path } or the grant's { bundle_path, expected_hash }
-#   events           mid-flight ScenarioEvents; spawn_polygon_fence is applied
-#                    through Shield.hot_apply, the other six are refused
+#   events           mid-flight ScenarioEvents. All seven of the grant's event
+#                    types are applied through the Shield's event APIs (since
+#                    2026-10-07; until then only spawn_polygon_fence was, and
+#                    the other six were refused). Payloads: EVENT_PAYLOADS in
+#                    guardrail/scenario_spec.py
 #   parameter_sweep  field -> values; "$field" in the scenario is replaced
 #   expected_kpis    what must be true afterwards. A scenario with no gate is a
 #                    demonstration, not a test. `P0_escape_rate: 0` and
@@ -29,9 +42,20 @@
 #
 # and ours: expected_outcome / expected_failsafe (labels, so "triggered when
 # expected, not when not expected" can be measured at all), shield (the OFF arm
-# is what proves the harness can still see a failure), stress (GPS noise,
-# latency, wind, start jitter), parameter_sample (seeded geometry draws),
-# ticks / dt / lookahead_s.
+# is what proves the harness can still see a failure), escalation (the
+# Shield's escalation FSM decides what is flown; default true), stress (GPS
+# noise, latency, wind, start jitter), parameter_sample (seeded geometry
+# draws), paraphrase / prefix / ab (arms: what the pilot is shown), ticks / dt /
+# lookahead_s.
+#
+# FAIL-SAFE LABELS (since 2026-10-07)
+#
+# `expected_failsafe` is about the grant's fail-safe: the escalation FSM
+# handing the aircraft to the autopilot's RTL or Land (Safety Shield p1,
+# "trigger fail-safe (RTL / Land) when repair is unsafe"; guardrail/fsm.py
+# FAILSAFE_STATES). Until 2026-10-07 the harness had no FSM and read "a Shield
+# Brake" as the trigger; every label written then was re-measured against the
+# FSM, and a Brake (or a Loiter) is not a fail-safe trigger.
 #
 # `expect: known_failure` marks a scenario whose gates are EXPECTED to fail. It
 # is reported as a known failure, never as a pass and never silently. That is
@@ -44,819 +68,42 @@
 # that passes them may still have entered a no-fly polygon. It is reported as
 # "tracked", counted apart from "pass", with its polygon entries beside it.
 #
-# The first 13 scenarios are the library as it stood before the schema; their
-# behaviour is unchanged (tests/test_sweep.py compares them). The families after
-# them are the stress harness: see the banner above each.
+# The 13 scenarios of the library as it stood before the schema keep their
+# behaviour with the escalation FSM off (tests/test_sweep.py compares them).
+#
+# THE STRESS HARNESS (2026-10-06)
+#
+# Families, not single flights: each expands over its parameter_sweep (the
+# grant's cartesian form) and, where it has one, a seeded parameter_sample of
+# approach angles. The smoke, nightly and broad profiles in
+# experiments/profiles/ choose how much of each to run. Every stress family
+# answers one line of the Safety Shield page's smoke matrix (PDF p6), one of
+# the grant's four templates, or the grant example's wind sweep, and says
+# which.
+#
+# Gates hold the REQUIREMENT, not what the Shield happened to do. Where a cell
+# breaks the requirement it is pinned under `known_failures` with the
+# mechanism, measured; any other cell that fails is a new failure.
 
 defaults:
   dt: 0.1
   ticks: 300
   lookahead_s: 3.0
 
-scenarios:
-  # ---- no-fly zone: the canonical pair ---------------------------------- #
-  - scenario_id: nfz-head-on
-    template: static_nfz
-    description: "Flown straight at a no-fly zone. The Shield must never let it in."
-    mission:
-      start_pose: { x: -20.0, y: 15.0, up: 15.0 }
-      target: { x: 40.0, y: 15.0, up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-    policy: { path: policies/sim_demo_policy.yaml }
-    shield: true
-    expected_kpis:
-      p0_violation_escape_rate: { max: 0.0 }
-      time_to_safe_episodes: { max: 0 }
-    expected_failsafe: false
-    # No outcome label: the dumb pilot aims through the zone and the Shield
-    # holds it at the edge (final x = -5.6, goal never reached). That is the
-    # same "repaired action, no sensible trajectory" gap as standoff-wedge; this
-    # scenario's claim is containment, not completion.
-
-  - scenario_id: nfz-head-on-control
-    template: static_nfz
-    description: >
-      The same flight unshielded. This scenario must FAIL its safety gate to be
-      doing its job: if an unguarded run into a no-fly zone scores clean, the
-      harness is measuring nothing and every other pass here is worthless.
-    mission:
-      start_pose: { x: -20.0, y: 15.0, up: 15.0 }
-      target: { x: 40.0, y: 15.0, up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-    policy: { path: policies/sim_demo_policy.yaml }
-    shield: false
-    expected_kpis:
-      p0_violation_escape_rate: { min: 0.01 }
-      time_to_safe_episodes: { min: 1 }
-    expected_outcome: fail
-
-  # ---- altitude --------------------------------------------------------- #
-  - scenario_id: altitude-floor-recovery
-    template: altitude_envelope
-    description: "Starts below the floor. Recovery must climb, not freeze."
-    mission:
-      start_pose: { x: -30.0, y: -30.0, up: 3.0 }
-      pilot: { type: constant, action: { vx: 3.0 } }
-    policy: { path: policies/sim_demo_policy.yaml }
-    shield: true
-    expected_kpis:
-      p0_violation_escape_rate: { max: 0.0 }
-      ended_safe: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
-
-  - scenario_id: altitude-ceiling-hold
-    template: altitude_envelope
-    description: "Commanded to climb through the ceiling for the whole flight."
-    mission:
-      start_pose: { x: -30.0, y: -30.0, up: 18.0 }
-      pilot: { type: constant, action: { vx: 2.0, vz_up: 2.0 } }
-    policy: { path: policies/sim_demo_policy.yaml }
-    shield: true
-    expected_kpis:
-      p0_violation_escape_rate: { max: 0.0 }
-      ended_safe: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
-
-  # ---- kinematics and the contract -------------------------------------- #
-  - scenario_id: speed-cap
-    template: kinematic_envelope
-    description: "A pilot asking for 20 m/s against a 4 m/s cap."
-    mission:
-      start_pose: { x: -40.0, y: -40.0, up: 15.0 }
-      pilot: { type: constant, action: { vx: 20.0 } }
-    policy: { path: policies/sim_demo_policy.yaml }
-    shield: true
-    expected_kpis:
-      p0_violation_escape_rate: { max: 0.0 }
-      max_speed_flown: { max: 4.001 }
-    expected_outcome: success
-    expected_failsafe: false
-
-  - scenario_id: nonfinite-action
-    template: action_contract
-    description: >
-      A NaN command, which is one division away from any detector reporting a
-      zero-width box. NaN loses every comparison, so an unsanitised action is
-      declared legal and passed straight through - the guardrail failing OPEN.
-    mission:
-      start_pose: { x: -40.0, y: -40.0, up: 15.0 }
-      pilot: { type: constant, action: { vx: .nan, vy: 2.0 } }
-    policy: { path: policies/sim_demo_policy.yaml }
-    shield: true
-    expected_kpis:
-      p0_violation_escape_rate: { max: 0.0 }
-      all_actions_finite: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
-
-  # ---- corridor: the new keep-IN rule ------------------------------------ #
-  - scenario_id: corridor-along
-    template: corridor_keep_in
-    description: "A clean run down the middle. Nothing should be touched."
-    mission:
-      start_pose: { x: 2.0, y: 0.0, up: 15.0 }
-      target: { x: 55.0, y: 0.0, up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-      clock_start: "2026-09-05T09:00:00"     # a Saturday: the curfew is not in force
-    policy: { path: policies/corridor_survey.yaml }
-    shield: true
-    expected_kpis:
-      p0_violation_escape_rate: { max: 0.0 }
-      repair_count: { max: 0 }
-      reached_goal: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
-
-  - scenario_id: corridor-drift-out
-    template: corridor_keep_in
-    description: "Aimed straight out of the side of the corridor."
-    mission:
-      start_pose: { x: 30.0, y: 0.0, up: 15.0 }
-      pilot: { type: constant, action: { vy: 4.0 } }
-      clock_start: "2026-09-05T09:00:00"
-    policy: { path: policies/corridor_survey.yaml }
-    shield: true
-    expected_kpis:
-      p0_violation_escape_rate: { max: 0.0 }
-      time_to_safe_episodes: { max: 0 }
-      max_offset_from_corridor: { max: 20.001 }
-    expected_outcome: success
-    expected_failsafe: false
-
-  - scenario_id: corridor-curfew-in-hours
-    template: time_window_static
-    description: "The scheduled fence is in force on a Monday morning and must bind."
-    mission:
-      start_pose: { x: 60.0, y: 0.0, up: 15.0 }
-      target: { x: 60.0, y: 55.0, up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-      clock_start: "2026-09-07T09:00:00"     # Monday, inside 07:30-17:30
-    policy: { path: policies/corridor_survey.yaml }
-    shield: true
-    expected_kpis:
-      p0_violation_escape_rate: { max: 0.0 }
-      ended_safe: { equals: true }
-    expected_failsafe: false
-    # No outcome label, for the same reason as nfz-head-on: the fence sits
-    # across the route and the dumb pilot never moves off (60, 0).
-
-  - scenario_id: corridor-curfew-out-of-hours
-    template: time_window_static
-    description: >
-      The same flight at 23:00. The fence is not in force, so the aircraft may
-      fly through where it stood - and nothing may repair against it. A rule
-      that still bends the action out of hours is enforcing a rule the policy
-      says is off.
-    mission:
-      start_pose: { x: 60.0, y: 0.0, up: 15.0 }
-      target: { x: 60.0, y: 55.0, up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-      clock_start: "2026-09-07T23:00:00"
-    policy: { path: policies/corridor_survey.yaml }
-    shield: true
-    expected_kpis:
-      p0_violation_escape_rate: { max: 0.0 }
-      reached_goal: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
-
-  # ---- subject stand-off ------------------------------------------------- #
-  - scenario_id: standoff-approach
-    template: subject_standoff
-    description: >
-      Flown at a declared pedestrian who is NOT on the route. The 10 m ring must
-      hold and the mission must still finish.
-    mission:
-      start_pose: { x: 0.0, y: 0.0, up: 15.0 }
-      target: { x: 40.0, y: 0.0, up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-      subject: { x: 20.0, y: 14.0, class: pedestrian }
-    policy: { path: policies/sitl_pedestrian.yaml }
-    shield: true
-    expected_kpis:
-      p0_violation_escape_rate: { max: 0.0 }
-      min_range_to_subject: { min: 9.99 }
-      reached_goal: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
-
-  - scenario_id: standoff-reclassified
-    template: subject_standoff
-    description: >
-      THE ANSWER TO THE 2026-09-02 REVIEW, made measurable.
-
-      Prof. Lai's point was fair: BoT-SORT and ByteTrack associate detections
-      across frames better than we do, so "we track well" is not a claim worth
-      making. But a tracker must be given a BOX and cannot be given a NOUN. It
-      returns an ID; it never returns a CLASS.
-
-      The stand-off rule is written per class - 10 m from a pedestrian, 5 m from
-      anything else - so the policy needs to know the subject IS a person before
-      it can pick the rule. That is not a tracking-quality contest the
-      open-vocabulary detector might lose; it is a question a tracker cannot be
-      asked at all.
-
-      Here one object never moves and the policy is never edited. Only the class
-      word attached to it changes, twelve seconds in, and the enforced ring goes
-      from 5 m to 10 m. Both rules come from policies/sitl_pedestrian.yaml
-      exactly as it already shipped - nothing was added for this scenario, which
-      is the point: the capability was in the schema the whole time.
-    mission:
-      start_pose: { x: 0.0, y: 0.0, up: 15.0 }
-      # The pilot's goal sits 6 m from the subject and it NEVER changes its mind.
-      # That is deliberate: once parked there it keeps asking to stay, so holding
-      # the aircraft out afterwards is the Shield working against a pilot that is
-      # still pulling in - not the mission conveniently wandering off.
-      target: { x: 22.0, y: 0.0, up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-      subject:
-        x: 22.0
-        y: 6.0
-        class: car
-        reclassify:
-          - { at_s: 10.0, class: pedestrian }
-    policy: { path: policies/sitl_pedestrian.yaml }
-    ticks: 400
-    shield: true
-    expected_kpis:
-      p0_violation_escape_rate: { max: 0.0 }
-      # While labelled a car only the 5 m rule binds, so 6 m is legal and the
-      # aircraft must actually GO there. Without this the scenario would pass on
-      # a flight that never approached, demonstrating nothing - the same
-      # reasoning that makes nfz-head-on-control gated to fail.
-      min_range_as_car: { max: 9.99 }
-      # It was inside 10 m when the label flipped: the rule changed under it.
-      range_at_reclassify: { max: 9.99 }
-      # And it recovered, against a pilot still asking to close.
-      final_range_to_subject: { min: 9.99 }
-      # The Shield had to act. Zero repairs would mean the range changed for
-      # some other reason.
-      repair_count: { min: 1 }
-      subject_class_final: { equals: pedestrian }
-    # The goal is inside the 10 m ring once the label flips, so NOT reaching it
-    # is the rule working: an arrival would be the breach.
-    expected_outcome: fail
-    expected_failsafe: false
-
-  - scenario_id: standoff-wedge
-    template: subject_standoff
-    expect: known_failure
-    description: >
-      THE OPEN DEFECT, pinned here so it stops living only in a document.
-      The subject sits exactly on the route, so every direction that makes
-      progress also closes the range. The Shield never emits an illegal action -
-      the P0 gate holds - but the mission wedges: the aircraft cannot get past
-      the subject and never reaches its goal. Recorded on 2026-08-31 as the gap
-      between "the action was repaired" and "the trajectory was sensible".
-      When this scenario starts PASSING, the defect is fixed and the marker
-      should come off.
-    mission:
-      start_pose: { x: 0.0, y: 0.0, up: 15.0 }
-      target: { x: 40.0, y: 0.0, up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-      subject: { x: 20.0, y: 0.0, class: pedestrian }
-    policy: { path: policies/sitl_pedestrian.yaml }
-    shield: true
-    expected_kpis:
-      p0_violation_escape_rate: { max: 0.0 }
-      min_range_to_subject: { min: 9.99 }
-      reached_goal: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
-
-  # ======================================================================= #
-  # THE STRESS HARNESS (2026-10-06)
-  #
-  # Families, not single flights: each expands over its parameter_sweep (the
-  # grant's cartesian form) and, where it has one, a seeded parameter_sample
-  # of approach angles. The smoke and nightly profiles in experiments/profiles/
-  # choose how much of each to run. Every family below answers one line of
-  # the Safety Shield page's smoke matrix (PDF p6) or the grant example's wind
-  # sweep, and says which.
-  #
-  # Gates hold the REQUIREMENT, not what the Shield happened to do. Where a
-  # cell breaks the requirement it is pinned under `known_failures` with the
-  # mechanism, measured; any other cell that fails is a new failure.
-  # ======================================================================= #
-
-  # ---- Shield matrix: "Sudden NFZ (hot-applied dynamic_nfz)" ------------- #
-  - scenario_id: dyn-nfz-spawn-ahead
-    template: dynamic_nfz_movement
-    description: >
-      The grant's worked example, as far as the Shield can take it: a polygon
-      no-fly zone hot-applied mid-flight (Shield.hot_apply, generation 0 -> 1),
-      its near edge `ahead_m` in front of the aircraft on its current heading.
-      3 m ahead leaves 2 m to the margin ring at up to 4 m/s, inside the 3 s
-      lookahead, so the reaction has to be immediate. The zone never moves -
-      translate_polygon_fence has no Shield API - so the goal behind it is not
-      reached, and no outcome is labelled.
-    mission:
-      task_prompt: "Fly to the waypoint 120 m ahead at cruise altitude."
-      start_pose: { x: -200.0, y: 0.0, up: 15.0 }
-      target: { x: -80.0, y: 0.0, up: 15.0 }
-      pilot: { type: goto, speed: "$vehicle_speed_mps" }
-      rotate_deg: "$approach_deg"
-    policy: { path: policies/sim_demo_policy.yaml }
-    events:
-      - at_sim_t: 5.0
-        type: spawn_polygon_fence
-        payload: { id: dyn-nfz, width_m: 30, height_m: 20, ahead_of_vehicle_m: "$ahead_m" }
-    ticks: 400
-    parameter_sweep:
-      vehicle_speed_mps: [2, 4, 8]
-      ahead_m: [3, 6, 12, 30]
-    parameter_sample:
-      approach_deg: { uniform: [0, 360] }
-    expected_kpis:
-      P0_escape_rate: 0
-      # Spawned AHEAD, so the aircraft is never somewhere illegal: zero unsafe
-      # episodes and no position it flew itself into.
-      time_to_safe_episodes: { max: 0 }
-      breaches: { max: 0 }
-    expected_failsafe: false
-
-  - scenario_id: dyn-nfz-spawn-on-top
-    template: dynamic_nfz_movement
-    description: >
-      The zone appears centred ON the aircraft (the reference repository's
-      test_dynamic_nfz_spawn_on_top, flown): legal one tick, inside a P0 zone
-      the next through no action of its own. It must get out, and must not fly
-      back in. The time bound is the Shield's own numbers: half the 40 m zone
-      plus the 1 m margin at GeofenceEscape's 2 m/s is 10.5 s.
-    mission:
-      start_pose: { x: -200.0, y: 0.0, up: 15.0 }
-      target: { x: -80.0, y: 0.0, up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-      rotate_deg: "$approach_deg"
-    policy: { path: policies/sim_demo_policy.yaml }
-    events:
-      - at_sim_t: 5.0
-        type: spawn_polygon_fence
-        payload: { id: dyn-nfz, width_m: "$size_m", height_m: "$size_m",
-                   ahead_of_vehicle_m: 0, anchor: center }
-    parameter_sweep:
-      size_m: [20, 40]
-    parameter_sample:
-      approach_deg: { uniform: [0, 360] }
-    expected_kpis:
-      P0_escape_rate: 0
-      time_to_safe_episodes: { min: 1 }      # the spawn really landed on it
-      time_to_safe_censored: { max: 0 }      # ... and it got out
-      max_time_to_safe_s: "<=11.0"
-      breaches: { max: 0 }                   # ... and stayed out
-    expected_failsafe: false
-
-  # ---- Shield matrix: "Time-window switch instant" ----------------------- #
-  - scenario_id: time-window-closes-mid-run
-    template: time_window_switch
-    description: >
-      The curfew fence (weekdays 07:30-17:30) goes out of force while the
-      aircraft is held at its edge: the scenario clock starts at 17:30:40 or
-      17:30:50 and advances with simulated time, so the window closes at
-      17:31:00, 20 s or 10 s in. Before the switch the fence must bind; after
-      it nothing may repair against it, and the mission must complete.
-      THE SWITCH INSTANT IS THE SHIELD'S, NOT THE REQUIREMENT'S: models.py's
-      Recurrence.active_at compares at minute resolution with an inclusive
-      end, so "end_time 17:30" keeps the fence in force until 17:30:59 and it
-      switches off at 17:31:00. The grant's "17:30" reads more naturally as
-      ending at 17:30:00. This scenario pins the measured behaviour; which
-      instant is right is an open question tied to the t- / t+ boundary check
-      the Shield does not do (audit card WP3-05).
-    mission:
-      start_pose: { x: 60.0, y: 0.0, up: 15.0 }
-      target: { x: 60.0, y: 55.0, up: 15.0 }
-      pilot: { type: goto, speed: "$vehicle_speed_mps" }
-      clock_start: "$clock"
-    policy: { path: policies/corridor_survey.yaml }
-    ticks: 450
-    parameter_sweep:
-      clock: ["2026-09-07T17:30:40", "2026-09-07T17:30:50"]
-      vehicle_speed_mps: [2, 4]
-    expected_kpis:
-      P0_escape_rate: 0
-      phase0_violation_ticks_nfz-school: { min: 1 }   # bound before the switch
-      phase1_violation_ticks_nfz-school: { max: 0 }   # and never after it
-      reached_goal: { equals: true }
-      breaches: { max: 0 }
-    expected_outcome: success
-    expected_failsafe: false
-
-  - scenario_id: time-window-opens-on-vehicle
-    template: time_window_switch
-    description: >
-      The opposite switch, and the harder one: the clock starts at 07:29:54-56,
-      so the curfew fence comes INTO force at 07:30:00 with the aircraft 4-12 m
-      inside it. Before the switch the rule must not bind at all; at the switch
-      the position becomes illegal under the aircraft, and it must get out.
-      The Shield evaluates rules at one instant; the grant's "check both sides
-      at t- and t+" is not implemented, and this scenario does not claim it.
-    mission:
-      start_pose: { x: 60.0, y: 0.0, up: 15.0 }
-      target: { x: 60.0, y: 55.0, up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-      clock_start: "$clock"
-    policy: { path: policies/corridor_survey.yaml }
-    parameter_sweep:
-      clock: ["2026-09-07T07:29:54", "2026-09-07T07:29:55", "2026-09-07T07:29:56"]
-    expected_kpis:
-      P0_escape_rate: 0
-      phase0_violation_ticks_nfz-school: { max: 0 }   # out of hours: inert
-      time_to_safe_episodes: { min: 1 }               # it opened on the aircraft
-      time_to_safe_censored: { max: 0 }
-      breaches: { max: 0 }
-      ended_safe: { equals: true }
-    expected_failsafe: false
-
-  # ---- Shield matrix: "High-speed near-edge" ----------------------------- #
-  - scenario_id: high-speed-near-edge
-    template: high_speed_near_edge
-    description: >
-      Lateral projection under a tight margin, at the 4 m/s cap of the demo
-      policy: a pilot asking 8 or 20 m/s (capped to 4) flies past a face of
-      the square no-fly zone on a line 0.2, 0.5 or 0.8 m INSIDE its 1 m
-      margin ring (pass_y 23.2-23.8; the ring is at 24), on all four faces
-      (rotation about the zone's centre). Every cell has to be projected
-      sideways by the fence rule, not only slowed by the speed cap: lines at
-      or outside the ring (24-28, the first version) touched only the cap,
-      measured 2026-10-06. The four faces are geometric copies of one another
-      on a square zone; they are kept because their repair counts differ
-      (float jitter in the iterated repair), and the sweep's distinct-
-      signature count says how many really differ. It must never enter the
-      ring, never exceed the cap, and still get past. The 12 m/s case is
-      near-edge-at-12mps below.
-    mission:
-      start_pose: { x: -30.0, y: "$pass_y", up: 15.0 }
-      target: { x: 60.0, y: "$pass_y", up: 15.0 }
-      pilot: { type: goto, speed: "$ask_mps" }
-      rotate_deg: "$edge_deg"
-      rotate_about: { x: 15.0, y: 15.0 }
-    policy: { path: policies/sim_demo_policy.yaml }
-    ticks: 400
-    parameter_sweep:
-      pass_y: [23.2, 23.5, 23.8]
-      ask_mps: [8, 20]
-      edge_deg: [0, 90, 180, 270]
-    expected_kpis:
-      P0_escape_rate: 0
-      time_to_safe_episodes: { max: 0 }
-      breaches: { max: 0 }
-      max_speed_flown: { max: 4.001 }
-      reached_goal: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
-
-  - scenario_id: near-edge-at-12mps
-    template: high_speed_near_edge
-    description: >
-      The matrix row's "high-speed", which the 4 m/s demo policy cannot fly:
-      policies/wgs84_taipei.yaml caps at 12 m/s, so a pilot asking 8, 12 or
-      20 m/s really flies 8-12 m/s - 1.2 m per 0.1 s tick - past the
-      school-yard zone's north face (y 40.3) on a line 0.2, 0.5 or 0.8 m
-      inside its 1 m margin ring, or exactly on it (41.3). No scenario clock,
-      so the zone's weekday curfew is in force (absent clock = every rule
-      active). It must never enter the ring, never exceed 12 m/s, and still
-      get past. One face only: the zone is not square (78 x 80.6 m), so a
-      rotation would move the line relative to the face it meets.
-    mission:
-      start_pose: { x: -70.0, y: "$pass_y", up: 15.0 }
-      target: { x: 70.0, y: "$pass_y", up: 15.0 }
-      pilot: { type: goto, speed: "$ask_mps" }
-    policy: { path: policies/wgs84_taipei.yaml }
-    ticks: 400
-    parameter_sweep:
-      pass_y: [40.5, 40.8, 41.1, 41.3]
-      ask_mps: [8, 12, 20]
-    expected_kpis:
-      P0_escape_rate: 0
-      time_to_safe_episodes: { max: 0 }
-      breaches: { max: 0 }
-      max_speed_flown: { max: 12.001 }
-      reached_goal: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
-
-  # ---- Shield matrix: "Three simultaneous violations" -------------------- #
-  - scenario_id: three-simultaneous-violations
-    template: three_simultaneous_violations
-    description: >
-      tests/test_guardrail_coverage.py's unit case, flown: below the 10 m floor,
-      asking 8-11 m/s against a 4 m/s cap, descending at 3 m/s, and pointed at
-      the no-fly zone 4 m away - from a drawn approach angle. Repair operators
-      have to interact without oscillating (bounded iteration); the aircraft
-      must climb out exactly once and never enter the zone.
-    mission:
-      start_pose: { x: 2.0, y: 15.0, up: "$start_up" }
-      pilot: { type: constant, action: { vx: "$ask_mps", vz_up: -3.0 } }
-      rotate_deg: "$approach_deg"
-      rotate_about: { x: 15.0, y: 15.0 }
-    policy: { path: policies/sim_demo_policy.yaml }
-    parameter_sweep:
-      start_up: [3.0, 6.0, 9.0]
-      ask_mps: [8, 11]
-    parameter_sample:
-      approach_deg: { uniform: [0, 360] }
-    expected_kpis:
-      P0_escape_rate: 0
-      all_actions_finite: { equals: true }
-      time_to_safe_episodes: { equals: 1 }
-      time_to_safe_censored: { max: 0 }
-      breaches: { max: 0 }
-      ended_safe: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
-    known_failures:
-      - params: { variant: 2 }
-        description: >
-          Forecast tunnelling (measured 2026-10-06). From approach variant 2 the
-          aircraft climbs out and slides round the zone's (23, 23) corner. At
-          t = 6.8 s it is 1.016 m from the corner (outside the 1 m ring) and the
-          emitted action (-2.89, 2.77) m/s enters the ring 0.05-0.10 s later;
-          the Shield's forecast samples t+0 and t+0.5 s only (dt = 0.5, the
-          value every rail passes), both outside, so the clip is never seen and
-          the aircraft enters the ring by 0.02 m. The grant asks whether the
-          predicted SEGMENT crosses the boundary (Safety Shield p2), not
-          whether sampled points land in it. Same in all six cells of this
-          variant; the polygon itself is not entered.
-
-  # ---- Shield matrix: "GPS noise / latency" ------------------------------ #
-  - scenario_id: gps-noise-within-margin
-    template: sensor_degradation
-    description: >
-      Stability under sensor degradation, inside the error budget the 1 m
-      margin was sized for: white position noise of 0.2-0.3 m (3 sigma under
-      0.9 m) and up to 2 ticks of state latency (0.8 m stale at 4 m/s). The
-      target line runs INSIDE the margin ring (0.4-0.8 m from the zone), so the
-      aircraft slides along the ring pressing in - the configuration where
-      noise matters. A line parallel to the edge outside the ring was measured
-      insensitive to 2 m noise, and a line inside the zone itself meets its
-      face head-on and wedges, so neither tests anything here.
-      The polygon itself must never be entered. The Shield's own escape count
-      is the grant's; true-state violations are reported beside it.
-    mission:
-      start_pose: { x: -30.0, y: "$pass_y", up: 15.0 }
-      target: { x: 60.0, y: "$pass_y", up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-    policy: { path: policies/sim_demo_policy.yaml }
-    ticks: 400
-    stress: { gps_noise_m: "$sigma", latency_ticks: "$latency" }
-    parameter_sweep:
-      pass_y: [23.2, 23.6]
-      sigma: [0.2, 0.3]
-      latency: [0, 1, 2]
-    expected_kpis:
-      P0_escape_rate: 0
-      all_actions_finite: { equals: true }
-      min_true_dist_to_fence_m: { min: 0.0 }
-      reached_goal: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
-
-  - scenario_id: gps-noise-beyond-margin
-    template: sensor_degradation
-    expect: tracked
-    description: >
-      Beyond the budget, TRACKED rather than gated: 1-2 m noise and 5-10 ticks
-      (0.5-1 s) of latency against a 1 m margin. The margin cannot absorb this
-      by construction, so polygon entries here are a measurement of how far
-      past its design point the Shield degrades, reported in the family table
-      (breaches, polygon ticks, closest approach) - not hidden behind a gate it
-      was never expected to pass. Gated only on what must hold whatever the
-      sensor does: the Shield never emits an action it has itself found
-      illegal, and never a non-finite one.
-    mission:
-      start_pose: { x: -30.0, y: "$pass_y", up: 15.0 }
-      target: { x: 60.0, y: "$pass_y", up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-    policy: { path: policies/sim_demo_policy.yaml }
-    ticks: 400
-    stress: { gps_noise_m: "$sigma", latency_ticks: "$latency" }
-    parameter_sweep:
-      pass_y: [23.2, 23.6]
-      sigma: [1.0, 2.0]
-      latency: [5, 10]
-    expected_kpis:
-      P0_escape_rate: 0
-      all_actions_finite: { equals: true }
-    expected_failsafe: false
-
-  # ---- GPS denial (audit card X-14; reference design L2 "GPS denial") ----- #
-  - scenario_id: gps-dropout
-    template: sensor_degradation
-    expect: tracked
-    description: >
-      TRACKED: GPS denial as a headless run can model it. For the window the
-      Shield is handed the LAST FIX, frozen, while the aircraft keeps flying -
-      what a bridge that forwards the last pose would do. The Shield's State
-      has no fix-quality field, so it cannot know the pose is stale, and the
-      grant names no Shield response to GPS loss. Measured 2026-10-06 on the
-      head-on lane: frozen while parked at the lookahead edge (6-11 s), the
-      Shield keeps permitting the ~3.9 m/s it would allow from 11.6 m out and
-      the aircraft ends 7 m inside the polygon; a 2-4 s window at 2 s never
-      reaches it. Gated only on what must hold whatever the sensor does - the
-      Shield never emits an action it has itself found illegal, never a
-      non-finite one - and on the dropout having actually frozen the pose
-      (a window that froze nothing would otherwise pass as a clean run).
-      Unlabelled: with no fix-status input there is no defensible fail-safe
-      expectation to write down.
-    mission:
-      start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
-      target: { x: 60.0, y: "$lane_y", up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-    policy: { path: policies/sim_demo_policy.yaml }
-    ticks: 400
-    stress: { gps_dropout_s: "$window" }
-    parameter_sweep:
-      lane_y: [15.0, 23.6]
-      window: [[2.0, 4.0], [2.0, 7.0], [4.0, 9.0], [6.0, 11.0]]
-    expected_kpis:
-      P0_escape_rate: 0
-      all_actions_finite: { equals: true }
-      gps_dropout_ticks: { min: 1 }
-
-  # ---- the grant example's wind_speed_mps: [0, 2, 5] --------------------- #
-  # 0 m/s is every scenario above. 2 m/s (and 1, 3) is within the 4 m/s speed
-  # cap's authority and is gated; 5 m/s is beyond it and is a known failure.
-  - scenario_id: wind-within-authority
-    template: wind_disturbance
-    description: >
-      A steady wind the Shield cannot see (it predicts with the commanded
-      action only), weaker than the 4 m/s speed cap, from four directions in
-      the mission's frame (0 tailwind, 90 from the zone, 180 headwind, 270
-      toward the zone), on the head-on lane (y 15) and the edge lane (y 25,
-      1 m outside the margin). With authority to spare, the polygon itself must
-      never be entered and the aircraft must always get back out of the margin.
-    mission:
-      start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
-      target: { x: 60.0, y: "$lane_y", up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-    policy: { path: policies/sim_demo_policy.yaml }
-    ticks: 400
-    stress: { wind_speed_mps: "$wind_speed_mps", wind_dir_deg: "$wind_dir_deg" }
-    parameter_sweep:
-      lane_y: [15.0, 25.0]
-      wind_speed_mps: [1, 2, 3]
-      wind_dir_deg: [0, 90, 180, 270]
-    expected_kpis:
-      P0_escape_rate: 0
-      min_true_dist_to_fence_m: { min: 0.0 }
-      time_to_safe_censored: { max: 0 }
-    expected_failsafe: false
-    known_failures:
-      - params: { lane_y: 15.0, wind_dir_deg: 0 }
-        description: >
-          A tailwind into the zone defeats the margin at every speed tried
-          (measured 2026-10-06). The Shield predicts with the commanded action
-          only, so the aircraft it has parked at the ring edge with ~zero
-          commanded velocity is carried in by the wind. Inside, GeofenceEscape
-          commands a fixed 2.0 m/s outward: at 1 m/s wind the aircraft
-          re-enters the ring 118 times, Brakes (a false fail-safe) and ends
-          inside it; at 2 m/s escape and wind cancel and it never gets out
-          (censored); at 3 m/s it is pushed 7.6 m into the polygon itself. The
-          4 m/s cap had authority to spare in all three. Crosswind, headwind
-          and wind from the zone pass on both lanes.
-
-  - scenario_id: wind-beyond-authority
-    template: wind_disturbance
-    expect: known_failure
-    description: >
-      The grant example's 5 m/s, as a tailwind into the zone, on the head-on
-      lane (y 15, through the zone's centre) and an off-centre lane (y 20,
-      3 m inside the zone's face). 5 m/s exceeds the 4 m/s cap, so no
-      repaired velocity can hold the aircraft out: the grant's answer is the
-      escalation FSM (N-in-T persists -> Loiter -> RTL), so the labels say
-      RTL_triggered and a fail-safe expected. The Shield does not run that
-      FSM (guardrail/fsm.py exists; its integration is a later wave), so the
-      aircraft is pushed through the zone with no fail-safe. Known failure
-      until the FSM is wired into the Shield. (The first version flew the
-      head-on lane from the zone's four sides: four rotations of one flight
-      about a square, one outcome, filling the nightly top-10 with copies.)
-    mission:
-      start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
-      target: { x: 60.0, y: "$lane_y", up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-    policy: { path: policies/sim_demo_policy.yaml }
-    stress: { wind_speed_mps: 5.0, wind_dir_deg: 0.0 }
-    parameter_sweep:
-      lane_y: [15.0, 20.0]
-    expected_kpis:
-      P0_escape_rate: 0
-      min_true_dist_to_fence_m: { min: 0.0 }
-      time_to_safe_censored: { max: 0 }
-    expected_outcome: RTL_triggered
-    expected_failsafe: true
-
-  - scenario_id: wind-gusts
-    template: wind_disturbance
-    expect: tracked
-    description: >
-      TRACKED: 2-3 m/s wind from a direction drawn from the seed, plus 0.5 m/s
-      gusts and a start jittered up to 1 m, so each seed is a different
-      flight - the family that makes the nightly profile's three seeds mean
-      something. Gated only on the Shield's own escape count and finite
-      actions; where the gusts carry the aircraft is reported, not gated,
-      because a drawn direction cannot carry a fixed expectation.
-    mission:
-      start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
-      target: { x: 60.0, y: "$lane_y", up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-    policy: { path: policies/sim_demo_policy.yaml }
-    ticks: 400
-    stress: { wind_speed_mps: "$wind_speed_mps", gust_mps: 0.5, start_jitter_m: 1.0 }
-    parameter_sweep:
-      lane_y: [15.0, 25.0]
-      wind_speed_mps: [2, 3]
-    expected_kpis:
-      P0_escape_rate: 0
-      all_actions_finite: { equals: true }
-    expected_failsafe: false
-
-  # ---- the old library's rule types, at many geometries ------------------- #
-  - scenario_id: standoff-approach-angles
-    template: subject_standoff
-    description: >
-      standoff-approach from drawn directions, with the declared subject 7, 9
-      or 12 m off the route as a pedestrian (10 m ring) or a car (5 m ring). At
-      7 and 9 m the pedestrian ring crosses the route and the Shield has to
-      take the aircraft round it; the car ring never does. Either way the
-      binding ring must hold and the mission must finish.
-    mission:
-      start_pose: { x: 0.0, y: 0.0, up: 15.0 }
-      target: { x: 40.0, y: 0.0, up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
-      subject: { x: 20.0, y: "$offset_m", class: "$subject_class" }
-      rotate_deg: "$approach_deg"
-    policy: { path: policies/sitl_pedestrian.yaml }
-    ticks: 400
-    parameter_sweep:
-      offset_m: [7, 9, 12]
-      subject_class: [pedestrian, car]
-    parameter_sample:
-      approach_deg: { uniform: [0, 360] }
-    expected_kpis:
-      P0_escape_rate: 0
-      time_to_safe_episodes: { max: 0 }
-      breaches: { max: 0 }
-      reached_goal: { equals: true }
-    expected_outcome: success
-    expected_failsafe: false
-
-  - scenario_id: corridor-drift-angles
-    template: corridor_keep_in
-    description: >
-      corridor-drift-out at six drift headings and two asked speeds. With no
-      scenario clock the curfew fence is always in force, so the north-east
-      headings also run into it at the corridor's corner: a keep-in and a
-      keep-out rule repairing against each other.
-    mission:
-      start_pose: { x: 30.0, y: 0.0, up: 15.0 }
-      pilot: { type: constant, action: { vx: 0.0, vy: "$ask_mps" } }
-      rotate_deg: "$drift_deg"
-    policy: { path: policies/corridor_survey.yaml }
-    parameter_sweep:
-      drift_deg: [-60, -30, 0, 30, 60, 150]
-      ask_mps: [4, 8]
-    expected_kpis:
-      P0_escape_rate: 0
-      time_to_safe_episodes: { max: 0 }
-      breaches: { max: 0 }
-      max_offset_from_corridor: { max: 20.001 }
-    expected_outcome: success
-    expected_failsafe: false
-    known_failures:
-      - params: { drift_deg: -30, ask_mps: 4 }
-        description: &endcap >
-          False fail-safe at a corridor end cap (measured 2026-10-06). Drifting
-          into the round end of the keep-in tube - (67.4, 64.8) past the (60,
-          60) end, or (6.1, 13.8) beside the (0, 0) end - the repair does not
-          converge and the Shield Brakes, though sliding along the cap is
-          legal: the grant's LateralProjection ("nearest feasible point inside
-          the corridor") would converge there. No escape and no breach; the
-          label says a fail-safe was not needed and it fired anyway.
-      - params: { drift_deg: 60 }
-        description: *endcap
-
-  - scenario_id: altitude-recovery-depth
-    template: altitude_envelope
-    description: >
-      altitude-floor-recovery from seven more depths: 0.5-9.5 m against the
-      10 m floor and 20.5-30 m against the 20 m ceiling. One recovery each,
-      never censored, and no slower than the depth at the 2 m/s climb cap plus
-      one 3 s lookahead (8 s at the deepest). 3 m is not swept: that is
-      altitude-floor-recovery's own flight, and the sweep refuses to count one
-      flight as two scenarios.
-    mission:
-      start_pose: { x: -30.0, y: -30.0, up: "$start_up" }
-      pilot: { type: constant, action: { vx: 3.0 } }
-    policy: { path: policies/sim_demo_policy.yaml }
-    parameter_sweep:
-      start_up: [0.5, 2.0, 6.0, 9.5, 20.5, 24.0, 30.0]
-    expected_kpis:
-      P0_escape_rate: 0
-      ended_safe: { equals: true }
-      time_to_safe_episodes: { equals: 1 }
-      time_to_safe_censored: { max: 0 }
-      mean_time_to_safe_s: "<=8.0"
-    expected_outcome: success
-    expected_failsafe: false
+templates:
+  - templates/static_nfz.yaml
+  - templates/altitude_envelope.yaml
+  - templates/kinematic_envelope.yaml
+  - templates/action_contract.yaml
+  - templates/corridor_keep_in.yaml
+  - templates/time_window_static.yaml
+  - templates/subject_standoff.yaml
+  - templates/dynamic_nfz_movement.yaml
+  - templates/time_window_switch.yaml
+  - templates/radius_scaling.yaml
+  - templates/corridor_swap.yaml
+  - templates/failsafe_escalation.yaml
+  - templates/high_speed_near_edge.yaml
+  - templates/three_simultaneous_violations.yaml
+  - templates/sensor_degradation.yaml
+  - templates/wind_disturbance.yaml

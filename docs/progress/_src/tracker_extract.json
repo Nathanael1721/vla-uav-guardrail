@@ -1,0 +1,817 @@
+{
+ "project": {
+  "en": {
+   "one_liner": "A safety layer between a drone's AI pilot (VLA) and its autopilot (ArduPilot): flight rules are written once in a file, summarised for the AI, and checked on every command before it reaches the drone.",
+   "problem": "A VLA (Vision-Language-Action model: it reads camera images and a text instruction and outputs motion commands) can output a command that breaks a flight rule, for example flying into a no-fly zone (NFZ). The grant asks for a system in which no P0 (highest-priority) rule violation reaches the aircraft, and for numbers that prove it.",
+   "solution": "The work packages: WP1 writes the rules in a Policy DSL (a fixed YAML/JSON rule format) and packs them into a signed bundle (an archive of the rules with a hash and a signature). WP2, the Prefix Compiler, turns the rules into a CSP (Constraint Summary Pack) for the VLA's prompt. WP3, the Safety Shield, checks and repairs every command; in the grant's design, ArduPilot's own GeoFence (the autopilot's built-in boundary) and its RTL (return to launch) / Land modes sit behind it as the last backstop. WP4 delivers the stress scenarios that produce the KPI numbers."
+  },
+  "zh": {
+   "one_liner": "介於無人機的 AI 駕駛（VLA）與自動駕駛系統（ArduPilot）之間的安全層：飛行規則只寫在一個檔案裡，先摘要給 AI，再在每個指令送到無人機之前逐一檢查。",
+   "problem": "VLA（Vision-Language-Action 模型：讀取攝影機影像和文字指令，輸出移動指令）可能輸出違反飛行規則的指令，例如飛進禁航區（NFZ）。計畫要求一個系統，確保沒有任何 P0（最高優先）規則的違規傳到飛機上，並提供能證明這點的數字。",
+   "solution": "各工作包（WP）：WP1 用 Policy DSL（固定的 YAML/JSON 規則格式）撰寫規則，並打包成有簽章的 bundle（含 hash 與簽章的規則封裝檔）。WP2（Prefix Compiler）把規則轉成供 VLA 提示詞使用的 CSP（Constraint Summary Pack）。WP3（Safety Shield）檢查並修正每一個指令；在計畫書的設計中，ArduPilot 本身的 GeoFence（飛控內建的邊界）以及 RTL（返航）/ Land 模式位於它後方，作為最後一道防線。WP4 交付產生 KPI 數字的壓力測試情境。"
+  }
+ },
+ "roles": [
+  {
+   "id": "driver",
+   "en": {
+    "analogy": "The driver: decides where to go, and may make mistakes.",
+    "in_project": "The pilot: a VLA (OpenVLA-7B and AerialVLA have flown through the Shield in simulation). The city demonstrations use a hand-written test controller in its place."
+   },
+   "zh": {
+    "analogy": "駕駛：決定要去哪裡，可能會犯錯。",
+    "in_project": "駕駛者（pilot）：VLA（OpenVLA-7B 與 AerialVLA 已在模擬中通過 Shield 飛行）。城市示範改用手寫的測試控制器。"
+   }
+  },
+  {
+   "id": "rulebook",
+   "en": {
+    "analogy": "The rulebook: 'do not drive here', 'max 5 m/s'.",
+    "in_project": "The policy: a YAML file in policies/, parsed by guardrail/models.py and hashed."
+   },
+   "zh": {
+    "analogy": "規則手冊：「這裡不能開」、「最高 5 m/s」。",
+    "in_project": "Policy：policies/ 中的 YAML 檔，由 guardrail/models.py 解析並計算雜湊值（hash）。"
+   }
+  },
+  {
+   "id": "instructor",
+   "en": {
+    "analogy": "The driving instructor with a second brake pedal: corrects or stops the driver.",
+    "in_project": "The Safety Shield: checks every command against all rules before it is sent."
+   },
+   "zh": {
+    "analogy": "有第二個煞車踏板的駕訓教練：修正或制止駕駛。",
+    "in_project": "Safety Shield：每個指令送出前，都依所有規則檢查。"
+   }
+  },
+  {
+   "id": "car",
+   "en": {
+    "analogy": "The car and its engine: does what it is told.",
+    "in_project": "ArduPilot (the autopilot) plus a simulator."
+   },
+   "zh": {
+    "analogy": "車子和引擎：照指令行動。",
+    "in_project": "ArduPilot（自動駕駛系統）加上模擬器。"
+   }
+  },
+  {
+   "id": "blackbox",
+   "en": {
+    "analogy": "The black box: records every decision on which a command would have broken a rule.",
+    "in_project": "The audit log (audit.jsonl), written by guardrail/audit.py."
+   },
+   "zh": {
+    "analogy": "黑盒子：記錄每一次指令將會違反規則時的決定。",
+    "in_project": "稽核日誌（audit.jsonl），由 guardrail/audit.py 寫入。"
+   }
+  }
+ ],
+ "wps": [
+  {
+   "id": "WP1",
+   "grant_page": "Policy DSL",
+   "grant_quote": "a single, version-controlled, validatable representation that the Prefix Compiler and Safety Shield share",
+   "en": {
+    "name": "Policy DSL / IR / signed bundle",
+    "plain": "A fixed way to write flight rules in a YAML or JSON file (Policy DSL), and the parsed in-memory form that other parts read (IR). The rules are packed into a signed bundle with a hash, so a flight can later be checked against the exact rules it used."
+   },
+   "zh": {
+    "name": "Policy DSL / IR / 簽章 bundle",
+    "plain": "用 YAML 或 JSON 檔撰寫飛行規則的固定格式（Policy DSL），以及其他模組讀取的記憶體內解析結果（IR）。規則打包成附 hash 的簽章 bundle，之後可以用當次飛行實際使用的規則來核對。"
+   }
+  },
+  {
+   "id": "WP2",
+   "grant_page": "Prefix Compiler",
+   "grant_quote": "Inject constraints — summarised, compressed, and risk-graded — into the VLA / planner input",
+   "en": {
+    "name": "Prefix Constraint Compiler",
+    "plain": "Turns the policy into a short Constraint Summary Pack (CSP) for the VLA's prompt, so that the VLA knows the rules before it chooses an action. The goal is fewer rule-breaking commands, so the Shield has less to repair."
+   },
+   "zh": {
+    "name": "Prefix Constraint Compiler",
+    "plain": "把 policy 轉成簡短的 Constraint Summary Pack（CSP），供 VLA 的提示詞使用，讓 VLA 在選擇動作之前就知道規則。目的是減少違規指令，讓 Shield 需要修正的次數變少。"
+   }
+  },
+  {
+   "id": "WP3",
+   "grant_page": "Safety Shield",
+   "grant_quote": "The Shield is the last software layer before the autopilot.",
+   "en": {
+    "name": "Suffix Safety Shield",
+    "plain": "WP3 delivers a ROS 2 node between the VLA and MAVROS 2 that checks every command and repairs it if it would break a rule. In the grant's design it also escalates to Brake, Loiter, RTL or Land when a repair is not safe, with ArduPilot's own GeoFence as the last backstop."
+   },
+   "zh": {
+    "name": "Suffix Safety Shield",
+    "plain": "WP3 交付位於 VLA 與 MAVROS 2 之間的 ROS 2 節點：檢查每個指令，若會違規就修正。在計畫書的設計中，修正不安全時還會升級為 Brake、Loiter、RTL 或 Land，並以 ArduPilot 本身的 GeoFence 作為最後一道防線。"
+   }
+  },
+  {
+   "id": "WP4",
+   "grant_page": "Stress Testing",
+   "grant_quote": "every reported KPI in the final report comes from a Stress Testing run executed in the [hil] topology",
+   "en": {
+    "name": "Dynamic-scenario stress testing",
+    "plain": "WP4 delivers a library of test scenarios in which rules change mid-flight (moving NFZ, time-window switch, corridor swap), and a harness that runs them and computes the KPIs. Under the grant, every KPI in the final report comes from this harness."
+   },
+   "zh": {
+    "name": "動態情境壓力測試",
+    "plain": "WP4 交付一組測試情境，規則會在飛行中改變（移動的 NFZ、時間窗切換、走廊替換），以及執行這些情境並計算 KPI 的測試框架（harness）。依計畫書，期末報告中的每一個 KPI 都來自這個 harness。"
+   }
+  }
+ ],
+ "architecture": [
+  {
+   "id": "operator",
+   "en": {
+    "label": "Operator / mission",
+    "short": "Gives the task prompt: what the drone should do."
+   },
+   "zh": {
+    "label": "操作員／任務",
+    "short": "給出任務提示：無人機要做什麼。"
+   }
+  },
+  {
+   "id": "vla",
+   "en": {
+    "label": "VLA backend",
+    "short": "AI model: camera image and words in, 4-D action out at 10 Hz."
+   },
+   "zh": {
+    "label": "VLA 後端",
+    "short": "AI 模型：輸入攝影機影像與文字，以 10 Hz 輸出 4-D 動作。"
+   }
+  },
+  {
+   "id": "policy_bundle",
+   "en": {
+    "label": "Policy IR / bundle",
+    "short": "The rules, parsed and sealed with a hash, loaded by the Shield."
+   },
+   "zh": {
+    "label": "Policy IR / bundle",
+    "short": "已解析並以雜湊值封存的規則，由 Shield 載入。"
+   }
+  },
+  {
+   "id": "prefix_compiler",
+   "en": {
+    "label": "Prefix Compiler",
+    "short": "Turns the rules into a short pack (CSP) placed in front of the VLA prompt."
+   },
+   "zh": {
+    "label": "Prefix Compiler",
+    "short": "把規則轉成一份簡短的摘要（CSP），放在 VLA 提示前面。"
+   }
+  },
+  {
+   "id": "shield",
+   "en": {
+    "label": "Safety Shield (ROS 2 node)",
+    "short": "Last software layer: checks, repairs or stops each action before MAVROS 2."
+   },
+   "zh": {
+    "label": "Safety Shield（ROS 2 節點）",
+    "short": "最後一層軟體：在送進 MAVROS 2 前檢查、修正或停止每個動作。"
+   }
+  },
+  {
+   "id": "mavros",
+   "en": {
+    "label": "MAVROS 2",
+    "short": "ROS 2 bridge that turns Shield output into MAVLink messages for ArduPilot."
+   },
+   "zh": {
+    "label": "MAVROS 2",
+    "short": "ROS 2 橋接器，把 Shield 的輸出轉成給 ArduPilot 的 MAVLink 訊息。"
+   }
+  },
+  {
+   "id": "ardupilot",
+   "en": {
+    "label": "ArduPilot (SITL / firmware)",
+    "short": "The autopilot: runs the inner control loop at 100-400 Hz."
+   },
+   "zh": {
+    "label": "ArduPilot（SITL／韌體）",
+    "short": "飛控：以 100-400 Hz 執行內迴圈控制。"
+   }
+  },
+  {
+   "id": "geofence",
+   "en": {
+    "label": "GeoFence / RTL / Land backstop",
+    "short": "ArduPilot's own fence: the final safety net if the Shield fails."
+   },
+   "zh": {
+    "label": "GeoFence／RTL／Land 後備",
+    "short": "ArduPilot 自己的圍欄：Shield 失效時的最後安全網。"
+   }
+  },
+  {
+   "id": "stress_harness",
+   "en": {
+    "label": "Stress Testing harness",
+    "short": "Runs many scenarios, changes rules mid-flight and computes the KPIs for the final report."
+   },
+   "zh": {
+    "label": "Stress Testing 測試框架",
+    "short": "執行大量情境、在飛行中改變規則，並計算期末報告的 KPI。"
+   }
+  },
+  {
+   "id": "gcs",
+   "en": {
+    "label": "Ground station (Mission Planner)",
+    "short": "Operator's map view of the flight, fed through mavlink-router next to MAVROS 2."
+   },
+   "zh": {
+    "label": "地面站（Mission Planner）",
+    "short": "給操作員看的飛行地圖，經 mavlink-router 與 MAVROS 2 並行取得資料。"
+   }
+  }
+ ],
+ "pipeline": [
+  {
+   "id": "camera",
+   "en": {
+    "label": "Drone camera",
+    "short": "Front camera: colour and depth images, 10 per second."
+   },
+   "zh": {
+    "label": "無人機攝影機",
+    "short": "前方攝影機：每秒 10 張彩色與深度影像。"
+   }
+  },
+  {
+   "id": "detector",
+   "en": {
+    "label": "Detector (OWL-ViT)",
+    "short": "Finds boxes that match a phrase such as 'a red car'."
+   },
+   "zh": {
+    "label": "偵測器（OWL-ViT）",
+    "short": "找出符合文字描述（例如「a red car」）的框。"
+   }
+  },
+  {
+   "id": "identity",
+   "en": {
+    "label": "Identity check",
+    "short": "Uses depth and the map to judge whether a box can physically be the car."
+   },
+   "zh": {
+    "label": "身分檢查",
+    "short": "用深度與地圖判斷一個框在物理上是否可能是那輛車。"
+   }
+  },
+  {
+   "id": "tracker",
+   "en": {
+    "label": "Tracker",
+    "short": "Locks one car, estimates where it is, and takes it back only on evidence."
+   },
+   "zh": {
+    "label": "追蹤器",
+    "short": "鎖定一輛車、估計它的位置，只有在有證據時才重新捕獲。"
+   }
+  },
+  {
+   "id": "pilot",
+   "en": {
+    "label": "Pilot (hand-written)",
+    "short": "Hand-written controller, not a VLA: follows the car's trail about 20 m behind."
+   },
+   "zh": {
+    "label": "駕駛程式（手寫）",
+    "short": "手寫控制器，不是 VLA：沿著車輛的足跡在約 20 m 後方跟隨。"
+   }
+  },
+  {
+   "id": "fenceguard",
+   "en": {
+    "label": "FenceGuard",
+    "short": "Lets the pilot read the policy, so it slows or steers around zones by itself."
+   },
+   "zh": {
+    "label": "FenceGuard",
+    "short": "讓駕駛程式讀取規則檔，自己減速或繞過禁區。"
+   }
+  },
+  {
+   "id": "shield",
+   "en": {
+    "label": "Safety Shield",
+    "short": "Checks every command against all rules, then passes, repairs or brakes it."
+   },
+   "zh": {
+    "label": "Safety Shield",
+    "short": "依所有規則檢查每一道指令，然後放行、修正或煞停。"
+   }
+  },
+  {
+   "id": "autopilot",
+   "en": {
+    "label": "Simulator autopilot",
+    "short": "Project AirSim's own flight controller flies the command; ArduPilot is not used here."
+   },
+   "zh": {
+    "label": "模擬器飛控",
+    "short": "由 Project AirSim 內建的飛控執行指令，這裡沒有使用 ArduPilot。"
+   }
+  },
+  {
+   "id": "hud",
+   "en": {
+    "label": "Policy HUD",
+    "short": "On-screen panel: each rule, its limit, the live value and a status colour."
+   },
+   "zh": {
+    "label": "規則 HUD",
+    "short": "螢幕面板：每條規則、它的限制、即時數值與狀態顏色。"
+   }
+  }
+ ],
+ "shield_steps": [
+  {
+   "id": "predict",
+   "en": {
+    "label": "Predict"
+   },
+   "zh": {
+    "label": "預測"
+   }
+  },
+  {
+   "id": "check",
+   "en": {
+    "label": "Check"
+   },
+   "zh": {
+    "label": "檢查"
+   }
+  },
+  {
+   "id": "repair",
+   "en": {
+    "label": "Repair"
+   },
+   "zh": {
+    "label": "修正"
+   }
+  },
+  {
+   "id": "recheck",
+   "en": {
+    "label": "Re-check"
+   },
+   "zh": {
+    "label": "再檢查"
+   }
+  },
+  {
+   "id": "brake",
+   "en": {
+    "label": "Brake"
+   },
+   "zh": {
+    "label": "煞停"
+   }
+  },
+  {
+   "id": "log",
+   "en": {
+    "label": "Log"
+   },
+   "zh": {
+    "label": "記錄"
+   }
+  }
+ ],
+ "hud_callouts": [
+  {
+   "id": "status_box",
+   "x": 168,
+   "y": 55,
+   "en": {
+    "label": "Flight status",
+    "detail": "Time, altitude, bearing to the target, forward speed, distance to the target, and the tracking state. Green 'TARGET LOCKED' means the tracker holds the car. Here: t 39.0 s, altitude 10.1 m, separation 21.2 m."
+   },
+   "zh": {
+    "label": "飛行狀態",
+    "detail": "時間、高度、目標方位、前進速度、與目標距離，以及追蹤狀態。綠色「TARGET LOCKED」表示追蹤器鎖定了那輛車。此畫面：t 39.0 s、高度 10.1 m、距離 21.2 m。"
+   }
+  },
+  {
+   "id": "banner",
+   "x": 640,
+   "y": 26,
+   "en": {
+    "label": "Event banner",
+    "detail": "The most important event of the last 1.5 s. Here it reads 'NO-FLY ZONE AHEAD - ROUTING AROUND IT (nfz-frontage)' in blue: the pilot (FenceGuard) is steering around the zone by itself, so the Shield does not need to act."
+   },
+   "zh": {
+    "label": "事件橫幅",
+    "detail": "最近 1.5 s 內最重要的事件。此處以藍色顯示「NO-FLY ZONE AHEAD - ROUTING AROUND IT (nfz-frontage)」：駕駛程式（FenceGuard）自己在繞過禁區，所以 Shield 不需要出手。"
+   }
+  },
+  {
+   "id": "rule_panel",
+   "x": 915,
+   "y": 131,
+   "en": {
+    "label": "Rule panel",
+    "detail": "One row per rule in the loaded policy (follow-car-citylife-nfz v0.1.0): name, limit, value measured now, status. Example row: Altitude band, 6-14 m, now 10.1 m, OK."
+   },
+   "zh": {
+    "label": "規則面板",
+    "detail": "載入的規則檔（follow-car-citylife-nfz v0.1.0）中每條規則一列：名稱、限制、目前量測值、狀態。例如：Altitude band，6-14 m，目前 10.1 m，OK。"
+   }
+  },
+  {
+   "id": "row_status",
+   "x": 1222,
+   "y": 89,
+   "en": {
+    "label": "Rule status",
+    "detail": "Status word and dot colour per rule. Here the NFZ row is AVOID (4 m away), the 10 m pedestrian rule is idle because the target is a car, and obstacle clearance is NEAR (4.5 m against a 3 m limit)."
+   },
+   "zh": {
+    "label": "規則狀態",
+    "detail": "每條規則的狀態文字與圓點顏色。此處 NFZ 列為 AVOID（相距 4 m），10 m 行人規則為 idle（因為目標是車），障礙物淨空為 NEAR（4.5 m，限制 3 m）。"
+   }
+  },
+  {
+   "id": "counts",
+   "x": 1028,
+   "y": 219,
+   "en": {
+    "label": "Running counts",
+    "detail": "Totals so far in this flight: Shield corrections, brakes, holds and P0 escapes (ticks on which a P0 violation remained in the command sent)."
+   },
+   "zh": {
+    "label": "累計次數",
+    "detail": "本次飛行到目前為止的累計：Shield 修正、煞停、停住，以及 P0 escape（實際送出的指令中仍有 P0 違規的 tick）次數。"
+   }
+  },
+  {
+   "id": "minimap",
+   "x": 1160,
+   "y": 600,
+   "en": {
+    "label": "Map",
+    "detail": "North-up map, 80 m across: obstacles (dark), the red NFZ, the drone's track (blue line, white arrow) and a red dot, which is the tracker's estimate of the car, not ground truth."
+   },
+   "zh": {
+    "label": "地圖",
+    "detail": "北方朝上、寬 80 m 的地圖：障礙物（深色）、紅色 NFZ、無人機軌跡（藍線、白色箭頭），以及紅點；紅點是追蹤器對車輛位置的估計，不是真實位置。"
+   }
+  }
+ ],
+ "statuses": [
+  {
+   "id": "idle",
+   "color": "#969696",
+   "en": {
+    "label": "idle",
+    "meaning": "The rule is in the policy but cannot apply now, e.g. the 10 m pedestrian stand-off while the target is a car."
+   },
+   "zh": {
+    "label": "idle",
+    "meaning": "規則在規則檔中，但目前無法適用，例如目標是車時的 10 m 行人距離規則。"
+   }
+  },
+  {
+   "id": "ok",
+   "color": "#46cd64",
+   "en": {
+    "label": "OK",
+    "meaning": "The rule applies and is met with room to spare."
+   },
+   "zh": {
+    "label": "OK",
+    "meaning": "規則適用且被遵守，仍有餘裕。"
+   }
+  },
+  {
+   "id": "near",
+   "color": "#ffcd3c",
+   "en": {
+    "label": "NEAR",
+    "meaning": "Inside the rule's own soft margin, within the pilot's 12 m brake distance of an NFZ, or off the obstacle map (clearance unknown)."
+   },
+   "zh": {
+    "label": "NEAR",
+    "meaning": "進入該規則自身的緩衝範圍、距 NFZ 在駕駛程式 12 m 煞車距離內，或位於障礙物地圖之外（淨空未知）。"
+   }
+  },
+  {
+   "id": "avoid",
+   "color": "#5ab4ff",
+   "en": {
+    "label": "AVOID",
+    "meaning": "The pilot (FenceGuard) is steering around an NFZ or obstacle by itself; the Shield does not need to act."
+   },
+   "zh": {
+    "label": "AVOID",
+    "meaning": "駕駛程式（FenceGuard）自己在繞過 NFZ 或障礙物；Shield 不需要出手。"
+   }
+  },
+  {
+   "id": "hold",
+   "color": "#f0463c",
+   "en": {
+    "label": "HOLD",
+    "meaning": "The pilot stopped short of an NFZ or obstacle."
+   },
+   "zh": {
+    "label": "HOLD",
+    "meaning": "駕駛程式在 NFZ 或障礙物前停住。"
+   }
+  },
+  {
+   "id": "act",
+   "color": "#ff911e",
+   "en": {
+    "label": "ACTING",
+    "meaning": "The Shield repaired the command for this rule."
+   },
+   "zh": {
+    "label": "ACTING",
+    "meaning": "Shield 為這條規則修正了指令。"
+   }
+  },
+  {
+   "id": "breach",
+   "color": "#ff3ca0",
+   "en": {
+    "label": "BREACH",
+    "meaning": "The drone is past the limit now (inside the zone or its margin, too close, or outside the band), or a P0 rule is still violated by the command actually sent."
+   },
+   "zh": {
+    "label": "BREACH",
+    "meaning": "無人機目前已超出限制（在禁區或其緩衝內、太近、或超出高度範圍），或實際送出的指令仍違反 P0 規則。"
+   }
+  },
+  {
+   "id": "brake",
+   "color": "#e61e1e",
+   "en": {
+    "label": "BRAKE",
+    "meaning": "Repair did not converge and the Shield stopped the drone."
+   },
+   "zh": {
+    "label": "BRAKE",
+    "meaning": "修正無法收斂，Shield 讓無人機停下。"
+   }
+  }
+ ],
+ "glossary": [
+  {
+   "id": "VLA",
+   "en": {
+    "text": "Vision-Language-Action model: an AI model that looks at a camera image, reads an instruction, and outputs a movement command."
+   },
+   "zh": {
+    "text": "Vision-Language-Action 模型：看攝影機影像、讀取指令，然後輸出移動指令的 AI 模型。"
+   }
+  },
+  {
+   "id": "Guardrail",
+   "en": {
+    "text": "Our name for the whole safety layer between the pilot and the autopilot: policy, Prefix Compiler, Shield and logs."
+   },
+   "zh": {
+    "text": "我們對駕駛與飛控之間整個安全層的稱呼：規則檔、Prefix Compiler、Shield 與記錄。"
+   }
+  },
+  {
+   "id": "Policy DSL",
+   "en": {
+    "text": "The rule language: flight rules (no-fly zones, altitude and speed limits, corridors, time windows) written in a YAML or JSON file, called a policy."
+   },
+   "zh": {
+    "text": "規則語言：把飛行規則（禁航區、高度與速度限制、走廊、時間窗）寫在 YAML 或 JSON 檔中，這個檔稱為 policy（規則檔）。"
+   }
+  },
+  {
+   "id": "IR",
+   "en": {
+    "text": "Intermediate Representation: the parsed, checked, in-memory form of the policy that the Prefix Compiler and the Shield read."
+   },
+   "zh": {
+    "text": "Intermediate Representation（中間表示）：規則檔經解析、驗證後存在記憶體中的形式，供 Prefix Compiler 與 Shield 讀取。"
+   }
+  },
+  {
+   "id": "Bundle",
+   "en": {
+    "text": "The deployable package of a policy: the IR plus a hash, a version number and a signature, so a flight can prove which rules it used."
+   },
+   "zh": {
+    "text": "可部署的規則套件：IR 加上雜湊值、版本號與簽章，讓每次飛行都能證明用了哪一套規則。"
+   }
+  },
+  {
+   "id": "policy_hash",
+   "en": {
+    "text": "A fingerprint of the policy content. If one rule changes, the hash changes, so logs and KPI numbers can be matched to the exact rules."
+   },
+   "zh": {
+    "text": "規則檔內容的指紋。只要改了一條規則，雜湊值就會改變，因此記錄與 KPI 數字能對應到確切的規則。"
+   }
+  },
+  {
+   "id": "CSP",
+   "en": {
+    "text": "Constraint Summary Pack: a short summary of the active rules that the Prefix Compiler places in front of the VLA prompt."
+   },
+   "zh": {
+    "text": "Constraint Summary Pack：生效規則的簡短摘要，由 Prefix Compiler 放在 VLA 提示前面。"
+   }
+  },
+  {
+   "id": "Prefix Compiler",
+   "en": {
+    "text": "WP2. Builds the CSP from the policy and the mission so the VLA knows the rules before it decides."
+   },
+   "zh": {
+    "text": "WP2。依規則檔與任務產生 CSP，讓 VLA 在做決定前就知道規則。"
+   }
+  },
+  {
+   "id": "Safety Shield",
+   "en": {
+    "text": "WP3. Software between the pilot and the autopilot that checks every command, repairs it, or stops the drone."
+   },
+   "zh": {
+    "text": "WP3。位於駕駛與飛控之間的軟體，檢查每道指令，加以修正或讓無人機停下。"
+   }
+  },
+  {
+   "id": "Repair operator",
+   "en": {
+    "text": "A small function in the Shield that changes a command just enough to obey one kind of rule, e.g. SpeedClamp or GeofenceSlide."
+   },
+   "zh": {
+    "text": "Shield 中的小函式，只把指令改到剛好符合某一類規則，例如 SpeedClamp 或 GeofenceSlide。"
+   }
+  },
+  {
+   "id": "NFZ",
+   "en": {
+    "text": "No-fly zone: a polygon the drone must not enter (polygon_fence in the policy)."
+   },
+   "zh": {
+    "text": "禁航區：無人機不得進入的多邊形區域（規則檔中的 polygon_fence）。"
+   }
+  },
+  {
+   "id": "Stand-off",
+   "en": {
+    "text": "Minimum distance from the tracked target, e.g. 5 m from a car or 10 m from a person (subject_standoff)."
+   },
+   "zh": {
+    "text": "與追蹤目標的最小距離，例如距車 5 m、距人 10 m（subject_standoff）。"
+   }
+  },
+  {
+   "id": "Obstacle clearance",
+   "en": {
+    "text": "Minimum distance from mapped obstacles such as buildings, trees and lamp arms; 3 m in the CityLife policy."
+   },
+   "zh": {
+    "text": "與地圖上障礙物（建築、樹木、路燈燈臂）的最小距離；CityLife 規則檔為 3 m。"
+   }
+  },
+  {
+   "id": "P0 / P1 / P2",
+   "en": {
+    "text": "Rule priority. P0 is the most important (safety), e.g. the NFZ; P1 covers limits such as speed; P2 is the lowest."
+   },
+   "zh": {
+    "text": "規則優先等級。P0 最重要（安全），例如 NFZ；P1 包含速度等限制；P2 最低。"
+   }
+  },
+  {
+   "id": "Mean repair magnitude",
+   "en": {
+    "text": "KPI: on average, how much the Shield changed a command (in m/s here)."
+   },
+   "zh": {
+    "text": "KPI：Shield 平均把指令改了多少（此處以 m/s 計）。"
+   }
+  },
+  {
+   "id": "Mission success rate",
+   "en": {
+    "text": "KPI: share of missions that reach their goal with no P0 violation."
+   },
+   "zh": {
+    "text": "KPI：達成目標且沒有 P0 違規的任務比例。"
+   }
+  },
+  {
+   "id": "KPI",
+   "en": {
+    "text": "Key Performance Indicator: a number the contract uses to accept the work. The grant lists five acceptance KPIs."
+   },
+   "zh": {
+    "text": "Key Performance Indicator（關鍵績效指標）：合約用來驗收的數字。合約列出五個驗收 KPI。"
+   }
+  },
+  {
+   "id": "ArduPilot",
+   "en": {
+    "text": "Open-source autopilot software used on real drones. It runs the fast inner control loop (100-400 Hz)."
+   },
+   "zh": {
+    "text": "用於真實無人機的開源飛控軟體，負責快速的內迴圈控制（100-400 Hz）。"
+   }
+  },
+  {
+   "id": "SITL",
+   "en": {
+    "text": "Software-In-The-Loop: the real ArduPilot code running as a program on a PC, with simulated sensors."
+   },
+   "zh": {
+    "text": "Software-In-The-Loop：真正的 ArduPilot 程式碼以 PC 程式執行，搭配模擬感測器。"
+   }
+  },
+  {
+   "id": "MAVROS 2",
+   "en": {
+    "text": "The ROS 2 package that translates ROS 2 topics into MAVLink, the message protocol ArduPilot understands."
+   },
+   "zh": {
+    "text": "ROS 2 套件，把 ROS 2 topic 轉換成 ArduPilot 看得懂的 MAVLink 訊息協定。"
+   }
+  },
+  {
+   "id": "ROS 2",
+   "en": {
+    "text": "Robot Operating System 2: middleware in which programs (nodes) exchange messages on named topics."
+   },
+   "zh": {
+    "text": "Robot Operating System 2：程式（node）透過具名 topic 交換訊息的中介軟體。"
+   }
+  },
+  {
+   "id": "Project AirSim",
+   "en": {
+    "text": "A photo-realistic drone simulator on Unreal Engine 5. Our city demonstrations run here, flown by Project AirSim's own flight controller."
+   },
+   "zh": {
+    "text": "以 Unreal Engine 5 打造的擬真無人機模擬器。我們的城市示範在這裡執行，由 Project AirSim 內建的飛行控制器飛行。"
+   }
+  },
+  {
+   "id": "OWL-ViT",
+   "en": {
+    "text": "Google's open-vocabulary object detector: text in, boxes out. Our city demos use it, instead of a VLA, to find the target."
+   },
+   "zh": {
+    "text": "Google 的開放詞彙物件偵測器：輸入文字、輸出框。我們的城市示範用它（而不是 VLA）來找目標。"
+   }
+  },
+  {
+   "id": "FenceGuard",
+   "en": {
+    "text": "Part of our hand-written pilot that reads the policy and slows or steers around zones before the Shield has to act. Our addition, not in the grant."
+   },
+   "zh": {
+    "text": "我們手寫駕駛程式的一部分，會讀取規則檔，在 Shield 需要出手前就減速或繞過禁區。這是我們自己加的，合約中沒有。"
+   }
+  },
+  {
+   "id": "HUD",
+   "en": {
+    "text": "Head-up display: text and panels drawn over the video, here showing the rules and their status."
+   },
+   "zh": {
+    "text": "抬頭顯示器（HUD）：疊在影片上的文字與面板，這裡用來顯示規則與狀態。"
+   }
+  },
+  {
+   "id": "Tick",
+   "en": {
+    "text": "One round of the control loop: 0.1 s at 10 Hz."
+   },
+   "zh": {
+    "text": "控制迴圈的一輪：在 10 Hz 下為 0.1 s。"
+   }
+  },
+  {
+   "id": "Audit log",
+   "en": {
+    "text": "audit.jsonl: one line per Shield decision that found a violation, so every repair can be checked later."
+   },
+   "zh": {
+    "text": "audit.jsonl：Shield 每次發現違規的決定記一行，之後可以逐一檢查每次修正。"
+   }
+  }
+ ]
+}

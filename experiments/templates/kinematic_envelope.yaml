@@ -1,0 +1,27 @@
+# Scenario library - template `kinematic_envelope`: speed and climb caps.
+# An extension template (guardrail/scenario_spec.py, EXTENSION_TEMPLATES).
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+
+template: kinematic_envelope
+
+scenarios:
+  # ---- kinematics and the contract -------------------------------------- #
+  - scenario_id: speed-cap
+    template: kinematic_envelope
+    description: "A pilot asking for 20 m/s against a 4 m/s cap."
+    mission:
+      start_pose: { x: -40.0, y: -40.0, up: 15.0 }
+      pilot: { type: constant, action: { vx: 20.0 } }
+    policy: { path: policies/sim_demo_policy.yaml }
+    shield: true
+    expected_kpis:
+      p0_violation_escape_rate: { max: 0.0 }
+      max_speed_flown: { max: 4.001 }
+    expected_outcome: success
+    expected_failsafe: false

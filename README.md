@@ -2,7 +2,7 @@
 
 [![version](https://img.shields.io/badge/version-0.5.1-blue)](CHANGELOG.md)
 [![P0 escape on demo and SITL flights](https://img.shields.io/badge/P0%20escape%20on%20demo%20and%20SITL%20flights-0.0%20%28dev%20evidence%2C%20not%20a%20contract%20KPI%20figure%29-lightgrey)](#p0-escape-on-the-recorded-flights-and-what-it-does-not-say)
-[![tests](https://img.shields.io/badge/tests-460%20fast%20%2B%2017%20coverage-brightgreen)](tests/)
+[![tests](https://img.shields.io/badge/tests-1400%2B%20fast%20%2B%2017%20coverage-brightgreen)](tests/)
 
 A vision-language model is told to *follow the yellow car*. It produces a
 velocity command. **Nothing in that pipeline knows what a no-fly zone is.**
@@ -38,10 +38,11 @@ decision = shield.step(state, raw_action)    # -> repaired action + audit record
 |---|---|
 | `guardrail/` | the policy DSL (WP1), prefix compiler (WP2), Safety Shield (WP3), replay bundles (WP4) |
 | `demo/` | the flight controller, OWL-ViT grounder, target estimator, scene scripting, recorder |
-| `policies/` | 27 policies, hashed into every audit record |
-| `tests/` | 23 files, 460 fast tests plus a ~10 min coverage suite |
-| `docs/` | 27 finding documents — see below |
-| `sitl/` | the ArduPilot SITL rail (pymavlink, and MAVROS 2 on ROS 2), all on one desktop. The MAVROS 2 rail is the grant's *dev* topology; the pymavlink rail is not even that. Five MAVROS 2 runs passed the project's own KPI-grade rule until 6 Oct; none is a contract KPI figure, which needs the *hil* topology (VLA + Shield on a Jetson Orin) |
+| `policies/` | the shipped policies, hashed into every audit record and signed into bundles |
+| `tests/` | one test file per module, each runnable on its own, plus a ~10 min coverage suite |
+| `docs/` | finding documents, design notes and reports — see below |
+| `sitl/` | the ArduPilot SITL rail (pymavlink, and MAVROS 2 on ROS 2), all on one desktop; the MAVROS 2 rail is the grant's *dev* topology. The same stack moves to the *hil* topology (VLA + Shield on a Jetson Orin) for the KPI campaign |
+| `tools/` | report, deck and KPI builders; `check_claims.py` fails on a withdrawn claim stated again; `prefix_eval.py` replays recorded frames with and without the CSP |
 | `scripts/` | launcher scripts (`.ps1` / `.bat`) — see `scripts/README.md` for which backend each targets |
 | `reference/` | the grant's own PDFs; not this project's to edit |
 
@@ -59,34 +60,23 @@ a Stress Testing run in the *hil* topology, where a Jetson Orin runs the VLA and
 the Shield (grant pages *Stress Testing* p.1, *Architecture constraints* p.4).
 None of these flights came from a stress harness, and all of them ran on one
 desktop. The three MAVROS 2 flights are what the grant calls the *dev*
-topology; the Project AirSim and pymavlink flights are not even that. Several
-of the other KPIs the
-grant names have no number yet; see the
-[contract audit](docs/AUDIT-KONTRAK-2026-10-05.md) and the
-[corrections to the mid-evaluation report](docs/CORRECTION-2026-10-06-mid-evaluation-and-deck.md).
+topology; the Project AirSim flights are the perception rail, and the pymavlink
+flights a direct-MAVLink variant of the desktop rail. The KPI campaign for the
+final report runs in the *hil* topology: the VLA and the Shield on a Jetson
+Orin, which is being set up, with the same code later moving onto the drone.
+Tools for the work-package KPIs (policy round-trip, CSP token budget and
+coverage, repair success with the grant's theta cap) were added on 6 Oct;
+[`CHANGELOG.md`](CHANGELOG.md) lists what changed in the earlier figures.
 
-It is worth being exact about what that means, because it is easy to read as
-more than it is. The metric counts P0 violations the Shield **detected** that
-nonetheless reached the actuator. On the most recent flight it reads 0.0 while a
-real pedestrian came within 10 m of the aircraft on 516 ticks, and the 10 m
-stand-off rule fired on 31 of them.
-
-That gap is not what it first looks like. On **498 of those 516 ticks the person
-was outside the camera's field of view** — beside or behind the aircraft — and
-the rule, `SubjectStandoff`, protects only the **subject being followed**, one
-position per tick. The aircraft was following a different pedestrian roughly
-45 m ahead, and its range estimate for that person was within a few metres.
-Nothing in the policy protects the other pedestrians, and a forward camera could
-not have seen them.
-
-**The Shield was correct throughout.** What the zero cannot say is anything
-about people the policy does not name and the sensor cannot see. That is a gap
-in policy scope and sensor coverage, and `standoff_score` plus its visibility
-breakdown are published beside the KPI so it cannot be read as more than it is.
+What the metric counts: P0 violations the Shield **detected** that still reached
+the actuator. It covers the rules in the policy. The stand-off rule,
+`SubjectStandoff`, protects the **subject being followed**; other pedestrians
+are outside that rule's scope, so `standoff_score` and its visibility breakdown
+(which pedestrians were in the camera's view) are published beside the KPI.
 
 ## The findings are the deliverable
 
-Twenty-seven documents in [`docs/`](docs/) record defects found and fixed, and
+The finding documents in [`docs/`](docs/) record defects found and fixed, and
 several record claims **retracted**. That is deliberate. The recurring failure
 in this project has a shape:
 
@@ -100,10 +90,14 @@ Worked examples:
 - [A tracking metric a constant could pass](docs/FINDING-the-tracking-metric-a-constant-could-pass.md) — at a 100 px tolerance, a "detector" that emits the frame centre and never opens the image scores 1.000.
 - [The subject was eight pixels wide](docs/FINDING-the-subject-was-eight-pixels-wide.md) — why the pedestrian phase looked chaotic, and three plausible fixes that measurement refuted.
 - [The verifier that verified five of seven](docs/FINDING-the-verifier-that-verified-five-of-seven.md) — a bundle checker naming two fields nothing emits.
+- [Facing East, "forward" flew North](docs/FINDING-forward-flew-north.md) — a camera VLA's body-frame output written straight into a North/East action.
 
 ## Running it
 
-Requires ProjectAirSim with an Unreal city level, an NVIDIA GPU, and Python 3.10.
+Requires Project AirSim with an Unreal city level and an NVIDIA GPU. The
+guardrail package needs Python 3.11+ (`pyproject.toml`); the Project AirSim and
+OpenVLA flight environment (`vla-real`) is Python 3.10.20, a recorded deviation
+([`docs/DESIGN-python-versions.md`](docs/DESIGN-python-versions.md)).
 [`RUNBOOK.md`](RUNBOOK.md) has the full setup; [`TUTORIAL.md`](TUTORIAL.md) is
 the gentle path.
 
@@ -133,21 +127,21 @@ Until 6 Oct only runs on the desktop ArduPilot SITL + MAVROS 2 rail could be
 runs passed that rule. In the grant's terms the rail is the *dev* topology, and
 the grant takes reported KPIs from *hil* runs only. Since 6 Oct the manifest
 labels the rail `dev`, reads stored `canonical-hil` runs as `dev`, and
-`is_kpi_grade()` refuses a dev run unless the PI grants a written waiver (open
-question PQ1). So today no run is KPI-grade
+`is_kpi_grade()` refuses a dev run unless a written PI waiver is recorded. The
+PI decided on 6 Oct that no waiver will be requested: KPI runs move to the
+*hil* topology on a Jetson Orin. So today no run is KPI-grade
 ([KPI rollup, 6 Oct](docs/data/kpi_rollup_2026-10-06.md)). Everything else is
 labelled functional-rail evidence.
 
 ## Status
 
 Pre-1.0 research software. See [`CHANGELOG.md`](CHANGELOG.md) for what changed
-and, as importantly, what was withdrawn. The current list of open contract
-items is the [5 Oct 2026 contract audit](docs/AUDIT-KONTRAK-2026-10-05.md) (in
-Indonesian) and the tracker built from it (`tracker/`).
+and, as importantly, what was withdrawn. Next: the *hil* topology on a Jetson
+Orin for the KPI campaign, Project AirSim imagery joined to the ArduPilot rail
+([`docs/projectairsim-setup.md`](docs/projectairsim-setup.md) covers ArduPilot,
+Project AirSim and Mission Planner together), and the stress-testing harness.
 [`docs/CHECKLIST-remaining-work.md`](docs/CHECKLIST-remaining-work.md) is
-superseded. Claims withdrawn from the delivered mid-evaluation report and deck
-are listed in
-[`docs/CORRECTION-2026-10-06-mid-evaluation-and-deck.md`](docs/CORRECTION-2026-10-06-mid-evaluation-and-deck.md).
+superseded.
 
 ## Contributing
 

@@ -1,10 +1,11 @@
 # NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
-# defect: a rule type the DSL does not define (circle_fence)
+# defect: a rule type neither the grant nor this DSL defines (cylinder_fence)
 # currently: refused
+# was: this case used circle_fence until 2026-10-06; circle_fence is now a defined type
 policy_id: neg-unknown-type
 version: 0.1.0
 constraints:
   - id: c
-    type: circle_fence
+    type: cylinder_fence
     center: { x: 0, y: 0 }
     radius_m: 10

@@ -24,6 +24,16 @@ past: gusts replaced by zero, `reached_goal` not passed into compute(), the
 oracle sharing the flying Shield, labels or a whole-scenario known_failure
 ignored by main(), false and missed fail-safes swapped, wind not turned with
 the mission, and every way a run could select nothing and still exit 0.
+
+2026-10-07 (stress-harness-2): the Shield's events, its escalation FSM and the
+arms. Every grant event type must reach the Shield and move the zone or the
+rule it names; the switch instant must be the Shield's, on the conservative
+side of the schedule's edge; RTL / Land must be outcomes the FSM produced and
+the autopilot flew; a moving zone that sweeps over a waiting aircraft must not
+be counted as the aircraft's own breach; paraphrase and prefix arms must log
+their ids and fly the same flight; and the run must write the grant's KPI
+report, one row per template and cell. A test that cannot run on this host
+returns SKIP and is counted apart, never as a pass.
 """
 import ast
 import copy
@@ -51,10 +61,17 @@ LIBRARY = Library(ROOT / "experiments" / "scenarios.yaml")
 DEFAULTS = LIBRARY.defaults
 FAMILIES = LIBRARY.by_id()
 BY_ID = {sid: fam.first.spec for sid, fam in FAMILIES.items()}
+SKIP = "SKIP"
 
 
 def _run(sid, seed=0):
     return S.run_headless(BY_ID[sid], DEFAULTS, seed)
+
+
+def _run_nofsm(sid, seed=0):
+    """The same flight with the escalation FSM off: what the Shield's own
+    action does, before the FSM decides to stop, loiter or go home."""
+    return S.run_headless(_with(BY_ID[sid], escalation=False), DEFAULTS, seed)
 
 
 def _cell(sid, **params):
@@ -121,11 +138,12 @@ def test_the_sitl_backend_reports_unavailable_rather_than_pretending():
     """Returning None means SKIP; the runner prints it and counts it apart.
 
     The alternative - a backend that silently falls back to headless - would
-    report ArduPilot results this host never produced.
+    report ArduPilot results this host never produced. On a host that HAS the
+    rail this returns SKIP, counted apart (follow-up #84: it printed SKIP and
+    was counted as a pass).
     """
     if S.sitl_available():
-        print("      SKIP: this host does have the ArduPilot rail")
-        return
+        return SKIP
     assert S.run_sitl(BY_ID["nfz-head-on"], "sweep_x") is None
 
 
@@ -179,23 +197,50 @@ def test_the_sitl_rail_refuses_a_mission_that_is_not_its_own():
     stressors, clocks and relabels, so nfz-head-on, speed-cap and the corridor
     scenarios would have been flown as the rail's fixed mission and scored
     against their own gates under their own ids - a pass describing a
-    different flight. Every library scenario is now refused, with what
-    differs."""
+    different flight. Since the node takes --target / --speed (2026-10-07)
+    the target is the scenario's own, but the start (the pad) and the pilot
+    (StubVLA) are still the rail's: every scenario that differs there is
+    refused, with what differs."""
     why = S.sitl_refusal(BY_ID["nfz-head-on"])
-    assert why and "fixed one" in why, why
-    assert "start (-20, 15)" in why and "target (40, 15)" in why, why
-    assert "pilot goto" in why, why
-    for sid, spec in BY_ID.items():
-        assert S.sitl_refusal(spec), f"{sid} would be flown as the rail's mission"
-    # A scenario on the rail's start and target is still refused on the pilot:
-    # StubVLA is not the headless goto law.
+    assert why and "its own mission" in why, why
+    assert "start (-20, 15)" in why and "pilot goto" in why, why
+    assert "target" not in why, "the target is passed now; it is not a mismatch"
+    flyable = {sid for sid, spec in BY_ID.items() if not S.sitl_refusal(spec)}
+    assert flyable == {"rail-mission-stub-vla"}, flyable
+    # A scenario on the rail's start is still refused on the pilot: StubVLA is
+    # not the headless goto law.
     same = _with(BY_ID["nfz-head-on"], **{"mission.start_pose.x": 0.0,
                                          "mission.start_pose.y": 0.0,
                                          "mission.target.x": 30.0,
                                          "mission.target.y": 30.0})
     diff = S._mission_mismatch(same)
     assert len(diff) == 1 and diff[0].startswith("pilot goto"), diff
-    assert len(S._mission_mismatch(BY_ID["nfz-head-on"])) == 3
+    assert len(S._mission_mismatch(BY_ID["nfz-head-on"])) == 2
+    # ... and a stub_vla mission off the pad, or at another cruise altitude.
+    off_pad = _with(BY_ID["rail-mission-stub-vla"], **{"mission.start_pose.x": 5.0})
+    assert any(d.startswith("start") for d in S._mission_mismatch(off_pad))
+    high = _with(BY_ID["rail-mission-stub-vla"], **{"mission.target.up": 25.0})
+    assert any(d.startswith("cruise altitude") for d in S._mission_mismatch(high))
+
+
+def test_the_rail_mission_goes_to_the_node_with_its_target_speed_seed_and_cap():
+    """REGRESSION (WP4-12, follow-up #130's sweep half). The manifest's
+    random_seed was a hard-coded 0 on the rail; the node takes --seed now, and
+    the scenario's target, speed and time cap travel with it. The one library
+    scenario the rail can fly under its own id carries all four."""
+    spec = BY_ID["rail-mission-stub-vla"]
+    cmd = S.build_sitl_cmd(spec, "sweep_t", seed=1002, defaults=DEFAULTS)
+    val = {cmd[i]: cmd[i + 1] for i in range(5, len(cmd) - 1) if cmd[i].startswith("--")}
+    assert val["--seed"] == "1002" and val["--target"] == "30,30", val
+    assert val["--speed"] == "6" and val["--max-s"] == "30", val
+    assert {a for a in cmd[5:] if a.startswith("--")} <= _argparse_flags(ROOT / S.SITL_NODE)
+    # A rotation about the start turns only the target, and the turned target
+    # is what the node is given.
+    turned = _with(spec, **{"mission.rotate_deg": 90.0})
+    tcmd = S.build_sitl_cmd(turned, "t")
+    tx, ty = (float(v) for v in tcmd[tcmd.index("--target") + 1].split(","))
+    assert abs(tx + 30.0) < 1e-6 and abs(ty - 30.0) < 1e-6, (tx, ty)
+    assert not S.sitl_refusal(turned)
 
 
 def test_the_rail_mission_constants_are_the_nodes_own():
@@ -329,14 +374,47 @@ LEGACY = {
 
 def test_the_13_original_scenarios_fly_exactly_as_before_the_schema():
     """Migration must be a change of FORM. Rows and extras were compared one to
-    one against the old code before this commit; this pins the end state."""
+    one against the old code before this commit; this pins the end state.
+    With the escalation FSM OFF (2026-10-07): the split into one file per
+    template, the events, the arms and the new measurements must not move a
+    single flight of the Shield's own action."""
     moved = []
     for sid, (final, reps) in LEGACY.items():
-        rows, extra = _run(sid)
+        rows, extra = _run_nofsm(sid)
         got = (extra["final"]["x"], extra["final"]["y"], extra["final"]["up"])
         n = sum(len(r["repairs"]) for r in rows)
         if got != final or n != reps:
             moved.append(f"{sid}: final {got} (was {final}), repairs {n} (was {reps})")
+    assert not moved, "\n      ".join(moved)
+
+
+# The same 13 with the escalation FSM ON, measured 2026-10-07: which edges the
+# FSM took. Three end differently from LEGACY, and the edges say why: X6 (the
+# position illegal for T = 5 s while the recovery still works - the floor
+# recovery is 0.55 m short when it fires, the re-labelled stand-off 0.15 m),
+# and G3 (an AltitudeFix of 4 m against the grant's 0.5 m vertical theta, so
+# the ceiling hold is handed to LOITER at 0.1 s).
+LEGACY_FSM = {
+    "nfz-head-on": "G1", "nfz-head-on-control": "",
+    "altitude-floor-recovery": "G1>X6>G9", "altitude-ceiling-hold": "X1>G3",
+    "speed-cap": "G1", "nonfinite-action": "G1", "corridor-along": "",
+    "corridor-drift-out": "G1", "corridor-curfew-in-hours": "G1",
+    "corridor-curfew-out-of-hours": "", "standoff-approach": "",
+    "standoff-reclassified": "G1>X6>G9", "standoff-wedge": "G1",
+}
+
+
+def test_the_13_original_scenarios_under_the_fsm_take_the_edges_measured():
+    """Pinned so a change in the FSM or in the harness's hand-over cannot move
+    these silently. A pinned edge that changes is a finding to re-measure,
+    not a number to edit."""
+    moved = []
+    for sid, chain in LEGACY_FSM.items():
+        run = S.run_episode(BY_ID[sid], DEFAULTS, 0)
+        got = ">".join(t["edge"] for t in ((run.extra.get("fsm") or {})
+                                            .get("transitions") or []))
+        if got != chain:
+            moved.append(f"{sid}: {got!r} (was {chain!r})")
     assert not moved, "\n      ".join(moved)
 
 
@@ -404,8 +482,12 @@ def test_removing_the_reclassification_makes_the_scenario_fail():
 
 
 def test_a_relabel_schedule_is_applied_in_time_order_not_file_order():
-    sc = _with(BY_ID["standoff-reclassified"], **{"mission.subject.reclassify": [
-        {"at_s": 20.0, "class": "car"}, {"at_s": 10.0, "class": "pedestrian"}]})
+    # FSM off: with it on, X6 ends this flight in RTL at 15 s, before the
+    # 20 s relabel (the scenario's known failure), and the schedule is the
+    # thing under test here.
+    sc = _with(BY_ID["standoff-reclassified"], escalation=False,
+               **{"mission.subject.reclassify": [
+                   {"at_s": 20.0, "class": "car"}, {"at_s": 10.0, "class": "pedestrian"}]})
     _, extra = S.run_headless(sc, DEFAULTS)
     assert extra["subject_class_final"] == "car", (
         "the later entry must win at the end regardless of file order")
@@ -478,13 +560,17 @@ def test_a_legal_cruise_near_the_band_edge_is_not_dragged_inward():
 
 def test_a_spawned_zone_bumps_the_generation_and_lands_where_it_says():
     """Shield.hot_apply: generation 0 -> 1, a new policy_hash, and the near edge
-    `ahead_m` in front of the aircraft on its heading at the spawn tick."""
+    `ahead_m` in front of the aircraft on its heading at the spawn tick. Since
+    2026-10-07 the spawn is a dynamic_nfz (a polygon_fence is locked at
+    mission start: this test raised LockedRuleClass on the old harness)."""
     spec = _cell("dyn-nfz-spawn-ahead", vehicle_speed_mps=4, ahead_m=12, variant=0)
     run = S.run_episode(spec, DEFAULTS, 0)
     hot = [e for e in run.events if e["type"] == "hot_apply"]
     assert len(hot) == 1 and hot[0]["generation"] == 1, hot
+    assert hot[0]["op"] == "spawn", hot[0]
     assert hot[0]["policy_hash"] != run.policy_hash_start
     assert run.extra["policy_generation_final"] == 1
+    assert [c.type for c in run.policy.constraints if c.id == "dyn-nfz"] == ["dynamic_nfz"]
     from shapely.geometry import Point, Polygon
     at = [r for r in run.rows if abs(r["t"] - hot[0]["t"]) < 1e-9][0]
     d = Polygon(hot[0]["vertices"]).exterior.distance(Point(at["x"], at["y"]))
@@ -502,16 +588,32 @@ def test_a_zone_spawned_on_top_puts_the_aircraft_inside_and_it_gets_out():
     assert res["time_to_safe_episodes"] >= 1 and res["time_to_safe_censored"] == 0
 
 
-def test_an_event_the_shield_has_no_api_for_is_refused_not_skipped():
-    spec = _with(BY_ID["dyn-nfz-spawn-ahead"], events=[
-        {"at_sim_t": 5.0, "type": "translate_polygon_fence",
-         "payload": {"mps": 5.0, "direction": "perpendicular_left"}}])
+def test_an_event_the_shield_refuses_errors_the_episode_unless_expected():
+    """An event the Shield refuses (here: translating a policy polygon_fence,
+    which is locked at mission start) is an error, never a silently skipped
+    event - unless the scenario says `expect_refused: true`, when the refusal
+    is recorded and an ACCEPTED event fails `event_refusals_as_expected`."""
+    base = BY_ID["nfz-head-on"]
+    bad = _with(base, events=[{"at_sim_t": 2.0, "type": "translate_polygon_fence",
+                               "payload": {"id": "nfz-square", "dx_m": 5.0}}])
     try:
-        S.run_episode(spec, DEFAULTS, 0)
-    except S.UnsupportedScenario as e:
-        assert "translate_polygon_fence" in str(e)
-        return
-    raise AssertionError("an unsupported event ran as if it had happened")
+        S.run_episode(bad, DEFAULTS, 0)
+    except ValueError as e:
+        assert "nfz-square" in str(e) and "dynamic_nfz" in str(e), e
+    else:
+        raise AssertionError("a refused event ran as if it had happened")
+    want = _with(base, events=[{"at_sim_t": 2.0, "type": "deactivate_rule",
+                                "payload": {"rule_id": "no-such-rule",
+                                            "expect_refused": True}}])
+    run = S.run_episode(want, DEFAULTS, 0)
+    hot = [e for e in run.events if e["type"] == "hot_apply"][0]
+    assert hot["refused"] and "no-such-rule" in hot["reason"], hot
+    assert run.extra["event_refusals_as_expected"] is True
+    assert run.extra["policy_generation_final"] == 0, "a refused event changed the rules"
+    wrong = _with(base, events=[{"at_sim_t": 2.0, "type": "deactivate_rule",
+                                 "payload": {"rule_id": "nfz-square",
+                                             "expect_refused": True}}])
+    assert S.run_episode(wrong, DEFAULTS, 0).extra["event_refusals_as_expected"] is False
 
 
 def test_an_event_after_the_run_ends_is_refused():
@@ -531,22 +633,52 @@ def test_an_event_after_the_run_ends_is_refused():
 # --------------------------------------------------------------------------- #
 
 def test_the_window_closing_mid_run_is_seen_and_splits_the_flight():
+    """REGRESSION (shield-enforcement's needs_outside, 2026-10-07). The switch
+    instant is read from the SHIELD (rule_status in_force, both sides of the
+    instant), no longer from models.py's minute-resolution active_at, which
+    held a 17:30 window until 17:30:59: the old harness, on this 17:29:50
+    clock, saw the window close at 70 s - never, in a 45 s run. The Shield
+    closes it at 17:30:00 plus its half-step band (0.25 s), so the switch
+    lands at 10.3 s, on the conservative side of the edge (switch_lag +0.3 s)."""
     spec = _cell("time-window-closes-mid-run",
-                 clock="2026-09-07T17:30:50", vehicle_speed_mps=4)
+                 clock="2026-09-07T17:29:50", vehicle_speed_mps=4)
     run = S.run_episode(spec, DEFAULTS, 0)
     sw = [e for e in run.events if e["type"] == "time_window_switch"]
     assert len(sw) == 1 and sw[0]["deactivated"] == ["nfz-school"], sw
-    assert abs(sw[0]["t"] - 10.0) < 1e-6, sw[0]["t"]
+    assert abs(sw[0]["t"] - 10.3) < 1e-6, sw[0]["t"]
+    assert "rule_status" in sw[0]["read_from"]
+    assert run.extra["switch_lag_s_nfz-school"] > 0, "a closing window switched early"
+    assert run.extra["switch_conservative_nfz-school"] is True
     assert run.extra["phase0_violation_ticks_nfz-school"] > 0
     assert run.extra["phase1_violation_ticks_nfz-school"] == 0
-    assert run.extra["reached_goal"] is True
+    assert run.extra["polygon_entries"] == 0 and run.extra["reached_goal"] is True
+
+
+def test_an_opening_window_is_enforced_before_it_is_in_force():
+    """The t+ side of the grant's boundary check: each forecast pose is judged
+    against the rules in force at ITS time, so a window opening inside the
+    lookahead binds before the edge. Here the aircraft would reach the school
+    zone's ring 0.5 s before the curfew opens; it must be held out and never
+    be inside, with ticks enforced before the switch counted."""
+    spec = _cell("time-window-opens-ahead", clock="2026-09-07T07:29:52")
+    run = S.run_episode(spec, DEFAULTS, 0)
+    ex = run.extra
+    assert ex["anticipated_ticks_nfz-school"] >= 1, ex["anticipated_ticks_nfz-school"]
+    assert ex["ticks_inside_fence_polygon"] == 0 and ex["breaches"] == 0, ex
+    assert ex["switch_lag_s_nfz-school"] <= 0, "an opening window was enforced late"
+    # Negative control: an instant-only reading (the forecast's later poses
+    # judged against the rules NOW) is what lets it in. Emulated by a clock
+    # that never reaches the edge: nothing is anticipated, nothing binds.
+    early = _with(spec, **{"mission.clock_start": "2026-09-07T06:00:00"})
+    e2 = S.run_episode(early, DEFAULTS, 0).extra
+    assert e2["anticipated_ticks_nfz-school"] == 0, e2["anticipated_ticks_nfz-school"]
 
 
 def test_with_no_switch_the_phase_gate_cannot_pass():
     """Negative control: the same flight on a clock that never crosses the edge
     has no second phase, so the gate on it is "not measured", never a pass."""
     spec = _cell("time-window-closes-mid-run",
-                 clock="2026-09-07T17:30:50", vehicle_speed_mps=4)
+                 clock="2026-09-07T17:29:50", vehicle_speed_mps=4)
     still = _with(spec, **{"mission.clock_start": "2026-09-07T09:00:00"})
     run = S.run_episode(still, DEFAULTS, 0)
     assert not [e for e in run.events if e["type"] == "time_window_switch"]
@@ -563,7 +695,7 @@ def test_gps_noise_reaches_the_shield_and_not_the_vehicle():
     first version used a latency-5 cell, which passed with the noise removed:
     the stale pose alone differs from the true one)."""
     spec = _with(_cell("gps-noise-beyond-margin", pass_y=23.6, sigma=2.0, latency=5),
-                 **{"stress.latency_ticks": 0})
+                 **{"stress.latency_ticks": 0, "escalation": False})
     run = S.run_episode(spec, DEFAULTS, 1001)
     diffs = [abs(r["perceived"]["x"] - r["x"]) + abs(r["perceived"]["y"] - r["y"])
              for r in run.rows]
@@ -581,9 +713,11 @@ def test_the_oracle_never_writes_into_the_flying_shields_window():
     would leave the emitted actions unchanged (history is a record, not an
     input) but would fill the window a rail's audit writer reads with
     true-state queries the flying Shield never made. The window must hold
-    exactly the poses that Shield saw, one per tick."""
+    exactly the poses that Shield saw, one per tick. (FSM off here: with it on,
+    a row's `emitted` is what FLEW - a stop or the autopilot's command - which
+    need not be the Shield's emitted action; the FSM checker below covers it.)"""
     spec = _with(_cell("gps-noise-beyond-margin", pass_y=23.6, sigma=2.0, latency=5),
-                 **{"stress.latency_ticks": 0})
+                 **{"stress.latency_ticks": 0, "escalation": False})
     run = S.run_episode(spec, DEFAULTS, 1001)
     win = run.shield_window
     assert len(win) == 50, len(win)
@@ -592,6 +726,12 @@ def test_the_oracle_never_writes_into_the_flying_shields_window():
         assert (rec.state.x, rec.state.y) == (row["perceived"]["x"], row["perceived"]["y"]), (
             "the flying Shield's window holds a pose it was never shown")
         assert rec.decision.emitted.model_dump() == row["emitted"]
+    # With the FSM on, the window still holds one entry per tick, of the
+    # poses the flying Shield saw - the checker and the oracle never write it.
+    fsm = S.run_episode(_with(spec, escalation=True), DEFAULTS, 1001)
+    ftail = fsm.rows[-len(fsm.shield_window):]
+    assert all((r.state.x, r.state.y) == (w["perceived"]["x"], w["perceived"]["y"])
+               for r, w in zip(fsm.shield_window, ftail))
 
 
 def test_latency_hands_the_shield_the_state_from_n_ticks_ago():
@@ -615,8 +755,10 @@ def test_true_state_violations_are_counted_apart_from_the_shields_own():
 
 def test_gps_dropout_freezes_the_pose_the_shield_sees_and_not_the_vehicle():
     """GPS denial (audit card X-14): for the window the Shield is handed the
-    last fix while the aircraft keeps moving; outside it, the live pose."""
-    spec = _cell("gps-dropout", lane_y=15.0, window=[6.0, 11.0])
+    last fix while the aircraft keeps moving; outside it, the live pose. (FSM
+    off: a LOITER would stop the aircraft, which is the FSM's business, not
+    the stressor's.)"""
+    spec = _with(_cell("gps-dropout", lane_y=15.0, window=[6.0, 11.0]), escalation=False)
     run = S.run_episode(spec, DEFAULTS, 0)
     inside = [r for r in run.rows if 6.0 - 1e-9 <= r["t"] < 11.0 - 1e-9]
     assert len(inside) == 50 == run.extra["gps_dropout_ticks"], run.extra["gps_dropout_ticks"]
@@ -693,7 +835,7 @@ def test_gusts_are_a_velocity_disturbance_the_shield_never_commands():
     every test and the smoke run). The per-tick residual between where the
     aircraft went and what was commanded plus the steady wind IS the gust: a
     0.5 m/s sigma must show up there, and nowhere when gust_mps is 0."""
-    spec = _cell("wind-gusts", lane_y=15.0, wind_speed_mps=2)
+    spec = _with(_cell("wind-gusts", lane_y=15.0, wind_speed_mps=2), escalation=False)
     assert spec.stress.gust_mps == 0.5
 
     def residuals(s):
@@ -777,33 +919,33 @@ def test_a_sweep_writes_one_bundle_per_episode_and_survives_an_out_outside_the_r
     kpi.json, harness_events.jsonl, in an `episode-<UTC>--<id>--seed<n>` folder."""
     with tempfile.TemporaryDirectory() as td:
         out, runs = Path(td) / "s.json", Path(td) / "runs"
-        rc = _sweep(["--only", "nfz-head-on", "--out", str(out), "--runs", str(runs),
+        rc = _sweep(["--only", "speed-cap", "--out", str(out), "--runs", str(runs),
                      "--seed", "1001"])
         assert rc == 0 and out.is_file()
         doc = json.loads(out.read_text(encoding="utf-8"))
         assert doc["_counts"]["pass"] == 1, doc["_counts"]
-        dirs = list(runs.iterdir())
-        assert len(dirs) == 1 and dirs[0].name.endswith("--nfz-head-on--seed1001"), dirs
+        dirs = [p for p in runs.iterdir() if p.is_dir()]
+        assert len(dirs) == 1 and dirs[0].name.endswith("--speed-cap--seed1001"), dirs
         man = json.loads((dirs[0] / "manifest.json").read_text(encoding="utf-8"))
         assert len(man) == 6 and man["random_seed"] == 1001
         assert man["topology"] == S.TOPOLOGY_HEADLESS
+        assert not (dirs[0] / "manifest_extras.json").exists(), "no arm, no extras"
         kpi = json.loads((dirs[0] / "kpi.json").read_text(encoding="utf-8"))
         assert kpi["kpi_grade"] is False and kpi["status"] == "pass"
         ev = (dirs[0] / "harness_events.jsonl").read_text(encoding="utf-8").splitlines()
         assert json.loads(ev[0])["type"] == "episode_start"
         assert json.loads(ev[-1])["type"] == "episode_end"
+        assert (runs / "kpi_report.md").is_file(), "the run's KPI report is missing"
 
 
 def test_a_pinned_cell_that_starts_passing_is_reported_fixed_not_quietly_passed():
     """The per-cell `known_failures` marker behaves like the scenario-wide one."""
-    raw = yaml.safe_load((ROOT / "experiments" / "scenarios.yaml").read_text(encoding="utf-8"))
-    fam = copy.deepcopy([s for s in raw["scenarios"]
-                         if s["scenario_id"] == "altitude-recovery-depth"][0])
+    fam = copy.deepcopy(LIBRARY.raw("altitude-recovery-depth"))
     fam["known_failures"] = [{"params": {"start_up": 9.5}, "description": "pinned on purpose"}]
     fam["parameter_sweep"] = {"start_up": [9.5, 20.5]}
     with tempfile.TemporaryDirectory() as td:
         lib = Path(td) / "lib.yaml"
-        lib.write_text(yaml.safe_dump({"defaults": raw["defaults"], "scenarios": [fam]}),
+        lib.write_text(yaml.safe_dump({"defaults": RAW["defaults"], "scenarios": [fam]}),
                        encoding="utf-8")
         out = Path(td) / "s.json"
         rc = _sweep(["--library", str(lib), "--out", str(out), "--no-bundles"])
@@ -822,7 +964,8 @@ RAW = yaml.safe_load((ROOT / "experiments" / "scenarios.yaml").read_text(encodin
 
 
 def _raw(sid, **changes):
-    fam = copy.deepcopy([s for s in RAW["scenarios"] if s["scenario_id"] == sid][0])
+    """A family as written, from whichever template file holds it."""
+    fam = copy.deepcopy(LIBRARY.raw(sid))
     fam.update(changes)
     return fam
 
@@ -968,15 +1111,12 @@ def test_a_profile_outside_its_declared_count_refuses_unless_narrowed():
 
 
 def test_a_run_that_scores_nothing_does_not_exit_zero():
-    """Every episode skipped (an unsupported event here) is a run that tested
-    nothing: exit 3, never 0."""
-    fam = _raw("dyn-nfz-spawn-ahead")
-    fam["events"] = [{"at_sim_t": 5.0, "type": "translate_polygon_fence",
-                      "payload": {"mps": 5.0}}]
-    fam["parameter_sweep"] = {"vehicle_speed_mps": [4], "ahead_m": [12]}
-    fam["mission"]["pilot"]["speed"] = "$vehicle_speed_mps"
-    fam["events"][0]["payload"]["ahead_m"] = "$ahead_m"
-    rc, doc = _sweep_lib([fam])
+    """Every episode skipped is a run that tested nothing: exit 3, never 0.
+    (Until 2026-10-07 an unsupported event made the skip; every event type is
+    supported now, so the skip is the SITL backend's: either the rail is not
+    on this host, or it refuses a scenario that is not its own mission - and
+    neither launches anything.)"""
+    rc, doc = _sweep_lib([_raw("speed-cap")], "--backend", "sitl")
     assert doc["_counts"]["skipped"] == 1 and rc == 3, (doc["_counts"], rc)
 
 
@@ -994,6 +1134,28 @@ def test_a_plain_run_does_not_overwrite_the_published_sweep():
     assert before == after, "a refused --publish touched the published file"
 
 
+def test_the_published_copy_drops_only_the_duplicated_per_episode_fields():
+    """Each episode's arm record and manifest repeat what its bundle and
+    `_manifest_common` hold. The published view leaves those two out and keeps
+    every field a consumer reads, without touching the full run document."""
+    row = {"id": "f/c/shield-on", "status": "pass", "why": "w",
+           "kpi": {"p0_violation_escape_rate": 0.0, "reached_goal": True},
+           "manifest": {"seed": 1}, "bundle": "demo/out/x",
+           "manifest_extras": {"paraphrase_id": "pp-1"},
+           "arm_record": {"paraphrase": {"text": "long text"}}}
+    doc = {"_counts": {"pass": 1}, "_cell_rollup": {"f/c/shield-on": {}},
+           "results": [row]}
+    pub = S.published_view(doc)
+    r = pub["results"][0]
+    assert "arm_record" not in r and "manifest" not in r
+    for k in ("id", "status", "why", "kpi", "bundle", "manifest_extras"):
+        assert r[k] == row[k], k
+    assert r["manifest_extras"]["paraphrase_id"] == "pp-1"
+    assert pub["_counts"] == doc["_counts"] and pub["_cell_rollup"] == doc["_cell_rollup"]
+    assert pub["_published_drops"]["fields"] == ["arm_record", "manifest"]
+    assert "arm_record" in doc["results"][0], "the full run doc was mutated"
+
+
 def test_the_sweep_reports_how_many_cells_behaved_differently():
     """A count of cells is not a count of behaviours; the distinct KPI
     signatures sit beside it. Two cells with identical KPI tables share one."""
@@ -1006,12 +1168,486 @@ def test_the_sweep_reports_how_many_cells_behaved_differently():
     assert all("distinct_kpi_signatures" in f for f in doc["_families"].values())
 
 
+# --------------------------------------------------------------------------- #
+# 2026-10-07: every grant event type, through the Shield's own APIs
+# --------------------------------------------------------------------------- #
+
+def test_every_grant_event_type_reaches_the_shield_and_changes_the_rule():
+    """REGRESSION (WP4-03, follow-ups #131 / #137). Until 2026-10-07 the harness
+    refused six of the grant's seven event types ("no Shield API"); the one it
+    ran was a polygon_fence, which the Shield now locks at mission start.
+    Each type must go through the Shield's own event API (generation + 1, a
+    Shield event record) and change exactly what it names."""
+    base = BY_ID["dyn-nfz-spawn-ahead"].model_dump(mode="json", by_alias=True)
+    base = {**base, "events": [], "parameter_sweep": {}, "parameter_sample": {},
+            "ticks": 120}
+    base["mission"] = {**base["mission"], "pilot": {"type": "goto", "speed": 4.0},
+                       "rotate_deg": 0.0}
+    spawn = {"at_sim_t": 1.0, "type": "spawn_polygon_fence",
+             "payload": {"id": "z", "vertices": [{"x": -150, "y": 30}, {"x": -140, "y": 30},
+                                                 {"x": -140, "y": 40}, {"x": -150, "y": 40}]}}
+
+    def fly(*evs, **over):
+        spec = ScenarioSpec.model_validate({**base, "events": [spawn, *evs], **over})
+        return S.run_episode(spec, DEFAULTS, 0)
+
+    def verts(run):
+        z = [c for c in run.policy.constraints if c.id == "z"][0]
+        return [(round(v.x, 6), round(v.y, 6)) for v in z.vertices], z
+    r = fly({"at_sim_t": 2.0, "type": "translate_polygon_fence",
+             "payload": {"id": "z", "dx_m": 5.0, "dy_m": -2.0}})
+    v, _ = verts(r)
+    assert v[0] == (-145.0, 28.0), v
+    ops = [e["op"] for e in r.events if e["type"] == "hot_apply"]
+    assert ops == ["spawn", "translate"] and r.extra["policy_generation_final"] == 2, ops
+    r = fly({"at_sim_t": 2.0, "type": "translate_polygon_fence",
+             "payload": {"id": "z", "mps": 2.0, "bearing_deg": 90.0}})
+    v, z = verts(r)
+    assert z.motion is not None and abs(z.motion.vy_mps - 2.0) < 1e-9, z.motion
+    assert abs(z.motion.vx_mps) < 1e-9 and v[0] == (-150.0, 30.0), (z.motion, v)
+    r = fly({"at_sim_t": 2.0, "type": "rotate_polygon_fence",
+             "payload": {"id": "z", "angle_deg": 90.0}})
+    v, _ = verts(r)
+    assert sorted(v) == sorted([(-140.0, 30.0), (-140.0, 40.0), (-150.0, 40.0),
+                                (-150.0, 30.0)]), v          # a square onto itself
+    r = fly({"at_sim_t": 2.0, "type": "rotate_polygon_fence",
+             "payload": {"id": "z", "deg_per_s": 6.0}})
+    assert abs(verts(r)[1].motion.yaw_rate_dps - 6.0) < 1e-9
+    r = fly({"at_sim_t": 2.0, "type": "scale_radius", "payload": {"id": "z", "factor": 2.0}})
+    v, _ = verts(r)
+    xs, ys = [p[0] for p in v], [p[1] for p in v]
+    assert (max(xs) - min(xs), max(ys) - min(ys)) == (20.0, 20.0), v
+    r = fly({"at_sim_t": 2.0, "type": "deactivate_rule", "payload": {"rule_id": "nfz-square"}})
+    sw = [c for c in r.policy.constraints if c.type == "time_window_switch"]
+    assert len(sw) == 1 and sw[0].target_id == "nfz-square" and not sw[0].active, sw
+    r = fly({"at_sim_t": 2.0, "type": "activate_rule",
+             "payload": {"rule_id": "z", "id": "sw-z", "window":
+                         {"start_time": "00:00", "end_time": "23:59"}}},
+            **{"mission": {**base["mission"], "clock_start": "2026-09-07T10:00:00"}})
+    sw = [c for c in r.policy.constraints if c.id == "sw-z"]
+    assert sw and sw[0].active and sw[0].valid_time.recurrence is not None, sw
+    cor = BY_ID["corridor-along"].model_dump(mode="json", by_alias=True)
+    cor["events"] = [{"at_sim_t": 2.0, "type": "swap_corridor",
+                      "payload": {"target_id": "corridor-survey-route", "width_m": 30.0,
+                                  "centerline": [[0, 0], [60, 0]]}}]
+    r = S.run_episode(ScenarioSpec.model_validate(cor), DEFAULTS, 0)
+    sp = [c for c in r.policy.constraints if c.type == "corridor_swap"]
+    assert len(sp) == 1 and sp[0].width_m == 30.0, sp
+    # Every event of every run above went through the Shield: one record each.
+    assert all(e.get("generation") for e in r.events if e["type"] == "hot_apply")
+
+
+def test_a_windowed_switch_without_a_clock_is_refused():
+    """With no clock every rule is in force, so a switch "scheduled" for
+    12:00-12:30 would act from the event on: an unscheduled switch under
+    another name. Refused before the episode runs."""
+    spec = _with(BY_ID["nfz-head-on"], events=[{
+        "at_sim_t": 1.0, "type": "deactivate_rule",
+        "payload": {"rule_id": "nfz-square",
+                    "window": {"start_time": "12:00", "end_time": "12:30"}}}])
+    try:
+        S.run_episode(spec, DEFAULTS, 0)
+    except ValueError as e:
+        assert "clock_start" in str(e)
+    else:
+        raise AssertionError("a windowed switch ran with no clock")
+
+
+def test_a_hot_applied_switch_with_its_own_window_releases_the_rule_at_its_edge():
+    """time_window_switch as a real event: sent at 1 s, in force from 12:00:00
+    (10 s in). The rule binds until the edge and is released after it, on the
+    conservative side; three phases (before the event, between, after)."""
+    run = S.run_episode(BY_ID["time-window-switch-event"], DEFAULTS, 0)
+    ex = run.extra
+    assert ex["phase1_violation_ticks_nfz-school"] > 0, ex
+    assert ex["phase2_violation_ticks_nfz-school"] == 0, ex
+    assert 0 <= ex["switch_lag_s_nfz-school"] <= 0.35, ex["switch_lag_s_nfz-school"]
+    assert ex["switch_conservative_nfz-school"] is True
+    assert ex["reached_goal"] is True and ex["polygon_entries"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# 2026-10-07: the escalation FSM decides what is flown
+# --------------------------------------------------------------------------- #
+
+def test_rtl_and_land_are_outcomes_the_fsm_produced_and_the_autopilot_flew():
+    """REGRESSION (follow-ups #117b / #118 / #142). The harness could produce
+    only success or fail: "RTL_triggered and Land_triggered need the escalation
+    FSM, which the Shield does not run yet". A zone whose breach action is
+    RTL / land now sends the FSM straight to RTL (G11) / Land (G12), the
+    autopilot model flies the mode, and the FSM's terminal edge ends the
+    episode."""
+    from guardrail import kpi as K
+    rtl = S.run_episode(_cell("failsafe-rtl-zone", ahead_m=12, variant=0), DEFAULTS, 0)
+    land = S.run_episode(BY_ID["failsafe-land-zone"], DEFAULTS, 0)
+    for run, label, edge, term in ((rtl, "RTL_triggered", "G11", "G9"),
+                                   (land, "Land_triggered", "G12", "G10")):
+        fsm = run.extra["fsm"]
+        assert fsm["outcome_label"] == label and fsm["failsafe_triggered"], fsm
+        edges = [t["edge"] for t in fsm["transitions"]]
+        assert edges == [edge, term], edges
+        assert run.extra["autopilot_ticks"] > 0 and run.extra["terminated_s"] is not None
+        ap = [r for r in run.rows if r.get("autopilot")]
+        assert ap and all(r["owner"] == "autopilot" for r in ap)
+        res = K.compute(run.rows, run.priorities, {"fsm": fsm})
+        assert res["outcome"] == label and res["mission_success"] is False, res["outcome"]
+        assert res["autopilot_ticks"] == len(ap) and res["shield_ticks"] == len(run.rows) - len(ap)
+    # Land descends at the autopilot's 0.5 m/s to the ground; RTL ends over home.
+    assert land.rows[-1]["up"] <= S.AP_LANDED_M + 1e-9, land.rows[-1]["up"]
+    home = (rtl.rows[0]["x"], rtl.rows[0]["y"])
+    end = rtl.rows[-1]
+    assert ((end["x"] - home[0]) ** 2 + (end["y"] - home[1]) ** 2) ** 0.5 <= S.AP_HOME_TOL_M
+    # The landing broke the 10 m floor under the AUTOPILOT: counted apart,
+    # never as the Shield's escape or breach.
+    assert land.extra["breaches"] == 0 and land.extra["autopilot_breaches"] >= 1, land.extra
+    res = S.score(BY_ID["failsafe-land-zone"], land.rows, land.extra, land.policy,
+                  land.priorities)
+    assert res["p0_escapes"] == 0 and res["true_p0_flown_ticks"] > 0, res
+
+
+def test_failsafe_triggered_is_the_fsm_entering_rtl_or_land_not_a_brake():
+    """REGRESSION (follow-up #118). `failsafe_triggered` was "any row braked",
+    so every Shield brake was scored as the grant's fail-safe. The ceiling hold
+    brakes and loiters (theta exceeded) and never reaches RTL / Land: not a
+    fail-safe trigger. With the FSM off nothing can be said: None, not False."""
+    spec = BY_ID["altitude-ceiling-hold"]
+    run = S.run_episode(spec, DEFAULTS, 0)
+    assert any(r["setpoint"] == "brake" for r in run.rows), "the scenario no longer brakes"
+    assert "Loiter" in run.extra["fsm"]["visited"]
+    res = S.score(spec, run.rows, run.extra, run.policy, run.priorities)
+    assert res["failsafe_triggered"] is False and res["failsafe_matches_label"] == 1.0
+    off = _with(spec, escalation=False)
+    r2 = S.run_episode(off, DEFAULTS, 0)
+    res2 = S.score(off, r2.rows, r2.extra, r2.policy, r2.priorities)
+    assert res2["failsafe_triggered"] is None and res2["failsafe_matches_label"] is None
+    assert any("not measured" in b for b in S.label_failures(off, res2))
+
+
+def test_a_zone_moving_onto_a_waiting_aircraft_is_imposed_not_its_breach():
+    """A zone that grows over the aircraft (scale_radius) makes its position
+    illegal without the aircraft moving: time to safe, never a breach or a
+    polygon entry. The test: the position the aircraft moved to was already
+    illegal at the previous instant, under the rules of that instant. The
+    negative control is the unshielded flight into a static zone, which IS
+    its own entry."""
+    run = S.run_episode(_cell("radius-scaling-grow", factor=3.0), DEFAULTS, 0)
+    ex = run.extra
+    assert ex["ticks_inside_fence_polygon"] > 0 or any(r["unsafe"] for r in run.rows)
+    assert ex["breaches"] == 0 and ex["polygon_entries"] == 0, ex
+    ctrl = _run("nfz-head-on-control")[1]
+    assert ctrl["breaches"] >= 1 and ctrl["polygon_entries"] == 1, ctrl
+    # The growth lands on an event tick, which is imposed whatever the test.
+    # A window opening INSIDE the lookahead makes the spot unsafe on an
+    # ordinary tick, seconds before the switch: imposed by time, not by the
+    # move - and only the "judged at the previous instant" test knows it.
+    tw = S.run_episode(_cell("time-window-opens-on-vehicle", clock="2026-09-07T07:29:54"),
+                       DEFAULTS, 0)
+    first_unsafe = next(r["t"] for r in tw.rows if r["unsafe"])
+    switch = [e["t"] for e in tw.events if e["type"] == "time_window_switch"][0]
+    events = {e["t"] for e in tw.events if e["type"] == "hot_apply"}
+    assert first_unsafe < switch and first_unsafe not in events, (first_unsafe, switch)
+    assert tw.extra["breaches"] == 0, tw.extra["breaches"]
+
+
+def test_a_switch_is_conservative_only_on_the_right_side_and_inside_the_band():
+    """The t- / t+ verdict on its own: OFF held until after the edge, ON
+    enforced from before it, each within half the forecast step plus a tick.
+    The minute-resolution reading (a 17:30 window held to 17:30:59, lag +59 s)
+    and an early switch-off must both be refused."""
+    eps, dt = 0.25, 0.1
+    assert S.switch_conservative(False, 0.3, eps, dt)            # OFF late: held
+    assert S.switch_conservative(True, -0.2, eps, dt)            # ON early: enforced
+    assert not S.switch_conservative(False, -0.2, eps, dt)       # OFF early
+    assert not S.switch_conservative(True, 0.2, eps, dt)         # ON late
+    assert not S.switch_conservative(False, 59.3, eps, dt)       # minute resolution
+    assert S.switch_conservative(False, 0.0, eps, dt) and S.switch_conservative(True, 0.0, eps, dt)
+
+
+def test_the_labelled_failsafe_summary_says_which_edge_fired():
+    """The labelled fail-safe correctness is printed with the FSM's own scorer
+    (Wilson bound, meets_target None on undiscriminating labels) and, per
+    triggered episode, the chain of FSM edges that led to RTL / Land - so a
+    correctness below the grant's 99 % says why."""
+    def item(trig, match, edges=()):
+        return {"status": "pass",
+                "kpi": {"failsafe_triggered": trig, "failsafe_matches_label": match,
+                        "fsm": {"transitions": [{"edge": e, "to": to} for e, to in edges]}}}
+    s = S.failsafe_summary([item(True, 1.0, [("G11", "RTL"), ("G9", "[*]")]),
+                            item(True, 0.0, [("X1", "Brake"), ("G3", "Loiter"),
+                                             ("G5", "RTL")]),
+                            item(False, 1.0), item(False, 1.0)])
+    assert s["triggers_by_edge"] == {"true": {"G11": 1}, "false": {"X1 > G3 > G5": 1}}, s
+    fs = s["fsm_scoring"]
+    assert fs["scored"] == 4 and fs["wilson_low_95"] is not None, fs
+    assert fs["meets_target"] is False and fs["min_error_free_episodes_for_target_at_95"] == 381
+    one_kind = S.failsafe_summary([item(False, 1.0), item(False, 1.0)])
+    assert one_kind["fsm_scoring"]["meets_target"] is None, "a stub would tie it"
+
+
+# --------------------------------------------------------------------------- #
+# 2026-10-07: arms and the KPI report
+# --------------------------------------------------------------------------- #
+
+def test_paraphrase_and_prefix_arms_log_their_ids_and_fly_the_same_flight():
+    """WP4-09 / WP4-15 plumbing. nfz-head-on flies its rule summary in three
+    wordings (the canonical one and two stored paraphrases) with the prefix
+    on and off: six episodes, each bundle with the six-field manifest and a
+    manifest_extras.json naming its paraphrase_id and prefix arm, and all six
+    the same flight - the headless pilot reads no text, so a difference would
+    be a harness defect, and the summary says it is plumbing only."""
+    with tempfile.TemporaryDirectory() as td:
+        out, runs = Path(td) / "s.json", Path(td) / "runs"
+        rc = _sweep(["--only", "nfz-head-on", "--out", str(out), "--runs", str(runs),
+                     "--seed", "1001"])
+        doc = json.loads(out.read_text(encoding="utf-8"))
+        dirs = sorted(p for p in runs.iterdir() if p.is_dir())
+        assert rc == 0 and len(dirs) == 6, (rc, [d.name for d in dirs])
+        ids = set()
+        for d in dirs:
+            man = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+            assert len(man) == 6, "the manifest is the grant's six fields"
+            ex = json.loads((d / "manifest_extras.json").read_text(encoding="utf-8"))
+            assert ex["prefix_arm"] in ("on", "off") and ex["pilot_reads_text"] is False
+            ids.add((ex["paraphrase_id"], ex["prefix_arm"]))
+        assert len(ids) == 6, ids
+        canon = [r for r in doc["results"] if "canonical" in r["id"]]
+        assert all(r["arm_record"]["paraphrase"]["backend"] == "identity" for r in canon)
+        arms = doc["_arms"]
+        assert arms["groups_whose_arms_flew_differently"] == [], arms
+        assert arms["prefix_ab_pairs"] == 1 and not arms["prefix_ab_pairs_that_differ"]
+        assert arms["pilot_reads_text"] is False and "plumbing" in arms["note"]
+        pp = arms["per_paraphrase"]
+        # Grouped by paraphrase_id alone: one wording shown with the prefix on
+        # and off is one arm of two trials.
+        assert pp["canonical_trials"] == 2 and pp["paraphrase_arms"] == 2, pp
+        assert pp["worst_drop_vs_canonical"] == 0.0, pp
+        assert len({kpi for kpi in (json.dumps(r["kpi"]["mission_success"])
+                                    for r in doc["results"])}) == 1
+
+
+def test_the_run_writes_the_grants_kpi_report_one_row_per_template_and_cell():
+    """Stress Testing p6: "Per-scenario-family stats table. One row per
+    (scenario template, parameter cell) tuple", plus top-K, in Markdown. The
+    sweep writes kpi_report.md with one row per cell and Shield arm, the
+    nulls beside the scores, the labelled fail-safe correctness, and the
+    not-KPI-grade note first."""
+    fams = [_raw("altitude-recovery-depth", parameter_sweep={"start_up": [6.0, 20.5]}),
+            _raw("nfz-head-on-control")]
+    with tempfile.TemporaryDirectory() as td:
+        lib = Path(td) / "lib.yaml"
+        lib.write_text(yaml.safe_dump({"defaults": RAW["defaults"], "scenarios": fams}),
+                       encoding="utf-8")
+        out, runs = Path(td) / "s.json", Path(td) / "runs"
+        rc = _sweep(["--library", str(lib), "--out", str(out), "--runs", str(runs)])
+        md = (runs / "kpi_report.md").read_text(encoding="utf-8")
+        doc = json.loads(out.read_text(encoding="utf-8"))
+    assert rc == 0, rc
+    # The run's own KPI-bearing answer sits in its scope (review: a profile's
+    # `grant_kpi_bearing: true` beside a headless result read as the run's).
+    assert doc["_scope"]["kpi_bearing_this_run"] is False, doc["_scope"]
+    assert all("\\" not in (r.get("bundle") or "") for r in doc["results"])
+    assert "p0_acted_tick_share" in doc["_rollup"]["_all_shield_on"]
+    assert "failsafe_trigger_correctness" not in doc["_rollup"]["_all_shield_on"]
+    assert "P0-acted tick share" in md and "Fail-safe correctness (ticks)" not in md
+    # What the autopilot flew is on the page, beside the Shield's own count.
+    assert "True state, and what the autopilot flew" in md
+    assert "outside the P0 escape rate" in md
+    keys = sorted(doc["_cell_rollup"])
+    assert keys == ["altitude_envelope/altitude-recovery-depth@start_up=20.5/shield-on",
+                    "altitude_envelope/altitude-recovery-depth@start_up=6/shield-on",
+                    "static_nfz/nfz-head-on-control/shield-off"], keys
+    for k in keys:
+        assert f"`{k}`" in md, k
+    assert "Not KPI-grade" in md and "Nulls beside the scores" in md
+    assert "Fail-safe trigger correctness (labelled episodes)" in md
+    assert "Top-10 failure cases" in md
+
+
+# --------------------------------------------------------------------------- #
+# 2026-10-07, review of stress-harness-2: the mutants that survived
+# --------------------------------------------------------------------------- #
+
+def test_the_failsafe_trigger_is_the_fsms_verdict_never_a_braked_row():
+    """REGRESSION (follow-up #118; review mutant R11 survived all four test
+    files). `failsafe_triggered` was "any row braked"; the two definitions
+    disagree on 233 of 789 nightly episodes. Both directions are pinned: a
+    flight whose Shield brakes for 231 ticks while the FSM never leaves
+    Brake / Loiter is NOT a fail-safe trigger, and a flight the FSM sends to
+    RTL (G5, the Loiter timeout) without one braked row IS one."""
+    spec = _cell("corridor-drift-angles", ask_mps=4, drift_deg=60)
+    run = S.run_episode(spec, DEFAULTS, 0)
+    assert any(r.get("braked") for r in run.rows), "the Shield no longer brakes here"
+    assert run.extra["fsm"]["failsafe_triggered"] is False, run.extra["fsm"]
+    res = S.score(spec, run.rows, run.extra, run.policy, run.priorities)
+    assert res["failsafe_triggered"] is False, "a brake was read as the fail-safe"
+    spec = BY_ID["wind-beyond-authority"]
+    run = S.run_episode(spec, DEFAULTS, 0)
+    assert not any(r.get("braked") for r in run.rows), "the scenario now brakes"
+    assert run.extra["fsm"]["outcome_label"] == "RTL_triggered", run.extra["fsm"]
+    res = S.score(spec, run.rows, run.extra, run.policy, run.priorities)
+    assert res["failsafe_triggered"] is True, "an RTL with no brake was missed"
+
+
+def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
+    """REVIEW (stress-harness-2, mutant R41 survived). The modelled RTL flies
+    straight home whatever lies between: on dyn-nfz-spawn-on-top@size_m=20 it
+    flies through the zone (16 P0 ticks, one polygon entry) after the FSM
+    handed over. That is never the Shield's entry or escape - and it must
+    not vanish either: the run-level true-state summary reports it apart."""
+    spec = _cell("dyn-nfz-spawn-on-top", size_m=20, variant=0)
+    run = S.run_episode(spec, DEFAULTS, 0)
+    ex = run.extra
+    assert ex["autopilot_polygon_entries"] >= 1 and ex["polygon_entries"] == 0, ex
+    assert 0 < ex["autopilot_p0_flown_ticks"] <= ex["true_p0_flown_ticks"], ex
+    res = S.score(spec, run.rows, run.extra, run.policy, run.priorities)
+    assert res["p0_escapes"] == 0, "the Shield's own counter is clean here"
+    ts = S.true_state_summary([{"status": "pass", "arm": "on", "kpi": res}])
+    assert ts["episodes_entering_polygon"] == 0, ts
+    assert ts["autopilot_polygon_entries"] == ex["autopilot_polygon_entries"], ts
+    assert ts["episodes_autopilot_entering_polygon"] == 1, ts
+    assert ts["autopilot_p0_flown_ticks"] == ex["autopilot_p0_flown_ticks"], ts
+    assert ts["episodes_autopilot_p0_flown_by_status"] == {"pass": 1}, ts
+    assert ts["autopilot_ticks"] == ex["autopilot_ticks"] > 0, ts
+
+
+def test_a_brake_tick_is_checked_as_the_zero_action_it_flew():
+    """REVIEW (mutant R42 survived). On a tick the FSM streams a stop, what
+    was flown is Action4D(), so its check is standing still here - not the
+    Shield's repaired action, which nobody flew. No library cell has a
+    repaired action that still violates on a brake tick, so the Shield is
+    made to report one (a phantom violation on every brake tick's repaired
+    action) and the flown check must not carry it."""
+    from guardrail.shield import Violation
+    phantom = Violation(rule_id="phantom", category="geofence",
+                        detail="the repaired action's, never flown", predicted_at_s=0.0)
+
+    class Spy(S.Shield):
+        def filter(self, *a, **kw):
+            d = super().filter(*a, **kw)
+            if d.setpoint == "brake":
+                d = d.model_copy(update={"emitted_violations":
+                                         list(d.emitted_violations) + [phantom]})
+            return d
+    real = S.Shield
+    S.Shield = Spy
+    try:
+        run = S.run_episode(BY_ID["altitude-ceiling-hold"], DEFAULTS, 0)
+    finally:
+        S.Shield = real
+    brakes = [r for r in run.rows if r.get("setpoint") == "brake"]
+    assert brakes, "the scenario no longer brakes"
+    carried = [r["t"] for r in brakes
+               if any(v["rule_id"] == "phantom" for v in r["emitted_violations"])]
+    assert not carried, f"brake ticks checked as the repaired action: {carried[:5]}"
+
+
+def test_a_second_motion_event_starts_from_where_the_first_left_the_zone():
+    """REVIEW (mutant R43 survived). A zone moving East at 2 m/s from t = 2 s
+    has moved 4 m when a second event at t = 4 s turns it North: the second
+    motion starts there, not 6 m along (the motion measured from the spawn
+    at t = 1 s, which is what forgetting to re-anchor the zone gives)."""
+    base = BY_ID["dyn-nfz-spawn-ahead"].model_dump(mode="json", by_alias=True)
+    base = {**base, "parameter_sweep": {}, "parameter_sample": {}, "ticks": 80}
+    base["mission"] = {**base["mission"], "pilot": {"type": "goto", "speed": 4.0},
+                       "rotate_deg": 0.0}
+    base["events"] = [
+        {"at_sim_t": 1.0, "type": "spawn_polygon_fence",
+         "payload": {"id": "z", "vertices": [{"x": -150, "y": 30}, {"x": -140, "y": 30},
+                                             {"x": -140, "y": 40}, {"x": -150, "y": 40}]}},
+        {"at_sim_t": 2.0, "type": "translate_polygon_fence",
+         "payload": {"id": "z", "mps": 2.0, "bearing_deg": 90.0}},
+        {"at_sim_t": 4.0, "type": "translate_polygon_fence",
+         "payload": {"id": "z", "mps": 2.0, "bearing_deg": 0.0}}]
+    run = S.run_episode(ScenarioSpec.model_validate(base), DEFAULTS, 0)
+    recs = [e for e in run.events if e["type"] == "hot_apply"]
+    assert [r["event"] for r in recs] == ["spawn_polygon_fence", "translate_polygon_fence",
+                                          "translate_polygon_fence"], recs
+    assert recs[1]["vertices"][0] == [-150.0, 30.0], recs[1]["vertices"]
+    assert recs[2]["vertices"][0] == [-150.0, 34.0], recs[2]["vertices"]
+
+
+def test_the_switch_band_is_half_the_forecast_step_plus_a_tick_end_to_end():
+    """REVIEW (mutant R44 survived: eps = 4 x dt instead of dt / 2). The claim
+    "eps = dt / 2" is the Shield's forecast step (0.5 s) halved, with the
+    harness tick (0.1 s) on top; pinned at the call run_episode makes, not
+    only in switch_conservative's own unit test."""
+    seen = []
+    real = S.switch_conservative
+
+    def spy(turned_on, lag_s, eps, dt):
+        seen.append((eps, dt))
+        return real(turned_on, lag_s, eps, dt)
+    S.switch_conservative = spy
+    try:
+        run = S.run_episode(BY_ID["time-window-switch-event"], DEFAULTS, 0)
+    finally:
+        S.switch_conservative = real
+    assert seen, "no scheduled switch was judged"
+    assert set(seen) == {(0.25, 0.1)}, seen
+    assert run.extra["switch_conservative_nfz-school"] is True
+    # A lag past the band is not conservative, on either side.
+    assert not real(False, 0.36, 0.25, 0.1) and not real(True, -0.36, 0.25, 0.1)
+
+
+def test_perpendicular_left_of_a_northbound_heading_is_west():
+    """REVIEW (mutant R14: left and right swapped, survived). The grant's
+    example translates its zone "perpendicular_left". x is North and y East,
+    so left of a northbound vehicle is West (y decreasing), right is East."""
+    north = (1.0, 0.0)
+    assert S._direction({"direction": "perpendicular_left"}, north) == (0.0, -1.0)
+    assert S._direction({"direction": "perpendicular_right"}, north) == (-0.0, 1.0)
+    east = (0.0, 1.0)
+    assert S._direction({"direction": "perpendicular_left"}, east) == (1.0, -0.0)
+    assert S._direction({"direction": "along"}, east) == east
+    assert S._direction({"direction": "against"}, east) == (-0.0, -1.0)
+
+
+def test_the_grants_verbatim_example_flies_its_bound_speed_and_wind():
+    """The grant's worked example as the grant writes it (bare sweep keys, no
+    pilot), with only its bundle - which does not exist here - replaced by a
+    policy that has a WGS84 origin. The bound keys must reach the flight:
+    the pilot asks for the swept speed and the wind blows at the swept speed
+    (a bare key that bound to nothing would fly four identical cells)."""
+    import math
+    sys.path.insert(0, str(ROOT / "tests"))
+    from test_scenario_spec import grant_example_verbatim
+    from guardrail.scenario_spec import Family
+    ex = grant_example_verbatim()
+    ex["policy"] = {"path": "policies/wgs84_taipei.yaml"}
+    ex["parameter_sweep"] = {"vehicle_speed_mps": [6, 12], "wind_speed_mps": [0, 5],
+                             "random_seed": [1001]}
+    got = {}
+    for c in Family(ex).cells():
+        run = S.run_episode(c.spec, DEFAULTS, 1001)
+        ask = max(math.hypot(r["raw"]["vx"], r["raw"]["vy"]) for r in run.rows)
+        wind = math.hypot(*run.events[0]["wind_mps"])
+        got[(c.params["vehicle_speed_mps"], c.params["wind_speed_mps"])] = (
+            round(ask, 3), round(wind, 2))
+    assert got == {(6, 0): (6.0, 0.0), (6, 5): (6.0, 5.0),
+                   (12, 0): (12.0, 0.0), (12, 5): (12.0, 5.0)}, got
+
+
+def test_bundle_links_use_forward_slashes_on_every_os():
+    """REVIEW (minor). `_show` returned OS-native separators, so the published
+    JSON and kpi_report.md carried `demo\\out\\sweep\\episode-...` on Windows,
+    and a republish on Linux or CI would have changed all 195 links."""
+    assert S._show(ROOT / "demo" / "out" / "sweep" / "x") == "demo/out/sweep/x"
+    with tempfile.TemporaryDirectory() as td:
+        outside = Path(td) / "a" / "b"
+        assert "\\" not in S._show(outside), S._show(outside)
+
+
 if __name__ == "__main__":
+    # A test that cannot run on this host returns SKIP, counted apart, never
+    # as a pass (follow-up #84; the pattern of tests/test_bundle.py).
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == SKIP:
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -1019,5 +1655,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

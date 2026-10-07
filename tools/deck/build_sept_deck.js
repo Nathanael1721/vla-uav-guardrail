@@ -379,17 +379,20 @@ async function main() {
   /* ── 02 · THE HEADLINE ──────────────────────────────────────────────── */
   {
     const s = pres.addSlide();
-    heading(s, "This period", "The hard KPI is now measured, not inferred");
+    heading(s, "This period", "P0 escape rate is now measured, not inferred");
     const on = kpi("ros2_shield_on"), off = kpi("ros2_shield_off");
     const dyn = has("ros2_shield_on_dynamic") ? kpi("ros2_shield_on_dynamic") : null;
-    const rows = [["Configuration", "P0 escape rate", "P0 ticks", "Unmeas.", "KPI-grade"]];
+    // The last column used to print the stored `kpi_grade` ("yes"), a flag
+    // set under the project's own 1 Sept rule. These runs are the grant's
+    // `dev` topology (one desktop); reported KPIs come from `hil`.
+    const rows = [["Configuration", "P0 escape rate", "P0 ticks", "Unmeas.", "Topology"]];
     rows.push(["Guardrail OFF (control)", n(off.p0_violation_escape_rate, 6),
-      off.p0_violation_ticks, off.p0_ticks_not_measurable, off.kpi_grade ? "yes" : "no"]);
+      off.p0_violation_ticks, off.p0_ticks_not_measurable, "dev"]);
     rows.push(["Guardrail ON", n(on.p0_violation_escape_rate, 1),
-      on.p0_violation_ticks, on.p0_ticks_not_measurable, on.kpi_grade ? "yes" : "no"]);
+      on.p0_violation_ticks, on.p0_ticks_not_measurable, "dev"]);
     if (dyn) {
       rows.push(["Guardrail ON + dynamic NFZ", n(dyn.p0_violation_escape_rate, 1),
-        dyn.p0_violation_ticks, dyn.p0_ticks_not_measurable, dyn.kpi_grade ? "yes" : "no"]);
+        dyn.p0_violation_ticks, dyn.p0_ticks_not_measurable, "dev"]);
     }
     table(s, rows, [0.34, 0.18, 0.14, 0.18, 0.16], 0.55, 1.72, 0.44,
       [[2, 1], [3, 1]]);
@@ -409,7 +412,7 @@ async function main() {
     rows.push(["Closest approach", n(off.standoff_min_range_m, 2) + " m", n(on.standoff_min_range_m, 2) + " m"]);
     rows.push(["P0 escape rate", n(koff.p0_violation_escape_rate, 6), n(kon.p0_violation_escape_rate, 1)]);
     rows.push(["Mission target reached", off.frac_within_30m ? "yes" : "no", on.frac_within_30m ? "yes" : "no"]);
-    rows.push(["KPI-grade", koff.kpi_grade ? "yes" : "no", kon.kpi_grade ? "yes" : "no"]);
+    rows.push(["Topology", "dev (one desktop)", "dev (one desktop)"]);
     table(s, rows, [0.4, 0.3, 0.3], 0.55, 1.65, 0.36, [[1, 2], [2, 2], [3, 2]]);
     card(s, 0.55, 3.92, 8.9, 1.25, ic.walk, "How to read this",
       "Both runs reach the target. The subject position is DECLARED, not perceived — this rail has no camera, so the measurement is of the Shield, which the review confirmed is the deliverable.");
@@ -471,15 +474,22 @@ async function main() {
       "Background vehicles on a shared circuit. These are the expensive ones: about 9 RPC/s each.");
     card(s, 6.60, 1.72, 2.85, 1.5, ic.walk, "Pedestrians",
       "12 on pavements, baked to static meshes; a few pace a verified stretch. The standing majority is free.");
+    // Detector rates are the MISSION rates from docs/data/eval_sep2026.json
+    // (start-gate wait excluded). Until 2026-10-06 this card printed city_kpi's
+    // stored det_hz (inflated) and said the rate "only just clears" its gate,
+    // which three of the five mid-evaluation flights do not (CORRECTION A14).
+    const DETF = readJson("docs/data/eval_sep2026.json").detector;
+    const detRates = Object.values(DETF.flights).map((f) => f.det_hz);
+    const detBelow = detRates.filter((h) => h < DETF.gate.det_hz_min).length;
     card(s, 0.55, 3.42, 8.9, 1.5, ic.chart, "Why most of it is static",
-      "A moving object costs one pose update per control tick, inside the same loop that runs the detector, whose rate only just clears its 4.0 Hz gate. A real street carries far more parked vehicles than moving ones — so the realistic choice and the affordable one are the same choice. Measured with 29 objects on the street: detector 5.15 Hz, all boxes on the correct vehicle, P0 escape rate 0.0.");
+      `A moving object costs one pose update per control tick, inside the same loop that runs the detector. Over the mission the detector ran ${Math.min(...detRates).toFixed(2)}-${Math.max(...detRates).toFixed(2)} Hz on the five mid-evaluation flights, below its ${DETF.gate.det_hz_min.toFixed(1)} Hz gate on ${detBelow} of them, so every moving object competes with it. A real street carries far more parked vehicles than moving ones — so the realistic choice and the affordable one are the same choice. Measured with 29 objects on the street (city_kpi): detector ${DETF.flights.city_kpi.det_hz.toFixed(2)} Hz over the mission, all boxes on the correct vehicle, P0 escape rate 0.0.`);
     badge(s, next() + 1);
   }
 
   /* ── 07 · THE FULL KPI SET ──────────────────────────────────────────── */
   {
     const s = pres.addSlide();
-    heading(s, "Acceptance", "Five of five KPIs now measured");
+    heading(s, "Acceptance", "Five acceptance KPIs computed (dev topology)");
     const on = kpi("ros2_shield_on"), off = kpi("ros2_shield_off");
     const eps = (k) => (k.time_to_safe_not_measurable ? "not measurable"
       : k.time_to_safe_episodes === 0 ? "0 — never unsafe"
@@ -489,7 +499,7 @@ async function main() {
     const rows = [["Grant KPI", "Guardrail OFF", "Guardrail ON"]];
     rows.push(["P0 violation escape rate  (target 0)",
       n(off.p0_violation_escape_rate, 6), n(on.p0_violation_escape_rate, 1)]);
-    rows.push(["Fail-safe trigger correctness",
+    rows.push(["Fail-safe correctness (= P0 ticks not escaped)",
       n(off.failsafe_trigger_correctness, 1), n(on.failsafe_trigger_correctness, 1)]);
     rows.push(["Mean repair magnitude", mag(off), mag(on)]);
     rows.push(["Max repair magnitude", off.max_repair_magnitude_mps === null
@@ -570,12 +580,12 @@ async function main() {
     const s = pres.addSlide();
     heading(s, "WP1 · WP2", "Three named deliverables, now produced");
     const b = EXTRA.bundles["wgs84_taipei"] || Object.values(EXTRA.bundles)[0];
-    card(s, 0.55, 1.68, 2.85, 1.72, ic.lock, "Signed policy bundle",
-      `tar.gz of canonical IR + manifest + signature, ${b.bytes} bytes. Reloading REFUSES a tampered IR, a foreign manifest, or a truncated archive.`);
+    card(s, 0.55, 1.68, 2.85, 1.72, ic.lock, "Policy bundle",
+      `tar.gz of canonical IR + manifest + signature, ${b.bytes} bytes (signature: ${b.signature || "placeholder"}). Reloading REFUSES a tampered IR, a foreign manifest, or a truncated archive.`);
     card(s, 3.58, 1.68, 2.85, 1.72, ic.globe, "WGS84 authoring",
       "The frame the DSL spec calls canonical. Additive: metre policies still load unchanged. A geographic policy with no origin is refused, not defaulted.");
     card(s, 6.60, 1.68, 2.85, 1.72, ic.rules, "Constraint Summary Pack",
-      "Every rule in force, with the hash. The prompt renders FROM the pack, so the two cannot disagree.");
+      "Every rule in force, with the hash. The prompt renders FROM the pack, so the two cannot disagree. Generated and saved; no flown VLA has read it yet.");
     card(s, 0.55, 3.62, 8.9, 1.45, ic.check, "A gap the pack exposed on the way",
       "The prompt handed to the pilot listed fences, the altitude band and the speed cap — and nothing else. On the pedestrian policy, whose headline rule is a 10 m stand-off, it described none of it. The planner could only discover that rule by being repaired against it, which is the opposite of what a prefix compiler is for.");
     badge(s, next() + 1);
@@ -606,7 +616,7 @@ async function main() {
       card(s, 0.55, 3.44, 4.35, 1.62, ic.check, "Tracking, scored honestly",
         `Median error against a null that emits the frame centre and never opens the image. Car half: ${n(R.pre.medianInShot, 1)} px against ${n(R.pre.medianCentreNull, 1)} px over ${preN} detections — real skill. Pedestrian half: ${n(R.post.medianInShot, 1)} px against ${n(R.post.medianCentreNull, 1)} px over ${R.post.n} — the detector does NOT beat the constant. A 0.5 m person is 8-13 px at every range the 10 m ring permits, and the boxes returned are 26 px. What improved between flights is where the aircraft POINTS, which flatters both columns equally.`);
       card(s, 5.10, 3.44, 4.35, 1.62, ic.warn, "The ring fired, and the count is not the result",
-        SS ? `${SS.fires} firings; on ${SS.fp} of them no real pedestrian was within 10 m. The predecessor flight fired 6 times and was reported as the demonstration; it was 0/6. A real pedestrian came within 10 m on ${SS.tp + SS.fn} ticks, almost all outside the camera's view: bystanders the subject-only rule does not protect. The Shield is correct throughout; the gap is policy scope and sensor coverage.` : "standoff_score missing from metrics.json — rebuild the flight.");
+        SS ? `${SS.fires} firings; on ${SS.fp} of them no real pedestrian was within 10 m. The predecessor flight's 6 firings were presented as the demonstration (withdrawn in 0.5.0): it was 0/6. A real pedestrian came within 10 m on ${SS.tp + SS.fn} ticks, almost all outside the camera's view: bystanders the subject-only rule does not protect. The Shield is correct throughout; the gap is policy scope and sensor coverage.` : "standoff_score missing from metrics.json — rebuild the flight.");
     }
     badge(s, next() + 1);
   }
@@ -617,8 +627,8 @@ async function main() {
     heading(s, "Remaining work", "Ordered by contribution to acceptance");
     const rg = EXTRA.rate_gate;
     const items = [
-      ["1", "Perception on the KPI-grade rail",
-       "ArduPilot SITL has no renderer, so all tracking evidence sits outside the contractual gate. The largest remaining item"],
+      ["1", "Perception-rail integration",
+       "ArduPilot SITL has no renderer; joining Project AirSim imagery to the ArduPilot rail is named for the final delivery. The largest remaining item"],
       ["2", "The camera rail still misses its own rate gate",
        `Pre-registered at loop ≥ ${rg.gate.loop_hz_min} Hz and detector ≥ ${rg.gate.det_hz_min} Hz; ${rg.n_meeting_gate} of ${rg.n_runs} recorded runs meet it`],
       ["3", "Low-altitude policies select the cruise-band map",
@@ -684,7 +694,7 @@ async function main() {
       x: 0.55, y: 2.0, w: 8.9, h: 1.1,
       fontSize: 68, color: WHITE, fontFace: FF, bold: true,
     });
-    s.addText("measured — not inferred — on the grant's canonical ArduPilot topology,\nwith zero unmeasurable ticks, across three configurations.", {
+    s.addText("measured — not inferred — on desktop ArduPilot SITL + MAVROS 2 (the grant's dev topology),\nwith zero unmeasurable ticks, across three configurations.", {
       x: 0.55, y: 3.2, w: 8.9, h: 0.8,
       fontSize: 13, color: TEAL_TINT, fontFace: FF, lineSpacingMultiple: 1.3,
     });

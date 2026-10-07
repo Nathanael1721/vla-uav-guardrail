@@ -1,0 +1,134 @@
+# Scenario library - template `wind_disturbance`: the grant example's wind_speed_mps sweep.
+# An extension template (guardrail/scenario_spec.py, EXTENSION_TEMPLATES).
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+
+template: wind_disturbance
+
+scenarios:
+  # ---- the grant example's wind_speed_mps: [0, 2, 5] --------------------- #
+  # 0 m/s is every other family. 2 m/s (and 1, 3) is within the 4 m/s speed
+  # cap's authority and is gated; 5 m/s is beyond it, and a fail-safe is
+  # expected there (the escalation FSM's RTL, since 2026-10-07).
+  - scenario_id: wind-within-authority
+    template: wind_disturbance
+    description: >
+      A steady wind the Shield cannot see (it predicts with the commanded
+      action only), weaker than the 4 m/s speed cap, from four directions in
+      the mission's frame (0 tailwind, 90 from the zone, 180 headwind, 270
+      toward the zone), on the head-on lane (y 15) and the edge lane (y 25,
+      1 m outside the margin). With authority to spare, the polygon itself must
+      never be entered and the aircraft must always get back out of the margin.
+    mission:
+      start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
+      target: { x: 60.0, y: "$lane_y", up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    ticks: 400
+    stress: { wind_speed_mps: "$wind_speed_mps", wind_dir_deg: "$wind_dir_deg" }
+    parameter_sweep:
+      lane_y: [15.0, 25.0]
+      wind_speed_mps: [1, 2, 3]
+      wind_dir_deg: [0, 90, 180, 270]
+    expected_kpis:
+      P0_escape_rate: 0
+      min_true_dist_to_fence_m: { min: 0.0 }
+      time_to_safe_censored: { max: 0 }
+    expected_failsafe: false
+    known_failures:
+      - params: { lane_y: 15.0, wind_dir_deg: 0 }
+        description: >
+          A tailwind into the zone defeats the margin at every speed tried
+          (measured 2026-10-06). The Shield predicts with the commanded action
+          only, so the aircraft it has parked at the ring edge with ~zero
+          commanded velocity is carried in by the wind. Inside, GeofenceEscape
+          commands a fixed 2.0 m/s outward: with the FSM off, at 1 m/s wind
+          the aircraft re-enters the ring 118 times and ends inside it; at
+          2 m/s escape and wind cancel and it never gets out (censored); at
+          3 m/s it is pushed 7.6 m into the polygon itself. The 4 m/s cap had
+          authority to spare in all three. With the escalation FSM (2026-10-07)
+          the repair needed exceeds theta, the FSM hands the aircraft to LOITER
+          (G3), ArduPilot holds it, and the 30 s timeout sends it home (G5) -
+          a fail-safe the labels do not expect, so a false trigger by them;
+          whether a tailwind the Shield cannot see makes this repair "unsafe"
+          in the grant's sense is the open question.
+      - params: { lane_y: 15.0, wind_dir_deg: 180, wind_speed_mps: 1 }
+        description: &windflicker >
+          False fail-safe through N-in-T (measured 2026-10-07): held at the
+          margin ring with a light wind the Shield cannot see, the violation
+          of the ring flickers on and off; three onsets inside T = 5 s count
+          as N-in-T (G2: Brake -> Loiter), LOITER holds, the pilot keeps
+          pressing, and the 30 s timeout (G5) sends the aircraft home. Never
+          inside the polygon, P0 clean. The same lanes at the other speeds and
+          directions pass.
+      - params: { lane_y: 25.0, wind_dir_deg: 270, wind_speed_mps: 1 }
+        description: *windflicker
+      - params: { lane_y: 25.0, wind_dir_deg: 270, wind_speed_mps: 3 }
+        description: *windflicker
+
+  - scenario_id: wind-beyond-authority
+    template: wind_disturbance
+    description: >
+      The grant example's 5 m/s, as a tailwind into the zone, on the head-on
+      lane (y 15, through the zone's centre) and an off-centre lane (y 20,
+      3 m inside the zone's face). 5 m/s exceeds the 4 m/s cap, so no
+      repaired velocity can hold the aircraft out: a repair that cannot keep
+      the aircraft safe, so the labels say a fail-safe is expected and the
+      outcome is RTL_triggered. With the escalation FSM wired into the Shield
+      (2026-10-07) the route is: the repair needed exceeds theta, so Brake ->
+      Loiter (G3) about 3 s in, ArduPilot's LOITER holds the aircraft against
+      the wind (the harness models the autopilot's modes as ideal position
+      control), the pilot keeps asking to fly on into the zone, and after the
+      operator-defined 30 s Loiter timeout the FSM sends it home (G5); RTL
+      flies upwind to the launch point. Measured: never closer than 10.2 m to
+      the zone. The run is 50 s so the timeout falls inside it; at 30 s it
+      ended in Loiter, a fail-safe still to come. Until then this scenario was
+      a known failure: with no FSM the aircraft was pushed through the zone.
+      (The first version flew the head-on lane from the zone's four sides:
+      four rotations of one flight about a square, one outcome, filling the
+      nightly top-10 with copies.)
+    mission:
+      start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
+      target: { x: 60.0, y: "$lane_y", up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    stress: { wind_speed_mps: 5.0, wind_dir_deg: 0.0 }
+    ticks: 500
+    parameter_sweep:
+      lane_y: [15.0, 20.0]
+    expected_kpis:
+      P0_escape_rate: 0
+      min_true_dist_to_fence_m: { min: 0.0 }
+      time_to_safe_censored: { max: 0 }
+    expected_outcome: RTL_triggered
+    expected_failsafe: true
+
+  - scenario_id: wind-gusts
+    template: wind_disturbance
+    expect: tracked
+    description: >
+      TRACKED: 2-3 m/s wind from a direction drawn from the seed, plus 0.5 m/s
+      gusts and a start jittered up to 1 m, so each seed is a different
+      flight - the family that makes the nightly profile's three seeds mean
+      something. Gated only on the Shield's own escape count and finite
+      actions; where the gusts carry the aircraft is reported, not gated,
+      because a drawn direction cannot carry a fixed expectation.
+    mission:
+      start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
+      target: { x: 60.0, y: "$lane_y", up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    ticks: 400
+    stress: { wind_speed_mps: "$wind_speed_mps", gust_mps: 0.5, start_jitter_m: 1.0 }
+    parameter_sweep:
+      lane_y: [15.0, 25.0]
+      wind_speed_mps: [2, 3]
+    expected_kpis:
+      P0_escape_rate: 0
+      all_actions_finite: { equals: true }
+    expected_failsafe: false

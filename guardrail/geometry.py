@@ -1,22 +1,42 @@
 """
 Geometry helpers — with guardrail/ir.py, the only guardrail files that import
-shapely.
+shapely. (models.py reaches shapely only through `keepout_area` and
+`corridor_tube` below, imported lazily by its layer merge, so the models stay
+importable without it.)
 
 Keeps geometric truth in one place (the grant's 'single rule-evaluation code
 path' invariant, scaled down). ir.py does not add a second rule: it builds
 `fence_polygon(f).buffer(f.margin_m)` once per fence and hands that ring back to
 `point_in_fence` here, so the containment test itself still lives only in this
 file.
+
+A circle_fence is a PolygonFence whose vertices are derived (the 32-gon
+circumscribing the circle, models.CircleFence), so every helper here handles it
+unchanged.
 """
 from __future__ import annotations
 
-from shapely.geometry import Point, Polygon
+from shapely.geometry import LineString, Point, Polygon
 
 from .models import PolygonFence
 
 
 def fence_polygon(fence: PolygonFence) -> Polygon:
     return Polygon([(v.x, v.y) for v in fence.vertices])
+
+
+def keepout_area(fence: PolygonFence) -> Polygon:
+    """The area a keep-out fence forbids: its polygon grown by its margin ring
+    (a negative margin is clamped to 0 - the lint refuses one anyway). Used by
+    the layer merge to decide whether an override is at least as strict."""
+    return fence_polygon(fence).buffer(max(fence.margin_m, 0.0))
+
+
+def corridor_tube(corridor) -> Polygon:
+    """The area a keep-in corridor allows: every point within half its width
+    of the centerline SEGMENTS (round caps), which is exactly the set the
+    Shield's distance-to-segments check accepts."""
+    return LineString(corridor.points()).buffer(corridor.half_width_m)
 
 
 def point_in_fence(x: float, y: float, up: float, fence: PolygonFence,

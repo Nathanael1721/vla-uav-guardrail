@@ -1,0 +1,53 @@
+// CityLife scene for the ArduPilot rail: the follow scene's spawn, clock and
+// home point (demo/pas_config/scene_semantic.jsonc), with the ArduPilot robot.
+//
+// The level supplies the traffic (CityLife_Day drives its own cars and walks
+// its own pedestrians), so no environment actor is spawned here.
+//
+// The CLOCK is load-bearing twice over. ArduPilot's AirSim backend advances its
+// own time by the difference between consecutive sensor-frame timestamps, so
+// ArduPilot runs at exactly the simulator's pace; and step-ns equal to
+// real-time-update-rate is what guardrail.manifest.sim_speedup_from_scene()
+// reads as sim_speedup 1.0. 3 ms per step also gives ArduPilot 333 sensor
+// frames a second against its 300 Hz loop (SCHED_LOOP_RATE in
+// airsim-quadX.parm); IAMAI's ArduPilot examples use the same clock.
+//
+// The HOME-GEO-POINT must match ArduPilot SITL's --home, which rail.py derives
+// from this file. GPS fixes are this point plus the vehicle's NED offset.
+//
+// RELOADING THIS SCENE RESETS THE SIMULATOR CLOCK, and ArduPilot's AirSim
+// backend adds (new timestamp - previous timestamp) to its own clock with no
+// guard against a negative step. So ArduPilot SITL must be (re)started AFTER
+// the scene is loaded, never left running across a reload. The perception
+// node and g1_check.py load the scene first and only then start SITL.
+{
+  "id": "SceneCityLifeArduPilot",
+  "actors": [
+    {
+      "type": "robot",
+      "name": "Drone1",
+      "origin": {
+        "xyz": "35.0 -20.0 -2.0",
+        "rpy-deg": "0 0 0"
+      },
+      "robot-config": "robot_citylife_ardupilot.jsonc"
+    }
+  ],
+  "clock": {
+    "type": "steppable",
+    "step-ns": 3000000,
+    "real-time-update-rate": 3000000,
+    "pause-on-start": false
+  },
+  "home-geo-point": {
+    "latitude": 35.6895,
+    "longitude": 139.6917,
+    "altitude": 40.0
+  },
+  "segmentation": {
+    "initialize-ids": false,
+    "ignore-existing": false,
+    "use-owner-name": true
+  },
+  "scene-type": "UnrealNative"
+}

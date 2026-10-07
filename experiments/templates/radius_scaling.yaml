@@ -1,0 +1,130 @@
+# Scenario library - template `radius_scaling`: a hot-applied zone rescaled mid-flight (scale_radius).
+# One of the grant's four templates.
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+#
+# scale_radius is applied through Shield.scale_nfz (about the zone's vertex
+# mean). Only a dynamic_nfz can be rescaled mid-flight (a polygon_fence is
+# locked at mission start), so each family spawns its zone at t = 0, before
+# the first tick, and rescales it later. Added 2026-10-07; until then the
+# event was refused for want of a Shield API.
+
+template: radius_scaling
+
+scenarios:
+  - scenario_id: radius-scaling-grow
+    template: radius_scaling
+    description: >
+      A 20 x 20 m zone across the route; the Shield holds the aircraft where
+      its 3 s forecast just clears the margin ring (about 11.8 m short of it at
+      4 m/s). At 10 s the zone grows by `factor` about its centre, so its ring
+      now covers where the aircraft waits: legal one tick, inside the ring the
+      next through no move of its own (imposed, not a breach). It must get
+      out, and not fly back in. The growth is small enough that the escape at
+      GeofenceEscape's 2 m/s takes under the escalation FSM's T = 5 s (2.5:
+      3.2 m into the ring; 3.0: 8.2 m), so no fail-safe is expected.
+    mission:
+      start_pose: { x: -60.0, y: 0.0, up: 15.0 }
+      target: { x: 40.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    events:
+      - at_sim_t: 0.0
+        type: spawn_polygon_fence
+        payload:
+          id: dyn-zone
+          vertices: [{ x: -30.0, y: -10.0 }, { x: -10.0, y: -10.0 },
+                     { x: -10.0, y: 10.0 }, { x: -30.0, y: 10.0 }]
+      - at_sim_t: 10.0
+        type: scale_radius
+        payload: { id: dyn-zone, factor: "$factor" }
+    parameter_sweep:
+      factor: [2.5, 3.0]
+    expected_kpis:
+      P0_escape_rate: 0
+      time_to_safe_episodes: { min: 1 }      # the growth really reached it
+      time_to_safe_censored: { max: 0 }      # ... and it got out
+      breaches: { max: 0 }                   # ... and stayed out
+      polygon_entries: { max: 0 }
+    expected_failsafe: false
+
+  - scenario_id: radius-scaling-grow-deep
+    template: radius_scaling
+    # KNOWN FAILURE (measured 2026-10-07): the false trigger the description
+    # predicts - X6 fires at 15 s, 5 s into the escape, and RTL flies the
+    # aircraft home out of the zone. A converging escape aborted by duration.
+    expect: known_failure
+    description: >
+      The same zone grown 3.5-fold: its ring jumps 25 m towards the aircraft,
+      which is then about 13 m inside it (the launch point, 4 m beyond the new
+      ring, stays outside). GeofenceEscape's 2 m/s needs about 6.6 s to get it
+      out, while the escalation FSM's edge X6 sends the aircraft
+      to RTL once the position has been illegal for T = 5 s with the Shield
+      still intervening. The escape converges the whole time, so by the
+      grant's words - trigger fail-safe (RTL / Land) "when repair is unsafe"
+      (Safety Shield p1) - no fail-safe is needed: the label says none is
+      expected, and an RTL here counts as a false trigger in the fail-safe
+      correctness KPI.
+    mission:
+      start_pose: { x: -60.0, y: 0.0, up: 15.0 }
+      target: { x: 40.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    events:
+      - at_sim_t: 0.0
+        type: spawn_polygon_fence
+        payload:
+          id: dyn-zone
+          vertices: [{ x: -30.0, y: -10.0 }, { x: -10.0, y: -10.0 },
+                     { x: -10.0, y: 10.0 }, { x: -30.0, y: 10.0 }]
+      - at_sim_t: 10.0
+        type: scale_radius
+        payload: { id: dyn-zone, factor: 3.5 }
+    ticks: 400
+    expected_kpis:
+      P0_escape_rate: 0
+      time_to_safe_episodes: { min: 1 }
+      time_to_safe_censored: { max: 0 }
+      breaches: { max: 0 }
+      polygon_entries: { max: 0 }
+    expected_failsafe: false
+
+  - scenario_id: radius-scaling-shrink
+    template: radius_scaling
+    description: >
+      A 30 x 30 m zone centred 12 m off the route blocks it; the aircraft
+      waits at its ring. At 8 s the zone shrinks by `factor` about its centre
+      and no longer reaches the route (0.5: its edge 4.5 m off it, 3.5 m
+      beyond the margin; 0.3: 7.5 m off). The rule that held the aircraft is
+      gone, so nothing may repair against the old outline any more and the
+      mission must complete.
+    mission:
+      start_pose: { x: -60.0, y: 0.0, up: 15.0 }
+      target: { x: 40.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    events:
+      - at_sim_t: 0.0
+        type: spawn_polygon_fence
+        payload:
+          id: dyn-zone
+          vertices: [{ x: -35.0, y: -3.0 }, { x: -5.0, y: -3.0 },
+                     { x: -5.0, y: 27.0 }, { x: -35.0, y: 27.0 }]
+      - at_sim_t: 8.0
+        type: scale_radius
+        payload: { id: dyn-zone, factor: "$factor" }
+    ticks: 400
+    parameter_sweep:
+      factor: [0.3, 0.5]
+    expected_kpis:
+      P0_escape_rate: 0
+      breaches: { max: 0 }
+      polygon_entries: { max: 0 }
+      reached_goal: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false

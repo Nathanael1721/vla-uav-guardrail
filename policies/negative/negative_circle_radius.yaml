@@ -1,0 +1,11 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: a circle_fence with radius_m -5
+# currently: refused
+policy_id: neg-circle-radius
+version: 0.1.0
+constraints:
+  - id: disc
+    type: circle_fence
+    geometry:
+      center: { lat: 25.0421, lon: 121.5310 }
+      radius_m: -5

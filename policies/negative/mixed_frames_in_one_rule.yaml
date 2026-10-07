@@ -1,7 +1,8 @@
 # NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
-# defect: lat/lon vertices with no origin to project about
+# defect: one fence with two lat/lon vertices and one x/y vertex
 # currently: refused
-policy_id: neg-no-origin
+# why: a silently half-projected fence is a fence in the wrong place
+policy_id: neg-mixed-frames
 version: 0.1.0
 constraints:
   - id: nfz
@@ -9,4 +10,4 @@ constraints:
     vertices:
       - { lat: 25.04, lon: 121.53 }
       - { lat: 25.05, lon: 121.53 }
-      - { lat: 25.05, lon: 121.54 }
+      - { x: 10, y: 10 }

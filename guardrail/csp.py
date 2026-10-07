@@ -256,6 +256,33 @@ class CSP(_Strict):
     selection: Selection
 
 
+class CSPUnenforcedRules(Exception):
+    """The policy carries rules the Safety Shield does not enforce.
+
+    The four declarable-only classes (distance_envelope, dynamic_nfz,
+    time_window_switch, corridor_swap; see models.RUNTIME_TYPES) can be
+    written in the DSL, but nothing at runtime checks them. A CSP is the
+    model's summary of the rules the Shield enforces, so neither choice the
+    compiler could make on its own is safe: telling the model a rule that is
+    not enforced makes the prompt promise more than the Shield delivers, and
+    dropping it makes a hard rule vanish from both without a trace. The flight
+    loaders refuse such a policy (Policy.unenforced_rules); so does the
+    compiler, by name. Until 2026-10-06 it raised a bare TypeError from the
+    relevance step (marked "pragma: no cover") or TemplateNotFound.
+
+    Deliberately NOT a ValueError subclass, like CSPBudgetExceeded.
+    """
+
+    def __init__(self, policy_id: str, rules: dict[str, str]):
+        self.policy_id = policy_id
+        self.rules = dict(rules)              # rule id -> rule type
+        super().__init__(
+            f"{policy_id}: cannot compile a CSP - the Safety Shield does not "
+            f"enforce {', '.join(f'{i} ({t})' for i, t in self.rules.items())}. "
+            f"These types are declarable in the DSL only; the flight loaders "
+            f"refuse this policy too (Policy.unenforced_rules).")
+
+
 class CSPBudgetExceeded(Exception):
     """The P0 rules alone do not fit the token budget.
 

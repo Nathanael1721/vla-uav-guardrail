@@ -1,0 +1,11 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: scope: everywhere (the grant defines global, mission, segment, waypoint)
+# currently: refused
+policy_id: neg-scope
+version: 0.1.0
+constraints:
+  - id: alt
+    type: altitude_envelope
+    scope: everywhere
+    alt_min_m: 5
+    alt_max_m: 30

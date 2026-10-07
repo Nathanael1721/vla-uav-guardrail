@@ -1118,14 +1118,117 @@ def test_corridor_clearance_and_standoff_explanations_change_with_the_mission():
 # --------------------------------------------------------------------------- #
 
 def test_every_rule_type_has_its_jinja2_templates():
+    """Every type the Shield ENFORCES (models.RUNTIME_TYPES) resolves to a
+    template of each kind, its own or (for a subclass such as circle_fence)
+    its base type's. A type with none would make compile_csp raise on any
+    policy that uses it. The declarable-only types are refused by name before
+    rendering (next test), so they need none; a type moved into RUNTIME_TYPES
+    without templates fails here."""
     _need()
-    from guardrail.models import Constraint
-    types = [a.model_fields["type"].annotation.__args__[0]
-             for a in Constraint.__origin__.__args__]
-    for kind in ("sentence", "summary", "reason"):
-        for t in types:
-            p = K.TEMPLATE_DIR / kind / f"{t}.j2"
-            assert p.is_file(), f"no template {p}"
+    from guardrail.models import RUNTIME_TYPES, Constraint
+    missing, runtime = [], set()
+    for cls in Constraint.__origin__.__args__:
+        name = cls.model_fields["type"].annotation.__args__[0]
+        if name not in RUNTIME_TYPES:
+            continue
+        runtime.add(name)
+        for kind in ("sentence", "summary", "reason"):
+            t = K.template_type(kind, cls)
+            if not (K.TEMPLATE_DIR / kind / f"{t}.j2").is_file():
+                missing.append(f"{kind}/{t}.j2")
+    assert runtime == set(RUNTIME_TYPES), (runtime, RUNTIME_TYPES)
+    assert not missing, f"rule types the compiler cannot render: {missing}"
+
+
+def test_a_rule_the_shield_does_not_enforce_is_refused_by_name():
+    """Review, 2026-10-06: a policy declaring distance_envelope, dynamic_nfz,
+    time_window_switch or corridor_swap made compile_csp raise a bare
+    TypeError from the relevance step (marked "pragma: no cover") or
+    TemplateNotFound. Telling the model an unenforced rule over-promises;
+    dropping it hides a hard rule. The compiler now refuses the policy with
+    CSPUnenforcedRules naming every such rule, as the flight loaders do."""
+    _need()
+    from guardrail.csp import CSPUnenforcedRules
+    from guardrail.models import RUNTIME_TYPES
+    base = [{"id": "fence", "type": "polygon_fence",
+             "vertices": [{"x": 10, "y": 10}, {"x": 20, "y": 10}, {"x": 20, "y": 20}],
+             "altitude_floor_m": 0, "altitude_ceiling_m": 100}]
+    extra = {
+        "distance_envelope": {"object_class": "people", "min_distance_m": 5.0},
+        "dynamic_nfz": {"vertices": [{"x": 30, "y": 30}, {"x": 35, "y": 30},
+                                     {"x": 35, "y": 35}]},
+        "time_window_switch": {"target_id": "fence", "active": False},
+        "corridor_swap": {"target_id": "fence", "centerline": [{"x": 0, "y": 0},
+                                                               {"x": 40, "y": 40}],
+                          "width_m": 6.0},
+    }
+    assert not set(extra) & set(RUNTIME_TYPES), "a type became enforced: update this test"
+    for typ, fields in extra.items():
+        pol = Policy.model_validate({"policy_id": f"p-{typ}", "constraints": base + [
+            dict({"id": f"r-{typ}", "type": typ}, **fields)]})
+        try:
+            ConstraintCompiler(pol).compile_csp(_mission(), now=None)
+        except CSPUnenforcedRules as e:
+            assert e.rules == {f"r-{typ}": typ}, e.rules
+            assert f"r-{typ} ({typ})" in str(e) and "unenforced_rules" in str(e), str(e)
+        else:
+            raise AssertionError(f"{typ}: compile_csp accepted a rule the Shield does not enforce")
+        assert pol.unenforced_rules(), "the flight loaders' check disagrees"
+    # not a ValueError: a caller's generic `except ValueError` must not swallow it
+    assert not issubclass(CSPUnenforcedRules, ValueError)
+
+
+def test_the_kpi_report_lists_a_file_with_an_unenforced_rule_and_carries_on():
+    """2026-10-07: one policy file declaring a declarable-only rule type in the
+    folder stopped coverage_report outright (load_policy refuses it for
+    flight). It is now listed by name with its reasons, left out of every
+    share, and the other files are scored exactly as without it."""
+    _need()
+    import yaml
+    d = Path(tempfile.mkdtemp())
+    (d / "mix.yaml").write_text(yaml.safe_dump(MIX, sort_keys=False), encoding="utf-8")
+    alone = K.coverage_report(d)["totals"]
+    switch = {"policy_id": "p-switch", "version": "0.1.0", "constraints": [
+        {"id": "fence", "type": "polygon_fence", "priority": "P0",
+         "vertices": [{"x": 10, "y": 10}, {"x": 20, "y": 10}, {"x": 20, "y": 20}],
+         "altitude_floor_m": 0, "altitude_ceiling_m": 100},
+        {"id": "fence-off", "type": "time_window_switch", "target_id": "fence",
+         "active": False}]}
+    (d / "switch.yaml").write_text(yaml.safe_dump(switch, sort_keys=False), encoding="utf-8")
+    rep = K.coverage_report(d)
+    t = rep["totals"]
+    assert t["n_policies"] == 2 and t["n_compiled"] == 1, t
+    assert t["n_not_flyable"] == 1, t
+    bad = rep["not_flyable"][0]
+    assert bad["policy_id"] == "p-switch" and len(bad["problems"]) == 1, bad
+    assert bad["problems"][0].startswith("fence-off: time_window_switch"), bad
+    for k in ("n_p0_in_scope", "n_p0_covered", "p0_coverage", "baseline_n_p0_covered"):
+        assert t[k] == alone[k], (k, t[k], alone[k])
+
+
+def test_a_circle_fence_compiles_as_the_keep_out_zone_it_is():
+    """CircleFence subclasses PolygonFence (its vertices are the derived
+    32-gon). Until 2026-10-06 the template lookup used `rule.type` alone, so a
+    policy with one circle could not compile a CSP (TemplateNotFound) while the
+    Shield enforced it. Now it renders, is covered, and is forbidden."""
+    _need()
+    from guardrail.models import CircleFence
+    pol = Policy.model_validate({"policy_id": "circle", "constraints": [
+        {"id": "disc", "type": "circle_fence", "center": {"x": 15.0, "y": 15.0},
+         "radius_m": 4.0, "altitude_floor_m": 0, "altitude_ceiling_m": 100}]})
+    rule = pol.constraints[0]
+    assert isinstance(rule, CircleFence), type(rule)
+    assert K.template_type("sentence", rule) == "polygon_fence"
+    csp = ConstraintCompiler(pol).compile_csp(_mission(), now=None)
+    assert "Never enter zone 'disc'." in csp.natural_language_prompt, csp.natural_language_prompt
+    assert K.p0_coverage(csp, pol)["coverage"] == 1.0
+    assert "disc" in csp.forbidden_action_set.no_translate_into_polygons
+    st = State(x=15.0, y=8.0, up=15.0)            # 7 m south of the centre
+    into = K.action_violations(Action4D(vy=0.0, vx=0.0), csp, state=st, policy=pol)
+    assert "polygon:disc" not in into, into
+    hit = K.action_violations(Action4D(vy=3.5), csp, state=st, policy=pol, dt=1.0)
+    assert "polygon:disc" in hit, hit
+    assert csp.relevance_explanations.get("disc"), "no reason rendered for the circle"
 
 
 def test_sentences_without_a_window_are_byte_identical_to_the_old_ones():
@@ -1596,6 +1699,77 @@ def test_parse_command_refuses_a_command_with_no_target():
         assert "known places" in str(e), e
         return
     raise AssertionError("a command with no target parsed")
+
+
+def test_a_csp_stored_under_the_old_16_hex_hash_still_checks_against_its_policy():
+    """A CSP written before 2026-10-06 carries the 16-hex legacy policy hash.
+    p0_coverage / rule_coverage / action_violations compared hashes with `!=`,
+    so such a CSP was refused against the very policy it was compiled from.
+    They now use Policy.matches_hash, which knows every recorded form. A CSP
+    for ANOTHER policy must still be refused, under either form."""
+    _need()
+    pol = load_policy(PED)
+    csp = ConstraintCompiler(pol).compile_csp(_mission(), now=MONDAY_0800)
+    legacy = sorted(pol.legacy_hashes().values())[0]
+    assert len(legacy) < len(pol.policy_hash), (legacy, pol.policy_hash)
+    old = csp.model_copy(update={"policy_hash": legacy})
+    assert K.p0_coverage(old, pol)["coverage"] == K.p0_coverage(csp, pol)["coverage"]
+    assert K.rule_coverage(old, pol)["all"] == K.rule_coverage(csp, pol)["all"]
+    assert K.action_violations(Action4D(), old, state=State(x=0, y=0, up=15),
+                               policy=pol) == []
+    other = load_policy(DEMO)
+    for bad in (old, csp):
+        for fn in (lambda c: K.p0_coverage(c, other),
+                   lambda c: K.rule_coverage(c, other),
+                   lambda c: K.action_violations(Action4D(), c, state=State(x=0, y=0, up=15),
+                                                 policy=other)):
+            try:
+                fn(bad)
+            except ValueError:
+                continue
+            raise AssertionError(f"a CSP for {bad.policy_hash} was accepted against "
+                                 f"{other.policy_hash}")
+
+
+def test_action_violations_give_the_same_answer_with_prebuilt_rings():
+    """`ir=` reuses the margin rings guardrail.ir compiled once (for a replay
+    that calls this per frame). Same verdicts at every probe point, with and
+    without; an IR compiled from a DIFFERENT policy is ignored, not trusted."""
+    _need()
+    from guardrail.ir import PolicyIR
+    pol = _mix()
+    csp = ConstraintCompiler(pol).compile_csp(_mission(**MIX_MISSION), now=None)
+    ir = PolicyIR.from_policy(pol)
+    assert ir.fences, "fixture has no fence, so the ring path is not exercised"
+    n_flagged = 0
+    for x in range(20, 61, 4):
+        for y in range(-20, 21, 4):
+            st = State(x=float(x), y=float(y), up=15.0)
+            a = K.action_violations(Action4D(vx=4.0), csp, state=st, policy=pol)
+            b = K.action_violations(Action4D(vx=4.0), csp, state=st, policy=pol, ir=ir)
+            assert a == b, (x, y, a, b)
+            n_flagged += any(v.startswith("polygon:") for v in a)
+    assert n_flagged > 0, "no probe point reached a fence; the comparison proved nothing"
+    # A stale IR must not be used: same answer as none. It is built from the
+    # SAME policy with the on-path fence grown (same fence id, so a lookup by
+    # id would find its ring), and the probe point is inside the stale ring
+    # but outside the real one - so trusting it WOULD change the answer.
+    # (Until the 6 Oct review the stale IR came from another policy whose
+    # fence ids differ, and the check passed whether or not staleness was
+    # tested.)
+    from guardrail.geometry import point_in_fence
+    grown = json.loads(json.dumps(MIX))
+    grown["constraints"][0]["vertices"] = _sq(30, -15, 60, 15)
+    stale = PolicyIR.from_policy(Policy.model_validate(grown))
+    assert not stale.is_current_for(pol)
+    st = State(x=28.0, y=0.0, up=15.0)                      # +4 m/s x 1 s -> x = 32
+    fence = {c.id: c for c in pol.constraints}["nfz-on-path"]
+    stale_ring = {r.rule.id: r.buffered for r in stale.fences}["nfz-on-path"]
+    assert point_in_fence(32.0, 0.0, 15.0, fence, buffered=stale_ring), "probe not in stale ring"
+    assert not point_in_fence(32.0, 0.0, 15.0, fence), "probe inside the real fence"
+    fresh = K.action_violations(Action4D(vx=4.0), csp, state=st, policy=pol)
+    assert "polygon:nfz-on-path" not in fresh, fresh
+    assert K.action_violations(Action4D(vx=4.0), csp, state=st, policy=pol, ir=stale) == fresh
 
 
 def test_a_csp_can_be_written_with_a_flight():

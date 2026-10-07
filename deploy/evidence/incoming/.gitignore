@@ -1,0 +1,7 @@
+# Measurements taken on the Jetson Orin land here (VLAGUARD_EVIDENCE_OUT in
+# deploy/compose/docker-compose.orin.yml). Git ignores them, so a measurement
+# never modifies a tracked file and the checkout the manifests read stays
+# clean. Copy reviewed files to the desktop, move them to deploy/evidence/<topology>/
+# and commit them there (docs/RUNBOOK-orin-hil.md).
+*
+!.gitignore

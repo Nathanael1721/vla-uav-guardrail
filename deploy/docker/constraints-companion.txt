@@ -1,0 +1,12 @@
+# Versions for the companion image's Python environment, taken from the
+# environment that flew the stored dev-rail runs: WSL ~/venv-ros on Ubuntu
+# 24.04 (docs/DESIGN-python-versions.md, "What runs where", read 2026-10-06).
+# pydantic and shapely are installed into the venv; the other four are the
+# Ubuntu 24.04 system packages the venv sees, pinned so pip keeps them.
+# tests/test_deploy_configs.py checks this list against that table.
+pydantic==2.13.4
+shapely==2.1.2
+numpy==1.26.4
+PyYAML==6.0.1
+Jinja2==3.1.2
+cryptography==41.0.7

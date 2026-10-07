@@ -1,0 +1,145 @@
+# hil and flight topologies, JETSON ORIN side. One file for both: only the
+# topology file changes (reference docs/03-simulation/topologies.md: "promoting
+# from hil to flight is a configuration change, not a code change"). In flight
+# the autopilot's serial device is mapped by a small override,
+# docker-compose.orin.flight.yml.
+#
+#   hil:    docker compose --env-file deploy/topologies/hil.env \
+#                          -f deploy/compose/docker-compose.orin.yml up -d mavros
+#   one mission (hil):
+#           docker compose --env-file deploy/topologies/hil.env \
+#                          -f deploy/compose/docker-compose.orin.yml run --rm mission mission --shield on --tag <tag>
+#   Shield tick profile of the Orin:
+#           docker compose --env-file deploy/topologies/hil.env \
+#                          -f deploy/compose/docker-compose.orin.yml run --rm profile
+#   flight: docker compose --env-file <your flight.env> -f deploy/compose/docker-compose.orin.yml \
+#                          -f deploy/compose/docker-compose.orin.flight.yml up -d mavros
+#
+# Host networking: MAVROS binds UDP 14555 on the Orin's own interface, and every
+# ROS node shares the host's network, so DDS stays local unless a desktop tool
+# asks for it (deploy/dds/cyclonedds.xml).
+#
+# EVIDENCE THAT THIS IS THE ORIN. The Shield node (mission) and the tools label
+# a run hil or flight only on evidence read from the machine
+# (guardrail.manifest.collect_host_evidence): the board name in the device
+# tree, /etc/nv_tegra_release and the JetPack package. A default Docker
+# container cannot read the device tree: Docker masks /sys/firmware, which
+# /proc/device-tree points into. The services that collect evidence therefore
+# run with security_opt systempaths=unconfined (Docker 19.03+; it lifts the
+# masking of /proc and /sys paths for that container, which these containers,
+# already on host networking on a lab Orin, are trusted with) and mount
+# /etc/nv_tegra_release read-only. Check it once on the Orin:
+#   docker run --rm --security-opt systempaths=unconfined ubuntu cat /proc/device-tree/model
+#
+# EVIDENCE THAT THE AUTOPILOT IS ELSEWHERE. The Shield node also scans /proc
+# for ArduPilot SITL, MAVROS and router processes
+# (guardrail.manifest.scan_local_processes): a SITL on the Shield's host makes
+# the run dev, and `mavros_on` records where MAVROS ran. A container sees only
+# its own PID namespace, so the mission runs with `pid: host`: the scan then
+# covers the whole Orin, sees MAVROS in the sibling mavros container, and would
+# see a SITL started on the Orin by mistake. No other service needs it.
+#
+# OUTPUT. VLAGUARD_EVIDENCE_OUT points the tools at deploy/evidence/incoming/,
+# which git ignores (deploy/evidence/incoming/.gitignore), so nothing measured
+# here modifies a tracked file and the checkout stays clean for the manifests'
+# code_revision. Runs land in demo/out/<tag>/, also ignored.
+#
+# Written 2026-10-06, NOT yet run.
+
+name: vlaguard-orin
+
+x-vlaguard:
+  topologies: [hil, flight]
+  host: orin
+  # The services whose processes read the host evidence.
+  evidence_services: [mission, profile, facts, vla-bench]
+  # Services this file cannot offer yet, and the file each one waits for. The
+  # test suite checks that each path is still missing, so this list cannot go
+  # stale silently, and that no service runs any of them.
+  pending:
+    - service: vla-pilot
+      needs: sitl/ros2_vla_bridge_node.py
+      why: a camera VLA from the vla image publishing /vla/action_4d for the Shield
+
+x-companion-env: &companion-env
+  VLAGUARD_TOPOLOGY: ${VLAGUARD_TOPOLOGY:?use --env-file deploy/topologies/hil.env or flight.env}
+  ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:?}
+  RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:?}
+  CYCLONEDDS_URI: file:///opt/vlaguard/deploy/dds/cyclonedds.xml
+  VLAGUARD_DDS_PEER_A: ${VLAGUARD_DDS_PEER_A:?}
+  VLAGUARD_DDS_PEER_B: ${VLAGUARD_DDS_PEER_B:?}
+  FCU_URL: ${FCU_URL-}
+  VLAGUARD_BAG: ${VLAGUARD_BAG:?}
+  VLAGUARD_ALLOW_FLIGHT_MISSION: ${VLAGUARD_ALLOW_FLIGHT_MISSION:?}
+  VLAGUARD_EVIDENCE_OUT: /opt/vlaguard/deploy/evidence/incoming
+
+x-companion-volumes: &companion-volumes
+  - ../..:/opt/vlaguard:ro
+  - ../../demo/out:/opt/vlaguard/demo/out
+  - ../../deploy/evidence:/opt/vlaguard/deploy/evidence
+  - /etc/nv_tegra_release:/etc/nv_tegra_release:ro
+
+services:
+  mavros:
+    image: ${VLAGUARD_IMAGE:?}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/companion.Dockerfile
+    network_mode: host
+    command: ["mavros"]
+    environment: *companion-env
+    volumes: *companion-volumes
+
+  # One mission per run. Refused in flight unless VLAGUARD_ALLOW_FLIGHT_MISSION=yes.
+  mission:
+    image: ${VLAGUARD_IMAGE:?}
+    profiles: ["mission"]
+    network_mode: host
+    pid: host
+    depends_on: [mavros]
+    security_opt: ["systempaths=unconfined"]
+    command: ["mission", "--shield", "on"]
+    environment: *companion-env
+    volumes: *companion-volumes
+
+  profile:
+    image: ${VLAGUARD_IMAGE:?}
+    profiles: ["tools"]
+    network_mode: none
+    security_opt: ["systempaths=unconfined"]
+    command: ["profile"]
+    environment: *companion-env
+    volumes: *companion-volumes
+
+  facts:
+    image: ${VLAGUARD_IMAGE:?}
+    profiles: ["tools"]
+    network_mode: none
+    security_opt: ["systempaths=unconfined"]
+    command: ["facts"]
+    environment: *companion-env
+    volumes: *companion-volumes
+
+  # R1 inference-rate protocol for one VLA backend (VLA_BACKEND) on the Orin;
+  # the CPU backends (stub, bc_v3) are measured here too.
+  vla-bench:
+    image: ${VLAGUARD_VLA_IMAGE:?}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/vla.Dockerfile
+      args:
+        BASE_IMAGE: ${VLA_BASE_IMAGE:?}
+    profiles: ["vla-bench"]
+    runtime: nvidia
+    network_mode: none
+    security_opt: ["systempaths=unconfined"]
+    command: ["measure", "--backend", "${VLA_BACKEND:?}", "--allow-gpu",
+              "--model-root", "/models", "--topology", "${VLAGUARD_TOPOLOGY:?}"]
+    environment:
+      VLAGUARD_TOPOLOGY: ${VLAGUARD_TOPOLOGY:?}
+      VLAGUARD_EVIDENCE_OUT: /opt/vlaguard/deploy/evidence/incoming
+    volumes:
+      - ../..:/opt/vlaguard:ro
+      - ../../deploy/evidence:/opt/vlaguard/deploy/evidence
+      - ${VLAGUARD_MODEL_ROOT:?}:/models:ro
+      - /etc/nv_tegra_release:/etc/nv_tegra_release:ro

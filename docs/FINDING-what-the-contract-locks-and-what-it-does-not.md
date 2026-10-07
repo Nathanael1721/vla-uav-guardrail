@@ -40,22 +40,34 @@ and names five acceptance KPIs: mission success rate, **P0 violation escape rate
 time to safe**. The last two have still never been measured, which
 `docs/CHECKLIST-remaining-work.md` already records.
 
-**So: yes, and it is not optional.** ArduPilot SITL with MAVROS 2 is the
-contracted path. It is also the rail this project already produces KPI-grade
-numbers on, so nothing needs to change to satisfy it.
+**So: yes, and it is not optional.** ArduPilot with MAVROS 2 is the contracted
+path. The desktop ArduPilot SITL + MAVROS 2 rail this project runs is the
+grant's **dev** topology. Reported KPI figures come from Stress Testing runs in
+the **hil** topology, with the VLA and the Shield on a Jetson Orin
+(Architecture constraints p.4; Stress Testing p.1); on 6 Oct the PI decided
+that the Orin is set up for that, rather than the desktop rail waived in.
+*(Corrected 2026-10-06: this paragraph said the desktop rail already produced
+KPI-grade numbers, so nothing needed to change. Withdrawn, CHANGELOG.md.)*
 
-## 2. The detector is explicitly NOT locked
+## 2. The grant says nothing about the detector
 
-The same document, one paragraph later:
+The same document, one paragraph later, makes the **VLA backend** switchable:
 
 > "The VLA backend interface is **switchable** (CognitiveDrone, OpenVLA generic,
 > BitVLA, in-house stubs for unit tests, etc.); every backend must conform to
 > this 4-D output shape, but **the project does not commit to any one of them as
 > a 'default'**."
 
-Changing the detector is therefore *inside* the contract. One property must
-survive: it has to stay **open-vocabulary**, because the grant title is
-"Semantic-Spatial Translation" and the language interface is what that names.
+That clause is about VLA backends that emit the 4-D action, and it names stubs
+only for unit tests. It does not cover the detector, and it does not cover the
+city demos' pilot: the city demos fly a hand-written controller, not a VLA, so
+they test the Shield and the tracker, not a constrained VLA. The detector is
+ours to choose because the grant does not specify one. *(Corrected 2026-10-06:
+this section said the clause made changing the detector "inside the contract"
+and read the grant title as naming a language interface. Withdrawn,
+CHANGELOG.md.)* One property must survive by our own design choice: the
+detector stays **open-vocabulary**, because the follow demos take their target
+as a phrase and the stand-off rule binds by the class that phrase resolves to.
 
 ---
 

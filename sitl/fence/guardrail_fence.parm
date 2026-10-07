@@ -1,0 +1,38 @@
+# ArduPilot GeoFence: the last-line backstop behind the Safety Shield.
+#
+# Grant, Architecture constraints p1: "The autopilot's own GeoFence /
+# FENCE_ACTION is the ultimate backstop." Loaded by sitl/start_sitl.sh as an
+# extra --defaults file after the stock copter.parm (GUARDRAIL_FENCE=0 skips
+# it). Parameter meanings are from ArduCopter 4.5.7,
+# libraries/AC_Fence/AC_Fence.cpp.
+#
+# The polygons come from the POLICY, not from this file: the MAVLink adapter
+# (sitl/mavlink_adapter_node.py) uploads each policy generation's keep-out
+# zones through /mavros/geofence/push as exclusion polygons / circles. They
+# are the zones as authored, without the Shield's margin_m; only zones whose
+# altitude band covers 0 .. FENCE_ALT_MAX are uploaded, and a zone the aircraft
+# is inside or near is held back until it is clear - so the autopilot fence is
+# never stricter than the policy, and with a working Shield it never fires.
+# With the Shield node gone it does. FENCE_ALT_MAX below the policy's ceiling
+# would make the altitude fence stricter than the policy (18 policies in
+# policies/ allow more than 25 m), so the Shield node reads the parameters
+# back from the autopilot at take-off, raises FENCE_ALT_MAX to the policy's
+# ceiling + 5 m when needed, and records both (hil_evidence.autopilot_fence).
+
+FENCE_ENABLE   1     # fence on from boot
+FENCE_TYPE     5     # bit 0 max altitude + bit 2 inclusion/exclusion polygons and circles
+FENCE_ACTION   1     # Copter: RTL or Land
+FENCE_ALT_MAX  30    # m; above the demo ceiling (20 m); raised at take-off if needed
+FENCE_MARGIN   2     # m, ArduPilot default
+FENCE_RADIUS   300   # m; unused while bit 1 (circle around home) is off
+
+# The fence must act on a BREACH only, not steer. ArduCopter's simple
+# avoidance (AVOID_ENABLE bit 0 "UseFence", on by default) also uses the fence
+# and, in GUIDED velocity control (ArduCopter/mode_guided.cpp, the
+# copter.avoid.adjust_velocity call), bends every velocity setpoint that
+# points within FENCE_MARGIN of a zone. With it on, the 2026-10-06 shield-off
+# run stopped about 2 m short of the no-fly zone for 20 s - the autopilot
+# doing the Shield's job - and a Shield-on run would be measured with a second
+# filter behind it. 0 = no avoidance; the Shield is the only filter, the fence
+# the backstop.
+AVOID_ENABLE   0

@@ -1681,7 +1681,7 @@ FORM_RULES = {
     "sentences": "Each paraphrase is one or more complete sentences.",
     "task": ("Half of them (form: verb_phrase) must be a bare verb phrase that "
              "reads correctly after \"What action should the robot take to ...?\" "
-             "(OpenVLA's prompt frame, demo/real_vla_demo.py:124); the other half "
+             "(OpenVLA's prompt frame, demo/real_vla_demo.py PROMPT_TEMPLATE); the other half "
              "(form: utterance) are free operator utterances."),
 }
 
@@ -2349,7 +2349,8 @@ TASKS = {
         "(demo/follow_vlm.py reads only the noun phrase)"),
     "task_fly_forward_avoid_restricted": (
         "fly forward and avoid restricted areas",
-        "demo/real_vla_demo.py:167 and scripts/demo_real_vla.ps1:10 - the OpenVLA "
+        "demo/real_vla_demo.py main() --instruction default (framed by "
+        "build_openvla_prompt) and scripts/demo_real_vla.ps1 - the OpenVLA "
         "pilot, the one model here that reads the instruction text"),
     "task_fly_to_40_40": (
         "fly to (40, 40) at 6 m/s altitude 20",

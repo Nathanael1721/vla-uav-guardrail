@@ -159,8 +159,17 @@ def samples(scenario: str, n: int, seed: int) -> list[tuple[State, Action4D]]:
     return out
 
 
+# Repair fields that are a record for the escalation FSM, not behaviour
+# (added 2026-10-07). The frozen legacy loop cannot report them, so the
+# comparison leaves them out, exactly as tests/test_ir.py does.
+_RECORD_ONLY = ("magnitude_m", "axis", "recovery")
+
+
 def _decision_key(d) -> str:
-    return json.dumps(d.model_dump(), sort_keys=True, default=str)
+    out = d.model_dump()
+    out["repairs"] = [{k: v for k, v in r.items() if k not in _RECORD_ONLY}
+                      for r in out.get("repairs", [])]
+    return json.dumps(out, sort_keys=True, default=str)
 
 
 def _time(fn, pairs, warmup: int = 20) -> tuple[list[float], list]:
@@ -187,11 +196,18 @@ def _stats(ms: list[float]) -> dict:
 
 
 def _make(impl: str, policy: Policy, horizon: float, dt: float) -> Shield:
+    # "current" and "legacy" are compared decision for decision, so both run
+    # without the escalation FSM: the frozen legacy repairs carry no
+    # magnitude_m, and the FSM would fault on them (tests/test_ir.py compares
+    # the same way). "current_fsm" is the Shield as it flies, FSM on, and is
+    # timed only.
     if impl == "current":
+        return Shield(policy, lookahead_s=horizon, dt=dt, escalation=False)
+    if impl == "current_fsm":
         return Shield(policy, lookahead_s=horizon, dt=dt)
     if impl == "legacy":
         from legacy_fence_loop import LegacyFenceShield
-        return LegacyFenceShield(policy, lookahead_s=horizon, dt=dt)
+        return LegacyFenceShield(policy, lookahead_s=horizon, dt=dt, escalation=False)
     raise ValueError(impl)
 
 
@@ -238,7 +254,10 @@ def main(argv=None) -> int:
             pairs = samples(sc, n, args.seed)
             row = {}
             decisions = {}
-            for impl in [*args.impl, "floor"]:
+            timed = [*args.impl, "floor"]
+            if "current" in args.impl and fn_name == "filter":
+                timed.insert(timed.index("current") + 1, "current_fsm")
+            for impl in timed:
                 use = pairs
                 if impl == "legacy" and args.legacy_cap:
                     use = pairs[:args.legacy_cap]
@@ -246,7 +265,7 @@ def main(argv=None) -> int:
                       else _make(impl, full.model_copy(deep=True), args.horizon, args.dt))
                 ms, outs = _time(getattr(sh, fn_name), use)
                 row[impl] = _stats(ms)
-                if impl != "floor":
+                if impl in ("current", "legacy"):
                     decisions[impl] = outs
                 if impl == "current" or (impl == "legacy" and "current" not in args.impl):
                     if fn_name == "_check":
@@ -292,14 +311,14 @@ def main(argv=None) -> int:
               f"{row['hot_apply']['median_ms']:.3f} ms (max {row['hot_apply']['max_ms']:.3f}; "
               f"budget 50 ms)")
     print()
-    hdr = f"{'scenario/call':<16}{'impl':<9}{'n':>6}{'median':>10}{'p99':>10}{'max':>10}   budget"
+    hdr = f"{'scenario/call':<16}{'impl':<12}{'n':>6}{'median':>10}{'p99':>10}{'max':>10}   budget"
     print(hdr)
     print("-" * len(hdr))
     for key, row in results.items():
         budget = QUERY_BUDGET_MS if key.endswith("_check") else TICK_BUDGET_MS
         for impl, s in row.items():
             verdict = "ok" if s["p99_ms"] <= budget else "OVER"
-            print(f"{key:<16}{impl:<9}{s['n']:>6}{s['median_ms']:>9.3f}m{s['p99_ms']:>9.3f}m"
+            print(f"{key:<16}{impl:<12}{s['n']:>6}{s['median_ms']:>9.3f}m{s['p99_ms']:>9.3f}m"
                   f"{s['max_ms']:>9.3f}m   {budget:g} ms p99 {verdict}")
     print()
     for key, s in sanity.items():

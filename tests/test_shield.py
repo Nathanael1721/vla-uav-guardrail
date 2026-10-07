@@ -193,7 +193,7 @@ def test_lesson4_style_nfz_dead_center_climb():
 def test_hot_apply_dynamic_nfz():
     """Grant's dynamic_nfz: a zone injected mid-flight must be enforced on the
     very next tick, and the policy generation/hash must change (audit trail)."""
-    from guardrail.models import PolygonFence, XY
+    from guardrail.models import DynamicNFZ, XY
 
     s = make_shield()
     st = State(x=-20, y=-20, up=4)
@@ -201,8 +201,8 @@ def test_hot_apply_dynamic_nfz():
     assert not s.filter(st, act).touched
 
     gen0, hash0 = s.policy.generation, s.policy.policy_hash
-    s.hot_apply(PolygonFence(
-        id="nfz-dynamic", type="polygon_fence",
+    s.hot_apply(DynamicNFZ(
+        id="nfz-dynamic", type="dynamic_nfz",
         vertices=[XY(x=-15, y=-24), XY(x=-8, y=-24), XY(x=-8, y=-16), XY(x=-15, y=-16)],
     ))
     assert s.policy.generation == gen0 + 1
@@ -211,6 +211,40 @@ def test_hot_apply_dynamic_nfz():
     d = s.filter(st, act)                         # same action now heads into it
     assert d.touched                              # enforced immediately
     assert not s._check(st, d.emitted)            # and repaired safely
+    assert d.generation == gen0 + 1 and d.policy_hash == s.policy.policy_hash
+
+
+def test_a_polygon_fence_is_locked_once_the_mission_starts():
+    """Policy DSL page: only dynamic_nfz, time_window_switch and corridor_swap
+    may be hot-applied; "all other classes are locked at mission start".
+    hot_apply took a PolygonFence mid-flight until 2026-10-07. Before the first
+    tick a zone is still part of the mission-start policy; after it, the call
+    is refused with the migration, and as_dynamic_nfz is that migration."""
+    from guardrail.models import PolygonFence, XY
+    from guardrail.shield import LockedRuleClass, as_dynamic_nfz
+
+    def fence():
+        return PolygonFence(id="nfz-late", type="polygon_fence",
+                            vertices=[XY(x=-15, y=-24), XY(x=-8, y=-24),
+                                      XY(x=-8, y=-16), XY(x=-15, y=-16)])
+    s = make_shield()
+    s.hot_apply(fence())                          # before take-off: allowed
+    assert s.policy.generation == 1 and not s.mission_started
+    s = make_shield()
+    s.filter(State(x=-20, y=-20, up=4), Action4D())
+    gen, n = s.policy.generation, len(s.policy.constraints)
+    try:
+        s.hot_apply(fence())
+    except LockedRuleClass as e:
+        assert "locked at mission start" in str(e) and "as_dynamic_nfz" in str(e)
+    else:
+        raise AssertionError("a polygon_fence was hot-applied after take-off")
+    assert (s.policy.generation, len(s.policy.constraints)) == (gen, n)
+    z = as_dynamic_nfz(fence())
+    assert z.type == "dynamic_nfz" and z.margin_m == fence().margin_m
+    assert [(v.x, v.y) for v in z.vertices] == [(v.x, v.y) for v in fence().vertices]
+    s.hot_apply(z)
+    assert s.policy.generation == gen + 1
 
 
 # --------------------------------------------------------------- runner
@@ -521,29 +555,54 @@ def test_fences_out_of_the_forecasts_reach_are_not_tested():
     assert near > 0, "no fence was tested beside a fence"
 
 
+def _fifty_variant(kind):
+    """The bench's 50-rule policy on one of the Shield's slow paths: "edge",
+    every rule with a weekly window whose end falls inside the lookahead (the
+    schedule is then read at both sides of every pose's instant); "moving",
+    every polygon fence a dynamic_nfz drifting at 1 m/s (materialised per
+    tick, no STRtree)."""
+    from guardrail.models import Policy
+    data = _fifty().fifty_rule_policy().model_dump(mode="json", exclude_none=True)
+    for c in data["constraints"]:
+        if kind == "edge":
+            c["valid_time"] = {"recurrence": {"start_time": "07:30", "end_time": "17:30"}}
+        elif kind == "moving" and c["type"] == "polygon_fence":
+            c.update(type="dynamic_nfz", motion={"vx_mps": 1.0})
+    return Policy.model_validate(data)
+
+
 def test_the_50_rule_monitor_fits_the_grant_budget():
-    """Median _check <= 5 ms and p99 filter() <= 100 ms at the grant's load, on
-    the samples where both used to fail worst (1-8 m outside a fence's margin,
-    flying at it). Desktop numbers; the margin is ~40x, so a loaded machine
-    still passes and a return of the per-fence loop does not."""
+    """Median _check <= 5 ms and p99 filter() <= 100 ms at the grant's load
+    (50 rules, the grant's 5 s lookahead at 0.1 s), on the samples where both
+    used to fail worst (1-8 m outside a fence's margin, flying at it). Also on
+    the two slow paths: windows with an edge inside the lookahead, and 48
+    moving zones (31 ms per _check before the swept-box skip). Desktop
+    numbers; the margin is >= 10x, so a loaded machine still passes and a
+    return of the per-fence loop does not."""
     import statistics
     import time
+    from datetime import datetime
     B = _fifty()
-    sh = Shield(B.fifty_rule_policy(), lookahead_s=3.0, dt=0.5)
     pairs = B.samples("near", 200, seed=3)
-    ms_check, ms_filter = [], []
-    for st, a in pairs:
-        t0 = time.perf_counter()
-        sh._check(st, a)
-        ms_check.append((time.perf_counter() - t0) * 1e3)
-    for st, a in pairs[:100]:
-        t0 = time.perf_counter()
-        sh.filter(st, a)
-        ms_filter.append((time.perf_counter() - t0) * 1e3)
-    med = statistics.median(ms_check)
-    p99 = sorted(ms_filter)[98]
-    assert med <= 5.0, f"_check median {med:.2f} ms > 5 ms at 50 rules"
-    assert p99 <= 100.0, f"filter() p99 {p99:.1f} ms > the 100 ms tick at 50 rules"
+    edge = datetime(2026, 10, 7, 17, 29, 57)            # the 17:30 edge is 3 s ahead
+    for label, pol, now in (("static", B.fifty_rule_policy(), None),
+                            ("edge", _fifty_variant("edge"), lambda: edge),
+                            ("moving", _fifty_variant("moving"), None)):
+        sh = Shield(pol, now=now)
+        assert (sh.lookahead_s, sh.dt) == (5.0, 0.1)
+        ms_check, ms_filter = [], []
+        for st, a in pairs:
+            t0 = time.perf_counter()
+            sh._check(st, a)
+            ms_check.append((time.perf_counter() - t0) * 1e3)
+        for k, (st, a) in enumerate(pairs[:100]):
+            t0 = time.perf_counter()
+            sh.filter(st, a, t=0.1 * k)
+            ms_filter.append((time.perf_counter() - t0) * 1e3)
+        med = statistics.median(ms_check)
+        p99 = sorted(ms_filter)[98]
+        assert med <= 5.0, f"{label}: _check median {med:.2f} ms > 5 ms at 50 rules"
+        assert p99 <= 100.0, f"{label}: filter() p99 {p99:.1f} ms > the 100 ms tick"
 
 
 def test_history_keeps_the_last_50_ticks_oldest_first():
@@ -624,6 +683,456 @@ def test_every_tick_in_the_window_carries_its_own_time():
         ms = s.history[-1].elapsed_ms
         assert math.isfinite(ms) and 0.0 < ms <= outer, (ms, outer)
     assert len(s.history) == len(cases)
+
+# ------------------------------------------- enforcement (2026-10-07, WP3-07/06/08)
+#
+# Each test below was run against guardrail/shield.py as of 401305a and failed
+# there (see docs/DESIGN-shield-enforcement.md, "Shown failing first").
+
+def _zone_policy(**kw):
+    """demo_policy's square zone (7..23 m, 1 m margin) plus a speed cap, with
+    the zone's fields overridden by `kw`."""
+    from guardrail.models import Policy
+    zone = {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+            "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7},
+                         {"x": 23, "y": 23}, {"x": 7, "y": 23}]}
+    zone.update(kw)
+    return Policy.model_validate({"policy_id": "zone", "constraints": [
+        zone, {"id": "kin", "type": "kinematic_envelope", "priority": "P1",
+               "speed_max_mps": 4.0, "climb_rate_max_mps": 2.0,
+               "yaw_rate_max_dps": 45.0}]})
+
+
+def test_the_default_lookahead_is_the_grants_5_s_at_10_hz():
+    """Safety Shield page: "Lookahead horizon: 5 s of predicted trajectory at
+    10 Hz = 50 future poses". The default was 3 s at 0.5 s (7 poses); a rail
+    that passes its own horizon keeps it."""
+    s = Shield(load_policy(POLICY_PATH))
+    assert (s.lookahead_s, s.dt) == (5.0, 0.1)
+    poses = s.forecast(State(x=0, y=0, up=4), Action4D(vx=1.0))
+    assert len(poses) == 51 and abs(poses[-1][0] - 5.0) < 1e-9
+    assert len(make_shield().forecast(State(x=0, y=0, up=4), Action4D(vx=1.0))) == 7
+
+
+def test_every_tick_feeds_the_escalation_fsm():
+    """A clean tick stays Normal and streams the action; a small trusted repair
+    enters Brake by G1 and still streams the repair; 2 s clean recovers by G7
+    (T_recover), not a tick earlier."""
+    s = Shield(load_policy(POLICY_PATH))
+    far = State(x=-20, y=-20, up=4)
+    d = s.filter(far, Action4D(vx=2.0))
+    assert (d.fsm_state_before, d.fsm_state_after, d.setpoint) == ("Normal", "Normal", "pass")
+    assert d.command == d.emitted == d.raw and d.set_mode is None
+    assert d.generation == 0 and d.policy_hash == s.policy.policy_hash
+    d = s.filter(State(x=0, y=15, up=4), Action4D(vx=1.3))     # 0.5 m deep forecast
+    assert [r.operator for r in d.repairs] == ["GeofenceSlide"], d.repairs
+    assert (d.fsm_edge, d.fsm_state_after, d.setpoint) == ("G1", "Brake", "pass")
+    assert d.command == d.emitted != d.raw
+    edges = [s.filter(far, Action4D(vx=2.0)).fsm_edge for _ in range(21)]
+    assert edges[:20] == [None] * 20 and edges[20] == "G7", edges
+
+
+def test_a_repair_reports_its_size_on_the_grants_axis():
+    """The grant's audit field `magnitude_m` per repair (Safety Shield p5):
+    the forecast's penetration depth for a lateral projection, the altitude
+    error for a vertical one; a repair of a position already outside the rule
+    is a recovery (exempt from theta)."""
+    from shapely.geometry import Point, Polygon
+    s = Shield(load_policy(POLICY_PATH))
+    st, a = State(x=0, y=15, up=4), Action4D(vx=3.0)
+    d = s.filter(st, a)
+    slide = [r for r in d.repairs if r.operator == "GeofenceSlide"]
+    ring = Polygon([(7, 7), (23, 7), (23, 23), (7, 23)]).buffer(1.0)
+    deepest = max(ring.boundary.distance(Point(p.x, p.y))
+                  for _, p in s.forecast(st, a) if ring.contains(Point(p.x, p.y)))
+    assert len(slide) == 1 and slide[0].axis == "lateral" and not slide[0].recovery
+    assert abs(slide[0].magnitude_m - deepest) < 1e-9, (slide[0].magnitude_m, deepest)
+    up = Shield(load_policy(POLICY_PATH)).filter(State(x=-20, y=-20, up=5),
+                                                 Action4D(vz_up=1.0))
+    fix = [r for r in up.repairs if r.operator == "AltitudeFix"][0]
+    assert (fix.axis, fix.recovery) == ("vertical", False)
+    assert abs(fix.magnitude_m - 4.0) < 1e-9          # 5 + 1 x 5 s against a 6 m ceiling
+    out = Shield(load_policy(POLICY_PATH)).filter(State(x=-20, y=-20, up=8), Action4D())
+    assert [r.recovery for r in out.repairs if r.operator == "AltitudeFix"] == [True]
+
+
+def test_theta_escalates_from_the_real_repair():
+    """The conservative cap, applied by the FSM to the repair's own
+    magnitude_m: a 9 m deep forecast (theta 2 m) is not flown - X1 into Brake
+    with a stop streamed - and the next untrusted repair goes to LOITER (G3).
+    The repair stack's own output is unchanged in `emitted`."""
+    s = Shield(load_policy(POLICY_PATH))
+    st, a = State(x=0, y=15, up=4), Action4D(vx=3.0)
+    d = s.filter(st, a)
+    assert d.repairs[0].magnitude_m > 2.0
+    assert (d.fsm_edge, d.setpoint, d.command) == ("X1", "brake", Action4D())
+    assert d.emitted != Action4D() and not d.braked     # the repair, as before
+    assert d.fsm_record["theta_exceeded"] is True
+    d = s.filter(st, a)
+    assert (d.fsm_edge, d.fsm_state_after, d.set_mode) == ("G3", "Loiter", "LOITER")
+    assert d.setpoint == "brake"                        # the hand-over tick
+    d = s.filter(st, a)
+    assert (d.setpoint, d.command, d.set_mode) == ("none", None, None)
+
+
+def test_monitor_only_is_recorded_and_never_repaired():
+    s = Shield(_zone_policy(violation_action="monitor_only"))
+    d = s.filter(State(x=0, y=15, up=4), Action4D(vx=3.0))
+    assert [v.rule_id for v in d.violations] == ["nfz"]
+    assert d.repairs == [] and not d.braked and d.emitted == d.raw
+    assert [v.rule_id for v in d.emitted_violations] == ["nfz"]   # flown, and said so
+    assert (d.fsm_state_after, d.setpoint) == ("Normal", "pass")
+
+
+def test_monitor_only_is_left_alone_when_another_rule_is_repaired():
+    """A tick that repairs a speed cap must not, while it is at it, steer away
+    from a monitor_only zone: only the cap is enforced, and the zone is still
+    on record as flown into."""
+    s = Shield(_zone_policy(violation_action="monitor_only"))
+    d = s.filter(State(x=0, y=15, up=4), Action4D(vx=6.0))
+    assert sorted(v.rule_id for v in d.violations) == ["kin", "nfz"]
+    assert [r.operator for r in d.repairs] == ["SpeedClamp"], d.repairs
+    assert d.emitted == Action4D(vx=4.0)
+    assert [v.rule_id for v in d.emitted_violations] == ["nfz"]
+
+
+def test_a_brake_rule_skips_projection_and_stops():
+    s = Shield(_zone_policy(violation_action="brake"))
+    d = s.filter(State(x=0, y=15, up=4), Action4D(vx=3.0))
+    assert d.braked and d.emitted == Action4D()
+    assert [r.operator for r in d.repairs] == ["Brake"]
+    assert "projection skipped" in d.repairs[0].detail
+    assert (d.fsm_edge, d.setpoint) == ("X1", "brake")
+
+
+def test_direct_failsafe_rules_request_their_mode():
+    """violation_action RTL / land / loiter: projection skipped, the mode
+    requested on the transition, a stop on the hand-over tick, nothing after."""
+    for act, edge, mode in (("RTL", "G11", "RTL"), ("land", "G12", "LAND"),
+                            ("loiter", "X4", "LOITER")):
+        s = Shield(_zone_policy(violation_action=act))
+        d = s.filter(State(x=0, y=15, up=4), Action4D(vx=3.0))
+        assert d.braked and (d.fsm_edge, d.set_mode, d.setpoint) == (edge, mode, "brake"), act
+        d = s.filter(State(x=0, y=15, up=4), Action4D(vx=3.0))
+        assert (d.set_mode, d.setpoint, d.command) == (None, "none", None), act
+
+
+def test_the_autopilots_report_ends_the_shields_failsafe():
+    """The FSM's terminal edges need what only the autopilot knows: home
+    reached (G9), landed (G10), RTL failed (G6). filter() takes them, so a
+    caller that streams `command` and requests `set_mode` from the Shield's
+    own FSM can finish an episode instead of holding RTL forever."""
+    st, a = State(x=0, y=15, up=4), Action4D(vx=3.0)
+    s = Shield(_zone_policy(violation_action="RTL"))
+    assert s.filter(st, a, t=0.0).fsm_edge == "G11"
+    d = s.filter(st, a, t=0.1, home_reached=True)
+    assert (d.fsm_edge, d.fsm_record["terminal"], d.command) == ("G9", True, None)
+    s = Shield(_zone_policy(violation_action="RTL"))
+    s.filter(st, a, t=0.0)
+    d = s.filter(st, a, t=0.1, rtl_failed=True)
+    assert (d.fsm_edge, d.set_mode, d.fsm_state_after) == ("G6", "LAND", "Land")
+    d = s.filter(st, a, t=5.0, landed=True)
+    assert (d.fsm_edge, d.fsm_record["terminal"]) == ("G10", True)
+
+
+def test_an_rtl_rule_inside_its_zone_recovers_rather_than_stopping():
+    """Where a stop is illegal (inside the zone) the Shield still recovers and
+    the stop is withheld, while the mode change goes through."""
+    s = Shield(_zone_policy(violation_action="RTL"))
+    d = s.filter(State(x=10, y=15, up=4), Action4D(vx=0.5))
+    assert not d.braked and [r.operator for r in d.repairs] == ["GeofenceEscape"]
+    assert (d.fsm_edge, d.set_mode, d.setpoint) == ("G11", "RTL", "pass")
+    assert d.command == d.emitted and d.emitted.vx < 0          # flying out
+    assert d.fsm_record["stop_withheld"] is True
+
+
+def test_a_soft_rule_is_capped_at_brake():
+    """A soft rule written with RTL stops the aircraft but never changes the
+    flight mode (fsm.RuleHit.effective_action), and the record says it was
+    capped."""
+    s = Shield(_zone_policy(violation_action="RTL", constraint_type="soft"))
+    d = s.filter(State(x=0, y=15, up=4), Action4D(vx=3.0))
+    assert d.braked and d.set_mode is None and d.fsm_state_after == "Brake"
+    gov = d.fsm_record["governing_rule"]
+    assert gov["capped"] is True and gov["effective_action"] == "brake"
+
+
+def _soft_conflict(p_high="P2", p_mid="P1"):
+    from guardrail.models import Policy
+    return Policy.model_validate({"policy_id": "soft", "constraints": [
+        {"id": "hard-band", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 10},
+        {"id": "soft-high", "type": "altitude_envelope", "alt_min_m": 20,
+         "alt_max_m": 30, "constraint_type": "soft", "priority": p_high},
+        {"id": "soft-mid", "type": "altitude_envelope", "alt_min_m": 3,
+         "alt_max_m": 8, "constraint_type": "soft", "priority": p_mid}]})
+
+
+def test_the_repair_chain_gives_up_a_soft_rule_lowest_priority_first():
+    """Hard band 0-10 m, soft P2 band 20-30 m, soft P1 band 3-8 m, aircraft
+    at 8 m. No action satisfies all three. The P2 rule is given up, the P1 and
+    hard rules are kept, and the command is left alone horizontally. Before,
+    the chain failed, the stop counted as illegal (the soft rule), and the
+    rescue search flew a 4 m/s heading nobody asked for."""
+    d = Shield(_soft_conflict()).filter(State(x=0, y=0, up=8), Action4D(vx=1.0))
+    assert d.relaxed == ["soft-high"], d.relaxed
+    assert [r.operator for r in d.repairs] == ["SoftRelax"]
+    assert d.emitted == Action4D(vx=1.0) and not d.braked
+    assert [v.rule_id for v in d.emitted_violations] == ["soft-high"]
+    assert (d.fsm_edge, d.setpoint) == ("G1", "pass")
+    # Priorities swapped: the P2 rule (soft-mid) goes first and does not help,
+    # so the P1 rule is given up too; only a rule actually broken is listed.
+    d = Shield(_soft_conflict("P1", "P2")).filter(State(x=0, y=0, up=8), Action4D(vx=1.0))
+    assert d.relaxed == ["soft-high"] and d.emitted == Action4D(vx=1.0)
+
+
+def test_the_lower_priority_soft_rule_goes_first_when_either_would_do():
+    """Two soft bands that cannot both hold (0-5 m and 7-10 m) inside a hard
+    0-10 m band, aircraft at 6 m. Giving up EITHER one would satisfy the rest;
+    the grant's order says the lower priority goes. Swap the priorities and
+    the other one goes, and the aircraft moves the other way."""
+    from guardrail.models import Policy
+
+    def pol(p_low, p_up):
+        return Policy.model_validate({"policy_id": "s", "constraints": [
+            {"id": "hard-band", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 10},
+            {"id": "soft-low", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 5,
+             "constraint_type": "soft", "priority": p_low},
+            {"id": "soft-up", "type": "altitude_envelope", "alt_min_m": 7, "alt_max_m": 10,
+             "constraint_type": "soft", "priority": p_up}]})
+    st, a = State(x=0, y=0, up=6), Action4D(vx=1.0)
+    d = Shield(pol("P2", "P1")).filter(st, a)
+    assert d.relaxed == ["soft-low"] and d.emitted.vz_up > 0, (d.relaxed, d.emitted)
+    d = Shield(pol("P1", "P2")).filter(st, a)
+    assert d.relaxed == ["soft-up"] and d.emitted.vz_up < 0, (d.relaxed, d.emitted)
+
+
+def test_a_stop_that_breaks_only_a_soft_rule_is_allowed():
+    """Inside a SOFT zone whose action is brake: the stop leaves the aircraft
+    inside a rule that allows a stop as its response, so the Shield stops
+    rather than recovering. (Only a HARD rule makes a stop illegal.)"""
+    s = Shield(_zone_policy(violation_action="brake", constraint_type="soft"))
+    d = s.filter(State(x=10, y=15, up=4), Action4D(vx=0.5))
+    assert d.braked and d.emitted == Action4D(), d
+    assert [r.operator for r in d.repairs] == ["Brake"]
+    hard = Shield(_zone_policy(violation_action="brake")).filter(
+        State(x=10, y=15, up=4), Action4D(vx=0.5))
+    assert not hard.braked and [r.operator for r in hard.repairs] == ["GeofenceEscape"]
+
+
+def test_a_hard_rule_is_never_given_up():
+    """Two hard rules that cannot both hold (a 0-10 m band and a corridor whose
+    floor is 20 m, aircraft at 5 m inside the corridor's width): nothing is
+    relaxed, the fallback keeps both rules on record as still broken, and the
+    FSM escalates (X1). A stop is illegal under the corridor floor, so the
+    Shield's best-effort recovery is streamed, not a stop."""
+    from guardrail.models import Policy
+    pol = Policy.model_validate({"policy_id": "hard", "constraints": [
+        {"id": "low", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 10},
+        {"id": "lane", "type": "corridor", "width_m": 20,
+         "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
+         "altitude_floor_m": 20, "altitude_ceiling_m": 30}]})
+    d = Shield(pol).filter(State(x=0, y=0, up=5), Action4D(vx=1.0))
+    assert d.relaxed == [] and not any(r.operator == "SoftRelax" for r in d.repairs)
+    assert [v.rule_id for v in d.emitted_violations] == ["low"]
+    assert (d.fsm_edge, d.setpoint) == ("X1", "pass")
+    assert d.fsm_record["stop_withheld"] is True
+
+
+def test_an_fsm_contract_break_requests_loiter_once_and_stops_streaming():
+    """A position operator that reports no magnitude_m cannot be judged by
+    theta. The FSM refuses the tick; the Shield must not crash the loop: it
+    records the fault, requests LOITER on that tick only, and streams nothing
+    until reset_episode()."""
+    class NoMagnitude(Shield):
+        def _repair_geofence(self, state, a, repairs):
+            out = super()._repair_geofence(state, a, repairs)
+            for i, r in enumerate(repairs):
+                if r.operator == "GeofenceSlide":
+                    repairs[i] = r.model_copy(update={"magnitude_m": None, "axis": None})
+            return out
+    s = NoMagnitude(load_policy(POLICY_PATH))
+    d = s.filter(State(x=0, y=15, up=4), Action4D(vx=1.3))
+    assert d.fsm_fault and "magnitude_m" in d.fsm_fault
+    assert (d.set_mode, d.setpoint, d.command) == ("LOITER", "none", None)
+    assert d.emitted != Action4D()                  # the repair itself is untouched
+    d = s.filter(State(x=-20, y=-20, up=4), Action4D(vx=2.0))
+    assert d.fsm_fault and d.set_mode is None and d.command is None
+    s.reset_episode()
+    d = s.filter(State(x=-20, y=-20, up=4), Action4D(vx=2.0))
+    assert d.fsm_fault is None and d.command == d.emitted
+
+
+def test_escalation_off_keeps_the_decision_as_it_was():
+    s = Shield(load_policy(POLICY_PATH), escalation=False)
+    d = s.filter(State(x=0, y=15, up=4), Action4D(vx=3.0))
+    assert s.fsm is None and d.fsm_state_after is None and d.setpoint is None
+    assert d.command == d.emitted and d.set_mode is None
+
+
+def _windowed(end="17:30", start="07:30"):
+    from guardrail.models import Policy
+    return Policy.model_validate({"policy_id": "w", "constraints": [{
+        "id": "yard", "type": "polygon_fence", "margin_m": 0.0,
+        "vertices": [{"x": -5, "y": -5}, {"x": 5, "y": -5}, {"x": 5, "y": 5},
+                     {"x": -5, "y": 5}],
+        "valid_time": {"recurrence": {"days": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+                                      "start_time": start, "end_time": end}}}]})
+
+
+def _at(hhmmss: str):
+    from datetime import datetime
+    fmt = "%Y-%m-%d %H:%M:%S.%f" if "." in hhmmss else "%Y-%m-%d %H:%M:%S"
+    when = datetime.strptime("2026-10-07 " + hhmmss, fmt)   # a Wednesday
+    return lambda: when
+
+
+def test_a_window_ending_17_30_ends_at_17_30_00():
+    """models.Recurrence compares whole minutes, so the school-yard zone of the
+    grant's worked example stayed in force until 17:30:59. The Shield reads the
+    window to the microsecond and checks both sides of the instant (eps =
+    dt / 2 = 50 ms): in force at 17:30:00.000 and 17:30:00.040, off at
+    17:30:00.060 and at 17:30:30."""
+    inside = State(x=0, y=0, up=5)
+    for hhmmss, on in (("17:29:59", True), ("17:30:00", True), ("17:30:00.040", True),
+                       ("17:30:00.060", False), ("17:30:30", False)):
+        s = Shield(_windowed(), now=_at(hhmmss))
+        assert bool(s.state_is_unsafe(inside)) is on, hhmmss
+
+
+def test_the_lookahead_reads_the_rules_in_force_at_each_poses_time():
+    """At 07:29:57, hovering inside the yard that switches on at 07:30:00: the
+    pose 3 s ahead is in the zone while it is in force, so the violation is
+    predicted at t + 3.0 s (both sides of 07:30 put the 50 ms before it in
+    force too, so the 2.9 s pose is not). Before, the forecast ignored the
+    switch-on entirely."""
+    s = Shield(_windowed(), now=_at("07:29:57"))
+    v = s._check(State(x=0, y=0, up=5), Action4D())
+    assert [(x.rule_id, round(x.predicted_at_s, 6)) for x in v] == [("yard", 3.0)], v
+    s = Shield(_windowed(), now=_at("07:29:59.960"))
+    assert [round(x.predicted_at_s, 6) for x in s._check(State(x=0, y=0, up=5), Action4D())] == [0.0]
+
+
+def test_the_default_end_of_day_is_the_end_of_the_day():
+    """`end_time` defaults to 23:59. Read as the instant 23:59:00 it would
+    switch every all-day schedule off for the last minute of each day."""
+    s = Shield(_windowed(end="23:59", start="00:00"), now=_at("23:59:30"))
+    assert s.state_is_unsafe(State(x=0, y=0, up=5))
+
+
+def test_rules_the_shield_cannot_enforce_are_refused_at_construction():
+    """A Policy built directly skips the flight loaders' gate; the Shield
+    must not then fly it with the rule silently ignored."""
+    from guardrail.models import Policy
+    pol = Policy.model_validate({"policy_id": "x", "constraints": [
+        {"id": "people", "type": "distance_envelope", "object_class": "people",
+         "min_distance_m": 10}]})
+    try:
+        Shield(pol)
+    except ValueError as e:
+        assert "people" in str(e) and "distance_envelope" in str(e)
+    else:
+        raise AssertionError("a distance_envelope policy was accepted")
+    msl = Policy.model_validate({"policy_id": "x", "constraints": [
+        {"id": "band", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 50,
+         "altitude_ref": "MSL"}]})
+    try:
+        Shield(msl)
+    except ValueError as e:
+        assert "MSL" in str(e)
+    else:
+        raise AssertionError("an MSL band was accepted")
+
+
+# ---------------------------------------------------------------------------
+# Added after the 2026-10-07 review: behaviours its mutation run changed
+# without any test noticing (each assertion below fails on that mutation).
+
+def test_the_last_instant_of_a_window_is_still_in_force():
+    """The window is CLOSED: 17:30:00.000 is its last instant, 17:30:00.000001
+    is outside. A tick at 17:30:00.050 reads 17:30:00.000 as its t - eps side,
+    so the zone is still seen. (An open end, `start <= t < end`, passed every
+    other window test: their t - eps side always fell before 17:30.)"""
+    from datetime import datetime
+    from guardrail.shield import recurrence_active
+    rec = _windowed().constraints[0].valid_time.recurrence
+    last = datetime(2026, 10, 7, 17, 30, 0)
+    assert recurrence_active(rec, last)
+    assert not recurrence_active(rec, last.replace(microsecond=1))
+    s = Shield(_windowed(), now=_at("17:30:00.050"))
+    assert [v.rule_id for v in s.state_is_unsafe(State(x=0, y=0, up=5))] == ["yard"]
+
+
+def test_a_window_past_midnight_ends_at_midnight_when_the_next_day_is_not_listed():
+    """Mon 22:00-06:00, Monday only (models.py's day attribution: an instant is
+    in force only if its own weekday is listed). At Mon 23:59:58 the aircraft
+    reaches the zone at Tue 00:00:01 at 3 m/s - the zone is off by then - and
+    at Mon 23:59:59.3 at 8 m/s, while it is on. The fast path needs midnight
+    as an edge: without it the tick reads the zone once, as on, for the whole
+    horizon."""
+    from datetime import datetime
+    from guardrail.models import Policy
+    pol = Policy.model_validate({"policy_id": "n", "constraints": [
+        {"id": "nfz-night", "type": "polygon_fence", "margin_m": 0.0,
+         "vertices": [{"x": 10, "y": -5}, {"x": 20, "y": -5}, {"x": 20, "y": 5},
+                      {"x": 10, "y": 5}],
+         "valid_time": {"recurrence": {"days": ["Mon"], "start_time": "22:00",
+                                       "end_time": "06:00"}}}]})
+    mon = datetime(2026, 10, 5, 23, 59, 58)
+    s = Shield(pol, now=lambda: mon, escalation=False)
+    assert s._check(State(x=0, y=0, up=4), Action4D(vx=3.0)) == []
+    v = s._check(State(x=0, y=0, up=4), Action4D(vx=8.0))
+    assert [(x.rule_id, round(x.predicted_at_s, 6)) for x in v] == [("nfz-night", 1.3)], v
+
+
+def test_a_cap_that_comes_into_force_later_is_broken_then_not_now():
+    """A speed cap in force from 12:00, checked at 11:59:58: the 3 m/s command
+    breaks it 2 s ahead (the first pose whose t + eps side is 12:00), not at
+    t = 0. Inside the window it is broken now."""
+    from datetime import datetime
+    from guardrail.models import Policy
+    pol = Policy.model_validate({"policy_id": "k", "constraints": [
+        {"id": "kin-noon", "type": "kinematic_envelope", "speed_max_mps": 2.0,
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0,
+         "valid_time": {"recurrence": {"start_time": "12:00", "end_time": "13:00"}}}]})
+    for when, at in ((datetime(2026, 10, 7, 11, 59, 58), 2.0),
+                     (datetime(2026, 10, 7, 12, 0, 1), 0.0)):
+        s = Shield(pol, now=lambda w=when: w, escalation=False)
+        v = s._check(State(x=0, y=0, up=5), Action4D(vx=3.0))
+        assert [(x.rule_id, round(x.predicted_at_s, 6)) for x in v] == [("kin-noon", at)], v
+
+
+def test_relaxed_lists_only_the_soft_rules_the_flown_action_breaks():
+    """Hard speed cap 1.5 m/s and band 0-10 m; soft P2 cap 2 m/s; soft P1 band
+    20-30 m; aircraft at 8 m commanding 3 m/s. Both soft rules are given up
+    (the P1 band cannot hold beside the hard band), but the hard clamp to
+    1.5 m/s satisfies the soft cap anyway: `relaxed` names only the band, the
+    one rule the flown action still breaks."""
+    from guardrail.models import Policy
+    pol = Policy.model_validate({"policy_id": "r", "constraints": [
+        {"id": "hard-band", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 10},
+        {"id": "hard-kin", "type": "kinematic_envelope", "speed_max_mps": 1.5,
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0},
+        {"id": "soft-kin", "type": "kinematic_envelope", "speed_max_mps": 2.0,
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0,
+         "constraint_type": "soft", "priority": "P2"},
+        {"id": "soft-high", "type": "altitude_envelope", "alt_min_m": 20,
+         "alt_max_m": 30, "constraint_type": "soft", "priority": "P1"}]})
+    d = Shield(pol).filter(State(x=0, y=0, up=8), Action4D(vx=3.0))
+    assert sorted(v.rule_id for v in d.violations) == ["hard-kin", "soft-high", "soft-kin"]
+    assert d.relaxed == ["soft-high"], d.relaxed
+    assert d.emitted == Action4D(vx=1.5)
+    assert [v.rule_id for v in d.emitted_violations] == ["soft-high"]
+
+
+def test_rule_status_reports_no_breach_for_a_rule_out_of_its_window():
+    """Hovering inside the school-yard zone at 18:00 (out of its window): the
+    row says inside, not in force, and no breach. At noon it is a breach."""
+    from datetime import datetime
+    inside = State(x=0, y=0, up=5)
+    row = Shield(_windowed(), now=lambda: datetime(2026, 10, 7, 18, 0)).rule_status(inside)[0]
+    assert (row["inside"], row["in_force"], row["breach"]) == (True, False, False), row
+    row = Shield(_windowed(), now=lambda: datetime(2026, 10, 7, 12, 0)).rule_status(inside)[0]
+    assert (row["inside"], row["in_force"], row["breach"]) == (True, True, True), row
 
 
 if __name__ == "__main__":

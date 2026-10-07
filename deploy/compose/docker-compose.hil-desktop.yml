@@ -1,0 +1,64 @@
+# hil topology, DESKTOP side: the simulator half.
+#
+#   docker compose --env-file deploy/topologies/hil.env \
+#                  -f deploy/compose/docker-compose.hil-desktop.yml up -d
+#
+# The desktop runs ArduPilot SITL and mavlink-router here, and Project AirSim
+# and Mission Planner natively on Windows. MAVROS 2, the Shield and the VLA run
+# on the Jetson Orin (deploy/compose/docker-compose.orin.yml). mavlink-router
+# (sitl/mavlink-router/main.conf, the native rail's) sends the autopilot's
+# MAVLink to the Orin's MAVROS (MAVROS_HOST:14555) and to Mission Planner
+# (GCS_HOST:14550) in parallel, and returns their commands: MAVROS answers the
+# address the router's packets arrive from, so no MAVLink port has to be
+# published here.
+#
+# Written 2026-10-06, NOT yet run. docs/RUNBOOK-orin-hil.md walks through it.
+
+name: vlaguard-hil-desktop
+
+x-vlaguard:
+  topologies: [hil]
+  host: desktop
+
+services:
+  router:
+    image: ${VLAGUARD_IMAGE:?use --env-file deploy/topologies/hil.env}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/companion.Dockerfile
+    command: ["router"]
+    environment:
+      VLAGUARD_TOPOLOGY: ${VLAGUARD_TOPOLOGY:?}
+      SITL_MAVLINK_PORT: ${SITL_MAVLINK_PORT:?}
+      MAVROS_HOST: ${MAVROS_HOST:?}
+      MAVROS_UDP_PORT: ${MAVROS_UDP_PORT:?}
+      GCS_HOST: ${GCS_HOST:?}
+      GCS_UDP_PORT: ${GCS_UDP_PORT:?}
+    volumes:
+      - ../..:/opt/vlaguard:ro
+    ports:
+      # Project AirSim (Windows host) -> SITL sensor input, SITL_MODEL=airsim-copter.
+      - "9003:9003/udp"
+
+  sitl:
+    image: ${VLAGUARD_SITL_IMAGE:?}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/sitl.Dockerfile
+    network_mode: "service:router"
+    depends_on: [router]
+    environment:
+      SITL_MODEL: ${SITL_MODEL:?}
+      SITL_HOME: ${SITL_HOME:?}
+      SITL_AIRFRAME_PARM: ${SITL_AIRFRAME_PARM-}
+      GUARDRAIL_FENCE: ${GUARDRAIL_FENCE:?}
+      SITL_WIPE: ${SITL_WIPE:?}
+      SITL_MAVLINK_PORT: ${SITL_MAVLINK_PORT:?}
+      SITL_ROUTER_HOST: 127.0.0.1
+      AIRSIM_HOST: ${AIRSIM_HOST:?}
+    volumes:
+      - ../..:/opt/vlaguard:ro
+      - sitl-run:/sitl-run
+
+volumes:
+  sitl-run:

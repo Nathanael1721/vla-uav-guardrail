@@ -2,28 +2,36 @@
 
 WHY THIS IS ALLOWED TO CHANGE
 
-The grant's `Architecture constraints` locks the flight path - hierarchical
-control, the 4-D action space, MAVROS 2 as the Year-1 bridge - and says so in
-terms: "The choices in this section are locked inputs... They are not re-debated
-here." The perception backend is explicitly NOT in that set:
+The grant says nothing about detectors. Its `Architecture constraints` lock the
+flight path - hierarchical control, the 4-D action space, MAVROS 2 as the
+Year-1 bridge - and its switchable-backend clause is about VLA backends:
 
     "The VLA backend interface is switchable (CognitiveDrone, OpenVLA generic,
      BitVLA, in-house stubs for unit tests, etc.); every backend must conform to
-     this 4-D output shape, but the project does not commit to any one of them
-     as a 'default'."
+     this 4-D output shape, ..."
 
-So swapping the detector is inside the contract. One property must survive: it
-has to stay OPEN-VOCABULARY. The grant title is "Semantic-Spatial Translation",
-and a detector that cannot take a phrase would remove the language interface the
-title depends on - the same reason `docs/CHECKLIST-remaining-work.md` recommends
-declining colour-tracking retraining.
+That clause does not cover this module: a detector is not a VLA backend and
+emits no 4-D action. Nor does it cover the city demos' pilot. The city demos
+fly a hand-written controller, not a VLA, so they test the Shield and the
+tracker, not a constrained VLA. (Until 2026-10-06 this docstring argued that
+the clause made swapping the detector "inside the contract"; that reading was
+withdrawn, CHANGELOG.md, Retracted.) The detector is ours to choose because the
+grant does not specify one.
+
+One property must survive, by our own design choice rather than a grant term:
+it has to stay OPEN-VOCABULARY, because the follow demos take their target as
+a phrase ("a red car", "a person") and the stand-off rule binds by the class
+that phrase resolves to - the same reason `docs/CHECKLIST-remaining-work.md`
+recommends declining colour-tracking retraining.
 
 WHY BOTHER
 
 OWL-ViT is the measured weak link twice over. It scores our pedestrians at
 0.03-0.07 against the taxi's 0.15-0.44, which is why the 10 m stand-off had to
-be demonstrated on the camera-free rail. And its latency is what pins `det_hz`
-to 3.4-5.2 Hz against a 4.0 Hz gate.
+be demonstrated on the camera-free rail. And its latency holds the in-flight
+detector rate at 2.77-4.31 Hz on the five mid-evaluation flights, against a
+4.0 Hz gate (mission rate, recomputed from the flight logs on 2026-10-06 by
+tools/build_eval_data.py `det_hz_mission`).
 
 WHAT THE INTERFACE PROMISES
 

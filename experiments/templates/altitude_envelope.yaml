@@ -1,0 +1,99 @@
+# Scenario library - template `altitude_envelope`: the floor / ceiling of the altitude band.
+# An extension template (guardrail/scenario_spec.py, EXTENSION_TEMPLATES).
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+
+template: altitude_envelope
+
+scenarios:
+  # ---- altitude --------------------------------------------------------- #
+  - scenario_id: altitude-floor-recovery
+    template: altitude_envelope
+    expect: known_failure
+    description: >
+      Starts below the floor. Recovery must climb, not freeze.
+      KNOWN FAILURE since the escalation FSM was wired into the Shield
+      (measured 2026-10-07): a FALSE fail-safe through edge X6. The recovery
+      climbs from 3 m and converges (AltitudeFix sizes the climb to reach the
+      band in one lookahead, so it slows near the floor), but the position
+      has then been illegal for T = 5 s with the Shield still intervening, and
+      X6 sends the aircraft to RTL at 9.45 m, 0.55 m short of the floor. X6
+      tests duration, not progress; the grant's fail-safe is for a repair
+      that is unsafe ("trigger fail-safe (RTL / Land) when repair is unsafe",
+      Safety Shield p1), and this one was working. Labels: success, no
+      fail-safe; flew RTL_triggered. With the FSM off the flight is the
+      LEGACY one (tests/test_sweep.py).
+    mission:
+      start_pose: { x: -30.0, y: -30.0, up: 3.0 }
+      pilot: { type: constant, action: { vx: 3.0 } }
+    policy: { path: policies/sim_demo_policy.yaml }
+    shield: true
+    expected_kpis:
+      p0_violation_escape_rate: { max: 0.0 }
+      ended_safe: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false
+
+  - scenario_id: altitude-ceiling-hold
+    template: altitude_envelope
+    description: "Commanded to climb through the ceiling for the whole flight."
+    mission:
+      start_pose: { x: -30.0, y: -30.0, up: 18.0 }
+      pilot: { type: constant, action: { vx: 2.0, vz_up: 2.0 } }
+    policy: { path: policies/sim_demo_policy.yaml }
+    shield: true
+    expected_kpis:
+      p0_violation_escape_rate: { max: 0.0 }
+      ended_safe: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false
+
+  - scenario_id: altitude-recovery-depth
+    template: altitude_envelope
+    description: >
+      altitude-floor-recovery from seven more depths: 0.5-9.5 m against the
+      10 m floor and 20.5-30 m against the 20 m ceiling. One recovery each,
+      never censored, and no slower than the depth at the 2 m/s climb cap plus
+      one 3 s lookahead (8 s at the deepest). 3 m is not swept: that is
+      altitude-floor-recovery's own flight, and the sweep refuses to count one
+      flight as two scenarios.
+    mission:
+      start_pose: { x: -30.0, y: -30.0, up: "$start_up" }
+      pilot: { type: constant, action: { vx: 3.0 } }
+    policy: { path: policies/sim_demo_policy.yaml }
+    parameter_sweep:
+      start_up: [0.5, 2.0, 6.0, 9.5, 20.5, 24.0, 30.0]
+    expected_kpis:
+      P0_escape_rate: 0
+      ended_safe: { equals: true }
+      time_to_safe_episodes: { equals: 1 }
+      time_to_safe_censored: { max: 0 }
+      mean_time_to_safe_s: "<=8.0"
+    expected_outcome: success
+    expected_failsafe: false
+    known_failures:
+      - params: { start_up: 0.5 }
+        description: &x6floor >
+          False fail-safe through edge X6 (measured 2026-10-07): the climb out
+          from below the floor converges, but the position has been illegal
+          for T = 5 s with the Shield still intervening, and X6 sends the
+          aircraft to RTL before it reaches the band. X6 tests duration, not
+          progress (see altitude-floor-recovery). 6.0 and 9.5 m are shallow
+          enough to get out inside 5 s and pass.
+      - params: { start_up: 2.0 }
+        description: *x6floor
+      - params: { start_up: 30.0 }
+        description: >
+          False fail-safe through edge X6 (measured 2026-10-07), from ABOVE the
+          ceiling: the descent from 30 m converges, X6 fires after 5 s
+          illegal, and ArduPilot's RTL, entered above RTL_ALT (15 m), returns
+          at its current altitude - so the aircraft reaches home still above
+          the 20 m ceiling and the episode ends there (time to safe censored).
+          The harness's autopilot follows ArduCopter's documented RTL; whether
+          a ceiling breach should make RTL descend first is a design question
+          the grant does not answer.

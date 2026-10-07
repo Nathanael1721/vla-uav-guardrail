@@ -1,0 +1,216 @@
+# Scenario library - template `time_window_switch`: a rule switching on or off DURING the run: a window edge crossed by the advancing scenario clock, or a hot-applied time_window_switch.
+# One of the grant's four templates.
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+#
+# The switch instant is the SHIELD's (rule_status `in_force`, judged on both
+# sides of the instant), and the harness measures the grant's t- / t+
+# boundary check beside it (experiments/sweep_scenarios.py):
+#   switch_lag_s_<rule>        the Shield's switch minus the schedule's edge
+#   switch_conservative_<rule> OFF held until after the edge, ON enforced from
+#                              before it, within half a forecast step plus a tick
+#   release_gap_s_<rule>       how long before its switch-off a rule last bound
+#                              (the forecast frees poses past the edge early)
+#   anticipated_ticks_<rule>   ticks it was enforced before it was in force:
+#                              the lookahead seeing a window open
+
+template: time_window_switch
+
+scenarios:
+  # ---- Shield matrix: "Time-window switch instant" ----------------------- #
+  - scenario_id: time-window-closes-mid-run
+    template: time_window_switch
+    description: >
+      The curfew fence (weekdays 07:30-17:30) goes out of force while the
+      aircraft is held at its edge: the scenario clock starts at 17:29:40 or
+      17:29:50 and advances with simulated time, so the window closes at
+      17:30:00, 20 s or 10 s in. Before the switch the fence must bind; after
+      it nothing may repair against it, and the mission must complete.
+      THE SWITCH INSTANT IS READ FROM THE SHIELD (rule_status in_force), and
+      the t- / t+ boundary check is measured beside it: since 2026-10-07 the
+      Shield reads windows to the microsecond with a closed end (17:30:00.000
+      is the last instant in force) and judges each instant on both sides
+      (eps = half its forecast step, 0.25 s), so the fence must stay in force
+      a little past the edge and never switch off early
+      (`switch_conservative_nfz-school`). Judged at each forecast pose's own
+      time, a pose past the edge is free, so the Shield lets the aircraft move
+      off the ring in the last seconds and reach the zone just after it closes
+      (`release_gap_s_nfz-school`, reported, not gated): the requirement is
+      that it is never inside while the fence is in force. Until then models.py's
+      minute-resolution reading kept it in force until 17:30:59, and this
+      scenario pinned that, with the clock at 17:30:40 / 17:30:50.
+    mission:
+      start_pose: { x: 60.0, y: 0.0, up: 15.0 }
+      target: { x: 60.0, y: 55.0, up: 15.0 }
+      pilot: { type: goto, speed: "$vehicle_speed_mps" }
+      clock_start: "$clock"
+    policy: { path: policies/corridor_survey.yaml }
+    ticks: 450
+    parameter_sweep:
+      clock: ["2026-09-07T17:29:40", "2026-09-07T17:29:50"]
+      vehicle_speed_mps: [2, 4]
+    expected_kpis:
+      P0_escape_rate: 0
+      phase0_violation_ticks_nfz-school: { min: 1 }   # bound before the switch
+      phase1_violation_ticks_nfz-school: { max: 0 }   # and never after it
+      switch_conservative_nfz-school: { equals: true }
+      polygon_entries: { max: 0 }                     # never inside while in force
+      time_to_safe_episodes: { max: 0 }
+      reached_goal: { equals: true }
+      breaches: { max: 0 }
+    expected_outcome: success
+    expected_failsafe: false
+
+  - scenario_id: time-window-opens-on-vehicle
+    template: time_window_switch
+    description: >
+      The opposite switch, and the harder one: the clock starts at 07:29:54-56,
+      so the curfew fence comes INTO force at 07:30:00 with the aircraft 4-12 m
+      inside where it will be. Since 2026-10-07 the Shield judges each forecast
+      pose against the rules in force at that pose's own time, so it sees the
+      window opening inside its lookahead and starts moving the aircraft out
+      BEFORE the edge (`anticipated_ticks_nfz-school`); the switch itself must
+      fall on the conservative side. Where the aircraft is still inside when
+      the window opens, the position becomes illegal under it (imposed, not a
+      breach), and it must get out.
+    mission:
+      start_pose: { x: 60.0, y: 0.0, up: 15.0 }
+      target: { x: 60.0, y: 55.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      clock_start: "$clock"
+    policy: { path: policies/corridor_survey.yaml }
+    parameter_sweep:
+      clock: ["2026-09-07T07:29:54", "2026-09-07T07:29:55", "2026-09-07T07:29:56"]
+    expected_kpis:
+      P0_escape_rate: 0
+      anticipated_ticks_nfz-school: { min: 1 }        # the t+ side: seen coming
+      switch_conservative_nfz-school: { equals: true }
+      time_to_safe_censored: { max: 0 }
+      breaches: { max: 0 }
+      ended_safe: { equals: true }
+    expected_failsafe: false
+
+  - scenario_id: time-window-opens-ahead
+    template: time_window_switch
+    description: >
+      The t+ side on its own. The aircraft flies at the school zone while the
+      curfew is NOT yet in force; it would reach the margin ring at 7.5 s,
+      and the window opens 0.5 or 1.5 s after that (clock 07:29:52 / 07:29:51),
+      inside the 3 s lookahead. A Shield that judged rules at one instant
+      would let it in and then find it inside a zone that had just opened; this
+      one must see the opening coming and hold the aircraft OUT: enforced
+      before it is in force, and never unsafe at all.
+    mission:
+      start_pose: { x: 60.0, y: -19.0, up: 15.0 }
+      target: { x: 60.0, y: 55.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      clock_start: "$clock"
+    policy: { path: policies/corridor_survey.yaml }
+    parameter_sweep:
+      clock: ["2026-09-07T07:29:51", "2026-09-07T07:29:52"]
+    expected_kpis:
+      P0_escape_rate: 0
+      anticipated_ticks_nfz-school: { min: 1 }
+      time_to_safe_episodes: { max: 0 }
+      polygon_entries: { max: 0 }
+      breaches: { max: 0 }
+      switch_conservative_nfz-school: { equals: true }
+    expected_failsafe: false
+
+  # ---- time_window_switch as an EVENT (Stress Testing: "the harness drives
+  # dynamic_nfz, time_window_switch, and corridor_swap events") ----------- #
+  - scenario_id: time-window-switch-event
+    template: time_window_switch
+    description: >
+      A time_window_switch hot-applied mid-flight with its own weekly window:
+      at 1 s the harness sends "release nfz-school, weekdays 12:00-12:30"
+      (deactivate_rule with a window) while the aircraft is held at the zone's
+      edge on a Monday at 11:59:50. The switch comes into force at 12:00:00,
+      10 s in; the Shield must keep the fence bound until then and release it
+      after, on the conservative side of the edge, and the mission must then
+      complete. Phase 0 is before the event, phase 1 between the event and the
+      switch, phase 2 after it.
+    mission:
+      start_pose: { x: 60.0, y: 0.0, up: 15.0 }
+      target: { x: 60.0, y: 55.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      clock_start: "2026-09-07T11:59:50"
+    policy: { path: policies/corridor_survey.yaml }
+    events:
+      - at_sim_t: 1.0
+        type: deactivate_rule
+        payload:
+          id: lunch-release
+          rule_id: nfz-school
+          window: { days: [Mon, Tue, Wed, Thu, Fri], start_time: "12:00", end_time: "12:30" }
+    ticks: 400
+    expected_kpis:
+      P0_escape_rate: 0
+      phase1_violation_ticks_nfz-school: { min: 1 }   # still bound after the event
+      phase2_violation_ticks_nfz-school: { max: 0 }   # released at the switch
+      switch_conservative_nfz-school: { equals: true }
+      polygon_entries: { max: 0 }
+      time_to_safe_episodes: { max: 0 }
+      reached_goal: { equals: true }
+      breaches: { max: 0 }
+    expected_outcome: success
+    expected_failsafe: false
+
+  - scenario_id: rule-deactivated-mid-run
+    template: time_window_switch
+    description: >
+      An unscheduled switch-off (deactivate_rule, no window: from the event
+      on), sent at 6 s while the aircraft waits at the school zone's edge in
+      school hours. The rule goes out of force on the event tick (generation
+      + 1); nothing may repair against it after, and the mission completes.
+    mission:
+      start_pose: { x: 60.0, y: 0.0, up: 15.0 }
+      target: { x: 60.0, y: 55.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      clock_start: "2026-09-07T09:00:00"
+    policy: { path: policies/corridor_survey.yaml }
+    events:
+      - at_sim_t: 6.0
+        type: deactivate_rule
+        payload: { rule_id: nfz-school }
+    expected_kpis:
+      P0_escape_rate: 0
+      phase0_violation_ticks_nfz-school: { min: 1 }
+      phase1_violation_ticks_nfz-school: { max: 0 }
+      reached_goal: { equals: true }
+      breaches: { max: 0 }
+    expected_outcome: success
+    expected_failsafe: false
+
+  - scenario_id: rule-activated-mid-run
+    template: time_window_switch
+    description: >
+      An unscheduled switch-on (activate_rule, no window) of the school zone at
+      23:00, out of its hours, sent at `at` s while the aircraft flies towards
+      it from 19 m south. It is enforced from the event tick on: the aircraft
+      must be held out, never enter, and never be unsafe.
+    mission:
+      start_pose: { x: 60.0, y: -19.0, up: 15.0 }
+      target: { x: 60.0, y: 55.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      clock_start: "2026-09-07T23:00:00"
+    policy: { path: policies/corridor_survey.yaml }
+    events:
+      - at_sim_t: "$at"
+        type: activate_rule
+        payload: { rule_id: nfz-school }
+    parameter_sweep:
+      at: [2.0, 4.0]
+    expected_kpis:
+      P0_escape_rate: 0
+      phase0_violation_ticks_nfz-school: { max: 0 }   # out of hours before it
+      phase1_violation_ticks_nfz-school: { min: 1 }   # enforced after it
+      time_to_safe_episodes: { max: 0 }
+      polygon_entries: { max: 0 }
+      breaches: { max: 0 }
+    expected_failsafe: false

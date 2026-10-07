@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Cyclone DDS configuration for every ROS 2 node in the companion image
+  (CYCLONEDDS_URI points here). The reference design: "Cyclone DDS partitions
+  traffic across the boundary" (docs/03-simulation/topologies.md, hil).
+
+  In dev and flight every ROS node is on one host, and the two peers are
+  loopback. In hil the two peers are the desktop and the Orin, so a ROS 2 tool
+  on the desktop (ros2 topic echo, rosbag2) can see the Orin's graph over the
+  cable. Discovery is unicast to the listed peers as well as multicast, so it
+  works on a direct cable with no switch that forwards multicast.
+
+  Cyclone DDS expands the two peer placeholders below from the environment;
+  the values come from the topology file (deploy/topologies/<name>.env).
+-->
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+            xsi:schemaLocation="https://cdds.io/config https://raw.githubusercontent.com/eclipse-cyclonedds/cyclonedds/master/etc/cyclonedds.xsd">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface autodetermine="true" priority="default" multicast="default"/>
+      </Interfaces>
+      <AllowMulticast>default</AllowMulticast>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <MaxAutoParticipantIndex>64</MaxAutoParticipantIndex>
+      <Peers>
+        <Peer address="${VLAGUARD_DDS_PEER_A}"/>
+        <Peer address="${VLAGUARD_DDS_PEER_B}"/>
+      </Peers>
+    </Discovery>
+  </Domain>
+</CycloneDDS>

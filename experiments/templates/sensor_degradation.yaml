@@ -1,0 +1,135 @@
+# Scenario library - template `sensor_degradation`: Safety Shield test matrix: GPS noise / latency, and GPS denial.
+# An extension template (guardrail/scenario_spec.py, EXTENSION_TEMPLATES).
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+
+template: sensor_degradation
+
+scenarios:
+  # ---- Shield matrix: "GPS noise / latency" ------------------------------ #
+  - scenario_id: gps-noise-within-margin
+    template: sensor_degradation
+    description: >
+      Stability under sensor degradation, inside the error budget the 1 m
+      margin was sized for: white position noise of 0.2-0.3 m (3 sigma under
+      0.9 m) and up to 2 ticks of state latency (0.8 m stale at 4 m/s). The
+      target line runs INSIDE the margin ring (0.4-0.8 m from the zone), so the
+      aircraft slides along the ring pressing in - the configuration where
+      noise matters. A line parallel to the edge outside the ring was measured
+      insensitive to 2 m noise, and a line inside the zone itself meets its
+      face head-on and wedges, so neither tests anything here.
+      The polygon itself must never be entered. The Shield's own escape count
+      is the grant's; true-state violations are reported beside it.
+    mission:
+      start_pose: { x: -30.0, y: "$pass_y", up: 15.0 }
+      target: { x: 60.0, y: "$pass_y", up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    ticks: 400
+    stress: { gps_noise_m: "$sigma", latency_ticks: "$latency" }
+    parameter_sweep:
+      pass_y: [23.2, 23.6]
+      sigma: [0.2, 0.3]
+      latency: [0, 1, 2]
+    expected_kpis:
+      P0_escape_rate: 0
+      all_actions_finite: { equals: true }
+      min_true_dist_to_fence_m: { min: 0.0 }
+      reached_goal: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false
+    known_failures:
+      - params: { latency: 0, pass_y: 23.2, sigma: 0.2 }
+        description: &noiseflicker >
+          False fail-safe through N-in-T under sensor noise (measured
+          2026-10-07): sliding along the margin ring with 0.2-0.3 m of position
+          noise, the Shield's violation of the ring switches on and off with
+          the noise; three onsets inside T = 5 s count as N-in-T (G2: Brake ->
+          Loiter), and in Loiter, with the pilot still pressing, new onsets
+          keep arriving and N-in-T persists (G4): RTL. The polygon is never
+          entered and the Shield's own count stays clean; the FSM counts noise
+          as violations. Where it shows on some seeds only, the pin names the
+          seed (0 is the library run's, 1001-1003 the nightly profile's).
+      - params: { latency: 0, pass_y: 23.2, sigma: 0.3 }
+        description: *noiseflicker
+      - params: { latency: 0, pass_y: 23.6, sigma: 0.3 }
+        description: *noiseflicker
+      - params: { latency: 1, pass_y: 23.2, sigma: 0.3 }
+        description: *noiseflicker
+      - params: { latency: 0, pass_y: 23.6, sigma: 0.2, random_seed: 0 }
+        description: *noiseflicker
+      - params: { latency: 1, pass_y: 23.2, sigma: 0.2, random_seed: 1002 }
+        description: *noiseflicker
+      - params: { latency: 1, pass_y: 23.6, sigma: 0.3, random_seed: 1002 }
+        description: *noiseflicker
+      - params: { latency: 2, pass_y: 23.2, sigma: 0.3, random_seed: 1003 }
+        description: *noiseflicker
+      - params: { latency: 2, pass_y: 23.6, sigma: 0.3, random_seed: 1002 }
+        description: *noiseflicker
+
+  - scenario_id: gps-noise-beyond-margin
+    template: sensor_degradation
+    expect: tracked
+    description: >
+      Beyond the budget, TRACKED rather than gated: 1-2 m noise and 5-10 ticks
+      (0.5-1 s) of latency against a 1 m margin. The margin cannot absorb this
+      by construction, so polygon entries here are a measurement of how far
+      past its design point the Shield degrades, reported in the family table
+      (breaches, polygon ticks, closest approach) - not hidden behind a gate it
+      was never expected to pass. Gated only on what must hold whatever the
+      sensor does: the Shield never emits an action it has itself found
+      illegal, and never a non-finite one.
+    mission:
+      start_pose: { x: -30.0, y: "$pass_y", up: 15.0 }
+      target: { x: 60.0, y: "$pass_y", up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    ticks: 400
+    stress: { gps_noise_m: "$sigma", latency_ticks: "$latency" }
+    parameter_sweep:
+      pass_y: [23.2, 23.6]
+      sigma: [1.0, 2.0]
+      latency: [5, 10]
+    expected_kpis:
+      P0_escape_rate: 0
+      all_actions_finite: { equals: true }
+    expected_failsafe: false
+
+  # ---- GPS denial (audit card X-14; reference design L2 "GPS denial") ----- #
+  - scenario_id: gps-dropout
+    template: sensor_degradation
+    expect: tracked
+    description: >
+      TRACKED: GPS denial as a headless run can model it. For the window the
+      Shield is handed the LAST FIX, frozen, while the aircraft keeps flying -
+      what a bridge that forwards the last pose would do. The Shield's State
+      has no fix-quality field, so it cannot know the pose is stale, and the
+      grant names no Shield response to GPS loss. Measured 2026-10-06 on the
+      head-on lane: frozen while parked at the lookahead edge (6-11 s), the
+      Shield keeps permitting the ~3.9 m/s it would allow from 11.6 m out and
+      the aircraft ends 7 m inside the polygon; a 2-4 s window at 2 s never
+      reaches it. Gated only on what must hold whatever the sensor does - the
+      Shield never emits an action it has itself found illegal, never a
+      non-finite one - and on the dropout having actually frozen the pose
+      (a window that froze nothing would otherwise pass as a clean run).
+      Unlabelled: with no fix-status input there is no defensible fail-safe
+      expectation to write down.
+    mission:
+      start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
+      target: { x: 60.0, y: "$lane_y", up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    ticks: 400
+    stress: { gps_dropout_s: "$window" }
+    parameter_sweep:
+      lane_y: [15.0, 23.6]
+      window: [[2.0, 4.0], [2.0, 7.0], [4.0, 9.0], [6.0, 11.0]]
+    expected_kpis:
+      P0_escape_rate: 0
+      all_actions_finite: { equals: true }
+      gps_dropout_ticks: { min: 1 }

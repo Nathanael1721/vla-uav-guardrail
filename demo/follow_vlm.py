@@ -60,12 +60,9 @@ from guardrail import kpi as kpi_mod                                # noqa: E402
 from guardrail.bundle import load_for_flight                        # noqa: E402
 from guardrail.manifest import build_manifest, is_kpi_grade         # noqa: E402
 from guardrail.replay import verify_replay, write_replay           # noqa: E402
-from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import (                                      # noqa: E402
-    Action4D, AltitudeEnvelope, ObstacleClearance, PolygonFence,
-    SubjectStandoff,
+    Action4D, AltitudeEnvelope, ObstacleClearance, SubjectStandoff,
 )
-from shapely.geometry import Point                                  # noqa: E402
 
 import city_planner                                                 # noqa: E402
 import occ_bands                                                    # noqa: E402
@@ -1752,15 +1749,28 @@ class FenceGuard:
     data. Nothing here reveals where the car is — only where the aircraft may
     not go. It brakes smoothly on approach and holds at a standoff, while yaw
     keeps tracking so the target stays in view.
+
+    THE ZONES ARE THE SHIELD'S (2026-10-07). This class used to build its own
+    copy of every zone (`fence_polygon(f).buffer(f.margin_m)`, all of them, at
+    construction) and measure against that copy. The grant allows one
+    rule-evaluation code path (Safety Shield page), and a copy built once
+    could not see a zone hot-applied mid-flight, a zone that moves, or one
+    outside its time window. `polys` now asks the Shield
+    (`Shield.zones_now()`): the same margin rings, compiled once in its IR, in
+    force now, a moving zone where it is this tick. Pass the flight's Shield;
+    without one a Shield is built over `policy` (no escalation FSM). Distances
+    are 2-D, every zone's footprint whatever its band, as before.
     """
 
     def __init__(self, policy, brake_m: float = 12.0, stand_off_m: float = 3.0,
                  obstacle_map: dict | None = None, min_clearance_m: float = 5.0,
-                 street_mask: dict | None = None):
-        from guardrail.geometry import fence_polygon
-        from guardrail.models import PolygonFence
-        self.polys = [fence_polygon(f).buffer(f.margin_m)
-                      for f in policy.by_type(PolygonFence)]
+                 street_mask: dict | None = None, shield=None):
+        if shield is None:
+            from guardrail.shield import Shield
+            shield = Shield(policy, escalation=False)
+        self.shield = shield
+        self._keepout_key = None
+        self._keepout = None
         self.brake_m = brake_m
         self.stand_off_m = stand_off_m
         # A detour has to stay on the ROAD, not merely outside the fence.
@@ -1791,12 +1801,27 @@ class FenceGuard:
         # nfz-hold count took building holds too. Recorded here, where the
         # verdict is made, instead.
         self.last_cause: str | None = None
-        # The zones grown by the stand-off plus a metre, as one shape, for
-        # clear_aim(). Built once: the policy's zones do not move in flight.
-        self._aim_keepout = None
-        if self.polys:
-            from shapely.ops import unary_union
-            self._aim_keepout = unary_union(self.polys).buffer(stand_off_m + 1.0)
+
+    @property
+    def polys(self) -> list:
+        """The keep-out zones' margin rings, from the Shield, in force now."""
+        return [r.buffered for r in self.shield.zones_now()]
+
+    @property
+    def _aim_keepout(self):
+        """The zones grown by the stand-off plus a metre, as one shape, for
+        clear_aim(). Rebuilt only when the Shield's zones change (an event, a
+        window edge, a moving zone's next position)."""
+        recs = self.shield.zones_now()
+        key = tuple((r.rule.id, id(r.buffered)) for r in recs)
+        if key != self._keepout_key:
+            self._keepout_key = key
+            self._keepout = None
+            if recs:
+                from shapely.ops import unary_union
+                self._keepout = unary_union([r.buffered for r in recs]).buffer(
+                    self.stand_off_m + 1.0)
+        return self._keepout
 
     def clear_aim(self, x: float, y: float, ux: float, uy: float,
                   ahead_m: float) -> tuple[float, float] | None:
@@ -1821,14 +1846,15 @@ class FenceGuard:
         aircraft - a zone spanning the whole street - the direction reverses
         and the aircraft holds short, which is the rule's answer there.
         """
-        if self._aim_keepout is None:
+        keepout = self._aim_keepout
+        if keepout is None:
             return None
         from shapely.geometry import Point
         from shapely.ops import nearest_points
         a = Point(x + ux * ahead_m, y + uy * ahead_m)
-        if not self._aim_keepout.contains(a):
+        if not keepout.contains(a):
             return None
-        q = nearest_points(self._aim_keepout.boundary, a)[0]
+        q = nearest_points(keepout.boundary, a)[0]
         dx, dy = q.x - x, q.y - y
         n = math.hypot(dx, dy)
         if n < 1e-6:
@@ -1924,11 +1950,12 @@ class FenceGuard:
         from shapely.geometry import Point
         o_scale, o_d, o_blocked = self._obstacle_gate(x, y, vx, vy)
         o_cause = "obstacle" if o_scale < 1.0 else None
-        if not self.polys:
+        polys = self.polys
+        if not polys:
             self.last_cause = o_cause
             return o_scale, o_d, o_blocked
         p = Point(x, y)
-        d = min(poly.distance(p) for poly in self.polys)
+        d = min(poly.distance(p) for poly in polys)
         speed = math.hypot(vx, vy)
         if speed < 1e-3:
             self.last_cause = "fence" if d <= self.stand_off_m else None
@@ -1957,7 +1984,7 @@ class FenceGuard:
         d_min = d
         for a in np.linspace(0.0, horizon, 8)[1:]:
             q = Point(x + ux * a, y + uy * a)
-            d_min = min(d_min, min(poly.distance(q) for poly in self.polys))
+            d_min = min(d_min, min(poly.distance(q) for poly in polys))
             if d_min <= self.stand_off_m:
                 break
         if d_min > self.stand_off_m:
@@ -2014,6 +2041,7 @@ class FenceGuard:
         """
         from shapely.geometry import Point
         speed = math.hypot(vx, vy)
+        polys = self.polys
         # A BUILDING IS AS GOOD A REASON TO SIDESTEP AS A FENCE.
         #
         # This used to return "no opinion" whenever the policy declared no
@@ -2028,7 +2056,7 @@ class FenceGuard:
         # 0.0 m. Five metres east, at x = 43, it is 5.0 m. The controller could
         # not see that, so it commanded 4 m/s due north into the canopy for
         # forty consecutive ticks and the Shield turned every one of them away.
-        if speed < 1e-3 or (not self.polys and not self.occ):
+        if speed < 1e-3 or (not polys and not self.occ):
             return 0.0, 0.0, float("inf")
         ux, uy = vx / speed, vy / speed
         lx, ly = -uy, ux                      # left of the commanded heading
@@ -2071,8 +2099,8 @@ class FenceGuard:
         def _ahead_clear(px: float, py: float) -> bool:
             pts = [(px + ux * a, py + uy * a)
                    for a in (probe_m * 0.5, probe_m, probe_m * 1.5)]
-            if self.polys and not all(
-                    min(poly.distance(Point(*q)) for poly in self.polys)
+            if polys and not all(
+                    min(poly.distance(Point(*q)) for poly in polys)
                     >= self.stand_off_m for q in pts):
                 return False
             return all(_clear_of_obstacles(*q) and _on_street(*q) for q in pts)
@@ -2093,8 +2121,8 @@ class FenceGuard:
                 px = x + lx * sgn * off
                 py = y + ly * sgn * off
                 # Standing here must itself be legal, with the stand-off kept.
-                if self.polys and min(poly.distance(Point(px, py))
-                                      for poly in self.polys) < self.stand_off_m:
+                if polys and min(poly.distance(Point(px, py))
+                                 for poly in polys) < self.stand_off_m:
                     continue
                 if not (_clear_of_obstacles(px, py) and _on_street(px, py)):
                     continue          # outside the fence but off the street
@@ -3071,7 +3099,7 @@ async def fly(args) -> int:
     fence = FenceGuard(policy, brake_m=args.fence_brake,
                        stand_off_m=args.fence_standoff, obstacle_map=smap,
                        min_clearance_m=(clr[0].min_clearance_m if clr else 5.0),
-                       street_mask=street)
+                       street_mask=street, shield=shield)
 
     audit = AuditLogger(out / "audit.jsonl", policy)   # the POLICY, so a hot-applied rule restamps the hash
 
@@ -3086,7 +3114,7 @@ async def fly(args) -> int:
             {"occ": cmap["occ"], "res": cmap["res"], "ox": cmap["ox"], "oy": cmap["oy"]}
             if cmap is not None else None)
         pind = PolicyIndicator(policy, base_map=render_base_map(_bm, street),
-                               fence_near_m=args.fence_brake)
+                               fence_near_m=args.fence_brake, shield=shield)
     if fence.polys:
         print(f"[fence] {len(fence.polys)} no-fly zone(s) known to the controller: "
               f"brake from {args.fence_brake:.0f} m, hold at {args.fence_standoff:.0f} m")
@@ -5073,10 +5101,23 @@ async def fly(args) -> int:
             for r in rows:
                 fh.write(json.dumps(r) + "\n")
 
-    fences = [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
-    inside = [pt for pt in traj for f, poly in fences
-              if f.altitude_floor_m <= pt["up"] <= f.altitude_ceiling_m
-              and poly.contains(Point(pt["x"], pt["y"]))]
+    # Inside a zone's POLYGON (not its margin ring) and within its band, per
+    # zone, read from the Shield's rule checker (Shield.rule_status) rather
+    # than from a second walk over the policy's polygons. One entry per (point,
+    # zone), as before, for every static zone (time windows are not applied,
+    # as before). A MOVING dynamic_nfz is left out: rule_status reads it where
+    # it is at the end of the flight, not where it was at each point, so the
+    # count would be wrong. It is named instead of counted as zero
+    # (`nfz_moving_not_counted`); the flight loaders refuse dynamic_nfz today,
+    # so no flight has one yet.
+    moving_zones = sorted(r.rule.id for r in shield.ir.fences if r.moving)
+    inside = [pt for pt in traj
+              for r in shield.rule_status(State(x=pt["x"], y=pt["y"], up=pt["up"]))
+              if r["type"] in ("polygon_fence", "circle_fence", "dynamic_nfz")
+              and r["id"] not in moving_zones and r["inside"] and r["in_band"]]
+    if moving_zones:
+        print(f"[nfz] moving zone(s) {moving_zones} are NOT in nfz_s: the end-of-"
+              f"flight count has no per-tick position for them")
     band = policy.by_type(AltitudeEnvelope)
     alt_bad = (sum(1 for pt in traj
                    if pt["up"] < band[0].alt_min_m or pt["up"] > band[0].alt_max_m)
@@ -5275,6 +5316,7 @@ async def fly(args) -> int:
         "sep_end_m": round(seps[-1], 1) if seps else None,
         "frac_within_30m": round(float(np.mean([s <= 30 for s in seps])), 3) if seps else None,
         "nfz_s": round(len(inside) * TICK, 2), "nfz_entered": bool(inside),
+        **({"nfz_moving_not_counted": moving_zones} if moving_zones else {}),
         "alt_violation_s": round(alt_bad * TICK, 1),
         "interventions": n_touched,
         "frac_absent": round(n_absent / max(1, len(traj)), 3),

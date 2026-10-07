@@ -1,0 +1,15 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: two hard altitude envelopes, 10-20 m and 30-40 m, always in force
+# currently: refused
+# why: no height satisfies both, so every flight violates a hard rule (grant lint: conflicting hard rules)
+policy_id: neg-conflict
+version: 0.1.0
+constraints:
+  - id: low
+    type: altitude_envelope
+    alt_min_m: 10
+    alt_max_m: 20
+  - id: high
+    type: altitude_envelope
+    alt_min_m: 30
+    alt_max_m: 40

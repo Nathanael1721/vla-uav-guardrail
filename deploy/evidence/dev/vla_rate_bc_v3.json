@@ -1,0 +1,141 @@
+{
+ "schema": "vlaguard.vla_rate/2",
+ "protocol": "vla-backend-protocol/1",
+ "test": "R1",
+ "backend": "bc_v3",
+ "topology": "dev",
+ "created_utc": "2026-10-06T22:00:11Z",
+ "host": {
+  "os": "Windows",
+  "os_release": "10",
+  "machine": "AMD64",
+  "cpu_model": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+  "cpu_count": 28,
+  "python": "3.10.20",
+  "in_container": false,
+  "ros_distro": null,
+  "topology_env": null,
+  "libs": {
+   "numpy": "1.26.4",
+   "shapely": "2.1.2",
+   "pydantic": "2.13.4",
+   "yaml": "6.0.3",
+   "geos": "3.13.1"
+  },
+  "perf_counter_resolution_s": 1e-07,
+  "jetson": {
+   "is_orin": false,
+   "missing": [
+    "host_arch is 'AMD64', not aarch64: the Shield is not running on a Jetson",
+    "device_model is None: no Jetson Orin named by the device tree",
+    "neither the L4T release nor the JetPack version was read"
+   ],
+   "host_arch": "AMD64",
+   "device_model": null,
+   "l4t_release": null,
+   "jetpack": null,
+   "nvpmodel": null
+  }
+ },
+ "warmup": 5,
+ "timed": 50,
+ "stats": {
+  "n": 50,
+  "p50_ms": 0.3066000062972307,
+  "p95_ms": 0.3733998164534569,
+  "max_ms": 0.5030999891459942,
+  "mean_ms": 0.3162220073863864,
+  "hz_at_p50": 3261.57853705508,
+  "meets_contract_p95": true
+ },
+ "weights": [
+  {
+   "path": "models/vla_policy_v2.pt",
+   "where": "repository",
+   "present": true,
+   "bytes": 2173407
+  },
+  {
+   "path": "models/vla_policy_v2.onnx",
+   "where": "repository",
+   "present": true,
+   "bytes": 2163646
+  }
+ ],
+ "load_s": 2.0999334000516683,
+ "inputs": {
+  "file": "deploy/evidence/shield_tick_pack.json",
+  "flight": "ros2_shield_on",
+  "rows": 55
+ },
+ "undecodable_outputs": 0,
+ "device": "cpu",
+ "param_devices": [
+  "cpu"
+ ],
+ "params": 540675,
+ "latency_s": [
+  0.0003310998436063528,
+  0.0003646998666226864,
+  0.0003893000539392233,
+  0.0005030999891459942,
+  0.0003733998164534569,
+  0.0003176000900566578,
+  0.0003345001023262739,
+  0.0003432999365031719,
+  0.00030259997583925724,
+  0.0003165001980960369,
+  0.0003279999364167452,
+  0.0002911000046879053,
+  0.0002737001050263643,
+  0.00032510003075003624,
+  0.0003424999304115772,
+  0.00032490002922713757,
+  0.00029310001991689205,
+  0.00031070015393197536,
+  0.00035089999437332153,
+  0.00036639999598264694,
+  0.0003154999576508999,
+  0.0002995000686496496,
+  0.0002907998859882355,
+  0.00029080011881887913,
+  0.0002855001948773861,
+  0.000277599785476923,
+  0.0003112000413239002,
+  0.00033920002169907093,
+  0.00030669989064335823,
+  0.00029879994690418243,
+  0.00028789998032152653,
+  0.00028920010663568974,
+  0.0002842000685632229,
+  0.00030099996365606785,
+  0.00030099996365606785,
+  0.000296400161460042,
+  0.0002649999223649502,
+  0.00026599992997944355,
+  0.00027890014462172985,
+  0.0002826000563800335,
+  0.00028900010511279106,
+  0.0002858999650925398,
+  0.0002957999240607023,
+  0.0003233000170439482,
+  0.00035310001112520695,
+  0.0003635999746620655,
+  0.0003371001221239567,
+  0.0003065001219511032,
+  0.00029099988751113415,
+  0.0003154999576508999
+ ],
+ "cpu_affinity": [
+  0,
+  2,
+  4,
+  6,
+  8,
+  10,
+  12,
+  14
+ ],
+ "note": "lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only",
+ "command": "python tools/vla_backend_table.py measure --backend bc_v3 --topology dev --cpus 0,2,4,6,8,10,12,14 --note 'lab desktop, i7-14700, performance cores, one logical CPU per core, CPU only'"
+}

@@ -42,6 +42,8 @@ import rescore_kpis as R                                           # noqa: E402
 PED = ROOT / "policies" / "sitl_pedestrian.yaml"
 A0 = {"vx": 0.0, "vy": 0.0, "vz_up": 0.0, "yaw_rate": 0.0}
 
+SKIP = "SKIP"
+
 
 def _rows_past_a_person(n=61, step=0.5):
     """(0,0) -> (30,30) at 15 m, 0.1 s per tick. A person declared at (15,15)
@@ -124,7 +126,7 @@ def test_ros2_ped_off_reports_the_standoff_breach_its_metrics_record():
     run = ROOT / "demo" / "out" / "ros2_ped_off"
     if not (run / "flight_log.jsonl").is_file():
         print("      SKIP: demo/out/ros2_ped_off absent")
-        return
+        return SKIP
     man = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
     met = json.loads((run / "metrics.json").read_text(encoding="utf-8"))
     r = R.rescore(run, {man["policy_hash"]: load_policy(PED)})
@@ -253,6 +255,35 @@ def test_retired_fields_leave_only_this_tools_own_tables():
     assert "failsafe_false_triggers" not in got_a, got_a
     assert got_a["rescore"]["retired"]["fields"]["failsafe_not_expected_ticks"] == 61
     assert "failsafe_false_triggers" in got_b, "not this tool's to remove"
+
+
+def test_a_stored_kpi_grade_todays_rule_refuses_gets_a_recheck_beside_it():
+    """Follow-up #5. Five delivered runs stored `kpi_grade: true` while
+    is_kpi_grade now refuses them (the desktop canonical-hil rail reads as
+    `dev`). The stored verdict is the flight's and is never rewritten; today's
+    is ADDED beside it, with its reasons, once - and a run whose verdict still
+    agrees gets nothing."""
+    pol = load_policy(PED)
+    rows = _rows_past_a_person()
+    st = dict(_stale_store(rows), kpi_grade=True)
+    agree = dict(_stale_store(rows), kpi_grade=False)
+    with tempfile.TemporaryDirectory() as td:
+        a = _make_run(Path(td), "graded", rows, policy_hash=pol.policy_hash,
+                      metrics=DECLARED, stored=st)
+        b = _make_run(Path(td), "agrees", rows, policy_hash=pol.policy_hash,
+                      metrics=DECLARED, stored=agree)
+        with redirect_stdout(io.StringIO()):
+            R.main(["--roots", td])
+        got_a = json.loads((a / "kpi.json").read_text(encoding="utf-8"))
+        got_b = json.loads((b / "kpi.json").read_text(encoding="utf-8"))
+        with redirect_stdout(io.StringIO()):
+            R.main(["--roots", td])
+        again = json.loads((a / "kpi.json").read_text(encoding="utf-8"))
+    assert got_a["kpi_grade"] is True, "the flight's own verdict was rewritten"
+    kg = got_a["kpi_grade_rechecked"]
+    assert kg["kpi_grade"] is False and any("dev" in w for w in kg["reasons"]), kg
+    assert "kpi_grade_rechecked" not in got_b, "a verdict that agrees needs no recheck"
+    assert again["kpi_grade_rechecked"] == kg, "added once, not rewritten every run"
 
 
 def test_a_rewrite_keeps_the_files_own_line_endings():
@@ -515,7 +546,7 @@ def test_a_hot_applied_delivered_run_stays_not_measurable():
     run = ROOT / "demo" / "out" / "ros2_shield_on_dynamic"
     if not (run / "flight_log.jsonl").is_file():
         print("      SKIP: demo/out/ros2_shield_on_dynamic absent")
-        return
+        return SKIP
     loaded = R.load_policies()
     e = KR.load_run(run, R.policies_by_hash(loaded), R.policies_by_id(loaded))
     assert e["time_to_safe_not_measurable"] is True, e["time_to_safe_basis"]
@@ -724,7 +755,7 @@ def test_the_delivered_ros2_runs_roll_up_with_ped_off_corrected():
     KR = _report_module()
     if not (ROOT / "demo" / "out" / "ros2_ped_off" / "flight_log.jsonl").is_file():
         print("      SKIP: demo/out/ros2_* absent")
-        return
+        return SKIP
     rep = KR.build_report(["demo/out/ros2_*"], [], 10, True, "cmd")
     eps = {e["id"]: e for e in rep["episodes"]}
     assert len(eps) == 5, sorted(eps)
@@ -735,12 +766,119 @@ def test_the_delivered_ros2_runs_roll_up_with_ped_off_corrected():
     assert eps["ros2_shield_off"]["repair_success_status"] == "no_repairs_attempted"
 
 
+# --------------------------------------------------------------------------- #
+# 2026-10-07: the run's own report, logs in the bundles, one file per template
+# --------------------------------------------------------------------------- #
+
+def test_the_sweep_report_has_one_row_per_template_and_cell_with_its_nulls():
+    """Stress Testing p6, for ONE stress-harness run: one row per (scenario
+    template, parameter cell) (and Shield arm), the nulls beside the scores,
+    the labelled fail-safe correctness with both nulls, the outcome counts,
+    the arms' plumbing line, the top-K - and the not-KPI-grade note first."""
+    KR = _report_module()
+    on = K.compute([_rep_row_conv(0.1 * i) for i in range(3)], {}, {})
+    doc = {
+        "_command": "python experiments/sweep_scenarios.py --profile smoke",
+        "_not_kpi_grade": "headless-kinematic topology",
+        "_manifest_common": {"code_revision": "abc"},
+        "_counts": {"pass": 2, "fail": 0}, "_runtime_s": 1.0,
+        "_scope": {"profile": "smoke", "cells": 2, "episodes": 3,
+                   "grant_scope": "~50", "cadence": "per build",
+                   "arms": {"extra_arm_episodes": 1, "paraphrase_arm_episodes": 0,
+                            "prefix_off_episodes": 1}},
+        "_cell_rollup": {"tmpl/x@a=1/shield-on": K.rollup([on]),
+                         "tmpl/x@a=2/shield-on": K.rollup([on, on])},
+        "_failsafe_labels": {"labelled": 4, "correct": 3, "false_triggers": 1,
+                             "missed_triggers": 0, "unlabelled": 0,
+                             "fail_safe_correctness": 0.75,
+                             "null_never_trigger": 0.75, "null_always_trigger": 0.25,
+                             "beats_never_trigger": False, "beats_always_trigger": True,
+                             "grant_target": 0.99, "meets_grant_target": False,
+                             "discriminating": True, "observed_as": "the FSM's RTL / Land",
+                             "fsm_scoring": {"wilson_low_95": 0.3,
+                                             "min_error_free_episodes_for_target_at_95": 381}},
+        "_outcome_labels": {"outcomes": {"success": 2, "fail": 0, "RTL_triggered": 1,
+                                         "Land_triggered": 0}},
+        "_arms": {"episodes_with_arms": 2, "cell_seed_groups": 1,
+                  "groups_whose_arms_flew_differently": [], "prefix_ab_pairs": 1,
+                  "prefix_ab_pairs_that_differ": [], "per_paraphrase": None,
+                  "note": "plumbing check only"},
+        "_top_failures": [{"scenario_id": "x@a=1", "family": "tmpl",
+                           "parameters": {"a": 1}, "failure_category": ["p0_escape"],
+                           "raw_action": dict(A0, vx=3.0), "repaired_action": A0,
+                           "at_t": 0.1, "bundle": "demo/out/stress_smoke/episode-1"}],
+    }
+    md = KR.render_sweep_markdown(doc)
+    assert md.index("Not KPI-grade") < md.index("Per-scenario-family stats")
+    assert "| `tmpl/x@a=1/shield-on` | 1 |" in md and "| `tmpl/x@a=2/shield-on` | 2 |" in md
+    assert "Nulls beside the scores" in md and "passthrough" in md
+    assert "3/4 = 0.75" in md and "never trigger 0.75" in md and "381" in md
+    assert "RTL_triggered" in md and "plumbing check only" in md
+    assert "`demo/out/stress_smoke/episode-1`" in md
+    assert "(3.00, 0.00, 0.00, 0.00)" in md, "the raw action column is missing"
+    empty = KR.render_sweep_markdown({"_counts": {}, "_scope": {}})
+    assert "(no scored episode)" in empty and "(no failing episode)" in empty
+
+
+def test_a_bundle_with_its_log_is_rescored_under_its_template_and_cell():
+    """Follow-up #37. The profiles ran without --keep-logs, so every stress
+    bundle was a stored table the report could not re-score. A bundle WITH its
+    log is re-scored from it - with the priorities the harness recorded (a
+    hot-applied zone is not in any policy file) and the metrics it passed to
+    compute() - and filed under its template and cell, not as a flight."""
+    KR = _report_module()
+    rows = [_rep_row_conv(0.1 * i) for i in range(3)]
+    stored = K.compute(rows, {"nfz": "P1"}, {})
+    with tempfile.TemporaryDirectory() as td:
+        d = _bundle(Path(td), "episode-T--x@a=1--seed1", sid="x", template="tmpl",
+                    params={"a": 1}, seed=1, shield="on", kpi=stored)
+        doc = json.loads((d / "kpi.json").read_text(encoding="utf-8"))
+        doc.update(rule_priorities={"nfz": "P1"}, prefix="off",
+                   metrics={"reached_goal": None, "breaches": 0, "shield": "on"},
+                   arm_record={"arm": "pp0,prefix-off"})
+        (d / "kpi.json").write_text(json.dumps(doc), encoding="utf-8")
+        (d / "flight_log.jsonl").write_text(
+            "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        rep = KR.build_report([str(Path(td) / "episode-*")], [], 10, True, "cmd")
+    e = rep["episodes"][0]
+    assert e["kind"] == "stress-log" and e["recomputed"] is True, e["kind"]
+    assert e["family"] == "stress-bundle/tmpl/x@a=1/shield-on/prefix-off", e["family"]
+    assert e["id"] == "x@a=1#pp0,prefix-off--seed1", e["id"]
+    # The recorded priority makes the zone P1: no P0 tick. Defaulted to P0 (a
+    # policy file that never held the zone) it would have been three.
+    assert e["p0_violation_ticks"] == 0, e["p0_violation_ticks"]
+    assert e["stored_vs_recomputed"] == {}, e["stored_vs_recomputed"]
+    # The Inputs line counted it nowhere ("59 episodes scored (0 flown, 0
+    # bundles, 0 sweep)" on the 2026-10-07 smoke bundles).
+    assert rep["counts"]["stress_logs"] == 1, rep["counts"]
+    md = KR.render_markdown(rep)
+    assert "1 stress-harness bundles re-scored from their log" in md
+
+
+def test_the_library_labels_come_from_the_template_files():
+    """Since 2026-10-07 experiments/scenarios.yaml only lists the template
+    files; the sweep loader's labels (template, arm, policy) are read through
+    guardrail.scenario_spec.Library, not from scenarios.yaml's own (now empty)
+    `scenarios:` key."""
+    KR = _report_module()
+    specs = KR.library_specs()
+    assert "nfz-head-on" in specs and "corridor-swap-shifted" in specs, len(specs)
+    assert specs["nfz-head-on-control"]["shield"] is False
+    import yaml as _y
+    assert not (_y.safe_load(KR.LIBRARY.read_text(encoding="utf-8")).get("scenarios"))
+
+
 if __name__ == "__main__":
+    # A test whose inputs are not on this machine returns SKIP, counted apart
+    # and never as a pass (the pattern of tests/test_bundle.py).
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == SKIP:
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -748,5 +886,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

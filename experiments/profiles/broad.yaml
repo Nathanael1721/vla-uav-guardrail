@@ -1,0 +1,46 @@
+# Broad sweep profile: the nightly coverage sweep the grant keeps OUT of the KPIs.
+#
+# Grant, Stress Testing, "Test scheduling":
+#   Broad sweep | nightly | ~3000 scenarios x 5 seeds | > 1.0 (functional rail only)
+# "The broad sweep runs at speed > 1 for coverage; its results are tracked but
+# not part of the final KPI numbers."
+#
+# DEFINED, NOT ROUTINELY RUN (2026-10-07)
+#
+# This profile exists so the third row of the grant's table is a file, checked
+# like the other two: tests/test_scenario_spec.py expands it, requires the
+# count to land in `expected_cells`, and requires that no two of its cells fly
+# the same episode. It has not been run end to end: about 15 000 episodes on
+# the headless backend is an estimated 70 minutes on the desktop, scaled from
+# the nightly profile's rate (789 episodes in about 220 s) - an estimate, not
+# a measurement. When it is run, its manifests say `headless-kinematic` with
+# a measured sim_speedup in the hundreds - the grant's "> 1.0, functional
+# rail only" - and the run records `grant_profile_kpi_bearing: false` and
+# `kpi_bearing_this_run: false`, so nothing from it can be read as a KPI.
+#
+# HOW THE COUNT IS MADE
+#
+# Every family's full parameter_sweep (as nightly), and 92 seeded geometry
+# draws (`samples_per_family`) per sampled family: each draw is a distinct
+# approach angle, and the draw for variant k is the same in every profile, so
+# variants 0-2 are the nightly profile's. Arms are off (`paraphrase_k: 0`,
+# `prefix_ab: false`): the headless pilots read no text, and this sweep is
+# about geometric coverage. Five seeds, as the grant's row asks; a seed changes
+# only the episodes that draw from it (GPS noise, gusts, drawn wind, start
+# jitter), and the sweep says how many did.
+#
+#   python experiments/sweep_scenarios.py --profile broad
+
+profile: broad
+cadence: nightly (coverage, not KPI)
+grant_scope: "~3000 scenarios x 5 seeds"
+grant_sim_speedup: "> 1.0 (functional rail only) - met: headless backend, measured speedup >> 1"
+grant_kpi_bearing: false
+library: experiments/scenarios.yaml
+seeds: [1001, 1002, 1003, 1004, 1005]
+samples_per_family: 92
+families: all
+expected_cells: [2700, 3300]
+paraphrase_k: 0
+prefix_ab: false
+sweep_overrides: {}

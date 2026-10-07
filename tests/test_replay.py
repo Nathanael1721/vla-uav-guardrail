@@ -618,6 +618,664 @@ def test_an_unscored_episode_bundles_and_says_so_instead_of_passing_quietly():
     shutil.rmtree(d, ignore_errors=True)
 
 
+# --------------------------------------------------------------------------- #
+# Episode records (2026-10-06): every generation, a fresh audit, the rosbag
+# --------------------------------------------------------------------------- #
+
+SIM_POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
+
+
+def _episode(d: Path, hot: bool = True, mission: bool = True,
+             stale_audit: bool = False, finish: bool = True, ids: bool = True):
+    """A short synthetic flight written the way the SITL rails write one:
+    EpisodeRecord first, then the audit logger, rows with the per-tick
+    fields (and the episode id), a hot-applied fence half way, and the
+    mission_end event. No simulator."""
+    from guardrail.audit import AuditLogger
+    from guardrail.compiler import ConstraintCompiler
+    from guardrail.models import Action4D, PolygonFence, State, XY
+    from guardrail.replay import EpisodeRecord, episode_row_fields
+    from guardrail.shield import Shield
+    run = d / "ep"
+    run.mkdir(parents=True, exist_ok=True)
+    if stale_audit:
+        (run / "audit.jsonl").write_text('{"policy_hash": "sha256:old"}\n',
+                                         encoding="utf-8")
+    policy = load_policy(SIM_POLICY)
+    m = (ConstraintCompiler(policy).parse_command("fly to the northeast pad at 6 m/s")
+         if mission else None)
+    rec = EpisodeRecord(run, policy, m, lookahead_s=3.0)
+    audit = AuditLogger(run / "audit.jsonl", policy)
+    shield = Shield(policy, lookahead_s=3.0, dt=0.5)
+    rows = []
+    for tick in range(40):
+        if hot and tick == 20:
+            # The rails' own call: a dynamic_nfz where the Shield enforces
+            # the grant's mid-flight update model, the polygon_fence where not.
+            rec.apply_zone(shield, PolygonFence(
+                id="nfz-dynamic", type="polygon_fence",
+                vertices=[XY(x=23, y=6), XY(x=31, y=6), XY(x=31, y=14),
+                          XY(x=23, y=14)], margin_m=1.0), t=tick * 0.1)
+        st = State(x=2.0 + 0.4 * tick, y=2.0 + 0.4 * tick, up=15.0)
+        d_ = shield.filter(st, Action4D(vx=4.0, vy=4.0))
+        audit.log(tick, d_)
+        rows.append({"t": tick * 0.1, "tick": tick, "x": st.x, "y": st.y,
+                     "up": st.up, "raw": d_.raw.model_dump(),
+                     "emitted": d_.emitted.model_dump(),
+                     "violations": [v.model_dump() for v in d_.violations],
+                     "emitted_violations": [v.model_dump()
+                                            for v in d_.emitted_violations],
+                     "repairs": [r.model_dump() for r in d_.repairs],
+                     "braked": d_.braked,
+                     **episode_row_fields(shield, st, policy,
+                                          rec.episode_id if ids else None)})
+    (run / "flight_log.jsonl").write_text(
+        "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    if finish:
+        rec.end("test episode over", t=4.0)
+    return run, policy, rec, rows
+
+
+def _scored(run: Path, policy, rec) -> None:
+    """metrics.json, kpi.json and manifest.json, as a rail writes them at the
+    end of a flight, all carrying the episode id."""
+    rows = [json.loads(l) for l in
+            (run / "flight_log.jsonl").read_text(encoding="utf-8").splitlines()]
+    metrics = {"tag": run.name, "shield": "on", "reached": True,
+               "frac_within_30m": 1.0, "nfz_s": 0.0,
+               "episode_id": rec.episode_id}
+    (run / "metrics.json").write_text(json.dumps(metrics), encoding="utf-8")
+    kpi = compute(rows, rule_priorities(policy), metrics)
+    kpi["episode_id"] = rec.episode_id
+    (run / "kpi.json").write_text(json.dumps(kpi), encoding="utf-8")
+    (run / "manifest.json").write_text(json.dumps(
+        {"policy_hash": policy.policy_hash, "topology": "dev"}), encoding="utf-8")
+
+
+def test_every_policy_generation_and_its_csp_travel_with_the_episode():
+    """WP2-15: after a hot-apply the dynamic KPI run's log named a policy
+    that no saved file described. Now both generations, and the CSP compiled
+    from each, are in the bundle, and the index lists them."""
+    from guardrail.compiler import ConstraintCompiler
+    d = _tmp()
+    run, policy, _, rows = _episode(d)
+    assert {r["generation"] for r in rows} == {0, 1}
+    path = write_replay(run, policy, d / "r.tar.gz", signer=None)
+    got = read_replay(path)
+    assert sorted(got["generation_policies"]) == [0, 1], got["index"]
+    table = got["index"]["generations"]
+    assert [g["generation"] for g in table] == [0, 1]
+    assert table[0]["csp"], table
+    assert table[1]["policy_hash"] == policy.policy_hash
+    ok, why = verify_replay(path)
+    # Generation 1 holds the hot-applied zone. Where the compiler can render
+    # it, its CSP must be on file; where it cannot (a dynamic_nfz while
+    # guardrail/csp.py still calls that type unenforced, 2026-10-07), the
+    # bundle must say why - never a generation silently without its CSP.
+    m = ConstraintCompiler(policy).parse_command("fly to the northeast pad at 6 m/s")
+    try:
+        ConstraintCompiler(policy).write_csp(d / "probe.json", m, lookahead_s=3.0)
+        compilable = True
+    except Exception:                                # noqa: BLE001
+        compilable = False
+    if compilable:
+        assert table[1]["csp"] and ok and not any("CSP" in w for w in why), why
+    else:
+        assert not table[1]["csp"], table
+        assert ok and any("generation 1 has no CSP on file:" in w
+                          and "no event says why" not in w for w in why), why
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_log_naming_an_unarchived_generation_is_refused():
+    """The WP2-15 defect as a check that can fail. With generation 0's files
+    gone, 20 rows name a policy the bundle cannot show: refused on write,
+    and a bundle forged without them is refused on verify. Before this, the
+    bundle kept only the final policy and verified clean."""
+    d = _tmp()
+    run, policy, _, _ = _episode(d)
+    good = write_replay(run, policy, d / "good.tar.gz", signer=None)
+    for f in ("policy_g0.json", "csp_g0.json"):
+        (run / f).unlink()
+    try:
+        write_replay(run, policy, d / "bad.tar.gz", signer=None)
+    except ValueError as exc:
+        assert "no recorded generation" in str(exc), exc
+    else:
+        raise AssertionError("a log naming an unarchived generation was bundled")
+    # The same omission made consistently inside a keyless bundle.
+    with tarfile.open(good, "r:gz") as tar:
+        idx = json.loads(tar.extractfile(INDEX_NAME).read())
+    for m in (EPISODE + "policy_g0.json", EPISODE + "csp_g0.json"):
+        idx["members"].pop(m)
+    idx["generations"] = [g for g in idx["generations"] if g["generation"] != 0]
+    ib = json.dumps(idx, indent=2, sort_keys=True).encode()
+    forged = _rewrite_many(good, d / "forged.tar.gz", {
+        EPISODE + "policy_g0.json": None, EPISODE + "csp_g0.json": None,
+        INDEX_NAME: ib,
+        SIGNATURE_NAME: f"{_digest(ib)} {_SIGNED_BY}\n".encode()})
+    ok, why = verify_replay(forged)
+    assert not ok and "no archived generation" in why[0], (ok, why)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_csp_compiled_from_another_generation_is_refused():
+    d = _tmp()
+    run, policy, _, _ = _episode(d)
+    (run / "csp_g1.json").write_bytes((run / "csp_g0.json").read_bytes())
+    try:
+        write_replay(run, policy, d / "r.tar.gz", signer=None)
+    except ValueError as exc:
+        assert "compiled from policy" in str(exc), exc
+    else:
+        raise AssertionError("generation 1 shipped generation 0's CSP")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_stale_audit_is_moved_aside_never_appended_to():
+    """WP4-20: AuditLogger appends, and ros2_shield_on/audit.jsonl held three
+    dates of flights. The new episode starts a fresh file; the old one is
+    kept under _previous/, not deleted."""
+    d = _tmp()
+    run, policy, rec, _ = _episode(d, stale_audit=True)
+    hashes = {json.loads(l)["policy_hash"] for l in
+              (run / "audit.jsonl").read_text(encoding="utf-8").splitlines()}
+    assert "sha256:old" not in hashes, hashes
+    kept = list((run / "_previous").rglob("audit.jsonl"))
+    assert len(kept) == 1 and "sha256:old" in kept[0].read_text(encoding="utf-8")
+    assert "audit.jsonl" in rec.moved
+    path = write_replay(run, policy, d / "r.tar.gz", signer=None)
+    assert verify_replay(path)[0]
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_csp_that_could_not_be_compiled_is_said_with_its_reason():
+    d = _tmp()
+    run, policy, _, _ = _episode(d, hot=False, mission=False)
+    path = write_replay(run, policy, d / "r.tar.gz", signer=None)
+    ok, why = verify_replay(path)
+    assert ok and any("generation 0 has no CSP" in w and "no mission" in w
+                      for w in why), why
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_unsafe_flag_makes_time_to_safe_measurable():
+    """WP3-17: the ROS rail logged no `unsafe`, so mean time to safe with the
+    Shield on was 'not measurable' on every run."""
+    from guardrail.models import Action4D, State
+    from guardrail.replay import episode_row_fields
+    from guardrail.shield import Shield
+    policy = load_policy(SIM_POLICY)
+    sh = Shield(policy)
+    inside = State(x=15.0, y=15.0, up=15.0)            # inside nfz-square
+    sh.filter(inside, Action4D(vx=1.0))
+    f = episode_row_fields(sh, inside, policy)
+    assert f["unsafe"] and "nfz-square" in f["unsafe_rules"], f
+    assert f["shield_ms"] is not None and f["shield_ms"] >= 0.0
+    outside = State(x=-5.0, y=-5.0, up=15.0)
+    sh.filter(outside, Action4D())
+    assert not episode_row_fields(sh, outside, policy)["unsafe"]
+    rows = [{"t": i * 0.1, "violations": [], "repairs": [], "raw": {},
+             "emitted": {}, "unsafe": i < 5} for i in range(10)]
+    k = compute(rows, rule_priorities(policy), {})
+    assert k["time_to_safe_not_measurable"] is False
+    assert k["mean_time_to_safe_s"] is not None, k
+
+
+def _bag(run: Path, start_ns: int, closed: bool = True) -> None:
+    bag = run / "bag"
+    bag.mkdir()
+    (bag / "bag_0.mcap").write_bytes(b"\x89MCAP0\r\n" + b"\x00" * 64)
+    if closed:
+        (bag / "metadata.yaml").write_text(
+            "rosbag2_bagfile_information:\n"
+            "  version: 9\n  storage_identifier: mcap\n"
+            f"  duration:\n    nanoseconds: {int(90e9)}\n"
+            f"  starting_time:\n    nanoseconds_since_epoch: {start_ns}\n"
+            "  message_count: 10\n"
+            "  topics_with_message_count:\n"
+            "    - topic_metadata:\n        name: /vla/action_4d\n"
+            "        type: std_msgs/msg/Float32MultiArray\n"
+            "      message_count: 10\n"
+            "    - topic_metadata:\n        name: /mavros/state\n"
+            "        type: mavros_msgs/msg/State\n"
+            "      message_count: 0\n"
+            "  relative_file_paths:\n    - bag_0.mcap\n", encoding="utf-8")
+
+
+def _episode_start(run: Path) -> int:
+    from guardrail.replay import _jsonl, episode_start_ns
+    return episode_start_ns(_jsonl((run / "events.jsonl").read_bytes()))
+
+
+def test_this_episodes_rosbag_is_bundled_and_its_empty_topics_named():
+    d = _tmp()
+    run, policy, _, _ = _episode(d)
+    _bag(run, _episode_start(run) - int(20e9))       # started 20 s before
+    path = write_replay(run, policy, d / "r.tar.gz", signer=None)
+    got = read_replay(path)
+    assert EPISODE + "bag/bag_0.mcap" in got["bag_files"], got["bag_files"]
+    assert got["index"]["bag"]["binding"] == "episode"
+    ok, why = verify_replay(path)
+    assert ok and any("/mavros/state" in w for w in why), why
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_rosbag_left_by_another_flight_is_refused():
+    """A reused run tag can hold yesterday's bag. It must not travel as this
+    episode's recording."""
+    d = _tmp()
+    run, policy, _, _ = _episode(d)
+    _bag(run, _episode_start(run) - int(86400e9))     # a day earlier
+    path = write_replay(run, policy, d / "r.tar.gz", signer=None)
+    got = read_replay(path)
+    assert not got["bag_files"] and not got["index"]["bag"]["included"]
+    ok, why = verify_replay(path)
+    assert ok and any("rosbag NOT included" in w for w in why), why
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_an_open_rosbag_is_not_bundled():
+    d = _tmp()
+    run, policy, _, _ = _episode(d)
+    _bag(run, _episode_start(run), closed=False)
+    got = read_replay(write_replay(run, policy, d / "r.tar.gz", signer=None))
+    assert not got["bag_files"]
+    assert "not closed" in got["index"]["bag"]["why"]
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_kpi_evidence_can_demand_a_signature():
+    """The keyless downgrade (drop the Ed25519 line, swap in the keyless
+    placeholder) still reads as keyless by default, because tracked keyless
+    bundles are real. A caller verifying KPI evidence can now refuse it."""
+    d = _tmp()
+    run, policy, _, _ = _episode(d)
+    keyless = write_replay(run, policy, d / "k.tar.gz", signer=None)
+    assert verify_replay(keyless)[0]
+    ok, why = verify_replay(keyless, require_signature=True)
+    assert not ok and "signed bundle was required" in why[0], why
+    signed = write_replay(run, policy, d / "s.tar.gz", signer=SIGNER)
+    ok, why = verify_replay(signed, TRUST, require_signature=True)
+    assert ok, why
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_the_pack_cli_rebuilds_a_bundle_from_the_episode_alone():
+    """run_ros2_demo.sh re-packs after the rosbag is closed. The CLI has no
+    policy in memory; it reads the last generation the episode wrote."""
+    from guardrail.replay import _main, last_generation_policy
+    d = _tmp()
+    run, policy, _, _ = _episode(d)
+    assert last_generation_policy(run).policy_hash == policy.policy_hash
+    _bag(run, _episode_start(run) - int(5e9))
+    assert _main(["pack", str(run), "--keyless"]) == 0
+    got = read_replay(run / "ep.replay.tar.gz")
+    assert got["bag_files"] and len(got["index"]["generations"]) == 2
+    shutil.rmtree(d, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------- #
+# One episode, not two (2026-10-07 review)
+# --------------------------------------------------------------------------- #
+
+def test_a_crashed_rerun_does_not_bundle_the_previous_flights_log():
+    """The review's reproduction. Flight A finished and was scored; a re-run
+    of the same tag started a new episode and died before writing its own
+    log. run_ros2_demo.sh then runs `pack` anyway (ros2 launch exits 0 when
+    the Shield node dies). On the old code that returned rc 0, "re-derives
+    its own KPIs", with A's rows bundled under B's events."""
+    from guardrail.replay import EpisodeRecord, _main
+    d = _tmp()
+    run, policy, rec_a, _ = _episode(d)
+    _scored(run, policy, rec_a)
+    assert _main(["pack", str(run), "--keyless"]) == 0      # A packs cleanly
+    # B: a new episode in the same directory, then a crash (no log, no end).
+    EpisodeRecord(run, load_policy(SIM_POLICY), None)
+    for f in ("flight_log.jsonl", "metrics.json", "kpi.json", "manifest.json",
+              "ep.replay.tar.gz"):
+        assert not (run / f).exists(), f"{f} of flight A was left beside B"
+    assert _main(["pack", str(run), "--keyless"]) == 1, (
+        "an episode with no log of its own was packed")
+    assert not (run / "ep.replay.tar.gz").exists()
+    kept = {p.name for p in (run / "_previous").rglob("*") if p.is_file()}
+    assert {"flight_log.jsonl", "kpi.json", "ep.replay.tar.gz"} <= kept, kept
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_log_from_another_episode_is_refused_even_if_put_back():
+    """The second line of defence: flight A's log copied back beside B's
+    events (by hand, or by a writer that skipped the rotation) carries A's
+    episode id and is refused on write; a bundle forged that way is refused
+    on verify."""
+    from guardrail.replay import EpisodeRecord
+    d = _tmp()
+    run, policy, rec_a, _ = _episode(d, hot=False)
+    log_a = (run / "flight_log.jsonl").read_bytes()
+    good = write_replay(run, policy, d / "good.tar.gz", signer=None)
+    rec_b = EpisodeRecord(run, load_policy(SIM_POLICY), None)
+    rec_b.end("crashed", t=0.0)
+    (run / "flight_log.jsonl").write_bytes(log_a)
+    try:
+        write_replay(run, load_policy(SIM_POLICY), d / "bad.tar.gz", signer=None)
+    except ValueError as exc:
+        assert "another flight" in str(exc), exc
+    else:
+        raise AssertionError("flight A's log was bundled under episode B")
+    # The same mix forged into a keyless bundle: B's events, A's rows.
+    with tarfile.open(good, "r:gz") as tar:
+        idx = json.loads(tar.extractfile(INDEX_NAME).read())
+    ev_b = (run / "events.jsonl").read_bytes()
+    idx["members"][EPISODE + "events.jsonl"] = _digest(ev_b)
+    ib = json.dumps(idx, indent=2, sort_keys=True).encode()
+    forged = _rewrite_many(good, d / "forged.tar.gz", {
+        EPISODE + "events.jsonl": ev_b, INDEX_NAME: ib,
+        SIGNATURE_NAME: f"{_digest(ib)} {_SIGNED_BY}\n".encode()})
+    ok, why = verify_replay(forged)
+    assert not ok and any("another flight" in w for w in why), (ok, why)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_metrics_or_kpi_from_another_episode_are_refused():
+    d = _tmp()
+    run, policy, rec, _ = _episode(d, hot=False)
+    _scored(run, policy, rec)
+    assert verify_replay(write_replay(run, policy, d / "ok.tar.gz",
+                                      signer=None))[0]
+    for name in ("metrics.json", "kpi.json"):
+        doc = json.loads((run / name).read_text(encoding="utf-8"))
+        saved = dict(doc)
+        doc["episode_id"] = rec.episode_id - 1
+        (run / name).write_text(json.dumps(doc), encoding="utf-8")
+        try:
+            write_replay(run, policy, d / "bad.tar.gz", signer=None)
+        except ValueError as exc:
+            assert name in str(exc) and "not this episode" in str(exc), exc
+        else:
+            raise AssertionError(f"{name} of another episode was bundled")
+        (run / name).write_text(json.dumps(saved), encoding="utf-8")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_audit_records_from_another_episode_are_refused():
+    """The rails give the audit logger the episode id (AuditLogger has taken
+    one since 2026-10-07), so every audit record names its episode, and an
+    audit record naming another episode is refused like a log row would be.
+    Records without an id (every audit written before) bind nothing."""
+    from guardrail.replay import episode_binding
+    d = _tmp()
+    run, policy, rec, _ = _episode(d, hot=False)
+    _scored(run, policy, rec)
+    events = [json.loads(ln) for ln in
+              (run / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    rows = [json.loads(ln) for ln in
+            (run / "flight_log.jsonl").read_text(encoding="utf-8").splitlines()]
+    mine = [{"tick": 1, "episode_id": str(rec.episode_id)},
+            {"tick": 2, "episode_id": rec.episode_id}, {"tick": 3}]
+    _, problems, _ = episode_binding(events, rows, audit=mine)
+    assert problems == [], problems
+    _, problems, _ = episode_binding(events, rows, audit=mine + [
+        {"tick": 4, "episode_id": str(rec.episode_id - 1)}])
+    assert any("audit.jsonl" in p_ and "not this episode" in p_
+               for p_ in problems), problems
+    # The logger the rails build writes the id into every record.
+    from guardrail.audit import AuditLogger
+    from guardrail.models import Action4D, State
+    from guardrail.replay import rail_shield
+    sh = rail_shield(policy, lookahead_s=5.0, dt=0.1)
+    AuditLogger(run / "audit.jsonl", policy, episode_id=str(rec.episode_id)).log(
+        41, sh.filter(State(x=4.0, y=15.0, up=15.0), Action4D(vx=6.0)))
+    last = json.loads((run / "audit.jsonl").read_text(
+        encoding="utf-8").splitlines()[-1])
+    assert last["episode_id"] == str(rec.episode_id), last
+    # Through the writer and the verifier.
+    path = write_replay(run, policy, d / "ok.tar.gz", signer=None)
+    assert verify_replay(path)[0]
+    with (run / "audit.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps({"tick": 99, "policy_hash": policy.policy_hash,
+                            "episode_id": str(rec.episode_id + 7)}))
+        f.write(chr(10))
+    try:
+        write_replay(run, policy, d / "bad.tar.gz", signer=None)
+    except ValueError as exc:
+        assert "audit.jsonl" in str(exc), exc
+    else:
+        raise AssertionError("an audit record of another episode was bundled")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_an_unfinished_episode_is_refused():
+    """No mission_end: the flight crashed or is still running."""
+    from guardrail.replay import _main
+    d = _tmp()
+    run, policy, _, _ = _episode(d, hot=False, finish=False)
+    try:
+        write_replay(run, policy, d / "r.tar.gz", signer=None)
+    except ValueError as exc:
+        assert "mission_end" in str(exc), exc
+    else:
+        raise AssertionError("an unfinished episode was bundled")
+    assert _main(["pack", str(run), "--keyless"]) == 1
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_an_id_less_log_is_bound_by_its_file_time_and_said_to_be():
+    """Rows written between 2026-10-06 and 2026-10-07 carry no episode id.
+    Such a log is accepted only if it was written after the episode began,
+    and the bundle says the binding is unverified."""
+    d = _tmp()
+    run, policy, rec, _ = _episode(d, hot=False, ids=False)
+    path = write_replay(run, policy, d / "r.tar.gz", signer=None)
+    assert read_replay(path)["index"]["log_binding"] == "unverified"
+    ok, why = verify_replay(path)
+    assert ok and any("episode binding UNVERIFIED" in w for w in why), why
+    old = (rec.episode_id - int(3600e9)) / 1e9            # an hour earlier
+    os.utime(run / "flight_log.jsonl", (old, old))
+    try:
+        write_replay(run, policy, d / "r2.tar.gz", signer=None)
+    except ValueError as exc:
+        assert "before this episode started" in str(exc), exc
+    else:
+        raise AssertionError("a log older than the episode was bundled")
+    # The pymavlink rail wrote no mission_end before 2026-10-07: its stored,
+    # id-less runs still bundle, and the missing end is said, not hidden.
+    d2 = _tmp()
+    run2, policy2, _, _ = _episode(d2, hot=False, ids=False, finish=False)
+    ok, why = verify_replay(write_replay(run2, policy2, d2 / "r.tar.gz",
+                                         signer=None))
+    assert ok and any("no mission_end" in w for w in why), why
+    shutil.rmtree(d, ignore_errors=True)
+    shutil.rmtree(d2, ignore_errors=True)
+
+
+def test_a_bound_episode_says_so_in_the_index():
+    d = _tmp()
+    run, policy, rec, rows = _episode(d)
+    assert {r["episode_id"] for r in rows} == {rec.episode_id}
+    got = read_replay(write_replay(run, policy, d / "r.tar.gz", signer=None))
+    assert got["index"]["log_binding"] == "episode"
+    assert got["index"]["episode_id"] == rec.episode_id
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_an_event_payload_cannot_overwrite_kind_t_or_wall():
+    """The first 2026-10-06 flight crashed in a ROS callback: the VLA's
+    identity JSON has its own "kind" key. The fix stores colliding keys as
+    data_<key>; overwriting them silently would lose the event's kind."""
+    from guardrail.replay import EpisodeRecord
+    d = _tmp()
+    rec = EpisodeRecord(d / "ep", load_policy(SIM_POLICY), None)
+    got = rec.event("vla_identity", t=1.5, kind="stub", wall="w", t_extra=2)
+    assert got["kind"] == "vla_identity" and got["t"] == 1.5, got
+    assert got["data_kind"] == "stub" and got["data_wall"] == "w", got
+    last = json.loads((d / "ep" / "events.jsonl").read_text(
+        encoding="utf-8").splitlines()[-1])
+    assert last == got
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_write_replay_refuses_a_policy_that_is_not_the_last_generation():
+    """A flight that hot-applied a rule ended under generation 1; handing the
+    writer generation 0 (a stale object, a re-loaded YAML) must be refused,
+    or the bundle's policy would not be the one in force at the end."""
+    d = _tmp()
+    run, policy, _, _ = _episode(d)
+    assert policy.generation == 1
+    try:
+        write_replay(run, load_policy(SIM_POLICY), d / "r.tar.gz", signer=None)
+    except ValueError as exc:
+        assert "not the last generation" in str(exc), exc
+    else:
+        raise AssertionError("generation 0 was bundled as the final policy")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_zone_applied_after_mission_start_goes_in_as_the_grant_allows():
+    """The grant's mid-flight update model: only dynamic_nfz,
+    time_window_switch and corridor_swap after mission start. A Shield that
+    enforces it refuses the polygon_fence the --dynamic runs used to send;
+    apply_zone sends the same zone as a dynamic_nfz there (same id, vertices,
+    band, margin), the polygon_fence where the Shield predates the rule, and
+    records the new generation either way."""
+    import guardrail.shield as S
+    from guardrail.models import Action4D, PolygonFence, State, XY
+    from guardrail.replay import EpisodeRecord
+    d = _tmp()
+    policy = load_policy(SIM_POLICY)
+    rec = EpisodeRecord(d / "ep", policy, None)
+    sh = S.Shield(policy)
+    sh.filter(State(x=0.0, y=0.0, up=15.0), Action4D(vx=1.0))   # mission started
+    fence = PolygonFence(id="nfz-late", type="polygon_fence", margin_m=1.0,
+                         vertices=[XY(x=40, y=-5), XY(x=50, y=-5),
+                                   XY(x=50, y=5), XY(x=40, y=5)])
+    rule = rec.apply_zone(sh, fence, t=1.0)
+    assert policy.generation == 1 and rec.generations[-1]["generation"] == 1
+    assert rule.id == "nfz-late"
+    assert [(v.x, v.y) for v in rule.vertices] == [(v.x, v.y) for v in fence.vertices]
+    if hasattr(S, "as_dynamic_nfz"):
+        assert rule.type == "dynamic_nfz", rule.type
+    else:
+        assert rule is fence
+    inside = State(x=45.0, y=0.0, up=15.0)
+    assert any(v.rule_id == "nfz-late" for v in sh.state_is_unsafe(inside)), \
+        "the applied zone is not enforced"
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_kpi_grade_run_with_a_keyless_bundle_is_demoted():
+    """Review 2026-10-07: require_signature existed but no KPI path asked for
+    it, so a keyless (or downgraded) bundle still passed as evidence for a
+    run is_kpi_grade had accepted. Both rails now pass the grade through
+    kpi_evidence_grade."""
+    from guardrail.replay import kpi_evidence_grade
+    d = _tmp()
+    run, policy, _, _ = _episode(d)
+    keyless = write_replay(run, policy, d / "k.tar.gz", signer=None)
+    graded, why = kpi_evidence_grade(True, [], keyless)
+    assert graded is False and "cannot serve as KPI evidence" in why[0], why
+    signed = write_replay(run, policy, d / "s.tar.gz", signer=SIGNER)
+    assert kpi_evidence_grade(True, [], signed, TRUST) == (True, [])
+    # A run that was not graded stays as it was, reasons untouched.
+    assert kpi_evidence_grade(False, ["topology"], keyless) == (False, ["topology"])
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_what_was_flown_is_what_the_escape_is_counted_on():
+    """flown_fields, the one place both SITL rails decide what was flown.
+    `none` (the autopilot's RTL holds the aircraft): nothing was flown, so
+    nothing escaped - 250 of the 283 "escapes" of the shield-off GeoFence
+    run were such ticks. `brake`: the zero action's check, not
+    decision.emitted's. `pass`: the re-check (on) or the raw action (off)."""
+    from guardrail.models import Action4D, State
+    from guardrail.replay import flown_fields
+    from guardrail.shield import Shield
+    policy = load_policy(SIM_POLICY)
+    sh = Shield(policy)
+    approach = State(x=4.0, y=15.0, up=15.0)            # 3 m short of the zone
+    d_ = sh.filter(approach, Action4D(vx=6.0))
+    assert any(v.rule_id == "nfz-square" for v in d_.violations)
+    off = flown_fields(sh, approach, d_, shield_on=False)
+    assert off["flown"] and any(v["rule_id"] == "nfz-square"
+                                for v in off["emitted_violations"])
+    held = flown_fields(sh, approach, d_, shield_on=False, setpoint="none")
+    assert held == {"flown": False, "emitted_violations": []}, held
+    on = flown_fields(sh, approach, d_, shield_on=True)
+    assert on["emitted_violations"] == [v.model_dump()
+                                        for v in d_.emitted_violations]
+    # Brake inside the zone: standing still there IS illegal, whatever the
+    # repaired action was.
+    inside = State(x=15.0, y=15.0, up=15.0)
+    d_in = sh.filter(inside, Action4D(vx=1.0))
+    br = flown_fields(sh, inside, d_in, shield_on=True, setpoint="brake")
+    assert br["flown"] and any(v["rule_id"] == "nfz-square"
+                               for v in br["emitted_violations"]), br
+    try:
+        flown_fields(sh, inside, d_in, shield_on=True, setpoint="hover")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an unknown setpoint kind was accepted")
+    # Scored: a control arm whose last ticks the autopilot flew is charged
+    # only for the ticks the VLA's action was flown.
+    rows = []
+    for i in range(10):
+        sp = "pass" if i < 3 else "none"
+        rows.append({"t": i * 0.1, "violations": [v.model_dump()
+                                                  for v in d_.violations],
+                     "repairs": [], "raw": {}, "emitted": {}, "setpoint": sp,
+                     **flown_fields(sh, approach, d_, shield_on=False,
+                                    setpoint=sp)})
+    k = compute(rows, rule_priorities(policy), {"shield": "off"})
+    assert k["p0_escapes"] == 3, k["p0_escapes"]
+
+
+def test_a_rail_runs_one_escalation_fsm_and_its_audit_records_that_one():
+    """Since 2026-10-07 a Shield can run the escalation FSM inside filter()
+    (`Shield(escalation=...)`, on by default), and AuditLogger.log records
+    that FSM's verdict unless the caller hands it a record of its own. The
+    SITL rails run THE FSM in the node, which sees the autopilot (mode, home
+    reached, landed, a GeoFence takeover). With both running, audit.jsonl
+    recorded the Shield's FSM and flight_log.jsonl the node's: they disagreed
+    on 3 of 83 ticks of the flight ros2fix_on_dyn_nfz. `rail_shield` builds
+    the rail's Shield without an FSM and `audit_tick` writes the node's."""
+    from guardrail.audit import AuditLogger
+    from guardrail.fsm import EscalationFSM, FSMConfig, tick_input_from_decision
+    from guardrail.models import Action4D, State
+    from guardrail.replay import audit_tick, rail_shield
+    from guardrail.shield import Shield
+    policy = load_policy(SIM_POLICY)
+    sh = rail_shield(policy, lookahead_s=5.0, dt=0.1)
+    assert (sh.lookahead_s, sh.dt) == (5.0, 0.1)
+    assert getattr(sh, "fsm", None) is None, "the rail's Shield runs a second FSM"
+    approach = State(x=4.0, y=15.0, up=15.0)            # 3 m short of the zone
+    d_ = sh.filter(approach, Action4D(vx=6.0))
+    assert d_.touched
+    assert getattr(d_, "set_mode", None) is None
+    assert getattr(d_, "fsm_record", None) is None
+    # The node's FSM steps on the decision and changes state.
+    fsm = EscalationFSM(FSMConfig())
+    out = fsm.step(tick_input_from_decision(
+        0.0, d_, policy, horizon_s=0.1, stop_illegal=sh.state_is_unsafe(approach)))
+    assert out.transition, out.record
+    path = Path(tempfile.mkdtemp()) / "audit.jsonl"
+    audit = AuditLogger(path, policy)
+    audit_tick(audit, 7, d_, fsm_out=out)
+    rec = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert (rec["tick"], rec["fsm_state_after"], rec["fsm_edge"]) == (
+        7, out.state.value, out.edge), rec
+    assert rec.get("fsm_set_mode") == out.set_mode, rec
+    # The node's FSM refused its input: the audit says so on that tick.
+    audit_tick(audit, 8, d_, fsm_fault="input refused")
+    rec = json.loads(path.read_text(encoding="utf-8").splitlines()[-1])
+    assert rec["tick"] == 8 and rec["fsm_fault"] == "input refused", rec
+    # What the rails built before: the Shield's own FSM, whose verdict the
+    # audit took when no record was handed over.
+    if "escalation" in __import__("inspect").signature(Shield).parameters:
+        both = Shield(policy, lookahead_s=5.0, dt=0.1)
+        d2 = both.filter(approach, Action4D(vx=6.0))
+        assert d2.fsm_record is not None, "the default Shield no longer runs an FSM"
+
+
 if __name__ == "__main__":
     # A test that short-circuits on a missing fixture must NOT print PASS. On a
     # clean clone demo/out/ is gitignored, so 7 of these 8 returned immediately

@@ -4,6 +4,20 @@
  *
  * Every number comes from docs/data/eval_sep2026.json (tools/build_eval_data.py).
  *
+ * CORRECTED 2026-10-06, in the generator only (the 16 Sept deck was delivered;
+ * its corrections are rows B1-B10 of
+ * docs/CORRECTION-2026-10-06-mid-evaluation-and-deck.md). A rebuild can no
+ * longer print: "Hard KPI" (P0 escape is one of five acceptance KPIs, B1);
+ * WP1/WP2/WP4 "Built" or WP3 "canonical-HIL runs" (B2); "rules into prompt"
+ * and the swappable-source box (B3); "Measured on the KPI rail" (B4); the
+ * contractual-gate card (B5); the "Canonical HIL" header and the 1.0
+ * fail-safe target, which is >= 0.99 (B6); the inflated detector range (the
+ * numbers file now carries the mission rate, B7); the KPI-rail / Gazebo plan
+ * items (B8, B9); "KPI gate cleared" / "All five KPIs" on the timeline and the
+ * conclusion. The desktop SITL + MAVROS 2 rail is the grant's `dev` topology;
+ * reported KPI figures come from Stress Testing runs in `hil` (Jetson Orin).
+ * tools/check_claims.py scans this file for the retracted wordings.
+ *
  *   node tools/deck/build_mideval_deck.js
  */
 const fs = require("fs");
@@ -23,6 +37,15 @@ const E = JSON.parse(fs.readFileSync(path.join(REPO, "docs/data/eval_sep2026.jso
 const OUT = path.join(REPO, "docs/Guardrail-MidEvaluation-Sep2026.pptx");
 const FPV = path.join(REPO, "demo/out/retarget_smooth/view/fpv");
 
+// Desktop SITL + MAVROS 2 runs under today's name ("dev"); a numbers file
+// written before 2026-10-06 stored them as "canonical-hil".
+const nDev = (E.rails.counts["dev"] || 0) + (E.rails.counts["canonical-hil"] || 0);
+const cityFlown = Object.keys(((E.unflown || {}).citylife_level || {}).flights || {}).length;
+// The 768x432 camera's flights, read off the same artefact list as the
+// report's Section 7, so a "next step" row cannot ask to fly what has flown.
+const camFlown = (((E.unflown || {}).camera_768x432 || {}).flight_artefacts || []).length;
+// "0 of 34 (33 measurable)", as the correction note states it (row A15).
+const camAll = E.rails.camera_flights_all ?? E.rails.camera_flights;
 const f1 = (v) => Number(v).toFixed(1);
 const f2 = (v) => Number(v).toFixed(2);
 
@@ -103,7 +126,7 @@ async function main() {
     H.card(s, 0.55, cy, cw, ch, ic.robot, "Model drives", "A VLA turns a phrase into velocity.");
     H.card(s, 0.55 + cw + 0.25, cy, cw, ch, ic.ban, "No rules inside", "Nothing in the model knows a no-fly zone.");
     H.card(s, 0.55 + 2 * (cw + 0.25), cy, cw, ch, ic.shield, "Guardrail", "Declared policy, enforced on every command.");
-    s.addText("Hard KPI: P0 violation escape rate = 0.", { x: 0.55, y: 3.9, w: 8.6, h: 0.35, fontSize: 12, color: TEAL, fontFace: FF, bold: true });
+    s.addText("P0 violation escape rate, target 0, is one of five acceptance KPIs.", { x: 0.55, y: 3.9, w: 8.6, h: 0.35, fontSize: 12, color: TEAL, fontFace: FF, bold: true });
     H.badge(s, page);
   }
 
@@ -112,10 +135,10 @@ async function main() {
     const s = content("Grant scope", "Work Packages");
     const rows = [
       ["WP", "Deliverable", "Status", "Evidence"],
-      ["WP1", "Policy DSL + IR", "Built", "6 constraint types, signed bundle"],
-      ["WP2", "Prefix constraint compiler", "Built", "Constraint summary pack"],
-      ["WP3", "Suffix Safety Shield", "KPI-grade", `${E.kpi.flights_kpi_grade} canonical-HIL runs`],
-      ["WP4", "Stress testing", "Built", `${S.counts.pass + S.counts.fail + S.counts.known_failure} scenarios, replay bundles`],
+      ["WP1", "Policy DSL + IR", "Partial", "6 constraint types, bundle signed with a lab dev key"],
+      ["WP2", "Prefix constraint compiler", "Partial", "CSP generated and saved; no flown VLA reads it yet"],
+      ["WP3", "Suffix Safety Shield", "Partial", `Shield core; ${nDev} SITL + MAVROS 2 runs (dev topology)`],
+      ["WP4", "Stress testing", "Partial", `${S.counts.pass + S.counts.fail + S.counts.known_failure}-scenario headless regression sweep`],
     ];
     H.table(s, rows, { y: 1.8, rh: 0.5, colFrac: [0.12, 0.3, 0.16, 0.42], emph: [[3, 2]], align: ["center", "left", "center", "left"] });
     s.addText("Five acceptance KPIs, all named in the grant: mission success · P0 escape rate · fail-safe correctness · mean repair magnitude · mean time to safe.", {
@@ -139,9 +162,9 @@ async function main() {
 
     const y2 = 3.35;
     box(s, xs[3], y2, bw, 0.95, "Policy DSL", "WP1 · hashed YAML");
-    box(s, xs[1], y2, bw * 2 + gap, 0.95, "Action source (swappable)", "OpenVLA-7B · AerialVLA · BC policy · hand-written", { dashed: true, border: LGREY });
+    box(s, xs[1], y2, bw * 2 + gap, 0.95, "Action source", "test pilot in the city · OpenVLA-7B, AerialVLA in separate runs", { dashed: true, border: LGREY });
     box(s, xs[4], y2, bw, 0.95, "WP4 evidence", "sweep · replay · manifest");
-    box(s, xs[0], y2, bw, 0.95, "Prefix compiler", "WP2 · rules into prompt");
+    box(s, xs[0], y2, bw, 0.95, "Prefix compiler", "WP2 · rules summarised into a CSP");
     arrowR(s, xs[0] + bw, y2 + 0.475, xs[1]);
     H.source(s, "The Shield sees only the Action4D. Which model produced it does not change the safety argument.", 4.55);
     H.badge(s, page);
@@ -189,8 +212,8 @@ async function main() {
     });
     const on = K.ros2_shield_on;
     H.card(s, 0.55, 3.15, 4.35, 1.45, ic.clip, "Audit record per tick", "Rule, repair, magnitude, policy hash.");
-    H.card(s, 5.1, 3.15, 4.35, 1.45, ic.shield, "Measured on the KPI rail",
-      `Fail-safe correctness ${f1(on.failsafe_trigger_correctness)}. Mean repair ${f2(on.mean_repair_magnitude_mps)} m/s.`);
+    H.card(s, 5.1, 3.15, 4.35, 1.45, ic.shield, "Measured on the dev-topology runs",
+      `Mean repair ${f2(on.mean_repair_magnitude_mps)} m/s (max ${f2(on.max_repair_magnitude_mps)}).`);
     H.badge(s, page);
   }
 
@@ -199,32 +222,32 @@ async function main() {
     const s = content("Simulation rails", "Where It Runs");
     // Counted from each flight's manifest by tools/build_eval_data.py.
     const rows = [
-      ["Rail", "Flights", "Camera", "KPI-grade"],
-      ["Project AirSim (Unreal)", String(E.rails.counts["projectairsim-single-host"] || 0), "Yes", "No"],
-      ["ArduPilot SITL · pymavlink", String(E.rails.counts["ardupilot-sitl-pymavlink"] || 0), "No", "No"],
-      ["ArduPilot SITL · MAVROS 2 · ROS 2 Jazzy", String(E.rails.counts["canonical-hil"] || 0), "No", "Yes"],
+      ["Rail", "Flights", "Camera", "Grant topology"],
+      ["Project AirSim (Unreal)", String(E.rails.counts["projectairsim-single-host"] || 0), "Yes", "perception rail"],
+      ["ArduPilot SITL · pymavlink", String(E.rails.counts["ardupilot-sitl-pymavlink"] || 0), "No", "desktop, no MAVROS"],
+      ["ArduPilot SITL · MAVROS 2 · ROS 2 Jazzy", String(nDev), "No", "dev"],
     ];
     H.table(s, rows, { y: 1.8, rh: 0.52, colFrac: [0.46, 0.16, 0.18, 0.2], emph: [[3, 3]] });
-    H.card(s, 0.55, 4.02, 8.9, 1.02, null, "The gap to close",
-      "Tracking runs on AirSim, outside the contractual gate. KPI figures come from SITL.");
+    H.card(s, 0.55, 4.02, 8.9, 1.02, null, "Next",
+      "Tracking runs on Project AirSim; the ArduPilot runs are on one desktop (dev). Reported KPIs come from Stress Testing runs in hil (Jetson Orin).");
     H.badge(s, page);
   }
 
   /* 08 · KPI RESULTS ------------------------------------------------------- */
   {
-    const s = content("Canonical HIL · ArduPilot SITL + MAVROS 2", "KPI Results");
+    const s = content("Dev topology · ArduPilot SITL + MAVROS 2, one desktop", "KPI Results");
     const a = K.ros2_shield_on, b = K.ros2_shield_on_dynamic, c = K.ros2_ped_on, off = K.ros2_shield_off;
     const yes = (v) => (v ? "Yes" : "No");
     const rows = [
       ["KPI", "Target", "No-fly zone", "Dynamic NFZ", "Pedestrian"],
       ["P0 escape rate", "0", f1(a.p0_violation_escape_rate), f1(b.p0_violation_escape_rate), f1(c.p0_violation_escape_rate)],
-      ["Fail-safe correctness", "1.0", f1(a.failsafe_trigger_correctness), f1(b.failsafe_trigger_correctness), f1(c.failsafe_trigger_correctness)],
+      ["Fail-safe correctness*", "≥ 0.99", f1(a.failsafe_trigger_correctness), f1(b.failsafe_trigger_correctness), f1(c.failsafe_trigger_correctness)],
       ["Mission success", "—", yes(a.mission_success), yes(b.mission_success), yes(c.mission_success)],
       ["Mean repair (m/s)", "—", f2(a.mean_repair_magnitude_mps), f2(b.mean_repair_magnitude_mps), f2(c.mean_repair_magnitude_mps)],
       ["Unsafe episodes", "—", String(a.time_to_safe_episodes), String(b.time_to_safe_episodes), String(c.time_to_safe_episodes)],
     ];
     H.table(s, rows, { y: 1.72, rh: 0.44, colFrac: [0.3, 0.13, 0.19, 0.19, 0.19], emph: [[1, 2], [1, 3], [1, 4]] });
-    s.addText(`Unshielded control: escape rate ${f2(off.p0_violation_escape_rate)}, mean time to safe ${f1(off.mean_time_to_safe_s)} s. Pedestrian position is declared, not detected.`, {
+    s.addText(`Unshielded control: escape rate ${f2(off.p0_violation_escape_rate)}, mean time to safe ${f1(off.mean_time_to_safe_s)} s. Pedestrian position is declared, not detected. *Computed as the share of P0 ticks that did not escape.`, {
       x: 0.55, y: 4.5, w: 8.9, h: 0.45, fontSize: 10.5, color: GREY, fontFace: FF, lineSpacingMultiple: 1.2,
     });
     H.badge(s, page);
@@ -313,9 +336,10 @@ async function main() {
     const items = [
       [ic.blind, "Bystanders", `${cov.outside_hfov} of ${cov.ticks_person_inside_10m} close ticks outside camera view.`],
       [ic.walk, "Pedestrian detection", `${f1(pa.box_err_px_median)} px vs ${f1(pa.box_err_px_null_centre)} px null.`],
-      [ic.video, "Camera rail rates", `${E.rails.camera_flights_meeting_both_gates} of ${E.rails.camera_flights} flights meet both gates.`],
+      [ic.video, "Camera rail rates", `${E.rails.camera_flights_meeting_both_gates} of ${camAll} flights (${E.rails.camera_flights} measurable) meet both gates.`],
       [ic.cube, "Tracking not KPI-grade", "SITL has no camera."],
-      [ic.wait, "Not yet flown", "768×432 camera, CityLife scene."],
+      (cityFlown && camFlown) ? [ic.wait, "CityLife flown", `${cityFlown} flights at 768×432.`]
+        : [ic.wait, "Not yet flown", [camFlown ? "" : "768×432 camera", cityFlown ? "" : "CityLife scene"].filter(Boolean).join(", ") + "."],
       [ic.warn, "Known failure", "Subject on the route wedges the mission."],
     ];
     items.forEach(([icon, t, b], i) => {
@@ -334,8 +358,8 @@ async function main() {
       ["16 Jul", "OpenVLA-7B flown"],
       ["3 Aug", "Clearance rule"],
       ["19 Aug", "Midterm review"],
-      ["25 Aug", "KPI gate cleared"],
-      ["1 Sep", "All five KPIs"],
+      ["25 Aug", "SITL + MAVROS 2"],
+      ["1 Sep", "Five KPIs computed"],
       ["10 Sep", `v0.5.0 public`],
     ];
     const x0 = 1.15, x1 = 8.85, y = 2.9;
@@ -357,11 +381,11 @@ async function main() {
   {
     const s = content("Next milestones", "Plan to Completion");
     const steps = [
-      ["AirSim imagery into the KPI rail", "Tracking evidence becomes contractual."],
+      ["AirSim imagery into the ArduPilot rail", "Perception-rail integration (final delivery)."],
       ["Cover bystanders", "A rule for any pedestrian, and a wider sensor."],
-      ["Fly 768×432, then a narrower FOV", `45° doubles subject size to ${f2(D.pedestrian_patches_by_hfov_16m["45deg"])} patches.`],
+      [camFlown ? "Evaluate a narrower FOV" : "Fly 768×432, then a narrower FOV", `45° doubles subject size to ${f2(D.pedestrian_patches_by_hfov_16m["45deg"])} patches.`],
       ["Fix the wedge", "Mission must pass a subject on its route."],
-      ["Gazebo SITL", "Second physics front-end."],
+      ["Gazebo Harmonic rail", "Mid-term item: scripts exist; keep a run."],
     ];
     steps.forEach(([t, b], i) => {
       const y = 1.72 + i * 0.64;
@@ -378,10 +402,10 @@ async function main() {
   {
     const s = pres.addSlide();
     H.darkBase(s, "Conclusion");
-    s.addText("All five KPIs measured on the canonical rail, with P0 escape rate 0.0.", {
+    s.addText("Five acceptance KPIs computed on the dev-topology runs, with P0 escape rate 0.0.", {
       x: 0.55, y: 1.5, w: 8.6, h: 1.7, fontSize: 26, color: WHITE, fontFace: FF, bold: true, lineSpacingMultiple: 1.15,
     });
-    s.addText("Perception is the open half: tracking is functional-rail only, and bystanders sit outside policy scope.", {
+    s.addText("Next: the hil topology on a Jetson Orin for the reported KPIs, and Project AirSim imagery into the ArduPilot rail.", {
       x: 0.55, y: 3.4, w: 8.2, h: 0.8, fontSize: 13, color: TEAL_TINT, fontFace: FF, lineSpacingMultiple: 1.3,
     });
   }

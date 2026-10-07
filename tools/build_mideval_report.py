@@ -23,15 +23,45 @@ the old claims again:
   * fail-safe trigger correctness: the grant's target is >= 0.99, not 1.0.
   * the P0 escape figure is one of five acceptance KPIs, measured on dev-
     topology demo and SITL flights, not on Stress Testing runs in hil.
+Second pass, also 2026-10-06 (rows A1-A21 of
+docs/CORRECTION-2026-10-06-mid-evaluation-and-deck.md, and the PI's decision
+that KPI figures come from the hil topology on a Jetson Orin, with no waiver
+for the desktop rail):
+  * no sentence offers a "PI waiver" route for the dev runs any more;
+  * WP1 and WP3 read "Partial" with what exists (A4, A6); the action-source
+    paragraph no longer reads the backend clause as covering the demo pilot
+    (A10); WP2 no longer says operator text is compiled into a mission (A11);
+  * the fail-safe figure is described as the share of P0 ticks that did not
+    escape, which restates the escape rate (A2, A12);
+  * the detector row reads the mission rate (`det_hz`, recomputed by
+    tools/build_eval_data.py `det_hz_mission`) and the both-gates count says
+    "of N measurable" (A14-A16);
+  * camera and CityLife "not yet flown" lines are read from the artefacts
+    (A19); the Gazebo and perception-rail plan items use A17/A18 wording;
+  * the test count prints the date it was measured, which a --no-tests build
+    of the numbers file carries forward rather than re-measures.
+Third pass (review of 2026-10-06): a rebuild read whatever the numbers file
+held on the day, so it printed October counts under the September title (71
+shielded flights, "2 of 63 measurable", the camera both flown and "to fly").
+The numbers file is now built AS OF the report's date by default
+(tools/build_eval_data.py --as-of 2026-09-14): 41 flights and "0 of 34 (33
+measurable)", as rows A3 and A15 of the correction note state them. The
+header names the cut-off, a test count measured after it says so, and plan
+item 3 and the "not yet flown" line read the same artefact list as Section 7,
+so the report cannot say a camera is both flown and still to fly
+(tests/test_build_mideval_report.py).
+tools/check_claims.py scans this file for the retracted wordings.
 """
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-E = json.loads((ROOT / "docs/data/eval_sep2026.json").read_text(encoding="utf-8"))
+EVAL = ROOT / "docs/data/eval_sep2026.json"
 OUT = ROOT / "docs/MID-EVALUATION-REPORT-Sep2026.md"
+E: dict = {}
 
 
 def f1(v):
@@ -46,7 +76,16 @@ def yn(v):
     return "Yes" if v else "No"
 
 
-def main():
+def main(argv=None):
+    """Render the report. `--out` writes elsewhere (tests, a review copy), so
+    checking what the generator prints never overwrites the delivered file."""
+    global E
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--eval", default=str(EVAL))
+    ap.add_argument("--out", default=str(OUT))
+    args = ap.parse_args(argv)
+    E = json.loads(Path(args.eval).read_text(encoding="utf-8"))
+    out = Path(args.out)
     K = E["kpi"]["runs"]
     R, D, L, S, G, U, RA = E["retarget"], E["detector"], E["lock"], E["sweep"], E["repo"], E["unflown"], E["rails"]
     on, dyn, ped, off, poff = (K["ros2_shield_on"], K["ros2_shield_on_dynamic"], K["ros2_ped_on"],
@@ -64,31 +103,56 @@ def main():
     # grant's "dev". Both keys are summed so an older eval file still counts.
     n_dev = RA["counts"].get("dev", 0) + RA["counts"].get("canonical-hil", 0)
     fc, fp = R["figure_frames"]["car"], R["figure_frames"]["person"]
+    det_below = sum(1 for x in fl if x["det_hz"] < D["gate"]["det_hz_min"])
+    tests_when = tf.get("measured") or E["generated"]
+    as_of = E.get("as_of")
+    if as_of and tf.get("measured") and tf["measured"] > as_of:
+        tests_when += f", after this report's {as_of} cut-off"
+    cam_all = RA.get("camera_flights_all", RA["camera_flights"])
+    both_gates = (f'{RA["camera_flights_meeting_both_gates"]} of {cam_all} '
+                  f'({RA["camera_flights"]} measurable)')
+    numbers_scope = (f"from the artefacts on disk on or before {as_of}" if as_of
+                     else "from every artefact on disk")
+    city_flown = sorted((U["citylife_level"].get("flights") or {}).keys())
+    cam_flown = U["camera_768x432"].get("flight_artefacts") or []
+    unflown_names = [n for n, flown in (("the 768×432 camera", cam_flown),
+                                        ("the CityLife scene", city_flown)) if not flown]
+    nf = " and ".join(unflown_names)
+    not_flown = "" if not unflown_names else f"- **Not yet flown.** {nf[:1].upper()}{nf[1:]}.\n"
+    n_cam = f"{len(cam_flown)} flight{'' if len(cam_flown) == 1 else 's'}"
+    p45 = f2(D["pedestrian_patches_by_hfov_16m"]["45deg"])
+    p90 = f2(D["pedestrian_patches_by_hfov_16m"]["90deg"])
+    plan_camera = (
+        f"Evaluate a narrower field of view on the 768×432 camera ({n_cam} "
+        f"flown with it): at 45° a 0.5 m person at 16 m covers {p45} patches instead of {p90}."
+        if cam_flown else
+        f"Fly the 768×432 camera, then evaluate a narrower field of view: at 45° a 0.5 m "
+        f"person at 16 m covers {p45} patches instead of {p90}.")
 
     md = f"""# Guardrail — Mid-Evaluation Progress Report
 
 **Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs** · ITRI · National Taipei University of Technology · September 2026 · software version {G["version"]}
 
-Advisor: · Author: · Numbers generated {E["generated"]} by `tools/build_eval_data.py`
+Advisor: · Author: · Numbers generated {E["generated"]} by `tools/build_eval_data.py`, {numbers_scope}
 
 ---
 
 ## 1. Summary
 
-- **The Guardrail flies ArduPilot through MAVROS 2.** {E["kpi"]["flights_kpi_grade"]} runs on ArduPilot SITL driven over MAVROS 2 on ROS 2 Jazzy met the run gate as it stood at flight time. That one-desktop configuration is the grant's `dev` topology; the grant takes contractual KPI figures from `hil` (VLA and Shield on a Jetson Orin), so these runs are evidence, and count as KPI figures only under a written waiver from the PI.
-- **The five acceptance KPIs are computed** on those dev-topology runs - mission success, P0 violation escape rate, fail-safe trigger correctness, mean repair magnitude and mean time to safe - not yet in Stress Testing runs in the hil topology. The other work-package KPIs are not measured yet.
+- **The Guardrail flies ArduPilot through MAVROS 2.** {n_dev} runs on ArduPilot SITL driven over MAVROS 2 on ROS 2 Jazzy, all on one desktop. In the grant's terms that is the `dev` topology. Reported KPI figures come from Stress Testing runs in the `hil` topology (VLA and Shield on a Jetson Orin), which is the next step.
+- **The five acceptance KPIs are computed** on those dev-topology runs - mission success, P0 violation escape rate, fail-safe trigger correctness, mean repair magnitude and mean time to safe. Fail-safe trigger correctness is computed as the share of P0 ticks that did not escape, so it restates the escape rate. The other work-package KPIs are not measured yet.
 - **P0 violation escape rate was 0.0 on {E["kpi"]["flights_escape_zero"]} shielded demo and SITL flights.** These are not contract KPI figures, and P0 escape is one of five acceptance KPIs. The {len(ctrl)} deliberately unshielded control flights read {f2(ctrl[0]["rate"])}, which is what they exist to show.
-- **Perception is the open half.** Tracking runs on Project AirSim, a functional rail outside the contractual gate; the pedestrian detector does not beat a centre-constant null; and no rule protects pedestrians other than the one being followed.
+- **Perception is the open half.** Tracking runs on Project AirSim; joining its imagery to the ArduPilot rail is the perception-rail integration named for the final delivery. The pedestrian detector does not beat a centre-constant null, and no rule protects pedestrians other than the one being followed.
 - **{len(G["commits_since_meeting"])} changes since the 2 September meeting**, including four silent defects found and fixed, a steadier tracker, and two published claims corrected (Section 8).
 
 ## 2. Scope and acceptance criteria
 
 | Work package | Deliverable | Status | Evidence |
 |---|---|---|---|
-| WP1 | Policy DSL and intermediate representation | Built | Six constraint types, `valid_time` on every rule, signed policy bundle |
-| WP2 | Prefix constraint compiler | Partial | Constraint summary pack is generated and saved; no VLA reads it yet |
-| WP3 | Suffix Safety Shield | Built, dev topology | {E["kpi"]["flights_kpi_grade"]} ArduPilot SITL + MAVROS 2 runs (`dev`, not `hil`) |
-| WP4 | Stress testing and evidence | Partial | {n_scen}-scenario headless sweep, replay bundles, per-flight manifests; the stress-testing harness and the hil campaign do not exist yet |
+| WP1 | Policy DSL and intermediate representation | Partial | Six constraint types, `valid_time` on every rule, a policy bundle (signed with a lab development key; the signing authority is the PI's choice) |
+| WP2 | Prefix constraint compiler | Partial | Constraint summary pack is generated and saved; no flown VLA has read it yet |
+| WP3 | Suffix Safety Shield | Partial | Shield core built (check, repair, brake); {n_dev} ArduPilot SITL + MAVROS 2 runs on the `dev` topology |
+| WP4 | Stress testing and evidence | Partial | {n_scen}-scenario headless regression sweep and per-flight manifests; replay bundles on the camera and pymavlink rails; the grant's stress-testing harness and the hil campaign are next |
 
 The five KPIs are named in the grant. They are computed by one function, `guardrail.kpi.compute`, used identically by the flights, the scenario sweep and the replay verifier.
 
@@ -104,13 +168,13 @@ The five KPIs are named in the grant. They are computed by one function, `guardr
 
 A camera frame and an operator's phrase enter an open-vocabulary detector (OWL-ViT). An instance lock keeps the controller on one object; a target-state estimator turns bearing and range into a velocity command. That command — the **Action4D**, `(vx north, vy east, vz up, yaw_rate)` at 10 Hz with `yaw_rate` in rad/s — is the Shield's only input. The Shield checks it against the policy, repairs or brakes, writes an audit record, and passes the result to MAVROS 2 and ArduPilot.
 
-The action source is deliberately swappable. OpenVLA-7B, AerialVLA, a behaviour-cloned policy and the hand-written controller have all flown through the same slot. The safety argument does not depend on which model is driving.
+OpenVLA-7B (in July, on AirSimNH, classic AirSim) and AerialVLA (on AirSimNH and on Project AirSim) flew through the Shield in separate runs. The grant's switchable-backend clause covers VLA backends that output the 4-D action. The hand-written controller is our test pilot, not a VLA backend: the city flights test the Shield and the tracker, not a constrained VLA.
 
-| Rail | Flights | Camera | KPI-grade |
+| Rail | Flights | Camera | Grant topology |
 |---|---|---|---|
-| Project AirSim (Unreal) | {RA["counts"].get("projectairsim-single-host", 0)} | Yes | No |
-| ArduPilot SITL · pymavlink | {RA["counts"].get("ardupilot-sitl-pymavlink", 0)} | No | No |
-| ArduPilot SITL · MAVROS 2 · ROS 2 Jazzy (grant: `dev`) | {n_dev} | No | Only under a PI waiver |
+| Project AirSim (Unreal) | {RA["counts"].get("projectairsim-single-host", 0)} | Yes | perception rail |
+| ArduPilot SITL · pymavlink | {RA["counts"].get("ardupilot-sitl-pymavlink", 0)} | No | one desktop, no MAVROS 2 |
+| ArduPilot SITL · MAVROS 2 · ROS 2 Jazzy | {n_dev} | No | `dev` |
 
 ## 4. Progress by work package
 
@@ -129,11 +193,11 @@ Every rule may carry `valid_time`. The policy hash is written into every audit r
 
 ### WP2 — Prefix constraint compiler
 
-Operator text is compiled into a structured mission and a constraint summary pack, rendered from the same policy object the Shield enforces. The pack is generated and saved; no VLA reads it yet, so the prefix half of the guardrail has not yet constrained a model.
+The compiler builds a constraint summary pack from the policy and the mission, and renders a prompt from it, so the prompt and the Shield share one source. The pack is generated and saved; no flown model has read it yet.
 
 ### WP3 — Suffix Safety Shield
 
-Each tick the Shield predicts the next 3 s, checks every rule, applies the smallest legal repair, re-checks the repaired action, and falls back to a recovery heading or a brake. On the ArduPilot SITL + MAVROS 2 rail (`dev` topology) its fail-safe trigger correctness is {f1(on["failsafe_trigger_correctness"])} and its mean repair magnitude {f2(on["mean_repair_magnitude_mps"])} m/s (maximum {f2(on["max_repair_magnitude_mps"])} m/s).
+Each tick the Shield predicts the next 3 s, checks every rule, applies the smallest legal repair, re-checks the repaired action, and falls back to a recovery heading or a brake. On the ArduPilot SITL + MAVROS 2 rail (`dev` topology) its mean repair magnitude is {f2(on["mean_repair_magnitude_mps"])} m/s (maximum {f2(on["max_repair_magnitude_mps"])} m/s). The fail-safe figure of {f1(on["failsafe_trigger_correctness"])} is the share of P0 ticks that did not escape; the grant's definition (triggered when expected, not when not expected) needs a false-trigger count and the escalation states, which come with the hil campaign.
 
 ### WP4 — Stress testing and evidence
 
@@ -145,11 +209,11 @@ The headless scenario sweep scores every scenario with `guardrail.kpi.compute`: 
 
 `nfz-head-on-control` is an unshielded control and passes by failing its safety gate. `standoff-wedge` is the one open defect, pinned as a scenario: a subject exactly on the route makes every forward direction close the range, so the Shield never emits an illegal action but the mission cannot get past.
 
-Every flight writes a manifest (code revision, detector weights hash, policy hash, seed, simulator speed-up, topology). A replay bundle re-derives the flight's KPIs from its own log. Tests: **{tf["passed"]}/{tf["total"]} fast** and **{tc["passed"]}/{tc["total"]} coverage**, both run on {E["generated"]}.
+Every flight writes a manifest (code revision, detector weights hash, policy hash, seed, simulator speed-up, topology). A replay bundle re-derives the flight's KPIs from its own log. Tests: **{tf["passed"]}/{tf["total"]} fast** (run {tests_when}) and **{tc["passed"]}/{tc["total"]} coverage** ({tc.get("note", "")}).
 
 ## 5. KPI results — dev topology (ArduPilot SITL + MAVROS 2)
 
-These runs are the grant's `dev` configuration, not `hil`; they are evidence of the Shield's behaviour and become contractual figures only under a written PI waiver.
+These runs are the grant's `dev` configuration (one desktop), not `hil`. They show the Shield's behaviour; the reported KPI figures will come from Stress Testing runs in the hil topology.
 
 | KPI | No-fly zone | Dynamic no-fly zone | Pedestrian stand-off | Unshielded control |
 |---|---|---|---|---|
@@ -178,9 +242,9 @@ These results come from Project AirSim and are evidence, not contractual KPI fig
 | Detection score ratio, Grounding DINO / OWL-ViT | person {f2(D["gdino_over_owlvit_person"])}× | taxi {f2(D["gdino_over_owlvit_taxi"])}× |
 | Detector rate in flight | {f2(det_lo)}–{f2(det_hi)} Hz | gate {f1(D["gate"]["det_hz_min"])} Hz |
 | Control loop in flight | {f2(loop_lo)}–{f2(loop_hi)} Hz | gate {f1(D["gate"]["loop_hz_min"])} Hz |
-| Camera flights meeting both gates | {RA["camera_flights_meeting_both_gates"]} of {RA["camera_flights"]} | — |
+| Camera flights meeting both gates | {both_gates} | — |
 
-OWL-ViT stays the detector: Grounding DINO scores higher but runs at roughly a fifth of the rate, and the in-flight detector rate is already near its gate.
+The detector rate is the mission rate, recomputed from each flight log. OWL-ViT stays the detector: Grounding DINO scores higher but runs at roughly a fifth of the rate, and the in-flight detector rate is below its gate on {det_below} of {len(D["flights"])} flights.
 
 ### Class-conditional safety
 
@@ -208,7 +272,7 @@ A velocity clamp on the estimator and a single yaw cap removed the spinning. The
 |---|---|---|
 | Scenario a tracker cannot run | Done | Phrase retarget, ring 5 m → 10 m; `standoff-reclassified` |
 | Architecture diagram with the lock layer | Done | `docs/architecture-v3.svg` |
-| More realistic pedestrians | Built, not flown | CityLife level: {U["citylife_level"]["pedestrians"]} walking pedestrians, {U["citylife_level"]["cars"]} driving cars |
+| More realistic pedestrians | {("Flown, " + str(len(city_flown)) + " flights") if city_flown else "Built, not flown"} | CityLife level: {U["citylife_level"]["pedestrians"]} walking pedestrians, {U["citylife_level"]["cars"]} driving cars |
 | Gazebo SITL | Open | — |
 | Real sensor (camera or LiDAR) | Open | Motivated by Section 9 |
 
@@ -219,7 +283,7 @@ Four defects were found that had produced no error and no warning:
 3. **A metric a constant could pass.** At a 100 px tolerance, a frame-centre "detector" scored 1.000 on target. The headline is now the median error against a null family.
 4. **A verifier that checked five of seven fields.** Two named KPI fields were never emitted, so they were never compared.
 
-The detector camera was also re-examined on the RTX 4090. OWL-ViT resizes every input to 768×768, so capture resolution does not change the forward-pass cost (offline: 400×225 → {f1(D["offline_4090"]["rows"][0]["total_ms"])} ms, 768×432 → {f1(D["offline_4090"]["rows"][1]["total_ms"])} ms). The camera is now configured at 768×432; **it has not been flown**, and in flight the GPU forward pass runs {D["contention"]["gpu_forward_x"][0]}–{D["contention"]["gpu_forward_x"][1]}× slower than offline. The code and documentation are public at version 0.5.0, with a 0.5.1 correction prepared.
+The detector camera was also re-examined on the RTX 4090. OWL-ViT resizes every input to 768×768, so capture resolution does not change the forward-pass cost (offline: 400×225 → {f1(D["offline_4090"]["rows"][0]["total_ms"])} ms, 768×432 → {f1(D["offline_4090"]["rows"][1]["total_ms"])} ms). The camera is now configured at 768×432 ({(n_cam + " flown with it") if cam_flown else "not yet flown"}), and in flight the GPU forward pass runs {D["contention"]["gpu_forward_x"][0]}–{D["contention"]["gpu_forward_x"][1]}× slower than offline. The code and documentation are public at version 0.5.0, with a 0.5.1 correction prepared.
 
 ## 8. Findings and corrections
 
@@ -235,18 +299,17 @@ The full record is in `CHANGELOG.md` and the {G["finding_docs"]} finding documen
 
 - **Bystanders.** No rule protects pedestrians other than the subject, and a forward camera cannot see beside the aircraft: a bystander came within {f2(af["closest_real_m"])} m while the P0 escape rate read {f1(R["p0_escape_after"])}.
 - **Pedestrian detection.** {f1(af["box_err_px_median"])} px median error against a {f1(af["box_err_px_null_centre"])} px centre-constant null over the whole pedestrian phase.
-- **Rates.** {RA["camera_flights_meeting_both_gates"]} of {RA["camera_flights"]} camera flights meet both the 9.5 Hz loop gate and the 4.0 Hz detector gate.
+- **Rates.** {both_gates} camera flights meet both the 9.5 Hz loop gate and the 4.0 Hz detector gate.
 - **Tracking is not KPI-grade.** The camera rail (Project AirSim) and the ArduPilot rail are different simulators, and neither is the grant's hil topology.
-- **Not yet flown.** The 768×432 camera and the CityLife scene.
-- **Known failure.** A subject exactly on the route wedges the mission (`standoff-wedge`).
+{not_flown}- **Known failure.** A subject exactly on the route wedges the mission (`standoff-wedge`).
 
 ## 10. Plan to completion
 
-1. Feed Project AirSim imagery to a Guardrail driven over MAVROS 2, so tracking evidence becomes contractual.
+1. Feed Project AirSim imagery to a Guardrail driven over MAVROS 2: the perception-rail integration named for the final delivery. Reported KPI figures come from Stress Testing runs in the hil topology.
 2. Add a rule for any pedestrian and a sensor that covers the aircraft's sides.
-3. Fly the 768×432 camera, then evaluate a narrower field of view: at 45° a 0.5 m person at 16 m covers {f2(D["pedestrian_patches_by_hfov_16m"]["45deg"])} patches instead of {f2(D["pedestrian_patches_by_hfov_16m"]["90deg"])}.
+3. {plan_camera}
 4. Resolve the `standoff-wedge` defect.
-5. Add Gazebo as a second physics front-end on the SITL rail.
+5. Run the Gazebo Harmonic functional rail, a mid-term delivery item: the launch scripts exist (`sitl/run_gazebo_demo.sh`), and the run output is to be kept in the repository.
 
 ## Appendix A — Evidence index
 
@@ -271,11 +334,14 @@ The full record is in `CHANGELOG.md` and the {G["finding_docs"]} finding documen
 | 3 August | Obstacle clearance becomes a P0 rule |
 | 19 August | Midterm review; Guardrail confirmed as the primary deliverable |
 | 25 August | First ArduPilot SITL + MAVROS 2 runs through the Shield (dev topology) |
-| 1 September | All five acceptance KPIs measured |
+| 1 September | The five acceptance KPIs computed on the dev-topology runs (rescore) |
 | 10 September | Version 0.5.0 published |
 """
-    OUT.write_text(md, encoding="utf-8")
-    print(f"wrote {OUT.relative_to(ROOT)} ({len(md.splitlines())} lines)")
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from build_eval_data import write_keeping_line_endings  # noqa: E402
+    write_keeping_line_endings(out, md)
+    print(f"wrote {out} ({len(md.splitlines())} lines)")
 
 
 if __name__ == "__main__":

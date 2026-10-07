@@ -1,0 +1,4 @@
+# Build context of sitl.Dockerfile: the repository root, of which only the SITL
+# entrypoint is needed. ArduPilot itself is cloned inside the build.
+*
+!deploy/docker/sitl-entrypoint.sh

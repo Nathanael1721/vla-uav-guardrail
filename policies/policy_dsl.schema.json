@@ -1,15 +1,120 @@
 {
   "$defs": {
     "AltitudeEnvelope": {
-      "description": "Stay between alt_min and alt_max (meters above ground).",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "alt_max",
+              "alt_max_m"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "alt_min",
+              "alt_min_m"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "altitude_max_m",
+              "alt_max_m"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "altitude_min_m",
+              "alt_min_m"
+            ]
+          }
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "alt_min_m"
+              ]
+            },
+            {
+              "required": [
+                "alt_min"
+              ]
+            },
+            {
+              "required": [
+                "altitude_min_m"
+              ]
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "alt_max_m"
+              ]
+            },
+            {
+              "required": [
+                "alt_max"
+              ]
+            },
+            {
+              "required": [
+                "altitude_max_m"
+              ]
+            }
+          ]
+        }
+      ],
+      "description": "Stay between alt_min and alt_max (metres above ground unless MSL).",
       "properties": {
+        "alt_max": {
+          "description": "The grant's name for `alt_max_m`; give one of the two.",
+          "type": "number"
+        },
         "alt_max_m": {
           "title": "Alt Max M",
+          "type": "number"
+        },
+        "alt_min": {
+          "description": "The grant's name for `alt_min_m`; give one of the two.",
           "type": "number"
         },
         "alt_min_m": {
           "title": "Alt Min M",
           "type": "number"
+        },
+        "altitude_max_m": {
+          "description": "The grant's name for `alt_max_m`; give one of the two.",
+          "type": "number"
+        },
+        "altitude_min_m": {
+          "description": "The grant's name for `alt_min_m`; give one of the two.",
+          "type": "number"
+        },
+        "altitude_ref": {
+          "anyOf": [
+            {
+              "enum": [
+                "AGL",
+                "MSL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Altitude Ref"
         },
         "constraint_type": {
           "default": "hard",
@@ -21,8 +126,26 @@
           "type": "string"
         },
         "id": {
+          "minLength": 1,
           "title": "Id",
           "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
         },
         "priority": {
           "default": "P0",
@@ -33,6 +156,24 @@
           ],
           "title": "Priority",
           "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
         },
         "type": {
           "const": "altitude_envelope",
@@ -54,7 +195,12 @@
           "default": "repair",
           "enum": [
             "repair",
-            "brake"
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
           ],
           "title": "Violation Action",
           "type": "string"
@@ -62,14 +208,634 @@
       },
       "required": [
         "id",
-        "type",
-        "alt_min_m",
-        "alt_max_m"
+        "type"
       ],
       "title": "AltitudeEnvelope",
       "type": "object"
     },
+    "CanonicalIR": {
+      "additionalProperties": false,
+      "description": "The canonical IR: what a bundle's ir.json holds and policy_hash digests. This project's field names only; a geographic point as {lat, lon}, a metre point as {x, y}.",
+      "properties": {
+        "constraints": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "altitude_envelope": "#/$defs/IR.AltitudeEnvelope",
+                "circle_fence": "#/$defs/IR.CircleFence",
+                "corridor": "#/$defs/IR.Corridor",
+                "corridor_swap": "#/$defs/IR.CorridorSwap",
+                "distance_envelope": "#/$defs/IR.DistanceEnvelope",
+                "dynamic_nfz": "#/$defs/IR.DynamicNFZ",
+                "kinematic_envelope": "#/$defs/IR.KinematicEnvelope",
+                "obstacle_clearance": "#/$defs/IR.ObstacleClearance",
+                "polygon_fence": "#/$defs/IR.PolygonFence",
+                "subject_standoff": "#/$defs/IR.SubjectStandoff",
+                "time_window_switch": "#/$defs/IR.TimeWindowSwitch"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/IR.PolygonFence"
+              },
+              {
+                "$ref": "#/$defs/IR.AltitudeEnvelope"
+              },
+              {
+                "$ref": "#/$defs/IR.KinematicEnvelope"
+              },
+              {
+                "$ref": "#/$defs/IR.ObstacleClearance"
+              },
+              {
+                "$ref": "#/$defs/IR.SubjectStandoff"
+              },
+              {
+                "$ref": "#/$defs/IR.Corridor"
+              },
+              {
+                "$ref": "#/$defs/IR.CircleFence"
+              },
+              {
+                "$ref": "#/$defs/IR.DistanceEnvelope"
+              },
+              {
+                "$ref": "#/$defs/IR.DynamicNFZ"
+              },
+              {
+                "$ref": "#/$defs/IR.TimeWindowSwitch"
+              },
+              {
+                "$ref": "#/$defs/IR.CorridorSwap"
+              }
+            ]
+          },
+          "minItems": 1,
+          "title": "Constraints",
+          "type": "array"
+        },
+        "generation": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Generation",
+          "type": "integer"
+        },
+        "issued_at": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Issued At"
+        },
+        "layers_merged": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layers Merged"
+        },
+        "origin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.Origin"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "policy_id": {
+          "minLength": 1,
+          "title": "Policy Id",
+          "type": "string"
+        },
+        "version": {
+          "default": "0.1.0",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "policy_id",
+        "constraints"
+      ],
+      "title": "CanonicalIR",
+      "type": "object"
+    },
+    "CircleFence": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "centre",
+              "center"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_ceiling_m"
+                ]
+              }
+            },
+            "required": [
+              "altitude_ceiling_m",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_floor_m"
+                ]
+              }
+            },
+            "required": [
+              "altitude_floor_m",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_ref"
+                ]
+              }
+            },
+            "required": [
+              "altitude_ref",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "center"
+                ]
+              }
+            },
+            "required": [
+              "center",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "centre"
+                ]
+              }
+            },
+            "required": [
+              "center",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "centre"
+                ]
+              }
+            },
+            "required": [
+              "centre",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "radius_m"
+                ]
+              }
+            },
+            "required": [
+              "radius_m",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "center"
+              ]
+            },
+            {
+              "required": [
+                "centre"
+              ]
+            },
+            {
+              "properties": {
+                "geometry": {
+                  "required": [
+                    "center"
+                  ]
+                }
+              },
+              "required": [
+                "geometry"
+              ]
+            },
+            {
+              "properties": {
+                "geometry": {
+                  "required": [
+                    "centre"
+                  ]
+                }
+              },
+              "required": [
+                "geometry"
+              ]
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "radius_m"
+              ]
+            },
+            {
+              "properties": {
+                "geometry": {
+                  "required": [
+                    "radius_m"
+                  ]
+                }
+              },
+              "required": [
+                "geometry"
+              ]
+            }
+          ]
+        }
+      ],
+      "description": "Keep-OUT disc (grant: \"Centre + radius + AGL floor / ceiling\").\n\nA subclass of PolygonFence on purpose: its `vertices` are DERIVED - the\nregular 32-gon circumscribing the circle - so every consumer that handles a\npolygon fence (the Shield, its STRtree, the CSP) enforces a circle without a\nline of new code. Circumscribed, so the polygon contains the whole disc; it\nreaches at most r * (1/cos(pi/32) - 1) = 0.48 % of the radius beyond it,\nthe conservative direction for a keep-out zone.\n\nThe derived vertices are not part of the IR (`exclude=True`): the IR and\nits hash hold the centre and radius as written, and the polygon is rebuilt\nat every load. That makes SEGMENTS part of what a stored hash MEANS without\nbeing part of the hash: changing it changes the enforced zone of every\ncircle_fence under an unchanged policy_hash. It is therefore pinned by\ntests/test_policy_dsl_grant_form.py, and changing it requires an\nIR_SCHEMA_VERSION bump.",
+      "properties": {
+        "altitude_ceiling_m": {
+          "default": 1000.0,
+          "title": "Altitude Ceiling M",
+          "type": "number"
+        },
+        "altitude_floor_m": {
+          "default": 0.0,
+          "title": "Altitude Floor M",
+          "type": "number"
+        },
+        "altitude_ref": {
+          "anyOf": [
+            {
+              "enum": [
+                "AGL",
+                "MSL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Altitude Ref"
+        },
+        "center": {
+          "$ref": "#/$defs/XY"
+        },
+        "centre": {
+          "$ref": "#/$defs/XY",
+          "description": "The grant's name for `center`; give one of the two."
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "geometry": {
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "not": {
+                "required": [
+                  "centre",
+                  "center"
+                ]
+              }
+            }
+          ],
+          "description": "The grant's geometry block. Keys omitted here take the reference's defaults: altitude band 0-200 m and, for a fence, no margin ring.",
+          "properties": {
+            "altitude_ceiling_m": {
+              "default": 1000.0,
+              "title": "Altitude Ceiling M",
+              "type": "number"
+            },
+            "altitude_floor_m": {
+              "default": 0.0,
+              "title": "Altitude Floor M",
+              "type": "number"
+            },
+            "altitude_ref": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "AGL",
+                    "MSL"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Altitude Ref"
+            },
+            "center": {
+              "$ref": "#/$defs/XY"
+            },
+            "centre": {
+              "$ref": "#/$defs/XY"
+            },
+            "radius_m": {
+              "exclusiveMinimum": 0,
+              "title": "Radius M",
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "margin_m": {
+          "default": 1.0,
+          "title": "Margin M",
+          "type": "number"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "radius_m": {
+          "exclusiveMinimum": 0,
+          "title": "Radius M",
+          "type": "number"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "type": {
+          "const": "circle_fence",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "CircleFence",
+      "type": "object"
+    },
     "Corridor": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_ceiling_m"
+                ]
+              }
+            },
+            "required": [
+              "altitude_ceiling_m",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_floor_m"
+                ]
+              }
+            },
+            "required": [
+              "altitude_floor_m",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_ref"
+                ]
+              }
+            },
+            "required": [
+              "altitude_ref",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "centerline"
+                ]
+              }
+            },
+            "required": [
+              "centerline",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "width_m"
+                ]
+              }
+            },
+            "required": [
+              "width_m",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "centerline"
+              ]
+            },
+            {
+              "properties": {
+                "geometry": {
+                  "required": [
+                    "centerline"
+                  ]
+                }
+              },
+              "required": [
+                "geometry"
+              ]
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "width_m"
+              ]
+            },
+            {
+              "properties": {
+                "geometry": {
+                  "required": [
+                    "width_m"
+                  ]
+                }
+              },
+              "required": [
+                "geometry"
+              ]
+            }
+          ]
+        }
+      ],
       "description": "Stay INSIDE a 3-D corridor: centerline polyline, width, altitude band.\n\nThe inverse of PolygonFence, and the first keep-IN rule in this file. A\nfence says \"not here\"; a corridor says \"only here\", which is what a delivery\nor survey mission is actually authorised to do.\n\nNamed in the reference DSL taxonomy (`policy-dsl.md`: \"Centerline polyline +\nwidth + AGL bounds\") and implemented in neither repository until now -\n`packages/policy-dsl/src/policy_dsl/models.py` carries only PolygonFence and\nAltitudeEnvelope.\n\nDistance is measured to the centerline SEGMENTS, never to its vertices; see\n`geometry.nearest_on_polyline` for why that distinction has already cost\nthis project one flight.\n\nThe altitude band is part of the corridor rather than delegated to\nAltitudeEnvelope, because a corridor is a tube: \"inside the width but above\nthe ceiling\" is outside the corridor, and expressing that with a separate\nglobal envelope would make it apply everywhere else too.",
       "properties": {
         "altitude_ceiling_m": {
@@ -81,6 +847,22 @@
           "default": 0.0,
           "title": "Altitude Floor M",
           "type": "number"
+        },
+        "altitude_ref": {
+          "anyOf": [
+            {
+              "enum": [
+                "AGL",
+                "MSL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Altitude Ref"
         },
         "centerline": {
           "items": {
@@ -99,9 +881,73 @@
           "title": "Constraint Type",
           "type": "string"
         },
+        "geometry": {
+          "additionalProperties": false,
+          "description": "The grant's geometry block. Keys omitted here take the reference's defaults: altitude band 0-200 m and, for a fence, no margin ring.",
+          "properties": {
+            "altitude_ceiling_m": {
+              "default": 1000.0,
+              "title": "Altitude Ceiling M",
+              "type": "number"
+            },
+            "altitude_floor_m": {
+              "default": 0.0,
+              "title": "Altitude Floor M",
+              "type": "number"
+            },
+            "altitude_ref": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "AGL",
+                    "MSL"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Altitude Ref"
+            },
+            "centerline": {
+              "items": {
+                "$ref": "#/$defs/XY"
+              },
+              "minItems": 2,
+              "title": "Centerline",
+              "type": "array"
+            },
+            "width_m": {
+              "exclusiveMinimum": 0,
+              "title": "Width M",
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
         "id": {
+          "minLength": 1,
           "title": "Id",
           "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
         },
         "priority": {
           "default": "P0",
@@ -112,6 +958,24 @@
           ],
           "title": "Priority",
           "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
         },
         "type": {
           "const": "corridor",
@@ -133,7 +997,1160 @@
           "default": "repair",
           "enum": [
             "repair",
-            "brake"
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        },
+        "width_m": {
+          "exclusiveMinimum": 0,
+          "title": "Width M",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "Corridor",
+      "type": "object"
+    },
+    "CorridorSwap": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "target",
+              "target_id"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_ceiling_m"
+                ]
+              }
+            },
+            "required": [
+              "altitude_ceiling_m",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_floor_m"
+                ]
+              }
+            },
+            "required": [
+              "altitude_floor_m",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_ref"
+                ]
+              }
+            },
+            "required": [
+              "altitude_ref",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "centerline"
+                ]
+              }
+            },
+            "required": [
+              "centerline",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "width_m"
+                ]
+              }
+            },
+            "required": [
+              "width_m",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "target_id"
+              ]
+            },
+            {
+              "required": [
+                "target"
+              ]
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "centerline"
+              ]
+            },
+            {
+              "properties": {
+                "geometry": {
+                  "required": [
+                    "centerline"
+                  ]
+                }
+              },
+              "required": [
+                "geometry"
+              ]
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "width_m"
+              ]
+            },
+            {
+              "properties": {
+                "geometry": {
+                  "required": [
+                    "width_m"
+                  ]
+                }
+              },
+              "required": [
+                "geometry"
+              ]
+            }
+          ]
+        }
+      ],
+      "description": "Grant: hot-applicable, \"Replaces an active corridor with another at\nruntime\". `target_id` names the corridor replaced; the rest is the new\ncorridor, in the corridor's own fields.\n\nDECLARABLE ONLY for the flight loaders, as the other two hot-apply\nclasses.",
+      "properties": {
+        "altitude_ceiling_m": {
+          "default": 1000.0,
+          "title": "Altitude Ceiling M",
+          "type": "number"
+        },
+        "altitude_floor_m": {
+          "default": 0.0,
+          "title": "Altitude Floor M",
+          "type": "number"
+        },
+        "altitude_ref": {
+          "anyOf": [
+            {
+              "enum": [
+                "AGL",
+                "MSL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Altitude Ref"
+        },
+        "centerline": {
+          "items": {
+            "$ref": "#/$defs/XY"
+          },
+          "minItems": 2,
+          "title": "Centerline",
+          "type": "array"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "geometry": {
+          "additionalProperties": false,
+          "description": "The grant's geometry block. Keys omitted here take the reference's defaults: altitude band 0-200 m and, for a fence, no margin ring.",
+          "properties": {
+            "altitude_ceiling_m": {
+              "default": 1000.0,
+              "title": "Altitude Ceiling M",
+              "type": "number"
+            },
+            "altitude_floor_m": {
+              "default": 0.0,
+              "title": "Altitude Floor M",
+              "type": "number"
+            },
+            "altitude_ref": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "AGL",
+                    "MSL"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Altitude Ref"
+            },
+            "centerline": {
+              "items": {
+                "$ref": "#/$defs/XY"
+              },
+              "minItems": 2,
+              "title": "Centerline",
+              "type": "array"
+            },
+            "width_m": {
+              "exclusiveMinimum": 0,
+              "title": "Width M",
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "target": {
+          "description": "The grant's name for `target_id`; give one of the two.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "target_id": {
+          "minLength": 1,
+          "title": "Target Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "corridor_swap",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        },
+        "width_m": {
+          "exclusiveMinimum": 0,
+          "title": "Width M",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "CorridorSwap",
+      "type": "object"
+    },
+    "DistanceEnvelope": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "required": [
+            "object_class"
+          ]
+        },
+        {
+          "required": [
+            "min_distance_m"
+          ]
+        }
+      ],
+      "description": "Grant: \"Min distance to typed object class (people, buildings, roads)\".\n\nDECLARABLE ONLY. The Shield has no map of people or roads; mapped buildings\nare covered by obstacle_clearance and the followed subject by\nsubject_standoff. A policy carrying this rule is refused by the flight\nloaders rather than flown with the rule silently ignored.",
+      "properties": {
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "min_distance_m": {
+          "exclusiveMinimum": 0,
+          "title": "Min Distance M",
+          "type": "number"
+        },
+        "object_class": {
+          "enum": [
+            "people",
+            "buildings",
+            "roads"
+          ],
+          "title": "Object Class",
+          "type": "string"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "type": {
+          "const": "distance_envelope",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "DistanceEnvelope",
+      "type": "object"
+    },
+    "DynamicNFZ": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_ceiling_m"
+                ]
+              }
+            },
+            "required": [
+              "altitude_ceiling_m",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_floor_m"
+                ]
+              }
+            },
+            "required": [
+              "altitude_floor_m",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_ref"
+                ]
+              }
+            },
+            "required": [
+              "altitude_ref",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "vertices"
+                ]
+              }
+            },
+            "required": [
+              "vertices",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "vertices"
+              ]
+            },
+            {
+              "properties": {
+                "geometry": {
+                  "required": [
+                    "vertices"
+                  ]
+                }
+              },
+              "required": [
+                "geometry"
+              ]
+            }
+          ]
+        }
+      ],
+      "description": "Grant: hot-applicable \"Polygon with motion (translate / rotate) injected\nmid-flight\".\n\nDECLARABLE ONLY for the flight loaders (RUNTIME_TYPES). Since 2026-10-07\nthe Shield enforces it, motion included (guardrail/shield.py, hot-apply);\nthe loaders keep refusing a policy file that carries one until the\ncompiler can render it. `ring_at(t)` is the declared motion's geometry.",
+      "properties": {
+        "altitude_ceiling_m": {
+          "default": 1000.0,
+          "title": "Altitude Ceiling M",
+          "type": "number"
+        },
+        "altitude_floor_m": {
+          "default": 0.0,
+          "title": "Altitude Floor M",
+          "type": "number"
+        },
+        "altitude_ref": {
+          "anyOf": [
+            {
+              "enum": [
+                "AGL",
+                "MSL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Altitude Ref"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "geometry": {
+          "additionalProperties": false,
+          "description": "The grant's geometry block. Keys omitted here take the reference's defaults: altitude band 0-200 m and, for a fence, no margin ring.",
+          "properties": {
+            "altitude_ceiling_m": {
+              "default": 1000.0,
+              "title": "Altitude Ceiling M",
+              "type": "number"
+            },
+            "altitude_floor_m": {
+              "default": 0.0,
+              "title": "Altitude Floor M",
+              "type": "number"
+            },
+            "altitude_ref": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "AGL",
+                    "MSL"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Altitude Ref"
+            },
+            "vertices": {
+              "items": {
+                "$ref": "#/$defs/XY"
+              },
+              "minItems": 3,
+              "title": "Vertices",
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "margin_m": {
+          "default": 1.0,
+          "title": "Margin M",
+          "type": "number"
+        },
+        "motion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Motion"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "type": {
+          "const": "dynamic_nfz",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "vertices": {
+          "items": {
+            "$ref": "#/$defs/XY"
+          },
+          "minItems": 3,
+          "title": "Vertices",
+          "type": "array"
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "DynamicNFZ",
+      "type": "object"
+    },
+    "IR.AltitudeEnvelope": {
+      "additionalProperties": false,
+      "description": "Stay between alt_min and alt_max (metres above ground unless MSL).",
+      "properties": {
+        "alt_max_m": {
+          "title": "Alt Max M",
+          "type": "number"
+        },
+        "alt_min_m": {
+          "title": "Alt Min M",
+          "type": "number"
+        },
+        "altitude_ref": {
+          "anyOf": [
+            {
+              "enum": [
+                "AGL",
+                "MSL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Altitude Ref"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "type": {
+          "const": "altitude_envelope",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "alt_min_m",
+        "alt_max_m"
+      ],
+      "title": "AltitudeEnvelope",
+      "type": "object"
+    },
+    "IR.CircleFence": {
+      "additionalProperties": false,
+      "description": "Keep-OUT disc (grant: \"Centre + radius + AGL floor / ceiling\").\n\nA subclass of PolygonFence on purpose: its `vertices` are DERIVED - the\nregular 32-gon circumscribing the circle - so every consumer that handles a\npolygon fence (the Shield, its STRtree, the CSP) enforces a circle without a\nline of new code. Circumscribed, so the polygon contains the whole disc; it\nreaches at most r * (1/cos(pi/32) - 1) = 0.48 % of the radius beyond it,\nthe conservative direction for a keep-out zone.\n\nThe derived vertices are not part of the IR (`exclude=True`): the IR and\nits hash hold the centre and radius as written, and the polygon is rebuilt\nat every load. That makes SEGMENTS part of what a stored hash MEANS without\nbeing part of the hash: changing it changes the enforced zone of every\ncircle_fence under an unchanged policy_hash. It is therefore pinned by\ntests/test_policy_dsl_grant_form.py, and changing it requires an\nIR_SCHEMA_VERSION bump.",
+      "properties": {
+        "altitude_ceiling_m": {
+          "default": 1000.0,
+          "title": "Altitude Ceiling M",
+          "type": "number"
+        },
+        "altitude_floor_m": {
+          "default": 0.0,
+          "title": "Altitude Floor M",
+          "type": "number"
+        },
+        "altitude_ref": {
+          "anyOf": [
+            {
+              "enum": [
+                "AGL",
+                "MSL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Altitude Ref"
+        },
+        "center": {
+          "$ref": "#/$defs/IR.XY"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "margin_m": {
+          "default": 1.0,
+          "title": "Margin M",
+          "type": "number"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "radius_m": {
+          "exclusiveMinimum": 0,
+          "title": "Radius M",
+          "type": "number"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "type": {
+          "const": "circle_fence",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "center",
+        "radius_m"
+      ],
+      "title": "CircleFence",
+      "type": "object"
+    },
+    "IR.Corridor": {
+      "additionalProperties": false,
+      "description": "Stay INSIDE a 3-D corridor: centerline polyline, width, altitude band.\n\nThe inverse of PolygonFence, and the first keep-IN rule in this file. A\nfence says \"not here\"; a corridor says \"only here\", which is what a delivery\nor survey mission is actually authorised to do.\n\nNamed in the reference DSL taxonomy (`policy-dsl.md`: \"Centerline polyline +\nwidth + AGL bounds\") and implemented in neither repository until now -\n`packages/policy-dsl/src/policy_dsl/models.py` carries only PolygonFence and\nAltitudeEnvelope.\n\nDistance is measured to the centerline SEGMENTS, never to its vertices; see\n`geometry.nearest_on_polyline` for why that distinction has already cost\nthis project one flight.\n\nThe altitude band is part of the corridor rather than delegated to\nAltitudeEnvelope, because a corridor is a tube: \"inside the width but above\nthe ceiling\" is outside the corridor, and expressing that with a separate\nglobal envelope would make it apply everywhere else too.",
+      "properties": {
+        "altitude_ceiling_m": {
+          "default": 1000.0,
+          "title": "Altitude Ceiling M",
+          "type": "number"
+        },
+        "altitude_floor_m": {
+          "default": 0.0,
+          "title": "Altitude Floor M",
+          "type": "number"
+        },
+        "altitude_ref": {
+          "anyOf": [
+            {
+              "enum": [
+                "AGL",
+                "MSL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Altitude Ref"
+        },
+        "centerline": {
+          "items": {
+            "$ref": "#/$defs/IR.XY"
+          },
+          "minItems": 2,
+          "title": "Centerline",
+          "type": "array"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "type": {
+          "const": "corridor",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
           ],
           "title": "Violation Action",
           "type": "string"
@@ -153,8 +2170,426 @@
       "title": "Corridor",
       "type": "object"
     },
-    "KinematicEnvelope": {
-      "description": "Caps on how fast the vehicle may move/climb/turn.",
+    "IR.CorridorSwap": {
+      "additionalProperties": false,
+      "description": "Grant: hot-applicable, \"Replaces an active corridor with another at\nruntime\". `target_id` names the corridor replaced; the rest is the new\ncorridor, in the corridor's own fields.\n\nDECLARABLE ONLY for the flight loaders, as the other two hot-apply\nclasses.",
+      "properties": {
+        "altitude_ceiling_m": {
+          "default": 1000.0,
+          "title": "Altitude Ceiling M",
+          "type": "number"
+        },
+        "altitude_floor_m": {
+          "default": 0.0,
+          "title": "Altitude Floor M",
+          "type": "number"
+        },
+        "altitude_ref": {
+          "anyOf": [
+            {
+              "enum": [
+                "AGL",
+                "MSL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Altitude Ref"
+        },
+        "centerline": {
+          "items": {
+            "$ref": "#/$defs/IR.XY"
+          },
+          "minItems": 2,
+          "title": "Centerline",
+          "type": "array"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "target_id": {
+          "minLength": 1,
+          "title": "Target Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "corridor_swap",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        },
+        "width_m": {
+          "exclusiveMinimum": 0,
+          "title": "Width M",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "target_id",
+        "centerline",
+        "width_m"
+      ],
+      "title": "CorridorSwap",
+      "type": "object"
+    },
+    "IR.DistanceEnvelope": {
+      "additionalProperties": false,
+      "description": "Grant: \"Min distance to typed object class (people, buildings, roads)\".\n\nDECLARABLE ONLY. The Shield has no map of people or roads; mapped buildings\nare covered by obstacle_clearance and the followed subject by\nsubject_standoff. A policy carrying this rule is refused by the flight\nloaders rather than flown with the rule silently ignored.",
+      "properties": {
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "min_distance_m": {
+          "exclusiveMinimum": 0,
+          "title": "Min Distance M",
+          "type": "number"
+        },
+        "object_class": {
+          "enum": [
+            "people",
+            "buildings",
+            "roads"
+          ],
+          "title": "Object Class",
+          "type": "string"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "type": {
+          "const": "distance_envelope",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "object_class",
+        "min_distance_m"
+      ],
+      "title": "DistanceEnvelope",
+      "type": "object"
+    },
+    "IR.DynamicNFZ": {
+      "additionalProperties": false,
+      "description": "Grant: hot-applicable \"Polygon with motion (translate / rotate) injected\nmid-flight\".\n\nDECLARABLE ONLY for the flight loaders (RUNTIME_TYPES). Since 2026-10-07\nthe Shield enforces it, motion included (guardrail/shield.py, hot-apply);\nthe loaders keep refusing a policy file that carries one until the\ncompiler can render it. `ring_at(t)` is the declared motion's geometry.",
+      "properties": {
+        "altitude_ceiling_m": {
+          "default": 1000.0,
+          "title": "Altitude Ceiling M",
+          "type": "number"
+        },
+        "altitude_floor_m": {
+          "default": 0.0,
+          "title": "Altitude Floor M",
+          "type": "number"
+        },
+        "altitude_ref": {
+          "anyOf": [
+            {
+              "enum": [
+                "AGL",
+                "MSL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Altitude Ref"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "margin_m": {
+          "default": 1.0,
+          "title": "Margin M",
+          "type": "number"
+        },
+        "motion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.Motion"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "type": {
+          "const": "dynamic_nfz",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "vertices": {
+          "items": {
+            "$ref": "#/$defs/IR.XY"
+          },
+          "minItems": 3,
+          "title": "Vertices",
+          "type": "array"
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "vertices"
+      ],
+      "title": "DynamicNFZ",
+      "type": "object"
+    },
+    "IR.KinematicEnvelope": {
+      "additionalProperties": false,
+      "description": "Caps on how fast the vehicle may move/climb/turn.\n\nGrant names: speed_max, climb_rate_max, turn_rate_max. Units are this\nproject's: m/s, m/s and DEGREES per second for the turn rate.",
       "properties": {
         "climb_rate_max_mps": {
           "exclusiveMinimum": 0,
@@ -171,8 +2606,26 @@
           "type": "string"
         },
         "id": {
+          "minLength": 1,
           "title": "Id",
           "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
         },
         "priority": {
           "default": "P0",
@@ -184,9 +2637,871 @@
           "title": "Priority",
           "type": "string"
         },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
         "speed_max_mps": {
           "exclusiveMinimum": 0,
           "title": "Speed Max Mps",
+          "type": "number"
+        },
+        "type": {
+          "const": "kinematic_envelope",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        },
+        "yaw_rate_max_dps": {
+          "exclusiveMinimum": 0,
+          "title": "Yaw Rate Max Dps",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "speed_max_mps",
+        "climb_rate_max_mps",
+        "yaw_rate_max_dps"
+      ],
+      "title": "KinematicEnvelope",
+      "type": "object"
+    },
+    "IR.Motion": {
+      "additionalProperties": false,
+      "description": "How a dynamic_nfz moves after it appears: a constant translation and a\nrotation about its centroid (grant: \"Polygon with motion (translate /\nrotate)\"). +yaw is clockwise seen from above (North towards East).",
+      "properties": {
+        "vx_mps": {
+          "default": 0.0,
+          "title": "Vx Mps",
+          "type": "number"
+        },
+        "vy_mps": {
+          "default": 0.0,
+          "title": "Vy Mps",
+          "type": "number"
+        },
+        "yaw_rate_dps": {
+          "default": 0.0,
+          "title": "Yaw Rate Dps",
+          "type": "number"
+        }
+      },
+      "title": "Motion",
+      "type": "object"
+    },
+    "IR.ObstacleClearance": {
+      "additionalProperties": false,
+      "description": "Keep at least `min_clearance_m` away from every MAPPED obstacle\n(surveyed buildings in the city occupancy grid).\n\nUnlike the other three, this rule cannot be evaluated from the policy file\nalone \u2014 it needs the occupancy map, which is handed to the Shield at\nconstruction time (`Shield(..., obstacle_map=...)`). With no map the rule\nis INERT: it never fires and never raises. Distance is measured in the\nhorizontal plane only; buildings are treated as infinitely tall columns,\nwhich is the conservative reading of a 2-D occupancy grid.\n\nsoft_margin_m widens the band the repair operator tapers speed over\n([0, min_clearance_m + soft_margin_m]); it never raises a violation on its\nown \u2014 hence \"slows, does not block\".\n\nWith subject_standoff this is this project's half of the grant's\n`distance_envelope` (buildings and the followed subject); the grant's own\nclass is declarable below as DistanceEnvelope.",
+      "properties": {
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "min_clearance_m": {
+          "exclusiveMinimum": 0,
+          "title": "Min Clearance M",
+          "type": "number"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "soft_margin_m": {
+          "default": 0.0,
+          "minimum": 0,
+          "title": "Soft Margin M",
+          "type": "number"
+        },
+        "type": {
+          "const": "obstacle_clearance",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "min_clearance_m"
+      ],
+      "title": "ObstacleClearance",
+      "type": "object"
+    },
+    "IR.Origin": {
+      "additionalProperties": false,
+      "description": "The anchor a lat/lon policy is projected about. See guardrail/projection.py.\n\nOptional. The grant's form has no origin and the frame is then derived the\nway the reference derives it (`Policy.frame_origin`).",
+      "properties": {
+        "lat": {
+          "maximum": 90.0,
+          "minimum": -90.0,
+          "title": "Lat",
+          "type": "number"
+        },
+        "lon": {
+          "maximum": 180.0,
+          "minimum": -180.0,
+          "title": "Lon",
+          "type": "number"
+        }
+      },
+      "required": [
+        "lat",
+        "lon"
+      ],
+      "title": "Origin",
+      "type": "object"
+    },
+    "IR.PolygonFence": {
+      "additionalProperties": false,
+      "description": "Keep-OUT no-fly zone. Violated when a (predicted) position is inside.",
+      "properties": {
+        "altitude_ceiling_m": {
+          "default": 1000.0,
+          "title": "Altitude Ceiling M",
+          "type": "number"
+        },
+        "altitude_floor_m": {
+          "default": 0.0,
+          "title": "Altitude Floor M",
+          "type": "number"
+        },
+        "altitude_ref": {
+          "anyOf": [
+            {
+              "enum": [
+                "AGL",
+                "MSL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Altitude Ref"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "margin_m": {
+          "default": 1.0,
+          "title": "Margin M",
+          "type": "number"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "type": {
+          "const": "polygon_fence",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "vertices": {
+          "items": {
+            "$ref": "#/$defs/IR.XY"
+          },
+          "minItems": 3,
+          "title": "Vertices",
+          "type": "array"
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "vertices"
+      ],
+      "title": "PolygonFence",
+      "type": "object"
+    },
+    "IR.Recurrence": {
+      "additionalProperties": false,
+      "description": "A weekly schedule: which days, and a clock window within them.\n\n`start_time` / `end_time` are \"HH:MM\" local. A window that ends before it\nstarts WRAPS past midnight (\"22:00\"-\"06:00\"), which is the common case for a\nnight-flight restriction and would otherwise be inexpressible.",
+      "properties": {
+        "days": {
+          "items": {
+            "enum": [
+              "Mon",
+              "Tue",
+              "Wed",
+              "Thu",
+              "Fri",
+              "Sat",
+              "Sun"
+            ],
+            "type": "string"
+          },
+          "title": "Days",
+          "type": "array"
+        },
+        "end_time": {
+          "default": "23:59",
+          "title": "End Time",
+          "type": "string"
+        },
+        "start_time": {
+          "default": "00:00",
+          "title": "Start Time",
+          "type": "string"
+        }
+      },
+      "title": "Recurrence",
+      "type": "object"
+    },
+    "IR.SubjectStandoff": {
+      "additionalProperties": false,
+      "description": "Keep at least `min_range_m` from the SUBJECT being followed.\n\nAsked for at the 2026-08-19 review: \"hold 10 m from a person, and different\npolicies for different objects\". Until now that was `--want-range`, a\ncommand-line flag on the controller - which meant it was not hashed into\n`policy_hash`, not written to the audit log, and not enforced by the Shield.\nIt was a setpoint the pilot was asked to aim for, not a rule it was held to,\nand the difference is the whole point of the project.\n\nLike ObstacleClearance this cannot be evaluated from the policy file alone:\nthe Shield has no idea where the subject is. The perception stack supplies it\nonce per tick through `Shield.set_subject()`. With no subject set the rule is\nINERT - it never fires and never raises - because a standoff rule with\nnothing to stand off from has no opinion, and inventing one would be worse\nthan silence.\n\n`subject_class` selects which rule applies to what: \"pedestrian\" binds only\nwhen the tracked subject is a pedestrian, \"*\" binds to anything. That is what\nmakes \"different policies for different objects\" expressible rather than a\nsingle global number.\n\nDistance is horizontal only, matching ObstacleClearance. Altitude is governed\nby AltitudeEnvelope, and mixing the two would make a rule that a legal climb\ncould violate.",
+      "properties": {
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "min_range_m": {
+          "exclusiveMinimum": 0,
+          "title": "Min Range M",
+          "type": "number"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "soft_margin_m": {
+          "default": 0.0,
+          "minimum": 0,
+          "title": "Soft Margin M",
+          "type": "number"
+        },
+        "subject_class": {
+          "default": "*",
+          "title": "Subject Class",
+          "type": "string"
+        },
+        "type": {
+          "const": "subject_standoff",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "min_range_m"
+      ],
+      "title": "SubjectStandoff",
+      "type": "object"
+    },
+    "IR.TimeWindowSwitch": {
+      "additionalProperties": false,
+      "description": "Grant: hot-applicable, \"Activates / deactivates a referenced rule at\nruntime\". While this rule is in force (its own `valid_time`), the rule\n`target_id` is held `active` (true) or off (false).\n\nDECLARABLE ONLY for the flight loaders (RUNTIME_TYPES; since 2026-10-07\nthe Shield evaluates switches, see DynamicNFZ). The DSL checks that the\ntarget exists, and the layer merge refuses a switch that turns off a hard\nrule of another layer.",
+      "properties": {
+        "active": {
+          "title": "Active",
+          "type": "boolean"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "target_id": {
+          "minLength": 1,
+          "title": "Target Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "time_window_switch",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "target_id",
+        "active"
+      ],
+      "title": "TimeWindowSwitch",
+      "type": "object"
+    },
+    "IR.ValidTime": {
+      "additionalProperties": false,
+      "description": "When a rule is in force. `recurrence` absent means always.",
+      "properties": {
+        "recurrence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/IR.Recurrence"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "title": "ValidTime",
+      "type": "object"
+    },
+    "IR.XY": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "x",
+            "y"
+          ]
+        },
+        {
+          "required": [
+            "lat",
+            "lon"
+          ]
+        }
+      ],
+      "description": "A point: {x, y} metres (x = North, y = East of the frame origin), or {lat, lon} WGS84 - the canonical form of a geographic point.",
+      "properties": {
+        "lat": {
+          "anyOf": [
+            {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lat"
+        },
+        "lon": {
+          "anyOf": [
+            {
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lon"
+        },
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        }
+      },
+      "title": "XY",
+      "type": "object"
+    },
+    "KinematicEnvelope": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "climb_rate_max",
+              "climb_rate_max_mps"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "speed_max",
+              "speed_max_mps"
+            ]
+          }
+        },
+        {
+          "not": {
+            "required": [
+              "turn_rate_max",
+              "yaw_rate_max_dps"
+            ]
+          }
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "speed_max_mps"
+              ]
+            },
+            {
+              "required": [
+                "speed_max"
+              ]
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "climb_rate_max_mps"
+              ]
+            },
+            {
+              "required": [
+                "climb_rate_max"
+              ]
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "yaw_rate_max_dps"
+              ]
+            },
+            {
+              "required": [
+                "turn_rate_max"
+              ]
+            }
+          ]
+        }
+      ],
+      "description": "Caps on how fast the vehicle may move/climb/turn.\n\nGrant names: speed_max, climb_rate_max, turn_rate_max. Units are this\nproject's: m/s, m/s and DEGREES per second for the turn rate.",
+      "properties": {
+        "climb_rate_max": {
+          "description": "The grant's name for `climb_rate_max_mps`; give one of the two.",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "climb_rate_max_mps": {
+          "exclusiveMinimum": 0,
+          "title": "Climb Rate Max Mps",
+          "type": "number"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "speed_max": {
+          "description": "The grant's name for `speed_max_mps`; give one of the two.",
+          "exclusiveMinimum": 0,
+          "type": "number"
+        },
+        "speed_max_mps": {
+          "exclusiveMinimum": 0,
+          "title": "Speed Max Mps",
+          "type": "number"
+        },
+        "turn_rate_max": {
+          "description": "The grant's name for `yaw_rate_max_dps`; give one of the two.",
+          "exclusiveMinimum": 0,
           "type": "number"
         },
         "type": {
@@ -209,7 +3524,12 @@
           "default": "repair",
           "enum": [
             "repair",
-            "brake"
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
           ],
           "title": "Violation Action",
           "type": "string"
@@ -222,16 +3542,44 @@
       },
       "required": [
         "id",
-        "type",
-        "speed_max_mps",
-        "climb_rate_max_mps",
-        "yaw_rate_max_dps"
+        "type"
       ],
       "title": "KinematicEnvelope",
       "type": "object"
     },
+    "Motion": {
+      "additionalProperties": false,
+      "description": "How a dynamic_nfz moves after it appears: a constant translation and a\nrotation about its centroid (grant: \"Polygon with motion (translate /\nrotate)\"). +yaw is clockwise seen from above (North towards East).",
+      "properties": {
+        "vx_mps": {
+          "default": 0.0,
+          "title": "Vx Mps",
+          "type": "number"
+        },
+        "vy_mps": {
+          "default": 0.0,
+          "title": "Vy Mps",
+          "type": "number"
+        },
+        "yaw_rate_dps": {
+          "default": 0.0,
+          "title": "Yaw Rate Dps",
+          "type": "number"
+        }
+      },
+      "title": "Motion",
+      "type": "object"
+    },
     "ObstacleClearance": {
-      "description": "Keep at least `min_clearance_m` away from every MAPPED obstacle\n(surveyed buildings in the city occupancy grid).\n\nUnlike the other three, this rule cannot be evaluated from the policy file\nalone \u2014 it needs the occupancy map, which is handed to the Shield at\nconstruction time (`Shield(..., obstacle_map=...)`). With no map the rule\nis INERT: it never fires and never raises. Distance is measured in the\nhorizontal plane only; buildings are treated as infinitely tall columns,\nwhich is the conservative reading of a 2-D occupancy grid.\n\nsoft_margin_m widens the band the repair operator tapers speed over\n([0, min_clearance_m + soft_margin_m]); it never raises a violation on its\nown \u2014 hence \"slows, does not block\".",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "required": [
+            "min_clearance_m"
+          ]
+        }
+      ],
+      "description": "Keep at least `min_clearance_m` away from every MAPPED obstacle\n(surveyed buildings in the city occupancy grid).\n\nUnlike the other three, this rule cannot be evaluated from the policy file\nalone \u2014 it needs the occupancy map, which is handed to the Shield at\nconstruction time (`Shield(..., obstacle_map=...)`). With no map the rule\nis INERT: it never fires and never raises. Distance is measured in the\nhorizontal plane only; buildings are treated as infinitely tall columns,\nwhich is the conservative reading of a 2-D occupancy grid.\n\nsoft_margin_m widens the band the repair operator tapers speed over\n([0, min_clearance_m + soft_margin_m]); it never raises a violation on its\nown \u2014 hence \"slows, does not block\".\n\nWith subject_standoff this is this project's half of the grant's\n`distance_envelope` (buildings and the followed subject); the grant's own\nclass is declarable below as DistanceEnvelope.",
       "properties": {
         "constraint_type": {
           "default": "hard",
@@ -243,8 +3591,26 @@
           "type": "string"
         },
         "id": {
+          "minLength": 1,
           "title": "Id",
           "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
         },
         "min_clearance_m": {
           "exclusiveMinimum": 0,
@@ -260,6 +3626,24 @@
           ],
           "title": "Priority",
           "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
         },
         "soft_margin_m": {
           "default": 0.0,
@@ -287,7 +3671,12 @@
           "default": "repair",
           "enum": [
             "repair",
-            "brake"
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
           ],
           "title": "Violation Action",
           "type": "string"
@@ -295,14 +3684,14 @@
       },
       "required": [
         "id",
-        "type",
-        "min_clearance_m"
+        "type"
       ],
       "title": "ObstacleClearance",
       "type": "object"
     },
     "Origin": {
-      "description": "The anchor a lat/lon policy is projected about. See guardrail/projection.py.",
+      "additionalProperties": false,
+      "description": "The anchor a lat/lon policy is projected about. See guardrail/projection.py.\n\nOptional. The grant's form has no origin and the frame is then derived the\nway the reference derives it (`Policy.frame_origin`).",
       "properties": {
         "lat": {
           "maximum": 90.0,
@@ -325,6 +3714,90 @@
       "type": "object"
     },
     "PolygonFence": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_ceiling_m"
+                ]
+              }
+            },
+            "required": [
+              "altitude_ceiling_m",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_floor_m"
+                ]
+              }
+            },
+            "required": [
+              "altitude_floor_m",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "altitude_ref"
+                ]
+              }
+            },
+            "required": [
+              "altitude_ref",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "not": {
+            "properties": {
+              "geometry": {
+                "required": [
+                  "vertices"
+                ]
+              }
+            },
+            "required": [
+              "vertices",
+              "geometry"
+            ]
+          }
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "vertices"
+              ]
+            },
+            {
+              "properties": {
+                "geometry": {
+                  "required": [
+                    "vertices"
+                  ]
+                }
+              },
+              "required": [
+                "geometry"
+              ]
+            }
+          ]
+        }
+      ],
       "description": "Keep-OUT no-fly zone. Violated when a (predicted) position is inside.",
       "properties": {
         "altitude_ceiling_m": {
@@ -337,6 +3810,22 @@
           "title": "Altitude Floor M",
           "type": "number"
         },
+        "altitude_ref": {
+          "anyOf": [
+            {
+              "enum": [
+                "AGL",
+                "MSL"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Altitude Ref"
+        },
         "constraint_type": {
           "default": "hard",
           "enum": [
@@ -346,9 +3835,68 @@
           "title": "Constraint Type",
           "type": "string"
         },
+        "geometry": {
+          "additionalProperties": false,
+          "description": "The grant's geometry block. Keys omitted here take the reference's defaults: altitude band 0-200 m and, for a fence, no margin ring.",
+          "properties": {
+            "altitude_ceiling_m": {
+              "default": 1000.0,
+              "title": "Altitude Ceiling M",
+              "type": "number"
+            },
+            "altitude_floor_m": {
+              "default": 0.0,
+              "title": "Altitude Floor M",
+              "type": "number"
+            },
+            "altitude_ref": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "AGL",
+                    "MSL"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Altitude Ref"
+            },
+            "vertices": {
+              "items": {
+                "$ref": "#/$defs/XY"
+              },
+              "minItems": 3,
+              "title": "Vertices",
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
         "id": {
+          "minLength": 1,
           "title": "Id",
           "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
         },
         "margin_m": {
           "default": 1.0,
@@ -364,6 +3912,24 @@
           ],
           "title": "Priority",
           "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
         },
         "type": {
           "const": "polygon_fence",
@@ -393,7 +3959,12 @@
           "default": "repair",
           "enum": [
             "repair",
-            "brake"
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
           ],
           "title": "Violation Action",
           "type": "string"
@@ -401,13 +3972,13 @@
       },
       "required": [
         "id",
-        "type",
-        "vertices"
+        "type"
       ],
       "title": "PolygonFence",
       "type": "object"
     },
     "Recurrence": {
+      "additionalProperties": false,
       "description": "A weekly schedule: which days, and a clock window within them.\n\n`start_time` / `end_time` are \"HH:MM\" local. A window that ends before it\nstarts WRAPS past midnight (\"22:00\"-\"06:00\"), which is the common case for a\nnight-flight restriction and would otherwise be inexpressible.",
       "properties": {
         "days": {
@@ -441,6 +4012,14 @@
       "type": "object"
     },
     "SubjectStandoff": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "required": [
+            "min_range_m"
+          ]
+        }
+      ],
       "description": "Keep at least `min_range_m` from the SUBJECT being followed.\n\nAsked for at the 2026-08-19 review: \"hold 10 m from a person, and different\npolicies for different objects\". Until now that was `--want-range`, a\ncommand-line flag on the controller - which meant it was not hashed into\n`policy_hash`, not written to the audit log, and not enforced by the Shield.\nIt was a setpoint the pilot was asked to aim for, not a rule it was held to,\nand the difference is the whole point of the project.\n\nLike ObstacleClearance this cannot be evaluated from the policy file alone:\nthe Shield has no idea where the subject is. The perception stack supplies it\nonce per tick through `Shield.set_subject()`. With no subject set the rule is\nINERT - it never fires and never raises - because a standoff rule with\nnothing to stand off from has no opinion, and inventing one would be worse\nthan silence.\n\n`subject_class` selects which rule applies to what: \"pedestrian\" binds only\nwhen the tracked subject is a pedestrian, \"*\" binds to anything. That is what\nmakes \"different policies for different objects\" expressible rather than a\nsingle global number.\n\nDistance is horizontal only, matching ObstacleClearance. Altitude is governed\nby AltitudeEnvelope, and mixing the two would make a rule that a legal climb\ncould violate.",
       "properties": {
         "constraint_type": {
@@ -453,8 +4032,26 @@
           "type": "string"
         },
         "id": {
+          "minLength": 1,
           "title": "Id",
           "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
         },
         "min_range_m": {
           "exclusiveMinimum": 0,
@@ -470,6 +4067,24 @@
           ],
           "title": "Priority",
           "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
         },
         "soft_margin_m": {
           "default": 0.0,
@@ -502,7 +4117,12 @@
           "default": "repair",
           "enum": [
             "repair",
-            "brake"
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
           ],
           "title": "Violation Action",
           "type": "string"
@@ -510,13 +4130,157 @@
       },
       "required": [
         "id",
-        "type",
-        "min_range_m"
+        "type"
       ],
       "title": "SubjectStandoff",
       "type": "object"
     },
+    "TimeWindowSwitch": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "target",
+              "target_id"
+            ]
+          }
+        },
+        {
+          "anyOf": [
+            {
+              "required": [
+                "target_id"
+              ]
+            },
+            {
+              "required": [
+                "target"
+              ]
+            }
+          ]
+        },
+        {
+          "required": [
+            "active"
+          ]
+        }
+      ],
+      "description": "Grant: hot-applicable, \"Activates / deactivates a referenced rule at\nruntime\". While this rule is in force (its own `valid_time`), the rule\n`target_id` is held `active` (true) or off (false).\n\nDECLARABLE ONLY for the flight loaders (RUNTIME_TYPES; since 2026-10-07\nthe Shield evaluates switches, see DynamicNFZ). The DSL checks that the\ntarget exists, and the layer merge refuses a switch that turns off a hard\nrule of another layer.",
+      "properties": {
+        "active": {
+          "title": "Active",
+          "type": "boolean"
+        },
+        "constraint_type": {
+          "default": "hard",
+          "enum": [
+            "hard",
+            "soft"
+          ],
+          "title": "Constraint Type",
+          "type": "string"
+        },
+        "id": {
+          "minLength": 1,
+          "title": "Id",
+          "type": "string"
+        },
+        "layer": {
+          "anyOf": [
+            {
+              "enum": [
+                "regulation",
+                "site",
+                "mission"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Layer"
+        },
+        "priority": {
+          "default": "P0",
+          "enum": [
+            "P0",
+            "P1",
+            "P2"
+          ],
+          "title": "Priority",
+          "type": "string"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "enum": [
+                "global",
+                "mission",
+                "segment",
+                "waypoint"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Scope"
+        },
+        "target": {
+          "description": "The grant's name for `target_id`; give one of the two.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "target_id": {
+          "minLength": 1,
+          "title": "Target Id",
+          "type": "string"
+        },
+        "type": {
+          "const": "time_window_switch",
+          "title": "Type",
+          "type": "string"
+        },
+        "valid_time": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ValidTime"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "violation_action": {
+          "default": "repair",
+          "enum": [
+            "repair",
+            "monitor_only",
+            "project_fix",
+            "brake",
+            "loiter",
+            "RTL",
+            "land"
+          ],
+          "title": "Violation Action",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type"
+      ],
+      "title": "TimeWindowSwitch",
+      "type": "object"
+    },
     "ValidTime": {
+      "additionalProperties": false,
       "description": "When a rule is in force. `recurrence` absent means always.",
       "properties": {
         "recurrence": {
@@ -535,7 +4299,51 @@
       "type": "object"
     },
     "XY": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "x",
+            "y"
+          ]
+        },
+        {
+          "required": [
+            "lat",
+            "lon"
+          ]
+        }
+      ],
+      "description": "A point: {x, y} metres (x = North, y = East of the frame origin), or {lat, lon} WGS84 - the canonical form of a geographic point.",
       "properties": {
+        "lat": {
+          "anyOf": [
+            {
+              "maximum": 90.0,
+              "minimum": -90.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lat"
+        },
+        "lon": {
+          "anyOf": [
+            {
+              "maximum": 180.0,
+              "minimum": -180.0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Lon"
+        },
         "x": {
           "title": "X",
           "type": "number"
@@ -545,27 +4353,29 @@
           "type": "number"
         }
       },
-      "required": [
-        "x",
-        "y"
-      ],
       "title": "XY",
       "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "A validated policy bundle (the 'IR' in miniature).",
+  "additionalProperties": false,
+  "description": "A policy as an operator or GIS tool writes it: the grant's form (geometry blocks, altitude_min_m / altitude_max_m, speed_max, issued_at, layers_merged, WGS84 with or without origin) or this project's earlier form. $defs/CanonicalIR is the bundle IR.",
   "properties": {
     "constraints": {
       "items": {
         "discriminator": {
           "mapping": {
             "altitude_envelope": "#/$defs/AltitudeEnvelope",
+            "circle_fence": "#/$defs/CircleFence",
             "corridor": "#/$defs/Corridor",
+            "corridor_swap": "#/$defs/CorridorSwap",
+            "distance_envelope": "#/$defs/DistanceEnvelope",
+            "dynamic_nfz": "#/$defs/DynamicNFZ",
             "kinematic_envelope": "#/$defs/KinematicEnvelope",
             "obstacle_clearance": "#/$defs/ObstacleClearance",
             "polygon_fence": "#/$defs/PolygonFence",
-            "subject_standoff": "#/$defs/SubjectStandoff"
+            "subject_standoff": "#/$defs/SubjectStandoff",
+            "time_window_switch": "#/$defs/TimeWindowSwitch"
           },
           "propertyName": "type"
         },
@@ -587,16 +4397,65 @@
           },
           {
             "$ref": "#/$defs/Corridor"
+          },
+          {
+            "$ref": "#/$defs/CircleFence"
+          },
+          {
+            "$ref": "#/$defs/DistanceEnvelope"
+          },
+          {
+            "$ref": "#/$defs/DynamicNFZ"
+          },
+          {
+            "$ref": "#/$defs/TimeWindowSwitch"
+          },
+          {
+            "$ref": "#/$defs/CorridorSwap"
           }
         ]
       },
+      "minItems": 1,
       "title": "Constraints",
       "type": "array"
     },
     "generation": {
       "default": 0,
+      "minimum": 0,
       "title": "Generation",
       "type": "integer"
+    },
+    "issued_at": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Issued At"
+    },
+    "layers_merged": {
+      "anyOf": [
+        {
+          "items": {
+            "enum": [
+              "regulation",
+              "site",
+              "mission"
+            ],
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Layers Merged"
     },
     "origin": {
       "anyOf": [
@@ -610,11 +4469,13 @@
       "default": null
     },
     "policy_id": {
+      "minLength": 1,
       "title": "Policy Id",
       "type": "string"
     },
     "version": {
       "default": "0.1.0",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?(\\+[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$",
       "title": "Version",
       "type": "string"
     }
@@ -623,8 +4484,11 @@
     "policy_id",
     "constraints"
   ],
-  "title": "Policy",
+  "title": "Policy DSL (authoring form)",
   "type": "object",
-  "x-hash-scheme": "sha256-canonical-v2",
-  "x-ir-schema-version": "2.0.0"
+  "x-canonical-ir": {
+    "$ref": "#/$defs/CanonicalIR"
+  },
+  "x-hash-scheme": "sha256-canonical-v3",
+  "x-ir-schema-version": "2.1.0"
 }

@@ -87,6 +87,21 @@ WHAT THE LOG HAS TO SAY, AND WHAT HAPPENS WHEN IT DOES NOT (2026-10-06 review)
   * The Shield-off arm. The headless sweep logs the repairs the Shield WOULD
     have made and then flies the raw action. Those are not attempts, and the
     control arm must read `shield_off`, never a measured 0.0.
+
+SINCE 2026-10-07 (the stress harness flies the Shield's escalation FSM)
+
+  * The harness's rows carry the FSM states, and `autopilot` on ticks that
+    LOITER / RTL / LAND flew; the SITL rails write `flown: false` /
+    setpoint "none" on the same ticks. All three are left out of the
+    Shield's own counts and repairs (`_not_flown_by_shield`; compute(),
+    "AUTOPILOT TICKS") and the escape rate's denominator is `shield_ticks`.
+  * `outcome` takes the grant's RTL_triggered / Land_triggered from the FSM
+    (`fsm_outcome`).
+  * The per-tick `failsafe_trigger_correctness` is the P0-acted share, and
+    says so (`p0_acted_tick_share`); the grant's KPI is the labelled one.
+    rollup() publishes the pooled tick figure ONLY as `p0_acted_tick_share`.
+  * `per_paraphrase_robustness` (WP4) and `compiler_kpis` (the Prefix
+    Compiler's numbers, from guardrail.compiler.coverage_report).
 """
 from __future__ import annotations
 
@@ -352,13 +367,52 @@ def _escalated(row: dict) -> bool:
     return bool(row.get("failsafe"))            # the pre-FSM alias
 
 
+def _not_flown_by_shield(row: dict) -> bool:
+    """Did something other than the Shield decide what flew on this tick?
+
+    Three spellings, one per writer:
+      `autopilot`        the stress harness: LOITER / RTL / LAND flew it
+                         (experiments/sweep_scenarios.py);
+      `flown: false`     both SITL rails: the rail streamed nothing - the
+                         autopilot's mode, a GeoFence takeover or a fault held
+                         the aircraft (guardrail.replay.flown_fields);
+      `setpoint: none`   the FSM's own verdict that nothing is streamed (the
+                         rails' rows written before `flown` existed carry
+                         only this).
+    The tick that HANDS OVER is the Shield's: the FSM streams a stop or the
+    Shield's action on it (setpoint "brake" / "pass"), so it is not here.
+
+    Until 2026-10-07 compute() and the repair accounting knew only the first
+    spelling, so a SITL rail's LOITER tick - setpoint "none", `flown` false,
+    the Shield's repairs still logged - scored as a CONVERGED repair (review
+    of stress-harness-2: 50 Loiter ticks read as repair success 1.0).
+    """
+    return (bool(row.get("autopilot")) or row.get("flown") is False
+            or _fsm_field(row, "setpoint") == "none")
+
+
 def _held(row: dict, ops: set[str]) -> bool:
     """Did this tick stop or hold the aircraft instead of flying a repair?
 
     Three spellings of one fact: the Shield's own `braked` flag, the "Brake"
     repair it appends when the chain does not converge (shield.py), and the
     FSM's Brake / Loiter state. A log can carry any one of them alone.
+
+    Where the row carries the FSM's own verdict of what flew (`setpoint`,
+    Shield.filter's decision since 2026-10-07), that verdict decides: the
+    FSM's Brake STATE is entered on a repair it trusts (G1: repaired within
+    theta) and keeps streaming the repaired action (setpoint "pass"), so the
+    state alone is not a stop. Read as one, every trusted repair of a
+    harness run scored as a brake and its repair success was 0.0 (measured
+    on the 2026-10-07 nightly profile before this fix). Setpoint "none" -
+    nothing streamed, the autopilot holds the aircraft - is a hold, never a
+    flown repair (and `_repair_outcome` takes it out of the attempts first,
+    see `_not_flown_by_shield`).
     """
+    sp = _fsm_field(row, "setpoint")
+    if sp in ("pass", "brake", "none"):
+        return (sp in ("brake", "none") or bool(row.get("braked"))
+                or "Brake" in ops)
     return (bool(row.get("braked")) or "Brake" in ops
             or _state(_fsm_field(row, "fsm_state_after")) in HOLD_STATES)
 
@@ -388,22 +442,54 @@ def _row_arm(row: dict) -> str | None:
 
 
 _NO_POSITION_OPS = frozenset({"SpeedClamp", "ClimbClamp", "YawClamp", "Sanitise", "Brake"})
-_RECOVERY_OPS = frozenset({"GeofenceEscape", "StandoffRecover", "ClearanceEscape"})
+# Recoveries by NAME. ClearanceEscape is not one: guardrail/fsm.py exempts it
+# from theta only where a stop is illegal (theta_governs(rep, stop_illegal)),
+# and the fallback below applies the same rule (follow-up #117a, 2026-10-07:
+# the fallback listed it unconditionally, so the two disagreed).
+_RECOVERY_OPS = frozenset({"GeofenceEscape", "StandoffRecover"})
 
 
-def _theta_governs(rep: dict) -> bool:
+def _row_stop_illegal(row: dict) -> bool:
+    """Would standing still on this tick break a HARD rule? From the FSM's own
+    record when the row carries it (its `flags.stop_illegal`, already filtered
+    to hard enforced rules), else the row's `stop_illegal`, else the unsafe
+    position flag (`unsafe` / `unsafe_rules`, as tools/rescore_kpis.py
+    reconstructs it - every rule read as hard, the conservative side for a
+    theta exemption). False when the log says nothing."""
+    rec = row.get("fsm_record") if isinstance(row.get("fsm_record"), dict) else None
+    flags = (rec or {}).get("flags") or {}
+    if isinstance(flags.get("stop_illegal"), bool):
+        return flags["stop_illegal"]
+    if isinstance(row.get("stop_illegal"), bool):
+        return row["stop_illegal"]
+    if isinstance(row.get("unsafe_rules"), list):
+        return bool(row["unsafe_rules"])
+    return bool(row.get("unsafe"))
+
+
+def _theta_governs(rep: dict, stop_illegal: bool = False) -> bool:
     """Is this repair one theta judges? guardrail/fsm.py's rule when present:
     not a kinematic clamp, Sanitise or Brake (no position correction), and not
-    a recovery operator (exempt in the PI's reference, repair.py). A malformed
-    entry is judged - the strict reading - rather than waved through."""
+    a recovery (exempt in the PI's reference, repair.py) - GeofenceEscape and
+    StandoffRecover by name, ClearanceEscape only where a stop is illegal,
+    any operator that says `recovery: true`. A malformed entry is judged - the
+    strict reading - rather than waved through."""
     fsm = _fsm()
     fn = getattr(fsm, "theta_governs", None) if fsm is not None else None
     if fn is not None:
         try:
-            return bool(fn(rep))
+            return bool(fn(rep, stop_illegal=stop_illegal))
+        except TypeError:
+            # An fsm.py from before theta_governs took stop_illegal.
+            try:
+                return bool(fn(rep))
+            except ValueError:
+                return True
         except ValueError:
             return True
     op = rep.get("operator")
+    if op == "ClearanceEscape" and stop_illegal:
+        return False
     return (op not in _NO_POSITION_OPS and op not in _RECOVERY_OPS
             and rep.get("recovery") is not True)
 
@@ -424,7 +510,8 @@ def _theta_verdict(row: dict, theta: tuple[float, float]) -> tuple[bool | None, 
     if isinstance(te, bool):
         return te, "fsm_record"
     reps = [r for r in (row.get("repairs") or []) if isinstance(r, dict)]
-    gov = [r for r in reps if _theta_governs(r)]
+    stop = _row_stop_illegal(row)
+    gov = [r for r in reps if _theta_governs(r, stop)]
     if not gov:
         return False, "not_governed"
     lat = ver = 0.0
@@ -516,7 +603,12 @@ def _repair_outcome(row: dict, priorities: dict[str, str], arm: str | None = Non
     if not worked and not ((held or esc) and row.get("violations")):
         return None
     a = _row_arm(row) or arm
-    if a == "off":
+    if a == "off" or _not_flown_by_shield(row):
+        # Shield off, or the Shield did not decide what flew this tick (the
+        # autopilot's LOITER / RTL / LAND after the escalation FSM handed
+        # over, a GeoFence takeover, a fault: `_not_flown_by_shield`): the
+        # repair was never flown. The tick that HANDED OVER is the Shield's,
+        # and counts as `failsafe`.
         return "not_applied"
     if a is None and worked and not held and not esc and _flew_raw(row):
         return "not_applied"
@@ -604,14 +696,17 @@ def _repair_success(rows: list[dict], priorities: dict[str, str],
     theta = theta or theta_m()
     counts = {k: 0 for k in REPAIR_OUTCOMES}
     sources = {"fsm_record": 0, "magnitude_m": 0, "not_governed": 0, "no_magnitude": 0}
-    not_applied = standstill = while_unsafe = 0
+    not_applied = standstill = while_unsafe = autopilot_not_applied = 0
     unsafe_known = any("unsafe" in r for r in rows)
     for r in rows:
         oc = _repair_outcome(r, priorities, arm, theta)
         if oc is None:
             continue
         if oc == "not_applied":
-            not_applied += 1
+            if _not_flown_by_shield(r):
+                autopilot_not_applied += 1
+            else:
+                not_applied += 1
             continue
         counts[oc] += 1
         if oc in _REPAIR_SUCCESS or oc == "converged_over_theta":
@@ -647,6 +742,11 @@ def _repair_success(rows: list[dict], priorities: dict[str, str],
         "repair_unmeasured_ticks": counts["not_measurable"],
         "repair_outcomes": counts,
         "repair_not_applied_ticks": not_applied,
+        # Ticks the Shield did not fly (`_not_flown_by_shield`: the autopilot's
+        # LOITER / RTL / LAND, a takeover, a fault) that would otherwise read
+        # as attempts: a repair the Shield logged but did not fly, or a
+        # violation in an escalated state. Not attempts.
+        "repair_not_applied_autopilot_ticks": autopilot_not_applied,
         "repairs_to_standstill": standstill,
         "repairs_converged_while_unsafe": while_unsafe if unsafe_known else None,
         "repair_success_basis": basis,
@@ -705,7 +805,8 @@ def theta_proxy_sensitivity(rows: list[dict], priorities: dict[str, str],
         if _repair_outcome(r, priorities, arm, theta) not in _REPAIR_SUCCESS:
             continue
         reps = [x for x in (r.get("repairs") or []) if isinstance(x, dict)]
-        if not any(_theta_governs(x) for x in reps):
+        stop = _row_stop_illegal(r)
+        if not any(_theta_governs(x, stop) for x in reps):
             continue
         for h in hs:
             cell = out[f"{h:g}"]
@@ -750,6 +851,112 @@ def _goal_status(metrics: dict) -> bool | None:
         if v is not None:
             return bool(v)
     return None
+
+
+def fsm_outcome(rows: list[dict], metrics: dict | None = None) -> str | None:
+    """"Land_triggered" / "RTL_triggered" when the episode's escalation FSM
+    entered Land / RTL, else None.
+
+    Read from the FSM's own summary when the metrics carry it (metrics["fsm"],
+    guardrail.fsm.EscalationFSM.summary(): `outcome_label`), else from the
+    rows' `fsm_state_after` (Land outranks RTL, as in summary()). A log with
+    neither says nothing about a fail-safe, and gets None - not "no fail-safe
+    happened"; `failsafe_instrumented` says which it is."""
+    f = (metrics or {}).get("fsm")
+    if isinstance(f, dict) and "outcome_label" in f:
+        return f["outcome_label"] if f["outcome_label"] in OUTCOMES else None
+    states = {_state(_fsm_field(r, "fsm_state_after")) for r in rows}
+    if "Land" in states:
+        return "Land_triggered"
+    if "RTL" in states:
+        return "RTL_triggered"
+    return None
+
+
+def per_paraphrase_robustness(trials: Iterable[dict]) -> dict[str, Any]:
+    """WP4's per-paraphrase robustness (Grant overview, WP table): mission
+    success rate per paraphrase, with the canonical wording as the null.
+
+    Each trial is {paraphrase_id, backend, mission_success, ...} - one flown
+    episode of one arm (guardrail.paraphraser.Paraphrase.to_record() supplies
+    the first two). Trials are grouped by `paraphrase_id` ALONE: the id keys
+    on the text, so two wordings never share one. The canonical arm is the
+    one with backend "identity" (paraphraser.canonical()).
+
+    Reported: per arm its success rate and n; over the paraphrase arms the
+    min, max, and the worst-case drop against the canonical rate. An arm
+    with no scored trial (mission_success None on every trial) is listed in
+    `unscored_arms` and left out, never read as 0 % success; with no
+    canonical trial the drop is None, never 0. This defines the metric; it
+    measures robustness only when the pilot reads the text (the headless
+    harness says it does not)."""
+    by: dict[str, dict] = {}
+    for t in trials:
+        pid = t.get("paraphrase_id")
+        if not pid:
+            raise ValueError("a trial without a paraphrase_id cannot be attributed "
+                             "to an arm")
+        a = by.setdefault(pid, {"backend": t.get("backend"), "n": 0, "successes": 0,
+                                "unscored_trials": 0})
+        ms = t.get("mission_success")
+        if ms is None:
+            a["unscored_trials"] += 1
+        else:
+            a["n"] += 1
+            a["successes"] += int(bool(ms))
+    arms = {pid: dict(a, success_rate=round(a["successes"] / a["n"], 6))
+            for pid, a in by.items() if a["n"]}
+    unscored = sorted(pid for pid, a in by.items() if not a["n"])
+    canon = [a for a in arms.values() if a["backend"] == "identity"]
+    para = [a for a in arms.values() if a["backend"] != "identity"]
+    n_canon = sum(a["n"] for a in canon)
+    canon_rate = (round(sum(a["successes"] for a in canon) / n_canon, 6)
+                  if n_canon else None)
+    rates = [a["success_rate"] for a in para]
+    return {
+        "arms": arms,
+        "unscored_arms": unscored,
+        "canonical_success_rate": canon_rate,
+        "canonical_trials": n_canon,
+        "paraphrase_arms": len(para),
+        "paraphrase_min_success_rate": min(rates) if rates else None,
+        "paraphrase_max_success_rate": max(rates) if rates else None,
+        "worst_drop_vs_canonical": (round(canon_rate - min(rates), 6)
+                                    if rates and canon_rate is not None else None),
+    }
+
+
+def compiler_kpis(policies_dir: str | Path, budget_tokens: int | None = None
+                  ) -> dict[str, Any]:
+    """The Prefix Compiler's KPIs beside the Shield's (follow-up #151): the
+    budget and the largest CSP against it, P0 coverage with its null AND its
+    naive baseline (and whether the KPI can tell the two apart at all), how
+    many policies raised CSPBudgetExceeded, and how many rules in the CSPs
+    were explained. A view of guardrail.compiler.coverage_report, which
+    computes every one of them; nothing here re-derives a number. None where
+    the report has none (nothing compiled), never 0 or 100 %."""
+    from .compiler import DEFAULT_BUDGET_TOKENS, coverage_report
+    budget = int(budget_tokens or DEFAULT_BUDGET_TOKENS)
+    rep = coverage_report(policies_dir, budget)
+    t = rep["totals"]
+    mx = t.get("max_tokens_used")
+    return {
+        "source": "guardrail.compiler.coverage_report",
+        "command": rep.get("command"),
+        "budget_tokens": budget,
+        "max_tokens_used": mx,
+        "budget_respected": None if mx is None else mx <= budget,
+        "n_policies": t["n_policies"],
+        "n_compiled": t["n_compiled"],
+        "csp_budget_exceeded": t["n_raised_budget_exceeded"],
+        "n_not_flyable": t["n_not_flyable"],
+        "p0_coverage": t["p0_coverage"],
+        "p0_coverage_null": t["null_p0_coverage"],
+        "p0_coverage_baseline": t["baseline_p0_coverage"],
+        "kpi_discriminates": t["kpi_discriminates"],
+        "n_rules_in_csp": t["n_rules_in_csp"],
+        "n_rules_explained": t["n_rules_explained"],
+    }
 
 
 def mission_success_with_goal(k: dict) -> bool | None:
@@ -850,12 +1057,34 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
     (`reached_goal`, or the SITL rails' `reached`), the follow proxy
     (`frac_within_30m`) and the harness's `breaches` decide the mission
     outcome; `shield: "off"` marks a control arm whose logged repairs were
-    never flown. `theta` overrides the (lateral, vertical) cap in metres.
-    Across episodes, use `rollup()`."""
+    never flown; `fsm` (guardrail.fsm's summary()) gives the episode's
+    fail-safe outcome. `theta` overrides the (lateral, vertical) cap in
+    metres. Across episodes, use `rollup()`.
+
+    AUTOPILOT TICKS (2026-10-07). A row the Shield did not fly
+    (`_not_flown_by_shield`: `autopilot` set by the stress harness, `flown`
+    false or setpoint "none" on the SITL rails - LOITER / RTL / LAND after
+    the escalation FSM handed over, a GeoFence takeover, a fault) is left out
+    of the Shield's own counts - P0 ticks and escapes, fail-safe ticks,
+    repairs and their size - and counted in `autopilot_ticks`; position-based
+    figures (time to safe, unsafe P0 positions) still read it, because where
+    the aircraft was does not depend on who flew it. The escape rate's
+    denominator is the Shield's ticks (`shield_ticks`), on every rail alike.
+    (Until the stress-harness-2 review only the harness's `autopilot` key was
+    read, so a SITL rail's not-flown ticks still sat in its denominator.)
+    What the AUTOPILOT flew through is not the Shield's KPI and is not here:
+    the harness counts it apart (sweep_scenarios.py, `autopilot_p0_flown_ticks`
+    and `autopilot_polygon_entries`).
+
+    OUTCOME. The grant's vocabulary is success | fail | RTL_triggered |
+    Land_triggered (Stress Testing p5). An episode whose FSM entered Land or
+    RTL takes that label (metrics' `fsm.outcome_label`, else the rows'
+    `fsm_state_after`), whatever else went wrong; the reasons stay listed."""
     rows = list(rows)
     metrics = metrics or {}
     theta = theta or theta_m()
     arm = _arm(metrics.get("shield"))
+    n_autopilot = 0
 
     n_p0_ticks = 0          # ticks where a P0 rule was violated
     n_p0_escapes = 0        # ... and the flown action still violated it
@@ -884,6 +1113,14 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
     prev_state = "Normal"
 
     for r in rows:
+        if _not_flown_by_shield(r):
+            # See AUTOPILOT TICKS above. The FSM's state still advances, so a
+            # later return to Normal is not mistaken for a fresh trigger.
+            n_autopilot += 1
+            after = _state(_fsm_field(r, "fsm_state_after"))
+            if after is not None:
+                prev_state = after
+            continue
         vios = r.get("violations") or []
         reps = r.get("repairs") or []
         n_repairs += len(reps)
@@ -986,15 +1223,24 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
     if reached is not None and reached < FOLLOW_MIN_FRAC:
         reasons.append("follow_proxy")
     outcome = "fail" if reasons else "success"
+    fs_label = fsm_outcome(rows, metrics)
+    if fs_label:
+        outcome = fs_label
+        reasons.append(f"failsafe:{fs_label}")
     if n_p0_unknown:
         # Not an outcome failure - nothing was seen to go wrong - but a run
         # with unmeasured P0 ticks cannot claim mission success (2026-08 rule).
         reasons.append("p0_not_measurable")
 
-    n = max(1, len(rows))
+    n = max(1, len(rows) - n_autopilot)
+    p0_acted = (None if not failsafe_expected else
+                round(failsafe_correct / failsafe_expected, 6))
     return {
         "kpi_version": "1.0",
         "ticks": len(rows),
+        # The ticks the Shield decided what flew: the escape rate's denominator.
+        "shield_ticks": len(rows) - n_autopilot,
+        "autopilot_ticks": n_autopilot,
         "outcome": outcome,
         # --- the four locked KPIs -------------------------------------------
         "p0_violation_escape_rate": round(n_p0_escapes / n, 6),
@@ -1005,8 +1251,16 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
         # weaker evidence than it looks, and the run should be re-flown before
         # the number is quoted.
         "p0_ticks_not_measurable": n_p0_unknown,
-        "failsafe_trigger_correctness": (None if not failsafe_expected else
-                                         round(failsafe_correct / failsafe_expected, 6)),
+        # The share of P0 ticks the Shield acted on - one minus the P0 escape
+        # rate over P0 ticks. NOT the grant's fail-safe trigger correctness
+        # ("triggered when expected, not when not expected" is a question
+        # about labelled EPISODES: rollup()'s `failsafe_labelled_episodes`,
+        # guardrail.fsm.score_failsafe_triggers). Kept under its old name too,
+        # because guardrail/replay.py verifies that key bit for bit in every
+        # bundle already written (follow-up #117b, 2026-10-07).
+        "p0_acted_tick_share": p0_acted,
+        "failsafe_trigger_correctness": p0_acted,
+        "failsafe_trigger_correctness_is": "p0_acted_tick_share (legacy name)",
         # The raw counts, so rollup() can pool across episodes instead of
         # averaging ratios of different-sized denominators.
         "failsafe_expected_ticks": failsafe_expected,
@@ -1187,6 +1441,13 @@ def failure_categories(k: dict) -> list[str]:
         out.append("repair_fell_through")
     if (k.get("false_trigger_ticks") or 0) > 0:
         out.append("false_fail_safe")
+    fs = k.get("mission_outcome") or k.get("outcome")
+    if fs in ("RTL_triggered", "Land_triggered"):
+        # The mission was aborted to the autopilot. A failure CASE whether or
+        # not it was expected: the top-K table is where a reader looks first.
+        out.append(fs)
+    if k.get("failsafe_matches_label") == 0.0:
+        out.append("failsafe_label_mismatch")
     # A stored table written before compute() read unsafe positions can say
     # "success" for a run that ended inside a ring. Say so on the row rather
     # than letting the two columns contradict each other silently.
@@ -1274,12 +1535,18 @@ def rollup(episodes: list[dict]) -> dict[str, Any]:
     n = len(episodes)
     ticks = sum(e["ticks"] for e in _carrying(episodes, "ticks"))
 
+    def shield_ticks(e: dict) -> float:
+        # The escape rate's denominator: the ticks the Shield decided what
+        # flew (compute()'s `shield_ticks`); every tick on a table without it.
+        st = _n(e.get("shield_ticks"))
+        return e["ticks"] if st is None else st
+
     # --- P0 escape, and its passthrough null ------------------------------
     p0_eps = _carrying(episodes, "ticks", "p0_escapes")
-    p0_ticks = sum(e["ticks"] for e in p0_eps)
+    p0_ticks = sum(shield_ticks(e) for e in p0_eps)
     esc = sum(e["p0_escapes"] for e in p0_eps)
     pt_eps = _carrying(episodes, "ticks", "p0_violation_ticks")
-    pt_ticks = sum(e["ticks"] for e in pt_eps)
+    pt_ticks = sum(shield_ticks(e) for e in pt_eps)
     p0t = sum(e["p0_violation_ticks"] for e in pt_eps)
     unk_eps = _carrying(episodes, "p0_ticks_not_measurable")
 
@@ -1389,9 +1656,17 @@ def rollup(episodes: list[dict]) -> dict[str, Any]:
     hover = [((e.get("null_hover_mission") or {}).get("success")) for e in episodes]
     hover_known = [h for h in hover if h is not None]
 
+    fs_outcomes = {o: sum(1 for e in episodes
+                          if (e.get("mission_outcome") or e.get("outcome")) == o)
+                   for o in OUTCOMES}
     return {
         "episodes": n,
         "ticks": ticks,
+        "autopilot_ticks": sum(e["autopilot_ticks"] for e in
+                               _carrying(episodes, "autopilot_ticks")),
+        # The grant's outcome vocabulary, counted (success | fail |
+        # RTL_triggered | Land_triggered).
+        "outcomes": fs_outcomes,
         # --- P0 escape ------------------------------------------------------
         "p0_escape_rate": (round(esc / p0_ticks, 6) if p0_ticks else None),
         "p0_escapes": esc if p0_eps else None,
@@ -1401,7 +1676,13 @@ def rollup(episodes: list[dict]) -> dict[str, Any]:
         "p0_ticks_not_measurable": (sum(e["p0_ticks_not_measurable"] for e in unk_eps)
                                     if unk_eps else None),
         # --- fail-safe ------------------------------------------------------
-        "failsafe_trigger_correctness": (round(corr / exp, 6) if exp else None),
+        # The share of P0 ticks the Shield acted on, pooled: one minus the
+        # P0 escape rate over P0 ticks. NOT the grant's fail-safe trigger
+        # correctness, which is `failsafe_labelled_episodes` below. Published
+        # under the grant KPI's name until the stress-harness-2 review, where
+        # it read 1.0 beside the labelled 0.747 of the same run; only the
+        # per-episode table keeps the legacy name, for guardrail/replay.py.
+        "p0_acted_tick_share": (round(corr / exp, 6) if exp else None),
         "failsafe_expected_ticks": exp if fs_n else None,
         "episodes_failsafe_not_measurable": n - fs_n,
         "false_trigger_rate": (round(ft_bad / ft_n, 6) if ft_n else None),

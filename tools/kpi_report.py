@@ -24,11 +24,15 @@ This tool reads what is already on disk:
     use, so the report and the artefacts cannot disagree about what an escape
     is;
   * the stress harness's episode bundles (`demo/out/stress_*/episode-*`:
-    `manifest.json`, `kpi.json`, `harness_events.jsonl`, no flight log unless
-    `--keep-logs`). Without per-tick rows they cannot be re-scored, so their
-    stored table is used and every such episode says so (`kind:
-    stored-table`);
+    `manifest.json`, `kpi.json`, `harness_events.jsonl`, and
+    `flight_log.jsonl` when the run had `--keep-logs`). A bundle WITH its log
+    is re-scored from it under its template and cell (`kind: stress-log`,
+    since 2026-10-07); without one its stored table is used and the episode
+    says so (`kind: stored-table`);
   * the headless sweep's aggregated JSON (`docs/data/scenario_sweep.json`).
+
+`render_sweep_markdown` is the same report for ONE harness run, written by
+experiments/sweep_scenarios.py next to its bundles (`kpi_report.md`).
 
 WHAT IT REFUSES TO BLUR
 
@@ -93,7 +97,7 @@ RAIL = {
 PRIORITY_FIELDS = (
     "p0_violation_escape_rate", "p0_escapes", "p0_violation_ticks",
     "p0_ticks_not_measurable", "failsafe_trigger_correctness",
-    "failsafe_expected_ticks", "failsafe_correct_ticks",
+    "p0_acted_tick_share", "failsafe_expected_ticks", "failsafe_correct_ticks",
     "failsafe_permitted_ticks", "violations_by_risk_level", "repair_outcomes",
     "outcome", "mission_success", "mission_fail_reasons", "unsafe_p0_ticks",
     "mission_started_unsafe",
@@ -199,7 +203,11 @@ def load_run(run: Path, by_hash: dict, by_id: dict) -> dict:
     metrics = _read_json(run / "metrics.json")
     manifest = _read_json(run / "manifest.json")
     stored = _read_json(run / "kpi.json")
-    if isinstance(stored.get("kpi"), dict):          # a harness bundle with --keep-logs
+    if isinstance(stored.get("kpi"), dict) and stored.get("template"):
+        # A stress-harness bundle written with --keep-logs: re-scored from its
+        # own log, under its template and parameter cell (load_bundle_log).
+        return load_bundle_log(run, rows, stored, manifest)
+    if isinstance(stored.get("kpi"), dict):
         stored = stored["kpi"]
     pol, how, note = R.resolve_policy(run, manifest, by_hash, by_id)
 
@@ -353,6 +361,71 @@ def time_to_safe_basis(sources: dict, pol) -> str:
 
 
 # --------------------------------------------------------------------------- #
+# a stress-harness episode bundle WITH its per-tick log (--keep-logs)
+# --------------------------------------------------------------------------- #
+
+def _bundle_family(doc: dict, sid, params: dict, arm: str) -> str:
+    template = doc.get("template") or str(sid).split("-")[0]
+    fam = f"stress-bundle/{template}/{cell_name(sid, params)}/shield-{arm}"
+    if doc.get("prefix") == "off":
+        fam += "/prefix-off"
+    return fam
+
+
+def load_bundle_log(run: Path, rows: list[dict], doc: dict, manifest: dict) -> dict:
+    """One episode bundle written by experiments/sweep_scenarios.py with
+    --keep-logs: RE-SCORED from its own flight_log.jsonl with
+    guardrail.kpi.compute (follow-up #37: until 2026-10-07 the profiles ran
+    without logs, so the report could only use their stored tables).
+
+    The priorities are the ones the harness recorded at the end of the episode
+    (`rule_priorities`, hot-applied zones included), so a rule spawned in
+    flight is not defaulted to P0 by a policy file that never held it; the
+    metrics are the ones the harness passed to compute() (`metrics`: the goal,
+    its self-caused breach count, the arm, the FSM's summary). Where the
+    re-score and the stored table disagree on a headline field, the report
+    says so."""
+    k_stored = doc["kpi"]
+    prios = doc.get("rule_priorities") or {}
+    m = dict(doc.get("metrics") or {})
+    arm = _arm(m.get("shield")) or _arm(doc.get("arm")) or "unknown"
+    k = K.compute(rows, prios, m)
+    for f in ("failsafe_triggered", "failsafe_matches_label", "mission_outcome",
+              "outcome_matches_label", "breaches", "polygon_entries",
+              "true_p0_flown_ticks", "min_true_dist_to_fence_m", "reached_goal"):
+        if f in k_stored:
+            k[f] = k_stored[f]
+    k["null_hover_mission"] = K.null_hover_mission(rows, {"reached_goal": m.get("reached_goal")})
+    k["worst_tick"] = K.worst_tick(rows, prios)
+    sid = doc.get("scenario_id") or doc.get("id") or run.name
+    params = doc.get("params") if isinstance(doc.get("params"), dict) else {}
+    seed = doc.get("seed", manifest.get("random_seed"))
+    graded, reasons = (is_kpi_grade(manifest, {}) if manifest
+                       else (False, ["no manifest.json"]))
+    diffs = {f: {"stored": k_stored[f], "recomputed": k.get(f)} for f in _COMPARE
+             if f in k_stored and k_stored[f] != k.get(f)}
+    arm_tag = ((doc.get("arm_record") or {}).get("arm") or "")
+    k.update({
+        "id": f"{cell_name(sid, params)}{'#' + arm_tag if arm_tag else ''}--seed{seed}",
+        "scenario_id": sid, "source": _rel(run), "kind": "stress-log",
+        "recomputed": True, "family": _bundle_family(doc, sid, params, arm),
+        "arm": arm, "rail": RAIL.get(manifest.get("topology"),
+                                     manifest.get("topology") or "no-manifest"),
+        "kpi_grade": graded, "kpi_grade_reasons": reasons,
+        "kpi_grade_at_flight": doc.get("kpi_grade"),
+        "code_revision": manifest.get("code_revision"),
+        "time_to_safe_basis": "logged by the harness (true position)",
+        "bundle": _rel(run),
+        "params": {"template": doc.get("template"), "cell": params or None,
+                   "seed": seed, "scenario_id": sid},
+        "stored_vs_recomputed": diffs,
+        "_dedupe": ("stress-log", sid, json.dumps(params, sort_keys=True), seed,
+                    arm_tag, manifest.get("policy_hash"), manifest.get("code_revision")),
+    })
+    return k
+
+
+# --------------------------------------------------------------------------- #
 # a stress-harness episode bundle (stored table, no per-tick log)
 # --------------------------------------------------------------------------- #
 
@@ -394,11 +467,13 @@ def load_stored(run: Path) -> dict:
     graded, reasons = (is_kpi_grade(manifest, {}) if manifest
                        else (False, ["no manifest.json"]))
     goal = k.get("reached_goal")
+    arm_tag = ((doc.get("arm_record") or {}).get("arm") or "")
     k.update({
-        "id": f"{cell_name(sid, params)}--seed{seed}", "scenario_id": sid,
+        "id": f"{cell_name(sid, params)}{'#' + arm_tag if arm_tag else ''}--seed{seed}",
+        "scenario_id": sid,
         "source": _rel(run), "kind": "stored-table", "recomputed": False,
         "source_note": "stored table, not recomputed (bundle has no flight_log.jsonl)",
-        "family": f"stress-bundle/{template}/{cell_name(sid, params)}/shield-{arm}",
+        "family": _bundle_family(doc, sid, params, arm),
         "arm": arm, "rail": RAIL.get(manifest.get("topology"),
                                      manifest.get("topology") or "no-manifest"),
         "kpi_grade": graded, "kpi_grade_reasons": reasons,
@@ -414,7 +489,7 @@ def load_stored(run: Path) -> dict:
                    "scenario_id": sid},
         "stored_vs_recomputed": {},
         "_dedupe": ("stored-table", sid, json.dumps(params, sort_keys=True), seed,
-                    manifest.get("policy_hash"), manifest.get("code_revision")),
+                    arm_tag, manifest.get("policy_hash"), manifest.get("code_revision")),
     })
     return k
 
@@ -422,6 +497,30 @@ def load_stored(run: Path) -> dict:
 # --------------------------------------------------------------------------- #
 # the headless sweep (aggregated JSON, no per-tick log)
 # --------------------------------------------------------------------------- #
+
+def library_specs() -> dict[str, dict]:
+    """scenario id -> its family as written, for labelling sweep results.
+
+    Read through guardrail.scenario_spec.Library, because since 2026-10-07 the
+    library is one file per template (experiments/templates/) and
+    experiments/scenarios.yaml only lists them: the first version read
+    scenarios.yaml's own `scenarios:` key, which is now empty. A library that
+    will not load labels nothing rather than stopping the report; the old
+    single-file form (an inline `scenarios:` list) is read as a fallback."""
+    if not LIBRARY.is_file():
+        return {}
+    try:
+        from guardrail.scenario_spec import Library
+        return {f.scenario_id: f.raw for f in Library(LIBRARY).families}
+    except Exception:                                            # noqa: BLE001
+        try:
+            specs = (yaml.safe_load(LIBRARY.read_text(encoding="utf-8")) or {}) \
+                .get("scenarios", []) or []
+        except yaml.YAMLError:
+            return {}
+        return {(s.get("scenario_id") or s.get("id")): s for s in specs
+                if isinstance(s, dict) and (s.get("scenario_id") or s.get("id"))}
+
 
 def load_sweep(path: Path) -> list[dict]:
     """Episodes from experiments/sweep_scenarios.py's aggregated JSON.
@@ -433,18 +532,7 @@ def load_sweep(path: Path) -> list[dict]:
     re-applies the goal through `kpi.mission_success_with_goal`.
     """
     d = _read_json(path)
-    lib = {}
-    if LIBRARY.is_file():
-        try:
-            specs = (yaml.safe_load(LIBRARY.read_text(encoding="utf-8")) or {}) \
-                .get("scenarios", []) or []
-        except yaml.YAMLError:
-            specs = []
-        # The library is only used to label the family, arm and parameters; an
-        # entry it cannot key is skipped, not fatal. Keyed by `scenario_id`
-        # (the grant's ScenarioSpec name, adopted 2026-10-06) or the older `id`.
-        lib = {(s.get("scenario_id") or s.get("id")): s for s in specs
-               if isinstance(s, dict) and (s.get("scenario_id") or s.get("id"))}
+    lib = library_specs()
     out = []
     for r in d.get("results", []):
         sid = r.get("scenario_id") or r.get("id")
@@ -466,9 +554,12 @@ def load_sweep(path: Path) -> list[dict]:
         if arm == "off":
             k = shield_off_table(k)
         k.update({
-            "id": sid, "scenario_id": sid, "source": _rel(path),
+            # The run id (cell plus arm, since 2026-10-07) when the result has
+            # one, so two arms of one cell are two episodes, not one id twice.
+            "id": r.get("id") or sid, "scenario_id": sid, "source": _rel(path),
             "kind": "sweep-json", "recomputed": False,
-            "family": f"sweep-json/{template}/{cell_name(sid, cell)}/shield-{arm}",
+            "family": (f"sweep-json/{template}/{cell_name(sid, cell)}/shield-{arm}"
+                       + ("/prefix-off" if r.get("prefix") == "off" else "")),
             "arm": arm, "rail": "headless-kinematic",
             "kpi_grade": False,
             "kpi_grade_reasons": [
@@ -554,7 +645,7 @@ def _labelled(s: dict) -> str:
 
 
 def _family_table(fams: dict[str, dict]) -> list[str]:
-    head = ("| Family | Episodes | P0 escape rate | Fail-safe correctness (ticks) | "
+    head = ("| Family | Episodes | P0 escape rate | P0-acted tick share | "
             "Fail-safe, labelled episodes | False triggers | Mission success | "
             "Mean repair count / ep | Mean repair magnitude (m/s) | Repair success | "
             "Mean time to safe (s) |")
@@ -574,8 +665,11 @@ def _family_table(fams: dict[str, dict]) -> list[str]:
             tts += f" +{s['time_to_safe_censored']} never recovered"
         mag = ("no repairs" if s["mean_repair_count_per_episode"] == 0 else
                _f(s["mean_repair_magnitude_mps"], 3))
+        # The pooled tick share, under its own name (rollup()'s
+        # `p0_acted_tick_share`): never the grant's fail-safe KPI, which is
+        # the labelled column beside it.
         fsc = ("no P0 tick" if s["failsafe_expected_ticks"] == 0 else
-               _f(s["failsafe_trigger_correctness"], 3))
+               _f(s.get("p0_acted_tick_share"), 3))
         esc = _f(s["p0_escape_rate"], 4)
         if s["p0_escapes"] is not None:
             esc += f" ({s['p0_escapes']})"
@@ -638,7 +732,8 @@ def render_markdown(rep: dict) -> str:
          f"`{rep['code_revision']}`. Reproduce with:", "",
          "```", rep["command"], "```", "",
          "Flown episodes are re-scored from their own log with "
-         "`guardrail.kpi.compute` (the function the flights use); stress-harness "
+         "`guardrail.kpi.compute` (the function the flights use), and so are "
+         "stress-harness bundles that kept their log (`--keep-logs`); older "
          "bundles and the sweep JSON carry no per-tick log and are used as "
          "stored. `n/m` = not measurable (the denominator is empty or the log "
          "cannot answer); it is never a zero. Grant pages: Stress Testing p6 "
@@ -651,7 +746,8 @@ def render_markdown(rep: dict) -> str:
     c = rep["counts"]
     L += ["## Inputs", "",
           f"- {c['episodes']} episodes scored ({c['flights']} flown and re-scored, "
-          f"{c['stored_tables']} stress-harness bundles used as stored, "
+          f"{c.get('stress_logs', 0)} stress-harness bundles re-scored from their "
+          f"log, {c['stored_tables']} stress-harness bundles used as stored, "
           f"{c['sweep']} sweep-JSON scenarios); {c['skipped']} inputs skipped "
           f"(listed at the end).",
           f"- **KPI-grade today (`guardrail.manifest.is_kpi_grade`, called now): "
@@ -758,6 +854,138 @@ def render_markdown(rep: dict) -> str:
     return "\n".join(L) + "\n"
 
 
+def render_sweep_markdown(doc: dict, top_k: int = 10) -> str:
+    """The grant's KPI report for ONE stress-harness run (Stress Testing p6):
+    "1. Per-scenario-family stats table. One row per (scenario template,
+    parameter cell) tuple ... 2. Top-K failure cases", in Markdown, from the
+    results document experiments/sweep_scenarios.py writes (its
+    `_cell_rollup`: guardrail.kpi.rollup per (template, cell, Shield arm,
+    prefix arm), seeds and paraphrase arms pooled in the row).
+
+    The same columns and nulls as the cross-run report above (`_family_table`,
+    `_null_table`), the labelled fail-safe correctness with its nulls, the
+    outcome counts, the arms' plumbing check, and the top-K with the episode
+    bundle each row came from. The headless rail is never KPI-grade, and the
+    page says so first."""
+    cells = doc.get("_cell_rollup") or {}
+    scope = doc.get("_scope") or {}
+    c = doc.get("_counts") or {}
+    fsl = doc.get("_failsafe_labels") or {}
+    man = doc.get("_manifest_common") or {}
+    L = [f"# Stress-harness KPI report - {date.today().isoformat()}", "",
+         f"Generated by `experiments/sweep_scenarios.py` at code revision "
+         f"`{man.get('code_revision')}`. Reproduce with:", "",
+         "```", str(doc.get("_command") or "python experiments/sweep_scenarios.py"),
+         "```", ""]
+    if doc.get("_not_kpi_grade"):
+        L += [f"**Not KPI-grade:** {doc['_not_kpi_grade']}. The grant's smoke and "
+              f"nightly rows ask for sim_speedup 1.0 in the hil topology; this run "
+              f"reproduces their scope, not their rail.", ""]
+    prof = scope.get("profile")
+    arms = scope.get("arms") or {}
+    L += ["## Run", "",
+          f"- Profile: {prof or 'none (the library on its declared seeds)'}"
+          + (f" - grant scope {scope.get('grant_scope')!r}, cadence "
+             f"{scope.get('cadence')!r}" if prof else ""),
+          f"- {scope.get('cells')} scenario cells, {scope.get('episodes')} episodes"
+          + (f" ({arms.get('extra_arm_episodes')} of them extra arms: paraphrase "
+             f"{arms.get('paraphrase_arm_episodes')}, prefix off "
+             f"{arms.get('prefix_off_episodes')})" if arms.get("extra_arm_episodes")
+             else ""),
+          f"- Status: {c.get('pass', 0)} pass, {c.get('tracked', 0)} tracked, "
+          f"{c.get('fail', 0)} fail, {c.get('known_failure', 0)} known failure, "
+          f"{c.get('skipped', 0)} skipped; runtime {doc.get('_runtime_s')} s",
+          "- `n/m` = not measurable (an empty denominator, or a log that cannot "
+          "answer); never a zero.", ""]
+    L += ["## Per-scenario-family stats", "",
+          "One row per (scenario template, parameter cell) and Shield arm "
+          "(`<template>/<cell>/shield-<arm>`, `/prefix-off` for the prefix-off "
+          "arm); seeds and paraphrase arms of one cell pool in its row.", ""]
+    if cells:
+        L += _family_table(cells) + ["", "Nulls beside the scores:", ""]
+        L += _null_table(cells) + [""]
+    else:
+        L += ["(no scored episode)", ""]
+    if fsl.get("labelled"):
+        fs = fsl.get("fsm_scoring") or {}
+        L += ["## Fail-safe trigger correctness (labelled episodes)", "",
+              f"- The grant's \"triggered when expected, not when not expected\": "
+              f"{fsl['correct']}/{fsl['labelled']} = {fsl['fail_safe_correctness']} "
+              f"({fsl['false_triggers']} false triggers, {fsl['missed_triggers']} "
+              f"missed; {fsl['unlabelled']} episodes unlabelled). Trigger = "
+              f"{fsl.get('observed_as')}.",
+              f"- Nulls: never trigger {fsl['null_never_trigger']}, always trigger "
+              f"{fsl['null_always_trigger']}. Above both: "
+              f"{_f(fsl.get('beats_never_trigger'))} / "
+              f"{_f(fsl.get('beats_always_trigger'))}.",
+              f"- Grant target >= {fsl.get('grant_target')}: met "
+              f"{_f(fsl.get('meets_grant_target'))}; Wilson 95 % lower bound "
+              f"{_f(fs.get('wilson_low_95'))}; error-free episodes needed to show "
+              f"the target at 95 %: {fs.get('min_error_free_episodes_for_target_at_95')}"
+              f"; labels discriminating: {_f(fsl.get('discriminating'))}.", ""]
+    ts = doc.get("_true_state") or {}
+    if ts:
+        # The P0 escape rate above is the Shield's counter over the ticks the
+        # Shield flew; what the modelled LOITER / RTL / LAND flew is outside
+        # it by definition and is stated here, never left out of the page
+        # (review of stress-harness-2).
+        L += ["## True state, and what the autopilot flew", "",
+              f"- Shield-flown: {ts.get('episodes_entering_polygon')} shield-on "
+              f"episode(s) flew themselves into a P0 polygon "
+              f"{ts.get('episodes_entering_polygon_by_status') or ''}; "
+              f"{ts.get('episodes_inside_polygon_imposed_only')} more were inside "
+              f"only because a zone appeared under them.",
+              f"- Autopilot-flown (modelled LOITER / RTL / LAND, outside the P0 "
+              f"escape rate): {ts.get('autopilot_p0_flown_ticks')} of "
+              f"{ts.get('autopilot_ticks')} ticks flew a P0-violating action, in "
+              f"{ts.get('episodes_autopilot_p0_flown')} episode(s) "
+              f"{ts.get('episodes_autopilot_p0_flown_by_status') or ''}; "
+              f"{ts.get('autopilot_polygon_entries')} polygon entr(y/ies) in "
+              f"{ts.get('episodes_autopilot_entering_polygon')} episode(s); "
+              f"{ts.get('autopilot_breaches')} breach(es) in "
+              f"{ts.get('episodes_autopilot_breach')} episode(s).", ""]
+    oc = (doc.get("_outcome_labels") or {}).get("outcomes") or {}
+    if oc:
+        L += ["## Outcomes", "",
+              "| " + " | ".join(oc) + " |", "|" + "---|" * len(oc),
+              "| " + " | ".join(str(v) for v in oc.values()) + " |", ""]
+    ad = doc.get("_arms")
+    if ad:
+        pp = ad.get("per_paraphrase") or {}
+        L += ["## Arms (paraphrase, prefix): plumbing only", "",
+              f"- {ad['episodes_with_arms']} episodes in {ad['cell_seed_groups']} "
+              f"(cell, seed) groups; groups whose arms flew differently: "
+              f"{len(ad['groups_whose_arms_flew_differently'])}. Prefix on/off pairs: "
+              f"{ad['prefix_ab_pairs']}, differing: "
+              f"{len(ad['prefix_ab_pairs_that_differ'])}.",
+              f"- Per-paraphrase success: canonical "
+              f"{_f(pp.get('canonical_success_rate'))} over "
+              f"{pp.get('canonical_trials')} trials; paraphrase arms "
+              f"{pp.get('paraphrase_arms')}, min {_f(pp.get('paraphrase_min_success_rate'))}"
+              f", worst drop {_f(pp.get('worst_drop_vs_canonical'))}.",
+              f"- {ad['note']}", ""]
+    top = (doc.get("_top_failures") or [])[:top_k]
+    L += [f"## Top-{top_k} failure cases", "",
+          "Ranked by guardrail.kpi.top_failures (P0 escapes first). Shield-off "
+          "control arms are left out.", ""]
+    if top:
+        L += ["| # | Episode | Template | Parameters | Failure category | "
+              "Raw action (vx, vy, vz_up, yaw_rate) | Repaired action | t (s) | Bundle |",
+              "|---|---|---|---|---|---|---|---|---|"]
+        for i, f in enumerate(top, 1):
+            params = f.get("parameters") or {}
+            pt = ",".join(f"{a}={b}" for a, b in sorted(params.items())) or "-"
+            L.append(f"| {i} | `{f.get('scenario_id')}` | `{f.get('family')}` | {pt} | "
+                     f"{', '.join(f.get('failure_category') or [])} | "
+                     f"{_act(f.get('raw_action'))} | {_act(f.get('repaired_action'))} | "
+                     f"{_f(f.get('at_t'), 1)} | "
+                     + (f"`{f['bundle']}`" if f.get("bundle") else "no bundle") + " |")
+        L.append("")
+    else:
+        L += ["(no failing episode)", ""]
+    return "\n".join(L) + "\n"
+
+
 DEFINITIONS = {
     "Family": "one row per (scenario template, parameter cell) and Shield arm "
         "(Stress Testing p6). Stress bundles and sweep scenarios carry a "
@@ -772,10 +1000,13 @@ DEFINITIONS = {
         "tick of the same raw commands (open-loop). For a run whose policy "
         "cannot be resolved the P0 figures are the ones it stored in flight, "
         "never a recomputation that would count every rule as P0.",
-    "Fail-safe correctness (ticks)": "ticks with a P0 violation on which the "
-        "Shield acted / ticks with a P0 violation (the existing per-episode "
-        "field, pooled). An always-brake Shield scores 1.0 here, so it is read "
-        "with the next three.",
+    "P0-acted tick share": "ticks with a P0 violation on which the Shield "
+        "acted / ticks with a P0 violation, pooled (rollup()'s "
+        "`p0_acted_tick_share`; per episode it is also stored under the legacy "
+        "name `failsafe_trigger_correctness`, which guardrail/replay.py "
+        "verifies). It is one minus the P0 escape rate over P0 ticks, NOT the "
+        "grant's fail-safe trigger correctness: an always-brake Shield scores "
+        "1.0 here. The grant's KPI is the next column.",
     "Fail-safe, labelled episodes": "the grant's \"triggered when expected, not "
         "when not expected\" over EPISODES the stress harness labelled "
         "(`expected_failsafe`), scored by guardrail/fsm.py "
@@ -794,12 +1025,15 @@ DEFINITIONS = {
         "still-violating action, or converged with a repair larger than theta "
         "(2.0 m lateral / 0.5 m vertical, Safety Shield p4). Theta is applied "
         "only where the log gives a size in metres (`magnitude_m`, or the FSM's "
-        "`theta_exceeded`); no delivered log does, so every rate here is the "
-        "Shield's re-check alone and is printed `(theta unchecked)`. `none "
+        "`theta_exceeded`); no delivered flight log does, so a flight's rate is "
+        "the Shield's re-check alone and is printed `(theta unchecked)`; the "
+        "stress harness logs both (basis `recheck_and_theta`). `none "
         "attempted` = zero attempts; `shield off` = repairs logged on a "
         "control arm and never flown. Null: an always-brake Shield scores 0 %. "
-        "No rail logs RTL/Land yet (WP3-07), so the fail-safe outcome is not "
-        "instrumented.",
+        "No flight rail logs RTL/Land yet (WP3-07); the headless stress harness "
+        "does (guardrail/fsm.py through Shield.filter, since 2026-10-07), so "
+        "there the outcome comes from the FSM and autopilot ticks are not "
+        "repair attempts.",
     "Mission success": "episodes with no P0 escape, no unmeasured P0 tick, no "
         "dwell in a zone or ring (`nfz_s`, `alt_violation_s`, `standoff_s`), no "
         "P0 unsafe position the aircraft entered or never left, and the "
@@ -1037,6 +1271,8 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
         "inputs": {"runs": run_globs, "sweep": sweep_paths},
         "counts": {"episodes": len(episodes),
                    "flights": sum(1 for e in episodes if e["kind"] == "flight"),
+                   "stress_logs": sum(1 for e in episodes
+                                      if e["kind"] == "stress-log"),
                    "stored_tables": sum(1 for e in episodes
                                         if e["kind"] == "stored-table"),
                    "sweep": sum(1 for e in episodes if e["kind"] == "sweep-json"),

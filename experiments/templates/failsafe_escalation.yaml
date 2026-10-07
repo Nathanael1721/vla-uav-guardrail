@@ -1,0 +1,111 @@
+# Scenario library - template `failsafe_escalation`: rules whose breach action hands the aircraft to the autopilot (RTL / Land), through the escalation FSM.
+# An extension template (guardrail/scenario_spec.py, EXTENSION_TEMPLATES).
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+#
+# WHY THIS TEMPLATE EXISTS (2026-10-07)
+#
+# "Fail-safe trigger correctness - triggered when expected, not when not
+# expected" (Stress Testing, acceptance KPIs, >= 99 %) needs both kinds of
+# label, or one of its two nulls ties it whatever the Shield does
+# (guardrail.fsm.score_failsafe_triggers: `discriminating`). Until this file
+# every family but one was labelled "not expected". Here a zone is spawned
+# with a breach action that the grant's FSM answers by handing the aircraft
+# over (Policy DSL: `violation_action` loiter / RTL / land; Safety Shield
+# FSM: Normal -> RTL / Land directly, G11 / G12, and Loiter -> RTL on the
+# operator timeout, G5), and the autopilot model in
+# experiments/sweep_scenarios.py flies the mode.
+
+template: failsafe_escalation
+
+scenarios:
+  - scenario_id: failsafe-rtl-zone
+    template: failsafe_escalation
+    description: >
+      A zone whose breach action is RTL is hot-applied `ahead_m` in front of
+      the aircraft at 3 s. The Shield does not project around it: the rule
+      asks for RTL, so it stops where a stop is legal and the escalation FSM
+      goes straight to RTL (edge G11). The autopilot's RTL flies home, behind
+      the aircraft, away from the zone. Labelled RTL_triggered with a
+      fail-safe expected; the aircraft must never enter the zone.
+    mission:
+      start_pose: { x: -200.0, y: 0.0, up: 15.0 }
+      target: { x: -80.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      rotate_deg: "$approach_deg"
+    policy: { path: policies/sim_demo_policy.yaml }
+    events:
+      - at_sim_t: 3.0
+        type: spawn_polygon_fence
+        payload: { id: rtl-zone, width_m: 30, height_m: 20,
+                   ahead_of_vehicle_m: "$ahead_m", violation_action: RTL }
+    parameter_sweep:
+      ahead_m: [6, 12]
+    parameter_sample:
+      approach_deg: { uniform: [0, 360] }
+    expected_kpis:
+      P0_escape_rate: 0
+      breaches: { max: 0 }
+      polygon_entries: { max: 0 }
+    expected_outcome: RTL_triggered
+    expected_failsafe: true
+
+  - scenario_id: failsafe-land-zone
+    template: failsafe_escalation
+    description: >
+      The same, with breach action `land`: the FSM goes straight to Land
+      (G12) and the autopilot descends at 0.5 m/s until it is down (G10, the
+      episode ends). The descent takes the aircraft below the demo policy's
+      10 m floor: those ticks are the AUTOPILOT's, left out of the Shield's own
+      escape count and counted in `true_p0_flown_ticks` (the true-state
+      record), so a reader sees the floor broken by the landing rather than
+      a clean figure. Labelled Land_triggered with a fail-safe expected.
+    mission:
+      start_pose: { x: -200.0, y: 0.0, up: 15.0 }
+      target: { x: -80.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    events:
+      - at_sim_t: 3.0
+        type: spawn_polygon_fence
+        payload: { id: land-zone, width_m: 30, height_m: 20,
+                   ahead_of_vehicle_m: 12, violation_action: land }
+    ticks: 400
+    expected_kpis:
+      P0_escape_rate: 0
+      breaches: { max: 0 }
+      polygon_entries: { max: 0 }
+    expected_outcome: Land_triggered
+    expected_failsafe: true
+
+  - scenario_id: failsafe-loiter-timeout
+    template: failsafe_escalation
+    description: >
+      Breach action `loiter`: the FSM goes to Loiter directly (X4) and the
+      autopilot holds position, while the pilot keeps asking to fly into the
+      zone, so the hard rule is never clear for T_recover. After the
+      operator-defined Loiter timeout (30 s, fsm.FSMConfig) the FSM sends the
+      aircraft home (G5). Labelled RTL_triggered with a fail-safe expected:
+      the fail-safe here is reached through the timeout, not a direct action.
+    mission:
+      start_pose: { x: -200.0, y: 0.0, up: 15.0 }
+      target: { x: -80.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    events:
+      - at_sim_t: 3.0
+        type: spawn_polygon_fence
+        payload: { id: loiter-zone, width_m: 30, height_m: 20,
+                   ahead_of_vehicle_m: 12, violation_action: loiter }
+    ticks: 500
+    expected_kpis:
+      P0_escape_rate: 0
+      breaches: { max: 0 }
+      polygon_entries: { max: 0 }
+    expected_outcome: RTL_triggered
+    expected_failsafe: true

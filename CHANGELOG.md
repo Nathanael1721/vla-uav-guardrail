@@ -16,6 +16,122 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-07 — the grant's own policy form, a Shield that escalates, ArduPilot on every rail
+
+Nine packages following the PI's answers of 6 Oct: the KPI campaign moves to
+the Jetson Orin (the grant's hil topology), the perception rail follows best
+practice on Project AirSim, and deviations are closed by conforming to the
+grant. Each package was challenged by an adversarial reviewer and fixed.
+Short SITL runs were flown in WSL (dev topology, not KPI-grade); Project
+AirSim, Unreal and any GPU model were not started.
+
+#### Added
+- **The grant's policy form** (`guardrail/models.py`, `guardrail/bundle.py`):
+  the grant's demo bundle and the Policy DSL page's worked example load as
+  written (geometry blocks, grant field names, scope, layer, altitude_ref,
+  issued_at, lat/lon without origin). All nine grant rule types are
+  declarable; circle fences are enforced. Layered policies
+  (regulation/site/mission) merge and refuse any override that loosens a
+  lower layer's hard rule. Bundles cross-load with the PI's reference loader
+  in both directions (3/3). `tools/geo_to_policy.py` converts GeoJSON/KML and
+  ingests REST payloads.
+- **Escalation in the Shield** (`guardrail/shield.py`): every `filter()` tick
+  feeds the escalation FSM (Brake, Loiter, RTL, Land); repairs report their
+  size, so theta (2.0 m / 0.5 m) is applied; breach actions, hard/soft and
+  priority now change behaviour.
+- **Mid-flight events**: moving no-fly zones (spawn, move, translate, rotate,
+  scale, expire), time-window switches and corridor swaps, each bumping the
+  generation, checked against the layer rule, and exposed over REST
+  (`guardrail/api.py`). Hot-applying a fixed polygon fence after take-off is
+  refused, as the grant locks that class.
+- **One rule checker**: `Shield.rule_status()`; the policy HUD and FenceGuard
+  read it and their own geometry is deleted.
+- **The grant's ROS 2 interface**: body-frame actions end to end, a separate
+  `sitl/mavlink_adapter_node.py` that converts to local NED after projection
+  and publishes `mavros_msgs/PositionTarget`, ROS 2 packages with launch files
+  (`sitl/ros2_ws/`), a MAVLink router config for Mission Planner (UDP 14550)
+  beside MAVROS, the ArduPilot GeoFence as backstop (`sitl/fence/`), and per
+  episode a fresh audit file, a CSP per policy generation, an events log and
+  a rosbag2 recording.
+- **Project AirSim flown by ArduPilot** (`demo/pas_ardupilot/`,
+  `scripts/run_pas_ardupilot.ps1`, `docs/DESIGN-projectairsim-ardupilot.md`):
+  Project AirSim's native ArduPilot controller (`ardupilot-api`, ArduPilot
+  SITL with `-f airsim-copter`), a one-process perception node (camera,
+  detector, Shield, FSM, ArduPilot), Mission Planner through the router, and
+  a script that records the four Gate G1 checks. Built and tested offline;
+  not yet flown.
+- **Jetson Orin portability** (`deploy/`, `docs/RUNBOOK-orin-hil.md`,
+  `docs/DESIGN-topologies.md`): one image definition for dev, hil and flight
+  where only a topology file differs; `tools/profile_shield_tick.py` (the
+  grant's tick budgets on real flight ticks, runnable on the Orin unchanged)
+  and `tools/vla_backend_table.py` (one protocol to compare VLA backends).
+  No image has been built yet.
+- **Stress harness**: every grant event type runs mid-flight; RTL and Land
+  outcomes occur; paraphrase arms and a prefix on/off key; one YAML per
+  template under `experiments/templates/` (16 files); a broad profile
+  (15,025 episodes, defined, not run); a per-template KPI report.
+- `tools/check_claims.py`: fails when a withdrawn claim is stated again;
+  `tools/prefix_eval.py` (WP2-09 offline replay, not yet run on the model).
+- A public progress site, preview only (`docs/progress/`,
+  `tools/build_public_site.py`): 21 pages in English and Traditional Chinese,
+  built from an explicit allow-list of fields. Not published.
+- Finding notes for the silent defects found on 6-7 Oct (`docs/FINDING-*.md`).
+
+#### Changed
+- WGS84 is the canonical stored form for geographic policies; 28 of 29 policy
+  hashes are unchanged and the moved one keeps its old hash verifiable.
+- Policy validation is strict: the negative corpus goes from 14/25 to 35/35
+  refused (10 cases added).
+- The Shield's default lookahead is the grant's 5 s at 0.1 s, with checks on
+  both sides of every time-window edge. At the grant's load (50 rules, 50
+  poses) a check near a fence takes 0.39 ms and `filter()` 2.5 ms on the
+  development desktop.
+- The topology label accepts `hil` and `flight` only on evidence (an Orin
+  host, the VLA host, the router layout), and records the ArduPilot version.
+
+#### Fixed
+- A window ending 17:30 stayed in force until 17:30:59.
+- A mission-layer event could switch off a hard regulation-layer zone.
+- The HUD showed rules the Shield did not correct as "corrected".
+- A SITL tick the autopilot held was scored as a converged repair.
+- A shield-off tick counted as a P0 escape even when nothing was flown.
+- `parse_command("altitude: (40, 40)")` read the target as the altitude.
+- `experiments/bench_shield_50rules.py` compares the fence code with the
+  escalation FSM off on both sides, and times the Shield with it on.
+
+#### Retracted
+- The `guardrail/bundle.py` docstring said the two implementations could read
+  each other's bundles. Until 7 Oct only the tar.gz container matched.
+- The sweep's fail-safe figure (triggered = any brake). Measured with the FSM
+  it is 0.747 (library), 0.726 (nightly) and 0.875 (smoke), below the grant's
+  0.99 and below the never-trigger null.
+- The sweep rollup published the P0-acted tick share (1.0) under the fail-safe
+  KPI's name; it is the escape rate restated.
+- The fine-tune result "100 % reached, efficiency 0.996" was stated without
+  its goal assist: the run flew with goal_blend 0.55, under which the
+  original adapter also reached 5/5 (0.942); without the assist the
+  fine-tune reached 0/5 and 1/5.
+- `docs/data/deck_sept_extra.json` carried stored detector rates (3.76, 5.15,
+  4.03 Hz); the mission rates are 2.77, 4.06 and 3.11 Hz.
+- The September deck's detector rate sentence used the stored 5.15 Hz; the
+  mission rate is 4.06 Hz.
+- The August midterm report's "the detector half of the threshold is met on
+  every scenario" used stored rates; the flights on disk read 3.02-3.11 Hz.
+- "Detections arrive at roughly 4 Hz while the control loop runs at 10 Hz":
+  the detector ran 3.02-3.11 Hz and the loop 7.5-8.4 Hz.
+
+#### Tests
+- New test files: `test_policy_dsl_grant_form`, `test_geo_to_policy`,
+  `test_shield_events`, `test_api`, `test_mavlink_adapter`,
+  `test_ros2_package`, `test_pas_ardupilot`, `test_deploy_configs`,
+  `test_profile_shield_tick`, `test_vla_backend_table`, `test_check_claims`,
+  `test_prefix_eval`, `test_build_public_site`, `test_build_progress_oct_data`
+  and others.
+- Full suite on Python 3.10: 2073 of 2078 over 70 test files. The five not
+  passing are four visible skips (FastAPI is not installed in that
+  environment; one sweep test) and the ITRI deck-pack check, which passes once
+  the deck is rebuilt from a clean tree.
+
 ### 2026-10-06 — ten work packages toward the grant's locked spec
 
 Ten packages taken from the re-verified audit, built in parallel on disjoint

@@ -1,0 +1,75 @@
+# Scenario library - template `corridor_keep_in`: a keep-in tube (policy corridor).
+# An extension template (guardrail/scenario_spec.py, EXTENSION_TEMPLATES).
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+
+template: corridor_keep_in
+
+scenarios:
+  # ---- corridor: the new keep-IN rule ------------------------------------ #
+  - scenario_id: corridor-along
+    template: corridor_keep_in
+    description: "A clean run down the middle. Nothing should be touched."
+    mission:
+      start_pose: { x: 2.0, y: 0.0, up: 15.0 }
+      target: { x: 55.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+      clock_start: "2026-09-05T09:00:00"     # a Saturday: the curfew is not in force
+    policy: { path: policies/corridor_survey.yaml }
+    shield: true
+    expected_kpis:
+      p0_violation_escape_rate: { max: 0.0 }
+      repair_count: { max: 0 }
+      reached_goal: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false
+
+  - scenario_id: corridor-drift-out
+    template: corridor_keep_in
+    description: "Aimed straight out of the side of the corridor."
+    mission:
+      start_pose: { x: 30.0, y: 0.0, up: 15.0 }
+      pilot: { type: constant, action: { vy: 4.0 } }
+      clock_start: "2026-09-05T09:00:00"
+    policy: { path: policies/corridor_survey.yaml }
+    shield: true
+    expected_kpis:
+      p0_violation_escape_rate: { max: 0.0 }
+      time_to_safe_episodes: { max: 0 }
+      max_offset_from_corridor: { max: 20.001 }
+    expected_outcome: success
+    expected_failsafe: false
+
+  - scenario_id: corridor-drift-angles
+    template: corridor_keep_in
+    description: >
+      corridor-drift-out at six drift headings and two asked speeds. With no
+      scenario clock the curfew fence is always in force, so the north-east
+      headings also run into it at the corridor's corner: a keep-in and a
+      keep-out rule repairing against each other.
+    mission:
+      start_pose: { x: 30.0, y: 0.0, up: 15.0 }
+      pilot: { type: constant, action: { vx: 0.0, vy: "$ask_mps" } }
+      rotate_deg: "$drift_deg"
+    policy: { path: policies/corridor_survey.yaml }
+    parameter_sweep:
+      drift_deg: [-60, -30, 0, 30, 60, 150]
+      ask_mps: [4, 8]
+    expected_kpis:
+      P0_escape_rate: 0
+      time_to_safe_episodes: { max: 0 }
+      breaches: { max: 0 }
+      max_offset_from_corridor: { max: 20.001 }
+    expected_outcome: success
+    expected_failsafe: false
+    # The 2026-10-06 pins on (-30, 4) and (60, *) are gone (2026-10-07). They
+    # recorded a Shield Brake at the corridor's end caps as a false fail-safe,
+    # when "triggered" meant "the Shield braked". With the escalation FSM the
+    # fail-safe is RTL / Land, and those cells end in Brake or Loiter: still a
+    # repair that does not converge where sliding along the cap is legal (the
+    # grant's LateralProjection would), but not a fail-safe trigger.

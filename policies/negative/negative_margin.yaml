@@ -1,7 +1,7 @@
 # NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
 # defect: margin_m is -20 on a 10 m fence
-# currently: ACCEPTED
-# finding: a negative safety ring shrinks the zone inward past nothing - here it erases the zone entirely
+# currently: refused
+# was: accepted until 2026-10-06 - a negative safety ring shrinks the zone inward past nothing - here it erases the zone entirely
 policy_id: neg-margin
 version: 0.1.0
 constraints:

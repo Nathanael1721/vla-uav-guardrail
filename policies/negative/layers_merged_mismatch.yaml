@@ -1,0 +1,13 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: layers_merged says [regulation] but a rule is in the mission layer
+# currently: refused
+# why: a merged policy that misreports its own layers cannot be audited against them
+policy_id: neg-layers
+version: 0.1.0
+layers_merged: [regulation]
+constraints:
+  - id: alt
+    type: altitude_envelope
+    layer: mission
+    alt_min_m: 5
+    alt_max_m: 30

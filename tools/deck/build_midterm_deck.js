@@ -45,6 +45,27 @@ function metrics(tag) {
   return JSON.parse(fs.readFileSync(path.join(REPO, "demo/out", tag, "metrics.json"), "utf8"));
 }
 
+// The detector rate over the MISSION, one implementation with
+// tools/build_eval_data.det_hz_mission (and build_report_results.py): the
+// inference seq numbers the ticks consumed, over the ticks' own span. A
+// metrics.json written since 2026-09-29 carries a correct det_hz (and the
+// legacy field beside it). The older `det_hz` counted every inference since
+// the detector loaded, start-gate wait included, over ticks x 0.1 s, and
+// overstates the rate whenever the loop ran below 10 Hz. Until 2026-10-06
+// slide 08 printed that stored value (3.63 / 4.03 / 4.15 Hz for these three
+// flights; mission rate 3.02 / 3.11 / 3.08 Hz).
+function missionDetHz(tag, m) {
+  if (m && Object.prototype.hasOwnProperty.call(m, "det_hz_all_inferences_over_mission_s_legacy")) {
+    return m.det_hz;
+  }
+  const p = path.join(REPO, "demo/out", tag, "flight_log.jsonl");
+  const rows = fs.readFileSync(p, "utf8").split("\n").filter((l) => l.trim()).map((l) => JSON.parse(l));
+  const seqs = rows.map((r) => r.det_seq).filter((v) => v !== null && v !== undefined);
+  if (seqs.length < 2 || rows.length < 2 || rows[rows.length - 1].t <= rows[0].t) return null;
+  const hz = (Math.max(...seqs) - Math.min(...seqs)) / (rows[rows.length - 1].t - rows[0].t);
+  return Math.round(hz * 100) / 100;
+}
+
 function loopRate(tag) {
   const p = path.join(REPO, "demo/out", tag, "flight_log.jsonl");
   const lines = fs.readFileSync(p, "utf8").split("\n").filter((l) => l.trim());
@@ -60,7 +81,11 @@ function videoInfo(tag) {
 
 const M = {};
 const L = {};
-for (const t of TAGS) { M[t] = metrics(t); L[t] = loopRate(t); }
+for (const t of TAGS) {
+  M[t] = metrics(t);
+  L[t] = loopRate(t);
+  M[t].det_hz_mission = missionDetHz(t, M[t]);
+}
 
 const STUDY = JSON.parse(
   fs.readFileSync(path.join(REPO, "docs/data/chase_resolution_study.json"), "utf8"));
@@ -335,7 +360,14 @@ async function main() {
   {
     const s = pres.addSlide();
     heading(s, "Methods · estimation and control", "Filtering the measurement, not the command");
-    s.addText("Detections arrive at roughly 4 Hz while the control loop runs at 10 Hz, and the box width used as a range proxy varies 37.7 % between consecutive frames.", {
+    // Until 2026-10-07 this read "roughly 4 Hz while the control loop runs at
+    // 10 Hz": the stored det_hz, and the loop's target. Over the mission the
+    // three flights' detector ran about 3 Hz (missionDetHz) and their loop
+    // 7.5-8.4 Hz (loopRate).
+    const span = (vs, d) => (vs.length ? `${n(Math.min(...vs), d)}-${n(Math.max(...vs), d)} Hz` : "n/a");
+    const detSpan = span(TAGS.map((t) => M[t].det_hz_mission).filter((v) => v !== null), 2);
+    const loopSpan = span(TAGS.map((t) => L[t].hz), 1);
+    s.addText(`Detections arrive at ${detSpan} over the mission while the control loop runs at ${loopSpan} (target 10 Hz), and the box width used as a range proxy varies 37.7 % between consecutive frames.`, {
       x: 0.55, y: 1.72, w: 8.9, h: 0.4, fontSize: 11.5, color: INK, fontFace: FF,
     });
     table(s, [
@@ -398,7 +430,7 @@ async function main() {
     const add = (label, fn) => rows.push([label, ...TAGS.map((t) => fn(M[t], L[t]))]);
     add("Detector hit rate", (m) => n(m.det_hit_rate, 3));
     add("Ticks with target held", (m) => pct(m.frac_ticks_seen));
-    add("Detector rate", (m) => n(m.det_hz, 2) + " Hz");
+    add("Detector rate (mission)", (m) => n(m.det_hz_mission, 2) + " Hz");
     add("Mean separation", (m) => n(m.sep_mean_m, 1) + " m");
     add("Time within 30 m", (m) => pct(m.frac_within_30m));
     table(s, rows, [0.4, 0.2, 0.2, 0.2], 0.55, 1.72, 0.36);
@@ -413,12 +445,12 @@ async function main() {
   /* ── 09 · RESULTS: GUARDRAIL ─────────────────────────────────────────── */
   {
     const s = pres.addSlide();
-    heading(s, "Results · guardrail", "The acceptance criterion");
+    heading(s, "Results · guardrail", "P0 escape rate, one of five acceptance KPIs");
     s.addShape(pres.shapes.ROUNDED_RECTANGLE, {
       x: 0.55, y: 1.7, w: 8.9, h: 0.95,
       fill: { color: TEAL }, line: { color: TEAL }, rectRadius: 0.08,
     });
-    s.addText("P0 violation escape rate = 0.000 on every flight recorded", {
+    s.addText(`P0 violation escape rate = 0.000 on all ${TAGS.length} scenario flights`, {
       x: 0.7, y: 1.85, w: 8.6, h: 0.35, fontSize: 17, color: WHITE, fontFace: FF, bold: true,
     });
     s.addText("An escape is counted only when the Shield neither repaired nor braked and the emitted action still violated a P0 rule. Scoring the raw action would credit the system for its own inputs.", {
@@ -463,16 +495,19 @@ async function main() {
                  "chase_960x540_window_960x540"];
     const cfg = ["1280 x 720", "960 x 540", "960 x 540"];
     const win = ["1280 x 720", "1280 x 720", "960 x 540"];
-    const rows = [["Chase capture", "Sim window", "Detector", "Loop", "Inference"]];
+    // The study's rates are the STORED det_hz of August (start-gate wait
+    // counted, over ticks x 0.1 s): upper bounds on the mission rate, so
+    // "below 4.0 Hz" holds a fortiori. Labelled as such since 2026-10-06.
+    const rows = [["Chase capture", "Sim window", "Detector (stored)", "Loop", "Inference"]];
     key.forEach((k, i) => rows.push([
       cfg[i], win[i], n(dz[k], 2) + " Hz", n(lz[k], 2) + " Hz",
       iz[k] ? iz[k] + " ms" : "-",
     ]));
     table(s, rows, [0.22, 0.22, 0.19, 0.19, 0.18], 0.55, 2.25, 0.36);
     card(s, 0.55, 3.7, 4.3, 1.35, ic.flask, "What the third row settles",
-      "Inference held at 286-287 ms across a 2.4x change in capture pixels and a 1.8x change in window pixels. A cost invariant to surrounding load is fixed per-inference cost, not contention.");
+      `Inference held at 286-287 ms across a 2.4x change in capture pixels and a 1.8x change in window pixels, so neither is the binding consumer. It is not a fixed cost either: the same inference takes ${n(STUDY._inference_breakdown.idle_ms.total, 0)} ms on an idle GPU. The forward pass inflates ${n(STUDY._inference_breakdown.inflation_over_idle.forward_gpu, 1)}x under flight load.`);
     card(s, 5.15, 3.7, 4.3, 1.35, ic.warn, "Threshold not relaxed",
-      "Neither configuration reached 4.0 Hz. The threshold was set before the data and is reported as missed. Tracking quality, which it exists to protect, was unaffected: hit rate 1.000, target held on 100 % of ticks.");
+      "Neither configuration reached 4.0 Hz, even on the stored rate, which overstates the mission rate. The threshold was set before the data and is reported as missed. Tracking quality, which it exists to protect, was unaffected: hit rate 1.000, target held on 100 % of ticks.");
     badge(s, next() + 1);
   }
 
@@ -484,7 +519,7 @@ async function main() {
       ["Action source", "Nature", "Result"],
       ["OpenVLA-7B, 4-bit", "Real 7B camera + language VLA", "553 ticks at 10 Hz, NFZ 0.0 s"],
       ["AerialVLA LoRA", "UAV-tuned adapter", "Target reached, NFZ 0"],
-      ["Our QLoRA fine-tunes", "Self-collected expert flights", "100 % reached, efficiency 0.996"],
+      ["Our QLoRA fine-tunes", "Self-collected expert flights", "5/5 reached (eff. 0.996) with goal assist; base adapter also 5/5"],
       ["Behaviour-cloning policy", "Trained state + geometry policy", "Flown, NFZ 0"],
       ["Proportional controller", "Hand-written, no model", "Reported in this document"],
     ], [0.28, 0.34, 0.38], 0.55, 1.72, 0.38);
@@ -509,7 +544,7 @@ async function main() {
       x: 0.55, y: 3.5, w: 8.9, h: 0.3, fontSize: 12, color: INK, fontFace: FF, bold: true,
     });
     s.addText([
-      { text: "simulation is not real-time  ·  a manifest field did not resolve  ·  detector ran below 2 Hz  ·  initial heading was more than 10 deg off  ·  topology is not the grant's canonical ArduPilot SITL configuration", options: { bullet: false } },
+      { text: "simulation is not real-time  ·  a manifest field did not resolve  ·  detector ran below 2 Hz  ·  initial heading was more than 10 deg off  ·  topology is not the desktop ArduPilot SITL + MAVROS 2 rail (the grant's dev topology)", options: { bullet: false } },
     ], {
       x: 0.55, y: 3.82, w: 8.9, h: 0.5, fontSize: 11, color: GREY, fontFace: FF,
     });
@@ -542,7 +577,7 @@ async function main() {
     table(s, [
       ["WP", "Component", "Status"],
       ["WP1", "Policy DSL", "In use; validated and hashed. Per-object stand-off not yet expressible"],
-      ["WP2", "Prefix compiler", "Reduced version in use on the VLA path"],
+      ["WP2", "Prefix compiler", "Summary pack generated and saved; no VLA reads it"],
       ["WP3", "Safety Shield", "Implemented, tested, exercised under conflict. P0 escape 0"],
       ["WP4", "Stress harness", "Manifest and KPI implemented. Scenario sweep not built"],
     ], [0.1, 0.28, 0.62], 0.55, 1.72, 0.45);
@@ -556,8 +591,8 @@ async function main() {
     const s = pres.addSlide();
     heading(s, "Next period", "Ordered by contribution to the acceptance criteria");
     const items = [
-      ["1", "Wire the SITL rail to the WP4 machinery", "Converts existing evidence into contractual figures without further flying"],
-      ["2", "Add MAVROS 2 to the SITL rail", "Completes the canonical topology; precondition for any KPI-grade number"],
+      ["1", "Wire the SITL rail to the WP4 machinery", "Scores the SITL runs with the same KPI code as the sweep"],
+      ["2", "Add MAVROS 2 to the SITL rail", "Completes the dev topology; hil then moves VLA + Shield to a Jetson Orin"],
       ["3", "Per-object stand-off constraint in the policy schema", "Converts a controller setpoint into a hashed, audited, enforced rule (WP1)"],
       ["4", "Pedestrians and additional vehicles in the scene", "Requested at the 19 August review; requires item 3 first"],
       ["5", "Populate the occupancy map with street furniture", "Addresses a demonstrated collision; requires no additional sensor"],
@@ -607,7 +642,7 @@ async function main() {
   {
     const s = pres.addSlide();
     darkBase(s, "Midterm report · February – August 2026");
-    s.addText("The Guardrail held on every flight recorded:\nP0 violation escape rate 0, no-fly-zone time 0.0 s,\naltitude envelope escape 0.0 s.", {
+    s.addText(`The Guardrail held on all ${TAGS.length} scenario flights:\nP0 violation escape rate 0, no-fly-zone time 0.0 s,\naltitude envelope escape 0.0 s.`, {
       x: 0.55, y: 1.9, w: 8.6, h: 1.4,
       fontSize: 22, color: WHITE, fontFace: FF, bold: true, lineSpacingMultiple: 1.25,
     });

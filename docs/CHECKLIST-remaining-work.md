@@ -12,7 +12,7 @@
 >   constraints p.2). `guardrail/frames.py` converts exactly, but at the 5 Oct
 >   audit nothing outside the tests called it. The item was closed by writing down the
 >   reason, not by matching the grant (tracker cards ARCH-04, WP2-17).
-> - **Item 6 (in the table below) overstated the bundle.** It said `bundle.py` "matches the
+> - **Item 6 (in the table below) overstated the bundle (retracted).** It said `bundle.py` "matches the
 >   reference layout byte-for-byte". Only the tar.gz container layout matches.
 >   The rule fields and the hash length differ, and neither repo's loader
 >   accepts the other's bundle (tracker card WP1-05).
@@ -30,9 +30,15 @@
 >   KPI configuration (tracker card ARCH-13). "KPI-grade" below is the
 >   project's own rule as it stood then, under which five runs passed. Since
 >   6 Oct the manifest labels that rail `dev`, reads stored `canonical-hil`
->   runs as `dev`, and `is_kpi_grade()` refuses a dev run unless the PI grants
->   a written waiver (question PQ1). Today no run is KPI-grade
+>   runs as `dev`, and `is_kpi_grade()` refuses a dev run unless a written PI
+>   waiver is recorded. Today no run is KPI-grade
 >   (`docs/data/kpi_rollup_2026-10-06.md`).
+> - **PI decision, 6 Oct (question PQ1 answered).** No waiver for the desktop
+>   rail will be requested. A Jetson Orin exists and is being set up; it is
+>   the grant's *hil* topology (VLA + Shield on the Orin, simulators + MAVROS
+>   + GCS on the desktop), and the KPI campaign runs there. The same stack is
+>   later moved onto the drone (*flight*) with no code change. Deviations
+>   follow the grant wherever possible rather than asking for waivers.
 > - **The ≥ 99 % fail-safe target** (paragraph below) is in the grant itself:
 >   Stress Testing p.3 and p.6.
 > - Missing from the list entirely:
@@ -70,7 +76,7 @@ in this repository.
 | **SITL wired to the WP4 machinery** | `sitl/run_sitl_demo.py` calls `build_manifest()` and `guardrail/kpi.py`, replacing the ad-hoc `kpi_ok`. |
 | **`canonical-hil` gate opens on evidence** | `check_hil_evidence()` requires a ROS distro, a MAVROS node and `fcu_connected`; `build_manifest` refuses the label with a scene file present. |
 | **Occupancy map covers the cruise band** | Was sampled at 15-55 m AGL and therefore held buildings only. Rebuilt over 6-14 m; a street mask separates roads from open ground. |
-| **The KPI is measured, not inferred** | `emitted_violations` records the Shield's re-check of the flown action. All six canonical runs now report `p0_ticks_not_measurable: 0`. See `docs/FINDING-the-kpi-was-never-measured.md`. |
+| **The KPI is measured, not inferred** | `emitted_violations` records the Shield's re-check of the flown action. All six desktop SITL + MAVROS 2 (dev-topology) runs now report `p0_ticks_not_measurable: 0`. See `docs/FINDING-the-kpi-was-never-measured.md`. |
 | **Object width derived per class** | `implied_range_from_width()` assumed 4.0 m (a car), which would report a 0.5 m pedestrian at roughly 8x their true distance. |
 
 Current measured position, desktop SITL + MAVROS 2 (labelled `canonical-hil` in the code until 6 Oct; the grant's *dev* topology), `code_revision 4bafc63fab21`:
@@ -101,16 +107,16 @@ started. What follows the table is what is genuinely still open.
 
 | Was | Now | Evidence |
 |---|---|---|
-| **2. 10 m pedestrian stand-off never flown** | **CLOSED, and already was** | Flown 2026-08-31 on the canonical rail: shield off 7.07 m / 2.3 s inside the ring, shield on 14.95 m / 0.0 s. This entry was stale when it was written. |
+| **2. 10 m pedestrian stand-off never flown** | **CLOSED, and already was** | Flown 2026-08-31 on the desktop SITL + MAVROS 2 rail (dev topology): shield off 7.07 m / 2.3 s inside the ring, shield on 14.95 m / 0.0 s. This entry was stale when it was written. |
 | **3. Scenario sweep harness** | **REOPENED 2026-10-06** (was CLOSED) | `experiments/sweep_scenarios.py` + `scenarios.yaml`. **13** scenarios, headless, ~1 s. **12** pass, 1 recorded known failure. *(Was written as 12/11 when the harness had one scenario fewer; corrected 2026-09-09 against the harness output.)* This is a regression sweep. The grant's stress harness also needs ScenarioSpec models, sweep configs per nightly profile, a gRPC RPC harness, episode exporters, a KPI auto-report generator and a CI smoke pipeline (Stress Testing p.6-7). None of those existed at the 5 Oct audit. |
 | **4. Two KPIs never measured** | **CLOSED** | `mean_repair_magnitude_mps` and `mean_time_to_safe_s` in `guardrail/kpi.py`; all 42 delivered runs rescored by `tools/rescore_kpis.py` with every stored P0 figure reproduced exactly. |
 | **5. Corridor and time-window constraints** | **CLOSED** | `Corridor` is the sixth constraint type; `valid_time` is a field on every rule. Both absent from the reference implementation too, so this is ahead of it rather than level. |
-| **6. Signed policy bundle and WGS84** | **PARTIAL** (was CLOSED; corrected 2026-10-06) | `guardrail/bundle.py` writes the same tar.gz container layout as the reference (IR, manifest, signature). *Was: "matches the reference layout byte-for-byte".* It does not. The rule fields and the hash length differ (ours is cut to 16 hex digits), and neither loader accepts the other's bundle. Probe on 2026-10-06: our `load_bundle` raised 4 validation errors on the reference demo bundle; the reference loader raised 6 and 4 on two of ours. The signature is a placeholder. `guardrail/projection.py` accepts lat/lon additively. `policies/wgs84_taipei.yaml` is the first geographic policy. |
-| **7. Constraint Summary Pack** | **REOPENED 2026-10-06** (was CLOSED; replay bundles still open) | `ConstraintCompiler.summary_pack()`. It also fixed a real gap: `build_prompt` emitted only fences, altitude and speed, so the pilot was never told about the 10 m stand-off the Shield enforces against it. Against the grant it was partial at the 5 Oct audit. The pack was a plain dict with no CSP schema. There was no filter / risk-grade / truncate / token-budget pipeline (Prefix Compiler p.3-4). No flown VLA has read it: the stub and BC pilots take the mission and policy, not the prompt. |
+| **6. Signed policy bundle and WGS84** | **PARTIAL** (was CLOSED; corrected 2026-10-06) | `guardrail/bundle.py` writes the same tar.gz container layout as the reference (IR, manifest, signature). *Was: "matches the reference layout byte-for-byte".* It does not. The rule fields and the hash length differ (ours is cut to 16 hex digits), and neither loader accepts the other's bundle. Probe on 2026-10-06: our `load_bundle` raised 4 validation errors on the reference demo bundle; the reference loader raised 6 and 4 on two of ours. The signature is a placeholder. `guardrail/projection.py` accepts lat/lon additively. `policies/wgs84_taipei.yaml` is the first geographic policy. *Since 2026-10-06* the policy hash is the full SHA-256 over the canonical IR, the signature is a real Ed25519 signature with a lab development key (the signing authority is the PI's choice), and the flight scripts can load a bundle (`load_for_flight`); the cross-loading with the reference is still open (WP1-05). |
+| **7. Constraint Summary Pack** | **REOPENED 2026-10-06** (was CLOSED; replay bundles still open) | `ConstraintCompiler.summary_pack()`. It also fixed a real gap: `build_prompt` emitted only fences, altitude and speed, so the pilot was never told about the 10 m stand-off the Shield enforces against it. Against the grant it was partial at the 5 Oct audit. The pack was a plain dict with no CSP schema. There was no filter / risk-grade / truncate / token-budget pipeline (Prefix Compiler p.3-4). No flown VLA has read it: the stub and BC pilots take the mission and policy, not the prompt. *Since 2026-10-06* the grant's pipeline exists: `ConstraintCompiler.compile_csp` (filter, risk grade, order, truncate to a token budget, `CSPBudgetExceeded` for P0 overflow) returns the typed CSP of `guardrail/csp.py`, designed in `docs/DESIGN-prefix-compiler.md`; `demo/real_vla_demo.py --csp on` puts its text in OpenVLA's prompt, and no flight has been made with it yet. Still open: the published CSP schema artefact (WP2-04), the cost-map adapter (WP2-07) and the cached multi-scale IR (WP2-16). |
 
 **Two KPI results worth quoting.** Shield ON: zero unsafe-position episodes.
 Shield OFF: 4.1 s to get out. Mean repair magnitude 3.5–4.1 m/s on the shielded
-canonical runs.
+dev-topology runs (desktop SITL + MAVROS 2).
 
 **A defect the new work found.** `AltitudeFix` aimed a recovery climb at the band
 boundary exactly, making it a decaying exponential that converged on the floor
@@ -148,7 +154,7 @@ The real defect was inside our own package. `guardrail/models.py` declared
 `yaw_rate` as deg/s in a comment while all six sites that ENFORCE or produce it
 read radians — and two adapters had believed the comment and applied
 `math.radians()` to an already-radian value, dividing every commanded yaw by
-57.3 on the canonical rail.
+57.3 on the desktop SITL + MAVROS 2 rail (dev topology).
 
 Nothing burned: the stub pilot that flies that rail has never commanded a
 non-zero yaw rate (0.0000 max across `sitl_shield_on`, `ros2_shield_on`,
@@ -318,6 +324,15 @@ policy, KPI - into one replayable artefact. Our `guardrail/compiler.py` is a
 reduced compiler; the reference lists WP2 as unbuilt, so we are ahead there, but
 the named artefact still does not exist.
 
+*Update 2026-10-06.* The typed CSP is now the grant's: `compile_csp` in
+`guardrail/compiler.py` and the record in `guardrail/csp.py`
+(`docs/DESIGN-prefix-compiler.md`). Replay bundles exist for the camera rail
+(`demo/follow_vlm.py`) and the pymavlink SITL rail (`sitl/run_sitl_demo.py`);
+the five SITL + MAVROS 2 runs predate the ROS 2 node's replay writer and have
+none. `tools/prefix_eval.py` is the offline replay of WP2-09 (CSP on/off over
+saved frames); it has been checked with a stand-in model only, and needs a GPU
+run on recorded OpenVLA frames.
+
 ### 8. The wedge: a repaired action can still be a stuck mission
 
 Now pinned as `standoff-wedge` in `experiments/scenarios.yaml`, marked
@@ -348,6 +363,12 @@ The grant locks "GCS: Mission Planner via mavlink-router fan-out (parallel to
 MAVROS), not as a serial bottleneck" (Grant overview p.3; Architecture
 constraints p.3). Nothing in `sitl/` or `guardrail/` sets it up. This list used
 to file it as out of scope (tracker card ARCH-10).
+
+Mission Planner talks MAVLink to ArduPilot, so it attaches to the same
+ArduPilot SITL whatever renders the world: Gazebo, the desktop SITL rail, or
+Project AirSim through its native `ardupilot-api` controller. The chain and the
+commands are in `docs/projectairsim-setup.md` (section "ArduPilot, Project
+AirSim and Mission Planner"); none of it has been run on this machine yet.
 
 For everything else that is open, see `docs/AUDIT-KONTRAK-2026-10-05.md`.
 
@@ -407,8 +428,10 @@ comfortably. This is pre-existing and unrelated to the Shield.
   a Jetson Orin running the VLA + Shield (Architecture constraints p.4;
   Stress Testing p.1). The Orin is needed for that gate even without flying.
   The *flight* topology is named for the final demos, and the grant says all
-  three topologies are first-class. Tracker cards ARCH-12 and ARCH-14; whether
-  either may be waived is a question for the PI.
+  three topologies are first-class. Tracker cards ARCH-12 and ARCH-14.
+  *PI decision, 6 Oct:* the Orin is being set up and is used as the hil
+  topology now; once the drone hardware is ready the stack moves onto it with
+  no code change. No waiver is requested.
 - **Colour-tracking retraining**, proposed at the meeting — it would remove the
-  open-vocabulary language interface the grant title depends on. Recommend
-  declining.
+  open-vocabulary phrase interface the follow demos use (a project choice; the
+  grant says nothing about detectors). Recommend declining.

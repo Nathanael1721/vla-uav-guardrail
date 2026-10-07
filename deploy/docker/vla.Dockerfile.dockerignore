@@ -1,0 +1,6 @@
+# Build context of vla.Dockerfile: only the two requirement files. Code is
+# mounted at run time, weights at /models; nothing else of the 34 GB tree (and
+# never policies/keys/) enters the build.
+*
+!requirements.txt
+!deploy/docker/requirements-vla.txt

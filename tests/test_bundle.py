@@ -157,8 +157,9 @@ def test_a_bundle_round_trips_to_an_identical_policy():
 
 
 def test_the_bundle_carries_the_three_named_members():
-    """The reference implementation's layout, matched so the two halves of the
-    same grant can read each other's bundles."""
+    """The reference implementation's container layout. The container alone
+    did not make the bundles exchangeable (the IRs differ); the cross-load is
+    tested in tests/test_policy_dsl_grant_form.py."""
     with tarfile.open(_unsigned(load_policy(DEMO)), "r:gz") as tar:
         names = sorted(tar.getnames())
     assert names == ["ir.json", "manifest.json", "signature.txt"], names
@@ -682,25 +683,28 @@ def test_a_legacy_bundle_with_an_unknown_key_is_refused():
     try:
         check_bundle(_legacy_bundle(pol, ir))
     except ValueError as e:
-        assert "does not represent" in str(e), e
+        # Since 2026-10-06 the model itself refuses the key ("cannot
+        # represent"); the legacy branch's own comparison ("does not
+        # represent") stays as the second line of defence.
+        assert "represent" in str(e), e
     else:
         raise AssertionError("a legacy IR with an unknown key was accepted")
 
 
-def test_issued_at_in_a_policy_file_is_refused_not_dropped():
-    """The grant's DSL example puts issued_at in the policy document; here it
-    is a bundle-manifest field. Pydantic would drop the key silently, so the
-    author would believe it was recorded. Shown failing on the pre-fix code:
-    the file loaded and the value vanished."""
+def test_issued_at_in_a_policy_file_is_kept_not_dropped():
+    """The grant's worked example puts issued_at in the policy document. Until
+    2026-10-06 it was refused here (it had been silently dropped before that).
+    Now it is part of the document as the grant has it: kept, hashed, and
+    carried to the bundle manifest - never dropped, which was the original
+    defect. Shown failing on the pre-fix code: the file was refused."""
     f = Path(tempfile.mkdtemp()) / "with_issued_at.yaml"
     f.write_text(DEMO.read_text(encoding="utf-8")
                  + "\nissued_at: 2026-04-28T09:00:00Z\n", encoding="utf-8")
-    try:
-        load_policy(f)
-    except ValueError as e:
-        assert "bundle manifest" in str(e) and "--issued-at" in str(e), e
-    else:
-        raise AssertionError("issued_at was silently dropped")
+    pol = load_policy(f)
+    assert pol.issued_at == "2026-04-28T09:00:00+00:00", pol.issued_at
+    assert pol.policy_hash != load_policy(DEMO).policy_hash
+    man = json.loads(_members(write_bundle(pol, _tmp(), signer=None))[MANIFEST_NAME])
+    assert man["issued_at"] == "2026-04-28T09:00:00Z", man
 
 
 def test_the_bundles_already_on_disk_still_open():
@@ -743,7 +747,7 @@ def test_the_schema_command_writes_the_published_schema():
     assert B._main(["schema", "-o", str(out)]) == 0
     got = json.loads(out.read_text(encoding="utf-8"))
     assert got == B.policy_json_schema()
-    assert got["x-hash-scheme"] == "sha256-canonical-v2"
+    assert got["x-hash-scheme"] == "sha256-canonical-v3"
     assert "PolygonFence" in got["$defs"] and "Corridor" in got["$defs"]
 
 
@@ -869,21 +873,29 @@ def test_a_wgs84_policy_actually_works_in_the_shield():
     assert not sh.state_is_unsafe(State(x=300.0, y=300.0, up=20.0))
 
 
-def test_geographic_coordinates_without_an_origin_are_REFUSED():
-    """An assumed origin does not fail - it relocates the policy and validates.
+def test_geographic_coordinates_without_an_origin_get_the_references_frame_never_0_0():
+    """An ASSUMED origin does not fail - it relocates the policy and validates,
+    which is why (0, 0) is never used. The grant's form has no origin at all,
+    so since 2026-10-06 the frame is DERIVED from the geometry the way the
+    reference derives it (mean of the first polygon's vertices): every rule
+    stays where its author put it, and the frame is near the rules.
 
-    That is the whole reason this raises instead of defaulting to (0, 0).
-    """
+    Shown failing on the pre-fix code: the policy was refused."""
     raw = {"policy_id": "p", "constraints": [
         {"id": "f", "type": "polygon_fence",
          "vertices": [{"lat": 25.0, "lon": 121.0}, {"lat": 25.1, "lon": 121.0},
                       {"lat": 25.1, "lon": 121.1}]}]}
-    try:
-        project_raw(raw)
-    except ValueError as e:
-        assert "origin" in str(e), e
-        return
-    raise AssertionError("a geographic policy with no origin was accepted")
+    out = project_raw(raw)
+    pts = out["constraints"][0]["vertices"]
+    assert all(abs(p["x"]) < 20_000 and abs(p["y"]) < 20_000 for p in pts), pts
+    from guardrail.models import Policy
+    pol = Policy.model_validate(raw)
+    assert pol.frame_origin == ((25.0 + 25.1 + 25.1) / 3, (121.0 + 121.0 + 121.1) / 3)
+    corridor_only = {"policy_id": "p", "constraints": [
+        {"id": "c", "type": "corridor", "width_m": 10,
+         "centerline": [{"lat": 25.0, "lon": 121.0}, {"lat": 25.0, "lon": 121.001}]}]}
+    assert Policy.model_validate(corridor_only).frame_origin == (25.0, 121.0005), \
+        "with no polygon the reference would use (0, 0); this uses the first geometry"
 
 
 def test_mixing_frames_in_one_point_is_refused():

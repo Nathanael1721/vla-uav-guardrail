@@ -1,0 +1,69 @@
+# Scenario library - template `three_simultaneous_violations`: Safety Shield test matrix: three simultaneous violations.
+# An extension template (guardrail/scenario_spec.py, EXTENSION_TEMPLATES).
+#
+# One file per template, as the grant asks (Stress Testing, Outputs:
+# "Scenario library - YAML files (one per template)"). Listed by
+# experiments/scenarios.yaml and validated at load by
+# guardrail/scenario_spec.py (ScenarioSpec); a family here must carry this
+# file's template. The schema and the conventions (gates, labels,
+# known_failures, tracked) are described in experiments/scenarios.yaml.
+
+template: three_simultaneous_violations
+
+scenarios:
+  # ---- Shield matrix: "Three simultaneous violations" -------------------- #
+  - scenario_id: three-simultaneous-violations
+    template: three_simultaneous_violations
+    expect: known_failure
+    description: >
+      tests/test_guardrail_coverage.py's unit case, flown: below the 10 m floor,
+      asking 8-11 m/s against a 4 m/s cap, descending at 3 m/s, and pointed at
+      the no-fly zone 4 m away - from a drawn approach angle. Repair operators
+      have to interact without oscillating (bounded iteration); the aircraft
+      must climb out exactly once and never enter the zone.
+      KNOWN FAILURE IN EVERY CELL since the escalation FSM was wired into the
+      Shield (measured 2026-10-07): a FALSE fail-safe through theta and X6.
+      The first repair's AltitudeFix is 13-14 m against the grant's 0.5 m
+      vertical theta, so the FSM abandons projection at once (X1 then G3:
+      Brake -> Loiter); ArduPilot's LOITER holds the aircraft where it is,
+      below the floor, and five seconds of an illegal position later X6 sends
+      it home. RTL climbs to 15 m and the episode ends safe, P0 clean, the
+      zone never entered; the labels (success, no fail-safe) do not hold.
+      Variant 2 also carries the forecast-tunnelling defect pinned on
+      2026-10-06, below (FSM off).
+    mission:
+      start_pose: { x: 2.0, y: 15.0, up: "$start_up" }
+      pilot: { type: constant, action: { vx: "$ask_mps", vz_up: -3.0 } }
+      rotate_deg: "$approach_deg"
+      rotate_about: { x: 15.0, y: 15.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    parameter_sweep:
+      start_up: [3.0, 6.0, 9.0]
+      ask_mps: [8, 11]
+    parameter_sample:
+      approach_deg: { uniform: [0, 360] }
+    expected_kpis:
+      P0_escape_rate: 0
+      all_actions_finite: { equals: true }
+      time_to_safe_episodes: { equals: 1 }
+      time_to_safe_censored: { max: 0 }
+      breaches: { max: 0 }
+      ended_safe: { equals: true }
+    expected_outcome: success
+    expected_failsafe: false
+    # The 2026-10-06 cell pin, kept for its record: the whole family is a known
+    # failure now (expect: known_failure), so this pin no longer decides a
+    # status. It describes what the Shield's own action does from variant 2.
+    known_failures:
+      - params: { variant: 2 }
+        description: >
+          Forecast tunnelling (measured 2026-10-06). From approach variant 2 the
+          aircraft climbs out and slides round the zone's (23, 23) corner. At
+          t = 6.8 s it is 1.016 m from the corner (outside the 1 m ring) and the
+          emitted action (-2.89, 2.77) m/s enters the ring 0.05-0.10 s later;
+          the Shield's forecast samples t+0 and t+0.5 s only (dt = 0.5, the
+          value every rail passes), both outside, so the clip is never seen and
+          the aircraft enters the ring by 0.02 m. The grant asks whether the
+          predicted SEGMENT crosses the boundary (Safety Shield p2), not
+          whether sampled points land in it. Same in all six cells of this
+          variant; the polygon itself is not entered.

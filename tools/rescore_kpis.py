@@ -45,6 +45,14 @@ A SECOND, NARROWER EXCEPTION: three false-trigger fields this tool wrote on
 2026-10-06 under a definition withdrawn the same day (`RETIRED_FIELDS`). They
 are removed on rewrite, with their values kept under `rescore.retired`.
 
+THE KPI-GRADE VERDICT (2026-10-07). A stored `kpi_grade` is the verdict of the
+day the run was flown. `guardrail.manifest.is_kpi_grade` has tightened since
+(the desktop rail is `dev`, never KPI-grade), so five runs still say `true`
+while today's rule says no. The stored field is never rewritten - it is what
+the flight wrote - but where today's verdict differs, `kpi_grade_rechecked`
+is ADDED beside it (the verdict, its reasons, the date), so no reader can take
+the old `true` for today's (follow-up #5).
+
 POLICY RESOLUTION
 
 Where the run's `policy_hash` matches a policy file we still hold, the full KPI
@@ -478,6 +486,18 @@ def rescore(run: Path, by_hash: dict, by_id: dict | None = None) -> dict | None:
                                "metrics.json when the rail declared it"),
                 }
 
+    # Today's KPI-grade verdict beside the one the flight wrote, when they
+    # differ (module docstring). Added once; a later disagreement is reported.
+    if isinstance(stored.get("kpi_grade"), bool) and manifest:
+        from guardrail.manifest import is_kpi_grade
+        today, why = is_kpi_grade(manifest, metrics)
+        if today != stored["kpi_grade"] and "kpi_grade_rechecked" not in stored:
+            added["kpi_grade_rechecked"] = {
+                "kpi_grade": today, "reasons": why,
+                "date": date.today().isoformat(),
+                "note": ("guardrail.manifest.is_kpi_grade today; `kpi_grade` is "
+                         "the verdict written when the run was flown")}
+
     prev = stored.get("rescore") if isinstance(stored.get("rescore"), dict) else {}
     retired = ([f for f in RETIRED_FIELDS if f in stored]
                if prev.get("date") == RETIRED_ON else [])
@@ -620,6 +640,11 @@ def main(argv: list[str] | None = None) -> int:
         if r["retired"]:
             print(f"\n-- {r['run']}: retiring {', '.join(r['retired'])} "
                   f"(this tool's own 2026-10-06 fields, definition withdrawn)")
+        kg = r["added"].get("kpi_grade_rechecked")
+        if kg:
+            print(f"\n-- {r['run']}: stored kpi_grade {r['stored'].get('kpi_grade')}, "
+                  f"today {kg['kpi_grade']} ({'; '.join(kg['reasons'])[:160]}) - "
+                  f"added as kpi_grade_rechecked")
         for w in r["withheld"]:
             print(f"\n!! {r['run']}: {w}")
         if r["stale_verdicts"]:

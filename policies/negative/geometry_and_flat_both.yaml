@@ -1,0 +1,16 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: altitude_ceiling_m written inside `geometry:` (40) and beside it (400)
+# currently: refused
+# why: one of the two would win silently; the author cannot know which
+policy_id: neg-geometry-twice
+version: 0.1.0
+constraints:
+  - id: nfz
+    type: polygon_fence
+    altitude_ceiling_m: 400
+    geometry:
+      vertices:
+        - { lat: 25.0421, lon: 121.5310 }
+        - { lat: 25.0428, lon: 121.5310 }
+        - { lat: 25.0428, lon: 121.5318 }
+      altitude_ceiling_m: 40

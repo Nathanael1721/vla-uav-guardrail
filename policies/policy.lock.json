@@ -1,9 +1,10 @@
 {
   "_doc": [
     "Policy identity lock. One id@version names exactly one content hash, forever: change a policy's content and you must raise its version and lock the new pair. Entries are never rewritten - old ones are how a stored run's hash stays traceable after the policy moves on.",
-    "policy_hash is the 64-hex SHA-256 over the None-free canonical IR (hash_scheme). legacy_hashes are the 16-hex forms the same content carried under earlier code, so manifests written before 2026-10-06 still resolve: legacy16-exclude-none (runs up to 2026-08-31; it is also the first 16 hex of policy_hash), legacy16-valid-time (4950be1, 2026-09-01, a window of hours), legacy16-include-defaults (445bdbe 2026-09-01 to 2026-10-06).",
+    "policy_hash is the 64-hex SHA-256 over the None-free canonical IR. The top-level hash_scheme (sha256-canonical-v2) is the scheme of every entry that carries no hash_scheme of its own - all entries locked up to 2026-10-06; an entry locked since records its own hash_scheme. legacy_hashes are the 16-hex forms the same content carried under earlier code, so manifests written before 2026-10-06 still resolve: legacy16-exclude-none (runs up to 2026-08-31; it is also the first 16 hex of policy_hash), legacy16-valid-time (4950be1, 2026-09-01, a window of hours), legacy16-include-defaults (445bdbe 2026-09-01 to 2026-10-06).",
+    "hashes (optional, per entry) records the SAME content's hash under a later canonical scheme, added by lock --update and never replacing policy_hash. Scheme sha256-canonical-v3 (2026-10-06) stores WGS84 points as lat/lon instead of projected metres; it differs from v2 only for geographic policies (today wgs84_taipei.yaml), so only that entry carries one.",
     "derived lists policies that exist only mid-flight (a hot-applied rule bumps generation and the hash), with the recipe to rebuild them.",
-    "ir_schema pins what every IR field means when omitted; see guardrail.models.ir_schema_defaults and tests/test_policy_hash.py.",
+    "ir_schema pins what every IR field means when omitted; see guardrail.models.ir_schema_defaults and tests/test_policy_hash.py. A pin lists every field of its model: lock --update adds a new field whose omission means '<absent>' (the one change that moves no hash) and never alters an existing field's pin. The 2.1.0 fields (scope, layer, altitude_ref, issued_at, layers_merged, lat/lon) were added to the pre-existing models' pins on 2026-10-07 this way.",
     "Maintain with: python -m guardrail.bundle lock [--update]. Checked by tests/test_policy_hash.py."
   ],
   "derived": [
@@ -51,45 +52,148 @@
   ],
   "hash_scheme": "sha256-canonical-v2",
   "ir_schema": {
+    "additive_pins": [
+      {
+        "fields": [
+          "AltitudeEnvelope.altitude_ref",
+          "AltitudeEnvelope.layer",
+          "AltitudeEnvelope.scope",
+          "Corridor.altitude_ref",
+          "Corridor.layer",
+          "Corridor.scope",
+          "KinematicEnvelope.layer",
+          "KinematicEnvelope.scope",
+          "ObstacleClearance.layer",
+          "ObstacleClearance.scope",
+          "Policy.issued_at",
+          "Policy.layers_merged",
+          "PolygonFence.altitude_ref",
+          "PolygonFence.layer",
+          "PolygonFence.scope",
+          "SubjectStandoff.layer",
+          "SubjectStandoff.scope",
+          "XY.lat",
+          "XY.lon"
+        ],
+        "on": "2026-10-07",
+        "why": "complete the 2.1.0 pins of pre-existing models"
+      }
+    ],
     "defaults": {
       "AltitudeEnvelope": {
         "alt_max_m": "<required>",
         "alt_min_m": "<required>",
+        "altitude_ref": "<absent>",
         "constraint_type": "hard",
         "id": "<required>",
+        "layer": "<absent>",
         "priority": "P0",
+        "scope": "<absent>",
         "type": "<required>",
         "valid_time": "<absent>",
+        "violation_action": "repair"
+      },
+      "CircleFence": {
+        "altitude_ceiling_m": 1000.0,
+        "altitude_floor_m": 0.0,
+        "altitude_ref": "<absent>",
+        "center": "<required>",
+        "constraint_type": "hard",
+        "id": "<required>",
+        "layer": "<absent>",
+        "margin_m": 1.0,
+        "priority": "P0",
+        "radius_m": "<required>",
+        "scope": "<absent>",
+        "type": "<required>",
+        "valid_time": "<absent>",
+        "vertices": [],
         "violation_action": "repair"
       },
       "Corridor": {
         "altitude_ceiling_m": 1000.0,
         "altitude_floor_m": 0.0,
+        "altitude_ref": "<absent>",
         "centerline": "<required>",
         "constraint_type": "hard",
         "id": "<required>",
+        "layer": "<absent>",
         "priority": "P0",
+        "scope": "<absent>",
         "type": "<required>",
         "valid_time": "<absent>",
         "violation_action": "repair",
         "width_m": "<required>"
       },
+      "CorridorSwap": {
+        "altitude_ceiling_m": 1000.0,
+        "altitude_floor_m": 0.0,
+        "altitude_ref": "<absent>",
+        "centerline": "<required>",
+        "constraint_type": "hard",
+        "id": "<required>",
+        "layer": "<absent>",
+        "priority": "P0",
+        "scope": "<absent>",
+        "target_id": "<required>",
+        "type": "<required>",
+        "valid_time": "<absent>",
+        "violation_action": "repair",
+        "width_m": "<required>"
+      },
+      "DistanceEnvelope": {
+        "constraint_type": "hard",
+        "id": "<required>",
+        "layer": "<absent>",
+        "min_distance_m": "<required>",
+        "object_class": "<required>",
+        "priority": "P0",
+        "scope": "<absent>",
+        "type": "<required>",
+        "valid_time": "<absent>",
+        "violation_action": "repair"
+      },
+      "DynamicNFZ": {
+        "altitude_ceiling_m": 1000.0,
+        "altitude_floor_m": 0.0,
+        "altitude_ref": "<absent>",
+        "constraint_type": "hard",
+        "id": "<required>",
+        "layer": "<absent>",
+        "margin_m": 1.0,
+        "motion": "<absent>",
+        "priority": "P0",
+        "scope": "<absent>",
+        "type": "<required>",
+        "valid_time": "<absent>",
+        "vertices": "<required>",
+        "violation_action": "repair"
+      },
       "KinematicEnvelope": {
         "climb_rate_max_mps": "<required>",
         "constraint_type": "hard",
         "id": "<required>",
+        "layer": "<absent>",
         "priority": "P0",
+        "scope": "<absent>",
         "speed_max_mps": "<required>",
         "type": "<required>",
         "valid_time": "<absent>",
         "violation_action": "repair",
         "yaw_rate_max_dps": "<required>"
       },
+      "Motion": {
+        "vx_mps": 0.0,
+        "vy_mps": 0.0,
+        "yaw_rate_dps": 0.0
+      },
       "ObstacleClearance": {
         "constraint_type": "hard",
         "id": "<required>",
+        "layer": "<absent>",
         "min_clearance_m": "<required>",
         "priority": "P0",
+        "scope": "<absent>",
         "soft_margin_m": 0.0,
         "type": "<required>",
         "valid_time": "<absent>",
@@ -102,6 +206,8 @@
       "Policy": {
         "constraints": "<required>",
         "generation": 0,
+        "issued_at": "<absent>",
+        "layers_merged": "<absent>",
         "origin": "<absent>",
         "policy_id": "<required>",
         "version": "0.1.0"
@@ -109,10 +215,13 @@
       "PolygonFence": {
         "altitude_ceiling_m": 1000.0,
         "altitude_floor_m": 0.0,
+        "altitude_ref": "<absent>",
         "constraint_type": "hard",
         "id": "<required>",
+        "layer": "<absent>",
         "margin_m": 1.0,
         "priority": "P0",
+        "scope": "<absent>",
         "type": "<required>",
         "valid_time": "<absent>",
         "vertices": "<required>",
@@ -134,10 +243,24 @@
       "SubjectStandoff": {
         "constraint_type": "hard",
         "id": "<required>",
+        "layer": "<absent>",
         "min_range_m": "<required>",
         "priority": "P0",
+        "scope": "<absent>",
         "soft_margin_m": 0.0,
         "subject_class": "*",
+        "type": "<required>",
+        "valid_time": "<absent>",
+        "violation_action": "repair"
+      },
+      "TimeWindowSwitch": {
+        "active": "<required>",
+        "constraint_type": "hard",
+        "id": "<required>",
+        "layer": "<absent>",
+        "priority": "P0",
+        "scope": "<absent>",
+        "target_id": "<required>",
         "type": "<required>",
         "valid_time": "<absent>",
         "violation_action": "repair"
@@ -146,12 +269,17 @@
         "recurrence": "<absent>"
       },
       "XY": {
+        "lat": "<absent>",
+        "lon": "<absent>",
         "x": "<required>",
         "y": "<required>"
       }
     },
     "locked_on": "2026-10-06",
-    "version": "2.0.0"
+    "previous_versions": [
+      "2.0.0"
+    ],
+    "version": "2.1.0"
   },
   "policies": {
     "corridor-survey@0.1.0": {
@@ -424,6 +552,9 @@
     },
     "wgs84-taipei-demo@0.1.0": {
       "file": "wgs84_taipei.yaml",
+      "hashes": {
+        "sha256-canonical-v3": "sha256:7d6e19554f33efe2960bc972030d2db81c4f9b00aa495c8309195b34869773b0"
+      },
       "legacy_hashes": {
         "legacy16-exclude-none": "sha256:ed22f684e37fc324",
         "legacy16-include-defaults": "sha256:655046b8ad011bdb",

@@ -1,0 +1,1111 @@
+{
+ "schema": "vlaguard.shield_tick_profile/2",
+ "created_utc": "2026-10-06T21:56:46Z",
+ "topology": "dev",
+ "command": "python tools/profile_shield_tick.py profile --topology dev --cpus 16-27 --out deploy/evidence/dev/shield_tick_profile-ecores.json --note 'lab desktop, i7-14700, efficiency cores (no hardware threads); other agents'\"'\"' processes were running'",
+ "code_revision": "401305abd019-dirty",
+ "host": {
+  "os": "Windows",
+  "os_release": "10",
+  "machine": "AMD64",
+  "cpu_model": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+  "cpu_count": 28,
+  "python": "3.10.20",
+  "in_container": false,
+  "ros_distro": null,
+  "topology_env": null,
+  "libs": {
+   "numpy": "1.26.4",
+   "shapely": "2.1.2",
+   "pydantic": "2.13.4",
+   "yaml": "6.0.3",
+   "geos": "3.13.1"
+  },
+  "perf_counter_resolution_s": 1e-07,
+  "jetson": {
+   "is_orin": false,
+   "missing": [
+    "host_arch is 'AMD64', not aarch64: the Shield is not running on a Jetson",
+    "device_model is None: no Jetson Orin named by the device tree",
+    "neither the L4T release nor the JetPack version was read"
+   ],
+   "host_arch": "AMD64",
+   "device_model": null,
+   "l4t_release": null,
+   "jetpack": null,
+   "nvpmodel": null
+  }
+ },
+ "pack": {
+  "path": "deploy/evidence/shield_tick_pack.json",
+  "sha256": "c480b9d347e6a789853bf8173be5e392e767b6847ff795921c7d338ba3968013",
+  "created_utc": "2026-10-06T21:55:32Z",
+  "code_revision_at_pack": "401305abd019-dirty"
+ },
+ "budgets_ms": {
+  "check": 5.0,
+  "filter": 100.0
+ },
+ "horizons": {
+  "flown": {
+   "lookahead_s": 3.0,
+   "dt_s": 0.5
+  },
+  "grant": {
+   "lookahead_s": 5.0,
+   "dt_s": 0.1
+  }
+ },
+ "gc_enabled": true,
+ "host_speed": {
+  "before": {
+   "workload": "200k sqrt-adds + 2000 shapely contains",
+   "median_ms": 62.86549987271428,
+   "min_ms": 62.3436002060771,
+   "max_ms": 64.60239994339645,
+   "repeats": 5
+  },
+  "after": {
+   "workload": "200k sqrt-adds + 2000 shapely contains",
+   "median_ms": 62.63329996727407,
+   "min_ms": 62.37480021081865,
+   "max_ms": 63.82620008662343,
+   "repeats": 5
+  },
+  "after_over_before": 0.9963064016684771,
+  "tolerance": 1.5,
+  "steady": true
+ },
+ "flights": [
+  {
+   "tag": "ros2_shield_on",
+   "rail": "dev",
+   "rail_recorded": "canonical-hil",
+   "ticks": 224,
+   "stride": 1,
+   "source_sha256": "a81a6e8e47530f81dd2b77913adc2fe41ff5a7a02f0df179a3096192c0eba11c",
+   "policy_hash": "sha256:8a311f9d22d2260000eb2b24775c3e6cbfeb70416c8299b3354e47227a2476af",
+   "policy_label": "sim_demo_policy.yaml",
+   "rules": {
+    "as_flown": 3,
+    "design_load": 50,
+    "floor": 2
+   },
+   "design_load_zones_added": 47,
+   "obstacle_map": false,
+   "arms": {
+    "as_flown": {
+     "flown": {
+      "check": {
+       "n": 224,
+       "median_ms": 0.26614998932927847,
+       "p95_ms": 0.35859993658959866,
+       "p99_ms": 0.5038999952375889,
+       "max_ms": 0.6190999411046505,
+       "mean_ms": 0.24803169487443352,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 224,
+       "median_ms": 0.9901999728754163,
+       "p95_ms": 1.761800143867731,
+       "p99_ms": 1.9521000795066357,
+       "max_ms": 2.0685000345110893,
+       "mean_ms": 0.9715397422301716,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 134,
+      "braked_ticks": 0,
+      "escaped_ticks": 0,
+      "logged_agreement": {
+       "compared": 224,
+       "identical_rule_sets": 224,
+       "logged_nonempty": 219,
+       "identical_nonempty": 219,
+       "never_flagging_null": 5,
+       "replay_flagged_where_log_was_empty": 0,
+       "informative": true
+      }
+     },
+     "grant": {
+      "check": {
+       "n": 224,
+       "median_ms": 0.8073999779298902,
+       "p95_ms": 1.8035001121461391,
+       "p99_ms": 2.0009998697787523,
+       "max_ms": 2.2475000005215406,
+       "mean_ms": 0.8452379520999135,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 224,
+       "median_ms": 2.894549979828298,
+       "p95_ms": 9.024200029671192,
+       "p99_ms": 9.620500029996037,
+       "max_ms": 10.512300068512559,
+       "mean_ms": 3.3730227608300214,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 138,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     }
+    },
+    "design_load": {
+     "flown": {
+      "check": {
+       "n": 224,
+       "median_ms": 0.49949996173381805,
+       "p95_ms": 0.7759002037346363,
+       "p99_ms": 0.9728001896291971,
+       "max_ms": 1.1573999654501677,
+       "mean_ms": 0.506820081292452,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 224,
+       "median_ms": 1.4777500182390213,
+       "p95_ms": 3.0683998484164476,
+       "p99_ms": 4.074399825185537,
+       "max_ms": 4.964499967172742,
+       "mean_ms": 1.6635807977373978,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 173,
+      "braked_ticks": 2,
+      "escaped_ticks": 0
+     },
+     "grant": {
+      "check": {
+       "n": 224,
+       "median_ms": 3.917700028978288,
+       "p95_ms": 7.3547998908907175,
+       "p99_ms": 7.803699932992458,
+       "max_ms": 9.013200178742409,
+       "mean_ms": 4.085105349076912,
+       "budget_ms": 5.0,
+       "over_budget": 47,
+       "verdict": "over"
+      },
+      "filter": {
+       "n": 224,
+       "median_ms": 8.281400077976286,
+       "p95_ms": 25.766799924895167,
+       "p99_ms": 27.173700043931603,
+       "max_ms": 28.03370007313788,
+       "mean_ms": 11.371772774769592,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 209,
+      "braked_ticks": 24,
+      "escaped_ticks": 0
+     }
+    },
+    "floor": {
+     "flown": {
+      "check": {
+       "n": 224,
+       "median_ms": 0.029399991035461426,
+       "p95_ms": 0.032899901270866394,
+       "p99_ms": 0.03920006565749645,
+       "max_ms": 0.09270012378692627,
+       "mean_ms": 0.030021430575288832,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 224,
+       "median_ms": 0.13449997641146183,
+       "p95_ms": 0.15029986388981342,
+       "p99_ms": 0.19129994325339794,
+       "max_ms": 0.2786999102681875,
+       "mean_ms": 0.13582901322349375,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 0,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     },
+     "grant": {
+      "check": {
+       "n": 224,
+       "median_ms": 0.1561000244691968,
+       "p95_ms": 0.1688001211732626,
+       "p99_ms": 0.24740002118051052,
+       "max_ms": 0.5326000973582268,
+       "mean_ms": 0.16160937125927635,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 224,
+       "median_ms": 0.6470499793067575,
+       "p95_ms": 0.73009985499084,
+       "p99_ms": 0.8035998325794935,
+       "max_ms": 0.8778998162597418,
+       "mean_ms": 0.6484174113471194,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 0,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     }
+    }
+   },
+   "rail_logged": {
+    "note": "measured on the rail that flew, on its host and under its load",
+    "tick_period": {
+     "n": 223,
+     "median_ms": 99.99999999999964,
+     "p95_ms": 100.00000000000142,
+     "p99_ms": 101.00000000000087,
+     "max_ms": 111.00000000000021,
+     "mean_ms": 100.0,
+     "late_ticks_over_150ms": 0
+    },
+    "shield_ms": null
+   }
+  },
+  {
+   "tag": "ros2_shield_on_dynamic",
+   "rail": "dev",
+   "rail_recorded": "canonical-hil",
+   "ticks": 314,
+   "stride": 1,
+   "source_sha256": "8ae9eebdb8464f9a8e6a494a69046093ddeb3bc71be0fc9f9fe68b63f66e4f13",
+   "policy_hash": "sha256:77d64d2e5e94ac39a433050a113932dacbc5f7491e4fce0f43cc24f16605b473",
+   "policy_label": "fase3-sim-demo@0.1.1+nfz-dynamic",
+   "rules": {
+    "as_flown": 4,
+    "design_load": 50,
+    "floor": 2
+   },
+   "design_load_zones_added": 46,
+   "obstacle_map": false,
+   "arms": {
+    "as_flown": {
+     "flown": {
+      "check": {
+       "n": 314,
+       "median_ms": 0.2820498775690794,
+       "p95_ms": 0.4930999130010605,
+       "p99_ms": 0.5929998587816954,
+       "max_ms": 1.000699819996953,
+       "mean_ms": 0.2989681603707326,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 314,
+       "median_ms": 1.0868500685319304,
+       "p95_ms": 1.6574999317526817,
+       "p99_ms": 1.7723999917507172,
+       "max_ms": 2.1577998995780945,
+       "mean_ms": 1.031683740105219,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 217,
+      "braked_ticks": 0,
+      "escaped_ticks": 0,
+      "logged_agreement": {
+       "compared": 314,
+       "identical_rule_sets": 314,
+       "logged_nonempty": 309,
+       "identical_nonempty": 309,
+       "never_flagging_null": 5,
+       "replay_flagged_where_log_was_empty": 0,
+       "informative": true
+      }
+     },
+     "grant": {
+      "check": {
+       "n": 314,
+       "median_ms": 1.6253498615697026,
+       "p95_ms": 2.4649000260978937,
+       "p99_ms": 2.657199976965785,
+       "max_ms": 3.1896999571472406,
+       "mean_ms": 1.5019576419678748,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 314,
+       "median_ms": 3.7958499742671847,
+       "p95_ms": 9.174600010737777,
+       "p99_ms": 9.467000141739845,
+       "max_ms": 10.23149979300797,
+       "mean_ms": 4.376176437718948,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 217,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     }
+    },
+    "design_load": {
+     "flown": {
+      "check": {
+       "n": 314,
+       "median_ms": 0.5588500062003732,
+       "p95_ms": 0.7727998308837414,
+       "p99_ms": 0.9066001512110233,
+       "max_ms": 1.1889999732375145,
+       "mean_ms": 0.5081404448386021,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 314,
+       "median_ms": 1.4266499783843756,
+       "p95_ms": 3.3261000644415617,
+       "p99_ms": 6.160099990665913,
+       "max_ms": 7.298799930140376,
+       "mean_ms": 1.6361512770211906,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 258,
+      "braked_ticks": 15,
+      "escaped_ticks": 0
+     },
+     "grant": {
+      "check": {
+       "n": 314,
+       "median_ms": 3.123900038190186,
+       "p95_ms": 6.941600004211068,
+       "p99_ms": 7.224899949505925,
+       "max_ms": 7.5980001129209995,
+       "mean_ms": 3.105519113285099,
+       "budget_ms": 5.0,
+       "over_budget": 46,
+       "verdict": "over"
+      },
+      "filter": {
+       "n": 314,
+       "median_ms": 6.25925010535866,
+       "p95_ms": 25.36019985564053,
+       "p99_ms": 26.963500073179603,
+       "max_ms": 27.771800057962537,
+       "mean_ms": 8.612628978718618,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 289,
+      "braked_ticks": 19,
+      "escaped_ticks": 0
+     }
+    },
+    "floor": {
+     "flown": {
+      "check": {
+       "n": 314,
+       "median_ms": 0.02969987690448761,
+       "p95_ms": 0.033800024539232254,
+       "p99_ms": 0.047800131142139435,
+       "max_ms": 0.18570013344287872,
+       "mean_ms": 0.03082101354909361,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 314,
+       "median_ms": 0.13714993838220835,
+       "p95_ms": 0.1596000511199236,
+       "p99_ms": 0.27359998784959316,
+       "max_ms": 0.443900004029274,
+       "mean_ms": 0.1414872566534645,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 0,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     },
+     "grant": {
+      "check": {
+       "n": 314,
+       "median_ms": 0.15594996511936188,
+       "p95_ms": 0.16729999333620071,
+       "p99_ms": 0.23830006830394268,
+       "max_ms": 0.4360999446362257,
+       "mean_ms": 0.15868344210728907,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 314,
+       "median_ms": 0.6434000097215176,
+       "p95_ms": 0.7515000179409981,
+       "p99_ms": 1.0073999874293804,
+       "max_ms": 1.301799900829792,
+       "mean_ms": 0.6513152861742267,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 0,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     }
+    }
+   },
+   "rail_logged": {
+    "note": "measured on the rail that flew, on its host and under its load",
+    "tick_period": {
+     "n": 313,
+     "median_ms": 99.99999999999987,
+     "p95_ms": 100.00000000000142,
+     "p99_ms": 100.00000000000142,
+     "max_ms": 100.99999999999909,
+     "mean_ms": 100.0,
+     "late_ticks_over_150ms": 0
+    },
+    "shield_ms": null
+   }
+  },
+  {
+   "tag": "ros2_ped_on",
+   "rail": "dev",
+   "rail_recorded": "canonical-hil",
+   "ticks": 164,
+   "stride": 1,
+   "source_sha256": "3659228191a91079256c8ea0174ce23ac06df91517eaecbb16655b331c7fa087",
+   "policy_hash": "sha256:68a4efd102869f5cf4819b4a2d67e3ee84579a8160b72ecc6d27856d2a2c1259",
+   "policy_label": "sitl_pedestrian.yaml",
+   "rules": {
+    "as_flown": 4,
+    "design_load": 50,
+    "floor": 4
+   },
+   "design_load_zones_added": 46,
+   "obstacle_map": false,
+   "arms": {
+    "as_flown": {
+     "flown": {
+      "check": {
+       "n": 164,
+       "median_ms": 0.07694994565099478,
+       "p95_ms": 0.0841999426484108,
+       "p99_ms": 0.09050010703504086,
+       "max_ms": 0.14439993537962437,
+       "mean_ms": 0.07761037261111707,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 164,
+       "median_ms": 0.3293498884886503,
+       "p95_ms": 0.34890021197497845,
+       "p99_ms": 0.5065000150352716,
+       "max_ms": 0.9003998711705208,
+       "mean_ms": 0.33132072748252894,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 0,
+      "braked_ticks": 0,
+      "escaped_ticks": 0,
+      "logged_agreement": {
+       "compared": 164,
+       "identical_rule_sets": 164,
+       "logged_nonempty": 160,
+       "identical_nonempty": 160,
+       "never_flagging_null": 4,
+       "replay_flagged_where_log_was_empty": 0,
+       "informative": true
+      }
+     },
+     "grant": {
+      "check": {
+       "n": 164,
+       "median_ms": 0.4688000772148371,
+       "p95_ms": 0.5131000652909279,
+       "p99_ms": 0.6309999153017998,
+       "max_ms": 0.9214000310748816,
+       "mean_ms": 0.4466920764548931,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 164,
+       "median_ms": 1.9177000503987074,
+       "p95_ms": 2.054099924862385,
+       "p99_ms": 2.1685000974684954,
+       "max_ms": 2.4164000060409307,
+       "mean_ms": 1.876247566897513,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 0,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     }
+    },
+    "design_load": {
+     "flown": {
+      "check": {
+       "n": 164,
+       "median_ms": 0.4594000056385994,
+       "p95_ms": 0.8659998420625925,
+       "p99_ms": 1.0385001078248024,
+       "max_ms": 2.903599990531802,
+       "mean_ms": 0.48210426864055234,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 164,
+       "median_ms": 1.3615998905152082,
+       "p95_ms": 3.000000026077032,
+       "p99_ms": 4.797999979928136,
+       "max_ms": 5.068999947980046,
+       "mean_ms": 1.5680920673397982,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 124,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     },
+     "grant": {
+      "check": {
+       "n": 164,
+       "median_ms": 4.086399916559458,
+       "p95_ms": 7.27459997870028,
+       "p99_ms": 8.285799995064735,
+       "max_ms": 8.70780018158257,
+       "mean_ms": 4.580228661879806,
+       "budget_ms": 5.0,
+       "over_budget": 49,
+       "verdict": "over"
+      },
+      "filter": {
+       "n": 164,
+       "median_ms": 9.631449938751757,
+       "p95_ms": 27.599699795246124,
+       "p99_ms": 44.361700071021914,
+       "max_ms": 45.753899961709976,
+       "mean_ms": 12.581253036709002,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 162,
+      "braked_ticks": 14,
+      "escaped_ticks": 0
+     }
+    },
+    "floor": {
+     "flown": {
+      "check": {
+       "n": 164,
+       "median_ms": 0.07699988782405853,
+       "p95_ms": 0.08559995330870152,
+       "p99_ms": 0.11390005238354206,
+       "max_ms": 0.12720003724098206,
+       "mean_ms": 0.07809086549436538,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 164,
+       "median_ms": 0.3336999798193574,
+       "p95_ms": 0.3603999502956867,
+       "p99_ms": 0.4903001245111227,
+       "max_ms": 0.9969999082386494,
+       "mean_ms": 0.33531402430792406,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 0,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     },
+     "grant": {
+      "check": {
+       "n": 164,
+       "median_ms": 0.4712499212473631,
+       "p95_ms": 0.5085000302642584,
+       "p99_ms": 0.6633000448346138,
+       "max_ms": 0.6819001864641905,
+       "mean_ms": 0.4497286551291259,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 164,
+       "median_ms": 1.9371500238776207,
+       "p95_ms": 2.1863000001758337,
+       "p99_ms": 2.3308999370783567,
+       "max_ms": 2.4318001233041286,
+       "mean_ms": 1.9167798753010064,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 0,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     }
+    }
+   },
+   "rail_logged": {
+    "note": "measured on the rail that flew, on its host and under its load",
+    "tick_period": {
+     "n": 163,
+     "median_ms": 99.99999999999964,
+     "p95_ms": 100.00000000000142,
+     "p99_ms": 101.00000000000087,
+     "max_ms": 101.00000000000087,
+     "mean_ms": 99.99999999999999,
+     "late_ticks_over_150ms": 0
+    },
+    "shield_ms": null
+   }
+  },
+  {
+   "tag": "citylife_redcar_nfz1",
+   "rail": "projectairsim-single-host",
+   "rail_recorded": "projectairsim-single-host",
+   "ticks": 599,
+   "stride": 4,
+   "source_sha256": "12e7263d7581a05ee214e1d73d0e76bde1eae91bef4c45022d95d0e926546353",
+   "policy_hash": "sha256:e50644313d185db5e8917ffa720a2b8dc83f452fe2d5538190adc55667ef63c3",
+   "policy_label": "follow_car_citylife_nfz.yaml",
+   "rules": {
+    "as_flown": 6,
+    "design_load": 50,
+    "floor": 5
+   },
+   "design_load_zones_added": 44,
+   "obstacle_map": true,
+   "arms": {
+    "as_flown": {
+     "flown": {
+      "check": {
+       "n": 599,
+       "median_ms": 0.16189995221793652,
+       "p95_ms": 0.17650006338953972,
+       "p99_ms": 0.2300997730344534,
+       "max_ms": 0.4436001181602478,
+       "mean_ms": 0.1639058430195601,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 599,
+       "median_ms": 0.1780001912266016,
+       "p95_ms": 0.19249995239078999,
+       "p99_ms": 0.2603998873382807,
+       "max_ms": 0.8962999563664198,
+       "mean_ms": 0.18144825174907014,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 0,
+      "braked_ticks": 0,
+      "escaped_ticks": 0,
+      "logged_agreement": {
+       "compared": 599,
+       "identical_rule_sets": 599,
+       "logged_nonempty": 0,
+       "identical_nonempty": 0,
+       "never_flagging_null": 599,
+       "replay_flagged_where_log_was_empty": 0,
+       "informative": false
+      }
+     },
+     "grant": {
+      "check": {
+       "n": 599,
+       "median_ms": 0.5746998358517885,
+       "p95_ms": 0.7031999994069338,
+       "p99_ms": 1.0281999129801989,
+       "max_ms": 2.382199978455901,
+       "mean_ms": 0.5967654416085733,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 599,
+       "median_ms": 0.632300041615963,
+       "p95_ms": 2.839100081473589,
+       "p99_ms": 3.657100023701787,
+       "max_ms": 4.180399933829904,
+       "mean_ms": 1.4794547575679864,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 0,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     }
+    },
+    "design_load": {
+     "flown": {
+      "check": {
+       "n": 599,
+       "median_ms": 0.16389996744692326,
+       "p95_ms": 0.4063001833856106,
+       "p99_ms": 0.6360001862049103,
+       "max_ms": 1.3734998647123575,
+       "mean_ms": 0.20759064394775437,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 599,
+       "median_ms": 0.17969985492527485,
+       "p95_ms": 0.4227000754326582,
+       "p99_ms": 2.022499917075038,
+       "max_ms": 4.82300017029047,
+       "mean_ms": 0.24925759769602987,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 9,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     },
+     "grant": {
+      "check": {
+       "n": 599,
+       "median_ms": 0.5896000657230616,
+       "p95_ms": 3.6027999594807625,
+       "p99_ms": 5.064399912953377,
+       "max_ms": 5.9587000869214535,
+       "mean_ms": 1.1976023437066599,
+       "budget_ms": 5.0,
+       "over_budget": 6,
+       "verdict": "over"
+      },
+      "filter": {
+       "n": 599,
+       "median_ms": 2.5161998346447945,
+       "p95_ms": 6.964899832382798,
+       "p99_ms": 14.658199856057763,
+       "max_ms": 29.486200073733926,
+       "mean_ms": 2.562063267665957,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 69,
+      "braked_ticks": 3,
+      "escaped_ticks": 0
+     }
+    },
+    "floor": {
+     "flown": {
+      "check": {
+       "n": 599,
+       "median_ms": 0.07790001109242439,
+       "p95_ms": 0.08750008419156075,
+       "p99_ms": 0.13429997488856316,
+       "max_ms": 0.2079999540001154,
+       "mean_ms": 0.07855459131947244,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 599,
+       "median_ms": 0.0917001161724329,
+       "p95_ms": 0.1012999564409256,
+       "p99_ms": 0.17080013640224934,
+       "max_ms": 0.37070014514029026,
+       "mean_ms": 0.09335692814910451,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 0,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     },
+     "grant": {
+      "check": {
+       "n": 599,
+       "median_ms": 0.350399874150753,
+       "p95_ms": 0.41969981975853443,
+       "p99_ms": 0.5942999850958586,
+       "max_ms": 0.764199998229742,
+       "mean_ms": 0.3566058400788271,
+       "budget_ms": 5.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "filter": {
+       "n": 599,
+       "median_ms": 0.39739999920129776,
+       "p95_ms": 1.6344999894499779,
+       "p99_ms": 2.1123001351952553,
+       "max_ms": 2.5981999933719635,
+       "mean_ms": 0.8550068458389858,
+       "budget_ms": 100.0,
+       "over_budget": 0,
+       "verdict": "within"
+      },
+      "geofence_ticks": 0,
+      "braked_ticks": 0,
+      "escaped_ticks": 0
+     }
+    }
+   },
+   "rail_logged": {
+    "note": "measured on the rail that flew, on its host and under its load",
+    "tick_period": null,
+    "tick_period_why": "rows were packed every 4th tick, so consecutive packed rows are not one tick apart",
+    "shield_ms": {
+     "n": 599,
+     "median_ms": 3.0,
+     "p95_ms": 11.1,
+     "p99_ms": 15.9,
+     "max_ms": 25.6,
+     "mean_ms": 3.979966611018364,
+     "budget_ms": 100.0,
+     "over_budget": 0,
+     "verdict": "within"
+    }
+   },
+   "agreement_note": "this flight logged no violation on any packed tick, so agreement verifies nothing beyond the empty sets: not its obstacle map, not its subject, not its fences"
+  }
+ ],
+ "pooled": {
+  "as_flown/flown": {
+   "check": {
+    "n": 1301,
+    "median_ms": 0.1634000800549984,
+    "p95_ms": 0.430600019171834,
+    "p99_ms": 0.5061000119894743,
+    "max_ms": 1.000699819996953,
+    "mean_ms": 0.20010976409317666,
+    "budget_ms": 5.0,
+    "over_budget": 0,
+    "verdict": "within"
+   },
+   "filter": {
+    "n": 1301,
+    "median_ms": 0.3249999135732651,
+    "p95_ms": 1.4280001632869244,
+    "p99_ms": 1.778600038960576,
+    "max_ms": 2.1577998995780945,
+    "mean_ms": 0.5415816285606648,
+    "budget_ms": 100.0,
+    "over_budget": 0,
+    "verdict": "within"
+   }
+  },
+  "as_flown/grant": {
+   "check": {
+    "n": 1301,
+    "median_ms": 0.5861001554876566,
+    "p95_ms": 2.2664000280201435,
+    "p99_ms": 2.4753001052886248,
+    "max_ms": 3.1896999571472406,
+    "mean_ms": 0.8390991551963345,
+    "budget_ms": 5.0,
+    "over_budget": 0,
+    "verdict": "within"
+   },
+   "filter": {
+    "n": 1301,
+    "median_ms": 2.5432000402361155,
+    "p95_ms": 6.467900006100535,
+    "p99_ms": 9.319400181993842,
+    "max_ms": 10.512300068512559,
+    "mean_ms": 2.5546306691960727,
+    "budget_ms": 100.0,
+    "over_budget": 0,
+    "verdict": "within"
+   }
+  },
+  "design_load/flown": {
+   "check": {
+    "n": 1301,
+    "median_ms": 0.3348998725414276,
+    "p95_ms": 0.7587000727653503,
+    "p99_ms": 0.9321998804807663,
+    "max_ms": 2.903599990531802,
+    "mean_ms": 0.36625341558077307,
+    "budget_ms": 5.0,
+    "over_budget": 0,
+    "verdict": "within"
+   },
+   "filter": {
+    "n": 1301,
+    "median_ms": 0.8489000611007214,
+    "p95_ms": 2.749999985098839,
+    "p99_ms": 5.636800080537796,
+    "max_ms": 7.298799930140376,
+    "mean_ms": 0.993747886042644,
+    "budget_ms": 100.0,
+    "over_budget": 0,
+    "verdict": "within"
+   }
+  },
+  "design_load/grant": {
+   "check": {
+    "n": 1301,
+    "median_ms": 2.130500040948391,
+    "p95_ms": 6.515299901366234,
+    "p99_ms": 7.5980001129209995,
+    "max_ms": 9.013200178742409,
+    "mean_ms": 2.581643277627461,
+    "budget_ms": 5.0,
+    "over_budget": 148,
+    "verdict": "over"
+   },
+   "filter": {
+    "n": 1301,
+    "median_ms": 4.486899822950363,
+    "p95_ms": 22.819999838247895,
+    "p99_ms": 27.54759998060763,
+    "max_ms": 45.753899961709976,
+    "mean_ms": 6.802186007854127,
+    "budget_ms": 100.0,
+    "over_budget": 0,
+    "verdict": "within"
+   }
+  },
+  "floor/flown": {
+   "check": {
+    "n": 1301,
+    "median_ms": 0.07349997758865356,
+    "p95_ms": 0.0833999365568161,
+    "p99_ms": 0.09959982708096504,
+    "max_ms": 0.2079999540001154,
+    "mean_ms": 0.058619293500937746,
+    "budget_ms": 5.0,
+    "over_budget": 0,
+    "verdict": "within"
+   },
+   "filter": {
+    "n": 1301,
+    "median_ms": 0.13109995052218437,
+    "p95_ms": 0.335899880155921,
+    "p99_ms": 0.35530002787709236,
+    "max_ms": 0.9969999082386494,
+    "mean_ms": 0.14278631629443783,
+    "budget_ms": 100.0,
+    "over_budget": 0,
+    "verdict": "within"
+   }
+  },
+  "floor/grant": {
+   "check": {
+    "n": 1301,
+    "median_ms": 0.3345001023262739,
+    "p95_ms": 0.480900052934885,
+    "p99_ms": 0.5550000350922346,
+    "max_ms": 0.764199998229742,
+    "mean_ms": 0.2870019197787554,
+    "budget_ms": 5.0,
+    "over_budget": 0,
+    "verdict": "within"
+   },
+   "filter": {
+    "n": 1301,
+    "median_ms": 0.647400040179491,
+    "p95_ms": 1.9628999289125204,
+    "p99_ms": 2.1651999559253454,
+    "max_ms": 2.5981999933719635,
+    "mean_ms": 0.904119523602905,
+    "budget_ms": 100.0,
+    "over_budget": 0,
+    "verdict": "within"
+   }
+  }
+ },
+ "logged_agreement": {
+  "compared": 1301,
+  "identical_rule_sets": 1301,
+  "logged_nonempty": 688,
+  "identical_nonempty": 688,
+  "never_flagging_null": 613,
+  "replay_flagged_where_log_was_empty": 0,
+  "flights_with_no_logged_violation": [
+   "citylife_redcar_nfz1"
+  ]
+ },
+ "headline": {
+  "condition": "50 active rules, 5 s horizon at 0.1 s (51 poses including t = 0), real flight states",
+  "verdict_basis": "p99 of every tick against the budget. The grant states a budget, not a percentile: p99 is this project's choice, and the maximum and the count of ticks over budget are reported beside it",
+  "check_p99_ms": 7.5980001129209995,
+  "check_max_ms": 9.013200178742409,
+  "check_over_budget": 148,
+  "check_budget_ms": 5.0,
+  "check_verdict": "over",
+  "filter_p99_ms": 27.54759998060763,
+  "filter_max_ms": 45.753899961709976,
+  "filter_over_budget": 0,
+  "filter_budget_ms": 100.0,
+  "filter_verdict": "within",
+  "ticks": 1301,
+  "host_steady": true
+ },
+ "failures": [],
+ "not_measured": "ROS 2 / DDS / MAVROS / MAVLink hops of the end-to-end tick; see rail_logged per flight for what the rails recorded",
+ "cpu_affinity": [
+  16,
+  17,
+  18,
+  19,
+  20,
+  21,
+  22,
+  23,
+  24,
+  25,
+  26,
+  27
+ ],
+ "note": "lab desktop, i7-14700, efficiency cores (no hardware threads); other agents' processes were running"
+}

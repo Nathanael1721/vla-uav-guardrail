@@ -1,16 +1,24 @@
 """
 Prefix Compiler - the "before the VLA" half of the Guardrail.
 
-Meeting architecture slot:
+In the grant, WP2 (the Prefix Constraint Compiler) is policy bundle + mission
+context -> Constraint Summary Pack (CSP), and the CSP is its only output
+(Prefix Compiler PDF p1). Parsing operator text into a mission is NOT part of
+the WP2 spec; it lives here only because the stub pilot needs a Mission.
 
-    User Command -> [Constraint Compiler] -> YAML Prompt / CSP -> VLA -> ...
+Where the CSP goes today: `compile_csp` builds it and the flight scripts write
+it to disk (demo/real_vla_demo.py, with `--csp on`, writes one JSON per policy
+generation and prepends its text to the OpenVLA instruction). No flown VLA has
+read a CSP yet: no flight has been made with that code. Say "generated and
+saved", not "the prompt the VLA reads", until one has.
 
 Two jobs live here.
 
 1. COMMAND -> MISSION (`parse_command`). A natural-language command resolved
    into a structured Mission. v0 parsing is deliberately simple: a named-place
-   registry + coordinate regex. A real deployment would use map data / an LLM
-   here; the *interface* (text in, validated Mission out) is what matters.
+   registry + coordinate regex. A value the text does not state falls back to
+   a default, and the Mission says which ones did (`defaults_used`), so a
+   fallback is never mistaken for a reading.
 
 2. POLICY + MISSION -> CSP (`compile_csp`), the grant's Prefix Compiler
    (Prefix Compiler PDF p3, "Pipeline"):
@@ -45,6 +53,19 @@ not enforcement. The Shield enforces every rule in the policy whether or not
 the CSP mentioned it. A rule the CSP filtered or dropped is still a rule; the
 CSP's `selection` says which and why, so a cut is never silent.
 
+WHICH TEXT IS CANONICAL (decided 2026-10-06). The same rules render two ways:
+`compile_csp(...).natural_language_prompt` (filtered, risk order, P0 first) and
+`build_prompt`'s type-ordered sentence list. The CANONICAL text is
+compile_csp's: it is the grant's CSP, the text demo/real_vla_demo.py injects,
+and the text the stored paraphrase sets are keyed to (experiments/paraphrases/).
+build_prompt's rendering stays for its legacy callers; the paraphraser serves it
+from the same sets by rule-set matching (paraphraser.rule_set_key). One rule
+follows: the sentence templates (guardrail/templates/sentence/*.j2) are frozen
+against the stored sets. Changing a template changes every CSP text, and the
+answer is a NEW frozen paraphrase set generated from the new text, never an
+edit of stored text; tests/test_paraphraser.py
+(test_every_instruction_in_scope_has_a_stored_set) fails until that is done.
+
 The older `summary_pack()` / `build_prompt()` surface is kept exactly as it was
 for the callers that read it (demo/run_demo.py, sitl/run_sitl_demo.py,
 sitl/ros2_shield_node.py, tools/build_architecture_svg.py, tests/test_bundle.py).
@@ -69,15 +90,16 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import csp as _csp
 from .csp import (CSP, CSP_VERSION, AllowedActionSet, CSPBudgetExceeded,
-                  ForbiddenActionSet, P0Entry, RiskWeights, RuleDecision,
-                  Selection, TokenCounter)
+                  CSPUnenforcedRules, ForbiddenActionSet, P0Entry, RiskWeights,
+                  RuleDecision, Selection, TokenCounter)
 from .geometry import nearest_on_polyline, point_in_fence
-from .models import (DAYS, AltitudeEnvelope, Corridor, KinematicEnvelope,
-                     ObstacleClearance, Policy, PolygonFence, SubjectStandoff)
+from .models import (DAYS, RUNTIME_TYPES, AltitudeEnvelope, Corridor,
+                     KinematicEnvelope, ObstacleClearance, Policy, PolygonFence,
+                     SubjectStandoff)
 
 # --------------------------------------------------------------------------- #
 # Defaults, each with its reason
@@ -144,6 +166,32 @@ PLACES = {
 }
 
 
+# The altitude phrase. Until 2026-10-06 this was
+#   (?:alt|altitude|height|tinggi)\D{0,3}(\d+)  |  (\d+)\s*m\s+(?:alt|altitude|height)
+# which reads "altitude 20" and "alt: 20" but not "at an altitude of 20" or
+# "at a height of 20 m": " of " is four non-digits, so the text fell through
+# to the 15 m default with nothing to say so (two of the eight stored
+# paraphrases of "fly to (40, 40) at 6 m/s altitude 20" would have flown 5 m
+# low). The old forms are all still read: the connective is optional and the
+# old \D{0,3} tail is kept after it.
+#
+# The first version of this widening (also 2026-10-06) read the TARGET as the
+# altitude: "fly at low altitude to (5, 5)" gave 5 m and "hold altitude to
+# (40, 40)" gave 40 m, with defaults_used empty - a wrong number presented as
+# read from the text. Three guards now, each enough for those commands:
+# parse_command strips the coordinate it used as the target before looking
+# for an altitude (as it strips the speed); the gap after the connective may
+# not contain "("; and a number followed by ", <number>" is a coordinate
+# pair, never an altitude. The number may not stop part-way through a longer
+# one ("(?!\d)(?!\.\d)"), so the look-ahead cannot be dodged by backtracking.
+_ALT_WORD = r"(?:altitude|alt|height|ketinggian|tinggi)"
+_ALT_NUM = r"(\d+(?:\.\d+)?)(?!\d)(?!\.\d)(?!\s*,\s*-?\d)"
+_ALT_RE = re.compile(
+    _ALT_WORD + r"\s*(?:(?:of|is|at|to|ke|sebesar|setinggi)\b\s*)?[^\d(]{0,3}?" + _ALT_NUM
+    + r"|(\d+(?:\.\d+)?)\s*(?:m|meters?|metres?)\s+"
+    r"(?:altitude|alt|height|ketinggian|tinggi|high|agl)\b")
+
+
 class Mission(BaseModel):
     task_text: str                 # the operator's original words
     target_x: float
@@ -156,6 +204,12 @@ class Mission(BaseModel):
     start_x: float = 0.0           # where the mission starts: home / current pose
     start_y: float = 0.0
     mission_id: str | None = None  # None: derived from the mission's content
+    # Added 2026-10-06: which fields parse_command did NOT read from the text
+    # and filled from its defaults ("cruise_alt_m", "speed_pref_mps"). Until
+    # then "at an altitude of 20" silently flew at the 15 m default. Not part
+    # of the mission's identity (_mission_id ignores it) and not read by
+    # compile_csp, so no stored CSP changes.
+    defaults_used: list[str] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- #
@@ -245,9 +299,34 @@ def window_text(rule) -> str | None:
     return f"{days} {clock}"
 
 
+def template_type(kind: str, rule_or_cls) -> str:
+    """The rule type whose `<kind>/<type>.j2` template renders this rule: its
+    own, else the nearest base class's that has one.
+
+    A rule type that subclasses another inherits its rendering. CircleFence is
+    a PolygonFence (its vertices are the derived 32-gon, models.py), so until
+    it has its own templates it reads as the keep-out zone it is: "Never enter
+    zone 'x'." Without this the lookup used `rule.type` alone, and a policy
+    with one circle_fence could not compile a CSP at all (TemplateNotFound),
+    though the Shield enforced the circle. A type with no template on its whole
+    chain returns its own name, so the loader names the file that is missing.
+    """
+    cls = rule_or_cls if isinstance(rule_or_cls, type) else type(rule_or_cls)
+    own = None
+    for c in cls.__mro__:
+        f = (getattr(c, "model_fields", None) or {}).get("type")
+        args = getattr(getattr(f, "annotation", None), "__args__", ()) if f else ()
+        if not args or not isinstance(args[0], str):
+            continue
+        own = own or args[0]
+        if (TEMPLATE_DIR / kind / f"{args[0]}.j2").is_file():
+            return args[0]
+    return own or getattr(rule_or_cls, "type", "unknown")
+
+
 def render_sentence(rule, show_priority: bool = False) -> str:
     """One rule as one sentence (templates/sentence/<type>.j2)."""
-    return render_template(f"sentence/{rule.type}.j2", {
+    return render_template(f"sentence/{template_type('sentence', rule)}.j2", {
         "r": rule, "window": window_text(rule),
         "soft": rule.constraint_type == "soft",
         "show_priority": show_priority, "priority": rule.priority})
@@ -255,7 +334,7 @@ def render_sentence(rule, show_priority: bool = False) -> str:
 
 def render_summary(rule) -> str:
     """One rule as a short clause for P1_summary / P2_summary."""
-    return render_template(f"summary/{rule.type}.j2", {
+    return render_template(f"summary/{template_type('summary', rule)}.j2", {
         "r": rule, "window": window_text(rule),
         "soft": rule.constraint_type == "soft"})
 
@@ -586,7 +665,7 @@ def _relevance(rule, act: dict, ctx: _Ctx) -> str:
     else:                                     # pragma: no cover - new rule type
         raise TypeError(f"no relevance template for {type(rule).__name__}")
     facts["time_fact"] = tf
-    return render_template(f"reason/{rule.type}.j2", facts)
+    return render_template(f"reason/{template_type('reason', rule)}.j2", facts)
 
 
 # --------------------------------------------------------------------------- #
@@ -661,7 +740,7 @@ def action_set_adapter(csp: CSP) -> dict:
 
 
 def action_violations(action, csp: CSP, state=None, policy: Policy | None = None,
-                      dt: float = 1.0) -> list[str]:
+                      dt: float = 1.0, ir=None) -> list[str]:
     """Which parts of the CSP's action sets a candidate Action4D breaks.
 
     This maps the CSP onto the VLA's action vocabulary, models.Action4D, and the
@@ -677,6 +756,12 @@ def action_violations(action, csp: CSP, state=None, policy: Policy | None = None
     Shield's own test - and against every keep-in corridor. Advisory: this
     counts would-be violations (the offline-replay metric of PDF p5); the
     Shield, not this function, decides what flies.
+
+    `ir`: a guardrail.ir.PolicyIR compiled from `policy`. With it each fence's
+    margin ring is the one built once at compile time instead of a rebuild per
+    call (30-45 us each), which matters to a replay that calls this for every
+    frame and candidate (tools/prefix_eval.py). Same answer either way; an IR
+    compiled from another policy is ignored rather than trusted.
     """
     a, f = csp.allowed_action_set, csp.forbidden_action_set
     out: list[str] = []
@@ -700,11 +785,13 @@ def action_violations(action, csp: CSP, state=None, policy: Policy | None = None
         out.append("altitude")
     if policy is None:
         return out
-    if policy.policy_hash != csp.policy_hash:
+    if not policy.matches_hash(csp.policy_hash):
         raise ValueError(f"CSP is for {csp.policy_hash}, policy is {policy.policy_hash}")
     by_id = {c.id: c for c in policy.constraints}
+    rings = ({r.rule.id: r.buffered for r in ir.fences}
+             if ir is not None and ir.is_current_for(policy) else {})
     for fid in f.no_translate_into_polygons:
-        if point_in_fence(x, y, up, by_id[fid]):
+        if point_in_fence(x, y, up, by_id[fid], buffered=rings.get(fid)):
             out.append(f"polygon:{fid}")
     for cid in f.no_translate_out_of_corridors:
         c = by_id[cid]
@@ -724,7 +811,7 @@ def p0_coverage(csp: CSP, policy: Policy) -> dict:
     counts as in scope and uncovered. Zero P0 rules in scope gives coverage
     None: "nothing to cover" is not 100 %, and it is not 0 % either.
     """
-    if policy.policy_hash != csp.policy_hash:
+    if not policy.matches_hash(csp.policy_hash):
         raise ValueError(f"CSP is for {csp.policy_hash}, policy is {policy.policy_hash}")
     dec = {r.id: r.decision for r in csp.selection.rules}
     filtered = ("filtered_inactive", "filtered_out_of_region")
@@ -759,7 +846,7 @@ def rule_coverage(csp: CSP, policy: Policy) -> dict:
     whatever the budget does. Scope is as in `p0_coverage`; a priority with no
     rule in scope gives None for both shares, not 1.0.
     """
-    if policy.policy_hash != csp.policy_hash:
+    if not policy.matches_hash(csp.policy_hash):
         raise ValueError(f"CSP is for {csp.policy_hash}, policy is {policy.policy_hash}")
     dec = {r.id: r.decision for r in csp.selection.rules}
     filtered = ("filtered_inactive", "filtered_out_of_region")
@@ -890,6 +977,9 @@ class ConstraintCompiler:
         m = re.search(r"\(?\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)?", low)
         if target is None and m:
             target = (float(m.group(1)), float(m.group(2)))
+            # The target's numbers are spent: "fly at low altitude to (5, 5)"
+            # must not read 5 m as the altitude (see _ALT_RE).
+            low = low.replace(m.group(0), " ")
         if target is None:
             raise ValueError(f"cannot resolve a target from: {text!r} "
                              f"(known places: {list(PLACES)})")
@@ -898,18 +988,24 @@ class ConstraintCompiler:
         # for an altitude (bit us once: "... 6 m/s altitude 20" parsed alt=6).
         speed = default_speed
         m = re.search(r"(\d+(?:\.\d+)?)\s*m/s", low)
+        speed_read = m is not None
         if m:
             speed = float(m.group(1))
             low = low.replace(m.group(0), " ")
 
         alt = default_alt
-        m = re.search(r"(?:alt|altitude|height|tinggi)\D{0,3}(\d+(?:\.\d+)?)|"
-                      r"(\d+(?:\.\d+)?)\s*m\s+(?:alt|altitude|height)", low)
+        m = _ALT_RE.search(low)
         if m:
             alt = float(m.group(1) or m.group(2))
 
+        defaults = []
+        if m is None:
+            defaults.append("cruise_alt_m")
+        if not speed_read:
+            defaults.append("speed_pref_mps")
         return Mission(task_text=text, target_x=target[0], target_y=target[1],
-                       cruise_alt_m=alt, speed_pref_mps=speed)
+                       cruise_alt_m=alt, speed_pref_mps=speed,
+                       defaults_used=defaults)
 
     # ---------------- policy (+ mission) -> CSP ---------------- #
 
@@ -978,7 +1074,9 @@ class ConstraintCompiler:
                           always carried structurally (P0_constraints vs the
                           summaries, and the order of the sentences).
 
-        Raises CSPBudgetExceeded if the P0 sentences alone exceed the budget.
+        Raises CSPBudgetExceeded if the P0 sentences alone exceed the budget,
+        and CSPUnenforcedRules if the policy carries a declarable-only rule
+        type the Shield does not enforce (models.RUNTIME_TYPES).
         """
         if not (0.0 < float(lookahead_s) <= _MAX_LOOKAHEAD_S):
             raise ValueError(f"lookahead_s must be in (0, {_MAX_LOOKAHEAD_S:g}], "
@@ -989,6 +1087,12 @@ class ConstraintCompiler:
             raise ValueError(f"region_margin_m must be >= 0 or None, got {region_margin_m!r}")
         issued, issued_src = _issue_stamp(issued_at, now)
         pol = self.policy
+        # A rule the Shield does not enforce can be neither told to the model
+        # nor dropped silently (csp.CSPUnenforcedRules). Checked before any
+        # rendering, so the error names the rules instead of a missing template.
+        unenforced = {c.id: c.type for c in pol.constraints if c.type not in RUNTIME_TYPES}
+        if unenforced:
+            raise CSPUnenforcedRules(pol.policy_id, unenforced)
         # The CSP refers to rules by id (geometry_ref, relevance_explanations,
         # selection). Two rules sharing an id would overwrite each other here
         # and one would vanish from the record without a trace.
@@ -1176,7 +1280,9 @@ class ConstraintCompiler:
         return [render_sentence(rule) for rule in _by_type_order(self.policy)]
 
     def build_prompt(self, mission: Mission) -> str:
-        """Render the structured YAML prompt the VLA receives.
+        """Render the structured YAML prompt for the VLA slot (the demos write
+        it to disk as prompt.yaml; the stub and BC pilots take the Mission and
+        policy objects, and no flown VLA has read this text).
         Templated, never free-form — same rule as the grant's NL adapter."""
         pack = self.summary_pack()
         alts = self.policy.by_type(AltitudeEnvelope)
@@ -1274,8 +1380,26 @@ def coverage_report(policies_dir: str | Path,
     files = sorted(Path(policies_dir).glob("*.yaml"))
     rows: list[dict] = []
     raised: list[dict] = []
+    not_flyable: list[dict] = []
     for f in files:
-        pol = load_policy(f)
+        # A file the Shield cannot fly as written (a declarable-only rule type,
+        # an unplaceable frame: Policy.flight_problems) has no CSP - the CSP
+        # summarises the rules the Shield enforces (csp.CSPUnenforcedRules).
+        # It is listed by name with its reasons and left out of every share,
+        # like `raised`. Until 2026-10-07 one such file in the folder stopped
+        # the whole report at load_policy. Every flyable file loads exactly as
+        # before (runtime=True); only a refused one is re-read as declared.
+        try:
+            pol = load_policy(f)
+        except ValueError:
+            pol = load_policy(f, runtime=False)
+            problems = pol.flight_problems()
+            if not problems:
+                raise
+            not_flyable.append({"file": _rel(f), "policy_id": pol.policy_id,
+                                "policy_hash": pol.policy_hash,
+                                "n_rules": len(pol.constraints), "problems": problems})
+            continue
         base = {"file": _rel(f), "policy_id": pol.policy_id,
                 "policy_hash": pol.policy_hash, "n_rules": len(pol.constraints)}
         naive = naive_prefix_baseline(pol, budget_tokens)
@@ -1342,6 +1466,7 @@ def coverage_report(policies_dir: str | Path,
             "n_policies": len(files),
             "n_compiled": len(rows),
             "n_raised_budget_exceeded": len(raised),
+            "n_not_flyable": len(not_flyable),
             "n_p0_in_scope": tot("n_p0_in_scope"),
             "n_p0_covered": tot("n_p0_covered"),
             "p0_coverage": cov,
@@ -1367,6 +1492,7 @@ def coverage_report(policies_dir: str | Path,
         },
         "rows": rows,
         "raised": raised,
+        "not_flyable": not_flyable,
     }
 
 
@@ -1392,6 +1518,9 @@ def _report(args) -> int:
     for r in rep["raised"]:
         print(f"{Path(r['file']).stem:34s} {r['n_rules']:5d}   CSPBudgetExceeded: P0 needs "
               f"{r['p0_tokens']} of {r['budget_tokens']} tokens")
+    for r in rep.get("not_flyable", []):
+        print(f"{Path(r['file']).stem:34s} {r['n_rules']:5d}   not flyable as written: "
+              + "; ".join(r["problems"]))
     t = rep["totals"]
     print(f"\nP0 coverage {t['n_p0_covered']}/{t['n_p0_in_scope']} "
           f"({_pct(t['p0_coverage'])}) over {t['n_compiled']} of {t['n_policies']} "
@@ -1418,6 +1547,9 @@ def _report(args) -> int:
     if rep["raised"]:
         print(f"{len(rep['raised'])} policy file(s) raised CSPBudgetExceeded and are "
               f"not in the coverage shares")
+    if rep.get("not_flyable"):
+        print(f"{len(rep['not_flyable'])} policy file(s) are not flyable as written "
+              f"(Policy.flight_problems), have no CSP, and are not in the coverage shares")
     print(f"code {rep['code_revision']}; reproduce: {rep['command']}")
     if args.json:
         out = Path(args.json)

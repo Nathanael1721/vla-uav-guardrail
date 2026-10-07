@@ -1,7 +1,7 @@
 {
   "schema": "guardrail.paraphrases.validation/1",
   "store_digest": "2b2b5788d9a021cc",
-  "validator_digest": "80d3096159a8a0de",
+  "validator_digest": "db9effaa13a7e2d5",
   "probes_digest": "1aec28f44872c919",
   "places_source": "guardrail.compiler.PLACES",
   "command": "python -m guardrail.paraphraser validate",
@@ -349,7 +349,7 @@
           6.0
         ],
         "n": 8,
-        "same_mission": 6,
+        "same_mission": 8,
         "same_only_by_default": 0,
         "null_identity_same_mission": true,
         "rows": [
@@ -369,13 +369,13 @@
           {
             "text": "go to point (40, 40) at an altitude of 20, moving at 6 m/s",
             "parsed": true,
-            "same_mission": false,
+            "same_mission": true,
             "speed_read": true,
-            "alt_read": false,
+            "alt_read": true,
             "mission": [
               40.0,
               40.0,
-              15.0,
+              20.0,
               6.0
             ]
           },
@@ -408,13 +408,13 @@
           {
             "text": "Please fly to (40, 40) at 6 m/s and an altitude of 20.",
             "parsed": true,
-            "same_mission": false,
+            "same_mission": true,
             "speed_read": true,
-            "alt_read": false,
+            "alt_read": true,
             "mission": [
               40.0,
               40.0,
-              15.0,
+              20.0,
               6.0
             ]
           },

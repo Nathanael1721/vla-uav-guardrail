@@ -17,6 +17,14 @@ The grant calls that rail `dev` and takes KPI figures from `hil` (Jetson Orin);
 stored `canonical-hil` labels are now shown as `dev`, and the grade column is
 today's guardrail.manifest.is_kpi_grade(), not a string comparison.
 
+Also corrected 2026-10-06: the detector rate rows read the MISSION rate
+(tools/build_eval_data.py `det_hz_mission`), not metrics.json's `det_hz`, which
+before 2026-09-29 counted the start-gate wait (CHANGELOG.md, 2026-09-29
+evening, Retracted); "the acceptance criterion is met on every flight" became
+the five-KPI wording (correction row C1); and the dev-topology paragraph no
+longer offers a PI waiver (the PI decided on 6 Oct that KPI runs move to the
+hil topology on a Jetson Orin).
+
 Usage:
     python tools/build_report_results.py
 """
@@ -58,8 +66,21 @@ def row(label: str, fn, M, L) -> str:
     return "| " + label + " | " + " | ".join(fn(M[t], L[t]) for t in TAGS) + " |"
 
 
+def mission_det_hz(tag: str, m: dict) -> float | None:
+    """The detector rate over the mission, from the flight log (one
+    implementation: tools/build_eval_data.det_hz_mission)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from build_eval_data import det_hz_mission                    # noqa: E402
+    p = ROOT / "demo" / "out" / tag / "flight_log.jsonl"
+    rows = [json.loads(x) for x in p.read_text(encoding="utf-8").splitlines() if x.strip()]
+    return det_hz_mission(rows, m)
+
+
 def build() -> str:
     M = {t: metrics(t) for t in TAGS}
+    for t in TAGS:
+        M[t]["det_hz_reported"] = M[t].get("det_hz")
+        M[t]["det_hz"] = mission_det_hz(t, M[t])
     L = {t: loop(t) for t in TAGS}
     R = {t: recorder(t) for t in TAGS}
     study = json.loads(STUDY.read_text(encoding="utf-8"))
@@ -111,7 +132,12 @@ def build() -> str:
             "| Shield interventions | "
             + " | ".join(str(M[t]["interventions"]) for t in TAGS) + " | not bounded |",
             "",
-            "The acceptance criterion is met on every flight. An escape is counted only "
+            ("No P0 escape on these scenario flights. "
+             if all(M[t]["p0_violation_escape_rate"] == 0 for t in TAGS) else "")
+            + "P0 violation escape rate (target 0) is one of the grant's five "
+            "acceptance KPIs, reported from Stress Testing runs in the hil "
+            "topology; these flights are functional-rail evidence. "
+            "An escape is counted only "
             "when the Shield neither repaired nor braked and the emitted action still "
             "violated a P0 rule; scoring the raw action would credit the system for its "
             "own inputs.", ""]
@@ -199,8 +225,8 @@ def build() -> str:
     # then that it was reachable only with recording off.
     gate = study["_gate"]["det_hz_min"]
     rates = {HEAD[t]: M[t]["det_hz"] for t in TAGS}
-    met = [k for k, v in rates.items() if v >= gate]
-    missed = [k for k, v in rates.items() if v < gate]
+    met = [k for k, v in rates.items() if v is not None and v >= gate]
+    missed = [k for k, v in rates.items() if v is None or v < gate]
     detail = ", ".join(f"{k} {f2(v)} Hz" for k, v in rates.items())
 
     if not missed:
@@ -230,8 +256,9 @@ def build() -> str:
             "10 Shield interventions, NFZ 0.0 s |",
             "| AerialVLA LoRA | UAV-tuned adapter on the same base | Target reached, NFZ 0, "
             "clean path around the zone |",
-            "| QLoRA fine-tunes (ours) | Trained on self-collected expert flights | 100 % "
-            "reached, mean efficiency 0.996, goal assist off |",
+            "| QLoRA fine-tunes (ours) | Trained on self-collected expert flights | 5/5 "
+            "reached, efficiency 0.996, with mission-direction assist (goal_blend 0.55); "
+            "the original adapter also 5/5 (0.942) under it |",
             "| Behaviour-cloning policy | Trained state and geometry policy | Flown, NFZ 0 |",
             "| Proportional controller | Hand-written, no model | Reported in 6.1 and 6.2 |",
             "",
@@ -283,8 +310,9 @@ def build() -> str:
                 "all on one desktop. The grant calls this configuration `dev` and "
                 "does not use it for reported KPI numbers; those come from `hil`, "
                 "with the VLA and the Shield on a Jetson Orin. These runs are "
-                "therefore evidence that the Guardrail works through MAVROS 2, and "
-                "count as KPI figures only under a written waiver from the PI.", "",
+                "therefore evidence that the Guardrail works through MAVROS 2; the "
+                "KPI campaign runs in `hil`, with the VLA and the Shield on a "
+                "Jetson Orin.", "",
                 "| Configuration | P0 escape rate | Time in zone | Interventions | Outcome | KPI-grade today |",
                 "|---|---|---|---|---|---|"]
         for label, k, m, mn in mavros:
@@ -377,7 +405,8 @@ def main() -> int:
     print(f"section 6 regenerated in {REPORT.name}")
     for t in TAGS:
         m, l = metrics(t), loop(t)
-        print(f"  {t:<14} det_hz={m['det_hz']:<6} loop={l['hz']:.2f} Hz  "
+        print(f"  {t:<14} det_hz={mission_det_hz(t, m)} (stored {m['det_hz']}) "
+              f"loop={l['hz']:.2f} Hz  "
               f"seen={m['frac_ticks_seen']}  p0_escape={m['p0_violation_escape_rate']}")
     return 0
 

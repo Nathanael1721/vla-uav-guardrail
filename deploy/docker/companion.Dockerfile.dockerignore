@@ -1,0 +1,9 @@
+# Build context of companion.Dockerfile (BuildKit reads <Dockerfile>.dockerignore
+# next to the Dockerfile). The context is the repository root, which is ~34 GB
+# (Unreal projects, flight artefacts, model weights) and holds the private
+# signing key under policies/keys/. Everything is excluded; only the two files
+# the Dockerfile copies are let back in. The code itself is mounted at run time.
+*
+!requirements.txt
+!deploy/docker/constraints-companion.txt
+!deploy/docker/entrypoint.sh

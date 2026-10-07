@@ -5,7 +5,10 @@
 # and Safety Shield, "Test matrix": "Every release runs this matrix in Stress
 # Testing's smoke set" - high-speed near-edge, sudden NFZ, time-window switch
 # instant, three simultaneous violations, GPS noise / latency. Each of the five
-# has at least one family below.
+# has at least one family below, and since 2026-10-07 so has each of the
+# grant's four templates (dynamic_nfz_movement, time_window_switch,
+# radius_scaling, corridor_swap) and the fail-safe family whose label says a
+# fail-safe IS expected.
 #
 # WHAT THIS REPRODUCES AND WHAT IT DOES NOT
 #
@@ -17,14 +20,15 @@
 #
 # HOW THE COUNT IS MADE
 #
-# The 13 scenarios of the original library run whole. Every stress family is
-# cut down to a few cells with `sweep_overrides` (values the family really
-# sweeps - an override for a parameter it does not sweep is refused), and
-# sampled families draw one approach angle (`samples_per_family: 1`). Before
-# anything runs, experiments/sweep_scenarios.py refuses the profile (exit 2) if
-# the expanded count falls outside `expected_cells` or if any two cells fly the
+# The original library's scenarios run whole. Every family with a sweep is cut
+# down to a few cells with `sweep_overrides` (values the family really sweeps -
+# an override for a parameter it does not sweep is refused), and sampled
+# families draw one approach angle (`samples_per_family: 1`). Before anything
+# runs, experiments/sweep_scenarios.py refuses the profile (exit 2) if the
+# expanded count falls outside `expected_cells` or if any two cells fly the
 # same episode (guardrail.scenario_spec.duplicate_cells, which compares
-# behaviour only - not ids, descriptions, gates or labels).
+# behaviour only - not ids, descriptions, gates or labels). The paraphrase and
+# prefix arms some families declare add EPISODES, never cells.
 #
 #   python experiments/sweep_scenarios.py --profile smoke
 
@@ -40,20 +44,39 @@ expected_cells: [40, 60]
 sweep_overrides:
   dyn-nfz-spawn-ahead:
     vehicle_speed_mps: [4]
-    ahead_m: [3, 12]
+    ahead_m: [12]
+  dyn-nfz-spawn-on-top:
+    size_m: [40]
+  dyn-nfz-translate:
+    zone_mps: [2]
+  dyn-nfz-rotate-spin:
+    deg_per_s: [3]
   time-window-closes-mid-run:
-    clock: ["2026-09-07T17:30:50"]
+    clock: ["2026-09-07T17:29:50"]
+    vehicle_speed_mps: [4]
   time-window-opens-on-vehicle:
-    clock: ["2026-09-07T07:29:55", "2026-09-07T07:29:56"]
+    clock: ["2026-09-07T07:29:56"]
+  time-window-opens-ahead:
+    clock: ["2026-09-07T07:29:52"]
+  rule-activated-mid-run:
+    at: [2.0]
+  radius-scaling-grow:
+    factor: [2.5]
+  radius-scaling-shrink:
+    factor: [0.5]
+  corridor-swap-narrowed:
+    ask_mps: [2]
+  failsafe-rtl-zone:
+    ahead_m: [12]
   high-speed-near-edge:
-    pass_y: [23.2, 23.5]
+    pass_y: [23.2]
     ask_mps: [20]
     edge_deg: [0, 90]
   near-edge-at-12mps:
-    pass_y: [40.5, 41.1]
+    pass_y: [41.1]
     ask_mps: [12, 20]
   three-simultaneous-violations:
-    start_up: [3.0, 9.0]
+    start_up: [3.0]
     ask_mps: [11]
   gps-noise-within-margin:
     pass_y: [23.6]
@@ -62,22 +85,23 @@ sweep_overrides:
   gps-noise-beyond-margin:
     pass_y: [23.6]
     sigma: [2.0]
-    latency: [5, 10]
+    latency: [5]
   gps-dropout:
     lane_y: [15.0, 23.6]
     window: [[6.0, 11.0]]
   wind-within-authority:
     wind_speed_mps: [2]
-    wind_dir_deg: [0, 270]
+    wind_dir_deg: [270]
   wind-beyond-authority:
     lane_y: [15.0]
   wind-gusts:
+    lane_y: [15.0]
     wind_speed_mps: [2]
   standoff-approach-angles:
-    offset_m: [7, 12]
+    offset_m: [12]
     subject_class: [pedestrian]
   corridor-drift-angles:
-    drift_deg: [-60, 0, 60]
+    drift_deg: [-60, 0]
     ask_mps: [8]
   altitude-recovery-depth:
-    start_up: [0.5, 9.5, 30.0]
+    start_up: [9.5, 30.0]

@@ -1,0 +1,79 @@
+# ArduCopter parameters for the CityLife quad flown in Project AirSim
+# (robot_citylife_ardupilot.jsonc, controller "ardupilot-api").
+#
+# Loaded LAST, after the two files `sim_vehicle.py -v ArduCopter -f airsim-copter`
+# loads itself (Tools/autotest/default_params/copter.parm and airsim-quadX.parm,
+# read from the pinned Copter-4.5.7 tree). rail.sitl_args() also starts SITL
+# with -w, which erases the parameters stored in eeprom.bin by an earlier
+# session (a value edited in Mission Planner, say); without -w a stored value
+# would override --defaults. With both, every value here wins at every start.
+#
+#   bash demo/pas_ardupilot/start_ardupilot.sh ...      (what our launcher runs)
+#   sim_vehicle.py -v ArduCopter -f airsim-copter --add-param-file=<this file> ...
+#                                                        (the upstream equivalent)
+
+# --- 1. Airframe and rate-loop tuning ---------------------------------------
+# Quad, X layout: motor 1 front-right, 2 rear-left, 3 front-left, 4 rear-right,
+# which is the robot config's actuator-order.
+FRAME_CLASS     1
+FRAME_TYPE      1
+# Copied verbatim from IAMAI's project-airsim-quad.param, the tuning their
+# ArduPilot example flies this exact airframe with (same mass, links and rotor
+# coefficients; tests/test_pas_ardupilot.py checks the airframe identity).
+ATC_RAT_RLL_P   0.733
+ATC_RAT_RLL_I   0.733
+ATC_RAT_RLL_D   0.0056
+ATC_ANG_RLL_P   36.000
+ATC_ACCEL_R_MAX 374870
+ATC_RAT_PIT_P   0.768
+ATC_RAT_PIT_I   0.768
+ATC_RAT_PIT_D   0.0050
+ATC_ANG_PIT_P   36.00
+ATC_ACCEL_P_MAX 348730
+ATC_RAT_YAW_P   2.000
+ATC_RAT_YAW_I   0.200
+ATC_RAT_YAW_D   0.0000
+ATC_ANG_YAW_P   3.429
+ATC_ACCEL_Y_MAX 2893
+
+# --- 2. Autonomous speeds sized to the CityLife policy ----------------------
+# airsim-quadX.parm sets WPNAV_SPEED 2000 (20 m/s) and RTL_ALT 2500 (25 m). The
+# CityLife policies cap speed at 5 m/s and climb at 2 m/s and hold 6-14 m
+# (policies/follow_car_citylife.yaml), so the autopilot's own modes (AUTO for
+# the G1 square, RTL as the fence action) stay inside the same envelope the
+# Shield enforces on the pilot.
+WPNAV_SPEED     500
+WPNAV_SPEED_UP  200
+WPNAV_SPEED_DN  150
+RTL_ALT         1200
+
+# --- 3. The autopilot's own geofence: the grant's "ultimate backstop" -------
+# Architecture constraints: "The autopilot's own GeoFence / FENCE_ACTION is the
+# ultimate backstop -- the Shield does not replace it, it pre-empts it."
+# Maximum altitude 20 m (above the policy's 14 m ceiling, so the Shield acts
+# first) and a 400 m circle round home. The radius is sized from flown data:
+# over the 26 stored CityLife follow trajectories (demo/out/citylife*/
+# trajectory.json, measured 2026-10-07) the largest horizontal distance from
+# the start point is 253.7 m (citylife_redcar_final2), and 214 m is typical
+# of the red-car runs. A 250 m circle would have fired RTL in the middle of
+# such a follow; 400 m leaves about 1.5x margin. tests/test_pas_ardupilot.py
+# re-measures it when those runs are on disk. The policy has no keep-in
+# boundary, so nothing tighter is pre-empted by the Shield here.
+# Action 1 = RTL, or LAND where RTL is impossible.
+FENCE_ENABLE    1
+FENCE_TYPE      3
+FENCE_ALT_MAX   20
+FENCE_RADIUS    400
+FENCE_ACTION    1
+
+# --- 4. Telemetry on SERIAL0, the link mavlink-router holds ------------------
+# Streamed without anyone asking, so Mission Planner, MAVROS and the perception
+# node all see position, attitude, EKF status and servo outputs from boot.
+# Mission Planner may raise or lower these for the shared link; the perception
+# node also requests its own messages by MAV_CMD_SET_MESSAGE_INTERVAL.
+SR0_POSITION    10
+SR0_EXTRA1      10
+SR0_EXTRA2      10
+SR0_EXTRA3      2
+SR0_EXT_STAT    2
+SR0_RC_CHAN     10

@@ -9,16 +9,22 @@
 #
 #   1. Standalone test files that run in full on a clean checkout. Each is its
 #      own runner (`python tests/test_x.py` prints "N/M passed" and exits
-#      non-zero on a failure); there is no pytest dependency.
+#      non-zero on a failure); there is no pytest dependency. A test that
+#      cannot run on the host prints SKIP and is counted apart, never as a
+#      pass (tests/test_api.py's route tests need FastAPI, installed on the
+#      3.11 job with signing only; they SKIP on the other two).
 #      tests/test_replay.py is NOT listed: its fixtures live under demo/out/
 #      (gitignored), so on a clean clone it runs 2 of its 20 tests and SKIPs
 #      18, and a green tick there would be mostly silence (measured on a
-#      simulated clean clone, 2026-10-06).
+#      simulated clean clone, 2026-10-06). tests/test_kpi_report.py is not
+#      listed for the same reason (its delivered-run checks need demo/out/).
 #   2. The smoke profile of the stress harness (experiments/profiles/smoke.yaml,
-#      ~50 scenarios x 1 seed). Known failures and tracked episodes are
-#      reported and do not fail the job; a new failure, a pinned defect that
-#      starts passing, a refused run (exit 2) or a run that scored nothing
-#      (exit 3) does.
+#      ~50 scenarios x 1 seed, with the escalation FSM flying, since
+#      2026-10-07). Known failures and tracked episodes are reported and do
+#      not fail the job; a new failure, a pinned defect that starts passing, a
+#      refused run (exit 2) or a run that scored nothing (exit 3) does. The
+#      run writes its KPI report (one row per template and parameter cell) to
+#      ci-smoke/episodes/kpi_report.md, kept with the bundles.
 #
 # NOT YET RUN ON GITHUB. This file was written and checked locally; nothing has
 # been pushed. Two things to check on the first run:
@@ -26,9 +32,9 @@
 #     against the 1 m margin ring in high-speed-near-edge). Linux floating point
 #     could move a cell across a gate; if one flips, re-measure it, do not
 #     loosen the gate.
-#   * The listed tests depend on files other work in progress is changing
-#     (e.g. tests/test_bundle.py needs the .gitignore key patterns). Commit
-#     them together, or the first run fails for reasons unrelated to the code.
+#   * The listed tests depend on files other work in progress is changing.
+#     Commit them together, or the first run fails for reasons unrelated to
+#     the code.
 #
 # WHAT DOES NOT RUN HERE, AND WHY
 #
@@ -53,7 +59,7 @@ on:
 jobs:
   guardrail:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -61,7 +67,7 @@ jobs:
           - python: "3.10"
             extras: "cryptography"
           - python: "3.11"
-            extras: "cryptography"
+            extras: "cryptography fastapi httpx"
           - python: "3.11"
             extras: ""
     steps:
@@ -71,12 +77,12 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
-      # jinja2 is named explicitly because requirements.txt does not list it yet,
-      # although guardrail/compiler.py's build_prompt() and summary_pack() need
-      # it (pyproject.toml declares it core; tests/test_bundle.py calls
-      # build_prompt). Drop it from this line once requirements.txt has it.
+      # requirements.txt carries jinja2 since 2026-10-06 (guardrail/compiler.py
+      # build_prompt() and summary_pack() render through it), so it is no
+      # longer named here by hand. FastAPI and httpx (TestClient) go only to the
+      # job that runs tests/test_api.py's route tests: pyproject's `api` extra.
       - name: Install the guardrail's dependencies
-        run: python -m pip install -r requirements.txt jinja2 ${{ matrix.extras }}
+        run: python -m pip install -r requirements.txt ${{ matrix.extras }}
 
       - name: Standalone test files
         run: |
@@ -85,6 +91,9 @@ jobs:
               tests/test_scenario_spec.py \
               tests/test_sweep.py \
               tests/test_shield.py \
+              tests/test_shield_events.py \
+              tests/test_ir.py \
+              tests/test_api.py \
               tests/test_corridor.py \
               tests/test_clearance.py \
               tests/test_check_contract.py \
@@ -107,7 +116,7 @@ jobs:
           python experiments/sweep_scenarios.py --profile smoke
           --out ci-smoke/sweep.json --runs ci-smoke/episodes
 
-      - name: Keep the smoke results and episode bundles
+      - name: Keep the smoke results, episode bundles and KPI report
         if: always()
         uses: actions/upload-artifact@v4
         with:

@@ -1,0 +1,27 @@
+# flight topology only: gives MAVROS the autopilot's serial device. Used ON TOP
+# of docker-compose.orin.yml, never alone:
+#
+#   docker compose --env-file <your copy of flight.env> \
+#                  -f deploy/compose/docker-compose.orin.yml \
+#                  -f deploy/compose/docker-compose.orin.flight.yml up -d mavros
+#
+# FCU_DEVICE ships empty in flight.env, so this file refuses to start until it
+# names the device in FCU_URL (e.g. /dev/ttyACM0 for USB, /dev/ttyTHS1 for a
+# UART on the carrier board). An autopilot reached over UDP (an Ethernet-
+# equipped flight controller) needs no device and no override: set FCU_URL to
+# its udp:// address and use docker-compose.orin.yml alone. hil never uses
+# this file; the hil MAVROS container maps no device at all.
+#
+# Written 2026-10-06, NOT yet run.
+
+name: vlaguard-orin
+
+x-vlaguard:
+  topologies: [flight]
+  host: orin
+  overrides: docker-compose.orin.yml
+
+services:
+  mavros:
+    devices:
+      - "${FCU_DEVICE:?set FCU_DEVICE to the autopilot's serial device (docs/RUNBOOK-orin-hil.md, Moving to the drone)}:${FCU_DEVICE:?}"

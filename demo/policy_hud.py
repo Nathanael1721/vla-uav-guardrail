@@ -10,13 +10,19 @@ any limit; a one-tick correction was gone before a viewer could read it.
 The grant's Safety Shield already keeps a per-decision audit trail
 (guardrail/audit.py: what was violated, which repair operator ran, whether it
 braked). This module is that same record made visible, tick by tick. It
-decides nothing. It reads
+decides nothing, and since 2026-10-07 it measures nothing either. It reads
 
   - the ShieldDecision the control loop already holds (violations, repairs,
     braked, emitted_violations),
-  - what the Shield itself measured: the subject position it was given (the
-    estimator's, never ground truth), its obstacle distance field and whether
-    the aircraft is off that field,
+  - the Shield's own rule checker, `Shield.rule_status(state)`: each rule's
+    distance, whether it is in force, binds and is breached, measured with the
+    geometry the Shield enforces (the zones' margin rings, the corridor's
+    segments, its obstacle distance field). The grant allows "exactly one
+    rule-evaluation code path in the system" (Safety Shield page); this module
+    used to keep a second one (`_poly_distance`, `_polyline_distance` and its
+    own breach tests), and a parity test was all that held the two together,
+  - what the Shield was given: the subject position (the estimator's, never
+    ground truth) and whether the aircraft is off its obstacle map,
   - the controller's FenceGuard verdict (holding at a fence or obstacle, or
     routing around one, and which of the two),
 
@@ -28,9 +34,10 @@ WHAT THE STATUSES MEAN (shown per rule), lowest to highest rank:
 
   idle    the rule is in the policy but cannot bind right now: a stand-off with
           no subject being tracked, one written for pedestrians while the
-          subject is a car, or a zone whose altitude band the aircraft is not
-          in. Shown, not hidden, because "the 10 m pedestrian rule did nothing
-          on a car flight" is a fact a reviewer should see.
+          subject is a car, a zone whose altitude band the aircraft is not
+          in, or a rule outside its time window (or switched off by a
+          time_window_switch). Shown, not hidden, because "the 10 m pedestrian
+          rule did nothing on a car flight" is a fact a reviewer should see.
   OK      bound and satisfied with room to spare.
   NEAR    inside the rule's own soft margin (`soft_margin_m` in the policy),
           within the controller's brake distance of a no-fly zone, or off the
@@ -38,8 +45,13 @@ WHAT THE STATUSES MEAN (shown per rule), lowest to highest rank:
   AVOID   the controller is steering around a no-fly zone or obstacle on its
           own (FenceGuard mirrors the policy), so the Shield does not have to.
   HOLD    the controller stopped short of a no-fly zone or obstacle.
+  WATCH   the command breaks this rule and the Shield did NOT correct it: the
+          rule's breach action is monitor_only (recorded, never repaired), or
+          the decision carries no repair at all (a Shield-off flight's log).
   ACTING  the Shield repaired the command for this rule: the rule was violated
-          by the command, or a repair operator for this kind of rule ran.
+          by the command, or a repair operator for this kind of rule ran. Never
+          shown for a monitor_only rule, and never without a repair or brake
+          in the decision.
   BREACH  the aircraft is PAST the limit right now (inside the zone or its
           margin, nearer than the clearance or stand-off, outside the band) -
           the Shield forgives that only while the motion is recovering - or a
@@ -58,8 +70,13 @@ repairs would call that flight "nothing happened".
 
 THE BANNER shows the most important event of the last `hold_s` seconds, by
 event, not by colour: a P0 still violated by the sent command, then a brake,
-then a breach, then any Shield repair, then a controller hold, a controller
-detour, being off the map, approaching a zone. A one-tick repair at 10 Hz is
+then a breach, then any Shield repair, then a rule broken and not corrected
+(WATCH), then a controller hold, a controller detour, being off the map,
+approaching a zone. "SHIELD CORRECTED COMMAND" and the "Shield corrections"
+count need a repair or a brake in the decision: before 2026-10-07 (review) a
+violated monitor_only rule, which the Shield flies uncorrected by design, was
+shown as ACTING with that banner, and so was every violation in the log of a
+flight flown with the Shield off. A one-tick repair at 10 Hz is
 invisible in a video, so rows and banner are LATCHED for `hold_s` seconds. The
 counts are not latched; they are the flight's running totals, and the P0
 escape count uses guardrail/kpi.py's definition exactly.
@@ -71,10 +88,10 @@ from collections import deque
 from dataclasses import dataclass
 
 # Row status rank; the latch keeps the highest seen within hold_s.
-SEVERITY = {"idle": 0, "ok": 1, "near": 2, "avoid": 3, "hold": 4, "act": 5,
-            "breach": 6, "brake": 7}
+SEVERITY = {"idle": 0, "ok": 1, "near": 2, "avoid": 3, "hold": 4, "watch": 5,
+            "act": 6, "breach": 7, "brake": 8}
 STATUS_TEXT = {"idle": "idle", "ok": "OK", "near": "NEAR", "avoid": "AVOID",
-               "hold": "HOLD", "act": "ACTING", "breach": "BREACH",
+               "hold": "HOLD", "watch": "WATCH", "act": "ACTING", "breach": "BREACH",
                "brake": "BRAKE"}
 
 # RGB per status, shared by the rows, the dots and the banner.
@@ -84,6 +101,7 @@ COLOURS = {
     "near": (255, 205, 60),
     "avoid": (90, 180, 255),
     "hold": (240, 70, 60),
+    "watch": (190, 140, 255),
     "act": (255, 145, 30),
     "breach": (255, 60, 160),
     "brake": (230, 30, 30),
@@ -92,12 +110,22 @@ COLOURS = {
 # Banner events, most important first. The latch compares these ranks, not the
 # colours: a Shield repair (orange) must not be hidden by a controller hold
 # (red) that happens to be drawn in a stronger colour.
-EVENTS = ("escape", "brake", "breach", "shield", "hold", "avoid", "offmap",
-          "approach")
+EVENTS = ("escape", "brake", "breach", "shield", "watch", "hold", "avoid",
+          "offmap", "approach")
 
 # Default for when the zone turns NEAR. The control loop passes FenceGuard's
 # own brake distance, which is where the aircraft starts slowing for a zone.
 FENCE_NEAR_M = 12.0
+
+
+class _Origin:
+    """A position for reading the rules' geometry before the first tick."""
+    x = 0.0
+    y = 0.0
+    up = 0.0
+
+
+_ORIGIN = _Origin()
 
 # Operator names in guardrail/shield.py, in words a viewer can read, and the
 # kind of rule each one acts for.
@@ -115,6 +143,7 @@ OPERATOR_WORDS = {
     "CorridorReturn": "steered back into corridor",
     "CorridorAltitudeFix": "corridor altitude corrected",
     "Sanitise": "invalid command replaced",
+    "SoftRelax": "soft rule given up",
     "Brake": "stopped",
 }
 OPERATOR_KIND = {
@@ -125,6 +154,19 @@ OPERATOR_KIND = {
     "StandoffRecover": "subject_standoff", "StandoffHold": "subject_standoff",
     "CorridorReturn": "corridor", "CorridorAltitudeFix": "corridor",
 }
+
+# Every keep-out zone class is drawn and judged as a zone; both corridor
+# classes as a corridor. The Shield enforces circle_fence (a derived 32-gon)
+# and dynamic_nfz (it can move) exactly as it enforces polygon_fence.
+ZONE_KINDS = ("polygon_fence", "circle_fence", "dynamic_nfz")
+TUBE_KINDS = ("corridor", "corridor_swap")
+
+
+def _family(kind: str) -> str:
+    """polygon_fence for any zone class, corridor for either corridor class:
+    the kind the repair operators are filed under (OPERATOR_KIND)."""
+    return ("polygon_fence" if kind in ZONE_KINDS
+            else "corridor" if kind in TUBE_KINDS else kind)
 
 
 @dataclass(frozen=True)
@@ -156,67 +198,47 @@ def rule_view(c) -> RuleView:
         label, limit = "Altitude band", f"{_num(c.alt_min_m)}-{_num(c.alt_max_m)} m"
     elif kind == "kinematic_envelope":
         label, limit = "Speed limit", f"<= {_num(c.speed_max_mps)} m/s"
-    elif kind == "polygon_fence":
+    elif kind in ZONE_KINDS:
         label, limit = f"NFZ {c.id}", "keep out"
-    elif kind == "corridor":
+    elif kind in TUBE_KINDS:
         label, limit = f"Corridor {c.id}", f"+/-{_num(c.width_m / 2.0)} m"
+    elif kind == "time_window_switch":
+        label, limit = f"Switch {c.target_id}", "on" if c.active else "off"
     else:
         label, limit = c.id, kind
     return RuleView(id=c.id, kind=kind, label=label, limit=limit,
                     priority=getattr(c, "priority", "P0"), soft_m=soft)
 
 
-def _poly_distance(px: float, py: float, pts) -> tuple[float, bool]:
-    """(distance to the polygon's boundary, inside?) without shapely, so the
-    module stays importable where shapely is not installed."""
-    inside = False
-    n = len(pts)
-    best = float("inf")
-    for i in range(n):
-        ax, ay = pts[i]
-        bx, by = pts[(i + 1) % n]
-        if (ay > py) != (by > py):
-            xc = ax + (py - ay) * (bx - ax) / (by - ay)
-            if px < xc:
-                inside = not inside
-        dx, dy = bx - ax, by - ay
-        L2 = dx * dx + dy * dy
-        t = 0.0 if L2 < 1e-12 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
-        best = min(best, math.hypot(px - (ax + t * dx), py - (ay + t * dy)))
-    return best, inside
-
-
-def _polyline_distance(px: float, py: float, pts) -> float:
-    best = float("inf")
-    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
-        dx, dy = bx - ax, by - ay
-        L2 = dx * dx + dy * dy
-        t = 0.0 if L2 < 1e-12 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
-        best = min(best, math.hypot(px - (ax + t * dx), py - (ay + t * dy)))
-    return best
-
-
 class PolicyIndicator:
     """Per-tick policy state for the HUD. Call `update()` once per control tick
-    with what the loop already has; hand the returned dict to the recorder."""
+    with what the loop already has; hand the returned dict to the recorder.
+
+    `shield` is the flight's own Shield, whose rule checker the panel reads
+    (and whose hot-applied rules it shows as they arrive). Without one the
+    indicator builds a Shield of its own over `policy`, with no escalation
+    FSM and no obstacle map - the rule geometry is still the Shield's, and an
+    offline caller passes the clearance it measured (`clearance_m`)."""
 
     def __init__(self, policy, hold_s: float = 1.5, trail_n: int = 400,
-                 base_map=None, fence_near_m: float = FENCE_NEAR_M):
-        self.policy = policy
+                 base_map=None, fence_near_m: float = FENCE_NEAR_M, shield=None):
+        if shield is None:
+            # Imported here, not at the top: the drawing half of this module
+            # (OverlayCache, draw_*) runs on the recorder thread and needs only
+            # PIL.
+            from guardrail.shield import Shield
+            shield = Shield(policy, escalation=False)
+        self.shield = shield
+        self.policy = shield.policy
         self.hold_s = float(hold_s)
         self.fence_near_m = float(fence_near_m)
-        self.rules = [rule_view(c) for c in policy.constraints]
-        # Rows are keyed by POSITION, not id: a policy with a reused id (a
-        # copy-pasted block) would otherwise pair a row with the wrong rule
-        # and raise inside the control loop. Ids are still shown.
-        self._pairs = list(zip(self.rules, policy.constraints))
-        self._by_id = {c.id: c for c in policy.constraints}
-        self._prio = {c.id: getattr(c, "priority", "P0") for c in policy.constraints}
-        self.fences = [(c.id, [(v.x, v.y) for v in c.vertices], float(c.margin_m))
-                       for c in policy.constraints if getattr(c, "type", "") == "polygon_fence"]
-        self.corridors = [(c.id, [(p.x, p.y) for p in c.centerline], float(c.width_m))
-                          for c in policy.constraints if getattr(c, "type", "") == "corridor"]
-        self._latch: dict[int, tuple[str, float, str]] = {}
+        self._gen = None
+        self.fences: list = []
+        self.corridors: list = []
+        first = self.shield.rule_status(_ORIGIN, None)
+        self._sync(first)
+        self._map_rules(first)
+        self._latch: dict[tuple, tuple[str, float, str]] = {}
         self._banner: tuple[int, str, str, float] | None = None
         self.counts = {"ticks": 0, "repaired": 0, "braked": 0, "held": 0,
                        "avoided": 0, "p0_escapes": 0}
@@ -224,13 +246,40 @@ class PolicyIndicator:
         self.trail: deque = deque(maxlen=trail_n)
         self.base_map = base_map          # see render_base_map()
 
+    def _sync(self, status: list[dict]) -> None:
+        """Rows follow the Shield's rule set: a hot-applied dynamic zone, switch
+        or swap gets a row at the generation it arrives, an expired zone loses
+        it. The rules are taken from the SAME rule_status snapshot as the row
+        values (each row carries its `rule`), so an event landing on the REST
+        thread mid-update cannot pair a row with another rule's status."""
+        cons = [r["rule"] for r in status]
+        key = tuple(id(c) for c in cons)
+        if self._gen == key:
+            return
+        self._gen = key
+        self.rules = [rule_view(c) for c in cons]
+        # Rows are keyed by POSITION (and id), not id alone: a policy with a
+        # reused id (a copy-pasted block) would otherwise pair a row with the
+        # wrong rule and raise inside the control loop. Ids are still shown.
+        self._pairs = list(zip(self.rules, cons))
+        self._by_id = {c.id: c for c in cons}
+        self._prio = {c.id: getattr(c, "priority", "P0") for c in cons}
+
+    def _map_rules(self, status: list[dict]) -> None:
+        """The zones and corridors for the inset map, as the Shield holds them
+        now (a moving zone where it is this tick)."""
+        self.fences = [(r["id"], r["vertices"], r["margin_m"]) for r in status
+                       if r["type"] in ZONE_KINDS and r["in_force"]]
+        self.corridors = [(r["id"], r["centerline"], r["width_m"]) for r in status
+                          if r["type"] in TUBE_KINDS and r["in_force"]]
+
     def _p(self, rid: str) -> str:
         # An unknown rule is treated as P0, as guardrail/kpi.py does.
         return self._prio.get(rid, "P0")
 
     # ------------------------------------------------------------------ #
 
-    def _latched(self, rid: int, status: str, value: str, t: float) -> tuple[str, str]:
+    def _latched(self, rid: tuple, status: str, value: str, t: float) -> tuple[str, str]:
         """Keep the most severe status seen within hold_s, with the value read
         at that moment, so an ACTING row does not show a value from after the
         repair already took effect."""
@@ -251,10 +300,25 @@ class PolicyIndicator:
         aircraft State (x north, y east, up); `fence_mode` the controller's
         "clear" / "near" / "skirt" / "hold" and `fence_cause` which hazard set
         it (FenceGuard.last_cause; None = not known). Returns the HUD snapshot."""
-        viol = {v.rule_id for v in decision.violations}
         ops = [r.operator for r in decision.repairs]
         acted_kinds = {OPERATOR_KIND[o] for o in ops if o in OPERATOR_KIND}
+        # The Shield's own reading of every rule at this position (see the
+        # module docstring). The subject is the one this loop was given.
+        status = self.shield.rule_status(
+            state, decision.emitted, subject=subject_xy, subject_class=subject_class,
+            use_live_subject=False, clearance_m=clearance_m)
+        self._sync(status)
+        self._map_rules(status)
         braked = bool(decision.braked)
+        # Which violations the Shield corrected and which it did not. A
+        # monitor_only rule is never corrected (its row's effective action,
+        # read from the Shield); a decision with no repair and no brake
+        # corrected nothing at all.
+        monitored = {r["id"] for r in status if r["effective_action"] == "monitor_only"}
+        acted = bool(decision.repairs) or braked
+        broken = {v.rule_id for v in decision.violations}
+        watch = broken if not acted else broken & monitored
+        viol = broken - watch
         holding = fence_mode == "hold"
         skirting = fence_mode == "skirt"
         # guardrail/kpi.py: an escape is a tick whose RAW command violated a P0
@@ -265,7 +329,7 @@ class PolicyIndicator:
         escaped = p0_raw and bool(escaped_ids)
 
         self.counts["ticks"] += 1
-        if decision.violations:
+        if acted:
             self.counts["repaired"] += 1
         if braked:
             self.counts["braked"] += 1
@@ -276,64 +340,65 @@ class PolicyIndicator:
         if escaped:
             self.counts["p0_escapes"] += 1
 
-        # Zones as the Shield enforces them: the polygon plus its margin, and
-        # only inside the zone's altitude band.
+        # Zones as the Shield enforces them (rule_status): the distance to the
+        # margin ring, and only inside the zone's altitude band and window.
         fence_d = {}
-        for fid, pts, margin in self.fences:
-            rule = self._by_id[fid]
-            d, inside = _poly_distance(state.x, state.y, pts)
-            in_band = rule.altitude_floor_m <= state.up <= rule.altitude_ceiling_m
-            in_ring = inside or d <= margin
-            fence_d[fid] = (0.0 if in_ring else d - margin, in_ring, in_band, inside)
+        for r in status:
+            if r["type"] in ZONE_KINDS and r["in_force"]:
+                fence_d[r["id"]] = (r["distance_m"], r["inside"] or r["in_margin"],
+                                    r["in_band"], r["inside"])
         live = [k for k in fence_d if fence_d[k][2]]
         nearest_fence = min(live, key=lambda k: fence_d[k][0]) if live else None
 
         rows, breaches = [], []
         for k, (rv, rule) in enumerate(self._pairs):
-            status, value, breach = "ok", "", False
+            st = status[k]
+            state_, value, breach = "ok", "", False
             bound = True
-            if rv.kind == "subject_standoff":
+            fam = _family(rv.kind)
+            if not st["in_force"]:
+                # Outside its time window, or held off by a switch / replaced
+                # by a swap: the Shield does not enforce it right now.
+                state_, value, bound = "idle", "not in force", False
+            elif rv.kind == "subject_standoff":
                 if subject_xy is None:
-                    status, value, bound = "idle", "no target", False
-                elif not rule.binds(subject_class):
-                    # Same test the Shield uses (SubjectStandoff.binds).
-                    status, value, bound = "idle", f"n/a ({subject_class})", False
+                    state_, value, bound = "idle", "no target", False
+                elif st["value"] is None:
+                    # The rule does not bind this subject (SubjectStandoff.binds).
+                    state_, value, bound = "idle", f"n/a ({subject_class})", False
                 else:
-                    sep = math.hypot(state.x - subject_xy[0], state.y - subject_xy[1])
+                    sep = st["value"]
                     value = f"{sep:.0f} m" if sep >= 10 else f"{sep:.1f} m"
-                    breach = sep < rule.min_range_m
-                    if sep - rule.min_range_m < rv.soft_m:
-                        status = "near"
+                    breach = st["breach"]
+                    if st["distance_m"] < rv.soft_m:
+                        state_ = "near"
             elif rv.kind == "obstacle_clearance":
                 if off_map:
                     # The clearance rule cannot see anything here: unknown,
                     # which is not the same as clear.
-                    status, value = "near", "off map"
-                elif clearance_m is None or not math.isfinite(clearance_m):
-                    status, value, bound = "idle", "no map", False
+                    state_, value = "near", "off map"
+                elif st["value"] is None:
+                    state_, value, bound = "idle", "no map", False
                 else:
-                    value = f"{clearance_m:.1f} m"
-                    breach = clearance_m < rule.min_clearance_m
-                    if clearance_m - rule.min_clearance_m < rv.soft_m:
-                        status = "near"
+                    value = f"{st['value']:.1f} m"
+                    breach = st["breach"]
+                    if st["distance_m"] < rv.soft_m:
+                        state_ = "near"
                 if bound and fence_cause == "obstacle" and (holding or skirting):
-                    status = "hold" if holding else "avoid"
+                    state_ = "hold" if holding else "avoid"
             elif rv.kind == "altitude_envelope":
                 value = f"{state.up:.1f} m"
-                room = min(state.up - rule.alt_min_m, rule.alt_max_m - state.up)
-                breach = room < 0
-                if room < max(rv.soft_m, 1.0):
-                    status = "near"
+                breach = st["breach"]
+                if st["distance_m"] < max(rv.soft_m, 1.0):
+                    state_ = "near"
             elif rv.kind == "kinematic_envelope":
-                e = decision.emitted
-                spd = math.hypot(e.vx, e.vy)
-                value = f"{spd:.1f} m/s"
-                breach = spd > rule.speed_max_mps + 1e-6
-            elif rv.kind == "polygon_fence":
+                value = f"{st['value']:.1f} m/s"
+                breach = st["breach"]
+            elif rv.kind in ZONE_KINDS:
                 d, in_ring, in_band, inside = fence_d.get(
                     rv.id, (float("inf"), False, False, False))
                 if not in_band:
-                    status, bound = "idle", False
+                    state_, bound = "idle", False
                     value = "above zone" if state.up > rule.altitude_ceiling_m else "below zone"
                 else:
                     # INSIDE only inside the polygon itself, which is what
@@ -341,39 +406,42 @@ class PolicyIndicator:
                     # ring the Shield also keeps the aircraft out of.
                     value = ("INSIDE" if inside else "IN MARGIN" if in_ring
                              else f"{d:.0f} m away")
-                    breach = in_ring
+                    breach = st["breach"]
                     if d < self.fence_near_m:
-                        status = "near"
+                        state_ = "near"
                     if rv.id == nearest_fence and fence_cause == "fence" and (holding or skirting):
-                        status = "hold" if holding else "avoid"
-            elif rv.kind == "corridor":
-                off = _polyline_distance(state.x, state.y,
-                                         [(p.x, p.y) for p in rule.centerline])
-                value = f"{off:.1f} m off"
-                breach = (off > rule.width_m / 2.0
-                          or not rule.altitude_floor_m <= state.up <= rule.altitude_ceiling_m)
-                if rule.width_m / 2.0 - off < max(rv.soft_m, 1.0):
-                    status = "near"
+                        state_ = "hold" if holding else "avoid"
+            elif rv.kind in TUBE_KINDS:
+                value = f"{st['value']:.1f} m off"
+                breach = st["breach"]
+                if st["distance_m"] < max(rv.soft_m, 1.0):
+                    state_ = "near"
+            elif rv.kind == "time_window_switch":
+                state_, value, bound = "idle", "event", False
             # The Shield's work for this rule: violated by the command, or a
             # repair operator of this rule's kind ran (a building push made
             # while repairing a stand-off is still the clearance rule acting).
             # For zones only the live nearest one is credited, for stand-offs
-            # only a binding one.
-            if bound and (rv.id in viol or (rv.kind in acted_kinds and (
-                    rv.kind != "polygon_fence" or rv.id == nearest_fence))):
-                status = "act"
+            # only a binding one. A rule the command breaks and the Shield did
+            # not correct is WATCH, and a monitor_only rule is never ACTING.
+            if bound and rv.id in watch:
+                state_ = "watch"
+            elif bound and st["effective_action"] != "monitor_only" and (
+                    rv.id in viol or (fam in acted_kinds and (
+                        fam != "polygon_fence" or rv.id == nearest_fence))):
+                state_ = "act"
             if bound and (breach or rv.id in escaped_ids):
-                status = "breach"
+                state_ = "breach"
                 breaches.append(rv)
             if braked and rv.id in viol:
-                status = "brake"
-            status, value = self._latched(k, status, value, t)
+                state_ = "brake"
+            state_, value = self._latched((k, rv.id), state_, value, t)
             rows.append({"id": rv.id, "label": rv.label, "limit": rv.limit,
-                         "value": value, "status": status, "priority": rv.priority})
+                         "value": value, "status": state_, "priority": rv.priority})
 
         self._update_banner(t, viol, ops, braked, escaped_ids if escaped else [],
                             breaches, holding, skirting, fence_cause, off_map,
-                            fence_d, nearest_fence)
+                            fence_d, nearest_fence, watch)
 
         if not self.trail or math.hypot(state.x - self.trail[-1][0],
                                         state.y - self.trail[-1][1]) > 0.5:
@@ -416,10 +484,12 @@ class PolicyIndicator:
 
     def _update_banner(self, t, viol, ops, braked, escaped_ids, breaches,
                        holding, skirting, fence_cause, off_map, fence_d,
-                       nearest_fence) -> None:
-        """Pick this tick's most important event and latch it for hold_s."""
+                       nearest_fence, watch=frozenset()) -> None:
+        """Pick this tick's most important event and latch it for hold_s.
+        `viol`: the violated rules the Shield corrected; `watch`: the ones the
+        command breaks and the Shield did not correct."""
         def kind_of(rid):
-            return getattr(self._by_id.get(rid), "type", "")
+            return _family(getattr(self._by_id.get(rid), "type", ""))
 
         # The LAST operator is the one whose result was flown: repairs are
         # appended in the order they ran, and a fall-back (ClearanceEscape,
@@ -439,16 +509,19 @@ class PolicyIndicator:
                     f"SHIELD BRAKE - aircraft stopped ({', '.join(sorted(viol))})")
         elif breaches:
             rv = breaches[0]
-            how = "SHIELD CORRECTING" if (rv.id in viol or rv.kind in
-                                          {OPERATOR_KIND.get(o) for o in ops}) else "RECOVERING"
-            in_poly = rv.kind == "polygon_fence" and fence_d.get(rv.id, (0, 0, 0, False))[3]
+            fam = _family(rv.kind)
+            how = ("MONITORED, NOT CORRECTED" if rv.id in watch
+                   else "SHIELD CORRECTING" if (rv.id in viol or fam in
+                                                {OPERATOR_KIND.get(o) for o in ops})
+                   else "RECOVERING")
+            in_poly = fam == "polygon_fence" and fence_d.get(rv.id, (0, 0, 0, False))[3]
             what = {"polygon_fence": (f"INSIDE NO-FLY ZONE {rv.id}" if in_poly
                                       else f"INSIDE NO-FLY ZONE MARGIN {rv.id}"),
                     "obstacle_clearance": "CLOSER THAN CLEARANCE TO OBSTACLE",
                     "subject_standoff": "CLOSER THAN STAND-OFF TO TARGET",
                     "altitude_envelope": "OUTSIDE ALTITUDE BAND",
                     "corridor": f"OUTSIDE CORRIDOR {rv.id}",
-                    "kinematic_envelope": "OVER SPEED LIMIT"}.get(rv.kind, rv.id)
+                    "kinematic_envelope": "OVER SPEED LIMIT"}.get(fam, rv.id)
             cand = ("breach", "breach", f"{what} - {how}")
         elif viol:
             rids = sorted(viol)
@@ -460,6 +533,9 @@ class PolicyIndicator:
             else:
                 text = f"SHIELD CORRECTED COMMAND - {words} ({', '.join(rids)})"
             cand = ("shield", "act", text)
+        elif watch:
+            cand = ("watch", "watch",
+                    f"RULE BROKEN - MONITORED, NOT CORRECTED ({', '.join(sorted(watch))})")
         elif holding:
             text = {"fence": f"NO-FLY ZONE AHEAD - HOLDING AT THE BOUNDARY ({nearest_fence})",
                     "obstacle": "OBSTACLE AHEAD - HOLDING"}.get(

@@ -10,7 +10,17 @@ ONE contract:
 That is the entire interface. "Plugging a model in" = writing a small adapter
 class with a single `.act(state) -> Action4D` method that (1) gathers the
 inputs the model wants, (2) runs the model, (3) maps its output onto the 4-D
-body-frame contract. Nothing else in the stack changes.
+contract. Nothing else in the stack changes.
+
+THE FRAME. This project's Action4D is WORLD frame: vx +North, vy +East, vz_up
++up, yaw_rate rad/s (guardrail/models.py), because every rule the Shield checks
+is world geometry. The grant locks body-frame velocities (vx forward, vy right),
+so the frame is a recorded deviation, crossed exactly once by
+guardrail.frames.from_body / to_body. A model that emits body-frame deltas (every
+camera VLA does: it sees what is ahead of it) must be rotated at the heading the
+frame was CAPTURED with before its action enters this slot. Skipping that is the
+silent defect in docs/FINDING-forward-flew-north.md: facing East, "forward"
+flew North. (Until 2026-10-06 this docstring called the contract body-frame.)
 
 This file gives the Protocol + three reference adapters at increasing realism:
     StubBackend      hand-written, no model            (already have: vla_stub)
@@ -29,7 +39,9 @@ from .models import Action4D, State
 # --------------------------------------------------------------------------- #
 class VLABackend(Protocol):
     def act(self, state: State) -> Action4D:
-        """One 10 Hz tick: observation -> 4-D body-frame action."""
+        """One 10 Hz tick: observation -> 4-D WORLD-frame Action4D (see the
+        module docstring; body-frame model output goes through
+        guardrail.frames.from_body first)."""
         ...
 
     # optional: called after a mid-flight policy change (hot-apply)
@@ -96,11 +108,22 @@ class AeroVLABackend:
         #   raw = self.model.predict_action(**inputs)   # model's own action vector
         raw = None
 
-        # TODO 3 — map the model's raw action onto OUR 4-D body-frame contract.
-        # Every VLA emits a slightly different action; adapt units + axes here.
-        # (CognitiveDrone / AeroVLA already emit ~4-D velocity — near 1:1.)
-        #   act = Action4D(vx=float(raw[0]), vy=float(raw[1]),
-        #                  vz_up=float(raw[2]), yaw_rate=float(raw[3]))
+        # TODO 3 — map the model's raw action onto OUR 4-D WORLD-frame contract.
+        # Every VLA emits a slightly different action; adapt units + axes here,
+        # then rotate body -> world at the heading the frame was captured with.
+        # Do not re-derive these: demo/real_vla_demo.py already has the tested
+        # pieces for OpenVLA (audit card ARCH-06) - openvla_raw_to_action(raw,
+        # scale, yaw_deg) (Bridge deltas -> body velocities -> from_body),
+        # state_from_pose(pose) (a State that carries the heading),
+        # build_openvla_prompt(instruction, csp) and tokenizer_id(tokenizer).
+        # They live in demo/, not here, because guardrail/ must not import the
+        # demo layer; a filled-in backend should move them into guardrail/
+        # rather than copy them.
+        # (CognitiveDrone / AeroVLA emit ~4-D body velocity — near 1:1 after
+        # the rotation.)
+        #   from .frames import from_body
+        #   act = from_body(float(raw[0]), float(raw[1]), float(raw[2]),
+        #                   float(raw[3]), yaw_deg=state.yaw_deg)
         act = self._last if raw is None else raw     # placeholder until filled
 
         self._last = act

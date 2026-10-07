@@ -307,7 +307,8 @@ def test_a_clean_revision_raises_no_code_revision_objection():
 
 # ------------------------------------------- canonical HIL needs evidence
 
-GOOD_HIL = {"ros_distro": "jazzy", "mavros_node": "/mavros", "fcu_connected": True}
+GOOD_HIL = {"ros_distro": "jazzy", "mavros_node": "/mavros", "fcu_connected": True,
+            "ardupilot_version": "ArduCopter V4.5.7 (2a3dc4b7)"}
 
 
 def test_canonical_hil_cannot_be_claimed_without_evidence():
@@ -338,8 +339,11 @@ def test_a_disconnected_flight_controller_is_not_canonical_hil():
 def _dev_run():
     # A REAL MAVROS run: ArduPilot SITL, so no Project AirSim scene file and
     # the speedup read from the flight controller instead of from a scene.
+    # The pilot is the source-pinned StubVLA, as on that rail: a HuggingFace
+    # id resolves only where its cache exists, which made these topology
+    # tests fail in WSL (no OWL-ViT cache) for a reason they do not test.
     return build_manifest(policy_hash="sha256:deadbeefdeadbeef",
-                          model_id="google/owlvit-base-patch32", seed=42,
+                          model_id="guardrail.vla_stub.StubVLA", seed=42,
                           scene_path=None, sim_speedup=1.0,
                           topology=TOPOLOGY_DEV, hil_evidence=GOOD_HIL)
 
@@ -381,25 +385,480 @@ def test_the_legacy_label_is_written_as_dev_and_read_as_dev():
     assert not ok and "read as 'dev'" in why[0], why
 
 
-def test_no_rail_here_may_claim_hil_or_flight():
-    """Both need a Jetson Orin, which no rail in this repository runs."""
+def test_a_desktop_rail_may_not_claim_hil_or_flight():
+    """Both need a Jetson Orin. With only the desktop's MAVROS evidence (no
+    device tree naming an Orin, x86_64) both labels are refused, naming the
+    Orin."""
     for topo in (TOPOLOGY_HIL, "flight"):
         try:
             build_manifest(policy_hash="sha256:deadbeefdeadbeef",
                            model_id="guardrail.vla_stub.StubVLA", seed=0,
                            scene_path=None, sim_speedup=1.0, topology=topo,
-                           hil_evidence=GOOD_HIL)
+                           hil_evidence={**GOOD_HIL, **DESKTOP_HOST})
         except ValueError as e:
             assert "Orin" in str(e), e
             continue
         raise AssertionError(f"{topo!r} was claimed by a desktop rail")
 
 
-def test_a_hil_manifest_draws_no_topology_objection():
-    """The grant's KPI topology is not refused by the gate itself."""
+# An Orin as the node would describe it: device tree, L4T, JetPack, and
+# MAVROS talking to SITL on a desktop across a wired link.
+DESKTOP_HOST = {"host_arch": "x86_64", "device_model": None,
+                "l4t_release": None, "jetpack": None}
+ORIN_HOST = {"host_arch": "aarch64",
+             "device_model": "NVIDIA Jetson AGX Orin Developer Kit",
+             "l4t_release": "R36.3.0", "jetpack": "6.0+b106"}
+REMOTE_LINK = {"fcu_url": "udp://:14555@192.168.10.2:14550",
+               "peer": "192.168.10.2", "peer_is_loopback": False,
+               "iface": "eth0", "link_kind": "ethernet"}
+ORIN_HIL = {**GOOD_HIL, **ORIN_HOST, "autopilot_kind": "sitl",
+            "network_link": REMOTE_LINK}
+
+
+def _hil_run(ev=None):
+    return build_manifest(policy_hash="sha256:deadbeefdeadbeef",
+                          model_id="guardrail.vla_stub.StubVLA", seed=0,
+                          scene_path=None, sim_speedup=1.0, topology="hil",
+                          hil_evidence=ORIN_HIL if ev is None else ev)
+
+
+def test_an_orin_with_a_remote_sitl_link_may_claim_hil():
+    """The PI's 2026-10-06 decision: the Orin is the hil machine. With its own
+    evidence the label is accepted, and the gate then has no topology
+    objection. On the code before this change this raised: hil was refused
+    outright, so the Orin could never produce a KPI-grade run."""
+    m = _hil_run()
+    assert m["topology"] == "hil", m
+    ok, why = is_kpi_grade({**m, "code_revision": "abc123abc123"},
+                           {**GOOD_METRICS, "hil_evidence": ORIN_HIL},
+                           dev_waiver="")
+    assert ok, why
+
+
+def test_hil_on_an_orin_with_a_loopback_link_is_refused():
+    """MAVROS and SITL on the same machine is dev, wherever that machine is:
+    the hil link is desktop -> Orin across the network."""
+    local = {**REMOTE_LINK, "fcu_url": "tcp://127.0.0.1:5760",
+             "peer": "127.0.0.1", "peer_is_loopback": True}
+    for ev in ({**ORIN_HIL, "network_link": local},
+               {k: v for k, v in ORIN_HIL.items() if k != "network_link"}):
+        try:
+            _hil_run(ev)
+        except ValueError as e:
+            assert "remote desktop" in str(e), e
+            continue
+        raise AssertionError("an Orin with a local autopilot link claimed hil")
+
+
+def test_hil_needs_a_sitl_autopilot_and_flight_a_hardware_one():
+    for ev, topo in (({**ORIN_HIL, "autopilot_kind": "hardware"}, "hil"),
+                     ({**ORIN_HIL, "autopilot_kind": "sitl"}, "flight"),
+                     ({**ORIN_HIL, "autopilot_kind": None}, "flight")):
+        try:
+            build_manifest(policy_hash="sha256:deadbeefdeadbeef",
+                           model_id="guardrail.vla_stub.StubVLA", seed=0,
+                           scene_path=None, sim_speedup=None, topology=topo,
+                           hil_evidence=ev)
+        except ValueError as e:
+            assert "autopilot_kind" in str(e), e
+            continue
+        raise AssertionError(f"{topo} accepted autopilot_kind "
+                             f"{ev['autopilot_kind']!r}")
+
+
+def test_a_flight_run_is_accepted_on_evidence_and_never_kpi_grade():
+    """The same node on the real drone: same code, label from evidence. The
+    grant makes flight qualitative validation, not a KPI topology."""
+    ev = {**ORIN_HIL, "autopilot_kind": "hardware",
+          "network_link": {"fcu_url": "serial:///dev/ttyTHS1:921600",
+                           "peer": None, "peer_is_loopback": True}}
+    m = build_manifest(policy_hash="sha256:deadbeefdeadbeef",
+                       model_id="guardrail.vla_stub.StubVLA", seed=0,
+                       scene_path=None, sim_speedup=None, topology="flight",
+                       hil_evidence=ev)
+    assert m["topology"] == "flight"
+    ok, why = is_kpi_grade({**m, "code_revision": "abc123abc123"},
+                           {**GOOD_METRICS, "hil_evidence": ev}, dev_waiver="")
+    assert not ok and any("'flight'" in r for r in why), why
+
+
+def test_a_hand_edited_hil_manifest_is_not_kpi_grade():
+    """The label alone is a string. This test used to assert the opposite
+    (`a_hil_manifest_draws_no_topology_objection`, passing a desktop dev
+    manifest relabelled "hil" with no evidence) - the gate then quoted a
+    hand-typed label. Now the evidence beside it is re-checked."""
     m = {**_dev_run(), "topology": "hil", "code_revision": "abc123abc123"}
     ok, why = is_kpi_grade(m, GOOD_METRICS, dev_waiver="")
-    assert ok, why
+    assert not ok and any("hil_evidence" in r for r in why), why
+    ok, why = is_kpi_grade(m, {**GOOD_METRICS,
+                               "hil_evidence": {**GOOD_HIL, **DESKTOP_HOST}},
+                           dev_waiver="")
+    assert not ok and any("Orin" in r for r in why), why
+
+
+def test_detect_topology_follows_the_evidence_not_a_flag():
+    from guardrail.manifest import detect_topology
+    assert detect_topology({**GOOD_HIL, **DESKTOP_HOST}) == "dev"
+    assert detect_topology(ORIN_HIL) == "hil"
+    assert detect_topology({**ORIN_HIL, "autopilot_kind": "hardware"}) == "flight"
+    # An Orin whose MAVROS takes MAVLink from "whoever sends first", with
+    # nothing scanned: nothing shows where SITL runs, so dev, not hil.
+    assert detect_topology({**ORIN_HIL, "network_link": RUNBOOK_LINK}) == "dev"
+    # The same URL with the Orin's processes scanned and no SITL among them:
+    # the runbook's hil (MAVROS on the Orin behind mavlink-router).
+    assert detect_topology({**ORIN_HIL, "network_link": RUNBOOK_LINK,
+                            "local_processes": ORIN_PROCS}) == "hil"
+    # SITL found running on the Orin itself: dev, whatever the URL says.
+    assert detect_topology({**ORIN_HIL, "local_processes": {
+        **ORIN_PROCS, "local_sitl": ["arducopter"]}}) == "dev"
+
+
+# What MAVROS's fcu_url is on the Orin in docs/RUNBOOK-orin-hil.md and
+# deploy/topologies/hil.env: an empty remote, so the router's packets are
+# answered wherever they came from.
+RUNBOOK_LINK = {"fcu_url": "udp://:14555@", "peer": None,
+                "peer_is_loopback": True, "iface": None, "link_kind": None}
+# /proc on the Orin in that layout: MAVROS beside the Shield, no SITL.
+ORIN_PROCS = {"scanned": "/proc", "local_sitl": [], "local_mavros": True,
+              "local_router": []}
+
+
+def test_the_grants_hil_layout_and_the_runbooks_layout_are_both_hil():
+    """Review 2026-10-07. The grant's table: "Desktop runs sims + MAVROS +
+    GCS; Jetson Orin runs VLA + Shield over network". The runbook: MAVROS on
+    the Orin with fcu_url udp://:14555@. The old check demanded a
+    non-loopback fcu_url remote, so it refused BOTH and passed only the PI
+    reference's layout: no Orin run made by the runbook could ever be hil."""
+    from guardrail.manifest import check_topology_evidence, mavros_location
+    grant = {**ORIN_HIL, "network_link": {
+                 "fcu_url": "udp://:14555@", "peer": None,
+                 "peer_is_loopback": True},
+             "local_processes": {**ORIN_PROCS, "local_mavros": False}}
+    runbook = {**ORIN_HIL, "network_link": RUNBOOK_LINK,
+               "local_processes": ORIN_PROCS}
+    for name, ev, where in (("grant", grant, "remote"),
+                            ("runbook", runbook, "shield_host")):
+        assert check_topology_evidence("hil", ev) == [], (
+            name, check_topology_evidence("hil", ev))
+        assert mavros_location(ev) == where, name
+        assert _hil_run(ev)["topology"] == "hil", name
+    # MAVROS on the desktop: its loopback fcu_url is the desktop's business.
+    tcp = {**grant, "network_link": {"fcu_url": "tcp://127.0.0.1:5760",
+                                     "peer": "127.0.0.1",
+                                     "peer_is_loopback": True}}
+    assert check_topology_evidence("hil", tcp) == []
+    # MAVROS on the Orin naming a loopback autopilot: local link, dev.
+    local = {**runbook, "network_link": tcp["network_link"]}
+    assert any("loopback" in m for m in check_topology_evidence("hil", local))
+
+
+def test_sitl_on_the_shields_host_is_never_hil():
+    from guardrail.manifest import check_topology_evidence
+    for procs in ({**ORIN_PROCS, "local_sitl": ["arducopter"]},
+                  {**ORIN_PROCS, "local_mavros": False,
+                   "local_sitl": ["sim_vehicle.py"]}):
+        miss = check_topology_evidence("hil", {**ORIN_HIL,
+                                               "local_processes": procs})
+        assert any("SITL runs on the Shield's host" in m for m in miss), miss
+
+
+def test_a_vla_node_off_the_orin_is_not_hil():
+    """The grant puts the VLA on the Orin with the Shield. A separate VLA
+    node reports its host on /vla/identity; the record of a node that sent
+    none is None, which is refused. Absent means in-process (unchanged)."""
+    from guardrail.manifest import check_topology_evidence
+    ok = {**ORIN_HIL, "vla_host": dict(ORIN_HOST)}
+    assert check_topology_evidence("hil", ok) == []
+    for vh, words in ((None, "did not report"),
+                      (dict(DESKTOP_HOST), "not on a Jetson Orin")):
+        miss = check_topology_evidence("hil", {**ORIN_HIL, "vla_host": vh})
+        assert any(words in m for m in miss), (vh, miss)
+        miss = check_topology_evidence("flight", {
+            **ORIN_HIL, "autopilot_kind": "hardware", "vla_host": vh})
+        assert any(words in m for m in miss), (vh, miss)
+
+
+def test_the_orin_rule_is_public_and_is_the_one_the_manifest_applies():
+    """tools/profile_shield_tick.py labels a host as an Orin with
+    guardrail.manifest.orin_missing when that name exists (and falls back to
+    the private one), so the tick profile and the manifest share one rule.
+    Requested by the orin-hil-portability unit, 2026-10-07. The private name
+    stays for older importers (tests/test_profile_shield_tick.py)."""
+    from guardrail import manifest as M
+    assert callable(getattr(M, "orin_missing", None)), "no public orin_missing"
+    assert M._orin_missing is M.orin_missing
+    assert M.orin_missing(dict(ORIN_HOST)) == []
+    miss = M.orin_missing(dict(DESKTOP_HOST))
+    assert len(miss) == 3 and any("aarch64" in m for m in miss), miss
+    # hil on a desktop host is refused with exactly these reasons among others.
+    got = M.check_topology_evidence("hil", {**ORIN_HIL, **DESKTOP_HOST})
+    assert all(m in got for m in miss), got
+
+
+def test_processes_are_named_by_their_executable_not_their_arguments():
+    """A rosbag recorder's ARGUMENTS name /mavros topics; it is not MAVROS."""
+    from guardrail.manifest import classify_process
+    assert classify_process(["/home/u/ardupilot/build/sitl/bin/arducopter",
+                             "--model", "quad"]) == "sitl"
+    assert classify_process(["python3", "/ap/Tools/autotest/sim_vehicle.py",
+                             "-v", "ArduCopter"]) == "sitl"
+    assert classify_process(["/opt/ros/jazzy/lib/mavros/mavros_node",
+                             "--ros-args", "-p", "fcu_url:=udp://:14555@"]) == "mavros"
+    assert classify_process(["/usr/bin/python3", "/opt/ros/jazzy/bin/ros2",
+                             "run", "mavros", "mavros_node"]) == "mavros"
+    assert classify_process(["mavlink-routerd", "-c", "x.conf"]) == "router"
+    assert classify_process(["/usr/bin/python3", "/opt/ros/jazzy/bin/ros2",
+                             "bag", "record", "/mavros/state",
+                             "/mavros/local_position/pose"]) is None
+    assert classify_process(["python", "sitl/ros2_shield_node.py",
+                             "--shield", "on"]) is None
+
+
+def test_the_process_scan_reads_proc_and_says_none_without_it():
+    import tempfile
+    from guardrail.manifest import scan_local_processes
+    d = Path(tempfile.mkdtemp(prefix="proc_"))
+    try:
+        for pid, argv in ((101, ["/x/arducopter", "--model", "quad"]),
+                          (102, ["/opt/ros/jazzy/lib/mavros/mavros_node"]),
+                          (103, ["ros2", "bag", "record", "/mavros/state"])):
+            (d / str(pid)).mkdir()
+            (d / str(pid) / "cmdline").write_bytes(
+                "\x00".join(argv).encode() + b"\x00")
+        (d / "self").mkdir()
+        got = scan_local_processes(d)
+        assert got["local_sitl"] == ["arducopter"], got
+        assert got["local_mavros"] is True and got["local_router"] == [], got
+        assert scan_local_processes(d / "missing") is None, \
+            "no /proc is 'not scanned', never 'nothing found'"
+    finally:
+        import shutil as _sh
+        _sh.rmtree(d, ignore_errors=True)
+
+
+def test_dev_evidence_without_the_autopilot_version_is_refused():
+    """ARCH-31: a run must name the firmware that flew. Before 2026-10-06 the
+    three-field evidence was enough and no run recorded a version."""
+    from guardrail.manifest import check_hil_evidence
+    ev = {k: v for k, v in GOOD_HIL.items() if k != "ardupilot_version"}
+    assert any("ardupilot_version" in m for m in check_hil_evidence(ev))
+    try:
+        build_manifest(policy_hash="sha256:deadbeefdeadbeef",
+                       model_id="guardrail.vla_stub.StubVLA", seed=0,
+                       scene_path=None, sim_speedup=1.0, topology="dev",
+                       hil_evidence=ev)
+    except ValueError as e:
+        assert "ardupilot_version" in str(e), e
+        return
+    raise AssertionError("dev accepted without the autopilot version")
+
+
+def test_host_evidence_is_read_from_the_device_tree_and_l4t():
+    from guardrail.manifest import collect_host_evidence
+    files = {"/proc/device-tree/model":
+             "NVIDIA Jetson AGX Orin Developer Kit\x00",
+             "/etc/nv_tegra_release":
+             "# R36 (release), REVISION: 3.0, GCID: 36191598, BOARD: generic, "
+             "EABI: aarch64, DATE: Mon May  6 17:34:21 UTC 2024"}
+    ev = collect_host_evidence(read=files.get, machine=lambda: "aarch64",
+                               jetpack=lambda: "6.0+b106")
+    assert ev["device_model"] == "NVIDIA Jetson AGX Orin Developer Kit", ev
+    assert ev["l4t_release"] == "R36.3.0" and ev["jetpack"] == "6.0+b106"
+    desk = collect_host_evidence(read=lambda p: None, machine=lambda: "x86_64",
+                                 jetpack=lambda: None)
+    assert desk["device_model"] is None and desk["l4t_release"] is None
+
+
+def test_fcu_url_peers_are_parsed_and_loopback_is_recognised():
+    from guardrail.manifest import fcu_peer, network_link_evidence
+    assert fcu_peer("udp://:14555@192.168.10.2:14550") == "192.168.10.2"
+    assert fcu_peer("udp://:14555@") is None
+    assert fcu_peer("tcp://127.0.0.1:5760") == "127.0.0.1"
+    assert fcu_peer("serial:///dev/ttyTHS1:921600") is None
+    link = network_link_evidence("udp://:14555@192.168.10.2:14550",
+                                 route_iface=lambda peer: "eth0")
+    assert not link["peer_is_loopback"] and link["link_kind"] == "ethernet", link
+    wifi = network_link_evidence("udp://:14555@10.0.0.5:14550",
+                                 route_iface=lambda peer: "wlan0")
+    assert wifi["link_kind"] == "wifi", wifi
+    assert network_link_evidence("tcp://127.0.0.1:5760",
+                                 route_iface=lambda p: "lo")["peer_is_loopback"]
+
+
+def test_the_autopilot_version_reads_like_the_firmware_banner():
+    from guardrail.manifest import decode_custom_version, describe_autopilot_version
+    assert describe_autopilot_version(0x040507FF, "2a3dc4b7") == \
+        "ArduCopter V4.5.7 (2a3dc4b7)"
+    # The firmware behind the five stored ros2_* runs, as its logs print it.
+    assert describe_autopilot_version(0x04080000, "5f119834") == \
+        "ArduCopter V4.8.0-dev (5f119834)"
+    ascii_bytes = [ord(c) for c in "2a3dc4b7"]
+    assert decode_custom_version(ascii_bytes) == "2a3dc4b7"
+    le_hex = bytes(ascii_bytes)[::-1].hex()       # MAVROS's uint64 rendering
+    assert decode_custom_version(le_hex) == "2a3dc4b7", le_hex
+    assert decode_custom_version("2a3dc4b7") == "2a3dc4b7"
+    assert decode_custom_version("") is None
+    assert decode_custom_version("not-a-hash") == "not-a-hash"
+
+
+def test_the_autopilot_version_is_read_over_mavlink_or_reported_missing():
+    from types import SimpleNamespace
+    from guardrail.manifest import ardupilot_version_from_mavlink
+
+    class _Mav:
+        def __init__(self): self.sent = []
+        def command_long_send(self, *a): self.sent.append(a)
+
+    class _Master:
+        target_system = target_component = 1
+        mav_type = 2
+
+        def __init__(self, reply):
+            self.mav, self._reply = _Mav(), reply
+
+        def recv_match(self, **kw):
+            return self._reply
+
+    reply = SimpleNamespace(flight_sw_version=0x040507FF,
+                            flight_custom_version=[ord(c) for c in "2a3dc4b7"])
+    got = ardupilot_version_from_mavlink(_Master(reply), timeout=0.01)
+    assert got["ardupilot_version"] == "ArduCopter V4.5.7 (2a3dc4b7)", got
+    assert got["flight_sw_version"] == "040507ff"
+    assert ardupilot_version_from_mavlink(_Master(None), timeout=0.01) is None
+
+
+def _two_weight_dirs():
+    import os
+    import tempfile
+    d = Path(tempfile.mkdtemp(prefix="weights_"))
+    a, b = d / "a", d / "b"
+    a.mkdir(); b.mkdir()
+    (a / "model.safetensors").write_bytes(b"\x01" * 4096)
+    (b / "model.safetensors").write_bytes(b"\x02" * 4096)
+    t = 1_700_000_000
+    for f in (a / "model.safetensors", b / "model.safetensors"):
+        os.utime(f, (t, t))
+    return d, a, b
+
+
+def test_weights_are_hashed_by_their_bytes_not_name_size_and_date():
+    """X-16. Two different checkpoints with the same file name, size and
+    mtime shared one hash under the old code (it hashed name+size+mtime and
+    cut to 16 hex). A byte-identical copy written later got a DIFFERENT one."""
+    import os
+    import shutil as _sh
+    from guardrail.manifest import model_hash
+    d, a, b = _two_weight_dirs()
+    os.environ["GUARDRAIL_DIGEST_CACHE"] = str(d / "cache.json")
+    try:
+        ha, hb = model_hash("lab/adapter", [a]), model_hash("lab/adapter", [b])
+        assert ha != hb, "different weights, same hash"
+        assert len(ha.rsplit(":", 1)[1]) == 64, ha
+        c = d / "c"
+        _sh.copytree(a, c)                       # same bytes, new mtime
+        assert model_hash("lab/adapter", [c]) == ha, "same bytes, other hash"
+    finally:
+        os.environ.pop("GUARDRAIL_DIGEST_CACHE", None)
+        _sh.rmtree(d, ignore_errors=True)
+
+
+def test_weight_digests_are_cached_and_invalidated_by_an_edit():
+    import os
+    import shutil as _sh
+    from guardrail import manifest as M
+    d, a, _ = _two_weight_dirs()
+    cache = d / "cache.json"
+    calls = {"n": 0}
+    real = M.file_sha256
+
+    def counting(path, cache=None):
+        before = dict(cache or {})
+        out = real(path, cache)
+        if cache is not None and cache != before:
+            calls["n"] += 1
+        return out
+    M.file_sha256 = counting
+    try:
+        first = M.weights_digest([a], cache)
+        assert calls["n"] == 1 and cache.is_file()
+        assert M.weights_digest([a], cache) == first and calls["n"] == 1, \
+            "the second launch re-hashed an unchanged file"
+        (a / "model.safetensors").write_bytes(b"\x03" * 4096)
+        assert M.weights_digest([a], cache) != first, "an edit was served stale"
+        assert calls["n"] == 2
+    finally:
+        M.file_sha256 = real
+        _sh.rmtree(d, ignore_errors=True)
+
+
+def test_a_checkpoint_replaced_with_its_mtime_preserved_is_rehashed():
+    """Review 2026-10-07. The cache key was path + size + mtime_ns, so a
+    different checkpoint copied over the same path with its mtime preserved
+    (`cp -p`, `rsync -a`, a LoRA adapter of the same shape) was served the
+    OLD digest. Two ways in: a replacing copy (a new file at the path) and a
+    same-size rewrite in place with the date put back."""
+    import os
+    import shutil as _sh
+    import tempfile
+    from guardrail import manifest as M
+    d = Path(tempfile.mkdtemp(prefix="weights_"))
+    cache = d / "cache.json"
+    w = d / "adapter"
+    w.mkdir()
+    f = w / "adapter_model.safetensors"
+    size = 3 * (1 << 16) + 123                     # past both 64 KiB samples
+    f.write_bytes(b"\x01" * size)
+    t = 1_700_000_000
+    os.utime(f, (t, t))
+    try:
+        first = M.weights_digest([w], cache)
+        # 1. cp -p: a different file of the same size and date replaces it;
+        #    the difference sits in the MIDDLE, outside the end samples.
+        other = d / "other.safetensors"
+        body = bytearray(b"\x01" * size)
+        body[size // 2] = 0x02
+        other.write_bytes(bytes(body))
+        os.utime(other, (t, t))
+        os.replace(other, f)
+        assert f.stat().st_mtime_ns == t * 10**9 and f.stat().st_size == size
+        second = M.weights_digest([w], cache)
+        assert second != first, "a replaced checkpoint was served the old digest"
+        # 2. rewritten in place, same size, mtime put back; header changed.
+        body = bytearray(f.read_bytes())
+        body[0] = 0x03
+        with open(f, "r+b") as fh:
+            fh.write(bytes(body))
+        os.utime(f, (t, t))
+        third = M.weights_digest([w], cache)
+        assert third != second, "an in-place rewrite was served the old digest"
+        # And the cache still works: unchanged, nothing is re-hashed.
+        assert M.weights_digest([w], cache) == third
+    finally:
+        _sh.rmtree(d, ignore_errors=True)
+
+
+def test_a_code_only_pilot_carries_the_full_sha256_of_its_source():
+    from guardrail.manifest import model_hash
+    h = model_hash("guardrail.vla_stub.StubVLA")
+    assert len(h.split("@src:")[1]) == 64, h
+
+
+def test_the_pilot_record_names_what_flew_beside_the_six_fields():
+    from guardrail.manifest import NO_VLA, model_hash, pilot_record
+    assert model_hash(NO_VLA) == NO_VLA, "no VLA is a fact, not unresolved"
+    rec = pilot_record(NO_VLA, "none", detector="google/owlvit-base-patch32")
+    assert rec["kind"] == "none" and rec["hash"] == NO_VLA, rec
+    stub = pilot_record("guardrail.vla_stub.StubVLA", "stub")
+    assert "@src:" in stub["hash"]
+    for bad in (("x", "none"), ("x", "model")):
+        try:
+            pilot_record(*bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"pilot_record accepted {bad}")
+    # The manifest keeps exactly the grant's six fields.
+    m = _dev_run()
+    assert "pilot" not in m and len(m) == 6
 
 
 def test_no_flight_entry_point_writes_the_old_label():
@@ -450,10 +909,14 @@ def test_an_audit_record_after_a_hot_apply_carries_the_new_policy_hash():
     before = pol.policy_hash
 
     al.log(1, sh.filter(State(x=-20, y=-20, up=4), Action4D(vx=8)))
-    sh.hot_apply(PolygonFence(
+    zone = PolygonFence(
         id="nfz-hot", type="polygon_fence",
         vertices=[{"x": -25, "y": -25}, {"x": -15, "y": -25},
-                  {"x": -15, "y": -15}, {"x": -25, "y": -15}]))
+                  {"x": -15, "y": -15}, {"x": -25, "y": -15}])
+    # After the first tick a Shield that enforces the grant's mid-flight
+    # update model takes the zone only as a dynamic_nfz (2026-10-07).
+    import guardrail.shield as _S
+    sh.hot_apply(_S.as_dynamic_nfz(zone) if hasattr(_S, "as_dynamic_nfz") else zone)
     al.log(2, sh.filter(State(x=-20, y=-20, up=4), Action4D(vx=1)))
 
     recs = [_json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]

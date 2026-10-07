@@ -1,0 +1,11 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: altitude_ref: ASL (only AGL and MSL exist)
+# currently: refused
+policy_id: neg-alt-ref
+version: 0.1.0
+constraints:
+  - id: alt
+    type: altitude_envelope
+    altitude_min_m: 5
+    altitude_max_m: 30
+    altitude_ref: ASL

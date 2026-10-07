@@ -1,0 +1,142 @@
+# dev topology - everything on one desktop (Docker Desktop with the WSL 2
+# backend, or any Linux host with Docker).
+#
+#   docker compose --env-file deploy/topologies/dev.env \
+#                  -f deploy/compose/docker-compose.dev.yml up -d router sitl mavros
+#   docker compose --env-file deploy/topologies/dev.env \
+#                  -f deploy/compose/docker-compose.dev.yml run --rm mission mission --shield on --tag dev_shield_on
+#
+# Same layout as the reference's sim/docker-compose.dev.yml: every ROS node
+# shares the router's network namespace, so DDS discovery stays on one host
+# and the only published port is SITL's sensor input from Project AirSim.
+# Mission Planner runs on the Windows host and receives MAVLink on UDP 14550.
+#
+# `mission` starts what the native rail starts (sitl/run_ros2_demo.sh,
+# USE_LAUNCH=1): the launch file runs the VLA stub, the MAVLink adapter (body
+# setpoints -> /mavros/setpoint_raw/local, mode requests -> /mavros/set_mode,
+# the policy's zones -> the autopilot's fence) and the Shield node; the run is
+# recorded with rosbag2 and packed into a replay bundle. There is no separate
+# VLA stub service: a second stub would be a second /vla/action_4d publisher.
+#
+# Written 2026-10-06, NOT yet run. The native WSL rail (sitl/run_ros2_demo.sh)
+# is what produced the stored ros2_* runs.
+
+name: vlaguard-dev
+
+x-vlaguard:
+  topologies: [dev]
+  host: desktop
+
+x-companion-env: &companion-env
+  VLAGUARD_TOPOLOGY: ${VLAGUARD_TOPOLOGY:?use --env-file deploy/topologies/dev.env}
+  ROS_DOMAIN_ID: ${ROS_DOMAIN_ID:?}
+  RMW_IMPLEMENTATION: ${RMW_IMPLEMENTATION:?}
+  CYCLONEDDS_URI: file:///opt/vlaguard/deploy/dds/cyclonedds.xml
+  VLAGUARD_DDS_PEER_A: ${VLAGUARD_DDS_PEER_A:?}
+  VLAGUARD_DDS_PEER_B: ${VLAGUARD_DDS_PEER_B:?}
+  SITL_MAVLINK_PORT: ${SITL_MAVLINK_PORT:?}
+  MAVROS_HOST: ${MAVROS_HOST:?}
+  MAVROS_UDP_PORT: ${MAVROS_UDP_PORT:?}
+  FCU_URL: ${FCU_URL-}
+  GCS_HOST: ${GCS_HOST:?}
+  GCS_UDP_PORT: ${GCS_UDP_PORT:?}
+  VLAGUARD_BAG: ${VLAGUARD_BAG:?}
+  VLAGUARD_ALLOW_FLIGHT_MISSION: ${VLAGUARD_ALLOW_FLIGHT_MISSION:?}
+
+x-companion-volumes: &companion-volumes
+  - ../..:/opt/vlaguard:ro
+  - ../../demo/out:/opt/vlaguard/demo/out
+  - ../../deploy/evidence:/opt/vlaguard/deploy/evidence
+
+services:
+  router:
+    image: ${VLAGUARD_IMAGE:?}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/companion.Dockerfile
+    command: ["router"]
+    environment: *companion-env
+    volumes: *companion-volumes
+    ports:
+      # Project AirSim (Windows host) -> SITL sensor input, SITL_MODEL=airsim-copter.
+      - "9003:9003/udp"
+
+  sitl:
+    image: ${VLAGUARD_SITL_IMAGE:?}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/sitl.Dockerfile
+    network_mode: "service:router"
+    depends_on: [router]
+    environment:
+      SITL_MODEL: ${SITL_MODEL:?}
+      SITL_HOME: ${SITL_HOME:?}
+      SITL_AIRFRAME_PARM: ${SITL_AIRFRAME_PARM-}
+      GUARDRAIL_FENCE: ${GUARDRAIL_FENCE:?}
+      SITL_WIPE: ${SITL_WIPE:?}
+      SITL_MAVLINK_PORT: ${SITL_MAVLINK_PORT:?}
+      SITL_ROUTER_HOST: 127.0.0.1
+      AIRSIM_HOST: ${AIRSIM_HOST:?}
+    volumes:
+      - ../..:/opt/vlaguard:ro
+      - sitl-run:/sitl-run
+
+  mavros:
+    image: ${VLAGUARD_IMAGE:?}
+    network_mode: "service:router"
+    depends_on: [router]
+    command: ["mavros"]
+    environment: *companion-env
+    volumes: *companion-volumes
+
+  # One mission per run: `docker compose run --rm mission mission --shield on --tag <tag>`.
+  # pid: host so the Shield node's /proc scan (guardrail.manifest.
+  # scan_local_processes) sees the host's SITL and MAVROS, which run in sibling
+  # containers, and records them as local, as they are in dev.
+  mission:
+    image: ${VLAGUARD_IMAGE:?}
+    profiles: ["mission"]
+    network_mode: "service:router"
+    pid: host
+    depends_on: [mavros]
+    command: ["mission", "--shield", "on"]
+    environment: *companion-env
+    volumes: *companion-volumes
+
+  # Shield tick profile of this host: deploy/evidence/dev/shield_tick_profile.json.
+  profile:
+    image: ${VLAGUARD_IMAGE:?}
+    profiles: ["tools"]
+    network_mode: none
+    command: ["profile"]
+    environment: *companion-env
+    volumes: *companion-volumes
+
+  # R1 inference-rate protocol for one VLA backend (VLA_BACKEND) on this host.
+  vla-bench:
+    image: ${VLAGUARD_VLA_IMAGE:?}
+    build:
+      context: ../..
+      dockerfile: deploy/docker/vla.Dockerfile
+      args:
+        BASE_IMAGE: ${VLA_BASE_IMAGE:?}
+    profiles: ["vla-bench"]
+    network_mode: none
+    command: ["measure", "--backend", "${VLA_BACKEND:?}", "--allow-gpu",
+              "--model-root", "/models", "--topology", "${VLAGUARD_TOPOLOGY:?}"]
+    environment:
+      VLAGUARD_TOPOLOGY: ${VLAGUARD_TOPOLOGY:?}
+    volumes:
+      - ../..:/opt/vlaguard:ro
+      - ../../deploy/evidence:/opt/vlaguard/deploy/evidence
+      - ${VLAGUARD_MODEL_ROOT:?}:/models:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  sitl-run:

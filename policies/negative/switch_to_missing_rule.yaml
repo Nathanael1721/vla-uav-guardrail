@@ -1,0 +1,15 @@
+# NEGATIVE CORPUS - tools/wp1_roundtrip_kpi.py: load_policy() must refuse this.
+# defect: a time_window_switch whose target_id names no rule
+# currently: refused
+# why: a switch for a rule that does not exist switches nothing, and says it did
+policy_id: neg-switch-target
+version: 0.1.0
+constraints:
+  - id: alt
+    type: altitude_envelope
+    alt_min_m: 5
+    alt_max_m: 30
+  - id: curfew-off
+    type: time_window_switch
+    target_id: nfz-school-yard
+    active: false

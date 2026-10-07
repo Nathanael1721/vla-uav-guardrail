@@ -3,8 +3,13 @@ VLA Drone Guardrail — end-to-end demo runner.
 
 Full meeting-architecture pipeline, live in AirSim:
 
-    User Command -> Constraint Compiler -> YAML Prompt -> (Stub) VLA
+    User Command -> Constraint Compiler -> (Stub) VLA
                  -> Safety Shield -> velocity command -> AirSim drone
+
+The compiler also renders a YAML prompt and writes it beside the run. The stub
+and BC pilots read the Mission and policy objects, not that text, so no VLA in
+this demo reads the prompt; it is the record of what a text-reading pilot
+would be given.
 
 Usage (conda env: airsim, Blocks sim running):
 
@@ -13,7 +18,8 @@ Usage (conda env: airsim, Blocks sim running):
     python demo/run_demo.py --command "fly to the north pad" --shield on
 
 Outputs per run, under demo/out/<tag>/:
-    prompt.yaml        the compiled YAML prompt the VLA received
+    prompt.yaml        the compiled YAML prompt (written for the record; the
+                       stub/BC pilots do not read text)
     trajectory.png     top-down plot: NFZ, path, start/target
     report.md          KPI summary (NFZ entry seconds, shield stats)
     audit.jsonl        Shield audit log (only when shield=on)

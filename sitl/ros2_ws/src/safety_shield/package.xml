@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>safety_shield</name>
+  <version>0.2.0</version>
+  <description>
+    The Guardrail's Safety Shield as a ROS 2 node: subscribes the VLA's
+    body-frame 4-D action on /vla/action_4d (10 Hz), checks and repairs it
+    against the signed policy, escalates through the grant's FSM, and
+    publishes the post-Shield body-frame setpoint on /shield/setpoint for the
+    mavlink_adapter package. Also packages the VLA stub node and the launch
+    file that starts the stub, the Shield and the adapter together. The node
+    code lives in the repository's sitl/ directory and guardrail/ package;
+    the entry points here find it (GUARDRAIL_ROOT, or the source tree a
+    symlink install points back to).
+  </description>
+  <maintainer email="nathanaelcayadi@gmail.com">Nathanael Tjahyadi</maintainer>
+  <license>Proprietary</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>mavros_msgs</exec_depend>
+  <exec_depend>rcl_interfaces</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>mavlink_adapter</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

@@ -1153,17 +1153,74 @@ def test_probe_rates_are_measured_and_not_zero():
     assert (rev["false_refusals"], rev["faithful"]) == (3, 30), rev
 
 
-def test_parser_preview_pins_the_altitude_fallback():
-    """The report's 'parse_command reads 6/8 as the same mission' for the
-    (40, 40) task: the two misses are 'an altitude of 20', which the compiler's
-    regex skips and silently replaces with its 15 m default. Pinned so the
-    finding cannot vanish unnoticed - when guardrail/compiler.py is fixed this
-    test fails and the doc's preview table must be updated."""
+def test_parser_preview_reads_the_altitude_of_every_paraphrase():
+    """Until 2026-10-06 the report said 'parse_command reads 6/8 as the same
+    mission' for the (40, 40) task: the two misses were 'an altitude of 20',
+    which the compiler's regex skipped and silently replaced with its 15 m
+    default (this test pinned 6/8 so the finding could not vanish unnoticed).
+    guardrail/compiler.py now reads 'altitude of N' and marks any default it
+    falls back to in Mission.defaults_used. 8/8, and every row READ the
+    altitude (alt_read), so none agrees only because 15 happened to be right."""
     entry = [e for e in P.load_store(STORE).values() if e.source_key == "task_fly_to_40_40"][0]
     pr = P._parser_reading(entry.source_text, [i["text"] for i in entry.paraphrases])
-    assert (pr["same_mission"], pr["n"], pr["same_only_by_default"]) == (6, 8, 0), pr
-    misses = [r["text"] for r in pr["rows"] if not r.get("same_mission")]
-    assert len(misses) == 2 and all("an altitude of 20" in t for t in misses), misses
+    assert (pr["same_mission"], pr["n"], pr["same_only_by_default"]) == (8, 8, 0), pr
+    of = [r for r in pr["rows"] if "an altitude of 20" in r["text"]]
+    assert len(of) == 2, [r["text"] for r in pr["rows"]]
+    assert all(r["alt_read"] and r["mission"][2] == 20.0 for r in of), of
+
+
+def test_parser_says_when_it_fell_back_to_a_default():
+    """A fallback is not a reading. The Mission names the fields the text did
+    not state, so a 15 m default can never pass as '15 m was asked for'."""
+    from guardrail.compiler import ConstraintCompiler
+    from guardrail.models import load_policy
+    cc = ConstraintCompiler(load_policy(ROOT / "policies" / "sim_demo_policy.yaml"))
+    m = cc.parse_command("fly to (40, 40)")
+    assert m.defaults_used == ["cruise_alt_m", "speed_pref_mps"], m.defaults_used
+    m = cc.parse_command("fly to (40, 40) at 6 m/s at an altitude of 20")
+    assert (m.cruise_alt_m, m.speed_pref_mps, m.defaults_used) == (20.0, 6.0, []), m
+    # Every form the old regex read is still read the same way.
+    for text, alt in (("fly to (40, 40) at 6 m/s altitude 20", 20.0),
+                      ("go to the northeast pad, alt: 25", 25.0),
+                      ("fly to (40, 40), 22 m altitude", 22.0),
+                      ("terbang ke (10, 10) tinggi 12", 12.0),
+                      ("fly to (40, 40) altitude=9.5", 9.5),
+                      ("fly to (40, 40) at a height of 18 m", 18.0)):
+        m = cc.parse_command(text)
+        assert m.cruise_alt_m == alt and "cruise_alt_m" not in m.defaults_used, (text, m)
+    # The speed is stripped first, so "6 m/s" is never read as an altitude.
+    m = cc.parse_command("fly to (40, 40) at 6 m/s")
+    assert (m.cruise_alt_m, m.defaults_used) == (15.0, ["cruise_alt_m"]), m
+
+
+def test_the_target_coordinate_is_never_read_as_the_altitude():
+    """Review, 2026-10-06: the first widening of the altitude phrase read the
+    TARGET as the cruise altitude, with defaults_used empty - a wrong number
+    presented as read from the text. "fly at low altitude to (5, 5)" flew at
+    5 m and "hold altitude to (40, 40)" at 40 m. These reach parse_command
+    from operator text (run_demo.py --command, the ROS 2 nodes)."""
+    from guardrail.compiler import ConstraintCompiler
+    from guardrail.models import load_policy
+    cc = ConstraintCompiler(load_policy(ROOT / "policies" / "sim_demo_policy.yaml"))
+    for text in ("fly at low altitude to (5, 5)", "hold altitude to (40, 40)",
+                 "maintain current altitude to (40, 40)", "height to (40, 40)",
+                 "altitude: (40, 40)", "keep altitude, fly to 40, 40",
+                 # a second pair is not the target and is not stripped: only
+                 # the regex's own guards keep it from being read
+                 "fly to (40, 40), hold altitude to (10, 10)",
+                 "fly to (40, 40), hold altitude to 10, 10",   # the ", N" look-ahead
+                 "hold altitude (1), then fly to (40, 40)",    # no "(" in the gap
+                 "fly to 40, 40 m altitude"):                  # the target is stripped
+        m = cc.parse_command(text)
+        assert (m.cruise_alt_m, "cruise_alt_m" in m.defaults_used) == (15.0, True), (text, m)
+        assert (m.target_x, m.target_y) != (None, None)
+    # ...while an altitude stated after the coordinate is still read
+    for text, alt in (("fly to (40, 40), altitude to 25", 25.0),
+                      ("fly to (40, 40) with the altitude at 20 m", 20.0),
+                      ("fly to (40,40) at altitude 20.", 20.0),
+                      ("fly at an altitude of 12 to (5, 5)", 12.0)):
+        m = cc.parse_command(text)
+        assert m.cruise_alt_m == alt and "cruise_alt_m" not in m.defaults_used, (text, m)
 
 
 def test_validation_report_describes_this_store_and_this_validator():

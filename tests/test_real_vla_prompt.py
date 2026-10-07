@@ -141,6 +141,18 @@ def _many_fences(n):
     return Policy.model_validate(raw)
 
 
+def _nothing_in_region():
+    """A policy whose only rule is a keep-out zone 9 km away: the CSP filters it
+    out of the mission region, so the CSP has no sentences. load_policy refuses
+    a policy with NO rules since 2026-10-06 (the DSL lint), so a rule-less
+    policy file can no longer reach the prompt builder; this one can, and it
+    still exercises the "no sentences" refusal."""
+    return Policy.model_validate({"policy_id": "nothing-in-region", "constraints": [
+        {"id": "nfz-far", "type": "polygon_fence", "vertices": [
+            {"x": 9000, "y": 9000}, {"x": 9010, "y": 9000},
+            {"x": 9010, "y": 9010}, {"x": 9000, "y": 9010}]}]})
+
+
 def _policy_file(pol):
     p = Path(tempfile.mkdtemp()) / f"{pol.policy_id}.yaml"
     p.write_text(yaml.safe_dump(pol.model_dump(mode="json")), encoding="utf-8")
@@ -172,6 +184,7 @@ def test_csp_off_fields_are_none_not_zero():
     rec = fp.current()
     assert rec["csp"] == "off" and fp.csp is None and fp.n_compiles == 0
     for k in ("csp_text", "csp_tokens", "csp_overhead_tokens", "csp_hash",
+              "csp_content_hash",
               "csp_issued_at", "csp_file", "csp_tokens_used", "csp_budget_tokens",
               "csp_token_counter", "csp_time_filter", "csp_decisions"):
         assert rec[k] is None, f"{k}={rec[k]!r}: 'no CSP' must not look like a zero"
@@ -530,7 +543,7 @@ def test_print_prompt_exit_codes_need_no_model_and_no_sim():
                             "--csp-budget", str(HUGE)], tokenizer=None)
     assert code == rv.EXIT_UNKNOWN and rec["within_budget"] is None, (code, rec["refused"])
 
-    empty = str(_policy_file(Policy(policy_id="empty", constraints=[])))
+    empty = str(_policy_file(_nothing_in_region()))
     code, rec = _main_json(["--csp", "on", "--print-prompt", "--policy", empty])
     assert code == rv.EXIT_REFUSED and rec["refused"]["kind"] == "no_prompt"
     assert len({rv.EXIT_OK, rv.EXIT_OVERFLOW, rv.EXIT_UNKNOWN, rv.EXIT_REFUSED}) == 4
@@ -550,7 +563,7 @@ def test_a_refused_flight_never_loads_the_model():
 
     tmp = Path(tempfile.mkdtemp())
     big = str(_policy_file(_many_fences(300)))
-    empty = str(_policy_file(Policy(policy_id="empty", constraints=[])))
+    empty = str(_policy_file(_nothing_in_region()))
     cases = {"csp_p0_over_budget": ["--policy", big],
              "prompt_over_text_budget": ["--policy", big, "--csp-budget", str(HUGE)],
              "no_prompt": ["--policy", empty]}
@@ -1199,6 +1212,72 @@ def test_the_real_openvla_tokenizer_if_present():
         print(f"      {path.name}: CSP {exact['csp_tokens']} tokens "
               f"(table {exact['csp_tokens_used']}, whitespace words {est['csp_tokens']}), "
               f"prompt {exact['prompt_tokens']}/{rv.OPENVLA_TEXT_BUDGET}")
+
+
+def test_two_unclocked_compiles_match_by_content_hash_not_by_csp_hash():
+    """The demo compiles without a clock, so `issued_at` comes from the wall
+    clock and csp_hash differs between two runs of the same flight. The record
+    now carries csp_content_hash (every field but the stamp), which matches."""
+    from guardrail.csp import csp_content_hash
+    pol = load_policy(PED)
+    a = rv.compile_flight_csp(pol, _mission())
+    b = a.model_copy(update={"issued_at": "2099-01-01T00:00:00"})
+    ra, rb = rv.prompt_record(INSTR, pol, a), rv.prompt_record(INSTR, pol, b)
+    assert ra["csp_hash"] != rb["csp_hash"], "fixture broken: the stamps were equal"
+    assert ra["csp_content_hash"] == rb["csp_content_hash"] == csp_content_hash(a)
+    assert ra["csp_content_hash"].startswith("sha256:"), ra["csp_content_hash"]
+    # and a different policy's CSP is a different content hash
+    other = load_policy(CORRIDOR)
+    rc = rv.prompt_record(INSTR, other, rv.compile_flight_csp(other, _mission()))
+    assert rc["csp_content_hash"] != ra["csp_content_hash"]
+
+
+def test_a_stored_paraphrase_is_flown_traceably_and_only_as_a_verb_phrase():
+    """--paraphrase-index / --paraphrase-seed (WP4 per-paraphrase robustness):
+    the flown text comes from the stored set, its record names the item, and an
+    `utterance` item is refused in OpenVLA's question frame unless asked for."""
+    text, rec = rv.paraphrased_instruction(INSTR)
+    assert (text, rec) == (INSTR, None), "no flag must fly the instruction as typed"
+    t0, r0 = rv.paraphrased_instruction(INSTR, index=0)
+    assert t0 != INSTR and r0["index"] == 0 and r0["form"] == "verb_phrase", r0
+    assert r0["text"] == t0 and r0["paraphrase_id"].startswith("pp-"), r0
+    assert r0["grammar_confound"] is False
+    assert rv.build_openvla_prompt(t0) == f"In: {QUESTION} {t0}?\nOut:"
+    # index 4 is an utterance ("Please fly forward, ..."): refused by default
+    try:
+        rv.paraphrased_instruction(INSTR, index=4)
+    except ValueError as e:
+        assert "verb_phrase" in str(e), e
+    else:
+        raise AssertionError("an utterance was accepted into the question frame")
+    t4, r4 = rv.paraphrased_instruction(INSTR, index=4, allow_utterance=True)
+    assert r4["form"] == "utterance" and r4["grammar_confound"] is True, r4
+    # a seed draw is deterministic and lands on a verb phrase
+    ta, ra = rv.paraphrased_instruction(INSTR, seed=7)
+    tb, rb = rv.paraphrased_instruction(INSTR, seed=7)
+    assert (ta, ra) == (tb, rb) and ra["form"] == "verb_phrase", ra
+    seen = {rv.paraphrased_instruction(INSTR, seed=s)[1]["index"] for s in range(12)}
+    assert len(seen) > 1, f"every seed drew the same item {seen}: the seed does nothing"
+    # an instruction with no stored set refuses; it never falls back silently
+    from guardrail import paraphraser as P
+    try:
+        rv.paraphrased_instruction("hover over the moon", index=0)
+    except P.UnknownSource:
+        pass
+    else:
+        raise AssertionError("a paraphrase run fell back to the canonical text")
+
+
+def test_print_prompt_names_the_paraphrase_it_would_fly():
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = rv.main(["--print-prompt", "--paraphrase-index", "1"])
+    shown = json.loads(out.getvalue())
+    assert shown["paraphrase"]["index"] == 1, shown["paraphrase"]
+    assert shown["paraphrase"]["text"] in shown["prompt"], shown["prompt"]
+    assert INSTR not in shown["prompt"], "the canonical text was flown instead"
+    assert code == rv._PRINT_EXIT[None if shown["refused"] is None
+                                  else shown["refused"]["kind"]]
 
 
 def test_importing_the_demo_loads_no_model():

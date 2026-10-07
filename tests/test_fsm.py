@@ -1050,9 +1050,10 @@ def test_a_real_shield_decision_maps_onto_the_fsm():
     and send a pure speed clamp to X1, while the per-operator source called
     it 0 m: the two sources disagreed about which repairs theta applies to,
     not only about how to measure them. A fence slide is a position
-    correction: the per-operator source refuses it until shield.py reports
-    magnitude_m, and the proxy calls it 0.42 m over one tick and 12.7 m over
-    3 s."""
+    correction: since 2026-10-07 shield.py reports its magnitude_m (the
+    forecast's penetration depth, here 3.0 m - over theta), and the Shield's
+    own FSM reaches the same edge as an FSM fed from outside; the proxy calls
+    it 0.42 m over one tick and 12.7 m over 3 s."""
     from guardrail import Action4D, Shield, State, load_policy
     pol = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
     sh = Shield(pol, lookahead_s=3.0, dt=0.5)
@@ -1074,8 +1075,13 @@ def test_a_real_shield_decision_maps_onto_the_fsm():
 
     slide = sh.filter(State(x=0, y=15, up=15), Action4D(vx=3.0))
     assert {r.operator for r in slide.repairs} == {"GeofenceSlide"}, slide.repairs
-    e = raises(ValueError, tick_input_from_decision, 0.0, slide, pol)
-    assert "GeofenceSlide" in str(e) and "magnitude_m" in str(e)
+    per_op = tick_input_from_decision(0.0, slide, pol)
+    assert (slide.repairs[0].axis, slide.repairs[0].magnitude_m) == ("lateral", 3.0)
+    assert (per_op.magnitude.lateral_m, per_op.magnitude.vertical_m) == (3.0, 0.0)
+    assert EscalationFSM().step(per_op).edge == "X1"
+    # The Shield's own FSM (already in Brake from the clamp above) judged the
+    # same 3.0 m over theta and escalated by G3.
+    assert slide.fsm_record["theta_exceeded"] is True and slide.fsm_edge == "G3"
     one_tick = tick_input_from_decision(0.0, slide, pol, 0.1)
     assert math.isclose(one_tick.magnitude.lateral_m, math.hypot(3.0, 3.0) * 0.1)
     assert EscalationFSM().step(one_tick).edge == "G1"
@@ -1560,6 +1566,48 @@ def test_fsm_episodes_feed_the_scorer():
     ]
     r = score_failsafe_triggers(eps)
     assert r["failsafe_trigger_correctness"] == 1.0 and r["beats_null"] is True
+
+
+def test_a_monitor_only_or_relaxed_rule_flown_as_commanded_is_not_a_failed_repair():
+    """shield.py records a monitor_only rule and flies the command, and gives
+    up a soft rule when it cannot satisfy every rule (`relaxed`). Both stay in
+    emitted_violations, because both were flown. Read as "emitted action still
+    violates", the first was an inconsistent TickInput (blocked with nothing
+    enforced) and the second an unconverged repair - an X1 stop the Shield had
+    deliberately not made."""
+    from guardrail.fsm import tick_input_from_row
+    from guardrail.models import Policy
+    from guardrail.shield import Repair, Violation
+    pol = Policy.model_validate({"policy_id": "m", "constraints": [
+        {"id": "watch", "type": "polygon_fence", "violation_action": "monitor_only",
+         "vertices": [{"x": 0, "y": 0}, {"x": 5, "y": 0}, {"x": 5, "y": 5}]},
+        {"id": "hard-band", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 10},
+        {"id": "soft-high", "type": "altitude_envelope", "alt_min_m": 20,
+         "alt_max_m": 30, "constraint_type": "soft", "priority": "P2"}]})
+    v_watch = Violation(rule_id="watch", category="geofence", detail="", predicted_at_s=1.0)
+    v_soft = Violation(rule_id="soft-high", category="altitude", detail="", predicted_at_s=0.0)
+    watch = SimpleNamespace(violations=[v_watch], repairs=[], braked=False,
+                            emitted_violations=[v_watch], relaxed=[],
+                            raw=SimpleNamespace(vx=1, vy=0, vz_up=0),
+                            emitted=SimpleNamespace(vx=1, vy=0, vz_up=0))
+    t = tick_input_from_decision(0.0, watch, pol)
+    assert t.outcome == "clean" and EscalationFSM().step(t).state.value == "Normal"
+    relaxed = SimpleNamespace(
+        violations=[v_soft], braked=False, emitted_violations=[v_soft],
+        relaxed=["soft-high"], repairs=[Repair(operator="SoftRelax", detail="")],
+        raw=SimpleNamespace(vx=1, vy=0, vz_up=0), emitted=SimpleNamespace(vx=1, vy=0, vz_up=0))
+    t = tick_input_from_decision(0.0, relaxed, pol)
+    assert t.outcome == "repaired" and EscalationFSM().step(t).edge == "G1"
+    # Without `relaxed`, the same decision IS a failed repair.
+    relaxed.relaxed = []
+    assert tick_input_from_decision(0.0, relaxed, pol).outcome == "blocked"
+    row = {"t": 0.0, "violations": [v_soft.model_dump()], "repairs": [{"operator": "SoftRelax",
+           "detail": ""}], "emitted_violations": [v_soft.model_dump()], "relaxed": ["soft-high"],
+           "raw": {"vx": 1, "vy": 0, "vz_up": 0}, "emitted": {"vx": 1, "vy": 0, "vz_up": 0}}
+    assert tick_input_from_row(row, pol).outcome == "repaired"
+    row_watch = {"t": 0.0, "violations": [v_watch.model_dump()], "repairs": [],
+                 "emitted_violations": [v_watch.model_dump()]}
+    assert tick_input_from_row(row_watch, pol).outcome == "clean"
 
 
 if __name__ == "__main__":

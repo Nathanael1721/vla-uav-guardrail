@@ -11,8 +11,9 @@
 # per sampled family, three seeds - is the grant's. The topology is not: on the
 # headless backend no episode is KPI-grade, so nothing from this profile may
 # feed the final KPI report until the same library runs on the HIL rail
-# (ArduPilot SITL + MAVROS 2) at sim_speedup 1.0. The broad sweep (~3000 x 5
-# seeds, functional rail) has no profile yet.
+# (ArduPilot SITL + MAVROS 2) at sim_speedup 1.0, in the hil topology (since
+# 2026-10-06 a Jetson Orin, docs/RUNBOOK-orin-hil.md). The broad sweep is
+# experiments/profiles/broad.yaml.
 #
 # THE THREE SEEDS
 #
@@ -26,6 +27,16 @@
 # Before anything runs, the sweep refuses this profile (exit 2) if its count
 # leaves `expected_cells` or if two of its cells fly the same episode.
 #
+# ARMS AND OVERRIDES (2026-10-07)
+#
+# The families' own paraphrase and prefix arms fly as declared (dyn-nfz-translate
+# in three wordings, nfz-head-on in three wordings with the rule summary on and
+# off): extra EPISODES, never extra cells, and the sweep checks that every arm
+# of an episode flew the same flight. One override keeps the count in range
+# with the grant's four templates and the fail-safe family added:
+# high-speed-near-edge flies three of the square zone's four faces (the
+# fourth is a rotation of the same geometry).
+#
 #   python experiments/sweep_scenarios.py --profile nightly
 
 profile: nightly
@@ -37,4 +48,6 @@ seeds: [1001, 1002, 1003]
 samples_per_family: 3
 families: all
 expected_cells: [170, 240]
-sweep_overrides: {}
+sweep_overrides:
+  high-speed-near-edge:
+    edge_deg: [0, 90, 180]

@@ -93,7 +93,8 @@ const PED_TICKS = 1788, FACADE_RANGE_M = "40-130";
 const LOOP_JUNCTIONS = 13, LOOP_JUNCTIONS_WITH_VEH_HEADS = 0, USABLE_ZEBRAS = 5;
 // CHANGELOG.md [Unreleased] 2026-09-29 "Retracted" and 2026-09-30 "Retracted / corrected".
 const RETRACTED = {
-  detOld: "6.9-7.5", detNew: "3.5-4.0", midEvalDet: "3.76-5.22",
+  // midEvalDet is printed as the quoted, retracted claim (CORRECTION row A14).
+  detOld: "6.9-7.5", detNew: "3.5-4.0", midEvalDet: '"3.76-5.22 Hz"', midEvalDetNew: "2.77-4.31",
   replayOldOn: "22.4", replayOldNew: "95.5", replayOldSeeds: "0/18", replayOldWrong: "260/293",
   pinholeBelowChance: 3,
 };
@@ -504,13 +505,13 @@ async function main() {
     const rows = [
       ["Claim", "Correct"],
       [`Detector rate ${R.detOld} Hz (red car)`, `${R.detNew} Hz over the mission; start-gate inferences were counted`],
-      [`Mid-eval report: detector ${R.midEvalDet} Hz`, "Uses the inflated rate; needs a correction note"],
+      [`Mid-eval report: detector ${R.midEvalDet}`, `${R.midEvalDetNew} Hz over the mission (correction note of 6 Oct, row A14)`],
       ["Identity gate passed", `Held out ${pctN(IG.held_out.on_notok_rate)} % vs ${pct0(IG.gate.on_notok_max)} gate: near miss`],
       // "to", not an arrow: Poppins has no U+2192 and a table cell is one run.
       [`Replay ${R.replayOldOn} to ${R.replayOldNew} %, ${R.replayOldSeeds} vs ${R.replayOldWrong}`,
         `Against the ${OLD_ARM_COMMIT} estimator: ${pctN(RP.as_flown_on_car_of_served)} to ${pctN(RP.new_on_car_of_served)} %, ${RP.new_false_seeds}/${RP.new_seeds} vs ${RP.as_flown_false_post_gap}/${RP.as_flown_post_gap}`],
       ["Tracking score (linear projection)", `Pinhole: ${R.pinholeBelowChance} more flights at or below chance`],
-      ["\"Nobody standing on a zebra\"", `Check was loose; ${SIM.zebra_figures_before_nkind} figures found`],
+      ["\"Nobody standing on a zebra\"", `Check was loose; ${SIM.zebra_figures_before_nkind} figures found`],  // retracted claim, quoted (CHANGELOG 2026-09-29)
     ];
     H.table(s, rows, { y: 1.66, rh: 0.44, fontSize: 10, colFrac: [0.4, 0.6], align: ["left", "left"] });
     source(s, "Source: CHANGELOG.md [Unreleased], 2026-09-29 and 2026-09-30.");
@@ -520,8 +521,8 @@ async function main() {
   /* 13 · AGAINST THE CONTRACT ---------------------------------------------- */
   {
     const s = content("ITRI subcontract, WP1-WP4", "Against the Contract");
-    // Status text: demo/out/ros2_*/kpi.json (P0 0.0 on every shielded canonical-hil
-    // run; mean time to safe only on the unshielded ros2_shield_off, the shielded
+    // Status text: demo/out/ros2_*/kpi.json (P0 0.0 on every shielded dev-topology
+    // run, stored under the old label canonical-hil; mean time to safe only on the unshielded ros2_shield_off, the shielded
     // runs have 0 unsafe episodes; no .replay bundle in any ros2_* folder),
     // docs/DESIGN-hil-perception-bridge.md ("scoping only"), git log since 09-16.
     // WP3: no FENCE_ENABLE / FENCE_ACTION anywhere in sitl/ or guardrail/.
@@ -529,17 +530,21 @@ async function main() {
     // strings are NOT paraphrased); per-paraphrase robustness is a grant KPI.
     // Gazebo: the grant's mid-term gate (2026-07-20) names the functional rail
     // (Gazebo Harmonic); the sources disagree on whether it ever ran, so the
-    // slide states only what is checkable: no artefact, open in the mid-eval.
+    // slide states only what is checkable: the launch scripts exist
+    // (sitl/setup_gazebo.sh, sitl/run_gazebo_demo.sh), no run output is kept.
+    // Rows corrected 2026-10-06 (the delivered 30 Sept deck is not rebuilt):
+    // WP1/WP2 "Built", WP3 "KPI-grade (canonical-hil)", "Measured", and Gazebo
+    // "no artefacts" were withdrawn (CHANGELOG.md, Retracted).
     const kf = SWEEP._counts.known_failure;
     const rows = [
       ["Item", "Status", "Since 16 Sept"],
-      ["WP1 Policy DSL + bundle", "Built", "One new policy"],
-      ["WP2 Prefix compiler", "Built", "Token budget, coverage not measured"],
-      ["WP3 Safety Shield", `KPI-grade (canonical-hil, ${KPI_DATE})`, "Off-map fix; KPIs not re-flown; ArduPilot fence backstop not configured"],
+      ["WP1 Policy DSL + bundle", "Partial", "One new policy"],
+      ["WP2 Prefix compiler", "Partial: CSP saved, no VLA reads it", "Token budget, coverage not measured"],
+      ["WP3 Safety Shield", `Shield core; 5 dev-topology runs (${KPI_DATE})`, "Off-map fix; KPIs not re-flown; ArduPilot fence backstop not configured"],
       ["WP4 Stress testing", `${sweepTotal} ${SWEEP._backend}: ${SWEEP._counts.pass} pass, ${kf} known failure${kf === 1 ? "" : "s"}`,
         `No new scenario since ${SWEEP_DATE}; no paraphraser or per-paraphrase KPI`],
-      ["Five acceptance KPIs", "Measured, P0 0.0; time to safe on control only", `Evidence ${KPI_AGE_D} days old, no replay bundles`],
-      ["Gazebo rail (mid-term gate)", "Open; no artefacts in the repo", `Not touched; asked ${GAZEBO_ASKED}`],
+      ["Five acceptance KPIs", "Computed on dev runs, P0 0.0; time to safe on control only", `Evidence ${KPI_AGE_D} days old, no replay bundles`],
+      ["Gazebo rail (mid-term gate)", "Open; scripts exist, no run output kept", `Not touched; asked ${GAZEBO_ASKED}`],
       ["Perception-rail integration", "Not started", "Final delivery item"],
     ];
     const tb = tableV(s, rows, {
@@ -549,7 +554,7 @@ async function main() {
     // docs research: verdict PARTIALLY DRIFTING. Of the post-09-16 work only the
     // scene items were PI requests (09-16 minutes); traffic signals, search,
     // landing and trail are outside the contract, identity was our own 09-29 ask.
-    s.addText("Core intact but not advanced. The PI asked for the 16 Sept scene items; signals, identity, search and landing were our own additions. Partial drift: perception-rail integration has not started.", {
+    s.addText("Shield core unchanged since 16 Sept. The PI asked for the 16 Sept scene items; signals, identity, search and landing were our own additions. Partial drift: perception-rail integration has not started.", {
       x: 0.55, y: tb + 0.06, w: 8.9, h: 0.42, fontSize: 11, color: TEAL, fontFace: FF, bold: true, valign: "top", lineSpacingMultiple: 1.0,
     });
     source(s, "Source: reference/Grant overview (PDF); demo/out/ros2_*/kpi.json; docs/data/scenario_sweep.json; mid-eval report s.7.");
@@ -560,8 +565,8 @@ async function main() {
   {
     const s = content("From Prof. Lai", "Decisions Needed");
     steps(s, [
-      ["HIL perception bridge", "Option A: AirSim + MAVROS, new label.\nOption B: HIL_GPS/HIL_SENSOR, fully canonical."],
-      ["What counts as 'hil'", "Our canonical-hil is desktop SITL + MAVROS 2, no Jetson. Acceptable?"],
+      ["HIL perception bridge", "Option A: AirSim + MAVROS, new label.\nOption B: HIL_GPS/HIL_SENSOR, EKF on AirSim sensors."],
+      ["What counts as 'hil'", "Our desktop SITL + MAVROS 2 rail is the grant's dev topology; hil puts VLA + Shield on a Jetson Orin."],
       ["Final-demo priorities", "Which scenarios first: NFZ in the city, crowd, intersection, square route?"],
     ], { y0: 1.72, dy: 1.04, rowH: 0.86, tw: 3.2, bx: 4.45, bw: 4.95, bodySize: 11.5 });
     H.badge(s, page);
@@ -572,7 +577,7 @@ async function main() {
     const s = content("Plan", "Next Steps");
     steps(s, [
       ["Commit and tag phase 3", `${SIM.suite_tests} tests green; flights still marked '-dirty'.`],
-      ["Re-fly the five KPI runs at HEAD", "canonical-hil, with replay bundles."],
+      ["Re-fly the five KPI runs at HEAD", "dev topology now, with replay bundles; hil on the Jetson Orin."],
       ["Show the Shield in the city", "NFZ over one CityLife junction, red-car mission through it."],
       ["Start the HIL bridge", "After the topology decision."],
       ["Person range from the ground ray", "Then identity for people."],
