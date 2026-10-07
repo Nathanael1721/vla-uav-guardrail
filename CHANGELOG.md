@@ -130,7 +130,10 @@ AirSim, Unreal and any GPU model were not started.
 - Full suite on Python 3.10: 2073 of 2078 over 70 test files. The five not
   passing are four visible skips (FastAPI is not installed in that
   environment; one sweep test) and the ITRI deck-pack check, which passes once
-  the deck is rebuilt from a clean tree.
+  the deck is rebuilt from a clean tree. On 3.11 the guardrail package's tests
+  pass, with visible skips only where an optional dependency is absent
+  (cryptography, jsonschema, tokenizers, psutil); demo tests that need cv2,
+  Pillow or projectairsim cannot run there (2032 of 2076 overall).
 
 ### 2026-10-06 — ten work packages toward the grant's locked spec
 

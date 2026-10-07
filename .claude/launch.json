@@ -30,6 +30,20 @@
         "C:/Users/natha/AppData/Local/Temp/claude/D--OneDrive-College-S2-TaipeiTech-Lab-VLA-Drone/b55be76a-a840-4098-ad3f-198de66a78a2/scratchpad/e2e_state.json"
       ],
       "port": 8766
+    },
+    {
+      "name": "public-site-preview",
+      "runtimeExecutable": "C:/Users/natha/.conda/envs/vla-real/python.exe",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8770",
+        "--bind",
+        "127.0.0.1",
+        "--directory",
+        "docs"
+      ],
+      "port": 8770
     }
   ]
 }

@@ -1,7 +1,7 @@
 {
  "generated_by": "tools/deck/build_progress_oct_data.py",
- "generated": "2026-10-07T07:53:39Z",
- "code_revision": "401305abd019-dirty",
+ "generated": "2026-10-07T07:56:19Z",
+ "code_revision": "9bdc3315820b-dirty",
  "status_date": "2026-10-07",
  "release": {
   "source": "CHANGELOG.md",
@@ -13,12 +13,12 @@
   ],
   "suite": {
    "python": "3.10",
-   "passed": 1408,
-   "total": 1408,
-   "files": 53,
-   "guardrail_passes_on_311": true
+   "passed": 2073,
+   "total": 2078,
+   "files": 70,
+   "guardrail_passes_on_311": false
   },
-  "suite_section": "2026-10-06"
+  "suite_section": "2026-10-07"
  },
  "wp1": {
   "source": "docs/data/wp1_roundtrip.json",
@@ -40,7 +40,7 @@
  },
  "wp2": {
   "command": "python -m guardrail.compiler report --policies policies --budget 256 --exact",
-  "code_revision": "401305abd019-dirty",
+  "code_revision": "9bdc3315820b-dirty",
   "budget_tokens": 256,
   "exact_counter": "openvla-llama2-sp@8f5e2869e180",
   "table_counter": "openvla-table-v1",
