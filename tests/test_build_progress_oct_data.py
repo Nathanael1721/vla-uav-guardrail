@@ -807,6 +807,19 @@ def test_verify_status_tells_a_stale_bench_from_drifted_numbers():
         "an absent bench read as merely stale"
 
 
+def test_a_new_commit_alone_does_not_make_the_numbers_stale():
+    """code_revision is provenance. Committing progress_oct.json moves HEAD;
+    if that alone read as stale, the file could never be committed current.
+    A changed number beside it must still be caught."""
+    bench = {k: {"code_sha": "s0"} for k in P.BENCH_RUNS}
+    stored = {"code_revision": "aaaa-dirty", "wp2": {"code_revision": "aaaa", "n": 1},
+              "wp3_bench": bench}
+    fresh = {"code_revision": "bbbb-dirty", "wp2": {"code_revision": "bbbb", "n": 1}}
+    assert P.verify(stored, fresh, "s0") == [], P.verify(stored, fresh, "s0")
+    fresh["wp2"]["n"] = 2
+    assert P.verify_status(P.verify(stored, fresh, "s0")) == 1, "a changed number passed"
+
+
 def _profile(**over):
     """A tick profile whose headline, design-load arm and as-flown arm all
     differ, so a reader of the wrong one gets a wrong number."""
@@ -1008,7 +1021,8 @@ def test_stored_sections_are_what_the_tree_computes_now():
     stored, fresh = _sections_or_skip()
     if stored is None:
         return SKIP
-    probs = [p for k, v in fresh.items() for p in P.diff(stored.get(k, "<absent>"), v, k)]
+    probs = [p for k, v in fresh.items() for p in P.diff(stored.get(k, "<absent>"), v, k)
+             if not p.split(":", 1)[0].endswith("code_revision")]   # provenance, as in verify()
     assert not probs, ("docs/data/progress_oct.json no longer matches the tree; re-run "
                        "tools/deck/build_progress_oct_data.py, then the deck build:\n      "
                        + "\n      ".join(probs))

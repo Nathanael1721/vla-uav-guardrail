@@ -1109,6 +1109,11 @@ def verify(stored: dict, fresh: dict, sha: str) -> list[str]:
     probs = []
     for k, v in fresh.items():
         probs += diff(stored.get(k, "<absent>"), v, k)
+    # A code_revision is a provenance stamp, not a number on a slide. Every
+    # number is compared above in full and the bench is pinned by code_sha
+    # below; comparing the stamp too made the file stale on every commit,
+    # including the commit of this very file.
+    probs = [p for p in probs if not p.split(":", 1)[0].endswith("code_revision")]
     bench = stored.get("wp3_bench") or {}
     for name in BENCH_RUNS:
         run = bench.get(name)
