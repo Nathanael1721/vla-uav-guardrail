@@ -1,5 +1,19 @@
 # Presentation Cheatsheet — September 2026
 
+> **Superseded (corrected 2026-10-06).** Personal speaker notes for the
+> September meetings, kept as a record and not updated. Several lines below
+> no longer hold:
+>
+> - The desktop ArduPilot SITL + MAVROS 2 rail it calls "canonical-HIL" is the
+>   grant's **dev** topology (withdrawn wording); reported KPI figures come from
+>   Stress Testing runs in the **hil** topology on a Jetson Orin.
+> - P0 escape rate is one of five acceptance KPIs, not "the hard KPI"
+>   (withdrawn wording).
+> - Detector rates quoted here were the stored `det_hz`; the mission rates are
+>   lower (CHANGELOG.md, 2026-09-29 evening and 2026-10-06, Retracted).
+>
+> Current status: CHANGELOG.md and the progress site under docs/progress/.
+
 Catatan pribadi untuk presentasi. Bahasa penjelasan Indonesia; kalimat dalam kutipan `"..."` adalah baris yang disarankan untuk diucapkan dalam bahasa Inggris (audiens ITRI internasional). Angka diambil langsung dari `docs/data/eval_sep2026.json` per 2026-09-14 — kalau ada yang bertanya sumbernya, itu jawabannya.
 
 **Jangan lupa duluan:** dua klaim di bawah ini SUDAH DIKOREKSI minggu lalu. Kalau reflek Anda masih mengingat versi lama dari sesi-sesi sebelumnya, jangan diucapkan:
