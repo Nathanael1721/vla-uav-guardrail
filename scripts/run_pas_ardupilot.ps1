@@ -243,6 +243,15 @@ try {
         }
         "g1" {
             for ($r = 1; $r -le $Runs; $r++) {
+                # A fresh simulator per run. With the ardupilot-api controller the
+                # steppable clock waits for ArduPilot's PWM; once the previous
+                # run's ArduPilot is gone, a scene reload never returns
+                # (2026-10-08: runs 2 and 3 timed out in /Sim/LoadScene).
+                if ($r -gt 1 -and $startedSim) {
+                    wsl.exe -d $Distro -- bash -c "pkill -9 -f '[a]rducopter --model airsim' ; pkill -9 -f '[m]avlink-routerd -c' ; pkill -9 -f '[m]avproxy.py --master=tcp:127.0.0.1:5760' ; true" 2>$null
+                    Say "restarting the simulator for run $r"
+                    Start-Sim
+                }
                 Say "G1 run $r of $Runs (seed $Seed)"
                 & $Py $G1 run --tag $Tag --run $r --seed $Seed --side-m $SideM --alt-m $AltM --start-sitl @net
                 if ($LASTEXITCODE -ne 0) { Warn "run $r exited $LASTEXITCODE; summarize counts it as a FAILED run (demo\out\$Tag\run_$r)" }
@@ -257,6 +266,6 @@ try {
 finally {
     if ($startedSim -and -not $KeepSim) { Say "stopping the simulator"; Stop-OurGameSim }
     if ($Step -ne "scene") {
-        wsl.exe -d $Distro -- bash -c "pkill -9 -f '[a]rducopter --model airsim' ; pkill -9 -f '[m]avlink-routerd -c' ; pkill -9 -f '[m]avproxy.py --master=tcp:127.0.0.1:5760' ; pkill -9 -f '[m]avros_node.*14555'" 2>$null
+        wsl.exe -d $Distro -- bash -c "pkill -9 -f '[a]rducopter --model airsim' ; pkill -9 -f '[m]avlink-routerd -c' ; pkill -9 -f '[m]avproxy.py --master=tcp:127.0.0.1:5760' ; pkill -9 -f '[m]avros_node.*14555' ; true" 2>$null
     }
 }

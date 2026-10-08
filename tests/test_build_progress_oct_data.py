@@ -807,6 +807,29 @@ def test_verify_status_tells_a_stale_bench_from_drifted_numbers():
         "an absent bench read as merely stale"
 
 
+def test_g1_facts_read_the_newest_verdict_and_never_invent_a_pass():
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td)
+        assert P.g1_facts(out) is None, "no G1 run read as something"
+        run = {"run": 1, "status": "ok", "checks": {
+            "1": {"p95_m": 0.81}, "3": {"landing_error_m": 0.18, "alt_m": 15.0}}}
+        (out / "g1_20261001_100000").mkdir()
+        (out / "g1_20261001_100000" / "g1_verdict.json").write_text(json.dumps(
+            {"tag": "g1_20261001_100000", "expected_runs": 3, "g1_passed": False, "runs": [run]}))
+        g = P.g1_facts(out)
+        assert g["passed"] is False and g["runs_ok"] == 1 and g["date"] == "2026-10-01", g
+        import os, time
+        newer = out / "g1_20261008_223259"
+        newer.mkdir()
+        (newer / "g1_verdict.json").write_text(json.dumps(
+            {"tag": newer.name, "expected_runs": 3, "g1_passed": True, "runs": [run, run, run]}))
+        later = time.time() + 5
+        os.utime(newer / "g1_verdict.json", (later, later))
+        g = P.g1_facts(out)
+        assert g["passed"] is True and g["runs_ok"] == 3 and g["ekf_p95_m"] == [0.81, 0.81], g
+        assert g["date"] == "2026-10-08" and g["alt_m"] == [15.0], g
+
+
 def test_a_new_commit_alone_does_not_make_the_numbers_stale():
     """code_revision is provenance. Committing progress_oct.json moves HEAD;
     if that alone read as stale, the file could never be committed current.

@@ -253,6 +253,22 @@ class NetworkPlan:
         """Where the router sends Mission Planner's UDP 14550 stream."""
         return self.windows_ip
 
+    @property
+    def router_tcp_host(self) -> str:
+        """Where a Windows process connects to the router's TCP server.
+
+        Under NAT this must be WSL's own address, not 127.0.0.1: mavlink-routerd
+        listens on [::] (IPv6, dual stack), and WSL's localhost forwarding
+        does not carry an IPv6 listener to Windows' 127.0.0.1 (measured
+        2026-10-08: [::] refused on 127.0.0.1, accepted on the WSL address; an
+        IPv4 0.0.0.0 listener such as the MAVProxy fallback works on both).
+        Under mirrored networking WSL shares the host's addresses."""
+        return self.wsl_ip if self.mode == "nat" else "127.0.0.1"
+
+    @property
+    def router_tcp_url(self) -> str:
+        return f"tcp:{self.router_tcp_host}:{ROUTER_TCP_PORT}"
+
     def to_dict(self) -> dict:
         return {"mode": self.mode, "windows_ip": self.windows_ip,
                 "wsl_ip": self.wsl_ip, "sim_bind_ip": self.sim_bind_ip,

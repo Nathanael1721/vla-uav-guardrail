@@ -213,6 +213,20 @@ def test_nat_refuses_addresses_that_would_drop_udp_silently():
 def test_mirrored_is_loopback_on_both_sides():
     p = rail.plan_network("mirrored", WIN, WSL)
     assert (p.sim_bind_ip, p.ardupilot_ip, p.gcs_address) == ("127.0.0.1",) * 3
+    assert p.router_tcp_url == f"tcp:127.0.0.1:{rail.ROUTER_TCP_PORT}"
+
+
+def test_under_nat_windows_reaches_the_router_at_wsl_s_address():
+    """mavlink-routerd's TCP server listens on [::]; WSL's NAT localhost
+    forwarding does not carry an IPv6 listener to Windows' 127.0.0.1, so G1 run
+    1 of 2026-10-08 timed out on tcp:127.0.0.1:5790 with ArduPilot running."""
+    p = rail.plan_network("nat", WIN, WSL)
+    assert p.router_tcp_host == WSL
+    assert p.router_tcp_url == f"tcp:{WSL}:{rail.ROUTER_TCP_PORT}"
+    for mod in (g1, pn):
+        src = Path(mod.__file__).read_text(encoding="utf-8")
+        assert 'add_argument("--mavlink-url", default=None' in src, \
+            f"{mod.__name__} still hard-codes 127.0.0.1 for the router"
 
 
 def test_wslconfig_mode_reads_only_an_uncommented_wsl2_setting():

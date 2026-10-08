@@ -8,9 +8,12 @@
 // own time by the difference between consecutive sensor-frame timestamps, so
 // ArduPilot runs at exactly the simulator's pace; and step-ns equal to
 // real-time-update-rate is what guardrail.manifest.sim_speedup_from_scene()
-// reads as sim_speedup 1.0. 3 ms per step also gives ArduPilot 333 sensor
-// frames a second against its 300 Hz loop (SCHED_LOOP_RATE in
-// airsim-quadX.parm); IAMAI's ArduPilot examples use the same clock.
+// reads as sim_speedup 1.0. The step is 5 ms (200 sensor frames a second),
+// matched by SCHED_LOOP_RATE 200 in citylife-quad.param. IAMAI's examples use
+// 3 ms against a 300 Hz loop, but CityLife renders too slowly for that: on
+// 2026-10-08 ArduPilot measured 221-222 Hz and refused to arm ("Main loop
+// slow", the check wants 90 % of SCHED_LOOP_RATE), and 3 ms steps at that
+// frame rate run the clock at about 0.67 of real time.
 //
 // The HOME-GEO-POINT must match ArduPilot SITL's --home, which rail.py derives
 // from this file. GPS fixes are this point plus the vehicle's NED offset.
@@ -35,8 +38,8 @@
   ],
   "clock": {
     "type": "steppable",
-    "step-ns": 3000000,
-    "real-time-update-rate": 3000000,
+    "step-ns": 5000000,
+    "real-time-update-rate": 5000000,
     "pause-on-start": false
   },
   "home-geo-point": {

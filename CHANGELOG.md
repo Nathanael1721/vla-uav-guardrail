@@ -16,6 +16,72 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-08 — Gate G1 passes: ArduPilot flies Project AirSim, Mission Planner sees it
+
+The first runs of the perception rail the PI asked about on 6 Oct: ArduPilot
+SITL as the flight controller on Project AirSim's physics and sensors,
+through the simulator's native `ardupilot-api` controller, with
+mavlink-router fanning MAVLink out to Mission Planner and the perception
+node. Dev topology on one desktop; not KPI-grade.
+
+#### Flown
+- **Gate G1 passed** (`demo/out/g1_20261008_223259`, the four conditions of
+  the reference fallback-gates page, three runs, same seed): ArduPilot's EKF
+  tracked the simulator's position with a p95 error of 0.81-0.82 m (limit
+  1.0 m; a frozen-position null gives 18.9-19.0 m); its PWM lifted the
+  vehicle 14.5 m from rest; each AUTO square mission (10 m sides, 15 m up)
+  reached all 5 mission items with no airborne collision and landed within
+  0.2 m of take-off; ArduPilot ran at 0.958-0.967 of real time. Frame:
+  `docs/img/g1_pas_ardupilot_airborne.png`.
+- **Perception node, red-car follow, 120 s** (`demo/out/pas_ap_20261008_224440`):
+  camera, detector, Shield and escalation FSM commanding ArduPilot. 1101
+  ticks at 9.16 Hz, detector 3.75 Hz, 85 Shield interventions, 0 GeoFence
+  breaches, ArduPilot real-time factor 0.951. **5 ticks let a P0 stand-off
+  violation through** (escape rate 0.0053): each time the aircraft was
+  already inside the stand-off ring, stopping was illegal, and the escape
+  repair did not leave the ring in one tick. The FSM went Brake to Loiter
+  seven times because stand-off repairs of 3.6-9.8 m exceed theta (2.0 m).
+  Both are open defects.
+- **Mission Planner's port carried the flight**: the router's UDP stream to
+  Windows port 14550 delivered GLOBAL_POSITION_INT and ATTITUDE at 19.0 Hz
+  for the whole 120 s mission, largest gap 0.1 s (`sitl/gcs_listen.py`).
+
+#### Fixed (each found on the rail on 8 Oct)
+- A Windows client could not reach the router: mavlink-routerd listens on
+  `[::]`, and WSL's NAT localhost forwarding does not carry an IPv6
+  listener to Windows' 127.0.0.1 (measured: refused on 127.0.0.1, accepted
+  on the WSL address). Under NAT the node and G1 now connect to WSL's own
+  address (`NetworkPlan.router_tcp_url`).
+- After a G1 run's ArduPilot stopped, the next scene load never returned:
+  the steppable clock waits for ArduPilot's PWM. The simulator is now
+  restarted for each G1 run.
+- ArduPilot refused to arm ("Main loop slow (222Hz < 300Hz)"): CityLife
+  delivers about 222 sensor frames a second against the 300 Hz loop
+  airsim-quadX.parm sets, and 3 ms steps at that rate ran the clock at about
+  0.67 of real time. The scene steps 5 ms and the param file sets
+  SCHED_LOOP_RATE 200.
+- The G1 square at 10 m flew through a street light (48-60 collisions a
+  run); the passing runs fly it at 15 m.
+- `start_ardupilot.sh` and `sitl/start_router.sh` now find a mavlink-routerd
+  installed without sudo in `~/.local/bin`; the runner no longer exits 1
+  when nothing is left to stop.
+
+#### Changed
+- The ITRI deck's Project AirSim slide states the G1 result from the newest
+  verdict file (`tools/deck/build_progress_oct_data.py`, section `g1`).
+- Installed for these runs: pymavlink and grpcio in the flight environment,
+  cryptography, jsonschema and psutil in the 3.11 environment, jinja2 in the
+  WSL ArduPilot venv, and mavlink-routerd built from source (2362c62) into
+  `~/.local`.
+
+#### Tests
+- `tests/test_pas_ardupilot.py` 97/97 (the router-address test fails on the
+  old code); `tests/test_build_progress_oct_data.py` gains a G1 case.
+- Full suite on Python 3.10: 2075 of 2081 over 70 test files. The six not
+  passing are four visible skips (FastAPI is absent in that environment; one
+  sweep test) and the two deck-pack checks, which pass once the deck data and
+  the pack are rebuilt from this commit.
+
 ### 2026-10-07 — the grant's own policy form, a Shield that escalates, ArduPilot on every rail
 
 Nine packages following the PI's answers of 6 Oct: the KPI campaign moves to

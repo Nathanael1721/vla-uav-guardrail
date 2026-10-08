@@ -816,7 +816,9 @@ async function main() {
     s.addText([
       { text: "Mission Planner can connect through ArduPilot. ", options: { bold: true, color: TEAL_DEEP } },
       { text: `Project AirSim's ${PAS_CONTROLLER} controller lets ArduPilot SITL fly on its physics (${SITL_CMD}), and Mission Planner joins over MAVLink beside MAVROS 2, as the grant specifies. `, options: { color: INK } },
-      { text: "Being connected now.", options: { bold: true, color: TEAL_DEEP } },
+      { text: (D.g1 && D.g1.passed)
+          ? `Gate G1 closed-loop check passed on ${D.g1.date}: ${D.g1.runs_ok}/${D.g1.runs_expected} square missions flown by ArduPilot, EKF error p95 ${D.g1.ekf_p95_m[0].toFixed(2)}-${D.g1.ekf_p95_m[1].toFixed(2)} m.`
+          : "Being connected now.", options: { bold: true, color: TEAL_DEEP } },
     ], { x: 0.72, y: ay, w: 8.56, h: 0.78, fontSize: 10, fontFace: FF, valign: "middle", lineSpacingMultiple: 1.08 });
     source(s, "Source: Project AirSim (IAMAI fork) example_user_scripts/ardupilot/; grant page 'Architecture constraints'.");
     H.badge(s, page);

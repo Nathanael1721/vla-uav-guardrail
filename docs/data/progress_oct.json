@@ -1,24 +1,25 @@
 {
  "generated_by": "tools/deck/build_progress_oct_data.py",
- "generated": "2026-10-07T07:56:19Z",
- "code_revision": "9bdc3315820b-dirty",
- "status_date": "2026-10-07",
+ "generated": "2026-10-08T14:54:11Z",
+ "code_revision": "b23b5fd331b8-dirty",
+ "status_date": "2026-10-08",
  "release": {
   "source": "CHANGELOG.md",
-  "status_date": "2026-10-07",
-  "section": "2026-10-07 — the grant's own policy form, a Shield that escalates, ArduPilot on every rail",
+  "status_date": "2026-10-08",
+  "section": "2026-10-08 — Gate G1 passes: ArduPilot flies Project AirSim, Mission Planner sees it",
   "sections": [
+   "2026-10-08",
    "2026-10-07",
    "2026-10-06"
   ],
   "suite": {
    "python": "3.10",
-   "passed": 2073,
-   "total": 2078,
+   "passed": 2075,
+   "total": 2081,
    "files": 70,
    "guardrail_passes_on_311": false
   },
-  "suite_section": "2026-10-07"
+  "suite_section": "2026-10-08"
  },
  "wp1": {
   "source": "docs/data/wp1_roundtrip.json",
@@ -40,7 +41,7 @@
  },
  "wp2": {
   "command": "python -m guardrail.compiler report --policies policies --budget 256 --exact",
-  "code_revision": "9bdc3315820b-dirty",
+  "code_revision": "b23b5fd331b8-dirty",
   "budget_tokens": 256,
   "exact_counter": "openvla-llama2-sp@8f5e2869e180",
   "table_counter": "openvla-table-v1",
@@ -562,6 +563,22 @@
    "p0_escapes": 0
   },
   "shield_repaired_ticks": 0
+ },
+ "g1": {
+  "tag": "g1_20261008_223259",
+  "date": "2026-10-08",
+  "passed": true,
+  "runs_ok": 3,
+  "runs_expected": 3,
+  "ekf_p95_m": [
+   0.8143,
+   0.8194
+  ],
+  "landing_error_m_max": 0.18,
+  "alt_m": [
+   15.0
+  ],
+  "source": "demo/out/g1_20261008_223259/g1_verdict.json"
  },
  "chart": {
   "path": "docs/share/2026-10-ITRI/_build/nfz2_track.png",

@@ -17,6 +17,10 @@
 # which is the robot config's actuator-order.
 FRAME_CLASS     1
 FRAME_TYPE      1
+# Main loop at the scene's 200 sensor frames a second (step-ns 5 ms in
+# scene_citylife_ardupilot.jsonc). airsim-quadX.parm sets 300, which CityLife
+# cannot feed: ArduPilot measured 221-222 Hz on 2026-10-08 and refused to arm.
+SCHED_LOOP_RATE 200
 # Copied verbatim from IAMAI's project-airsim-quad.param, the tuning their
 # ArduPilot example flies this exact airframe with (same mass, links and rotor
 # coefficients; tests/test_pas_ardupilot.py checks the airframe identity).

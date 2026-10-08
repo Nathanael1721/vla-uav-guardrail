@@ -19,6 +19,9 @@
 # MAVProxy is started with --streamrate=-1 so it never changes the stream
 # rates MAVROS asks for on the shared SITL link.
 set -eo pipefail
+# mavlink-routerd is built without sudo into ~/.local (see sitl/README.md);
+# a non-login shell does not have that on PATH.
+export PATH="$HOME/.local/bin:$PATH"
 DIR="$(cd "$(dirname "$0")" && pwd)"
 RUN="$HOME/sitl-run"
 mkdir -p "$RUN"

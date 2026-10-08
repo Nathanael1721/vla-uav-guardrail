@@ -608,7 +608,7 @@ def _fly(a, rec: dict, out: Path, *, pas=None, link=None) -> None:
                                     stdout=open(out / "sitl_wsl.log", "w"),
                                     stderr=subprocess.STDOUT)
         inbox = collections.deque()
-        link = link or PymavlinkLink(a.mavlink_url)
+        link = link or PymavlinkLink(a.mavlink_url or plan.router_tcp_url)
 
         def hook(msg, t):
             tt = round(t - t0, 3)
@@ -824,7 +824,8 @@ def main(argv=None) -> int:
     r.add_argument("--windows-ip", default=None)
     r.add_argument("--wsl-ip", default=None)
     r.add_argument("--sim-host", default="127.0.0.1")
-    r.add_argument("--mavlink-url", default=f"tcp:127.0.0.1:{rail.ROUTER_TCP_PORT}")
+    r.add_argument("--mavlink-url", default=None,
+                   help="default: the router's TCP server as this network plan reaches it")
     r.add_argument("--start-sitl", action="store_true")
     r.add_argument("--wsl-distro", default="Ubuntu")
     r.add_argument("--side-m", type=float, default=10.0)

@@ -486,7 +486,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--windows-ip", default=None)
     ap.add_argument("--wsl-ip", default=None)
     ap.add_argument("--link", choices=["pymavlink", "mavros"], default="pymavlink")
-    ap.add_argument("--mavlink-url", default=f"tcp:127.0.0.1:{rail.ROUTER_TCP_PORT}")
+    ap.add_argument("--mavlink-url", default=None,
+                    help="default: the router's TCP server as this network plan reaches it")
     ap.add_argument("--start-sitl", action="store_true",
                     help="after the scene loads, start ArduPilot SITL + the router "
                          "(+ MAVROS 2 with --link mavros) in WSL "
@@ -689,7 +690,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # ---- autopilot -------------------------------------------------------
         if link is None:
             if args.link == "pymavlink":
-                link = PymavlinkLink(args.mavlink_url)
+                link = PymavlinkLink(args.mavlink_url or (plan.router_tcp_url if plan is not None
+                                     else f"tcp:127.0.0.1:{rail.ROUTER_TCP_PORT}"))
                 link.connect(timeout=180.0)
             else:
                 from mavros_link import MavrosLink, Ros2ImageSource

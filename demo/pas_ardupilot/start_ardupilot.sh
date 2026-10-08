@@ -24,6 +24,9 @@
 #   ... then NO repeating "No sensor message received in last 1s" lines:
 #   those mean the simulator's frames are not arriving (see the design doc).
 set -eo pipefail
+# mavlink-routerd is built without sudo into ~/.local (see sitl/README.md);
+# a non-login shell does not have that on PATH.
+export PATH="$HOME/.local/bin:$PATH"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"

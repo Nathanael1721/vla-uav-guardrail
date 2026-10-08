@@ -1061,6 +1061,32 @@ def draw_track_chart(track: dict, out: Path) -> dict:
 
 # --------------------------------------------------------------------------- #
 
+def g1_facts(out: Path | None = None) -> dict | None:
+    """The newest Gate G1 verdict written by demo/pas_ardupilot/g1_check.py
+    (ArduPilot SITL flying Project AirSim's physics through the native
+    ardupilot-api controller). None when no verdict exists: an absent check
+    is never read as a pass."""
+    out = out or (ROOT / "demo" / "out")
+    verdicts = sorted(out.glob("g1_*/g1_verdict.json"), key=lambda p: p.stat().st_mtime)
+    if not verdicts:
+        return None
+    v = json.loads(verdicts[-1].read_text(encoding="utf-8"))
+    runs = [r for r in v.get("runs", []) if r.get("status") == "ok"]
+    c1 = [r["checks"]["1"]["p95_m"] for r in runs if "1" in r.get("checks", {})]
+    land = [r["checks"]["3"]["landing_error_m"] for r in runs if "3" in r.get("checks", {})]
+    alt = sorted({r["checks"]["3"].get("alt_m") for r in runs if "3" in r.get("checks", {})})
+    return {
+        "tag": v.get("tag"),
+        "date": "-".join([v["tag"][3:7], v["tag"][7:9], v["tag"][9:11]]) if v.get("tag") else None,
+        "passed": bool(v.get("g1_passed")),
+        "runs_ok": len(runs), "runs_expected": v.get("expected_runs"),
+        "ekf_p95_m": [min(c1), max(c1)] if c1 else None,
+        "landing_error_m_max": max(land) if land else None,
+        "alt_m": alt,
+        "source": f"demo/out/{v.get('tag')}/g1_verdict.json",
+    }
+
+
 def compute_sections() -> tuple[dict, dict]:
     """Every section of progress_oct.json except the bench, recomputed from
     its sources (no file is written), and the flight track for the chart."""
@@ -1078,6 +1104,7 @@ def compute_sections() -> tuple[dict, dict]:
         "wp4": wp4_facts(),
         "paraphraser": paraphraser_facts(),
         "nfz_flight": flight,
+        "g1": g1_facts(),
     }, track
 
 
@@ -1206,7 +1233,7 @@ def main(argv=None) -> int:
         **({"bench_refused": refused} if refused else {}),
         # The rule that chose the quoted run, for the README that explains it.
         "bench_pick_rule": {"load_tolerance": LOAD_TOLERANCE, "same": list(BENCH_SAME)},
-        **{k: secs[k] for k in ("wp3_profile", "wp3_fsm", "wp4", "paraphraser", "nfz_flight")},
+        **{k: secs[k] for k in ("wp3_profile", "wp3_fsm", "wp4", "paraphraser", "nfz_flight", "g1")},
         "chart": draw_track_chart(track, CHART),
     }
     OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
