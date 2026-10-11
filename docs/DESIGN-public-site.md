@@ -1,9 +1,9 @@
 # The public progress site (`docs/progress/`)
 
-**Date:** 2026-10-06 (revised 2026-10-07)
+**Date:** 2026-10-06 (revised 2026-10-07; re-curated 2026-10-08)
 **Where it is served:** `docs/` is the GitHub Pages source (`docs/_config.yml`),
-so the site is served at `<pages-url>/progress/` once `docs/progress/` is
-pushed.
+so the site is served at `<pages-url>/progress/`. It has been live since
+2026-10-08, so every push of `docs/progress/` publishes.
 **Code:** `tools/build_public_site.py`, curated text in
 `docs/progress/_src/site.json`, styles in `docs/progress/assets/site.css`,
 tests in `tests/test_build_public_site.py`.
@@ -42,7 +42,14 @@ language switch on each page and a chooser at `docs/progress/index.html`.
    been shown. Work that is not finished appears only as a **Next** item, on the
    roadmap and on its work-package page. A work package's description states
    its scope ("WP3 delivers ...", "in the grant's design ..."), so it does not
-   read as a claim that everything in it is built.
+   read as a claim that everything in it is built. Open defects stay in the
+   engineering documents, but the site never says or implies they are fixed:
+   a run with an open defect is shown only for what it demonstrates (what ran,
+   for how long, what the ground station received), none of its safety scores
+   is stated without the defect beside it, and a sentence about earlier runs
+   is scoped to those runs ("on each of these runs", not "on every run").
+   The generator cannot tell a defect from a result, so this part is checked
+   by reading at each re-curation, not by the build.
 2. **Every number is the current, corrected number.** A number in curated text
    must appear in a source the text cites, and the English and Chinese text
    must carry the same numbers. Quantities are written as digits, so that both
@@ -73,11 +80,17 @@ language switch on each page and a chooser at `docs/progress/index.html`.
    refuses the names of commit authors and of the repository owner, and any name
    in an optional local deny list (below), in Latin or Chinese characters.
 7. **Simulation is labelled as simulation, and the topology is named.** Runs on
-   one desktop are the grant's *dev* topology and are labelled so; the city
-   demonstrations say that a hand-written test controller is the pilot and that
-   Project AirSim's own flight controller flies the drone. The simulator is
-   called Project AirSim, or classic AirSim for the July OpenVLA run; bare
-   "AirSim" is refused as ambiguous.
+   one desktop with MAVROS 2 are the grant's *dev* topology and are labelled
+   so; the city demonstrations up to 3 Oct say that a hand-written test
+   controller is the pilot and that Project AirSim's own flight controller
+   flies the drone. Since 8 Oct ArduPilot SITL can fly the Project AirSim
+   vehicle; such a run names its MAVLink link, and a run that commanded
+   ArduPilot over pymavlink says that it is not one of the grant's topologies
+   (they all use MAVROS 2). The stress harness's episodes are headless (no
+   simulator and no ArduPilot; Loiter, RTL and Land are modelled as ideal
+   position control), and a sentence about them says so: they are episodes,
+   not flights. The simulator is called Project AirSim, or classic
+   AirSim for the July OpenVLA run; bare "AirSim" is refused as ambiguous.
 8. **Every image has been looked at.** The text checks cannot read an image, so
    each image is listed in `site.json` `reviewed_images` with the digest of the
    file a person checked against the content policy and against its caption
@@ -108,6 +121,8 @@ the build. "Refused" below means `PolicyViolation` or `BuildError`.
 | Images are on Pages, and reviewed | an image under `docs/img/` must be tracked by git; a copy under `docs/progress/assets/img/` is committed with the pages; every image must be in `reviewed_images` with its current digest, and every entry there must be used | `test_videos_link_only_when_committed_and_small`, `test_every_image_is_reviewed_and_unchanged` |
 | Next is labelled Next | every planned item on a work-package page carries the Next label; no heading names limitations or risks | `test_no_heading_lists_obstacles_and_open_work_is_labelled_next` |
 | Pages are generated, not edited | the committed pages equal a fresh build; a page the generator no longer makes is deleted | `test_the_committed_pages_match_a_fresh_build`, `test_a_page_the_generator_no_longer_makes_is_removed` |
+| The harness is labelled headless | a curated sentence saying the grant's event types run in the middle of a flight or episode must say "headless" in English and 無模擬器 in Chinese; the wording published on 2026-10-08 is the null | `test_the_harness_events_are_labelled_headless` |
+| Unfinished harness work stays Next | while `sitl_refusal()` in `experiments/sweep_scenarios.py` refuses a scenario with events, the roadmap must carry a Next item for flying such scenarios on ArduPilot SITL (the item was dropped on 2026-10-08 as if done) | `test_the_roadmap_shows_event_scenarios_on_sitl_while_the_harness_refuses_them` |
 | The site is not older than the CHANGELOG | every build records a digest of each CHANGELOG section it watches (every cited section, every undated section, every section dated on or after `as_of`) in `_src/build_manifest.json`. `--check` exits 1 when a page differs, when a watched section changed since the last build (new work is often written under an existing dated heading), or when a section is dated after `as_of` | `test_check_fails_on_an_edited_page_and_on_a_grown_changelog_section`, `test_changelog_sections_newer_than_as_of_are_reported` |
 
 Each refusal test has a matching case that must pass (neutral wording, the
@@ -127,6 +142,105 @@ check and its exemption for the site's own copies, the image review and its
 unused-entry check, the claims-only CHANGELOG text, the e-mail rule, the
 disallowed-key walk in the extract, the number-word check, JSON path citation
 and its rounding tolerance, and the narrowed meeting and AirSim rules.
+
+## Re-curation of 2026-10-08
+
+The site went live on 8 Oct showing "as of 6 Oct" and listing the work of
+7 Oct as Next. `--check` named both new CHANGELOG sections. What changed:
+
+- `as_of` 2026-10-08; change entries for 2026-10-07 and 2026-10-08.
+- WP1: the grant's rule format, policy layers, rule changes during a flight
+  and the GeoJSON/KML converter move to Built; two Shown items with both
+  nulls from `docs/data/wp1_roundtrip.json` (35/35 malformed policies refused
+  against 20/35 on 5 Oct and 0/35 for a loader that checks nothing; 3/3
+  reference documents loaded here, against 0/3). The second Shown item says
+  the reference loader reads "the 3 bundles we write from" the reference's
+  documents, not "ours": the cited key comes from
+  `reference_loader_reads_our_reference_form_bundle`, and our own 29 policies
+  use rule types the reference lacks (`reference_hash_representable` 0/29), so
+  "ours load there" claimed interoperability nobody has shown. The 7 Oct
+  change entry gives the same baseline as the Shown item (20/35 on 5 Oct,
+  14/25 of the 25 earlier cases), not 14/25 alone.
+- WP3: the grant's ROS 2 interface, escalation inside the Shield, ArduPilot's
+  GeoFence as backstop, and Project AirSim flown by ArduPilot with a stream to
+  Mission Planner's UDP port 14550 move to Built. Mission Planner itself was
+  never run (a listener stood in on its port), so neither the item nor the
+  8 Oct change entry says Mission Planner was attached, and the glossary's
+  mavlink-router entry separates the grant's design (Mission Planner and
+  MAVROS 2) from what the router has fed on this rail (Mission Planner's port
+  and the perception node). The Reproduce command of the stream item shows
+  both steps, `listen` and `check`; the capture behind 19.0 Hz is not stored
+  with the run (`docs/DESIGN-projectairsim-ardupilot.md` says where it is).
+  Shown gains Gate G1 (with
+  `docs/img/g1_pas_ardupilot_airborne.png`, reviewed: byte-identical to run 1's
+  chase frame, no text inside it) and the Mission Planner stream of the 8 Oct
+  follow, labelled as a pymavlink run. That run's P0 escapes and Loiter
+  escalations are open defects: the site states none of its safety scores
+  (`docs/DESIGN-projectairsim-ardupilot.md`, "Measured 2026-10-08", has them).
+  The SITL escape-rate sentence is scoped to its own runs. The live site had
+  said "the P0 violation escape rate is 0.00 on every run" (and the Chinese
+  equivalent); under content policy 4 that wording is now in
+  `FORBIDDEN_TEXT`, so an unscoped zero cannot come back. The first version
+  of that rule matched the published wording only; it now matches the rate,
+  a zero and every/all runs or flights in either order within one clause, in
+  both languages, and lets "all of these runs" and a non-zero rate such as
+  0.0053 pass. The published `site.json` of 10451bc is refused by it; the
+  generator of 10451bc accepted all 13 `WITHDRAWN` escape-rate phrases, and
+  the first version of the rule accepted 10 of them.
+- WP4: scenario templates and events during an episode, and the Orin image
+  definitions and profiler, move to Built. The templates item and the 7 Oct
+  change entry say the events run in the middle of a headless episode (no
+  simulator; Loiter, RTL and Land modelled as ideal position control): every
+  stored sweep and nightly manifest names the topology `headless-kinematic`,
+  and the harness's ArduPilot path refuses every scenario with events. The
+  first re-curation said "in the middle of a flight", which left the
+  simulation unlabelled and read as RTL and Land seen on ArduPilot. The Orin item says "image
+  definitions" and a profiler "written to run on the Orin unchanged": no
+  image has been built and no Orin has run it yet, so "ready for the Orin"
+  and "runs on the Orin" would overstate it.
+- A G1 headline tile (p95 EKF error 0.81-0.82 m against a 1.0 m limit and a
+  frozen-position null of 18.9-19.0 m) replaces the paraphrase count, which
+  was a count rather than a measurement.
+- Roadmap: the done items leave Next; Next is now the Orin (hil) setup and
+  timing, the perception node through MAVROS 2, sentence templates for the
+  mid-flight rule types (at `as_of` the flight loaders still refuse a policy
+  that declares one, `guardrail.models.RUNTIME_TYPES`), OpenVLA with the rule
+  summary, the broad stress profile, then the November KPI campaign on the
+  Orin and, after the hil runs, the drone. Two Next items were added on
+  review. Flying the scenarios with mid-flight rule changes on ArduPilot SITL
+  through MAVROS 2 (WP4): the first re-curation dropped the old item "a stress
+  harness that starts ArduPilot SITL sessions, changes rules mid-flight ..."
+  as if it were done, but `sitl_refusal()` still refuses every scenario with
+  events, the rule change flown mid-flight on SITL so far is the ROS 2 node's
+  own no-fly-zone spawn (`--dynamic`, outside the harness), and the November
+  campaign of dynamic scenarios depends on it. And keeping the aircraft in its altitude band while the escalation holds
+  it on ArduPilot, with fail-safe trigger correctness brought to the grant's
+  99 % (WP3): no current figure is stated, only the target.
+- Topologies: dev keeps the Shield on/off runs; Gate G1 is said to have run
+  on the same desktop, not to be a dev-topology run, because it had neither
+  the Shield nor MAVROS 2.
+- The architecture's ground-station box links to WP3; the glossary gains
+  Gate G1 and mavlink-router, and the Project AirSim entry says who flies the
+  vehicle before and after 8 Oct.
+- The tracker's demo-pipeline autopilot text changed on 8 Oct to "the older
+  demo path still uses AirSim's controller", which the build refuses (bare
+  "AirSim"). `overrides` keep the pipeline's autopilot box consistent with the
+  pipeline's lead, which describes the chain as flown up to 3 Oct (identity
+  check, tracker and policy indicator, none of which the 8 Oct ArduPilot
+  follow used), and point to WP3 for ArduPilot flying the vehicle.
+- `assets/site.css`: on a 375 px screen the roadmap's "Today" label sat
+  inside the final-gate date label (overlap 552 px² in English, 394 px² in
+  Chinese, measured in the browser); the gate label now sits one line higher
+  (overlap 0 at 375 px and at the pane's 626 px).
+  `test_the_roadmap_gate_label_sits_above_the_today_label` reads a 0 px gap
+  from the stylesheet of 10451bc (it fails there) and 20 px from this one.
+- `docs/index.md` (the Pages root) titles its escape-rate section "on the
+  mid-evaluation flights" and states the 8 Oct follow's 5 P0 stand-off escapes
+  (0.0053, no Shield-off control on that rail yet) beside the 41 flights'
+  0.0.
+- Checked after the rebuild: `--check` 21/21 pages up to date; every page,
+  link, anchor and image served with HTTP 200 from `python -m http.server
+  -d docs`; no page wider than a 375 px viewport.
 
 ## Sources
 

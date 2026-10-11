@@ -45,9 +45,9 @@ sys.path.insert(0, str(ROOT / "demo"))
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import (                                      # noqa: E402
-    Action4D, ObstacleClearance, PolygonFence,
+    Action4D, ObstacleClearance,
 )
-from shapely.geometry import Point                                  # noqa: E402
+from guardrail.replay import DWELL_ZONE_TYPES, zone_dwell           # noqa: E402
 
 from aerialvla_demo import AerialVLABackend, RateLimiter            # noqa: E402
 import city_planner                                                 # noqa: E402
@@ -458,11 +458,19 @@ async def fly(args) -> int:
         client.disconnect()
 
     # ---- report: the KPI must hold even with nothing planning the route ----
-    fences = [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
-    inside = sum(1 for pt in traj for f, poly in fences
-                 if f.altitude_floor_m <= pt["up"] <= f.altitude_ceiling_m
-                 and poly.contains(Point(pt["x"], pt["y"])))
-    nfz_s = inside * TICK
+    # Zone dwell from the Shield's own rule checker, the count every rail
+    # shares (guardrail.replay.zone_dwell): polygon and circle fences and
+    # every dynamic_nfz that does not move; a moving one is named
+    # (nfz_moving_not_counted), not scored 0. Until 2026-10-11 this walked
+    # policy.by_type(PolygonFence), which a dynamic_nfz is not.
+    dwell = zone_dwell(shield, traj, TICK)
+    nfz_s = dwell["nfz_s"]
+    if dwell["nfz_moving_not_counted"]:
+        print(f"[nfz] moving zone(s) {dwell['nfz_moving_not_counted']} are NOT in "
+              f"the NFZ time: the end-of-flight count has no per-tick position")
+    # Every zone with vertices, for the plot.
+    fences = [(f, fence_polygon(f)) for f in policy.constraints
+              if f.type in DWELL_ZONE_TYPES and getattr(f, "vertices", None)]
     dist = sum(math.hypot(traj[i]["x"] - traj[i - 1]["x"],
                           traj[i]["y"] - traj[i - 1]["y"])
                for i in range(1, len(traj)))

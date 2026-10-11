@@ -1019,15 +1019,16 @@ class FakeDetections:
     """follow_vlm.Grounder.latest() in shape: a small box right of centre.
     With `misses`, every second inference finds nothing (n_miss counts it)."""
 
-    def __init__(self, clock, cx=576.0, w=20.0, fresh=True, misses=False):
+    def __init__(self, clock, cx=576.0, w=20.0, fresh=True, misses=False, cy=216.0,
+                 h=12.0):
         self.clock, self.cx, self.w, self.fresh, self.n = clock, cx, w, fresh, 0
-        self.misses = misses
+        self.misses, self.cy, self.h = misses, cy, h
 
     def latest(self):
         self.n += 1
         now = self.clock.t
         miss = self.n // 2 if self.misses else 0
-        return {"det": (self.cx, 216.0, self.w, 12.0, 0.3, 768, 432, 0.5),
+        return {"det": (self.cx, self.cy, self.w, self.h, 0.3, 768, 432, 0.5),
                 "t_det": now - (0.05 if self.fresh else 5.0), "seq": self.n,
                 "n_seen": self.n - miss, "n_miss": miss}
 
@@ -1057,6 +1058,125 @@ def test_the_subject_is_placed_along_the_heading_without_ground_truth():
     assert abs((y - 5.0) - math.sqrt(r * r - dh * dh)) < 1e-6, (y, r)
 
 
+def _depth_image(r):
+    import numpy as np
+    return np.full((432, 768), r, dtype=np.float32)
+
+
+def test_a_depth_return_nearer_than_the_road_below_is_not_the_subject():
+    """REGRESSION (pas_ap_20261008_224440, tick 857: the first of five P0
+    escape ticks). The state and the box are the flight's; the depth inside
+    the box read less than the camera's 7.2 m height above a car's centre.
+    The old subject_estimate turned that slant range into a horizontal range
+    of 0 and put the car exactly under the aircraft - where FrontCamera,
+    20 deg down with a half vertical field of about 29 deg, cannot see - and
+    the Shield then held a 5 m P0 ring centred on the aircraft. The depth is
+    now refused and the box width ranges the car instead."""
+    fv = pn._fv()
+    det = (391.8, 155.5, 50.5, 24.1, 0.0211, 768, 432, 0.11)
+    st = State(x=36.847, y=-48.38, up=7.962, yaw_deg=-99.78)
+    yaw = math.radians(-99.78)
+    for r in (4.0, 6.0, 7.0):                    # all under the 7.2 m height
+        why = pn.depth_implausible(det, r, st.up, 90.0, fv)
+        assert why, r
+        x, y, src = pn.subject_estimate(det, _depth_image(r), st, yaw, 90.0, 1.9, fv)
+        assert src == "width:depth-rejected", (r, src)
+        assert math.hypot(x - st.x, y - st.y) > 5.0, (r, x, y)
+    # Nearer than the camera's height above any subject: refused whatever the
+    # ray - even for a box with no frame size, where no ray can be drawn.
+    assert "whatever the ray" in pn.depth_implausible(det, 4.0, st.up, 90.0, fv)
+    assert "whatever the ray" in pn.depth_implausible(det[:5], 4.0, st.up, 90.0, fv)
+    assert pn.depth_implausible(det[:5], 6.0, st.up, 90.0, fv) is None
+    # A box near the horizon, where the base-ray check has no ground range to
+    # compare with: a 7 m return along that ray is 8 m above the road.
+    high = (384.0, 60.0, 40.0, 10.0, 0.3, 768, 432, 0.5)
+    assert fv.ground_range_m(high, 8.0, 0.0, hfov_deg=90.0) is None
+    assert "cannot see under" in pn.depth_implausible(high, 7.0, 8.0, 90.0, fv)
+    # Short of where the box's base ray meets the road: in front of the subject.
+    assert "in front of the subject" in pn.depth_implausible(det, 10.0, st.up, 90.0, fv)
+    # A range that agrees with the box's base ray is the subject's, and kept.
+    x, y, src = pn.subject_estimate(det, _depth_image(34.0), st, yaw, 90.0, 1.9, fv)
+    dh = st.up - pn.SUBJECT_UP_M
+    assert src == "depth" and abs(math.hypot(x - st.x, y - st.y)
+                                  - math.sqrt(34.0 ** 2 - dh * dh)) < 1e-6
+    # A ray steep enough to see under the aircraft (nose 35 deg down, box at
+    # the frame's bottom, its lower edge 83 deg down) may still put a subject
+    # close below: 0.85 m away at 7.3 m. Not straight below at 7.0 m, though:
+    # that centre would be 90 deg down, under the box.
+    low = (384.0, 400.0, 60.0, 40.0, 0.3, 768, 432, 0.5)
+    assert math.degrees(pn.ray_depression_rad(400.0, 768, 432, 90.0,
+                                              math.radians(-35.0))) > 80.0
+    assert pn.depth_implausible(low, 7.3, 8.0, 90.0, fv, math.radians(-35.0)) is None
+    assert "would put" in pn.depth_implausible(low, 7.0, 8.0, 90.0, fv,
+                                               math.radians(-35.0))
+    # Nose up is LESS depression (MAVLink ATTITUDE pitch is positive nose up).
+    assert pn.ray_depression_rad(216.0, 768, 432, 90.0, math.radians(5.0)) < \
+        pn.ray_depression_rad(216.0, 768, 432, 90.0, 0.0)
+
+
+def test_the_flight_log_keeps_a_refused_depth_and_the_rule_that_refused_it():
+    """The 2026-10-12 re-fly refused 43 depth returns and logged only the
+    width range that replaced them (56-156 m, up to 122 m off the nearest
+    depth-ranged tick), so which rule refused them could not be told
+    afterwards. depth_check records the depth range and the refusal; the row
+    carries it."""
+    fv = pn._fv()
+    det = (391.8, 155.5, 50.5, 24.1, 0.0211, 768, 432, 0.11)
+    st = State(x=36.847, y=-48.38, up=7.962, yaw_deg=-99.78)
+    bad = pn.depth_check(det, _depth_image(10.0), st, 90.0, fv)
+    assert bad["r_m"] == 10.0 and "in front of the subject" in bad["refused"], bad
+    good = pn.depth_check(det, _depth_image(34.0), st, 90.0, fv)
+    assert good == {"r_m": 34.0, "refused": None}, good
+    assert pn.depth_check(det, None, st, 90.0, fv) is None
+    assert pn.depth_check(None, _depth_image(34.0), st, 90.0, fv) is None
+    # It agrees with subject_estimate on what was refused.
+    for r in (4.0, 10.0, 34.0):
+        _, _, src = pn.subject_estimate(det, _depth_image(r), st, math.radians(-99.78),
+                                        90.0, 1.9, fv)
+        refused = pn.depth_check(det, _depth_image(r), st, 90.0, fv)["refused"]
+        assert (src == "width:depth-rejected") == bool(refused), (r, src, refused)
+    src = (ROOT / "demo" / "pas_ardupilot" / "perception_node.py").read_text(encoding="utf-8")
+    assert '"subject_depth": subj_depth' in src
+
+
+def test_a_depth_that_would_place_the_subject_under_its_own_box_is_refused():
+    """REVIEW (2026-10-09). The first three rules let a box low in the frame
+    through: at 7.96 m up, a box at 0.85-0.9 of the frame height (its bottom
+    edge 43-46 deg below the horizon) with a depth of 7.5-8.5 m passed them
+    all, and Pythagoras then placed the car 2.1-4.5 m away - 58-74 deg below
+    the horizon, outside FrontCamera's view and inside the 5 m P0 ring. The
+    fourth rule refuses a range whose placement would be under the box's
+    bottom edge by more than DEPRESSION_SLACK_DEG. Failed on the code before
+    it (every cell below returned None from the old rules)."""
+    fv = pn._fv()
+    up, H = 7.96, 432
+    for frac in (0.85, 0.875, 0.9):
+        for bh in (20.0, 30.0):
+            det = (384.0, frac * H, 40.0, bh, 0.3, 768, H, 0.5)
+            for r in (7.5, 8.0, 8.5):
+                why = pn.depth_implausible(det, r, up, 90.0, fv)
+                assert why, (frac, bh, r)
+                old = pn.DEPRESSION_SLACK_DEG
+                pn.DEPRESSION_SLACK_DEG = 1e9          # the fourth rule off
+                try:
+                    before = pn.depth_implausible(det, r, up, 90.0, fv)
+                finally:
+                    pn.DEPRESSION_SLACK_DEG = old
+                if before is None:
+                    assert "would put" in why, (frac, bh, r, why)
+                    h = math.sqrt(r * r - (up - pn.SUBJECT_UP_M) ** 2)
+                    assert h < 5.0, h                  # inside the P0 ring
+    # Within the slack (3 deg) a range is kept: pitch error is not a refusal.
+    det = (384.0, 0.9 * H, 40.0, 24.0, 0.3, 768, H, 0.5)
+    bottom = pn.ray_depression_rad(0.9 * H + 12.0, 768, H, 90.0)
+    dh = up - pn.SUBJECT_UP_M
+    r_edge = dh / math.sin(bottom + math.radians(pn.DEPRESSION_SLACK_DEG - 0.5))
+    assert pn.depth_implausible(det, r_edge, up, 90.0, fv) is None, r_edge
+    # The tick-857 box at the range the box's base ray agrees with: kept.
+    det857 = (391.8, 155.5, 50.5, 24.1, 0.0211, 768, 432, 0.11)
+    assert pn.depth_implausible(det857, 34.0, 7.962, 90.0, fv) is None
+
+
 class FakeLink:
     """An ArduPilot that flies whatever velocity it was last sent while in
     GUIDED, descends on its own in RTL / LAND, and can be told to take the
@@ -1064,8 +1184,8 @@ class FakeLink:
     name = "pymavlink"
 
     def __init__(self, clock, anchor, yaw=0.0, takeover_at=None, fence=None,
-                 clock_rate=1.0):
-        self.clock, self.anchor, self.yaw = clock, anchor, yaw
+                 clock_rate=1.0, pitch=0.0):
+        self.clock, self.anchor, self.yaw, self.pitch = clock, anchor, yaw, pitch
         self.snap = ap.Snapshot()
         self.x, self.y, self.up, self.v = 35.0, -20.0, 8.0, Action4D()
         self.sent, self.sent_t, self.t_last = [], [], None
@@ -1102,7 +1222,8 @@ class FakeLink:
         self.t_last = t
         lat, lon = self.anchor.to_latlon(self.x, self.y)
         s = self.snap
-        s.lat, s.lon, s.rel_alt, s.yaw, s.pitch, s.roll = lat, lon, self.up, self.yaw, 0.0, 0.0
+        s.lat, s.lon, s.rel_alt, s.yaw, s.pitch, s.roll = (lat, lon, self.up, self.yaw,
+                                                           self.pitch, 0.0)
         s.time_boot_ms = int((t - 1000.0) * 1000 * self.clock_rate)
         s.t_time_boot = t
         if self.fence is not None:
@@ -1151,11 +1272,14 @@ class FakeCamera:
 
 
 class FakeObs:
+    def __init__(self, depth_m=None):
+        self.depth_m = depth_m
+
     def put_pose_full(self, *a, **k):
         pass
 
     def get_depth(self):
-        return None
+        return None if self.depth_m is None else _depth_image(self.depth_m)
 
 
 CAP_POLICY = """policy_id: pas-ap-test
@@ -1216,7 +1340,8 @@ class FakeMavrosLink(FakeLink):
 
 
 def _fly(shield="on", link_cls=None, policy=CAP_POLICY, extra=(), link_kw=None,
-         grounder_kw=None, max_s="3", camera_log=None, popen=None, run_cmd=None):
+         grounder_kw=None, max_s="3", camera_log=None, popen=None, run_cmd=None,
+         depth_m=None):
     out = _tmp()
     pol = out / "policy.yaml"
     pol.write_text(policy, encoding="utf-8")
@@ -1230,7 +1355,8 @@ def _fly(shield="on", link_cls=None, policy=CAP_POLICY, extra=(), link_kw=None,
     link = (link_cls or FakeLink)(clk, anchor, **(link_kw or {}))
     rc = pn.run(args, link=link, camera=FakeCamera(link, camera_log),
                 grounder=FakeDetections(clk, **(grounder_kw or {})),
-                obs=FakeObs(), clock=clk, sleep=clk.sleep, popen=popen, run_cmd=run_cmd)
+                obs=FakeObs(depth_m), clock=clk, sleep=clk.sleep, popen=popen,
+                run_cmd=run_cmd)
     return rc, out / "run", link
 
 
@@ -1359,6 +1485,181 @@ def test_a_persistent_p0_violation_reaches_a_mode_request():
     t_rtl = next(r["t"] for r in rows if r.get("set_mode") == "RTL")
     assert all(r["flown_action"] is None and r["flown"] is False
                for r in rows if r["t"] > t_rtl)
+
+
+# The aircraft starts at 8 m under a 6 m ceiling whose action is a DIRECT
+# loiter: a stop is illegal there, so the Shield recovers and the FSM goes
+# Normal -> Loiter (X4) on the first tick.
+LOITER_POLICY = RTL_POLICY.replace("pas-ap-rtl", "pas-ap-loiter").replace(
+    "violation_action: RTL", "violation_action: loiter")
+
+
+def test_the_fsm_s_loiter_is_flown_as_arducopter_s_brake():
+    """REGRESSION (7 Oct SITL, 8 Oct pas_ap_20261008_224440). ArduCopter's
+    LOITER takes its climb rate from the throttle stick; with no pilot input
+    it sank 1.4-1.8 m/s in every LOITER spell of the 8 Oct follow. The FSM
+    still says LOITER (the grant's word, on record), and the autopilot is
+    asked for BRAKE, which holds position and altitude with no pilot input.
+    BRAKE is a mode the node asked for, so it is no takeover. The old node
+    sent LOITER. `--hold-mode LOITER` restores the literal mapping."""
+    rc, run, link = _fly("on", policy=LOITER_POLICY, max_s="3")
+    assert rc == 0
+    assert link.requested == ["BRAKE", "LAND"], link.requested
+    rows = _rows(run)
+    hold = [r for r in rows if r.get("set_mode")]
+    assert [(r["set_mode"], r["autopilot_set_mode"]) for r in hold] == [("LOITER", "BRAKE")]
+    m = _json(run, "metrics.json")
+    assert m["autopilot_took_over"] is None, "a mode the FSM asked for is no takeover"
+    # Both vocabularies on record, as on the ROS rail: the FSM's words and
+    # ArduCopter's (review 2026-10-09: this node used to record only BRAKE).
+    assert m["mode_requests"] == ["LOITER", "LAND"], m["mode_requests"]
+    assert m["autopilot_mode_requests"] == ["BRAKE", "LAND"], m["autopilot_mode_requests"]
+    assert m["fsm"]["hold_mode"] == {"fsm_mode": "LOITER", "autopilot_mode": "BRAKE"}
+    events = [json.loads(l) for l in (run / "events.jsonl").read_text().splitlines()]
+    req = [e for e in events if e["kind"] == "mode_request"]
+    assert req and (req[0]["mode"], req[0]["autopilot_mode"]) == ("LOITER", "BRAKE"), req
+    rc, run, link = _fly("on", policy=LOITER_POLICY, max_s="3",
+                         extra=("--hold-mode", "LOITER"))
+    assert link.requested == ["LOITER", "LAND"], link.requested
+    # The pymavlink link can ask for BRAKE and name it in a heartbeat.
+    assert ap.COPTER_MODES["BRAKE"] == 17 and ap.COPTER_MODE_NAMES[17] == "BRAKE"
+
+
+# The aircraft starts 2 m over a 6 m ceiling whose action is `repair`: a stop
+# is illegal there, so the Shield recovers (a descent) and the FSM sits in
+# Brake while the position stays illegal.
+CEILING_POLICY = RTL_POLICY.replace("pas-ap-rtl", "pas-ap-ceiling").replace(
+    "violation_action: RTL", "violation_action: repair")
+
+
+class SluggishLink(FakeLink):
+    """An autopilot that follows only 40 % of the commanded climb rate: the
+    recovery works, slower than the Shield asked (about 0.2 m/s)."""
+
+    def pump(self):
+        v = self.v
+        self.v = Action4D(vx=v.vx, vy=v.vy, vz_up=0.4 * v.vz_up, yaw_rate=v.yaw_rate)
+        try:
+            super().pump()
+        finally:
+            self.v = v
+
+
+def test_the_node_hands_the_fsm_the_position_s_illegal_depth():
+    """REVIEW (2026-10-09). X6 leaves a working recovery alone only if it is
+    TOLD how far from legal the position is; a node passing
+    unsafe_depth_m=None passed every test. Here a slow descent out of a
+    ceiling takes over 5 s (T): with the depth the FSM sees it working and
+    holds X6; without it, X6 sent the aircraft home at 5.0 s."""
+    rc, run, link = _fly("on", link_cls=SluggishLink, policy=CEILING_POLICY, max_s="9")
+    assert rc == 0
+    rows = _rows(run)
+    depths = [r["unsafe_depth_m"] for r in rows if r.get("stop_illegal")]
+    assert depths[0] == 2.0 and depths[-1] < 1.0, (depths[0], depths[-1])
+    late = [r for r in rows if r["t"] >= 5.0 and r.get("stop_illegal")]
+    assert late, "the recovery finished before T: the test proves nothing"
+    for r in late:
+        prog = r["fsm"]["x6_progress"]
+        assert prog is not None and prog["slope_mps"] is not None, (r["t"], prog)
+        assert prog["progressing"] is True, (r["t"], prog)
+    edges = [r["fsm_edge"] for r in rows if r.get("fsm_edge")]
+    assert "X6" not in edges and link.requested == ["LAND"], (edges, link.requested)
+
+
+WATCHED_CAP_POLICY = """policy_id: pas-ap-watched-cap
+version: 0.1.0
+constraints:
+  - id: watched-speed
+    type: kinematic_envelope
+    constraint_type: soft
+    priority: P2
+    violation_action: monitor_only
+    speed_max_mps: 2.0
+    climb_rate_max_mps: 2.0
+    yaw_rate_max_dps: 45.0
+  - id: nfz-ahead
+    type: polygon_fence
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    margin_m: 1.0
+    vertices:
+      - {x: 45, y: -40}
+      - {x: 70, y: -40}
+      - {x: 70, y: 0}
+      - {x: 45, y: 0}
+"""
+
+
+def test_a_watched_only_speed_cap_does_not_fault_the_fsm_on_either_theta_basis():
+    """REVIEW (2026-10-09). A monitor_only speed cap the raw action exceeds,
+    and a slide off a zone on the same ticks. On the one-period reading the
+    FSM measures from the raw action clamped to the caps the Shield applied
+    (none here); read off the whole policy, the watched cap made every tick
+    "a decision made under other caps": a fault, a hold, nothing streamed.
+    The run records the basis it flew, and its KPI table is judged on it."""
+    for extra, horizon in (((), None), (("--theta-horizon-s", "0.1"), 0.1)):
+        rc, run, link = _fly("on", policy=WATCHED_CAP_POLICY, max_s="4", extra=extra)
+        assert rc == 0
+        rows = _rows(run)
+        both = [r for r in rows
+                if any(v["rule_id"] == "watched-speed" for v in r["violations"])
+                and any(op["operator"] == "GeofenceSlide" for op in r["repairs"])]
+        assert both, "no tick had both: the test proves nothing"
+        m = _json(run, "metrics.json")
+        assert m["fsm"]["fault"] is None, m["fsm"]["fault"]
+        assert m["fsm"]["theta_basis"]["horizon_s"] == horizon, m["fsm"]["theta_basis"]
+        assert _json(run, "kpi.json")["repair_theta_horizon_s"] == horizon
+    src = (ROOT / "demo" / "pas_ardupilot" / "perception_node.py").read_text(encoding="utf-8")
+    i = src.index("fsm_out = fsm.step(tick_input_from_decision(")
+    call = src[i:src.index("setpoint = fsm_out.setpoint", i)]
+    assert "unsafe_depth_m=unsafe_depth" in call and \
+        "caps=shield.applied_caps or False" in call, call
+
+
+def test_an_fsm_fault_holds_the_aircraft_as_brake_not_loiter():
+    """REVIEW (2026-10-09). When the FSM refuses a tick the node holds the
+    aircraft and stops streaming. That hold must be flown as BRAKE too (the
+    LOITER this unit exists to avoid sinks with no pilot); a node sending the
+    literal LOITER there passed every test."""
+    real = pn.tick_input_from_decision
+
+    def refuse(*a, **k):
+        raise ValueError("forced: a decision the FSM refuses")
+    pn.tick_input_from_decision = refuse
+    try:
+        rc, run, link = _fly("on", max_s="2")
+    finally:
+        pn.tick_input_from_decision = real
+    assert rc == 0
+    assert link.requested[:1] == ["BRAKE"], link.requested
+    m = _json(run, "metrics.json")
+    assert "forced" in m["fsm"]["fault"]
+    assert m["mode_requests"][:1] == ["LOITER"] and m["autopilot_mode_requests"][:1] == ["BRAKE"]
+    assert m["autopilot_took_over"] is None, "the node's own hold is no takeover"
+
+
+def test_the_node_reads_the_body_pitch_it_flies_at():
+    """The depth rules read the body pitch (MAVLink ATTITUDE, nose up
+    positive). Nose 34 deg down, a box low in the frame and a depth of 7.4 m
+    from 8 m up: a subject almost below, which that steep a camera does see,
+    so the depth is kept. Read with the sign flipped, the camera would look
+    14 deg down and the same depth would be refused. The row logs the pitch,
+    so a replay can judge the rules."""
+    rc, run, link = _fly("on", link_kw={"pitch": -0.6},
+                         grounder_kw={"cx": 384.0, "cy": 400.0, "w": 60.0, "h": 40.0},
+                         depth_m=7.4, max_s="2")
+    assert rc == 0
+    m = _json(run, "metrics.json")
+    assert m["subject_source"].get("depth", 0) > 0, m["subject_source"]
+    assert "width:depth-rejected" not in m["subject_source"], m["subject_source"]
+    rows = _rows(run)
+    assert all(abs(r["pitch_deg"] - math.degrees(-0.6)) < 0.01 for r in rows)
+    # Level, the same box and depth are refused: the pitch is what decided.
+    rc, run, link = _fly("on", grounder_kw={"cx": 384.0, "cy": 400.0, "w": 60.0, "h": 40.0},
+                         depth_m=7.4, max_s="2")
+    m = _json(run, "metrics.json")
+    assert m["subject_source"].get("width:depth-rejected", 0) > 0, m["subject_source"]
 
 
 def test_the_autopilot_taking_the_aircraft_stops_the_commands():

@@ -316,11 +316,11 @@
    "id": "autopilot",
    "en": {
     "label": "Simulator autopilot",
-    "short": "Project AirSim's own flight controller flies the command; ArduPilot is not used here."
+    "short": "In this chain Project AirSim's own flight controller flies the command. Since 8 Oct 2026 ArduPilot SITL can fly the vehicle instead (see WP3)."
    },
    "zh": {
     "label": "模擬器飛控",
-    "short": "由 Project AirSim 內建的飛控執行指令，這裡沒有使用 ArduPilot。"
+    "short": "在這條流程中，由 Project AirSim 內建的飛控執行指令。自 2026 年 10 月 8 日起，也可以改由 ArduPilot SITL 飛行這架機體（見 WP3）。"
    }
   },
   {
@@ -762,10 +762,10 @@
   {
    "id": "Project AirSim",
    "en": {
-    "text": "A photo-realistic drone simulator on Unreal Engine 5. Our city demonstrations run here, flown by Project AirSim's own flight controller."
+    "text": "A photo-realistic drone simulator on Unreal Engine 5. Our city demonstrations run here. Up to 3 Oct 2026 they were flown by Project AirSim's own flight controller; since 8 Oct 2026 ArduPilot SITL can fly the vehicle instead, through Project AirSim's ArduPilot controller."
    },
    "zh": {
-    "text": "以 Unreal Engine 5 打造的擬真無人機模擬器。我們的城市示範在這裡執行，由 Project AirSim 內建的飛行控制器飛行。"
+    "text": "以 Unreal Engine 5 打造的擬真無人機模擬器，我們的城市示範在這裡執行。2026 年 10 月 3 日以前由 Project AirSim 內建的飛行控制器飛行；自 2026 年 10 月 8 日起，也可以改由 ArduPilot SITL 透過 Project AirSim 的 ArduPilot 控制器飛行。"
    }
   },
   {

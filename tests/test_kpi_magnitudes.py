@@ -638,9 +638,19 @@ def test_a_sanitised_nan_counts_as_an_applied_repair():
 # the theta cap: "Converged? magnitude < theta?" (Safety Shield p3-p4)
 # --------------------------------------------------------------------------- #
 
-def _sized(t, m, axis="lateral", op="GeofenceProject"):
+def _sized(t, m, axis="lateral", op="GeofenceProject", dv=None):
+    """A converged repair whose operator reports magnitude_m `m` on `axis`
+    (its forecast depth: the default basis), and, with `dv`, whose setpoint
+    changed by `dv` m/s on that axis (what the one-period reading measures).
+    `m` None leaves the operator's size out."""
     r = _rep_row(t, "converged", ops=())
-    r["repairs"] = [{"operator": op, "detail": "", "magnitude_m": m, "axis": axis}]
+    if dv is not None:
+        r["raw"] = dict(A0)
+        r["emitted"] = dict(A0, **({"vx": dv} if axis == "lateral" else {"vz_up": dv}))
+    rep = {"operator": op, "detail": ""}
+    if m is not None:
+        rep.update(magnitude_m=m, axis=axis)
+    r["repairs"] = [rep]
     return r
 
 
@@ -649,15 +659,94 @@ def test_a_legal_repair_bigger_than_theta_is_not_a_success():
     action_original|| > threshold ... the Shield abandons projection and
     triggers fail-safe" (p4), theta 2.0 m lateral / 0.5 m vertical. The
     pre-change kpi.py scores a clean re-check as converged whatever its size:
-    1.0 for this log."""
+    1.0 for this log. The size is each operator's own magnitude_m by
+    default (the grant's p5 audit field)."""
     res = K.compute([_sized(0.0, 3.0)], P0P1, {})
     assert res["repair_outcomes"]["converged_over_theta"] == 1, res["repair_outcomes"]
     assert res["repair_success_rate"] == 0.0, res
     assert res["repair_success_basis"] == "recheck_and_theta"
+    assert res["repair_theta_horizon_s"] is None
     assert K.compute([_sized(0.0, 1.5)], P0P1, {})["repair_success_rate"] == 1.0
     assert K.compute([_sized(0.0, 0.6, "vertical")], P0P1, {})["repair_success_rate"] == 0.0
     assert K.compute([_sized(0.0, 2.0)], P0P1, {})["repair_success_rate"] == 1.0, \
         "exactly theta passes: the grant escalates on '> threshold'"
+
+
+def test_the_one_period_reading_is_selectable_and_never_the_silent_default():
+    """REVIEW (2026-10-09). A builder made kpi.py size every tick on the
+    setpoint change over one 0.1 s period and called it the grant's basis;
+    the grant's own p5 audit example (magnitude_m 0.7 for a 1.53 m/s change)
+    does not support that, and under the shipped caps it can never exceed
+    theta. The default is the operator's magnitude_m again; the one-period
+    reading is what a caller (or a run's metrics.json) asks for by number.
+    A 3 m/s change whose forecast went 9 m deep: over theta on the default,
+    0.3 m and a success on the one-period reading."""
+    res = K.compute([_sized(0.0, 9.0, dv=3.0)], P0P1, {})
+    assert res["repair_outcomes"]["converged_over_theta"] == 1, res["repair_outcomes"]
+    assert res["repair_theta_sources"]["magnitude_m"] == 1, res["repair_theta_sources"]
+    one = K.compute([_sized(0.0, 9.0, dv=3.0)], P0P1, {}, theta_horizon_s=0.1)
+    assert one["repair_outcomes"]["converged"] == 1, one["repair_outcomes"]
+    assert one["repair_theta_sources"]["action_per_period"] == 1, one["repair_theta_sources"]
+    assert one["repair_theta_horizon_s"] == 0.1
+    # Past theta on the one-period reading too: a 30 m/s change is 3.0 m.
+    assert K.compute([_sized(0.0, None, dv=30.0)], P0P1, {}, theta_horizon_s=0.1)[
+        "repair_outcomes"]["converged_over_theta"] == 1
+    # The FSM's own verdict outranks both.
+    r = dict(_sized(0.0, 9.0, dv=3.0), theta_exceeded=False)
+    assert K.compute([r], P0P1, {})["repair_outcomes"]["converged"] == 1
+    r = dict(_sized(0.0, 0.1, dv=0.1), theta_exceeded=True)
+    assert K.compute([r], P0P1, {}, theta_horizon_s=0.1)[
+        "repair_outcomes"]["converged_over_theta"] == 1
+
+
+def test_a_run_is_judged_on_the_theta_basis_it_flew():
+    """compute() reads the basis from the run's metrics.json
+    (`fsm.theta_basis.horizon_s`), so compute_from_dir, the replay verifier
+    and tools/kpi_report.py all judge a tick without the FSM's own verdict on
+    the basis the run flew; an explicit theta_horizon_s overrides it. A
+    clamped tick on the one-period reading needs the policy's caps, which
+    compute_from_dir passes (review 2026-10-09: dropping them passed every
+    test; the tick then read no_magnitude)."""
+    import json as _json
+    import tempfile
+    from guardrail.models import Policy
+    pol = Policy.model_validate({"policy_id": "k", "constraints": [
+        {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0, "priority": "P0",
+         "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7}, {"x": 23, "y": 23},
+                      {"x": 7, "y": 23}]},
+        {"id": "kin", "type": "kinematic_envelope", "speed_max_mps": 4.0,
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0, "priority": "P1"}]})
+    row = _row(0.0, raw={"vx": 6.0}, em={"vx": 0.0, "vy": 4.0})
+    row["violations"] = [{"rule_id": "nfz", "category": "geofence"},
+                         {"rule_id": "kin", "category": "kinematic"}]
+    row["repairs"] = [{"operator": "SpeedClamp", "detail": ""},
+                      {"operator": "GeofenceSlide", "detail": "", "magnitude_m": 9.0,
+                       "axis": "lateral"}]
+    one = {"fsm": {"theta_basis": {"source": "one period", "horizon_s": 0.1}}}
+    assert K.run_theta_horizon(one) == 0.1
+    for bad in (None, {}, {"fsm": None}, {"fsm": {"theta_basis": {"horizon_s": None}}},
+                {"fsm": {"theta_basis": {"horizon_s": -1}}},
+                {"fsm": {"theta_basis": {"horizon_s": True}}}):
+        assert K.run_theta_horizon(bad) is None, bad
+    pr = {"nfz": "P0", "kin": "P1"}
+    assert K.compute([row], pr, {})["repair_theta_sources"]["magnitude_m"] == 1
+    assert K.compute([row], pr, one)["repair_theta_sources"]["no_magnitude"] == 1
+    assert K.compute([row], pr, one, theta_horizon_s=None)[
+        "repair_theta_sources"]["magnitude_m"] == 1
+    with tempfile.TemporaryDirectory() as td:
+        run = Path(td)
+        (run / "flight_log.jsonl").write_text(_json.dumps(row) + "\n", encoding="utf-8")
+        k = K.compute_from_dir(run, pol)
+        assert k["repair_theta_sources"]["magnitude_m"] == 1, k["repair_theta_sources"]
+        assert k["repair_outcomes"]["converged_over_theta"] == 1      # 9 m forecast depth
+        (run / "metrics.json").write_text(_json.dumps(one), encoding="utf-8")
+        k = K.compute_from_dir(run, pol)
+        assert k["repair_theta_horizon_s"] == 0.1
+        if K._fsm() is not None:
+            assert k["repair_theta_sources"]["action_per_period"] == 1, \
+                k["repair_theta_sources"]
+            # |(0, 4) - (4, 0)| x 0.1 s = 0.57 m: under theta on this reading.
+            assert k["repair_outcomes"]["converged"] == 1, k["repair_outcomes"]
 
 
 def test_the_fsm_records_theta_verdict_is_used_when_present():
@@ -670,10 +759,13 @@ def test_the_fsm_records_theta_verdict_is_used_when_present():
 
 
 def test_without_a_size_in_metres_the_rate_says_theta_was_not_applied():
-    """Every delivered log is here: a clean re-check and no magnitude_m. The
-    rate stays, and says what it rests on, instead of passing for the grant's
-    full test."""
-    res = K.compute([_rep_row(0.0, "converged")], P0P1, {})
+    """A log that cannot size its repair (no magnitude_m on the default
+    basis; on the one-period reading, no emitted action, or a clamped tick
+    with no caps for the clamp-free measure): a clean re-check and nothing
+    more. The rate stays, and says what it rests on, instead of passing for
+    the grant's full test."""
+    unsized = _rep_row(0.0, "converged")
+    res = K.compute([unsized], P0P1, {})
     assert res["repair_success_rate"] == 1.0
     assert res["repair_success_basis"] == "recheck_only_theta_not_applied", res
     assert res["repair_theta_unchecked_ticks"] == 1
@@ -681,7 +773,20 @@ def test_without_a_size_in_metres_the_rate_says_theta_was_not_applied():
     assert clamp["repair_success_basis"] == "recheck_theta_not_applicable", \
         "theta judges position corrections, not a speed clamp"
     assert clamp["repair_theta_unchecked_ticks"] == 0
-    mixed = K.compute([_sized(0.0, 1.0), _rep_row(0.1, "converged")], P0P1, {})
+    gone = dict(unsized)
+    del gone["emitted"]
+    k = K.compute([gone], P0P1, {}, theta_horizon_s=0.1)
+    assert k["repair_theta_sources"]["no_magnitude"] == 1, k["repair_theta_sources"]
+    both = _rep_row(0.1, "converged", ops=("GeofenceProject", "SpeedClamp"))
+    k = K.compute([both], P0P1, {}, theta_horizon_s=0.1)
+    assert k["repair_theta_sources"]["no_magnitude"] == 1, \
+        "a clamped tick is not sized without the policy's caps"
+    if K._fsm() is not None:
+        from guardrail.fsm import KinematicCaps
+        caps = KinematicCaps(speed_max_mps=4.0, climb_rate_max_mps=2.0)
+        k = K.compute([both], P0P1, {}, caps=caps, theta_horizon_s=0.1)
+        assert k["repair_theta_sources"]["action_per_period"] == 1, k["repair_theta_sources"]
+    mixed = K.compute([_sized(0.0, 1.0), unsized], P0P1, {})
     assert mixed["repair_success_basis"] == "recheck_and_theta_partial", mixed
     # Pooled: a clamp-only episode does not make an unchecked family "partial".
     assert K.rollup([clamp, res])["repair_success_basis"] == \
@@ -1144,16 +1249,21 @@ def test_clearance_escape_is_exempt_from_theta_only_where_a_stop_is_illegal():
     disagreed. Both readings now agree, and the row's stop_illegal decides."""
     rep = {"operator": "ClearanceEscape", "detail": "", "magnitude_m": 5.0,
            "axis": "lateral"}
+    act = {"raw": dict(A0), "emitted": dict(A0, vx=25.0)}      # 2.5 m per period
     real = K._fsm
     for label, fsm in (("fsm.py", real), ("fallback", lambda: None)):
         K._fsm = fsm
         try:
             assert K._theta_governs(rep, stop_illegal=False) is True, label
             assert K._theta_governs(rep, stop_illegal=True) is False, label
-            row = {"repairs": [rep], "stop_illegal": False}
+            row = {"repairs": [rep], "stop_illegal": False, **act}
             assert K._theta_verdict(row, (2.0, 0.5)) == (True, "magnitude_m"), label
-            row = {"repairs": [rep], "stop_illegal": True}
+            assert K._theta_verdict(row, (2.0, 0.5), horizon_s=0.1) == \
+                (True, "action_per_period"), label
+            row = {"repairs": [rep], "stop_illegal": True, **act}
             assert K._theta_verdict(row, (2.0, 0.5))[1] == "not_governed", label
+            assert K._theta_verdict(row, (2.0, 0.5), horizon_s=0.1)[1] == \
+                "not_governed", label
             assert K._theta_governs({"operator": "GeofenceEscape"}, False) is False, label
         finally:
             K._fsm = real

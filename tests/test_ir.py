@@ -569,28 +569,72 @@ def test_a_slide_that_turns_into_a_second_fence_is_still_repaired():
 
 # ------------------------------------------------- multi-scale geometry (WP2-16)
 
-def test_every_zone_carries_a_coarse_ring_that_contains_it():
-    """The IR's coarse scale must CONTAIN the authored polygon (a coarse
-    keep-out zone that cut a corner would describe a smaller zone than the
-    Shield enforces), have at most COARSE_MAX_VERTICES vertices, and be the
-    one guardrail/compiler.py's multiscale_geometry computes for itself, so
-    the compiler can read it from the IR instead."""
+def _coarse_problems(fine_pts, coarse_pts) -> list[str]:
+    """Why `coarse_pts` is not an acceptable coarse ring for `fine_pts`, from
+    shapely alone (nothing of guardrail.ir's own computation):
+
+      * it must CONTAIN the fine polygon (a coarse keep-out zone that cut a
+        corner would describe a smaller zone than the Shield enforces);
+      * it has at most COARSE_MAX_VERTICES vertices;
+      * it is no looser than it has to be: the convex hull itself when the
+        hull fits in COARSE_MAX_VERTICES vertices, else a polygon no larger
+        than the minimum-area rotated rectangle around the fine one.
+
+    Until 2026-10-11 the test compared the IR's ring with
+    guardrail.compiler.multiscale_geometry's, which since 2026-10-08 IS the
+    IR's (`compiled_ir(policy).multiscale`): a comparison of one object with
+    itself, which no ring could fail."""
     from shapely.geometry import Polygon as _P
-    from guardrail.compiler import multiscale_geometry
     from guardrail.ir import COARSE_MAX_VERTICES
+    fine, coarse = _P(fine_pts), _P(coarse_pts)
+    tol = 1e-6 * max(fine.area, 1.0)
+    out = []
+    if len(coarse_pts) > COARSE_MAX_VERTICES:
+        out.append(f"{len(coarse_pts)} vertices > {COARSE_MAX_VERTICES}")
+    if not coarse.buffer(1e-6).contains(fine):
+        out.append("does not contain the fine polygon")
+    hull = fine.convex_hull
+    if len(hull.exterior.coords) - 1 <= COARSE_MAX_VERTICES:
+        if coarse.symmetric_difference(hull).area > tol:
+            out.append("is not the convex hull, which fits the vertex budget")
+    elif coarse.area > fine.minimum_rotated_rectangle.area + tol:
+        out.append("is larger than the minimum rotated rectangle")
+    return out
+
+
+def test_the_coarse_ring_check_can_fail():
+    """The checker above, against rings that are wrong in each way."""
+    tri = [(0.0, 0.0), (10.0, 0.0), (0.0, 10.0)]
+    assert _coarse_problems(tri, tri) == []
+    assert "is not the convex hull" in " ".join(
+        _coarse_problems(tri, [(0, 0), (10, 0), (10, 10), (0, 10)]))      # its bbox
+    assert "does not contain" in " ".join(
+        _coarse_problems(tri, [(0, 0), (9, 0), (0, 9)]))                  # cut corner
+    # A 12-gon: its hull has 12 vertices, over the budget, so the rectangle rule.
+    gon = [(10 * math.cos(k * math.pi / 6), 10 * math.sin(k * math.pi / 6))
+           for k in range(12)]
+    assert "larger than the minimum rotated rectangle" in " ".join(
+        _coarse_problems(gon, [(-20, -20), (20, -20), (20, 20), (-20, 20)]))
+    assert "vertices >" in " ".join(_coarse_problems(gon, gon))
+    from shapely.geometry import Polygon as _P
+    mrr = list(_P(gon).minimum_rotated_rectangle.exterior.coords)[:-1]
+    assert _coarse_problems(gon, mrr) == [], _coarse_problems(gon, mrr)
+
+
+def test_every_zone_carries_a_coarse_ring_that_contains_it():
+    """The IR's coarse scale must CONTAIN the authored polygon, have at most
+    COARSE_MAX_VERTICES vertices and be no looser than it has to be, checked
+    against the IR alone (`_coarse_problems`)."""
+    from shapely.geometry import Polygon as _P
     n = 0
     for path in POLICIES:
         pol = load_policy(path)
         ir = PolicyIR.from_policy(pol)
-        comp = multiscale_geometry(pol)
         for rec in ir.fences:
             geo = ir.multiscale[rec.rule.id]
-            fine, coarse = _P(geo["fine"]), _P(geo["coarse"])
-            assert len(geo["coarse"]) <= COARSE_MAX_VERTICES, (path.name, rec.rule.id)
-            assert coarse.buffer(1e-6).contains(fine), (path.name, rec.rule.id)
-            theirs = _P(comp[rec.rule.id]["coarse"])
-            assert coarse.symmetric_difference(theirs).area <= 1e-6 * max(fine.area, 1.0), \
-                (path.name, rec.rule.id, geo["coarse"], comp[rec.rule.id]["coarse"])
+            fine = _P(geo["fine"])
+            bad = _coarse_problems(geo["fine"], geo["coarse"])
+            assert not bad, (path.name, rec.rule.id, bad, geo["coarse"])
             minx, miny, maxx, maxy = fine.bounds
             assert geo["bbox"] == [(minx, miny), (maxx, miny), (maxx, maxy), (minx, maxy)]
             n += 1

@@ -172,8 +172,8 @@ from guardrail import kpi as K                                     # noqa: E402
 from guardrail.models import (Action4D, CorridorSwap, DynamicNFZ,  # noqa: E402
                               State, TimeWindowSwitch)
 from guardrail.scenario_spec import (GRANT_EVENT_TYPES, Defaults,  # noqa: E402
-                                     Library, ScenarioSpec, expand,
-                                     load_profile)
+                                     Library, ScenarioEvent, ScenarioSpec,
+                                     expand, load_profile)
 from guardrail.shield import Shield, recurrence_active             # noqa: E402
 
 LIB = ROOT / "experiments" / "scenarios.yaml"
@@ -664,7 +664,134 @@ def _as_defaults(d) -> Defaults:
 def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None) -> EpisodeRun:
     """One headless episode. `arm` (paraphrase / prefix record) is RECORDED in
     the episode_start event and changes nothing else: no headless pilot reads
-    text."""
+    text. Flown by EpisodeRunner without a pause, so a stepped episode and
+    this one share one integrator."""
+    return EpisodeRunner(sc, defaults, seed, arm).finish()
+
+
+class EpisodeRunner:
+    """run_episode one tick at a time, with events injected between ticks.
+
+        r = EpisodeRunner(spec, defaults, seed)
+        while r.t is not None and r.t < 5.0:
+            r.step()                         # fly one tick
+        r.inject(event)                      # a ScenarioEvent (or its dict)
+        run = r.finish()                     # the EpisodeRun run_episode returns
+
+    `t` is the simulated time of the next tick to fly (None once the episode
+    has ended). An injected event joins the schedule exactly as if it had been
+    the LAST entry of the scenario's `events:` list: ordered by at_sim_t,
+    after any event already scheduled for the same instant, and applied by the
+    same apply_event at that tick. So an episode stepped with injections flies
+    the same rows as run_episode on the scenario with those events written in
+    (tests/test_sweep.py checks both, with a null). It is the hook a live
+    control plane needs (guardrail/harness_service.py still schedules its
+    events for EndEpisode; docs/DESIGN-harness-grpc.md).
+
+    Refused, as run_episode refuses them in a scenario: an event before `t`
+    (that tick has flown), one after the last tick (it would never fire), and
+    one with a `window` when the mission has no clock. `wall_s` in the result
+    includes the caller's pauses between steps.
+
+    AN EPISODE THAT RAISES IS OVER. An error inside a tick (a Shield refusal
+    of an injected event, as run_episode would raise it for the same event
+    written in) propagates from that step() or finish(); the runner is then
+    `done` with `t` None and no result, and every later step(), inject() or
+    finish() raises RuntimeError naming the first error. Before 2026-10-12 the
+    dead generator left `done` False for ever, so finish() spun without end.
+    """
+
+    def __init__(self, sc, defaults=None, seed: int = 0, arm: dict | None = None):
+        self._box: dict[str, Any] = {}
+        self._gen = _episode(sc, defaults, seed, arm, self._box)
+        self.result: EpisodeRun | None = None
+        self.error: BaseException | None = None
+        self._failed_t: float | None = None     # the tick that raised
+        self._next: tuple[int, float] | None = None
+        self._advance()                      # set up, up to the start of tick 0
+
+    def _advance(self) -> None:
+        flying = None if self._next is None else self._next[1]
+        try:
+            self._next = next(self._gen)
+        except StopIteration as stop:
+            self._next = None
+            if stop.value is None:
+                # Only a generator that already died returns nothing; _episode
+                # itself always returns an EpisodeRun.
+                self.error = self.error or RuntimeError(
+                    "the episode's integrator stopped without a result")
+                self._failed_t = flying
+                raise self._failed() from None
+            self.result = stop.value
+        except BaseException as exc:
+            self._next, self.error, self._failed_t = None, exc, flying
+            raise
+
+    def _failed(self) -> RuntimeError:
+        at = self._failed_t
+        return RuntimeError(
+            f"the episode failed{'' if at is None else f' in the tick at {at:.1f} s'}: "
+            f"{type(self.error).__name__}: {self.error}")
+
+    def _check_alive(self) -> None:
+        if self.error is not None:
+            raise self._failed() from self.error
+
+    @property
+    def done(self) -> bool:
+        return self.result is not None or self.error is not None
+
+    @property
+    def t(self) -> float | None:
+        return None if self._next is None else self._next[1]
+
+    @property
+    def t_end(self) -> float:
+        return self._box["t_end"]
+
+    def step(self) -> bool:
+        """Fly the next tick. False once the episode has ended (the last tick,
+        or a terminal fail-safe), and a no-op after that. Raises what the tick
+        raised, then RuntimeError on every later call (class docstring)."""
+        self._check_alive()
+        if not self.done:
+            self._advance()
+        return not self.done
+
+    def inject(self, event) -> None:
+        self._check_alive()
+        ev = event if isinstance(event, ScenarioEvent) else ScenarioEvent.model_validate(event)
+        if self.done:
+            raise RuntimeError("the episode has ended: nothing more can be injected")
+        if ev.at_sim_t < self._next[1] - 1e-9:
+            raise ValueError(f"event at {ev.at_sim_t} s is in the past: the next "
+                             f"tick to fly is {self._next[1]:.1f} s")
+        if ev.at_sim_t > self._box["t_end"] + 1e-9:
+            raise ValueError(f"event at {ev.at_sim_t} s never fires: the run "
+                             f"ends at {self._box['t_end']:.1f} s")
+        if "window" in ev.payload and not self._box["has_clock"]:
+            raise ValueError(f"{ev.type} with a `window` needs mission.clock_start: "
+                             f"with no clock the window is always in force")
+        pending = self._box["pending"]
+        k = len(pending)
+        while k > 0 and pending[k - 1].at_sim_t > ev.at_sim_t:
+            k -= 1
+        pending.insert(k, ev)
+
+    def finish(self) -> EpisodeRun:
+        self._check_alive()
+        while not self.done:
+            self._advance()
+        return self.result
+
+
+def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
+    """The integrator behind run_episode and EpisodeRunner: a generator that
+    yields (tick, t) at the start of every tick, before that tick's scheduled
+    events are applied, and returns the EpisodeRun. `box` receives the
+    schedule (`pending`, sorted by at_sim_t), `t_end` and `has_clock`, so
+    EpisodeRunner can add to the schedule between ticks."""
     spec = _as_spec(sc)
     dfl = _as_defaults(defaults)
     dt = float(spec.dt or dfl.dt)
@@ -749,6 +876,8 @@ def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None) -> Ep
         return any(priorities.get(v.rule_id, "P0") == "P0" for v in vios)
 
     pending = sorted(spec.events, key=lambda e: e.at_sim_t)
+    box.update(pending=pending, t_end=t_end,
+               has_clock=spec.mission.clock_start is not None)
     events: list[dict] = [{
         "t": 0.0, "type": "episode_start", "scenario_id": spec.scenario_id,
         "seed": seed, "policy_hash": hash0, "generation": policy.generation,
@@ -815,6 +944,9 @@ def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None) -> Ep
     wall0 = time.perf_counter()
 
     for i in range(ticks):
+        # EpisodeRunner's pause point: the caller may add to `pending` here,
+        # before this tick's scheduled events are applied.
+        yield i, i * dt
         t_now = i * dt
         sim_t[0] = t_now
         imposed = i == 0
@@ -1570,6 +1702,57 @@ def label_failures(spec: ScenarioSpec, res: dict) -> list[str]:
     return bad
 
 
+VERDICTS = ("pass", "tracked", "fail", "known_failure", "unexpected_pass")
+FIXED_MESSAGE = ("marked known_failure but every gate passed - "
+                 "the defect is fixed; remove the marker")
+_MARKS = {"pass": "pass ", "tracked": "track", "fail": "FAIL ",
+          "known_failure": "KNOWN", "unexpected_pass": "FIXED"}
+
+
+def episode_verdict(spec: ScenarioSpec, res: dict, params: dict, seed: int
+                    ) -> tuple[str, list[str], list[str], str | None]:
+    """One scored episode's verdict: (status, gates_failed, labels_failed,
+    known_failure_reason), status one of VERDICTS.
+
+    The one place the sweep decides it. main() calls it for every episode, and
+    so does the gRPC harness (guardrail/harness_service.py), so an episode
+    flown over gRPC is judged exactly as the sweep judges it - until
+    2026-10-11 the harness carried a copy of this logic.
+
+    `gates_failed` holds the gate failures and, unless the family is tracked,
+    the label failures. `labels_failed` is non-empty only for a tracked family,
+    whose label mismatches are reported but do not fail it.
+    """
+    labels_bad = label_failures(spec, res)
+    bad = check_gates(spec.gates, res)
+    labels_failed: list[str] = []
+    if spec.expect == "tracked":
+        # A tracked family measures how far past its design point the
+        # Shield degrades; a fail-safe its degraded perception provoked is
+        # part of that measurement. Its label mismatches are reported
+        # (`labels_failed`, and in the fail-safe KPI, which counts every
+        # labelled episode) but do not fail it - its gates still do.
+        labels_failed = labels_bad
+    else:
+        bad = bad + labels_bad
+    known_why = spec.known_failure_for(params, seed)
+    if bad and known_why is not None:
+        status = "known_failure"
+    elif bad:
+        status = "fail"
+    elif known_why is not None:
+        # A known failure that started passing is news, not a quiet pass.
+        status = "unexpected_pass"
+        bad = [FIXED_MESSAGE]
+    elif spec.expect == "tracked":
+        # Its gates hold only what must hold whatever the sensor does; the
+        # aircraft may still have entered a polygon. Never a "pass".
+        status = "tracked"
+    else:
+        status = "pass"
+    return status, bad, labels_failed, known_why
+
+
 # --------------------------------------------------------------------------- #
 # run-level summaries (pure functions of the scored items, so they are tested)
 # --------------------------------------------------------------------------- #
@@ -2085,41 +2268,23 @@ def main(argv: list[str] | None = None) -> int:
             continue
 
         res = score(spec, rows, extra, policy, prios)
-        labels_bad = label_failures(spec, res)
-        bad = check_gates(spec.gates, res)
+        status, bad, labels_failed, known_why = episode_verdict(
+            spec, res, ep.cell.params, ep.seed)
         if spec.expect == "tracked":
-            # A tracked family measures how far past its design point the
-            # Shield degrades; a fail-safe its degraded perception provoked is
-            # part of that measurement. Its label mismatches are reported
-            # (`labels_failed`, and in the fail-safe KPI, which counts every
-            # labelled episode) but do not fail it - its gates still do.
-            common["labels_failed"] = labels_bad
-        else:
-            bad = bad + labels_bad
-        known_why = spec.known_failure_for(ep.cell.params, ep.seed)
-        known = known_why is not None
-        if known:
+            common["labels_failed"] = labels_failed
+        if known_why is not None:
             common["known_failure_reason"] = known_why
-        if bad and known:
+        mark = _MARKS[status]
+        if status == "known_failure":
             n_known += 1
-            status, mark = "known_failure", "KNOWN"
-        elif bad:
+        elif status in ("fail", "unexpected_pass"):
+            # An unexpected pass fails the run: a marker left on a fixed
+            # defect would hide the next regression of that cell.
             n_fail += 1
-            status, mark = "fail", "FAIL "
-        elif known:
-            # A known failure that started passing is news, not a quiet pass.
-            n_fail += 1
-            status, mark = "unexpected_pass", "FIXED"
-            bad = ["marked known_failure but every gate passed - "
-                   "the defect is fixed; remove the marker"]
-        elif spec.expect == "tracked":
-            # Its gates hold only what must hold whatever the sensor does; the
-            # aircraft may still have entered a polygon. Never a "pass".
+        elif status == "tracked":
             n_tracked += 1
-            status, mark = "tracked", "track"
         else:
             n_pass += 1
-            status, mark = "pass", "pass "
 
         if verbose or status not in ("pass", "tracked"):
             print(f"  {mark} {label:<34} escape={res['p0_violation_escape_rate']:<9} "

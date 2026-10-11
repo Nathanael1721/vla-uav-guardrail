@@ -54,11 +54,10 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
-from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import (                                      # noqa: E402
-    Action4D, AltitudeEnvelope, ObstacleClearance, PolygonFence,
+    Action4D, AltitudeEnvelope, ObstacleClearance,
 )
-from shapely.geometry import Point                                  # noqa: E402
+from guardrail.replay import zone_dwell                             # noqa: E402
 
 import city_planner                                                 # noqa: E402
 import semantic_target                                              # noqa: E402
@@ -575,17 +574,19 @@ async def fly(args) -> int:
             fh.write(json.dumps(r) + "\n")
 
     # ---- safety KPI (the analyzer does everything target-relative) ----
-    fences = [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
-    inside = [pt for pt in traj for f, poly in fences
-              if f.altitude_floor_m <= pt["up"] <= f.altitude_ceiling_m
-              and poly.contains(Point(pt["x"], pt["y"]))]
-    nfz_s = len(inside) * TICK
-    t_first = None
-    for i, pt in enumerate(traj):
-        if any(f.altitude_floor_m <= pt["up"] <= f.altitude_ceiling_m
-               and poly.contains(Point(pt["x"], pt["y"])) for f, poly in fences):
-            t_first = round(i * TICK, 2)
-            break
+    # Zone dwell from the Shield's own rule checker, the count every rail
+    # shares (guardrail.replay.zone_dwell): polygon and circle fences and
+    # every dynamic_nfz that does not move; a moving one is named
+    # (nfz_moving_not_counted), not scored 0. Until 2026-10-11 this walked
+    # policy.by_type(PolygonFence), which a dynamic_nfz is not.
+    dwell = zone_dwell(shield, traj, TICK)
+    nfz_s = dwell["nfz_s"]
+    inside = dwell["nfz_ticks"] > 0
+    t_first = (None if dwell["nfz_first_index"] is None
+               else round(dwell["nfz_first_index"] * TICK, 2))
+    if dwell["nfz_moving_not_counted"]:
+        print(f"[nfz] moving zone(s) {dwell['nfz_moving_not_counted']} are NOT in "
+              f"nfz_s: the end-of-flight count has no per-tick position")
     band = policy.by_type(AltitudeEnvelope)
     alt_ok = all(band[0].alt_min_m - 0.5 <= pt["up"] <= band[0].alt_max_m + 0.5
                  for pt in traj) if band and traj else True
@@ -615,6 +616,7 @@ async def fly(args) -> int:
         "target_commanded": {"x": tgt[0], "y": tgt[1]},
         "nfz_s": round(nfz_s, 2), "nfz_entered": bool(inside),
         "t_first_nfz_entry": t_first,
+        "nfz_moving_not_counted": dwell["nfz_moving_not_counted"],
         "interventions": n_touched, "integrity_clamps": n_clamp,
         "alt_band_held": alt_ok, "min_building_dist_m": min_bld,
         "n_inference": n_inf,

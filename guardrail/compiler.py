@@ -12,7 +12,7 @@ generation and prepends its text to the OpenVLA instruction). No flown VLA has
 read a CSP yet: no flight has been made with that code. Say "generated and
 saved", not "the prompt the VLA reads", until one has.
 
-Two jobs live here.
+Three jobs live here.
 
 1. COMMAND -> MISSION (`parse_command`). A natural-language command resolved
    into a structured Mission. v0 parsing is deliberately simple: a named-place
@@ -38,6 +38,14 @@ Two jobs live here.
                                        refs, per-rule relevance explanations
          -> CSP                        the typed record in guardrail/csp.py
 
+   Every runtime rule type renders, the three hot-apply classes included
+   (dynamic_nfz, time_window_switch, corridor_swap; templates since
+   2026-10-08, when they joined models.RUNTIME_TYPES). A rule a switch or swap
+   acts on is timed by `_RuleClock`, the Shield's own logic, so the CSP never
+   leaves out a rule the Shield enforces. The multi-scale polygons behind each
+   P0 `geometry_ref` are the IR's (guardrail/ir.py): picked here, never
+   computed here (WP2-16).
+
    It is a stateless function, as PDF p1 requires, GIVEN A CLOCK: same policy
    (hash + generation) + same mission + same `now` -> byte-identical CSP, in
    any process. Nothing is random, so the spec's "rule-selection seed" has
@@ -47,6 +55,14 @@ Two jobs live here.
    clock. So a CSP compiled without a clock differs from run to run in that one
    field, and `csp.csp_content_hash` - every field except the issue stamp - is
    the identity to compare such CSPs by (the KPI report does).
+
+3. POLICY -> COST MAP (`rasterise_cost_map`), the grant's cost-map adapter
+   ("path planners only", PDF p4): the rules in force at one instant on a 2-D
+   grid with the grant's conventions (5 m cells, nfz_hard inf, corridor_pref
+   0, corridor_outside 50), exported as .npz + a JSON header and referenced
+   from a CSP's `cost_map_ref` when passed to compile_csp. No planner reads it
+   yet; `cost_map_agreement` scores it against the Shield with two nulls.
+   docs/DESIGN-cost-map-adapter.md.
 
 What the CSP is FOR, stated so nobody over-reads it: it is advice to the model,
 not enforcement. The Shield enforces every rule in the policy whether or not
@@ -86,9 +102,11 @@ import json
 import math
 import re
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import numpy as np
 import yaml
 from pydantic import BaseModel, Field
 
@@ -97,9 +115,20 @@ from .csp import (CSP, CSP_VERSION, AllowedActionSet, CSPBudgetExceeded,
                   CSPUnenforcedRules, ForbiddenActionSet, P0Entry, RiskWeights,
                   RuleDecision, Selection, TokenCounter)
 from .geometry import nearest_on_polyline, point_in_fence
-from .models import (DAYS, RUNTIME_TYPES, AltitudeEnvelope, Corridor,
-                     KinematicEnvelope, ObstacleClearance, Policy, PolygonFence,
-                     SubjectStandoff)
+from .ir import PolicyIR, is_moving
+from .models import (DAYS, RUNTIME_TYPES, AltitudeEnvelope, CircleFence, Corridor,
+                     CorridorSwap, DynamicNFZ, KinematicEnvelope,
+                     ObstacleClearance, Policy, PolygonFence, SubjectStandoff,
+                     TimeWindowSwitch)
+from .shield import recurrence_active
+
+# Keep-OUT zones and keep-IN tubes. CircleFence is a PolygonFence (its vertices
+# are the derived 32-gon); DynamicNFZ and CorridorSwap are not subclasses of
+# the fence and the corridor, so every test below names both. Until 2026-10-08
+# the compiler tested PolygonFence and Corridor alone, which was right only
+# while the loaders refused the hot-apply types (models.RUNTIME_TYPES).
+_ZONES = (PolygonFence, DynamicNFZ)
+_TUBES = (Corridor, CorridorSwap)
 
 # --------------------------------------------------------------------------- #
 # Defaults, each with its reason
@@ -129,8 +158,9 @@ DEFAULT_BUDGET_TOKENS = 256
 DEFAULT_REGION_MARGIN_M = 200.0
 
 # A coarse polygon has at most this many vertices; above it, the oriented
-# bounding rectangle. See multiscale_geometry.
-COARSE_MAX_VERTICES = 8
+# bounding rectangle. The IR computes it (guardrail/ir.py); this is its limit,
+# re-exported for callers that read it here. See multiscale_geometry.
+from .ir import COARSE_MAX_VERTICES  # noqa: E402
 
 # Severity in [0, 1]: "hard >> soft, P0 > P1 > P2" (PDF p4). The grant gives the
 # order, not the numbers. With these, a P1 rule outranks a P2 rule of equal
@@ -232,6 +262,16 @@ def _fmt_m(x) -> str:
     return "0" if s == "-0" else s
 
 
+def _fmt_rate(x) -> str:
+    """A speed (m/s) or turn rate (deg/s) to 0.1, as `_fmt_m`, except that a
+    non-zero rate never prints as "0": a zone creeping at 0.04 m/s is not
+    still (one significant digit then, "0.04")."""
+    s = _fmt_m(x)
+    if s == "0" and float(x) != 0.0:
+        return format(float(x), ".1g")
+    return s
+
+
 def _env():
     """The Jinja2 environment, built once.
 
@@ -256,6 +296,7 @@ def _env():
             keep_trailing_newline=False)
         env.filters["g"] = _fmt_g
         env.filters["m"] = _fmt_m
+        env.filters["rate"] = _fmt_rate
         _ENV = env
     return _ENV
 
@@ -342,11 +383,12 @@ def render_summary(rule) -> str:
 # --------------------------------------------------------------------------- #
 # Geometry for SUMMARISING, not enforcing.
 #
-# Pure Python on purpose. guardrail/geometry.py is the only module that imports
-# shapely, and it holds the Shield's rule evaluation; these helpers only score
-# and describe, and nothing the Shield decides depends on them. Where a check
-# does matter for safety (does this action enter a zone?) the code below calls
-# geometry.point_in_fence, the Shield's own test.
+# The distance helpers below are pure Python: they only score and describe,
+# and nothing the Shield decides depends on them. Where a check does matter for
+# safety (does this action enter a zone?) the code calls geometry.point_in_fence,
+# the Shield's own test. The multi-scale polygons are not computed here at all:
+# they are read from the compiled IR (guardrail/ir.py), the grant's "the Prefix
+# Compiler picks the scale, never re-computes" (card WP2-16).
 # --------------------------------------------------------------------------- #
 
 Pt = tuple[float, float]
@@ -354,46 +396,6 @@ Pt = tuple[float, float]
 
 def _cross(o: Pt, a: Pt, b: Pt) -> float:
     return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
-
-
-def _convex_hull(pts: list[Pt]) -> list[Pt]:
-    """Andrew's monotone chain, counter-clockwise, no repeated first point."""
-    p = sorted(set(pts))
-    if len(p) <= 2:
-        return p
-    lower: list[Pt] = []
-    for q in p:
-        while len(lower) >= 2 and _cross(lower[-2], lower[-1], q) <= 0:
-            lower.pop()
-        lower.append(q)
-    upper: list[Pt] = []
-    for q in reversed(p):
-        while len(upper) >= 2 and _cross(upper[-2], upper[-1], q) <= 0:
-            upper.pop()
-        upper.append(q)
-    return lower[:-1] + upper[:-1]
-
-
-def _min_area_rect(hull: list[Pt]) -> list[Pt]:
-    """Smallest-area rectangle containing a convex hull (one side lies on a hull
-    edge - rotating calipers, done by brute force over the edges)."""
-    best = None
-    n = len(hull)
-    for i in range(n):
-        (ax, ay), (bx, by) = hull[i], hull[(i + 1) % n]
-        L = math.hypot(bx - ax, by - ay)
-        if L < 1e-12:
-            continue
-        ux, uy = (bx - ax) / L, (by - ay) / L          # along the edge
-        vx, vy = -uy, ux                               # normal
-        us = [x * ux + y * uy for x, y in hull]
-        vs = [x * vx + y * vy for x, y in hull]
-        area = (max(us) - min(us)) * (max(vs) - min(vs))
-        if best is None or area < best[0] - 1e-12:
-            best = (area, ux, uy, vx, vy, min(us), max(us), min(vs), max(vs))
-    _, ux, uy, vx, vy, u0, u1, v0, v1 = best
-    return [(u * ux + v * vx, u * uy + v * vy)
-            for u, v in ((u0, v0), (u1, v0), (u1, v1), (u0, v1))]
 
 
 def _point_in_poly(x: float, y: float, poly: list[Pt]) -> bool:
@@ -436,56 +438,50 @@ def _seg_poly(a: Pt, b: Pt, poly: list[Pt]) -> float:
     return min(_seg_seg(a, b, poly[i], poly[(i + 1) % n]) for i in range(n))
 
 
-# Built once per policy hash. The grant puts this cache in the IR ("the policy
-# bundle's IR already carries pre-computed multi-scale polygons ... The Prefix
-# Compiler picks the scale, never re-computes", PDF p1); our IR (models.Policy)
-# does not carry it, and models.py / bundle.py are WP1's files. Until the IR
-# does, it is computed here once per policy and memoised - recorded as a
-# deviation in docs/DESIGN-prefix-compiler.md.
-_GEOMETRY_CACHE: dict[str, dict] = {}
-_GEOMETRY_CACHE_MAX = 64
+# The compiled IR, once per policy hash (a hot-apply bumps the generation and
+# with it the hash, so a stale IR is never served). The grant puts the
+# multi-scale cache in the IR ("the policy bundle's IR already carries
+# pre-computed multi-scale polygons ... The Prefix Compiler picks the scale,
+# never re-computes", PDF p1). Until 2026-10-08 this module computed its own
+# hull and oriented rectangle beside the IR's (guardrail/ir.py, the same rule
+# twice, kept equal by a test); it now reads the IR's.
+_IR_CACHE: dict[str, PolicyIR] = {}
+_IR_CACHE_MAX = 64
 
 
-def _r6(pts) -> list[Pt]:
-    return [(round(x, 6) + 0.0, round(y, 6) + 0.0) for x, y in pts]
+def compiled_ir(policy: Policy) -> PolicyIR:
+    """The PolicyIR compiled from `policy`, memoised by its hash."""
+    key = policy.policy_hash
+    hit = _IR_CACHE.get(key)
+    if hit is not None and hit.is_current_for(policy):
+        return hit
+    ir = PolicyIR.from_policy(policy)
+    if len(_IR_CACHE) >= _IR_CACHE_MAX:
+        _IR_CACHE.pop(next(iter(_IR_CACHE)))
+    _IR_CACHE[key] = ir
+    return ir
 
 
 def multiscale_geometry(policy: Policy) -> dict[str, dict[str, list[Pt]]]:
-    """{rule id: {"fine": [...], "coarse": [...]}} for every zone and corridor.
+    """{rule id: {scale: vertices}} for every zone and tube, READ FROM THE IR
+    (`PolicyIR.multiscale`); nothing is computed here.
 
-    fine   - the vertices as authored (the Shield adds margin_m itself).
-    coarse - a polygon that CONTAINS the fine one: its convex hull, or, if the
-             hull still has more than COARSE_MAX_VERTICES vertices, the
-             minimum-area oriented rectangle around it. Containment is the
-             point: a coarse keep-out zone that cut a corner would tell the
-             model a smaller zone than the Shield enforces.
-    Corridors get "fine" only (their centerline). Coarsening a keep-IN shape
-    outward would widen where the model believes it may fly.
+    fine   - the vertices as authored (the Shield adds margin_m itself); a
+             corridor's or corridor_swap's centerline;
+    coarse - zones only: a polygon that CONTAINS the fine one (its convex hull,
+             or the minimum-area oriented rectangle when the hull has more than
+             COARSE_MAX_VERTICES vertices). Containment is the point: a coarse
+             keep-out zone that cut a corner would tell the model a smaller
+             zone than the Shield enforces;
+    bbox   - zones only: the axis-aligned bounding rectangle.
+    A keep-IN tube is never coarsened: that would widen where the model
+    believes it may fly. A moving dynamic_nfz is listed at its declared
+    position.
     """
-    key = policy.policy_hash
-    hit = _GEOMETRY_CACHE.get(key)
-    if hit is not None:
-        return hit
-    out: dict[str, dict[str, list[Pt]]] = {}
-    for c in policy.constraints:
-        if isinstance(c, PolygonFence):
-            fine = [(v.x, v.y) for v in c.vertices]
-            hull = _convex_hull(fine)
-            coarse = hull if len(hull) <= COARSE_MAX_VERTICES else _min_area_rect(hull)
-            out[c.id] = {"fine": _r6(fine), "coarse": _r6(coarse)}
-        elif isinstance(c, Corridor):
-            out[c.id] = {"fine": _r6(c.points())}
-    if len(_GEOMETRY_CACHE) >= _GEOMETRY_CACHE_MAX:
-        _GEOMETRY_CACHE.pop(next(iter(_GEOMETRY_CACHE)))
-    _GEOMETRY_CACHE[key] = out
-    return out
+    return compiled_ir(policy).multiscale
 
 
-_REF = re.compile(r"^(fine|coarse|param):(.+)@v([^/@]+)/g(\d+)$")
-
-
-def _geometry_ref(scale: str, rule_id: str, policy: Policy) -> str:
-    return f"{scale}:{rule_id}@v{policy.version}/g{policy.generation}"
+_REF = re.compile(r"^(fine|coarse|bbox|param):(.+)@v([^/@]+)/g(\d+)$")
 
 
 def resolve_geometry_ref(policy: Policy, ref: str) -> list[Pt] | None:
@@ -493,7 +489,8 @@ def resolve_geometry_ref(policy: Policy, ref: str) -> list[Pt] | None:
 
     Refuses a ref whose version or generation is not this policy's: after a
     mid-flight hot-apply bumps the generation, a CSP from before must not
-    quietly resolve against geometry it never described.
+    quietly resolve against geometry it never described. Geometric refs are
+    resolved by the IR (`PolicyIR.resolve_geometry_ref`).
     """
     m = _REF.match(ref)
     if not m:
@@ -506,10 +503,7 @@ def resolve_geometry_ref(policy: Policy, ref: str) -> list[Pt] | None:
         if not any(c.id == rid for c in policy.constraints):
             raise ValueError(f"no rule {rid!r} in {policy.policy_id}")
         return None
-    geo = multiscale_geometry(policy).get(rid)
-    if geo is None or scale not in geo:
-        raise ValueError(f"no {scale} geometry for {rid!r} in {policy.policy_id}")
-    return list(geo[scale])
+    return compiled_ir(policy).resolve_geometry_ref(ref)
 
 
 # --------------------------------------------------------------------------- #
@@ -540,11 +534,145 @@ def _activity(rule, now: datetime | None, lookahead_s: float) -> dict:
             "off": states[0] and bool(later) and not all(later)}
 
 
+# Padding of the time window for rules that switches and swaps act on. The
+# Shield judges each forecast instant on both sides (t - dt/2 and t + dt/2;
+# 0.05 s at its defaults), so it can enforce a rule a few hundredths of a
+# second outside [now, now + lookahead]. One second on each side keeps the
+# CSP's set a SUPERSET of what the Shield enforces in that window.
+_SWITCH_PAD_S = 1.0
+_JUST_AFTER = timedelta(microseconds=1)
+
+
+class _RuleClock:
+    """Which rules are in force at an instant, with time_window_switch and
+    corridor_swap applied EXACTLY as the Shield applies them
+    (guardrail/shield.py `_Schedule.on`, the same `recurrence_active`, to the
+    microsecond).
+
+    Why a second implementation of `on` and not a call into the Shield: the
+    Shield's schedule hangs off its per-generation runtime (fence index,
+    anchors, FSM) and is private. This is the ~20 lines of rule logic only,
+    and tests/test_csp.py holds it to the Shield's own answer
+    (`Shield.rule_status(...)["in_force"]`) at every instant around every edge
+    of a policy built to have them. If they ever disagree the test names the
+    rule and the instant.
+
+    Used only for rules a switch or swap touches (and for those events
+    themselves). Every other rule keeps `_activity`'s minute-grained test,
+    unchanged since 2026-10-06, so no stored CSP moves. That test is the
+    conservative one for a rule's OWN window (models.Recurrence.active_at keeps
+    a window ending 17:30 open until 17:30:59; the Shield closes it at
+    17:30:00) - but it is NOT conservative for a switch that turns a rule OFF,
+    which it would hold off 59 s longer than the Shield: a rule the Shield
+    enforces would be missing from the CSP. Hence the exact clock here.
+    """
+
+    def __init__(self, policy: Policy):
+        self.sw: dict[str, list] = {}
+        self.sp: dict[str, list] = {}
+        for c in policy.constraints:
+            if isinstance(c, TimeWindowSwitch):
+                self.sw.setdefault(c.target_id, []).append(c)
+            elif isinstance(c, CorridorSwap):
+                self.sp.setdefault(c.target_id, []).append(c)
+
+    def involved(self, rule) -> bool:
+        return (isinstance(rule, (TimeWindowSwitch, CorridorSwap))
+                or rule.id in self.sw or rule.id in self.sp)
+
+    @staticmethod
+    def _base(rule, x):
+        """The rule's own window at x: True, False, or None (it has a window
+        and there is no clock). shield._Schedule._base, verbatim."""
+        vt = rule.valid_time
+        if vt is None or vt.recurrence is None:
+            return True
+        if x is None:
+            return None
+        return recurrence_active(vt.recurrence, x)
+
+    def on(self, rule, x) -> bool:
+        """Is `rule` in force at instant x (None: no clock)?
+
+        A time_window_switch is "in force" while its own window holds (it then
+        acts); the Shield never enforces it as geometry. Everything else is
+        shield._Schedule.on: a corridor_swap holds while its window holds and
+        switches its target off meanwhile; of the switches on a rule that are
+        in force, the last in policy order decides; a switch whose window
+        cannot be read turns a rule ON but never OFF; no clock counts as in
+        force."""
+        if isinstance(rule, TimeWindowSwitch):
+            return self._base(rule, x) is not False
+        if isinstance(rule, CorridorSwap):
+            return self._base(rule, x) is not False
+        for sp in self.sp.get(rule.id, ()):
+            if self._base(sp, x) is True:
+                return False
+        sws = self.sw.get(rule.id, ())
+        if sws:
+            if any(s.active and self._base(s, x) is None for s in sws):
+                return True
+            known = [s.active for s in sws if self._base(s, x) is True]
+            if known:
+                return known[-1]
+        return self._base(rule, x) is not False
+
+    def acted_on_text(self, rule) -> str | None:
+        """Every switch and swap that acts on `rule`, with its window, in
+        words ("switched off by sw-b-off (Mon 08:00-08:30)"); None when none
+        does. For P0Entry.in_force, which otherwise reads only the rule's own
+        window: a switch target read "always" there although a switch turns
+        it off for part of the week (found in review, 2026-10-08)."""
+        parts = [f"switched {'on' if s.active else 'off'} by {s.id} "
+                 f"({window_text(s) or 'always'})" for s in self.sw.get(rule.id, ())]
+        parts += [f"replaced by {sp.id} ({window_text(sp) or 'always'})"
+                  for sp in self.sp.get(rule.id, ())]
+        return "; ".join(parts) or None
+
+    def holders(self, rule, x) -> list[str]:
+        """The ids of the switches and swaps holding `rule` OFF at x."""
+        out = [sp.id for sp in self.sp.get(rule.id, ()) if self._base(sp, x) is True]
+        sws = [s for s in self.sw.get(rule.id, ()) if self._base(s, x) is True]
+        if sws and not sws[-1].active:
+            out.append(sws[-1].id)
+        return out
+
+    def activity(self, rule, now: datetime | None, lookahead_s: float) -> dict:
+        """`_activity`'s answer, from exact instants.
+
+        Every schedule changes state only at a minute boundary (a window
+        opens AT hh:mm:00 and closes just AFTER it; days change at midnight),
+        so the state is constant on each open stretch between boundaries. The
+        window [now - pad, now + lookahead + pad] is therefore sampled
+        exhaustively by: its two ends, `now`, every boundary inside it, and
+        one microsecond after each."""
+        if now is None:
+            v = self.on(rule, None)
+            return {"now": v, "any": v, "on": False, "off": False}
+        pad = timedelta(seconds=_SWITCH_PAD_S)
+        lo, end = now - pad, now + timedelta(seconds=lookahead_s) + pad
+        ts = [now, lo, end]
+        t = lo.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        while t <= end:
+            ts.append(t)
+            if t + _JUST_AFTER <= end:
+                ts.append(t + _JUST_AFTER)
+            t += timedelta(minutes=1)
+        state = {x: self.on(rule, x) for x in ts}
+        later = [state[x] for x in sorted(ts) if x > now]
+        return {"now": state[now], "any": any(state.values()),
+                "on": (not state[now]) and any(later),
+                "off": state[now] and bool(later) and not all(later)}
+
+
 class _Ctx:
     """The mission context, computed once per compilation."""
 
     def __init__(self, mission: Mission, lookahead_s: float, now, reach_m: float,
-                 region_margin_m: float | None):
+                 region_margin_m: float | None, policy: Policy | None = None,
+                 clock: "_RuleClock | None" = None):
+        self.policy = policy
+        self.clock = clock
         self.m = mission
         self.a: Pt = (mission.start_x, mission.start_y)
         self.b: Pt = (mission.target_x, mission.target_y)
@@ -564,10 +692,11 @@ class _Ctx:
                            "y_max": max(self.a[1], self.b[1]) + widen}
 
 
-def _fence_dist(f: PolygonFence, ctx: _Ctx) -> tuple[float, float]:
-    """(path distance, target distance) to the fence's MARGIN RING - the edge
+def _fence_dist(f, ctx: _Ctx) -> tuple[float, float]:
+    """(path distance, target distance) to the zone's MARGIN RING - the edge
     the Shield actually enforces. Exact: the distance to a polygon buffered by
-    m is the distance to the polygon minus m, floored at 0."""
+    m is the distance to the polygon minus m, floored at 0. A dynamic_nfz is
+    measured at its declared position."""
     poly = [(v.x, v.y) for v in f.vertices]
     d_path = max(0.0, _seg_poly(ctx.a, ctx.b, poly) - f.margin_m)
     d_tgt = max(0.0, _seg_poly(ctx.b, ctx.b, poly) - f.margin_m)
@@ -575,15 +704,17 @@ def _fence_dist(f: PolygonFence, ctx: _Ctx) -> tuple[float, float]:
 
 
 def _in_region(rule, ctx: _Ctx) -> bool:
-    """Only keep-OUT zones are ever filtered by region.
+    """Only keep-OUT zones are ever filtered by region, and never a MOVING one.
 
     A corridor is keep-IN: everywhere outside it is forbidden, so "far from the
     mission" is precisely the case where it matters most (the mission is
-    outside it). Envelopes and stand-offs have no location. The test is a
-    bounding-box overlap, which can only keep MORE zones than an exact test
-    would, never fewer.
+    outside it). Envelopes and stand-offs have no location. A moving
+    dynamic_nfz has no fixed place the compiler knows: the Shield moves it from
+    the event time, which a CSP issued from the policy alone cannot see. The
+    test is a bounding-box overlap, which can only keep MORE zones than an
+    exact test would, never fewer.
     """
-    if ctx.region is None or not isinstance(rule, PolygonFence):
+    if ctx.region is None or not isinstance(rule, _ZONES) or is_moving(rule):
         return True
     xs = [v.x for v in rule.vertices]
     ys = [v.y for v in rule.vertices]
@@ -602,8 +733,9 @@ def _proximity(rule, ctx: _Ctx) -> float:
     """In [0, 1]. Keep-out zones: 1 on the path, falling linearly to 0 at the
     region's edge. Everything else binds wherever the vehicle is - a corridor
     because outside it is forbidden, envelopes and stand-offs because they
-    have no location - so 1."""
-    if not isinstance(rule, PolygonFence):
+    have no location, a moving zone because its place is not known here, a
+    switch because it acts on a rule wherever that rule binds - so 1."""
+    if not isinstance(rule, _ZONES) or is_moving(rule):
         return 1.0
     d, _ = _fence_dist(rule, ctx)
     return max(0.0, min(1.0, 1.0 - d / ctx.prox_scale_m))
@@ -635,19 +767,38 @@ def _relevance(rule, act: dict, ctx: _Ctx) -> str:
     """Why this rule matters to THIS mission, from mission facts (PDF p5)."""
     m, (sx, sy), (tx, ty) = ctx.m, ctx.a, ctx.b
     tf = _time_fact(rule, act, ctx)
-    if isinstance(rule, PolygonFence):
+    if isinstance(rule, _ZONES):
         d_path, d_tgt = _fence_dist(rule, ctx)
         facts = {"crosses": d_path <= 0.0, "sx": sx, "sy": sy, "tx": tx, "ty": ty,
                  "d_path": d_path, "d_target": d_tgt, "alt": m.cruise_alt_m,
                  "floor": rule.altitude_floor_m, "ceil": rule.altitude_ceiling_m,
                  "in_band": rule.altitude_floor_m <= m.cruise_alt_m <= rule.altitude_ceiling_m}
-    elif isinstance(rule, Corridor):
+        if isinstance(rule, CircleFence):
+            facts["r"] = rule
+        elif isinstance(rule, DynamicNFZ):
+            mv = rule.motion
+            speed = math.hypot(mv.vx_mps, mv.vy_mps) if mv else 0.0
+            facts.update(moving=is_moving(rule), speed=speed,
+                         turn=abs(mv.yaw_rate_dps) if mv else 0.0,
+                         travel=speed * ctx.lookahead_s, lookahead=ctx.lookahead_s)
+    elif isinstance(rule, _TUBES):
         hw, pts = rule.half_width_m, rule.points()
         facts = {"start_in": nearest_on_polyline(sx, sy, pts)[0] <= hw,
                  "target_in": nearest_on_polyline(tx, ty, pts)[0] <= hw,
                  "hw": hw, "alt": m.cruise_alt_m, "floor": rule.altitude_floor_m,
                  "ceil": rule.altitude_ceiling_m,
                  "alt_in_band": rule.altitude_floor_m <= m.cruise_alt_m <= rule.altitude_ceiling_m}
+        if isinstance(rule, CorridorSwap):
+            facts["target"] = rule.target_id
+    elif isinstance(rule, TimeWindowSwitch):
+        tgt = next((c for c in (ctx.policy.constraints if ctx.policy else ())
+                    if c.id == rule.target_id), None)
+        state = None
+        if tgt is not None and ctx.clock is not None:
+            state = ctx.clock.activity(tgt, ctx.now, ctx.lookahead_s)["any"]
+        facts = {"target": rule.target_id, "active": rule.active,
+                 "target_kind": (tgt.type if tgt is not None else "rule"),
+                 "target_state": state}
     elif isinstance(rule, AltitudeEnvelope):
         a = m.cruise_alt_m
         where = ("inside" if rule.alt_min_m <= a <= rule.alt_max_m
@@ -693,7 +844,10 @@ def _action_sets(rules: list) -> tuple[AllowedActionSet, ForbiddenActionSet]:
     hard = [r for r in rules if r.constraint_type == "hard"]
     kins = [r for r in hard if isinstance(r, KinematicEnvelope)]
     alts = [r for r in hard if isinstance(r, AltitudeEnvelope)]
-    cors = [r for r in hard if isinstance(r, Corridor)]
+    # A corridor_swap is a keep-in tube like a corridor; the corridor it
+    # replaces is out of scope while the swap holds (_RuleClock), so it is not
+    # in `rules` and does not narrow the band.
+    cors = [r for r in hard if isinstance(r, _TUBES)]
     src: list[str] = []
     kw: dict = {}
     if kins:
@@ -716,8 +870,8 @@ def _action_sets(rules: list) -> tuple[AllowedActionSet, ForbiddenActionSet]:
         src += [b[0] for b in bands]
     allowed = AllowedActionSet(source_rules=src, **kw)
     forbidden = ForbiddenActionSet(
-        no_translate_into_polygons=[r.id for r in hard if isinstance(r, PolygonFence)],
-        no_translate_out_of_corridors=[r.id for r in hard if isinstance(r, Corridor)])
+        no_translate_into_polygons=[r.id for r in hard if isinstance(r, _ZONES)],
+        no_translate_out_of_corridors=[r.id for r in hard if isinstance(r, _TUBES)])
     return allowed, forbidden
 
 
@@ -755,7 +909,9 @@ def action_violations(action, csp: CSP, state=None, policy: Policy | None = None
     is checked against every forbidden zone using geometry.point_in_fence - the
     Shield's own test - and against every keep-in corridor. Advisory: this
     counts would-be violations (the offline-replay metric of PDF p5); the
-    Shield, not this function, decides what flies.
+    Shield, not this function, decides what flies. A MOVING dynamic_nfz is
+    tested where it was declared: the CSP cannot know how far the Shield has
+    moved it, so the count for such a zone is advisory twice over.
 
     `ir`: a guardrail.ir.PolicyIR compiled from `policy`. With it each fence's
     margin ring is the one built once at compile time instead of a rebuild per
@@ -799,6 +955,634 @@ def action_violations(action, csp: CSP, state=None, policy: Policy | None = None
         if d > c.half_width_m or not (c.altitude_floor_m <= up <= c.altitude_ceiling_m):
             out.append(f"corridor:{cid}")
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Cost-map adapter (Prefix Compiler PDF p4, "Cost-map adapter (path planners
+# only)": "Emitted as a separate artefact referenced by cost_map_ref"; PDF p6
+# lists it among the outputs). docs/DESIGN-cost-map-adapter.md has the why.
+# --------------------------------------------------------------------------- #
+
+COST_MAP_FORMAT = "guardrail-cost-map-v1"
+# The grant's example: resolution_m 5, nfz_hard inf, corridor_pref 0,
+# corridor_outside 50. COST_SOFT is this project's: a soft keep-out (zone,
+# stand-off, clearance, altitude) is discouraged at the same price as leaving
+# a corridor, and never made impassable.
+COST_MAP_RESOLUTION_M = 5.0
+COST_FREE = 0.0
+COST_HARD = math.inf
+COST_SOFT = 50.0
+COST_CORRIDOR_PREF = 0.0
+COST_CORRIDOR_OUTSIDE = 50.0
+# A grid larger than this is refused rather than allocated (2000 x 2000 cells
+# is 10 km square at 5 m).
+COST_MAP_MAX_CELLS = 4_000_000
+# A stand-off disc is drawn as a polygon that CONTAINS the circle (vertices on
+# a circle of r / cos(pi / n)), never the inscribed one shapely's buffer gives.
+_DISC_SEGMENTS = 64
+
+
+def _cost_text(v: float):
+    """A cost as the header writes it: JSON has no infinity, so "inf"."""
+    return "inf" if math.isinf(v) else float(v)
+
+
+def _sha_array(a: np.ndarray) -> str:
+    a = np.ascontiguousarray(a)
+    h = hashlib.sha256(f"{a.dtype.str}{list(a.shape)}".encode())
+    h.update(a.tobytes())
+    return "sha256:" + h.hexdigest()
+
+
+def _obstacle_digest(obstacle_map: dict) -> dict:
+    occ = (np.asarray(obstacle_map["occ"]) > 0).astype(np.uint8)
+    return {"res": float(obstacle_map["res"]), "ox": float(obstacle_map["ox"]),
+            "oy": float(obstacle_map["oy"]), "shape": list(occ.shape),
+            "sha256": _sha_array(occ)}
+
+
+@dataclass(frozen=True)
+class CostMap:
+    """A 2-D cost grid rasterised from a policy's active constraints.
+
+    `cost[i, j]` is the cost of the cell CENTRED on (x, y) = (ox + i * res,
+    oy + j * res) in the policy's local frame (x metres North, y metres East
+    of the frame origin), the indexing of the Shield's obstacle map
+    ({"occ", "res", "ox", "oy"}). `layers` holds one boolean mask per layer, in
+    the header's `cost_map.layers` order; the cost is the maximum over the
+    layers a cell is in (0 in none). `header` is everything else, JSON-ready,
+    with the grant's keys (`cost_map: {resolution_m, origin: {lat, lon},
+    layers: [{name, source, cost}]}`) at its top; `ref` is what a CSP's
+    cost_map_ref holds."""
+    cost: np.ndarray
+    layers: tuple
+    header: dict = field(compare=False)
+
+    @property
+    def ref(self) -> str:
+        return self.header["ref"]
+
+    @property
+    def policy_hash(self) -> str:
+        return self.header["policy_hash"]
+
+    @property
+    def generation(self) -> int:
+        return int(self.header["generation"])
+
+    @property
+    def resolution_m(self) -> float:
+        return float(self.header["cost_map"]["resolution_m"])
+
+    @property
+    def origin_xy(self) -> tuple[float, float]:
+        ox, oy = self.header["origin_xy_m"]
+        return float(ox), float(oy)
+
+    def cell_of(self, x: float, y: float) -> tuple[int, int] | None:
+        """The (i, j) of the cell holding (x, y), or None off the grid."""
+        res = self.resolution_m
+        ox, oy = self.origin_xy
+        i = int(math.floor((x - ox) / res + 0.5))
+        j = int(math.floor((y - oy) / res + 0.5))
+        nx, ny = self.cost.shape
+        return (i, j) if (0 <= i < nx and 0 <= j < ny) else None
+
+    def cost_at(self, x: float, y: float) -> float | None:
+        ij = self.cell_of(x, y)
+        return None if ij is None else float(self.cost[ij])
+
+    def save(self, stem: str | Path) -> tuple[Path, Path]:
+        """Write `<stem>.npz` (the cost grid and the layer masks) and
+        `<stem>.json` (the header, LF). The header names the npz by file name
+        and carries the SHA-256 of every array, so `load_cost_map` refuses a
+        grid that is not the one this header describes."""
+        stem = Path(stem)
+        stem.parent.mkdir(parents=True, exist_ok=True)
+        npz, js = stem.with_name(stem.name + ".npz"), stem.with_name(stem.name + ".json")
+        np.savez_compressed(npz, cost=self.cost,
+                            **{f"layer_{k:03d}": m for k, m in enumerate(self.layers)})
+        doc = dict(self.header)
+        doc["npz"] = npz.name
+        with open(js, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(doc, indent=2, sort_keys=True) + "\n")
+        return npz, js
+
+
+def _cost_map_ref(core: dict) -> str:
+    digest = hashlib.sha256(json.dumps(core, sort_keys=True, separators=(",", ":"),
+                                       ensure_ascii=True).encode("ascii")).hexdigest()
+    return (f"costmap:{core['policy_id']}@v{core['version']}/g{core['generation']}"
+            f"#sha256:{digest}")
+
+
+def load_cost_map(json_path: str | Path, policy: Policy | None = None, *,
+                  ref: str | None = None) -> CostMap:
+    """Read a cost map written by `CostMap.save`, refusing one whose arrays,
+    header or ref do not agree - and, with `policy`, one rasterised from
+    another policy or generation (as `resolve_geometry_ref` refuses a stale
+    ref). With `ref` (a CSP's cost_map_ref), also one that is not the map
+    that CSP names: the same policy and generation is not enough, two maps
+    of one generation differ by clock, height, subject or zone age."""
+    js = Path(json_path)
+    doc = json.loads(js.read_text(encoding="utf-8"))
+    npz_name = doc.pop("npz", None)
+    if not npz_name:
+        raise ValueError(f"{js.name}: no npz named in the header")
+    with np.load(js.with_name(npz_name)) as z:
+        cost = z["cost"]
+        layers = tuple(z[f"layer_{k:03d}"] for k in range(len(doc["cost_map"]["layers"])))
+    if _sha_array(cost) != doc.get("cost_sha256"):
+        raise ValueError(f"{js.name}: the cost grid in {npz_name} is not the one "
+                         f"this header describes")
+    if [_sha_array(m) for m in layers] != doc.get("layer_sha256"):
+        raise ValueError(f"{js.name}: a layer mask in {npz_name} is not the one "
+                         f"this header describes")
+    held = doc.pop("ref", None)
+    if held != _cost_map_ref(doc):
+        raise ValueError(f"{js.name}: the header does not hash to its ref; it was "
+                         f"edited after the map was made")
+    doc["ref"] = held
+    if policy is not None and not (policy.matches_hash(doc["policy_hash"])
+                                   and int(doc["generation"]) == policy.generation):
+        raise ValueError(f"{js.name} was rasterised from {doc['policy_hash']} "
+                         f"g{doc['generation']}; this policy is {policy.policy_hash} "
+                         f"g{policy.generation}")
+    if ref is not None and held != ref:
+        raise ValueError(f"{js.name} holds {held}, not the map {ref}")
+    return CostMap(cost=cost, layers=layers, header=doc)
+
+
+def _check_cost_map_for(cm: CostMap, policy: Policy, mission: Mission,
+                        now: datetime | None) -> None:
+    """Refuse a cost map that is not the map of the CSP being compiled.
+
+    The same policy and generation is not enough (found in review,
+    2026-10-08): two maps of one generation differ by clock and by height. A
+    CSP issued Mon 08:15 for a 15 m cruise accepted a map rasterised at Mon
+    12:30 - fence-a not drawn although the Shield enforces it at 08:15,
+    fence-b drawn although a switch holds it off - and one drawn at 200 m.
+    So the map must match on all three:
+
+      policy  its policy_hash and generation are this policy's;
+      clock   its `clock` is this CSP's `now` (both None, or the same
+              instant to the microsecond);
+      height  it was drawn at the mission's cruise height. A map drawn at no
+              particular height (altitude_m None) is refused too: that
+              reading takes every keep-out zone whatever its band, but reads
+              a corridor laterally, which is PERMISSIVE for the corridor's
+              altitude band (see rasterise_cost_map), and it never prices an
+              altitude envelope the cruise height breaks.
+
+    What a CSP cannot check - where the subject is, how old a moving zone is,
+    which obstacle map - is recorded in the map's header and is the
+    caller's to match."""
+    if not (cm.policy_hash == policy.policy_hash and cm.generation == policy.generation):
+        raise ValueError(f"the cost map was rasterised from {cm.policy_hash} "
+                         f"g{cm.generation}; this policy is {policy.policy_hash} "
+                         f"g{policy.generation}")
+    want = None if now is None else now.isoformat()
+    got = cm.header.get("clock")
+    if got != want:
+        raise ValueError(f"the cost map was rasterised at clock {got}; this CSP is "
+                         f"issued at clock {want}. Which rules are in force (time "
+                         f"windows, switches, swaps) depends on the clock: "
+                         f"rasterise it with now= the CSP's clock")
+    alt = cm.header.get("altitude_m")
+    if alt is None or abs(float(alt) - float(mission.cruise_alt_m)) > 1e-9:
+        raise ValueError(f"the cost map was drawn at altitude_m={alt}; this CSP's "
+                         f"mission cruises at {_fmt_g(mission.cruise_alt_m)} m. "
+                         f"Zone and corridor bands and altitude envelopes depend "
+                         f"on the height: rasterise it with altitude_m= the "
+                         f"cruise height")
+
+
+def _disc(x: float, y: float, r: float):
+    from shapely.geometry import Point
+    q = _DISC_SEGMENTS // 4
+    return Point(x, y).buffer(r / math.cos(math.pi / _DISC_SEGMENTS), quad_segs=q)
+
+
+def _clearance_mask(obstacle_map: dict, r: float, xs: np.ndarray, ys: np.ndarray,
+                    res: float) -> np.ndarray:
+    """Cells whose square comes within `r` of a blocked map cell's SQUARE.
+
+    The Shield measures clearance to the nearest blocked cell's CENTRE through
+    a chamfer distance field (shield._build_signed_distance_field); measuring
+    to the whole blocked square is never farther than to its centre, by up to
+    half a map cell, which absorbs the field's approximation. Cells off the
+    map are free, as the Shield reads them (every obstacle lies on the map)."""
+    occ = np.asarray(obstacle_map["occ"]) > 0
+    mres = float(obstacle_map["res"])
+    mox, moy = float(obstacle_map["ox"]), float(obstacle_map["oy"])
+    out = np.zeros((len(xs), len(ys)), dtype=bool)
+    hb, h = mres / 2.0, res / 2.0
+    for bi, bj in zip(*np.nonzero(occ)):
+        bx, by = mox + bi * mres, moy + bj * mres
+        reach = r + hb + h
+        i0 = max(0, int(math.floor((bx - reach - xs[0]) / res)))
+        i1 = min(len(xs), int(math.ceil((bx + reach - xs[0]) / res)) + 1)
+        j0 = max(0, int(math.floor((by - reach - ys[0]) / res)))
+        j1 = min(len(ys), int(math.ceil((by + reach - ys[0]) / res)) + 1)
+        if i0 >= i1 or j0 >= j1:
+            continue
+        dx = np.maximum(np.abs(xs[i0:i1] - bx) - (h + hb), 0.0)[:, None]
+        dy = np.maximum(np.abs(ys[j0:j1] - by) - (h + hb), 0.0)[None, :]
+        out[i0:i1, j0:j1] |= (dx * dx + dy * dy) < r * r
+    return out
+
+
+def rasterise_cost_map(policy: Policy, *, now: datetime | None = None,
+                       zone_age_s: float | dict | None = None,
+                       altitude_m: float | None = None,
+                       resolution_m: float = COST_MAP_RESOLUTION_M,
+                       bounds: tuple[float, float, float, float] | None = None,
+                       pad_m: float | None = None,
+                       subject: tuple | None = None,
+                       obstacle_map: dict | None = None) -> CostMap:
+    """The cost-map adapter: the policy's constraints in force at one instant,
+    rasterised onto a 2-D grid (Prefix Compiler PDF p4).
+
+    now          the clock for valid_time windows, switches and swaps, read by
+                 the SHIELD (Shield(now=...).rule_status()["in_force"], both
+                 sides of the instant), so the map and the Shield cannot
+                 disagree about which rules are on. None: no clock, as the
+                 Shield reads it.
+    zone_age_s   seconds since each MOVING dynamic_nfz appeared (a number for
+                 all, or {zone id: age}); the zone is drawn at ring_at(age),
+                 the geometry the Shield materialises (ir.compile_fence).
+                 Default 0: where it was declared. Recorded in the header.
+    altitude_m   draw only what binds at this height (the Shield's band test).
+                 None is a 2-D reading for a planner that does not know its
+                 height, and it is NOT conservative throughout: it draws every
+                 keep-out zone whatever its band (conservative), but counts a
+                 cell inside a corridor laterally, ignoring the corridor's
+                 altitude band (PERMISSIVE: at a height outside the band the
+                 Shield forbids the whole corridor, and the map prices its
+                 interior 0), and it prices no altitude envelope. So
+                 compile_csp refuses a map drawn at None; a CSP's map is drawn
+                 at the mission's cruise height.
+    bounds       (x_min, y_min, x_max, y_max) in metres; default the extent of
+                 everything drawn, padded by `pad_m` (default 2 cells).
+    subject      (x, y) or (x, y, class): where the followed subject is, for
+                 subject_standoff. Without it the rule is inert, as in the
+                 Shield, and the header says so.
+    obstacle_map {"occ", "res", "ox", "oy"} for obstacle_clearance, the
+                 Shield's own map format. Without it the rule is inert.
+
+    Layers (the grant's names first): nfz_hard (inf) / nfz_soft (50) for each
+    keep-out zone with its margin ring; corridor_pref (0) for each keep-in
+    tube and corridor_outside (50) for every cell not inside ALL of them - the
+    Shield checks each corridor on its own, so the vehicle must be in all at
+    once. corridor_outside is 50 for a HARD corridor too, as in the grant's
+    example: outside a hard corridor the Shield refuses the position, while
+    the map only prices it, so a planner trusting the map may cross out at a
+    price (a planner starting outside, on the take-off pad, could not plan
+    into an inf field at all). cost_map_agreement counts those points
+    separately (`hard_rule_priced_finite`); standoff_hard / standoff_soft; clearance_hard / clearance_soft;
+    altitude_hard / altitude_soft over the whole grid when `altitude_m` breaks
+    an altitude envelope. A keep-out layer takes every cell whose square
+    MEETS the zone; a tube counts a cell inside only when the square lies
+    WHOLLY in it - both the conservative side. Rules with no footprint
+    (kinematic caps, switches, an envelope the height respects) are listed
+    under `not_drawn` with why, never dropped in silence.
+    """
+    import shapely
+    from .geometry import corridor_tube
+    from .ir import compile_fence
+    from .models import State
+    from .shield import Shield
+
+    res = float(resolution_m)
+    if not (res > 0 and math.isfinite(res)):
+        raise ValueError(f"resolution_m must be a positive number, got {resolution_m!r}")
+    sh = Shield(policy, now=(lambda: now) if now is not None else None, escalation=False)
+    up = float(altitude_m) if altitude_m is not None else 0.0
+    status = {r["id"]: r for r in sh.rule_status(State(x=0.0, y=0.0, up=up))}
+
+    def in_force(c) -> bool:
+        return bool(status[c.id]["in_force"])
+
+    def age_of(c) -> float:
+        if isinstance(zone_age_s, dict):
+            return float(zone_age_s.get(c.id, 0.0))
+        return float(zone_age_s or 0.0)
+
+    def in_band(c) -> bool:
+        return altitude_m is None or (c.altitude_floor_m <= altitude_m <= c.altitude_ceiling_m)
+
+    drawn: list[tuple[str, str | None, object, float]] = []   # name, source, geometry, cost
+    tubes: list[tuple] = []                                     # (rule, geometry or None)
+    not_in_force, out_of_band, not_drawn = [], [], []
+    ages: dict[str, float] = {}
+    whole: list[tuple[str, str, float]] = []                    # layers over every cell
+    clear: list[tuple] = []
+
+    ir = compiled_ir(policy)
+    zone_recs = {r.rule.id: r for r in ir.fences}
+    for c in policy.constraints:
+        hard = c.constraint_type == "hard"
+        if isinstance(c, TimeWindowSwitch):
+            not_drawn.append({"id": c.id, "type": c.type,
+                              "why": f"an event: it acts through whether "
+                                     f"'{c.target_id}' is in force, which the map "
+                                     f"already reflects"})
+            continue
+        if not in_force(c):
+            not_in_force.append(c.id)
+            continue
+        if isinstance(c, _ZONES):
+            if not in_band(c):
+                out_of_band.append(c.id)
+                continue
+            rec = zone_recs[c.id]
+            if rec.moving:
+                ages[c.id] = age_of(c)
+                rec = compile_fence(rec.index, c, ring=c.ring_at(ages[c.id]),
+                                    multiscale=False)
+            drawn.append(("nfz_hard" if hard else "nfz_soft", c.id, rec.buffered,
+                          COST_HARD if hard else COST_SOFT))
+        elif isinstance(c, _TUBES):
+            if not in_band(c):
+                out_of_band.append(c.id)
+                tubes.append((c, None))        # nowhere inside it at this height
+            else:
+                tubes.append((c, corridor_tube(c)))
+        elif isinstance(c, SubjectStandoff):
+            if subject is None:
+                not_drawn.append({"id": c.id, "type": c.type,
+                                  "why": "no subject position given; the rule is "
+                                         "inert until perception supplies one, as in "
+                                         "the Shield"})
+                continue
+            cls = subject[2] if len(subject) > 2 else None
+            if not c.binds(cls):
+                not_drawn.append({"id": c.id, "type": c.type,
+                                  "why": f"binds {c.subject_class!r}; the subject "
+                                         f"is {cls!r}"})
+                continue
+            drawn.append(("standoff_hard" if hard else "standoff_soft", c.id,
+                          _disc(float(subject[0]), float(subject[1]), c.min_range_m),
+                          COST_HARD if hard else COST_SOFT))
+        elif isinstance(c, ObstacleClearance):
+            if obstacle_map is None:
+                not_drawn.append({"id": c.id, "type": c.type,
+                                  "why": "no obstacle map given; the rule is inert "
+                                         "without one, as in the Shield"})
+                continue
+            clear.append(c)
+        elif isinstance(c, AltitudeEnvelope):
+            if altitude_m is not None and not (c.alt_min_m - 1e-9 <= altitude_m
+                                               <= c.alt_max_m + 1e-9):
+                whole.append(("altitude_hard" if hard else "altitude_soft", c.id,
+                              COST_HARD if hard else COST_SOFT))
+            else:
+                not_drawn.append({"id": c.id, "type": c.type,
+                                  "why": (f"no 2-D footprint: bounds height to "
+                                          f"{c.alt_min_m:g}-{c.alt_max_m:g} m"
+                                          + ("" if altitude_m is None else
+                                             f", which {altitude_m:g} m respects"))})
+        elif isinstance(c, KinematicEnvelope):
+            not_drawn.append({"id": c.id, "type": c.type,
+                              "why": "bounds speed, climb and turn rate, not position"})
+        else:                                   # pragma: no cover - a new type
+            raise TypeError(f"the cost map has no layer for {c.type} ({c.id})")
+
+    # ---- the grid ----
+    if bounds is None:
+        boxes = [g.bounds for _, _, g, _ in drawn if not g.is_empty]
+        boxes += [g.bounds for _, g in tubes if g is not None and not g.is_empty]
+        if obstacle_map is not None and clear:
+            occ = np.asarray(obstacle_map["occ"])
+            mres, mox, moy = (float(obstacle_map["res"]), float(obstacle_map["ox"]),
+                              float(obstacle_map["oy"]))
+            boxes.append((mox - mres / 2, moy - mres / 2,
+                          mox + (occ.shape[0] - 0.5) * mres,
+                          moy + (occ.shape[1] - 0.5) * mres))
+        if not boxes:
+            raise ValueError(f"{policy.policy_id}: nothing with a footprint is in "
+                             f"force to rasterise; pass bounds= to grid the area "
+                             f"anyway")
+        pad = 2 * res if pad_m is None else float(pad_m)
+        bounds = (min(b[0] for b in boxes) - pad, min(b[1] for b in boxes) - pad,
+                  max(b[2] for b in boxes) + pad, max(b[3] for b in boxes) + pad)
+    x0, y0, x1, y1 = (float(v) for v in bounds)
+    if not all(math.isfinite(v) for v in (x0, y0, x1, y1)) or x1 < x0 or y1 < y0:
+        raise ValueError(f"bounds must be finite (x_min, y_min, x_max, y_max), got {bounds!r}")
+    ox, oy = math.floor(x0 / res) * res, math.floor(y0 / res) * res
+    nx = int(math.ceil((x1 - ox) / res - 1e-9)) + 1
+    ny = int(math.ceil((y1 - oy) / res - 1e-9)) + 1
+    if nx * ny > COST_MAP_MAX_CELLS:
+        raise ValueError(f"a {nx} x {ny} grid at {res:g} m is over the "
+                         f"{COST_MAP_MAX_CELLS} cell limit; coarsen the resolution "
+                         f"or pass smaller bounds")
+    xs = ox + res * np.arange(nx)
+    ys = oy + res * np.arange(ny)
+    h = res / 2.0
+    X, Y = np.meshgrid(xs, ys, indexing="ij")
+    cells = shapely.box(X - h, Y - h, X + h, Y + h)
+
+    layers: list[dict] = []
+    masks: list[np.ndarray] = []
+    cost = np.zeros((nx, ny), dtype=np.float32)
+
+    def add(name: str, source: str | None, mask: np.ndarray, value: float) -> None:
+        nonlocal cost
+        mask = np.asarray(mask, dtype=bool)
+        layers.append({"name": name, "source": source, "cost": _cost_text(value),
+                       "cells": int(mask.sum())})
+        masks.append(mask)
+        if value > 0:
+            cost = np.maximum(cost, np.where(mask, np.float32(value), np.float32(0)))
+
+    for name, source, geom, value in drawn:
+        shapely.prepare(geom)
+        add(name, source, shapely.intersects(geom, cells), value)
+    for c in clear:
+        hard = c.constraint_type == "hard"
+        add("clearance_hard" if hard else "clearance_soft", c.id,
+            _clearance_mask(obstacle_map, c.min_clearance_m, xs, ys, res),
+            COST_HARD if hard else COST_SOFT)
+    if tubes:
+        inside_all = np.ones((nx, ny), dtype=bool)
+        for c, geom in tubes:
+            if geom is None:
+                inside = np.zeros((nx, ny), dtype=bool)
+            else:
+                shapely.prepare(geom)
+                inside = shapely.covers(geom, cells)
+            inside_all &= inside
+            add("corridor_pref", c.id, inside, COST_CORRIDOR_PREF)
+        add("corridor_outside", None, ~inside_all, COST_CORRIDOR_OUTSIDE)
+    for name, source, value in whole:
+        add(name, source, np.ones((nx, ny), dtype=bool), value)
+
+    proj = policy.projection()
+    origin_ll = None
+    if proj is not None:
+        la, lo = proj.to_latlon(ox, oy)
+        origin_ll = {"lat": la, "lon": lo}
+    fo = policy.frame_origin
+    subj = None
+    if subject is not None:
+        subj = {"x": float(subject[0]), "y": float(subject[1]),
+                "class": subject[2] if len(subject) > 2 else None}
+    core = {
+        "cost_map": {"resolution_m": res, "origin": origin_ll, "layers": layers},
+        "format": COST_MAP_FORMAT,
+        "frame": "local metres: x North, y East of the policy frame origin",
+        "frame_origin": None if fo is None else {"lat": fo[0], "lon": fo[1]},
+        "origin_xy_m": [ox, oy],
+        "shape": [nx, ny],
+        "index": ("cost[i, j] is the cell centred on (x, y) = (ox + i * res, "
+                  "oy + j * res), covering +-res/2 on each axis; the Shield's "
+                  "obstacle-map indexing"),
+        "costs": {"free": COST_FREE, "hard": _cost_text(COST_HARD), "soft": COST_SOFT,
+                  "corridor_pref": COST_CORRIDOR_PREF,
+                  "corridor_outside": COST_CORRIDOR_OUTSIDE},
+        "combine": "max over the layers a cell is in; 0 in none",
+        "rasterisation": {
+            "keep_out": "a cell is in the layer when its square meets the zone "
+                        "(margin ring included)",
+            "keep_in": "a cell is inside a tube only when its square lies wholly "
+                       "within it"},
+        "policy_id": policy.policy_id, "version": policy.version,
+        "generation": policy.generation, "policy_hash": policy.policy_hash,
+        "clock": None if now is None else now.isoformat(),
+        "in_force_by": "Shield.rule_status (both sides of the instant)",
+        "zone_age_s": ages, "altitude_m": altitude_m, "subject": subj,
+        "obstacle_map": None if obstacle_map is None else _obstacle_digest(obstacle_map),
+        "not_in_force": not_in_force, "out_of_band": out_of_band,
+        "not_drawn": not_drawn,
+        "cost_sha256": _sha_array(cost),
+        "layer_sha256": [_sha_array(m) for m in masks],
+    }
+    core = json.loads(json.dumps(core))         # exactly what the JSON will hold
+    header = dict(core, ref=_cost_map_ref(core))
+    return CostMap(cost=cost, layers=tuple(masks), header=header)
+
+
+def cost_map_agreement(cm: CostMap, policy: Policy, *, n_points: int = 2000,
+                       seed: int = 0, now: datetime | None = None,
+                       obstacle_map: dict | None = None) -> dict:
+    """How the map agrees with the Shield, with both nulls.
+
+    Points are drawn uniformly over the grid (seeded). At each, the Shield's
+    own `rule_status` (a Shield built over the same policy, clock, subject and
+    obstacle map, with every moving zone at the map's age) says which rules
+    standing there breaks; the map's cell says what a planner pays.
+
+      missed     the Shield forbids the point (a hard rule: needs inf; only
+                 soft rules or a corridor: needs at least 50) and the cell is
+                 cheaper. A sound map has 0: a planner trusting it would plan
+                 through a place the Shield then repairs away from. "A
+                 corridor needs 50" is the grant's corridor_outside price,
+                 for a hard corridor too; so `missed` alone does not say
+                 that the map prices a place the Shield REFUSES:
+      hard_rule_priced_finite
+                 a HARD rule forbids the point (a hard corridor included)
+                 and the cell's cost is finite. Every such point the map
+                 does not miss is outside a hard corridor, priced 50; a
+                 planner trusting the map may go there at that price and the
+                 Shield will refuse it. Reported beside `missed`, never
+                 folded into it.
+      over_cost  the Shield allows the point and the cell costs more than 0:
+                 the price of the conservative cell rule (a cell straddling a
+                 zone's edge is all zone).
+
+    Nulls, scored the same way: an all-free grid (zero skill: misses every
+    forbidden point) and an all-inf grid (refuses everything: misses none,
+    over-costs every allowed point). A map is worth something only where it
+    beats both: missed 0 like the all-inf grid, over_cost far below it.
+    """
+    from .models import Action4D, State
+    from .shield import Shield
+    hdr = cm.header
+    if cm.policy_hash != policy.policy_hash or cm.generation != policy.generation:
+        raise ValueError("the cost map is not this policy's")
+    if (hdr.get("clock") is not None) != (now is not None) or (
+            now is not None and now.isoformat() != hdr["clock"]):
+        raise ValueError(f"score with the map's own clock ({hdr.get('clock')})")
+    if (hdr.get("obstacle_map") is None) != (obstacle_map is None) or (
+            obstacle_map is not None and _obstacle_digest(obstacle_map) != hdr["obstacle_map"]):
+        raise ValueError("score with the obstacle map the cost map was made from")
+    ages = set((hdr.get("zone_age_s") or {}).values())
+    if len(ages) > 1:
+        raise ValueError("the Shield moves every authored zone on one clock; a map "
+                         "with different ages per zone cannot be scored against it")
+    sh = Shield(policy, now=(lambda: now) if now is not None else None,
+                escalation=False, obstacle_map=obstacle_map)
+    alt = hdr.get("altitude_m")
+    up = float(alt) if alt is not None else None
+    age = ages.pop() if ages else 0.0
+    if age > 0:
+        far = State(x=-1e6, y=-1e6, up=up if up is not None else 10.0)
+        sh.filter(far, Action4D(), t=0.0)
+        sh.filter(far, Action4D(), t=float(age))
+    subj = hdr.get("subject")
+    if subj is not None:
+        sh.set_subject(subj["x"], subj["y"], subj["class"])
+    rng = np.random.default_rng(seed)
+    nx, ny = cm.cost.shape
+    res = cm.resolution_m
+    ox, oy = cm.origin_xy
+    xs = rng.uniform(ox - res / 2, ox + (nx - 0.5) * res, n_points)
+    ys = rng.uniform(oy - res / 2, oy + (ny - 0.5) * res, n_points)
+    need = []                                    # per point: the cost it needs
+    hard = []                                    # per point: a hard rule forbids it
+    got = []
+    for x, y in zip(xs, ys):
+        ij = cm.cell_of(float(x), float(y))
+        if ij is None:
+            continue
+        rows = sh.rule_status(State(x=float(x), y=float(y),
+                                    up=up if up is not None else 0.0))
+        req = 0.0
+        by_hard = False
+        for r in rows:
+            c = r["rule"]
+            if up is not None:
+                hit = r["breach"]
+            elif not r["in_force"]:
+                hit = False
+            # A map drawn for no particular height takes every zone and tube
+            # whatever its band, so the Shield's test is read laterally.
+            elif isinstance(c, _ZONES):
+                hit = bool(r["inside"] or r["in_margin"])
+            elif isinstance(c, _TUBES):
+                hit = r["value"] > c.half_width_m + 1e-9
+            elif isinstance(c, AltitudeEnvelope):
+                hit = False
+            else:
+                hit = r["breach"]
+            if hit:
+                req = max(req, COST_HARD if (c.constraint_type == "hard"
+                                             and not isinstance(c, _TUBES))
+                          else COST_SOFT)
+                by_hard = by_hard or c.constraint_type == "hard"
+        need.append(req)
+        hard.append(by_hard)
+        got.append(float(cm.cost[ij]))
+    need_a, got_a, hard_a = np.asarray(need), np.asarray(got), np.asarray(hard, dtype=bool)
+    forb = need_a > 0
+    allow = ~forb
+
+    def score(cells: np.ndarray) -> dict:
+        missed = int(np.sum(forb & (cells < need_a)))
+        priced = int(np.sum(hard_a & np.isfinite(cells)))
+        over = int(np.sum(allow & (cells > 0)))
+        return {"missed": missed, "hard_rule_priced_finite": priced,
+                "over_cost": over,
+                "missed_rate": (missed / int(forb.sum())) if forb.any() else None,
+                "hard_rule_priced_finite_rate": ((priced / int(hard_a.sum()))
+                                                 if hard_a.any() else None),
+                "over_cost_rate": (over / int(allow.sum())) if allow.any() else None}
+    return {"n_points": int(len(need_a)), "n_forbidden": int(forb.sum()),
+            "n_forbidden_by_hard": int(hard_a.sum()),
+            "n_allowed": int(allow.sum()), "seed": seed,
+            "map": score(got_a),
+            "null_all_free": score(np.zeros_like(got_a)),
+            "null_all_inf": score(np.full_like(got_a, np.inf))}
 
 
 def p0_coverage(csp: CSP, policy: Policy) -> dict:
@@ -905,11 +1689,23 @@ def _issue_stamp(issued_at, now: datetime | None) -> tuple[str, str]:
 def _by_type_order(policy: Policy) -> list:
     """The rules in the 2026-09-01 compiler's order: zones, corridors, altitude,
     kinematics, clearance, stand-off. `build_prompt` keeps it, and the naive
-    baseline below cuts it."""
+    baseline below cuts it.
+
+    The hot-apply types sit beside their kin (dynamic_nfz after the fences,
+    corridor_swap after the corridors) and switches last; no shipped policy
+    has one, so no existing text moves. Until 2026-10-08 the list stopped at
+    stand-off, which would have dropped those three types from build_prompt
+    WITHOUT A WORD the day they became flyable. A runtime type missing here
+    now raises instead."""
     out: list = []
-    for cls in (PolygonFence, Corridor, AltitudeEnvelope, KinematicEnvelope,
-                ObstacleClearance, SubjectStandoff):
+    for cls in (PolygonFence, DynamicNFZ, Corridor, CorridorSwap, AltitudeEnvelope,
+                KinematicEnvelope, ObstacleClearance, SubjectStandoff,
+                TimeWindowSwitch):
         out += policy.by_type(cls)
+    left = [c.id for c in policy.constraints
+            if c.type in RUNTIME_TYPES and all(c is not o for o in out)]
+    if left:
+        raise RuntimeError(f"rule types with no place in the by-type order: {left}")
     return out
 
 
@@ -1053,8 +1849,19 @@ class ConstraintCompiler:
                     weights: RiskWeights | None = None,
                     region_margin_m: float | None = DEFAULT_REGION_MARGIN_M,
                     show_priority: bool = False,
-                    issued_at: datetime | str | None = None) -> CSP:
+                    issued_at: datetime | str | None = None,
+                    cost_map: "CostMap | None" = None) -> CSP:
         """The Prefix Compiler: policy + mission + clock -> CSP (PDF p3).
+
+        cost_map        - a CostMap rasterised from THIS policy and generation,
+                          at THIS clock (`now`) and at the mission's cruise
+                          height (`ConstraintCompiler.cost_map(now=now,
+                          altitude_m=mission.cruise_alt_m)`); its `ref`
+                          becomes the CSP's cost_map_ref. Any other map is
+                          refused (_check_cost_map_for). Default None, as in
+                          the grant ("for path planners; lazy-loaded
+                          artefact"): no CSP compiled without one changed on
+                          2026-10-08.
 
         now             - the clock the time filter uses, in the policy's local
                           time (the same convention as Shield(now=...)). None
@@ -1075,8 +1882,10 @@ class ConstraintCompiler:
                           summaries, and the order of the sentences).
 
         Raises CSPBudgetExceeded if the P0 sentences alone exceed the budget,
-        and CSPUnenforcedRules if the policy carries a declarable-only rule
-        type the Shield does not enforce (models.RUNTIME_TYPES).
+        CSPUnenforcedRules if the policy carries a declarable-only rule
+        type the Shield does not enforce (models.RUNTIME_TYPES) or an MSL
+        altitude, and ValueError for a cost map that is not this CSP's
+        (another policy, generation, clock or height).
         """
         if not (0.0 < float(lookahead_s) <= _MAX_LOOKAHEAD_S):
             raise ValueError(f"lookahead_s must be in (0, {_MAX_LOOKAHEAD_S:g}], "
@@ -1090,9 +1899,18 @@ class ConstraintCompiler:
         # A rule the Shield does not enforce can be neither told to the model
         # nor dropped silently (csp.CSPUnenforcedRules). Checked before any
         # rendering, so the error names the rules instead of a missing template.
+        # An MSL altitude is named too (2026-10-08): the type is enforced, the
+        # height reference is not (Policy.unenforced_rules refuses it for
+        # flight; a Policy built directly reached the compiler without that).
         unenforced = {c.id: c.type for c in pol.constraints if c.type not in RUNTIME_TYPES}
+        unenforced.update({c.id: f"{c.type} with altitude_ref MSL"
+                           for c in pol.constraints
+                           if getattr(c, "altitude_ref", None) == "MSL"
+                           and c.id not in unenforced})
         if unenforced:
             raise CSPUnenforcedRules(pol.policy_id, unenforced)
+        if cost_map is not None:
+            _check_cost_map_for(cost_map, pol, mission, now)
         # The CSP refers to rules by id (geometry_ref, relevance_explanations,
         # selection). Two rules sharing an id would overwrite each other here
         # and one would vanish from the record without a trace.
@@ -1104,25 +1922,39 @@ class ConstraintCompiler:
         counter = token_counter or _csp.DEFAULT_TOKEN_COUNTER
         w = weights or RiskWeights()
 
-        acts = {c.id: _activity(c, now, lookahead_s) for c in pol.constraints}
+        # Rules a time_window_switch or corridor_swap touches are timed by the
+        # Shield's own logic (_RuleClock); every other rule as before.
+        clock = _RuleClock(pol)
+        acts = {c.id: (clock.activity(c, now, lookahead_s) if clock.involved(c)
+                       else _activity(c, now, lookahead_s))
+                for c in pol.constraints}
         # How far the vehicle can get in one lookahead: the tightest hard speed
         # cap among caps that can be in force, else what the operator asked for.
         caps = [c.speed_max_mps for c in pol.by_type(KinematicEnvelope)
                 if c.constraint_type == "hard" and acts[c.id]["any"]]
         reach = (min(caps) if caps else mission.speed_pref_mps) * lookahead_s
-        ctx = _Ctx(mission, lookahead_s, now, reach, region_margin_m)
+        ctx = _Ctx(mission, lookahead_s, now, reach, region_margin_m, pol, clock)
 
         # ---- filter, grade, render each rule ----
         rows: dict[str, dict] = {}
         for c in pol.constraints:
             row = {"rule": c, "act": acts[c.id]}
             if not acts[c.id]["any"]:
-                start = now.isoformat(timespec="seconds")
+                held = clock.holders(c, now) if clock.involved(c) else []
+                if now is None:
+                    row["reason"] = (f"held off by {', '.join(held) or 'its schedule'}, "
+                                     f"in force at every time (no clock was given); "
+                                     f"the Shield does not enforce it while that "
+                                     f"holds")
+                else:
+                    start = now.isoformat(timespec="seconds")
+                    why = (f"held off by {', '.join(held)}" if held
+                           else window_text(c))
+                    row["reason"] = (f"not in force at any time from {start} to "
+                                     f"{_fmt_g(lookahead_s)} s later ({why}); "
+                                     f"the rule stays in the policy and the Shield "
+                                     f"applies it whenever it is in force")
                 row["decision"] = "filtered_inactive"
-                row["reason"] = (f"not in force at any time from {start} to "
-                                 f"{_fmt_g(lookahead_s)} s later ({window_text(c)}); "
-                                 f"the rule stays in the policy and the Shield "
-                                 f"applies it whenever it is in force")
             elif not _in_region(c, ctx):
                 d, _ = _fence_dist(c, ctx)
                 row["decision"] = "filtered_out_of_region"
@@ -1177,23 +2009,39 @@ class ConstraintCompiler:
 
         # ---- render the CSP ----
         kept = [r for r in p0 + rest if r["decision"] == "kept"]
-        geo = multiscale_geometry(pol)
+        # The scale is PICKED here and the geometry is the IR's (WP2-16): fine
+        # for a zone the vehicle can reach in one lookahead, coarse beyond; a
+        # keep-in tube is never coarsened; a moving zone is fine (its coarse
+        # ring would sit at a position it has left).
+        ir = compiled_ir(pol)
         p0_entries = []
         for r in p0:
             c = r["rule"]
-            if isinstance(c, PolygonFence):
+            if isinstance(c, _ZONES) and not is_moving(c):
                 d, _ = _fence_dist(c, ctx)
                 scale = "fine" if d <= ctx.reach_m else "coarse"
-            elif isinstance(c, Corridor):
+            elif isinstance(c, _ZONES + _TUBES):
                 scale = "fine"
             else:
                 scale = "param"
-            if scale != "param" and scale not in geo.get(c.id, {}):
-                raise RuntimeError(f"no {scale} geometry cached for {c.id}")
+            # The IR mints the ref and refuses a scale it does not carry.
+            ref = (f"param:{c.id}@v{pol.version}/g{pol.generation}" if scale == "param"
+                   else ir.geometry_ref(scale, c.id))
+            # in_force: the rule's own window, then whatever switches or
+            # replaces it. A P0 time_window_switch is itself a P0 entry (scale
+            # "param", in_force = its own window) and counts in P0 coverage:
+            # the vehicle cannot violate an event, but its sentence is what
+            # tells the model when its target is off, so a CSP that dropped it
+            # would leave the model believing the target always binds - or
+            # never does.
+            in_force = window_text(c) or "always"
+            acted = clock.acted_on_text(c)
+            if acted is not None:
+                in_force = f"{in_force}; {acted}"
             p0_entries.append(P0Entry(
-                id=c.id, type=c.type, geometry_ref=_geometry_ref(scale, c.id, pol),
+                id=c.id, type=c.type, geometry_ref=ref,
                 violation_action=c.violation_action, constraint_type=c.constraint_type,
-                in_force=window_text(c) or "always"))
+                in_force=in_force))
 
         def summary(prio: str) -> tuple[str | None, list[str]]:
             k = [r["rule"] for r in kept if r["rule"].priority == prio]
@@ -1238,7 +2086,7 @@ class ConstraintCompiler:
             P2_summary=p2,
             allowed_action_set=allowed,
             forbidden_action_set=forbidden,
-            cost_map_ref=None,
+            cost_map_ref=None if cost_map is None else cost_map.ref,
             natural_language_prompt=prompt,
             relevance_explanations={c.id: rows[c.id]["relevance"]
                                     for c in pol.constraints
@@ -1254,14 +2102,35 @@ class ConstraintCompiler:
                 rules=decisions),
         )
 
+    def cost_map(self, **kw) -> CostMap:
+        """The cost-map adapter over this policy (`rasterise_cost_map`); pass
+        the result to `compile_csp(cost_map=...)` to set cost_map_ref (drawn
+        with the CSP's `now` and `altitude_m` = the mission's cruise height,
+        or compile_csp refuses it), and `CostMap.save(stem)` to export it
+        (.npz + JSON header)."""
+        return rasterise_cost_map(self.policy, **kw)
+
     def write_csp(self, path: str | Path, mission: Mission,
                   lookahead_s: float = DEFAULT_LOOKAHEAD_S,
                   now: datetime | None = None, **csp_kw) -> Path:
         """Emit the typed CSP as JSON, so it can travel with a flight's
-        artefacts (one per policy generation is what the KPIs need)."""
+        artefacts (one per policy generation is what the KPIs need).
+
+        With `cost_map=` (a CostMap rasterised from this policy and
+        generation, see `cost_map`), the map is exported beside the CSP as
+        `costmap_<csp stem>.npz` + `costmap_<csp stem>.json` (CostMap.save)
+        and the CSP's cost_map_ref names it, so the reference travels with a
+        file that `load_cost_map` resolves. The prefix keeps the map out of
+        the `csp_g*.json` pattern the replay bundle reads (guardrail/replay.py).
+        The CSP is compiled first, so a map of another policy, clock or
+        height is refused before anything is written."""
         p = Path(path)
         p.parent.mkdir(parents=True, exist_ok=True)
-        text = self.compile_csp(mission, lookahead_s, now, **csp_kw).model_dump_json(indent=2)
+        csp = self.compile_csp(mission, lookahead_s, now, **csp_kw)
+        cm = csp_kw.get("cost_map")
+        if cm is not None:
+            cm.save(p.with_name(f"costmap_{p.stem}"))
+        text = csp.model_dump_json(indent=2)
         with open(p, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text + "\n")
         return p
@@ -1323,7 +2192,7 @@ class ConstraintCompiler:
 
 
 # --------------------------------------------------------------------------- #
-# CLI: python -m guardrail.compiler {report,schema,table}
+# CLI: python -m guardrail.compiler {report,schema,table,costmap,costmap-report}
 # --------------------------------------------------------------------------- #
 
 # The mission the KPI report compiles every policy for. Fixed, and the report
@@ -1601,9 +2470,158 @@ def _table(args) -> int:
     return 0
 
 
+def cost_map_report(policies_dir: str | Path, *, resolution_m: float = COST_MAP_RESOLUTION_M,
+                    n_points: int = 1000, seed: int = 0) -> dict:
+    """The cost map's agreement with the Shield over a folder of policies,
+    each with its two nulls (see cost_map_agreement): no clock, every moving
+    zone where declared, no subject and no obstacle map, and no particular
+    height (altitude_m None: every keep-out zone drawn whatever its band,
+    every corridor read laterally - see rasterise_cost_map for why that
+    reading is permissive for a corridor's band). A policy with nothing to
+    draw is listed, not scored.
+
+    `missed` is scored under the grant's corridor_outside = 50, for hard
+    corridors too; `hard_rule_priced_finite` counts the points a hard rule
+    forbids that the map prices finitely, so the headline "missed 0" is
+    never read without it."""
+    from .manifest import code_revision
+    from .models import load_policy
+    rows, skipped = [], []
+    for f in sorted(Path(policies_dir).glob("*.yaml")):
+        try:
+            pol = load_policy(f)
+        except ValueError as exc:
+            skipped.append({"file": _rel(f), "why": str(exc).splitlines()[0][:160]})
+            continue
+        try:
+            cm = rasterise_cost_map(pol, resolution_m=resolution_m)
+        except ValueError as exc:
+            skipped.append({"file": _rel(f), "why": str(exc).splitlines()[0][:160]})
+            continue
+        ag = cost_map_agreement(cm, pol, n_points=n_points, seed=seed)
+        rows.append({"file": _rel(f), "policy_hash": pol.policy_hash,
+                     "shape": cm.header["shape"], "ref": cm.ref,
+                     "layers": [(L["name"], L["source"], L["cells"])
+                                for L in cm.header["cost_map"]["layers"]],
+                     "not_drawn": [d["id"] for d in cm.header["not_drawn"]],
+                     **ag})
+
+    def tot(part: str, k: str) -> int:
+        return sum(r[part][k] for r in rows)
+    n_f = sum(r["n_forbidden"] for r in rows)
+    n_h = sum(r["n_forbidden_by_hard"] for r in rows)
+    n_a = sum(r["n_allowed"] for r in rows)
+    totals = {"n_policies_scored": len(rows), "n_skipped": len(skipped),
+              "n_points": sum(r["n_points"] for r in rows),
+              "n_forbidden": n_f, "n_forbidden_by_hard": n_h, "n_allowed": n_a}
+    for part in ("map", "null_all_free", "null_all_inf"):
+        hp = tot(part, "hard_rule_priced_finite")
+        totals[part] = {"missed": tot(part, "missed"),
+                        "hard_rule_priced_finite": hp,
+                        "over_cost": tot(part, "over_cost"),
+                        "missed_rate": (tot(part, "missed") / n_f) if n_f else None,
+                        "hard_rule_priced_finite_rate": (hp / n_h) if n_h else None,
+                        "over_cost_rate": (tot(part, "over_cost") / n_a) if n_a else None}
+    totals["hard_rule_priced_finite_by_policy"] = {
+        Path(r["file"]).stem: r["map"]["hard_rule_priced_finite"]
+        for r in rows if r["map"]["hard_rule_priced_finite"]}
+    return {"what": "cost-map adapter vs the Shield's own rule_status, per point",
+            "command": (f"python -m guardrail.compiler costmap-report --policies "
+                        f"{_rel(Path(policies_dir))} --resolution {resolution_m:g} "
+                        f"--points {n_points} --seed {seed}"),
+            "code_revision": code_revision(), "resolution_m": resolution_m,
+            "totals": totals, "rows": rows, "skipped": skipped}
+
+
+def _costmap(args) -> int:
+    from .models import load_policy
+    pol = load_policy(args.policy)
+    now = datetime.fromisoformat(args.now) if args.now else None
+    subject = None
+    if args.subject:
+        parts = args.subject.split(",")
+        subject = (float(parts[0]), float(parts[1])) + ((parts[2],) if len(parts) > 2 else ())
+    cm = rasterise_cost_map(pol, now=now, zone_age_s=args.zone_age,
+                            altitude_m=args.altitude, resolution_m=args.resolution,
+                            subject=subject)
+    npz, js = cm.save(args.out)
+    hdr = cm.header
+    print(f"{js}  +  {npz.name}")
+    print(f"  grid      {hdr['shape'][0]} x {hdr['shape'][1]} at {cm.resolution_m:g} m, "
+          f"origin (x, y) = {tuple(hdr['origin_xy_m'])}")
+    for L in hdr["cost_map"]["layers"]:
+        print(f"  layer     {L['name']:18s} {str(L['source'] or ''):28s} cost {L['cost']!s:>4s} "
+              f"{L['cells']} cells")
+    for d in hdr["not_drawn"]:
+        print(f"  not drawn {d['id']}: {d['why']}")
+    for k in ("not_in_force", "out_of_band"):
+        if hdr[k]:
+            print(f"  {k:9s} {', '.join(hdr[k])}")
+    print(f"  ref       {cm.ref}")
+    ag = cost_map_agreement(cm, pol, now=now, n_points=args.points)
+    print(f"  vs Shield {ag['n_points']} points ({ag['n_forbidden']} forbidden, "
+          f"{ag['n_forbidden_by_hard']} by a hard rule): missed {ag['map']['missed']}, "
+          f"hard-forbidden but priced finite {ag['map']['hard_rule_priced_finite']}, "
+          f"over-cost {ag['map']['over_cost']}; nulls: all-free missed "
+          f"{ag['null_all_free']['missed']}, all-inf over-cost "
+          f"{ag['null_all_inf']['over_cost']}")
+    return 0
+
+
+def _costmap_report(args) -> int:
+    rep = cost_map_report(args.policies, resolution_m=args.resolution,
+                          n_points=args.points, seed=args.seed)
+    for r in rep["rows"]:
+        print(f"{Path(r['file']).stem:34s} {r['shape'][0]:4d}x{r['shape'][1]:<4d} "
+              f"forbidden {r['n_forbidden']:4d}/{r['n_points']:<5d} missed "
+              f"{r['map']['missed']:3d} hard-priced-finite "
+              f"{r['map']['hard_rule_priced_finite']:3d} over-cost "
+              f"{r['map']['over_cost']:4d}")
+    for s in rep["skipped"]:
+        print(f"{Path(s['file']).stem:34s} skipped: {s['why']}")
+    t = rep["totals"]
+    print(f"\n{t['n_points']} points over {t['n_policies_scored']} policies, "
+          f"{t['n_forbidden']} forbidden by the Shield ({t['n_forbidden_by_hard']} "
+          f"by a hard rule):")
+    for part in ("map", "null_all_free", "null_all_inf"):
+        p = t[part]
+        print(f"  {part:14s} missed {p['missed']:5d} ({_pct(p['missed_rate'])})  "
+              f"hard-forbidden priced finite {p['hard_rule_priced_finite']:5d} "
+              f"({_pct(p['hard_rule_priced_finite_rate'])})  "
+              f"over-cost {p['over_cost']:5d} ({_pct(p['over_cost_rate'])})")
+    if t["map"]["hard_rule_priced_finite"]:
+        print(f"  'missed' uses the grant's corridor_outside = 50 for hard corridors "
+              f"too; the map prices {t['map']['hard_rule_priced_finite']} points the "
+              f"Shield refuses (by policy: {t['hard_rule_priced_finite_by_policy']})")
+    print(f"code {rep['code_revision']}; reproduce: {rep['command']}")
+    if args.json:
+        out = Path(args.json)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with open(out, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(json.dumps(rep, indent=2) + "\n")
+        print(f"wrote {out}")
+    return 0 if t["map"]["missed"] == 0 else 1
+
+
 def _main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="python -m guardrail.compiler")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    cm = sub.add_parser("costmap", help="rasterise one policy (.npz + JSON header)")
+    cm.add_argument("policy")
+    cm.add_argument("-o", "--out", required=True, help="output stem (writes STEM.npz, STEM.json)")
+    cm.add_argument("--resolution", type=float, default=COST_MAP_RESOLUTION_M)
+    cm.add_argument("--now", default=None, help="ISO time for valid_time windows")
+    cm.add_argument("--zone-age", type=float, default=None,
+                    help="seconds since each moving dynamic_nfz appeared")
+    cm.add_argument("--altitude", type=float, default=None)
+    cm.add_argument("--subject", default=None, help="X,Y[,CLASS] of the followed subject")
+    cm.add_argument("--points", type=int, default=1000)
+    cr = sub.add_parser("costmap-report", help="cost map vs the Shield over a folder")
+    cr.add_argument("--policies", default=str(Path(__file__).resolve().parents[1] / "policies"))
+    cr.add_argument("--resolution", type=float, default=COST_MAP_RESOLUTION_M)
+    cr.add_argument("--points", type=int, default=1000)
+    cr.add_argument("--seed", type=int, default=0)
+    cr.add_argument("--json", default=None)
     r = sub.add_parser("report", help="P0 coverage and token use over a policy folder")
     r.add_argument("--policies", default=str(Path(__file__).resolve().parents[1] / "policies"))
     r.add_argument("--budget", type=int, default=DEFAULT_BUDGET_TOKENS)
@@ -1616,6 +2634,10 @@ def _main(argv: list[str] | None = None) -> int:
     t = sub.add_parser("table", help="print a regenerated token table for csp.py")
     t.add_argument("--policies", default=str(Path(__file__).resolve().parents[1] / "policies"))
     args = ap.parse_args(argv)
+    if args.cmd == "costmap":
+        return _costmap(args)
+    if args.cmd == "costmap-report":
+        return _costmap_report(args)
     if args.cmd == "report":
         return _report(args)
     if args.cmd == "schema":

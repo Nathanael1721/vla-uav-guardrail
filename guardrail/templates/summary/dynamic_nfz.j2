@@ -1,0 +1,2 @@
+{% extends "summary/_base.j2" %}
+{% block core %}{% set m = r.motion %}{% set v = ((m.vx_mps ** 2 + m.vy_mps ** 2) ** 0.5) if m else 0 %}{% set w = (m.yaw_rate_dps if m else 0) %}no entry into '{{ r.id }}'{% if v > 0 or w != 0 %} ({% if v > 0 %}moving {{ v|rate }} m/s{% endif %}{% if w != 0 %}{% if v > 0 %}, {% endif %}turning {{ (w if w > 0 else -w)|rate }} deg/s{% endif %}){% endif %}{% endblock %}

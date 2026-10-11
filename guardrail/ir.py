@@ -75,9 +75,7 @@ Each zone carries three scales, computed once at compile time:
   fine    the vertices as authored (the Shield adds `margin_m` itself);
   coarse  a polygon that CONTAINS the fine one: its convex hull or, when the
           hull has more than COARSE_MAX_VERTICES vertices, the minimum-area
-          oriented rectangle around it - the rule guardrail/compiler.py's
-          `multiscale_geometry` uses, so the two agree (tests/test_ir.py checks
-          it on every shipped policy). Containment is the point: a coarse
+          oriented rectangle around it. Containment is the point: a coarse
           keep-out zone that cut a corner would describe a smaller zone than
           the Shield enforces;
   bbox    the axis-aligned bounding rectangle of the fine polygon.
@@ -87,6 +85,12 @@ outward would widen where a reader believes it may fly. `geometry_ref(scale,
 rule_id)` names one scale of one rule of THIS generation, in the compiler's
 format ("coarse:<id>@v<version>/g<generation>"), and `resolve_geometry_ref`
 refuses a reference minted for another version or generation.
+
+This is the ONLY place the scales are computed. Since 2026-10-08 the Prefix
+Compiler reads them from here (guardrail/compiler.py `multiscale_geometry` is
+`compiled_ir(policy).multiscale`, and its P0 refs are minted and resolved by
+this class) - the grant's "The Prefix Compiler picks the scale, never
+re-computes". Until then the compiler computed its own hull beside this one.
 
 NOT HERE YET (honest list)
 
@@ -116,7 +120,7 @@ except ImportError:                     # pragma: no cover - shapely 1.x
 FENCE_TYPES = ("polygon_fence", "circle_fence", "dynamic_nfz")
 # Rule types listed with a "fine" scale only (keep-IN tubes).
 TUBE_TYPES = ("corridor", "corridor_swap")
-# Same limit as guardrail/compiler.py COARSE_MAX_VERTICES.
+# The coarse scale's vertex limit (guardrail/compiler.py re-exports it).
 COARSE_MAX_VERTICES = 8
 SCALES = ("fine", "coarse", "bbox")
 

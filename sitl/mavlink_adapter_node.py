@@ -40,13 +40,17 @@ WHAT ELSE GOES THROUGH HERE (the MAVROS-facing side, WP3-09)
     escalation FSM and the mission end ask for GUIDED / LOITER / RTL / LAND.
     Only the modes the FSM can ask for (guardrail.fsm.MODE_FOR) are
     forwarded; anything else (STABILIZE, ACRO, ...) is refused and reported.
+    The FSM's LOITER is sent as ArduCopter's BRAKE (`autopilot_mode`; see
+    DEFAULT_HOLD_MODE for why: LOITER sinks with no pilot on the throttle).
   * /shield/fences (std_msgs/String JSON, latched) -> /mavros/geofence/push:
     the policy's keep-out zones, converted to lat/lon about the autopilot's
     home, uploaded as ArduPilot exclusion polygons / circles. With
     sitl/fence/guardrail_fence.parm (FENCE_ENABLE=1, FENCE_ACTION=1) the
     autopilot's own GeoFence is the backstop behind the Shield (Architecture
     constraints p1). Only zones whose altitude band covers the whole fence
-    column are uploaded, so the backstop is never stricter than the policy,
+    column, and that no clock can turn off (no time window, no
+    time_window_switch that switches them off), are uploaded, so the
+    backstop is never stricter than the policy,
     and a zone the aircraft is inside (or within FENCE_MARGIN of) is held back
     until it is clear, so a hot-applied zone on top of the aircraft cannot
     breach the autopilot fence the moment it arrives. A policy with a
@@ -80,7 +84,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from guardrail.frames import from_body, to_local_ned                     # noqa: E402
-from guardrail.fsm import MODE_FOR                                       # noqa: E402
+from guardrail.fsm import MODE_FOR, FSMState                             # noqa: E402
 from guardrail.projection import LocalProjection                         # noqa: E402
 
 # mavros_msgs/PositionTarget constants, written out so this module imports
@@ -106,6 +110,105 @@ MAV_FRAME_GLOBAL_RELATIVE_ALT = 3
 # The modes the adapter forwards: those the escalation FSM can ask for (Normal
 # and Brake fly GUIDED; Loiter, RTL, Land), which include the mission-end LAND.
 ALLOWED_MODES = frozenset(MODE_FOR.values())
+MODE_FOR_LOITER = MODE_FOR[FSMState.LOITER]
+
+# THE FSM'S LOITER IS ARDUCOPTER'S BRAKE MODE (2026-10-08).
+#
+# The grant names the mode "LOITER" (Safety Shield p5, "SET_MODE GUIDED /
+# LOITER / RTL / LAND"), and that is what the FSM requests and the audit
+# records. What it asks of the autopilot is "hold the aircraft where it is".
+# ArduCopter's LOITER does that only with a pilot on the sticks: its climb
+# rate is the throttle stick's (Copter-4.5.7 mode_loiter.cpp: "target_climb_rate
+# = get_pilot_desired_climb_rate(channel_throttle->get_control_in())"), and
+# with no RC input in SITL that is a steady descent - 14.2 m to the ground
+# on 7 Oct (ros2fix2_on_fsm); on 8 Oct (pas_ap_20261008_224440) every one of
+# the seven LOITER spells sank at 1.4-1.8 m/s, the deepest from 7.6 m to
+# 1.8 m in 3.3 s, below the policy's 6 m floor. The alternatives a companion
+# computer has:
+#   * LOITER with the throttle centred by RC_CHANNELS_OVERRIDE: the companion
+#     impersonates the pilot. ArduPilot accepts overrides only from
+#     SYSID_MYGCS (Mission Planner's 255), they lapse after RC_OVERRIDE_TIME
+#     unless re-sent, and while they are sent the safety pilot's own throttle
+#     is overridden. A hold that lives in the companion is not the
+#     autopilot's hold.
+#   * GUIDED with a position-hold setpoint: holds altitude, but the companion
+#     keeps flying the aircraft, the mode never changes (Mission Planner shows
+#     no escalation), and the FSM's Loiter means the autopilot owns it.
+#   * BRAKE: ArduCopter's own stop-and-hold (mode.h: "full-brake using
+#     inertial/GPS system, no pilot input"). mode_brake.cpp stops with the
+#     position controller at zero velocity and holds altitude
+#     ("set_pos_target_z_from_climb_rate_cm(0.0f)"), with no timeout unless
+#     a Solo button sets one. It needs a position estimate, as LOITER does.
+# BRAKE is what this adapter sends for the FSM's LOITER. `hold_mode="LOITER"`
+# restores the literal mapping, for a flight with a pilot holding the
+# throttle centred.
+HOLD_MODES = ("BRAKE", "LOITER")
+DEFAULT_HOLD_MODE = "BRAKE"
+
+
+def autopilot_mode(fsm_mode: str, hold_mode: str = DEFAULT_HOLD_MODE) -> str:
+    """The ArduCopter mode to request for one of the FSM's modes: the FSM's
+    LOITER becomes `hold_mode` (BRAKE by default), the rest pass through."""
+    mode = str(fsm_mode).strip().upper()
+    if hold_mode not in HOLD_MODES:
+        raise ValueError(f"hold_mode {hold_mode!r} is not one of {HOLD_MODES}")
+    if mode not in ALLOWED_MODES:
+        raise ValueError(f"{mode!r} is not a mode the escalation FSM asks for "
+                         f"({sorted(ALLOWED_MODES)})")
+    return hold_mode if mode == MODE_FOR_LOITER else mode
+
+
+class ModeRequests:
+    """The modes a node asked the autopilot for, in both vocabularies, and
+    whether one of them explains the autopilot leaving GUIDED now.
+
+    `fsm` is what was asked in the FSM's (and the grant's) words - LOITER,
+    RTL, LAND, GUIDED - and `autopilot` what ArduCopter was asked for (the
+    FSM's LOITER as `hold_mode`, BRAKE by default). Both rails record both
+    (metrics.json `mode_requests` / `autopilot_mode_requests`), so one
+    escalation reads the same on either rail. Until 2026-10-09 the Project
+    AirSim node recorded ArduCopter's words and the ROS node the FSM's.
+
+    A mode change is OURS only if a request made since the aircraft last came
+    back to GUIDED can explain it (`explains`). The old check asked whether
+    the mode was ANYWHERE in the episode's list, so after one FSM hold a
+    pilot's BRAKE from Mission Planner could never read as a takeover. A
+    request that went through the adapter (`via_adapter=True`) is flown as
+    the ADAPTER's hold mode, which this node does not know, so either hold
+    mode explains it."""
+
+    def __init__(self, hold_mode: str = DEFAULT_HOLD_MODE) -> None:
+        if hold_mode not in HOLD_MODES:
+            raise ValueError(f"hold_mode {hold_mode!r} is not one of {HOLD_MODES}")
+        self.hold_mode = hold_mode
+        self.fsm: list[str] = []
+        self.autopilot: list[str] = []
+        # (FSM mode, autopilot modes it may produce), since GUIDED was entered.
+        self._pending: list[tuple[str, frozenset[str]]] = []
+
+    def ask(self, mode: str, *, via_adapter: bool = False) -> str:
+        """Record one request (the FSM's word) and return ArduCopter's."""
+        m = str(mode).strip().upper()
+        ap = autopilot_mode(m, self.hold_mode)
+        self.fsm.append(m)
+        self.autopilot.append(ap)
+        may = (frozenset(HOLD_MODES) if via_adapter and m == MODE_FOR_LOITER
+               else frozenset({ap}))
+        self._pending.append((m, may))
+        return ap
+
+    def entered_guided(self) -> None:
+        """The autopilot is back in GUIDED: the requests that led here are
+        spent. Requests made AFTER the last GUIDED request stay (a hold asked
+        for before the GUIDED report arrived)."""
+        last = max((i for i, (m, _) in enumerate(self._pending) if m == "GUIDED"),
+                   default=None)
+        self._pending = [] if last is None else self._pending[last + 1:]
+
+    def explains(self, autopilot_mode_now: str) -> bool:
+        """Did a pending request ask for the mode the autopilot just entered?"""
+        mode = str(autopilot_mode_now).strip().upper()
+        return any(mode in may for m, may in self._pending if m != "GUIDED")
 # ArduPilot's FENCE_MARGIN default; the node passes the autopilot's own value.
 FENCE_MARGIN_M = 2.0
 # How far above the policy's highest legal altitude the autopilot's altitude
@@ -249,6 +352,21 @@ def zone_clearance_m(fence: dict, x: float, y: float) -> float:
     return -d if _point_in_polygon(x, y, verts) else d
 
 
+def time_controls(rule, off_switches=()) -> list[str]:
+    """What can switch `rule` off by the clock: its own time window
+    (`valid_time` with a recurrence; absent, or without one, means always)
+    and the ids of the time_window_switches that turn it off. [] = in force
+    for the whole flight."""
+    out = []
+    vt = getattr(rule, "valid_time", None)
+    if vt is not None and getattr(vt, "recurrence", None) is not None:
+        out.append("it has a time window (valid_time)")
+    if off_switches:
+        out.append(f"time_window_switch {', '.join(sorted(off_switches))} can "
+                   f"switch it off")
+    return out
+
+
 def policy_fences(policy, column_m: float | None,
                   position: tuple[float, float] | None = None,
                   margin_m: float = FENCE_MARGIN_M
@@ -274,14 +392,38 @@ def policy_fences(policy, column_m: float | None,
     ArduPilot would RTL while the Shield is still steering out - the grant's
     GeoFence is to "fire only if the Shield itself crashes or fails to emit".
     The caller uploads it once the aircraft is clear.
+
+    A zone a CLOCK can turn off is not exported either (2026-10-11): one with
+    a time window (`valid_time` with a recurrence), and one a
+    time_window_switch can switch off (`active: false` naming it). ArduPilot's
+    fence has no clock, so it would hold such a zone at times the policy
+    does not - stricter than the Shield, an RTL at the fence edge on a flight
+    the Shield allows. It is listed in `skipped` (`time_controlled: True`)
+    with why; the Shield alone enforces it. Until this date every zone was
+    exported whatever its window or switch.
     """
     fences, skipped = [], []
-    for c in getattr(policy, "constraints", []):
+    constraints = list(getattr(policy, "constraints", []))
+    # Rule id -> the switches that can turn it OFF. A switch that holds its
+    # target ON adds no off-time to it.
+    switched_off: dict[str, list[str]] = {}
+    for c in constraints:
+        if getattr(c, "type", "") == "time_window_switch" \
+                and getattr(c, "active", True) is False:
+            switched_off.setdefault(c.target_id, []).append(c.id)
+    for c in constraints:
         ctype = getattr(c, "type", "")
         if ctype not in ("polygon_fence", "circle_fence", "dynamic_nfz"):
             if ctype == "corridor":
                 skipped.append({"id": c.id, "why": "keep-in corridor: not "
                                 "exported as an autopilot inclusion fence"})
+            continue
+        clock = time_controls(c, switched_off.get(c.id, ()))
+        if clock:
+            skipped.append({"id": c.id, "time_controlled": True, "why": (
+                f"{'; '.join(clock)}: the autopilot fence has no clock and "
+                f"would enforce the zone while the policy has it off - "
+                f"stricter than the policy, so the Shield alone enforces it")})
             continue
         if ctype == "dynamic_nfz" and getattr(c, "motion", None) is not None:
             skipped.append({"id": c.id, "why": "moving dynamic_nfz: the "
@@ -479,8 +621,12 @@ if HAVE_ROS:
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
 
     class MavlinkAdapterNode(Node):
-        def __init__(self, out: Path | None, upload_fences: bool = True) -> None:
+        def __init__(self, out: Path | None, upload_fences: bool = True,
+                     hold_mode: str = DEFAULT_HOLD_MODE) -> None:
             super().__init__("mavlink_adapter")
+            if hold_mode not in HOLD_MODES:
+                raise ValueError(f"hold_mode {hold_mode!r} is not one of {HOLD_MODES}")
+            self.hold_mode = hold_mode
             for name in ("IGNORE_PX", "IGNORE_PY", "IGNORE_PZ", "IGNORE_AFX",
                          "IGNORE_AFY", "IGNORE_AFZ", "IGNORE_YAW",
                          "FRAME_LOCAL_NED"):
@@ -613,18 +759,23 @@ if HAVE_ROS:
                                        f"escalation FSM can ask for")
                 self._status(refused)
                 return
+            # The FSM's vocabulary in, ArduCopter's mode out (LOITER -> BRAKE,
+            # see DEFAULT_HOLD_MODE); the status carries both.
+            ap = autopilot_mode(mode, self.hold_mode)
             if not self.cli_mode.service_is_ready():
                 self._status({"kind": "mode_request", "mode": mode,
+                              "autopilot_mode": ap,
                               "mode_sent": False, "why": "set_mode not ready"})
                 return
-            fut = self.cli_mode.call_async(SetMode.Request(custom_mode=mode))
+            fut = self.cli_mode.call_async(SetMode.Request(custom_mode=ap))
 
-            def done(f, mode=mode):
+            def done(f, mode=mode, ap=ap):
                 r = f.result()
                 self._status({"kind": "mode_request", "mode": mode,
+                              "autopilot_mode": ap,
                               "mode_sent": bool(r and r.mode_sent)})
             fut.add_done_callback(done)
-            self.get_logger().info(f"SET_MODE {mode} requested")
+            self.get_logger().info(f"SET_MODE {ap} requested (FSM: {mode})")
 
         # ---------------- fences ---------------- #
 
@@ -729,6 +880,9 @@ def main(argv: list[str] | None = None) -> None:
                     help="episode directory for adapter_log.jsonl")
     ap.add_argument("--no-fences", action="store_true",
                     help="do not upload the policy's fences to the autopilot")
+    ap.add_argument("--hold-mode", choices=HOLD_MODES, default=DEFAULT_HOLD_MODE,
+                    help="ArduCopter mode for the FSM's LOITER: BRAKE (default; holds "
+                         "with no pilot input) or LOITER (needs the throttle centred)")
     args, ros_args = ap.parse_known_args(argv)
     if not HAVE_ROS:
         raise SystemExit("mavlink_adapter_node needs rclpy and mavros_msgs: "
@@ -736,7 +890,8 @@ def main(argv: list[str] | None = None) -> None:
                          "~/venv-ros/bin/python")
     rclpy.init(args=ros_args)
     node = MavlinkAdapterNode(Path(args.out) if args.out else None,
-                              upload_fences=not args.no_fences)
+                              upload_fences=not args.no_fences,
+                              hold_mode=args.hold_mode)
     try:
         rclpy.spin(node)
     except (KeyboardInterrupt, Exception) as e:          # noqa: BLE001

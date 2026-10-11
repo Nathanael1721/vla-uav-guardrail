@@ -349,6 +349,120 @@ def test_only_the_modes_the_fsm_can_ask_for_are_forwarded():
     assert "mode_request(msg.data)" in src
 
 
+def test_the_fsm_s_loiter_reaches_arducopter_as_brake():
+    """REGRESSION (7 Oct SITL ros2fix2_on_fsm; 8 Oct pas_ap_20261008_224440).
+    ArduCopter's LOITER takes its climb rate from the throttle stick
+    (mode_loiter.cpp, get_pilot_desired_climb_rate): with no pilot input in
+    SITL it descended 14.2 m to the ground on 7 Oct and sank 1.4-1.8 m/s in
+    every LOITER spell on 8 Oct. The adapter forwarded the FSM's word as the
+    autopilot's mode. It now asks for BRAKE, which holds position and
+    altitude with no pilot input (mode_brake.cpp: zero velocity target,
+    set_pos_target_z_from_climb_rate_cm(0)). The FSM's vocabulary is
+    unchanged: the request on /shield/mode_request still says LOITER."""
+    assert A.DEFAULT_HOLD_MODE == "BRAKE"
+    assert A.autopilot_mode("LOITER") == "BRAKE"
+    assert A.autopilot_mode(" loiter ") == "BRAKE"
+    assert A.autopilot_mode("LOITER", "LOITER") == "LOITER"
+    for m in ("GUIDED", "RTL", "LAND"):
+        assert A.autopilot_mode(m) == m and A.autopilot_mode(m, "LOITER") == m
+    for bad, hold in (("STABILIZE", "BRAKE"), ("BRAKE", "BRAKE"), ("LOITER", "ALT_HOLD")):
+        try:
+            A.autopilot_mode(bad, hold)
+        except ValueError:
+            continue
+        raise AssertionError(f"autopilot_mode({bad!r}, {hold!r}) accepted")
+    # The node sends ArduCopter's mode, and both ROS rails can name it.
+    src = (ROOT / "sitl" / "mavlink_adapter_node.py").read_text(encoding="utf-8")
+    body = src[src.index("def _on_mode_request"):]
+    body = body[:body.index("\n        def ", 10)]
+    assert "SetMode.Request(custom_mode=ap)" in body and "autopilot_mode(mode" in body
+    node = (ROOT / "sitl" / "ros2_shield_node.py").read_text(encoding="utf-8")
+    assert "SetMode.Request(custom_mode=ap)" in node
+    assert "self._asks.explains(mode)" in node
+    assert "ap = self._asks.ask(mode, via_adapter=to_adapter)" in node
+
+
+def test_mode_requests_are_kept_in_both_vocabularies_and_explain_only_the_current_spell():
+    """REVIEW (2026-10-09). The Project AirSim node recorded ArduCopter's
+    words (BRAKE) and the ROS node the FSM's (LOITER), so one escalation read
+    differently on the two rails. And both judged a takeover against every
+    mode asked for in the episode, so after one FSM hold a pilot's BRAKE from
+    Mission Planner could never read as one. ModeRequests keeps both lists
+    and explains a mode change only by a request made since the aircraft last
+    came back to GUIDED."""
+    m = A.ModeRequests()
+    assert m.ask("LOITER") == "BRAKE" and m.explains("BRAKE") and not m.explains("LOITER")
+    assert m.ask("GUIDED") == "GUIDED"
+    m.entered_guided()
+    assert not m.explains("BRAKE"), "a pilot's BRAKE after the hold is a takeover"
+    assert m.ask("RTL") == "RTL" and m.explains("RTL") and not m.explains("LAND")
+    m.ask("LAND")
+    assert m.fsm == ["LOITER", "GUIDED", "RTL", "LAND"]
+    assert m.autopilot == ["BRAKE", "GUIDED", "RTL", "LAND"]
+    # A hold asked for AFTER the GUIDED request, before GUIDED is reported,
+    # survives the report.
+    m = A.ModeRequests()
+    m.ask("GUIDED")
+    m.ask("LOITER")
+    m.entered_guided()
+    assert m.explains("BRAKE")
+    # GUIDED entered with no request of ours (bring-up, a pilot): all spent.
+    m = A.ModeRequests()
+    m.ask("RTL")
+    m.entered_guided()
+    assert not m.explains("RTL")
+    # Through the adapter the hold mode is the adapter's: either counts.
+    m = A.ModeRequests("LOITER")
+    assert m.ask("LOITER", via_adapter=True) == "LOITER"
+    assert m.explains("BRAKE") and m.explains("LOITER")
+    m = A.ModeRequests()
+    m.ask("LOITER", via_adapter=False)
+    assert not m.explains("LOITER"), "sent as BRAKE: a LOITER now is someone else's"
+    for bad in ("ALT_HOLD", ""):
+        try:
+            A.ModeRequests(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"hold mode {bad!r} accepted")
+
+
+def test_the_ros_node_hands_the_fsm_the_depth_and_the_caps_the_shield_applied():
+    """REVIEW (2026-10-09). The ROS node's FSM wiring had no test of its own:
+    passing unsafe_depth_m=None or caps=None was caught only by an unrelated
+    test that was already failing. The node cannot run without rclpy here,
+    so its source is checked: the FSM is given the position's illegal depth
+    (X6 / X7) and the caps the Shield clamped against on that tick, and the
+    row logs the depth."""
+    node = (ROOT / "sitl" / "ros2_shield_node.py").read_text(encoding="utf-8")
+    i = node.index("inp = tick_input_from_decision(")
+    call = node[i:node.index("fsm_out = self.fsm.step(inp)", i)]
+    assert "unsafe_depth_m=unsafe_depth" in call, call
+    assert "caps=self.shield.applied_caps or False" in call, call
+    assert "horizon_s=self.theta_horizon_s" in call, call
+    j = node.index("unsafe_depth = self.shield.unsafe_depth(st, stop_illegal)")
+    assert j < i
+    assert "shield=self.shield, unsafe_depth=unsafe_depth))" in node
+    import sys as _sys
+    _sys.path.insert(0, str(ROOT / "sitl"))
+    import ros2_shield_node as N
+    from guardrail.fsm import DEFAULT_THETA_HORIZON_S
+    assert N.default_theta_horizon() is DEFAULT_THETA_HORIZON_S is None
+    from guardrail import Action4D, Shield, State
+    from guardrail.fsm import EscalationFSM, TickInput
+    from guardrail.models import Policy
+    sh = Shield(Policy.model_validate({"policy_id": "r", "constraints": [
+        {"id": "band", "type": "altitude_envelope", "alt_min_m": 0, "alt_max_m": 30}]}),
+        escalation=False)
+    st, a = State(x=0.0, y=0.0, up=10.0), Action4D(vx=1.0)
+    d = sh.filter(st, a)
+    out = EscalationFSM().step(TickInput(t=1.0, outcome="clean"))
+    row = N.build_row(now=1.0, tick=1, state=st, body=a, decision=d, raw_world=a,
+                      emitted_world=a, emitted_body=a, shield_on=True, extra={},
+                      subject=None, fsm_out=out, stop_illegal=[], shield=sh,
+                      unsafe_depth=1.23456)
+    assert row["unsafe_depth_m"] == 1.2346, row
+
+
 def test_a_second_setpoint_publisher_stops_forwarding():
     """A VLA backend misconfigured to publish on /shield/setpoint would fly
     unshielded actions with nothing recorded. The adapter checks the
@@ -385,6 +499,71 @@ def test_the_module_imports_without_ros_and_says_so_at_run_time():
             assert "rclpy" in str(e)
             return
         raise AssertionError("main() ran without rclpy")
+
+
+_SQ = [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}, {"x": 0, "y": 10}]
+
+
+def _timed_policy():
+    from guardrail.models import Policy
+
+    def zone(zid, dx, **kw):
+        return {"id": zid, "type": "polygon_fence", **kw,
+                "vertices": [{"x": v["x"] + dx, "y": v["y"]} for v in _SQ]}
+    return Policy.model_validate({"policy_id": "timed", "constraints": [
+        zone("yard", 0, valid_time={"recurrence": {"start_time": "07:30",
+                                                   "end_time": "17:30"}}),
+        zone("always", 20, valid_time={}),            # a window that is "always"
+        zone("held", 40),
+        {"id": "sw-off", "type": "time_window_switch", "target_id": "held",
+         "active": False, "valid_time": {"recurrence": {"start_time": "08:00",
+                                                        "end_time": "08:30"}}},
+        zone("on", 60),
+        {"id": "sw-on", "type": "time_window_switch", "target_id": "on", "active": True},
+        zone("plain", 80),
+    ]})
+
+
+def test_a_zone_a_clock_can_turn_off_is_left_to_the_shield():
+    """compiler-conform review (2026-10-08): a time_window_switch in a policy
+    file now flies, and policy_fences exported every zone whatever its window
+    or switch, so the autopilot's GeoFence held a zone the policy had
+    switched off - stricter than the Shield, an RTL at the fence edge on a
+    flight the Shield allows. A zone with a time window, or one a switch can
+    turn off, is now skipped and named; one in force for the whole flight
+    (no window, or a switch that only holds it ON) is still exported."""
+    fences, skipped = A.policy_fences(_timed_policy(), column_m=30.0)
+    assert [f["id"] for f in fences] == ["always", "on", "plain"], fences
+    why = {s["id"]: s for s in skipped}
+    assert set(why) == {"yard", "held"}, skipped
+    assert why["yard"]["time_controlled"] and "time window" in why["yard"]["why"]
+    assert why["held"]["time_controlled"] and "sw-off" in why["held"]["why"]
+    assert all("stricter than the policy" in s["why"] for s in skipped)
+
+
+def test_a_switch_hot_applied_mid_flight_takes_its_zone_off_the_next_export():
+    """The ROS node re-exports the zones on every generation; a switch that
+    arrives by hot-apply must take its target off the next upload."""
+    from guardrail.models import Action4D, Policy, State, TimeWindowSwitch
+    from guardrail.shield import Shield
+    pol = Policy.model_validate({"policy_id": "hot", "constraints": [
+        {"id": "plain", "type": "polygon_fence", "vertices": _SQ}]})
+    assert [f["id"] for f in A.policy_fences(pol, column_m=30.0)[0]] == ["plain"]
+    sh = Shield(pol, escalation=False)
+    sh.filter(State(x=-50, y=-50, up=10), Action4D())
+    sh.hot_apply(TimeWindowSwitch(id="sw", type="time_window_switch",
+                                  target_id="plain", active=False))
+    fences, skipped = A.policy_fences(sh.policy, column_m=30.0)
+    assert fences == [] and skipped[0]["id"] == "plain" and "sw" in skipped[0]["why"]
+
+
+def test_time_controls_reads_only_a_real_window_or_a_switch_off():
+    by = {c.id: c for c in _timed_policy().constraints}
+    assert A.time_controls(by["yard"]) == ["it has a time window (valid_time)"]
+    assert A.time_controls(by["always"]) == []
+    assert A.time_controls(by["plain"]) == []
+    assert A.time_controls(by["held"], ["sw-off"]) == [
+        "time_window_switch sw-off can switch it off"]
 
 
 if __name__ == "__main__":

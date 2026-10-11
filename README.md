@@ -1,7 +1,7 @@
 # Guardrail — a safety layer for language-commanded UAVs
 
 [![version](https://img.shields.io/badge/version-0.5.1-blue)](CHANGELOG.md)
-[![P0 escape on demo and SITL flights](https://img.shields.io/badge/P0%20escape%20on%20demo%20and%20SITL%20flights-0.0%20%28dev%20evidence%2C%20not%20a%20contract%20KPI%20figure%29-lightgrey)](#p0-escape-on-the-recorded-flights-and-what-it-does-not-say)
+[![P0 escape on the 41 mid-evaluation flights](https://img.shields.io/badge/P0%20escape%2C%2041%20mid--evaluation%20flights-0.0%20%28dev%20evidence%2C%20not%20a%20contract%20KPI%20figure%29-lightgrey)](#p0-escape-on-the-mid-evaluation-flights-and-what-it-does-not-say)
 [![tests](https://img.shields.io/badge/tests-1400%2B%20fast%20%2B%2017%20coverage-brightgreen)](tests/)
 
 A vision-language model is told to *follow the yellow car*. It produces a
@@ -42,11 +42,12 @@ decision = shield.step(state, raw_action)    # -> repaired action + audit record
 | `tests/` | one test file per module, each runnable on its own, plus a ~10 min coverage suite |
 | `docs/` | finding documents, design notes and reports — see below |
 | `sitl/` | the ArduPilot SITL rail (pymavlink, and MAVROS 2 on ROS 2), all on one desktop; the MAVROS 2 rail is the grant's *dev* topology. The same stack moves to the *hil* topology (VLA + Shield on a Jetson Orin) for the KPI campaign |
+| `deploy/` | container images and topology files for the grant's *dev*, *hil* and *flight* topologies, with the Orin side defined for JetPack 6.2; not yet run on an Orin |
 | `tools/` | report, deck and KPI builders; `check_claims.py` fails on a withdrawn claim stated again; `prefix_eval.py` replays recorded frames with and without the CSP |
 | `scripts/` | launcher scripts (`.ps1` / `.bat`) — see `scripts/README.md` for which backend each targets |
 | `reference/` | the grant's own PDFs; not this project's to edit |
 
-## P0 escape on the recorded flights, and what it does not say
+## P0 escape on the mid-evaluation flights, and what it does not say
 
 **P0 violation escape rate** (target 0) is one of the five acceptance KPIs the
 grant lists, and the only one with a hard limit. It was 0.0 on the 41 shielded
@@ -55,15 +56,28 @@ ArduPilot SITL over pymavlink, 3 on ArduPilot SITL over MAVROS 2. The five
 deliberately unshielded control flights read 0.63 — they exist to fail, and
 they do.
 
+On 8 Oct 2026 a 120 s follow on the Project AirSim + ArduPilot rail let 5 P0
+stand-off violations through (0.0053, 5 of 937 Shield-flown ticks; no
+Shield-off control has been flown there yet); see
+[Project AirSim flown by ArduPilot](docs/DESIGN-projectairsim-ardupilot.md).
+On every escape tick the perception node had placed the followed car at the
+aircraft's own position, a range of 0, where the stand-off check saw no
+action that opened the range
+([finding](docs/FINDING-the-escape-that-stayed-inside-the-ring.md)). With the
+fix, a replay of that flight's 1101 logged ticks through the Shield gives 0
+escapes. That is a replay, not a flight: no flight has used the fix yet.
+
 **These are not contract KPI figures.** The grant takes every reported KPI from
 a Stress Testing run in the *hil* topology, where a Jetson Orin runs the VLA and
 the Shield (grant pages *Stress Testing* p.1, *Architecture constraints* p.4).
 None of these flights came from a stress harness, and all of them ran on one
 desktop. The three MAVROS 2 flights are what the grant calls the *dev*
 topology; the Project AirSim flights are the perception rail, and the pymavlink
-flights a direct-MAVLink variant of the desktop rail. The KPI campaign for the
-final report runs in the *hil* topology: the VLA and the Shield on a Jetson
-Orin, which is being set up, with the same code later moving onto the drone.
+flights a direct-MAVLink variant of the desktop rail. The 8 Oct follow
+commanded ArduPilot over pymavlink, so it is none of the grant's topologies.
+The KPI campaign for the final report runs in the *hil* topology: the VLA and
+the Shield on a Jetson Orin, which is being set up, with the same code later
+moving onto the drone.
 Tools for the work-package KPIs (policy round-trip, CSP token budget and
 coverage, repair success with the grant's theta cap) were added on 6 Oct;
 [`CHANGELOG.md`](CHANGELOG.md) lists what changed in the earlier figures.
@@ -136,10 +150,35 @@ labelled functional-rail evidence.
 ## Status
 
 Pre-1.0 research software. See [`CHANGELOG.md`](CHANGELOG.md) for what changed
-and, as importantly, what was withdrawn. Next: the *hil* topology on a Jetson
-Orin for the KPI campaign, Project AirSim imagery joined to the ArduPilot rail
-([`docs/projectairsim-setup.md`](docs/projectairsim-setup.md) covers ArduPilot,
-Project AirSim and Mission Planner together), and the stress-testing harness.
+and, as importantly, what was withdrawn.
+
+Done in October 2026, none of it KPI-grade:
+
+- **Gate G1 passed on 8 Oct.** ArduPilot SITL flew the aircraft in Project
+  AirSim through Project AirSim's native ArduPilot controller on 3 of 3 runs,
+  and the stream mavlink-router sends to Mission Planner's UDP port 14550
+  carried position and attitude at 19.0 Hz through a 120 s flight (measured
+  with a listener on that port; Mission Planner's display was not recorded).
+  See [Project AirSim flown by ArduPilot](docs/DESIGN-projectairsim-ardupilot.md).
+- **The Prefix Compiler follows more of the grant.** It renders the moving
+  no-fly zone, the time-window switch and the corridor swap, reads its
+  multi-scale geometry from the policy IR, and produces the grant's cost map
+  ([cost-map adapter](docs/DESIGN-cost-map-adapter.md)), which no path
+  planner reads yet.
+- **The stress harness has a gRPC control plane** over mutual TLS, driving the
+  headless harness ([design note](docs/DESIGN-harness-grpc.md)).
+- **The Jetson Orin deployment is defined for JetPack 6.2**, with ROS 2 Jazzy
+  in an Ubuntu 24.04 container ([`deploy/`](deploy/README.md),
+  [topologies](docs/DESIGN-topologies.md)). Nothing has been built or run on
+  an Orin yet.
+
+Next: the *hil* topology on the Jetson Orin for the KPI campaign, the
+perception node through MAVROS 2, an escalation hold step that keeps the
+aircraft inside its altitude band on ArduPilot with fail-safe trigger
+correctness at the grant's target of at least 99 %, scenarios with mid-flight
+rule changes on ArduPilot SITL, and then the drone.
+[`docs/projectairsim-setup.md`](docs/projectairsim-setup.md) covers ArduPilot,
+Project AirSim and Mission Planner together.
 [`docs/CHECKLIST-remaining-work.md`](docs/CHECKLIST-remaining-work.md) is
 superseded.
 

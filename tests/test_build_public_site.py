@@ -192,6 +192,22 @@ WITHDRAWN = (
     "write to someone@example.org", "see the grant audit", "four fully-run rails",
     "hardware flight is a stretch goal", "合約 KPI 數字", "會議中決定",
     "flown by AirSim's own autopilot", "使用 AirSim 內建飛控", "由AirSim飛行",
+    # The unscoped zero the site carried until 2026-10-08, in both languages,
+    # and other ways of saying it (each accepted by the first version of the
+    # rule, which matched the published wording only).
+    "the P0 violation escape rate is 0.00 on every run",
+    "開啟 Shield 時，每一次飛行的 P0 違規逃逸率都是 0.00",
+    "an escape rate of 0 on all flights",
+    "the P0 violation escape rate is 0.00 in every run",
+    "the escape rate is 0.00 on every shielded run",
+    "an escape rate of 0.00 across all runs",
+    "With the Shield on, every run's P0 violation escape rate is 0.00",
+    "P0 violation escape rate: 0.00 on all runs",
+    "the escape rate was zero on every flight",
+    "On all shielded flights the escape rate was 0.",
+    "所有飛行的 P0 違規逃逸率都是 0.00",
+    "每次飛行的 P0 違規逃逸率均為 0.00",
+    "P0 違規逃逸率在每一次飛行中都是 0",
 )
 NEUTRAL = (
     "Obstacle clearance is 3 m.", "Risk grading 0.5 / 0.3 / 0.2.", "Shield corrections 0",
@@ -202,6 +218,16 @@ NEUTRAL = (
     # Ordinary English and an accurate name for the July simulator.
     "meeting the 5 ms budget", "a check meeting its deadline",
     "the July OpenVLA run used classic AirSim (AirSimNH)",
+    # The same zero, scoped to the runs it was measured on; a rate that is not
+    # zero; "every flight" about something else.
+    "the P0 violation escape rate is 0.00 on each of these runs",
+    "開啟 Shield 時，這幾次飛行的 P0 違規逃逸率都是 0.00",
+    "The control loop runs at 9.99-10.0 Hz on every flight",
+    "escape rate is 0 on all of these runs",
+    "the escape rate was 0.0053 on every run of the follow",
+    "every run's escape rate is 0.0053",
+    "所有飛行的逃逸率為 0.0053",
+    "Acceptance KPI, target 0. Measured on every run as the share of ticks",
 )
 
 
@@ -975,6 +1001,99 @@ def test_the_committed_snapshot_holds_only_allow_listed_fields():
             text_fields = set(spec[4]) if spec[4] else {"text"}
             for lang in B.LANGS:
                 assert set(it[lang]) == text_fields, f"{name}.{lang}: {set(it[lang])}"
+
+
+def _css_px(css, selector, prop):
+    """The last pixel value `prop` gets for `selector` in a flat stylesheet,
+    following the cascade order of the rules that name the selector."""
+    val = None
+    for sels, body in re.findall(r"([^{}]+)\{([^}]*)\}", re.sub(r"/\*.*?\*/", "", css, flags=re.S)):
+        if selector in [s.strip() for s in sels.split(",")]:
+            m = re.search(rf"(?<![\w-]){re.escape(prop)}\s*:\s*(-?\d+(?:\.\d+)?)px", body)
+            if m:
+                val = float(m.group(1))
+    return val
+
+
+def roadmap_label_gap(css):
+    """(vertical gap between the gate and Today labels, room above the track
+    for the gate label), both in px."""
+    today = _css_px(css, ".track .today", "top")
+    gate = _css_px(css, ".track .gate", "top")
+    m = re.search(r"\.track\s*\{[^}]*margin:\s*(\d+)px", css)
+    return today - gate, float(m.group(1)) + gate
+
+
+def test_the_roadmap_gate_label_sits_above_the_today_label():
+    """Near the end of the grant the Today marker sits close to the final-gate
+    marker, and both labels were drawn on the same line: on a 375 px screen
+    the 'Today' label lay inside the gate's date label (552 px² overlap in
+    English, 394 px² in Chinese, measured in a browser on 2026-10-08). The gate
+    label must sit at least one label line (18 px at .74rem) above Today, and
+    the track must leave room above it for that line."""
+    gap, room = roadmap_label_gap((SITE / "assets" / "site.css").read_text(encoding="utf-8"))
+    assert gap >= 18, f"the gate and Today labels are {gap} px apart vertically"
+    assert room >= 0, f"the gate label overhangs the track's top margin by {-room} px"
+    # The null: the same check refuses labels drawn on one line.
+    one_line = (".track { margin: 34px 4px 6px; }\n"
+                ".track .today, .track .gate { top: -26px; }\n.track .gate { border-left: 0; }")
+    assert roadmap_label_gap(one_line)[0] == 0
+
+
+# ------------------------------------------- what the curated text claims
+# The stress harness runs the grant's events only headless: no simulator and
+# no ArduPilot, with Loiter, RTL and Land modelled as ideal position control.
+# Its ArduPilot path refuses every scenario that has events
+# (experiments/sweep_scenarios.py, sitl_refusal). The site said on 2026-10-08
+# that every event type "can run in the middle of a flight", which leaves the
+# simulation unlabelled (content policy 7).
+_EVENTS_MID_RUN = re.compile(r"(?i)event\s+types?\b.{0,80}?\b(?:middle\s+of|mid-?)\s*"
+                             r"(?:an?\s+)?(?:\w+\s+)?(?:flight|episode)")
+
+
+def harness_event_claims_unlabelled(content):
+    """Paths of curated sentences that say grant event types run in the middle
+    of a flight or episode without saying headless (en) and 無模擬器 (zh)."""
+    return [path for path, unit, _src in B.text_units(content)
+            if _EVENTS_MID_RUN.search(unit["en"])
+            and not ("headless" in unit["en"] and "無模擬器" in unit["zh"])]
+
+
+def test_the_harness_events_are_labelled_headless():
+    content, _ = load_committed()
+    claims = [p for p, u, _s in B.text_units(content) if _EVENTS_MID_RUN.search(u["en"])]
+    print(f"      {len(claims)} curated sentence(s) about the harness's events checked")
+    bad = harness_event_claims_unlabelled(content)
+    assert not bad, f"grant events said to run mid-flight without 'headless' / '無模擬器' at {bad}"
+    # The null: the wording published on 2026-10-08 is caught.
+    old = {"x": {"en": "Every event type the grant names can run in the middle of a flight, "
+                       "and RTL and Land outcomes occur.",
+                 "zh": "計畫書列出的每一種事件類型都能在飛行途中執行，並會出現 RTL 與 Land 的結果。"}}
+    assert harness_event_claims_unlabelled(old) == ["$.x"]
+
+
+def test_the_roadmap_shows_event_scenarios_on_sitl_while_the_harness_refuses_them():
+    """The November KPI campaign flies dynamic scenarios, so while the
+    harness's ArduPilot path refuses scenarios with events, flying them there
+    is unfinished work and appears as Next (content policy 1). The item was
+    dropped on 2026-10-08 as if it were done."""
+    sys.path.insert(0, str(ROOT))
+    sys.path.insert(0, str(ROOT / "experiments"))
+    import sweep_scenarios as S                                    # noqa: E402
+    from guardrail.scenario_spec import Library                    # noqa: E402
+    spec = Library(ROOT / "experiments" / "scenarios.yaml").by_id()["dyn-nfz-spawn-ahead"].first.spec
+    assert spec.events, "the probe scenario has no events; pick one that has"
+    why = S.sitl_refusal(spec)
+    content, _ = load_committed()
+    items = [it for w in content["roadmap"]["next"] for it in w["items"]]
+    named = [it["en"] for it in items
+             if "SITL" in it["en"] and re.search(r"(?i)rule\s+changes|changes?\s+rules|events", it["en"])]
+    if why and "events" in why:
+        assert named, ("the harness's ArduPilot path refuses scenarios with events "
+                       f"({why!r}), and no roadmap Next item says that work is still to do")
+    else:
+        print(f"      note: the harness now flies event scenarios on SITL ({why!r}); "
+              f"the Next item {named} may move to Built")
 
 
 if __name__ == "__main__":

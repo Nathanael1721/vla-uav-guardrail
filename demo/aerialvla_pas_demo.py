@@ -33,8 +33,9 @@ from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
 from guardrail.compiler import ConstraintCompiler                   # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import (                                      # noqa: E402
-    Action4D, ObstacleClearance, PolygonFence,
+    Action4D, ObstacleClearance,
 )
+from guardrail.replay import DWELL_ZONE_TYPES, zone_dwell           # noqa: E402
 from shapely.geometry import Point                                  # noqa: E402
 
 from aerialvla_demo import AerialVLABackend, RateLimiter            # noqa: E402
@@ -42,6 +43,18 @@ import city_planner                                                 # noqa: E402
 
 TICK = 0.1
 MAX_S = 90
+
+
+def planning_zones(policy) -> list:
+    """The keep-out zones a static planning grid can hold: polygon and circle
+    fences and every dynamic_nfz without motion - the zones
+    guardrail.replay.zone_dwell counts. A moving dynamic_nfz is left to the
+    Shield, which places it at each tick."""
+    return [c for c in policy.constraints
+            if c.type in DWELL_ZONE_TYPES and getattr(c, "vertices", None)
+            and getattr(c, "motion", None) is None]
+
+
 DEPTH_SCALE = 1.0     # probe: p50=23, p95=65504 (sky sentinel) -> values ARE meters
 SIM_CONFIG_DIR = str(ROOT / "demo" / "pas_config")
 SCENE = "scene_guardrail.jsonc"
@@ -269,7 +282,11 @@ async def fly(args) -> int:
     plan_grid = None                      # inflated planning grid (for smoothing)
     if args.no_planner:               # already loaded above for the Shield
         cmap = None
-    fences = [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
+    # Every keep-out zone the planner can route around: polygon and circle
+    # fences and a dynamic_nfz that does not move (the zones zone_dwell
+    # counts). A moving one is left to the Shield: a static grid cannot
+    # hold it.
+    fences = [(f, fence_polygon(f)) for f in planning_zones(policy)]
     if cmap is None and not fences:
         print("[planner] no city map, no NFZ — reactive only")
     elif args.no_planner:
@@ -330,7 +347,7 @@ async def fly(args) -> int:
     target = waypoints[0]
     # NFZ polygons (for a proximity slow-down so aggressive path-following can't
     # corner-cut into a fence faster than the Shield can repair)
-    nfz_polys = [fence_polygon(f) for f in policy.by_type(PolygonFence)]
+    nfz_polys = [fence_polygon(f) for f in planning_zones(policy)]
     # planned polyline (spawn + expanded waypoints) for arc-length pure-pursuit.
     # Chaikin-smooth it (clearance-preserving) so the sharp A* corners become
     # smooth curves — the flown path then reads as clean arcs, not a jagged detour.
@@ -630,11 +647,19 @@ async def fly(args) -> int:
     finally:
         client.disconnect()
 
-    fences = [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
-    inside = sum(1 for pt in traj for f, poly in fences
-                 if f.altitude_floor_m <= pt["up"] <= f.altitude_ceiling_m
-                 and poly.contains(Point(pt["x"], pt["y"])))
-    nfz_s = inside * TICK
+    # Zone dwell from the Shield's own rule checker, the count every rail
+    # shares (guardrail.replay.zone_dwell): polygon and circle fences and
+    # every dynamic_nfz that does not move; a moving one is named
+    # (nfz_moving_not_counted), not scored 0. Until 2026-10-11 this walked
+    # policy.by_type(PolygonFence), which a dynamic_nfz is not.
+    dwell = zone_dwell(shield, traj, TICK)
+    nfz_s = dwell["nfz_s"]
+    if dwell["nfz_moving_not_counted"]:
+        print(f"[nfz] moving zone(s) {dwell['nfz_moving_not_counted']} are NOT in "
+              f"nfz_s: the end-of-flight count has no per-tick position")
+    # Every zone with vertices, for the plot.
+    fences = [(f, fence_polygon(f)) for f in policy.constraints
+              if f.type in DWELL_ZONE_TYPES and getattr(f, "vertices", None)]
 
     # ---- path-quality metrics: how tightly the flown path hugs the plan ----
     def _seg_dist(px, py, a, b):
@@ -659,7 +684,9 @@ async def fly(args) -> int:
     mean_dev = sum(devs) / max(1, len(devs))
     max_dev = max(devs) if devs else 0.0
     len_ratio = flown_len / plan_len if plan_len > 0 else 0.0
-    metrics = {"reached": reached, "nfz_s": nfz_s, "interventions": n_touched,
+    metrics = {"reached": reached, "nfz_s": nfz_s,
+               "nfz_moving_not_counted": dwell["nfz_moving_not_counted"],
+               "interventions": n_touched,
                "mean_dev": round(mean_dev, 2), "max_dev": round(max_dev, 2),
                "len_ratio": round(len_ratio, 3), "ticks": len(traj),
                "params": {"lookahead": args.lookahead, "follow_blend": args.follow_blend,

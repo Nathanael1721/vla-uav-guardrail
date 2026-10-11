@@ -76,8 +76,11 @@ MAV_CMD_REQUEST_MESSAGE = 512
 MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES = 520
 MSG_AUTOPILOT_VERSION = 148
 MAV_RESULT_ACCEPTED = 0
+# BRAKE (17) is where the escalation FSM's Loiter goes on this rail: ArduCopter's
+# LOITER takes its climb rate from the throttle stick and sinks with no pilot
+# (sitl/mavlink_adapter_node.py, DEFAULT_HOLD_MODE).
 COPTER_MODES = {"STABILIZE": 0, "AUTO": 3, "GUIDED": 4, "LOITER": 5,
-                "RTL": 6, "LAND": 9}
+                "RTL": 6, "LAND": 9, "BRAKE": 17}
 COPTER_MODE_NAMES = {v: k for k, v in COPTER_MODES.items()}
 
 # type_mask: use velocity + yaw_rate, ignore position, acceleration and yaw.

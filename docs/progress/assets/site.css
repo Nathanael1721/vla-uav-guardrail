@@ -171,11 +171,13 @@ ol.timeline li.entry::before { content: ""; position: absolute; left: -26px; top
 ol.timeline ul { margin-bottom: 0; }
 
 /* roadmap */
-.track { position: relative; height: 16px; border-radius: 8px; background: var(--line); margin: 34px 4px 6px; }
+.track { position: relative; height: 16px; border-radius: 8px; background: var(--line); margin: 54px 4px 6px; }
 .track .filled { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 8px; background: var(--muted); opacity: .3; }
 .track .dot { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 50%; background: var(--done); border: 2px solid var(--panel); transform: translate(-50%, -50%); }
 .track .today, .track .gate { position: absolute; top: -26px; bottom: -6px; width: 0; border-left: 2px solid var(--next); }
-.track .gate { border-left: 2px dashed var(--ink); }
+/* The gate label sits one line above the Today label: near the end of the
+   grant the two markers are close, and on a phone the labels collided. */
+.track .gate { top: -46px; border-left: 2px dashed var(--ink); }
 .track .today b, .track .gate b { position: absolute; top: 0; left: 4px; font-size: .74rem; color: var(--next); white-space: nowrap; }
 .track .gate b { left: auto; right: 4px; color: var(--ink); }
 .months { position: relative; height: 20px; margin: 4px; font-size: .74rem; color: var(--muted); }

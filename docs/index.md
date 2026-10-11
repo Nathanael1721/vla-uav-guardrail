@@ -18,9 +18,12 @@ Built for the ITRI grant *Semantic-Spatial Translation and Safety-Constrained
 VLA for ArduPilot UAVs* (PI: Prof. Kuan-Ting Lai, NTUT).
 Version **0.5.1** — see the [changelog]({{ site.github.repository_url }}/blob/master/CHANGELOG.md).
 
+**[Progress site](progress/)**: what is built, what has been shown and what
+comes next, in English and Traditional Chinese.
+
 ---
 
-## P0 escape on the recorded flights, and what it does not say
+## P0 escape on the mid-evaluation flights, and what it does not say
 
 **P0 violation escape rate** (target 0) is one of the five acceptance KPIs the
 grant lists, and the only one with a hard limit. It was 0.0 on the 41 shielded
@@ -28,6 +31,10 @@ flights counted for the 14 Sept mid-evaluation: 34 on Project AirSim, 4 on
 ArduPilot SITL over pymavlink, 3 on ArduPilot SITL over MAVROS 2. The five
 deliberately unshielded control flights read 0.63 — they exist to fail, and
 they do.
+
+On 8 Oct 2026 a 120 s follow on the Project AirSim + ArduPilot rail let 5 P0
+stand-off violations through (0.0053; no Shield-off control has been flown
+there yet); see [Project AirSim flown by ArduPilot](DESIGN-projectairsim-ardupilot.md).
 
 **These are not contract KPI figures.** The grant takes every reported KPI from
 a Stress Testing run in the *hil* topology, where a Jetson Orin runs the VLA and
@@ -88,6 +95,8 @@ has one shape:
 - [Policy identity and signed bundles](DESIGN-policy-identity.md)
 - [The Paraphraser](DESIGN-paraphraser.md)
 - [Python versions, environments, and the ArduPilot pin](DESIGN-python-versions.md)
+- [Project AirSim flown by ArduPilot, with Mission Planner attached](DESIGN-projectairsim-ardupilot.md)
+- [The public progress site](DESIGN-public-site.md)
 - [The HIL perception bridge](DESIGN-hil-perception-bridge.md)
 - [The orbit-building task](DESIGN-orbit-building-task.md)
 - [A native Unreal environment](DESIGN-unreal-native-environment.md)

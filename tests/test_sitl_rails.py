@@ -85,19 +85,27 @@ def test_neither_rail_assigns_to_the_read_only_policy_hash():
 
     `policy_hash` is a property with no setter, so an assignment is an
     AttributeError at run time and completely invisible to import-time checks.
+    Every demo and sitl script is read since 2026-10-11: demo/run_demo.py
+    still assigned it twice, so every shielded run died on its first tick
+    (since 2026-08-26), unseen because nothing here read demo/.
     """
-    for name in ("run_sitl_demo.py", "ros2_shield_node.py"):
-        src = (SITL / name).read_text(encoding="utf-8")
+    scripts = (sorted(SITL.glob("*.py")) + sorted((ROOT / "demo").glob("*.py"))
+               + sorted((ROOT / "demo" / "pas_ardupilot").glob("*.py")))
+    assert len(scripts) > 20, scripts
+    for path in scripts:
+        src = path.read_text(encoding="utf-8")
         tree = ast.parse(src)
         for node in ast.walk(tree):
-            if not isinstance(node, ast.Assign):
+            if not isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
                 continue
-            for tgt in node.targets:
-                if isinstance(tgt, ast.Attribute) and tgt.attr == "policy_hash":
+            for tgt in (node.targets if isinstance(node, ast.Assign) else [node.target]):
+                if isinstance(tgt, ast.Attribute) and tgt.attr == "policy_hash" \
+                        and "audit" in ast.unparse(tgt.value).lower():
                     raise AssertionError(
-                        f"{name}:{node.lineno} assigns to AuditLogger.policy_hash, "
-                        f"which is read-only. Pass the policy object to "
-                        f"AuditLogger instead and delete the assignment.")
+                        f"{path.relative_to(ROOT)}:{node.lineno} assigns to "
+                        f"AuditLogger.policy_hash, which is read-only. Pass the "
+                        f"policy object to AuditLogger instead and delete the "
+                        f"assignment.")
 
 
 def test_both_rails_construct_the_logger_with_the_policy_not_the_hash():
@@ -678,6 +686,559 @@ def test_fsm_theta_basis_is_stated_and_the_proxy_is_used_until_shield_reports_ma
         assert h == N.PROXY_HORIZON_S == 0.1
         basis = N.theta_basis(h)
         assert "cannot fire" in basis["note"], basis
+
+
+# --------------------------------------------------------------------------- #
+# The rails flown headless (2026-10-11): stand-ins for AirSim and pymavlink
+# --------------------------------------------------------------------------- #
+#
+# demo/run_demo.py needs AirSim and sitl/run_sitl_demo.py a MAVLink link to
+# ArduPilot; neither has a stub mode. These tests fly their main() against a
+# point mass that integrates the last velocity command on a virtual clock, so
+# the code between "connect" and "report" runs here, on any machine, without a
+# simulator. They prove code paths and records, not flight dynamics.
+
+import contextlib                                                     # noqa: E402
+import dataclasses                                                    # noqa: E402
+import importlib.util                                                 # noqa: E402
+import types                                                          # noqa: E402
+
+DEMO = ROOT / "demo"
+
+
+class _Sim:
+    """A point mass: position (North, East, up) and the last velocity command,
+    integrated by the virtual clock's sleep()."""
+
+    def __init__(self, up: float = 0.0):
+        self.t = 0.0
+        self.x = self.y = 0.0
+        self.up = up
+        self.v = (0.0, 0.0, 0.0)          # North, East, up (m/s)
+        self.modes: list = []             # set_mode arguments, in order
+
+    def time(self) -> float:
+        return self.t
+
+    def sleep(self, dt: float) -> None:
+        dt = float(dt)
+        self.x += self.v[0] * dt
+        self.y += self.v[1] * dt
+        self.up = max(0.0, self.up + self.v[2] * dt)
+        self.t += dt
+
+
+@contextlib.contextmanager
+def _argv(args: list[str]):
+    old = sys.argv
+    sys.argv = list(args)
+    try:
+        yield
+    finally:
+        sys.argv = old
+
+
+def _load(path: Path, name: str, fakes: dict | None = None):
+    """A FRESH copy of a script as a module (its own globals, so a test's
+    patches never leak), with `fakes` standing in for modules this machine
+    may not have; the fakes are removed from sys.modules again afterwards."""
+    fakes = fakes or {}
+    saved = {k: sys.modules.get(k) for k in fakes}
+    sys.modules.update(fakes)
+    try:
+        spec = importlib.util.spec_from_file_location(name, path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+    return mod
+
+
+# ---------------------------------------------------------------- run_demo.py
+
+def _fake_airsim(sim: _Sim):
+    """Just enough of the airsim package for demo/run_demo.py."""
+    air = types.ModuleType("airsim")
+    air.ImageType = types.SimpleNamespace(Scene=0)
+
+    class _Done:
+        def __init__(self, fn=None):
+            self.fn = fn
+
+        def join(self):
+            if self.fn is not None:
+                self.fn()
+
+    class MultirotorClient:
+        def confirmConnection(self):
+            pass
+
+        def enableApiControl(self, on):
+            pass
+
+        def armDisarm(self, on):
+            pass
+
+        def takeoffAsync(self):
+            return _Done(lambda: setattr(sim, "up", 3.0))
+
+        def landAsync(self):
+            return _Done(lambda: setattr(sim, "up", 0.0))
+
+        def simGetVehiclePose(self):
+            pos = types.SimpleNamespace(x_val=sim.x, y_val=sim.y, z_val=-sim.up)
+            return types.SimpleNamespace(position=pos)
+
+        def moveByVelocityAsync(self, vx, vy, vz_ned, duration=0.0):
+            sim.v = (float(vx), float(vy), -float(vz_ned))
+            return _Done()
+
+        def simGetImage(self, camera, kind):
+            return None                   # no camera: run_demo skips the frame
+
+    air.MultirotorClient = MultirotorClient
+    return air
+
+
+def _fly_run_demo(args: list[str], patch=None) -> tuple[Path, str]:
+    """demo/run_demo.py main() on the stand-in simulator; returns (out dir,
+    report.md text)."""
+    sim = _Sim()
+    air = _fake_airsim(sim)
+    RD = _load(DEMO / "run_demo.py", "run_demo_headless", {"airsim": air})
+    RD.airsim = air
+    RD.time = types.SimpleNamespace(time=sim.time, sleep=sim.sleep)
+    tmp = Path(tempfile.mkdtemp(prefix="run_demo_"))
+    RD.ROOT = tmp                         # demo/out/<tag> lands in the temp dir
+    if patch is not None:
+        patch(RD)
+    with _argv(["run_demo.py", "--policy", str(POLICY), "--tag", "t"] + args):
+        assert RD.main() == 0
+    out = tmp / "demo" / "out" / "t"
+    return out, (out / "report.md").read_text(encoding="utf-8")
+
+
+def _report_value(report: str, label: str) -> str:
+    for line in report.splitlines():
+        if line.startswith(f"| {label} |") or line.startswith(f"| **{label}** |"):
+            return line.split("|")[2].strip().strip("*").strip()
+    raise AssertionError(f"no '{label}' row in report.md:\n{report}")
+
+
+def test_run_demo_sends_its_dynamic_zone_as_a_dynamic_nfz():
+    """compiler-conform review: `--dynamic` hot-applied a PolygonFence after
+    mission start, which Shield.hot_apply refuses (LockedRuleClass) since
+    2026-10-07. Shown failing first, then the fix: the same zone as the
+    dynamic_nfz it stands for, counted by the dwell from when it went live."""
+    from guardrail.shield import LockedRuleClass
+    RD = _load(DEMO / "run_demo.py", "run_demo_unit", {"airsim": _fake_airsim(_Sim())})
+    policy = load_policy(POLICY)
+    shield = Shield(policy, lookahead_s=3.0, dt=0.5)
+    shield.filter(State(x=0.0, y=0.0, up=15.0), Action4D(vx=1.0))   # mission start
+    try:
+        shield.hot_apply(RD.DYNAMIC_FENCE)            # what main() did until today
+    except LockedRuleClass:
+        pass
+    else:
+        raise AssertionError("the Shield took a polygon_fence after mission start")
+    zone = RD.apply_dynamic_zone(shield, RD.DYNAMIC_FENCE)
+    assert zone.type == "dynamic_nfz" and zone.id == RD.DYNAMIC_FENCE.id
+    assert policy.generation == 1 and zone.motion is None
+    assert [(v.x, v.y) for v in zone.vertices] == [(v.x, v.y) for v in RD.DYNAMIC_FENCE.vertices]
+    pts = [{"t": t, "x": 27.0, "y": 10.0, "up": 15.0} for t in (7.0, 8.0, 9.0)]
+    d = RD.nfz_dwell(shield, pts, spawn_t=8.0)
+    assert d["nfz_by_zone_s"] == {RD.DYNAMIC_FENCE.id: 0.2}, d
+    # The spawn tick logged as t = 8.0 (the trajectory rounds t to 0.01 s)
+    # while the clock read 8.004: that tick still counts.
+    d = RD.nfz_dwell(shield, pts, spawn_t=8.004)
+    assert d["nfz_by_zone_s"] == {RD.DYNAMIC_FENCE.id: 0.2}, d
+    # The count it replaced, policy.by_type(PolygonFence), sees no zone here.
+    from guardrail.models import PolygonFence
+    assert RD.DYNAMIC_FENCE.id not in [f.id for f in policy.by_type(PolygonFence)]
+
+
+def test_run_demo_flies_dynamic_headless_with_the_shield_on():
+    """`python demo/run_demo.py --shield on --dynamic`, end to end. Before
+    today this died on its first shielded tick (AuditLogger.policy_hash is
+    read-only since 2026-08-26), and with that fixed, at t = 8 s
+    (LockedRuleClass)."""
+    out, report = _fly_run_demo(["--shield", "on", "--dynamic"])
+    assert _report_value(report, "Target reached") == "yes", report
+    assert "generation 1" in _report_value(report, "Dynamic NFZ"), report
+    assert "nfz-dynamic" in _report_value(report, "Zones counted"), report
+    assert _report_value(report, "Time inside NFZ") == "0.0 s", report
+    recs = [json.loads(l) for l in (out / "audit.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len({r["policy_hash"] for r in recs}) == 2, (
+        "the audit records must carry the generation after the hot-apply")
+
+
+def test_run_demo_counts_time_inside_its_dynamic_zone_with_the_shield_off():
+    """The control arm, with the zone put on the straight path and spawned
+    early: the dwell names it, and only from when it went live."""
+    from guardrail.models import PolygonFence, XY
+
+    def on_the_path(RD):
+        RD.DYNAMIC_AT_S = 2.0
+        RD.DYNAMIC_FENCE = PolygonFence(
+            id="nfz-dynamic", type="polygon_fence", margin_m=1.0,
+            vertices=[XY(x=24, y=24), XY(x=28, y=24), XY(x=28, y=28), XY(x=24, y=28)])
+    out, report = _fly_run_demo(["--shield", "off", "--dynamic"], on_the_path)
+    by_zone = _report_value(report, "Time inside NFZ, by zone")
+    assert "nfz-dynamic" in by_zone and "nfz-square" in by_zone, report
+    assert float(_report_value(report, "Time inside NFZ").split()[0]) > 0.0, report
+    assert _report_value(report, "Moving zones NOT counted") == "none", report
+
+
+# ----------------------------------------------------------- run_sitl_demo.py
+
+MODE_IDS = {"STABILIZE": 0, "GUIDED": 4, "LOITER": 5, "RTL": 6, "LAND": 9, "BRAKE": 17}
+
+
+def _fly_pymavlink_rail(args: list[str], patch=None, path: Path | None = None):
+    """sitl/run_sitl_demo.py main() against a stand-in autopilot. Returns
+    (out dir, metrics, rows, events, the sim, the module)."""
+    sim = _Sim()
+    fakes = {}
+    if importlib.util.find_spec("pymavlink") is None:
+        pm = types.ModuleType("pymavlink")
+        pm.mavutil = types.SimpleNamespace()
+        fakes["pymavlink"] = pm
+    R = _load(path or (SITL / "run_sitl_demo.py"), "run_sitl_demo_headless", fakes)
+
+    class _M:
+        target_system = target_component = 1
+
+        def mode_mapping(self):
+            return dict(MODE_IDS)
+
+        def set_mode(self, mode_id):
+            sim.modes.append(mode_id)
+
+        def motors_armed(self):
+            return True
+
+    class _Link:
+        def __init__(self, url):
+            self.m = _M()
+
+        def autopilot_fence(self, policy, cruise_alt_m):
+            return {"FENCE_ENABLE": None, "FENCE_ALT_MAX": None,
+                    "fence_alt_max_raised_from": None, "AVOID_ENABLE": None,
+                    "source": "stand-in (tests/test_sitl_rails.py)"}
+
+        def prepare(self, alt_m):
+            sim.up = float(alt_m)
+
+        def state(self, timeout=1.0):
+            return State(x=sim.x, y=sim.y, up=sim.up)
+
+        def send_velocity(self, vx, vy, vz_up, yaw_rate):
+            sim.v = (float(vx), float(vy), float(vz_up))
+
+        def land_disarm(self):            # the real one sets LAND
+            sim.v = (0.0, 0.0, 0.0)
+            sim.modes.append(MODE_IDS["LAND"])
+
+    R.MavlinkAdapter = _Link
+    R.ardupilot_version_from_mavlink = lambda m: {"ardupilot_version": "stand-in"}
+    R.sim_speedup_from_mavlink = lambda m: None
+    R.time = types.SimpleNamespace(time=sim.time, sleep=sim.sleep)
+    tmp = Path(tempfile.mkdtemp(prefix="sitl_rail_"))
+    R.ROOT = tmp
+    if patch is not None:
+        patch(R)
+    with _argv(["run_sitl_demo.py", "--policy", str(POLICY), "--tag", "t"] + args):
+        assert R.main() == 0
+    out = tmp / "demo" / "out" / "t"
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    rows = [json.loads(l) for l in (out / "flight_log.jsonl").read_text(encoding="utf-8").splitlines()]
+    events = [json.loads(l) for l in (out / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    return out, metrics, rows, events, sim, R
+
+
+def _spy_and_force_a_hold(seen: list, hold_at_s: float = 2.0):
+    """Record every tick_input_from_decision call, and make the FSM ask for
+    LOITER once (its own state stays as it is): the rail must send BRAKE."""
+    def patch(R):
+        real_tick = R.tick_input_from_decision
+
+        def spy(*a, **kw):
+            seen.append(kw)
+            return real_tick(*a, **kw)
+        R.tick_input_from_decision = spy
+
+        class OneHold(R.EscalationFSM):
+            forced = False
+
+            def step(self, inp):
+                out = super().step(inp)
+                if not OneHold.forced and inp.t >= hold_at_s:
+                    OneHold.forced = True
+                    out = dataclasses.replace(out, set_mode="LOITER",
+                                              reason="test: the FSM asks for a hold")
+                return out
+        R.EscalationFSM = OneHold
+    return patch
+
+
+def test_the_pymavlink_rail_wires_the_fsm_as_the_other_two_rails():
+    """fsm-standoff-fix review: this rail alone still flew theta on the 0.1 s
+    velocity proxy, gave the FSM no illegal depth and no applied caps, and
+    sent the FSM's LOITER as ArduCopter's LOITER, which sinks with nobody on
+    the throttle (14.2 m to the ground on 7 Oct)."""
+    seen: list = []
+    out, metrics, rows, events, sim, R = _fly_pymavlink_rail(
+        ["--shield", "on"], _spy_and_force_a_hold(seen))
+    assert seen, "the FSM never stepped"
+    assert all(kw.get("horizon_s") is None for kw in seen), \
+        "theta must read each repair's own magnitude_m (DEFAULT_THETA_HORIZON_S)"
+    assert all("unsafe_depth_m" in kw for kw in seen), "X6/X7 got no illegal depth"
+    assert all(kw.get("caps") is not None for kw in seen), \
+        "the FSM must get the caps the Shield clamped against (or False)"
+    assert metrics["fsm"]["theta_basis"] == {"source": "per-operator magnitude_m",
+                                             "horizon_s": None}, metrics["fsm"]
+    assert metrics["fsm"]["hold_mode"] == {"fsm_mode": "LOITER", "autopilot_mode": "BRAKE"}
+    # Every request in both words, and what was SENT is ArduCopter's word:
+    # the FSM's LOITER as BRAKE, never as LOITER.
+    fsm_words, ap_words = metrics["mode_requests"], metrics["autopilot_mode_requests"]
+    assert "LOITER" in fsm_words, fsm_words
+    assert ap_words == [R.autopilot_mode(m) for m in fsm_words], (fsm_words, ap_words)
+    assert "LOITER" not in ap_words and "BRAKE" in ap_words, ap_words
+    assert sim.modes[:len(ap_words)] == [MODE_IDS[m] for m in ap_words], (sim.modes, ap_words)
+    assert MODE_IDS["LOITER"] not in sim.modes, sim.modes
+    req = [e for e in events if e["kind"] == "mode_request"]
+    assert [(e["mode"], e["autopilot_mode"]) for e in req] == \
+        list(zip(fsm_words, ap_words))[:len(req)], req
+    fsm_rows = [r for r in rows if "fsm_state_after" in r]
+    assert fsm_rows and all("unsafe_depth_m" in r for r in fsm_rows)
+    assert any(isinstance(r["unsafe_depth_m"], float) for r in fsm_rows)
+    held = [r for r in fsm_rows if r.get("set_mode") == "LOITER"]
+    assert held and all(r["autopilot_set_mode"] == "BRAKE" for r in held), held
+    # Zone dwell: the shared count, its fields in metrics.json.
+    assert metrics["nfz_moving_not_counted"] == [] and "nfz_by_zone_s" in metrics
+
+
+def test_the_pymavlink_rail_selects_the_one_period_reading_only_when_asked():
+    seen: list = []
+    _, metrics, *_ = _fly_pymavlink_rail(
+        ["--shield", "on", "--theta-horizon-s", "0.1"], _spy_and_force_a_hold(seen))
+    assert {kw.get("horizon_s") for kw in seen} == {0.1}
+    assert metrics["fsm"]["theta_basis"]["horizon_s"] == 0.1
+    assert "one-period" in metrics["fsm"]["theta_basis"]["source"]
+
+
+def test_the_pymavlink_rail_holds_a_refused_fsm_input_as_brake():
+    """A Shield/FSM contract break mid-flight: the rail holds the aircraft as
+    the FSM's Loiter is held, BRAKE, and records both words."""
+    calls = {"n": 0}
+
+    def patch(R):
+        real_tick = R.tick_input_from_decision
+
+        def refuse_fifth(*a, **kw):
+            calls["n"] += 1
+            if calls["n"] == 5:
+                raise ValueError("test: the FSM refused this input")
+            return real_tick(*a, **kw)
+        R.tick_input_from_decision = refuse_fifth
+    _, metrics, rows, events, sim, _ = _fly_pymavlink_rail(["--shield", "on"], patch)
+    assert sim.modes[0] == MODE_IDS["BRAKE"], sim.modes
+    assert MODE_IDS["LOITER"] not in sim.modes
+    assert metrics["fsm"]["fault"] == "test: the FSM refused this input"
+    assert metrics["mode_requests"][0] == "LOITER"
+    assert metrics["autopilot_mode_requests"][0] == "BRAKE"
+    assert any(e["kind"] == "fsm_fault" for e in events)
+    assert all(r["setpoint"] == "none" for r in rows[4:]), "a faulted rail streamed"
+
+
+def _zone_on_the_path(at_s: float):
+    """Patch: the --dynamic zone put on the straight path to (30, 30) and
+    applied `at_s` seconds in. The stand-in, shield off, is inside its
+    footprint from t = 5.7 s to 6.8 s."""
+    from guardrail.models import PolygonFence, XY
+
+    def patch(R):
+        R.DYNAMIC_AT_S = at_s
+        R.DYNAMIC_FENCE = PolygonFence(
+            id="nfz-dynamic", type="polygon_fence", margin_m=1.0,
+            vertices=[XY(x=24, y=24), XY(x=28, y=24), XY(x=28, y=28), XY(x=24, y=28)])
+    return patch
+
+
+def _in_footprint(traj: list, fence) -> list:
+    """Trajectory points inside a zone's AUTHORED polygon and altitude band,
+    worked out here, apart from guardrail.replay.zone_dwell."""
+    from shapely.geometry import Point
+    from guardrail.geometry import fence_polygon
+    poly = fence_polygon(fence)
+    return [p for p in traj if poly.contains(Point(p["x"], p["y"]))
+            and fence.altitude_floor_m <= p["up"] <= fence.altitude_ceiling_m]
+
+
+def test_the_pymavlink_rail_counts_its_dynamic_zone_from_when_it_went_live():
+    """The control arm through a hot-applied dynamic_nfz on the straight path,
+    applied while the aircraft is already inside it: counted (the rails' old
+    by_type(PolygonFence) count would have missed it), and only from the tick
+    it went live, that tick included.
+
+    rails-integration review: this test used to apply the zone before the
+    aircraft got there, so it asserted only that no point was in the zone
+    before the spawn, and dropping live_from from the rail survived it. Now
+    the aircraft is in the footprint on both sides of the spawn, and the
+    count must equal the in-footprint ticks from the spawn on.
+
+    The loop here takes 3 ms per tick besides its 0.1 s sleep, as a real one
+    does, so the clock does not land on the 0.01 s grid. That showed a second
+    defect: the rail compared the trajectory's t, rounded to 0.01 s, with the
+    unrounded spawn time, so the spawn tick (t = 6.283 s, logged 6.28) was
+    dropped whenever the clock read past the rounded value: on a real clock,
+    any spawn reading in the lower half of a 0.01 s step."""
+    on_the_path = _zone_on_the_path(6.2)
+
+    def patch(R):
+        on_the_path(R)
+        sleep = R.time.sleep
+        R.time = types.SimpleNamespace(time=R.time.time,
+                                       sleep=lambda dt: sleep(dt + 0.003))
+    out, metrics, rows, events, _, R = _fly_pymavlink_rail(
+        ["--shield", "off", "--dynamic"], patch)
+    spawn = next(e["t"] for e in events if e["kind"] == "policy_generation"
+                 and e.get("generation") == 1)
+    traj = json.loads((out / "trajectory.json").read_text(encoding="utf-8"))
+    inside = _in_footprint(traj, R.DYNAMIC_FENCE)
+    before = [p for p in inside if p["t"] < round(spawn, 2)]
+    after = [p for p in inside if p["t"] >= round(spawn, 2)]
+    assert before and after, (
+        f"the aircraft must be in the footprint before ({len(before)}) and after "
+        f"({len(after)}) the spawn at {spawn}, or the test proves nothing")
+    assert after[0]["t"] == round(spawn, 2), (after[0], spawn)
+    got = metrics["nfz_by_zone_s"].get("nfz-dynamic")
+    assert got == round(len(after) * R.TICK, 3), (
+        f"nfz-dynamic {got} s; {len(after)} ticks from the spawn on "
+        f"({len(before)} before it must not count)")
+    assert metrics["nfz_by_zone_s"].get("nfz-square", 0) > 0, metrics["nfz_by_zone_s"]
+    assert abs(metrics["nfz_s"] - sum(metrics["nfz_by_zone_s"].values())) < 0.051
+
+
+def test_the_pymavlink_rail_lands_at_mission_end_and_records_it():
+    """A mission that ends without a fail-safe (shield off: target reached)
+    asks for LAND, and that request is on record in both vocabularies."""
+    _, metrics, _, _, sim, _ = _fly_pymavlink_rail(["--shield", "off"])
+    assert metrics["reached"] is True, metrics.get("reached")
+    assert metrics["mode_requests"] == ["LAND"], metrics["mode_requests"]
+    assert metrics["autopilot_mode_requests"] == ["LAND"], metrics["autopilot_mode_requests"]
+    assert sim.modes == [MODE_IDS["LAND"]], sim.modes
+
+
+def test_the_pymavlink_rail_writes_each_generations_cost_map_when_asked():
+    """--cost-map: every generation's CSP names its map, both files are on
+    disk and load as that map, and the replay bundle carries them and still
+    re-derives its KPIs. Without the flag: no map, no ref."""
+    from guardrail.compiler import load_cost_map
+    from guardrail.replay import EPISODE, read_replay, verify_replay
+    out, metrics, _, events, _, _ = _fly_pymavlink_rail(
+        ["--shield", "on", "--dynamic", "--cost-map"])
+    gens = [e for e in events if e["kind"] == "policy_generation"]
+    assert [e["generation"] for e in gens] == [0, 1], gens
+    assert all(e.get("cost_map_ref") for e in gens), gens
+    assert not [e for e in events if e["kind"] == "cost_map_failed"]
+    for g in (0, 1):
+        csp = json.loads((out / f"csp_g{g}.json").read_text(encoding="utf-8"))
+        assert csp["cost_map_ref"] == gens[g]["cost_map_ref"], (g, csp["cost_map_ref"])
+        cm = load_cost_map(out / f"costmap_csp_g{g}.json", ref=csp["cost_map_ref"])
+        assert cm.generation == g and (out / f"costmap_csp_g{g}.npz").is_file()
+    bundle = out / f"{out.name}.replay.tar.gz"
+    members = read_replay(bundle)["index"]["members"]
+    for g in (0, 1):
+        for ext in ("npz", "json"):
+            assert f"{EPISODE}costmap_csp_g{g}.{ext}" in members, sorted(members)
+    ok, why = verify_replay(bundle)
+    assert ok, why
+    # Off by default.
+    out2, _, _, events2, _, _ = _fly_pymavlink_rail(["--shield", "off", "--dynamic"])
+    assert not list(out2.glob("costmap_*")), list(out2.glob("costmap_*"))
+    assert all("cost_map_ref" not in e for e in events2
+               if e["kind"] == "policy_generation")
+
+
+def test_the_ros2_rail_passes_cost_map_and_live_from():
+    """The ROS 2 node cannot fly here (rclpy), so its wiring is read: the
+    --cost-map flag reaches EpisodeRecord, and the dynamic zone's spawn time
+    reaches zone_dwell as live_from, on the trajectory's 0.01 s grid."""
+    N = _node()
+    assert N.make_parser().parse_args(["--cost-map"]).cost_map is True
+    assert N.make_parser().parse_args([]).cost_map is False
+    tree = ast.parse((SITL / "ros2_shield_node.py").read_text(encoding="utf-8"))
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)]
+    recs = [n for n in calls if getattr(n.func, "id", None) == "EpisodeRecord"]
+    assert len(recs) == 1, len(recs)
+    kw = {k.arg: ast.unparse(k.value) for k in recs[0].keywords}
+    assert kw.get("cost_map") in ("args.cost_map", "getattr(args, 'cost_map', False)"), kw
+    dwell = [n for n in calls if getattr(n.func, "id", None) == "zone_dwell"]
+    assert len(dwell) == 1, len(dwell)
+    kw = {k.arg: k.value for k in dwell[0].keywords}
+    assert "live_from" in kw, list(kw)
+    # The shape, not just the names: {zone: spawn time on the 0.01 s grid}
+    # once the zone went live, None before (a `None and {...}` or a constant
+    # condition would still name both).
+    lf = kw["live_from"]
+    assert isinstance(lf, ast.IfExp) and isinstance(lf.body, ast.Dict), ast.unparse(lf)
+    assert ast.unparse(lf.body) == "{self.dynamic_fence_id: round(self.spawn_t, 2)}", \
+        ast.unparse(lf)
+    assert ast.unparse(lf.test) == "self.dynamic_fence_id and self.spawn_t is not None", \
+        ast.unparse(lf)
+    assert ast.unparse(lf.orelse) == "None", ast.unparse(lf)
+
+
+# ------------------------------------------------------- every rail, one count
+
+DWELL_RAILS = ("demo/run_demo.py", "demo/real_vla_demo.py", "demo/aerialvla_demo.py",
+               "demo/aerialvla_pas_demo.py", "demo/semantic_demo.py",
+               "demo/semantic_seek.py", "demo/pas_ardupilot/perception_node.py",
+               "sitl/run_sitl_demo.py", "sitl/ros2_shield_node.py")
+
+
+def test_every_rail_counts_zone_dwell_through_the_shield():
+    """nfz_s, which guardrail/kpi.py reads for the mission outcome, is one
+    count on every rail (guardrail.replay.zone_dwell, demo/follow_vlm.py's
+    count). Until 2026-10-11 each rail walked policy.by_type(PolygonFence)
+    itself, so a declared dynamic_nfz scored 0 s (models.FLIGHT_HELD_TYPES);
+    the two SITL rails counted it, scoring a moving one where it was declared."""
+    for rel in DWELL_RAILS:
+        src = (ROOT / rel).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                 and getattr(n.func, "id", getattr(n.func, "attr", "")) == "zone_dwell"]
+        assert calls, f"{rel} does not count zone dwell through zone_dwell"
+        assert "poly.contains(Point(" not in src, f"{rel} still walks polygons for dwell"
+    for rel in DWELL_RAILS[1:]:
+        src = (ROOT / rel).read_text(encoding="utf-8")
+        if '"nfz_s"' in src:
+            assert '"nfz_moving_not_counted"' in src, (
+                f"{rel} writes nfz_s without naming the zones it could not count")
+
+
+def test_the_pas_planner_routes_around_every_static_zone_and_leaves_moving_ones():
+    """demo/aerialvla_pas_demo.planning_zones feeds the A* planner and the
+    proximity slow-down. Since 2026-10-11 it holds polygon and circle fences
+    and every dynamic_nfz without motion (until then: polygon fences only);
+    a moving dynamic_nfz is left to the Shield, which places it each tick."""
+    from guardrail.models import Policy
+    sq = [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}, {"x": 0, "y": 10}]
+    pol = Policy.model_validate({"policy_id": "plan", "constraints": [
+        {"id": "poly", "type": "polygon_fence", "vertices": sq},
+        {"id": "circ", "type": "circle_fence", "center": {"x": 40, "y": 0},
+         "radius_m": 5},
+        {"id": "dyn", "type": "dynamic_nfz", "vertices": sq},
+        {"id": "mov", "type": "dynamic_nfz", "motion": {"vx_mps": 1.0}, "vertices": sq},
+        {"id": "alt", "type": "altitude_envelope", "alt_min_m": 10, "alt_max_m": 20},
+    ]})
+    A = _load(DEMO / "aerialvla_pas_demo.py", "aerialvla_pas_demo_unit")
+    assert [z.id for z in A.planning_zones(pol)] == ["poly", "circ", "dyn"]
 
 
 if __name__ == "__main__":

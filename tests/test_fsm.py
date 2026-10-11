@@ -164,8 +164,10 @@ def test_trusted_repairs_alone_never_leave_brake():
     assert f.summary()["max_state"] == "Brake"
 
 
-def test_g2_flicker_escalates_on_the_third_onset():
-    f = EscalationFSM()
+def test_g2_flicker_escalates_on_the_third_onset_without_the_debounce():
+    """With onset_clear_s = 0 (the reading before 2026-10-08) every return
+    after one clean tick is a new onset."""
+    f = EscalationFSM(FSMConfig(onset_clear_s=0.0))
     seq = ["V", "C", "V", "C", "V"]
     states = []
     for t, k in zip(clock(5), seq):
@@ -173,6 +175,82 @@ def test_g2_flicker_escalates_on_the_third_onset():
         states.append((o.state, o.edge))
     assert states[:4] == [(S.BRAKE, "G1"), (S.BRAKE, None), (S.BRAKE, None), (S.BRAKE, None)]
     assert states[4] == (S.LOITER, "G2"), states
+
+
+def test_g2_flicker_inside_the_debounce_is_one_violation():
+    """REGRESSION (stress library, 2026-10-07/08). GPS noise of 0.2-0.3 m made
+    a forecast skimming nfz-square's ring violate at 6.1, 6.3 and 6.8 s: three
+    "onsets" in 0.7 s, N-in-T, LOITER, then RTL - on a pass the scenario
+    labels within the error budget (`gps-noise-within-margin`). A violation
+    that returns after a clean spell shorter than onset_clear_s (1.0 s) is
+    the same violation flickering at the 10 Hz monitor. Failed on the old
+    fsm.py, which counted three onsets and went to Loiter at 6.8 s."""
+    f = EscalationFSM()
+    assert f.config.onset_clear_s == 1.0
+    out = {}
+    for t in clock(15, t0=6.0):
+        k = round(t, 1)
+        out[k] = (f.tick(t, "repaired", [hit()], SMALL)
+                  if k in (6.1, 6.3, 6.8) else f.tick(t))
+    assert out[6.8].state == S.BRAKE and out[6.8].record["n_in_t"] == 1, out[6.8].reason
+    assert f.summary()["max_state"] == "Brake"
+
+
+def test_n_in_t_still_catches_a_pilot_who_re_violates_faster_than_the_debounce():
+    """REVIEW (2026-10-09). The first debounce merged every violation that
+    came back within 1 s of a clean spell into the one before, so one-tick
+    hard violations every 0.3, 0.5 or 0.9 s for 30 s never left Brake: the
+    thrash N-in-T (3 in 5 s) exists to catch, switched off. With theta inert
+    and a stop legal nothing else escalates that pattern. The debounce is now
+    a rate limit - at most one counted onset per onset_clear_s - so a pilot
+    who keeps re-violating still makes N onsets in T. Failed on that code
+    (no edge after G1 for any period)."""
+    want = {0.3: [(0.0, "G1"), (2.4, "G2"), (6.0, "G4")],
+            0.5: [(0.0, "G1"), (2.0, "G2"), (5.0, "G4")],
+            0.9: [(0.0, "G1"), (3.6, "G2"), (9.0, "G4")]}
+    for period, expected in want.items():
+        f = EscalationFSM()
+        marks = {round(k * period, 1) for k in range(200)}
+        edges = []
+        for t in clock(300):
+            k = round(t, 1)
+            o = f.tick(t, "repaired", [hit()], SMALL) if k in marks else f.tick(t)
+            if o.edge:
+                edges.append((k, o.edge))
+        assert edges == expected, (period, edges)
+        assert f.summary()["outcome_label"] == "RTL_triggered", period
+    # Every 0.5 s: in Loiter by 3 s with the default config.
+    f = EscalationFSM()
+    for t in clock(31):
+        k = round(t, 1)
+        o = f.tick(t, "repaired", [hit()], SMALL) if (k * 10) % 5 == 0 else f.tick(t)
+    assert f.state == S.LOITER, f.state
+    # A limit that leaves no room for N onsets in T would delete G2 and G4
+    # quietly: refused. (N - 1) x limit == T is the edge, and allowed.
+    raises(ValueError, FSMConfig, onset_clear_s=2.6)
+    assert FSMConfig(onset_clear_s=2.5).onset_clear_s == 2.5
+    assert FSMConfig(onset_clear_s=9.0, event_mode="tick").onset_clear_s == 9.0
+    # A rising edge inside the rate limit is recorded as merged, not dropped
+    # silently.
+    f = EscalationFSM()
+    f.tick(0.0, "repaired", [hit()], SMALL)
+    f.tick(0.1)
+    o = f.tick(0.2, "repaired", [hit()], SMALL)
+    assert o.record["onset_merged"] is True and o.record["n_in_t"] == 1, o.record
+
+
+def test_g2_three_violations_a_debounce_apart_still_escalate():
+    """The debounce does not switch N-in-T off: three violations each after a
+    clean spell of 1.1 s (>= onset_clear_s, < T_recover so Brake does not
+    recover in between) are three onsets in 2.4 s -> Loiter."""
+    f = EscalationFSM()
+    edges = {}
+    for t in clock(25):
+        k = round(t, 1)
+        o = (f.tick(t, "repaired", [hit()], SMALL) if k in (0.0, 1.2, 2.4) else f.tick(t))
+        if o.edge:
+            edges[k] = o.edge
+    assert edges == {0.0: "G1", 2.4: "G2"}, edges
 
 
 def test_g2_slow_thrash_escalates_the_tick_after_the_third_onset():
@@ -189,7 +267,7 @@ def test_g2_slow_thrash_escalates_the_tick_after_the_third_onset():
 
 
 def test_g4_new_onsets_in_loiter_send_rtl():
-    f = EscalationFSM()
+    f = EscalationFSM(FSMConfig(onset_clear_s=0.0))
     to_loiter_via_g3(f)
     seq = ["C", "V", "C", "V", "C", "V"]
     out = [(f.tick(t, "repaired", [hit()], SMALL) if k == "V" else f.tick(t))
@@ -200,10 +278,25 @@ def test_g4_new_onsets_in_loiter_send_rtl():
     assert out[5].setpoint == "none"
 
 
+def test_g4_stays_reachable_with_the_default_debounce():
+    """The onset rate limit (1.0 s) leaves G4 reachable: three violations in
+    Loiter 1.2 s apart all count, and none of the clean spells between them
+    is long enough for G8 (T_recover 2.0 s)."""
+    f = EscalationFSM()
+    to_loiter_via_g3(f)
+    edges = {}
+    for t in clock(40, t0=0.2):
+        k = round(t, 1)
+        o = (f.tick(t, "repaired", [hit()], SMALL) if k in (1.3, 2.5, 3.7) else f.tick(t))
+        if o.edge:
+            edges[k] = o.edge
+    assert edges == {3.7: "G4"}, edges
+
+
 def test_g4_the_onsets_that_caused_the_loiter_do_not_count_again():
     """Without clearing the window on entry, the very next onset would make
     four in the window and fire G4 at once."""
-    f = EscalationFSM()
+    f = EscalationFSM(FSMConfig(onset_clear_s=0.0))
     seq = ["V", "C", "V", "C", "V", "C", "V"]
     out = [(f.tick(t, "repaired", [hit()], SMALL) if k == "V" else f.tick(t))
            for t, k in zip(clock(7), seq)]
@@ -387,6 +480,219 @@ def test_x6_needs_the_position_illegal_on_every_tick_and_a_hard_rule():
     assert f.tick(6.1, "repaired", [hit()], SMALL, stop_illegal=True).edge == "X6"
 
 
+def test_x6_leaves_a_recovery_that_is_working_alone():
+    """REGRESSION (stress library at 10451bc: `altitude-floor-recovery`, three
+    `altitude-recovery-depth` cells, `standoff-reclassified`,
+    `dyn-nfz-spawn-on-top`, `radius-scaling-grow-deep`). X6 sent each of
+    these home at T = 5 s while the recovery was climbing at the 2 m/s cap
+    or leaving a grown zone at 2 m/s - false fail-safes by their labels. With the position's illegal
+    depth falling at >= 0.1 m/s over T, X6 waits; the old fsm.py fired X6 at
+    5.0 s here."""
+    f = EscalationFSM()
+    edges = []
+    for i, t in enumerate(clock(90)):
+        depth = max(0.0, 8.0 - 0.2 * t)       # climbing out at 0.2 m/s
+        o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=depth > 0,
+                   unsafe_depth_m=depth)
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+    assert edges == [(0.0, "G1")], edges
+    assert o.record["x6_progress"]["progressing"] is True, o.record["x6_progress"]
+
+
+def test_x6_still_fires_on_a_position_that_is_not_getting_better():
+    """Held 3 m inside (a wind beyond the cap), or creeping out slower than
+    0.1 m/s: no progress, X6 at T, as before. A tick with no depth reported
+    is no evidence of progress."""
+    for depths in ((3.0,) * 60, tuple(3.0 - 0.005 * i for i in range(60)),
+                   (None,) * 60):
+        f = EscalationFSM()
+        edges = []
+        for t, dep in zip(clock(60), depths):
+            o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=True,
+                       unsafe_depth_m=dep)
+            if o.edge:
+                edges.append((round(t, 1), o.edge))
+        assert edges == [(0.0, "G1"), (5.0, "X6")], (depths[:3], edges)
+
+
+def test_x7_a_recovery_losing_ground_goes_home_before_t():
+    """`wind-beyond-authority` (5 m/s tailwind, 4 m/s cap): once the Shield's
+    repairs are trusted, the wind carries the aircraft into the zone and
+    through its 16 m in about 3.5 s - under X6's T. X7 fires once the
+    illegal depth has GROWN for T_recover while the Shield recovers."""
+    f = EscalationFSM()
+    edges = []
+    for t in clock(40):
+        depth = 3.0 * t                         # pushed in at 3 m/s net
+        o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=True,
+                   unsafe_depth_m=depth)
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+    assert edges == [(0.0, "G1"), (2.0, "X7")], edges
+    assert f.summary()["outcome_label"] == "RTL_triggered"
+    # Noise around a steady depth is not losing ground.
+    f = EscalationFSM()
+    for i, t in enumerate(clock(40)):
+        o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=True,
+                   unsafe_depth_m=3.0 + (0.05 if i % 2 else -0.05))
+        assert o.edge in (None, "G1"), (t, o.reason)
+
+
+def test_x7_is_not_fooled_by_position_noise_on_a_working_recovery():
+    """REVIEW (2026-10-09). X7 compared two depth samples T_recover apart and
+    fired on a rise of 0.2 m: with 0.2-0.3 m of position noise (the harness's
+    GPS noise; the perception rail's subject range is far noisier) it sent
+    working recoveries home - 40 of 200 seeded runs at 0.5 m/s and sigma
+    0.3 m, 176 of 200 at 0.3 m/s. It now fits a least-squares slope over the
+    window and needs it above x6_min_escape_mps at two standard errors and a
+    fitted rise of x7_min_rise_m. 50 seeds each: no X7 on a working
+    recovery; the 3 m/s push-in still fires X7 at 2.0 s through the same
+    noise. Failed on the two-sample X7."""
+    import random as _r
+    for sigma, v in ((0.3, 0.5), (0.3, 0.3), (0.2, 0.2)):
+        for seed in range(50):
+            rng = _r.Random(seed)
+            f = EscalationFSM()
+            for t in clock(150):
+                d = max(0.0, 10.0 - v * t + rng.gauss(0.0, sigma))
+                o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=True,
+                           unsafe_depth_m=d)
+                assert o.edge != "X7", (sigma, v, seed, round(t, 1), o.reason)
+    for seed in range(50):
+        rng = _r.Random(seed)
+        f = EscalationFSM()
+        edge = None
+        for t in clock(40):
+            o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=True,
+                       unsafe_depth_m=max(0.0, 3.0 * t + rng.gauss(0.0, 0.3)))
+            if o.edge in ("X6", "X7"):
+                edge = (round(t, 1), o.edge)
+                break
+        assert edge == (2.0, "X7"), (seed, edge)
+
+
+def test_x7_needs_a_rise_beyond_its_floor_and_a_slope_beyond_the_noise():
+    """Each of X7's two guards on its own. A slow sink (0.2 m/s, 0.4 m in
+    T_recover, under the 0.5 m floor) is not "losing ground" for X7; X6
+    still sends it home at T. A rise of 0.6 m whose slope (0.3 m/s) does not
+    stand out of +/-0.5 m of tick-to-tick noise (two standard errors, 0.38
+    m/s) is not shown either. Either guard removed, X7 fired at 2.0 s."""
+    for name, depth in (("floor", lambda i, t: 3.0 + 0.2 * t),
+                        ("noise", lambda i, t: 3.0 + 0.3 * t + 0.5 * (-1) ** i)):
+        f = EscalationFSM()
+        edges = []
+        for i, t in enumerate(clock(80)):
+            o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=True,
+                       unsafe_depth_m=depth(i, t))
+            if o.edge:
+                edges.append((round(t, 1), o.edge))
+        assert edges == [(0.0, "G1"), (5.0, "X6")], (name, edges)
+
+
+def test_x7_needs_a_hard_violation_on_the_tick():
+    """X7 escalates a recovery the SHIELD is still fighting on a hard rule.
+    A tick with no violation, or only a soft one, is not that, however the
+    depth moves (X6 has the same condition)."""
+    f = EscalationFSM()
+    edges = []
+    for t in clock(30):
+        k = round(t, 1)
+        if 2.0 <= k < 2.3:
+            o = f.tick(t, "clean", stop_illegal=True, unsafe_depth_m=3.0 * t)
+        elif 2.3 <= k < 2.6:
+            o = f.tick(t, "repaired", [hit(ctype="soft")], SMALL, stop_illegal=True,
+                       unsafe_depth_m=3.0 * t)
+        else:
+            o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=True,
+                       unsafe_depth_m=3.0 * t)
+        if o.edge:
+            edges.append((k, o.edge))
+            if o.edge == "X7":
+                break
+    assert edges == [(0.0, "G1"), (2.6, "X7")], edges
+
+
+def test_x7_reads_the_last_t_recover_not_t():
+    """A recovery that worked for 4 s (falling 2 m/s) and then starts losing
+    ground (rising 1.5 m/s) is caught on the last T_recover (2 s): X7 at
+    5.3 s. Read over T (5 s), the fall would hide the rise until well after
+    that."""
+    f = EscalationFSM()
+    edges = []
+    for t in clock(120):
+        d = 10.0 - 2.0 * t if t <= 4.0 else 2.0 + 1.5 * (t - 4.0)
+        o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=True, unsafe_depth_m=d)
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+            if o.edge in ("X6", "X7"):
+                break
+    assert edges == [(0.0, "G1"), (5.3, "X7")], edges
+    assert o.record["x7_losing"]["span_s"] == 2.0, o.record["x7_losing"]
+
+
+def test_x6_reads_its_trend_over_the_whole_of_t():
+    """X6's window is T (5 s), so the depth buffer must keep a sample T old.
+    Falling at 1 m/s for 3 s, then flat: at 5.0 s the fit over [0, 5] still
+    shows the recovery working and X6 waits; it fires once the flat part
+    dominates the window (6.9 s). Kept only T_recover (2 s) of samples, the
+    window would be flat at 5.0 s and X6 would fire then."""
+    f = EscalationFSM()
+    edges, at5 = [], None
+    for t in clock(150):
+        o = f.tick(t, "repaired", [hit()], SMALL, stop_illegal=True,
+                   unsafe_depth_m=max(2.0, 5.0 - t))
+        if abs(t - 5.0) < 1e-6:
+            at5 = o.record["x6_progress"]
+        if o.edge:
+            edges.append((round(t, 1), o.edge))
+    assert at5["from_t_s"] == 0.0 and at5["progressing"] is True, at5
+    assert edges == [(0.0, "G1"), (6.9, "X6")], edges
+
+
+def test_a_replayed_clean_row_inside_a_zone_keeps_x6_s_clock():
+    """tick_input_from_row reads `unsafe` / `unsafe_rules` and
+    `unsafe_depth_m` on CLEAN rows too, as the live Shield passes them on
+    every tick: a clean tick inside a zone (a pilot already leaving) keeps
+    X6's clock running, and only a legal position restarts it. Read as legal,
+    the clean rows at 2.1-2.5 s restarted the clock and X6 came 2.6 s late."""
+    from guardrail.fsm import tick_input_from_row
+    rep_ = [{"operator": "GeofenceEscape", "detail": "", "magnitude_m": 1.0,
+             "axis": "lateral", "recovery": True}]
+    rows = []
+    for t in clock(80):
+        k = round(t, 1)
+        row = {"t": t, "unsafe": True, "unsafe_depth_m": 3.0,
+               "raw": {"vx": 0.0, "vy": 0.0, "vz_up": 0.0},
+               "emitted": {"vx": 1.0, "vy": 0.0, "vz_up": 0.0},
+               "emitted_violations": [], "braked": False}
+        if not (2.1 <= k <= 2.5):
+            row.update(violations=[{"rule_id": "nfz", "category": "geofence"}],
+                       repairs=rep_)
+        rows.append(row)
+    f = EscalationFSM()
+    edges = []
+    for row in rows:
+        inp = tick_input_from_row(row)
+        if 2.1 <= round(row["t"], 1) <= 2.5:
+            assert inp.outcome == "clean" and inp.stop_illegal is True, inp
+            assert inp.unsafe_depth_m == 3.0
+        o = f.step(inp)
+        if o.edge:
+            edges.append((round(row["t"], 1), o.edge))
+    assert edges == [(0.0, "G1"), (5.0, "X6")], edges
+
+
+def test_unsafe_depth_is_validated():
+    for bad in (-0.1, float("nan"), "3", True):
+        try:
+            TickInput(t=0.0, outcome="clean", unsafe_depth_m=bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"unsafe_depth_m={bad!r} accepted")
+    assert TickInput(t=0.0, outcome="clean", unsafe_depth_m=2).unsafe_depth_m == 2.0
+
+
 def test_x6_bounds_a_loiter_held_inside_the_zone():
     """Nowhere legal to stop and no repair converging: the grant's ladder puts
     the aircraft in LOITER (G3), which holds it in the violation. X6 sends it
@@ -511,13 +817,14 @@ def _edge_scripts():
     loit = dict(outcome="blocked", violations=[hit(action="loiter")])
     stuck = dict(rep, stop_illegal=True)
     clean = {}
-    flick = [(0.0, rep), (0.1, clean), (0.2, rep), (0.3, clean), (0.4, rep)]
+    # Returns a debounce apart (onset_clear_s 1.0 s, T_recover 2.0 s).
+    thrash = [(0.0, rep), (0.1, clean), (1.2, rep), (1.3, clean), (2.4, rep)]
     return {
         "G1": run(None, [(0.0, rep)]),
-        "G2": run(None, flick),
+        "G2": run(None, thrash),
         "G3": run(None, [(0.0, big), (0.1, big)]),
-        "G4": run(None, [(0.0, big), (0.1, big), (0.2, clean), (0.3, rep),
-                         (0.4, clean), (0.5, rep), (0.6, clean), (0.7, rep)]),
+        "G4": run(None, [(0.0, big), (0.1, big), (0.2, clean), (1.3, rep),
+                         (1.4, clean), (2.5, rep), (2.6, clean), (3.7, rep)]),
         "G5": run(None, [(0.0, blk), (0.1, blk), (30.1, blk)]),
         "G6": run(None, [(0.0, rtl), (0.1, dict(rtl_failed=True))]),
         "G7": run(None, [(0.0, rep), (0.1, clean), (2.1, clean)]),
@@ -532,6 +839,9 @@ def _edge_scripts():
         "X4": run(None, [(0.0, loit)]),
         "X5": run(None, [(0.0, rtl), (0.1, dict(landed=True))]),
         "X6": run(None, [(0.0, stuck), (2.5, stuck), (5.0, stuck)]),
+        "X7": run(None, [(0.0, dict(stuck, unsafe_depth_m=1.0)),
+                         (1.0, dict(stuck, unsafe_depth_m=1.5)),
+                         (2.0, dict(stuck, unsafe_depth_m=2.0))]),
     }
 
 
@@ -1079,9 +1389,19 @@ def test_a_real_shield_decision_maps_onto_the_fsm():
     assert (slide.repairs[0].axis, slide.repairs[0].magnitude_m) == ("lateral", 3.0)
     assert (per_op.magnitude.lateral_m, per_op.magnitude.vertical_m) == (3.0, 0.0)
     assert EscalationFSM().step(per_op).edge == "X1"
-    # The Shield's own FSM (already in Brake from the clamp above) judged the
-    # same 3.0 m over theta and escalated by G3.
+    # The Shield's own FSM (already in Brake from the clamp above) judges the
+    # same 3.0 m over theta on its default basis and escalates by G3.
     assert slide.fsm_record["theta_exceeded"] is True and slide.fsm_edge == "G3"
+    # A Shield opted into the one-period reading measures the setpoint change
+    # over one control period, 0.42 m, under theta: trusted, it stays in
+    # Brake (the reading a builder made the default on 2026-10-08, reverted
+    # pending the PI).
+    one = Shield(pol, lookahead_s=3.0, dt=0.5, theta_horizon_s=0.1)
+    one.filter(st, Action4D(vx=8.0))
+    s1 = one.filter(State(x=0, y=15, up=15), Action4D(vx=3.0))
+    assert s1.fsm_record["theta_exceeded"] is False and s1.fsm_edge is None
+    assert math.isclose(s1.fsm_record["magnitude"]["lateral_m"],
+                        math.hypot(3.0, 3.0) * 0.1, rel_tol=1e-6)
     one_tick = tick_input_from_decision(0.0, slide, pol, 0.1)
     assert math.isclose(one_tick.magnitude.lateral_m, math.hypot(3.0, 3.0) * 0.1)
     assert EscalationFSM().step(one_tick).edge == "G1"
@@ -1130,6 +1450,38 @@ def test_the_proxy_measures_from_the_clamped_raw_action():
     raises(ValueError, KinematicCaps, 0.0, 2.0)
     raises(ValueError, KinematicCaps, 4.0, float("nan"))
     assert KinematicCaps.from_policy(SimpleNamespace(constraints=[])) is None
+
+
+def test_a_watched_only_cap_is_no_cap_and_a_caller_can_say_it_applied_none():
+    """REGRESSION (2026-10-09). shield.py never clamps a `monitor_only`
+    kinematic envelope, but `KinematicCaps.from_policy` counted it, so a raw
+    action over it with a slide on the tick was refused as "the wrong policy
+    for this run": on the one-period basis, an FSM fault and LOITER. A caller
+    that knows it clamped against nothing passes caps=False."""
+    from guardrail.fsm import KinematicCaps
+    kin = SimpleNamespace(type="kinematic_envelope", speed_max_mps=4.0,
+                          climb_rate_max_mps=2.0, violation_action="monitor_only")
+    hard = SimpleNamespace(type="kinematic_envelope", speed_max_mps=6.0,
+                           climb_rate_max_mps=3.0, violation_action="repair")
+    assert KinematicCaps.from_policy(SimpleNamespace(constraints=[kin])) is None
+    caps = KinematicCaps.from_policy(SimpleNamespace(constraints=[kin, hard]))
+    assert (caps.speed_max_mps, caps.climb_rate_max_mps) == (6.0, 3.0)
+    assert KinematicCaps.of([]) is None
+    raw = SimpleNamespace(vx=6.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)
+    em = SimpleNamespace(vx=6.0, vy=4.0, vz_up=0.0, yaw_rate=0.0)
+    slide = SimpleNamespace(operator="GeofenceSlide", magnitude_m=1.0, axis="lateral",
+                            recovery=False)
+    d = SimpleNamespace(violations=[SimpleNamespace(rule_id="nfz")], repairs=[slide],
+                        braked=False, emitted_violations=[], relaxed=[], raw=raw, emitted=em)
+    pol = SimpleNamespace(constraints=[SimpleNamespace(
+        id="cap", type="kinematic_envelope", speed_max_mps=4.0, climb_rate_max_mps=2.0,
+        violation_action="repair", constraint_type="hard", priority="P1")])
+    raises(ValueError, tick_input_from_decision, 0.0, d, pol, 0.1)   # "wrong policy"
+    inp = tick_input_from_decision(0.0, d, pol, 0.1, caps=False)
+    assert math.isclose(inp.magnitude.lateral_m, 0.4), inp.magnitude
+    raises(ValueError, tick_input_from_decision, 0.0, d, pol, 0.1, caps=True)
+    # On the default basis (per-operator magnitude_m) the caps are not read.
+    assert tick_input_from_decision(0.0, d, pol).magnitude.lateral_m == 1.0
 
 
 def test_recovery_operators_are_exempt_from_theta_as_in_the_reference():

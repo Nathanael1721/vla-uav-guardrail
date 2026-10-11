@@ -34,7 +34,7 @@
     after_fpv: ["img", "progress_0930_after_fpv.jpg"], est_on_car: ["img", "progress_0930_estimate_on_car.png"],
     within30: ["img", "progress_0930_within_30m.png"], signals: ["img", "citylife_signals_junction_4100_4100.png"],
     retarget: ["img", "mideval/retarget_car_person.jpg"], flow_tracking: ["img", "flowchart_tracking.svg"],
-    flow_system: ["img", "flowchart_system.svg"],
+    flow_system: ["img", "flowchart_system.svg"], g1_airborne: ["img", "g1_pas_ardupilot_airborne.png"],
     v_nfz_hud: ["video", "citylife_redcar_nfz_policy_hud.mp4"], v_identity: ["video", "citylife_redcar_identity.mp4"],
     v_before_after: ["video", "progress_0930_before_after.mp4"], v_demo_nfz: ["video", "demo_nfz.mp4"],
     v_retarget: ["video", "retarget_smooth.mp4"], v_demo_follow: ["video", "demo_follow.mp4"],

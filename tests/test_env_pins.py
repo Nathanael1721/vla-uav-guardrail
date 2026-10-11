@@ -70,7 +70,9 @@ DESIGN_DOC = ROOT / "docs" / "DESIGN-python-versions.md"
 CORE = {"pydantic": "pydantic", "pydantic_core": "pydantic", "yaml": "pyyaml",
         "shapely": "shapely", "numpy": "numpy", "jinja2": "jinja2"}
 EXTRA = {"cryptography": "signing", "fastapi": "api", "uvicorn": "api",
-         "tokenizers": "tokens"}
+         "tokenizers": "tokens", "grpc": "harness", "google": "harness"}
+# Import name -> distribution name, where the two differ.
+DIST_OF = {"grpc": "grpcio", "google": "protobuf"}
 # Whole modules that exist only for an extra; importing them needs the extra.
 EXTRA_ONLY_MODULES = {"api"}
 # VLA-slot occupants: run from the source tree in the VLA env, not packaged
@@ -215,10 +217,26 @@ def test_signing_is_an_extra_named_signing_that_brings_cryptography():
 
 
 def test_only_the_guardrail_package_is_packaged():
-    """demo/, tools/, training/ and the OpenVLA code must never become installable."""
+    """demo/, tools/, training/ and the OpenVLA code must never become installable.
+    Sub-packages of guardrail (guardrail.protos, the harness's stubs) are fine."""
     pk = _pyproject()["tool"]["setuptools"].get("packages")
-    assert pk == ["guardrail"], f"packages = {pk!r}"
+    assert pk and pk[0] == "guardrail" and all(p.startswith("guardrail.") for p in pk[1:]), \
+        f"packages = {pk!r}"
+    for p in pk[1:]:
+        init = ROOT.joinpath(*p.split(".")) / "__init__.py"
+        assert init.is_file(), f"{p} is packaged but {init.relative_to(ROOT)} does not exist"
     assert (ROOT / "guardrail" / "__init__.py").is_file()
+    # The other direction: every sub-package on disk is listed. setuptools'
+    # explicit `packages` does not recurse, so a dropped entry builds a wheel
+    # that ships guardrail/protos/harness.proto (package data) without the
+    # harness_pb2*.py stubs beside it, and `import guardrail.harness_service`
+    # fails only after install.
+    on_disk = {".".join(init.parent.relative_to(ROOT).parts)
+               for init in (ROOT / "guardrail").rglob("__init__.py")
+               if "__pycache__" not in init.parts}
+    assert on_disk == set(pk), (f"packages = {pk!r}, sub-packages on disk "
+                                f"{sorted(on_disk)}: unlisted {sorted(on_disk - set(pk))}, "
+                                f"listed but absent {sorted(set(pk) - on_disk)}")
 
 
 def test_every_data_file_in_the_package_is_shipped():
@@ -246,7 +264,7 @@ def test_every_import_guardrail_makes_is_declared():
                 continue
             if name in EXTRA:
                 extra = EXTRA[name]
-                if name not in {_dist(r) for r in extras.get(extra, [])}:
+                if DIST_OF.get(name, name) not in {_dist(r) for r in extras.get(extra, [])}:
                     problems.append(f"{mod}: {name} not in extra [{extra}]")
                 elif not (guarded or lazy or mod in EXTRA_ONLY_MODULES):
                     problems.append(f"{mod}: imports optional {name} unguarded at module level")

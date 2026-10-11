@@ -626,7 +626,8 @@ SIM_POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
 
 
 def _episode(d: Path, hot: bool = True, mission: bool = True,
-             stale_audit: bool = False, finish: bool = True, ids: bool = True):
+             stale_audit: bool = False, finish: bool = True, ids: bool = True,
+             cost_map: bool = False):
     """A short synthetic flight written the way the SITL rails write one:
     EpisodeRecord first, then the audit logger, rows with the per-tick
     fields (and the episode id), a hot-applied fence half way, and the
@@ -644,7 +645,7 @@ def _episode(d: Path, hot: bool = True, mission: bool = True,
     policy = load_policy(SIM_POLICY)
     m = (ConstraintCompiler(policy).parse_command("fly to the northeast pad at 6 m/s")
          if mission else None)
-    rec = EpisodeRecord(run, policy, m, lookahead_s=3.0)
+    rec = EpisodeRecord(run, policy, m, lookahead_s=3.0, cost_map=cost_map)
     audit = AuditLogger(run / "audit.jsonl", policy)
     shield = Shield(policy, lookahead_s=3.0, dt=0.5)
     rows = []
@@ -1274,6 +1275,366 @@ def test_a_rail_runs_one_escalation_fsm_and_its_audit_records_that_one():
         both = Shield(policy, lookahead_s=5.0, dt=0.1)
         d2 = both.filter(approach, Action4D(vx=6.0))
         assert d2.fsm_record is not None, "the default Shield no longer runs an FSM"
+
+
+# --------------------------------------------------------------------------- #
+# Cost maps in the episode and the bundle (2026-10-11)
+# --------------------------------------------------------------------------- #
+
+def test_a_cost_map_travels_with_the_csp_that_names_it():
+    """EpisodeRecord(cost_map=True): every generation's CSP names its map,
+    drawn at the CSP's clock and the mission's cruise height, and the bundle
+    carries both files and lists the ref per generation."""
+    from guardrail.compiler import load_cost_map
+    d = _tmp()
+    run, policy, rec, _ = _episode(d, cost_map=True)
+    for g in (0, 1):
+        csp = json.loads((run / f"csp_g{g}.json").read_text(encoding="utf-8"))
+        assert csp["cost_map_ref"], csp["cost_map_ref"]
+        cm = load_cost_map(run / f"costmap_csp_g{g}.json", ref=csp["cost_map_ref"])
+        assert cm.generation == g and cm.header["altitude_m"] == rec.mission.cruise_alt_m
+    assert [r["cost_map_ref"] is not None for r in rec.generations] == [True, True]
+    _scored(run, policy, rec)
+    path = write_replay(run, policy, d / "r.tar.gz", signer=None)
+    got = read_replay(path)
+    for g in (0, 1):
+        for ext in ("npz", "json"):
+            assert EPISODE + f"costmap_csp_g{g}.{ext}" in got["index"]["members"]
+    assert all(r.get("cost_map_ref") for r in got["index"]["generations"])
+    ok, why = verify_replay(path)
+    assert ok, why
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_without_cost_maps_nothing_changes():
+    """The default: no map, no cost_map_ref, no row key, no costmap files."""
+    d = _tmp()
+    run, policy, rec, _ = _episode(d)
+    assert not list(run.glob("costmap_*"))
+    assert all("cost_map_ref" not in r for r in rec.generations)
+    path = write_replay(run, policy, d / "r.tar.gz", signer=None)
+    assert all("cost_map_ref" not in r for r in read_replay(path)["index"]["generations"])
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_csp_naming_a_cost_map_that_is_not_on_file_is_refused():
+    d = _tmp()
+    run, policy, _, _ = _episode(d, cost_map=True)
+    (run / "costmap_csp_g1.npz").unlink()
+    try:
+        write_replay(run, policy, d / "r.tar.gz", signer=None)
+    except ValueError as exc:
+        assert "costmap_csp_g1.npz is not on file" in str(exc), exc
+    else:
+        raise AssertionError("a CSP naming a missing cost map was bundled")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_cost_map_that_is_not_the_one_its_csp_names_is_refused():
+    """Generation 0's map put in generation 1's place: same policy id, both
+    files intact and self-consistent, the wrong map."""
+    d = _tmp()
+    run, policy, _, _ = _episode(d, cost_map=True)
+    for ext in ("npz", "json"):
+        (run / f"costmap_csp_g1.{ext}").write_bytes(
+            (run / f"costmap_csp_g0.{ext}").read_bytes())
+    # The header names its npz by file name; keep it pointing at g1's.
+    js = run / "costmap_csp_g1.json"
+    doc = json.loads(js.read_text(encoding="utf-8"))
+    doc["npz"] = "costmap_csp_g1.npz"
+    js.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    try:
+        write_replay(run, policy, d / "r.tar.gz", signer=None)
+    except ValueError as exc:
+        assert "is not the cost map csp_g1.json names" in str(exc), exc
+    else:
+        raise AssertionError("generation 1 shipped generation 0's cost map")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_cost_map_no_csp_names_is_refused():
+    d = _tmp()
+    run, policy, _, _ = _episode(d)
+    (run / "costmap_csp_g0.json").write_text("{}", encoding="utf-8")
+    try:
+        write_replay(run, policy, d / "r.tar.gz", signer=None)
+    except ValueError as exc:
+        assert "csp_g0.json names no cost map" in str(exc), exc
+    else:
+        raise AssertionError("a stray cost map was bundled")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_tampered_cost_grid_inside_a_consistent_keyless_bundle_is_refused():
+    """The digest of a KEYLESS bundle can be recomputed by a forger; the cost
+    map's own header digests cannot be, without changing its ref, which the
+    CSP holds."""
+    import numpy as np
+    d = _tmp()
+    run, policy, rec, _ = _episode(d, cost_map=True)
+    _scored(run, policy, rec)
+    good = write_replay(run, policy, d / "good.tar.gz", signer=None)
+    name = EPISODE + "costmap_csp_g0.npz"
+    with tarfile.open(good, "r:gz") as tar:
+        idx = json.loads(tar.extractfile(INDEX_NAME).read())
+        with np.load(io.BytesIO(tar.extractfile(name).read())) as z:
+            arrays = {k: z[k].copy() for k in z.files}
+    arrays["cost"] = np.zeros_like(arrays["cost"])           # "free everywhere"
+    buf = io.BytesIO()
+    np.savez_compressed(buf, **arrays)
+    data = buf.getvalue()
+    idx["members"][name] = _digest(data)
+    ib = json.dumps(idx, indent=2, sort_keys=True).encode()
+    forged = _rewrite_many(good, d / "forged.tar.gz", {
+        name: data, INDEX_NAME: ib,
+        SIGNATURE_NAME: f"{_digest(ib)} {_SIGNED_BY}\n".encode()})
+    ok, why = verify_replay(forged)
+    assert not ok and "is not the cost map csp_g0.json names" in why[0], (ok, why)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_rerun_moves_the_previous_flights_cost_maps_aside():
+    from guardrail.replay import EpisodeRecord, STALE_PATTERNS
+    assert "costmap_csp_g*.npz" in STALE_PATTERNS and "costmap_csp_g*.json" in STALE_PATTERNS
+    d = _tmp()
+    run, policy, _, _ = _episode(d, hot=False, cost_map=True)
+    rec2 = EpisodeRecord(run, load_policy(SIM_POLICY), None)
+    assert not list(run.glob("costmap_*")), list(run.glob("costmap_*"))
+    assert {"costmap_csp_g0.npz", "costmap_csp_g0.json"} <= set(rec2.moved)
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_refused_cost_map_is_said_and_the_csp_is_still_written():
+    """A map the compiler refuses (here: drawn at Mon 08:00 for a CSP with
+    no clock) costs the generation its map, never its CSP, and says why."""
+    from datetime import datetime
+    from guardrail import compiler as C
+    real = C.ConstraintCompiler.cost_map
+
+    def wrong_clock(self, **kw):
+        kw["now"] = datetime(2026, 10, 12, 8, 0)
+        return real(self, **kw)
+    C.ConstraintCompiler.cost_map = wrong_clock
+    try:
+        d = _tmp()
+        run, _, rec, _ = _episode(d, hot=False, cost_map=True)
+    finally:
+        C.ConstraintCompiler.cost_map = real
+    csp = json.loads((run / "csp_g0.json").read_text(encoding="utf-8"))
+    assert csp["cost_map_ref"] is None and not list(run.glob("costmap_*"))
+    assert rec.generations[0]["csp"] and rec.generations[0]["cost_map_ref"] is None
+    ev = [json.loads(l) for l in (run / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    failed = [e for e in ev if e["kind"] == "cost_map_failed"]
+    assert len(failed) == 1 and "rasterised at clock" in failed[0]["error"], failed
+    shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_self_consistent_map_of_the_right_generation_but_not_the_named_one_is_refused():
+    """rails-integration review: the only wrong-map test put generation 0's
+    map in generation 1's place, which the policy-generation check refuses
+    before the CSP's ref is ever compared, so dropping `ref=ref` from
+    _cost_map_problems survived. Here the map is generation 0's own policy,
+    intact and self-consistent, drawn 40 m above the cruise height: only the
+    ref the CSP holds tells it apart."""
+    from guardrail.compiler import ConstraintCompiler, load_cost_map
+    d = _tmp()
+    run, policy, rec, _ = _episode(d, hot=False, cost_map=True)
+    g0 = load_policy(SIM_POLICY)                 # generation 0, as flown
+    other = ConstraintCompiler(g0).cost_map(
+        now=None, altitude_m=rec.mission.cruise_alt_m + 40.0)
+    named = json.loads((run / "csp_g0.json").read_text(encoding="utf-8"))["cost_map_ref"]
+    assert other.ref != named, "the substitute must be another map"
+    other.save(run / "costmap_csp_g0")
+    # It passes every check but the ref: same policy and generation, digests
+    # intact, its header's own ref.
+    load_cost_map(run / "costmap_csp_g0.json", g0)
+    _scored(run, policy, rec)
+    try:
+        write_replay(run, policy, d / "r.tar.gz", signer=None)
+    except ValueError as exc:
+        assert "is not the cost map csp_g0.json names" in str(exc), exc
+        assert named in str(exc), exc
+    else:
+        raise AssertionError("a map drawn at another height shipped as the CSP's map")
+    shutil.rmtree(d, ignore_errors=True)
+
+
+class _TickingClock:
+    """An hour later on every call: a CSP and its map drawn from two clock
+    readings carry two instants."""
+
+    def __init__(self):
+        from datetime import datetime
+        self.t0, self.calls = datetime(2026, 10, 12, 8, 0, 0), 0
+
+    def __call__(self):
+        from datetime import timedelta
+        self.calls += 1
+        return self.t0 + timedelta(hours=self.calls - 1)
+
+
+def test_each_generations_csp_and_cost_map_share_one_clock_reading():
+    """rails-integration review: every EpisodeRecord cost-map test ran without
+    a clock, so drawing the map with now=None (or reading the clock again)
+    survived. Here the clock moves on every call: each generation's CSP and
+    its map must carry the same reading, the one taken for that generation."""
+    from guardrail.compiler import ConstraintCompiler, load_cost_map
+    from guardrail.models import PolygonFence, XY
+    from guardrail.replay import EpisodeRecord
+    from guardrail.shield import Shield
+    d = _tmp()
+    run = d / "ep"
+    policy = load_policy(SIM_POLICY)
+    m = ConstraintCompiler(policy).parse_command("fly to the northeast pad at 6 m/s")
+    clock = _TickingClock()
+    rec = EpisodeRecord(run, policy, m, lookahead_s=3.0, clock=clock, cost_map=True)
+    shield = Shield(policy, lookahead_s=3.0, dt=0.5)
+    rec.apply_zone(shield, PolygonFence(
+        id="nfz-dynamic", type="polygon_fence",
+        vertices=[XY(x=23, y=6), XY(x=31, y=6), XY(x=31, y=14), XY(x=23, y=14)],
+        margin_m=1.0), t=2.0)
+    assert clock.calls == 2, f"{clock.calls} clock readings for two generations"
+    ev = [json.loads(l) for l in (run / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert not [e for e in ev if e["kind"] in ("cost_map_failed", "csp_failed")], ev
+    for g in (0, 1):
+        reading = clock.t0.replace(hour=clock.t0.hour + g)
+        csp = json.loads((run / f"csp_g{g}.json").read_text(encoding="utf-8"))
+        assert csp["cost_map_ref"], (g, csp["cost_map_ref"])
+        assert csp["selection"]["time_filter"] is True, g
+        assert csp["issued_at"].startswith(reading.isoformat(timespec="seconds")), \
+            (g, csp["issued_at"])
+        cm = load_cost_map(run / f"costmap_csp_g{g}.json", ref=csp["cost_map_ref"])
+        assert cm.header["clock"] == reading.isoformat(), (g, cm.header["clock"])
+    shutil.rmtree(d, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------- #
+# Zone dwell, one count for every rail (2026-10-11)
+# --------------------------------------------------------------------------- #
+
+_SQ = [{"x": 0, "y": 0}, {"x": 10, "y": 0}, {"x": 10, "y": 10}, {"x": 0, "y": 10}]
+
+
+def _dwell_policy():
+    """A policy DECLARING every keep-out type. Built with Policy.model_validate:
+    the flight loaders still hold a policy file with a dynamic_nfz
+    (models.FLIGHT_HELD_TYPES) until every rail counts it, which is what the
+    test below shows they now do."""
+    from guardrail.models import Policy
+    return Policy.model_validate({"policy_id": "dwell", "constraints": [
+        {"id": "sq", "type": "polygon_fence", "vertices": _SQ, "margin_m": 2.0,
+         "altitude_floor_m": 0, "altitude_ceiling_m": 50},
+        {"id": "circ", "type": "circle_fence", "center": {"x": 40, "y": 0},
+         "radius_m": 5},
+        {"id": "dyn", "type": "dynamic_nfz", "vertices": [
+            {"x": 20, "y": 20}, {"x": 30, "y": 20}, {"x": 30, "y": 30}, {"x": 20, "y": 30}]},
+        {"id": "mov", "type": "dynamic_nfz", "motion": {"vx_mps": 1.0}, "vertices": [
+            {"x": 60, "y": 60}, {"x": 70, "y": 60}, {"x": 70, "y": 70}, {"x": 60, "y": 70}]},
+    ]})
+
+
+def test_zone_dwell_counts_a_declared_dynamic_nfz_and_names_a_moving_one():
+    """The silent zero models.FLIGHT_HELD_TYPES exists for: every rail but
+    follow_vlm counted policy.by_type(PolygonFence), so time inside a
+    declared dynamic_nfz scored 0 s. zone_dwell counts it; a moving zone is
+    named, not scored 0; the margin ring and the band are the rule's."""
+    from guardrail.replay import zone_dwell
+    from guardrail.shield import Shield
+    sh = Shield(_dwell_policy(), escalation=False)
+    pts = [{"x": 5, "y": 5, "up": 10},       # sq
+           {"x": 5, "y": 5, "up": 60},       # sq, above its band: not counted
+           {"x": 11, "y": 5, "up": 10},      # sq's margin ring, not its polygon
+           {"x": 40, "y": 2, "up": 10},      # circ
+           {"x": 25, "y": 25, "up": 10},     # dyn (static, declared)
+           {"x": 25, "y": 25, "up": 10},     # dyn
+           {"x": 65, "y": 65, "up": 10},     # mov: named, not counted
+           {"x": -50, "y": -50, "up": 10}]   # nowhere
+    got = zone_dwell(sh, pts, 0.1)
+    assert got["nfz_by_zone_s"] == {"circ": 0.1, "dyn": 0.2, "sq": 0.1}, got
+    assert got["nfz_ticks"] == 4 and abs(got["nfz_s"] - 0.4) < 1e-9, got
+    assert got["nfz_moving_not_counted"] == ["mov"], got
+    assert got["nfz_counted_zones"] == ["sq", "circ", "dyn"], got
+    assert got["nfz_first_index"] == 0
+    # The first point INSIDE a counted zone (semantic_seek's t_first_nfz_entry
+    # is this index times the tick): above the band and in the margin ring
+    # do not count, nor does a moving zone.
+    assert zone_dwell(sh, pts[1:], 0.1)["nfz_first_index"] == 2
+    assert zone_dwell(sh, pts[6:], 0.1)["nfz_first_index"] is None
+    # The count every rail used until 2026-10-11, on the same points.
+    from shapely.geometry import Point
+    from guardrail.geometry import fence_polygon
+    from guardrail.models import PolygonFence
+    pol = sh.policy
+    legacy = sum(1 for p in pts for f in pol.by_type(PolygonFence)
+                 if f.altitude_floor_m <= p["up"] <= f.altitude_ceiling_m
+                 and fence_polygon(f).contains(Point(p["x"], p["y"])))
+    assert legacy == 2, "the old count saw only the polygon and circle fences"
+
+
+def test_zone_dwell_counts_a_hot_applied_zone_only_once_it_is_live():
+    from guardrail.models import Action4D, State
+    from guardrail.replay import zone_dwell
+    from guardrail.shield import Shield, as_dynamic_nfz
+    from guardrail.models import PolygonFence, XY
+    sh = Shield(load_policy(SIM_POLICY), escalation=False)
+    sh.filter(State(x=-50, y=-50, up=15), Action4D())          # mission started
+    sh.hot_apply(as_dynamic_nfz(PolygonFence(
+        id="nfz-dynamic", type="polygon_fence",
+        vertices=[XY(x=23, y=6), XY(x=31, y=6), XY(x=31, y=14), XY(x=23, y=14)],
+        margin_m=1.0)))
+    pts = [{"t": t, "x": 27.0, "y": 10.0, "up": 15.0} for t in (7.0, 7.9, 8.0, 8.1)]
+    got = zone_dwell(sh, pts, 0.1, live_from={"nfz-dynamic": 8.0, "ghost": 1.0})
+    assert got["nfz_by_zone_s"] == {"nfz-dynamic": 0.2}, got
+    assert got["nfz_live_from_unknown"] == ["ghost"], got
+    assert zone_dwell(sh, pts, 0.1)["nfz_ticks"] == 4, "without live_from: every point"
+    try:
+        zone_dwell(sh, [{"x": 27.0, "y": 10.0, "up": 15.0}], 0.1,
+                   live_from={"nfz-dynamic": 8.0})
+    except ValueError as exc:
+        assert "no 't'" in str(exc), exc
+    else:
+        raise AssertionError("a point with no time was counted against a live time")
+    for bad in (0, -0.1, float("inf"), float("nan")):
+        try:
+            zone_dwell(sh, pts, bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"tick_s={bad!r} accepted")
+
+
+def test_zone_dwell_agrees_with_the_old_count_on_every_shipped_policy():
+    """The stored nfz_s figures were counted over policy.by_type(PolygonFence).
+    On the shipped policies (which declare no dynamic_nfz) the new count must
+    give the same number on the same points, or every stored figure moved."""
+    import random
+    from shapely.geometry import Point
+    from guardrail.geometry import fence_polygon
+    from guardrail.models import PolygonFence
+    from guardrail.replay import zone_dwell
+    from guardrail.shield import Shield
+    rng = random.Random(11)
+    n_hit = n_pol = 0
+    for path in sorted((ROOT / "policies").glob("*.yaml")):
+        try:
+            pol = load_policy(path)
+        except Exception:                              # noqa: BLE001
+            continue                                   # not a flight policy
+        fences = pol.by_type(PolygonFence)
+        if not fences:
+            continue
+        n_pol += 1
+        xs = [v.x for f in fences for v in f.vertices]
+        ys = [v.y for f in fences for v in f.vertices]
+        pts = [{"x": rng.uniform(min(xs) - 10, max(xs) + 10),
+                "y": rng.uniform(min(ys) - 10, max(ys) + 10),
+                "up": rng.uniform(0, 60)} for _ in range(300)]
+        legacy = sum(1 for p in pts for f in fences
+                     if f.altitude_floor_m <= p["up"] <= f.altitude_ceiling_m
+                     and fence_polygon(f).contains(Point(p["x"], p["y"])))
+        got = zone_dwell(Shield(pol, escalation=False), pts, 0.1)["nfz_ticks"]
+        assert got == legacy, (path.name, got, legacy)
+        n_hit += legacy
+    assert n_pol >= 5 and n_hit > 0, (n_pol, n_hit)
 
 
 if __name__ == "__main__":

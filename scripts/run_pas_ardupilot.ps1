@@ -186,7 +186,8 @@ if ($Step -eq "check") {
         if ($pr.Count -gt 0) { Say "$exe has $($pr.Count) inbound-allow program rule(s) (may cover its UDP port too; not checked)" }
     }
     Say "WSL side"
-    $rt = (wsl.exe -d $Distro -- sh -c "command -v mavlink-routerd || echo MISSING") -join ""
+    # the router is built into ~/.local/bin, which start_ardupilot.sh puts on PATH
+    $rt = (wsl.exe -d $Distro -- sh -c 'command -v mavlink-routerd || test -x ~/.local/bin/mavlink-routerd && echo found || echo MISSING') -join ""
     if ($rt -match "MISSING") { Warn "mavlink-routerd not installed in ${Distro}: the MAVProxy fallback will be used (not the grant's router; Mission Planner TCP is then 5791)" }
     else { Say "mavlink-routerd: $rt" }
     wsl.exe -d $Distro -- bash "$(ConvertTo-WslPath $Root)/sitl/setup_sitl.sh" --verify

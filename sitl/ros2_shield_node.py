@@ -68,17 +68,32 @@ Shield page locks it (3 s at 0.5 s until 2026-10-07).
 ESCALATION (WP3-07 wiring). With the Shield on, every decision goes through
 guardrail.fsm.EscalationFSM (docs/DESIGN-escalation-fsm.md, "Integration").
 Its mode requests go to the adapter on /shield/mode_request. Theta is applied
-to the Shield's per-operator Repair.magnitude_m when shield.py reports it,
-else to the velocity proxy with an explicit horizon (0.1 s, which cannot fire
-on these flights); the source is recorded in metrics.json as
-`fsm.theta_basis`. Flown with magnitude_m on 2026-10-07, the default mission
-left Normal at the first tick (a forecast penetration of 8.1 m against theta
-2.0 m), and ArduCopter's LOITER, with no RC input on SITL, descended to the
-ground (docs/DESIGN-ros2-interface.md, "Escalation FSM wiring"). This node
+to the Shield's per-operator Repair.magnitude_m (the default basis,
+guardrail.fsm.DEFAULT_THETA_HORIZON_S); `--theta-horizon-s 0.1` selects the
+one-period reading (the setpoint change over one 0.1 s control period, a PI
+question, docs/DESIGN-escalation-fsm.md). The source is recorded in
+metrics.json as `fsm.theta_basis`. Flown with magnitude_m on
+2026-10-07, the default mission left Normal at the first tick (a forecast
+penetration of 8.1 m against theta 2.0 m), and ArduCopter's LOITER, with no
+RC input on SITL, descended to the ground (docs/DESIGN-ros2-interface.md,
+"Escalation FSM wiring"); the FSM's LOITER is now flown as ArduCopter's
+BRAKE (the adapter's hold mode, mavlink_adapter_node.DEFAULT_HOLD_MODE). The
+FSM also gets the position's illegal depth (Shield.unsafe_depth) for X6's
+progress and X7's losing-ground tests, logged as `unsafe_depth_m`, and the
+caps the Shield clamped against (Shield.applied_caps). Mode requests are
+recorded in the FSM's words and ArduCopter's (`mode_requests`,
+`autopilot_mode_requests`; mavlink_adapter_node.ModeRequests). This node
 runs the one FSM: its Shield is built without an FSM of its own
 (guardrail.replay.rail_shield), because only the node sees the autopilot, and
 each audit record carries the node's FSM verdict and its log row's tick
 number (guardrail.replay.audit_tick).
+
+ZONE DWELL AND COST MAP (2026-10-11). `nfz_s` is the count every rail shares
+(guardrail.replay.zone_dwell, read from the Shield's rule checker): polygon
+and circle fences and every dynamic_nfz that does not move, the hot-applied
+zone from when it went live; a moving zone is named in
+`nfz_moving_not_counted` instead of being scored where it was declared.
+`--cost-map` gives each generation's CSP its cost map (EpisodeRecord).
 
 Run (after `source /opt/ros/jazzy/setup.bash`; normally via run_ros2_demo.sh
 or the launch file in sitl/ros2_ws):
@@ -111,7 +126,8 @@ from guardrail import Action4D, AuditLogger, Shield, State             # noqa: E
 from guardrail.bundle import load_for_flight                              # noqa: E402
 from guardrail.compiler import ConstraintCompiler                         # noqa: E402
 from guardrail.frames import from_body, to_body                           # noqa: E402
-from guardrail.fsm import (FAILSAFE_STATES, EscalationFSM, FSMConfig,     # noqa: E402
+from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa: E402
+                           THETA_HORIZON_S, EscalationFSM, FSMConfig,
                            tick_input_from_decision)
 from guardrail.geometry import fence_polygon                              # noqa: E402
 from guardrail.kpi import compute_from_dir                                # noqa: E402
@@ -127,11 +143,11 @@ from guardrail.models import (AltitudeEnvelope, PolygonFence,             # noqa
 from guardrail.replay import (EpisodeRecord, audit_tick,                  # noqa: E402
                               episode_row_fields, flown_fields,
                               kpi_evidence_grade, rail_shield,
-                              verify_replay, write_replay)
-from guardrail.shield import Repair                                       # noqa: E402
-from mavlink_adapter_node import (FENCE_MARGIN_M, TOPIC_FENCES,           # noqa: E402
-                                  TOPIC_MODE_REQUEST, TOPIC_SETPOINT,
-                                  TOPIC_STATUS, fence_alt_plan,
+                              verify_replay, write_replay, zone_dwell)
+from mavlink_adapter_node import (DEFAULT_HOLD_MODE, FENCE_MARGIN_M,      # noqa: E402
+                                  HOLD_MODES, TOPIC_FENCES, TOPIC_MODE_REQUEST,
+                                  TOPIC_SETPOINT, TOPIC_STATUS, ModeRequests,
+                                  fence_alt_plan,
                                   heading_deg_from_enu_quaternion,
                                   policy_ceiling_m, policy_fences, read_parm,
                                   zones_near)
@@ -154,8 +170,9 @@ ON_AIRCRAFT_HALF_M = 5.0
 def keepout_zones(policy) -> list:
     """Every keep-out zone with vertices: polygon and circle fences, and the
     dynamic_nfz a mid-flight zone becomes where the Shield enforces the
-    grant's update model. (A moving dynamic_nfz is drawn and scored where it
-    was spawned; the rails spawn static ones.)"""
+    grant's update model. (A moving dynamic_nfz is drawn where it was
+    spawned; zone dwell is guardrail.replay.zone_dwell, which names a moving
+    zone instead of scoring it.)"""
     return [c for c in getattr(policy, "constraints", [])
             if getattr(c, "type", "") in ("polygon_fence", "circle_fence",
                                           "dynamic_nfz")
@@ -179,10 +196,11 @@ LOOKAHEAD_DT_S = 0.1
 # take-off and recorded (hil_evidence.autopilot_fence).
 FENCE_PARAMS = ("FENCE_ENABLE", "FENCE_TYPE", "FENCE_ACTION", "FENCE_ALT_MAX",
                 "FENCE_MARGIN", "AVOID_ENABLE")
-# The FSM's theta needs a per-operator magnitude (Repair.magnitude_m). Until
-# shield.py reports it, the velocity proxy with this horizon is used, and the
-# basis is written into metrics.json.
-PROXY_HORIZON_S = 0.1
+# The one-period reading of theta (guardrail.fsm.THETA_HORIZON_S, 0.1 s):
+# selectable with --theta-horizon-s 0.1, not the default (the per-operator
+# magnitude_m is). The name is kept for the tests and tools that read it; the
+# basis a run used is written into metrics.json.
+PROXY_HORIZON_S = THETA_HORIZON_S
 # After the autopilot takes the aircraft away from the Shield (a GeoFence
 # breach RTL, a pilot on the GCS), how long to keep recording before ending
 # the episode if it has not landed.
@@ -233,7 +251,8 @@ def build_row(*, now: float, tick: int, state: State, body: Action4D,
               emitted_body: Action4D | None, shield_on: bool, extra: dict,
               subject: tuple | None, fsm_out=None, stop_illegal=None,
               mode: str | None = None, setpoint: str = "pass",
-              shield: Shield | None = None) -> dict:
+              shield: Shield | None = None,
+              unsafe_depth: float | None = None) -> dict:
     """The per-tick row, in the shape guardrail/kpi.py reads.
 
     raw / emitted stay in the world frame the Shield's checks use (kpi.py's
@@ -276,6 +295,8 @@ def build_row(*, now: float, tick: int, state: State, body: Action4D,
                     "fsm_state_after": fsm_out.state.value,
                     "fsm_edge": fsm_out.edge, "set_mode": fsm_out.set_mode,
                     "stop_illegal": bool(stop_illegal),
+                    "unsafe_depth_m": (None if unsafe_depth is None
+                                       else round(unsafe_depth, 4)),
                     "failsafe": bool(fsm_out.transition
                                      and fsm_out.state in FAILSAFE_STATES)})
     elif shield_on is False:
@@ -287,16 +308,27 @@ def theta_basis(horizon_s: float | None) -> dict:
     """How theta's repair magnitude is measured on this run."""
     if horizon_s is None:
         return {"source": "per-operator magnitude_m", "horizon_s": None}
-    return {"source": "velocity proxy |dv| * h (guardrail.fsm.magnitude_from_actions)",
+    one = abs(horizon_s - THETA_HORIZON_S) < 1e-9
+    return {"source": ("setpoint change |dv| over one control period, the one-period "
+                       "reading (guardrail.fsm.THETA_HORIZON_S; selectable, pending "
+                       "the PI)" if one else
+                       "velocity proxy |dv| * h (guardrail.fsm.magnitude_from_actions)"),
             "horizon_s": horizon_s,
-            "note": ("at h = 0.1 s the theta cap cannot fire on these flights "
-                     "(docs/DESIGN-escalation-fsm.md); N-in-T, X6 and direct "
-                     "RTL / Land / Loiter actions are live")}
+            "note": ("under a 4-5 m/s / 2 m/s envelope a clamped command changes by "
+                     "at most 1.0 / 0.4 m per period, so the theta cap cannot fire "
+                     "on these flights (docs/DESIGN-escalation-fsm.md); 'no operator "
+                     "converged', N-in-T, X6, X7 and direct RTL / Land / Loiter "
+                     "actions are live")}
 
 
 def default_theta_horizon() -> float | None:
-    return None if "magnitude_m" in getattr(Repair, "model_fields", {}) \
-        else PROXY_HORIZON_S
+    """The basis a run uses unless --theta-horizon-s says otherwise:
+    guardrail.fsm.DEFAULT_THETA_HORIZON_S, None - each repair's own
+    magnitude_m, which shield.py reports since 2026-10-07. (On 2026-10-08 a
+    builder made the one-period reading the default and called it the
+    grant's; reverted the next day: the grant's p5 audit example does not
+    support it, and under the shipped caps it can never exceed theta.)"""
+    return DEFAULT_THETA_HORIZON_S
 
 
 def percentile(values: list[float], q: float) -> float | None:
@@ -370,7 +402,8 @@ if HAVE_ROS:
             # Episode record FIRST: it moves an earlier flight's audit and
             # generation files aside, so the logger below starts a fresh file.
             self.rec = EpisodeRecord(out, self.policy, self.mission,
-                                     lookahead_s=LOOKAHEAD_S)
+                                     lookahead_s=LOOKAHEAD_S,
+                                     cost_map=getattr(args, "cost_map", False))
             (out / "prompt.yaml").write_text(compiler.build_prompt(self.mission),
                                              encoding="utf-8")
             # No escalation FSM inside the Shield: this node runs THE FSM,
@@ -389,6 +422,10 @@ if HAVE_ROS:
             cfg = FSMConfig.from_yaml(args.fsm_config) if args.fsm_config else FSMConfig()
             self.fsm = EscalationFSM(cfg) if self.shield_on else None
             self.fsm_fault: str | None = None
+            self.hold_mode = getattr(args, "hold_mode", DEFAULT_HOLD_MODE)
+            # What was asked of the autopilot, in the FSM's words and
+            # ArduCopter's, and which request explains a mode change.
+            self._asks = ModeRequests(self.hold_mode)
 
             # A DECLARED subject, so subject_standoff rules bind on a rail with
             # no camera. Ground truth, not perception.
@@ -446,7 +483,6 @@ if HAVE_ROS:
             self.failsafe_t: float | None = None
             self.n_pose = 0
             self._last_rate_req = 0.0
-            self._requested_modes: list[str] = []
 
             self.create_subscription(PoseStamped, "/mavros/local_position/pose",
                                      self._on_pose, qos_profile_sensor_data)
@@ -504,6 +540,8 @@ if HAVE_ROS:
             if msg.mode != self.mode:
                 self.rec.event("mode", t=self._t(), mode=msg.mode,
                                previous=self.mode, armed=bool(msg.armed))
+                if msg.mode == "GUIDED":
+                    self._asks.entered_guided()
                 if (self.mission_t0 is not None and not self.done
                         and self.mode == "GUIDED" and msg.mode != "GUIDED"
                         and self.takeover is None
@@ -516,8 +554,12 @@ if HAVE_ROS:
             self.mode = msg.mode
 
         def _fsm_asked(self, mode: str) -> bool:
-            """Did this node ask for the mode the autopilot just entered?"""
-            return mode in self._requested_modes
+            """Did this node ask for the mode the autopilot just entered, since
+            the aircraft last came back to GUIDED? A LOITER request sent through
+            the adapter is flown as the adapter's hold mode (BRAKE by default,
+            LOITER with its --hold-mode LOITER), so either counts for it
+            (ModeRequests.explains)."""
+            return self._asks.explains(mode)
 
         def _on_ext(self, msg: ExtendedState) -> None:
             self.landed = msg.landed_state == LANDED_STATE_ON_GROUND
@@ -630,16 +672,19 @@ if HAVE_ROS:
         def _request_mode(self, mode: str, why: str) -> None:
             """Through the adapter (WP3-09); straight to MAVROS only when no
             adapter is listening, and the record says which."""
-            self._requested_modes.append(mode)
             via = "adapter"
-            if self.count_subscribers(TOPIC_MODE_REQUEST) > 0:
+            to_adapter = self.count_subscribers(TOPIC_MODE_REQUEST) > 0
+            ap = self._asks.ask(mode, via_adapter=to_adapter)
+            if to_adapter:
+                # The FSM's vocabulary: the adapter maps LOITER to its hold mode.
                 self.pub_mode.publish(String(data=mode))
             elif self.cli_mode.service_is_ready():
-                self.cli_mode.call_async(SetMode.Request(custom_mode=mode))
-                via = "mavros (no adapter subscribed)"
+                self.cli_mode.call_async(SetMode.Request(custom_mode=ap))
+                via = f"mavros (no adapter subscribed) as {ap}"
             else:
                 via = "nobody: set_mode not ready"
-            self.rec.event("mode_request", t=self._t(), mode=mode, why=why, via=via)
+            self.rec.event("mode_request", t=self._t(), mode=mode, autopilot_mode=ap,
+                           why=why, via=via)
             self.get_logger().info(f"{mode} requested ({why}) via {via}")
 
         def _publish_body(self, a: Action4D) -> None:
@@ -1003,6 +1048,7 @@ if HAVE_ROS:
 
             fsm_out = None
             stop_illegal = None
+            unsafe_depth = None
             setpoint = "pass"
             # Once the autopilot has taken the aircraft (a GeoFence RTL), the
             # FSM no longer steps: its mode requests would fight the autopilot.
@@ -1010,13 +1056,19 @@ if HAVE_ROS:
                     and self.takeover is None:
                 try:
                     stop_illegal = self.shield.state_is_unsafe(st)
+                    # How far from legal: X6's progress and X7's losing-ground
+                    # tests read its trend.
+                    unsafe_depth = self.shield.unsafe_depth(st, stop_illegal)
                     inp = tick_input_from_decision(
                         now, decision, self.policy, horizon_s=self.theta_horizon_s,
                         rtl_failed=False,
                         home_reached=(self.mode == "RTL"
                                       and math.hypot(st.x, st.y) < REACH_M),
                         landed=bool(self.landed) and self.mode in ("RTL", "LAND"),
-                        stop_illegal=stop_illegal)
+                        stop_illegal=stop_illegal, unsafe_depth_m=unsafe_depth,
+                        # The caps the Shield clamped against on this tick,
+                        # not every cap the policy lists (Shield.applied_caps).
+                        caps=self.shield.applied_caps or False)
                     fsm_out = self.fsm.step(inp)
                 except ValueError as e:
                     # A Shield/FSM contract break mid-flight: hold, say why,
@@ -1067,7 +1119,7 @@ if HAVE_ROS:
                 emitted_body=flown, shield_on=self.shield_on, extra=extra,
                 subject=self.subject, fsm_out=fsm_out,
                 stop_illegal=stop_illegal, mode=self.mode, setpoint=setpoint,
-                shield=self.shield))
+                shield=self.shield, unsafe_depth=unsafe_depth))
 
             # The episode ends when the autopilot has the aircraft and is done
             # with it: landed, or a bounded wait so a run stays short.
@@ -1109,19 +1161,24 @@ if HAVE_ROS:
             self._report()
 
         def _report(self) -> None:
+            # Drawn in the plot below.
             fences = [(f, fence_polygon(f)) for f in keepout_zones(self.policy)]
-
-            def active(f, p):
-                if f.id == self.dynamic_fence_id:
-                    return self.spawn_t is not None and p["t"] >= self.spawn_t
-                return True
-
-            from shapely.geometry import Point
-            inside = sum(1 for p in self.traj for f, poly in fences
-                         if active(f, p)
-                         and f.altitude_floor_m <= p["up"] <= f.altitude_ceiling_m
-                         and poly.contains(Point(p["x"], p["y"])))
-            nfz_s = inside * TICK
+            # Zone dwell from the Shield's own rule checker, the count every
+            # rail shares (guardrail.replay.zone_dwell); the hot-applied zone
+            # counts from when it went live, and a moving zone is named, not
+            # scored where it was declared (as it was until 2026-10-11). The
+            # spawn time on the trajectory's 0.01 s grid (traj "t" is rounded
+            # so), or the spawn tick is dropped when the clock read past it.
+            self.dwell = zone_dwell(
+                self.shield, self.traj, TICK,
+                live_from=({self.dynamic_fence_id: round(self.spawn_t, 2)}
+                           if self.dynamic_fence_id and self.spawn_t is not None
+                           else None))
+            nfz_s = self.dwell["nfz_s"]
+            if self.dwell["nfz_moving_not_counted"]:
+                self.get_logger().warn(
+                    f"moving zone(s) {self.dwell['nfz_moving_not_counted']} are NOT "
+                    f"in nfz_s: the end-of-flight count has no per-tick position")
             kpi = "PASS" if nfz_s == 0 else "FAIL"
 
             try:
@@ -1197,6 +1254,8 @@ if HAVE_ROS:
                 # mission expresses reaching the target in its units.
                 "frac_within_30m": 1.0 if self.reached else 0.0,
                 "nfz_s": round(nfz_s, 2),
+                "nfz_by_zone_s": self.dwell["nfz_by_zone_s"],
+                "nfz_moving_not_counted": self.dwell["nfz_moving_not_counted"],
                 **self._standoff_metrics(),
                 "alt_violation_s": round(alt_s, 2),
                 "interventions": self.n_touched,
@@ -1216,6 +1275,11 @@ if HAVE_ROS:
                          "theta_basis": theta_basis(self.theta_horizon_s),
                          "fault": self.fsm_fault} if self.fsm else None),
                 "autopilot_took_over": self.takeover,
+                # Both vocabularies (mavlink_adapter_node.ModeRequests): the
+                # FSM's words, and what ArduCopter was asked for (a request
+                # through the adapter is flown as the adapter's hold mode).
+                "mode_requests": list(self._asks.fsm),
+                "autopilot_mode_requests": list(self._asks.autopilot),
                 "fence_upload": (self.fence_status[-1] if self.fence_status else None),
                 "fence_uploads": self.fence_status,
                 "fences_still_deferred": self.deferred_fences,
@@ -1370,8 +1434,18 @@ def make_parser() -> argparse.ArgumentParser:
     ap.add_argument("--fsm-config", default=None,
                     help="escalation FSM thresholds YAML (guardrail.fsm.FSMConfig)")
     ap.add_argument("--theta-horizon-s", default="auto",
-                    help="'auto' (per-operator magnitude when shield.py reports "
-                         "it, else the 0.1 s proxy), 'none', or seconds")
+                    help="'auto' (the default basis, guardrail.fsm."
+                         "DEFAULT_THETA_HORIZON_S: per-operator magnitude_m, the "
+                         "forecast depth), 'none' (the same, explicitly), or seconds "
+                         "(0.1 = the one-period reading: the setpoint change over one "
+                         "control period; pending the PI)")
+    ap.add_argument("--hold-mode", choices=list(HOLD_MODES), default=DEFAULT_HOLD_MODE,
+                    help="ArduCopter mode the FSM's Loiter is flown as when no adapter "
+                         "is subscribed (the adapter's own --hold-mode otherwise)")
+    ap.add_argument("--cost-map", action="store_true",
+                    help="give every generation's CSP its cost map (costmap_csp_g<N>"
+                         ".npz/.json, named in cost_map_ref; guardrail.replay."
+                         "EpisodeRecord)")
     return ap
 
 

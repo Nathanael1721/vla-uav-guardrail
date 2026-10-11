@@ -1105,6 +1105,129 @@ def test_main_without_frames_says_no_frame_and_off_sends_the_old_prompt():
         (out / "trajectory.json").read_text(encoding="utf-8")))
 
 
+def test_with_cost_map_every_csp_names_the_map_written_beside_it():
+    """--cost-map (optional, 2026-10-11): the CSP carries cost_map_ref, the map
+    drawn with the CSP's own clock reading and at the cruise height, saved as
+    costmap_<csp stem>.npz / .json next to the CSP, where load_cost_map
+    resolves the ref. The default stays without one."""
+    from guardrail.compiler import load_cost_map
+    out = Path(tempfile.mkdtemp())
+    pol = load_policy(URBAN)
+    fp = _fp(pol, cost_map=True)
+    rec = fp.current()
+    fp.attach(out, "csp/run-c")
+    assert rec["cost_map_ref"] and rec["cost_map_ref"] == fp.csp.cost_map_ref, rec
+    assert rec["cost_map_error"] is None
+    stem = Path(rec["csp_file"]).stem
+    assert rec["cost_map_file"] == f"csp/run-c/costmap_{stem}.json", rec["cost_map_file"]
+    cm = load_cost_map(out / rec["cost_map_file"], pol, ref=fp.csp.cost_map_ref)
+    assert cm.header["altitude_m"] == _mission().cruise_alt_m and cm.header["clock"] is None
+    assert (out / f"csp/run-c/costmap_{stem}.npz").is_file()
+    on_disk = CSP.model_validate_json((out / rec["csp_file"]).read_text(encoding="utf-8"))
+    assert on_disk.cost_map_ref == cm.ref
+    # Off by default: no ref, no map file, no record keys.
+    plain = _fp(load_policy(URBAN))
+    prec = plain.current()
+    plain.attach(Path(tempfile.mkdtemp()), "csp/run-d")
+    assert plain.csp.cost_map_ref is None and "cost_map_ref" not in prec
+    assert "cost_map_file" not in prec
+    # With the CSP off nothing names a map, and the record says so.
+    off = _rec(load_policy(URBAN), csp_on=False, cost_map=True)
+    assert off["cost_map_ref"] is None and "CSP is off" in off["cost_map_error"]
+
+
+def test_a_cost_map_that_cannot_be_drawn_leaves_the_csp_without_one_and_says_why():
+    from guardrail import compiler as C
+    real = C.ConstraintCompiler.cost_map
+
+    def broken(self, **kw):
+        raise ValueError("test: nothing to rasterise")
+    C.ConstraintCompiler.cost_map = broken
+    try:
+        fp = _fp(load_policy(URBAN), cost_map=True)
+        rec = fp.current()
+    finally:
+        C.ConstraintCompiler.cost_map = real
+    assert fp.csp is not None and fp.csp.cost_map_ref is None
+    assert rec["cost_map_ref"] is None
+    assert rec["cost_map_error"] == "ValueError: test: nothing to rasterise"
+    # The post-load recount keeps the reason too.
+    fp.set_tokenizer(CharTokenizer())
+    after = fp.current()
+    assert after["cost_map_error"] == "ValueError: test: nothing to rasterise", after
+    assert after["cost_map_ref"] is None and "cost_map_file" not in after
+
+
+def test_the_post_load_recount_keeps_every_cost_map_field():
+    """rails-integration review: set_tokenizer rebuilt the record with
+    prompt_record() and copied back only csp_file, so a --cost-map run whose
+    preflight had no tokenizer.json wrote vla_run.json's "prompt" without
+    cost_map_ref, cost_map_file or cost_map_error, while the CSP and its map
+    sat on disk. Failed before the fix: ref and file None, the error key gone."""
+    out = Path(tempfile.mkdtemp())
+    fp = _fp(load_policy(URBAN), tokenizer=None, cost_map=True)
+    fp.current()
+    fp.attach(out, "csp/run-t")
+    before = dict(fp.current())
+    assert before["cost_map_ref"] and before["cost_map_file"], before
+    assert "cost_map_error" in before and before["cost_map_error"] is None
+    fp.set_tokenizer(CharTokenizer())
+    after = fp.current()
+    assert after["token_method"] == rv.TOKENS_EXACT
+    for k in ("csp_file", "cost_map_ref", "cost_map_file", "cost_map_error"):
+        assert k in after and after[k] == before[k], (k, before.get(k), after.get(k))
+    assert (out / after["cost_map_file"]).is_file()
+    assert fp.n_compiles == 1, "recounting recompiled the CSP"
+
+
+class _TickingClock:
+    """A clock that is an hour later on every call: a CSP and its map drawn
+    from two readings would carry two instants, which compile_csp refuses."""
+
+    def __init__(self):
+        from datetime import datetime
+        self.t0, self.calls = datetime(2026, 10, 12, 8, 0, 0), 0
+
+    def __call__(self):
+        from datetime import timedelta
+        self.calls += 1
+        return self.t0 + timedelta(hours=self.calls - 1)
+
+
+def test_the_csp_and_its_cost_map_share_one_clock_reading():
+    """rails-integration review: every cost-map test ran with clock=None, so a
+    FlightPrompt drawing its map with now=None (or reading the clock twice)
+    survived. Here the clock moves on every call: the CSP and its map must
+    carry the same, first, reading."""
+    from guardrail.compiler import load_cost_map
+    clock = _TickingClock()
+    pol = load_policy(URBAN)
+    out = Path(tempfile.mkdtemp())
+    fp = _fp(pol, cost_map=True, clock=clock)
+    rec = fp.current()
+    fp.attach(out, "csp/run-k")
+    assert clock.calls == 1, f"the clock was read {clock.calls} times for one CSP"
+    assert rec["cost_map_error"] is None and rec["cost_map_ref"], rec
+    assert fp.csp.selection.time_filter is True
+    assert fp.csp.issued_at.startswith("2026-10-12T08:00:00"), fp.csp.issued_at
+    cm = load_cost_map(out / rec["cost_map_file"], pol, ref=fp.csp.cost_map_ref)
+    assert cm.header["clock"] == clock.t0.isoformat(), cm.header["clock"]
+
+
+def test_main_with_cost_map_writes_each_csps_map_and_counts_dwell_through_the_shield():
+    code, out, stdout, sim, b = _fly(
+        ["--csp", "on", "--cost-map", "--tag", "cm", "--policy", str(URBAN)], yaw=0.0)
+    assert code == rv.EXIT_OK, f"exit {code}\n{stdout[-1500:]}"
+    run = json.loads((out / "vla_run.json").read_text(encoding="utf-8"))
+    maps = sorted((out / run["csp_dir"]).glob("costmap_*.json"))
+    assert len(maps) == 1 and maps[0].with_suffix(".npz").is_file(), maps
+    csp = CSP.model_validate_json(
+        (out / _steps(out)[0]["csp_file"]).read_text(encoding="utf-8"))
+    from guardrail.compiler import load_cost_map
+    assert load_cost_map(maps[0], ref=csp.cost_map_ref).ref == csp.cost_map_ref
+    assert "time inside NFZ 0.0s" in stdout, stdout[-800:]
+
+
 def _big_policy_file():
     """100 fences: the estimate cannot prove a fit (byte bound past 1784) while
     a word count can - the case the post-load recount decides."""

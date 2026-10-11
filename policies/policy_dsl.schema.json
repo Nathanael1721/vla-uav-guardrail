@@ -1163,7 +1163,7 @@
           ]
         }
       ],
-      "description": "Grant: hot-applicable, \"Replaces an active corridor with another at\nruntime\". `target_id` names the corridor replaced; the rest is the new\ncorridor, in the corridor's own fields.\n\nDECLARABLE ONLY for the flight loaders, as the other two hot-apply\nclasses.",
+      "description": "Grant: hot-applicable, \"Replaces an active corridor with another at\nruntime\". `target_id` names the corridor replaced; the rest is the new\ncorridor, in the corridor's own fields.\n\nFlyable since 2026-10-08, as the other two hot-apply classes\n(RUNTIME_TYPES).",
       "properties": {
         "altitude_ceiling_m": {
           "default": 1000.0,
@@ -1569,7 +1569,7 @@
           ]
         }
       ],
-      "description": "Grant: hot-applicable \"Polygon with motion (translate / rotate) injected\nmid-flight\".\n\nDECLARABLE ONLY for the flight loaders (RUNTIME_TYPES). Since 2026-10-07\nthe Shield enforces it, motion included (guardrail/shield.py, hot-apply);\nthe loaders keep refusing a policy file that carries one until the\ncompiler can render it. `ring_at(t)` is the declared motion's geometry.",
+      "description": "Grant: hot-applicable \"Polygon with motion (translate / rotate) injected\nmid-flight\".\n\nThe Shield enforces it, motion included, since 2026-10-07\n(guardrail/shield.py, hot-apply); since 2026-10-08 the compiler renders it\n(RUNTIME_TYPES), so a hot-applied generation holding one compiles a CSP.\nThe flight loaders still refuse a policy FILE that declares one\n(FLIGHT_HELD_TYPES): offline analysis and the BC features do not read\nit yet. `ring_at(t)` is the declared motion's geometry.",
       "properties": {
         "altitude_ceiling_m": {
           "default": 1000.0,
@@ -2172,7 +2172,7 @@
     },
     "IR.CorridorSwap": {
       "additionalProperties": false,
-      "description": "Grant: hot-applicable, \"Replaces an active corridor with another at\nruntime\". `target_id` names the corridor replaced; the rest is the new\ncorridor, in the corridor's own fields.\n\nDECLARABLE ONLY for the flight loaders, as the other two hot-apply\nclasses.",
+      "description": "Grant: hot-applicable, \"Replaces an active corridor with another at\nruntime\". `target_id` names the corridor replaced; the rest is the new\ncorridor, in the corridor's own fields.\n\nFlyable since 2026-10-08, as the other two hot-apply classes\n(RUNTIME_TYPES).",
       "properties": {
         "altitude_ceiling_m": {
           "default": 1000.0,
@@ -2437,7 +2437,7 @@
     },
     "IR.DynamicNFZ": {
       "additionalProperties": false,
-      "description": "Grant: hot-applicable \"Polygon with motion (translate / rotate) injected\nmid-flight\".\n\nDECLARABLE ONLY for the flight loaders (RUNTIME_TYPES). Since 2026-10-07\nthe Shield enforces it, motion included (guardrail/shield.py, hot-apply);\nthe loaders keep refusing a policy file that carries one until the\ncompiler can render it. `ring_at(t)` is the declared motion's geometry.",
+      "description": "Grant: hot-applicable \"Polygon with motion (translate / rotate) injected\nmid-flight\".\n\nThe Shield enforces it, motion included, since 2026-10-07\n(guardrail/shield.py, hot-apply); since 2026-10-08 the compiler renders it\n(RUNTIME_TYPES), so a hot-applied generation holding one compiles a CSP.\nThe flight loaders still refuse a policy FILE that declares one\n(FLIGHT_HELD_TYPES): offline analysis and the BC features do not read\nit yet. `ring_at(t)` is the declared motion's geometry.",
       "properties": {
         "altitude_ceiling_m": {
           "default": 1000.0,
@@ -3161,7 +3161,7 @@
     },
     "IR.TimeWindowSwitch": {
       "additionalProperties": false,
-      "description": "Grant: hot-applicable, \"Activates / deactivates a referenced rule at\nruntime\". While this rule is in force (its own `valid_time`), the rule\n`target_id` is held `active` (true) or off (false).\n\nDECLARABLE ONLY for the flight loaders (RUNTIME_TYPES; since 2026-10-07\nthe Shield evaluates switches, see DynamicNFZ). The DSL checks that the\ntarget exists, and the layer merge refuses a switch that turns off a hard\nrule of another layer.",
+      "description": "Grant: hot-applicable, \"Activates / deactivates a referenced rule at\nruntime\". While this rule is in force (its own `valid_time`), the rule\n`target_id` is held `active` (true) or off (false).\n\nFlyable since 2026-10-08 (RUNTIME_TYPES; the Shield evaluates switches\nsince 2026-10-07, see DynamicNFZ). The DSL checks that the target exists,\nand the layer merge refuses a switch that turns off a hard rule of\nanother layer. The compiler applies switches exactly as the Shield does\n(guardrail/compiler.py `_RuleClock`), so a CSP never leaves out a rule a\nswitch holds on.",
       "properties": {
         "active": {
           "title": "Active",
@@ -4166,7 +4166,7 @@
           ]
         }
       ],
-      "description": "Grant: hot-applicable, \"Activates / deactivates a referenced rule at\nruntime\". While this rule is in force (its own `valid_time`), the rule\n`target_id` is held `active` (true) or off (false).\n\nDECLARABLE ONLY for the flight loaders (RUNTIME_TYPES; since 2026-10-07\nthe Shield evaluates switches, see DynamicNFZ). The DSL checks that the\ntarget exists, and the layer merge refuses a switch that turns off a hard\nrule of another layer.",
+      "description": "Grant: hot-applicable, \"Activates / deactivates a referenced rule at\nruntime\". While this rule is in force (its own `valid_time`), the rule\n`target_id` is held `active` (true) or off (false).\n\nFlyable since 2026-10-08 (RUNTIME_TYPES; the Shield evaluates switches\nsince 2026-10-07, see DynamicNFZ). The DSL checks that the target exists,\nand the layer merge refuses a switch that turns off a hard rule of\nanother layer. The compiler applies switches exactly as the Shield does\n(guardrail/compiler.py `_RuleClock`), so a CSP never leaves out a rule a\nswitch holds on.",
       "properties": {
         "active": {
           "title": "Active",

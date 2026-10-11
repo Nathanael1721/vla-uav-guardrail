@@ -14,20 +14,22 @@ scenarios:
   # ---- altitude --------------------------------------------------------- #
   - scenario_id: altitude-floor-recovery
     template: altitude_envelope
-    expect: known_failure
     description: >
       Starts below the floor. Recovery must climb, not freeze.
-      KNOWN FAILURE since the escalation FSM was wired into the Shield
-      (measured 2026-10-07): a FALSE fail-safe through edge X6. The recovery
-      climbs from 3 m and converges (AltitudeFix sizes the climb to reach the
-      band in one lookahead, so it slows near the floor), but the position
-      has then been illegal for T = 5 s with the Shield still intervening, and
-      X6 sends the aircraft to RTL at 9.45 m, 0.55 m short of the floor. X6
-      tests duration, not progress; the grant's fail-safe is for a repair
-      that is unsafe ("trigger fail-safe (RTL / Land) when repair is unsafe",
-      Safety Shield p1), and this one was working. Labels: success, no
-      fail-safe; flew RTL_triggered. With the FSM off the flight is the
-      LEGACY one (tests/test_sweep.py).
+      Was a KNOWN FAILURE from 2026-10-07 to 2026-10-09: a FALSE fail-safe
+      through edge X6. The recovery climbs from 3 m and converges
+      (AltitudeFix sizes the climb to reach the band in one lookahead, so it
+      slows near the floor), but the position had then been illegal for
+      T = 5 s with the Shield still intervening, and X6, which tested
+      duration only, sent the aircraft to RTL at 9.45 m, 0.55 m short of the
+      floor. The grant's fail-safe is for a repair that is unsafe ("trigger
+      fail-safe (RTL / Land) when repair is unsafe", Safety Shield p1), and
+      this one was working. Since 2026-10-09 X6 leaves a recovery alone while
+      its illegal depth is shown to fall (guardrail/fsm.py,
+      x6_min_escape_mps): the flight takes G1 then G7, reaches the band at
+      6.3 s and completes. Re-measured 2026-10-11 on both theta readings and
+      with the onset limit at 1 s and 0 s; the marker was removed then. With
+      the FSM off the flight is the LEGACY one (tests/test_sweep.py).
     mission:
       start_pose: { x: -30.0, y: -30.0, up: 3.0 }
       pilot: { type: constant, action: { vx: 3.0 } }
@@ -61,7 +63,16 @@ scenarios:
       never censored, and no slower than the depth at the 2 m/s climb cap plus
       one 3 s lookahead (8 s at the deepest). 3 m is not swept: that is
       altitude-floor-recovery's own flight, and the sweep refuses to count one
-      flight as two scenarios.
+      flight as two scenarios. 0.5, 2 and 30 m were known failures from
+      2026-10-07 to 2026-10-09 (X6 sent a converging recovery to RTL after
+      5 s illegal; see altitude-floor-recovery). Since X6's progress test
+      (2026-10-09) they take G1 then G7 and recover in 7.6, 6.8 and 7.8 s;
+      re-measured 2026-10-11 on both theta readings and both onset limits,
+      and their markers were removed then. Still open from the 30 m cell:
+      ArduPilot's RTL entered above RTL_ALT (15 m) returns at its current
+      altitude, so an RTL from above the 20 m ceiling would reach home
+      still above it; whether a ceiling breach should make RTL descend
+      first is a design question the grant does not answer.
     mission:
       start_pose: { x: -30.0, y: -30.0, up: "$start_up" }
       pilot: { type: constant, action: { vx: 3.0 } }
@@ -76,24 +87,3 @@ scenarios:
       mean_time_to_safe_s: "<=8.0"
     expected_outcome: success
     expected_failsafe: false
-    known_failures:
-      - params: { start_up: 0.5 }
-        description: &x6floor >
-          False fail-safe through edge X6 (measured 2026-10-07): the climb out
-          from below the floor converges, but the position has been illegal
-          for T = 5 s with the Shield still intervening, and X6 sends the
-          aircraft to RTL before it reaches the band. X6 tests duration, not
-          progress (see altitude-floor-recovery). 6.0 and 9.5 m are shallow
-          enough to get out inside 5 s and pass.
-      - params: { start_up: 2.0 }
-        description: *x6floor
-      - params: { start_up: 30.0 }
-        description: >
-          False fail-safe through edge X6 (measured 2026-10-07), from ABOVE the
-          ceiling: the descent from 30 m converges, X6 fires after 5 s
-          illegal, and ArduPilot's RTL, entered above RTL_ALT (15 m), returns
-          at its current altitude - so the aircraft reaches home still above
-          the 20 m ceiling and the episode ends there (time to safe censored).
-          The harness's autopilot follows ArduCopter's documented RTL; whether
-          a ceiling breach should make RTL descend first is a design question
-          the grant does not answer.

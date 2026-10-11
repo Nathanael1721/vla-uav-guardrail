@@ -12,9 +12,9 @@ declarable here, plus two of this project's own:
     kinematic_envelope  speed / climb-rate / turn-rate caps
     distance_envelope   min distance to a typed object class (people, buildings,
                         roads)                                     [declarable]
-    dynamic_nfz         polygon with motion, injected mid-flight   [declarable]
-    time_window_switch  switches a referenced rule on/off          [declarable]
-    corridor_swap       replaces an active corridor with another   [declarable]
+    dynamic_nfz         polygon with motion, injected mid-flight
+    time_window_switch  switches a referenced rule on/off
+    corridor_swap       replaces an active corridor with another
     obstacle_clearance  (ours) min distance from MAPPED buildings
     subject_standoff    (ours) min distance from the tracked subject
 
@@ -23,13 +23,18 @@ the flight loaders do not accept it yet (RUNTIME_TYPES). Such a policy is
 refused by the flight loaders (`load_policy`, `load_layered`,
 `bundle.load_bundle`, `bundle.load_for_flight`) unless the caller asks
 for the declaration only (`runtime=False`): a rule the Shield silently ignores
-is worse than a refusal. So is a geographic policy whose frame is derived
+is worse than a refusal. So is an MSL altitude (the Shield has no
+ground-elevation source), and a geographic policy whose frame is derived
 rather than stated (the ArduPilot SITL rail puts the vehicle's start, its
 home, at the frame origin).
-`Policy.flight_problems()` says what and why. Since 2026-10-07 the Shield
-itself enforces dynamic_nfz, time_window_switch and corridor_swap
-(guardrail/shield.py, ENFORCED_TYPES); the loaders still refuse them until the
-compiler can render them, see RUNTIME_TYPES.
+`Policy.flight_problems()` says what and why. The Shield has enforced
+dynamic_nfz, time_window_switch and corridor_swap since 2026-10-07
+(guardrail/shield.py, ENFORCED_TYPES); since 2026-10-08 the compiler renders
+them too (guardrail/templates/), so a policy declaring a switch or a swap
+flies. A policy FILE declaring a dynamic_nfz is still refused for flight
+(FLIGHT_HELD_TYPES): the Shield enforces it and the rails count it, but
+offline analysis and the BC features would not. Only distance_envelope is
+left declarable-only.
 
 Every rule may carry `valid_time`, a recurring schedule; that is a FIELD, as in
 the grant's ConstraintBase, not a class.
@@ -786,10 +791,12 @@ class DynamicNFZ(_Banded, ConstraintBase):
     """Grant: hot-applicable "Polygon with motion (translate / rotate) injected
     mid-flight".
 
-    DECLARABLE ONLY for the flight loaders (RUNTIME_TYPES). Since 2026-10-07
-    the Shield enforces it, motion included (guardrail/shield.py, hot-apply);
-    the loaders keep refusing a policy file that carries one until the
-    compiler can render it. `ring_at(t)` is the declared motion's geometry."""
+    The Shield enforces it, motion included, since 2026-10-07
+    (guardrail/shield.py, hot-apply); since 2026-10-08 the compiler renders it
+    (RUNTIME_TYPES), so a hot-applied generation holding one compiles a CSP.
+    The flight loaders still refuse a policy FILE that declares one
+    (FLIGHT_HELD_TYPES): offline analysis and the BC features do not read
+    it yet. `ring_at(t)` is the declared motion's geometry."""
     type: Literal["dynamic_nfz"]
     vertices: list[XY] = Field(min_length=3)
     altitude_floor_m: float = 0.0
@@ -828,10 +835,12 @@ class TimeWindowSwitch(ConstraintBase):
     runtime". While this rule is in force (its own `valid_time`), the rule
     `target_id` is held `active` (true) or off (false).
 
-    DECLARABLE ONLY for the flight loaders (RUNTIME_TYPES; since 2026-10-07
-    the Shield evaluates switches, see DynamicNFZ). The DSL checks that the
-    target exists, and the layer merge refuses a switch that turns off a hard
-    rule of another layer."""
+    Flyable since 2026-10-08 (RUNTIME_TYPES; the Shield evaluates switches
+    since 2026-10-07, see DynamicNFZ). The DSL checks that the target exists,
+    and the layer merge refuses a switch that turns off a hard rule of
+    another layer. The compiler applies switches exactly as the Shield does
+    (guardrail/compiler.py `_RuleClock`), so a CSP never leaves out a rule a
+    switch holds on."""
     type: Literal["time_window_switch"]
     target_id: str = Field(min_length=1)
     active: bool
@@ -844,8 +853,8 @@ class CorridorSwap(_Tube, ConstraintBase):
     runtime". `target_id` names the corridor replaced; the rest is the new
     corridor, in the corridor's own fields.
 
-    DECLARABLE ONLY for the flight loaders, as the other two hot-apply
-    classes."""
+    Flyable since 2026-10-08, as the other two hot-apply classes
+    (RUNTIME_TYPES)."""
     type: Literal["corridor_swap"]
     target_id: str = Field(min_length=1)
     centerline: list[XY] = Field(min_length=2)
@@ -871,19 +880,47 @@ Constraint = Annotated[
     Field(discriminator="type"),
 ]
 
-# The rule types a flight may carry. Everything else is declarable only; see
-# Policy.unenforced_rules. Two modules key on this set: the flight loaders
-# (refuse the rest) and the constraint compiler (guardrail/compiler.py renders
-# only these; tests/test_csp.py demands a template for each). It must never
-# hold a type the Shield does not enforce (shield.ENFORCED_TYPES; checked in
-# tests/test_policy_dsl_grant_form.py). Since 2026-10-07 the Shield also
-# enforces dynamic_nfz, time_window_switch and corridor_swap, but the compiler
-# has no templates for them, so they stay out of this set - refused by the
-# loaders, an over-refusal rather than a rule silently ignored - until the
-# templates land; then they are added here in the same change.
+# The rule types the runtime handles: the Shield enforces them and the
+# constraint compiler renders them (guardrail/compiler.py; tests/test_csp.py
+# demands a template for each). Everything else is declarable only; see
+# Policy.unenforced_rules. It must never hold a type the Shield does not
+# enforce (shield.ENFORCED_TYPES; checked in
+# tests/test_policy_dsl_grant_form.py). The Shield has enforced dynamic_nfz,
+# time_window_switch and corridor_swap since 2026-10-07; they joined this set
+# on 2026-10-08, in the change that gave the compiler their templates
+# (sentence, summary, reason). distance_envelope stays out: nothing enforces
+# it. An MSL altitude is refused separately, by name (unenforced_rules).
+# A flight may carry every type here except those in FLIGHT_HELD_TYPES.
 RUNTIME_TYPES: frozenset[str] = frozenset({
     "polygon_fence", "circle_fence", "altitude_envelope", "kinematic_envelope",
-    "obstacle_clearance", "subject_standoff", "corridor"})
+    "obstacle_clearance", "subject_standoff", "corridor",
+    "dynamic_nfz", "time_window_switch", "corridor_swap"})
+# Runtime types the flight loaders still refuse in a policy FILE, with why
+# (Policy.unmeasured_rules). Not a gap in the Shield, which enforces them,
+# nor in the compiler, which renders them: a gap in what the flight rails
+# MEASURE. Found in review on 2026-10-08, the day dynamic_nfz joined
+# RUNTIME_TYPES: every rail except demo/follow_vlm.py computes its zone-dwell
+# metric (nfz_s, which guardrail/kpi.compute reads for the mission outcome)
+# from policy.by_type(PolygonFence), and a DynamicNFZ is not a PolygonFence,
+# so a declared zone would add 0 s of dwell however long the aircraft spent
+# in it - a silent zero. The grant's own route for this type, a zone
+# "injected mid-flight" (Shield.hot_apply), does not pass through these
+# loaders and is unchanged. Since 2026-10-11 every flight rail counts zone
+# dwell through guardrail.replay.zone_dwell (polygon, circle and non-moving
+# dynamic_nfz; a moving zone is named in nfz_moving_not_counted, not scored),
+# so the rails no longer drop it. The hold stays because other consumers
+# still read polygon fences only: experiments/analyze_semantic_ab.py's dwell
+# and overlay, training/features.make_fences (the BC pilots' features) and
+# the build_prompt no_fly_zones shorthand. Remove the entry once they read
+# zone_dwell / the Shield's rule checker too.
+FLIGHT_HELD_TYPES: dict[str, str] = {
+    "dynamic_nfz": (
+        "the rails' dwell metric (nfz_s, guardrail.replay.zone_dwell) names a "
+        "moving zone without scoring it, and offline analysis "
+        "(experiments/analyze_semantic_ab.py) and the BC pilots' features read "
+        "polygon fences only, so time inside it could score 0 s; inject it "
+        "mid-flight (Shield.hot_apply) instead"),
+}
 # The grant's nine (Policy DSL page, taxonomy table).
 GRANT_TYPES: tuple[str, ...] = (
     "polygon_fence", "circle_fence", "corridor", "altitude_envelope",
@@ -1157,11 +1194,81 @@ class Policy(BaseModel):
                 "constraints": rules}
 
     def reference_hash(self) -> str | None:
-        """The reference implementation's policy_hash for this document."""
+        """The reference implementation's policy_hash for this document: its
+        `policy_hash(doc.model_dump(mode="json"))` (policy_dsl/ir.py build_ir,
+        vlaguard_common/hashing.py canonicalize) over the authored document as
+        its PolicyDoc holds it - grant field names, `geometry:` blocks, every
+        default written out, `issued_at: null` kept. None when the reference
+        cannot hold the document at all (`reference_problems`); a hash of a
+        document its loader would refuse is a number nobody can check, so none
+        is invented. Checked against the reference's own loader, in its own
+        3.11 environment, by tools/wp1_roundtrip_kpi.py."""
         ref = self.reference_ir()
         if ref is None:
             return None
         return "sha256:" + hashlib.sha256(canonical_json(ref)).hexdigest()
+
+    def reference_delta(self) -> dict | None:
+        """What `reference_ir()` writes that this policy does not say, so that
+        this policy is rebuilt EXACTLY - same `policy_hash` - from the
+        reference's document plus this record (`from_reference`). None when the
+        reference cannot represent the policy.
+
+        The reference's form is lossy in two ways only, both about defaults
+        (everything else it cannot hold is refused by `reference_problems`):
+        an absent `scope` / `layer` / `altitude_ref` is written as "mission" /
+        "mission" / "AGL", and `repair` is spelt `project_fix`. A
+        reference-form bundle ships this record in its manifest
+        (guardrail/bundle.py), so the PI's loader verifies the reference hash
+        and this project's loader verifies BOTH that and this project's hash of
+        the policy it rebuilds (card WP1-05, deviation 10)."""
+        if self.reference_problems():
+            return None
+        rules: dict[str, dict] = {}
+        for c in self.constraints:
+            d: dict[str, Any] = {}
+            absent = [k for k in _REFERENCE_DEFAULTED
+                      if k in type(c).model_fields and getattr(c, k) is None]
+            if absent:
+                d["absent"] = absent
+            if c.violation_action != canonical_action(c.violation_action):
+                d["violation_action"] = c.violation_action
+            if d:
+                rules[c.id] = d
+        return {"rules": rules}
+
+    @classmethod
+    def from_reference(cls, doc: dict, delta: dict | None) -> "Policy":
+        """The policy a reference-form document plus its `reference_delta`
+        stands for. Refuses a delta that does not round-trip: the rebuilt
+        policy must write back exactly `doc` (so a delta can only restore an
+        absent default or a spelling, never change what a rule means)."""
+        import copy
+        rules = dict((delta or {}).get("rules") or {})
+        out = copy.deepcopy(doc)
+        by_id = {r.get("id"): r for r in out.get("constraints") or []
+                 if isinstance(r, dict)}
+        unknown = sorted(set(rules) - set(by_id))
+        if unknown:
+            raise ValueError(f"reference delta names rules the document does not "
+                             f"have: {unknown}")
+        for rid, d in rules.items():
+            r = by_id[rid]
+            for k in d.get("absent") or []:
+                if k not in _REFERENCE_DEFAULTED:
+                    raise ValueError(f"{rid}: reference delta may restore only "
+                                     f"{list(_REFERENCE_DEFAULTED)} as absent, not {k!r}")
+                holder = r["geometry"] if (k == "altitude_ref" and isinstance(
+                    r.get("geometry"), dict)) else r
+                holder.pop(k, None)
+            if "violation_action" in d:
+                r["violation_action"] = d["violation_action"]
+        pol = cls.model_validate(out)
+        if pol.reference_ir() != doc:
+            raise ValueError("the reference delta does not round-trip: the policy "
+                             "it rebuilds does not write back the archived "
+                             "reference document")
+        return pol
 
     # ------------------------------------------------------------------ #
     # The DSL's rule-consistency lint (grant ingest pipeline)
@@ -1259,11 +1366,22 @@ class Policy(BaseModel):
                 f"places the vehicle's start (home) at the frame origin. State "
                 f"`origin: {{lat, lon}}` = the take-off position to fly it")
 
+    def unmeasured_rules(self) -> list[str]:
+        """Rules the Shield enforces but the flight rails would not MEASURE,
+        with the reason (FLIGHT_HELD_TYPES). A flight loader refuses a policy
+        file for which this is non-empty: a dwell metric that cannot see a
+        zone reads 0 s, which is indistinguishable from a clean flight."""
+        return [f"{c.id}: {c.type} is enforced by the Shield, but "
+                f"{FLIGHT_HELD_TYPES[c.type]}"
+                for c in self.constraints if c.type in FLIGHT_HELD_TYPES]
+
     def flight_problems(self) -> list[str]:
-        """Everything that keeps this policy off a flight rail: unenforced rules
-        and an unplaceable frame. Empty = flyable as written."""
+        """Everything that keeps this policy off a flight rail: unenforced
+        rules, rules the rails would not measure, and an unplaceable frame.
+        Empty = flyable as written."""
         frame = self.frame_problem()
-        return self.unenforced_rules() + ([frame] if frame else [])
+        return (self.unenforced_rules() + self.unmeasured_rules()
+                + ([frame] if frame else []))
 
     def start_conflicts(self) -> list[str]:
         """Hard keep-out zones whose horizontal footprint (the polygon grown by
@@ -1284,12 +1402,16 @@ class Policy(BaseModel):
         column and the clock at take-off is not known here. Pure Python, like
         polygon_problem. The flight loaders record it in `runtime_notes`, and
         tools/geo_to_policy.py refuses a stated take-off point inside a zone
-        it creates."""
+        it creates.
+
+        A dynamic_nfz is checked at its declared position (since 2026-10-08,
+        when a policy file carrying one became flyable): a moving zone starts
+        there at the Shield's first tick."""
         out = []
         for c in self.constraints:
-            if not isinstance(c, PolygonFence) or c.constraint_type != "hard":
+            if not isinstance(c, (PolygonFence, DynamicNFZ)) or c.constraint_type != "hard":
                 continue
-            ring = _dedupe_ring(c.ring())
+            ring = _dedupe_ring([(v.x, v.y) for v in c.vertices])
             if len(ring) < 3:
                 continue
             m = max(c.margin_m, 0.0)
@@ -1530,6 +1652,9 @@ HASH_SCHEME = "sha256-canonical-v3"
 PRIOR_SCHEME_V2 = "sha256-canonical-v2"
 # The reference implementation's hash of the same document (see reference_ir).
 REFERENCE_FORM = "reference-policy-dsl-0.1"
+# Fields the reference writes out when this project leaves them absent
+# (Policy.reference_delta): its defaults "mission", "mission", "AGL".
+_REFERENCE_DEFAULTED = ("scope", "layer", "altitude_ref")
 
 # The IR schema's own version, independent of any one policy's semver. Bumped
 # when a field is added, removed, or has its default changed; recorded in bundle
@@ -1915,7 +2040,8 @@ def _refuse_unenforced(pol: Policy, source: str) -> None:
     if gaps:
         raise ValueError(
             f"{source}: the Safety Shield cannot enforce this policy as written, "
-            f"so it is not loaded for flight:\n  - " + "\n  - ".join(gaps)
+            f"or the flight rails cannot measure it, so it is not loaded for "
+            f"flight:\n  - " + "\n  - ".join(gaps)
             + "\nLoad it with runtime=False to work with it as a declaration "
               "(bundle, schema, export).")
 

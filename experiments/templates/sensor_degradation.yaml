@@ -25,6 +25,21 @@ scenarios:
       face head-on and wedges, so neither tests anything here.
       The polygon itself must never be entered. The Shield's own escape count
       is the grant's; true-state violations are reported beside it.
+
+      Pins re-measured 2026-10-12 on the shipped default. Since the FSM
+      counts at most one onset per second (onset limit, 2026-10-09) these
+      cells pass on every seed measured (library 0, nightly 1001-1003) and
+      their known-failure pins were removed: latency 0 / pass_y 23.2 /
+      sigma 0.2 (every seed); latency 0 / 23.6 / 0.2 (seed 0); latency 1 /
+      23.2 / 0.2 (1002); latency 2 / 23.2 / 0.3 (1003); latency 2 / 23.6 /
+      0.3 (1002). Three pins that named every seed now name only the seeds
+      where the cell still fails: latency 0 / 23.2 / 0.3 passes on seeds 0
+      and 1003, latency 0 / 23.6 / 0.3 on 0, 1001 and 1003, and latency 1 /
+      23.2 / 0.3 on 1001-1003. With the onset limit at 0 s (every return
+      counts) every one of those cells fails again, on every seed measured
+      (2026-10-12, the library and the nightly profile). The
+      limit is the PI's question 11 (docs/DESIGN-escalation-fsm.md,
+      Questions for the PI): if the PI picks 0 s, the pins come back.
     mission:
       start_pose: { x: -30.0, y: "$pass_y", up: 15.0 }
       target: { x: 60.0, y: "$pass_y", up: 15.0 }
@@ -44,7 +59,13 @@ scenarios:
     expected_outcome: success
     expected_failsafe: false
     known_failures:
-      - params: { latency: 0, pass_y: 23.2, sigma: 0.2 }
+      # Re-measured 2026-10-12 on the shipped default (N-in-T onset limit
+      # 1 s), library seed 0 and nightly seeds 1001-1003: each pin below still
+      # fails on the seed it names and passes on the others. Five pins that
+      # passed on every seed measured were removed then, and three that named
+      # every seed were narrowed to the seeds where the cell still fails (see
+      # the description).
+      - params: { latency: 0, pass_y: 23.2, sigma: 0.3, random_seed: 1001 }
         description: &noiseflicker >
           False fail-safe through N-in-T under sensor noise (measured
           2026-10-07): sliding along the margin ring with 0.2-0.3 m of position
@@ -55,21 +76,13 @@ scenarios:
           entered and the Shield's own count stays clean; the FSM counts noise
           as violations. Where it shows on some seeds only, the pin names the
           seed (0 is the library run's, 1001-1003 the nightly profile's).
-      - params: { latency: 0, pass_y: 23.2, sigma: 0.3 }
+      - params: { latency: 0, pass_y: 23.2, sigma: 0.3, random_seed: 1002 }
         description: *noiseflicker
-      - params: { latency: 0, pass_y: 23.6, sigma: 0.3 }
+      - params: { latency: 0, pass_y: 23.6, sigma: 0.3, random_seed: 1002 }
         description: *noiseflicker
-      - params: { latency: 1, pass_y: 23.2, sigma: 0.3 }
-        description: *noiseflicker
-      - params: { latency: 0, pass_y: 23.6, sigma: 0.2, random_seed: 0 }
-        description: *noiseflicker
-      - params: { latency: 1, pass_y: 23.2, sigma: 0.2, random_seed: 1002 }
+      - params: { latency: 1, pass_y: 23.2, sigma: 0.3, random_seed: 0 }
         description: *noiseflicker
       - params: { latency: 1, pass_y: 23.6, sigma: 0.3, random_seed: 1002 }
-        description: *noiseflicker
-      - params: { latency: 2, pass_y: 23.2, sigma: 0.3, random_seed: 1003 }
-        description: *noiseflicker
-      - params: { latency: 2, pass_y: 23.6, sigma: 0.3, random_seed: 1002 }
         description: *noiseflicker
 
   - scenario_id: gps-noise-beyond-margin

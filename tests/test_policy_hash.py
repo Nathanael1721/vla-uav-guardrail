@@ -249,6 +249,57 @@ def test_every_stored_manifest_resolves_to_a_policy():
             assert resolve_run_policy(man, cands)[0] is not None, tag
 
 
+def _geo_policy(**rule_extra):
+    """A policy the reference implementation can hold: WGS84 fence with no
+    margin ring, an altitude envelope; scope / layer / altitude_ref absent and
+    `repair` spelt this project's way, the two things its form writes out."""
+    sq = [{"lat": 25.0421, "lon": 121.5310}, {"lat": 25.0428, "lon": 121.5310},
+          {"lat": 25.0428, "lon": 121.5318}]
+    return Policy.model_validate({"policy_id": "geo", "version": "0.1.0", "constraints": [
+        {"id": "f", "type": "polygon_fence", "vertices": sq, "margin_m": 0.0,
+         "altitude_floor_m": 0, "altitude_ceiling_m": 120, **rule_extra},
+        {"id": "alt", "type": "altitude_envelope", "alt_min_m": 5, "alt_max_m": 90,
+         "scope": "global"}]})
+
+
+def test_the_reference_delta_rebuilds_the_source_exactly_and_nothing_else():
+    """Deviation 10: a reference-form bundle carries the reference's hash
+    (which its loader checks) and this project's hash of the SOURCE, rebuilt
+    from the reference document plus `reference_delta`. The delta may only
+    restore an absent default (scope, layer, altitude_ref) or a spelling
+    (repair); anything that would change what a rule means fails the round
+    trip (the rebuilt policy must write back the same reference document)."""
+    pol = _geo_policy()
+    doc = json.loads(json.dumps(pol.reference_ir()))
+    delta = pol.reference_delta()
+    assert delta["rules"]["f"] == {"absent": ["scope", "layer", "altitude_ref"],
+                                   "violation_action": "repair"}, delta
+    assert delta["rules"]["alt"] == {"absent": ["layer", "altitude_ref"],
+                                     "violation_action": "repair"}, delta
+    back = Policy.from_reference(doc, delta)
+    assert back.policy_hash == pol.policy_hash
+    assert Policy.model_validate(doc).policy_hash != pol.policy_hash, \
+        "without the delta the document alone is a different policy (the third hash)"
+    forged = [
+        ("alt's written scope 'global' claimed absent (= mission)",
+         {"rules": {**delta["rules"], "alt": {"absent": ["scope", "layer", "altitude_ref"],
+                                              "violation_action": "repair"}}}),
+        ("a breach action changed", {"rules": {**delta["rules"],
+                                               "f": {**delta["rules"]["f"],
+                                                     "violation_action": "brake"}}}),
+        ("a field the reference does not default", {"rules": {
+            "f": {"absent": ["priority"]}}}),
+        ("a rule the document lacks", {"rules": {"ghost": {"absent": ["scope"]}}}),
+    ]
+    for name, bad in forged:
+        try:
+            Policy.from_reference(doc, bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"a forged delta was accepted: {name}")
+    assert _geo_policy(margin_m=1.0).reference_delta() is None, "not representable"
+
+
 def test_resolve_run_policy_refuses_rather_than_guesses():
     cands = policy_candidates()
     for man in ({}, {"policy_hash": ""}, {"policy_hash": "unresolved"},

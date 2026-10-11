@@ -1,0 +1,9 @@
+{#- A dynamic_nfz: injected mid-flight (rendered since 2026-10-08; a policy
+    FILE declaring one is still refused for flight, models.FLIGHT_HELD_TYPES).
+    Distances are measured at its DECLARED position; a moving zone's position
+    at issue time is not known to the compiler (the Shield tracks it from the
+    event time), so a moving zone is never filtered by region and
+    is graded as if on the path. Only the motion it has is named: a zone that
+    only turns is not said to travel, one that only translates is not said to
+    turn at 0 deg/s. -#}
+{% if moving %}this zone{% if speed > 0 %} moves at {{ speed|rate }} m/s, up to {{ travel|m }} m in the {{ lookahead|g }} s lookahead{% endif %}{% if turn > 0 %}{% if speed > 0 %} and{% endif %} turns at {{ turn|rate }} deg/s{% endif %}; where it is at issue time is the Shield's to track, so it is kept whatever its distance; at its declared position it is {{ d_path|m }} m from the straight path{% elif crosses %}the straight path from ({{ sx|g }}, {{ sy|g }}) to the target ({{ tx|g }}, {{ ty|g }}) crosses this dynamic zone{% else %}this dynamic zone is {{ d_path|m }} m from the straight path to the target and {{ d_target|m }} m from the target itself{% endif %}; cruise altitude {{ alt|g }} m is {{ "inside" if in_band else "outside" }} its {{ floor|g }}-{{ ceil|g }} m band{% if time_fact %}; {{ time_fact }}{% endif %}

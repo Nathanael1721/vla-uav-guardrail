@@ -55,21 +55,24 @@ scenarios:
 
   - scenario_id: radius-scaling-grow-deep
     template: radius_scaling
-    # KNOWN FAILURE (measured 2026-10-07): the false trigger the description
-    # predicts - X6 fires at 15 s, 5 s into the escape, and RTL flies the
-    # aircraft home out of the zone. A converging escape aborted by duration.
-    expect: known_failure
+    # Was a KNOWN FAILURE from 2026-10-07 to 2026-10-09: X6 fired at 15 s,
+    # 5 s into the escape, and RTL flew the aircraft home out of the zone - a
+    # converging escape aborted by duration. Since X6's progress test
+    # (2026-10-09) the escape is left alone: G1 then G3, out in 6.7 s, no
+    # fail-safe. Re-measured 2026-10-11 on both theta readings and both
+    # onset limits; the marker was removed then.
     description: >
       The same zone grown 3.5-fold: its ring jumps 25 m towards the aircraft,
       which is then about 13 m inside it (the launch point, 4 m beyond the new
       ring, stays outside). GeofenceEscape's 2 m/s needs about 6.6 s to get it
-      out, while the escalation FSM's edge X6 sends the aircraft
-      to RTL once the position has been illegal for T = 5 s with the Shield
-      still intervening. The escape converges the whole time, so by the
-      grant's words - trigger fail-safe (RTL / Land) "when repair is unsafe"
-      (Safety Shield p1) - no fail-safe is needed: the label says none is
-      expected, and an RTL here counts as a false trigger in the fail-safe
-      correctness KPI.
+      out, longer than the escalation FSM's T = 5 s, so this cell asks whether
+      edge X6 tells a converging escape from an unsafe one: X6 may send the
+      aircraft to RTL only when the illegal depth is not shown to fall
+      (x6_min_escape_mps, guardrail/fsm.py). The escape converges the whole
+      time, so by the grant's words - trigger fail-safe (RTL / Land) "when
+      repair is unsafe" (Safety Shield p1) - no fail-safe is needed: the label
+      says none is expected, and an RTL here counts as a false trigger in the
+      fail-safe correctness KPI.
     mission:
       start_pose: { x: -60.0, y: 0.0, up: 15.0 }
       target: { x: 40.0, y: 0.0, up: 15.0 }

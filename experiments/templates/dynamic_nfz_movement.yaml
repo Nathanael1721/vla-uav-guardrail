@@ -73,6 +73,13 @@ scenarios:
       the next through no action of its own. It must get out, and must not fly
       back in. The time bound is the Shield's own numbers: half the 40 m zone
       plus the 1 m margin at GeofenceEscape's 2 m/s is 10.5 s.
+      size_m=20 variant 0 was a known failure from 2026-10-07 to 2026-10-09:
+      from that approach angle GeofenceEscape takes more than T = 5 s to get
+      out, and X6, which tested duration only, sent the aircraft to RTL while
+      the escape was still converging. Since X6's progress test (2026-10-09)
+      the escape is left alone (G1 then G7) and is out in 5.6 s; re-measured
+      2026-10-11 on both theta readings and both onset limits, and the marker
+      was removed then.
     mission:
       start_pose: { x: -200.0, y: 0.0, up: 15.0 }
       target: { x: -80.0, y: 0.0, up: 15.0 }
@@ -95,15 +102,6 @@ scenarios:
       max_time_to_safe_s: "<=11.0"
       breaches: { max: 0 }                   # ... and stayed out
     expected_failsafe: false
-    known_failures:
-      - params: { size_m: 20, variant: 0 }
-        description: >
-          False fail-safe through edge X6 (measured 2026-10-07): from this
-          approach angle GeofenceEscape takes more than T = 5 s to get the
-          aircraft out of the 20 m zone that appeared on it, and X6 sends it to
-          RTL while the escape is still converging (X6 tests duration, not
-          progress). The other two nightly variants and every 40 m cell get out
-          the way the scenario expects; RTL's own flight home leaves the zone.
 
   # ---- the grant's worked example, moving (dyn-nfz-translate-001) -------- #
   - scenario_id: dyn-nfz-translate

@@ -5,12 +5,20 @@
 halves listed under "Review fixes"). `demo/real_vla_demo.py --csp on` (another
 unit, WP2-01) now injects the typed CSP's text into OpenVLA's prompt; no flight
 with it was run in this unit.
-**Cards:** WP2-02, WP2-03, WP2-04, WP2-05, WP2-06, WP2-07 (action-set part),
-WP2-08, WP2-14, WP2-16, and the umbrella WP2-18.
+**Updated 2026-10-08** (unit compiler-conform, after the PI's 6 Oct ruling to
+conform to the grant): the compiler reads its multi-scale geometry from the IR
+(§9), the three hot-apply types and circle_fence have their own templates
+(§8), P0 entries name the switches and swaps acting on them (§1), and the
+cost-map adapter is built (§11, `docs/DESIGN-cost-map-adapter.md`). Nothing
+was flown with these changes.
+**Cards:** WP2-02, WP2-03, WP2-04, WP2-05, WP2-06, WP2-07 (action-set part;
+the cost-map part since 2026-10-08), WP2-08, WP2-14, WP2-16, and the umbrella
+WP2-18.
 **Grant:** *Prefix Compiler* page (`reference/Prefix Compiler - ….pdf`, cited as
 PDF pN below) and `kuanting-vla-uav-guardrail/docs/02-implementation/prefix-compiler.md`.
 **Code:** `guardrail/csp.py` (the record), `guardrail/compiler.py` (the pipeline),
-`guardrail/templates/` (the wording), `tests/test_csp.py` (65 tests).
+`guardrail/templates/` (the wording), `tests/test_csp.py` (65 tests when this
+note was written; 93 on 2026-10-08).
 
 ---
 
@@ -80,10 +88,21 @@ spec's order (`csp.LOCKED_FIELDS`, which a test checks). The spec leaves
 with one worked example each; their fields here are the example's fields, plus
 named additions:
 
-- `P0Entry.in_force`: the rule's schedule in words.
+- `P0Entry.in_force`: the rule's schedule in words. Since 2026-10-08 it also
+  names every time_window_switch and corridor_swap that acts on the rule,
+  with its window: `always; switched off by sw-b-off (Mon 08:00-08:30)`.
+  Before, a switch target read "always" although a switch turns it off for
+  part of the week (found in review). A rule nothing switches reads as
+  before.
 - `AllowedActionSet.horizontal_speed_max_mps` and `source_rules`.
 - `ForbiddenActionSet.no_translate_out_of_corridors`: the spec's example has no
   keep-in rule; this DSL does.
+
+A P0 time_window_switch is itself a P0 entry (geometry ref `param:`,
+`in_force` its own window) and counts in P0 coverage. The vehicle cannot
+violate an event, but the switch's sentence is what tells the model when its
+target is off. A CSP that dropped it would leave the model believing the
+target always binds, or never does.
 
 The CSP gets two top-level fields:
 
@@ -235,6 +254,15 @@ environment uses:
   "Keep at least  m away".
 - `autoescape=False`: this is plain text, not HTML.
 
+Since 2026-10-08 the three hot-apply types (dynamic_nfz, time_window_switch,
+corridor_swap) have templates in all three folders and are in
+`models.RUNTIME_TYPES`, so a policy or a hot-applied generation holding them
+compiles a CSP. circle_fence has its own templates too. distance_envelope and
+MSL heights are still refused by name. Switch timing uses the Shield's exact
+clock (`compiler._RuleClock`), which agrees with `Shield.rule_status` at 352
+rule-instants around every window edge of the test policy; the minute-grained
+clock used for other rules, run as the null, would leave out 18 of them.
+
 **Backward compatibility.** Every HARD rule without a time window renders
 byte for byte what the 2026-09-01 f-strings did. A test checks this for all 132
 such sentences across the 29 fixtures, against a verbatim copy of the old code.
@@ -269,29 +297,45 @@ appear in the summary fields. A `[P0]` tag on each sentence is available as
 `show_priority=True`. It is off by default because the spec's worked prompt
 (PDF p2) has no tags, and OpenVLA has never seen any.
 
-### 9. Multi-scale geometry is computed in the compiler: a deviation
+### 9. Multi-scale geometry is read from the IR; the bundle file does not carry it
 
 PDF p1 locks: "the policy bundle's IR already carries pre-computed multi-scale
-polygons … The Prefix Compiler picks the scale, never re-computes." Our IR
-(`models.Policy`, and since 2026-10-06 `guardrail/ir.py`) carries no
-multi-scale cache; `ir.py` lists that as not done. Those are WP1 files and
-were not edited in this unit. Instead, `compiler.multiscale_geometry` builds
-the cache once per policy hash and memoises it. It should move into the IR at
-ingest; see "Outside this unit".
+polygons … The Prefix Compiler picks the scale, never re-computes."
+
+**Until 2026-10-08** our IR carried no multi-scale cache, so
+`compiler.multiscale_geometry` built its own (a pure-Python hull and oriented
+rectangle) once per policy hash and memoised it.
+
+**Since 2026-10-08** the compiler picks the scale and computes nothing.
+`compiler.multiscale_geometry(policy)` returns `PolicyIR.multiscale` of
+`compiler.compiled_ir(policy)`. `guardrail/ir.py` computes the scales once,
+when it compiles the policy's IR, and `compiled_ir` memoises that IR by
+policy hash; a hot-apply bumps the generation and with it the hash, so a stale
+IR is never served. The compiler's own hull and oriented-rectangle code is
+deleted, and its P0 geometry refs are minted and resolved by the IR
+(`PolicyIR.geometry_ref`). A test requires `multiscale_geometry(pol)` to be
+the IR's own object.
+
+**What still differs from the grant:** the policy bundle file (`ir.json`) does
+not carry the polygons. They are computed at load, once per policy hash, from
+the rules the bundle does carry. Card WP2-16 stays PARTIAL for that reason.
 
 **Scales.**
 
 - *Fine* is the vertices as authored.
 - *Coarse* always contains the fine polygon. It is the convex hull, or the
-  minimum-area oriented rectangle when the hull has more than 8 vertices. A
-  coarse keep-out zone that cut a corner would tell the model a smaller zone
-  than the Shield enforces. A test checks containment with shapely,
-  independently of the pure-Python hull.
+  minimum-area oriented rectangle when the hull has more than 8 vertices
+  (`ir.coarse_ring`, with shapely). A coarse keep-out zone that cut a corner
+  would tell the model a smaller zone than the Shield enforces. A test checks
+  containment on every fixture and on a 12-gon.
+- *Bbox* is the axis-aligned bounding rectangle.
 - Corridors are only ever *fine*. Coarsening a keep-in shape outward would
   widen where the model believes it may fly.
+- A moving dynamic_nfz is listed at its declared position.
 
-**How the scale is picked.** A zone gets *fine* when its margin ring is within
-one lookahead of travel of the path, and *coarse* otherwise.
+**How the scale is picked.** A static zone gets *fine* when its margin ring is
+within one lookahead of travel of the path, and *coarse* otherwise. A moving
+zone and a corridor always get *fine*.
 
 **References.**
 
@@ -304,10 +348,14 @@ For all 29 shipped policies, coarse equals fine, because every zone has 3-4
 vertices. The 12-gon in the test is where coarsening actually reduces a shape
 (12 vertices to 4).
 
-The helpers are pure Python on purpose. `geometry.py` stays the only shapely
-importer and holds the Shield's evaluation. Nothing the Shield decides depends
-on the compiler's helpers. The one safety-relevant check, whether an action
-enters a zone, calls `geometry.point_in_fence`.
+Until 2026-10-08 the compiler's helpers were pure Python, and `geometry.py`
+was the only shapely importer on this path. At module import
+`guardrail/compiler.py` now imports numpy itself (for the cost map, §11),
+shapely through `guardrail/ir.py` (which it reads for the scales), and
+`guardrail.shield` (`recurrence_active`, for the switch clock). That is
+heavier for a caller that only wants `parse_command`.
+Nothing the Shield decides depends on the compiler. The one safety-relevant
+check, whether an action enters a zone, calls `geometry.point_in_fence`.
 
 ### 10. The action set is exact in body frame
 
@@ -339,12 +387,37 @@ the yaw cap, from deg/s to rad/s. Comparing the raw numbers would admit
 anything under 45 rad/s, the unit confusion in
 `FINDING-the-contract-disagreed-with-itself-about-yaw.md`.
 
-### 11. The cost-map adapter is out of scope, pending the PI
+### 11. The cost-map adapter is built (2026-10-08); nothing reads it yet
 
 PDF p6 asks whether v1 should ship all three adapters, and notes that a cost
-map is "only useful if a path-planner backend joins the system". No path
-planner is in this system, so `cost_map_ref` is always `None`. This needs the
-PI's written confirmation (plan question PQ4, item 3).
+map is "only useful if a path-planner backend joins the system". When this
+note was first written the adapter was left out of scope, pending the PI. The
+PI's answer of 6 Oct was to follow the grant wherever that is technically
+possible, and producing the artefact needs no planner, so it is built. The
+full design is `docs/DESIGN-cost-map-adapter.md`.
+
+- `compiler.rasterise_cost_map`, `CostMap`, `load_cost_map` and
+  `cost_map_agreement`; CLI `python -m guardrail.compiler costmap` and
+  `costmap-report`. It uses the grant's conventions (5 m cells, `origin {lat,
+  lon}`, nfz_hard inf, corridor_pref 0, corridor_outside 50) and exports
+  `.npz` plus a JSON header.
+- `compile_csp(cost_map=)` sets `cost_map_ref` only for the CSP's own map: the
+  same policy and generation, the same clock, and drawn at the mission's
+  cruise height. A map of another clock or height raises `ValueError`, and
+  `write_csp` then writes nothing. Without the argument `cost_map_ref` stays
+  `None`, as before.
+- Measured on 24 shipped policies (1000 points each, 5 m cells, no height):
+  **0 missed under the grant's corridor_outside = 50; 602 of 4181
+  hard-forbidden points, all outside the hard corridor of `corridor_survey`,
+  are priced 50, not inf.** It over-costs 2116 of 19819 allowed points
+  (11 %). Nulls: an all-free grid misses all 4181; an all-inf grid over-costs
+  all 19819.
+- No planner reads the map. A flight CSP carries `cost_map_ref: null` by
+  default. Since 2026-10-11 three rails pass the CSP its own map when asked:
+  `sitl/run_sitl_demo.py`, `sitl/ros2_shield_node.py` (both through
+  `guardrail/replay.py`, `EpisodeRecord(cost_map=True)`) and
+  `demo/real_vla_demo.py`, each with an opt-in `--cost-map` (another unit's
+  change). No flight has used it yet. The map is one instant and 2-D only.
 
 ### 12. Stateless given a clock; two hashes
 
@@ -525,11 +598,18 @@ caught by the test named in that version.
 
 ## Deviations to record in the final report
 
-1. Multi-scale geometry is computed by the compiler, once per policy, not
-   carried in the IR (§9).
+1. Multi-scale geometry is carried by the compiled IR, not by the bundle file.
+   Since 2026-10-08 the compiler picks the scale from `PolicyIR.multiscale`
+   (`compiler.compiled_ir`) and computes nothing; `guardrail/ir.py` computes
+   the scales once per policy hash at load. The grant's bundle IR carries
+   them pre-computed; our `ir.json` does not (§9). Until 2026-10-08 the
+   compiler computed them itself.
 2. The token budget default (256) and the severity values (1.0 / 0.6 / 0.3) are
    our choices where the spec leaves numbers open (§2, §5).
-3. The cost-map adapter is not built (§11, pending the PI).
+3. Closed on 2026-10-08: the cost-map adapter is built (§11,
+   `docs/DESIGN-cost-map-adapter.md`). What remains different is stated
+   there: the map is one instant and 2-D, a hard corridor's outside is priced
+   50 as in the grant's example, and no planner reads it.
 4. The CSP adds `policy_id` and `selection`, and the three sub-models add named
    fields (§1). A reader built to the spec ignores them; ours refuses unknown
    ones.
@@ -557,17 +637,24 @@ caught by the test named in that version.
 - **The effectiveness evaluation CLI is not built** (offline replay and A/B,
   PDF p5; card WP2-09). `action_violations` is the per-candidate check such a
   replay would count with.
-- **The SITL rail writes no CSP** (WP2-11/15). `sitl/ros2_shield_node.py` and
-  `sitl/run_sitl_demo.py` still write only `build_prompt`'s YAML. `write_csp`
-  exists for them to call.
+- **The SITL rail writes no CSP** (WP2-11/15), when this note was written.
+  Done since, by other units: `sitl/ros2_shield_node.py` and
+  `sitl/run_sitl_demo.py` write each policy generation's CSP
+  (`csp_g<gen>.json`) through `guardrail/replay.py` (`EpisodeRecord.
+  write_generation`), and a CSP that cannot be compiled is recorded as a
+  `csp_failed` event with its error. Their CSPs carry `cost_map_ref: null`
+  unless the rail is given `--cost-map` (opt-in since 2026-10-11, also on
+  `demo/real_vla_demo.py`; §11). No flight has used it yet. The rails still
+  write these CSPs without the Shield's clock (see "Outside this unit").
 - **R7's "structured-only" fallback** for dense P0 policies is not offered. P0
   overflow always raises.
-- **`csp.schema.json` is not committed** (so WP2-04 stays PARTIAL). It is
-  generated with `python -m guardrail.compiler schema <path>`. The tests check
-  that the exported schema requires the locked fields, accepts real CSPs and
-  rejects a CSP without `P0_constraints`. The drift test is written and SKIPs
-  visibly until a copy exists at `docs/data/csp.schema.json` or
-  `guardrail/csp.schema.json`; neither path is this unit's to write.
+- **`csp.schema.json` was not committed** when this note was written. Done
+  since: `guardrail/csp.schema.json` is committed (401305a) and shipped as
+  package data. It is generated with `python -m guardrail.compiler schema
+  <path>`. The tests check that the exported schema requires the locked
+  fields, accepts real CSPs and rejects a CSP without `P0_constraints`, and
+  the drift test now compares the committed file with the model instead of
+  skipping.
 - **The KPI report is not stored in `docs/data/`** (so WP2-02 and WP2-03 are
   done in code but PARTIAL as deliverables). `report --json <file>` writes it.
   That folder belongs to another unit, so the file was written only to a
@@ -585,14 +672,16 @@ caught by the test named in that version.
 
 | File | Change wanted |
 |---|---|
-| `guardrail/ir.py` (WP1) | Carry the coarse/fine cache built at ingest. It can call `compiler.multiscale_geometry`. Then make the compiler read it. |
-| `sitl/ros2_shield_node.py`, `sitl/run_sitl_demo.py` | Call `write_csp(out / f"csp_g{generation}.json", mission, now=<the Shield's clock>)` at start and after each hot-apply. |
+| `sitl/ros2_shield_node.py`, `sitl/run_sitl_demo.py` | Pass the Shield's clock (`now`) when each generation's CSP is written, so the CSP's time filter is on in flight. |
 | `guardrail/kpi.py` (WP2-02/03) | Add the compiler KPIs (budget, P0 coverage, raised count, explained count) by calling `compiler.coverage_report`. |
 | `docs/data/csp_kpis.json` | Generate with `python -m guardrail.compiler report --exact --json docs/data/csp_kpis.json` (vla-real env). |
-| `csp.schema.json` (`docs/data/csp.schema.json` or `guardrail/csp.schema.json`) | Generate with `python -m guardrail.compiler schema <path>` and commit it. The drift test in `tests/test_csp.py` already looks at both paths and stops skipping once one exists. |
-| `requirements.txt` | Add `jinja2` (pin `3.1.6`, as `sitl/setup_sitl.sh` does). `build_prompt` and `summary_pack` render through Jinja2 and raise ImportError without it; `pyproject.toml` lists it and `.github/workflows/tests.yml` installs it by hand because `requirements.txt` does not. |
 | `demo/real_vla_demo.py` (WP2-01) | Log `csp.csp_content_hash(csp)` beside `csp_hash`, or pass `issued_at=` explicitly, so two runs of the same flight can be matched by content. Its CSPs are compiled without a clock and are stamped from the wall clock (`selection.issued_at_source == "wall_clock"`). |
 
 Done since the first version of this note, by other units: `demo/real_vla_demo.py`
 now uses `compile_csp`, and the paraphraser store's source texts carry the
-schedule clause (`experiments/paraphrases/csp_corridor_survey.json`).
+schedule clause (`experiments/paraphrases/csp_corridor_survey.json`). On
+2026-10-08 `guardrail/ir.py` began carrying the coarse/fine/bbox cache and the
+compiler reads it (§9), so that row is gone from the table above; the SITL
+rails write a CSP per generation (see "Not done"). `guardrail/csp.schema.json`
+is committed and `requirements.txt` lists `jinja2`, so those two rows are gone
+too.

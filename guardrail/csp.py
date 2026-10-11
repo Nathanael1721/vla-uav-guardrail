@@ -246,7 +246,11 @@ class CSP(_Strict):
 
     allowed_action_set: AllowedActionSet
     forbidden_action_set: ForbiddenActionSet
-    cost_map_ref: str | None = None    # out of scope: no path planner (see design doc)
+    # for path planners; lazy-loaded artefact. None unless the caller passes a
+    # compiler.CostMap (rasterised from this policy and generation, at this
+    # CSP's clock and the mission's cruise height) to compile_csp; then "costmap:<id>@v<version>/g<generation>#sha256:<digest>",
+    # resolved by compiler.load_cost_map (docs/DESIGN-cost-map-adapter.md).
+    cost_map_ref: str | None = None
     natural_language_prompt: str       # always emitted; templated, never free-form
 
     relevance_explanations: dict[str, str]   # rule_id -> mission-context fact
@@ -259,9 +263,11 @@ class CSP(_Strict):
 class CSPUnenforcedRules(Exception):
     """The policy carries rules the Safety Shield does not enforce.
 
-    The four declarable-only classes (distance_envelope, dynamic_nfz,
-    time_window_switch, corridor_swap; see models.RUNTIME_TYPES) can be
-    written in the DSL, but nothing at runtime checks them. A CSP is the
+    The declarable-only class (distance_envelope, the only one left since the
+    three hot-apply classes joined models.RUNTIME_TYPES on 2026-10-08, when
+    the compiler gained their templates) and an MSL altitude can be written in the DSL, but
+    nothing at runtime checks them. `rules` maps each such rule's id to its
+    type ("<type> with altitude_ref MSL" for the second). A CSP is the
     model's summary of the rules the Shield enforces, so neither choice the
     compiler could make on its own is safe: telling the model a rule that is
     not enforced makes the prompt promise more than the Shield delivers, and
@@ -279,7 +285,8 @@ class CSPUnenforcedRules(Exception):
         super().__init__(
             f"{policy_id}: cannot compile a CSP - the Safety Shield does not "
             f"enforce {', '.join(f'{i} ({t})' for i, t in self.rules.items())}. "
-            f"These types are declarable in the DSL only; the flight loaders "
+            f"These are declarable in the DSL only (a type nothing enforces, or "
+            f"an MSL height the Shield cannot measure); the flight loaders "
             f"refuse this policy too (Policy.unenforced_rules).")
 
 

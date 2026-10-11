@@ -339,6 +339,13 @@ RETRACTIONS: dict[str, str] = {
     "triggered = any brake": "not a sentence: the fail-safe figure, re-measured with the FSM",
     "p0-acted tick share": "not a sentence: a field published under the KPI's name, renamed",
     "goal assist": "FT-assist",
+    # 2026-10-12 retractions (wave 3)
+    "the escape repair did not leave the ring": "not a sentence: the 8 Oct escape cause, "
+                                                "re-diagnosed as range 0 (FINDING-the-escape-"
+                                                "that-stayed-inside-the-ring.md)",
+    "brake to loiter seven times": "not a sentence: an event count, recounted from metrics.json",
+    "dev topology on one desktop": "not a sentence: a topology label on one run, corrected",
+    "published library sweep": "not a sentence: a sweep figure, republished",
 }
 
 # The quotation is marked as withdrawn when one of these is near it. Only

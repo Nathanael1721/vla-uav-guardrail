@@ -105,20 +105,22 @@ if str(ROOT / "sitl") not in sys.path:
 
 from guardrail import AuditLogger, State                             # noqa: E402
 from guardrail.bundle import load_for_flight                          # noqa: E402
-from guardrail.fsm import (FAILSAFE_STATES, EscalationFSM, FSMConfig,  # noqa: E402
+from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E402
+                           THETA_HORIZON_S, EscalationFSM, FSMConfig,
                            tick_input_from_decision)
-from guardrail.geometry import fence_polygon                          # noqa: E402
 from guardrail.kpi import compute_from_dir                            # noqa: E402
 from guardrail.manifest import (NO_VLA, TOPOLOGY_DEV, TOPOLOGY_HIL,   # noqa: E402
                                 build_manifest, is_kpi_grade)
 from guardrail.models import (Action4D, AltitudeEnvelope,             # noqa: E402
-                              ObstacleClearance, PolygonFence)
+                              ObstacleClearance)
 from guardrail.replay import (EpisodeRecord, audit_tick,               # noqa: E402
                               episode_row_fields, flown_fields,
                               kpi_evidence_grade, rail_shield,
-                              verify_replay, write_replay)
-from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S, Repair       # noqa: E402
-from mavlink_adapter_node import fence_alt_plan, policy_ceiling_m      # noqa: E402
+                              verify_replay, write_replay, zone_dwell)
+from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S               # noqa: E402
+from mavlink_adapter_node import (DEFAULT_HOLD_MODE, HOLD_MODES,       # noqa: E402
+                                  ModeRequests, autopilot_mode,
+                                  fence_alt_plan, policy_ceiling_m)
 
 import rail                                                           # noqa: E402
 import topology as topo                                               # noqa: E402
@@ -131,10 +133,31 @@ GRANT_OBS_HZ = 10.0
 DEFAULT_POLICY = ROOT / "policies" / "follow_car_citylife.yaml"
 DEFAULT_CITYMAP = ROOT / "demo" / "out" / "citymap_citylife" / "occ_day.npz"
 SUBJECT_UP_M = 0.75          # centre height of a car or a person, as follow_vlm
-# The FSM's theta needs a per-operator magnitude (Repair.magnitude_m). Until
-# shield.py reports one, the velocity proxy with this horizon is used, as on
-# the two SITL rails, and the basis is written into metrics.json.
-PROXY_HORIZON_S = 0.1
+# A depth reading is the subject's range only if the subject can be where it
+# puts it. Four ways it cannot (2026-10-08, five P0 escape ticks of the
+# red-car follow came from a subject placed on the aircraft itself):
+#   * nearer than the camera's height above the tallest subject - the return
+#     is from something above any car or person, whatever the ray;
+#   * nearer than the camera's height above the subject's centre (the slant
+#     range Pythagoras would turn into a horizontal range of 0) while the ray
+#     through the box's centre puts the return above any subject - FrontCamera
+#     looks 20 deg down with a half vertical field of about 29 deg, so it
+#     cannot see what is under the aircraft;
+#   * much nearer than where the ray through the box's bottom edge meets the
+#     road (follow_vlm.ground_range_m) - the return is from something in front
+#     of the subject. The same 1.5 ratio follow_vlm's ground-contact check
+#     uses the other way round;
+#   * (2026-10-09, review) a range that would put the subject's centre BELOW
+#     the box: Pythagoras places the centre asin(dh / r) below the horizon,
+#     and no part of the subject can be lower in the image than the box's
+#     bottom edge. The three rules above let a box low in the frame through
+#     at 7.5-8.5 m from 7.96 m up: placed 2.1-4.5 m away, 58-74 deg down,
+#     outside FrontCamera's view and inside the 5 m P0 ring. Allowed slack:
+#     DEPRESSION_SLACK_DEG, for pitch error and the box's own jitter.
+# Each way the depth fix is dropped and the box width gives the range.
+SUBJECT_TOP_MAX_M = 2.5
+DEPTH_GROUND_RATIO_MAX = 1.5
+DEPRESSION_SLACK_DEG = 3.0
 # After the FSM entered RTL / Land, how long to keep recording.
 FAILSAFE_GRACE_S = 40.0
 # After the autopilot took the aircraft (fence RTL, failsafe, a pilot in
@@ -150,10 +173,40 @@ LANDED_STATE_ON_GROUND = 1
 RT_FACTOR_BAND = (0.95, 1.05)
 
 
-def theta_horizon() -> float | None:
-    """None (per-operator magnitude) once Repair carries magnitude_m, else
-    the velocity proxy's horizon - the rule sitl/ros2_shield_node.py uses."""
-    return None if "magnitude_m" in getattr(Repair, "model_fields", {}) else PROXY_HORIZON_S
+def theta_horizon(arg: str | None = "auto") -> float | None:
+    """What the FSM measures theta on. 'auto' (and 'none'): the default
+    basis, guardrail.fsm.DEFAULT_THETA_HORIZON_S - each repair's own
+    magnitude_m, the forecast depth it corrected (the grant's p5 audit
+    field; the PI reference's metric). A number: the setpoint change |dv|
+    over that many seconds; 0.1 is the one-period reading
+    (guardrail.fsm.THETA_HORIZON_S), a PI question and not the default,
+    because under the shipped caps it can never exceed theta. (A builder
+    made 0.1 the default on 2026-10-08; reverted on review the next day.)"""
+    if arg is None or str(arg).strip().lower() in ("auto", "none"):
+        return DEFAULT_THETA_HORIZON_S if arg != "none" else None
+    h = float(arg)
+    if not math.isfinite(h) or h <= 0:
+        raise ValueError(f"--theta-horizon-s must be 'auto', 'none' or seconds > 0, "
+                         f"got {arg!r}")
+    return h
+
+
+def theta_basis(horizon: float | None) -> dict:
+    """How theta's repair magnitude is measured on this run (metrics.json
+    `fsm.theta_basis`; guardrail.kpi reads `horizon_s` back from it)."""
+    if horizon is None:
+        return {"source": "per-operator magnitude_m", "horizon_s": None}
+    return {"source": ("setpoint change |dv| over one control period (the one-period "
+                       "reading; selectable, pending the PI)"
+                       if abs(horizon - THETA_HORIZON_S) < 1e-9
+                       else "velocity proxy |dv| * h"),
+            "horizon_s": horizon}
+
+
+# The ArduCopter mode the FSM's LOITER is flown as (BRAKE: see
+# sitl/mavlink_adapter_node.py DEFAULT_HOLD_MODE). `--hold-mode LOITER`
+# restores the literal mapping for a flight with a pilot on the throttle.
+HOLD_MODE = DEFAULT_HOLD_MODE
 
 
 def _fv():
@@ -216,8 +269,84 @@ class FollowPilot:
                  "det": det})
 
 
+def ray_depression_rad(row_px: float, img_w: float, img_h: float, hfov_deg: float,
+                       body_pitch_rad: float = 0.0,
+                       mount_pitch_deg: float = -20.0) -> float:
+    """How far below the horizon the camera ray through image row `row_px`
+    points, in radians (negative above it): the mount's pitch, the body's
+    (nose up positive, as MAVLink ATTITUDE reports it), and the row's offset
+    from the image centre through the pinhole of a square-pixel camera with
+    horizontal field `hfov_deg`. The arithmetic follow_vlm.ground_range_m uses
+    for a box's bottom edge."""
+    f = (img_w / 2.0) / math.tan(math.radians(hfov_deg) / 2.0)
+    below = math.atan((row_px - img_h / 2.0) / f)
+    return -(math.radians(mount_pitch_deg) + body_pitch_rad) + below
+
+
+def depth_implausible(det, r: float, up: float, hfov_deg: float, fv=None,
+                      body_pitch_rad: float = 0.0) -> str | None:
+    """Why a depth range `r` cannot be the detected subject's, or None.
+
+    Until 2026-10-08 a depth return shorter than the camera's height above
+    the subject was clamped to a horizontal range of 0: the subject was put
+    exactly under the aircraft, where FrontCamera cannot see, the Shield saw
+    a P0 stand-off ring of radius 5 m with the aircraft at its centre, and
+    five ticks of the red-car follow (pas_ap_20261008_224440) flew a P0
+    violation (docs/FINDING-the-escape-that-stayed-inside-the-ring.md). The
+    rail records no ground truth of the car; the ticks either side ranged
+    it at 3.5-55 m.
+
+    These rules remove the returns they can rule out, not every wrong one: a
+    return from something at the subject's own range and bearing passes."""
+    if up - r > SUBJECT_TOP_MAX_M:
+        return (f"depth {r:.1f} m is nearer than the camera's height above any "
+                f"subject ({up:.1f} m up, subjects under {SUBJECT_TOP_MAX_M:g} m), "
+                f"whatever the ray")
+    fv = fv or _fv()
+    mount = getattr(fv, "CAMERA_MOUNT_PITCH_DEG", -20.0)
+    if r < up - SUBJECT_UP_M and len(det) >= 7:
+        # Pythagoras would put the subject straight under the aircraft. Only
+        # a ray that looks steeply enough down can see a subject there: where
+        # the box centre's ray meets this range must be no higher than a
+        # subject. (Applied to this short-range case only, where a few
+        # degrees of pitch error move the point by centimetres.)
+        dep = ray_depression_rad(float(det[1]), float(det[5]), float(det[6]), hfov_deg,
+                                 body_pitch_rad, mount)
+        top = up - r * math.sin(max(0.0, dep))
+        if top > SUBJECT_TOP_MAX_M:
+            return (f"depth {r:.1f} m along a ray {math.degrees(dep):.0f} deg below "
+                    f"the horizon ends {top:.1f} m above the road, above any subject "
+                    f"(under {SUBJECT_TOP_MAX_M:g} m); the camera cannot see under "
+                    f"the aircraft")
+    ground = getattr(fv, "ground_range_m", None)
+    if ground is not None and len(det) >= 7:
+        try:
+            r_g = ground(det, up, body_pitch_rad,
+                         mount_pitch_deg=getattr(fv, "CAMERA_MOUNT_PITCH_DEG", -20.0),
+                         hfov_deg=hfov_deg)
+        except (TypeError, ValueError, ZeroDivisionError):
+            r_g = None
+        if r_g is not None and r * DEPTH_GROUND_RATIO_MAX < r_g:
+            return (f"depth {r:.1f} m is in front of the subject: its box's base "
+                    f"ray meets the road at {r_g:.1f} m")
+    if len(det) >= 7:
+        # The placement Pythagoras will make must be inside the box: the
+        # subject's centre at asin(dh / r) below the horizon is no lower than
+        # the ray through the box's bottom edge (with slack for pitch error).
+        dh = max(0.0, up - SUBJECT_UP_M)
+        placed = math.asin(min(1.0, dh / r))
+        bottom = ray_depression_rad(float(det[1]) + float(det[3]) / 2.0, float(det[5]),
+                                    float(det[6]), hfov_deg, body_pitch_rad, mount)
+        if placed > bottom + math.radians(DEPRESSION_SLACK_DEG):
+            return (f"depth {r:.1f} m would put the subject's centre "
+                    f"{math.degrees(placed):.0f} deg below the horizon, under its "
+                    f"box's bottom edge ({math.degrees(bottom):.0f} deg): outside "
+                    f"what the camera saw")
+    return None
+
+
 def subject_estimate(det, depth, state: State, yaw_rad: float, hfov_deg: float,
-                     width_m: float, fv=None):
+                     width_m: float, fv=None, body_pitch_rad: float = 0.0):
     """(x, y, source) of the detected subject in the scene frame, or None.
 
     Range from the depth image inside the box (follow_vlm.range_from_depth),
@@ -225,20 +354,52 @@ def subject_estimate(det, depth, state: State, yaw_rad: float, hfov_deg: float,
     column. Slant range becomes horizontal range with the height difference.
     No ground truth enters: this is what lets the Shield's stand-off rules bind
     on the real drone too.
+
+    A depth range the subject cannot have (`depth_implausible`) is dropped
+    for the width range, and the source says so ("width:depth-rejected"). A
+    range shorter than the height difference survives only where the box
+    centre's ray looks down steeply enough to reach a subject there (a body
+    pitched well nose-down); it then puts the subject directly below, as the
+    geometry says.
     """
     if det is None:
         return None
     fv = fv or _fv()
     b = fv.box_bearing(float(det[0]), float(det[5]), hfov_deg)
     r, src = (fv.range_from_depth(depth, det), "depth") if depth is not None else (None, None)
+    if r is not None and math.isfinite(r) and r > 0 and \
+            depth_implausible(det, r, state.up, hfov_deg, fv, body_pitch_rad):
+        r, src = None, "depth-rejected"
     if r is None:
-        r, src = fv.implied_range_from_width(det, width_m, hfov_deg), "width"
+        rejected = src == "depth-rejected"
+        r = fv.implied_range_from_width(det, width_m, hfov_deg)
+        src = "width:depth-rejected" if rejected else "width"
     if r is None or not math.isfinite(r) or r <= 0:
         return None
     dh = max(0.0, state.up - SUBJECT_UP_M)
     horiz = math.sqrt(max(0.0, r * r - dh * dh))
     ang = yaw_rad + b
     return (state.x + horiz * math.cos(ang), state.y + horiz * math.sin(ang), src)
+
+
+def depth_check(det, depth, state: State, hfov_deg: float, fv=None,
+                body_pitch_rad: float = 0.0) -> dict | None:
+    """The depth range inside the box and why `depth_implausible` refused it
+    (`refused` None: accepted), for the flight log; None with no box or no
+    depth image.
+
+    Added after the 2026-10-12 re-fly (pas_ap_20261012_033329): 43 depth
+    returns were refused and ranged by box width at 56-156 m; within 5 ticks
+    of a depth-ranged tick the two ranges disagreed by up to 122 m, and the
+    log kept neither the refused range nor the rule that refused it."""
+    if det is None or depth is None:
+        return None
+    fv = fv or _fv()
+    r = fv.range_from_depth(depth, det)
+    if r is None or not math.isfinite(r) or r <= 0:
+        return {"r_m": None, "refused": None}
+    return {"r_m": round(float(r), 2),
+            "refused": depth_implausible(det, r, state.up, hfov_deg, fv, body_pitch_rad)}
 
 
 # --------------------------------------------------------------------------- #
@@ -469,6 +630,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="escalation FSM thresholds YAML (guardrail.fsm.FSMConfig)")
     ap.add_argument("--no-fsm", action="store_true",
                     help="do not run the escalation FSM (not for KPI runs)")
+    ap.add_argument("--theta-horizon-s", default="auto",
+                    help="theta's basis: 'auto' / 'none' (the default: each repair's "
+                         "own magnitude_m, the forecast depth), or seconds (0.1 = the "
+                         "one-period reading, the setpoint change over one control "
+                         "period; pending the PI)")
+    ap.add_argument("--hold-mode", choices=list(HOLD_MODES), default=HOLD_MODE,
+                    help="ArduCopter mode the FSM's Loiter is flown as: BRAKE (default; "
+                         "holds with no pilot input) or LOITER (sinks unless a pilot "
+                         "centres the throttle)")
     ap.add_argument("--seed", type=int, default=20261006)
     ap.add_argument("--max-s", type=float, default=120.0)
     # where things are
@@ -655,7 +825,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     fsm = (EscalationFSM(FSMConfig.from_yaml(args.fsm_config) if args.fsm_config
                          else FSMConfig())
            if shield_on and not args.no_fsm else None)
-    horizon = theta_horizon()
+    horizon = theta_horizon(getattr(args, "theta_horizon_s", "auto"))
+    hold_mode = getattr(args, "hold_mode", HOLD_MODE)
 
     # ---- simulator configs and camera -------------------------------------
     sim_cfg, plan = sim_configs(args, out)
@@ -747,7 +918,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         rows, traj, ekf_err = [], [], []
         n_touched = n_braked = n_escaped = n_no_state = n_subject = 0
         subject_src: dict = {}
-        requested_modes: list[str] = []
+        # What was asked of the autopilot, in the FSM's words and ArduCopter's,
+        # and which request can explain a mode change (ModeRequests).
+        asks = ModeRequests(hold_mode)
         takeover = None
         fsm_fault = None
         failsafe_t = None
@@ -781,8 +954,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 # The autopilot left GUIDED without this node asking: its fence
                 # fired RTL, a failsafe, or a pilot in Mission Planner. From here
                 # it has the aircraft, and nothing more is commanded.
+                if mode == "GUIDED" and prev_mode != "GUIDED":
+                    asks.entered_guided()
                 if (takeover is None and prev_mode == "GUIDED" and mode != "GUIDED"
-                        and mode not in requested_modes):
+                        and not asks.explains(mode)):
                     takeover = {"t": round(now, 3), "mode": mode, "previous": prev_mode,
                                 "fence_breach_count": s.fence_breach_count,
                                 "statustext": s.statustext[-3:]}
@@ -794,10 +969,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 obs.put_pose_full(t_tick, st.x, st.y, st.up, yaw, s.pitch or 0.0, s.roll or 0.0)
                 body, info = pilot.step(t_tick, st.up)
                 raw = body_to_world(*body, yaw)
-                subj = None
+                subj = subj_depth = None
                 if info["fresh"]:
                     depth = obs.get_depth() if hasattr(obs, "get_depth") else None
-                    subj = subject_estimate(info["det"], depth, st, yaw, hfov, width_m, fv)
+                    subj = subject_estimate(info["det"], depth, st, yaw, hfov, width_m, fv,
+                                            body_pitch_rad=s.pitch or 0.0)
+                    subj_depth = depth_check(info["det"], depth, st, hfov, fv,
+                                             body_pitch_rad=s.pitch or 0.0)
                 if subj is not None and subject_class is not None:
                     shield.set_subject(subj[0], subj[1], subject_class)
                     n_subject += 1
@@ -812,11 +990,14 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 emitted = d.emitted if shield_on else raw
 
                 # ---- escalation FSM (Shield on only) -------------------------
-                fsm_out, setpoint, stop_illegal = None, "pass", None
+                fsm_out, setpoint, stop_illegal, unsafe_depth = None, "pass", None, None
                 if fsm is not None and fsm_fault is None and takeover is None:
                     try:
                         in_failsafe = fsm.state in FAILSAFE_STATES
                         stop_illegal = shield.state_is_unsafe(st)
+                        # How far from legal the position is: X6's progress
+                        # test and X7's losing-ground test read its trend.
+                        unsafe_depth = shield.unsafe_depth(st, stop_illegal)
                         on_ground = (s.armed is False
                                      or s.landed_state == LANDED_STATE_ON_GROUND)
                         fsm_out = fsm.step(tick_input_from_decision(
@@ -827,18 +1008,25 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                                              st.y - home_xy[1]) < REACH_M),
                             landed=bool(in_failsafe and mode in ("RTL", "LAND")
                                         and on_ground),
-                            stop_illegal=stop_illegal))
+                            stop_illegal=stop_illegal, unsafe_depth_m=unsafe_depth,
+                            # The caps the Shield clamped against on this tick
+                            # (Shield.applied_caps), not every cap in the policy.
+                            caps=shield.applied_caps or False))
                         setpoint = fsm_out.setpoint
                         if fsm_out.transition:
                             rec.event("fsm_transition", t=now, **{k: fsm_out.record[k] for k in (
                                 "fsm_state_before", "fsm_state_after", "transition",
                                 "edge", "edge_source", "reason", "fsm_config_hash")})
                         if fsm_out.set_mode:
-                            requested_modes.append(fsm_out.set_mode)
-                            sent = link.request_mode(fsm_out.set_mode)
+                            # The FSM's vocabulary on record, ArduCopter's mode
+                            # sent: its LOITER is flown as BRAKE (HOLD_MODE).
+                            ap_mode = asks.ask(fsm_out.set_mode)
+                            sent = link.request_mode(ap_mode)
                             rec.event("mode_request", t=now, mode=fsm_out.set_mode,
+                                      autopilot_mode=ap_mode,
                                       why=fsm_out.reason, sent=bool(sent))
-                            print(f"[fsm]    {fsm_out.set_mode} requested: {fsm_out.reason}")
+                            print(f"[fsm]    {fsm_out.set_mode} requested as {ap_mode}: "
+                                  f"{fsm_out.reason}")
                         if fsm_out.state in FAILSAFE_STATES and failsafe_t is None:
                             failsafe_t = now
                     except ValueError as exc:
@@ -846,10 +1034,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         # stop streaming. The run is not KPI-grade.
                         fsm_fault = str(exc)
                         rec.event("fsm_fault", t=now, error=fsm_fault)
-                        requested_modes.append("LOITER")
-                        link.request_mode("LOITER")
+                        hold = asks.ask("LOITER")
+                        link.request_mode(hold)
                         failsafe_t = now
-                        print(f"[fsm]    input refused, LOITER: {exc}")
+                        print(f"[fsm]    input refused, {hold}: {exc}")
                 if fsm_fault is not None or takeover is not None:
                     setpoint = "none"
                 # After the FSM stepped, with ITS verdict: one state machine on
@@ -876,6 +1064,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     "t": round(now, 3), "tick": tick,
                     "x": round(st.x, 3), "y": round(st.y, 3), "up": round(st.up, 3),
                     "yaw_deg": round(st.yaw_deg, 2),
+                    # Body pitch (ATTITUDE, nose up positive): the depth rules
+                    # read it, and a replay cannot judge them without it.
+                    "pitch_deg": (None if s.pitch is None
+                                  else round(math.degrees(s.pitch), 2)),
                     "body": [round(v, 4) for v in body],
                     "raw": raw.model_dump(), "emitted": emitted.model_dump(),
                     # The action sent to the autopilot (None: nothing sent);
@@ -891,6 +1083,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     # What the autopilot was doing on this tick, by its own report.
                     "ap_mode": mode, "armed": s.armed,
                     "subject": None if subj is None else [round(subj[0], 2), round(subj[1], 2), subj[2]],
+                    # The depth range in the box and the rule that refused it, if any.
+                    "subject_depth": subj_depth,
                     **extra,
                 }
                 if fsm_out is not None:
@@ -899,12 +1093,17 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         "fsm_state_before": fsm_out.before.value,
                         "fsm_state_after": fsm_out.state.value,
                         "fsm_edge": fsm_out.edge, "set_mode": fsm_out.set_mode,
+                        "autopilot_set_mode": (autopilot_mode(fsm_out.set_mode, hold_mode)
+                                               if fsm_out.set_mode else None),
                         "stop_illegal": bool(stop_illegal),
+                        "unsafe_depth_m": (None if unsafe_depth is None
+                                           else round(unsafe_depth, 4)),
                         "failsafe": bool(fsm_out.transition
                                          and fsm_out.state in FAILSAFE_STATES),
                         "fsm": {k: r_.get(k) for k in (
-                            "outcome", "theta_exceeded", "n_in_t", "reason",
-                            "risk_level", "fsm_config_hash")}})
+                            "outcome", "theta_exceeded", "n_in_t", "onset_merged",
+                            "reason", "risk_level", "magnitude", "x6_progress",
+                            "x7_losing", "fsm_config_hash")}})
                 elif not shield_on:
                     row["fsm_state_after"] = None
                 rows.append(row)
@@ -942,7 +1141,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 fsm is not None and (fsm.terminal or fsm.state in FAILSAFE_STATES))
             if not autopilot_owns:
                 try:
-                    requested_modes.append("LAND")
+                    asks.ask("LAND")
                     link.land()
                 except Exception as exc:                          # noqa: BLE001
                     print(f"[link]   LAND failed: {exc}")
@@ -964,11 +1163,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         fence_breaches = (None if fence0 is None or fence1 is None else fence1 - fence0)
 
         # ---- dwell, from the flown trajectory -------------------------------------
-        fences = [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
-        from shapely.geometry import Point
-        nfz_ticks = sum(1 for p in traj for f, poly in fences
-                        if f.altitude_floor_m <= p["up"] <= f.altitude_ceiling_m
-                        and poly.contains(Point(p["x"], p["y"])))
+        # Zone dwell from the Shield's own rule checker, the count every rail
+        # shares (guardrail.replay.zone_dwell): polygon and circle fences and
+        # every dynamic_nfz that does not move; a moving one is named
+        # (nfz_moving_not_counted), not scored 0. Until 2026-10-11 this walked
+        # policy.by_type(PolygonFence), which a dynamic_nfz is not.
+        dwell = zone_dwell(shield, traj, TICK)
+        nfz_ticks = dwell["nfz_ticks"]
+        if dwell["nfz_moving_not_counted"]:
+            print(f"[nfz]    moving zone(s) {dwell['nfz_moving_not_counted']} are NOT "
+                  f"in nfz_s: the end-of-flight count has no per-tick position")
         env = policy.by_type(AltitudeEnvelope)
         alt_ticks = sum(1 for p in traj for e in env if not (e.alt_min_m <= p["up"] <= e.alt_max_m))
 
@@ -1024,15 +1228,20 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             "subject_class": subject_class,
             "interventions": n_touched, "brakes": n_braked, "escape_ticks": n_escaped,
             "nfz_s": round(nfz_ticks * TICK, 2), "alt_violation_s": round(alt_ticks * TICK, 2),
+            "nfz_by_zone_s": dwell["nfz_by_zone_s"],
+            "nfz_moving_not_counted": dwell["nfz_moving_not_counted"],
             # No subject ground truth is read on this rail, so there is no tracking
             # score and no stand-off dwell to report. None, never 0.
             "frac_within_30m": None, "standoff_s": None, "follow_scored": False,
             "fsm": (dict(fsm.summary(), fault=fsm_fault,
-                         theta_basis=({"source": "per-operator magnitude_m"} if horizon is None
-                                      else {"source": "velocity proxy |dv| * h",
-                                            "horizon_s": horizon}))
+                         theta_basis=theta_basis(horizon),
+                         hold_mode={"fsm_mode": "LOITER",
+                                    "autopilot_mode": autopilot_mode("LOITER", hold_mode)})
                     if fsm is not None else None),
-            "mode_requests": requested_modes,
+            # The FSM's words (LOITER, RTL, LAND; LAND also at mission end) and
+            # what ArduCopter was asked for (the FSM's LOITER as BRAKE).
+            "mode_requests": list(asks.fsm),
+            "autopilot_mode_requests": list(asks.autopilot),
             # What the autopilot did on its own, by its own report: mode and arm
             # changes, STATUSTEXT, fence breaches. Relative to mission start
             # (bring-up events are negative).
@@ -1142,7 +1351,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
               f"{n_touched} | escape ticks {n_escaped} | P0 escape rate "
               f"{kpi['p0_violation_escape_rate']} | ended: {end_reason}")
         print(f"[report] ArduPilot real-time factor {rt_factor} | fence breaches "
-              f"{fence_breaches} | mode requests {requested_modes} | autopilot took "
+              f"{fence_breaches} | mode requests {asks.fsm} (sent as "
+              f"{asks.autopilot}) | autopilot took "
               f"over: {takeover['mode'] if takeover else 'no'}")
         print(f"[report] topology stamped {manifest['topology']!r}; grant label "
               f"{cls['grant']!r}: " + "; ".join(cls["reasons"] + withheld))

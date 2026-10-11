@@ -74,8 +74,13 @@ term.
       vehicle has finished its RTL, and an FSM stuck in RTL after touchdown
       would be wrong.
   X6  Brake / Loiter -> RTL when the POSITION has been illegal (`stop_illegal`:
-      standing still here breaks a hard rule) on every tick for >= T, and a
-      hard rule is still violated on this tick. Without it, an aircraft held
+      standing still here breaks a hard rule) on every tick for >= T, a
+      hard rule is still violated on this tick, and the illegal depth
+      (`unsafe_depth_m`) has not been shown to fall at x6_min_escape_mps
+      over that T (a least-squares slope over the window, at two standard
+      errors; since 2026-10-08 a recovery that is working is left to
+      finish, and a window with a tick of no depth counts as no progress).
+      Without it, an aircraft held
       inside a P0 zone (wind beyond the speed cap) never escalates: every tick
       gets a recovery operator, recoveries are exempt from theta, a held
       violation is one N-in-T onset, and the FSM sits in Brake forever. That
@@ -87,11 +92,19 @@ term.
       abort every GeofenceEscape that was about to succeed. T is the grant's
       own persistence window, so a recovery gets the same 5 s the grant gives
       N-in-T.
+  X7  Brake / Loiter -> RTL when the position has been illegal for >=
+      T_recover, a hard rule is violated on this tick, and the illegal depth
+      is GROWING over the last T_recover: a least-squares slope above
+      x6_min_escape_mps at two standard errors, and a fitted rise of at least
+      x7_min_rise_m. A recovery is losing ground to something the Shield's
+      forecast cannot see (wind beyond the speed cap). Ours, since
+      2026-10-08; a PI question.
 
 Interpretations of terms the grant uses but does not define:
 
   * N-in-T counts violation ONSETS by default (a hard-rule violation on a
-    tick whose previous tick had none), not violated ticks. At the grant's
+    tick whose previous tick had none, at most one per onset_clear_s; see
+    ONSET_CLEAR_S), not violated ticks. At the grant's
     10 Hz monitor rate, counting ticks means any violation lasting 0.3 s
     escalates. Every sustained repair, such as sliding along a fence, would
     then put the aircraft in LOITER, and projection would be pointless. N=3
@@ -115,10 +128,23 @@ Interpretations of terms the grant uses but does not define:
     p3 says the first operator with "magnitude <= threshold wins", and p4
     escalates only when the change is "> threshold". The diagram's
     "magnitude < theta" is the one place that says otherwise.
-    Where the metres come from is an integration decision with a large
-    effect. The grant's audit schema has a per-operator `magnitude_m`
-    (`magnitude_from_repairs`, preferred), and `magnitude_from_actions` is a
-    velocity proxy with an explicit horizon. The design doc has the
+    Where the metres come from is an OPEN QUESTION for the PI, and the
+    default stays where the grant's own example points until he answers.
+    The default (horizon_s=None) reads each operator's own `magnitude_m`
+    (`magnitude_from_repairs`): the depth of the forecast it corrected. The
+    grant's audit example logs LateralProjection with "magnitude_m": 0.7
+    for a raw (5.0, 1.2) emitted as (4.7, -0.3) (Safety Shield p5), a
+    velocity change of 1.53 m/s, so its metres are not |dv| over one
+    period (0.15 m); p3 has LateralProjection "project the predicted point
+    to the nearest feasible point", a position depth; and the PI reference
+    (repair.py) escalates a deep head-on dive "rather than projected".
+    The alternative, THETA_HORIZON_S (|dv| x one 0.1 s control period,
+    `magnitude_from_actions`), reads p4's "||action_repaired -
+    action_original||" literally for a 10 Hz setpoint. It is selectable
+    and NOT the default: under every shipped envelope (4-5 m/s, 2 m/s
+    climb) a clamped command changes by at most 1.0 m / 0.4 m per period,
+    so the cap could never fire, which would waive it. The design doc
+    ("Theta: two readings, one default") has both sides and the
     measurements.
   * Theta does not govern every operator. Kinematic clamps change a speed,
     not a position. RECOVERY operators are exempt, as in the PI's reference
@@ -221,6 +247,55 @@ from typing import Any, Iterable, Mapping, Sequence
 # test of IEEE 754, not of the FSM.
 EPS = 1e-9
 
+# The grant's control period. "Monitor rate: 10 Hz, matching the VLA action
+# rate" (Safety Shield PDF p1) and "It emits a 10 Hz setpoint that
+# ArduPilot's inner loop tracks" (Architecture constraints PDF p1): each
+# action, raw or repaired, is in force for one 0.1 s period, then the next
+# tick replaces it.
+CONTROL_PERIOD_S = 0.1
+# Theta's ONE-PERIOD reading (docs/DESIGN-escalation-fsm.md, "Theta: two
+# readings, one default"): |dv| x CONTROL_PERIOD_S, p4's "||action_repaired -
+# action_original||" read literally for a setpoint flown for one 0.1 s
+# period. SELECTABLE, NOT THE DEFAULT. The default is the per-operator
+# `magnitude_m` (horizon_s=None, DEFAULT_THETA_HORIZON_S), the reading the
+# grant's audit example (p5: magnitude_m 0.7 for a 1.53 m/s change) and the
+# PI reference support, until the PI says otherwise. Under the 4-5 m/s caps
+# of every shipped policy this reading caps nothing (at most 1.0 m per
+# period against theta 2.0 m).
+THETA_HORIZON_S = CONTROL_PERIOD_S
+# The basis every Shield and rail uses unless told otherwise: None, each
+# repair's own magnitude_m. Changing it is a PI decision, recorded in the
+# design doc when it is made.
+DEFAULT_THETA_HORIZON_S: float | None = None
+# X6's progress test: a position that is illegal for T but whose illegal depth
+# falls at least this fast (shown at two standard errors of a least-squares
+# fit over T) is a recovery that is working, and X6 leaves it alone. The same
+# 0.1 m/s the Shield's trend tests and the PI's reference (checker.py
+# `_ESCAPE_SPEED_MPS`) use to tell escaping from drift. X7 uses it the other
+# way round: a depth growing faster than this, at two standard errors.
+X6_MIN_ESCAPE_MPS = 0.1
+# X7's floor: the fitted rise of the illegal depth over T_recover must be at
+# least this many metres before X7 calls a recovery "losing ground". Two
+# depth samples T_recover apart with 0.2-0.3 m of position noise sent working
+# 0.3-0.5 m/s recoveries home (review of 2026-10-09: 40-176 of 200 seeded
+# runs); a fitted slope with its standard error and this floor do not.
+X7_MIN_RISE_M = 0.5
+# N-in-T's onset rate limit: a hard violation that starts again less than
+# this long after the last COUNTED onset is the same violation flickering at
+# the 10 Hz monitor, not a new one. 0 counts every return, as before
+# 2026-10-08, when GPS noise of 0.2-0.3 m made a forecast skimming a zone's
+# ring violate at 6.1, 6.3 and 6.8 s - three "onsets" in 0.7 s, N-in-T,
+# LOITER, then RTL - on a pass the scenario labels within the error budget.
+# It is a RATE LIMIT, not a merge: a pilot who keeps re-violating still
+# produces one onset per ONSET_CLEAR_S, so N-in-T (3 in 5 s) still catches the
+# thrash it exists for. (A first version merged every return after a clean
+# spell under 1 s into one onset, and one-tick violations every 0.3-0.9 s for
+# 30 s then never left Brake.) It must leave room for N onsets in T,
+# (N - 1) x onset_clear_s <= T, or N-in-T could never fire; FSMConfig refuses
+# a config that breaks that. Pending the PI (design doc, "Questions for the
+# PI").
+ONSET_CLEAR_S = 1.0
+
 
 class FSMState(str, Enum):
     """The grant's five states (Safety Shield PDF p4), spelled as it spells them.
@@ -296,7 +371,12 @@ EDGES: dict[str, tuple[str, str, str, str]] = {
     "X4": ("Normal|Brake", "Loiter", "extension", "violation_action == loiter (direct)"),
     "X5": ("RTL", "[*]", "extension", "landed during RTL without home_reached"),
     "X6": ("Brake|Loiter", "RTL", "extension",
-           "position illegal (stop_illegal) on every tick for >= T, hard rule violated"),
+           "position illegal (stop_illegal) on every tick for >= T, hard rule violated, "
+           "illegal depth not shown to be falling"),
+    "X7": ("Brake|Loiter", "RTL", "extension",
+           "position illegal for >= T_recover and its illegal depth GROWING (fitted slope "
+           "at two standard errors, and a minimum rise) while the Shield intervenes on a "
+           "hard rule (a recovery losing ground)"),
 }
 
 
@@ -468,6 +548,17 @@ def _is_kinematic_constraint(c: Any) -> bool:
                 and getattr(c, "climb_rate_max_mps", None) is not None))
 
 
+def _watched_only(c: Any) -> bool:
+    """Is this rule's breach action `monitor_only` (recorded, never repaired)?"""
+    va = getattr(c, "violation_action", None)
+    if va is None:
+        return False
+    try:
+        return canonical_action(va) == "monitor_only"
+    except ValueError:
+        return False
+
+
 @dataclass(frozen=True)
 class KinematicCaps:
     """The policy's horizontal-speed and climb-rate caps, as shield.py applies them.
@@ -494,13 +585,23 @@ class KinematicCaps:
 
     @classmethod
     def from_policy(cls, policy: Any) -> "KinematicCaps | None":
-        """The smallest caps among the policy's kinematic envelopes, or None."""
+        """The smallest caps among the policy's ENFORCED kinematic envelopes,
+        or None. A `monitor_only` envelope is never clamped by shield.py, so
+        it is no cap here either (until 2026-10-09 it was, and a raw action
+        over it with a position repair on the tick was refused as a decision
+        "made under other caps": an FSM fault, LOITER, nothing streamed)."""
         kins = [c for c in (getattr(policy, "constraints", None) or [])
-                if _is_kinematic_constraint(c)]
-        if not kins:
+                if _is_kinematic_constraint(c) and not _watched_only(c)]
+        return cls.of(kins)
+
+    @classmethod
+    def of(cls, rules: Iterable[Any]) -> "KinematicCaps | None":
+        """The smallest caps among `rules` (kinematic envelopes), or None."""
+        rules = list(rules)
+        if not rules:
             return None
-        return cls(min(float(c.speed_max_mps) for c in kins),
-                   min(float(c.climb_rate_max_mps) for c in kins))
+        return cls(min(float(c.speed_max_mps) for c in rules),
+                   min(float(c.climb_rate_max_mps) for c in rules))
 
     def clamp(self, vx: float, vy: float, vz: float) -> tuple[float, float, float]:
         """shield.py's SpeedClamp and ClimbClamp, exactly: scale the horizontal
@@ -538,13 +639,15 @@ def magnitude_from_actions(raw: Any, emitted: Any, horizon_s: float,
     correction. Without caps the whole action change is measured, clamp
     included. `repair_magnitude` refuses that on a tick that has a clamp.
 
-    `horizon_s` has NO DEFAULT, and that is deliberate. The choice decides
-    whether the cap ever fires (docs/DESIGN-escalation-fsm.md has the table
-    for the delivered shield-ON flights). The PI's reference measures
-    something else again: the penetration depth of the raw predicted
-    trajectory (kuanting-vla-uav-guardrail/.../repair.py, LateralProjection),
-    which is what `magnitude_from_repairs` reads once shield.py reports it. A
-    default here would make that decision invisibly.
+    `horizon_s` has NO DEFAULT, and that is deliberate: a caller passes
+    THETA_HORIZON_S (one 0.1 s control period, the selectable one-period
+    reading) or another horizon by name. The choice decides whether the cap
+    ever fires (docs/DESIGN-escalation-fsm.md has the tables). The default
+    basis everywhere is not this function: it is each operator's own
+    penetration depth (`magnitude_from_repairs`), the reading of the grant's
+    p5 audit example and of the PI's reference (kuanting-vla-uav-guardrail/
+    .../repair.py, LateralProjection). A default here would make that
+    decision invisibly.
 
     Accepts Action4D objects or dicts, with `vz_up` (this repo) or `vz`.
     """
@@ -761,6 +864,13 @@ class TickInput:
                ring holds the aircraft in the violation it is meant to
                leave. Held on every tick for T, it is also what X6 escalates
                on.
+    unsafe_depth_m  how far the POSITION is from legal, in metres
+               (Shield.unsafe_depth: summed over the hard rules a stop here
+               breaks), or None when the caller cannot say. X6 and X7 read
+               its fitted trend: a depth shown to fall at >=
+               x6_min_escape_mps over T is a recovery that is working (no
+               X6); one shown to grow over T_recover is losing ground (X7).
+               None is read as no progress, and never fires X7.
     """
     t: float
     outcome: str
@@ -771,6 +881,7 @@ class TickInput:
     landed: bool = False
     note: str = ""
     stop_illegal: bool = False
+    unsafe_depth_m: float | None = None
 
     def __post_init__(self) -> None:
         if isinstance(self.t, bool) or not isinstance(self.t, (int, float)) \
@@ -788,6 +899,12 @@ class TickInput:
                 raise ValueError(f"{flag} must be a bool, got {getattr(self, flag)!r}")
         if self.magnitude is not None and not isinstance(self.magnitude, RepairMagnitude):
             raise ValueError("magnitude must be a RepairMagnitude or None")
+        if self.unsafe_depth_m is not None:
+            d = self.unsafe_depth_m
+            if not _num_ok(d) or d < 0:
+                raise ValueError(f"unsafe_depth_m must be a finite number >= 0 or None, "
+                                 f"got {d!r}")
+            object.__setattr__(self, "unsafe_depth_m", float(d))
         enforced = [h for h in vios if h.effective_action != "monitor_only"]
         if self.outcome == "repaired" and self.magnitude is None:
             raise ValueError("outcome 'repaired' without a magnitude: the theta cap "
@@ -805,13 +922,23 @@ class TickInput:
 
 @dataclass(frozen=True)
 class FSMConfig:
-    """The grant's five thresholds (Safety Shield PDF p4) plus our two knobs.
+    """The grant's five thresholds (Safety Shield PDF p4) plus our knobs.
 
     n_violations, window_s, theta_lateral_m, theta_vertical_m, t_recover_s are
     the grant's N, T, theta (lateral / vertical) and T_recover, with the
     grant's defaults. loiter_timeout_s is the "operator-defined timeout" the
     grant names without a default (30 s is ours; None disables it).
     event_mode is how N-in-T counts (see the module docstring).
+    x6_min_escape_mps is X6's progress test (ours): a position illegal for T
+    whose illegal depth (TickInput.unsafe_depth_m) is shown to fall at least
+    this fast (least-squares slope over T, at two standard errors) is a
+    working recovery and does not fire X6. A window with a tick of no depth
+    is read as no progress, so a caller that reports none keeps X6 as it was.
+    X7 uses the same rate the other way, with x7_min_rise_m as its floor.
+    onset_clear_s is N-in-T's onset rate limit (ONSET_CLEAR_S; 0 counts
+    every return). The three knobs entered the config on 2026-10-08/09, so
+    every fsm_config_hash written before then differs from today's for the
+    same grant thresholds.
     """
     n_violations: int = 3
     window_s: float = 5.0
@@ -820,6 +947,9 @@ class FSMConfig:
     t_recover_s: float = 2.0
     loiter_timeout_s: float | None = 30.0
     event_mode: str = "onset"
+    x6_min_escape_mps: float = X6_MIN_ESCAPE_MPS
+    onset_clear_s: float = ONSET_CLEAR_S
+    x7_min_rise_m: float = X7_MIN_RISE_M
 
     # Grant symbols accepted in YAML, so a profile can be written the way p4
     # writes it ("N: 3, T: 5, T_recover: 2").
@@ -842,6 +972,9 @@ class FSMConfig:
         num("theta_lateral_m", 0, True)
         num("theta_vertical_m", 0, True)
         num("t_recover_s", 0, False)
+        num("x6_min_escape_mps", 0, False)
+        num("onset_clear_s", 0, False)
+        num("x7_min_rise_m", 0, False)
         if self.loiter_timeout_s is not None:
             num("loiter_timeout_s", 0, True)
             # A timeout no longer than T_recover means no Loiter can ever
@@ -854,10 +987,20 @@ class FSMConfig:
         if self.event_mode not in EVENT_MODES:
             raise ValueError(f"FSMConfig.event_mode {self.event_mode!r} "
                              f"is not one of {EVENT_MODES}")
+        # At most one counted onset per onset_clear_s: N of them need
+        # (N - 1) x onset_clear_s seconds, which must fit in T, or N-in-T (G2,
+        # G4) could never fire and the config would quietly delete both edges.
+        if (self.event_mode == "onset"
+                and (self.n_violations - 1) * self.onset_clear_s > self.window_s + EPS):
+            raise ValueError(
+                f"onset_clear_s ({self.onset_clear_s}) x (N - 1) = "
+                f"{(self.n_violations - 1) * self.onset_clear_s:g} s exceeds T "
+                f"({self.window_s}): N onsets could never fall inside T")
         # Canonical numbers, AFTER validation (so True is still refused). YAML
         # "T: 5" arrives as the int 5, and json.dumps writes 5 and 5.0
         # differently, so one set of thresholds had two config hashes.
-        for name in ("window_s", "theta_lateral_m", "theta_vertical_m", "t_recover_s"):
+        for name in ("window_s", "theta_lateral_m", "theta_vertical_m", "t_recover_s",
+                     "x6_min_escape_mps", "onset_clear_s", "x7_min_rise_m"):
             object.__setattr__(self, name, float(getattr(self, name)))
         if self.loiter_timeout_s is not None:
             object.__setattr__(self, "loiter_timeout_s", float(self.loiter_timeout_s))
@@ -975,9 +1118,14 @@ class EscalationFSM:
         self._entered_at: float | None = None
         self._events: list[float] = []          # hard-rule onset times in the window
         self._prev_hard = False
+        self._last_onset: float | None = None   # the last COUNTED onset (rate limit)
         self._clean_any_since: float | None = None   # no enforced violation since
         self._clean_hard_since: float | None = None  # no HARD enforced violation since
         self._stuck_since: float | None = None       # stop_illegal on every tick since
+        # (t, unsafe_depth_m or None) on the ticks of the current stuck spell,
+        # oldest first, pruned to the last sample at least max(T, T_recover)
+        # old: the windows X6's and X7's fitted trends are read from.
+        self._depths: list[tuple[float, float | None]] = []
         self._n = 0
         self._transitions: list[dict[str, Any]] = []
         self._visited = [FSMState.NORMAL]
@@ -1069,9 +1217,20 @@ class EscalationFSM:
         # X6's clock: the position has been illegal on every tick since.
         if not inp.stop_illegal:
             self._stuck_since = None
-        elif self._stuck_since is None:
-            self._stuck_since = t
+            self._depths = []
+        else:
+            if self._stuck_since is None:
+                self._stuck_since = t
+            self._depths.append((t, inp.unsafe_depth_m))
+            # Keep the last sample at least max(T, T_recover) old (the ones
+            # the two trends are read from) and everything after it.
+            keep = max(cfg.window_s, cfg.t_recover_s)
+            while (len(self._depths) > 1
+                   and self._depths[1][0] <= t - keep + EPS):
+                self._depths.pop(0)
         stuck_s = None if self._stuck_since is None else t - self._stuck_since
+        progress = self._x6_progress(t)
+        losing = self._x7_losing(t)
 
         # Clean streaks. Brake recovers when nothing enforced is violated;
         # Loiter when no HARD rule is, so a soft rule can never hold the
@@ -1085,10 +1244,21 @@ class EscalationFSM:
         elif self._clean_hard_since is None:
             self._clean_hard_since = t
 
-        # N-in-T bookkeeping: hard-rule onsets only.
-        onset = hard_violated and (cfg.event_mode == "tick" or not self._prev_hard)
+        # N-in-T bookkeeping: hard-rule onsets only, at most one per
+        # onset_clear_s. A violation that starts again sooner than that after
+        # the last counted onset is the same violation flickering at the
+        # 10 Hz monitor; a pilot who keeps re-violating still produces one
+        # onset per onset_clear_s, so N-in-T still sees the thrash.
+        rising = hard_violated and not self._prev_hard
+        if cfg.event_mode == "tick":
+            onset = hard_violated
+        else:
+            onset = rising and (self._last_onset is None
+                                or t - self._last_onset >= cfg.onset_clear_s - EPS)
+        merged = rising and not onset
         self._prev_hard = hard_violated
         if onset:
+            self._last_onset = t
             self._events.append(t)
         self._events = [e for e in self._events if t - e <= cfg.window_s + EPS]
         n_in_t = len(self._events) >= cfg.n_violations
@@ -1101,7 +1271,7 @@ class EscalationFSM:
         target, edge, why = self._decide(inp, t, violated, strongest, gov,
                                          untrusted, hard_untrusted, theta_exceeded,
                                          n_in_t, cleared_any, cleared_hard,
-                                         hard_violated, stuck_s)
+                                         hard_violated, stuck_s, progress, losing)
 
         terminal_now = False
         if edge in ("G9", "G10", "X5"):
@@ -1172,11 +1342,18 @@ class EscalationFSM:
                       "vertical_m": cfg.theta_vertical_m},
             "theta_exceeded": theta_exceeded,
             "n_in_t": len(self._events),
+            # A hard violation started this tick but within onset_clear_s of
+            # the last counted onset: the same violation, not a new one.
+            "onset_merged": merged,
             "n_threshold": cfg.n_violations,
             "window_s": cfg.window_s,
             "cleared_s": None if cleared_any is None else round(cleared_any, 6),
             "cleared_hard_s": None if cleared_hard is None else round(cleared_hard, 6),
             "stop_illegal_s": None if stuck_s is None else round(stuck_s, 6),
+            "unsafe_depth_m": (None if inp.unsafe_depth_m is None
+                               else round(inp.unsafe_depth_m, 6)),
+            "x6_progress": progress,
+            "x7_losing": losing,
             "flags": {"rtl_failed": inp.rtl_failed, "home_reached": inp.home_reached,
                       "landed": inp.landed, "stop_illegal": inp.stop_illegal},
             "stop_withheld": withheld,
@@ -1189,6 +1366,92 @@ class EscalationFSM:
                          record=record)
 
     # ------------------------------------------------------------ internals
+    def _fit(self, t: float, window_s: float) -> dict[str, Any] | None:
+        """Least-squares line through the illegal-depth samples of the last
+        `window_s` (from the last sample at or before t - window_s to now).
+
+        None when there is nothing to fit. `slope_mps` is None when a sample
+        in the window has no depth (a caller that did not report one): no
+        evidence either way. `se_mps` is the slope's standard error from the
+        fit's own residuals (0 with fewer than three samples, where it cannot
+        be estimated). Two samples T apart, as the first version read the
+        trend, let 0.2-0.3 m of position noise decide X7 on its own."""
+        if not self._depths:
+            return None
+        i0 = 0
+        for i, s in enumerate(self._depths):
+            if s[0] <= t - window_s + EPS:
+                i0 = i
+            else:
+                break
+        pts = self._depths[i0:]
+        t0 = pts[0][0]
+        span = pts[-1][0] - t0
+        out: dict[str, Any] = {"from_t_s": round(t0, 6), "span_s": round(span, 6),
+                               "n": len(pts), "slope_mps": None, "se_mps": None}
+        if any(d is None for _, d in pts) or len(pts) < 2 or span < EPS:
+            return out
+        n = len(pts)
+        tb = sum(ti for ti, _ in pts) / n
+        db = sum(di for _, di in pts) / n
+        sxx = sum((ti - tb) ** 2 for ti, _ in pts)
+        if sxx < EPS * EPS:
+            return out
+        b = sum((ti - tb) * (di - db) for ti, di in pts) / sxx
+        res = sum((di - db - b * (ti - tb)) ** 2 for ti, di in pts)
+        se = math.sqrt(res / (n - 2) / sxx) if n > 2 else 0.0
+        out.update({"from_m": round(pts[0][1], 6), "now_m": round(pts[-1][1], 6),
+                    "slope_mps": round(b, 6), "se_mps": round(se, 6),
+                    "_b": b, "_se": se, "_span": span})
+        return out
+
+    def _x6_progress(self, t: float) -> dict[str, Any] | None:
+        """Is the illegal position getting better? None until the stuck spell
+        is T long. Otherwise the depth's fitted slope over the last T, and
+        whether its fall rate, less two standard errors, reaches
+        x6_min_escape_mps: a recovery that is working. A window with a tick of
+        no depth is `progressing: False`: no evidence of progress is not
+        evidence of it."""
+        cfg = self.config
+        if (self._stuck_since is None or not self._depths
+                or t - self._stuck_since < cfg.window_s - EPS):
+            return None
+        fit = self._fit(t, cfg.window_s)
+        span = fit["span_s"]
+        need = cfg.x6_min_escape_mps * span
+        if fit["slope_mps"] is None:
+            return {"from_t_s": fit["from_t_s"], "span_s": span, "n": fit["n"],
+                    "fell_m": None, "need_m": round(need, 6), "progressing": False}
+        b, se = fit.pop("_b"), fit.pop("_se")
+        fall = -b * fit.pop("_span")
+        shown = -b - 2.0 * se
+        return {**fit, "fell_m": round(fall, 6), "need_m": round(need, 6),
+                "progressing": bool(shown >= cfg.x6_min_escape_mps - EPS and fall > EPS)}
+
+    def _x7_losing(self, t: float) -> dict[str, Any] | None:
+        """Is the illegal position getting WORSE? None until the stuck spell is
+        T_recover long, or when a depth in the window is missing (an unknown
+        depth never fires X7; X6 still covers it at T). Otherwise the depth's
+        fitted slope over the last T_recover, and whether the aircraft is
+        losing ground: the slope less two standard errors above
+        x6_min_escape_mps AND a fitted rise of at least x7_min_rise_m. The
+        Shield is commanding a recovery and the aircraft goes deeper, pushed
+        by something its forecast cannot see (wind beyond the speed cap)."""
+        cfg = self.config
+        if (self._stuck_since is None or not self._depths
+                or t - self._stuck_since < max(cfg.t_recover_s, CONTROL_PERIOD_S) - EPS):
+            return None
+        fit = self._fit(t, cfg.t_recover_s)
+        if fit is None or fit["slope_mps"] is None:
+            return None
+        b, se = fit.pop("_b"), fit.pop("_se")
+        rose = b * fit.pop("_span")
+        shown = b - 2.0 * se
+        return {**fit, "rose_m": round(rose, 6),
+                "need_mps": cfg.x6_min_escape_mps, "need_m": cfg.x7_min_rise_m,
+                "losing": bool(shown > cfg.x6_min_escape_mps + EPS
+                               and rose >= cfg.x7_min_rise_m - EPS)}
+
     def _enter(self, target: FSMState, t: float) -> None:
         self._state = target
         self._entered_at = t
@@ -1212,20 +1475,48 @@ class EscalationFSM:
                 gov: RuleHit | None, untrusted: bool, hard_untrusted: bool,
                 theta_exceeded: bool | None, n_in_t: bool,
                 cleared_any: float | None, cleared_hard: float | None,
-                hard_violated: bool = False, stuck_s: float | None = None):
+                hard_violated: bool = False, stuck_s: float | None = None,
+                progress: dict | None = None, losing: dict | None = None):
         """Return (target state or None, edge id or None, reason)."""
         cfg = self.config
         S = FSMState
         if self._terminal:
             return None, None, f"terminal ({self._terminal_reason}); no transitions"
         # X6: somewhere a stop is illegal for a whole T, with the Shield still
-        # intervening on a hard rule. The recovery is not getting the aircraft
-        # out, and holding (Loiter) would keep it in the violation.
+        # intervening on a hard rule, and the illegal depth NOT falling. The
+        # recovery is not getting the aircraft out, and holding (Loiter) would
+        # keep it in the violation. A recovery whose depth falls at
+        # x6_min_escape_mps or faster is left to finish: on 7 Oct, X6 sent
+        # climbs from under the altitude floor and 2 m/s exits from a grown
+        # zone home at T, while they were working (docs/DESIGN-escalation-
+        # fsm.md, "X6 waits for a recovery that is working").
+        working = bool(progress and progress.get("progressing"))
         stuck = (hard_violated and stuck_s is not None
-                 and stuck_s >= cfg.window_s - EPS)
+                 and stuck_s >= cfg.window_s - EPS and not working)
+        if stuck:
+            fell = progress.get("fell_m") if progress else None
+            trend = ("; no depth reported, so no progress can be seen" if fell is None
+                     else f"; illegal depth fell {fell:.2f} m (fitted) in "
+                          f"{progress['span_s']:.2f} s, not shown above the "
+                          f"{progress['need_m']:.2f} m a working recovery makes "
+                          f"(slope {progress['slope_mps']:+.2f} +/- "
+                          f"{2 * progress['se_mps']:.2f} m/s)")
         stuck_why = (f"position illegal for {stuck_s:.2f} s >= T {cfg.window_s:g} s "
-                     f"while the Shield intervenes on a hard rule; holding here "
-                     f"keeps the aircraft in the violation" if stuck else "")
+                     f"while the Shield intervenes on a hard rule{trend}; holding "
+                     f"here keeps the aircraft in the violation" if stuck else "")
+        # X7: the position has been illegal for T_recover and is getting
+        # DEEPER while the Shield commands its recovery - something the
+        # Shield's forecast cannot see (a wind beyond the speed cap) is beating
+        # it. Waiting for X6's full T lets it through the zone: the 5 m/s
+        # tailwind of `wind-beyond-authority` crosses the 16 m square in about
+        # 3.5 s (5.4-8.9 s, lane 15, measured with X6 / X7 off).
+        sinking = bool(hard_violated and losing and losing.get("losing"))
+        sinking_why = (f"position illegal for {stuck_s:.2f} s and its illegal depth "
+                       f"grew {losing['rose_m']:.2f} m (fitted) in "
+                       f"{losing['span_s']:.2f} s (slope {losing['slope_mps']:+.2f} "
+                       f"+/- {2 * losing['se_mps']:.2f} m/s) while the Shield "
+                       f"recovers: the recovery is losing ground"
+                       if sinking else "")
 
         def cite(h: RuleHit | None) -> str:
             if h is None:
@@ -1268,6 +1559,8 @@ class EscalationFSM:
                 return direct[strongest], edge, f"direct {strongest} by {cite(gov)}"
             if stuck:
                 return S.RTL, "X6", stuck_why
+            if sinking:
+                return S.RTL, "X7", sinking_why
             if strongest == "loiter":
                 return S.LOITER, "X4", f"direct loiter by {cite(gov)}"
             if hard_untrusted:
@@ -1306,6 +1599,8 @@ class EscalationFSM:
                                      f"{cfg.loiter_timeout_s:g} s")
             if stuck:
                 return S.RTL, "X6", stuck_why
+            if sinking:
+                return S.RTL, "X7", sinking_why
             return None, None, (f"holding {dwell:.2f} s"
                                 + (f"; {cite(gov)} still violated" if violated else ""))
 
@@ -1439,7 +1734,8 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
                              *, rtl_failed: bool = False, home_reached: bool = False,
                              landed: bool = False, note: str = "",
                              stop_illegal: Any = None,
-                             caps: KinematicCaps | None = None) -> TickInput:
+                             caps: "KinematicCaps | None | bool" = None,
+                             unsafe_depth_m: float | None = None) -> TickInput:
     """Map one `guardrail.shield.ShieldDecision` onto a TickInput.
 
     blocked   the Shield braked, or its own re-check of the emitted action is
@@ -1453,11 +1749,22 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
     Theta's magnitude has two possible sources, and nothing picks one
     silently (`repair_magnitude`):
       horizon_s=None   per-operator `magnitude_m` (`magnitude_from_repairs`),
-                       the grant's schema (shield.py fills it since
-                       2026-10-07; a repair without it raises).
-      horizon_s=h      the velocity proxy |dv| * h (`magnitude_from_actions`),
-                       measured from the CLAMPED raw action. `caps` defaults
-                       to the policy's kinematic caps.
+                       each operator's forecast penetration: the DEFAULT
+                       (DEFAULT_THETA_HORIZON_S) of the Shield and every rail,
+                       the reading of the grant's p5 audit example and of
+                       the PI's reference.
+      horizon_s=THETA_HORIZON_S  the one-period reading: the setpoint
+                       change |dv| over one 0.1 s control period
+                       (`magnitude_from_actions`), measured from the CLAMPED
+                       raw action. Selectable (`--theta-horizon-s 0.1`),
+                       pending the PI; under every shipped envelope it can
+                       never exceed theta.
+      horizon_s=h      the same |dv| proxy at another horizon (analysis).
+
+    caps: None reads them from the policy (`KinematicCaps.from_policy`); a
+    caller that knows which caps its Shield clamped against on this tick (the
+    Shield itself: a cap out of its time window or switched off is not one)
+    passes them, or False when it clamped against none.
 
     stop_illegal: pass `shield.state_is_unsafe(state)` from the node (the
     list; it is filtered to hard enforced rules here) or a bool. Left as
@@ -1465,6 +1772,9 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
     taken as False on a repaired one. A ClearanceEscape rescue that
     re-checked clean is the exception: whether it is a recovery or a
     non-converged repair depends on exactly this, so None is refused there.
+
+    unsafe_depth_m: `shield.unsafe_depth(state)` (metres from legal), for
+    X6's progress test. None: X6 sees no progress, as before 2026-10-08.
     """
     vios = list(getattr(decision, "violations", None) or [])
     repairs = list(getattr(decision, "repairs", None) or [])
@@ -1497,11 +1807,16 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
     if outcome == "repaired":
         if caps is None and horizon_s is not None:
             caps = KinematicCaps.from_policy(policy)
+        elif caps is False:
+            caps = None
+        elif caps is True or not (caps is None or isinstance(caps, KinematicCaps)):
+            raise ValueError(f"caps must be KinematicCaps, None or False, got {caps!r}")
         mag = repair_magnitude(repairs, decision.raw, decision.emitted, horizon_s,
                                caps=caps, stop_illegal=stop)
     return TickInput(t=t, outcome=outcome, violations=hits, magnitude=mag,
                      rtl_failed=rtl_failed, home_reached=home_reached,
-                     landed=landed, note=note, stop_illegal=bool(stop))
+                     landed=landed, note=note, stop_illegal=bool(stop),
+                     unsafe_depth_m=unsafe_depth_m)
 
 
 # --------------------------------------------------------------------------- #
@@ -1538,17 +1853,26 @@ def tick_input_from_row(row: Mapping[str, Any], policy: Any = None,
     vios = row.get("violations") or []
     hits = _hits_from_violations(policy, vios)
     t = float(row["t"])
-    if not hits:
-        return TickInput(t=t, outcome="clean")
-    if not any(h.effective_action != "monitor_only" for h in hits):
-        return TickInput(t=t, outcome="clean", violations=hits)
+    # X6's progress input, when the rail logged it (rows since 2026-10-08).
+    depth = row.get("unsafe_depth_m")
+    depth = float(depth) if _num_ok(depth) and depth >= 0 else None
+    # Read on clean ticks too, as the live Shield passes it on every tick: a
+    # clean tick inside a zone keeps X6's clock running (a pilot already
+    # leaving), and only a legal position restarts it.
     stop = _row_stop_illegal(row, policy)
+    if not hits:
+        return TickInput(t=t, outcome="clean", stop_illegal=bool(stop),
+                         unsafe_depth_m=depth)
+    if not any(h.effective_action != "monitor_only" for h in hits):
+        return TickInput(t=t, outcome="clean", violations=hits,
+                         stop_illegal=bool(stop), unsafe_depth_m=depth)
     braked = bool(row.get("braked"))
     ev = _still_enforced(policy, row.get("emitted_violations"), row.get("relaxed"))
     if braked or ev:
         return TickInput(t=t, outcome="blocked", violations=hits,
                          stop_illegal=(stop if stop is not None
-                                       else _blocked_stop_illegal(braked, ev)))
+                                       else _blocked_stop_illegal(braked, ev)),
+                         unsafe_depth_m=depth)
     repairs = row.get("repairs")
     if not repairs:
         raise ValueError(f"row t={t}: violations but no repair. This is a shield-off "
@@ -1557,11 +1881,11 @@ def tick_input_from_row(row: Mapping[str, Any], policy: Any = None,
         why = ("a stop was legal" if stop is False
                else "the log does not record whether a stop was legal")
         return TickInput(t=t, outcome="blocked", violations=hits, stop_illegal=False,
-                         note=f"{_RESCUE_NOTE}; {why}")
+                         note=f"{_RESCUE_NOTE}; {why}", unsafe_depth_m=depth)
     mag = repair_magnitude(repairs, row.get("raw"), row.get("emitted"), horizon_s,
                            caps=caps, stop_illegal=bool(stop))
     return TickInput(t=t, outcome="repaired", violations=hits, magnitude=mag,
-                     stop_illegal=bool(stop))
+                     stop_illegal=bool(stop), unsafe_depth_m=depth)
 
 
 def replay_rows(rows: Iterable[Mapping[str, Any]], horizon_s: float | None = None,
@@ -1583,6 +1907,7 @@ def replay_rows(rows: Iterable[Mapping[str, Any]], horizon_s: float | None = Non
         caps = KinematicCaps.from_policy(policy)
     f = EscalationFSM(config)
     first = None
+    edges: dict[str, int] = {}
     n = rep = over = onsets = 0
     governed_n = exempt_only = clamps_only = exempt_recov = 0
     gov_recov = gov_clamp = rescue_blocked = stop_known = stop_ticks = 0
@@ -1613,6 +1938,8 @@ def replay_rows(rows: Iterable[Mapping[str, Any]], horizon_s: float | None = Non
                 else:
                     clamps_only += 1
         o = f.step(inp)
+        if o.edge:
+            edges[o.edge] = edges.get(o.edge, 0) + 1
         if first is None and o.state not in _GUIDED_STATES:
             first = {"tick": row.get("tick", n), "t_s": inp.t, "edge": o.edge,
                      "state": o.state.value, "reason": o.reason}
@@ -1632,8 +1959,15 @@ def replay_rows(rows: Iterable[Mapping[str, Any]], horizon_s: float | None = Non
         "hard_onsets": onsets,
         "first_escalation": first,
         "max_state_counterfactual": f.summary()["max_state"],
+        # Every edge the FSM took over the whole log. After the first
+        # escalation this is counterfactual where the flight's own FSM
+        # differed (the log then holds what the OTHER state machine flew).
+        "edge_counts_counterfactual": dict(sorted(edges.items())),
         "horizon_s": horizon_s,
         "magnitude_source": ("velocity proxy |dv| * horizon_s, from the clamped raw action"
+                             + (" (the one-period reading: one control period)"
+                                if horizon_s is not None
+                                and abs(horizon_s - THETA_HORIZON_S) < EPS else "")
                              if horizon_s is not None else "per-operator magnitude_m"),
         "kinematic_caps": caps.to_dict() if caps is not None else None,
         "fsm_config_hash": f.config.digest,
@@ -1650,7 +1984,9 @@ def _main(argv: Sequence[str] | None = None) -> int:
     rp = sub.add_parser("replay", help="replay a flight_log.jsonl through the FSM")
     rp.add_argument("run_dir", nargs="+")
     rp.add_argument("--horizon", type=float, default=None,
-                    help="velocity proxy horizon (s); omit for per-operator magnitude_m")
+                    help=f"|dv| horizon (s); {THETA_HORIZON_S:g} is the one-period "
+                         "reading (one control period; selectable, pending the PI); "
+                         "omit for per-operator magnitude_m, the default basis")
     rp.add_argument("--policy", default=None,
                     help="the policy the run flew: resolves hard/soft, priority and "
                          "kinematic rules, and gives the proxy its caps")

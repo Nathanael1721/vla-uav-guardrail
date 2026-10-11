@@ -76,14 +76,15 @@ WHAT THE LOG HAS TO SAY, AND WHAT HAPPENS WHEN IT DOES NOT (2026-10-06 review)
     either, which is why `failsafe_instrumented` is reported.
   * The theta cap. The grant's "Converged? magnitude < theta?" (Safety Shield
     p3-p4, theta = 2.0 m lateral / 0.5 m vertical) needs a repair size in
-    METRES. It is read from the grant's per-operator `magnitude_m` / `axis`, or
-    from the FSM record's `theta_exceeded`. No delivered log carries either,
-    so on every artefact today the repair success rate is the Shield's re-check
-    alone - `repair_success_basis` says so, and `repair_theta_unchecked_ticks`
-    counts the ticks. The velocity proxy (|dv| x horizon) is NOT used to decide
-    it: the grant gives no horizon and the choice flips the answer from none to
-    all (docs/DESIGN-escalation-fsm.md); `theta_proxy_sensitivity()` shows the
-    spread instead of picking a side.
+    METRES. It is read from the FSM record's `theta_exceeded` when the row
+    carries it (every rail since 2026-10-07), else from the grant's
+    per-operator `magnitude_m` / `axis` (the default basis), or - when the
+    run recorded the one-period reading in metrics.json - from the setpoint
+    change |dv| x that horizon (guardrail/fsm.py THETA_HORIZON_S; selectable,
+    pending the PI; docs/DESIGN-escalation-fsm.md). A tick that cannot be
+    sized on its basis leaves the rate resting on the re-check alone
+    (`repair_success_basis`, `repair_theta_unchecked_ticks`).
+    `theta_proxy_sensitivity()` shows how the answer moves with the horizon.
   * The Shield-off arm. The headless sweep logs the repairs the Shield WOULD
     have made and then flies the raw action. Those are not attempts, and the
     control arm must read `shield_off`, never a measured 0.0.
@@ -494,17 +495,68 @@ def _theta_governs(rep: dict, stop_illegal: bool = False) -> bool:
             and rep.get("recovery") is not True)
 
 
-def _theta_verdict(row: dict, theta: tuple[float, float]) -> tuple[bool | None, str]:
+# One control period (guardrail/fsm.py CONTROL_PERIOD_S), for the one-period
+# reading of theta when fsm.py is not importable.
+CONTROL_PERIOD_S = 0.1
+_VELOCITY_CLAMPS = frozenset({"SpeedClamp", "ClimbClamp"})
+
+
+def _period_magnitude(row: dict, reps: list[dict], stop: bool, caps: Any = None,
+                      horizon_s: float = CONTROL_PERIOD_S) -> tuple[float, float] | None:
+    """(lateral m, vertical m): the setpoint change |dv| x `horizon_s`, the
+    one-period reading of theta at horizon_s = 0.1 s (guardrail/fsm.py
+    THETA_HORIZON_S; selectable, not the default). guardrail/fsm.py's
+    repair_magnitude when present, which measures from the CLAMPED raw action
+    given the policy's caps and refuses a clamped tick without them; else the
+    same arithmetic here, for ticks with no velocity clamp. None when it
+    cannot be sized."""
+    raw, em = row.get("raw"), row.get("emitted")
+    if not isinstance(raw, dict) or not isinstance(em, dict):
+        return None
+    fsm = _fsm()
+    fn = getattr(fsm, "repair_magnitude", None) if fsm is not None else None
+    if fn is not None:
+        try:
+            m = fn(reps, raw, em, horizon_s=horizon_s, caps=caps, stop_illegal=stop)
+        except (ValueError, TypeError):
+            return None
+        return m.lateral_m, m.vertical_m
+    if any(r.get("operator") in _VELOCITY_CLAMPS for r in reps):
+        return None
+    try:
+        d = [float(em.get(k, 0.0)) - float(raw.get(k, 0.0)) for k in ("vx", "vy", "vz_up")]
+    except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in d):
+        return None
+    return math.hypot(d[0], d[1]) * horizon_s, abs(d[2]) * horizon_s
+
+
+def _theta_verdict(row: dict, theta: tuple[float, float], caps: Any = None,
+                   horizon_s: float | None = None) -> tuple[bool | None, str]:
     """(exceeded, source) for the grant's "magnitude < theta" on one tick.
 
       fsm_record    the FSM's own `theta_exceeded`, when the row carries it;
-      magnitude_m   summed per axis over the repairs theta governs, the same
-                    rule as fsm.magnitude_from_repairs (an upper bound on the
-                    total correction, so an untrusted repair is never reported
-                    smaller than it was);
+      magnitude_m   (horizon_s None, the DEFAULT basis) summed per axis over
+                    the repairs theta governs, the same rule as
+                    fsm.magnitude_from_repairs (an upper bound on the total
+                    correction, so an untrusted repair is never reported
+                    smaller than it was): each operator's forecast depth, the
+                    reading of the grant's p5 audit example;
+      action_per_period  (horizon_s given, e.g. the one-period reading
+                    fsm.THETA_HORIZON_S) the setpoint change |dv| x
+                    horizon_s (`_period_magnitude`; `caps` are the policy's
+                    kinematic caps, needed on a clamped tick);
       not_governed  no repair on the tick is one theta judges (clamps,
                     recoveries): theta does not apply, so it cannot fail;
-      no_magnitude  a governed repair carries no `magnitude_m`: UNKNOWN.
+      no_magnitude  a governed repair that cannot be sized on the chosen
+                    basis (no `magnitude_m`; or no raw / emitted action, or a
+                    clamped tick without caps): UNKNOWN.
+
+    The basis is the run's own: compute() reads it from the run's metrics
+    (`fsm.theta_basis.horizon_s`, `run_theta_horizon`), so a run flown on the
+    one-period reading is not re-judged on the per-operator one, or the
+    other way round.
     """
     te = _fsm_field(row, "theta_exceeded")
     if isinstance(te, bool):
@@ -514,6 +566,12 @@ def _theta_verdict(row: dict, theta: tuple[float, float]) -> tuple[bool | None, 
     gov = [r for r in reps if _theta_governs(r, stop)]
     if not gov:
         return False, "not_governed"
+    if horizon_s is not None:
+        m = _period_magnitude(row, reps, stop, caps, horizon_s)
+        if m is None:
+            return None, "no_magnitude"
+        lat, ver = m
+        return (lat > theta[0] + _EPS or ver > theta[1] + _EPS), "action_per_period"
     lat = ver = 0.0
     for r in gov:
         m, ax = r.get("magnitude_m"), r.get("axis")
@@ -550,7 +608,8 @@ def _ops(row: dict) -> set[str]:
 
 
 def _repair_outcome(row: dict, priorities: dict[str, str], arm: str | None = None,
-                    theta: tuple[float, float] | None = None) -> str | None:
+                    theta: tuple[float, float] | None = None,
+                    caps: Any = None, horizon_s: float | None = None) -> str | None:
     """Classify one tick's repair attempt; None if the Shield did not try, and
     "not_applied" if it logged a repair that was never flown.
 
@@ -623,7 +682,7 @@ def _repair_outcome(row: dict, priorities: dict[str, str], arm: str | None = Non
         return "residual_p0"
     if em_v:
         return "residual_other"
-    exceeded, _ = _theta_verdict(row, theta or theta_m())
+    exceeded, _ = _theta_verdict(row, theta or theta_m(), caps, horizon_s)
     if exceeded:
         return "converged_over_theta"
     return "converged_via_rescue" if "ClearanceEscape" in ops else "converged"
@@ -642,7 +701,9 @@ def _is_standstill(row: dict) -> bool:
 
 def _repair_success(rows: list[dict], priorities: dict[str, str],
                     arm: str | None = None,
-                    theta: tuple[float, float] | None = None) -> dict[str, Any]:
+                    theta: tuple[float, float] | None = None,
+                    caps: Any = None,
+                    horizon_s: float | None = None) -> dict[str, Any]:
     """The Safety Shield page's "Repair success rate": tracked, and it "informs
     Prefix Compiler effectiveness eval" (p6).
 
@@ -695,11 +756,12 @@ def _repair_success(rows: list[dict], priorities: dict[str, str],
     """
     theta = theta or theta_m()
     counts = {k: 0 for k in REPAIR_OUTCOMES}
-    sources = {"fsm_record": 0, "magnitude_m": 0, "not_governed": 0, "no_magnitude": 0}
+    sources = {"fsm_record": 0, "magnitude_m": 0, "action_per_period": 0,
+               "not_governed": 0, "no_magnitude": 0}
     not_applied = standstill = while_unsafe = autopilot_not_applied = 0
     unsafe_known = any("unsafe" in r for r in rows)
     for r in rows:
-        oc = _repair_outcome(r, priorities, arm, theta)
+        oc = _repair_outcome(r, priorities, arm, theta, caps, horizon_s)
         if oc is None:
             continue
         if oc == "not_applied":
@@ -710,7 +772,7 @@ def _repair_success(rows: list[dict], priorities: dict[str, str],
             continue
         counts[oc] += 1
         if oc in _REPAIR_SUCCESS or oc == "converged_over_theta":
-            sources[_theta_verdict(r, theta)[1]] += 1
+            sources[_theta_verdict(r, theta, caps, horizon_s)[1]] += 1
         if oc in _REPAIR_SUCCESS:
             if _is_standstill(r):
                 standstill += 1
@@ -726,7 +788,7 @@ def _repair_success(rows: list[dict], priorities: dict[str, str],
     else:
         rate = round(ok / measured, 6)
         status = "measured" if not counts["not_measurable"] else "partially_measured"
-    sized = sources["fsm_record"] + sources["magnitude_m"]
+    sized = sources["fsm_record"] + sources["magnitude_m"] + sources["action_per_period"]
     unsized = sources["no_magnitude"]
     judged = sized + sources["not_governed"] + unsized
     basis = (None if not judged else
@@ -752,6 +814,9 @@ def _repair_success(rows: list[dict], priorities: dict[str, str],
         "repair_success_basis": basis,
         "repair_theta_unchecked_ticks": unsized,
         "repair_theta_sources": sources,
+        # The basis a tick without the FSM's own verdict was sized on: None,
+        # each repair's magnitude_m (the default); a number, |dv| x that.
+        "repair_theta_horizon_s": horizon_s,
         "repair_theta_m": {"lateral": theta[0], "vertical": theta[1]},
         # Can this log record an escalation at all? False on every artefact
         # today, so `repair_outcomes["failsafe"] == 0` is "not instrumented",
@@ -1049,7 +1114,8 @@ def _intervention_episodes(rows: list[dict]) -> dict[str, Any]:
 
 def compute(rows: Iterable[dict], priorities: dict[str, str],
             metrics: dict | None = None, *,
-            theta: tuple[float, float] | None = None) -> dict[str, Any]:
+            theta: tuple[float, float] | None = None,
+            caps: Any = None, theta_horizon_s: Any = "from_metrics") -> dict[str, Any]:
     """Score ONE episode from its per-tick flight-log rows.
 
     `metrics` is the episode's metrics.json: dwell inside zones / rings
@@ -1059,7 +1125,16 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
     outcome; `shield: "off"` marks a control arm whose logged repairs were
     never flown; `fsm` (guardrail.fsm's summary()) gives the episode's
     fail-safe outcome. `theta` overrides the (lateral, vertical) cap in
-    metres. Across episodes, use `rollup()`.
+    metres. A tick without the FSM's own theta verdict is sized on
+    `theta_horizon_s`: by default the basis the run recorded in `metrics`
+    (`fsm.theta_basis.horizon_s`, `run_theta_horizon`), which is None - each
+    repair's own `magnitude_m` - unless the run flew another; a number reads
+    the setpoint change |dv| x that many seconds, for which `caps`
+    (guardrail.fsm.KinematicCaps of the policy flown) let a tick that also
+    carries a speed or climb clamp be sized. Every caller that passes the
+    run's metrics (compute_from_dir, guardrail/replay.py, tools/kpi_report.py)
+    therefore judges theta on the basis the run flew. Across episodes, use
+    `rollup()`.
 
     AUTOPILOT TICKS (2026-10-07). A row the Shield did not fly
     (`_not_flown_by_shield`: `autopilot` set by the stress harness, `flown`
@@ -1280,7 +1355,9 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
         # `mean_repair_count_per_episode` (audit card X-03).
         "repairs_per_episode": round(n_repairs, 3),
         # --- repair success rate --------------------------------------------
-        **_repair_success(rows, priorities, arm, theta),
+        **_repair_success(rows, priorities, arm, theta, caps,
+                          (run_theta_horizon(metrics) if theta_horizon_s == "from_metrics"
+                           else theta_horizon_s)),
         # --- mean repair magnitude ------------------------------------------
         # Translational and yaw are separate quantities in separate units and
         # are never combined; see _repair_magnitude(). Computed over every tick
@@ -1328,7 +1405,25 @@ def compute_from_dir(run_dir: str | Path, policy) -> dict[str, Any]:
     mp = run / "metrics.json"
     if mp.is_file():
         metrics = json.loads(mp.read_text(encoding="utf-8"))
-    return compute(rows, rule_priorities(policy), metrics)
+    fsm = _fsm()
+    caps = None
+    if fsm is not None and hasattr(getattr(fsm, "KinematicCaps", None), "from_policy"):
+        caps = fsm.KinematicCaps.from_policy(policy)
+    return compute(rows, rule_priorities(policy), metrics, caps=caps)
+
+
+def run_theta_horizon(metrics: dict | None) -> float | None:
+    """The theta basis a run recorded in metrics.json (`fsm.theta_basis.
+    horizon_s`): a number for the |dv| x horizon reading, None for each
+    repair's own magnitude_m (also when the run recorded nothing, the
+    default basis)."""
+    fsm = (metrics or {}).get("fsm") if isinstance(metrics, dict) else None
+    basis = fsm.get("theta_basis") if isinstance(fsm, dict) else None
+    h = basis.get("horizon_s") if isinstance(basis, dict) else None
+    if isinstance(h, bool) or not isinstance(h, (int, float)) \
+            or not math.isfinite(h) or h <= 0:
+        return None
+    return float(h)
 
 
 # --------------------------------------------------------------------------- #

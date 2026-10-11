@@ -1,0 +1,6 @@
+{#- An event that holds another rule on or off while its own window holds
+    (grant: "Activates / deactivates a referenced rule at runtime"). Not an
+    extension of _base.j2: "switched off (in force Mon-Fri ...)" would read as
+    if the window belonged to the target. The schedule follows the verb, and
+    the qualifiers keep _base.j2's order and spelling. -#}
+Rule '{{ r.target_id }}' is switched {{ "on" if r.active else "off" }}{% if window %} {{ window }}{% endif %}{% if soft %} (soft limit){% endif %}{% if show_priority %} [{{ priority }}]{% endif %}.

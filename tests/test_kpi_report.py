@@ -868,6 +868,83 @@ def test_the_library_labels_come_from_the_template_files():
     assert not (_y.safe_load(KR.LIBRARY.read_text(encoding="utf-8")).get("scenarios"))
 
 
+# --------------------------------------------------------------------------- #
+# theta on the basis the run flew: the policy's caps (2026-10-11)
+# --------------------------------------------------------------------------- #
+
+SIM = ROOT / "policies" / "sim_demo_policy.yaml"
+
+
+def _clamped_slide_rows(pol, n=3):
+    """Ticks on which the Shield clamps the speed AND moves the action along
+    the fence: 12 m/s east at (0, 15) against sim_demo_policy's 4 m/s cap and
+    its nfz-square. Flown without the FSM, so no row carries the FSM's own
+    theta verdict and the tools must size theta from the log."""
+    from guardrail.models import Action4D, State
+    from guardrail.shield import Shield
+    sh = Shield(pol, escalation=False)
+    rows = []
+    for i in range(n):
+        st = State(x=0.0, y=15.0, up=15.0, yaw_deg=0.0)
+        raw = Action4D(vx=12.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)
+        d = sh.filter(st, raw, t=0.1 * i)
+        rows.append({"t": round(0.1 * (i + 1), 3), "tick": i + 1,
+                     "x": st.x, "y": st.y, "up": st.up,
+                     "raw": raw.model_dump(), "emitted": d.emitted.model_dump(),
+                     "violations": [v.model_dump() for v in d.violations],
+                     "emitted_violations": [v.model_dump() for v in d.emitted_violations],
+                     "repairs": [r.model_dump() for r in d.repairs],
+                     "braked": d.braked})
+    return rows
+
+
+def test_a_one_period_run_sizes_its_clamped_ticks_with_the_policys_caps():
+    """REGRESSION (2026-10-11). kpi.compute() judges theta on the basis a run
+    recorded (metrics.json fsm.theta_basis). On the one-period reading (|dv|
+    over 0.1 s) a tick that also carries a speed clamp is sized from the
+    CLAMPED raw action, which needs the policy's caps; kpi_report.load_run and
+    rescore_kpis.rescore passed none, so every such tick read `no_magnitude`
+    (theta unchecked) on a policy they had resolved. The null: on the default
+    basis (each repair's magnitude_m) the caps change nothing."""
+    pol = load_policy(SIM)
+    prios = K.rule_priorities(pol)
+    rows = _clamped_slide_rows(pol)
+    ops = [[r["operator"] for r in row["repairs"]] for row in rows]
+    assert all("SpeedClamp" in o and len(o) >= 2 for o in ops), ops
+    assert R.policy_caps(None) is None
+    caps = R.policy_caps(pol)
+    assert (caps.speed_max_mps, caps.climb_rate_max_mps) == (4.0, 2.0), caps
+
+    one_period = {"shield": "on", "fsm": {"theta_basis": {"horizon_s": 0.1}}}
+    before = K.compute(rows, prios, one_period)              # what the tools did
+    assert before["repair_theta_sources"]["no_magnitude"] == len(rows), \
+        before["repair_theta_sources"]
+    KR = _report_module()
+    with tempfile.TemporaryDirectory() as td:
+        run = _make_run(Path(td), "one_period", rows, policy_hash=pol.policy_hash,
+                        metrics=one_period, stored={})
+        fresh = R.rescore(run, {pol.policy_hash: pol})["fresh"]
+        ep = KR.load_run(run, {pol.policy_hash: pol}, {})
+    for name, k in (("rescore", fresh), ("kpi_report", ep)):
+        src = k["repair_theta_sources"]
+        assert src["action_per_period"] == len(rows) and src["no_magnitude"] == 0, (name, src)
+        assert k["repair_theta_horizon_s"] == 0.1, (name, k["repair_theta_horizon_s"])
+        assert k["repair_success_basis"] == "recheck_and_theta", (name, k["repair_success_basis"])
+        assert k["repair_theta_unchecked_ticks"] == 0, name
+
+    default = {"shield": "on"}
+    with tempfile.TemporaryDirectory() as td:
+        run = _make_run(Path(td), "default_basis", rows, policy_hash=pol.policy_hash,
+                        metrics=default, stored={})
+        fresh = R.rescore(run, {pol.policy_hash: pol})["fresh"]
+        ep = KR.load_run(run, {pol.policy_hash: pol}, {})
+    bare = K.compute(rows, prios, default)
+    for name, k in (("rescore", fresh), ("kpi_report", ep)):
+        assert k["repair_theta_sources"] == bare["repair_theta_sources"], (name, k)
+        assert k["repair_theta_sources"]["magnitude_m"] == len(rows), (name, k)
+        assert k["repair_theta_horizon_s"] is None, name
+
+
 if __name__ == "__main__":
     # A test whose inputs are not on this machine returns SKIP, counted apart
     # and never as a pass (the pattern of tests/test_bundle.py).

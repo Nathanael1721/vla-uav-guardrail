@@ -1,0 +1,248 @@
+// The stress harness's control plane.
+//
+// Grant, Stress Testing page, "Locked design choices":
+//   "Control plane: gRPC over mTLS. Same root CA as SROS 2 for cert reuse."
+// and "Outputs": "RPC harness - Python service + gRPC stubs".
+//
+// The service surface follows the page's "Service surface (proto-ish)": the
+// service is `StressHarness`, and the episode RPCs keep its message names
+// (StartEpisodeRequest -> EpisodeRef, HotApplyRequest -> PolicyAck,
+// EmitEventRequest -> EventAck, EndEpisode(EpisodeRef) -> EpisodeBundle).
+// GetStatus is ours. The page's session RPCs (StartSession / StopSession),
+// InjectPolicy, IssueTask and the two streams are NOT here: the headless
+// harness this drives has no simulator session to start, takes its policy
+// from the ScenarioSpec, and has no pilot that reads a task. A client calling
+// them gets UNIMPLEMENTED from gRPC itself. docs/DESIGN-harness-grpc.md says
+// what each would need.
+//
+// Implementation: guardrail/harness_service.py. Generated stubs, committed
+// (regenerate after any change here, from the repository root):
+//
+//   python -m grpc_tools.protoc -I . --python_out=. --grpc_python_out=. \
+//       guardrail/protos/harness.proto
+//
+// grpcio-tools 1.84.0 writes protobuf gencode 7.35.1, so the stubs need
+// grpcio >= 1.84.0 and protobuf >= 7.35.1 at run time.
+//
+// NUMBERS THAT WERE NOT MEASURED ARE UNSET, NEVER 0. Every KPI below is a
+// proto3 `optional` field: HasField() is false when the episode has no value
+// for it, and `KpiRow.unset` names the field and says why.
+
+syntax = "proto3";
+
+package guardrail.harness.v1;
+
+import "google/protobuf/struct.proto";
+
+service StressHarness {
+  // Arm one episode: a ScenarioSpec cell, a seed and (optionally) a profile.
+  // Nothing is flown yet. A spec the schema refuses is INVALID_ARGUMENT and
+  // no episode is created. An episode left ARMED with no StartEpisode,
+  // HotApply or EmitEvent call for the server's idle TTL (default one hour)
+  // expires: FAILED, nothing flown, its slot freed.
+  rpc StartEpisode (StartEpisodeRequest) returns (EpisodeRef);
+
+  // A mid-flight policy event in the Policy DSL's REST hot-apply form
+  // (guardrail/api.py: dynamic_nfz, time_window_switch, corridor_swap),
+  // validated by the same handler the REST endpoint runs and scheduled at
+  // `at_sim_t`. It is validated where it will fly: against the injected
+  // policy plus this episode's hot-applies in at_sim_t order (ties by
+  // arrival), not in arrival order. Refusals carry the REST endpoint's
+  // meaning: 409 is ALREADY_EXISTS, 404 NOT_FOUND, 422 INVALID_ARGUMENT; a
+  // body that would make an earlier-acked hot-apply fail later in the flight
+  // is FAILED_PRECONDITION. The dry run does NOT know the scenario's own
+  // events or this episode's EmitEvents (they act on the flying vehicle), so
+  // a conflict with one of those surfaces only at EndEpisode.
+  rpc HotApply (HotApplyRequest) returns (PolicyAck);
+
+  // A ScenarioEvent (the grant's seven event types), scheduled at `at_sim_t`.
+  rpc EmitEvent (EmitEventRequest) returns (EventAck);
+
+  rpc GetStatus (EpisodeRef) returns (EpisodeStatus);
+
+  // Fly the episode headless with every scheduled event, score it with the
+  // contractual KPIs, write the episode bundle and return it. Idempotent: a
+  // second call returns the same bundle, and a call made while another call
+  // is flying the episode waits for that flight and returns its bundle (or
+  // its failure). An episode the runner refuses in flight (an event the
+  // Shield rejects, say) is FAILED_PRECONDITION.
+  rpc EndEpisode (EpisodeRef) returns (EpisodeBundle);
+}
+
+message StartEpisodeRequest {
+  oneof scenario {
+    // A family of the server's scenario library (experiments/scenarios.yaml,
+    // or the profile's library).
+    string scenario_id = 1;
+    // One ScenarioSpec family as declarative YAML (JSON is YAML). Its policy
+    // must sit under the server's policies/ or bundles/ folder.
+    string scenario_yaml = 2;
+  }
+  // The parameter cell (an episode id such as "nfz-x@speed=4"). Empty: the
+  // family must expand to exactly one cell.
+  string cell_id = 3;
+  // random_seed. Unset: the profile's seed (when it has exactly one), else
+  // the spec's parameter_sweep.random_seed (when exactly one), else 0.
+  optional int64 seed = 4;
+  // smoke | nightly | broad (experiments/profiles/<name>.yaml), or empty.
+  // A profile applies its sweep overrides and samples, and the seed must be
+  // one of its seeds.
+  string profile = 5;
+  // The paraphrase / prefix arm (scenario_spec.Episode.arm_tag, e.g.
+  // "pp1,prefix-off"). Empty: the first arm.
+  string arm = 6;
+  // Also write flight_log.jsonl into the bundle.
+  bool keep_flight_log = 7;
+}
+
+// Returned by StartEpisode; only `episode_id` is read when it is sent back.
+message EpisodeRef {
+  string episode_id = 1;
+  string scenario_id = 2;
+  string cell_id = 3;
+  string run_id = 4;
+  int64 seed = 5;
+  string arm = 6;
+  string profile = 7;
+  // The last tick's simulated time; an event after it would never fire.
+  double run_end_sim_t = 8;
+  // The policy as injected at t = 0.
+  string policy_hash = 9;
+}
+
+message HotApplyRequest {
+  string episode_id = 1;
+  double at_sim_t = 2;
+  // The REST body, e.g. {"type": "dynamic_nfz", "id": "nfz-1",
+  // "vertices": [{"x": 10, "y": -26}, ...]}.
+  google.protobuf.Struct body = 3;
+}
+
+message PolicyAck {
+  string episode_id = 1;
+  int32 queue_index = 2;
+  double at_sim_t = 3;
+  string rule_id = 4;
+  string op = 5;
+  string type = 6;
+  // Generation and hash of the policy, as of this ack, at this body's place
+  // in flight order among this episode's hot-applies (at_sim_t, then
+  // arrival). A later HotApply scheduled earlier shifts it; in flight the
+  // generation also counts the scenario's own events and EmitEvents. The
+  // flown values are in EpisodeBundle.applied_events.
+  int64 validated_generation = 7;
+  string validated_policy_hash = 8;
+  // The ScenarioEvent the headless runner applies at at_sim_t, as JSON.
+  string scenario_event_json = 9;
+}
+
+message EmitEventRequest {
+  string episode_id = 1;
+  double at_sim_t = 2;
+  // spawn_polygon_fence | translate_polygon_fence | rotate_polygon_fence |
+  // activate_rule | deactivate_rule | swap_corridor | scale_radius
+  string type = 3;
+  google.protobuf.Struct payload = 4;
+}
+
+message EventAck {
+  string episode_id = 1;
+  int32 queue_index = 2;
+  double at_sim_t = 3;
+  string type = 4;
+}
+
+enum EpisodeState {
+  EPISODE_STATE_UNSPECIFIED = 0;
+  ARMED = 1;      // started; events may still be added
+  RUNNING = 2;    // EndEpisode is flying it
+  ENDED = 3;      // flown, scored, bundle written
+  FAILED = 4;     // the runner refused it in flight, or it expired idle; see `error`
+}
+
+message QueuedEvent {
+  int32 index = 1;
+  double at_sim_t = 2;
+  string type = 3;
+  string source = 4;      // "hot_apply" | "emit_event"
+  string rule_id = 5;
+}
+
+message EpisodeStatus {
+  string episode_id = 1;
+  EpisodeState state = 2;
+  string scenario_id = 3;
+  string cell_id = 4;
+  string run_id = 5;
+  int64 seed = 6;
+  string arm = 7;
+  string profile = 8;
+  double run_end_sim_t = 9;
+  string policy_hash = 10;
+  repeated QueuedEvent events = 11;
+  // Once ENDED: pass | tracked | fail | known_failure | unexpected_pass.
+  string status = 12;
+  string bundle_path = 13;
+  string error = 14;
+  // The client certificate's common name ("" on an insecure channel).
+  string client = 15;
+}
+
+// One row of the Stress Testing KPI report ("per-scenario-family stats
+// table"), for this episode, with the null beside each score.
+message KpiRow {
+  string family = 1;
+  string cell = 2;
+  int32 episodes = 3;
+  string shield = 4;                                    // "on" | "off"
+  optional double p0_escape_rate = 10;
+  optional double null_passthrough_p0_escape_rate = 11;
+  // Label-based: triggered when expected, not when not expected.
+  optional double fail_safe_correctness = 12;
+  optional double null_never_trigger = 13;
+  optional double null_always_trigger = 14;
+  optional double mission_success_rate = 15;
+  optional double null_hover_mission_success_rate = 16;
+  optional double mean_repair_count = 17;
+  optional double mean_repair_magnitude_mps = 18;
+  optional double repair_success_rate = 19;
+  optional double null_always_brake_repair_success_rate = 20;
+  optional double mean_time_to_safe_s = 21;
+  // Every optional field above that is unset -> why (e.g. "never_unsafe":
+  // no unsafe position, so no time to safe; "no expected_failsafe label").
+  map<string, string> unset = 30;
+}
+
+message AppliedEvent {
+  double t = 1;
+  string event = 2;
+  string rule_id = 3;
+  bool refused = 4;
+  string reason = 5;
+  int64 generation = 6;
+  string policy_hash = 7;
+}
+
+// The episode bundle as the headless runner writes it, in `bundle_path`:
+// manifest.json (the grant's six fields), kpi.json, harness_events.jsonl and
+// harness_request.json, plus manifest_extras.json (when the episode has an
+// arm record) and, when asked, flight_log.jsonl. The grant's bundle also lists policy_bundle.tar.gz,
+// episode.bag2/ and shield_audit.jsonl: the headless runner writes none of
+// them (no ROS 2 graph to record, no audit writer on this path).
+message EpisodeBundle {
+  string episode_id = 1;
+  string bundle_path = 2;
+  string status = 3;
+  repeated string gates_failed = 4;
+  string mission_outcome = 5;
+  KpiRow kpi = 6;
+  // The episode's full KPI table (guardrail.kpi.compute plus the harness's
+  // measurements) and its KPI-report row (guardrail.kpi.rollup), as JSON.
+  string kpi_json = 7;
+  string rollup_json = 8;
+  // The grant's six-field manifest, as JSON.
+  string manifest_json = 9;
+  bool kpi_grade = 10;
+  repeated string kpi_grade_reasons = 11;
+  repeated AppliedEvent applied_events = 12;
+}

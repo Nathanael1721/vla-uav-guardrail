@@ -17,7 +17,18 @@
 #
 # Host networking: MAVROS binds UDP 14555 on the Orin's own interface, and every
 # ROS node shares the host's network, so DDS stays local unless a desktop tool
-# asks for it (deploy/dds/cyclonedds.xml).
+# asks for it (deploy/dds/cyclonedds.xml). No port is published on the Orin,
+# which also keeps these files clear of the Docker 28 / JetPack 6.2 (r36.4.3)
+# iptables "raw" table problem that breaks published ports
+# (docs/RUNBOOK-orin-hil.md, step 2).
+#
+# JETPACK 6.2 AND THE CONTAINER RUNTIMES. The companion containers (mavros,
+# mission, profile, facts: ROS 2 Jazzy on Ubuntu 24.04, no GPU) run with
+# `runtime: runc`. jetson-containers' set-up makes `nvidia` the daemon's
+# default runtime, and on JetPack 6 that runtime mounts L4T's GPU driver
+# libraries into every container it starts; the safety path takes none of
+# them. Only vla-bench names `runtime: nvidia`: the VLA image is built on an
+# L4T r36.4 base and needs the GPU.
 #
 # EVIDENCE THAT THIS IS THE ORIN. The Shield node (mission) and the tools label
 # a run hil or flight only on evidence read from the machine
@@ -28,8 +39,10 @@
 # run with security_opt systempaths=unconfined (Docker 19.03+; it lifts the
 # masking of /proc and /sys paths for that container, which these containers,
 # already on host networking on a lab Orin, are trusted with) and mount
-# /etc/nv_tegra_release read-only. Check it once on the Orin:
-#   docker run --rm --security-opt systempaths=unconfined ubuntu cat /proc/device-tree/model
+# /etc/nv_tegra_release read-only. Check it once on the Orin, with the image
+# already built (nothing is pulled):
+#   docker run --rm --runtime runc --security-opt systempaths=unconfined \
+#       --entrypoint cat vlaguard/companion:jazzy /proc/device-tree/model
 #
 # EVIDENCE THAT THE AUTOPILOT IS ELSEWHERE. The Shield node also scans /proc
 # for ArduPilot SITL, MAVROS and router processes
@@ -44,7 +57,7 @@
 # here modifies a tracked file and the checkout stays clean for the manifests'
 # code_revision. Runs land in demo/out/<tag>/, also ignored.
 #
-# Written 2026-10-06, NOT yet run.
+# Written 2026-10-06, revised for JetPack 6.2 on 2026-10-08, NOT yet run.
 
 name: vlaguard-orin
 
@@ -85,6 +98,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/docker/companion.Dockerfile
+    runtime: runc
     network_mode: host
     command: ["mavros"]
     environment: *companion-env
@@ -94,6 +108,7 @@ services:
   mission:
     image: ${VLAGUARD_IMAGE:?}
     profiles: ["mission"]
+    runtime: runc
     network_mode: host
     pid: host
     depends_on: [mavros]
@@ -105,6 +120,7 @@ services:
   profile:
     image: ${VLAGUARD_IMAGE:?}
     profiles: ["tools"]
+    runtime: runc
     network_mode: none
     security_opt: ["systempaths=unconfined"]
     command: ["profile"]
@@ -114,6 +130,7 @@ services:
   facts:
     image: ${VLAGUARD_IMAGE:?}
     profiles: ["tools"]
+    runtime: runc
     network_mode: none
     security_opt: ["systempaths=unconfined"]
     command: ["facts"]

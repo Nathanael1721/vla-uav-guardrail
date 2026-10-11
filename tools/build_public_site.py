@@ -162,6 +162,23 @@ FORBIDDEN_TEXT = (
     ("withdrawn", r"(?i)stretch\s+goal", "hil and flight are first-class in the grant"),
     ("withdrawn", r"(?i)structured\s+mission", "the Prefix Compiler emits a CSP"),
     ("withdrawn", r"(?i)byte-for-byte", "replay is not byte-for-byte"),
+    # Published until 2026-10-08 as "the P0 violation escape rate is 0.00 on
+    # every run". The red-car follow on the ArduPilot rail that day had P0
+    # escapes, so a zero is stated only for the runs it was measured on. Any
+    # order and phrasing within one clause: the rate, then a zero, then
+    # every/all runs or flights; or every/all runs or flights, then the rate,
+    # then a zero. "all of these runs" names its runs and passes. A zero is 0,
+    # 0.0, 0.00 or "zero", never the start of 0.0053.
+    ("withdrawn",
+     r"(?i)escape\s+rate\b[^.;。；]{0,30}?(?<![\d.])(?:0(?:\.0+)?|zero)(?!\.?\d)[^.;。；]{0,20}?"
+     r"\b(?:on|in|across|for|over)\s+(?:every|all)\s+(?!of\b)(?:\w+\s+){0,2}?(?:runs?|flights?|episodes?)\b|"
+     r"\b(?:every|all)\s+(?!of\b)(?:\w+\s+){0,2}?(?:run|flight|episode)(?:s|'s|’s)?\b[^.;。；]{0,40}?"
+     r"escape\s+rate\b[^.;。；]{0,15}?(?<![\d.])(?:0(?:\.0+)?|zero)(?!\.?\d)|"
+     r"(?:每一?次|所有)[^。；.;]{0,12}?飛行[^。；.;]{0,10}?逃逸率[^。；.;]{0,4}?(?:都是|均為|皆為|都為|為|是)\s*"
+     r"(?:0(?:\.0+)?|零)(?!\.?\d)|"
+     r"逃逸率[^。；.;]{0,10}?(?:每一?次|所有)[^。；.;]{0,12}?飛行[^。；.;]{0,6}?(?:都是|均為|皆為|都為|為|是)\s*"
+     r"(?:0(?:\.0+)?|零)(?!\.?\d)",
+     "a zero escape rate is scoped to the runs it was measured on"),
     ("contract-status", r"(?i)contract(ual)?\s+KPI|KPI-grade|合約\s*KPI", "no KPI status claims"),
     ("internal", r"(?i)(grant|contract)\s+audit|\baudit\s*:|AUDIT-KONTRAK", "audit verdicts are internal"),
     ("internal", r"\b(DRIFT|PARTIAL|MISSING)\b", "audit verdict words"),

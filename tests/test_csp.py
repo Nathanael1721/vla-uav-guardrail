@@ -48,6 +48,8 @@ import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -1146,33 +1148,39 @@ def test_a_rule_the_shield_does_not_enforce_is_refused_by_name():
     TypeError from the relevance step (marked "pragma: no cover") or
     TemplateNotFound. Telling the model an unenforced rule over-promises;
     dropping it hides a hard rule. The compiler now refuses the policy with
-    CSPUnenforcedRules naming every such rule, as the flight loaders do."""
+    CSPUnenforcedRules naming every such rule, as the flight loaders do.
+
+    Since 2026-10-08 the three hot-apply types render (they are enforced, and
+    have templates) and only distance_envelope is left - plus an MSL height,
+    named the same way: a Policy built directly reached the compiler without
+    the loaders' MSL refusal, and compiled."""
     _need()
     from guardrail.csp import CSPUnenforcedRules
-    from guardrail.models import RUNTIME_TYPES
+    from guardrail.models import GRANT_TYPES, RUNTIME_TYPES
+    assert set(GRANT_TYPES) - RUNTIME_TYPES == {"distance_envelope"}, \
+        "a type joined or left RUNTIME_TYPES: update this test"
     base = [{"id": "fence", "type": "polygon_fence",
              "vertices": [{"x": 10, "y": 10}, {"x": 20, "y": 10}, {"x": 20, "y": 20}],
              "altitude_floor_m": 0, "altitude_ceiling_m": 100}]
-    extra = {
-        "distance_envelope": {"object_class": "people", "min_distance_m": 5.0},
-        "dynamic_nfz": {"vertices": [{"x": 30, "y": 30}, {"x": 35, "y": 30},
-                                     {"x": 35, "y": 35}]},
-        "time_window_switch": {"target_id": "fence", "active": False},
-        "corridor_swap": {"target_id": "fence", "centerline": [{"x": 0, "y": 0},
-                                                               {"x": 40, "y": 40}],
-                          "width_m": 6.0},
+    cases = {
+        "distance_envelope": ({"id": "r-de", "type": "distance_envelope",
+                               "object_class": "people", "min_distance_m": 5.0},
+                              {"r-de": "distance_envelope"}),
+        "MSL": ({"id": "r-msl", "type": "altitude_envelope", "alt_min_m": 5,
+                 "alt_max_m": 90, "altitude_ref": "MSL"},
+                {"r-msl": "altitude_envelope with altitude_ref MSL"}),
     }
-    assert not set(extra) & set(RUNTIME_TYPES), "a type became enforced: update this test"
-    for typ, fields in extra.items():
-        pol = Policy.model_validate({"policy_id": f"p-{typ}", "constraints": base + [
-            dict({"id": f"r-{typ}", "type": typ}, **fields)]})
+    for name, (rule, want) in cases.items():
+        pol = Policy.model_validate({"policy_id": f"p-{name}", "constraints": base + [rule]})
         try:
             ConstraintCompiler(pol).compile_csp(_mission(), now=None)
         except CSPUnenforcedRules as e:
-            assert e.rules == {f"r-{typ}": typ}, e.rules
-            assert f"r-{typ} ({typ})" in str(e) and "unenforced_rules" in str(e), str(e)
+            assert e.rules == want, e.rules
+            rid, what = next(iter(want.items()))
+            assert f"{rid} ({what})" in str(e) and "unenforced_rules" in str(e), str(e)
         else:
-            raise AssertionError(f"{typ}: compile_csp accepted a rule the Shield does not enforce")
+            raise AssertionError(f"{name}: compile_csp accepted a rule the Shield does "
+                                 f"not enforce")
         assert pol.unenforced_rules(), "the flight loaders' check disagrees"
     # not a ValueError: a caller's generic `except ValueError` must not swallow it
     assert not issubclass(CSPUnenforcedRules, ValueError)
@@ -1188,20 +1196,22 @@ def test_the_kpi_report_lists_a_file_with_an_unenforced_rule_and_carries_on():
     d = Path(tempfile.mkdtemp())
     (d / "mix.yaml").write_text(yaml.safe_dump(MIX, sort_keys=False), encoding="utf-8")
     alone = K.coverage_report(d)["totals"]
-    switch = {"policy_id": "p-switch", "version": "0.1.0", "constraints": [
+    # A time_window_switch was the example until 2026-10-08, when it became
+    # flyable; distance_envelope is the one declarable-only type left.
+    people = {"policy_id": "p-people", "version": "0.1.0", "constraints": [
         {"id": "fence", "type": "polygon_fence", "priority": "P0",
          "vertices": [{"x": 10, "y": 10}, {"x": 20, "y": 10}, {"x": 20, "y": 20}],
          "altitude_floor_m": 0, "altitude_ceiling_m": 100},
-        {"id": "fence-off", "type": "time_window_switch", "target_id": "fence",
-         "active": False}]}
-    (d / "switch.yaml").write_text(yaml.safe_dump(switch, sort_keys=False), encoding="utf-8")
+        {"id": "people", "type": "distance_envelope", "object_class": "people",
+         "min_distance_m": 5.0}]}
+    (d / "people.yaml").write_text(yaml.safe_dump(people, sort_keys=False), encoding="utf-8")
     rep = K.coverage_report(d)
     t = rep["totals"]
     assert t["n_policies"] == 2 and t["n_compiled"] == 1, t
     assert t["n_not_flyable"] == 1, t
     bad = rep["not_flyable"][0]
-    assert bad["policy_id"] == "p-switch" and len(bad["problems"]) == 1, bad
-    assert bad["problems"][0].startswith("fence-off: time_window_switch"), bad
+    assert bad["policy_id"] == "p-people" and len(bad["problems"]) == 1, bad
+    assert bad["problems"][0].startswith("people: distance_envelope"), bad
     for k in ("n_p0_in_scope", "n_p0_covered", "p0_coverage", "baseline_n_p0_covered"):
         assert t[k] == alone[k], (k, t[k], alone[k])
 
@@ -1210,7 +1220,11 @@ def test_a_circle_fence_compiles_as_the_keep_out_zone_it_is():
     """CircleFence subclasses PolygonFence (its vertices are the derived
     32-gon). Until 2026-10-06 the template lookup used `rule.type` alone, so a
     policy with one circle could not compile a CSP (TemplateNotFound) while the
-    Shield enforced it. Now it renders, is covered, and is forbidden."""
+    Shield enforced it. Now it renders, is covered, and is forbidden.
+
+    Since 2026-10-08 it has its own templates (the grant's "Centre + radius"),
+    so the text says it is a circle and how big; it read as a bare polygon
+    zone before. No shipped policy has a circle, so no stored text moved."""
     _need()
     from guardrail.models import CircleFence
     pol = Policy.model_validate({"policy_id": "circle", "constraints": [
@@ -1218,9 +1232,15 @@ def test_a_circle_fence_compiles_as_the_keep_out_zone_it_is():
          "radius_m": 4.0, "altitude_floor_m": 0, "altitude_ceiling_m": 100}]})
     rule = pol.constraints[0]
     assert isinstance(rule, CircleFence), type(rule)
-    assert K.template_type("sentence", rule) == "polygon_fence"
+    for kind in ("sentence", "summary", "reason"):
+        assert K.template_type(kind, rule) == "circle_fence", kind
+    assert not any(isinstance(c, CircleFence) for p in POLICIES
+                   for c in load_policy(p).constraints), "a fixture has a circle now"
     csp = ConstraintCompiler(pol).compile_csp(_mission(), now=None)
-    assert "Never enter zone 'disc'." in csp.natural_language_prompt, csp.natural_language_prompt
+    assert "Never enter zone 'disc', a circle of radius 4 m." in csp.natural_language_prompt, \
+        csp.natural_language_prompt
+    assert K.render_summary(rule) == "no entry into 'disc' (radius 4 m)"
+    assert "circular zone (radius 4 m)" in csp.relevance_explanations["disc"]
     assert K.p0_coverage(csp, pol)["coverage"] == 1.0
     assert "disc" in csp.forbidden_action_set.no_translate_into_polygons
     st = State(x=15.0, y=8.0, up=15.0)            # 7 m south of the centre
@@ -1778,6 +1798,801 @@ def test_a_csp_can_be_written_with_a_flight():
     ConstraintCompiler(load_policy(PED)).write_csp(out, _mission(), now=MONDAY_0800)
     got = C.CSP.model_validate_json(out.read_text(encoding="utf-8"))
     assert got.policy_hash == load_policy(PED).policy_hash
+
+
+# --------------------------------------------------------------------------- #
+# 2026-10-08: the hot-apply types fly (WP1-15 / WP1-09), the scale is the IR's
+# (WP2-16), and the cost-map adapter (WP2-07, deviation 4)
+# --------------------------------------------------------------------------- #
+
+def _weekdays(start, end, days=("Mon", "Tue", "Wed", "Thu", "Fri")):
+    return {"recurrence": {"days": list(days), "start_time": start, "end_time": end}}
+
+
+# Every hot-apply type, each with an edge the clock can sit on: fence-a is in
+# force on weekdays 07:30-17:30 and switched off Mondays 12:00-13:00; fence-b
+# is switched off Mondays 08:00-08:30; the main corridor is swapped for a
+# narrower, lower one Mondays 09:00-10:00; one zone moves at 2 m/s; one does
+# not move and lies far from every mission.
+HOT = {
+    "policy_id": "hot-apply-mix",
+    "constraints": [
+        {"id": "fence-a", "type": "polygon_fence", "priority": "P0",
+         "vertices": _sq(40, -25, 50, -15), "valid_time": _weekdays("07:30", "17:30")},
+        {"id": "fence-b", "type": "polygon_fence", "priority": "P0",
+         "vertices": _sq(60, 20, 70, 30)},
+        {"id": "corr-main", "type": "corridor", "priority": "P0",
+         "centerline": [{"x": 0, "y": 0}, {"x": 100, "y": 0}], "width_m": 40,
+         "altitude_floor_m": 5, "altitude_ceiling_m": 60},
+        {"id": "dyn", "type": "dynamic_nfz", "priority": "P0",
+         "vertices": _sq(20, 30, 30, 40),
+         "motion": {"vx_mps": 2.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}},
+        {"id": "dyn-still", "type": "dynamic_nfz", "priority": "P1",
+         "vertices": _sq(-400, -400, -390, -390)},
+        {"id": "sw-a-off", "type": "time_window_switch", "priority": "P0",
+         "target_id": "fence-a", "active": False,
+         "valid_time": _weekdays("12:00", "13:00", ("Mon",))},
+        {"id": "sw-b-off", "type": "time_window_switch", "priority": "P1",
+         "target_id": "fence-b", "active": False,
+         "valid_time": _weekdays("08:00", "08:30", ("Mon",))},
+        {"id": "swap-main", "type": "corridor_swap", "priority": "P0",
+         "target_id": "corr-main",
+         "centerline": [{"x": 0, "y": 0}, {"x": 100, "y": 10}], "width_m": 30,
+         "altitude_floor_m": 10, "altitude_ceiling_m": 50,
+         "valid_time": _weekdays("09:00", "10:00", ("Mon",))},
+    ],
+}
+HOT_MISSION = dict(tx=100.0, ty=0.0, alt=15.0, speed=4.0)
+MON = datetime(2026, 10, 5)                     # a Monday
+
+
+def _hot():
+    """HOT as a declaration (DSL lint applied). Not for flight: its two
+    dynamic_nfz are held back from policy files (models.FLIGHT_HELD_TYPES)."""
+    from guardrail.models import policy_from_raw
+    return policy_from_raw(json.loads(json.dumps(HOT)), source="HOT", runtime=False)
+
+
+def test_the_hot_apply_types_compile_and_a_switch_or_swap_flies():
+    """The three hot-apply classes, which the Shield has enforced since
+    2026-10-07, now have their templates and are in RUNTIME_TYPES, so a
+    policy or a hot-applied generation holding them compiles a CSP. Shown
+    failing on 10451bc: `policy_from_raw` refused HOT ("cannot enforce ...
+    dynamic_nfz, time_window_switch, corridor_swap") and compile_csp raised
+    CSPUnenforcedRules on the same rules.
+
+    A policy FILE with a switch or a swap loads for flight. One declaring a
+    dynamic_nfz does not (models.FLIGHT_HELD_TYPES, found in review on
+    2026-10-08): the Shield enforces the zone, but the flight rails' dwell
+    metric (nfz_s) counts polygon and circle fences only and would score it
+    0 s. The refusal names each zone and that reason."""
+    _need()
+    from guardrail.models import FLIGHT_HELD_TYPES, RUNTIME_TYPES, policy_from_raw
+    assert {"dynamic_nfz", "time_window_switch", "corridor_swap"} <= RUNTIME_TYPES
+    assert set(FLIGHT_HELD_TYPES) == {"dynamic_nfz"}
+    pol = _hot()
+    held = pol.flight_problems()
+    assert sorted(p.split(":")[0] for p in held) == ["dyn", "dyn-still"], held
+    assert all("nfz_s" in p for p in held), held
+    try:
+        policy_from_raw(json.loads(json.dumps(HOT)), source="HOT")   # the flight gate
+    except ValueError as e:
+        assert "dyn:" in str(e) and "dyn-still:" in str(e) and "nfz_s" in str(e), str(e)
+    else:
+        raise AssertionError("a policy file declaring a dynamic_nfz loaded for flight")
+    no_zones = {**HOT, "constraints": [c for c in HOT["constraints"]
+                                       if c["type"] != "dynamic_nfz"]}
+    flies = policy_from_raw(json.loads(json.dumps(no_zones)), source="HOT-no-zones")
+    assert flies.flight_problems() == []
+    csp = ConstraintCompiler(pol).compile_csp(_mission(**HOT_MISSION),
+                                              now=MON.replace(hour=8, minute=15),
+                                              budget_tokens=1000)
+    dec = {r.id: r for r in csp.selection.rules}
+    nl = csp.natural_language_prompt
+    assert "Never enter zone 'dyn', which moves at 2 m/s." in nl, nl
+    assert "Rule 'fence-b' is switched off Mon 08:00-08:30." in csp.P1_summary + nl \
+        or "rule 'fence-b' switched off (Mon 08:00-08:30)" in csp.P1_summary, csp.P1_summary
+    assert dec["fence-b"].decision == "filtered_inactive", dec["fence-b"]
+    assert "held off by sw-b-off" in dec["fence-b"].reason, dec["fence-b"].reason
+    assert dec["dyn-still"].decision == "filtered_out_of_region", dec["dyn-still"]
+    assert dec["swap-main"].decision == "filtered_inactive"
+    assert K.p0_coverage(csp, pol)["coverage"] == 1.0
+    assert K.rule_coverage(csp, pol)["all"]["recorded"] == 1.0
+    f = csp.forbidden_action_set
+    assert set(f.no_translate_into_polygons) == {"fence-a", "dyn"}, f
+    assert f.no_translate_out_of_corridors == ["corr-main"], f
+    assert csp.allowed_action_set.altitude_band_m_agl == (5.0, 60.0)
+    # 09:30 Monday: the swap holds, so the main corridor is replaced.
+    swapped = ConstraintCompiler(pol).compile_csp(_mission(**HOT_MISSION),
+                                                  now=MON.replace(hour=9, minute=30),
+                                                  budget_tokens=1000)
+    d2 = {r.id: r for r in swapped.selection.rules}
+    assert d2["corr-main"].decision == "filtered_inactive"
+    assert "held off by swap-main" in d2["corr-main"].reason, d2["corr-main"].reason
+    assert swapped.forbidden_action_set.no_translate_out_of_corridors == ["swap-main"]
+    assert swapped.allowed_action_set.altitude_band_m_agl == (10.0, 50.0)
+    assert ("Stay inside corridor 'swap-main', which replaces 'corr-main', within 15 m "
+            "of its centerline and between 10 m and 50 m (in force Mon 09:00-10:00)."
+            ) in swapped.natural_language_prompt, swapped.natural_language_prompt
+    refs = {p.id: p.geometry_ref for p in swapped.P0_constraints}
+    assert refs["dyn"] == "fine:dyn@v0.1.0/g0" and refs["swap-main"].startswith("fine:")
+    assert K.resolve_geometry_ref(pol, refs["dyn"])[0] == (20.0, 30.0)
+
+
+def _shield_in_force(pol, when):
+    from guardrail.shield import Shield
+    sh = Shield(pol, now=(lambda: when) if when is not None else None, escalation=False)
+    return {r["id"]: r["in_force"] for r in sh.rule_status(State(x=-1e5, y=-1e5, up=20.0))}
+
+
+def test_the_csp_times_switches_and_swaps_exactly_as_the_shield_does():
+    """The CSP must never leave out a rule the Shield enforces. A switch that
+    turns a rule OFF is where the compiler's old minute-grained clock was not
+    conservative: models.Recurrence.active_at holds a window ending 08:30 open
+    until 08:30:59, while the Shield closes it at 08:30:00.000 - so the target
+    would be missing from the CSP for most of a minute while the Shield
+    enforced it. Checked at instants on both sides of every edge of HOT,
+    against the Shield's own `rule_status()["in_force"]`, and the minute
+    reading is run as the null: it fails the same check, so the check can."""
+    _need()
+    pol = _hot()
+    clock = K._RuleClock(pol)
+
+    class _Minute(K._RuleClock):                 # the null: the old clock
+        @staticmethod
+        def _base(rule, x):
+            vt = rule.valid_time
+            if vt is None or vt.recurrence is None:
+                return True
+            return None if x is None else vt.recurrence.active_at(x)
+    minute = _Minute(pol)
+    edges = [(7, 30), (8, 0), (8, 30), (9, 0), (10, 0), (12, 0), (13, 0), (17, 30)]
+    offsets = (-61, -20, -1, -0.05, -1e-6, 0, 1e-6, 0.05, 1, 20, 61)
+    n, exact, null_misses = 0, 0, []
+    for hh, mm in edges:
+        for off in offsets:
+            when = MON.replace(hour=hh, minute=mm) + timedelta(seconds=off)
+            shield = _shield_in_force(pol, when)
+            csp = ConstraintCompiler(pol).compile_csp(_mission(**HOT_MISSION), now=when,
+                                                      lookahead_s=5.0, region_margin_m=None,
+                                                      budget_tokens=1000)
+            dec = {r.id: r.decision for r in csp.selection.rules}
+            for c in pol.constraints:
+                if c.type == "time_window_switch":
+                    continue                     # an event: the Shield never "enforces" it
+                n += 1
+                if shield[c.id]:
+                    assert dec[c.id] != "filtered_inactive", (when, c.id)
+                    if not minute.activity(c, when, 5.0)["any"]:
+                        null_misses.append((when.time().isoformat(), c.id))
+                # Exact agreement with the Shield's both-sides reading.
+                eps = timedelta(seconds=0.05)
+                if clock.involved(c):
+                    assert (clock.on(c, when - eps) or clock.on(c, when + eps)) == shield[c.id], \
+                        (when, c.id)
+                    exact += 1
+    assert n > 400 and exact > 200, (n, exact)
+    assert null_misses, "the minute-grained null never left out an enforced rule; the check proves nothing"
+    print(f"      {n} rule-instants, {exact} timed by switches/swaps agree exactly with "
+          f"the Shield; the minute-grained null leaves out {len(null_misses)} enforced "
+          f"rule-instants, e.g. {null_misses[0]}")
+
+
+def test_without_a_clock_a_switch_applies_only_where_the_shield_applies_it():
+    """No clock: a switch with a window cannot be read, so it never turns a
+    rule off (the Shield's rule); a switch with no window always applies."""
+    _need()
+    raw = json.loads(json.dumps(HOT))
+    raw["constraints"].append({"id": "sw-a-always", "type": "time_window_switch",
+                               "target_id": "fence-a", "active": False})
+    from guardrail.models import policy_from_raw
+    pol = policy_from_raw(raw, runtime=False)
+    csp = ConstraintCompiler(pol).compile_csp(_mission(**HOT_MISSION), now=None,
+                                              budget_tokens=1000)
+    dec = {r.id: r for r in csp.selection.rules}
+    sh = _shield_in_force(pol, None)
+    assert not sh["fence-a"] and dec["fence-a"].decision == "filtered_inactive"
+    assert "held off by sw-a-always" in dec["fence-a"].reason, dec["fence-a"].reason
+    assert sh["fence-b"] and dec["fence-b"].decision == "kept", dec["fence-b"]
+    assert sh["corr-main"] and dec["corr-main"].decision == "kept"
+    assert "Rule 'fence-a' is switched off." in csp.natural_language_prompt
+
+
+def test_build_prompt_carries_every_runtime_type():
+    """build_prompt's by-type order stopped at stand-off until 2026-10-08: a
+    dynamic_nfz, corridor_swap or time_window_switch would have been dropped
+    from its text WITHOUT A WORD the day the loaders accepted them. Shown
+    failing on 10451bc: _sentences() returned 5 sentences for HOT's 8 rules."""
+    _need()
+    pol = _hot()
+    sents = ConstraintCompiler(pol)._sentences()
+    assert len(sents) == len(pol.constraints), (len(sents), len(pol.constraints))
+    text = " ".join(sents)
+    for rid in ("dyn", "dyn-still", "swap-main", "fence-b"):
+        assert f"'{rid}'" in text, rid
+    base = K.naive_prefix_baseline(pol, 1000)
+    assert base["n_rules_in_text"] == len(pol.constraints), base
+
+
+def test_the_compiler_reads_the_multiscale_geometry_the_ir_carries():
+    """WP2-16: "the Prefix Compiler picks the scale, never re-computes". Until
+    2026-10-08 guardrail/compiler.py computed its own hull and oriented
+    rectangle beside the IR's (the same rule twice, kept equal only by a
+    test). Now the compiler's multi-scale cache IS the IR's object, and a
+    zone or tube type the IR knows (dynamic_nfz, corridor_swap) is there too.
+    Shown failing on 10451bc: no `compiled_ir`, and the compiler's cache had
+    no entry for `dyn` or `swap-main`."""
+    _need()
+    pol = _hot()
+    ir = K.compiled_ir(pol)
+    assert K.multiscale_geometry(pol) is ir.multiscale
+    assert not hasattr(K, "_convex_hull") and not hasattr(K, "_min_area_rect")
+    assert set(ir.multiscale["dyn"]) == {"fine", "coarse", "bbox"}
+    assert set(ir.multiscale["swap-main"]) == {"fine"}, "a keep-in tube is never coarsened"
+    for p in POLICIES[:6]:
+        q = load_policy(p)
+        csp = ConstraintCompiler(q).compile_csp(_mission(), now=None)
+        for e in csp.P0_constraints:
+            if not e.geometry_ref.startswith("param:"):
+                assert K.resolve_geometry_ref(q, e.geometry_ref) == \
+                    K.compiled_ir(q).resolve_geometry_ref(e.geometry_ref)
+    bumped = pol.model_copy(update={"generation": 1})
+    assert K.compiled_ir(bumped) is not ir and K.compiled_ir(bumped).generation == 1
+
+
+def test_the_new_sentences_are_bounded_by_the_table_counter():
+    """The table counter has no entries for the words the new templates use,
+    so they are counted by their bytes - an upper bound by construction.
+    Checked against the exact tokenizer where it exists."""
+    _need()
+    pol = _hot()
+    disc = Policy.model_validate({"policy_id": "c", "constraints": [
+        {"id": "disc", "type": "circle_fence", "center": {"x": 1, "y": 1},
+         "radius_m": 4.5}]})
+    texts = [K.render_sentence(c) for c in pol.constraints + disc.constraints]
+    texts += [K.render_summary(c) for c in pol.constraints + disc.constraints]
+    table = C.TableTokenCounter()
+    exact = C.openvla_token_counter()
+    if exact is None:
+        return _skip("no OpenVLA tokenizer here; the byte bound holds by construction")
+    for t in texts:
+        assert table.count(t) >= exact.count(t), (t, table.count(t), exact.count(t))
+
+
+# ---- the cost-map adapter -------------------------------------------------- #
+
+WGS84 = ROOT / "policies" / "wgs84_taipei.yaml"
+
+
+def test_the_cost_map_follows_the_grants_conventions():
+    """Prefix Compiler page: resolution_m 5, an origin {lat, lon}, layers
+    nfz_hard (cost inf), corridor_pref (0), corridor_outside (50)."""
+    _need()
+    geo = K.rasterise_cost_map(load_policy(WGS84), now=MONDAY_0800)
+    assert set(geo.header["cost_map"]["origin"]) == {"lat", "lon"}
+    o = geo.header["cost_map"]["origin"]
+    assert abs(o["lat"] - 25.04) < 0.01 and abs(o["lon"] - 121.53) < 0.01, o
+    pol = load_policy(SURVEY)
+    cm = K.rasterise_cost_map(pol, now=MONDAY_0800)
+    h = cm.header
+    assert h["cost_map"]["resolution_m"] == 5.0
+    names = {(L["name"], L["cost"]) for L in h["cost_map"]["layers"]}
+    assert ("nfz_hard", "inf") in names and ("corridor_pref", 0.0) in names \
+        and ("corridor_outside", 50.0) in names, names
+    assert cm.cost.dtype == np.float32 and np.isinf(cm.cost).any()
+    assert set(np.unique(cm.cost[np.isfinite(cm.cost)]).tolist()) <= {0.0, 50.0}
+    assert h["policy_hash"] == pol.policy_hash and h["generation"] == pol.generation
+    assert cm.ref.startswith(f"costmap:{pol.policy_id}@v{pol.version}/g0#sha256:")
+    metre = K.rasterise_cost_map(load_policy(DEMO))
+    assert metre.header["cost_map"]["origin"] is None, "a metre policy has no WGS84 origin"
+    # What has no footprint is listed with why, never dropped in silence.
+    whys = {d["id"]: d["why"] for d in metre.header["not_drawn"]}
+    assert any("speed" in w for w in whys.values()), whys
+
+
+def test_the_cost_map_never_frees_a_place_the_shield_forbids_and_beats_both_nulls():
+    """The score and its two nulls (cost_map_agreement): the map must miss
+    NO point the Shield forbids (an all-free grid misses all of them), and
+    must over-cost far fewer allowed points than an all-inf grid (which
+    over-costs every one). A map with one zone's cells freed is caught."""
+    _need()
+    cases = [(load_policy(DEMO), None), (load_policy(SURVEY), MONDAY_0800),
+             (_mix(), None), (_hot(), MON.replace(hour=8, minute=15)),
+             (_hot(), MON.replace(hour=9, minute=30))]
+    for pol, now in cases:
+        cm = K.rasterise_cost_map(pol, now=now, altitude_m=15.0)
+        ag = K.cost_map_agreement(cm, pol, now=now, n_points=600)
+        assert ag["n_forbidden"] > 0 and ag["n_allowed"] > 0, (pol.policy_id, ag)
+        assert ag["map"]["missed"] == 0, (pol.policy_id, now, ag)
+        assert ag["null_all_free"]["missed"] == ag["n_forbidden"], ag
+        assert ag["null_all_inf"]["over_cost"] == ag["n_allowed"], ag
+        assert ag["map"]["over_cost"] < 0.5 * ag["n_allowed"], (pol.policy_id, ag)
+    pol = _mix()
+    cm = K.rasterise_cost_map(pol, altitude_m=15.0)
+    k = next(i for i, L in enumerate(cm.header["cost_map"]["layers"])
+             if L["source"] == "nfz-on-path")
+    holed = K.CostMap(cost=np.where(cm.layers[k], np.float32(0), cm.cost),
+                      layers=cm.layers, header=cm.header)
+    ag = K.cost_map_agreement(holed, pol, n_points=3000)
+    assert ag["map"]["missed"] > 0, "a map with a zone freed passed the scorer"
+
+
+def test_a_moving_zone_is_drawn_where_the_shield_has_it():
+    """A dynamic_nfz moving at 2 m/s, 10 s after it appeared, is 20 m on - in
+    the map and in the Shield (ticked to t = 10 s). The map drawn at age 0 and
+    scored at age 10 misses points: the scorer sees a stale position."""
+    _need()
+    pol = _hot()
+    now = MON.replace(hour=8, minute=15)
+    m0 = K.rasterise_cost_map(pol, now=now, altitude_m=15.0, zone_age_s=0.0,
+                              bounds=(-20, -60, 140, 80))
+    m10 = K.rasterise_cost_map(pol, now=now, altitude_m=15.0, zone_age_s=10.0,
+                               bounds=(-20, -60, 140, 80))
+    k0 = next(i for i, L in enumerate(m0.header["cost_map"]["layers"]) if L["source"] == "dyn")
+    k10 = next(i for i, L in enumerate(m10.header["cost_map"]["layers"]) if L["source"] == "dyn")
+    shift = np.argwhere(m10.layers[k10]).min(0) - np.argwhere(m0.layers[k0]).min(0)
+    assert tuple(shift) == (4, 0), shift                     # 20 m north at 5 m cells
+    assert m10.header["zone_age_s"] == {"dyn": 10.0}
+    assert K.cost_map_agreement(m10, pol, now=now, n_points=1500)["map"]["missed"] == 0
+    stale = K.CostMap(cost=m0.cost, layers=m0.layers, header=m10.header)
+    assert K.cost_map_agreement(stale, pol, now=now, n_points=1500)["map"]["missed"] > 0
+
+
+def test_standoff_and_clearance_are_drawn_only_with_their_inputs():
+    """Both rules are inert in the Shield without a subject / an obstacle map;
+    the map says so by name. With them, the map agrees with the Shield's own
+    stand-off test and distance field."""
+    _need()
+    pol = Policy.model_validate({"policy_id": "so", "constraints": [
+        {"id": "fence", "type": "polygon_fence", "vertices": _sq(30, 30, 40, 40)},
+        {"id": "keep-off", "type": "obstacle_clearance", "min_clearance_m": 4.0},
+        {"id": "standoff", "type": "subject_standoff", "min_range_m": 10.0},
+        {"id": "ped-only", "type": "subject_standoff", "subject_class": "pedestrian",
+         "min_range_m": 20.0}]})
+    bare = K.rasterise_cost_map(pol)
+    whys = {d["id"]: d["why"] for d in bare.header["not_drawn"]}
+    assert "no obstacle map" in whys["keep-off"] and "no subject" in whys["standoff"], whys
+    occ = np.zeros((30, 30), dtype=np.uint8)
+    occ[5:8, 20:24] = 1
+    omap = {"occ": occ, "res": 2.0, "ox": 0.0, "oy": 0.0}
+    cm = K.rasterise_cost_map(pol, altitude_m=15.0, subject=(10.0, 10.0, "car"),
+                              obstacle_map=omap, resolution_m=2.0)
+    names = {L["name"]: L for L in cm.header["cost_map"]["layers"]}
+    assert names["standoff_hard"]["source"] == "standoff" and names["standoff_hard"]["cells"] > 0
+    assert names["clearance_hard"]["cells"] > 0
+    assert "binds 'pedestrian'" in {d["id"]: d["why"] for d in cm.header["not_drawn"]}["ped-only"]
+    ag = K.cost_map_agreement(cm, pol, obstacle_map=omap, n_points=3000)
+    assert ag["n_forbidden"] > 100 and ag["map"]["missed"] == 0, ag
+    assert ag["map"]["over_cost"] < 0.5 * ag["n_allowed"], ag
+
+
+def test_the_whole_grid_is_refused_at_a_height_the_envelope_forbids():
+    _need()
+    pol = _mix()                                   # alt-band 5-50 m, hard
+    cm = K.rasterise_cost_map(pol, altitude_m=70.0)
+    assert np.isinf(cm.cost).all()
+    assert any(L["name"] == "altitude_hard" for L in cm.header["cost_map"]["layers"])
+    assert K.cost_map_agreement(cm, pol, n_points=300)["map"]["missed"] == 0
+    ok = K.rasterise_cost_map(pol, altitude_m=20.0)
+    assert not np.isinf(ok.cost).all()
+    low = K.rasterise_cost_map(_hot(), now=MON.replace(hour=8, minute=15), altitude_m=2.0)
+    out = next(L for L in low.header["cost_map"]["layers"] if L["name"] == "corridor_outside")
+    assert out["cells"] == low.cost.size, "below the corridor band, everywhere is outside it"
+    assert "fence-b" in low.header["not_in_force"]
+
+
+def test_the_cost_map_export_round_trips_and_refuses_tampering():
+    _need()
+    import zipfile
+    pol = _mix()
+    cm = K.rasterise_cost_map(pol, altitude_m=15.0)
+    d = Path(tempfile.mkdtemp())
+    npz, js = cm.save(d / "mix")
+    assert npz.name == "mix.npz" and js.name == "mix.json"
+    assert b"\r\n" not in js.read_bytes()
+    # The grant's Outputs table says the adapter "emits YAML": the JSON header
+    # is a YAML document, and a YAML reader gets the same values from it.
+    import yaml as _yaml
+    text = js.read_text(encoding="utf-8")
+    assert _yaml.safe_load(text) == json.loads(text)
+    back = K.load_cost_map(js, pol)
+    assert back.ref == cm.ref and np.array_equal(back.cost, cm.cost)
+    assert all(np.array_equal(a, b) for a, b in zip(back.layers, cm.layers))
+    doc = json.loads(js.read_text(encoding="utf-8"))
+    doc["cost_map"]["resolution_m"] = 4.0
+    (d / "edited.json").write_text(json.dumps(doc), encoding="utf-8")
+    try:
+        K.load_cost_map(d / "edited.json")
+    except ValueError as e:
+        assert "edited" in str(e), e
+    else:
+        raise AssertionError("an edited header loaded")
+    with np.load(npz) as z:
+        arrays = {k: z[k] for k in z.files}
+    arrays["cost"] = np.zeros_like(arrays["cost"])
+    np.savez_compressed(d / "mix.npz", **arrays)
+    try:
+        K.load_cost_map(js)
+    except ValueError as e:
+        assert "not the one" in str(e), e
+    else:
+        raise AssertionError("a zeroed grid loaded under the old header")
+    cm.save(d / "mix")
+    try:
+        K.load_cost_map(js, pol.model_copy(update={"generation": 1}))
+    except ValueError as e:
+        assert "g0" in str(e), e
+    else:
+        raise AssertionError("a generation-0 map loaded for generation 1")
+    assert zipfile.is_zipfile(npz)
+
+
+def test_cost_map_ref_reaches_the_csp_only_when_asked():
+    """The grant: `cost_map_ref: str | None = None  # for path planners;
+    lazy-loaded artefact`. Without a map the CSP is what it was (no stored CSP
+    moved); with one, its ref; a map of another policy is refused."""
+    _need()
+    pol = _mix()
+    comp = ConstraintCompiler(pol)
+    plain = comp.compile_csp(_mission(**MIX_MISSION), now=None, issued_at="2026-10-08T00:00:00")
+    assert plain.cost_map_ref is None
+    cm = comp.cost_map(altitude_m=15.0)
+    with_map = comp.compile_csp(_mission(**MIX_MISSION), now=None,
+                                issued_at="2026-10-08T00:00:00", cost_map=cm)
+    assert with_map.cost_map_ref == cm.ref
+    assert with_map.model_copy(update={"cost_map_ref": None}) == plain
+    other = K.rasterise_cost_map(load_policy(DEMO))
+    try:
+        comp.compile_csp(_mission(**MIX_MISSION), now=None, cost_map=other)
+    except ValueError as e:
+        assert "rasterised from" in str(e), e
+    else:
+        raise AssertionError("a cost map of another policy was referenced")
+
+
+def test_write_csp_exports_the_cost_map_it_references():
+    """A CSP written with a cost map carries the map beside it, so its
+    cost_map_ref names a file that travels with the CSP: written as
+    costmap_<stem>.npz/.json (outside the replay bundle's csp_g*.json
+    pattern), resolved by load_cost_map with the CSP's own ref, and refused
+    under another map's ref. A map of another policy is refused before
+    anything is written. Shown failing on the first 2026-10-08 version:
+    write_csp set the ref but wrote no map, and load_cost_map took no ref."""
+    _need()
+    pol = _mix()
+    comp = ConstraintCompiler(pol)
+    cm = comp.cost_map(altitude_m=15.0)
+    d = Path(tempfile.mkdtemp())
+    p = comp.write_csp(d / "csp_g0.json", _mission(**MIX_MISSION), now=None,
+                       issued_at="2026-10-08T00:00:00", cost_map=cm)
+    csp = json.loads(p.read_text(encoding="utf-8"))
+    assert csp["cost_map_ref"] == cm.ref
+    js = d / "costmap_csp_g0.json"
+    assert js.is_file() and (d / "costmap_csp_g0.npz").is_file(), sorted(os.listdir(d))
+    assert sorted(x.name for x in d.glob("csp_g*.json")) == ["csp_g0.json"]
+    back = K.load_cost_map(js, pol, ref=csp["cost_map_ref"])
+    assert np.array_equal(back.cost, cm.cost)
+    high = comp.cost_map(altitude_m=40.0)          # same policy and generation
+    assert high.ref != cm.ref
+    try:
+        K.load_cost_map(js, pol, ref=high.ref)
+    except ValueError as e:
+        assert "not the map" in str(e), e
+    else:
+        raise AssertionError("a cost map loaded under another map's ref")
+    d2 = Path(tempfile.mkdtemp())
+    try:
+        comp.write_csp(d2 / "csp_g0.json", _mission(**MIX_MISSION), now=None,
+                       cost_map=K.rasterise_cost_map(load_policy(DEMO)))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("write_csp wrote a CSP naming another policy's cost map")
+    assert not any(d2.iterdir()), sorted(os.listdir(d2))
+    # Without a map, write_csp writes the CSP alone, as before.
+    d3 = Path(tempfile.mkdtemp())
+    comp.write_csp(d3 / "csp_g0.json", _mission(**MIX_MISSION), now=None)
+    assert sorted(os.listdir(d3)) == ["csp_g0.json"]
+
+
+def test_a_dynamic_zone_names_only_the_motion_it_has():
+    """A zone that only turns is not said to travel, one that only
+    translates is not said to turn at 0 deg/s, and a non-zero rate never
+    prints as 0. Shown failing on the first 2026-10-08 templates: the reason
+    read "this zone moves (2 m/s, turning 0 deg/s)" for a zone that does not
+    turn, "(0 m/s, turning 7.5 deg/s), up to 0 m" for one that only turns,
+    and the sentence "which moves at 0 m/s" for a zone creeping at 0.03 m/s."""
+    _need()
+    from guardrail.models import policy_from_raw
+
+    def zone(zid, x0, motion):
+        r = {"id": zid, "type": "dynamic_nfz", "vertices": _sq(x0, 50, x0 + 10, 60)}
+        if motion is not None:
+            r["motion"] = motion
+        return r
+    pol = policy_from_raw({"policy_id": "motions", "constraints": [
+        zone("go", 0, {"vx_mps": 2.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}),
+        zone("spin", 20, {"vx_mps": 0.0, "vy_mps": 0.0, "yaw_rate_dps": -7.5}),
+        zone("both", 40, {"vx_mps": 0.0, "vy_mps": 1.5, "yaw_rate_dps": 3.0}),
+        zone("creep", 60, {"vx_mps": 0.03, "vy_mps": 0.0, "yaw_rate_dps": 0.0}),
+        zone("still", 80, None)]}, runtime=False)
+    by = {c.id: c for c in pol.constraints}
+    want_sentence = {
+        "go": "Never enter zone 'go', which moves at 2 m/s.",
+        "spin": "Never enter zone 'spin', which turns at 7.5 deg/s.",
+        "both": "Never enter zone 'both', which moves at 1.5 m/s and turns at 3 deg/s.",
+        "creep": "Never enter zone 'creep', which moves at 0.03 m/s.",
+        "still": "Never enter zone 'still'.",
+    }
+    want_summary = {
+        "go": "no entry into 'go' (moving 2 m/s)",
+        "spin": "no entry into 'spin' (turning 7.5 deg/s)",
+        "both": "no entry into 'both' (moving 1.5 m/s, turning 3 deg/s)",
+        "creep": "no entry into 'creep' (moving 0.03 m/s)",
+        "still": "no entry into 'still'",
+    }
+    for zid, c in by.items():
+        assert K.render_sentence(c) == want_sentence[zid], (zid, K.render_sentence(c))
+        assert K.render_summary(c) == want_summary[zid], (zid, K.render_summary(c))
+    csp = ConstraintCompiler(pol).compile_csp(_mission(tx=100.0, ty=55.0), now=None,
+                                              budget_tokens=1000)
+    rel = csp.relevance_explanations
+    assert rel["go"].startswith("this zone moves at 2 m/s, up to 10 m in the 5 s "
+                                "lookahead; "), rel["go"]
+    assert rel["spin"].startswith("this zone turns at 7.5 deg/s; "), rel["spin"]
+    assert rel["both"].startswith("this zone moves at 1.5 m/s, up to 7.5 m in the 5 s "
+                                  "lookahead and turns at 3 deg/s; "), rel["both"]
+    assert rel["creep"].startswith("this zone moves at 0.03 m/s"), rel["creep"]
+    assert rel["still"].startswith(("this dynamic zone is", "the straight path")), rel["still"]
+    for zid, text in rel.items():
+        assert "0 deg/s" not in text and "up to 0 m" not in text, (zid, text)
+
+
+# ---- review fixes, 2026-10-08 (late) --------------------------------------- #
+
+def test_compile_csp_refuses_a_cost_map_of_another_instant_or_height():
+    """Two maps of one generation differ by clock and height, so matching the
+    policy hash and generation is not enough. Shown failing on the first
+    2026-10-08 version: a CSP issued Mon 08:15 for a 15 m cruise accepted a
+    map rasterised at Mon 12:30 (fence-a, which the Shield enforces at 08:15,
+    not drawn; fence-b, which a switch holds off, drawn at inf) and a map
+    drawn at 200 m; write_csp then exported that map and named it."""
+    _need()
+    pol = _hot()
+    comp = ConstraintCompiler(pol)
+    at = MON.replace(hour=8, minute=15)
+    mission = _mission(**HOT_MISSION)                     # cruises at 15 m
+    good = comp.cost_map(now=at, altitude_m=15.0)
+    assert comp.compile_csp(mission, now=at, budget_tokens=1000,
+                            cost_map=good).cost_map_ref == good.ref
+    late = comp.cost_map(now=MON.replace(hour=12, minute=30), altitude_m=15.0)
+    # What the wrong instant gets wrong, so the refusal is about something:
+    assert "fence-a" in late.header["not_in_force"] and "fence-a" not in good.header["not_in_force"]
+    assert "fence-b" in good.header["not_in_force"] and "fence-b" not in late.header["not_in_force"]
+    cases = [(late, "clock 2026-10-05T12:30:00"),
+             (comp.cost_map(altitude_m=15.0), "clock None"),
+             (comp.cost_map(now=at, altitude_m=200.0), "altitude_m=200"),
+             (comp.cost_map(now=at), "altitude_m=None")]
+    for bad, word in cases:
+        try:
+            comp.compile_csp(mission, now=at, budget_tokens=1000, cost_map=bad)
+        except ValueError as e:
+            assert word in str(e), (word, str(e))
+        else:
+            raise AssertionError(f"compile_csp accepted a map of another instant or height ({word})")
+        d = Path(tempfile.mkdtemp())
+        try:
+            comp.write_csp(d / "csp_g0.json", mission, now=at, budget_tokens=1000, cost_map=bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"write_csp wrote a CSP naming a map of another instant ({word})")
+        assert not any(d.iterdir()), (word, sorted(os.listdir(d)))
+    # Without a clock, the map drawn without one at the cruise height is the one.
+    flat = comp.cost_map(altitude_m=15.0)
+    assert comp.compile_csp(mission, now=None, budget_tokens=1000,
+                            cost_map=flat).cost_map_ref == flat.ref
+
+
+def test_the_cost_map_reports_hard_corridor_points_it_prices_finite():
+    """The headline "misses 0 forbidden points" holds under the grant's
+    corridor_outside = 50, which prices the outside of a HARD corridor too:
+    the Shield refuses those points, the map lets a planner in at 50. The
+    scorer counts them beside `missed` (hard_rule_priced_finite), with both
+    nulls, so the headline is never read without them. Shown failing on the
+    first 2026-10-08 version: no such count (reviewer's rerun with hard
+    corridors requiring inf: 602 of 4181 shipped points)."""
+    _need()
+    pol = load_policy(SURVEY)                        # hard corridor, hard fence
+    cm = K.rasterise_cost_map(pol, now=MONDAY_0800, altitude_m=15.0)
+    ag = K.cost_map_agreement(cm, pol, now=MONDAY_0800, n_points=1500)
+    m = ag["map"]
+    assert m["missed"] == 0, ag
+    assert m["hard_rule_priced_finite"] > 0, "the survey corridor is hard; its outside is priced 50"
+    assert ag["n_forbidden_by_hard"] >= m["hard_rule_priced_finite"]
+    assert ag["null_all_free"]["hard_rule_priced_finite"] == ag["n_forbidden_by_hard"], ag
+    assert ag["null_all_inf"]["hard_rule_priced_finite"] == 0, ag
+    # Each such point sits in a corridor_outside cell at 50, nowhere else:
+    # every other hard layer is inf.
+    finite_hard = {L["name"] for L in cm.header["cost_map"]["layers"]
+                   if L["cost"] != "inf" and L["name"].endswith("_hard")}
+    assert finite_hard == set(), finite_hard
+    soft = Policy.model_validate({**json.loads(json.dumps(
+        pol.model_dump(mode="json", exclude_none=True))), "constraints": [
+        {**c.model_dump(mode="json", exclude_none=True), "constraint_type": "soft"}
+        if c.type == "corridor" else c.model_dump(mode="json", exclude_none=True)
+        for c in pol.constraints]})
+    sag = K.cost_map_agreement(K.rasterise_cost_map(soft, now=MONDAY_0800, altitude_m=15.0),
+                               soft, now=MONDAY_0800, n_points=1500)
+    assert sag["map"]["hard_rule_priced_finite"] == 0, "a soft corridor priced 50 is what it says"
+
+
+def test_a_keep_out_zone_is_drawn_with_its_margin_ring():
+    """The Shield forbids a hard zone's margin ring as it forbids the zone. A
+    map drawing the bare polygon (the review's mutation: rec.buffered ->
+    rec.polygon) passed every other test here, because they sample too few
+    points in the ring; this one samples only the ring."""
+    _need()
+    from shapely.geometry import Point
+    from shapely.geometry import Polygon as SPoly
+    from guardrail.shield import Shield
+    pol = Policy.model_validate({"policy_id": "ring", "constraints": [
+        {"id": "z", "type": "polygon_fence", "vertices": _sq(0, 0, 20, 20), "margin_m": 8.0}]})
+    cm = K.rasterise_cost_map(pol, altitude_m=15.0, resolution_m=5.0)
+    sh = Shield(pol, escalation=False)
+    poly = SPoly([(0, 0), (20, 0), (20, 20), (0, 20)])
+    rng = np.random.default_rng(1)
+    n = 0
+    while n < 400:
+        x, y = (float(v) for v in rng.uniform(-8.5, 28.5, 2))
+        d = poly.distance(Point(x, y))
+        if not 0.0 < d < 7.9:
+            continue
+        row = next(r for r in sh.rule_status(State(x=x, y=y, up=15.0)) if r["id"] == "z")
+        assert row["in_margin"] and row["breach"], (x, y, row)
+        assert cm.cost_at(x, y) == math.inf, (x, y, d, cm.cost_at(x, y))
+        n += 1
+
+
+def test_the_shipped_policies_cost_map_report_misses_nothing():
+    """The shipped-policy report (python -m guardrail.compiler costmap-report)
+    as a test: 0 missed over every rasterisable policy, the qualifier
+    counted, both nulls at their extremes. It catches the margin-ring
+    mutation on its own (38 missed at 1000 points in review)."""
+    _need()
+    rep = K.cost_map_report(ROOT / "policies", n_points=1000)
+    t = rep["totals"]
+    assert t["n_policies_scored"] >= 20, t
+    assert t["map"]["missed"] == 0, {r["file"]: r["map"]["missed"] for r in rep["rows"]
+                                     if r["map"]["missed"]}
+    assert t["null_all_free"]["missed"] == t["n_forbidden"] > 0
+    assert t["null_all_inf"]["over_cost"] == t["n_allowed"] > 0
+    assert t["map"]["over_cost"] < 0.5 * t["n_allowed"], t
+    assert t["map"]["hard_rule_priced_finite"] == sum(
+        t["hard_rule_priced_finite_by_policy"].values())
+    print(f"      {t['n_points']} points over {t['n_policies_scored']} policies: missed "
+          f"{t['map']['missed']} of {t['n_forbidden']}; hard-forbidden but priced finite "
+          f"{t['map']['hard_rule_priced_finite']} of {t['n_forbidden_by_hard']} "
+          f"({t['hard_rule_priced_finite_by_policy']}); over-cost {t['map']['over_cost']} "
+          f"of {t['n_allowed']}")
+
+
+def _two_switches(first_active: bool):
+    """fence-s switched by two overlapping switches of opposite sense; the
+    one LATER in policy order decides while both hold (Shield._Schedule)."""
+    from guardrail.models import policy_from_raw
+    a = {"id": "sw-wide", "type": "time_window_switch", "target_id": "fence-s",
+         "active": first_active, "valid_time": _weekdays("08:00", "09:00", ("Mon",))}
+    b = {"id": "sw-narrow", "type": "time_window_switch", "target_id": "fence-s",
+         "active": not first_active, "valid_time": _weekdays("08:30", "08:45", ("Mon",))}
+    return policy_from_raw({"policy_id": "two-switches", "constraints": [
+        {"id": "fence-s", "type": "polygon_fence", "priority": "P0",
+         "vertices": _sq(40, -5, 50, 5)}, a, b]}, runtime=False)
+
+
+def test_the_last_switch_in_policy_order_decides_as_in_the_shield():
+    """Of the switches on one rule that hold at an instant, the last in
+    policy order decides (shield._Schedule.on). A clock where the FIRST
+    decided passed every other test (the review's mutation M02): no policy
+    there has two switches on one target. Both orders, every edge, against
+    the Shield's own rule_status."""
+    _need()
+    for first_active in (False, True):
+        pol = _two_switches(first_active)
+        clock = K._RuleClock(pol)
+        fence = next(c for c in pol.constraints if c.id == "fence-s")
+        n = 0
+        for hh, mm in ((8, 0), (8, 30), (8, 37), (8, 45), (9, 0)):
+            for off in (-1, -0.05, 0, 0.05, 1, 30):
+                when = MON.replace(hour=hh, minute=mm) + timedelta(seconds=off)
+                shield = _shield_in_force(pol, when)["fence-s"]
+                eps = timedelta(seconds=0.05)
+                assert (clock.on(fence, when - eps) or clock.on(fence, when + eps)) == shield, \
+                    (first_active, when, shield)
+                dec = {r.id: r.decision for r in ConstraintCompiler(pol).compile_csp(
+                    _mission(**HOT_MISSION), now=when, lookahead_s=0.05,
+                    budget_tokens=1000).selection.rules}
+                if shield:
+                    assert dec["fence-s"] != "filtered_inactive", (first_active, when)
+                n += 1
+        # 08:37, inside both windows: the narrow switch (listed last) decides.
+        mid = MON.replace(hour=8, minute=37)
+        assert clock.on(fence, mid) == (not first_active), (first_active, clock.on(fence, mid))
+        assert _shield_in_force(pol, mid)["fence-s"] == (not first_active)
+        assert n == 30
+
+
+def test_a_moving_zone_far_from_the_path_is_never_filtered_by_region():
+    """A moving dynamic_nfz has no fixed place the compiler knows, so it is
+    never filtered by region; the same zone standing still IS filtered. HOT's
+    moving zone lies near the path, so filtering it again passed every other
+    test (the review's mutation M11)."""
+    _need()
+    from guardrail.models import policy_from_raw
+    far = _sq(500, 500, 510, 510)
+    pol = policy_from_raw({"policy_id": "far-zones", "constraints": [
+        {"id": "far-moving", "type": "dynamic_nfz", "vertices": far,
+         "motion": {"vx_mps": 2.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}},
+        {"id": "far-still", "type": "dynamic_nfz", "vertices": far}]}, runtime=False)
+    csp = ConstraintCompiler(pol).compile_csp(_mission(tx=100.0, ty=0.0), now=None,
+                                              budget_tokens=1000)
+    dec = {r.id: r.decision for r in csp.selection.rules}
+    assert dec["far-moving"] == "kept", dec
+    assert dec["far-still"] == "filtered_out_of_region", dec
+
+
+def test_a_runtime_type_with_no_place_in_the_by_type_order_raises():
+    """build_prompt and the naive baseline walk the by-type order. A runtime
+    type missing from it would vanish from their text without a word, so
+    _by_type_order raises (the review's mutation M10, removing the raise,
+    passed every other test: today every runtime type has its place)."""
+    _need()
+    from guardrail.models import RUNTIME_TYPES
+    pol = Policy.model_validate({"policy_id": "stub", "constraints": [
+        {"id": "f", "type": "polygon_fence", "vertices": _sq(0, 0, 5, 5)},
+        {"id": "people", "type": "distance_envelope", "object_class": "people",
+         "min_distance_m": 10.0}]})
+    saved = K.RUNTIME_TYPES
+    K.RUNTIME_TYPES = frozenset(RUNTIME_TYPES | {"distance_envelope"})
+    try:
+        ConstraintCompiler(pol)._sentences()
+    except RuntimeError as e:
+        assert "people" in str(e), str(e)
+    else:
+        raise AssertionError("a runtime type with no place in the order was dropped silently")
+    finally:
+        K.RUNTIME_TYPES = saved
+    assert len(ConstraintCompiler(_hot())._sentences()) == len(HOT["constraints"])
+
+
+def test_a_switch_target_names_its_switches_in_p0_in_force():
+    """P0Entry.in_force read only the rule's own window: fence-b read
+    "always" at 08:45 although sw-b-off turns it off Mondays 08:00-08:30.
+    Now the switches and swaps acting on a rule follow its window. A P0
+    switch is itself a P0 entry (param ref, its own window): its sentence is
+    what tells the model when the target is off."""
+    _need()
+    pol = _hot()
+    comp = ConstraintCompiler(pol)
+    p0 = {e.id: e for e in comp.compile_csp(_mission(**HOT_MISSION),
+                                            now=MON.replace(hour=8, minute=45),
+                                            budget_tokens=1000).P0_constraints}
+    assert p0["fence-b"].in_force == "always; switched off by sw-b-off (Mon 08:00-08:30)", \
+        p0["fence-b"].in_force
+    assert p0["fence-a"].in_force == ("Mon-Fri 07:30-17:30; switched off by sw-a-off "
+                                      "(Mon 12:00-13:00)"), p0["fence-a"].in_force
+    assert p0["corr-main"].in_force == "always; replaced by swap-main (Mon 09:00-10:00)", \
+        p0["corr-main"].in_force
+    assert p0["dyn"].in_force == "always"
+    noon = {e.id: e for e in comp.compile_csp(_mission(**HOT_MISSION),
+                                              now=MON.replace(hour=12, minute=30),
+                                              budget_tokens=1000).P0_constraints}
+    assert "fence-a" not in noon, "held off by sw-a-off at 12:30"
+    assert noon["sw-a-off"].in_force == "Mon 12:00-13:00", noon["sw-a-off"]
+    assert noon["sw-a-off"].geometry_ref.startswith("param:sw-a-off@")
+    survey = ConstraintCompiler(load_policy(SURVEY)).compile_csp(_mission(), now=MONDAY_0800)
+    assert {e.id: e.in_force for e in survey.P0_constraints}["nfz-school"] == \
+        "Mon-Fri 07:30-17:30", "a rule nothing switches reads as before"
 
 
 if __name__ == "__main__":

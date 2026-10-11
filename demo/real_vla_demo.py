@@ -138,8 +138,8 @@ from guardrail.csp import (CSP, CSPBudgetExceeded,                  # noqa: E402
                            openvla_token_counter)
 from guardrail.frames import from_body                              # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
-from guardrail.models import Action4D, Policy, PolygonFence         # noqa: E402
-from shapely.geometry import Point                                  # noqa: E402
+from guardrail.models import Action4D, Policy                       # noqa: E402
+from guardrail.replay import DWELL_ZONE_TYPES, zone_dwell           # noqa: E402
 
 TICK = 0.1
 MAX_S = 60
@@ -206,8 +206,13 @@ _PRINT_EXIT = {None: EXIT_OK, "csp_p0_over_budget": EXIT_OVERFLOW,
 # --------------------------------------------------------------------------- #
 
 def compile_flight_csp(policy: Policy, mission: Mission, now: datetime | None = None,
-                       budget_tokens: int = DEFAULT_BUDGET_TOKENS) -> CSP:
+                       budget_tokens: int = DEFAULT_BUDGET_TOKENS,
+                       cost_map=None) -> CSP:
     """The grant's CSP for this flight: `ConstraintCompiler.compile_csp`.
+
+    `cost_map` (optional, `--cost-map`): a map drawn from this policy at the
+    same `now` and at the mission's cruise height, which becomes the CSP's
+    cost_map_ref; compile_csp refuses any other map (ValueError).
 
     Everything but the clock and the budget is the compiler's default,
     including its token counter: the table counter is an upper bound on
@@ -219,7 +224,8 @@ def compile_flight_csp(policy: Policy, mission: Mission, now: datetime | None = 
     Raises CSPBudgetExceeded when the P0 rules alone exceed `budget_tokens`.
     """
     return ConstraintCompiler(policy).compile_csp(mission, now=now,
-                                                  budget_tokens=budget_tokens)
+                                                  budget_tokens=budget_tokens,
+                                                  cost_map=cost_map)
 
 
 def paraphrased_instruction(instruction: str, *, seed: int | None = None,
@@ -423,14 +429,25 @@ class FlightPrompt:
     A rebuild that fails clears the old prompt first, so `current()` raises
     again on the next call instead of quietly serving the rules of a policy
     that is no longer in force.
+
+    `cost_map=True` (with the CSP on) gives each CSP its cost map, drawn with
+    the CSP's own clock reading and at the mission's cruise height, written
+    beside the CSP as costmap_<csp stem>.npz / .json (as
+    ConstraintCompiler.write_csp names it) and named in its cost_map_ref. A
+    map that cannot be drawn leaves the CSP without one and says why
+    (`cost_map_error`, and the prompt record's `cost_map_error`).
     """
 
     def __init__(self, instruction: str, policy: Policy, mission: Mission,
                  csp_on: bool, tokenizer=None, *,
                  csp_budget: int = DEFAULT_BUDGET_TOKENS,
-                 text_budget: int = OPENVLA_TEXT_BUDGET, clock=CSP_CLOCK):
+                 text_budget: int = OPENVLA_TEXT_BUDGET, clock=CSP_CLOCK,
+                 cost_map: bool = False):
         self.instruction, self.policy, self.mission = instruction, policy, mission
         self.csp_on = csp_on
+        self.cost_map_on = bool(cost_map)
+        self.cost_map_error: str | None = None
+        self._cost_map = None
         self.tokenizer = tokenizer
         self.csp_budget, self.text_budget = csp_budget, text_budget
         self.clock = clock               # zero-argument callable, as Shield(now=)
@@ -449,29 +466,50 @@ class FlightPrompt:
         """The prompt record. May raise CSPBudgetExceeded or ValueError."""
         key = (self.policy.policy_hash, self.policy.generation)
         if key != self._key:
-            self._key = self._csp = self._rec = None
-            csp = None
+            self._key = self._csp = self._rec = self._cost_map = None
+            csp = cm = None
             if self.csp_on:
                 self.n_compiles += 1
+                # ONE clock reading for the CSP and its map: compile_csp
+                # refuses a map drawn at any other instant.
+                now = None if self.clock is None else self.clock()
+                if self.cost_map_on:
+                    try:
+                        cm = ConstraintCompiler(self.policy).cost_map(
+                            now=now, altitude_m=self.mission.cruise_alt_m)
+                        self.cost_map_error = None
+                    except Exception as e:                       # noqa: BLE001
+                        cm, self.cost_map_error = None, f"{type(e).__name__}: {e}"
                 csp = compile_flight_csp(
-                    self.policy, self.mission,
-                    now=None if self.clock is None else self.clock(),
-                    budget_tokens=self.csp_budget)
+                    self.policy, self.mission, now=now,
+                    budget_tokens=self.csp_budget, cost_map=cm)
             rec = prompt_record(self.instruction, self.policy, csp,
                                 self.tokenizer, self.text_budget)
-            self._csp, self._rec, self._key = csp, rec, key
+            if self.cost_map_on:
+                rec["cost_map_ref"] = None if csp is None else csp.cost_map_ref
+                rec["cost_map_error"] = (self.cost_map_error if self.csp_on
+                                         else "the CSP is off, so no CSP names a map")
+            self._csp, self._rec, self._key, self._cost_map = csp, rec, key, cm
             self._write_csp()
         return self._rec
 
+    # Record keys set outside prompt_record() (by current() and _write_csp),
+    # which a recount must carry over: they describe the CSP as issued and the
+    # files written for it, not the count.
+    _KEPT_ON_RECOUNT = ("csp_file", "cost_map_ref", "cost_map_error", "cost_map_file")
+
     def set_tokenizer(self, tokenizer) -> None:
         """Count with `tokenizer` from now on. The CSP is kept as issued:
-        recounting must not re-issue it under a new hash."""
+        recounting must not re-issue it under a new hash, and the record keeps
+        naming the CSP file and its cost map (until 2026-10-12 only csp_file
+        was carried over, so a --cost-map run recounted after the model load
+        logged no cost-map fields)."""
         self.tokenizer = tokenizer
         if self._rec is not None:
-            csp_file = self._rec.get("csp_file")
+            kept = {k: self._rec[k] for k in self._KEPT_ON_RECOUNT if k in self._rec}
             self._rec = prompt_record(self.instruction, self.policy, self._csp,
                                       tokenizer, self.text_budget)
-            self._rec["csp_file"] = csp_file
+            self._rec.update(kept)
 
     def attach(self, out: Path, csp_dir: str = "csp") -> None:
         """Write every CSP into `<out>/<csp_dir>/` from now on, the current one
@@ -493,6 +531,10 @@ class FlightPrompt:
         with open(path, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(self._csp.model_dump_json(indent=2) + "\n")
         self._rec["csp_file"] = rel
+        if self._cost_map is not None:
+            # The name ConstraintCompiler.write_csp gives it: costmap_<stem>.
+            _, js = self._cost_map.save(path.with_name(f"costmap_{path.stem}"))
+            self._rec["cost_map_file"] = f"{self.csp_dir}/{js.name}"
 
 
 def check_prompt(prompts: FlightPrompt) -> tuple[dict | None, dict | None]:
@@ -913,6 +955,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="token budget of the CSP text (compile_csp's budget_tokens): "
                          "P1/P2 rules are dropped by risk to fit and listed in the "
                          "CSP's selection; P0 rules over it refuse the run")
+    ap.add_argument("--cost-map", action="store_true",
+                    help="with --csp on: give every CSP its cost map (costmap_<csp "
+                         "stem>.npz/.json beside it, named in cost_map_ref)")
     ap.add_argument("--no-frames", action="store_true",
                     help="do not keep the camera frames (the step log still "
                          "records frame index, state and raw action)")
@@ -940,7 +985,7 @@ def main(argv: list[str] | None = None) -> int:
     # written: compile the CSP, build and count the prompt, refuse if it fails.
     prompts = FlightPrompt(instruction, policy, mission, csp_on,
                            tokenizer=load_openvla_tokenizer(),
-                           csp_budget=args.csp_budget)
+                           csp_budget=args.csp_budget, cost_map=args.cost_map)
     prec, refusal = check_prompt(prompts)
 
     if args.print_prompt:
@@ -1056,11 +1101,18 @@ def main(argv: list[str] | None = None) -> int:
     client.armDisarm(False)
     client.enableApiControl(False)
 
-    fences = [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
-    inside = sum(1 for p in traj for f, poly in fences
-                 if f.altitude_floor_m <= p["up"] <= f.altitude_ceiling_m
-                 and poly.contains(Point(p["x"], p["y"])))
-    nfz_s = inside * TICK
+    # Zone dwell from the Shield's own rule checker, the count every rail
+    # shares (guardrail.replay.zone_dwell): polygon and circle fences and
+    # every dynamic_nfz that does not move; a moving one is named, not scored
+    # 0. Until 2026-10-11 this walked policy.by_type(PolygonFence).
+    dwell = zone_dwell(shield, traj, TICK)
+    nfz_s = dwell["nfz_s"]
+    if dwell["nfz_moving_not_counted"]:
+        print(f"[nfz] moving zone(s) {dwell['nfz_moving_not_counted']} are NOT in "
+              f"the NFZ time: the end-of-flight count has no per-tick position")
+    # Every zone with vertices, for the plot.
+    fences = [(f, fence_polygon(f)) for f in policy.constraints
+              if f.type in DWELL_ZONE_TYPES and getattr(f, "vertices", None)]
 
     (out / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
     try:

@@ -23,26 +23,26 @@
 <section class="panel">
 <h2>計畫書的要求</h2>
 <blockquote>“a single, version-controlled, validatable representation that the Prefix Compiler and Safety Shield share”<cite>計畫書 Policy DSL 頁面</cite></blockquote>
-<p class="files">主要檔案：<code>guardrail/models.py</code> <code>guardrail/bundle.py</code> <code>policies/</code> <code>tools/wp1_roundtrip_kpi.py</code></p>
+<p class="files">主要檔案：<code>guardrail/models.py</code> <code>guardrail/bundle.py</code> <code>guardrail/api.py</code> <code>policies/</code> <code>tools/geo_to_policy.py</code> <code>tools/wp1_roundtrip_kpi.py</code></p>
 </section>
 <section>
 <h2>已完成</h2>
-<ul class="built"><li><h3>多種規則類型，可加時間窗</h3><p>飛行規則以 YAML 撰寫。規則類型包括多邊形禁航區、高度範圍、速度與爬升限制、障礙物淨空、與跟隨目標的安全距離，以及 3D 走廊；每條規則都可以加上時間窗。</p><p class="files"><code>guardrail/models.py</code> <code>policies/</code></p></li><li><h3>每份規則檔都有指紋</h3><p>每份規則檔都有以標準化 JSON 計算的完整 SHA-256 雜湊值。飛行記錄與 KPI 數字都帶著它，因此任何結果都能追溯到產生它時所用的確切規則。</p><p class="files"><code>guardrail/models.py</code></p></li><li><h3>已簽章的政策套件</h3><p>規則檔與其清單打包成以 Ed25519 簽章的套件。載入器會拒絕未簽章、被修改或偽造的套件。在沒有安裝 cryptography 函式庫的環境中，改由純 Python 的驗證器檢查簽章。</p><p class="files"><code>guardrail/bundle.py</code> <code>policies/keys/trusted_signers.json</code></p></li><li><h3>固定版本</h3><p>鎖定檔為每個規則檔版本固定一個雜湊值。Shield 節點、SITL 示範與城市示範都可以改為載入已簽章的套件，而不是 YAML 檔。</p><p class="files"><code>policies/policy.lock.json</code> <code>sitl/ros2_shield_node.py</code> <code>demo/follow_vlm.py</code></p></li><li><h3>Schema 與重播套件</h3><p>以 JSON Schema 描述 Policy DSL；一次飛行可以打包成重播套件，由套件自行重新算出 KPI。</p><p class="files"><code>policies/policy_dsl.schema.json</code> <code>guardrail/replay.py</code></p></li></ul>
+<ul class="built"><li><h3>計畫書的規則格式，可加時間窗</h3><p>飛行規則以 YAML 撰寫，可使用計畫書本身的格式（geometry 區塊與計畫書的欄位名稱），也可使用專案先前的格式。規則類型包括多邊形與圓形禁航區、高度範圍、速度與爬升限制、障礙物淨空、與跟隨目標的安全距離，以及 3D 走廊；每條規則都可以加上時間窗，計畫書列出的每一種規則類型都能宣告。</p><p class="files"><code>guardrail/models.py</code> <code>policies/</code></p></li><li><h3>規則分層</h3><p>法規、場域與任務等規則層會合併成一份規則檔。若某個覆寫會放寬下層的硬性規則，無論來自檔案或飛行中的規則變更，都會被拒絕。</p><p class="files"><code>guardrail/models.py</code></p></li><li><h3>飛行中的規則變更</h3><p>飛行中可以套用移動的禁航區（產生、移動、旋轉、縮放或到期）、時間窗切換與走廊替換。每次變更都會開始新的規則世代，也都能透過 REST 端點送出。起飛後新增固定的多邊形禁航區會被拒絕，因為計畫書在起飛前就固定這一類規則。</p><p class="files"><code>guardrail/shield.py</code> <code>guardrail/api.py</code></p></li><li><h3>從地圖檔匯入區域</h3><p>轉換工具可把以 GeoJSON 或 KML 繪製的區域，以及透過 REST 收到的區域資料，轉成規則檔中的規則。</p><p class="files"><code>tools/geo_to_policy.py</code></p></li><li><h3>每份規則檔都有指紋</h3><p>每份規則檔都有以標準化 JSON 計算的完整 SHA-256 雜湊值。飛行記錄與 KPI 數字都帶著它，因此任何結果都能追溯到產生它時所用的確切規則。</p><p class="files"><code>guardrail/models.py</code></p></li><li><h3>已簽章的政策套件</h3><p>規則檔與其清單打包成以 Ed25519 簽章的套件。載入器會拒絕未簽章、被修改或偽造的套件。在沒有安裝 cryptography 函式庫的環境中，改由純 Python 的驗證器檢查簽章。</p><p class="files"><code>guardrail/bundle.py</code> <code>policies/keys/trusted_signers.json</code></p></li><li><h3>每個套件都帶有本專案與參考實作的雜湊值</h3><p>每份套件清單都同時帶有本專案的規則檔雜湊值與計畫書參考實作的雜湊值，載入器兩者都會檢查：偽造的參考雜湊項目 29/29 被拒絕。</p><p class="files"><code>guardrail/bundle.py</code></p></li><li><h3>固定版本</h3><p>鎖定檔為每個規則檔版本固定一個雜湊值。Shield 節點、SITL 示範與城市示範都可以改為載入已簽章的套件，而不是 YAML 檔。</p><p class="files"><code>policies/policy.lock.json</code> <code>sitl/ros2_shield_node.py</code> <code>demo/follow_vlm.py</code></p></li><li><h3>Schema 與重播套件</h3><p>以 JSON Schema 描述 Policy DSL；一次飛行可以打包成重播套件，由套件自行重新算出 KPI。</p><p class="files"><code>policies/policy_dsl.schema.json</code> <code>guardrail/replay.py</code></p></li></ul>
 </section>
 <section>
 <h2>已展示</h2>
-<ul class="grid g2 shown"><li class="card"><h3>往返載入與竄改拒絕</h3><p>29 份專案規則檔中，29 份從已簽章的套件載入後雜湊值與規則都相同，且簽章驗證通過；29 份竄改過的副本中，29 份被拒絕。完全不檢查的載入器只會拒絕 29 份中的 0 份。</p><p class="files">重現方式：<code>python tools/wp1_roundtrip_kpi.py</code></p></li><li class="card"><h3>每次已存飛行都可追溯</h3><p>改用完整長度的規則檔雜湊值時，全部 76 份已存的飛行清單都能追溯到飛行時使用的規則檔（76/76）；以先前的雜湊算法只有 34/76。</p></li></ul>
+<ul class="grid g2 shown"><li class="card"><h3>往返載入與竄改拒絕</h3><p>29 份專案規則檔中，29 份從已簽章的套件載入後雜湊值與規則都相同，且簽章驗證通過；29 份竄改過的副本中，29 份被拒絕。完全不檢查的載入器只會拒絕 29 份中的 0 份。</p><p class="files">重現方式：<code>python tools/wp1_roundtrip_kpi.py</code></p></li><li class="card"><h3>拒絕寫錯的規則檔</h3><p>負面測試集中刻意寫錯的 35 份規則檔全部被拒絕（35/35）。2026 年 10 月 5 日當時的載入器只拒絕 20/35，完全不檢查的載入器則拒絕 0/35。</p><p class="files">重現方式：<code>python tools/wp1_roundtrip_kpi.py</code></p></li><li class="card"><h3>參考實作的規則檔能在這裡載入，我們為它們打包的套件也能在參考實作載入</h3><p>計畫書參考實作的 3 份規則檔中，3 份都能在這裡載入，且雜湊值與參考實作自己算出的相同；我們由這 3 份產生的套件，參考實作的載入器也能讀取 3 份中的 3 份。2026 年 10 月 5 日時，雙向都是 3 份中的 0 份。我們自己的規則檔使用了參考實作沒有的規則類型。</p><p class="files">重現方式：<code>python tools/wp1_roundtrip_kpi.py</code></p></li><li class="card"><h3>每次已存飛行都可追溯</h3><p>改用完整長度的規則檔雜湊值時，全部 76 份已存的飛行清單都能追溯到飛行時使用的規則檔（76/76）；以先前的雜湊算法只有 34/76。</p></li></ul>
 </section>
 <section class="panel">
 <h2>此工作項目的下一步</h2>
-<ul class="next-list"><li><span class="pill next">下一步</span> <span class="date">2026 年 10 月</span> 規則分層（法規、場域、任務）與圓形禁航區。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 10 月至 11 月</span> 透過 REST 端點在飛行中更新規則（移動的禁航區、時間窗切換、走廊替換）。</li></ul>
+<ul class="next-list"><li><span class="pill next">下一步</span> <span class="date">2026 年 10 月</span> 宣告移動禁航區的規則檔可以載入飛行；在飛行中套用移動禁航區目前已經可以運作。</li></ul>
 <p><a href="roadmap.html">完整路線圖 →</a></p>
 </section>
 <p class="pager"><span></span><a href="wp2.html">WP2 →</a></p>
 
 </main>
 <footer>
-<p>資料截至 2026 年 10 月 6 日。由 <code>tools/build_public_site.py</code> 依專案原始碼庫產生。</p>
+<p>資料截至 2026 年 10 月 12 日。由 <code>tools/build_public_site.py</code> 依專案原始碼庫產生。</p>
 <p class="muted">工研院資通所（ICL）委託合作研究 · Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs · 計畫主持人：Kuan-Ting Lai 教授（國立臺北科技大學 AIoT 實驗室）</p>
 </footer>
 </body>

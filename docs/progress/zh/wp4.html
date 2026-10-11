@@ -23,11 +23,11 @@
 <section class="panel">
 <h2>計畫書的要求</h2>
 <blockquote>“every reported KPI in the final report comes from a Stress Testing run executed in the [hil] topology”<cite>計畫書 Stress Testing 頁面</cite></blockquote>
-<p class="files">主要檔案：<code>guardrail/scenario_spec.py</code> <code>experiments/profiles/</code> <code>guardrail/kpi.py</code> <code>tools/kpi_report.py</code> <code>guardrail/replay.py</code> <code>guardrail/manifest.py</code></p>
+<p class="files">主要檔案：<code>guardrail/scenario_spec.py</code> <code>experiments/profiles/</code> <code>experiments/templates/</code> <code>guardrail/kpi.py</code> <code>tools/kpi_report.py</code> <code>guardrail/replay.py</code> <code>guardrail/manifest.py</code> <code>deploy/</code></p>
 </section>
 <section>
 <h2>已完成</h2>
-<ul class="built"><li><h3>情境規格</h3><p>ScenarioSpec 與 ScenarioEvent 逐欄依照計畫書的 Stress Testing 頁面，附有預期結果、預期 fail-safe 的標籤與種子。</p><p class="files"><code>guardrail/scenario_spec.py</code></p></li><li><h3>smoke 與 nightly 測試設定</h3><p>smoke 設定為 52 個情境 × 1 個種子，nightly 設定為 211 × 3 個種子，並加入風、陣風、起點抖動與 GPS 訊號中斷等壓力因素。</p><p class="files"><code>experiments/profiles/</code></p></li><li><h3>每個 episode 都有清單</h3><p>每個 episode 都記錄程式碼版本、模型權重雜湊值、規則檔雜湊值、種子、模擬加速倍率與拓撲，因此任何數字都能追溯到產生它的來源。</p><p class="files"><code>guardrail/manifest.py</code></p></li><li><h3>附基準的 KPI 報告</h3><p>報告依情境類別、從磁碟上的記錄計算計畫書的 KPI，在每個分數旁列出其零基準（null baseline），無法量測的數值會如實標示，而不是印成零。</p><p class="files"><code>tools/kpi_report.py</code> <code>guardrail/kpi.py</code></p></li><li><h3>重播套件與回歸掃描</h3><p>episode 會打包成能自行重新算出 KPI 的重播套件，另有 13 個情境的無模擬器掃描，防止 Shield 退化。</p><p class="files"><code>guardrail/replay.py</code> <code>experiments/sweep_scenarios.py</code></p></li></ul>
+<ul class="built"><li><h3>情境規格</h3><p>ScenarioSpec 與 ScenarioEvent 逐欄依照計畫書的 Stress Testing 頁面，附有預期結果、預期 fail-safe 的標籤與種子。</p><p class="files"><code>guardrail/scenario_spec.py</code></p></li><li><h3>smoke 與 nightly 測試設定</h3><p>smoke 設定為 52 個情境 × 1 個種子，nightly 設定為 211 × 3 個種子，並加入風、陣風、起點抖動與 GPS 訊號中斷等壓力因素。</p><p class="files"><code>experiments/profiles/</code></p></li><li><h3>情境範本與 episode 途中的事件</h3><p>每個情境範本是一個 YAML 檔（共 16 個檔案）。計畫書列出的每一種事件類型都能在無模擬器測試框架的 episode 途中執行（沒有模擬器；ArduPilot 的 Loiter、RTL 與 Land 以理想的位置控制模擬），並會在其中出現 RTL 與 Land 的結果；情境也可以帶有改寫過的指令，以及開關規則摘要的設定。</p><p class="files"><code>experiments/templates/</code> <code>guardrail/scenario_spec.py</code></p></li><li><h3>每個 episode 都有清單</h3><p>每個 episode 都記錄程式碼版本、模型權重雜湊值、規則檔雜湊值、種子、模擬加速倍率與拓撲，因此任何數字都能追溯到產生它的來源。</p><p class="files"><code>guardrail/manifest.py</code></p></li><li><h3>附基準的 KPI 報告</h3><p>報告依情境類別與範本、從磁碟上的記錄計算計畫書的 KPI，在每個分數旁列出其零基準（null baseline），無法量測的數值會如實標示，而不是印成零。</p><p class="files"><code>tools/kpi_report.py</code> <code>guardrail/kpi.py</code></p></li><li><h3>重播套件與回歸掃描</h3><p>episode 會打包成能自行重新算出 KPI 的重播套件，另有 13 個情境的無模擬器掃描，防止 Shield 退化。</p><p class="files"><code>guardrail/replay.py</code> <code>experiments/sweep_scenarios.py</code></p></li><li><h3>Jetson Orin 的映像檔定義</h3><p>同一份映像檔定義涵蓋 dev、hil 與 flight，只有拓撲設定檔不同；另有一份說明如何建置 Orin 的操作手冊。針對 JetPack 6.2，映像檔在 Ubuntu 24.04 容器中執行 ROS 2 Jazzy，因此 rclpy 以 Python 3.12 執行；另有首次開機檢查，回報 Orin 的設定狀態。效能分析工具以真實飛行的 Shield tick 對照計畫書的 tick 預算計時，其設計可在 Orin 上原封不動執行。</p><p class="files"><code>deploy/</code> <code>docs/RUNBOOK-orin-hil.md</code> <code>deploy/orin/first_boot_check.sh</code> <code>tools/profile_shield_tick.py</code></p></li><li><h3>壓力測試框架的控制介面</h3><p>測試框架透過採用雙向 TLS 的 gRPC 接收計畫書的 StartEpisode、HotApply、EmitEvent 與 EndEpisode 呼叫，並回傳每個 episode 的套件與 KPI 表。目前驅動的是不接模擬器的測試框架。</p><p class="files"><code>guardrail/harness_service.py</code> <code>guardrail/protos/harness.proto</code> <code>tools/harness_client.py</code></p></li></ul>
 </section>
 <section>
 <h2>已展示</h2>
@@ -35,14 +35,14 @@
 </section>
 <section class="panel">
 <h2>此工作項目的下一步</h2>
-<ul class="next-list"><li><span class="pill next">下一步</span> <span class="date">2026 年 10 月</span> 在 Jetson Orin 上執行 VLA 與 Shield，模擬器留在桌機（計畫書的 hil 拓撲），並在計畫書訂定預算時所依據的負載下（50 條規則、每個 tick 檢查 50 個未來位置）量測 Shield 的耗時，對照 5 ms 的查詢預算。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 10 月至 11 月</span> 感知軌道：由 Project AirSim 模擬無人機與攝影機，ArduPilot SITL 透過 Project AirSim 的 ArduPilot 控制器飛行，Shield 位於 MAVROS 2 之前。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 10 月至 11 月</span> 壓力測試框架：啟動 ArduPilot SITL 工作階段、在飛行中變更規則，並把每個 episode 連同 rosbag2 收集成套件。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 11 月</span> KPI 測試：在 hil 拓撲上、以交付版本的程式碼執行動態情境，每個情境至少 3 個種子。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 11 月</span> 以會讀取文字的駕駛量測每種改寫的穩健度。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 11 月</span> 依情境類別整理的動態情境壓力測試 KPI 報告。</li></ul>
+<ul class="next-list"><li><span class="pill next">下一步</span> <span class="date">2026 年 10 月</span> 建置 Jetson Orin，在上面執行 VLA 與 Shield，模擬器留在桌機（計畫書的 hil 拓撲），並在計畫書訂定預算時所依據的負載下（50 條規則、每個 tick 檢查 50 個未來位置）量測 Shield 的耗時，對照 5 ms 的查詢預算。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 10 月至 11 月</span> 完整執行 2026 年 10 月 7 日定義的廣泛壓力測試設定。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 10 月至 11 月</span> 在 ArduPilot SITL 上經由 MAVROS 2 執行含飛行中規則變更的情境；目前測試框架的 ArduPilot 路徑只飛沒有事件的情境。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 11 月</span> KPI 測試：在 hil 拓撲上（VLA 與 Shield 在 Jetson Orin 上）、以交付版本的程式碼執行動態情境，每個情境至少 3 個種子。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 11 月</span> 以會讀取文字的駕駛量測每種改寫的穩健度。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 11 月</span> 依情境類別整理的動態情境壓力測試 KPI 報告。</li></ul>
 <p><a href="roadmap.html">完整路線圖 →</a></p>
 </section>
 <p class="pager"><a href="wp3.html">← WP3</a><span></span></p>
 
 </main>
 <footer>
-<p>資料截至 2026 年 10 月 6 日。由 <code>tools/build_public_site.py</code> 依專案原始碼庫產生。</p>
+<p>資料截至 2026 年 10 月 12 日。由 <code>tools/build_public_site.py</code> 依專案原始碼庫產生。</p>
 <p class="muted">工研院資通所（ICL）委託合作研究 · Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs · 計畫主持人：Kuan-Ting Lai 教授（國立臺北科技大學 AIoT 實驗室）</p>
 </footer>
 </body>

@@ -5108,8 +5108,10 @@ async def fly(args) -> int:
     # as before). A MOVING dynamic_nfz is left out: rule_status reads it where
     # it is at the end of the flight, not where it was at each point, so the
     # count would be wrong. It is named instead of counted as zero
-    # (`nfz_moving_not_counted`); the flight loaders refuse dynamic_nfz today,
-    # so no flight has one yet.
+    # (`nfz_moving_not_counted`); the flight loaders refuse a policy file that
+    # declares a dynamic_nfz today (guardrail/models.py FLIGHT_HELD_TYPES), so
+    # no flight has one yet. Every other rail runs this same count through
+    # guardrail.replay.zone_dwell since 2026-10-11.
     moving_zones = sorted(r.rule.id for r in shield.ir.fences if r.moving)
     inside = [pt for pt in traj
               for r in shield.rule_status(State(x=pt["x"], y=pt["y"], up=pt["up"]))

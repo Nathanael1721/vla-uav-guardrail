@@ -23,6 +23,12 @@
 #   profile    tools/profile_shield_tick.py profile --topology $VLAGUARD_TOPOLOGY
 #   facts      tools/profile_shield_tick.py facts
 #   vla-table  tools/vla_backend_table.py
+#   versions   what this image holds, for the record the runbook asks for:
+#              its Ubuntu, the ROS 2 distribution, the Python rclpy and the
+#              Shield node run on, MAVROS, Cyclone DDS, rosbag2's MCAP
+#              storage, mavlink-routerd and the guardrail's Python packages.
+#              Needs no topology file and no checkout:
+#                docker run --rm vlaguard/companion:jazzy versions
 #   shell      an interactive shell with ROS sourced
 #
 # The repository is NOT baked into the image. It is mounted at VLAGUARD_ROOT
@@ -76,12 +82,52 @@ resolve_ip() {
   echo "$ip"
 }
 
+# key=value lines; "none" where a thing is absent, never an empty value.
+print_versions() {
+  local distro="${ROS_DISTRO:-none}" ubuntu="none" p v
+  if [ -r /etc/os-release ]; then
+    ubuntu="$(. /etc/os-release && echo "${ID:-?} ${VERSION_ID:-?}")"
+  fi
+  echo "image_os=$ubuntu"
+  echo "ros_distro=$distro"
+  if [ "$distro" != "none" ] && [ -f "/opt/ros/$distro/setup.bash" ]; then
+    echo "ros_setup=/opt/ros/$distro/setup.bash"
+  else
+    echo "ros_setup=none"
+  fi
+  for p in python3 "$PY"; do
+    v="$("$p" -c 'import sys; print("%d.%d.%d" % sys.version_info[:3])' 2>/dev/null)" || v="none"
+    echo "python[$p]=$v"
+  done
+  for p in rclpy mavros mavros-extras rmw-cyclonedds-cpp rosbag2-storage-mcap; do
+    v="none"
+    if [ "$distro" != "none" ] && command -v dpkg-query >/dev/null 2>&1; then
+      v="$(dpkg-query -W -f='${Version}' "ros-$distro-$p" 2>/dev/null)" || v="none"
+    fi
+    echo "deb[ros-$distro-$p]=${v:-none}"
+  done
+  v="$(mavlink-routerd --version 2>/dev/null | head -n 1)" || v=""
+  echo "mavlink-routerd=${v:-none}"
+  for p in pydantic shapely numpy PyYAML Jinja2 cryptography; do
+    v="$("$PY" -c "import importlib.metadata as m; print(m.version('$p'))" 2>/dev/null)" || v="none"
+    echo "pip[$p]=${v:-none}"
+  done
+}
+
 role="${1:-help}"
 [ "$#" -gt 0 ] && shift
 
 case "$role" in
   help|-h|--help)
     awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
+    exit 0
+    ;;
+  versions)
+    if [ "$DRY" = "1" ]; then
+      echo "EXEC: print_versions"
+      exit 0
+    fi
+    print_versions
     exit 0
     ;;
 esac
@@ -208,6 +254,6 @@ case "$role" in
     run bash
     ;;
   *)
-    die 64 "unknown role '$role' (router, mavros, mission, profile, facts, vla-table, shell)"
+    die 64 "unknown role '$role' (router, mavros, mission, profile, facts, vla-table, versions, shell)"
     ;;
 esac

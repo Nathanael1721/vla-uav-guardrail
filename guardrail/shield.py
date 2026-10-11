@@ -36,8 +36,12 @@ ENFORCEMENT (2026-10-07; docs/DESIGN-shield-enforcement.md has the whole story)
     The FSM's verdict rides beside it: `fsm_state_before/after`, the mode to
     request (`set_mode`, edge-triggered), and `command`, the action to stream
     this tick (the emitted action, a stop, or nothing while the autopilot owns
-    the aircraft). The conservative cap theta is applied by the FSM from each
-    repair's own `magnitude_m` / `axis` (the grant's audit fields). A caller
+    the aircraft). The conservative cap theta is applied by the FSM, by
+    default to each repair's own `magnitude_m` / `axis` (the grant's audit
+    fields: the depth of the forecast it corrected, as in the p5 audit
+    example). `theta_horizon_s=fsm.THETA_HORIZON_S` selects the one-period
+    reading instead (the setpoint change over one 0.1 s control period; a PI
+    question, docs/DESIGN-escalation-fsm.md). A caller
     that flies this verdict reports the autopilot's side through
     `filter(..., rtl_failed=, home_reached=, landed=)`; the flight rails run
     their own FSM instead (guardrail/replay.py, `rail_shield`).
@@ -102,6 +106,11 @@ from .models import (
 )
 
 BRAKE =Action4D(vx=0.0, vy=0.0, vz_up=0.0, yaw_rate=0.0)
+
+# A subject closer than this (metres, horizontally) is directly under or over
+# the aircraft: the line to it, and with it "closing" and "opening", is not
+# defined. The stand-off check and its recovery treat it as one case.
+_STANDOFF_COINCIDENT_M = 1e-6
 
 # The grant's numbers (Safety Shield page, "Locked design choices"): a 5 s
 # lookahead "at 10 Hz = 50 future poses", and a 10 Hz monitor. Callers that pass
@@ -693,11 +702,14 @@ class _Tick:
     monitor clock, and the rule ids the repair chain is told to leave alone
     (monitor_only rules, and soft rules it has given up)."""
     __slots__ = ("rt", "sched", "t", "skip", "_lists", "_moving", "_swept", "unsafe",
-                 "_t_first")
+                 "_t_first", "given_up")
 
     def __init__(self, rt: _Runtime, sched: _Schedule, t: float, t_first: float | None):
         self.rt, self.sched, self.t, self._t_first = rt, sched, t, t_first
         self.skip: frozenset = frozenset()
+        # The soft rules _relax gave up on this tick: the repair chain skipped
+        # them, so a soft speed cap among them clamped nothing (_applied_caps).
+        self.given_up: frozenset = frozenset()
         self._lists: dict = {}
         self._moving: dict = {}
         self._swept: dict = {}
@@ -794,7 +806,7 @@ class Shield:
     def __init__(self, policy: Policy, lookahead_s: float = LOOKAHEAD_S,
                  dt: float = LOOKAHEAD_DT_S, obstacle_map: dict | None = None,
                  now=None, escalation: "_fsm.FSMConfig | bool | None" = True,
-                 theta_horizon_s: float | None = None):
+                 theta_horizon_s: float | None = _fsm.DEFAULT_THETA_HORIZON_S):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
@@ -816,9 +828,16 @@ class Shield:
         fsm.FSMConfig, or False / None for no escalation FSM. With an FSM every
         filter() tick feeds it; see ShieldDecision.
 
-        theta_horizon_s: None (default) applies theta to each repair's own
-        `magnitude_m`, the grant's audit field; a number h selects the FSM's
-        velocity proxy |dv| x h instead (guardrail/fsm.py)."""
+        theta_horizon_s: what theta is measured on. None (the default,
+        fsm.DEFAULT_THETA_HORIZON_S) applies it to each repair's own
+        `magnitude_m`: the forecast depth it corrected, the grant's p5 audit
+        field and the PI reference's metric. fsm.THETA_HORIZON_S (0.1 s)
+        selects the one-period reading, the setpoint change |dv| over one
+        control period (p4's "||action_repaired - action_original||" read
+        literally); it is not the default because under the shipped speed
+        caps it can never exceed theta (docs/DESIGN-escalation-fsm.md,
+        "Theta: two readings, one default"). Another number measures |dv|
+        over that horizon."""
         why = self.unenforceable(policy)
         if why:
             raise ValueError("the Shield does not enforce every rule of "
@@ -873,6 +892,8 @@ class Shield:
             _fsm._check_horizon(theta_horizon_s)
         self.theta_horizon_s = theta_horizon_s
         self._fsm_fault: str | None = None
+        # The kinematic caps the last filter() clamped against (applied_caps).
+        self._last_caps: "_fsm.KinematicCaps | None" = None
 
         # Distance field: built ONCE here, never per tick (same rule as the
         # fence polygons). Skipped entirely when nothing needs it.
@@ -1100,6 +1121,17 @@ class Shield:
         return tuple(self._window)
 
     @property
+    def applied_caps(self) -> "_fsm.KinematicCaps | None":
+        """The speed and climb caps the last `filter()` clamped against
+        (`_applied_caps`), or None when it applied none. A rail that runs its
+        own FSM passes `caps=shield.applied_caps or False` to
+        `fsm.tick_input_from_decision`, so theta's |dv| measure (when a rail
+        selects it) starts
+        from the action the chain really clamped, not from every cap the
+        policy lists (one switched off mid-flight, or `monitor_only`)."""
+        return self._last_caps
+
+    @property
     def _ir(self) -> PolicyIR:
         tick = self._tick_ctx()
         return tick.rt.ir if tick is not None else self._rt.ir
@@ -1315,19 +1347,62 @@ class Shield:
         """Best available recovery when the repair chain did not converge.
 
         Returns (clean, best): `clean` re-checks with ZERO violations, `best`
-        merely keeps the most clearance. Stopping is not an answer on its own —
+        is chosen first among the headings that take the aircraft DEEPER into
+        no hard rule it is already inside (`_deepens`), then by clearance, then
+        toward the commanded heading. Stopping is not an answer on its own —
         a stationary vehicle inside the clearance ring (or inside a fence) is
         still in violation on the next tick and every tick after it, so a brake
-        there is a permanent freeze, not a fail-safe."""
+        there is a permanent freeze, not a fail-safe.
+
+        Until 2026-10-08 `best` was ranked by clearance alone, so where the
+        clearance push and a stand-off ring disagreed the best effort could fly
+        straight at the subject whose ring the aircraft was already inside."""
         clean = clean_key = best = best_key = None
         for cand in self._clear_dir_candidates(a, cap):
             key = (self._clear_min_dist(state, cand) if self._dist is not None else 0.0,
                    cand.vx * raw.vx + cand.vy * raw.vy)
-            if best_key is None or key > best_key:
-                best, best_key = cand, key
+            bkey = (-self._deepens(state, cand),) + key
+            if best_key is None or bkey > best_key:
+                best, best_key = cand, bkey
             if not self._check(state, cand) and (clean_key is None or key > clean_key):
                 clean, clean_key = cand, key
         return clean, best
+
+    def _deepens(self, state: State, a: Action4D) -> int:
+        """How many HARD, enforced rules the aircraft is already inside that
+        `a` takes it deeper into: a stand-off ring whose subject it closes on,
+        a zone it heads further into (relative to the zone, if it moves).
+        Directly over a subject every heading opens the range, so none deepens
+        that ring. Altitude is not counted: every recovery candidate carries
+        the same, already repaired, vertical speed."""
+        tick = self._tick_ctx()
+        rt = tick.rt if tick is not None else self._rt
+
+        def enforced_hard(rule) -> bool:
+            alive = self._mask(rule)
+            return (rt.hard.get(rule.id, True)
+                    and self._act(rt, rule.id) != "monitor_only"
+                    and (alive is True or (alive is not False and alive(0.0))))
+
+        n = 0
+        if self._subject is not None:
+            sx, sy = self._subject
+            d = math.hypot(state.x - sx, state.y - sy)
+            if d > _STANDOFF_COINCIDENT_M:
+                closing = (a.vx * (sx - state.x) + a.vy * (sy - state.y)) / d
+                n += sum(1 for so in self._standoffs
+                         if so.binds(self._subject_class) and enforced_hard(so)
+                         and self._standoff_inside(so, d) and closing > 1e-9)
+        for rec in self._fence_records(self._ir):
+            f = rec.rule
+            if not enforced_hard(f) or not point_in_fence(
+                    state.x, state.y, state.up, f, rec.polygon, rec.buffered):
+                continue
+            ox, oy = push_out_direction(state.x, state.y, rec.polygon)
+            mv = self._motion_of(f)
+            ex, ey = (a.vx - mv[0], a.vy - mv[1]) if mv else (a.vx, a.vy)
+            n += int(ex * ox + ey * oy < -1e-9)
+        return n
 
     # ---------------- the monitor, one predicate per rule ---------------- #
     #
@@ -1406,9 +1481,21 @@ class Shield:
             # against it can never see an opening move and the rule fires on the
             # very action that is recovering. Same shape as the geofence
             # "escaping" test.
-            ux, uy = ((sx - state.x) / d_now, (sy - state.y) / d_now) \
-                if d_now > 1e-6 else (0.0, 0.0)
-            opening = -(action.vx * ux + action.vy * uy)
+            if d_now > _STANDOFF_COINCIDENT_M:
+                ux, uy = (sx - state.x) / d_now, (sy - state.y) / d_now
+                opening = -(action.vx * ux + action.vy * uy)
+            else:
+                # Directly over the subject: range 0 has no line to the
+                # subject, and the radial component along a zero vector is 0
+                # for EVERY action, so no action could ever pass and the
+                # Shield flew its best effort with the P0 still on it (5 ticks
+                # of the 8 Oct follow; docs/FINDING-the-escape-that-stayed-
+                # inside-the-ring.md). From range 0 the range grows at the
+                # horizontal speed whatever the heading (the one-sided
+                # derivative of |p - s| at p = s), which is also what a
+                # one-second probe of the range would read - the trend test the
+                # PI reference takes for a zone.
+                opening = math.hypot(action.vx, action.vy)
             if opening <= 0.1:
                 return [Violation(
                     rule_id=so.id, category="standoff", predicted_at_s=0.0,
@@ -2085,12 +2172,12 @@ class Shield:
 
         dx, dy = sx - state.x, sy - state.y
         d = math.hypot(dx, dy)
-        if d < 1e-6:
-            return a                       # directly overhead; no defined line
+        ring = worst.min_range_m
+        if d <= _STANDOFF_COINCIDENT_M:
+            return self._recover_from_overhead(state, a, ring, d, repairs)
         ux, uy = dx / d, dy / d            # unit vector pointing AT the subject
 
         closing = a.vx * ux + a.vy * uy    # positive means approaching
-        ring = worst.min_range_m
 
         # The REPAIR must trigger on the same criterion the CHECK uses, or it
         # declines to act on the very violation that was raised and the action
@@ -2140,14 +2227,58 @@ class Shield:
             return a                       # opening already, or no breach coming
 
         vx, vy = a.vx - closing * ux, a.vy - closing * uy
+        # How deep the forecast being repaired goes into the ring: its
+        # closest pose to the subject, the same "deepest pose" GeofenceSlide
+        # reports for a zone. Until 2026-10-08 this was ring - (d - closing x
+        # lookahead), a straight-line range that runs THROUGH the subject and
+        # out the other side: 20 of the 25 StandoffHold repairs of the 8 Oct
+        # flight reported 5.3-11.0 m into a 5 m ring, which no forecast can
+        # reach. It is also what theta reads on the default basis
+        # (guardrail/fsm.py DEFAULT_THETA_HORIZON_S).
+        d_min = min(math.hypot(p.x - sx, p.y - sy) for _, p in self._predict(state, a))
         repairs.append(Repair(
             operator="StandoffHold",
             detail=(f"range {d:.1f}m, closing {closing:.2f} m/s would breach "
                     f"min {ring}m within {self.lookahead_s:.0f}s: closing "
                     f"component removed, tangential motion kept"),
-            # How far inside the ring the forecast would have ended.
-            magnitude_m=ring - (d - closing * self.lookahead_s), axis="lateral"))
+            magnitude_m=max(0.0, ring - d_min), axis="lateral"))
         return Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
+
+    def _recover_from_overhead(self, state: State, a: Action4D, ring: float,
+                               d: float, repairs: list["Repair"]) -> Action4D:
+        """StandoffRecover when the subject is directly below the aircraft.
+
+        There is no line to the subject, so there is no "closing component" to
+        remove and no outward direction to push along - and every direction
+        opens the range at the full horizontal speed. Until 2026-10-08 this
+        operator returned the action unchanged ("no defined line"), the check
+        could not see any action opening the range, and the P0 escape guard
+        flew a best-effort heading with the violation still on it.
+
+        The heading kept is the one commanded, when there is one: the least
+        change that leaves. A hover gets the reverse of the aircraft's
+        heading, which backs the subject out in front of a forward camera.
+        The speed is floored, like the off-centre recovery, at the rate that
+        clears the ring in one lookahead (0.5 m/s at least, the speed cap at
+        most), and never lowered."""
+        cap = min((k.speed_max_mps for k in self._kins), default=4.0)
+        want = min(cap, max(0.5, (ring - d) / max(self.lookahead_s, 1e-3)))
+        h = math.hypot(a.vx, a.vy)
+        if h > 1e-6:
+            ex, ey = a.vx / h, a.vy / h
+            how = "along the commanded heading"
+        else:
+            yaw = math.radians(state.yaw_deg)
+            ex, ey = -math.cos(yaw), -math.sin(yaw)
+            how = "backing away from the aircraft's heading"
+        out = min(cap, max(want, h))
+        repairs.append(Repair(
+            operator="StandoffRecover",
+            detail=(f"range {d:.1f}m: directly over the subject, every heading "
+                    f"opens the range; leaving {how} at {out:.2f} m/s "
+                    f"(commanded {h:.2f}, recovery needs {want:.2f})"),
+            magnitude_m=ring - d, axis="lateral", recovery=True))
+        return Action4D(vx=ex * out, vy=ey * out, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
 
     def _repair_corridor(self, state: State, a: Action4D,
                          repairs: list["Repair"]) -> Action4D:
@@ -2284,6 +2415,61 @@ class Shield:
         breaks; truthiness is the common use.
         """
         return self._check(state, BRAKE)
+
+    def unsafe_depth(self, state: State, violations: list | None = None) -> float:
+        """How far this POSITION is from legal, in metres: summed over the
+        HARD, enforced rules standing still here breaks (`state_is_unsafe`, or
+        the `violations` given), each measured its own way - the altitude
+        error outside an envelope or corridor band, the depth inside a zone's
+        margin ring, the distance inside a stand-off or clearance ring, the
+        excess over a corridor's half-width. 0.0 where a stop is legal.
+
+        The escalation FSM's X6 reads its TREND (fsm.TickInput.unsafe_depth_m):
+        a position illegal for T whose depth keeps falling is a recovery that
+        is working, not one to abort. On 7 Oct X6 sent climbs from under the
+        altitude floor home at 5.0 s while they climbed at the 2 m/s cap.
+        A rule this method cannot measure contributes 0, which reads as no
+        progress on it - the side that still escalates."""
+        if self._tick_ctx() is None and self._needs_tick():
+            with self._scope(self._new_tick(None)):
+                return self._unsafe_depth_in(state, violations)
+        return self._unsafe_depth_in(state, violations)
+
+    def _unsafe_depth_in(self, state: State, violations: list | None) -> float:
+        vios = self.state_is_unsafe(state) if violations is None else violations
+        tick = self._tick_ctx()
+        rt = tick.rt if tick is not None else self._rt
+        ids = {v.rule_id for v in vios
+               if rt.hard.get(v.rule_id, True)
+               and self._act(rt, v.rule_id) != "monitor_only"}
+        if not ids:
+            return 0.0
+        x, y, up = state.x, state.y, state.up
+        total = 0.0
+        for env in self._alts:
+            if env.id in ids:
+                total += max(0.0, env.alt_min_m - up, up - env.alt_max_m)
+        if self._subject is not None:
+            sx, sy = self._subject
+            d = math.hypot(x - sx, y - sy)
+            for so in self._standoffs:
+                if so.id in ids and so.binds(self._subject_class):
+                    total += max(0.0, so.min_range_m - d)
+        if self._dist is not None:
+            here = self._distance_at(x, y)
+            for c in self._clear:
+                if c.id in ids:
+                    total += max(0.0, c.min_clearance_m - here)
+        for c in self._corridors:
+            if c.id in ids:
+                d_lat, _ = self._corridor_geom(c, x, y)
+                total += (max(0.0, d_lat - c.half_width_m)
+                          + max(0.0, c.altitude_floor_m - up, up - c.altitude_ceiling_m))
+        for rec in self._fence_records(self._ir):
+            f = rec.rule
+            if f.id in ids and point_in_fence(x, y, up, f, rec.polygon, rec.buffered):
+                total += rec.buffered.boundary.distance(Point(x, y))
+        return total
 
     # ---------------- mid-flight events (the grant's hot-apply path) ---------------- #
     #
@@ -2802,6 +2988,7 @@ class Shield:
         tick = self._begin_tick(t)
         with self._scope(tick):
             decision = self._decide(state, raw)
+            self._last_caps = self._applied_caps(tick, decision)
             decision = self._escalate(tick, state, decision, rtl_failed=rtl_failed,
                                       home_reached=home_reached, landed=landed)
         elapsed_ms = (time.perf_counter() - t0) * 1e3
@@ -2835,6 +3022,7 @@ class Shield:
             if self.fsm is not None:
                 self.fsm.reset()
             self._fsm_fault = None
+            self._last_caps = None
             self._window.clear()
             rt = self._rt
             if rt.moving_ids and self._t_last is not None:
@@ -2951,6 +3139,7 @@ class Shield:
                                                        skip | frozenset(given), list(head))
             if not blocking:
                 broken = {v.rule_id for v in self._check(state, fixed)}
+                tick.given_up = frozenset(given)
                 return fixed, reps, sorted(given & broken)
         return None
 
@@ -3067,14 +3256,35 @@ class Shield:
                               repairs=_dedupe(repairs), relaxed=relaxed,
                               emitted_violations=self._check(state, fixed))
 
+    def _applied_caps(self, tick: _Tick, d: ShieldDecision) -> "_fsm.KinematicCaps | None":
+        """The speed and climb caps the repair chain clamped against on this
+        tick: the kinematic rules in force here (`tick.rules`, which leaves out
+        a rule out of its window or switched off), not `monitor_only`, and not
+        a soft one the chain gave up (`tick.given_up`, set by _relax). Theta's
+        |dv| measure (when a rail selects it) starts from the raw action
+        clamped to these; reading the caps off the whole policy instead made
+        a raw action over a cap the chain never applied a "decision made under
+        other caps", which the FSM refuses (a fault, LOITER, nothing
+        streamed). (A first version left out EVERY soft cap once any soft rule
+        was given up, so a soft P1 speed cap the chain still clamped to was
+        missing while a soft P2 band was relaxed: the FSM then measured the
+        clamp as position correction, or refused the tick.)"""
+        rt = tick.rt
+        return _fsm.KinematicCaps.of(
+            k for k in tick.rules("kins")
+            if self._act(rt, k.id) != "monitor_only" and k.id not in tick.given_up)
+
     def _escalate(self, tick: _Tick, state: State, d: ShieldDecision, *,
                   rtl_failed: bool = False, home_reached: bool = False,
                   landed: bool = False) -> ShieldDecision:
         """Feed this tick to the escalation FSM and attach its verdict.
 
-        Theta is applied by the FSM, from the repairs' own magnitude_m (or the
-        velocity proxy when theta_horizon_s is set). `stop_illegal` is the full
-        BRAKE check, which the FSM filters to hard enforced rules. A contract
+        Theta is applied by the FSM, to the repairs' own magnitude_m
+        (theta_horizon_s None, the default), or to the setpoint change |dv| x
+        theta_horizon_s when a number is given (the one-period reading). `stop_illegal` is the full
+        BRAKE check, which the FSM filters to hard enforced rules, and
+        `unsafe_depth_m` how far from legal that position is (X6's progress
+        test). A contract
         break (the FSM refuses the input) never stops the control loop: the
         decision carries `fsm_fault`, the first one requests LOITER, and
         nothing is streamed after it until reset_episode()."""
@@ -3090,10 +3300,13 @@ class Shield:
             return d.model_copy(update=upd)
         try:
             self._stop_illegal(tick, state)          # fills tick.unsafe
+            caps = self._applied_caps(tick, d)
             inp = _fsm.tick_input_from_decision(
                 tick.t, d, tick.rt, horizon_s=self.theta_horizon_s,
                 stop_illegal=list(tick.unsafe), rtl_failed=bool(rtl_failed),
-                home_reached=bool(home_reached), landed=bool(landed))
+                home_reached=bool(home_reached), landed=bool(landed),
+                caps=caps if caps is not None else False,
+                unsafe_depth_m=self._unsafe_depth_in(state, list(tick.unsafe)))
             out = self.fsm.step(inp)
         except ValueError as e:
             self._fsm_fault = str(e)

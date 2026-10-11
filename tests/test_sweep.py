@@ -388,19 +388,23 @@ def test_the_13_original_scenarios_fly_exactly_as_before_the_schema():
     assert not moved, "\n      ".join(moved)
 
 
-# The same 13 with the escalation FSM ON, measured 2026-10-07: which edges the
-# FSM took. Three end differently from LEGACY, and the edges say why: X6 (the
-# position illegal for T = 5 s while the recovery still works - the floor
-# recovery is 0.55 m short when it fires, the re-labelled stand-off 0.15 m),
-# and G3 (an AltitudeFix of 4 m against the grant's 0.5 m vertical theta, so
-# the ceiling hold is handed to LOITER at 0.1 s).
+# The same 13 with the escalation FSM ON: which edges the FSM took. Measured
+# 2026-10-07; two re-measured 2026-10-11 after X6 gained its progress test
+# (2026-10-09). Until then X6 sent two working recoveries to RTL once the
+# position had been illegal for T = 5 s (G1>X6>G9: the floor recovery 0.55 m
+# short when it fired, the re-labelled stand-off 0.15 m). X6 now leaves a
+# recovery alone while its illegal depth is shown to fall: the floor recovery
+# is G1>G7 (back in the band, mission completes) and the re-labelled stand-off
+# G1>G3 (out of the ring, then LOITER). G3 on the ceiling hold is an
+# AltitudeFix of 4 m against the grant's 0.5 m vertical theta, so it is handed
+# to LOITER at 0.1 s.
 LEGACY_FSM = {
     "nfz-head-on": "G1", "nfz-head-on-control": "",
-    "altitude-floor-recovery": "G1>X6>G9", "altitude-ceiling-hold": "X1>G3",
+    "altitude-floor-recovery": "G1>G7", "altitude-ceiling-hold": "X1>G3",
     "speed-cap": "G1", "nonfinite-action": "G1", "corridor-along": "",
     "corridor-drift-out": "G1", "corridor-curfew-in-hours": "G1",
     "corridor-curfew-out-of-hours": "", "standoff-approach": "",
-    "standoff-reclassified": "G1>X6>G9", "standoff-wedge": "G1",
+    "standoff-reclassified": "G1>G3", "standoff-wedge": "G1",
 }
 
 
@@ -1493,9 +1497,30 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
     straight home whatever lies between: on dyn-nfz-spawn-on-top@size_m=20 it
     flies through the zone (16 P0 ticks, one polygon entry) after the FSM
     handed over. That is never the Shield's entry or escape - and it must
-    not vanish either: the run-level true-state summary reports it apart."""
+    not vanish either: the run-level true-state summary reports it apart.
+    Since 2026-10-09 X6 leaves this cell's working exit alone (G1, G7), so
+    the modelled RTL through the zone is recreated by flying the same cell
+    with X6's progress test off (G1>X6>G9)."""
+    from guardrail.fsm import FSMConfig
+
+    class NoProgressTest(S.Shield):
+        def __init__(self, policy, *a, escalation=True, **k):
+            if escalation is True:
+                escalation = FSMConfig(x6_min_escape_mps=1e9)
+            super().__init__(policy, *a, escalation=escalation, **k)
+
     spec = _cell("dyn-nfz-spawn-on-top", size_m=20, variant=0)
-    run = S.run_episode(spec, DEFAULTS, 0)
+    default = S.run_episode(spec, DEFAULTS, 0)
+    got = ">".join(t["edge"] for t in (default.extra.get("fsm") or {}).get("transitions") or [])
+    assert got == "G1>G7", f"the shipped X6 should leave this exit alone: {got!r}"
+    real = S.Shield
+    S.Shield = NoProgressTest
+    try:
+        run = S.run_episode(spec, DEFAULTS, 0)
+    finally:
+        S.Shield = real
+    edges = [t["edge"] for t in (run.extra.get("fsm") or {}).get("transitions") or []]
+    assert "X6" in edges, f"the RTL this test needs did not happen: {edges}"
     ex = run.extra
     assert ex["autopilot_polygon_entries"] >= 1 and ex["polygon_entries"] == 0, ex
     assert 0 < ex["autopilot_p0_flown_ticks"] <= ex["true_p0_flown_ticks"], ex
@@ -1635,6 +1660,177 @@ def test_bundle_links_use_forward_slashes_on_every_os():
     with tempfile.TemporaryDirectory() as td:
         outside = Path(td) / "a" / "b"
         assert "\\" not in S._show(outside), S._show(outside)
+
+
+# --------------------------------------------------------------------------- #
+# the steppable runner (2026-10-11): one integrator for run_episode and a
+# live control plane
+# --------------------------------------------------------------------------- #
+
+def _same_run(a, b) -> list[str]:
+    """Where two EpisodeRuns differ (wall time aside)."""
+    diff = [f for f in ("rows", "extra", "events", "policy_hash_start", "sim_s",
+                        "seed_consumed", "priorities")
+            if getattr(a, f) != getattr(b, f)]
+    if a.policy.policy_hash != b.policy.policy_hash:
+        diff.append("policy")
+    return diff
+
+
+def test_the_stepped_runner_flies_exactly_what_run_episode_flies():
+    """EpisodeRunner stepped tick by tick must be run_episode: an event cell,
+    seeded GPS noise, seeded gusts, a terminal fail-safe that ends the episode
+    early (three-simultaneous-violations: X1>G3>X6>G9 at 9.6 s) and the
+    Shield-off control arm."""
+    cells = [_cell("dyn-nfz-spawn-on-top", size_m=40, variant=0),
+             FAMILIES["gps-noise-beyond-margin"].first.spec,
+             FAMILIES["wind-gusts"].first.spec,
+             FAMILIES["three-simultaneous-violations"].first.spec,
+             BY_ID["nfz-head-on-control"]]
+    for spec in cells:
+        ref = S.run_episode(spec, DEFAULTS, 3)
+        r = S.EpisodeRunner(spec, DEFAULTS, 3)
+        steps, ts = 0, []
+        while r.t is not None:
+            ts.append(r.t)
+            r.step()
+            steps += 1
+        assert r.done and r.step() is False and r.t is None, spec.scenario_id
+        got = r.finish()
+        assert steps == len(ref.rows) == len(got.rows), (spec.scenario_id, steps, len(ref.rows))
+        assert all(abs(a - row["t"]) < 1e-6 for a, row in zip(ts, ref.rows)), \
+            (spec.scenario_id, ts[:3])
+        assert not _same_run(ref, got), (spec.scenario_id, _same_run(ref, got))
+    early = S.run_episode(FAMILIES["three-simultaneous-violations"].first.spec, DEFAULTS, 3)
+    assert early.extra["terminated_s"] is not None, "the early-ending case did not end early"
+
+
+def test_an_event_injected_between_ticks_flies_as_the_same_event_written_in():
+    """The live hook: dyn-nfz-spawn-on-top's zone (spawned ON the aircraft at
+    5 s, so where it lands depends on where the aircraft is) injected while
+    the episode is paused before the 5 s tick flies exactly the rows of the
+    scenario with the event written in. The null: the same episode with no
+    injection flies differently, so the comparison could fail."""
+    spec = _cell("dyn-nfz-spawn-on-top", size_m=40, variant=0)
+    assert len(spec.events) == 1 and spec.events[0].at_sim_t == 5.0, spec.events
+    written = S.run_episode(spec, DEFAULTS, 0)
+    bare = spec.model_copy(update={"events": []})
+    r = S.EpisodeRunner(bare, DEFAULTS, 0)
+    while r.t < 5.0 - 1e-9:
+        r.step()
+    r.inject(spec.events[0].model_dump(mode="json"))     # a dict is validated
+    live = r.finish()
+    assert not _same_run(written, live), _same_run(written, live)
+    assert live.extra["harness_events"] == 1, live.extra["harness_events"]
+    null = S.run_episode(bare, DEFAULTS, 0)
+    assert null.rows != written.rows, "the zone changed nothing: the test proves nothing"
+
+
+def test_an_injected_event_joins_the_schedule_after_one_already_due_then():
+    """Two events at the same instant fly in the order a scenario lists them;
+    an injected one counts as listed last, so it lands after one already
+    scheduled for that instant - the order run_episode would give it."""
+    spec = _cell("dyn-nfz-spawn-on-top", size_m=40, variant=0)
+    second = {"at_sim_t": 5.0, "type": "spawn_polygon_fence",
+              "payload": {"id": "dyn-nfz-2", "width_m": 10, "height_m": 10,
+                          "ahead_of_vehicle_m": 30}}
+    both = spec.model_copy(update={"events": list(spec.events)
+                                   + [S.ScenarioEvent.model_validate(second)]})
+    written = S.run_episode(both, DEFAULTS, 0)
+    r = S.EpisodeRunner(spec, DEFAULTS, 0)
+    r.inject(second)                                     # before any tick flew
+    live = r.finish()
+    assert not _same_run(written, live), _same_run(written, live)
+    ids = [e.get("rule_id") for e in live.events
+           if e.get("type") == "hot_apply" and e.get("event") == "spawn_polygon_fence"]
+    assert ids == ["dyn-nfz", "dyn-nfz-2"], ids
+
+
+def test_the_runner_refuses_an_event_it_cannot_fly_as_written():
+    """Refused like a scenario's own event: in the past (that tick flew), after
+    the last tick (never fires), a window with no clock, and anything after the
+    episode ended."""
+    spec = _cell("dyn-nfz-spawn-on-top", size_m=40, variant=0)
+    ev = {"type": "spawn_polygon_fence",
+          "payload": {"id": "late", "width_m": 10, "height_m": 10, "ahead_of_vehicle_m": 30}}
+    r = S.EpisodeRunner(spec, DEFAULTS, 0)
+    for _ in range(10):
+        r.step()
+    assert abs(r.t - 10 * float(spec.dt or DEFAULTS.dt)) < 1e-9, r.t
+    cases = [({**ev, "at_sim_t": r.t - 0.5}, "in the past"),
+             ({**ev, "at_sim_t": r.t_end + 1.0}, "never fires"),
+             ({"at_sim_t": r.t + 1.0, "type": "deactivate_rule",
+               "payload": {"rule_id": "nfz-square",
+                           "window": {"days": ["Mon"], "start_time": "12:00",
+                                      "end_time": "12:30"}}},
+              "needs mission.clock_start")]
+    for bad, why in cases:
+        try:
+            r.inject(bad)
+        except ValueError as e:
+            assert why in str(e), (why, str(e))
+        else:
+            raise AssertionError(f"accepted an event that is {why}: {bad}")
+    r.inject({**ev, "at_sim_t": r.t})                    # the tick about to fly: fine
+    r.finish()
+    try:
+        r.inject({**ev, "at_sim_t": 1.0})
+    except RuntimeError as e:
+        assert "ended" in str(e), str(e)
+    else:
+        raise AssertionError("accepted an event after the episode ended")
+
+
+
+def test_a_runner_whose_episode_raised_fails_fast_instead_of_hanging():
+    """A tick that raises ends the episode. Before 2026-10-12 the dead
+    generator left the runner `done` False for ever: step() returned True,
+    inject() raised TypeError and finish() spun without end, so a live caller
+    that caught the error and called finish() hung its thread. Here a second
+    zone with dyn-nfz-spawn-on-top's id is injected at 6 s; the Shield refuses
+    the duplicate when that tick flies (as it would refuse the same event
+    written in). That step() raises the refusal; every later call raises
+    RuntimeError naming it, at once (a watchdog thread bounds the wait, so a
+    regression fails here instead of hanging the suite)."""
+    import threading
+    spec = _cell("dyn-nfz-spawn-on-top", size_m=40, variant=0)
+    dup = {"at_sim_t": 6.0, "type": "spawn_polygon_fence",
+           "payload": {"id": "dyn-nfz", "width_m": 10, "height_m": 10,
+                       "ahead_of_vehicle_m": 30}}
+    r = S.EpisodeRunner(spec, DEFAULTS, 0)
+    while r.t < 6.0 - 1e-9:
+        r.step()
+    r.inject(dup)                       # accepted: the refusal is the Shield's
+    try:
+        r.step()
+    except ValueError as e:
+        first = str(e)
+        assert "already exists" in first, first
+    else:
+        raise AssertionError("the duplicate zone id was not refused when its tick flew")
+
+    later: dict[str, str] = {}
+
+    def call_again():
+        for name, fn in (("finish", r.finish), ("step", r.step),
+                         ("inject", lambda: r.inject({**dup, "at_sim_t": 7.0}))):
+            try:
+                fn()
+                later[name] = "returned"
+            except RuntimeError as e:
+                later[name] = f"RuntimeError: {e}"
+            except Exception as e:                       # noqa: BLE001
+                later[name] = f"{type(e).__name__}: {e}"
+
+    th = threading.Thread(target=call_again, daemon=True)
+    th.start()
+    th.join(10.0)
+    assert not th.is_alive(), f"a call after the error hung (got so far: {later})"
+    for name in ("finish", "step", "inject"):
+        got = later.get(name, "")
+        assert got.startswith("RuntimeError: the episode failed in the tick at 6.0 s")             and "already exists" in got, (name, got)
+    assert r.done and r.t is None and r.result is None, (r.done, r.t, r.result)
+    assert isinstance(r.error, ValueError), repr(r.error)
 
 
 if __name__ == "__main__":

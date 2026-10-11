@@ -14,6 +14,300 @@ that wave is mechanical.
 WP1-10 (breach actions), WP1-11 (hard/soft), WP1-12 (priority), and WP3-15
 (fail-safe KPI).
 
+**Update 2026-10-09.** The status above is the module's first day. Since
+2026-10-07 the FSM runs inside `Shield.filter()` and on every flight rail.
+The first follow flight through it on ArduPilot (8 Oct) led to four changes,
+described in the next section: X6 waits for a recovery that is shown to be
+working and X7 sends home one that is shown to be losing ground, N-in-T
+counts at most one onset per second, the FSM's LOITER is flown as
+ArduCopter's BRAKE, and StandoffHold reports a depth its ring can have.
+Theta stays on each repair's own `magnitude_m`; the one-period reading is
+selectable and is a question for the PI. On the labelled library,
+fail-safe trigger correctness went from 0.747 to 0.823 on the default basis
+(0.903 on the one-period reading), still below the never-trigger null of
+0.968. Every `fsm_config_hash` changed with the three new config fields:
+the default thresholds now hash to `sha256:5ae67785...`, while
+`docs/data/scenario_sweep.json` (published before them) carries
+`sha256:0136098f...`.
+
+## 2026-10-08: what the first follow flight on ArduPilot changed
+
+`demo/out/pas_ap_20261008_224440` is a 120 s red-car follow on Project
+AirSim with ArduPilot SITL as the flight controller, the Shield and this FSM
+in the loop (dev topology, not KPI-grade). Its FSM went Brake -> Loiter eight
+times (G3): five on stand-off repairs "over theta" of 3.6-9.8 m, three on
+"no operator converged". Every LOITER spell sank 1.4-1.8 m/s. The deepest
+went from 7.6 m to 1.8 m in 3.3 s, and the aircraft bottomed out at 0.36 m
+after GUIDED resumed; 279 ticks were under the policy's 6 m floor. The SITL
+runs of 7 Oct had shown the same descent, and the harness's labelled
+fail-safe correctness was 0.73-0.87 against the grant's 0.99.
+
+### Theta: two readings, one default
+
+What the grant says, word for word:
+
+- Safety Shield p4: "Conservative cap. If ||action_repaired -
+  action_original|| > threshold, or no operator converges, the Shield
+  abandons projection and triggers fail-safe." Defaults: "θ=2.0 m (lateral)
+  / 0.5 m (vertical)".
+- Safety Shield p3: LateralProjection "Project[s] the predicted point to the
+  nearest feasible point outside the NFZ or inside the corridor", and the
+  first operator with "magnitude ≤ threshold wins".
+- Safety Shield p5, the audit record example: raw action (5.0, 1.2),
+  emitted (4.7, -0.3), and `{"operator": "LateralProjection", "result":
+  "ok", "magnitude_m": 0.7}`.
+- Stress Testing p5-p6: the KPI "Average repair magnitude" is the "Mean of
+  ||post_repair - planner_output||".
+- Safety Shield p1 / Architecture constraints p1: a 10 Hz monitor matching
+  the 10 Hz VLA action rate, a 5 s lookahead.
+
+**Reading A, per-operator depth (the default, `theta_horizon_s=None`,
+`fsm.DEFAULT_THETA_HORIZON_S`).** Each operator reports how far the forecast
+it corrected went into the rule (`magnitude_m`), and theta caps that. It is
+what the p5 example records: (5.0, 1.2) to (4.7, -0.3) is a velocity change
+of 1.53 m/s, and the example's 0.7 m is not that change over one period
+(0.15 m), so its metres come from somewhere else - the projected point of
+p3. It is the PI reference's metric (`safety_shield/repair.py`: the
+penetration depth "is escalated rather than projected" for "a deep head-on
+dive").
+
+**Reading B, one control period (`theta_horizon_s=fsm.THETA_HORIZON_S`,
+`--theta-horizon-s 0.1`).** p4's ||Δaction|| read literally: each action is
+flown for one 0.1 s period, so |Δv| x 0.1 s is how far the repaired setpoint
+moves the aircraft from where the planner's would have put it before the
+next tick. A builder made this the default on 2026-10-08 and called it "the
+grant's basis". The review of 2026-10-09 reverted that, for three reasons:
+the p5 example and p3 above read the other way; under every shipped policy
+(4-5 m/s speed caps, 2 m/s climb) a clamped command can change by at most
+8-10 m/s laterally and 4 m/s vertically, 0.8-1.0 m and 0.4 m per period, so
+theta could never fire - a de facto waiver of the conservative cap, which
+the 6 Oct decision ("conform rather than waive") does not allow without the
+PI; and its safety cost is measurable (the tables below: more episodes
+entering a P0 polygon). It stays selectable on every rail, and the basis a
+run used is recorded in `metrics.json` (`fsm.theta_basis`) and read back by
+`guardrail/kpi.py`.
+
+Two of the measurements that had pointed at reading B were measurement
+artefacts:
+
+- The stand-off "repairs of 3.6-9.8 m" were StandoffHold extrapolating the
+  range in a straight line (20 of the flight's 25 reported more than the
+  5 m ring's radius, up to 11.0 m). Fixed in shield.py: it reports the
+  forecast's closest approach. On four of the five that sent the flight to
+  LOITER the line ran through the subject; the fifth (tick 480, 16.5 m out,
+  closing at 3.02 m/s) ended 1.4 m short of it.
+  docs/FINDING-the-escape-that-stayed-inside-the-ring.md.
+- The 1696-1701 of 1763 governed ticks over theta at h = 1-5 s ("The table,
+  clamp-free" below) are the lookahead read as the repair's horizon: at
+  h = 5 s any change over 0.4 m/s exceeds theta.
+
+The replayed flight (`tests/test_flight_pas_ap_20261008.py`: every tick's
+logged state, subject and raw action through the Shield and this FSM):
+
+| shield.py | theta basis | Brake -> Loiter | of them over theta | repaired ticks over theta | P0 escape ticks |
+|---|---|---|---|---|---|
+| 10451bc (as flown; the replay reproduces the flight's edges exactly) | per-operator `magnitude_m` | 8 | 5 | 23 | 5 |
+| this one | **per-operator `magnitude_m` (default; closest-approach depth)** | **2** | 2 | 19 | 0 |
+| this one | one period (opt-in) | 0 | 0 | 0 | 0 |
+| this one | 1.0 s | 6 | 6 | 26 | 0 |
+
+On the default basis the 19 ticks over theta are all StandoffHold repairs
+whose forecast's closest approach goes 2.1-4.3 m into the 5 m ring: the car
+approached head-on at 2-3 m/s. The two Brake -> Loiter edges now hold
+altitude (BRAKE, below) instead of sinking.
+
+When a rail opts into reading B, the measure starts from the raw action
+clamped to the caps the Shield applied on that tick (`Shield.applied_caps`,
+which both ArduPilot rails pass as `caps`): a `monitor_only` cap, one
+switched off mid-flight, or a soft cap the chain gave up is not one. Read off
+the whole policy, they made the FSM refuse the tick (a fault, a hold,
+nothing streamed); a first version of `applied_caps` left out every soft
+cap once any soft rule was given up, and made the FSM refuse a tick whose
+soft P1 speed cap had clamped
+(`test_applied_caps_leave_out_only_the_soft_caps_the_chain_gave_up`). On
+reading A the caps are not read.
+
+**What each reading costs** (headless sweeps, Shield-on episodes, true
+state; everything else as shipped):
+
+| profile | episodes entering a P0 polygon: 10451bc / A / B | P0 ticks flown at the true state: 10451bc / A / B |
+|---|---|---|
+| library | 1 / 1 / 4 | 957 / 934 / 630 |
+| nightly | 3 / 3 / 12 | 4945 / 4718 / 1964 |
+| smoke | 1 / 1 / 2 | 434 / 392 / 342 |
+
+Reading B flies fewer ticks inside a zone but lets more episodes into one:
+`wind-beyond-authority` (5 m/s tailwind, 4 m/s cap) passes on A, where theta
+escalates the deep forecast and the modelled LOITER holds the aircraft
+outside, and fails on B (3.0-5.6 m inside the polygon before X7 sends it
+home). How much of B's cost is the harness's open-loop wind model
+(ArduCopter's GUIDED controller tracks ground velocity against a steady
+wind) is open.
+
+### X6 waits for a recovery that is working; X7 sends home one that is losing ground
+
+X6 fired on every position illegal for T, including recoveries that were
+working: climbs from under the altitude floor at the 2 m/s cap and 2 m/s
+exits from a grown zone were sent home at 5.0 s (`altitude-floor-recovery`,
+three `altitude-recovery-depth` cells, `standoff-reclassified`,
+`dyn-nfz-spawn-on-top`, `radius-scaling-grow-deep`: seven false fail-safes by
+their labels on the library at 10451bc). The Shield now reports how far the
+position is from legal (`Shield.unsafe_depth`, `TickInput.unsafe_depth_m`:
+summed over the hard rules a stop here breaks), and the FSM fits a
+least-squares line through it.
+
+- **X6** fires only if the fitted fall rate over the last T, less two
+  standard errors, does not reach `x6_min_escape_mps` (0.1 m/s, the trend
+  threshold the Shield's checks and the reference's `_ESCAPE_SPEED_MPS` use).
+  A window with a tick of no depth counts as no progress, so a caller that
+  reports none keeps X6 as it was.
+- **X7** (Brake / Loiter -> RTL) fires when the position has been illegal
+  for T_recover, a hard rule is violated on the tick, the fitted slope over
+  the last T_recover less two standard errors is above 0.1 m/s, and the
+  fitted rise is at least `x7_min_rise_m` (0.5 m): something the forecast
+  cannot see (a wind beyond the speed cap) is beating the recovery, and
+  waiting T lets it through (with X6 and X7 off, the 5 m/s tailwind carries
+  the aircraft across the 16 m square in about 3.5 s). An unknown depth
+  never fires X7.
+
+The first version compared two depth samples (T apart for X6, T_recover
+apart for X7) and fired X7 on a rise of 0.2 m. With 0.2-0.3 m of position
+noise (the harness's GPS noise; the perception rail's subject range is far
+noisier) that sent working recoveries home: 40 of 200 seeded runs at
+0.5 m/s and sigma 0.3 m, 176 of 200 at 0.3 m/s (review of 2026-10-09). With
+the fit: 0 of 200 at 0.5 and at 0.3 m/s (sigma 0.3 m), 0 of 200 at 0.2 m/s
+(sigma 0.2 m), while a 3 m/s push-in still fires X7 at 2.0 s through
+0.3 m of noise on every seed. The price is on X6's side: a 0.2 m/s recovery
+under 0.2 m of noise is not "shown" working in 5 of 200 runs, and X6 sends
+it home. And a recovery whose speed falls off near the boundary (the
+Shield's altitude recovery slows as the depth shrinks) can drop under
+0.1 m/s before it finishes; X6 then fires if the position is still illegal
+after T.
+
+Order of checks with both: **Brake:** direct land, direct RTL, X6, X7, direct
+loiter, G3, G2, G7. **Loiter:** direct land / RTL, G4, G8, G5, X6, X7.
+
+### N-in-T: at most one onset per second
+
+GPS noise of 0.2-0.3 m made a forecast skimming `nfz-square`'s ring violate
+at 6.1, 6.3 and 6.8 s: three "onsets" in 0.7 s, N-in-T, LOITER, then RTL, on
+a pass the scenario labels within the error budget. A hard violation that
+starts again less than `onset_clear_s` (1.0 s) after the last COUNTED onset
+is now the same violation flickering at the 10 Hz monitor
+(`record["onset_merged"]` says so), not a new one.
+
+The first version merged every return after a clean spell shorter than 1 s
+into the violation before it, however long the flicker went on. The review
+of 2026-10-09 showed what that cost: one-tick hard violations every 0.3, 0.5
+or 0.9 s for 30 s never left Brake - the thrash N-in-T (3 in 5 s) exists to
+catch, switched off, with theta inert on reading B and a stop legal, so
+nothing else escalated it. As a rate limit, the same pattern reaches Loiter
+(G2) at 2.4, 2.0 and 3.6 s and RTL (G4) at 6.0, 5.0 and 9.0 s
+(`test_n_in_t_still_catches_a_pilot_who_re_violates_faster_than_the_debounce`).
+It must leave room for N onsets in T, (N - 1) x `onset_clear_s` <= T, or
+N-in-T could never fire; `FSMConfig` refuses a config that breaks that.
+`event_mode: tick` ignores it; `onset_clear_s: 0` restores
+counting every return. Whether one second is the right separation is a
+question for the PI (below).
+
+### The FSM's LOITER is flown as ArduCopter's BRAKE
+
+The grant names the mode LOITER (p2, p5: "SET_MODE GUIDED / LOITER / RTL /
+LAND"), and the FSM, the audit record and `set_mode` still say LOITER. What
+it asks of the autopilot is to hold the aircraft where it is. ArduCopter's
+LOITER does that only with a pilot on the sticks: Copter-4.5.7
+`mode_loiter.cpp` sets `target_climb_rate =
+get_pilot_desired_climb_rate(channel_throttle->get_control_in())`, and with
+no RC input the throttle reads its minimum. The choices a companion computer
+has:
+
+| option | holds altitude with no pilot | mode change visible to the GCS | who owns the aircraft |
+|---|---|---|---|
+| LOITER + throttle centred by RC_CHANNELS_OVERRIDE | yes, while the override is re-sent (it lapses after RC_OVERRIDE_TIME) | yes | the companion, impersonating the pilot; the safety pilot's own throttle is overridden meanwhile |
+| GUIDED with a hold setpoint | yes | no: the FSM's Loiter would be invisible in Mission Planner | the companion keeps flying it |
+| **BRAKE** | **yes**: `mode_brake.cpp` stops with the position controller and `set_pos_target_z_from_climb_rate_cm(0.0f)`; no timeout unless a Solo button sets one ("full-brake using inertial/GPS system, no pilot input", `mode.h`) | yes | the autopilot |
+
+BRAKE needs a position estimate, as LOITER does. It is what
+`sitl/mavlink_adapter_node.py` (`autopilot_mode`, `DEFAULT_HOLD_MODE`), the
+ROS node's no-adapter fallback and the Project AirSim node send for the FSM's
+LOITER, including the hold a node requests when the FSM refuses a tick;
+`--hold-mode LOITER` restores the literal mapping for a flight with a pilot
+holding the throttle centred. Both rails record the requests in both
+vocabularies (`mode_requests`: the FSM's words; `autopilot_mode_requests`:
+ArduCopter's; `ModeRequests`), and a mode change is read as the node's own
+only if a request made since the aircraft last came back to GUIDED explains
+it, so a pilot's BRAKE after an FSM hold is seen as a takeover.
+
+Measured in ArduCopter SITL (Copter-4.5.7, `sitl/start_sitl.sh` with
+`GUARDRAIL_FENCE=0`, no RC input: RC3 read 1000 throughout), take-off in
+GUIDED to 15 m, then 20 s in BRAKE, 12 s in LOITER, 8 s in BRAKE (pymavlink,
+2026-10-09, a scratch probe, not committed):
+
+| mode | time | altitude |
+|---|---|---|
+| BRAKE | 19.9 s | 14.97-15.01 m (mean +0.002 m/s) |
+| LOITER | 6.7 s | 15.0 m to the ground (mean -2.23 m/s, up to 2.49 m/s down; SITL "Hit ground at 2.38 m/s") |
+
+Not yet flown on the Project AirSim rail.
+
+### Fail-safe trigger correctness, measured again (headless harness, not KPI-grade)
+
+`experiments/sweep_scenarios.py`, labelled episodes, the escalation FSM
+entering RTL or Land counted as the trigger. Before = the code at 10451bc
+(the figures CHANGELOG 2026-10-07 published). Each cell: correctness (false
+triggers / missed triggers).
+
+| configuration | library (186 labelled, 6 expected) | nightly (762, 30) | smoke (56, 4) |
+|---|---|---|---|
+| 10451bc | 0.747 (47 / 0) | 0.726 (209 / 0) | 0.875 (7 / 0) |
+| **as shipped: reading A, onset limit 1 s, X6 / X7 fitted** | **0.823 (33 / 0)** | **0.790 (160 / 0)** | **0.964 (2 / 0)** |
+| reading B, the rest as shipped | 0.903 (18 / 0) | 0.921 (60 / 0) | 0.982 (1 / 0) |
+| reading A, onset limit off (0 s) | 0.785 (40 / 0) | 0.753 (188 / 0) | 0.946 (3 / 0) |
+| reading B, onset limit off | 0.860 (26 / 0) | 0.883 (89 / 0) | 0.964 (2 / 0) |
+| reading A, onset limit 1 s, X6 progress and X7 off | 0.785 (40 / 0) | | |
+| reading A, onset 0, X6 progress and X7 off (10451bc's FSM, this unit's Shield) | 0.747 (47 / 0) | | |
+| the builder's first version, as reported (reading B, merging debounce, two-sample X7) | 0.978 (4 / 0) | 0.980 (15 / 0) | 1.000 (0 / 0) |
+| null: never trigger / always trigger | 0.968 / 0.032 | 0.961 / 0.039 | 0.929 / 0.071 |
+| Wilson 95 % lower bound, as shipped / reading B | 0.761 / 0.852 | 0.760 / 0.900 | 0.879 / 0.906 |
+
+Read plainly:
+
+- **None meets 0.99, and on the library and the nightly profile nothing
+  here beats a Shield that never triggers** (0.968, 0.961), on either
+  reading. Only smoke beats it, on the point estimate alone: its Wilson
+  lower bound (0.879) is below the null too. The builder's 0.978 rested on
+  reading B, which waives theta, and on the merging debounce, which switched
+  off N-in-T for thrash faster than once a second; both were reverted.
+- What this unit's FSM changes do on reading A: the X6 progress test and X7
+  remove 7 false triggers (40 to 33 with the onset limit on; 47 to 40 with
+  it off), and the onset limit removes 7 (40 to 33). No missed trigger on
+  any configuration.
+- Where the 33 left on the library come from, by the first edge after G1
+  and the edge into the fail-safe: G3 (theta over, or no operator converged)
+  into Loiter, then the 30 s Loiter timeout G5 (8) or N-in-T persisting G4
+  (7); X1 / G3 then X6 (7: all six `three-simultaneous-violations` cells
+  and one wind gust); X1 / G3 then G5 (3, `dyn-nfz-spawn-ahead`); G2 then
+  G5 / G4 / X7 (7); one G7 round trip then G5. By family: sensor
+  degradation 9 (eight `gps-noise-beyond-margin` cells with 1-2 m of noise,
+  which the library tracks rather than passes), wind 9, dynamic NFZ 6, three
+  simultaneous violations 6, high speed near an edge 2, stand-off 1.
+- 16 of the 33 end by the Loiter timeout (G5). In the two checked
+  (`wind-within-authority` lane 15 at 1 m/s, `dyn-nfz-spawn-ahead` 3 m at
+  4 m/s) the harness's pilot kept asking for the action through the zone on
+  every one of its 300 Loiter ticks while the modelled LOITER held the
+  aircraft, so G8's hard-clean T_recover never came. Whether "cleared for
+  T_recover" in Loiter should judge the pilot's request (which nobody flies
+  while the autopilot holds) or the position is a question for the PI
+  (below); so are the labels of the noise and wind cells and the harness's
+  open-loop wind. None of it is tuned here.
+
+None of this is KPI-grade: the headless harness is a kinematic model, and
+the grant's KPI is measured on the hil topology (the Orin), which is not
+built yet. Reproduce: `python experiments/sweep_scenarios.py [--profile
+smoke|nightly] --out <file> --no-bundles`; the other rows patch
+`Shield(theta_horizon_s=...)` and `FSMConfig(onset_clear_s=...,
+x6_min_escape_mps=1e9)` around the same entry point.
+
 ## The gap, stated exactly
 
 The grant's Safety Shield repairs an unsafe action when the repair is small,
@@ -75,7 +369,7 @@ Related grant text this module follows:
 |---|---|---|---|
 | Normal | GUIDED | `pass` (the Shield's emitted action, i.e. the raw one when nothing is violated) | nothing enforced is violated |
 | Brake | GUIDED | `pass` (the repaired action) when the repair is trusted; `brake` (zero velocity) when it is not, or when a rule asks for a stop. Exception: `pass` when a stop is illegal here (`stop_illegal`) | the Shield is intervening |
-| Loiter | LOITER | `none` | the autopilot holds position |
+| Loiter | LOITER, flown as ArduCopter's BRAKE since 2026-10-08 (see "The FSM's LOITER is flown as ArduCopter's BRAKE") | `none` | the autopilot holds position |
 | RTL | RTL | `none` | the autopilot flies home |
 | Land | LAND | `none` | the autopilot lands where it is |
 
@@ -126,13 +420,14 @@ never presented as a contract term. One transition per tick at most.
 | X3 | Brake, Loiter → Land | a violated rule's effective action is land | LAND | extension, same reason |
 | X4 | Normal, Brake → Loiter | a violated rule's effective action is loiter | LOITER | extension: the DSL allows `loiter`; the diagram never says what it does |
 | X5 | RTL → [*] | `landed` during RTL without `home_reached` | – | extension: ArduPilot's RTL ends by landing at home |
-| X6 | Brake, Loiter → RTL | `stop_illegal` on every tick for ≥ T, and a hard rule violated on this tick | RTL | extension: p1 "trigger fail-safe when repair is unsafe". See "X6" below |
+| X6 | Brake, Loiter → RTL | `stop_illegal` on every tick for ≥ T, a hard rule violated on this tick, and (since 2026-10-08) the illegal depth not falling at `x6_min_escape_mps` over that T | RTL | extension: p1 "trigger fail-safe when repair is unsafe". See "X6" below |
+| X7 | Brake, Loiter → RTL | `stop_illegal` for ≥ T_recover, a hard rule violated on this tick, and the illegal depth GROWING by ≥ `x6_min_escape_mps` over the last T_recover (since 2026-10-08) | RTL | extension: a recovery losing ground to something the forecast cannot see |
 
 The order of checks inside each state is fixed, and it is the order the table
 is resolved in when two conditions hold at once. It follows the strongest
-response. **Brake:** direct land, direct RTL, X6, direct loiter, then G3,
-G2, G7. **Loiter:** direct land/RTL, then G4, G8, G5, X6. Recovery wins over
-the timeout when both hold on the same tick. **RTL:** G9, X5, G6, so a tick
+response. **Brake:** direct land, direct RTL, X6, X7, direct loiter, then G3,
+G2, G7. **Loiter:** direct land/RTL, then G4, G8, G5, X6, X7. Recovery wins
+over the timeout when both hold on the same tick. **RTL:** G9, X5, G6, so a tick
 that reports home together with an RTL failure is a finished RTL. In RTL and
 Land the pilot's proposals do not move the FSM. The autopilot is flying, and
 the grant draws no edge out of RTL for them.
@@ -220,6 +515,7 @@ stack and the FSM cannot disagree.
 | Term | Chosen reading | Why |
 |---|---|---|
 | "N-in-T" | counts hard-rule **onsets** (violated after a tick with none), not violated ticks. `event_mode: tick` is kept as a knob | At 10 Hz, counting ticks escalates any violation that lasts 0.3 s, so every sustained repair, such as sliding along a fence, would put the aircraft in LOITER. "3 in 5 s" reads as three separate violations, the thrash of a pilot fighting the Shield. The grant leaves the defaults to "stress-run data" (p7). The one case onsets cannot see, a position that stays illegal, is X6's |
+| an onset (since 2026-10-08) | a hard violation after a tick with none, at most one per `onset_clear_s` (1.0 s) counted: a rate limit, not a merge | a violation back within 1 s of the last counted one is the same one flickering at the 10 Hz monitor (GPS noise on a forecast skimming a ring), while a pilot who keeps re-violating still makes N onsets in T; (N - 1) x `onset_clear_s` must fit in T (validated), or G2 and G4 could never fire. See "N-in-T: at most one onset per second" |
 | "N-in-T persists" | N **new** onsets within T after entering Loiter (the window is cleared on entry) | otherwise the onsets that caused the Loiter fire G4 on the next tick |
 | window edges | inclusive: an onset exactly T old counts. Floating slack 1e-9 s | the more conservative reading; fifty additions of 0.1 s give 4.999999999999998 s |
 | "cleared for ≥ T_recover" | from the **first clean tick** | the later of the two possible starts, so recovery is never early |
@@ -371,11 +667,17 @@ delivered flight would ever exceed it. That is a check that cannot fail. With
 any horizon from 1 s up, almost every stub flight goes to LOITER as soon as a
 position operator fires. The grant may well intend the second outcome: its
 reference escalates "a deep head-on dive … rather than projected". But it
-would change what the KPI runs show. **Recommendation:** option 1. It is the
-grant's schema and the PI's reference metric, and it needs shield.py to
-report `magnitude_m` and `axis` per position operator (see Integration).
-Until then, any run that uses option 2 must state its h beside every trigger
-count. This is a question for the PI (below).
+would change what the KPI runs show. **Recommendation (2026-10-06, still
+in force):** option 1. It is the grant's schema and the PI's reference
+metric, and it needs shield.py to report `magnitude_m` and `axis` per
+position operator (see Integration; done 2026-10-07). Any run that uses
+option 2 must state its h beside every trigger count (`fsm.theta_basis` in
+metrics.json). This is a question for the PI (below).
+
+On 2026-10-08 a builder switched the default to option 2 at h = 0.1 s and
+called it the grant's basis; the review of 2026-10-09 reverted it ("Theta:
+two readings, one default" at the top has why and both readings'
+numbers).
 
 ### N-in-T and X6 on the same flights
 
@@ -423,6 +725,9 @@ home_reached, landed, note, stop_illegal)`
   false on a repaired one. A ClearanceEscape that re-checked clean is the
   exception: whether it is a recovery or an unconverged repair depends on
   exactly this flag, so unset is refused there.
+- `unsafe_depth_m` (since 2026-10-08): `Shield.unsafe_depth(state)`, metres
+  from legal, or None. X6's progress test and X7 read its trend; None is no
+  progress for X6 and never fires X7. Validated finite and >= 0.
 
 Inconsistent inputs raise: `clean` with an enforced violation, `repaired` /
 `blocked` with none, NaN anything.
@@ -436,8 +741,9 @@ fsm_state_after, transition, edge, edge_source (grant | extension), terminal,
 set_mode, setpoint, reason, outcome, governing_rule, risk_level, violations
 (sorted, each with effective_action / capped / resolved / kinematic),
 magnitude (with recovery_exempt), theta, theta_exceeded, n_in_t, n_threshold,
-window_s, cleared_s, cleared_hard_s, stop_illegal_s, flags (incl.
-stop_illegal), stop_withheld, note, fsm_config_hash`.
+window_s, cleared_s, cleared_hard_s, stop_illegal_s, unsafe_depth_m,
+x6_progress, x7_losing, flags (incl. stop_illegal), stop_withheld, note,
+fsm_config_hash`.
 
 `fsm_config_hash` is the full SHA-256 of the thresholds in force, over
 canonical float values, so a trigger count can be traced to the N / T / θ
@@ -459,6 +765,9 @@ escalation:            # grant symbols (N, T, T_recover) or the field names
   T_recover: 2.0
   loiter_timeout_s: 30.0   # ours; null disables
   event_mode: onset        # ours; or "tick"
+  onset_clear_s: 1.0       # ours (2026-10-09); onset rate limit; (N - 1) x it <= T
+  x6_min_escape_mps: 0.1   # ours (2026-10-08); X6's progress and X7's losing rate
+  x7_min_rise_m: 0.5       # ours (2026-10-09); X7's minimum fitted rise
   profiles:
     night:
       t_recover_s: 3.0     # either spelling, in either layer
@@ -752,6 +1061,15 @@ returns `None`, not 0 and not 1.
    the proxy measured from the clamped command, the delivered flights never
    escalate at h = 0.1 s, escalate on 5 % of position repairs at 0.5 s, and
    on 96 % at 1 s (ROS runs: first over θ between 0.35 s and 0.80 s).
+   The default is each operator's forecast depth (`magnitude_m`, the p5
+   audit example's field, the reference's metric). The alternative read
+   literally from p4, ‖Δaction‖ over one 0.1 s control period, is
+   selectable: under 4-5 m/s caps it cannot exceed 2.0 m, so the cap would
+   never fire on today's policies; it scores the library 0.903 against the
+   default's 0.823, and lets `wind-beyond-authority` into its zone
+   (3.0-5.6 m) where the default holds it outside. Which does the grant
+   intend? (A third reading, depth into the AUTHORED polygon with no margin
+   as the reference measures it, has not been measured.)
 2. **Soft rules.** Is "enforced up to brake, never a mode change" what the
    grant means by soft?
 3. **N-in-T.** Onsets or ticks? (The grant lists this as open, p7.)
@@ -775,6 +1093,27 @@ returns `None`, not 0 and not 1.
    converge and the Shield finds a clean heading by search (ClearanceEscape)
    although a stop was legal, is that "no operator converges" (stop and
    escalate, as this module reads it) or a converged repair?
+10. **LOITER on ArduCopter.** The FSM's LOITER is flown as ArduCopter's BRAKE
+    (LOITER descends with no pilot input; measured in SITL, 15 m to the ground
+    in 6.7 s). Is BRAKE acceptable as "Loiter" for the KPI and in Mission
+    Planner, or should the companion hold the throttle with RC overrides?
+11. **N-in-T and noise.** Is "at most one counted onset per second" the
+    right reading of a "violation" for N-in-T (3 in 5 s) at a 10 Hz monitor?
+    It keeps a skimming GPS-noise flicker to one onset and still escalates a
+    pilot who re-violates every 0.3-0.9 s; 0 s (every return counts) adds 7
+    false triggers on the library.
+12. **X6 and X7 (ours).** X6 now leaves a recovery alone while its illegal
+    depth is shown to fall at 0.1 m/s or faster (least-squares over T, two
+    standard errors), and X7 sends home one whose depth is shown to grow
+    (over T_recover, two standard errors, at least 0.5 m). Neither is in the
+    grant. Are they acceptable readings of "trigger fail-safe when repair is
+    unsafe", and is 0.1 m/s the right line?
+13. **"Cleared" in Loiter.** In the harness, 16 of the library's 33 false
+    triggers reach RTL by the 30 s Loiter timeout because the pilot keeps
+    asking for the violating action while the autopilot holds the aircraft,
+    so G8 never sees T_recover of hard-clean ticks. Should Loiter's
+    "cleared for T_recover" judge the pilot's request (as now) or the
+    position?
 
 ## Not done
 
@@ -798,3 +1137,18 @@ returns `None`, not 0 and not 1.
 - The X6 measurement on delivered flights depends on reconstructing
   `stop_illegal` offline; the plain replay cannot see it until the node logs
   the flag.
+- (2026-10-09) The BRAKE hold is measured in ArduCopter SITL only; no flight
+  on the Project AirSim rail has used it yet. `sitl/run_sitl_demo.py` (the
+  pymavlink rail, another unit's file) still sends ArduCopter's LOITER and
+  passes no `unsafe_depth_m`, so on that rail X6 has no progress test and X7
+  never fires.
+- X6 and X7 fit a line through the depth samples and assume the noise is
+  independent from tick to tick. Noise correlated over seconds (GPS drift)
+  makes the standard error too small; no test covers that, and X6's
+  progress test then also errs towards "working".
+- Theta's basis waits for the PI (question 1). The tables above give both
+  readings' numbers on the replayed flight and the three profiles;
+  switching is one argument (`Shield(theta_horizon_s=0.1)`,
+  `--theta-horizon-s 0.1` on the ROS node and the Project AirSim node).
+- None of the configurations measured reaches 0.99, or beats the
+  never-trigger null on the library or the nightly profile.

@@ -61,6 +61,15 @@ scenarios:
       active). It must never enter the ring, never exceed 12 m/s, and still
       get past. One face only: the zone is not square (78 x 80.6 m), so a
       rotation would move the line relative to the face it meets.
+
+      40.8 m at 12 m/s was a known failure from 2026-10-07 to 2026-10-12
+      (the edge flicker below). Since the FSM counts at most one onset per
+      second (onset limit, 2026-10-09) it passes on the shipped default, in
+      the library and on all three nightly seeds, and on either theta
+      reading; with the onset limit at 0 s it fails again (measured
+      2026-10-11 and 2026-10-12). Its pin was removed on 2026-10-12. The
+      limit is the PI's question 11 (docs/DESIGN-escalation-fsm.md,
+      Questions for the PI): if the PI picks 0 s, the pin comes back.
     mission:
       start_pose: { x: -70.0, y: "$pass_y", up: 15.0 }
       target: { x: 70.0, y: "$pass_y", up: 15.0 }
@@ -90,8 +99,6 @@ scenarios:
           it is still loitering at the end. Never inside the polygon, P0
           clean; the goal is not reached, and where RTL fires it is a false
           trigger. The other eight cells pass with the FSM on.
-      - params: { pass_y: 40.8, ask_mps: 12 }
-        description: *edgeflicker
       - params: { pass_y: 40.8, ask_mps: 8 }
         description: *edgeflicker
       - params: { pass_y: 41.1, ask_mps: 8 }

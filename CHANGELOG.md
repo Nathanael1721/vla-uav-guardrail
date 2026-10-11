@@ -16,6 +16,134 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-12 — the 8 Oct follow's defects fixed in replay, the compiler and harness conform, gRPC over mTLS, the Orin defined for JetPack 6.2
+
+Work of 9-12 Oct, in six packages and four integration packages, each
+challenged by a reviewer who broke its tests on purpose, then fixed, and one
+re-fly of the perception node with all of it. The Jetson Orin and the drone
+are not available, so no hil or flight run exists.
+
+#### Flown
+- **The perception node re-flew the 8 Oct red-car follow, 120 s, with these changes**
+  (`demo/out/pas_ap_20261012_033329`, Project AirSim + ArduPilot SITL over
+  pymavlink, none of the grant's topologies, not KPI-grade): 1098 ticks at
+  9.14 Hz, detector 4.26 Hz, 43 Shield interventions (yaw caps and building
+  clearance), 0 escape ticks, 0 GeoFence breaches, ArduPilot real-time factor
+  0.962, EKF p95 0.62 m. The FSM went Normal -> Brake 3 times and back each
+  time; it never reached Loiter, and the altitude stayed at 7.99-8.15 m (on
+  8 Oct, LOITER spells took it down to 0.36 m).
+- What this run does not show: the car was tracked on 129 ticks (269 on
+  8 Oct) and never came nearer than 16.5 m, so the 5 m stand-off ring was
+  never approached. Its 0 escapes do not test the range-0 fix, and the BRAKE
+  hold was never commanded in flight; both rest on the replay and the SITL
+  probe above.
+
+#### Fixed
+- **The five P0 escapes of the 8 Oct follow** (`docs/FINDING-the-escape-that-stayed-inside-the-ring.md`).
+  On every escape tick the perception node had placed the car under the
+  aircraft (a depth return shorter than the camera's height became a range
+  of 0), and at range 0 the stand-off check saw no action opening the range.
+  The check now reads horizontal speed as the opening speed at range 0,
+  `StandoffRecover` leaves along the commanded heading, and the node refuses
+  depth returns the camera geometry rules out. A replay of the 1101 logged
+  ticks gives 0 escapes (the old Shield reproduces the 5).
+- **Over-escalation**: `StandoffHold.magnitude_m` is the forecast's closest
+  approach inside the ring; on the replayed flight Brake -> Loiter falls from
+  8 to 2. X6 leaves a recovery alone while the illegal depth is shown to
+  fall (least-squares slope), a new edge X7 sends a recovery that loses
+  ground to RTL, and N-in-T counts at most one onset per second.
+- **The FSM's Loiter is flown as ArduCopter BRAKE** on every rail
+  (`--hold-mode LOITER` keeps the literal mode): with no RC input, LOITER fell
+  from 15 m to the ground in 6.7 s in SITL while BRAKE held 14.97-15.01 m.
+  Mode requests are recorded in the FSM's and in ArduCopter's words, so a
+  pilot's takeover after a hold is no longer read as the node's own.
+- `demo/run_demo.py` died on its first shielded tick (it assigned the
+  read-only `AuditLogger.policy_hash` since 26 Aug), and `--dynamic`
+  hot-applied a fixed polygon fence, refused since 7 Oct; it now hot-applies
+  the zone as a `dynamic_nfz`.
+- The ArduPilot GeoFence export no longer uploads a zone that a clock can
+  switch off (a `valid_time` window or a `time_window_switch`).
+- `EpisodeRunner` no longer hangs after a tick raises.
+- `scripts/run_pas_ardupilot.ps1 -Step check` reported mavlink-router as
+  missing and the MAVProxy fallback as in use, although the router built into
+  `~/.local/bin` is what the rail starts; it now looks there too.
+
+#### Added
+- **The three hot-apply rule types compile** (templates for `dynamic_nfz`,
+  `time_window_switch`, `corridor_swap`, `circle_fence`); a policy file with
+  a switch or a swap flies. A file declaring a `dynamic_nfz` is still held
+  for flight (`models.FLIGHT_HELD_TYPES`): the rails count it now, but offline
+  analysis and the BC pilots' features read polygon fences only.
+- **Cost-map adapter** (`compiler.rasterise_cost_map`,
+  `docs/DESIGN-cost-map-adapter.md`) with the grant's conventions; 0 missed
+  under corridor_outside = 50 on 24 shipped policies; no planner reads it.
+  Replay bundles carry each generation's map; `--cost-map` on both SITL rails
+  and `demo/real_vla_demo.py`.
+- **Both hashes in every bundle** (ours and the PI reference's); a forged
+  reference entry is refused 29/29; no stored hash moved.
+- **The stress harness's gRPC control plane over mutual TLS**
+  (`guardrail/harness_service.py`, `guardrail/protos/harness.proto`,
+  `tools/harness_client.py`, `docs/DESIGN-harness-grpc.md`): StartEpisode,
+  HotApply, EmitEvent, GetStatus, EndEpisode on the headless harness, with a
+  lab root CA meant to be shared with SROS 2 (not yet enabled).
+- **One zone-dwell count on every rail** (`guardrail.replay.zone_dwell`).
+- **The Orin deployment made concrete for JetPack 6.2** (Jetson Linux
+  36.4.3): ROS 2 Jazzy in an Ubuntu 24.04 container so rclpy runs on Python
+  3.12 (the grant asks 3.11+), the VLA image on an r36.4 base,
+  bitsandbytes built for sm_87, and `deploy/orin/first_boot_check.sh` for the
+  person setting the Orin up. Nothing has been built or run on an Orin.
+- `tests/test_tracker_content.py` checks the local tracker's content when it
+  is present.
+- The perception node logs, per tick, the depth range inside the box and the
+  rule that refused it (`subject_depth`, `depth_check`).
+
+#### Found
+- On the re-fly, 43 depth returns were refused and the car ranged by its box
+  width instead, at 56-156 m. On the 31 of them with a depth-ranged tick
+  within 5 ticks, the two ranges disagree by up to 122 m (the width range
+  farther on 22, nearer on 9). The log kept neither the refused depth nor the
+  rule that refused it, so whether the refusals were right cannot be told
+  from this run; the next flight logs both. The depth image is also
+  quantised to 1 m (the simulator does not honour the float encoding asked
+  for).
+
+#### Changed
+- The public progress site is re-curated to 12 Oct (Gate G1 with its numbers
+  and frame, and this entry's progress); README and `docs/index.md` scope the P0-escape figure to the 41
+  mid-evaluation flights and state the 8 Oct follow's 5 escapes.
+- `docs/data/scenario_sweep.json` is republished on today's FSM: 152 pass,
+  20 tracked, 23 known failures, 0 fail; P0 escape 0.0 over 194 Shield-on
+  episodes; fail-safe trigger correctness 0.823 (33 false, 0 missed), below
+  the never-trigger null 0.968 and the grant's 0.99.
+- `policies/policy_dsl.schema.json` regenerated: only the hot-apply types'
+  descriptions changed.
+
+#### Retracted
+- The escape repair did not leave the ring in one tick (8 Oct entry): on all
+  five ticks the node had placed the subject at the aircraft's own position
+  (range 0), so no action could open the range.
+- Brake to Loiter seven times (8 Oct entry): the log has eight Brake -> Loiter
+  edges, five on stand-off repairs and three where no operator converged.
+- Dev topology on one desktop (8 Oct entry), for the follow run: it commanded
+  ArduPilot over pymavlink, which is none of the grant's topologies.
+- The published library sweep's fail-safe correctness of 0.747 was measured
+  on the 10451bc FSM; republished on today's FSM it is 0.823.
+
+#### Tests
+- New: `tests/test_flight_pas_ap_20261008.py` (replays the 8 Oct log on both
+  theta readings; SKIP without the log), `tests/test_harness_service.py`,
+  `tests/test_tracker_content.py`, and cases in `test_shield`, `test_fsm`,
+  `test_csp`, `test_sweep`, `test_sitl_rails`, `test_replay`,
+  `test_pas_ardupilot` and others. Each package's new tests were shown
+  failing on the code before its fix, and the reviewers' deliberate defects
+  were caught.
+- Full suite on Python 3.10: 2291 of 2296 over 74 test files. On 3.11 the
+  guardrail package's tests pass (2254 of 2294 overall: demo tests that need
+  cv2, Pillow or projectairsim cannot run there, and five skips are visible).
+  On 3.10 the five not passing are four visible skips (FastAPI is not
+  installed in that environment; one sweep test) and the ITRI deck-pack
+  check, which passes once the deck is rebuilt from a clean tree.
+
 ### 2026-10-08 — Gate G1 passes: ArduPilot flies Project AirSim, Mission Planner sees it
 
 The first runs of the perception rail the PI asked about on 6 Oct: ArduPilot

@@ -1,0 +1,5 @@
+{#- What the switch does to the rule it names, at the CSP's clock. The
+    target's state is computed the way the Shield computes it (switches and
+    swaps applied, no clock = in force unless a switch that is always on holds
+    it off; compiler._RuleClock). -#}
+holds {{ target_kind }} '{{ target }}' {{ "on" if active else "off" }} while in force; {% if target_state is none %}'{{ target }}' is not a rule of this policy{% elif target_state %}'{{ target }}' is in force within the lookahead and is in this CSP{% else %}'{{ target }}' is not in force at any time in the lookahead, so it is left out of this CSP{% endif %}{% if time_fact %}; {{ time_fact }}{% endif %}

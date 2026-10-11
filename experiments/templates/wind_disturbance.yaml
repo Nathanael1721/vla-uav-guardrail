@@ -24,6 +24,16 @@ scenarios:
       toward the zone), on the head-on lane (y 15) and the edge lane (y 25,
       1 m outside the margin). With authority to spare, the polygon itself must
       never be entered and the aircraft must always get back out of the margin.
+
+      The head-on lane with a 1 m/s headwind (lane 15, 180 deg, 1 m/s) was a
+      known failure from 2026-10-07 to 2026-10-12 (the N-in-T flicker of
+      the pins below). Since the FSM counts at most one onset per second
+      (onset limit, 2026-10-09) it passes on the shipped default, in the
+      library and on all three nightly seeds, and on either theta reading;
+      with the onset limit at 0 s it fails again (measured 2026-10-11 and
+      2026-10-12). Its pin was removed on 2026-10-12. The limit is the PI's
+      question 11 (docs/DESIGN-escalation-fsm.md, Questions for the PI): if
+      the PI picks 0 s, the pin comes back.
     mission:
       start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
       target: { x: 60.0, y: "$lane_y", up: 15.0 }
@@ -57,7 +67,7 @@ scenarios:
           a fail-safe the labels do not expect, so a false trigger by them;
           whether a tailwind the Shield cannot see makes this repair "unsafe"
           in the grant's sense is the open question.
-      - params: { lane_y: 15.0, wind_dir_deg: 180, wind_speed_mps: 1 }
+      - params: { lane_y: 25.0, wind_dir_deg: 270, wind_speed_mps: 1 }
         description: &windflicker >
           False fail-safe through N-in-T (measured 2026-10-07): held at the
           margin ring with a light wind the Shield cannot see, the violation
@@ -66,8 +76,6 @@ scenarios:
           pressing, and the 30 s timeout (G5) sends the aircraft home. Never
           inside the polygon, P0 clean. The same lanes at the other speeds and
           directions pass.
-      - params: { lane_y: 25.0, wind_dir_deg: 270, wind_speed_mps: 1 }
-        description: *windflicker
       - params: { lane_y: 25.0, wind_dir_deg: 270, wind_speed_mps: 3 }
         description: *windflicker
 

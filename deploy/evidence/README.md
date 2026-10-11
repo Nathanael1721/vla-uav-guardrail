@@ -13,6 +13,10 @@ by hand.
 | `dev/vla_rate_<backend>.json` | `python tools/vla_backend_table.py measure --backend <b> --topology dev` | R1 inference rate on the desktop. |
 | `hil/shield_tick_profile.json` | the profile on the Orin (`docker compose ... run --rm profile`), copied from `incoming/hil/` | **Not yet measured.** The number the grant's "Orin profiling" asks for. |
 | `hil/vla_rate_<backend>.json` | `docker compose ... --profile vla-bench run --rm vla-bench` on the Orin, copied from `incoming/hil/` | **Not yet measured.** |
+| `hil/first_boot_check.txt` | `bash deploy/orin/first_boot_check.sh` on the Orin (runbook step 1) | **Not yet run.** The Orin as set up: L4T release, board, JetPack's CUDA / cuDNN / TensorRT, power modes, ROS on the host, Docker and its runtimes, with a verdict per expectation. |
+| `hil/companion_versions.txt` | `docker run --rm vlaguard/companion:jazzy versions` (step 8) | **Not yet run.** The ROS 2 distribution, rclpy's Python and the MAVROS build in the image that flew. |
+| `hil/gpu_check_base.json`, `hil/gpu_check.json` | `deploy/orin/gpu_check.py` in the VLA base and in the built VLA image (step 8) | **Not yet run.** Whether the GPU stack computes on the Orin, 4-bit kernels included. |
+| `hil/power_<date>.txt`, `hil/tegrastats_<date>.log` | `nvpmodel -q`, `jetson_clocks --show` and `tegrastats` on the Orin (step 4) | **Not yet run.** The power mode and locked clocks of each timing session, and the temperatures during it. |
 | `incoming/` | the Orin's containers (`VLAGUARD_EVIDENCE_OUT`) | Git-ignored landing folder, so a measurement on the Orin never modifies a tracked file. Reviewed files are moved to `<topology>/` on the desktop and committed. |
 | `vla_backend_table.json`, `.md` | `python tools/vla_backend_table.py table` | The backend comparison table: what is on disk, under which conditions, and which cells wait for the Orin. |
 

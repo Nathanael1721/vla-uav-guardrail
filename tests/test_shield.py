@@ -369,6 +369,279 @@ def test_a_lost_subject_must_clear_the_stale_position():
     assert not sh.filter(State(x=24.0, y=0.0, up=9.0), Action4D(vx=4.0)).touched
 
 
+# The five P0 escape ticks of the 8 Oct red-car follow (demo/out/
+# pas_ap_20261008_224440, flight_log.jsonl): the logged state and raw action,
+# and the subject where the perception node had put it - exactly under the
+# aircraft (a depth return nearer than the camera's height clamped to a
+# horizontal range of 0; the log rounds it to 1 cm). Policy follow-car-
+# citylife: standoff-any 5 m, hard P0; kin-caps 5 m/s. Tick 1100 also had a
+# clearance repair; the occupancy map it needs is not in the repository.
+FLIGHT_20261008_ESCAPES = (
+    # tick, x, y, up, yaw_deg, raw vx, raw vy, raw vz_up, raw yaw_rate
+    (857, 36.847, -48.38, 7.962, -99.78, -0.2329274635260671, -1.3506142592864019,
+     0.022800000000000153, 0.024335576298841224),
+    (927, 36.78, -49.618, 7.656, -122.72, -1.351323832833803, -2.1032865154849554,
+     0.20640000000000017, 0.6132928977960882),
+    (928, 36.758, -49.655, 7.683, -122.28, -1.3350221786371677, -2.113671225605429,
+     0.1902000000000001, 0.6132928977960882),
+    (999, 35.956, -50.251, 7.745, -136.49, -1.6663927657452855, -1.5819485365379262,
+     0.15299999999999994, 0.6522187346889204),
+    (1100, 34.854, -51.237, 7.986, -112.77, -1.1267271260310219, -2.684560428475885,
+     0.00840000000000014, 0.10296043387283836),
+)
+
+
+def _follow_car_policy():
+    from guardrail.models import Policy
+    return Policy.model_validate({"policy_id": "follow-car-citylife", "version": "0.1.0",
+                                  "constraints": [
+        {"id": "standoff-pedestrian", "type": "subject_standoff", "subject_class": "pedestrian",
+         "min_range_m": 10.0, "soft_margin_m": 2.0, "constraint_type": "hard",
+         "priority": "P0", "violation_action": "repair"},
+        {"id": "standoff-any", "type": "subject_standoff", "subject_class": "*",
+         "min_range_m": 5.0, "soft_margin_m": 1.0, "constraint_type": "hard",
+         "priority": "P0", "violation_action": "repair"},
+        {"id": "alt-band", "type": "altitude_envelope", "alt_min_m": 6.0, "alt_max_m": 14.0,
+         "constraint_type": "hard", "priority": "P0", "violation_action": "repair"},
+        {"id": "kin-caps", "type": "kinematic_envelope", "speed_max_mps": 5.0,
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0, "constraint_type": "hard",
+         "priority": "P1", "violation_action": "repair"}]})
+
+
+def test_the_8_oct_escapes_with_the_subject_directly_below_are_gone():
+    """REGRESSION (pas_ap_20261008_224440, 5 P0 escape ticks). With the
+    subject at range 0 the check's "opening" was the action's component along
+    a zero vector - 0 for every action - so nothing could pass; the repair
+    returned the action untouched ("no defined line"); the P0 guard flew a
+    best-effort ClearanceEscape with standoff-any still violated. On the old
+    shield.py all five ticks emit standoff-any. From range 0 every horizontal
+    motion opens the range at its full speed, which is what the check now
+    reads."""
+    sh = Shield(_follow_car_policy(), escalation=False)
+    for tick, x, y, up, yaw, vx, vy, vz, wz in FLIGHT_20261008_ESCAPES:
+        st = State(x=x, y=y, up=up, yaw_deg=yaw)
+        sh.set_subject(x, y, "vehicle")                  # range 0, as the node had it
+        d = sh.filter(st, Action4D(vx=vx, vy=vy, vz_up=vz, yaw_rate=wz))
+        p0 = [v.rule_id for v in d.emitted_violations if v.rule_id != "kin-caps"]
+        assert not p0, f"tick {tick}: P0 still flown: {p0} ({d.repairs})"
+        assert math.hypot(d.emitted.vx, d.emitted.vy) > 0.1, f"tick {tick}: not leaving"
+
+
+def test_a_hover_directly_over_the_subject_backs_away_from_the_heading():
+    """No commanded motion and no line to the subject: StandoffRecover backs
+    off along the reverse of the heading (which brings the subject back in
+    front of a forward camera) at the ring's recovery speed, flagged as a
+    recovery. A hover there is still a violation - stopping keeps the
+    aircraft at the centre of the ring - so the check does flag it."""
+    sh = Shield(_follow_car_policy(), escalation=False)
+    st = State(x=10.0, y=-5.0, up=8.0, yaw_deg=90.0)        # facing East (+y)
+    sh.set_subject(10.0, -5.0, "vehicle")
+    assert [v.rule_id for v in sh._check(st, Action4D())] == ["standoff-any"]
+    d = sh.filter(st, Action4D())
+    rec = [r for r in d.repairs if r.operator == "StandoffRecover"]
+    assert rec and rec[0].recovery and rec[0].axis == "lateral", d.repairs
+    assert abs(rec[0].magnitude_m - 5.0) < 1e-9
+    assert d.emitted.vy < -0.49 and abs(d.emitted.vx) < 1e-9, d.emitted   # backing West
+    assert not d.emitted_violations, d.emitted_violations
+    # Any motion at more than 0.1 m/s already opens the range from 0 and
+    # passes. Once something else opens the repair loop (an unrelated yaw
+    # breach, as in the escape-floor tests below), a slow drift is kept in its
+    # direction and floored at the recovery speed (5 m ring / 5 s lookahead =
+    # 1.0 m/s), never lowered.
+    assert not sh.filter(st, Action4D(vx=0.2)).violations
+    d = sh.filter(st, Action4D(vx=0.2, yaw_rate=YAW_BREACH))
+    assert abs(d.emitted.vx - 1.0) < 1e-9 and abs(d.emitted.vy) < 1e-9, d.emitted
+    d = sh.filter(st, Action4D(vx=3.0, yaw_rate=YAW_BREACH))
+    assert abs(d.emitted.vx - 3.0) < 1e-9, d.emitted
+
+
+def test_a_stand_off_holds_magnitude_is_a_depth_the_ring_can_have():
+    """REGRESSION (8 Oct flight: StandoffHold reported 8.1-11.0 m into a 5 m
+    ring). It extrapolated the range in a straight line THROUGH the subject:
+    ring - (d - closing x lookahead). The deepest a forecast can go into a
+    ring is its radius; the field is now the forecast's closest pose. Tick
+    201 of the flight: 8.3 m out, closing at 2.27 m/s with a tangential
+    component, closest forecast pose 4.2 m from the car - 0.8 m deep (the
+    old code said 8.08 m)."""
+    sh = Shield(_follow_car_policy(), escalation=False)
+    st = State(x=35.11, y=-19.674, up=8.001, yaw_deg=2.14)
+    sh.set_subject(42.38, -23.63, "vehicle")
+    a = Action4D(vx=2.639389733893821, vy=0.09851453808726945, vz_up=-0.0006,
+                 yaw_rate=-0.6427205700542464)
+    d = sh.filter(st, a)
+    hold = [r for r in d.repairs if r.operator == "StandoffHold"]
+    assert hold, d.repairs
+    closest = min(math.hypot(p.x - 42.38, p.y + 23.63) for _, p in sh.forecast(st, a))
+    assert abs(closest - 4.22) < 0.01, closest
+    assert abs(hold[0].magnitude_m - (5.0 - closest)) < 1e-9, (hold[0], closest)
+    assert hold[0].magnitude_m < 2.0, "the old code reported 8.08 m here"
+
+
+def test_unsafe_depth_measures_how_far_the_position_is_from_legal():
+    """The escalation FSM's X6 / X7 read this trend. Each hard rule a stop
+    here breaks, measured its own way and summed; 0 where a stop is legal;
+    soft and monitor_only rules do not count."""
+    from guardrail.models import Policy
+    pol = Policy.model_validate({"policy_id": "depth", "constraints": [
+        {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+         "vertices": [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 20},
+                      {"x": 0, "y": 20}]},
+        {"id": "band", "type": "altitude_envelope", "alt_min_m": 10.0, "alt_max_m": 30.0},
+        {"id": "soft-band", "type": "altitude_envelope", "alt_min_m": 12.0,
+         "alt_max_m": 30.0, "constraint_type": "soft", "priority": "P2"},
+        {"id": "ring", "type": "subject_standoff", "subject_class": "*",
+         "min_range_m": 5.0}]})
+    sh = Shield(pol)
+    assert sh.unsafe_depth(State(x=-30, y=-30, up=15)) == 0.0
+    assert abs(sh.unsafe_depth(State(x=-30, y=-30, up=7)) - 3.0) < 1e-9     # 3 m under
+    inside = sh.unsafe_depth(State(x=10, y=4, up=15))                          # ring at -1
+    assert abs(inside - 5.0) < 1e-6, inside
+    sh.set_subject(-30.0, -28.0, "vehicle")
+    both = sh.unsafe_depth(State(x=-30, y=-30, up=7))                          # 3 m + 3 m
+    assert abs(both - 6.0) < 1e-9, both
+
+
+def test_applied_caps_leave_out_only_the_soft_caps_the_chain_gave_up():
+    """REVIEW (2026-10-09). Shield.applied_caps is what a rail's FSM measures
+    theta's |dv| from (one-period reading). A first version left out EVERY
+    soft speed cap once any soft rule was given up (SoftRelax). Here a soft
+    P2 band is given up and a soft P1 speed cap is still clamped to (4 -> 2
+    m/s) while a zone is slid along: that version handed the FSM no caps, and
+    on the one-period reading the FSM refused the tick ("needs the policy's
+    caps") - a fault, LOITER, nothing streamed. Only the soft rules the chain
+    actually gave up are left out now; a soft P2 speed cap given up with the
+    band is."""
+    from guardrail.models import Policy
+
+    def pol(speed_prio):
+        return Policy.model_validate({"policy_id": "soft", "constraints": [
+            {"id": "hard-band", "type": "altitude_envelope", "alt_min_m": 0,
+             "alt_max_m": 10},
+            {"id": "soft-high", "type": "altitude_envelope", "alt_min_m": 20,
+             "alt_max_m": 30, "constraint_type": "soft", "priority": "P2"},
+            {"id": "soft-speed", "type": "kinematic_envelope", "speed_max_mps": 2.0,
+             "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0,
+             "constraint_type": "soft", "priority": speed_prio},
+            {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+             "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7}, {"x": 23, "y": 23},
+                          {"x": 7, "y": 23}]}]})
+    st, fast = State(x=0, y=15, up=8), Action4D(vx=4.0)
+    kept = Shield(pol("P1"), theta_horizon_s=0.1)
+    d = kept.filter(st, fast)
+    assert d.relaxed == ["soft-high"], d.relaxed
+    assert {"SpeedClamp", "GeofenceSlide", "SoftRelax"} <= {r.operator for r in d.repairs}
+    assert kept.applied_caps.to_dict() == {"speed_max_mps": 2.0, "climb_rate_max_mps": 2.0}
+    assert d.fsm_fault is None, d.fsm_fault
+    given = Shield(pol("P2"), theta_horizon_s=0.1)
+    d = given.filter(st, fast)
+    assert "soft-speed" in d.relaxed and "SpeedClamp" not in {r.operator for r in d.repairs}
+    assert given.applied_caps is None, given.applied_caps
+    assert d.fsm_fault is None, d.fsm_fault
+
+
+def test_unsafe_depth_off_a_corridor_is_the_excess_over_its_half_width():
+    """A corridor's term of Shield.unsafe_depth (review 2026-10-09: dropping
+    it passed every test): the lateral excess over the half-width, plus the
+    altitude error outside its band."""
+    from guardrail.models import Policy
+    sh = Shield(Policy.model_validate({"policy_id": "c", "constraints": [
+        {"id": "lane", "type": "corridor", "width_m": 10,
+         "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
+         "altitude_floor_m": 5, "altitude_ceiling_m": 30}]}))
+    assert sh.unsafe_depth(State(x=0, y=4.0, up=10)) == 0.0
+    assert abs(sh.unsafe_depth(State(x=0, y=8.0, up=10)) - 3.0) < 1e-9
+    assert abs(sh.unsafe_depth(State(x=0, y=-9.5, up=10)) - 4.5) < 1e-9
+    assert abs(sh.unsafe_depth(State(x=0, y=8.0, up=3)) - 5.0) < 1e-9
+
+
+def test_a_best_effort_recovery_never_deepens_the_ring_it_is_inside():
+    """REGRESSION (2026-10-08). Inside a zone 1.5 m from its north face and
+    inside a 10 m stand-off ring whose subject is 5.5 m further north: the
+    zone's exit and the ring's exit point opposite ways, nothing re-checks
+    clean, a stop is illegal, and the Shield flies its best effort. The old
+    shield.py ranked that best effort by clearance (none mapped) and then by
+    the commanded heading, so a pilot asking to go north got 4 m/s north:
+    straight at the subject whose P0 ring it was already inside. The best
+    effort is now chosen among headings that go deeper into neither, here
+    along the zone's face."""
+    from guardrail.models import Policy
+    pol = Policy.model_validate({"policy_id": "conflict", "constraints": [
+        {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+         "vertices": [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 20},
+                      {"x": 0, "y": 20}]},
+        {"id": "ring", "type": "subject_standoff", "subject_class": "*",
+         "min_range_m": 10.0},
+        {"id": "kin", "type": "kinematic_envelope", "speed_max_mps": 4.0,
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
+    sh = Shield(pol, escalation=False)
+    st = State(x=18.5, y=10.0, up=10.0)          # x North: the zone's north face is x = 20
+    sh.set_subject(24.0, 10.0, "vehicle")         # 5.5 m north, inside the 10 m ring
+    d = sh.filter(st, Action4D(vx=2.0))
+    assert any(r.operator == "ClearanceEscape" for r in d.repairs), d.repairs
+    assert d.emitted_violations, "a clean answer exists: the test proves nothing"
+    closing = d.emitted.vx                        # the subject is due North
+    assert closing <= 1e-9, f"best effort closes on the subject at {closing:.2f} m/s"
+    assert d.emitted.vx >= -1e-9, "best effort heads deeper into the zone"
+    assert math.hypot(d.emitted.vx, d.emitted.vy) > 1.0, d.emitted   # still moving
+
+
+_SQ20 = [{"x": 0, "y": 0}, {"x": 20, "y": 0}, {"x": 20, "y": 20}, {"x": 0, "y": 20}]
+
+
+def test_a_best_effort_recovery_never_heads_deeper_into_the_zone_it_is_inside():
+    """The zone half of the rule above (review 2026-10-09: removing the zone
+    term of _deepens passed every test, because the commanded heading there
+    already pointed out of the zone). Same zone and ring, but the pilot asks
+    to go SOUTH, deeper into the zone and away from the subject. Ranked by
+    the ring and the commanded heading alone, the best effort was due south
+    at 4 m/s; it now slides along the zone's face."""
+    from guardrail.models import Policy
+    pol = Policy.model_validate({"policy_id": "conflict", "constraints": [
+        {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0, "vertices": _SQ20},
+        {"id": "ring", "type": "subject_standoff", "subject_class": "*",
+         "min_range_m": 10.0},
+        {"id": "kin", "type": "kinematic_envelope", "speed_max_mps": 4.0,
+         "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}]})
+    st = State(x=18.5, y=10.0, up=10.0)          # the zone's north face is x = 20
+    for raw in (Action4D(vx=-2.0), Action4D(vx=-3.0, vy=-1.0), Action4D(vx=-2.0, vy=0.5)):
+        sh = Shield(pol, escalation=False)
+        sh.set_subject(24.0, 10.0, "vehicle")
+        d = sh.filter(st, raw)
+        assert d.repairs[-1].operator == "ClearanceEscape", d.repairs
+        assert d.emitted_violations, "a clean answer exists: the test proves nothing"
+        # push-out of the north face is +x: no component into the zone
+        assert d.emitted.vx >= -1e-9, (raw, d.emitted)
+        assert math.hypot(d.emitted.vx, d.emitted.vy) > 1.0, d.emitted
+
+
+def test_deepens_counts_hard_enforced_rules_and_a_moving_zone_relative_to_it():
+    """_deepens, rule by rule: a hard zone the aircraft is inside counts a
+    heading into it; a monitor_only or soft zone does not (the rescue must
+    not be steered by a rule it may break); a zone moving north at 3 m/s is
+    entered by flying north at 2 m/s (1 m/s south relative to it) and left
+    at 4 m/s."""
+    from guardrail.models import Policy
+
+    def zone(**kw):
+        z = {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0, "vertices": _SQ20}
+        z.update(kw)
+        return Policy.model_validate({"policy_id": "z", "constraints": [z]})
+    st = State(x=18.5, y=10.0, up=10.0)
+    hard = Shield(zone(), escalation=False)
+    assert [hard._deepens(st, Action4D(vx=v)) for v in (-2.0, 0.0, 2.0)] == [1, 0, 0]
+    assert [hard._deepens(st, Action4D(vy=v)) for v in (-2.0, 2.0)] == [0, 0]
+    for kw in ({"violation_action": "monitor_only"},
+               {"constraint_type": "soft", "priority": "P2"}):
+        sh = Shield(zone(**kw), escalation=False)
+        assert sh._deepens(st, Action4D(vx=-2.0)) == 0, kw
+    moving = Shield(Policy.model_validate({"policy_id": "mv", "constraints": [
+        {"id": "dyn", "type": "dynamic_nfz", "margin_m": 1.0, "vertices": _SQ20,
+         "motion": {"vx_mps": 3.0}}]}), escalation=False)
+    assert [moving._deepens(st, Action4D(vx=v)) for v in (-2.0, 2.0, 4.0)] == [1, 1, 0]
+    # Not inside: nothing to deepen.
+    assert hard._deepens(State(x=-30.0, y=-30.0, up=10.0), Action4D(vx=4.0)) == 0
+
+
 
 
 
@@ -756,18 +1029,108 @@ def test_a_repair_reports_its_size_on_the_grants_axis():
     assert [r.recovery for r in out.repairs if r.operator == "AltitudeFix"] == [True]
 
 
-def test_theta_escalates_from_the_real_repair():
-    """The conservative cap, applied by the FSM to the repair's own
-    magnitude_m: a 9 m deep forecast (theta 2 m) is not flown - X1 into Brake
-    with a stop streamed - and the next untrusted repair goes to LOITER (G3).
-    The repair stack's own output is unchanged in `emitted`."""
+def test_theta_defaults_to_the_operators_depth_and_one_period_is_opt_in():
+    """REVIEW (2026-10-09). A builder switched the Shield's default theta
+    basis to the setpoint change over one 0.1 s period and called it the
+    grant's. The grant's own audit example logs LateralProjection with
+    magnitude_m 0.7 for a 1.53 m/s change (Safety Shield p5) - not |dv| x
+    0.1 s - and the PI reference escalates a deep head-on dive "rather than
+    projected". Under the shipped 4-5 m/s caps the one-period reading can
+    never exceed theta, so making it the default waived the cap before the
+    PI answered. This slide's forecast goes 9 m into the zone's ring: on the
+    default basis it is escalated (X1, a stop, then LOITER); the one-period
+    reading, opted into, trusts it (0.3 m). Failed on the builder's code,
+    whose default Shield trusted it (G1)."""
     s = Shield(load_policy(POLICY_PATH))
+    assert s.theta_horizon_s is None
     st, a = State(x=0, y=15, up=4), Action4D(vx=3.0)
     d = s.filter(st, a)
-    assert d.repairs[0].magnitude_m > 2.0
+    assert d.repairs[0].magnitude_m > 2.0               # the forecast depth, reported
+    assert d.fsm_record["theta_exceeded"] is True
+    assert abs(d.fsm_record["magnitude"]["lateral_m"] - d.repairs[0].magnitude_m) < 1e-6
+    assert (d.fsm_edge, d.setpoint, d.command) == ("X1", "brake", Action4D())
+    d = s.filter(st, a)
+    assert (d.fsm_edge, d.fsm_state_after, d.set_mode) == ("G3", "Loiter", "LOITER")
+    # The one-period reading is selectable, and trusts the same repair.
+    one = Shield(load_policy(POLICY_PATH), theta_horizon_s=0.1)
+    d = one.filter(st, a)
+    dv = math.hypot(d.emitted.vx - d.raw.vx, d.emitted.vy - d.raw.vy)
+    mag = d.fsm_record["magnitude"]
+    assert abs(mag["lateral_m"] - dv * 0.1) < 1e-6 and mag["lateral_m"] < 2.0, mag
+    assert d.fsm_record["theta_exceeded"] is False
+    assert (d.fsm_edge, d.setpoint, d.command) == ("G1", "pass", d.emitted)
+    for _ in range(5):
+        d = one.filter(st, a)
+        assert d.fsm_state_after == "Brake" and d.set_mode is None, d.fsm_record["reason"]
+
+
+def test_theta_is_measured_from_the_caps_the_chain_applied_this_tick():
+    """REGRESSION (2026-10-09, found while trying theta on one control
+    period). The one-period measure starts from the raw action clamped to the
+    speed cap. The FSM read the caps off the whole policy, so a cap the chain
+    did not apply - `monitor_only`, or switched off by a time_window_switch -
+    made a 6 m/s pass with a slide "a decision made under other caps": the
+    FSM refused the tick, the Shield requested LOITER and streamed nothing
+    more (fsm_fault). The Shield now hands the FSM the caps it clamped
+    against on that tick. (The default basis, each repair's magnitude_m,
+    needs no caps; it is checked here too.)"""
+    from guardrail.models import Policy
+    zone = {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+            "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7},
+                         {"x": 23, "y": 23}, {"x": 7, "y": 23}]}
+    kin = {"id": "kin", "type": "kinematic_envelope", "speed_max_mps": 4.0,
+           "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}
+    st, fast = State(x=0, y=15, up=4), Action4D(vx=6.0)
+    watched = Policy.model_validate({"policy_id": "mo", "constraints": [
+        zone, dict(kin, violation_action="monitor_only", constraint_type="soft",
+                   priority="P2")]})
+    assert Shield(watched).filter(st, fast).fsm_fault is None
+    sh = Shield(watched, theta_horizon_s=0.1)
+    d = sh.filter(st, fast)
+    assert d.fsm_fault is None and d.set_mode is None, d.fsm_fault
+    assert sh.applied_caps is None, "a watched-only cap clamps nothing"
+    assert [r.operator for r in d.repairs] == ["GeofenceSlide"], d.repairs
+    dv = math.hypot(d.emitted.vx - fast.vx, d.emitted.vy - fast.vy)
+    assert abs(d.fsm_record["magnitude"]["lateral_m"] - dv * 0.1) < 1e-6
+    switched = Shield(Policy.model_validate({"policy_id": "sw", "constraints": [zone, kin]}),
+                      theta_horizon_s=0.1)
+    switched.filter(State(x=-40, y=-40, up=4), Action4D(vx=1.0), t=0.0)
+    switched.set_rule_active("kin", False, t=0.1)
+    d = switched.filter(st, fast, t=0.2)
+    assert d.fsm_fault is None and d.fsm_edge == "G1", (d.fsm_fault, d.fsm_edge)
+    assert switched.applied_caps is None        # what a rail's own FSM is handed
+    # With the cap applied, the measure still starts from the clamped action.
+    capped = Shield(Policy.model_validate({"policy_id": "cap", "constraints": [zone, kin]}),
+                    theta_horizon_s=0.1)
+    d = capped.filter(st, fast)
+    assert "SpeedClamp" in [r.operator for r in d.repairs] and d.fsm_fault is None
+    assert capped.applied_caps.to_dict() == {"speed_max_mps": 4.0, "climb_rate_max_mps": 2.0}
+    dv = math.hypot(d.emitted.vx - 4.0, d.emitted.vy)
+    assert abs(d.fsm_record["magnitude"]["lateral_m"] - dv * 0.1) < 1e-6, d.fsm_record
+
+
+def test_theta_still_escalates_a_setpoint_change_beyond_it():
+    """On the one-period reading theta can still fire, but only without a
+    speed cap: a 30 m/s command into a zone with no speed cap is slid to a
+    4 m/s tangent, a 30.3 m/s change of setpoint, 3.0 m over one period
+    (theta 2.0 m): X1 with a stop, then LOITER (G3). The emitted repair is
+    unchanged. (Under a 5 m/s / 2 m/s envelope a clamped command can change
+    by at most 1.0 m / 0.4 m per period, so there it cannot fire, which is
+    why it is not the default.) The default basis escalates it too."""
+    from guardrail.models import Policy
+    pol = Policy.model_validate({"policy_id": "zone-uncapped", "constraints": [
+        {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+         "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7},
+                      {"x": 23, "y": 23}, {"x": 7, "y": 23}]}]})
+    assert Shield(pol).filter(State(x=0, y=15, up=4), Action4D(vx=30.0)).fsm_edge == "X1"
+    s = Shield(pol, theta_horizon_s=0.1)
+    st, a = State(x=0, y=15, up=4), Action4D(vx=30.0)
+    d = s.filter(st, a)
+    assert [r.operator for r in d.repairs] == ["GeofenceSlide"], d.repairs
+    assert d.fsm_record["magnitude"]["lateral_m"] > 2.0, d.fsm_record["magnitude"]
+    assert d.fsm_record["theta_exceeded"] is True
     assert (d.fsm_edge, d.setpoint, d.command) == ("X1", "brake", Action4D())
     assert d.emitted != Action4D() and not d.braked     # the repair, as before
-    assert d.fsm_record["theta_exceeded"] is True
     d = s.filter(st, a)
     assert (d.fsm_edge, d.fsm_state_after, d.set_mode) == ("G3", "Loiter", "LOITER")
     assert d.setpoint == "brake"                        # the hand-over tick
@@ -940,9 +1303,11 @@ def test_a_hard_rule_is_never_given_up():
 
 def test_an_fsm_contract_break_requests_loiter_once_and_stops_streaming():
     """A position operator that reports no magnitude_m cannot be judged by
-    theta. The FSM refuses the tick; the Shield must not crash the loop: it
-    records the fault, requests LOITER on that tick only, and streams nothing
-    until reset_episode()."""
+    theta on the per-operator basis (theta_horizon_s=None, selectable since
+    the grant's one-period basis became the default on 2026-10-08). The FSM
+    refuses the tick; the Shield must not crash the loop: it records the
+    fault, requests LOITER on that tick only, and streams nothing until
+    reset_episode()."""
     class NoMagnitude(Shield):
         def _repair_geofence(self, state, a, repairs):
             out = super()._repair_geofence(state, a, repairs)
@@ -950,7 +1315,7 @@ def test_an_fsm_contract_break_requests_loiter_once_and_stops_streaming():
                 if r.operator == "GeofenceSlide":
                     repairs[i] = r.model_copy(update={"magnitude_m": None, "axis": None})
             return out
-    s = NoMagnitude(load_policy(POLICY_PATH))
+    s = NoMagnitude(load_policy(POLICY_PATH), theta_horizon_s=None)
     d = s.filter(State(x=0, y=15, up=4), Action4D(vx=1.3))
     assert d.fsm_fault and "magnitude_m" in d.fsm_fault
     assert (d.set_mode, d.setpoint, d.command) == ("LOITER", "none", None)

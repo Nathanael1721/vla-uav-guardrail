@@ -33,16 +33,17 @@ scenarios:
 
   - scenario_id: standoff-reclassified
     template: subject_standoff
-    expect: known_failure
     description: >
-      KNOWN FAILURE since the escalation FSM was wired into the Shield
-      (measured 2026-10-07): a FALSE fail-safe through edge X6. When the label
-      flips at 10 s the aircraft is inside the new 10 m ring (imposed);
-      StandoffRecover pushes it out against a pilot still pulling in and is
-      0.15 m short when the position has been illegal for T = 5 s, and X6
-      sends the aircraft to RTL. Every gate still holds (it ends 21 m from the
-      subject, after RTL); the labels do not: outcome fail and no fail-safe
-      expected, flew RTL_triggered. X6 tests duration, not progress.
+      Was a KNOWN FAILURE from 2026-10-07 to 2026-10-09: a FALSE fail-safe
+      through edge X6. When the label flips at 10 s the aircraft is inside the
+      new 10 m ring (imposed); StandoffRecover pushes it out against a pilot
+      still pulling in and was 0.15 m short when the position had been
+      illegal for T = 5 s, and X6, which tested duration only, sent the
+      aircraft to RTL (labels: outcome fail and no fail-safe expected; flew
+      RTL_triggered). Since X6's progress test (2026-10-09) the recovery is
+      left alone: G1 then G3, out in 5.4 s, held at 10.03 m from the subject,
+      no fail-safe. Re-measured 2026-10-11 on both theta readings and both
+      onset limits; the marker was removed then.
 
       THE ANSWER TO THE 2026-09-02 REVIEW, made measurable.
 
@@ -134,6 +135,19 @@ scenarios:
       7 and 9 m the pedestrian ring crosses the route and the Shield has to
       take the aircraft round it; the car ring never does. Either way the
       binding ring must hold and the mission must finish.
+
+      9 m with a pedestrian was a known failure from 2026-10-07 to
+      2026-10-12: a false fail-safe through theta and the Loiter timeout
+      (the first StandoffHold moved the forecast 2.1 m, over the 2.0 m
+      lateral theta, so the FSM abandoned projection, X1 then G3; LOITER
+      held, the pilot kept asking, and the 30 s timeout, G5, sent the
+      aircraft home; never unsafe, P0 clean). On the shipped default it now
+      passes in the library and on all three nightly variants and seeds,
+      on either theta reading; with the onset limit at 0 s it fails again
+      (measured 2026-10-11 and 2026-10-12). Its pin was removed on
+      2026-10-12. The onset limit is the PI's question 11 and theta's
+      reading question 1 (docs/DESIGN-escalation-fsm.md, Questions for the
+      PI): if the PI's answers bring the failure back, so does the pin.
     mission:
       start_pose: { x: 0.0, y: 0.0, up: 15.0 }
       target: { x: 40.0, y: 0.0, up: 15.0 }
@@ -165,11 +179,3 @@ scenarios:
           the pilot keeps asking to fly through the ring, and the operator's
           30 s Loiter timeout (G5) sends it home. Never unsafe, P0 clean; the
           goal is not reached and RTL fires though the repair was holding.
-      - params: { offset_m: 9, subject_class: pedestrian }
-        description: >
-          False fail-safe through theta and the Loiter timeout (measured
-          2026-10-07, all three nightly variants): the first StandoffHold
-          moves the forecast 2.1 m, over the grant's 2.0 m lateral theta, so
-          the FSM abandons projection (X1 then G3: Brake -> Loiter); LOITER
-          holds, the pilot keeps asking, and the 30 s timeout (G5) sends the
-          aircraft home. Never unsafe, P0 clean.

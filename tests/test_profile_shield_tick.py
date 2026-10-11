@@ -763,6 +763,78 @@ def test_attach_summary_is_never_within_budget_when_the_run_failed():
     assert s["sha256"] == P.sha256_file(p) and s["failures"] == 1
 
 
+# --------------------------------------------------------------------------- #
+# the power mode and the CPU limits, read rather than written in --note
+# --------------------------------------------------------------------------- #
+_NVPMODEL_CONF = """< PARAM TYPE=FILE NAME=CPU_ONLINE >
+< POWER_MODEL ID=0 NAME=MAXN >
+CPU_ONLINE CORE_0 1
+< POWER_MODEL ID=1 NAME=MODE_15W >
+< POWER_MODEL ID=2 NAME=MODE_30W >
+< POWER_MODEL ID=3 NAME=MODE_50W >
+< PM_CONFIG DEFAULT=2 >
+"""
+
+
+def _orin_files(status="pmode:0003 fmode:quiet", conf=_NVPMODEL_CONF, online="0-3"):
+    files = {P.NVPMODEL_STATUS: status, P.NVPMODEL_CONF: conf,
+             f"{P.CPU_SYSFS}/online": online}
+    for n in range(4):
+        base = f"{P.CPU_SYSFS}/cpu{n}/cpufreq"
+        files.update({f"{base}/scaling_governor": "schedutil",
+                      f"{base}/scaling_min_freq": "729600",
+                      f"{base}/scaling_max_freq": "2201600" if n < 2 else "1728000",
+                      f"{base}/cpuinfo_min_freq": "115200",
+                      f"{base}/cpuinfo_max_freq": "2201600",
+                      f"{base}/scaling_cur_freq": "2201600"})
+    return {k: v for k, v in files.items() if v is not None}
+
+
+def test_the_power_mode_and_cpu_limits_are_read_not_noted():
+    """DESIGN-topologies.md next step 5: the mode came only from the --note
+    text, because nvpmodel is not on PATH inside the containers. It is now
+    read from /var/lib/nvpmodel/status (name from /etc/nvpmodel.conf) and
+    the CPU limits from cpufreq, and attached to a run's summary."""
+    files = _orin_files()
+    pw = P.power_facts(read=files.get)
+    assert pw["nvpmodel"]["mode_id"] == 3 and pw["nvpmodel"]["mode_name"] == "MODE_50W"
+    assert pw["nvpmodel"]["why"] is None
+    cpus = pw["cpufreq"]["cpus"]
+    assert sorted(cpus) == ["0", "1", "2", "3"] and pw["cpufreq"]["why"] is None
+    assert cpus["2"] == {"governor": "schedutil", "scaling_min_khz": 729600,
+                         "scaling_max_khz": 1728000, "cpuinfo_min_khz": 115200,
+                         "cpuinfo_max_khz": 2201600, "cur_khz": 2201600}, cpus["2"]
+    s = P.power_summary(pw)
+    assert s == {"nvpmodel_mode_id": 3, "nvpmodel_mode_name": "MODE_50W",
+                 "cpu_governors": ["schedutil"], "cpu_scaling_max_khz": [1728000, 2201600],
+                 "why": None}, s
+    prof = {"host": {"machine": "aarch64", "jetson": {"is_orin": True}, "power": pw}}
+    assert P.attach_summary(prof)["host_power"] == s
+
+
+def test_an_unreadable_power_mode_is_none_with_a_reason_never_a_guess():
+    """This desktop (and a container without the mounts): every field None,
+    each with why. A status file without pmode, and a mode ID the conf does
+    not name, are said too."""
+    pw = P.power_facts(read=lambda p: None)
+    assert pw["nvpmodel"]["mode_id"] is None and "not readable" in pw["nvpmodel"]["why"]
+    assert pw["cpufreq"]["cpus"] is None and "not readable" in pw["cpufreq"]["why"]
+    assert P.power_summary(pw)["why"] == pw["nvpmodel"]["why"]
+    odd = P.power_facts(read=_orin_files(status="garbage").get)
+    assert odd["nvpmodel"]["mode_id"] is None and "pmode" in odd["nvpmodel"]["why"]
+    unnamed = P.power_facts(read=_orin_files(conf=None).get)
+    assert unnamed["nvpmodel"]["mode_id"] == 3 and unnamed["nvpmodel"]["mode_name"] is None
+    assert "/etc/nvpmodel.conf" in unnamed["nvpmodel"]["why"]
+    masked = {k: v for k, v in _orin_files().items() if "/cpufreq/" not in k}
+    m = P.power_facts(read=masked.get)
+    assert all(v is None for c in m["cpufreq"]["cpus"].values() for v in c.values())
+    assert "no cpufreq files" in m["cpufreq"]["why"]
+    # A profile from before 2026-10-11 has no power record: None, not {}.
+    assert P.attach_summary({"host": {"machine": "x86_64"}})["host_power"] is None
+    # And on this host, whatever it is, the facts carry the record.
+    assert set(P.host_facts(jetson={"is_orin": False})["power"]) == {"nvpmodel", "cpufreq"}
+
+
 def test_the_default_output_goes_where_the_environment_says():
     """The Orin writes into deploy/evidence/incoming/ (git-ignored), so a run
     there never modifies a tracked file and never makes the checkout dirty."""

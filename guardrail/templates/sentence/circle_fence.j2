@@ -1,0 +1,6 @@
+{% extends "sentence/_base.j2" %}
+{#- Keep-OUT disc (grant: "Centre + radius + AGL floor / ceiling"). The Shield
+    enforces the circumscribed 32-gon plus the margin ring, so the radius is
+    stated as the disc's, never smaller than what is enforced. No centre: a
+    polygon's sentence carries no coordinates either. -#}
+{% block core %}Never enter zone '{{ r.id }}', a circle of radius {{ r.radius_m|g }} m{% endblock %}

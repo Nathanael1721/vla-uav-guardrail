@@ -1,7 +1,7 @@
 {
- "generated": "2026-10-07T02:25:10Z",
+ "generated": "2026-10-08T19:42:47Z",
  "command": "python tools/wp1_roundtrip_kpi.py",
- "code_revision": "401305abd019-dirty",
+ "code_revision": "10451bc60a15-dirty",
  "python": "3.10.20",
  "cryptography_available": true,
  "signature_verifier": "cryptography",
@@ -15,7 +15,15 @@
   "reference_documents_loaded": "3/3",
   "reference_bundles_loaded": "1/1",
   "reference_hash_agrees": "3/3",
-  "reference_loader_reads_ours": "3/3"
+  "reference_loader_reads_ours": "3/3",
+  "both_hashes_recorded_and_verified": "29/29",
+  "reference_hash_representable": "0/29",
+  "forged_reference_hash_refused": "29/29",
+  "reference_form_source_verified": "3/3"
+ },
+ "null_record_ignored": {
+  "forged_reference_hash_refused": "0/29",
+  "why": "10451bc wrote no `hashes` record and read none; the forged reference hash is invisible to such a reader"
  },
  "null_accept_everything": {
   "round_trip": "29/29",
@@ -1121,6 +1129,450 @@
    }
   ]
  },
+ "both_hashes": {
+  "n": 29,
+  "passed": 29,
+  "representable": 0,
+  "not_representable_because": {
+   "a rule type the reference lacks": 29,
+   "a schedule (valid_time)": 2,
+   "margin ring": 24,
+   "metre vertices": 23,
+   "origin": 1
+  },
+  "forged_refused": 29,
+  "forged_run": 29,
+  "null_record_ignored_refused": 0,
+  "rows": [
+   {
+    "file": "corridor_survey.yaml",
+    "policy_hash": "sha256:5a0e507fe15678551b887141eb85c904030c088d89cf90f916c82649f17b770d",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "a schedule (valid_time)",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "demo_policy.yaml",
+    "policy_hash": "sha256:714e1db183a191083567b919ffd49aa0eecce05833d4d0945cff567b77c2d988",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "edge_patrol.yaml",
+    "policy_hash": "sha256:e6903b303840f120c880e60b91c3fea44c2c923b3a320060c68f5895c60e1c68",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "follow_car.yaml",
+    "policy_hash": "sha256:979c982866fe38ef506b23a92c48823b038c62adccd39c6ab4da8cd0ba57ad9f",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "follow_car_citylife.yaml",
+    "policy_hash": "sha256:4f7ebad65201bcd0445f3bba6ccc9f9cece5ecb76308501830636e91dc5f7188",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "follow_car_citylife_nfz.yaml",
+    "policy_hash": "sha256:e50644313d185db5e8917ffa720a2b8dc83f452fe2d5538190adc55667ef63c3",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "follow_car_gap.yaml",
+    "policy_hash": "sha256:70565b9a03394595193e36e5e5422de2105b3ec70fba04173d1b68f31f8f4530",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "follow_car_nfz.yaml",
+    "policy_hash": "sha256:5826eccda2af83d511b537130865d8ea566eb1af1c41395cda97d854ee986282",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "follow_pedestrian.yaml",
+    "policy_hash": "sha256:fefde27c34af37b8e6ff2cc2292c7c7963e540cfa6f020f5bd4e676bfea2ca39",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "gui_high_test.yaml",
+    "policy_hash": "sha256:71acc4d0ef62b7c9e12265c607c3cb7d4af545e301dd89f4e16a168adc1fc9b5",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "gui_policy.yaml",
+    "policy_hash": "sha256:6ecb934e9ac1b6d4ad08d91619a150caf8a1abe0d478094b32cd8c28cd931055",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "hard_11.yaml",
+    "policy_hash": "sha256:e8fbedd09a32de70a2d2cbb34e0343d9a4a41bb3676ecfa5d6dfef055c3ab2af",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "hard_21.yaml",
+    "policy_hash": "sha256:453348b882d155ea7acd19ae84d9e8ca214acc6bc26b693c40c817725bc53987",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "hard_3.yaml",
+    "policy_hash": "sha256:93cb817f15dcf05a0e38ffb7ba0aa27bee1b7a152875b1abfafca74ff9b297c9",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "hp_14.yaml",
+    "policy_hash": "sha256:e69b769ac522ed8b16b27974b7d5b7966f240323fdf87bbce099eec3b80eeb8c",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "hp_30.yaml",
+    "policy_hash": "sha256:d01acc72c9b883ac40a3a1fb3d1cfc97002a93dd408f6e7324831a431c184ca8",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "hp_42.yaml",
+    "policy_hash": "sha256:4961629f34dd5900c125503a6d6b88fc76af871867916b6cac0fa6d12d875791",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "hp_5.yaml",
+    "policy_hash": "sha256:e3a006271d60c6a62ab0e4995fc49906e313b79ee4c7be30dd7f6e0512ed7ce5",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "hp_8.yaml",
+    "policy_hash": "sha256:f6245bbf61ad1f974bcdcf80135724ab1701cc0b4b6dafac4054b9d47fd6ce20",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "orbit_building.yaml",
+    "policy_hash": "sha256:b94223dce2ed42ef897b58e1f2297c624e425c3d96dced0eb631e8d1fc4dc3f3",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "poly_test.yaml",
+    "policy_hash": "sha256:8afa2bc6059bc8d351eea8e1fae83f360fe07621ea66f726e2f7015e4393a940",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "random_scenario.yaml",
+    "policy_hash": "sha256:7d5534e50d9d302bb4b8c5b88d65159cbf271e686c487be578d5691fbcb10516",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "rth_poly.yaml",
+    "policy_hash": "sha256:776daf142f81192470a4bc58cae1bee7790b8a6ad645fdd63c6625c3e98974be",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "semantic_conflict.yaml",
+    "policy_hash": "sha256:79fb476a67d1d205444861bf9cbeb45fb98878813ecf5627fe71a31c3f625694",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "sim_demo_policy.yaml",
+    "policy_hash": "sha256:8a311f9d22d2260000eb2b24775c3e6cbfeb70416c8299b3354e47227a2476af",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "sitl_pedestrian.yaml",
+    "policy_hash": "sha256:68a4efd102869f5cf4819b4a2d67e3ee84579a8160b72ecc6d27856d2a2c1259",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "urban_clearance.yaml",
+    "policy_hash": "sha256:d81796e79514d4e1511f873895ca4800118de1a97bf0f67ed726e367ab63ee5b",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "urban_demo_policy.yaml",
+    "policy_hash": "sha256:c93b635572d11b0f2332aa625dbc5966ab3b087f0f91899812dc4594240242db",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "margin ring",
+     "metre vertices"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   },
+   {
+    "file": "wgs84_taipei.yaml",
+    "policy_hash": "sha256:7d6e19554f33efe2960bc972030d2db81c4f9b00aa495c8309195b34869773b0",
+    "policy_hash_unchanged": true,
+    "both_recorded": true,
+    "both_verified": true,
+    "reference_hash": null,
+    "reference_problems": [
+     "a rule type the reference lacks",
+     "a schedule (valid_time)",
+     "margin ring",
+     "origin"
+    ],
+    "ok": true,
+    "forged_reference_hash": "refused"
+   }
+  ]
+ },
  "reference": {
   "run": true,
   "our_loader_on_reference_documents": {
@@ -1131,7 +1583,8 @@
     "frame_origin": [
      25.042450000000002,
      121.53139999999999
-    ]
+    ],
+    "source_verified": true
    },
    "bundles/projectairsim-demo.yaml": {
     "loads": true,
@@ -1140,7 +1593,8 @@
     "frame_origin": [
      4.5e-07,
      4.5e-07
-    ]
+    ],
+    "source_verified": true
    },
    "bundles/sitl-flight-demo.yaml": {
     "loads": true,
@@ -1149,7 +1603,8 @@
     "frame_origin": [
      -35.3629,
      149.16522999999998
-    ]
+    ],
+    "source_verified": true
    }
   },
   "our_loader_on_reference_bundles": {
@@ -1212,13 +1667,13 @@
   "failures": []
  },
  "stored_runs": {
-  "n": 86,
+  "n": 89,
   "matched_before": 34,
-  "matched_after": 86,
+  "matched_after": 89,
   "after_by_form": {
    "legacy16-exclude-none": 42,
    "legacy16-include-defaults": 34,
-   "sha256-canonical-v3": 10
+   "sha256-canonical-v3": 13
   },
   "unmatched_after": [],
   "set_aside": [

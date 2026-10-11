@@ -260,6 +260,23 @@ def resolve_policy(run: Path, manifest: dict, by_hash: dict,
     return cands[0], "policy_id", f"resolved by policy_id {pid!r}, not by hash"
 
 
+def policy_caps(pol):
+    """The resolved policy's kinematic caps (guardrail.fsm.KinematicCaps), or
+    None (no policy, or no enforced speed / climb envelope in it).
+
+    kpi.compute() sizes a tick that has no FSM theta verdict on the basis the
+    run recorded (`fsm.theta_basis.horizon_s` in metrics.json). On the default
+    basis, each repair's own magnitude_m, the caps change nothing. On the
+    one-period reading (|dv| over 0.1 s) a tick that also carries a speed or
+    climb clamp can be sized only from the clamped raw action, so without the
+    caps it is reported `no_magnitude` (theta unchecked) instead of sized.
+    kpi.compute_from_dir passes them the same way."""
+    if pol is None:
+        return None
+    from guardrail.fsm import KinematicCaps
+    return KinematicCaps.from_policy(pol)
+
+
 # --------------------------------------------------------------------------- #
 # reconstruction of `unsafe`
 # --------------------------------------------------------------------------- #
@@ -424,7 +441,9 @@ def rescore(run: Path, by_hash: dict, by_id: dict | None = None) -> dict | None:
         reconstructed = True
 
     prios = K.rule_priorities(pol) if pol else {}
-    fresh = K.compute(rows, prios, metrics)
+    # The caps let a clamped tick be sized on a run flown on the one-period
+    # theta reading (policy_caps); on the default basis they change nothing.
+    fresh = K.compute(rows, prios, metrics, caps=policy_caps(pol))
     fresh["time_to_safe_reconstructed"] = reconstructed
 
     # Invariant check, only where the policy is genuinely resolvable.

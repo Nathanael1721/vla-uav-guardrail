@@ -280,9 +280,12 @@ autopilot, keeps the label at `dev`. A Shield node inside a container sees only
 its own PID namespace; run it with `pid: host` (or MAVROS in the same
 container) for `mavros_on` to describe the host. `build_manifest` refuses
 `hil` and `flight` without the evidence, and `is_kpi_grade` re-checks it for
-`hil`, so a hand-edited label is not quoted. JetPack 6 is Ubuntu 22.04, i.e.
-ROS 2 Humble; the nodes use only rclpy APIs common to Humble and Jazzy, and
-the Guardrail package runs on Python 3.10.
+`hil`, so a hand-edited label is not quoted. JetPack 6.2 is Ubuntu 22.04,
+whose native ROS 2 is Humble; the Orin runs ROS 2 Jazzy inside the companion
+container on an Ubuntu 24.04 user space, so the Shield's rclpy runs on Python
+3.12, meeting the grant's 3.11+ (`docs/DESIGN-topologies.md`, decision 2).
+The nodes use only rclpy APIs common to Humble and Jazzy, and the Guardrail
+package also imports on Python 3.10.
 
 ## Escalation FSM wiring
 
@@ -295,7 +298,8 @@ or the autopilot already has the aircraft in RTL / Land. Theta is applied to
 `Repair.magnitude_m` when `guardrail/shield.py` reports it, and to the
 velocity proxy (h = 0.1 s, which cannot fire on these flights) when it does
 not; the node picks the source by itself and writes it into `metrics.json`
-(`fsm.theta_basis`); the pymavlink rail keeps the proxy. `magnitude_m` arrived
+(`fsm.theta_basis`). That was the wiring of the flights below; the
+2026-10-09 paragraph says what changed since. `magnitude_m` arrived
 in the Shield during 2026-10-07, so the flights below say which source each
 one used. If the autopilot leaves GUIDED without being asked (a GeoFence
 breach), the node records the takeover, stops streaming and stops stepping the
@@ -323,6 +327,28 @@ cruise speed, through the middle of `nfz-square`) against theta 2.0 m, so
 the FSM leaves Normal at the first tick. In ArduCopter's LOITER with no RC
 input, as on this SITL, the aircraft descended from 14.5 m to the ground in
 about 6.5 s.
+
+**Changed on 2026-10-09; none of the flights below used it.** The FSM's
+Loiter is now flown as ArduCopter's BRAKE, by the adapter
+(`mavlink_adapter_node.DEFAULT_HOLD_MODE`; `--hold-mode LOITER` keeps the
+literal mapping) and by the node's fallback when no adapter is subscribed.
+LOITER takes its climb rate from the throttle stick, which is why it sank as
+above. In a short SITL probe with no RC input (2026-10-09, not a stored run),
+BRAKE held 14.97-15.01 m for 19.9 s while LOITER fell from 15 m to the ground
+in 6.7 s. The node's theta now defaults to each repair's own `magnitude_m`
+(`guardrail.fsm.DEFAULT_THETA_HORIZON_S`) rather than picking a source by
+itself; `--theta-horizon-s 0.1` selects the one-period reading, pending the
+PI. Mode requests are recorded in the FSM's words and in ArduCopter's
+(`mode_requests`, `autopilot_mode_requests`). `docs/DESIGN-escalation-fsm.md`
+has the reasons and the numbers.
+
+**Since 2026-10-11 the pymavlink rail is wired the same way**
+(`sitl/run_sitl_demo.py`, another unit's change). Until then it kept the
+velocity proxy. Its theta now defaults to each repair's own `magnitude_m`
+(`--theta-horizon-s`, recorded as `fsm.theta_basis`). It sends the FSM's
+Loiter, and the hold after a refused FSM input, as BRAKE (`--hold-mode`,
+`mavlink_adapter_node.DEFAULT_HOLD_MODE`). It records every mode request in
+both vocabularies. No stored flight on that rail has used this yet.
 
 ## Shield horizon
 
@@ -366,7 +392,7 @@ fence read-back, zone deferral). The FSM's theta source is given per run:
 | `ros2fix_off_fence` | Shield off | "Fence Breached", GUIDED -> RTL at 3.36 s; 6.3 s inside the zone, at most 5.9 m deep; of 284 ticks, the VLA's action was flown on 33 (all 33 P0 escapes) and the autopilot's RTL flew 251 (`flown: false`); time to safe 6.8 s (1 episode) plus 1 censored (the RTL descent below the 10 m floor when the episode ended); GCS port check passed |
 | `ros2fix_on_unsafe_start` | Shield on, a 10 x 10 m zone hot-applied centred on the aircraft at 8 s (polygon_fence); theta on the velocity proxy | the Shield steered out: time to safe 3.2 s (1 episode, none censored), 2.6 s inside the zone; P0 escapes 0 of 114 P0 ticks; the zone was held back from the autopilot fence and uploaded 3.7 s later, once clear; no fence breach and no autopilot takeover; target reached in 21.0 s; GCS port check passed |
 | `ros2fix_on_policy55` | Shield on, `policies/poly_test.yaml` (altitude band 35-55 m, flown at the mission's 15 m); theta on `magnitude_m` | FENCE_ALT_MAX raised from 30 to 60 m and read back (policy ceiling 55 m); `tri-nfz`, whose vertex is on home, held back on the pad, uploaded 2.0 s into the mission once clear, and named as covering home (`zones_over_home`); the FSM went Normal -> Brake [G1] -> Loiter [G3] at 1.4 s -> RTL [X6] at 5.1 s (position below the 35 m floor) -> home reached [G9]; the GeoFence reported "Fence Breached" at 26.5 s, after the RTL had brought the aircraft home into `tri-nfz`; of 102 ticks, a setpoint was flown on 14 (0 P0 escapes) and the FSM's LOITER / RTL held the other 88 (`flown: false`) |
-| `ros2fix_on_dyn_nfz` | Shield on, NFZ hot-applied at 8 s, sent as a dynamic_nfz (the Shield's mid-flight update model); theta on `magnitude_m` | Brake -> Loiter [G3] at 0.2 s (geofence repair magnitude 8.1 m > theta 2.0 m), LOITER descended to the ground, Loiter -> RTL [X6] at 8.2 s; target not reached; the dynamic_nfz uploaded to the autopilot fence (8 items read back); generation 1's CSP not compiled (the compiler does not yet render dynamic_nfz), which the bundle states |
+| `ros2fix_on_dyn_nfz` | Shield on, NFZ hot-applied at 8 s, sent as a dynamic_nfz (the Shield's mid-flight update model); theta on `magnitude_m` | Brake -> Loiter [G3] at 0.2 s (geofence repair magnitude 8.1 m > theta 2.0 m), LOITER descended to the ground, Loiter -> RTL [X6] at 8.2 s; target not reached; the dynamic_nfz uploaded to the autopilot fence (8 items read back); generation 1's CSP not compiled (the compiler did not yet render dynamic_nfz), which the bundle states. Since 2026-10-08 the compiler renders dynamic_nfz, so a new run would write that generation's CSP; the stored run stays as recorded |
 | `sitlfix_on_dyn` (pymavlink rail, `--seed 3`) | Shield on, NFZ hot-applied at 8 s (polygon_fence); theta on the velocity proxy | target reached in 25.6 s; 0.0 s inside any zone; P0 escapes 0 of 122 P0 ticks; fence parameters read back over PARAM_VALUE (FENCE_ENABLE 1, FENCE_ALT_MAX 30, AVOID_ENABLE 0); generations 0 and 1 written, their CSPs not compiled because `~/venv-ap` has no jinja2, which the record and the bundle say |
 
 2026-10-06 (3 s horizon at 0.5 s; rows without `flown` or episode ids):

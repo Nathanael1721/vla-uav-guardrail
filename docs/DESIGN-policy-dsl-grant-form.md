@@ -1,6 +1,10 @@
 # DESIGN - the Policy DSL in the grant's own form
 
-2026-10-06, revised 2026-10-07 after review. Audit cards WP1-01, WP1-02,
+2026-10-06, revised 2026-10-07 after review, updated 2026-10-08 (the
+hot-apply types compile and switches and swaps fly, decision 5; both hashes in
+every bundle, decision 7) and 2026-10-11 (every rail counts zone dwell the
+same way, and the dynamic_nfz hold stays, decision 5).
+Audit cards WP1-01, WP1-02,
 WP1-05, WP1-06 (model part), WP1-07, WP1-09 / WP1-15 (types), WP1-13, WP1-14,
 WP1-16, WP1-17, X-11.
 Code: `guardrail/models.py`, `guardrail/projection.py`, `guardrail/bundle.py`,
@@ -201,12 +205,54 @@ Later on 2026-10-07 the Shield itself (`guardrail/shield.py`,
 included), time_window_switch and corridor_swap, and refusing at construction
 any rule it does not enforce. `RUNTIME_TYPES` also decides what the constraint
 compiler renders (`guardrail/compiler.py`; `tests/test_csp.py` demands a
-template per type), and there are no templates for those three yet, so the
-loaders still refuse them: an over-refusal, never a rule silently dropped.
-They join `RUNTIME_TYPES` in the change that adds the templates. A test keeps
-`RUNTIME_TYPES` inside the Shield's `ENFORCED_TYPES`, checks that every type
-the loaders refuse is either refused or enforced by the Shield, and prints
-the over-refused set. distance_envelope is enforced by neither.
+template per type). On 2026-10-07 there were no templates for those three, so
+the loaders still refused them: an over-refusal, never a rule silently
+dropped.
+
+**Since 2026-10-08** the three types have templates (sentence, summary and
+reason; `guardrail/templates/`) and are in `RUNTIME_TYPES`, so the compiler
+renders them and a hot-applied generation holding one compiles a CSP. What a
+policy FILE may carry for flight:
+
+- **A switch or a swap flies.** A policy file declaring a time_window_switch
+  or a corridor_swap loads through every flight loader.
+- **A dynamic_nfz is held** (`models.FLIGHT_HELD_TYPES`,
+  `Policy.unmeasured_rules`, reported through `Policy.flight_problems`).
+  Every flight loader (YAML and bundle) refuses a policy file that declares
+  one, naming the zone and the reason. The Shield enforces the zone and the
+  compiler renders it; the hold was put in for what the flight rails
+  measure. On 2026-10-08, when it was added, the seven rails under `demo/`
+  other than `follow_vlm.py` computed their zone-dwell metric `nfz_s` (read
+  by `guardrail/kpi.py` for the mission outcome) from
+  `policy.by_type(PolygonFence)`. That list holds polygon and circle fences
+  (`CircleFence` subclasses `PolygonFence`) and not a dynamic_nfz, so time
+  inside a declared zone scored 0 s without a word. The two SITL rails
+  counted a dynamic_nfz but scored a moving one where it was declared;
+  `demo/follow_vlm.py` counted through `Shield.rule_status`.
+- **Since 2026-10-11 every rail counts `nfz_s` the same way.** The nine
+  rails listed in `tests/test_sitl_rails.py` call
+  `guardrail.replay.zone_dwell`, which is `demo/follow_vlm.py`'s count moved
+  into the library (`follow_vlm.py` keeps its own copy). It
+  counts time inside the authored polygon, within its altitude band, of
+  every polygon_fence, circle_fence and dynamic_nfz that does not move. A
+  moving dynamic_nfz is not scored: the rule checker places it where it is
+  at the end of the flight, not where it was at each tick, so the rail
+  names it in `nfz_moving_not_counted`. Time windows and switches are not
+  applied, so the count can be too high, never too low.
+- **The hold is still in place on 2026-10-11.** `FLIGHT_HELD_TYPES` still
+  holds dynamic_nfz, and its message still gives the reason from before
+  2026-10-11 (polygon and circle fences only). What the rails still cannot
+  score is a moving zone. Removing the entry, or restating its reason as
+  the moving-zone gap, is a change to `guardrail/models.py`, and this note
+  follows it. No flight has used a policy file that declares a dynamic_nfz.
+  The grant's own route for this type, a zone injected mid-flight
+  (`Shield.hot_apply`), does not pass through these loaders and is
+  unchanged.
+
+`runtime=False` still loads, bundles and exports a file with a dynamic_nfz.
+A test keeps `RUNTIME_TYPES` inside the Shield's `ENFORCED_TYPES` and checks
+that the loaders never hand the Shield a rule it does not enforce.
+distance_envelope is enforced by neither and stays declarable only.
 
 `altitude_ref: MSL` is declarable and refused for flight, by the loaders and
 by the Shield's constructor: the Shield measures height above ground and has
@@ -265,21 +311,46 @@ loader in its 3.11 environment (`tools/wp1_roundtrip_kpi.py`, read-only): it
 computes the same hash as `reference_hash()` for 3/3 of its documents, and
 reads 3/3 bundles written here.
 
-**A reference-form bundle is an exchange format, not a flight artefact.** Its
-IR writes every default out (`scope` and `layer` "mission", `altitude_ref`
-"AGL", margin 0) and spells `repair` as `project_fix`, so the policy rebuilt
-from it has a third hash: neither the manifest's nor the source policy's.
-Measured on the one-envelope policy of
+**On 2026-10-07 a reference-form bundle was an exchange format, not a flight
+artefact.** Its IR writes every default out (`scope` and `layer` "mission",
+`altitude_ref` "AGL", margin 0) and spells `repair` as `project_fix`, so the
+policy rebuilt from it has a third hash: neither the manifest's nor the source
+policy's. Measured on the one-envelope policy of
 `tests/test_policy_dsl_grant_form.py` (no scope or layer, `repair`): source
 `sha256:4bc4c5eb...`, manifest `sha256:b6fa8935...`, rebuilt
 `sha256:0f52850e...`. A run flown from it would record a `loaded_policy_hash`
-that resolves to no policy. So the flight loaders (`load_bundle`,
-`load_for_flight`) refuse it and say why; `check_bundle` still reads it; the source policy still
-recognises the manifest's hash (`hash_form` -> `reference-policy-dsl-0.1`);
-and every flight's bundle source record now carries both
-`declared_policy_hash` (the manifest's) and `loaded_policy_hash`. Bundles for
-ITRI may be written in this form; bundles to fly are written in this
-project's.
+that resolves to no policy, so the flight loaders (`load_bundle`,
+`load_for_flight`) refused every reference-form bundle and said why. Every
+flight's bundle source record carries both `declared_policy_hash` (the
+manifest's) and `loaded_policy_hash`.
+
+**Since 2026-10-08 (PI deviation 10) every manifest carries both hashes**,
+`hashes: {sha256-canonical-v3: ..., reference-policy-dsl-0.1: ...}`, and
+`check_bundle` verifies both (`bundle._verify_both_hashes`). The reference's
+entry is null, with `reference_problems`, where its Phase-1 DSL cannot hold
+the policy. A manifest that names one form but not the other is refused, so a
+dropped entry cannot pass unchecked.
+
+- **A reference-form bundle written here carries `reference_delta`** beside
+  both hashes. `check_bundle` rebuilds the source policy from the reference
+  document and the delta (`Policy.from_reference`) and requires it to hash to
+  the manifest's `sha256-canonical-v3` entry, so a forged entry of that form
+  is refused too. Such a bundle flies the source policy, under the hash its
+  manifest records, and the reference's own loader reads the same file (it
+  checks `policy_hash`, the reference hash).
+- **Only a reference-form bundle without the delta is exchange-only**: the
+  reference's own bundles, and any written here before 2026-10-08. The flight
+  loaders refuse it and say why; `check_bundle` still reads it, and the source
+  policy still recognises the manifest's hash (`hash_form` ->
+  `reference-policy-dsl-0.1`).
+
+Measured with `tools/wp1_roundtrip_kpi.py` (Measurements): both hashes
+recorded and verified on 29/29 shipped policies; a forged reference entry is
+refused 29/29, where a reader that ignores the record (10451bc) refuses 0/29;
+the reference can represent 0 of the 29 shipped policies (every one uses a
+rule type it lacks); the source policy is rebuilt and verified from 3/3
+reference-form bundles of the reference's own documents. No stored hash
+moved: `policy_hash` of a bundle in this project's form is what it was.
 
 What still differs, precisely:
 
@@ -288,7 +359,11 @@ What still differs, precisely:
    null` when absent); this code hashes its own IR. The same policy therefore
    has two hashes. This code reproduces the reference's for every policy the
    reference can represent; the reference does not reproduce this code's, and
-   reads only bundles written with `ir_form="reference"`.
+   reads only bundles written with `ir_form="reference"`. Since 2026-10-08
+   every manifest written here records both hashes and `check_bundle`
+   verifies both. The reference's entry is null for all 29 shipped policies,
+   which its Phase-1 DSL cannot represent, so its loader can cross-verify
+   only documents inside that DSL (3/3 of the PI's own).
 2. **Rule types.** The reference implements polygon_fence and
    altitude_envelope only, and has no `valid_time` field. Its loader refuses
    the grant's worked example (the corridor) and keeps a document with a
@@ -315,9 +390,14 @@ What still differs, precisely:
 8. **Python.** The reference needs 3.11 (`enum.StrEnum`); this code runs on
    3.10 and 3.11.
 9. **Identity through an exchange.** A policy written in the reference form
-   and read back here carries every default explicitly, so its hash here is
-   not the source policy's (above). The source still recognises the bundle's
-   hash; the rebuilt policy is read, not flown.
+   and read back here carries every default explicitly, so the document alone
+   rebuilds a policy whose hash here is not the source policy's (above).
+   Since 2026-10-08 a reference-form bundle written here also carries
+   `reference_delta`, which rebuilds the source policy exactly; `check_bundle`
+   verifies it against the manifest's `sha256-canonical-v3` entry, and the
+   bundle flies the source policy under that hash. A reference-form bundle
+   without the delta (the reference's own) is still read, not flown, and the
+   source still recognises its hash.
 
 ### 8. GeoJSON / KML and the ingest tool (WP1-16)
 
@@ -340,8 +420,10 @@ rules to `--base` exactly as the API's hot-apply would (one generation per
 rule; the test compares the hash with the API's own handlers) and emits a
 bundle. A zone body becomes a dynamic_nfz: since 2026-10-07 the API spawns
 POST /nfz as one, because the grant locks polygon_fence at mission start, and
-until then this tool appended a polygon_fence. Such a bundle is a declaration
-until dynamic_nfz joins `RUNTIME_TYPES` (decision 5). An endpoint that fails or returns an empty body is
+until then this tool appended a polygon_fence. Such a bundle is a declaration:
+dynamic_nfz has been in `RUNTIME_TYPES` since 2026-10-08, but a policy file
+or bundle declaring one is held from flight (`models.FLIGHT_HELD_TYPES`;
+decision 5 says why and what has changed since). An endpoint that fails or returns an empty body is
 refused by name. Geographic zones are refused onto a metre base
 with no origin.
 
@@ -399,6 +481,17 @@ did not exist (`to_grant_form`, `reference_hash`, the reference IR form).
 | stored manifests resolving (`demo/out/*/`) | 86/86 (81/81 on 2026-10-06; 83/84 at 2026-10-07 06:30) | 34/86 (the formula before the identity release) | 86/86 |
 | set aside in `demo/out/_*/`, listed not counted | 2, resolving 0/2 | - | - |
 
+Added on 2026-10-08 with both hashes in every manifest (decision 7; the same
+tool, `docs/data/wp1_roundtrip.json`, generated 2026-10-08):
+
+| Column | 2026-10-08 | Null |
+|---|---|---|
+| both hashes recorded and verified | 29/29 | - |
+| forged reference hash refused | 29/29 | 0/29: a reader that ignores the record (10451bc wrote and read none) |
+| policies the reference can represent | 0/29 (all 29 use a rule type it lacks) | - |
+| reference-form bundles: source policy rebuilt and verified | 3/3 | - |
+| stored manifests resolving (`demo/out/*/`) | 89/89 (42 `legacy16-exclude-none`, 34 `legacy16-include-defaults`, 13 `sha256-canonical-v3`) | 34/89 (the formula before the identity release) |
+
 The negative corpus is not the corpus of 2026-10-05: 14/25 then and 35/35
 now compare two corpora. On the original 25 slots it is 25/25 (2 replaced);
 10 cases were added; the 401305a loader refuses 20 of today's 35. Two cases
@@ -429,10 +522,14 @@ recorded `sha256:06a67859...`); resolving a run against its own snapshots is
 
 - distance_envelope is enforced by nothing (no map of people or roads) and
   MSL has no conversion; both are refused by every flight loader and by the
-  Shield's constructor. dynamic_nfz, time_window_switch and corridor_swap
-  are enforced by the Shield but refused by the loaders until the compiler
-  can render them (decision 5). A requested flight mode is flown only where
-  a rail passes `set_mode` to an autopilot; flights record that.
+  Shield's constructor. A dynamic_nfz declared in a policy file is still
+  held from flight (`models.FLIGHT_HELD_TYPES`). Since 2026-10-11 every
+  rail counts a static one's dwell; a moving one is named, not scored, and
+  the entry's stated reason predates that (decision 5). Switches and swaps
+  in a policy file fly. Nothing has
+  been flown or run in SITL with a switch or a swap declared in a policy
+  file. A requested flight mode is flown only where a rail passes `set_mode`
+  to an autopilot; flights record that.
 - The flight rails do not project a vehicle's GPS into a derived frame, so a
   grant-form policy must state its take-off origin to fly (refused otherwise).
   Whether the stated origin is the real take-off point is not something the

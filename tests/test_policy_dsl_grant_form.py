@@ -1001,14 +1001,22 @@ def test_a_scenario_cannot_fly_a_bundle_the_shield_would_ignore():
 
 
 def test_the_loaders_never_hand_the_shield_a_rule_it_does_not_enforce():
-    """RUNTIME_TYPES (what a flight may carry) must stay inside the Shield's
+    """RUNTIME_TYPES (what the runtime handles) must stay inside the Shield's
     own ENFORCED_TYPES, and both must refuse MSL. Every type the loaders turn
     away is either refused by the Shield too or enforced by it - the second is
-    an over-refusal (safe), printed so it is not forgotten: since 2026-10-07
-    the Shield enforces the three hot-apply classes, which wait for compiler
-    templates before they join RUNTIME_TYPES (see its comment)."""
+    an over-refusal (safe), printed so it is not forgotten. From 2026-10-07 to
+    2026-10-08 the three hot-apply classes were over-refused while they waited
+    for compiler templates; since then RUNTIME_TYPES equals ENFORCED_TYPES,
+    and the one over-refusal left is FLIGHT_HELD_TYPES (dynamic_nfz in a
+    policy FILE), held for a stated reason: the rails' dwell metric."""
     from guardrail import shield as S
+    from guardrail.models import FLIGHT_HELD_TYPES
     assert RUNTIME_TYPES <= S.ENFORCED_TYPES, RUNTIME_TYPES - S.ENFORCED_TYPES
+    assert S.ENFORCED_TYPES - RUNTIME_TYPES == set(), \
+        f"over-refused again: {sorted(S.ENFORCED_TYPES - RUNTIME_TYPES)}"
+    assert set(FLIGHT_HELD_TYPES) <= RUNTIME_TYPES, "a held type must be one the runtime handles"
+    assert set(FLIGHT_HELD_TYPES) == {"dynamic_nfz"}, \
+        f"the held set changed - update this test and the docs: {sorted(FLIGHT_HELD_TYPES)}"
     nine = _all_nine()
     for rule in nine["constraints"]:
         if rule["type"] in RUNTIME_TYPES:
@@ -1026,7 +1034,24 @@ def test_the_loaders_never_hand_the_shield_a_rule_it_does_not_enforce():
     pol = policy_from_raw(msl, runtime=False)
     assert pol.unenforced_rules() and Shield.unenforceable(pol)
     print(f"      over-refused (the Shield enforces them, the loaders wait for the "
-          f"compiler): {sorted(S.ENFORCED_TYPES - RUNTIME_TYPES)}")
+          f"compiler): {sorted(S.ENFORCED_TYPES - RUNTIME_TYPES)}; held from policy "
+          f"files until the rails measure them: {sorted(FLIGHT_HELD_TYPES)}")
+
+
+def _strip_manifest_keys(src, dst, *keys):
+    """Rewrite a bundle with keys removed from its manifest (unsigned)."""
+    with tarfile.open(src, "r:gz") as tar:
+        m = {x.name: tar.extractfile(x).read() for x in tar.getmembers()}
+    man = json.loads(m["manifest.json"])
+    for k in keys:
+        man.pop(k, None)
+    m["manifest.json"] = json.dumps(man, indent=2, sort_keys=True).encode()
+    with tarfile.open(dst, "w:gz") as tar:
+        for name, data in m.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return dst
 
 
 def test_a_reference_form_bundle_is_an_exchange_format_not_a_flight_artefact():
@@ -1034,24 +1059,181 @@ def test_a_reference_form_bundle_is_an_exchange_format_not_a_flight_artefact():
     spells `repair` as `project_fix`, so the policy rebuilt from it has a THIRD
     hash - neither the manifest's nor the source's. Shown failing before
     2026-10-07: load_for_flight flew it and recorded that third hash, which
-    resolves to no policy. Now refused for flight; readable; and the source
-    policy still recognises the manifest's hash."""
+    resolves to no policy. Refused for flight since.
+
+    Since 2026-10-08 the manifest carries both hashes and the
+    `reference_delta` that rebuilds the source; check_bundle verifies both,
+    and the flight loaders fly the SOURCE policy under the hash the manifest
+    records - the third hash never reaches a run. A reference-form bundle
+    without the delta (the reference's own; or one with it stripped) is still
+    refused, for the old reason."""
     pol = policy_from_raw(_raw(), runtime=True)       # no scope/layer, `repair`
     b = B.write_bundle(pol, _tmp("x.tar.gz"), signer=None, ir_form="reference")
     chk = B.check_bundle(b)
     declared = chk.manifest["policy_hash"]
     assert chk.hash_form == REFERENCE_FORM
     assert len({pol.policy_hash, declared, chk.policy.policy_hash}) == 3, \
-        "three hashes: the reason it cannot be a flight artefact"
+        "three hashes: the document rebuilt from the reference form is not the source"
     assert pol.hash_form(declared) == REFERENCE_FORM, "the source still knows it"
-    assert chk.source_record()["declared_policy_hash"] == declared
-    _refused(lambda: B.load_for_flight(b, allow_unverified=True), "exchange format")
-    _refused(lambda: B.load_bundle(b, require_signature=False), "exchange format")
-    assert B.load_bundle(b, require_signature=False, runtime=False).policy_id == "t"
+    assert chk.hashes == {HASH_SCHEME: pol.policy_hash, REFERENCE_FORM: declared}
+    assert chk.source_policy is not None and chk.source_policy.policy_hash == pol.policy_hash
+    flown, rec = B.load_for_flight(b, allow_unverified=True)
+    assert flown.policy_hash == pol.policy_hash
+    assert rec["declared_policy_hash"] == declared
+    assert rec["loaded_policy_hash"] == pol.policy_hash, "the run records the source's hash"
+    assert B.load_bundle(b, require_signature=False).policy_hash == pol.policy_hash
+    assert B.load_bundle(b, require_signature=False, runtime=False).policy_hash == \
+        chk.policy.policy_hash, "runtime=False returns the archived document"
+    # Without its delta: the old exchange format, refused for flight.
+    bare = _strip_manifest_keys(b, _tmp("bare.tar.gz"), "hashes", "reference_delta",
+                                "reference_problems")
+    assert B.check_bundle(bare).source_policy is None
+    _refused(lambda: B.load_for_flight(bare, allow_unverified=True), "exchange format")
+    _refused(lambda: B.load_bundle(bare, require_signature=False), "exchange format")
     # A bundle in this project's form carries the same hash in both places.
     own = B.check_bundle(B.write_bundle(pol, _tmp("o.tar.gz"), signer=None))
     rec = own.source_record()
     assert rec["declared_policy_hash"] == rec["loaded_policy_hash"] == pol.policy_hash
+
+
+def test_every_manifest_names_both_hashes_and_both_are_verified():
+    """Deviation 10 (the PI's decision of 6 Oct, conform to the grant): every
+    bundle names its policy under this project's canonical form AND the
+    reference implementation's, and the loader checks both. Where the
+    reference cannot hold the policy, its entry is null with the reasons -
+    and the null is checked too, so a forged reference hash on such a policy
+    is refused. An edited or dropped entry is refused. No stored hash moved:
+    `policy_hash` of a bundle in this project's form is what it was.
+
+    Shown failing on 10451bc: no manifest had `hashes`, and an edited
+    reference hash could not be noticed because none was recorded."""
+    ref_pol = load_policy(REF_DEMO, runtime=False)        # representable
+    metre = load_policy(DEMO)                              # not representable
+    for pol, want_ref in ((ref_pol, ref_pol.reference_hash()), (metre, None)):
+        b = B.write_bundle(pol, _tmp("h.tar.gz"), signer=None)
+        chk = B.check_bundle(b)
+        assert chk.manifest["policy_hash"] == pol.policy_hash, "our hash did not move"
+        assert chk.hashes == {HASH_SCHEME: pol.policy_hash, REFERENCE_FORM: want_ref}
+        assert chk.manifest["hashes"] == chk.hashes
+        if want_ref is None:
+            assert any("metre vertices" in w for w in chk.manifest["reference_problems"])
+        else:
+            assert want_ref == REF_HASHES["bundles/itri-icl-2026-demo.yaml"]
+        # tamper each entry, and drop one
+        for edit in ("ours", "ref", "drop"):
+            with tarfile.open(b, "r:gz") as tar:
+                m = {x.name: tar.extractfile(x).read() for x in tar.getmembers()}
+            man = json.loads(m["manifest.json"])
+            if edit == "ours":
+                man["hashes"][HASH_SCHEME] = "sha256:" + "0" * 64
+            elif edit == "ref":
+                man["hashes"][REFERENCE_FORM] = "sha256:" + "1" * 64
+            else:
+                man["hashes"].pop(REFERENCE_FORM)
+            m["manifest.json"] = json.dumps(man, indent=2, sort_keys=True).encode()
+            bad = _tmp(f"{edit}.tar.gz")
+            with tarfile.open(bad, "w:gz") as tar:
+                for name, data in m.items():
+                    info = tarfile.TarInfo(name)
+                    info.size = len(data)
+                    tar.addfile(info, io.BytesIO(data))
+            _refused(lambda: B.check_bundle(bad), "hashes")
+    # A reference-form bundle: its own (reference) hash is the declared one,
+    # and this project's entry is checked against the source policy the
+    # reference_delta rebuilds. Forging that entry alone passed every test
+    # until the review's mutation M18 removed the check; it is refused here.
+    src = policy_from_raw(_raw(), runtime=True)
+    rb = B.write_bundle(src, _tmp("rf.tar.gz"), signer=None, ir_form="reference")
+    assert B.check_bundle(rb).hashes[HASH_SCHEME] == src.policy_hash
+    with tarfile.open(rb, "r:gz") as tar:
+        m = {x.name: tar.extractfile(x).read() for x in tar.getmembers()}
+    man = json.loads(m["manifest.json"])
+    man["hashes"][HASH_SCHEME] = "sha256:" + "2" * 64
+    m["manifest.json"] = json.dumps(man, indent=2, sort_keys=True).encode()
+    forged = _tmp("rf-forged.tar.gz")
+    with tarfile.open(forged, "w:gz") as tar:
+        for name, data in m.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    _refused(lambda: B.check_bundle(forged), f"hashes[{HASH_SCHEME}]",
+             "rebuilt from the reference document")
+    _refused(lambda: B.load_for_flight(forged, allow_unverified=True), f"hashes[{HASH_SCHEME}]")
+    # The lock still pins every shipped policy under the hash it always had.
+    assert B.check_lock() == [], B.check_lock()
+
+
+def test_a_reference_form_bundle_is_verified_by_both_loaders():
+    """The grant's demo document, written here in the reference's form: the
+    PI's own loader (its 3.11 env, read-only) reads it and reproduces its
+    `policy_hash`; this loader verifies that hash and this project's hash of
+    the source it rebuilds. Without the reference env the local half runs and
+    the cross half says SKIP."""
+    if not REF_DEMO.is_file():
+        return SKIP
+    pol = load_policy(REF_DEMO, runtime=False)
+    out = B.write_bundle(pol, _tmp("both.tar.gz"), signer=None, ir_form="reference")
+    chk = B.check_bundle(out)
+    assert chk.hashes == {HASH_SCHEME: pol.policy_hash, REFERENCE_FORM: pol.reference_hash()}
+    assert chk.source_policy.policy_hash == pol.policy_hash
+    if not _reference_available():
+        return SKIP
+    import wp1_roundtrip_kpi as W
+    got = W.run_reference(
+        "import json; from policy_dsl import load_bundle; "
+        f"print(json.dumps({{'h': load_bundle({str(out)!r}).policy_hash}}))")
+    assert got.get("ok"), got
+    assert got["h"] == chk.hashes[REFERENCE_FORM], got
+
+
+def test_a_dynamic_zone_in_a_policy_file_is_held_until_the_rails_measure_it():
+    """dynamic_nfz joined RUNTIME_TYPES on 2026-10-08 (the Shield enforces it,
+    the compiler renders it), but a policy FILE declaring one is refused for
+    flight (models.FLIGHT_HELD_TYPES): every flight rail but follow_vlm
+    computes its zone-dwell metric nfz_s - which guardrail/kpi.py reads for
+    the mission outcome - from policy.by_type(PolygonFence), so the zone
+    would score 0 s however long the aircraft spent in it. Found in review
+    the day it joined; the refusal names the zone and that reason, by every
+    flight loader (YAML and bundle). The declaration still loads, bundles and
+    records a start conflict (until 2026-10-08 start_conflicts looked at
+    polygon fences only). A policy file with a switch and a swap flies."""
+    raw = _raw(constraints=[
+        {"id": "alt", "type": "altitude_envelope", "alt_min_m": 5, "alt_max_m": 30},
+        {"id": "dz", "type": "dynamic_nfz",
+         "vertices": [{"x": -5, "y": -5}, {"x": 5, "y": -5}, {"x": 5, "y": 5}]}])
+    p = _yaml(json.dumps(raw), "dz.json")
+    _refused(lambda: load_policy(p), "dz: dynamic_nfz is enforced by the Shield", "nfz_s")
+    _refused(lambda: B.load_for_flight(None, p), "nfz_s")
+    pol = load_policy(p, runtime=False)
+    assert [g.split(":")[0] for g in pol.flight_problems()] == ["dz"]
+    assert pol.unenforced_rules() == [], "the Shield enforces it; the gap is the rails'"
+    assert any(n.startswith("dz: the frame origin") for n in pol.runtime_notes()), \
+        pol.runtime_notes()
+    assert Shield(pol).state_is_unsafe(State(x=1.0, y=-3.0, up=10.0))
+    b = B.write_bundle(pol, _tmp("dz.tar.gz"), signer=None)
+    _refused(lambda: B.load_for_flight(b, allow_unverified=True), "nfz_s")
+    _refused(lambda: B.load_bundle(b, require_signature=False), "nfz_s")
+    assert B.load_bundle(b, require_signature=False, runtime=False).policy_hash == pol.policy_hash
+    # Switches and swaps are measured as before (the Shield applies them; no
+    # rail scores corridor dwell), so a file declaring them flies.
+    raw = _raw(constraints=[
+        {"id": "alt", "type": "altitude_envelope", "alt_min_m": 5, "alt_max_m": 30},
+        _square("nfz", 40, 40, 10),
+        {"id": "off", "type": "time_window_switch", "target_id": "nfz", "active": False,
+         "valid_time": {"recurrence": {"days": ["Sat"], "start_time": "08:00",
+                                       "end_time": "09:00"}}},
+        {"id": "lane", "type": "corridor", "width_m": 40,
+         "centerline": [{"x": 0, "y": 0}, {"x": 100, "y": 0}]},
+        {"id": "swap", "type": "corridor_swap", "target_id": "lane", "width_m": 30,
+         "centerline": [{"x": 0, "y": 0}, {"x": 100, "y": 10}],
+         "valid_time": {"recurrence": {"days": ["Sun"], "start_time": "08:00",
+                                       "end_time": "09:00"}}}])
+    p2 = _yaml(json.dumps(raw), "sw.json")
+    flies = load_policy(p2)
+    assert flies.flight_problems() == []
+    flown, _ = B.load_for_flight(B.write_bundle(flies, _tmp("sw.tar.gz"), signer=None),
+                                 allow_unverified=True)
+    assert flown.policy_hash == flies.policy_hash
 
 
 def test_the_lint_compares_every_pair_of_hard_height_limits():

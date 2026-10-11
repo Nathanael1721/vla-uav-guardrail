@@ -195,6 +195,38 @@ def test_the_reference_cross_load():
     assert all(x["reference_loader_reads_our_reference_form_bundle"].values()), x
 
 
+def test_every_manifest_names_both_hashes_and_a_forged_one_is_refused():
+    """2026-10-08 (deviation 10): each policy's bundle records this project's
+    hash AND the reference's (null, with reasons, where the reference cannot
+    hold it); both are verified; `policy_hash` did not move; a forged
+    reference hash is refused - and the measured null (a reader that ignores
+    the record, as 10451bc did) accepts every forgery, so the column can fail."""
+    bh = W.both_hashes(ROOT / "policies")
+    assert bh["n"] == N_POLICIES, bh["n"]
+    bad = [r for r in bh["rows"] if not r.get("ok")]
+    assert not bad, bad
+    assert bh["forged_run"] == bh["n"] and bh["forged_refused"] == bh["n"], bh
+    assert bh["null_record_ignored_refused"] == 0, bh["null_record_ignored_refused"]
+    # Every shipped policy that is not representable says why.
+    for r in bh["rows"]:
+        assert r["reference_hash"] or r["reference_problems"], r
+    assert sum(bh["not_representable_because"].values()) >= bh["n"] - bh["representable"]
+
+
+def test_the_report_carries_the_both_hash_columns_and_their_null():
+    out = Path(tempfile.mkdtemp(prefix="wp1bh_")) / "wp1.json"
+    assert W.main(["--out", str(out), "--no-runs", "--no-reference"]) == 0
+    res = json.loads(out.read_text(encoding="utf-8"))
+    n = res["round_trip"]["n"]
+    assert res["kpi"]["both_hashes_recorded_and_verified"] == f"{n}/{n}"
+    assert res["kpi"]["forged_reference_hash_refused"] == f"{n}/{n}"
+    assert res["null_record_ignored"]["forged_reference_hash_refused"] == f"0/{n}"
+    x = res["reference"]
+    if x.get("run"):
+        docs = x["our_loader_on_reference_documents"]
+        assert res["kpi"]["reference_form_source_verified"] == f"{len(docs)}/{len(docs)}"
+
+
 def test_a_run_set_aside_is_listed_not_dropped():
     """Shown failing on the census code of 2026-10-07 06:30 (no `set_aside`):
     two runs another unit moved into demo/out/_hot_apply_not_in_lock/ fell

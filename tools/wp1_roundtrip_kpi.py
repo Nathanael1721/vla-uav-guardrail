@@ -54,6 +54,21 @@ Two sections added on 2026-10-06 measure the grant's own form:
                    the 1 bundle (it refused issued_at, the geometry block,
                    project_fix and the missing origin).
 
+One section added on 2026-10-08 (deviation 10, card WP1-05):
+
+  both_hashes      every policies/*.yaml bundled: its manifest names the policy
+                   under BOTH canonical forms (this project's and the
+                   reference implementation's, null with the reasons where
+                   the reference cannot hold it), check_bundle verifies both,
+                   and `policy_hash` is still this project's (no stored hash
+                   moved). Each bundle is then forged with a wrong reference
+                   hash and must be refused. Null, MEASURED: the same forged
+                   bundles read by a loader that ignores the record (what
+                   10451bc did - it wrote none and read none) are all accepted.
+                   The reference section also reads each reference-form
+                   bundle's source record back (this project's hash of the
+                   policy its delta rebuilds).
+
 Two identity checks ride along because they are the same question asked of
 stored artefacts: the JSON Schema export is current, and every stored flight
 manifest still resolves to a policy (the census, before and after the
@@ -181,6 +196,114 @@ def round_trip(policies_dir: Path, signer="auto") -> dict:
             "signatures": dict(sig),
             "tamper_refusal": {"run": len(t_run), "refused": t_ref,
                                "rate": round(t_ref / len(t_run), 4) if t_run else None},
+            "rows": rows}
+
+
+# --------------------------------------------------------------------------- #
+# both hashes in every manifest (2026-10-08)
+# --------------------------------------------------------------------------- #
+
+_REASON_KINDS = (("metre vertices", "metre vertices"), ("margin_m", "margin ring"),
+                 ("is not in the reference's DSL", "a rule type the reference lacks"),
+                 ("valid_time", "a schedule (valid_time)"), ("`origin`", "origin"),
+                 ("`layers_merged`", "layers_merged"), ("no rules", "no rules"))
+
+
+def _reason_kind(why: str) -> str:
+    for key, label in _REASON_KINDS:
+        if key in why:
+            return label
+    return "other"
+
+
+def _forge_reference_hash(src: Path, dst: Path) -> None:
+    """The bundle with its manifest's reference-form hash replaced by a wrong
+    one (the ir.json, signature line and `policy_hash` untouched)."""
+    with tarfile.open(src, "r:gz") as tar:
+        members = {m.name: tar.extractfile(m).read() for m in tar.getmembers()}
+    man = json.loads(members["manifest.json"])
+    man["hashes"][REFERENCE_FORM] = "sha256:" + "0" * 64
+    members["manifest.json"] = json.dumps(man, indent=2, sort_keys=True).encode()
+    with tarfile.open(dst, "w:gz") as tar:
+        for name, data in members.items():
+            info = tarfile.TarInfo(name=name)
+            info.size, info.mtime = len(data), 0
+            tar.addfile(info, io.BytesIO(data))
+
+
+class _RecordIgnored:
+    """The null reader: check_bundle with the 2026-10-08 hash record skipped,
+    as 10451bc read every bundle (it wrote no record and read none)."""
+
+    def __enter__(self):
+        import guardrail.bundle as _b
+        self._b, self._saved = _b, _b._verify_both_hashes
+        _b._verify_both_hashes = lambda name, man, irb, pol, form, declared: (
+            {form: declared}, None)
+        return self
+
+    def __exit__(self, *exc):
+        self._b._verify_both_hashes = self._saved
+        return False
+
+
+def both_hashes(policies_dir: Path) -> dict:
+    files = sorted(policies_dir.glob("*.yaml"))
+    if not files:
+        raise SystemExit(f"no policies in {policies_dir}; refusing to report 0/0")
+    tmp = Path(tempfile.mkdtemp(prefix="wp1hash_"))
+    rows, kinds = [], Counter()
+    forged: list[tuple[str, Path]] = []
+    for f in files:
+        row = {"file": f.name}
+        try:
+            pol = load_policy(f, runtime=False)
+            b = write_bundle(pol, tmp / f"{f.stem}.tar.gz", changelog="wp1 both hashes",
+                             issued_at="2026-01-01T00:00:00Z", signer=None)
+            chk = check_bundle(b)
+            rec = chk.manifest.get("hashes") or {}
+            ref = pol.reference_hash()
+            row.update({
+                "policy_hash": pol.policy_hash,
+                "policy_hash_unchanged": chk.manifest.get("policy_hash") == pol.policy_hash,
+                "both_recorded": set(rec) == {HASH_SCHEME, REFERENCE_FORM},
+                "both_verified": chk.hashes == {HASH_SCHEME: pol.policy_hash,
+                                                REFERENCE_FORM: ref},
+                "reference_hash": ref})
+            if ref is None:
+                row["reference_problems"] = sorted(
+                    {_reason_kind(w) for w in chk.manifest.get("reference_problems") or []})
+                kinds.update(row["reference_problems"])
+            row["ok"] = (row["policy_hash_unchanged"] and row["both_recorded"]
+                         and row["both_verified"])
+            bad = tmp / f"{f.stem}.forged.tar.gz"
+            _forge_reference_hash(b, bad)
+            forged.append((f.name, bad))
+        except Exception as exc:                               # noqa: BLE001
+            row.update({"ok": False, "error": f"{type(exc).__name__}: {exc}"[:300]})
+        rows.append(row)
+
+    def refusals() -> dict:
+        out = {}
+        for name, bad in forged:
+            try:
+                check_bundle(bad)
+                out[name] = "ACCEPTED"
+            except ValueError:
+                out[name] = "refused"
+        return out
+    verdict = refusals()
+    with _RecordIgnored():
+        null = refusals()
+    for r in rows:
+        r["forged_reference_hash"] = verdict.get(r["file"], "not run")
+    n = len(rows)
+    return {"n": n, "passed": sum(1 for r in rows if r.get("ok")),
+            "representable": sum(1 for r in rows if r.get("reference_hash")),
+            "not_representable_because": dict(sorted(kinds.items())),
+            "forged_refused": sum(1 for v in verdict.values() if v == "refused"),
+            "forged_run": len(verdict),
+            "null_record_ignored_refused": sum(1 for v in null.values() if v == "refused"),
             "rows": rows}
 
 
@@ -430,6 +553,15 @@ def reference_cross_load(run_reference_loader: bool = True) -> dict:
                              changelog="wp1 cross-load", signer=None,
                              ir_form="reference")
             written[rel] = str(b)
+            # Both hashes of the bundle, read back by this loader: the
+            # reference's (declared) and this project's hash of the source
+            # its reference_delta rebuilds (2026-10-08).
+            back = check_bundle(b)
+            ours_docs[rel]["source_verified"] = (
+                back.source_policy is not None
+                and back.source_policy.policy_hash == pol.policy_hash
+                and back.hashes == {HASH_SCHEME: pol.policy_hash,
+                                    REFERENCE_FORM: pol.reference_hash()})
         except Exception as exc:                               # noqa: BLE001
             ours_docs[rel] = {"loads": False, "error": f"{type(exc).__name__}: {exc}"[:300]}
     for t in tars:
@@ -564,6 +696,7 @@ def build(policies_dir: Path = ROOT / "policies", neg_dir: Path = NEGATIVE_DIR,
     rt = round_trip(policies_dir, signer=signer)
     neg = negative_corpus(neg_dir)
     gf = grant_form_round_trip(policies_dir)
+    bh = both_hashes(policies_dir)
     xref = reference_cross_load(run_reference_loader=reference)
     n = rt["n"]
     agree = xref.get("reference_hash_agrees")
@@ -593,7 +726,19 @@ def build(policies_dir: Path = ROOT / "policies", neg_dir: Path = NEGATIVE_DIR,
                                       if agree is not None else "not run"),
             "reference_loader_reads_ours": (f"{sum(reads.values())}/{len(reads)}"
                                             if reads is not None else "not run"),
+            "both_hashes_recorded_and_verified": f"{bh['passed']}/{bh['n']}",
+            "reference_hash_representable": f"{bh['representable']}/{bh['n']}",
+            "forged_reference_hash_refused": f"{bh['forged_refused']}/{bh['forged_run']}",
+            "reference_form_source_verified": (
+                f"{sum(bool(r.get('source_verified')) for r in docs.values())}/{len(docs)}"),
         },
+        # The 2026-10-08 hash record, read by a loader that ignores it (what
+        # 10451bc did): measured on the same forged bundles.
+        "null_record_ignored": {
+            "forged_reference_hash_refused": (f"{bh['null_record_ignored_refused']}/"
+                                              f"{bh['forged_run']}"),
+            "why": "10451bc wrote no `hashes` record and read none; the forged "
+                   "reference hash is invisible to such a reader"},
         "null_accept_everything": {
             "round_trip": f"{n}/{n}", "tamper_refusal": f"0/{rt['tamper_refusal']['run']}",
             "negative_refusal": f"0/{neg['n']}",
@@ -617,6 +762,7 @@ def build(policies_dir: Path = ROOT / "policies", neg_dir: Path = NEGATIVE_DIR,
         "round_trip": rt,
         "negative_corpus": neg,
         "grant_form": gf,
+        "both_hashes": bh,
         "reference": xref,
         "version_lock_problems": check_lock(policies_dir),
         "schema": schema_status(),
@@ -640,6 +786,10 @@ def main(argv=None) -> int:
     say("null: accept everything", {k: v for k, v in res["null_accept_everything"].items()
                                      if k != "why"})
     say("null: the 2026-10-05 code", res["null_2026_10_05"])
+    say("null: the hash record ignored (10451bc)",
+        {k: v for k, v in res["null_record_ignored"].items() if k != "why"})
+    say("not representable by the reference, because",
+        res["both_hashes"]["not_representable_because"])
     say("signatures on the round-trip bundles", res["round_trip"]["signatures"])
     for r in res["round_trip"]["rows"]:
         if not r.get("ok") or r.get("tamper") != "refused":

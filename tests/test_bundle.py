@@ -416,6 +416,9 @@ def test_a_consistent_forgery_without_the_key_is_refused():
     h = "sha256:" + hashlib.sha256(ir_b).hexdigest()
     man = json.loads(m[MANIFEST_NAME])
     man["policy_hash"] = h
+    # Consistent means every record of the hash: since 2026-10-08 the
+    # manifest also names it in `hashes` (and check_bundle verifies that).
+    man["hashes"]["sha256-canonical-v3"] = h
     old_sig = m[SIGNATURE_NAME].decode().splitlines()[1]
     bad = _repack(p, _tmp("forged.tar.gz"), {
         IR_NAME: ir_b,
@@ -975,6 +978,25 @@ def test_the_pack_can_be_written_alongside_a_flight():
     ConstraintCompiler(load_policy(PED)).write_summary_pack(out)
     got = json.loads(out.read_text(encoding="utf-8"))
     assert got["n_rules"] == 4
+
+
+def test_a_bundle_written_before_the_hashes_record_still_verifies():
+    """Bundles issued before 2026-10-08 have no `hashes` in their manifest.
+    They verify as before, under the one form they name - the record is
+    additive."""
+    pol = load_policy(DEMO)
+    b = _unsigned(pol)
+    man = json.loads(_members(b)[MANIFEST_NAME])
+    assert set(man["hashes"]) == {B.HASH_SCHEME, B.REFERENCE_FORM}
+    old = dict(man)
+    for k in ("hashes", "reference_problems"):
+        old.pop(k)
+    before = _repack(b, _tmp("before.tar.gz"),
+                     {MANIFEST_NAME: json.dumps(old, indent=2, sort_keys=True).encode()})
+    chk = check_bundle(before)
+    assert chk.policy.policy_hash == pol.policy_hash
+    assert chk.hashes == {B.HASH_SCHEME: pol.policy_hash}, chk.hashes
+    assert B.load_bundle(before, require_signature=False).policy_hash == pol.policy_hash
 
 
 def test_the_prompt_keeps_the_shorthands_the_demos_already_read():

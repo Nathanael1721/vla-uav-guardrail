@@ -23,6 +23,18 @@ Outputs per run, under demo/out/<tag>/:
     trajectory.png     top-down plot: NFZ, path, start/target
     report.md          KPI summary (NFZ entry seconds, shield stats)
     audit.jsonl        Shield audit log (only when shield=on)
+
+No simulator, no run: this script needs AirSim (Blocks) and has no stub mode.
+tests/test_sitl_rails.py flies main() against a stand-in for the airsim
+package to keep its code paths honest.
+
+2026-10-11: `--dynamic` sends its zone as a dynamic_nfz
+(guardrail.shield.as_dynamic_nfz). The Shield has refused a polygon_fence
+after mission start since 2026-10-07 (LockedRuleClass), and before that every
+shielded run already died on its first tick, assigning to AuditLogger's
+read-only policy_hash (since 2026-08-26). Zone dwell is the count every rail
+shares (guardrail.replay.zone_dwell), so the dynamic zone is counted, from the
+moment it went live.
 """
 from __future__ import annotations
 
@@ -41,9 +53,9 @@ from guardrail import AuditLogger, Shield, State, load_policy          # noqa: E
 from guardrail.compiler import ConstraintCompiler                      # noqa: E402
 from guardrail.geometry import fence_polygon                           # noqa: E402
 from guardrail.models import PolygonFence, XY                          # noqa: E402
+from guardrail.replay import DWELL_ZONE_TYPES, zone_dwell              # noqa: E402
+from guardrail.shield import as_dynamic_nfz                            # noqa: E402
 from guardrail.vla_stub import StubVLA                                 # noqa: E402
-
-from shapely.geometry import Point                                     # noqa: E402
 
 TICK = 0.1          # 10 Hz — the grant's action rate
 MAX_S = 90          # mission time cap
@@ -83,12 +95,36 @@ class RateLimiter:
 
 # The dynamic NFZ spawned by --dynamic: sits on the east-edge detour path the
 # drone takes around the static zone, so it forces a SECOND, wider reroute.
+# Authored as a polygon and sent as the dynamic_nfz it stands for
+# (`apply_dynamic_zone`): the grant lets only dynamic_nfz, time_window_switch
+# and corridor_swap change after mission start.
 DYNAMIC_AT_S = 8.0
 DYNAMIC_FENCE = PolygonFence(
     id="nfz-dynamic", type="polygon_fence",
     vertices=[XY(x=23, y=6), XY(x=31, y=6), XY(x=31, y=14), XY(x=23, y=14)],
     margin_m=1.0,
 )
+
+
+def apply_dynamic_zone(shield, fence: PolygonFence = DYNAMIC_FENCE):
+    """Hot-apply `fence` mid-flight as a dynamic_nfz (same id, vertices,
+    band, margin, priority and breach action, no motion) and return the rule
+    applied. `shield.hot_apply(fence)` itself raises LockedRuleClass once the
+    mission has started (the first filter() tick)."""
+    zone = as_dynamic_nfz(fence)
+    shield.hot_apply(zone)
+    return zone
+
+
+def nfz_dwell(shield, traj: list[dict], spawn_t: float | None) -> dict:
+    """Seconds inside keep-out zones (guardrail.replay.zone_dwell): every
+    polygon and circle fence and every dynamic_nfz that does not move, the
+    --dynamic zone only from `spawn_t`, when it went live. `spawn_t` is put
+    on the trajectory's 0.01 s grid (traj "t" is rounded so), or the spawn
+    tick itself is dropped whenever the clock read past the rounded value."""
+    return zone_dwell(shield, traj, TICK,
+                      live_from=({DYNAMIC_FENCE.id: round(spawn_t, 2)}
+                                 if spawn_t is not None else None))
 
 
 def main() -> int:
@@ -199,10 +235,14 @@ def main() -> int:
 
         # --- dynamic NFZ hot-apply (grant: dynamic_nfz + generation bump) ---
         if args.dynamic and spawn_t is None and now >= DYNAMIC_AT_S:
-            shield.hot_apply(DYNAMIC_FENCE)
+            apply_dynamic_zone(shield, DYNAMIC_FENCE)
             if hasattr(vla, "refresh_fences"):
-                vla.refresh_fences(policy)             # BC model sees the new zone too
-            audit.policy_hash = policy.policy_hash     # records now carry the new hash
+                # The BC pilots' features read polygon fences only
+                # (training/features.make_fences), so they do not see a
+                # dynamic_nfz; the Shield enforces it either way.
+                vla.refresh_fences(policy)
+            # No restamp: AuditLogger holds the policy and reads its hash at
+            # log time (the property is read-only; assigning it raised).
             spawn_t, spawn_pos = now, (state.x, state.y)
             print(f"[dynamic]  t={now:.1f}s NFZ '{DYNAMIC_FENCE.id}' hot-applied "
                   f"-> generation {policy.generation}, {policy.policy_hash}")
@@ -223,8 +263,7 @@ def main() -> int:
         raw = vla.act(state)
         if shield_on:
             decision = shield.filter(state, raw)
-            audit.policy_hash = policy.policy_hash   # API may have hot-applied
-            audit.log(tick, decision)
+            audit.log(tick, decision)        # reads the hash live (hot-applies)
             emitted = decision.emitted
             if decision.touched:
                 n_touched += 1
@@ -283,22 +322,18 @@ def main() -> int:
     print("[flight]   landed")
 
     # ---- 4. KPI: seconds spent inside a raw NFZ polygon ----
-    # A dynamic fence only counts AFTER it went live (fair accounting).
-    fences = [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
-
-    def _active(f, p) -> bool:
-        if f.id == DYNAMIC_FENCE.id:
-            return spawn_t is not None and p["t"] >= spawn_t
-        return True
-
-    inside_ticks = sum(
-        1 for p in traj
-        for f, poly in fences
-        if _active(f, p)
-        and f.altitude_floor_m <= p["up"] <= f.altitude_ceiling_m
-        and poly.contains(Point(p["x"], p["y"]))
-    )
-    nfz_seconds = inside_ticks * TICK
+    # A dynamic fence only counts AFTER it went live (fair accounting). Read
+    # from the Shield's rule checker; until 2026-10-11 this walked
+    # policy.by_type(PolygonFence), which a dynamic_nfz is not - the --dynamic
+    # zone would have added 0 s however long the drone sat in it.
+    dwell = nfz_dwell(shield, traj, spawn_t)
+    nfz_seconds = dwell["nfz_s"]
+    if dwell["nfz_moving_not_counted"]:
+        print(f"[nfz]      moving zone(s) {dwell['nfz_moving_not_counted']} are NOT "
+              f"in the NFZ time: the end-of-flight count has no per-tick position")
+    # Every zone with vertices, for the plot (the dynamic one included).
+    fences = [(f, fence_polygon(f)) for f in policy.constraints
+              if f.type in DWELL_ZONE_TYPES and getattr(f, "vertices", None)]
 
     # ---- 5. Plot ----
     plot_path = out / "trajectory.png"
@@ -358,6 +393,9 @@ def main() -> int:
 | Dynamic NFZ | {f'hot-applied at t={spawn_t:.1f}s -> generation {policy.generation}' if spawn_t else 'not used'} |
 | Camera frames captured | {n_frames} (`frames/`) |
 | **Time inside NFZ** | **{nfz_seconds:.1f} s** |
+| Time inside NFZ, by zone | {', '.join(f'{k} {v:.1f} s' for k, v in dwell['nfz_by_zone_s'].items()) or 'none'} |
+| Zones counted | {', '.join(dwell['nfz_counted_zones']) or 'none'} |
+| Moving zones NOT counted | {', '.join(dwell['nfz_moving_not_counted']) or 'none'} |
 | **P0 KPI (0 NFZ entry)** | **{'PASS' if kpi_ok else 'FAIL'}** |
 """
     (out / "report.md").write_text(report, encoding="utf-8")

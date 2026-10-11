@@ -1,0 +1,8 @@
+{% extends "sentence/_base.j2" %}
+{#- Keep-OUT zone that may move (grant: "Polygon with motion (translate /
+    rotate) injected mid-flight"; since 2026-10-08 a policy file may declare
+    one from the start). A zone that does not move reads exactly as a
+    polygon_fence; a moving one says how fast, because its position at issue
+    time is the Shield's to track and the model cannot be told one fixed
+    place. Rates go through |rate, which never prints a non-zero rate as 0. -#}
+{% block core %}{% set m = r.motion %}{% set v = ((m.vx_mps ** 2 + m.vy_mps ** 2) ** 0.5) if m else 0 %}{% set w = (m.yaw_rate_dps if m else 0) %}Never enter zone '{{ r.id }}'{% if v > 0 %}, which moves at {{ v|rate }} m/s{% endif %}{% if w != 0 %}{% if v > 0 %} and{% else %}, which{% endif %} turns at {{ (w if w > 0 else -w)|rate }} deg/s{% endif %}{% endblock %}

@@ -239,7 +239,9 @@ def _read_text(path: str) -> str | None:
 
 def _nvpmodel() -> str | None:
     """The Orin's power mode, when nvpmodel is on PATH (on the host; not inside
-    the containers, which is why the runbook asks for it in --note)."""
+    the containers). `power_facts` reads the mode from nvpmodel's status file
+    instead, which a container sees once it is mounted, so the mode no longer
+    rests on the --note text."""
     try:
         r = subprocess.run(["nvpmodel", "-q"], capture_output=True, text=True, timeout=10)
         if r.returncode == 0:
@@ -247,6 +249,120 @@ def _nvpmodel() -> str | None:
     except (OSError, subprocess.SubprocessError):
         pass
     return None
+
+
+# Where the power mode and the CPU limits are read (DESIGN-topologies.md, next
+# step 5). nvpmodel writes the mode it set to NVPMODEL_STATUS ("pmode:0002 ..."),
+# and its ID -> name table is in NVPMODEL_CONF; the CPU limits are cpufreq's.
+NVPMODEL_STATUS = "/var/lib/nvpmodel/status"
+NVPMODEL_CONF = "/etc/nvpmodel.conf"
+CPU_SYSFS = "/sys/devices/system/cpu"
+CPUFREQ_FIELDS = (("scaling_governor", "governor"), ("scaling_min_freq", "scaling_min_khz"),
+                  ("scaling_max_freq", "scaling_max_khz"), ("cpuinfo_min_freq", "cpuinfo_min_khz"),
+                  ("cpuinfo_max_freq", "cpuinfo_max_khz"), ("scaling_cur_freq", "cur_khz"))
+
+
+def _int_or_none(text: str | None) -> int | None:
+    try:
+        return int(str(text).strip())
+    except (TypeError, ValueError):
+        return None
+
+
+def nvpmodel_mode_names(conf_text: str | None) -> dict[int, str]:
+    """{mode ID: name} from /etc/nvpmodel.conf's `< POWER_MODEL ID=2 NAME=MODE_30W >`
+    lines; {} when the text is absent or holds no such line."""
+    import re
+    out = {}
+    for m in re.finditer(r"<\s*POWER_MODEL\s+ID=(\d+)\s+NAME=([^\s>]+)", conf_text or ""):
+        out[int(m.group(1))] = m.group(2)
+    return out
+
+
+def _parse_cpu_list(spec: str | None) -> list[int] | None:
+    """'0-3,6' -> [0, 1, 2, 3, 6]; None when it cannot be read."""
+    if not spec:
+        return None
+    cpus = []
+    try:
+        for part in spec.strip().split(","):
+            if "-" in part:
+                a, b = part.split("-", 1)
+                cpus.extend(range(int(a), int(b) + 1))
+            elif part.strip():
+                cpus.append(int(part))
+    except ValueError:
+        return None
+    return cpus
+
+
+def power_facts(read=None) -> dict:
+    """The power mode and the CPU frequency limits this host runs at, READ from
+    the files that hold them, so a timing no longer depends on --note text.
+
+    nvpmodel   the mode nvpmodel last set, from /var/lib/nvpmodel/status (its
+               ID; the name from /etc/nvpmodel.conf when that is readable too).
+               Inside a container both files exist only if they are mounted.
+    cpufreq    per online CPU: governor, scaling and hardware min/max and the
+               current frequency in kHz, from /sys/devices/system/cpu.
+
+    Nothing is guessed: a value that cannot be read is None with a `why`
+    (on a desktop without nvpmodel, or on Windows, where there is no sysfs).
+    `read` is the file reader (path -> text or None), so tests can describe
+    any host without being one."""
+    read = read or _read_text
+    status = read(NVPMODEL_STATUS)
+    nv: dict = {"source": NVPMODEL_STATUS, "raw": status, "mode_id": None,
+                "mode_name": None, "why": None}
+    if status is None:
+        nv["why"] = (f"{NVPMODEL_STATUS} is not readable here (no nvpmodel on this "
+                     f"host, or not mounted into this container)")
+    else:
+        import re
+        m = re.search(r"pmode\s*[:=]\s*(\d+)", status)
+        if m is None:
+            nv["why"] = f"{NVPMODEL_STATUS} holds no 'pmode:<ID>'"
+        else:
+            nv["mode_id"] = int(m.group(1))
+            names = nvpmodel_mode_names(read(NVPMODEL_CONF))
+            nv["mode_name"] = names.get(nv["mode_id"])
+            if nv["mode_name"] is None:
+                nv["why"] = (f"mode ID read; its name is not, because {NVPMODEL_CONF} "
+                             f"is not readable here or does not list ID {nv['mode_id']}")
+    online_spec = read(f"{CPU_SYSFS}/online")
+    online = _parse_cpu_list(online_spec)
+    cf: dict = {"source": f"{CPU_SYSFS}/cpu<N>/cpufreq", "online": online_spec,
+                "cpus": None, "why": None}
+    if online is None:
+        cf["why"] = (f"{CPU_SYSFS}/online is not readable here (no Linux sysfs on "
+                     f"this host)")
+    else:
+        cpus = {}
+        for n in online:
+            vals = {name: read(f"{CPU_SYSFS}/cpu{n}/cpufreq/{f}") for f, name in CPUFREQ_FIELDS}
+            cpus[str(n)] = {k: (v if k == "governor" else _int_or_none(v))
+                            for k, v in vals.items()}
+        cf["cpus"] = cpus
+        if all(all(v is None for v in c.values()) for c in cpus.values()):
+            cf["why"] = ("no cpufreq files are readable for the online CPUs (no cpufreq "
+                         "driver, or masked in this container)")
+    return {"nvpmodel": nv, "cpufreq": cf}
+
+
+def power_summary(power: dict | None) -> dict | None:
+    """The compact form a run's metrics.json carries (attach_summary): the mode,
+    and the governors and the max-frequency range over the online CPUs."""
+    if not power:
+        return None
+    nv = power.get("nvpmodel") or {}
+    cpus = (power.get("cpufreq") or {}).get("cpus") or {}
+    maxes = sorted({c.get("scaling_max_khz") for c in cpus.values()
+                    if c.get("scaling_max_khz") is not None})
+    return {"nvpmodel_mode_id": nv.get("mode_id"), "nvpmodel_mode_name": nv.get("mode_name"),
+            "cpu_governors": sorted({c.get("governor") for c in cpus.values()
+                                     if c.get("governor")}) or None,
+            "cpu_scaling_max_khz": [maxes[0], maxes[-1]] if maxes else None,
+            "why": nv.get("why") if nv.get("mode_id") is None else None}
 
 
 def _orin_rule():
@@ -331,6 +447,8 @@ def host_facts(jetson: dict | None = None) -> dict:
         "libs": _lib_versions(),
         "perf_counter_resolution_s": clock.resolution,
         "jetson": jetson if jetson is not None else jetson_facts(),
+        # The power mode and CPU frequency limits, read (None + why when absent).
+        "power": power_facts(),
     }
 
 
@@ -1049,6 +1167,8 @@ def attach_summary(prof: dict, path: Path | None = None) -> dict:
         "topology": prof.get("topology"),
         "host_is_orin": bool(((prof.get("host") or {}).get("jetson") or {}).get("is_orin")),
         "host_machine": (prof.get("host") or {}).get("machine"),
+        # None for a profile taken before power_facts existed (2026-10-11).
+        "host_power": power_summary((prof.get("host") or {}).get("power")),
         "code_revision": prof.get("code_revision"),
         "check_p99_ms": head.get("check_p99_ms"),
         "check_max_ms": head.get("check_max_ms"),

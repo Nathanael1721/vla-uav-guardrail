@@ -72,6 +72,11 @@ own audit log was appended across flights instead of belonging to one
   policy_g<N>.json   the canonical IR of EVERY generation in force, written at
                      take-off and after each hot-apply;
   csp_g<N>.json      the typed Constraint Summary Pack compiled from it;
+  costmap_csp_g<N>.npz / .json
+                     the cost map that CSP names in `cost_map_ref`, when the
+                     rail asked for one (`EpisodeRecord(cost_map=True)`, since
+                     2026-10-11); a CSP naming a map the bundle does not carry,
+                     or a map that is not the one named, is refused;
   audit.jsonl        the Shield's audit log for this episode only (a stale
                      one is moved to _previous/ first, never appended to);
   events.jsonl       hot-applies, mode changes, fence uploads, FSM
@@ -125,6 +130,7 @@ import json
 import re
 import shutil
 import tarfile
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -160,6 +166,10 @@ EPISODE_FILES = {
 
 # One policy IR and one CSP per policy generation, by generation number.
 GENERATION_RE = re.compile(r"^(policy|csp)_g(\d+)\.json$")
+# The cost map a generation's CSP names (ConstraintCompiler.write_csp writes it
+# as costmap_<csp stem>.npz + .json). Kept out of GENERATION_RE on purpose, as
+# the compiler keeps it out of the csp_g*.json pattern.
+COSTMAP_RE = re.compile(r"^costmap_csp_g(\d+)\.(npz|json)$")
 # The rosbag2 directory. rosbag2 writes metadata.yaml when the recording is
 # CLOSED, so a bag without it is still open (or crashed) and is not bundled.
 BAG_DIR = "bag"
@@ -174,6 +184,9 @@ BAG_LEAD_S = 600.0
 # table and manifest to be bundled with the new episode's events and bag.
 STALE_PATTERNS = ("audit.jsonl", "events.jsonl", "adapter_log.jsonl",
                   "policy_g*.json", "csp_g*.json",
+                  # Since 2026-10-11: a re-run without --cost-map must not
+                  # leave the previous flight's map beside its own CSP.
+                  "costmap_csp_g*.npz", "costmap_csp_g*.json",
                   "flight_log.jsonl", "metrics.json", "kpi.json",
                   "manifest.json", "report.md", "prompt.yaml",
                   "trajectory.json", "trajectory.png", "*.replay.tar.gz")
@@ -233,25 +246,75 @@ def _read(tar: tarfile.TarFile, name: str) -> bytes:
 # Policy generations, the rosbag, and the binding checks between them
 # --------------------------------------------------------------------------- #
 
+def _is_generation_file(name: str) -> bool:
+    return bool(GENERATION_RE.match(name) or COSTMAP_RE.match(name))
+
+
 def _generation_files(run: Path) -> dict[str, bytes]:
     if not run.is_dir():
         return {}
     return {f.name: f.read_bytes() for f in sorted(run.iterdir())
-            if f.is_file() and GENERATION_RE.match(f.name)}
+            if f.is_file() and _is_generation_file(f.name)}
+
+
+def _cost_map_problems(files: dict[str, bytes], refs: dict[int, str | None],
+                       policies: dict[int, Policy]) -> list[str]:
+    """Every generation's cost map against the CSP that names it.
+
+    `refs` is each CSP's `cost_map_ref` by generation. A CSP naming a map
+    must have both files beside it, and they must load as THAT map
+    (compiler.load_cost_map: array digests, the header's own ref, the
+    generation's policy, and the ref the CSP holds). A map no CSP names is
+    refused too: a bundle would carry an artefact nothing in it vouches for."""
+    problems: list[str] = []
+    maps: dict[int, set[str]] = {}
+    for name in files:
+        m = COSTMAP_RE.match(name)
+        if m:
+            maps.setdefault(int(m.group(1)), set()).add(m.group(2))
+    for n in sorted(set(maps) | {k for k, v in refs.items() if v}):
+        stem, ref, have = f"costmap_csp_g{n}", refs.get(n), maps.get(n, set())
+        if not ref:
+            problems.append(f"{stem}.{'/'.join(sorted(have))} is on file but "
+                            + (f"csp_g{n}.json names no cost map" if n in refs
+                               else f"there is no csp_g{n}.json to name it"))
+            continue
+        missing = sorted({"npz", "json"} - have)
+        if missing:
+            problems.append(f"csp_g{n}.json names cost map {ref}, but "
+                            + " and ".join(f"{stem}.{e}" for e in missing)
+                            + " is not on file")
+            continue
+        if n not in policies:
+            continue                     # reported as a CSP without its policy
+        with tempfile.TemporaryDirectory() as td:
+            for ext in ("npz", "json"):
+                (Path(td) / f"{stem}.{ext}").write_bytes(files[f"{stem}.{ext}"])
+            try:
+                from .compiler import load_cost_map
+                load_cost_map(Path(td) / f"{stem}.json", policies[n], ref=ref)
+            except Exception as exc:                       # noqa: BLE001
+                problems.append(f"{stem} is not the cost map csp_g{n}.json "
+                                f"names: {type(exc).__name__}: {exc}")
+    return problems
 
 
 def generation_table(files: dict[str, bytes]) -> tuple[list[dict], dict, list[str]]:
-    """`files` maps policy_g<N>.json / csp_g<N>.json names to their bytes.
+    """`files` maps policy_g<N>.json / csp_g<N>.json names (and, since
+    2026-10-11, costmap_csp_g<N>.npz / .json) to their bytes.
 
     Returns `(table, policies, problems)`: one row per generation
-    ({generation, policy_hash, csp, csp_policy_hash}), the rebuilt Policy per
-    generation number, and every inconsistency found - a policy file that
-    does not hold the generation its name says, a CSP compiled from another
-    policy than the one beside it, a CSP with no policy at all.
+    ({generation, policy_hash, csp, csp_policy_hash}, plus `cost_map_ref`
+    when the CSP names a map), the rebuilt Policy per generation number, and
+    every inconsistency found - a policy file that does not hold the
+    generation its name says, a CSP compiled from another policy than the
+    one beside it, a CSP with no policy at all, and a cost map missing, not
+    the one its CSP names, or named by no CSP (`_cost_map_problems`).
     """
     gens: dict[int, dict] = {}
     policies: dict[int, Policy] = {}
     problems: list[str] = []
+    cost_map_refs: dict[int, str | None] = {}
     for name in sorted(files):
         m = GENERATION_RE.match(name)
         if not m:
@@ -278,6 +341,9 @@ def generation_table(files: dict[str, bytes]) -> tuple[list[dict], dict, list[st
         else:
             row["csp"] = True
             row["csp_policy_hash"] = doc.get("policy_hash")
+            cost_map_refs[n] = doc.get("cost_map_ref")
+            if cost_map_refs[n]:
+                row["cost_map_ref"] = cost_map_refs[n]
     for n, row in gens.items():
         if row["csp"] and n not in policies:
             problems.append(f"csp_g{n}.json has no policy_g{n}.json beside it")
@@ -286,6 +352,7 @@ def generation_table(files: dict[str, bytes]) -> tuple[list[dict], dict, list[st
                 f"csp_g{n}.json was compiled from policy "
                 f"{row['csp_policy_hash']}, not generation {n} "
                 f"({row['policy_hash']})")
+    problems += _cost_map_problems(files, cost_map_refs, policies)
     return [gens[n] for n in sorted(gens)], policies, problems
 
 
@@ -699,7 +766,7 @@ def read_replay(path: str | Path,
             in blobs[EPISODE + "flight_log.jsonl"].decode("utf-8").splitlines()
             if line.strip()]
     gen_blobs = {n[len(EPISODE):]: b for n, b in blobs.items()
-                 if n.startswith(EPISODE) and GENERATION_RE.match(n[len(EPISODE):])}
+                 if n.startswith(EPISODE) and _is_generation_file(n[len(EPISODE):])}
     _, gen_policies, gen_problems = generation_table(gen_blobs)
     return {"index": index, "policy": policy, "hash_form": form,
             "signature": {"status": status, "signed_by": signed_by,
@@ -988,6 +1055,84 @@ def flown_fields(shield, state, decision, *, shield_on: bool,
             "emitted_violations": [v.model_dump() for v in found]}
 
 
+# The keep-out zone types whose dwell every rail reports as `nfz_s`.
+DWELL_ZONE_TYPES = ("polygon_fence", "circle_fence", "dynamic_nfz")
+
+
+def zone_dwell(shield, points, tick_s: float, *,
+               live_from: dict[str, float] | None = None) -> dict[str, Any]:
+    """Time spent inside keep-out zones (`nfz_s`), read from the Shield's own
+    rule checker, the same way on every rail.
+
+    One count per (point, zone) whose AUTHORED polygon holds the point (not
+    its margin ring) while the point is inside the zone's altitude band -
+    `Shield.rule_status`'s `inside` and `in_band` - for every polygon_fence,
+    circle_fence and dynamic_nfz that does not move; the count times
+    `tick_s` is `nfz_s`. This is demo/follow_vlm.py's count (2026-10-07),
+    moved here so every rail runs it. Until 2026-10-11 every other rail
+    walked `policy.by_type(PolygonFence)`, and a DynamicNFZ is not a
+    PolygonFence: time inside a declared dynamic_nfz scored 0 s without a
+    word, which is why models.FLIGHT_HELD_TYPES holds that type back.
+
+    A MOVING dynamic_nfz is not counted: rule_status places it where it is
+    at the END of the flight, not where it was at each point. It is named in
+    `nfz_moving_not_counted` instead of scoring zero. Time windows and
+    switches are not applied, as in follow_vlm (a zone counts whenever the
+    aircraft was in it): the count can be too high, never too low. The rule
+    set is the Shield's at the end of the flight, so a zone removed before
+    then is not counted.
+
+    `points` are dicts with x, y, up (and t, in the units of `live_from`).
+    `live_from` maps a zone hot-applied mid-flight to the time it went live;
+    points before it are not counted for that zone. A zone hot-applied with
+    no entry here (one posted over the REST API, whose time the rail does
+    not know) is counted over the whole flight - too high, never too low.
+    An id in `live_from` that the Shield does not hold is named in
+    `nfz_live_from_unknown`, not dropped.
+
+    Returns nfz_s, nfz_ticks, nfz_by_zone_s, nfz_first_index (the first
+    point inside a counted zone, or None), nfz_counted_zones,
+    nfz_moving_not_counted and nfz_live_from_unknown.
+    """
+    from .models import State
+    tick_s = float(tick_s)
+    if not (tick_s > 0.0 and tick_s < float("inf")):
+        raise ValueError(f"tick_s must be a positive number of seconds, got {tick_s!r}")
+    live_from = dict(live_from or {})
+    fences = list(shield.ir.fences)
+    moving = sorted({r.rule.id for r in fences if r.moving})
+    counted = [r.rule.id for r in fences
+               if not r.moving and r.rule.type in DWELL_ZONE_TYPES]
+    known = {r.rule.id for r in fences}
+    by_zone: dict[str, int] = {}
+    first = None
+    for i, p in enumerate(points):
+        st = State(x=float(p["x"]), y=float(p["y"]), up=float(p["up"]))
+        for r in shield.rule_status(st):
+            if r["type"] not in DWELL_ZONE_TYPES or r["id"] in moving:
+                continue
+            if not (r.get("inside") and r.get("in_band")):
+                continue
+            t0 = live_from.get(r["id"])
+            if t0 is not None:
+                if p.get("t") is None:
+                    raise ValueError(f"point {i} has no 't', so whether zone "
+                                     f"{r['id']!r} (live from {t0}) was in "
+                                     f"force there cannot be decided")
+                if float(p["t"]) < float(t0):
+                    continue
+            by_zone[r["id"]] = by_zone.get(r["id"], 0) + 1
+            if first is None:
+                first = i
+    n = sum(by_zone.values())
+    return {"nfz_s": n * tick_s, "nfz_ticks": n,
+            "nfz_by_zone_s": {k: round(v * tick_s, 3) for k, v in sorted(by_zone.items())},
+            "nfz_first_index": first,
+            "nfz_counted_zones": counted,
+            "nfz_moving_not_counted": moving,
+            "nfz_live_from_unknown": sorted(k for k in live_from if k not in known)}
+
+
 def rail_shield(policy: Policy, *, lookahead_s: float, dt: float, **kw):
     """A flight rail's Shield, without an escalation FSM of its own.
 
@@ -1044,19 +1189,29 @@ class EpisodeRecord:
     `episode_id` (the `episode_start` wall_ns) goes into every row, metrics
     and the KPI table; `end()` writes the `mission_end` event, without which
     the episode is refused as unfinished.
+
+    `cost_map=True` (off by default; the rails' `--cost-map`) gives every
+    generation's CSP its cost map: `ConstraintCompiler.cost_map` drawn with
+    the CSP's own clock and at the mission's cruise height (compile_csp
+    refuses a map of any other clock or height), written beside the CSP as
+    costmap_csp_g<N>.npz / .json and named in its `cost_map_ref`. A map that
+    cannot be drawn or is refused is a `cost_map_failed` event, and the CSP
+    is still written, without one.
     """
 
     def __init__(self, run_dir: str | Path, policy: Policy, mission=None, *,
                  lookahead_s: float | None = None,
                  clock: Callable[[], datetime] | None = None,
                  rotate: bool = True,
-                 wall_ns: Callable[[], int] = time.time_ns) -> None:
+                 wall_ns: Callable[[], int] = time.time_ns,
+                 cost_map: bool = False) -> None:
         self.dir = Path(run_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.policy = policy
         self.mission = mission
         self.lookahead_s = lookahead_s
         self.clock = clock
+        self.cost_map = bool(cost_map)
         self._wall_ns = wall_ns
         self.moved = rotate_stale_episode(self.dir) if rotate else []
         self.events_path = self.dir / "events.jsonl"
@@ -1097,23 +1252,51 @@ class EpisodeRecord:
         pol_file = self.dir / f"policy_g{g}.json"
         pol_file.write_bytes(self.policy.canonical_bytes())
         csp_file, err = self.dir / f"csp_g{g}.json", None
+        cm_ref = cm_err = None
         if self.mission is None:
             err = "no mission given, so no CSP can be compiled"
+            if self.cost_map:
+                cm_err = "no mission given, so no CSP to name a cost map"
         else:
             try:
                 from .compiler import ConstraintCompiler
+                comp = ConstraintCompiler(self.policy)
                 kw = {} if self.lookahead_s is None else {
                     "lookahead_s": self.lookahead_s}
-                ConstraintCompiler(self.policy).write_csp(
-                    csp_file, self.mission,
-                    now=self.clock() if self.clock else None, **kw)
+                # ONE clock reading for the CSP and its map: compile_csp
+                # refuses a map drawn at any other instant.
+                now = self.clock() if self.clock else None
+                cm = None
+                if self.cost_map:
+                    try:
+                        cm = comp.cost_map(now=now,
+                                           altitude_m=self.mission.cruise_alt_m)
+                    except Exception as exc:                  # noqa: BLE001
+                        cm_err = f"{type(exc).__name__}: {exc}"
+                try:
+                    comp.write_csp(csp_file, self.mission, now=now,
+                                   **({"cost_map": cm} if cm is not None else {}),
+                                   **kw)
+                    cm_ref = None if cm is None else cm.ref
+                except ValueError as exc:
+                    if cm is None:
+                        raise
+                    # The map was refused (write_csp writes nothing then):
+                    # say so, and keep the CSP, without a map.
+                    cm_err = f"{type(exc).__name__}: {exc}"
+                    comp.write_csp(csp_file, self.mission, now=now, **kw)
             except Exception as exc:                          # noqa: BLE001
                 err = f"{type(exc).__name__}: {exc}"
         row = {"generation": g, "policy_hash": self.policy.policy_hash,
                "reason": reason, "csp": err is None}
+        if self.cost_map:
+            row["cost_map_ref"] = cm_ref
         self.generations.append(row)
         if err is not None:
             self.event("csp_failed", t=t, generation=g, error=err)
+        if self.cost_map and cm_ref is None:
+            self.event("cost_map_failed", t=t, generation=g,
+                       error=cm_err or err or "no cost map written")
         self.event("policy_generation", t=t, **row)
         return row
 

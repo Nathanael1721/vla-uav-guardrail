@@ -37,11 +37,26 @@ stores its own IR - so the same policy hashes differently. Now:
     WGS84 polygon fences without a margin ring and altitude envelopes, no
     schedules (`Policy.reference_problems`).
 
-A reference-form bundle is an EXCHANGE format, not a flight artefact. Its IR
-writes every default out, so the policy rebuilt from it has a third hash -
-neither the manifest's nor the source policy's (the source policy recognises
-the manifest's hash as REFERENCE_FORM). The flight loaders (`load_bundle`,
-`load_for_flight`) refuse it; `check_bundle` reads it.
+A reference-form bundle's IR writes every default out, so the policy rebuilt
+from it has a third hash - neither the manifest's nor the source policy's (the
+source policy recognises the manifest's hash as REFERENCE_FORM). Until
+2026-10-08 the flight loaders therefore refused every reference-form bundle.
+
+BOTH HASHES IN EVERY MANIFEST (2026-10-08, deviation 10)
+
+Every manifest written since names the policy under both canonical forms,
+`hashes: {sha256-canonical-v3: ..., reference-policy-dsl-0.1: ...}`, and
+`check_bundle` verifies both (`_verify_both_hashes`). The reference's entry is
+null, with `reference_problems`, where its Phase-1 DSL cannot hold the policy -
+measured: 0 of the 29 shipped policies (metre vertices, margin rings, types it
+lacks), 3 of its own 3 documents. A reference-form manifest also carries
+`reference_delta`, which rebuilds the source policy exactly
+(`Policy.from_reference`): such a bundle is read by the reference's loader
+(which checks `policy_hash`, the reference hash) and by this one (which checks
+both, and flies the source policy under the hash its manifest records). A
+reference-form bundle without the delta - the reference's own - is still
+refused for flight. `policy_hash` of a bundle in this project's form is what
+it always was: no stored hash moved.
 
 docs/DESIGN-policy-dsl-grant-form.md lists what still differs.
 
@@ -589,18 +604,38 @@ def manifest_for(policy: Policy, changelog: str = "initial", *,
     made (`hash_scheme`, `ir_schema_version`) and, for a published bundle, when
     it was issued. `issued_at=None` leaves the key out (a replay bundle embeds a
     policy it did not issue). `ir_form="reference"` describes a bundle whose
-    ir.json is the reference implementation's document (see _ir_for)."""
+    ir.json is the reference implementation's document (see _ir_for).
+
+    BOTH HASHES (2026-10-08, card WP1-05, deviation 10). `hashes` names the
+    policy under both canonical forms: this project's (HASH_SCHEME, the one
+    every stored run records) and the reference implementation's
+    (REFERENCE_FORM, `Policy.reference_hash`). `policy_hash` is still the one
+    the archived ir.json bytes hash to, so the reference's own loader - which
+    reads `policy_hash` and nothing else - verifies a reference-form bundle,
+    and `check_bundle` verifies both entries of `hashes`. Where the reference
+    cannot represent the policy its entry is null and `reference_problems`
+    says why: a hash of a document its loader would refuse is not written.
+    A reference-form bundle also carries `reference_delta`, the record that
+    rebuilds this project's policy from the reference's document exactly
+    (Policy.from_reference). No stored hash moves: `policy_hash` of a bundle
+    in this project's form is what it was."""
     _, digest, scheme = _ir_for(policy, ir_form)
+    ref = policy.reference_hash()
     m = {
         "policy_id": policy.policy_id,
         "version": policy.version,
         "generation": policy.generation,
         "policy_hash": digest,
         "hash_scheme": scheme,
+        "hashes": {HASH_SCHEME: policy.policy_hash, REFERENCE_FORM: ref},
         "ir_schema_version": IR_SCHEMA_VERSION,
         "signed_by": signed_by or UNSIGNED,
         "changelog": changelog,
     }
+    if ref is None:
+        m["reference_problems"] = policy.reference_problems()
+    if ir_form == "reference":
+        m["reference_delta"] = policy.reference_delta()
     if issued_at is not None:
         m["issued_at"] = issued_at
     return m
@@ -710,23 +745,46 @@ class BundleCheck:
     signature: str              # one of the SIG_* statuses
     signed_by: str
     detail: str
+    # Every hash form the manifest names and this check VERIFIED, form ->
+    # hash (None: the manifest records that the form cannot represent the
+    # policy, and that was checked too). Bundles written before 2026-10-08
+    # name one form, `hash_form`.
+    hashes: dict = field(default_factory=dict)
+    # A reference-form bundle with a `reference_delta`: this project's policy
+    # rebuilt from it, its hash verified against `hashes[HASH_SCHEME]`.
+    source_policy: Policy | None = None
 
     @property
     def verified(self) -> bool:
         return self.signature == SIG_VERIFIED
+
+    @property
+    def flight_policy(self) -> Policy | None:
+        """The policy a flight loader hands the Shield: the rebuilt policy for
+        a bundle in this project's form; for a reference-form bundle the
+        source policy its delta rebuilds (whose hash the manifest records), or
+        None when it carries no delta - see _refuse_for_flight."""
+        if self.hash_form == REFERENCE_FORM:
+            return self.source_policy
+        return self.policy
 
     def source_record(self) -> dict:
         """What a flight writes about where its policy came from.
 
         `declared_policy_hash` is the hash the bundle's manifest (and its
         signature) names; `loaded_policy_hash` is the hash of the policy
-        object rebuilt from it. They are equal for every bundle this project
+        object the flight gets. They are equal for every bundle this project
         writes in its own form, and for the legacy forms `hash_form` names the
-        relation. Both are recorded so a run never has to infer one."""
+        relation. A reference-form bundle declares the reference's hash and
+        flies this project's policy rebuilt from it, whose hash the manifest
+        names in `hashes` (both verified). Both are recorded so a run never
+        has to infer one."""
+        flown = self.flight_policy or self.policy
         return {"kind": "bundle", "path": str(self.path),
-                "loaded_policy_hash": self.policy.policy_hash,
+                "loaded_policy_hash": flown.policy_hash,
                 "declared_policy_hash": self.manifest.get("policy_hash"),
                 "hash_form": self.hash_form,
+                "hashes": dict(self.hashes),
                 "issued_at": self.manifest.get("issued_at"),
                 "signed_by": self.signed_by,
                 "signature": self.signature,
@@ -827,6 +885,9 @@ def check_bundle(path: str | Path,
         raise ValueError(f"{p.name}: the policy in this bundle does not pass the "
                          f"DSL lint: " + "; ".join(lint))
 
+    hashes, source = _verify_both_hashes(p.name, manifest, ir_bytes, policy, form,
+                                         declared)
+
     sig_hash, signed_by, sig_hex = parse_signature(sig_text)
     if sig_hash != declared:
         raise ValueError(
@@ -843,7 +904,76 @@ def check_bundle(path: str | Path,
                else " Refusing: this is not a layout any signer here writes.")
         raise ValueError(f"{p.name}: {detail}.{why}")
     return BundleCheck(path=p, policy=policy, manifest=manifest, hash_form=form,
-                       signature=status, signed_by=signed_by, detail=detail)
+                       signature=status, signed_by=signed_by, detail=detail,
+                       hashes=hashes, source_policy=source)
+
+
+def _verify_both_hashes(name: str, manifest: dict, ir_bytes: bytes, policy: Policy,
+                        form: str, declared: str) -> tuple[dict, Policy | None]:
+    """Check every entry of the manifest's `hashes` (see manifest_for) against
+    the policy this bundle rebuilds; return the verified forms and, for a
+    reference-form bundle with a delta, this project's policy rebuilt from it.
+
+    `declared` (the manifest's `policy_hash`) was verified by the caller. A
+    manifest without `hashes` was written before 2026-10-08 and names one
+    form only. One that has it must name both forms: an entry dropped from a
+    manifest would otherwise read as "not recorded" and pass unchecked.
+
+      this project's form   hashes[HASH_SCHEME] is the declared hash, and
+                            hashes[REFERENCE_FORM] is what the rebuilt policy's
+                            reference_hash() gives - null exactly when the
+                            reference cannot represent it;
+      the reference's form  hashes[REFERENCE_FORM] is the declared hash, and
+                            the source policy rebuilt with `reference_delta`
+                            (Policy.from_reference, which also proves it writes
+                            back the archived document) hashes to
+                            hashes[HASH_SCHEME].
+    """
+    rec = manifest.get("hashes")
+    if rec is None:
+        return {form: declared}, None
+    if not isinstance(rec, dict) or set(rec) != {HASH_SCHEME, REFERENCE_FORM}:
+        raise ValueError(
+            f"{name}: the manifest's `hashes` must name exactly the two forms "
+            f"{HASH_SCHEME} and {REFERENCE_FORM}; it names "
+            f"{sorted(rec) if isinstance(rec, dict) else type(rec).__name__}. An "
+            f"entry dropped from the record would pass unchecked.")
+    if form == REFERENCE_FORM:
+        if rec[REFERENCE_FORM] != declared:
+            raise ValueError(f"{name}: hashes[{REFERENCE_FORM}] is "
+                             f"{rec[REFERENCE_FORM]}, but the bundle's policy_hash "
+                             f"is {declared}")
+        if "reference_delta" not in manifest:
+            raise ValueError(f"{name}: a reference-form manifest that records "
+                             f"{HASH_SCHEME} must carry the reference_delta that "
+                             f"rebuilds that policy")
+        try:
+            source = Policy.from_reference(json.loads(ir_bytes), manifest["reference_delta"])
+        except ValueError as exc:
+            raise ValueError(f"{name}: reference_delta does not rebuild a policy "
+                             f"from this document: {str(exc).splitlines()[0]}") from None
+        if source.policy_hash != rec[HASH_SCHEME]:
+            raise ValueError(
+                f"{name}: hashes[{HASH_SCHEME}] is {rec[HASH_SCHEME]}, but the "
+                f"policy rebuilt from the reference document and its delta "
+                f"hashes to {source.policy_hash}")
+        return {HASH_SCHEME: source.policy_hash, REFERENCE_FORM: declared}, source
+    if form != HASH_SCHEME:
+        raise ValueError(f"{name}: a {form} bundle cannot carry the 2026-10-08 "
+                         f"`hashes` record; it was written before that form "
+                         f"existed, so the record was added afterwards")
+    if rec[HASH_SCHEME] != declared:
+        raise ValueError(f"{name}: hashes[{HASH_SCHEME}] is {rec[HASH_SCHEME]}, "
+                         f"but the bundle's policy_hash is {declared}")
+    ref = policy.reference_hash()
+    if rec[REFERENCE_FORM] != ref:
+        raise ValueError(
+            f"{name}: hashes[{REFERENCE_FORM}] is {rec[REFERENCE_FORM]}, but the "
+            f"policy in this bundle "
+            + (f"hashes to {ref} under the reference's canonical form"
+               if ref is not None else "cannot be represented by the reference")
+            + ". The manifest does not describe this policy.")
+    return {HASH_SCHEME: declared, REFERENCE_FORM: ref}, None
 
 
 def _refuse_for_flight(chk: BundleCheck, name: str) -> None:
@@ -851,23 +981,28 @@ def _refuse_for_flight(chk: BundleCheck, name: str) -> None:
 
     1. A rule the Shield would not enforce as written (models.
        _refuse_unenforced: a declarable-only type, MSL, a derived frame).
-    2. A bundle in the reference implementation's IR form. It is an EXCHANGE
-       format: its ir.json writes every default out (scope, layer,
+    2. A bundle in the reference implementation's IR form WITHOUT a
+       `reference_delta` (the reference's own bundles, and any written here
+       before 2026-10-08). Its ir.json writes every default out (scope, layer,
        altitude_ref, margin 0) and spells `repair` as `project_fix`, so the
        policy rebuilt from it hashes to a THIRD value - neither the manifest's
        hash nor the source policy's. A run flown from it would record a
        loaded_policy_hash that resolves to no policy (2026-10-07 review).
-       Re-issue it in this project's form to fly it."""
+       Since 2026-10-08 a reference-form bundle written here carries the
+       delta and this project's hash beside the reference's, both verified by
+       check_bundle; it flies the source policy, under the hash its manifest
+       names, and the reference's own loader reads the same file."""
     from .models import _refuse_unenforced
-    if chk.hash_form == REFERENCE_FORM:
+    if chk.hash_form == REFERENCE_FORM and chk.source_policy is None:
         raise ValueError(
             f"{name}: a bundle in the reference implementation's IR form "
-            f"({REFERENCE_FORM}) is an exchange format, not a flight artefact: "
-            f"the policy rebuilt from it hashes to {chk.policy.policy_hash[:23]}..., "
-            f"not the manifest's {str(chk.manifest.get('policy_hash'))[:23]}..., "
-            f"so a run could not be traced back to it. Write the bundle in this "
-            f"project's form (`python -m guardrail.bundle POLICY`) to fly it.")
-    _refuse_unenforced(chk.policy, name)
+            f"({REFERENCE_FORM}) with no reference_delta is an exchange format, "
+            f"not a flight artefact: the policy rebuilt from it hashes to "
+            f"{chk.policy.policy_hash[:23]}..., not the manifest's "
+            f"{str(chk.manifest.get('policy_hash'))[:23]}..., so a run could not "
+            f"be traced back to it. Write the bundle with this code (`python -m "
+            f"guardrail.bundle POLICY`, either --ir-form) to fly it.")
+    _refuse_unenforced(chk.flight_policy, name)
 
 
 def load_bundle(path: str | Path, *, require_signature: bool = True,
@@ -889,7 +1024,9 @@ def load_bundle(path: str | Path, *, require_signature: bool = True,
     `runtime=True` (the default) applies the same flight gate as
     `load_policy` and `load_for_flight`: a bundle holding a rule the Shield
     would not enforce (a declarable-only type, MSL, a derived frame), or one
-    in the reference's exchange form, is refused. Until 2026-10-07 this
+    in the reference's form without a reference_delta, is refused; a
+    reference-form bundle with one returns the source policy it rebuilds
+    (`BundleCheck.flight_policy`). Until 2026-10-07 this
     function skipped that gate, so a bundle with a dynamic_nfz loaded here and
     the Shield then ignored the zone without a word - and
     guardrail/scenario_spec.py loads its `bundle_path` scenarios through it.
@@ -908,7 +1045,7 @@ def load_bundle(path: str | Path, *, require_signature: bool = True,
             f"{Path(path).name}: signature {chk.signature}: {chk.detail}. "
             f"Refusing to treat it as signed. Load with "
             f"require_signature=False only if the run is recorded as UNSIGNED.")
-    return chk.policy
+    return chk.flight_policy if runtime else chk.policy
 
 
 def load_for_flight(bundle: str | Path | None = None,
@@ -954,7 +1091,7 @@ def load_for_flight(bundle: str | Path | None = None,
         rec = chk.source_record()
         if not chk.verified:
             rec["accepted_unverified"] = True
-        pol = chk.policy
+        pol = chk.flight_policy
     else:
         if yaml_path is None:
             raise ValueError("no policy given: pass a bundle or a YAML file")
@@ -1526,6 +1663,9 @@ def _main(argv: list[str] | None = None) -> int:
         print(f"{chk.path.name}: {chk.policy.policy_id} v{chk.policy.version} "
               f"gen {chk.policy.generation}")
         print(f"  policy_hash {chk.manifest.get('policy_hash')}  ({chk.hash_form})")
+        for scheme, h in sorted(chk.hashes.items()):
+            print(f"  verified    {scheme}: "
+                  + (h if h is not None else "not representable (recorded and checked)"))
         print(f"  issued_at   {chk.manifest.get('issued_at', '(not recorded)')}")
         print(f"  signature   {chk.signature.upper()}  - {chk.detail}")
         return 0 if (chk.verified or a.allow_unsigned) else 1
@@ -1624,6 +1764,10 @@ def _main(argv: list[str] | None = None) -> int:
     print(f"  policy_id   {chk.policy.policy_id}")
     print(f"  version     {chk.policy.version}  generation {chk.policy.generation}")
     print(f"  policy_hash {chk.manifest.get('policy_hash')}  ({chk.hash_form})")
+    for scheme, h in sorted(chk.hashes.items()):
+        print(f"  verified    {scheme}: "
+              + (h if h is not None else "not representable - "
+                 + "; ".join(chk.manifest.get("reference_problems") or [])))
     print(f"  issued_at   {chk.manifest.get('issued_at')}")
     print(f"  rules       {len(chk.policy.constraints)}")
     if chk.policy.layers_merged:

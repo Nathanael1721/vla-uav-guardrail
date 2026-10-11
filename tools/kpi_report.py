@@ -237,7 +237,10 @@ def load_run(run: Path, by_hash: dict, by_id: dict) -> dict:
     # "logged but not flown" test set it aside.
     m_c = (dict(metrics, shield="on")
            if rail == "airsim" and metrics.get("shield") is None else metrics)
-    k = K.compute(rows, prios, m_c)
+    # compute() judges theta on the basis the run recorded; on the one-period
+    # reading a clamped tick needs the policy's caps to be sized
+    # (rescore_kpis.policy_caps). None without a resolved policy.
+    k = K.compute(rows, prios, m_c, caps=R.policy_caps(pol))
     priority_source = "recomputed against the resolved policy"
     if pol is None:
         for f in PRIORITY_FIELDS:

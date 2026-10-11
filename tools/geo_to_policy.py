@@ -69,7 +69,7 @@ With `--base`, new rules are APPENDED to the base policy and its generation is
 bumped once per rule - exactly what the API's hot-apply does to a live policy,
 so the bundle describes the policy that would be in force. A bundle holding a
 dynamic_nfz is a declaration until the flight loaders accept that type
-(guardrail/models.py, RUNTIME_TYPES). Geographic zones
+(guardrail/models.py, FLIGHT_HELD_TYPES; RUNTIME_TYPES already holds it). Geographic zones
 cannot be appended to a base written in local metres without an origin: their
 position in that frame is unknown, and guessing it would misplace every zone.
 """

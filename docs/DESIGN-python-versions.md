@@ -43,10 +43,13 @@ mypy `python_version = "3.11"`. Its `policy_dsl` fails to import on 3.10.20
 1. **The guardrail package declares Python 3.11+.** `pyproject.toml`
    (repo root) packages `guardrail/` only, with `requires-python = ">=3.11"`.
    It takes its version from `VERSION`, and its core dependencies are those of
-   `requirements.txt`, plus `jinja2` (see "Open items"). Optional extras:
+   `requirements.txt`, `jinja2` included (see "Open items"). Optional extras:
    `signing` (cryptography, for Ed25519 bundle signatures), `api`
    (fastapi + uvicorn, for `guardrail/api.py`), and `tokens` (tokenizers, for
-   the exact OpenVLA token counter in `guardrail/csp.py`). `demo/`,
+   the exact OpenVLA token counter in `guardrail/csp.py`). Added later:
+   `harness` (grpcio, protobuf and cryptography, for the stress harness's
+   gRPC control plane, `guardrail/harness_service.py`; see
+   `docs/DESIGN-harness-grpc.md`). `demo/`,
    `training/`, `tools/`, `sitl/`, and the OpenVLA code are **not** packages.
    Two modules ship but are not promised by an install. `guardrail/vla_bc.py`
    needs torch and `training/` from the source tree.
@@ -369,22 +372,23 @@ lacks the field is then correctly refused.
 
 The rail uses **Jazzy** on Ubuntu 24.04.4 (`/opt/ros/jazzy`). The grant lists
 the distribution as an open question and names Humble for AI Wings parity. The
-reference implementation uses Humble. No PI decision is recorded. The question
-is `PI-DECISIONS-2026-10-06.md` Q4 item 3 ("confirm Jazzy") and is not decided
-here.
+reference implementation uses Humble.
+
+The PI's rule of 6 Oct was to choose by what the Orin's JetPack supports and
+to conform to the grant. For JetPack 6.2 (Ubuntu 22.04) that means **Jazzy in
+an Ubuntu 24.04 container** (`ros:jazzy-ros-base-noble`;
+`docs/DESIGN-topologies.md`, decision 2, 2026-10-08), because Humble's rclpy
+would put the Shield on Python 3.10, below the grant's "Python 3.11+ as a ROS
+2 node (rclpy)". In that container rclpy runs on Python 3.12, and the
+companion image's build stops if rclpy would run below 3.11. The desktop's
+dev rail is the same distribution. Nothing of this has run on the Orin yet.
 
 ## Open items (owned by other files)
 
-- `README.md` still has the sentence "Requires ProjectAirSim with an Unreal
-  city level, an NVIDIA GPU, and Python 3.10." It should state the split: the
-  guardrail package needs Python 3.11+, and the OpenVLA / Project AirSim
-  flight env (`vla-real`) is 3.10.20, a recorded deviation.
-- `requirements.txt` lacks `jinja2`. `guardrail/compiler.py` needs it for
-  `build_prompt()` and `summary_pack()`. `pyproject.toml` lists it, so the two
-  files disagree until `requirements.txt` gains the line, and
-  `test_core_dependencies_are_exactly_requirements_txt` fails until then. With
-  the line added, the file passes in full (checked with a scratch copy of
-  `requirements.txt` through `ENV_PINS_REQUIREMENTS`).
+- Done since: `README.md` states the split (the guardrail package needs
+  Python 3.11+; the OpenVLA / Project AirSim flight env `vla-real` is 3.10.20,
+  a recorded deviation), and `requirements.txt` lists `jinja2`, which
+  `guardrail/compiler.py` needs for `build_prompt()` and `summary_pack()`.
 - **The pymavlink rail is broken in `~/venv-ap` until jinja2 is installed.**
   `sitl/run_sitl_demo.py` calls `compiler.build_prompt()` to write
   `prompt.yaml` before take-off. That call now imports jinja2, and `~/venv-ap`

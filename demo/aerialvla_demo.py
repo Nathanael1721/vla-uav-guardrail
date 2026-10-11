@@ -34,8 +34,8 @@ sys.path.insert(0, str(ROOT / "demo"))
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
 from guardrail.compiler import ConstraintCompiler                   # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
-from guardrail.models import Action4D, PolygonFence                 # noqa: E402
-from shapely.geometry import Point                                  # noqa: E402
+from guardrail.models import Action4D                               # noqa: E402
+from guardrail.replay import DWELL_ZONE_TYPES, zone_dwell           # noqa: E402
 
 TICK = 0.1
 MAX_S = 90
@@ -423,11 +423,19 @@ def main() -> int:
     client.armDisarm(False)
     client.enableApiControl(False)
 
-    fences = [(f, fence_polygon(f)) for f in policy.by_type(PolygonFence)]
-    inside = sum(1 for p in traj for f, poly in fences
-                 if f.altitude_floor_m <= p["up"] <= f.altitude_ceiling_m
-                 and poly.contains(Point(p["x"], p["y"])))
-    nfz_s = inside * TICK
+    # Zone dwell from the Shield's own rule checker, the count every rail
+    # shares (guardrail.replay.zone_dwell): polygon and circle fences and
+    # every dynamic_nfz that does not move; a moving one is named
+    # (nfz_moving_not_counted), not scored 0. Until 2026-10-11 this walked
+    # policy.by_type(PolygonFence), which a dynamic_nfz is not.
+    dwell = zone_dwell(shield, traj, TICK)
+    nfz_s = dwell["nfz_s"]
+    if dwell["nfz_moving_not_counted"]:
+        print(f"[nfz] moving zone(s) {dwell['nfz_moving_not_counted']} are NOT in "
+              f"nfz_s: the end-of-flight count has no per-tick position")
+    # Every zone with vertices, for the plot.
+    fences = [(f, fence_polygon(f)) for f in policy.constraints
+              if f.type in DWELL_ZONE_TYPES and getattr(f, "vertices", None)]
 
     import json
     (out / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
@@ -488,6 +496,7 @@ def main() -> int:
     straight = math.hypot(target[0] - traj[0]["x"], target[1] - traj[0]["y"])
     spl = (straight / path_len) if (reached and path_len > 0) else 0.0
     metrics = {"reached": reached, "ticks": len(traj), "nfz_s": nfz_s,
+               "nfz_moving_not_counted": dwell["nfz_moving_not_counted"],
                "interventions": n_touched, "path_len_m": round(path_len, 1),
                "straight_m": round(straight, 1), "efficiency": round(spl, 3),
                "params": {"yaw_gain": args.yaw_gain, "goal_blend": args.goal_blend,

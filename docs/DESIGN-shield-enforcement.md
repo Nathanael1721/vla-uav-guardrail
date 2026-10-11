@@ -68,30 +68,48 @@ autopilot's side through `filter(..., rtl_failed=, home_reached=, landed=)`,
 which drives the terminal edges G6, G9, G10 and X5.
 
 Theta is applied by the FSM, never inside the repair stack, from each repair's
-own `magnitude_m` and `axis` (the grant's audit fields, Safety Shield p5):
+own `magnitude_m` and `axis` (the grant's audit fields, Safety Shield p5;
+`Shield(theta_horizon_s=None)`, the default, `fsm.DEFAULT_THETA_HORIZON_S`).
+A second reading is selectable, `theta_horizon_s=fsm.THETA_HORIZON_S`: the
+setpoint change |dv| over one 0.1 s control period, p4's
+"||action_repaired - action_original||" read literally. It is NOT the
+default. A builder made it the default on 2026-10-08 and called it the
+grant's basis; the review of 2026-10-09 reverted that, because the grant's
+own audit example (p5: LateralProjection `magnitude_m` 0.7 for a raw
+(5.0, 1.2) emitted as (4.7, -0.3), a 1.53 m/s change, which one period would
+record as 0.15 m) and p3 ("project the predicted point to the nearest
+feasible point", a position depth) read the other way, and under every
+shipped speed cap the one-period reading can never exceed theta - a waiver
+the 6 Oct decision ("conform rather than waive") does not allow without the
+PI. docs/DESIGN-escalation-fsm.md, "Theta: two readings, one default", has
+both sides and the measurements.
 
 | operator | axis | magnitude_m |
 |---|---|---|
 | AltitudeFix, CorridorAltitudeFix | vertical | the altitude error at the lookahead end |
 | GeofenceSlide | lateral | the deepest forecast pose inside the zone's margin ring |
 | ClearanceFix | lateral | the deepest forecast incursion into the clearance ring |
-| StandoffHold | lateral | how far inside the ring the forecast would end |
+| StandoffHold | lateral | the forecast's closest approach inside the ring (`ring - d_min`; until 2026-10-08 a straight-line range through the subject, up to 11.0 m into a 5 m ring) |
 | CorridorReturn | lateral | the excursion past the half-width |
 | GeofenceEscape, StandoffRecover | lateral | the current depth; `recovery=True`, exempt |
 | SpeedClamp, ClimbClamp, YawClamp, Sanitise, Brake, SoftRelax | none | velocity or record only |
 
-The PI reference (`safety_shield/repair.py`, LateralProjection) uses the
-same idea, penetration depth ("a deep head-on dive therefore reports a large
-magnitude and is escalated rather than projected"), but measures a zone's
-depth into the AUTHORED polygon, with no margin (`policy_dsl/ir.py`
-signed_distance). This Shield measures into the zone's margin ring, the shape
-it enforces; that is this project's reading, not the reference's, and an open
-question for the PI (see "Interpretations"). With a 1 m margin a forecast
-reports up to 1 m more than the reference would. One consequence: a pilot
-that keeps pushing into a zone is projected while the forecast only clips it,
-and the FSM escalates (X1, then G3 to LOITER) once the forecast reaches more
-than 2 m inside the ring.
-`tests/test_shield.py::test_theta_escalates_from_the_real_repair` pins it.
+The PI reference (`safety_shield/repair.py`, LateralProjection) applies theta
+to penetration depth ("a deep head-on dive therefore reports a large
+magnitude and is escalated rather than projected"), measured into the
+AUTHORED polygon, with no margin (`policy_dsl/ir.py` signed_distance). This
+Shield's per-operator field measures into the zone's margin ring, the shape it
+enforces, so with a 1 m margin a forecast reports up to 1 m more than the
+reference would; that is this project's reading, and an open question for
+the PI (see "Interpretations"). On the default basis a pilot that keeps
+pushing into a zone escalates (X1, then G3 to LOITER) once the forecast
+reaches more than 2 m inside the ring. On the one-period reading a slide
+changes the setpoint by at most 2 x the speed cap, 0.8-1.0 m per period under
+the 4-5 m/s caps of every policy here, so theta would never fire on them and
+only the other escalation arms (no operator converged, N-in-T, X6, X7, a
+rule's own action) would carry it.
+`tests/test_shield.py::test_theta_defaults_to_the_operators_depth_and_one_period_is_opt_in`
+and `::test_theta_still_escalates_a_setpoint_change_beyond_it` pin both.
 
 If the FSM refuses a tick (a position repair without a magnitude, an
 inconsistent input), the control loop does not stop: the decision carries
@@ -266,8 +284,19 @@ passed 120 s (`test_a_moving_zone_carries_on_across_reset_episode`).
 
 Switches and swaps are rules in the policy, so they are hashed and audited
 like any other. Declared in a policy file, all three are enforced from the
-first tick (the flight loaders still refuse such files until the compiler can
-render them; models.RUNTIME_TYPES).
+first tick. Since 2026-10-08 the compiler renders all three
+(`models.RUNTIME_TYPES`), and switches and swaps in a policy file fly. A
+dynamic_nfz in a policy file is held from flight (`models.FLIGHT_HELD_TYPES`).
+The hold was added on 2026-10-08 for the rails' dwell metric `nfz_s`. Then,
+seven rails under `demo/` counted `policy.by_type(PolygonFence)` (polygon and
+circle fences), so a declared zone scored 0 s. Since 2026-10-11 every rail
+counts dwell through `guardrail.replay.zone_dwell` (`demo/follow_vlm.py`'s
+count, read from `Shield.rule_status`). It counts polygon and circle fences
+and every dynamic_nfz that does not move, and names a moving one in
+`nfz_moving_not_counted` instead of scoring it. On 2026-10-11 the hold is
+still in place, with its pre-2026-10-11 reason; what the rails still cannot
+score is a moving zone (`docs/DESIGN-policy-dsl-grant-form.md`, decision 5).
+A dynamic_nfz injected mid-flight with `hot_apply` is unaffected.
 
 Mid-flight hot-apply latency on the 50-rule load, after mission start: a
 dynamic_nfz spawn (lint and layer checks, runtime rebuild included) median
@@ -308,13 +337,15 @@ and dynamic_nfz. All three are compiled, indexed and enforced the same way.
 Each zone carries three scales, computed once at compile time
 (`PolicyIR.multiscale`): `fine` (the authored vertices), `coarse` (a polygon
 that contains the fine one: its convex hull, or the minimum-area oriented
-rectangle when the hull has more than 8 vertices, the rule
-`compiler.multiscale_geometry` uses) and `bbox`. Corridors carry `fine` only:
-coarsening a keep-in shape outward would widen where a reader believes it may
-fly. `geometry_ref(scale, rule_id)` names one scale of one rule of this
-generation in the compiler's format (`coarse:nfz-square@v0.1.0/g0`), and
-`resolve_geometry_ref` refuses a reference minted for another version or
-generation. The compiler does not read them yet (see below).
+rectangle when the hull has more than 8 vertices) and `bbox`. Corridors carry
+`fine` only: coarsening a keep-in shape outward would widen where a reader
+believes it may fly. `geometry_ref(scale, rule_id)` names one scale of one
+rule of this generation in the compiler's format
+(`coarse:nfz-square@v0.1.0/g0`), and `resolve_geometry_ref` refuses a
+reference minted for another version or generation. Since 2026-10-08
+`compiler.multiscale_geometry` returns `PolicyIR.multiscale` (through
+`compiler.compiled_ir`, one IR per policy hash) and computes nothing; the
+compiler's own hull code is deleted, and its P0 refs are minted by the IR.
 
 ### 6. One rule checker
 
@@ -344,7 +375,9 @@ left; for a zone, the distance to its margin ring). Zones add `inside`,
   trajectory point. Such zones are left out and named (a printed line and
   `metrics["nfz_moving_not_counted"]`) rather than counted as zero. No flight
   has one yet (the loaders refuse dynamic_nfz); a per-tick count logged from
-  `rule_status` during the flight is the fix when one does.
+  `rule_status` during the flight is the fix when one does. Since
+  2026-10-11 the other nine rails run the same count
+  (`guardrail.replay.zone_dwell`), with the same moving-zone gap.
 - The panel says what the Shield did, not what it saw. A rule the command
   breaks and the Shield did not correct is shown as WATCH (with the banner
   "RULE BROKEN - MONITORED, NOT CORRECTED"), never ACTING: a monitor_only
@@ -405,6 +438,43 @@ mode or refused its input, so a Brake -> Normal recovery on a clean tick is
 on record. `AuditLogger.for_episode(dir, policy, episode_id)` writes one
 `audit_<episode_id>.jsonl` per episode ("rotated per mission", Outputs table);
 `rotate()` starts the next.
+
+### 8. The first follow flight on ArduPilot (2026-10-08)
+
+`demo/out/pas_ap_20261008_224440` (120 s red-car follow, Project AirSim +
+ArduPilot SITL, Shield and FSM in the loop) left five P0 escape ticks and
+eight Brake -> Loiter edges. What changed in the Shield because of it:
+
+- **Range 0 to a stand-off subject.** The perception node had put the car
+  under the aircraft on the five escape ticks, and the check could not see
+  any action opening a range of 0. The check now reads the horizontal speed
+  as the opening rate there; `StandoffRecover` leaves along the commanded
+  heading (a hover: backwards). Replayed through the old Shield the log
+  reproduces all five escapes on all 1101 ticks; through this one it has
+  none. docs/FINDING-the-escape-that-stayed-inside-the-ring.md.
+- **The best effort never deepens a hard ring or zone it is inside**
+  (`_deepens`, relative to a moving zone; soft and `monitor_only` rules do
+  not steer it), where before it was ranked by clearance alone.
+- **`StandoffHold.magnitude_m` is a depth the ring can have** (the forecast's
+  closest approach), where before 20 of the flight's 25 reported more than
+  the ring's radius. Theta stays on this field (section 1). On the replayed
+  flight the FSM's Brake -> Loiter edges go from 8 (as flown) to 2, and the
+  repaired ticks over theta from 23 to 19: every one a StandoffHold whose
+  forecast's closest approach is 2.1-4.3 m inside the 5 m ring. The
+  one-period reading (opt-in) would trust all of them: 0 and 0.
+- **`Shield.applied_caps`**: the caps the chain clamped against on this tick,
+  for a rail's FSM measuring |dv| on the one-period reading. A
+  `monitor_only` cap, one a time_window_switch turned off, or a soft cap the
+  chain gave up (`_relax`, `tick.given_up`) is not one. Read off the whole
+  policy, the first two made the FSM refuse the tick; a first version of this
+  property left out every soft cap once any soft rule was given up, and the
+  FSM then refused a tick whose soft P1 speed cap had clamped
+  (`test_applied_caps_leave_out_only_the_soft_caps_the_chain_gave_up`).
+- **`Shield.unsafe_depth(state)`**: metres from legal, summed over the hard
+  rules a stop here breaks (an altitude error, a depth into a zone's ring, a
+  stand-off or clearance ring, a corridor's half-width). The FSM's X6 reads
+  its trend to leave a working recovery alone, and its X7 to send home a
+  recovery that is losing ground (docs/DESIGN-escalation-fsm.md).
 
 ## Measurements
 
@@ -575,7 +645,9 @@ known to carry the claim. *Fix:* WATCH (section 6);
 | which breach actions skip projection | brake, loiter, RTL, land (the reference: RTL and land only, and it emits the raw action) | follow-up #112 / docs/DESIGN-escalation-fsm.md; a stop is the conservative response while the mode change is requested |
 | a stop action where stopping is illegal | recover, request the mode, withhold the stop | a stop there is the deadlock the Shield exists to avoid |
 | soft | enforced, capped at brake, given up first (by priority) in a conflict | the escalation FSM's reading (docs/DESIGN-escalation-fsm.md); PI question open |
-| theta's metric | per-operator penetration depth into the margin ring (the reference: into the authored polygon, no margin) | the ring is what this Shield enforces; PI question open |
+| theta's metric | per-operator penetration depth into the margin ring (the reference: into the authored polygon, no margin); the setpoint change over one 0.1 s period is selectable (`theta_horizon_s=0.1`), not the default | the grant's p5 audit example and p3 LateralProjection read as a depth, and under the shipped caps the one-period reading can never fire (docs/DESIGN-escalation-fsm.md); PI question open |
+| range 0 to a stand-off subject | every horizontal motion opens the range at its full speed; a hover recovers along the reverse of the heading | the one-sided derivative of the range at the subject, and what a one-second probe of the range (the trend test the PI reference takes for a zone) would read |
+| best effort where nothing re-checks clean and a stop is illegal | the heading that goes deeper into no hard ring or zone the aircraft is inside, then clearance, then the commanded heading | "never deepen" is the least a P0 fallback must keep; the grant is silent |
 | polygon_fence before the first tick | accepted (still the mission-start policy) | "locked at mission start" |
 | switch / swap without a readable window | may turn on, never off; a swap enforces both | nothing that cannot establish "off" may switch a rule off |
 | an event's layer | its `layer` field, absent = mission; REST events are always mission | the DSL's default layer; nothing on the REST channel authenticates a higher layer |
@@ -599,8 +671,9 @@ known to carry the claim. *Fix:* WATCH (section 6);
 - `guardrail/models.py`: `Recurrence.active_at` to the Shield's reading (or
   calling `shield.recurrence_active`), so the CSP and the Shield agree on a
   window's last instant.
-- `guardrail/compiler.py`: read `PolicyIR.multiscale` and emit
-  `PolicyIR.geometry_ref(...)` in P0_constraints instead of recomputing.
+- ~~`guardrail/compiler.py`: read `PolicyIR.multiscale` and emit
+  `PolicyIR.geometry_ref(...)` in P0_constraints instead of recomputing.~~
+  Done 2026-10-08 (`docs/DESIGN-prefix-compiler.md` section 9).
 - `docs/DESIGN-escalation-fsm.md`: lines saying shield.py has no
   `magnitude_m` and was not changed are now historical.
 - The flight rails (`sitl/ros2_shield_node.py`, `sitl/run_sitl_demo.py`) build

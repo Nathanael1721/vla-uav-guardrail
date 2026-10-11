@@ -27,7 +27,7 @@
 </section>
 <section>
 <h2>已完成</h2>
-<ul class="built"><li><h3>有型別的 Constraint Summary Pack</h3><p>編譯器把規則檔轉成 Constraint Summary Pack，包含計畫書鎖定的 14 個欄位，並以 JSON Schema 描述。</p><p class="files"><code>guardrail/csp.py</code> <code>guardrail/csp.schema.json</code></p></li><li><h3>篩選、風險分級與 token 預算</h3><p>規則依任務區域與時間篩選，依風險分級（0.5 嚴重度 + 0.3 接近程度 + 0.2 時間緊迫度），再放進可設定的 256 個 token 預算。P0 規則一律保留；若光是 P0 規則就超出預算，編譯器會丟出 <code>CSPBudgetExceeded</code>，而不是默默截斷。</p><p class="files"><code>guardrail/csp.py</code></p></li><li><h3>可讀的規則句子</h3><p>每條保留的規則都由 Jinja2 範本產生一個句子，並附上保留它的理由。有時間窗的規則會寫明時間窗，在時間窗之外則不放入摘要。</p><p class="files"><code>guardrail/templates/</code></p></li><li><h3>摘要可放進 OpenVLA 的提示</h3><p>使用 <code>--csp on</code> 時，真實 VLA 示範會把摘要放在 OpenVLA 的指令之前，並在每次推論時記錄確切的提示、token 數，以及摘要與規則檔的雜湊值。超出預算的提示會在模型載入前就被拒絕。</p><p class="files"><code>demo/real_vla_demo.py</code></p></li><li><h3>改寫器（Paraphraser）</h3><p>112 句自由改寫（14 組 × 8），對象是給 VLA 提示用的任務指令與規則摘要，只產生一次並連同產生它們的提示一起保存；另有以種子產生的範本備援，以及逐一比對改寫句與原句任務欄位的驗證器。</p><p class="files"><code>guardrail/paraphraser.py</code> <code>experiments/paraphrases/</code></p></li></ul>
+<ul class="built"><li><h3>有型別的 Constraint Summary Pack</h3><p>編譯器把規則檔轉成 Constraint Summary Pack，包含計畫書鎖定的 14 個欄位，並以 JSON Schema 描述。</p><p class="files"><code>guardrail/csp.py</code> <code>guardrail/csp.schema.json</code></p></li><li><h3>篩選、風險分級與 token 預算</h3><p>規則依任務區域與時間篩選，依風險分級（0.5 嚴重度 + 0.3 接近程度 + 0.2 時間緊迫度），再放進可設定的 256 個 token 預算。P0 規則一律保留；若光是 P0 規則就超出預算，編譯器會丟出 <code>CSPBudgetExceeded</code>，而不是默默截斷。</p><p class="files"><code>guardrail/csp.py</code></p></li><li><h3>可讀的規則句子</h3><p>每條保留的規則都由 Jinja2 範本產生一個句子，並附上保留它的理由。有時間窗的規則會寫明時間窗，在時間窗之外則不放入摘要。移動禁航區、時間窗切換、走廊替換與圓形禁航區都有自己的範本，因此含有切換或替換的規則檔能連同規則摘要一起載入飛行。</p><p class="files"><code>guardrail/templates/</code></p></li><li><h3>成本地圖</h3><p>編譯器也能依計畫書的慣例把規則檔畫成成本地圖：硬性禁航區的成本為無限大，偏好走廊為 0，走廊外為 50，並可寫在規則摘要旁。在 24 份專案規則檔上，Shield 禁止的點中，成本低於計畫書慣例的為 0 個。</p><p class="files"><code>guardrail/compiler.py</code> <code>docs/DESIGN-cost-map-adapter.md</code></p></li><li><h3>摘要可放進 OpenVLA 的提示</h3><p>使用 <code>--csp on</code> 時，真實 VLA 示範會把摘要放在 OpenVLA 的指令之前，並在每次推論時記錄確切的提示、token 數，以及摘要與規則檔的雜湊值。超出預算的提示會在模型載入前就被拒絕。</p><p class="files"><code>demo/real_vla_demo.py</code></p></li><li><h3>改寫器（Paraphraser）</h3><p>112 句自由改寫（14 組 × 8），對象是給 VLA 提示用的任務指令與規則摘要，只產生一次並連同產生它們的提示一起保存；另有以種子產生的範本備援，以及逐一比對改寫句與原句任務欄位的驗證器。</p><p class="files"><code>guardrail/paraphraser.py</code> <code>experiments/paraphrases/</code></p></li></ul>
 </section>
 <section>
 <h2>已展示</h2>
@@ -35,14 +35,14 @@
 </section>
 <section class="panel">
 <h2>此工作項目的下一步</h2>
-<ul class="next-list"><li><span class="pill next">下一步</span> <span class="date">2026 年 10 月至 11 月</span> 讓 OpenVLA 在提示中帶著規則摘要飛行，並比較摘要開啟與關閉時的任務結果。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 11 月</span> 以會讀取文字的駕駛量測每種改寫的穩健度。</li></ul>
+<ul class="next-list"><li><span class="pill next">下一步</span> <span class="date">2026 年 10 月</span> 宣告移動禁航區的規則檔可以載入飛行；在飛行中套用移動禁航區目前已經可以運作。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 10 月至 11 月</span> 讓 OpenVLA 在提示中帶著規則摘要飛行，並比較摘要開啟與關閉時的任務結果。</li><li><span class="pill next">下一步</span> <span class="date">2026 年 11 月</span> 以會讀取文字的駕駛量測每種改寫的穩健度。</li></ul>
 <p><a href="roadmap.html">完整路線圖 →</a></p>
 </section>
 <p class="pager"><a href="wp1.html">← WP1</a><a href="wp3.html">WP3 →</a></p>
 
 </main>
 <footer>
-<p>資料截至 2026 年 10 月 6 日。由 <code>tools/build_public_site.py</code> 依專案原始碼庫產生。</p>
+<p>資料截至 2026 年 10 月 12 日。由 <code>tools/build_public_site.py</code> 依專案原始碼庫產生。</p>
 <p class="muted">工研院資通所（ICL）委託合作研究 · Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs · 計畫主持人：Kuan-Ting Lai 教授（國立臺北科技大學 AIoT 實驗室）</p>
 </footer>
 </body>

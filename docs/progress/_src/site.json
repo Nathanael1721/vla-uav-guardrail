@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "about": "Curated public wording for docs/progress/. Edit this file, then run: python tools/build_public_site.py. See docs/DESIGN-public-site.md for the content policy. Every number is written as digits and must appear in a source listed in the nearest 'src' (a change entry cites its CHANGELOG section automatically); a JSON source names the value, as file.json#path.to.value. Every image is listed in reviewed_images with the digest of the file that was looked at.",
- "as_of": "2026-10-06",
+ "as_of": "2026-10-12",
  "final_gate": "2026-11-30",
  "grant": {
   "programme": {"en": "ITRI ICL subcontract (collaborative research)", "zh": "工研院資通所（ICL）委託合作研究"},
@@ -21,7 +21,7 @@
   "ardupilot": "wp3.html",
   "geofence": "wp3.html",
   "stress_harness": "wp4.html",
-  "gcs": "roadmap.html"
+  "gcs": "wp3.html"
  },
  "ui": {
   "en": {
@@ -76,7 +76,7 @@
    "h_tick": "One Shield tick",
    "tick_lead": "Ten times a second, every command goes through the same six steps.",
    "h_pipeline": "The city demonstration",
-   "pipeline_lead": "In the Project AirSim city a drone follows a red car. This is the chain from the camera to the motors. A hand-written controller is the pilot here, so this demonstration exercises perception, the Shield and the policy indicator.",
+   "pipeline_lead": "In the Project AirSim city a drone follows a red car. This is the chain from the camera to the motors as flown up to 3 Oct 2026. A hand-written controller is the pilot here, so this demonstration exercises perception, the Shield and the policy indicator. The flight of 8 Oct 2026 in which ArduPilot flies the drone is described on the WP3 page.",
    "h_hud": "Reading the policy indicator",
    "hud_lead": "A frame from the flight of 3 Oct 2026. Select a number to read what that part of the screen shows.",
    "hud_alt": "Drone camera view over a city street, following a red car, with the policy panel, the event banner and the map drawn over it.",
@@ -162,7 +162,7 @@
    "h_tick": "Shield 的一個 tick",
    "tick_lead": "每秒十次，每道指令都經過同樣的六個步驟。",
    "h_pipeline": "城市示範",
-   "pipeline_lead": "在 Project AirSim 的城市中，無人機跟隨一輛紅車。以下是從攝影機到馬達的流程。此處的駕駛是手寫控制器，因此這個示範驗證的是感知、Shield 與規則指示面板。",
+   "pipeline_lead": "在 Project AirSim 的城市中，無人機跟隨一輛紅車。以下是 2026 年 10 月 3 日以前飛行時從攝影機到馬達的流程。此處的駕駛是手寫控制器，因此這個示範驗證的是感知、Shield 與規則指示面板。2026 年 10 月 8 日由 ArduPilot 飛行無人機的那次飛行，說明在 WP3 頁面。",
    "h_hud": "如何閱讀規則指示面板",
    "hud_lead": "取自 2026 年 10 月 3 日飛行的一個畫面。選擇數字即可閱讀畫面中該部分的說明。",
    "hud_alt": "無人機攝影機俯視城市街道、跟隨一輛紅車，畫面上疊有規則面板、事件橫幅與地圖。",
@@ -199,6 +199,12 @@
  },
  "highlights": [
   {
+   "value": "0.81-0.82 m",
+   "label": {"en": "p95 gap between ArduPilot's position estimate and the simulator's true position, with ArduPilot flying Project AirSim (Gate G1, limit 1.0 m)", "zh": "ArduPilot 飛行 Project AirSim 時，其位置估計與模擬器真實位置之間的 p95 差距（Gate G1，上限 1.0 m）"},
+   "context": {"en": "All 3 runs of the same square mission in AUTO passed; a position frozen at the start would read 18.9-19.0 m. Development runs on one desktop, not KPI figures.", "zh": "同一條 AUTO 方形任務的 3 次執行全部通過；若位置停在起點不動，差距會是 18.9-19.0 m。在一台桌機上的開發階段執行，不是 KPI 數字。"},
+   "src": ["CHANGELOG.md#2026-10-08", "docs/data/progress_oct.json#g1.runs_ok"]
+  },
+  {
    "value": "29/29",
    "label": {"en": "signed policy bundles that load back with the same hash and a verified signature", "zh": "已簽章的政策套件重新載入後雜湊值相同、簽章驗證通過"},
    "context": {"en": "29/29 tampered copies are refused; a loader that checks nothing refuses 0/29.", "zh": "29/29 份竄改過的副本被拒絕；完全不檢查的載入器只會拒絕 0/29。"},
@@ -211,12 +217,6 @@
    "src": ["docs/data/eval_sep2026.json#kpi.runs.ros2_shield_off.nfz_s", "docs/data/eval_sep2026.json#kpi.runs.ros2_shield_on.nfz_s"]
   },
   {
-   "value": "112",
-   "label": {"en": "paraphrases (14 sets × 8) of task instructions and rule summaries for the VLA's prompt, each compared slot by slot with the original", "zh": "句改寫（14 組 × 8），對象是給 VLA 提示用的任務指令與規則摘要，每句都與原句逐欄比對"},
-   "context": {"en": "Generated once and stored with the prompt that produced them, so every run uses the same wording.", "zh": "只產生一次，並連同產生它們的提示一起保存，因此每次執行都使用相同的措辭。"},
-   "src": ["CHANGELOG.md#2026-10-06"]
-  },
-  {
    "value": "633",
    "label": {"en": "episodes in the nightly stress profile (211 scenarios × 3 seeds)", "zh": "個 episode：nightly 壓力測試設定（211 個情境 × 3 個種子）"},
    "context": {"en": "Run headless (no simulator) in 223 s; the smoke profile runs 52 episodes in 15.9 s.", "zh": "不接模擬器執行，耗時 223 s；smoke 設定在 15.9 s 內執行 52 個 episode。"},
@@ -225,12 +225,27 @@
  ],
  "wps": {
   "WP1": {
-   "files": ["guardrail/models.py", "guardrail/bundle.py", "policies/", "tools/wp1_roundtrip_kpi.py"],
+   "files": ["guardrail/models.py", "guardrail/bundle.py", "guardrail/api.py", "policies/", "tools/geo_to_policy.py", "tools/wp1_roundtrip_kpi.py"],
    "done": [
     {
-     "title": {"en": "Rule types, with time windows", "zh": "多種規則類型，可加時間窗"},
-     "text": {"en": "Flight rules are written in YAML. The rule types include polygon no-fly zones, an altitude band, speed and climb limits, obstacle clearance, a stand-off from the followed subject, and 3D corridors, and any rule can carry a time window.", "zh": "飛行規則以 YAML 撰寫。規則類型包括多邊形禁航區、高度範圍、速度與爬升限制、障礙物淨空、與跟隨目標的安全距離，以及 3D 走廊；每條規則都可以加上時間窗。"},
+     "title": {"en": "The grant's rule format, with time windows", "zh": "計畫書的規則格式，可加時間窗"},
+     "text": {"en": "Flight rules are written in YAML, in the grant's own form (geometry blocks and the grant's field names) as well as the project's earlier form. The rule types include polygon and circle no-fly zones, an altitude band, speed and climb limits, obstacle clearance, a stand-off from the followed subject and 3D corridors; any rule can carry a time window, and every rule type the grant lists can be declared.", "zh": "飛行規則以 YAML 撰寫，可使用計畫書本身的格式（geometry 區塊與計畫書的欄位名稱），也可使用專案先前的格式。規則類型包括多邊形與圓形禁航區、高度範圍、速度與爬升限制、障礙物淨空、與跟隨目標的安全距離，以及 3D 走廊；每條規則都可以加上時間窗，計畫書列出的每一種規則類型都能宣告。"},
      "files": ["guardrail/models.py", "policies/"]
+    },
+    {
+     "title": {"en": "Policy layers", "zh": "規則分層"},
+     "text": {"en": "Regulation, site and mission layers merge into one policy. An override that would loosen a lower layer's hard rule is refused, whether it comes in a file or as a rule change during a flight.", "zh": "法規、場域與任務等規則層會合併成一份規則檔。若某個覆寫會放寬下層的硬性規則，無論來自檔案或飛行中的規則變更，都會被拒絕。"},
+     "files": ["guardrail/models.py"]
+    },
+    {
+     "title": {"en": "Rule changes during a flight", "zh": "飛行中的規則變更"},
+     "text": {"en": "A moving no-fly zone (spawned, moved, rotated, scaled or expired), a time-window switch and a corridor swap can be applied during a flight. Each starts a new policy generation, and each can also be sent through a REST endpoint. Adding a fixed polygon no-fly zone after take-off is refused, because the grant fixes that rule class before take-off.", "zh": "飛行中可以套用移動的禁航區（產生、移動、旋轉、縮放或到期）、時間窗切換與走廊替換。每次變更都會開始新的規則世代，也都能透過 REST 端點送出。起飛後新增固定的多邊形禁航區會被拒絕，因為計畫書在起飛前就固定這一類規則。"},
+     "files": ["guardrail/shield.py", "guardrail/api.py"]
+    },
+    {
+     "title": {"en": "Zones from map files", "zh": "從地圖檔匯入區域"},
+     "text": {"en": "A converter turns zones drawn in GeoJSON or KML, and zone payloads received over REST, into policy rules.", "zh": "轉換工具可把以 GeoJSON 或 KML 繪製的區域，以及透過 REST 收到的區域資料，轉成規則檔中的規則。"},
+     "files": ["tools/geo_to_policy.py"]
     },
     {
      "title": {"en": "A fingerprint for every policy", "zh": "每份規則檔都有指紋"},
@@ -242,6 +257,12 @@
      "title": {"en": "Signed policy bundles", "zh": "已簽章的政策套件"},
      "text": {"en": "A policy and its manifest are packed into a bundle signed with Ed25519. The loader refuses an unsigned, edited or forged bundle. Where the cryptography library is not installed, a pure-Python verifier checks the signature instead.", "zh": "規則檔與其清單打包成以 Ed25519 簽章的套件。載入器會拒絕未簽章、被修改或偽造的套件。在沒有安裝 cryptography 函式庫的環境中，改由純 Python 的驗證器檢查簽章。"},
      "files": ["guardrail/bundle.py", "policies/keys/trusted_signers.json"]
+    },
+    {
+     "title": {"en": "Both hashes in every bundle", "zh": "每個套件都帶有本專案與參考實作的雜湊值"},
+     "text": {"en": "Every bundle manifest carries the project's policy hash and the hash of the grant's reference implementation, and the loader checks both: a forged reference entry is refused 29/29.", "zh": "每份套件清單都同時帶有本專案的規則檔雜湊值與計畫書參考實作的雜湊值，載入器兩者都會檢查：偽造的參考雜湊項目 29/29 被拒絕。"},
+     "files": ["guardrail/bundle.py"],
+     "src": ["CHANGELOG.md#2026-10-12"]
     },
     {
      "title": {"en": "Pinned versions", "zh": "固定版本"},
@@ -260,6 +281,18 @@
      "text": {"en": "29 of 29 project policies load back from a signed bundle with the same hash, the same rules and a verified signature, and 29 of 29 tampered copies are refused. A loader that checked nothing would refuse 0 of 29.", "zh": "29 份專案規則檔中，29 份從已簽章的套件載入後雜湊值與規則都相同，且簽章驗證通過；29 份竄改過的副本中，29 份被拒絕。完全不檢查的載入器只會拒絕 29 份中的 0 份。"},
      "command": "python tools/wp1_roundtrip_kpi.py",
      "src": ["docs/data/wp1_roundtrip.json#kpi.round_trip", "docs/data/wp1_roundtrip.json#kpi.tamper_refusal", "docs/data/wp1_roundtrip.json#null_accept_everything.tamper_refusal"]
+    },
+    {
+     "title": {"en": "Malformed policies refused", "zh": "拒絕寫錯的規則檔"},
+     "text": {"en": "All 35 deliberately malformed policies in the negative test set are refused (35/35). The loader as it was on 5 Oct 2026 refused 20/35, and a loader that checks nothing refuses 0/35.", "zh": "負面測試集中刻意寫錯的 35 份規則檔全部被拒絕（35/35）。2026 年 10 月 5 日當時的載入器只拒絕 20/35，完全不檢查的載入器則拒絕 0/35。"},
+     "command": "python tools/wp1_roundtrip_kpi.py",
+     "src": ["docs/data/wp1_roundtrip.json#kpi.negative_refusal", "docs/data/wp1_roundtrip.json#null_2026_10_05.negative_refusal", "docs/data/wp1_roundtrip.json#null_accept_everything.negative_refusal"]
+    },
+    {
+     "title": {"en": "The reference implementation's policies load here, and our bundles of them load there", "zh": "參考實作的規則檔能在這裡載入，我們為它們打包的套件也能在參考實作載入"},
+     "text": {"en": "3 of 3 policy documents from the grant's reference implementation load here with the reference's own hash, and the reference loader reads the 3 bundles we write from them (3 of 3). On 5 Oct 2026, 0 of 3 loaded in either direction. Our own policies use rule types the reference does not have.", "zh": "計畫書參考實作的 3 份規則檔中，3 份都能在這裡載入，且雜湊值與參考實作自己算出的相同；我們由這 3 份產生的套件，參考實作的載入器也能讀取 3 份中的 3 份。2026 年 10 月 5 日時，雙向都是 3 份中的 0 份。我們自己的規則檔使用了參考實作沒有的規則類型。"},
+     "command": "python tools/wp1_roundtrip_kpi.py",
+     "src": ["docs/data/wp1_roundtrip.json#kpi.reference_documents_loaded", "docs/data/wp1_roundtrip.json#kpi.reference_hash_agrees", "docs/data/wp1_roundtrip.json#kpi.reference_loader_reads_ours", "docs/data/wp1_roundtrip.json#null_2026_10_05.reference_documents_loaded", "docs/data/wp1_roundtrip.json#null_2026_10_05.reference_loader_reads_ours", "docs/data/wp1_roundtrip.json#reference.reference_loader_reads_our_reference_form_bundle", "docs/data/wp1_roundtrip.json#both_hashes.not_representable_because"]
     },
     {
      "title": {"en": "Every stored flight traceable", "zh": "每次已存飛行都可追溯"},
@@ -285,8 +318,14 @@
     },
     {
      "title": {"en": "Readable rule sentences", "zh": "可讀的規則句子"},
-     "text": {"en": "Each kept rule becomes a sentence from a Jinja2 template, with the reason it was kept. A time-windowed rule carries its window, and drops out of the pack outside it.", "zh": "每條保留的規則都由 Jinja2 範本產生一個句子，並附上保留它的理由。有時間窗的規則會寫明時間窗，在時間窗之外則不放入摘要。"},
+     "text": {"en": "Each kept rule becomes a sentence from a Jinja2 template, with the reason it was kept. A time-windowed rule carries its window, and drops out of the pack outside it. The moving no-fly zone, the time-window switch, the corridor swap and the circle fence have their own templates, so a policy file with a switch or a swap loads for flight with its rule summary.", "zh": "每條保留的規則都由 Jinja2 範本產生一個句子，並附上保留它的理由。有時間窗的規則會寫明時間窗，在時間窗之外則不放入摘要。移動禁航區、時間窗切換、走廊替換與圓形禁航區都有自己的範本，因此含有切換或替換的規則檔能連同規則摘要一起載入飛行。"},
      "files": ["guardrail/templates/"]
+    },
+    {
+     "title": {"en": "A cost map", "zh": "成本地圖"},
+     "text": {"en": "The compiler can also draw a policy as a cost map in the grant's conventions, where a hard no-fly zone costs infinity, a preferred corridor 0 and the area outside it 50, and write it beside the rule summary. On 24 project policies, 0 points that the Shield forbids were priced cheaper than the grant's conventions allow.", "zh": "編譯器也能依計畫書的慣例把規則檔畫成成本地圖：硬性禁航區的成本為無限大，偏好走廊為 0，走廊外為 50，並可寫在規則摘要旁。在 24 份專案規則檔上，Shield 禁止的點中，成本低於計畫書慣例的為 0 個。"},
+     "files": ["guardrail/compiler.py", "docs/DESIGN-cost-map-adapter.md"],
+     "src": ["CHANGELOG.md#2026-10-12"]
     },
     {
      "title": {"en": "The pack reaches OpenVLA's prompt", "zh": "摘要可放進 OpenVLA 的提示"},
@@ -314,17 +353,24 @@
    ]
   },
   "WP3": {
-   "files": ["guardrail/shield.py", "guardrail/ir.py", "guardrail/fsm.py", "sitl/ros2_shield_node.py", "demo/policy_hud.py"],
+   "files": ["guardrail/shield.py", "guardrail/ir.py", "guardrail/fsm.py", "sitl/ros2_shield_node.py", "sitl/mavlink_adapter_node.py", "demo/pas_ardupilot/", "demo/policy_hud.py"],
    "done": [
     {
      "title": {"en": "A Shield that checks every command", "zh": "檢查每一道指令的 Shield"},
-     "text": {"en": "Every tick the Shield forecasts where the command leads, checks it against every active rule, repairs it with small operators (speed, climb and yaw clamps, altitude fix, clearance fix, stand-off recovery, corridor return, geofence slide), checks the result again, and brakes when no repair is clean.", "zh": "每個 tick，Shield 都會預測指令會把無人機帶到哪裡，依所有生效的規則檢查，用小型修正運算子（速度、爬升與偏航限制、高度修正、淨空修正、安全距離恢復、走廊返回、禁航區邊緣滑行）修正，再檢查一次結果；若沒有乾淨的修正，就煞停。"},
-     "files": ["guardrail/shield.py"]
+     "text": {"en": "Every tick the Shield forecasts where the command leads over the next 5 s at 0.1 s steps, as the grant specifies, checks it against every active rule, repairs it with small operators (speed, climb and yaw clamps, altitude fix, clearance fix, stand-off recovery, corridor return, geofence slide), checks the result again, and brakes when no repair is clean.", "zh": "每個 tick，Shield 都會依計畫書的規定，以每 0.1 s 一步預測指令在接下來 5 s 會把無人機帶到哪裡，依所有生效的規則檢查，用小型修正運算子（速度、爬升與偏航限制、高度修正、淨空修正、安全距離恢復、走廊返回、禁航區邊緣滑行）修正，再檢查一次結果；若沒有乾淨的修正，就煞停。"},
+     "files": ["guardrail/shield.py"],
+     "src": ["CHANGELOG.md#2026-10-07"]
     },
     {
-     "title": {"en": "A ROS 2 node in front of MAVROS 2", "zh": "位於 MAVROS 2 前方的 ROS 2 節點"},
-     "text": {"en": "The Shield runs as a ROS 2 node between the pilot and MAVROS 2, so ArduPilot receives only the checked command.", "zh": "Shield 以 ROS 2 節點的形式位於駕駛與 MAVROS 2 之間，因此 ArduPilot 只會收到檢查過的指令。"},
-     "files": ["sitl/ros2_shield_node.py"]
+     "title": {"en": "The grant's ROS 2 interface", "zh": "計畫書的 ROS 2 介面"},
+     "text": {"en": "The Shield runs as a ROS 2 node between the pilot and MAVROS 2 and takes body-frame actions end to end. A separate MAVLink adapter node converts the checked action to local NED and publishes it to MAVROS 2 as a PositionTarget, so ArduPilot receives only the checked command. The packages come with launch files, and each episode writes its own audit file, events log and rosbag2 recording.", "zh": "Shield 以 ROS 2 節點的形式位於駕駛與 MAVROS 2 之間，全程使用機體座標系的動作。另一個 MAVLink 轉接節點把檢查過的動作轉成本地 NED 座標，以 PositionTarget 發布給 MAVROS 2，因此 ArduPilot 只會收到檢查過的指令。這些套件附有啟動檔，每個 episode 都會寫入自己的稽核檔、事件記錄與 rosbag2 錄製檔。"},
+     "files": ["sitl/ros2_shield_node.py", "sitl/mavlink_adapter_node.py", "sitl/ros2_ws/"]
+    },
+    {
+     "title": {"en": "Project AirSim flown by ArduPilot, with a stream to Mission Planner's port", "zh": "由 ArduPilot 飛行的 Project AirSim，並把資料流送到 Mission Planner 的連接埠"},
+     "text": {"en": "Project AirSim simulates the drone, its camera and the city, while ArduPilot SITL flies the vehicle through the simulator's own ArduPilot controller. mavlink-router passes ArduPilot's MAVLink stream to Mission Planner's UDP port 14550 and to a perception node that runs the camera, the detector, the Shield and the escalation state machine in one process.", "zh": "Project AirSim 模擬無人機、攝影機與城市，ArduPilot SITL 則透過模擬器內建的 ArduPilot 控制器飛行這架機體。mavlink-router 把 ArduPilot 的 MAVLink 資料流送到 Mission Planner 的 UDP 14550 連接埠，以及在同一個程序中執行攝影機、偵測器、Shield 與升級狀態機的感知節點。"},
+     "files": ["demo/pas_ardupilot/", "scripts/run_pas_ardupilot.ps1"],
+     "src": ["CHANGELOG.md#2026-10-08"]
     },
     {
      "title": {"en": "A compiled fence index", "zh": "編譯後的禁航區索引"},
@@ -334,9 +380,14 @@
     },
     {
      "title": {"en": "An escalation state machine", "zh": "升級狀態機"},
-     "text": {"en": "Normal → Brake → Loiter → RTL → Land with the grant's defaults: 3 violations in 5 s escalate, a repair larger than θ (2.0 m lateral, 0.5 m vertical) escalates, and 2 s clear returns to Normal. Built and tested as a module, with a scorer for fail-safe trigger correctness.", "zh": "Normal → Brake → Loiter → RTL → Land，採用計畫書的預設值：5 s 內 3 次違規即升級、修正幅度大於 θ（水平 2.0 m、垂直 0.5 m）即升級、連續 2 s 沒有違規即回到 Normal。已做成模組並完成測試，附有 fail-safe 觸發正確性的評分器。"},
-     "files": ["guardrail/fsm.py"],
+     "text": {"en": "Normal → Brake → Loiter → RTL → Land with the grant's defaults: 3 violations in 5 s escalate, a repair larger than θ (2.0 m lateral, 0.5 m vertical) escalates, and 2 s clear returns to Normal. It runs inside the Shield on every tick, each repair reports its size so that θ applies, and the ROS 2 node and the ArduPilot perception node request ArduPilot's flight modes from it.", "zh": "Normal → Brake → Loiter → RTL → Land，採用計畫書的預設值：5 s 內 3 次違規即升級、修正幅度大於 θ（水平 2.0 m、垂直 0.5 m）即升級、連續 2 s 沒有違規即回到 Normal。它在每個 tick 都於 Shield 內執行，每次修正都會回報幅度，因此可套用 θ；ROS 2 節點與 ArduPilot 感知節點依它向 ArduPilot 要求切換飛行模式。"},
+     "files": ["guardrail/fsm.py", "guardrail/shield.py"],
      "src": ["CHANGELOG.md#2026-10-06"]
+    },
+    {
+     "title": {"en": "ArduPilot's GeoFence as the backstop", "zh": "以 ArduPilot GeoFence 作為最後防線"},
+     "text": {"en": "Parameter files set ArduPilot's own GeoFence (FENCE_ENABLE, FENCE_TYPE, FENCE_ACTION) behind the Shield, and the ArduPilot perception node reads the fence back from the autopilot after take-off and records it with the flight.", "zh": "參數檔設定 ArduPilot 自己的 GeoFence（FENCE_ENABLE、FENCE_TYPE、FENCE_ACTION），位於 Shield 後方；ArduPilot 感知節點在起飛後會從飛控讀回圍欄設定，並隨飛行一起記錄。"},
+     "files": ["sitl/fence/guardrail_fence.parm", "demo/pas_ardupilot/citylife-quad.param"]
     },
     {
      "title": {"en": "An audit log", "zh": "稽核日誌"},
@@ -345,12 +396,25 @@
     },
     {
      "title": {"en": "The policy on screen", "zh": "螢幕上的規則"},
-     "text": {"en": "A panel over the video shows each rule of the loaded policy with its limit, the live value and a status; a banner names the most important event of the last 1.5 s, and a north-up map shows the zones and the track.", "zh": "疊在影片上的面板列出已載入規則檔的每條規則、其限制、即時數值與狀態；橫幅顯示最近 1.5 s 內最重要的事件，北方朝上的地圖顯示禁航區與飛行軌跡。"},
+     "text": {"en": "A panel over the video shows each rule of the loaded policy with its limit, the live value and a status; a banner names the most important event of the last 1.5 s, and a north-up map shows the zones and the track. The panel reads each rule's status from the Shield's own rule checker.", "zh": "疊在影片上的面板列出已載入規則檔的每條規則、其限制、即時數值與狀態；橫幅顯示最近 1.5 s 內最重要的事件，北方朝上的地圖顯示禁航區與飛行軌跡。面板上每條規則的狀態直接取自 Shield 本身的規則檢查器。"},
      "files": ["demo/policy_hud.py"],
      "src": ["CHANGELOG.md#2026-10-03"]
     }
    ],
    "shown": [
+    {
+     "title": {"en": "Gate G1: ArduPilot flies Project AirSim", "zh": "Gate G1：ArduPilot 飛行 Project AirSim"},
+     "image": "docs/img/g1_pas_ardupilot_airborne.png",
+     "text": {"en": "3 runs of the same AUTO square mission (10 m sides, 15 m up), with ArduPilot SITL flying Project AirSim's vehicle, all passed. ArduPilot's position estimate stayed within 0.81-0.82 m (p95) of the simulator's true position, against a 1.0 m limit and 18.9-19.0 m for a position frozen at the start; its motor commands lifted the vehicle 14.5 m from rest; every run reached all 5 mission items with no airborne collision and landed within 0.2 m of take-off; ArduPilot ran at 0.958-0.967 of real time. The picture is the chase camera of the first run after lift-off. One desktop, development runs.", "zh": "同一條 AUTO 方形任務（邊長 10 m、高度 15 m）由 ArduPilot SITL 飛行 Project AirSim 的機體，3 次執行全部通過。ArduPilot 的位置估計與模擬器真實位置的差距在 0.81-0.82 m 以內（p95），上限為 1.0 m，若位置停在起點不動則為 18.9-19.0 m；它的馬達指令讓機體從靜止爬升 14.5 m；每次執行都抵達全部 5 個任務點，空中沒有碰撞，降落點距起飛點 0.2 m 以內；ArduPilot 以即時速度的 0.958-0.967 倍執行。圖片是第一次執行起飛後的追蹤視角。單一桌機，開發階段的執行。"},
+     "command": "./scripts/run_pas_ardupilot.ps1 -Step g1 -AltM 15",
+     "src": ["CHANGELOG.md#2026-10-08", "docs/data/progress_oct.json#g1.runs_ok"]
+    },
+    {
+     "title": {"en": "Mission Planner's port carries the flight", "zh": "Mission Planner 的連接埠收到整段飛行"},
+     "text": {"en": "On a 120 s red-car follow, the perception node ran the camera, the detector, the Shield and the escalation state machine, and commanded ArduPilot over MAVLink directly (pymavlink, not yet MAVROS 2). A listener standing in for Mission Planner on its UDP port 14550 received position and attitude at 19.0 Hz for the whole mission, with no gap longer than 0.1 s. One desktop; since the grant's topologies use MAVROS 2, this run is not one of them.", "zh": "在一次 120 s 的紅車跟隨飛行中，感知節點執行攝影機、偵測器、Shield 與升級狀態機，並直接透過 MAVLink（pymavlink，尚未經過 MAVROS 2）指揮 ArduPilot。在 Mission Planner 的 UDP 14550 連接埠上代替 Mission Planner 接收資料的監聽程式，在整個任務期間以 19.0 Hz 收到位置與姿態資料，最長間隔不超過 0.1 s。單一桌機；由於計畫書的拓撲都使用 MAVROS 2，這次飛行不屬於其中任何一種。"},
+     "command": "python sitl/gcs_listen.py listen --seconds 300 --out gcs.json; python sitl/gcs_listen.py check gcs.json demo/out/<tag>/events.jsonl",
+     "src": ["CHANGELOG.md#2026-10-08"]
+    },
     {
      "title": {"en": "Shield off and on, on ArduPilot SITL", "zh": "在 ArduPilot SITL 上關閉與開啟 Shield"},
      "image": "docs/progress/assets/img/sitl_nfz_off_on.png",
@@ -359,15 +423,15 @@
     },
     {
      "title": {"en": "P0 escape rate beside its control runs", "zh": "P0 逃逸率與對照飛行"},
-     "text": {"en": "Development runs on the same SITL setup (dev topology, scripted test pilot). With the Shield on, the P0 violation escape rate is 0.00 on every run; the unshielded control runs read 0.6265 (no-fly-zone mission) and 0.6310 (pedestrian stand-off mission). The grant measures its KPIs on the hil topology (Jetson Orin).", "zh": "在同一套 SITL 環境上的開發階段飛行（dev 拓撲，腳本測試駕駛）。開啟 Shield 時，每一次飛行的 P0 違規逃逸率都是 0.00；未開啟 Shield 的對照飛行為 0.6265（禁航區任務）與 0.6310（行人安全距離任務）。計畫書的 KPI 在 hil 拓撲（Jetson Orin）上量測。"},
+     "text": {"en": "Development runs on the same SITL setup (dev topology, scripted test pilot). With the Shield on, the P0 violation escape rate is 0.00 on each of these runs; the unshielded control runs read 0.6265 (no-fly-zone mission) and 0.6310 (pedestrian stand-off mission). The grant measures its KPIs on the hil topology (Jetson Orin).", "zh": "在同一套 SITL 環境上的開發階段飛行（dev 拓撲，腳本測試駕駛）。開啟 Shield 時，這幾次飛行的 P0 違規逃逸率都是 0.00；未開啟 Shield 的對照飛行為 0.6265（禁航區任務）與 0.6310（行人安全距離任務）。計畫書的 KPI 在 hil 拓撲（Jetson Orin）上量測。"},
      "command": "python tools/kpi_report.py",
      "src": ["docs/data/eval_sep2026.json#kpi.runs.ros2_shield_on.p0_violation_escape_rate", "docs/data/eval_sep2026.json#kpi.runs.ros2_shield_on_dynamic.p0_violation_escape_rate", "docs/data/eval_sep2026.json#kpi.runs.ros2_ped_on.p0_violation_escape_rate", "docs/data/eval_sep2026.json#kpi.runs.ros2_shield_off.p0_violation_escape_rate", "docs/data/eval_sep2026.json#kpi.runs.ros2_ped_off.p0_violation_escape_rate"]
     },
     {
      "title": {"en": "Fence checks with the compiled index", "zh": "使用編譯後索引的禁航區檢查"},
-     "text": {"en": "With 50 rules (48 of them no-fly zones) and a 3 s forecast at 0.5 s steps, near a fence one check takes 0.13-0.26 ms and a full Shield step 0.55-1.0 ms (medians), against 14-33 ms and 172 ms before the index. Measured on the development desktop.", "zh": "以 50 條規則（其中 48 條為禁航區）、3 s 預測、每 0.5 s 一步，靠近禁航區時一次檢查需 0.13-0.26 ms，完整的 Shield 一步需 0.55-1.0 ms（皆為中位數）；加入索引前分別為 14-33 ms 與 172 ms。於開發用桌機量測。"},
+     "text": {"en": "With 50 rules (48 of them no-fly zones) and a 3 s forecast at 0.5 s steps, near a fence one check takes 0.13-0.26 ms and a full Shield step 0.55-1.0 ms (medians), against 14-33 ms and 172 ms before the index. With the grant's 5 s forecast at 0.1 s steps (50 poses), a check near a fence takes 0.39 ms and a full Shield step 2.5 ms. The grant's budgets are 5 ms per check and 100 ms per tick. Measured on the development desktop.", "zh": "以 50 條規則（其中 48 條為禁航區）、3 s 預測、每 0.5 s 一步，靠近禁航區時一次檢查需 0.13-0.26 ms，完整的 Shield 一步需 0.55-1.0 ms（皆為中位數）；加入索引前分別為 14-33 ms 與 172 ms。改用計畫書規定的 5 s 預測、每 0.1 s 一步（50 個位置）時，靠近禁航區的一次檢查需 0.39 ms，完整的 Shield 一步需 2.5 ms。計畫書的預算是每次檢查 5 ms、每個 tick 100 ms。於開發用桌機量測。"},
      "command": "python experiments/bench_shield_50rules.py",
-     "src": ["CHANGELOG.md#2026-10-06", "experiments/bench_shield_50rules.py"]
+     "src": ["CHANGELOG.md#2026-10-06", "CHANGELOG.md#2026-10-07", "experiments/bench_shield_50rules.py"]
     },
     {
      "title": {"en": "A VLA and the Shield in the same ticks", "zh": "VLA 與 Shield 在同一個 tick 中運作"},
@@ -389,7 +453,7 @@
    ]
   },
   "WP4": {
-   "files": ["guardrail/scenario_spec.py", "experiments/profiles/", "guardrail/kpi.py", "tools/kpi_report.py", "guardrail/replay.py", "guardrail/manifest.py"],
+   "files": ["guardrail/scenario_spec.py", "experiments/profiles/", "experiments/templates/", "guardrail/kpi.py", "tools/kpi_report.py", "guardrail/replay.py", "guardrail/manifest.py", "deploy/"],
    "done": [
     {
      "title": {"en": "A scenario specification", "zh": "情境規格"},
@@ -403,13 +467,19 @@
      "src": ["CHANGELOG.md#2026-10-06"]
     },
     {
+     "title": {"en": "Scenario templates and mid-episode events", "zh": "情境範本與 episode 途中的事件"},
+     "text": {"en": "Each scenario template is one YAML file (16 files). Every event type the grant names can run in the middle of an episode on the headless harness (no simulator; ArduPilot's Loiter, RTL and Land modelled as ideal position control), and RTL and Land outcomes occur there; a scenario can also carry paraphrased instructions and a key that switches the rule summary on or off.", "zh": "每個情境範本是一個 YAML 檔（共 16 個檔案）。計畫書列出的每一種事件類型都能在無模擬器測試框架的 episode 途中執行（沒有模擬器；ArduPilot 的 Loiter、RTL 與 Land 以理想的位置控制模擬），並會在其中出現 RTL 與 Land 的結果；情境也可以帶有改寫過的指令，以及開關規則摘要的設定。"},
+     "files": ["experiments/templates/", "guardrail/scenario_spec.py"],
+     "src": ["CHANGELOG.md#2026-10-07"]
+    },
+    {
      "title": {"en": "A manifest for every episode", "zh": "每個 episode 都有清單"},
      "text": {"en": "Each episode records the code revision, the weights hash, the policy hash, the seed, the simulation speed-up and the topology, so any number can be traced back to what produced it.", "zh": "每個 episode 都記錄程式碼版本、模型權重雜湊值、規則檔雜湊值、種子、模擬加速倍率與拓撲，因此任何數字都能追溯到產生它的來源。"},
      "files": ["guardrail/manifest.py"]
     },
     {
      "title": {"en": "A KPI report with baselines", "zh": "附基準的 KPI 報告"},
-     "text": {"en": "The report computes the grant's KPIs per scenario family from the logs on disk, prints each score next to its null baseline, and marks a value that cannot be measured as such instead of printing a zero.", "zh": "報告依情境類別、從磁碟上的記錄計算計畫書的 KPI，在每個分數旁列出其零基準（null baseline），無法量測的數值會如實標示，而不是印成零。"},
+     "text": {"en": "The report computes the grant's KPIs per scenario family and per template from the logs on disk, prints each score next to its null baseline, and marks a value that cannot be measured as such instead of printing a zero.", "zh": "報告依情境類別與範本、從磁碟上的記錄計算計畫書的 KPI，在每個分數旁列出其零基準（null baseline），無法量測的數值會如實標示，而不是印成零。"},
      "files": ["tools/kpi_report.py", "guardrail/kpi.py"]
     },
     {
@@ -417,6 +487,17 @@
      "text": {"en": "Episodes are packed into replay bundles that re-derive their own KPIs, and a 13-scenario headless sweep guards the Shield against regressions.", "zh": "episode 會打包成能自行重新算出 KPI 的重播套件，另有 13 個情境的無模擬器掃描，防止 Shield 退化。"},
      "files": ["guardrail/replay.py", "experiments/sweep_scenarios.py"],
      "src": ["docs/data/kpi_rollup_2026-10-06.md"]
+    },
+    {
+     "title": {"en": "Image definitions for the Jetson Orin", "zh": "Jetson Orin 的映像檔定義"},
+     "text": {"en": "One image definition covers dev, hil and flight, with only a topology file differing, and a runbook describes setting up the Orin. For JetPack 6.2 the images run ROS 2 Jazzy in an Ubuntu 24.04 container, so rclpy runs on Python 3.12, and a first-boot check reports the Orin's setup. A profiler that times Shield ticks from real flights against the grant's tick budgets is written to run on the Orin unchanged.", "zh": "同一份映像檔定義涵蓋 dev、hil 與 flight，只有拓撲設定檔不同；另有一份說明如何建置 Orin 的操作手冊。針對 JetPack 6.2，映像檔在 Ubuntu 24.04 容器中執行 ROS 2 Jazzy，因此 rclpy 以 Python 3.12 執行；另有首次開機檢查，回報 Orin 的設定狀態。效能分析工具以真實飛行的 Shield tick 對照計畫書的 tick 預算計時，其設計可在 Orin 上原封不動執行。"},
+     "files": ["deploy/", "docs/RUNBOOK-orin-hil.md", "deploy/orin/first_boot_check.sh", "tools/profile_shield_tick.py"],
+     "src": ["CHANGELOG.md#2026-10-12"]
+    },
+    {
+     "title": {"en": "A control plane for the stress harness", "zh": "壓力測試框架的控制介面"},
+     "text": {"en": "The harness takes the grant's StartEpisode, HotApply, EmitEvent and EndEpisode calls over gRPC with mutual TLS, and returns each episode's bundle and KPI table. It drives the headless harness (no simulator).", "zh": "測試框架透過採用雙向 TLS 的 gRPC 接收計畫書的 StartEpisode、HotApply、EmitEvent 與 EndEpisode 呼叫，並回傳每個 episode 的套件與 KPI 表。目前驅動的是不接模擬器的測試框架。"},
+     "files": ["guardrail/harness_service.py", "guardrail/protos/harness.proto", "tools/harness_client.py"]
     }
    ],
    "shown": [
@@ -447,13 +528,13 @@
    "name": "dev",
    "stage": "in_use",
    "where": {"en": "Everything on one desktop", "zh": "全部在一台桌機上"},
-   "purpose": {"en": "ArduPilot SITL, the simulators, MAVROS 2, the Shield and the pilot run together. Used for development and tests; the Shield on/off runs on this site come from here.", "zh": "ArduPilot SITL、模擬器、MAVROS 2、Shield 與駕駛一起執行。用於開發與測試；本網站的 Shield 開／關飛行來自這裡。"}
+   "purpose": {"en": "ArduPilot SITL, the simulators, MAVROS 2, the Shield and the pilot run together. Used for development and tests; the Shield on/off runs on this site come from here, and Gate G1 ran on the same desktop.", "zh": "ArduPilot SITL、模擬器、MAVROS 2、Shield 與駕駛一起執行。用於開發與測試；本網站的 Shield 開／關飛行來自這裡，Gate G1 也在同一台桌機上執行。"}
   },
   {
    "name": "hil",
    "stage": "next",
    "where": {"en": "Simulators on the desktop, VLA and Shield on a Jetson Orin", "zh": "模擬器在桌機，VLA 與 Shield 在 Jetson Orin"},
-   "purpose": {"en": "The desktop runs the simulators, ArduPilot SITL, MAVROS 2 and the ground station; the Orin runs the VLA and the Shield over the network. The grant measures its KPIs in this topology.", "zh": "桌機執行模擬器、ArduPilot SITL、MAVROS 2 與地面站；Orin 透過網路執行 VLA 與 Shield。計畫書的 KPI 在這個拓撲中量測。"}
+   "purpose": {"en": "The desktop runs the simulators, ArduPilot SITL and the ground station; the Jetson Orin runs the VLA and the Shield, connected over the network. The grant measures its KPIs in this topology. The Orin is being set up.", "zh": "桌機執行模擬器、ArduPilot SITL 與地面站；Jetson Orin 透過網路連線，執行 VLA 與 Shield。計畫書的 KPI 在這個拓撲中量測。Orin 正在建置中。"}
   },
   {
    "name": "flight",
@@ -463,6 +544,16 @@
   }
  ],
  "gallery": [
+  {
+   "id": "g1-ardupilot",
+   "kind": "image",
+   "file": "docs/img/g1_pas_ardupilot_airborne.png",
+   "date": "2026-10-08",
+   "wp": ["WP3"],
+   "title": {"en": "ArduPilot flies Project AirSim (Gate G1)", "zh": "ArduPilot 飛行 Project AirSim（Gate G1）"},
+   "caption": {"en": "The chase camera of the first Gate G1 run, after ArduPilot's motor commands lifted the drone above the CityLife street. 3 runs of the same AUTO square mission passed, and ArduPilot's position estimate stayed within 0.81-0.82 m (p95) of the simulator's true position. One desktop, development runs.", "zh": "Gate G1 第一次執行的追蹤視角，取自 ArduPilot 的馬達指令讓無人機升到 CityLife 街道上方之後。同一條 AUTO 方形任務的 3 次執行都通過，ArduPilot 的位置估計與模擬器真實位置的差距在 0.81-0.82 m 以內（p95）。單一桌機，開發階段的執行。"},
+   "src": ["CHANGELOG.md#2026-10-08", "docs/data/progress_oct.json#g1.runs_ok"]
+  },
   {
    "id": "policy-hud",
    "kind": "image",
@@ -572,6 +663,47 @@
   }
  ],
  "changes": [
+  {
+   "changelog": "2026-10-12",
+   "date": "2026-10-12",
+   "date_start": "2026-10-09",
+   "title": {"en": "Rule-change templates, a cost map, both hashes, a harness control plane and the Orin defined for JetPack 6.2", "zh": "規則變更範本、成本地圖、套件帶參考實作雜湊值、測試框架控制介面，以及針對 JetPack 6.2 定義的 Orin"},
+   "points": [
+    {"en": "The moving no-fly zone, the time-window switch, the corridor swap and the circle fence compile into the rule summary, and a policy file with a switch or a swap loads for flight.", "zh": "移動禁航區、時間窗切換、走廊替換與圓形禁航區都能編譯進規則摘要，含有切換或替換的規則檔可以載入飛行。"},
+    {"en": "A cost-map adapter draws a policy in the grant's conventions; on 24 project policies, 0 points that the Shield forbids were priced cheaper than the grant's conventions allow.", "zh": "成本地圖轉接器依計畫書的慣例畫出規則檔；在 24 份專案規則檔上，Shield 禁止的點中，成本低於計畫書慣例的為 0 個。"},
+    {"en": "Every bundle carries both the project's hash and the reference implementation's hash, and a forged reference entry is refused 29/29.", "zh": "每個套件都同時帶有本專案的雜湊值與參考實作的雜湊值，偽造的參考雜湊項目 29/29 被拒絕。"},
+    {"en": "The escalation's hold step is now flown as ArduCopter's BRAKE mode, which held 14.97-15.01 m in ArduPilot SITL with no pilot input.", "zh": "升級機制的定點步驟現在以 ArduCopter 的 BRAKE 模式飛行；在沒有駕駛輸入的 ArduPilot SITL 中，它把高度維持在 14.97-15.01 m。"},
+    {"en": "The stress harness takes its episode calls over gRPC with mutual TLS (headless harness, no simulator).", "zh": "壓力測試框架透過採用雙向 TLS 的 gRPC 接收 episode 呼叫（不接模擬器的測試框架）。"},
+    {"en": "The Jetson Orin deployment is defined for JetPack 6.2: ROS 2 Jazzy in an Ubuntu 24.04 container, with rclpy on Python 3.12.", "zh": "Jetson Orin 的部署已針對 JetPack 6.2 定義：在 Ubuntu 24.04 容器中執行 ROS 2 Jazzy，rclpy 以 Python 3.12 執行。"}
+   ]
+  },
+  {
+   "changelog": "2026-10-08",
+   "date": "2026-10-08",
+   "title": {"en": "Gate G1 passed: ArduPilot flies Project AirSim, and Mission Planner's port carries the flight", "zh": "通過 Gate G1：ArduPilot 飛行 Project AirSim，Mission Planner 的連接埠收到整段飛行"},
+   "points": [
+    {"en": "ArduPilot SITL now flies the Project AirSim drone through the simulator's own ArduPilot controller, and mavlink-router passes its MAVLink stream to Mission Planner's UDP port 14550 and to the perception node.", "zh": "ArduPilot SITL 現在透過模擬器內建的 ArduPilot 控制器飛行 Project AirSim 的無人機，並由 mavlink-router 把它的 MAVLink 資料流送到 Mission Planner 的 UDP 14550 連接埠與感知節點。"},
+    {"en": "Gate G1 passed on 3 runs of the same square mission: ArduPilot's position estimate stayed within 0.81-0.82 m (p95) of the simulator's true position, against a 1.0 m limit and 18.9-19.0 m for a position frozen at the start, and its motor commands lifted the vehicle 14.5 m from rest.", "zh": "Gate G1 在同一條方形任務的 3 次執行中通過：ArduPilot 的位置估計與模擬器真實位置的差距在 0.81-0.82 m 以內（p95），上限為 1.0 m，若位置停在起點不動則為 18.9-19.0 m；它的馬達指令讓機體從靜止爬升 14.5 m。", "src": ["CHANGELOG.md#2026-10-08", "docs/data/progress_oct.json#g1.runs_ok"]},
+    {"en": "Each AUTO square mission (10 m sides, 15 m up) reached all 5 mission items with no airborne collision and landed within 0.2 m of take-off; ArduPilot ran at 0.958-0.967 of real time.", "zh": "每一次 AUTO 方形任務（邊長 10 m、高度 15 m）都抵達全部 5 個任務點，空中沒有碰撞，降落點距起飛點 0.2 m 以內；ArduPilot 以即時速度的 0.958-0.967 倍執行。"},
+    {"en": "A 120 s red-car follow flew with the camera, the detector, the Shield and the escalation state machine commanding ArduPilot over MAVLink directly (not yet through MAVROS 2). Mission Planner's UDP port received position and attitude at 19.0 Hz for the whole mission, with no gap longer than 0.1 s.", "zh": "一次 120 s 的紅車跟隨飛行中，由攝影機、偵測器、Shield 與升級狀態機直接透過 MAVLink（尚未經過 MAVROS 2）指揮 ArduPilot。Mission Planner 的 UDP 連接埠在整個任務期間以 19.0 Hz 收到位置與姿態資料，最長間隔不超過 0.1 s。"},
+    {"en": "All on one desktop: development runs, not KPI figures. The grant measures its KPIs on the hil topology (Jetson Orin).", "zh": "全部在一台桌機上：開發階段的執行，不是 KPI 數字。計畫書的 KPI 在 hil 拓撲（Jetson Orin）上量測。"}
+   ]
+  },
+  {
+   "changelog": "2026-10-07",
+   "date": "2026-10-07",
+   "title": {"en": "The grant's policy form, a Shield that escalates, rule changes during a flight and the ROS 2 interface", "zh": "計畫書的規則格式、會升級的 Shield、飛行中的規則變更與 ROS 2 介面"},
+   "points": [
+    {"en": "Policies written in the grant's own form load as written; every rule type the grant lists can be declared, and circle no-fly zones are enforced.", "zh": "以計畫書格式撰寫的規則檔可原樣載入；計畫書列出的每一種規則類型都能宣告，圓形禁航區也會實際執行。"},
+    {"en": "Regulation, site and mission layers merge into one policy, and an override that would loosen a lower layer's hard rule is refused.", "zh": "法規、場域與任務等規則層會合併成一份規則檔；若某個覆寫會放寬下層的硬性規則，就會被拒絕。"},
+    {"en": "Validation is strict: 35/35 malformed policies in the negative test set are refused; the loader of 5 Oct 2026 refused 20/35 (14/25 of the 25 earlier cases).", "zh": "驗證變得嚴格：負面測試集中的 35/35 份錯誤規則檔全部被拒絕；2026 年 10 月 5 日的載入器拒絕 20/35（其中原有的 25 個案例拒絕 14/25）。", "src": ["CHANGELOG.md#2026-10-07", "docs/data/wp1_roundtrip.json#kpi.negative_refusal", "docs/data/wp1_roundtrip.json#null_2026_10_05.negative_refusal"]},
+    {"en": "The escalation state machine (Brake, Loiter, RTL, Land) runs inside the Shield on every tick, and each repair reports its size so that the grant's θ applies.", "zh": "升級狀態機（Brake、Loiter、RTL、Land）在每個 tick 都於 Shield 內執行，每次修正都會回報幅度，因此可套用計畫書的 θ。"},
+    {"en": "Rule changes during a flight: a moving no-fly zone, a time-window switch and a corridor swap, each starting a new policy generation, also through a REST endpoint.", "zh": "飛行中的規則變更：移動的禁航區、時間窗切換與走廊替換，每次都開始新的規則世代，也可透過 REST 端點送出。"},
+    {"en": "The grant's ROS 2 interface: body-frame actions end to end, a MAVLink adapter node that publishes PositionTarget to MAVROS 2, launch files, a router configuration for Mission Planner beside MAVROS 2, and ArduPilot's GeoFence as the backstop.", "zh": "計畫書的 ROS 2 介面：全程使用機體座標系的動作、把 PositionTarget 發布給 MAVROS 2 的 MAVLink 轉接節點、啟動檔、讓 Mission Planner 與 MAVROS 2 並行的路由設定，以及作為最後防線的 ArduPilot GeoFence。"},
+    {"en": "The Shield looks 5 s ahead at 0.1 s steps, as the grant specifies; at the grant's load (50 rules, 50 poses) a check near a fence takes 0.39 ms and a full Shield step 2.5 ms on the development desktop.", "zh": "Shield 依計畫書規定，以每 0.1 s 一步預測 5 s；在計畫書的負載下（50 條規則、50 個位置），開發用桌機上靠近禁航區的一次檢查需 0.39 ms，完整的 Shield 一步需 2.5 ms。"},
+    {"en": "The stress harness runs every event type the grant names in the middle of a headless episode (no simulator), with RTL and Land outcomes, from 16 scenario templates, one file each.", "zh": "壓力測試框架可在無模擬器的 episode 途中執行計畫書列出的每一種事件類型，並出現 RTL 與 Land 的結果；情境範本共 16 個，每個一個檔案。"}
+   ]
+  },
   {
    "changelog": "2026-10-06",
    "date": "2026-10-06",
@@ -710,32 +842,33 @@
    {"date": "2026-09-29", "wp": ["WP3"], "en": "Control loop at 10 Hz, a city obstacle map, traffic signals and pedestrians.", "zh": "控制迴圈達 10 Hz、城市障礙物地圖、交通號誌與行人。", "src": ["CHANGELOG.md#2026-09-29"]},
    {"date": "2026-09-30", "wp": [], "en": "Target identity and re-acquisition.", "zh": "目標身分辨識與重新捕獲。"},
    {"date": "2026-10-03", "wp": ["WP3"], "en": "The policy indicator on screen, and a no-fly zone in the city.", "zh": "螢幕上的規則指示面板，以及城市中的禁航區。"},
-   {"date": "2026-10-06", "wp": ["WP1", "WP2", "WP3", "WP4"], "en": "Fence index, typed rule summary, paraphraser, escalation state machine, signed bundles, stress profiles and a KPI report.", "zh": "禁航區索引、有型別的規則摘要、改寫器、升級狀態機、已簽章套件、壓力測試設定與 KPI 報告。"}
+   {"date": "2026-10-06", "wp": ["WP1", "WP2", "WP3", "WP4"], "en": "Fence index, typed rule summary, paraphraser, escalation state machine, signed bundles, stress profiles and a KPI report.", "zh": "禁航區索引、有型別的規則摘要、改寫器、升級狀態機、已簽章套件、壓力測試設定與 KPI 報告。"},
+   {"date": "2026-10-07", "wp": ["WP1", "WP3", "WP4"], "en": "The grant's policy form and policy layers, escalation inside the Shield, rule changes during a flight, the grant's ROS 2 interface and ArduPilot's GeoFence as the backstop.", "zh": "計畫書的規則格式與規則分層、Shield 內的升級機制、飛行中的規則變更、計畫書的 ROS 2 介面，以及作為最後防線的 ArduPilot GeoFence。"},
+   {"date": "2026-10-08", "wp": ["WP3"], "en": "Gate G1 passed: ArduPilot flies Project AirSim, and Mission Planner's port carries the flight.", "zh": "通過 Gate G1：ArduPilot 飛行 Project AirSim，Mission Planner 的連接埠收到整段飛行。"},
+   {"date": "2026-10-12", "wp": ["WP1", "WP2", "WP4"], "en": "Templates for the rule changes, a cost map, both hashes in every bundle, a gRPC control plane for the stress harness, and the Orin images defined for JetPack 6.2.", "zh": "規則變更的範本、成本地圖、每個套件都帶有本專案與參考實作的雜湊值、壓力測試框架的 gRPC 控制介面，以及針對 JetPack 6.2 定義的 Orin 映像檔。", "src": ["CHANGELOG.md#2026-10-12"]}
   ],
   "next": [
    {
     "window": {"en": "October 2026", "zh": "2026 年 10 月"},
     "items": [
-     {"wp": ["WP3"], "en": "Connect the escalation state machine to the Shield node, so that it drives ArduPilot's Brake, Loiter, RTL and Land modes.", "zh": "把升級狀態機接到 Shield 節點，由它驅動 ArduPilot 的 Brake、Loiter、RTL 與 Land 模式。"},
-     {"wp": ["WP3"], "en": "Configure ArduPilot's GeoFence (FENCE_ENABLE, FENCE_TYPE, FENCE_ACTION) as the last backstop behind the Shield.", "zh": "設定 ArduPilot 的 GeoFence（FENCE_ENABLE、FENCE_TYPE、FENCE_ACTION），作為 Shield 後方的最後防線。"},
-     {"wp": ["WP3", "WP4"], "en": "Run the VLA and the Shield on the Jetson Orin, with the simulators on the desktop (the grant's hil topology), and time the Shield there at the load the grant states its budget for (50 rules, 50 future poses per tick) against the 5 ms query budget.", "zh": "在 Jetson Orin 上執行 VLA 與 Shield，模擬器留在桌機（計畫書的 hil 拓撲），並在計畫書訂定預算時所依據的負載下（50 條規則、每個 tick 檢查 50 個未來位置）量測 Shield 的耗時，對照 5 ms 的查詢預算。", "src": ["CHANGELOG.md#2026-10-06", "experiments/bench_shield_50rules.py"]},
-     {"wp": ["WP1"], "en": "Policy layers (regulation, site, mission) and circle fences.", "zh": "規則分層（法規、場域、任務）與圓形禁航區。"}
+     {"wp": ["WP3", "WP4"], "en": "Set up the Jetson Orin and run the VLA and the Shield on it, with the simulators on the desktop (the grant's hil topology), and time the Shield there at the load the grant states its budget for (50 rules, 50 future poses per tick) against the 5 ms query budget.", "zh": "建置 Jetson Orin，在上面執行 VLA 與 Shield，模擬器留在桌機（計畫書的 hil 拓撲），並在計畫書訂定預算時所依據的負載下（50 條規則、每個 tick 檢查 50 個未來位置）量測 Shield 的耗時，對照 5 ms 的查詢預算。", "src": ["CHANGELOG.md#2026-10-06", "experiments/bench_shield_50rules.py"]},
+     {"wp": ["WP3"], "en": "Fly the perception node through MAVROS 2: in WSL on the desktop (the grant's dev topology), then on the Jetson Orin (hil).", "zh": "讓感知節點經由 MAVROS 2 飛行：先在桌機的 WSL 中（計畫書的 dev 拓撲），再到 Jetson Orin 上（hil）。"},
+     {"wp": ["WP3"], "en": "Make the escalation's hold step keep the aircraft inside its altitude band on ArduPilot, and bring fail-safe trigger correctness to the grant's target of at least 99 %.", "zh": "讓升級機制的定點步驟在 ArduPilot 上把機體維持在高度範圍內，並把 fail-safe 觸發正確率提高到計畫書至少 99 % 的目標。", "src": ["docs/DESIGN-escalation-fsm.md"]},
+     {"wp": ["WP1", "WP2"], "en": "A policy file that declares a moving no-fly zone loads for flight; a moving zone applied during a flight already works.", "zh": "宣告移動禁航區的規則檔可以載入飛行；在飛行中套用移動禁航區目前已經可以運作。"}
     ]
    },
    {
     "window": {"en": "October – November 2026", "zh": "2026 年 10 月至 11 月"},
     "items": [
-     {"wp": ["WP4"], "en": "Perception rail: Project AirSim simulates the drone and its camera while ArduPilot SITL flies it through Project AirSim's ArduPilot controller, with the Shield in front of MAVROS 2.", "zh": "感知軌道：由 Project AirSim 模擬無人機與攝影機，ArduPilot SITL 透過 Project AirSim 的 ArduPilot 控制器飛行，Shield 位於 MAVROS 2 之前。"},
-     {"wp": [], "en": "Mission Planner as the ground station, connected to the same ArduPilot over MAVLink through mavlink-router, next to MAVROS 2.", "zh": "以 Mission Planner 作為地面站，透過 mavlink-router 以 MAVLink 連到同一個 ArduPilot，與 MAVROS 2 並行。"},
      {"wp": ["WP2"], "en": "Fly OpenVLA with the rule summary in its prompt, and compare missions with the summary on and off.", "zh": "讓 OpenVLA 在提示中帶著規則摘要飛行，並比較摘要開啟與關閉時的任務結果。"},
-     {"wp": ["WP4"], "en": "A stress harness that starts ArduPilot SITL sessions, changes rules mid-flight and collects each episode as a bundle with rosbag2.", "zh": "壓力測試框架：啟動 ArduPilot SITL 工作階段、在飛行中變更規則，並把每個 episode 連同 rosbag2 收集成套件。"},
-     {"wp": ["WP1"], "en": "Mid-flight policy updates (a moving no-fly zone, a time-window switch, a corridor swap) through a REST endpoint.", "zh": "透過 REST 端點在飛行中更新規則（移動的禁航區、時間窗切換、走廊替換）。"}
+     {"wp": ["WP4"], "en": "Run the broad stress profile, defined on 7 Oct 2026, end to end.", "zh": "完整執行 2026 年 10 月 7 日定義的廣泛壓力測試設定。"},
+     {"wp": ["WP4"], "en": "Run the scenarios with mid-flight rule changes on ArduPilot SITL through MAVROS 2; so far the harness's ArduPilot path flies only scenarios without events.", "zh": "在 ArduPilot SITL 上經由 MAVROS 2 執行含飛行中規則變更的情境；目前測試框架的 ArduPilot 路徑只飛沒有事件的情境。"}
     ]
    },
    {
     "window": {"en": "November 2026", "zh": "2026 年 11 月"},
     "items": [
-     {"wp": ["WP4"], "en": "KPI campaign: dynamic scenarios with at least 3 seeds each, on the hil topology and the delivered code.", "zh": "KPI 測試：在 hil 拓撲上、以交付版本的程式碼執行動態情境，每個情境至少 3 個種子。", "src": ["CHANGELOG.md#2026-10-06"]},
+     {"wp": ["WP4"], "en": "KPI campaign: dynamic scenarios with at least 3 seeds each, on the hil topology (VLA and Shield on the Jetson Orin) and the delivered code.", "zh": "KPI 測試：在 hil 拓撲上（VLA 與 Shield 在 Jetson Orin 上）、以交付版本的程式碼執行動態情境，每個情境至少 3 個種子。", "src": ["CHANGELOG.md#2026-10-06"]},
      {"wp": ["WP2", "WP4"], "en": "Per-paraphrase robustness, measured with a pilot that reads text.", "zh": "以會讀取文字的駕駛量測每種改寫的穩健度。"},
      {"wp": ["WP4"], "en": "The KPI report on dynamic-scenario stress, per scenario family.", "zh": "依情境類別整理的動態情境壓力測試 KPI 報告。"}
     ]
@@ -758,7 +891,9 @@
   "from_tracker": ["VLA", "Guardrail", "Policy DSL", "IR", "Bundle", "policy_hash", "CSP", "Prefix Compiler", "Safety Shield", "Repair operator", "NFZ", "Stand-off", "Obstacle clearance", "P0 / P1 / P2", "Mean repair magnitude", "Mission success rate", "KPI", "ArduPilot", "SITL", "MAVROS 2", "ROS 2", "Project AirSim", "OWL-ViT", "FenceGuard", "HUD", "Tick", "Audit log"],
   "extra": [
    {"term": "Brake", "en": "The Shield's stop command: every velocity value (vx, vy, vz and yaw rate) set to zero. The first step of the escalation state machine.", "zh": "Shield 的停止指令：所有速度值（vx、vy、vz 與偏航率）全部設為零。也是升級狀態機的第一步。"},
-   {"term": "Escalation state machine", "en": "The Shield's fail-safe ladder in the grant's design: Normal → Brake → Loiter (hold position) → RTL (return to launch) → Land, stepping up when violations repeat or a repair would be too large.", "zh": "計畫書設計中 Shield 的 fail-safe 階梯：Normal → Brake → Loiter（原地定點）→ RTL（返回起飛點）→ Land，違規重複發生或修正幅度過大時逐級升級。"},
+   {"term": "Escalation state machine", "en": "The Shield's fail-safe ladder from the grant's design: Normal → Brake → Loiter (hold position) → RTL (return to launch) → Land, stepping up when violations repeat or a repair would be too large. It runs inside the Shield and requests ArduPilot's flight modes.", "zh": "依計畫書設計的 Shield fail-safe 階梯：Normal → Brake → Loiter（原地定點）→ RTL（返回起飛點）→ Land，違規重複發生或修正幅度過大時逐級升級。它在 Shield 內執行，並向 ArduPilot 要求切換飛行模式。"},
+   {"term": "Gate G1", "en": "The check that ArduPilot really flies Project AirSim's vehicle: ArduPilot's position estimate must follow the simulator's true position, its motor commands must lift the vehicle, and repeated square missions in AUTO must reach every corner and land where they took off.", "zh": "確認 ArduPilot 真的在飛行 Project AirSim 機體的檢查：ArduPilot 的位置估計必須跟上模擬器的真實位置、它的馬達指令必須讓機體升空，而且重複的 AUTO 方形任務必須抵達每個角落，並降落在起飛的地方。"},
+   {"term": "mavlink-router", "en": "Passes one autopilot's MAVLink stream to several programs at once. In the grant's design it feeds Mission Planner and MAVROS 2; on the Project AirSim rail it has so far fed Mission Planner's port and the perception node.", "zh": "把同一個飛控的 MAVLink 資料流同時送給多個程式。在計畫書的設計中，它供應 Mission Planner 與 MAVROS 2；在 Project AirSim 軌道上，目前為止它供應的是 Mission Planner 的連接埠與感知節點。"},
    {"term": "GeoFence", "en": "ArduPilot's own fence (FENCE_ENABLE, FENCE_TYPE, FENCE_ACTION), the last backstop behind the Shield in the grant's design.", "zh": "ArduPilot 自己的圍欄（FENCE_ENABLE、FENCE_TYPE、FENCE_ACTION），在計畫書的設計中是 Shield 後方的最後防線。"},
    {"term": "P0 violation escape rate", "en": "Acceptance KPI, target 0. Measured here as the share of ticks on which a P0 violation is still present in the command actually sent to the drone.", "zh": "驗收 KPI，目標為 0。本專案以「P0 違規仍留在實際送給無人機之指令中的 tick 比例」來量測。", "src": ["docs/data/kpi_rollup_2026-10-06.md"]},
    {"term": "Fail-safe trigger correctness", "en": "Acceptance KPI: the fail-safe triggers when it is expected to, and not when it is not. The grant's target is at least 99 %.", "zh": "驗收 KPI：在預期時觸發 fail-safe，不預期時不觸發。計畫書的目標為至少 99 %。", "src": ["docs/DESIGN-escalation-fsm.md"]},
@@ -766,7 +901,7 @@
    {"term": "Jetson Orin", "en": "NVIDIA's embedded computer for robots and drones. In the grant's hil and flight topologies it runs the VLA and the Shield.", "zh": "NVIDIA 給機器人與無人機用的嵌入式電腦。在計畫書的 hil 與 flight 拓撲中，由它執行 VLA 與 Shield。"},
    {"term": "Topology (dev / hil / flight)", "en": "Where the software runs. dev: everything on one desktop. hil: simulators on the desktop, VLA and Shield on a Jetson Orin. flight: the Orin on a real drone.", "zh": "軟體在哪裡執行。dev：全部在一台桌機。hil：模擬器在桌機，VLA 與 Shield 在 Jetson Orin。flight：Orin 裝在真實無人機上。"},
    {"term": "Paraphraser", "en": "Rewrites a task instruction or a rule summary in different words, so that a test can check whether the mission result stays the same.", "zh": "用不同措辭改寫任務指令或規則摘要，讓測試能檢查任務結果是否不變。"},
-   {"term": "Perception rail", "en": "The camera-based simulation path: camera images → VLA → Shield → MAVROS 2 → ArduPilot as one system.", "zh": "以攝影機為基礎的模擬路徑：攝影機影像 → VLA → Shield → MAVROS 2 → ArduPilot 串成同一系統。"},
+   {"term": "Perception rail", "en": "The camera-based simulation path in the grant's design: camera images → VLA → Shield → MAVROS 2 → ArduPilot as one system. Here Project AirSim supplies the camera and the physics, and ArduPilot SITL flies the vehicle.", "zh": "計畫書設計中以攝影機為基礎的模擬路徑：攝影機影像 → VLA → Shield → MAVROS 2 → ArduPilot 串成同一系統。本專案由 Project AirSim 提供攝影機與物理模擬，ArduPilot SITL 負責飛行。"},
    {"term": "OpenVLA / AerialVLA", "en": "OpenVLA is an open-source VLA model; AerialVLA is a drone version of it. Both have flown through the Shield in simulation.", "zh": "OpenVLA 是開源的 VLA 模型；AerialVLA 是它的無人機版本。兩者都已在模擬中通過 Shield 飛行。"},
    {"term": "Mission Planner", "en": "ArduPilot's ground-station software: map, parameters and flight monitoring over MAVLink.", "zh": "ArduPilot 的地面站軟體：透過 MAVLink 提供地圖、參數設定與飛行監看。"},
    {"term": "MAVLink", "en": "The message protocol ArduPilot uses with ground stations and companion computers.", "zh": "ArduPilot 與地面站、機載電腦（companion computer）溝通所用的訊息協定。"},
@@ -782,7 +917,8 @@
   "docs/img/progress_0930_after_fpv.jpg": "sha256:ca2aa07797194365",
   "docs/img/progress_0930_before_fpv.jpg": "sha256:9a6fb81391f0d08b",
   "docs/img/citylife_signals_junction_4100_4100_low.png": "sha256:be8a81d15fa81bec",
-  "docs/img/flowchart_tracking.png": "sha256:b88e85db65caf76a"
+  "docs/img/flowchart_tracking.png": "sha256:b88e85db65caf76a",
+  "docs/img/g1_pas_ardupilot_airborne.png": "sha256:fab3bf99f9186492"
  },
  "overrides": {
   "project.solution": {"en": "The work packages: WP1 writes the rules in a Policy DSL (a fixed YAML/JSON rule format) and packs them into a signed bundle (an archive of the rules with a hash and a signature). WP2, the Prefix Compiler, turns the rules into a CSP (Constraint Summary Pack) for the VLA's prompt. WP3, the Safety Shield, checks and repairs every command; in the grant's design, ArduPilot's own GeoFence (the autopilot's built-in boundary) and its RTL (return to launch) / Land modes sit behind it as the last backstop. WP4 delivers the stress scenarios that produce the KPI numbers.", "zh": "各工作包（WP）：WP1 用 Policy DSL（固定的 YAML/JSON 規則格式）撰寫規則，並打包成有簽章的 bundle（含 hash 與簽章的規則封裝檔）。WP2（Prefix Compiler）把規則轉成供 VLA 提示詞使用的 CSP（Constraint Summary Pack）。WP3（Safety Shield）檢查並修正每一個指令；在計畫書的設計中，ArduPilot 本身的 GeoFence（飛控內建的邊界）以及 RTL（返航）/ Land 模式位於它後方，作為最後一道防線。WP4 交付產生 KPI 數字的壓力測試情境。"},
@@ -794,6 +930,8 @@
   "wps.WP4.plain": {"en": "WP4 delivers a library of test scenarios in which rules change mid-flight (moving NFZ, time-window switch, corridor swap), and a harness that runs them and computes the KPIs. Under the grant, every KPI in the final report comes from this harness.", "zh": "WP4 交付一組測試情境，規則會在飛行中改變（移動的 NFZ、時間窗切換、走廊替換），以及執行這些情境並計算 KPI 的測試框架（harness）。依計畫書，期末報告中的每一個 KPI 都來自這個 harness。"},
   "hud_callouts.counts.detail": {"en": "Totals so far in this flight: Shield corrections, brakes, holds and P0 escapes (ticks on which a P0 violation remained in the command sent).", "zh": "本次飛行到目前為止的累計：Shield 修正、煞停、停住，以及 P0 escape（實際送出的指令中仍有 P0 違規的 tick）次數。"},
   "wps.WP4.grant_quote": "every reported KPI in the final report comes from a Stress Testing run executed in the [hil] topology",
-  "glossary.Project AirSim.text": {"en": "A photo-realistic drone simulator on Unreal Engine 5. Our city demonstrations run here, flown by Project AirSim's own flight controller.", "zh": "以 Unreal Engine 5 打造的擬真無人機模擬器。我們的城市示範在這裡執行，由 Project AirSim 內建的飛行控制器飛行。"}
+  "glossary.Project AirSim.text": {"en": "A photo-realistic drone simulator on Unreal Engine 5. Our city demonstrations run here. Up to 3 Oct 2026 they were flown by Project AirSim's own flight controller; since 8 Oct 2026 ArduPilot SITL can fly the vehicle instead, through Project AirSim's ArduPilot controller.", "zh": "以 Unreal Engine 5 打造的擬真無人機模擬器，我們的城市示範在這裡執行。2026 年 10 月 3 日以前由 Project AirSim 內建的飛行控制器飛行；自 2026 年 10 月 8 日起，也可以改由 ArduPilot SITL 透過 Project AirSim 的 ArduPilot 控制器飛行。"},
+  "pipeline.autopilot.label": {"en": "Simulator autopilot", "zh": "模擬器飛控"},
+  "pipeline.autopilot.short": {"en": "In this chain Project AirSim's own flight controller flies the command. Since 8 Oct 2026 ArduPilot SITL can fly the vehicle instead (see WP3).", "zh": "在這條流程中，由 Project AirSim 內建的飛控執行指令。自 2026 年 10 月 8 日起，也可以改由 ArduPilot SITL 飛行這架機體（見 WP3）。"}
  }
 }

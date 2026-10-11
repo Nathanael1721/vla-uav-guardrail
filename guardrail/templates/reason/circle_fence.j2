@@ -1,0 +1,3 @@
+{#- As reason/polygon_fence.j2: distances are to the margin ring around the
+    circumscribed polygon, the boundary the Shield enforces. -#}
+{% if crosses %}the straight path from ({{ sx|g }}, {{ sy|g }}) to the target ({{ tx|g }}, {{ ty|g }}) crosses this circular zone (radius {{ r.radius_m|g }} m){% else %}this circular zone (radius {{ r.radius_m|g }} m) is {{ d_path|m }} m from the straight path to the target and {{ d_target|m }} m from the target itself{% endif %}; cruise altitude {{ alt|g }} m is {{ "inside" if in_band else "outside" }} its {{ floor|g }}-{{ ceil|g }} m band{% if time_fact %}; {{ time_fact }}{% endif %}

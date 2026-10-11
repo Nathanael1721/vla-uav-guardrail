@@ -18,6 +18,13 @@
 #      18, and a green tick there would be mostly silence (measured on a
 #      simulated clean clone, 2026-10-06). tests/test_kpi_report.py is not
 #      listed for the same reason (its delivered-run checks need demo/out/).
+#      tests/test_harness_service.py (the stress harness's gRPC control plane,
+#      about 20 s) runs in full on the 3.10 job and the 3.11 job with
+#      cryptography, which install pyproject's `harness` extra pinned to the
+#      versions the committed stubs were generated with, plus grpcio-tools
+#      so its stale-stub check runs (without grpcio-tools that one test
+#      SKIPs). On the requirements-only job its logic tests, which drive
+#      Harness directly, run and the gRPC / mTLS tests SKIP visibly.
 #   2. The smoke profile of the stress harness (experiments/profiles/smoke.yaml,
 #      ~50 scenarios x 1 seed, with the escalation FSM flying, since
 #      2026-10-07). Known failures and tracked episodes are reported and do
@@ -64,10 +71,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # The quotes around protobuf>=7.35.1 matter: `extras` is pasted into
+          # a bash line, where a bare `>` would redirect pip's output.
           - python: "3.10"
-            extras: "cryptography"
+            extras: "cryptography grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0"
           - python: "3.11"
-            extras: "cryptography fastapi httpx"
+            extras: "cryptography fastapi httpx grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0"
           - python: "3.11"
             extras: ""
     steps:
@@ -81,6 +90,8 @@ jobs:
       # build_prompt() and summary_pack() render through it), so it is no
       # longer named here by hand. FastAPI and httpx (TestClient) go only to the
       # job that runs tests/test_api.py's route tests: pyproject's `api` extra.
+      # grpcio and protobuf (pyproject's `harness` extra) and grpcio-tools go
+      # to the two jobs with cryptography, for tests/test_harness_service.py.
       - name: Install the guardrail's dependencies
         run: python -m pip install -r requirements.txt ${{ matrix.extras }}
 
@@ -101,7 +112,8 @@ jobs:
               tests/test_kpi_magnitudes.py \
               tests/test_manifest.py \
               tests/test_bundle.py \
-              tests/test_frame_contract.py; do
+              tests/test_frame_contract.py \
+              tests/test_harness_service.py; do
             echo "::group::$t"
             if ! python "$t"; then
               echo "::error file=$t::$t failed"
