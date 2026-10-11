@@ -416,7 +416,7 @@ async function main() {
       ["WP3 Safety Shield", "Monitor, filter, projection; fail-safe escalation",
         `Rule check at the 50-rule load (desktop): ${ms(chk.legacy.median_ms)} to ${ms(chk.current.median_ms)}; ${F.states.join(" / ")} state machine`],
       ["WP4 Stress testing", "Scenario library, KPI rollups, replay, paraphraser",
-        `${smoke.episodes}-episode smoke and ${nf(nightly.episodes)}-episode nightly profiles; ${PP.paraphrases} stored paraphrases; KPI report generator; gRPC control over mutual TLS`],
+        `${smoke.episodes}-episode smoke and ${nf(nightly.episodes)}-episode nightly profiles; ${PP.paraphrases} stored paraphrases; KPI report generator; gRPC over mTLS`],
       ["Demonstration", "ITRI request, 30 September", "Policy indicator on screen; city no-fly-zone flight"],
     ];
     const tb = tableV(s, rows, { y: 1.62, fontSize: 10, colFrac: [0.21, 0.27, 0.52], rhs: [0.34, 0.5, 0.5, 0.5, 0.5, 0.42], emph: [[1, 0], [2, 0], [3, 0], [4, 0]] });
