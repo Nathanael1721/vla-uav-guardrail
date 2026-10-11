@@ -410,13 +410,13 @@ async function main() {
     const rows = [
       ["Work package", "Grant output", `Delivered by ${dayMonth(STATUS)}`],
       ["WP1 Policy DSL", "Signed policy bundle (hash + semver)",
-        `Ed25519-signed bundles; ${W1.round_trip_passed}/${W1.policies} policies round-trip; ${W1.tamper_refused}/${W1.tamper_run} tampered bundles refused`],
+        `Ed25519-signed bundles; ${W1.round_trip_passed}/${W1.policies} policies round-trip; ${W1.tamper_refused}/${W1.tamper_run} tampered bundles refused; both hashes in every bundle`],
       ["WP2 Prefix Compiler", "Constraint Summary Pack in the VLA prefix",
-        `Typed ${W2.csp_fields_locked}-field CSP; ${W2.p0_covered}/${W2.p0_in_scope} P0 rules carried within a ${W2.budget_tokens}-token budget; OpenVLA prompt path`],
+        `Typed ${W2.csp_fields_locked}-field CSP; ${W2.p0_covered}/${W2.p0_in_scope} P0 rules carried within a ${W2.budget_tokens}-token budget; OpenVLA prompt path; cost map`],
       ["WP3 Safety Shield", "Monitor, filter, projection; fail-safe escalation",
         `Rule check at the 50-rule load (desktop): ${ms(chk.legacy.median_ms)} to ${ms(chk.current.median_ms)}; ${F.states.join(" / ")} state machine`],
       ["WP4 Stress testing", "Scenario library, KPI rollups, replay, paraphraser",
-        `${smoke.episodes}-episode smoke and ${nf(nightly.episodes)}-episode nightly profiles; ${PP.paraphrases} stored paraphrases; KPI report generator`],
+        `${smoke.episodes}-episode smoke and ${nf(nightly.episodes)}-episode nightly profiles; ${PP.paraphrases} stored paraphrases; KPI report generator; gRPC control over mutual TLS`],
       ["Demonstration", "ITRI request, 30 September", "Policy indicator on screen; city no-fly-zone flight"],
     ];
     const tb = tableV(s, rows, { y: 1.62, fontSize: 10, colFrac: [0.21, 0.27, 0.52], rhs: [0.34, 0.5, 0.5, 0.5, 0.5, 0.42], emph: [[1, 0], [2, 0], [3, 0], [4, 0]] });
