@@ -16,6 +16,39 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-12 (later) — CI green: a clamp that repaired rounding errors, and a timing test fit for shared runners
+
+GitHub's test workflow had failed on every push since 8 Oct, so its smoke
+step never ran. Two causes, both fixed here.
+
+#### Fixed
+- **SpeedClamp logged "repairs" of float-rounding excesses.** The kinematic
+  check allows 1e-9 over a cap, but the repair operator compared strictly, so
+  an action another operator had already scaled onto the cap and that came
+  out at 4.000000000000001 m/s was "clamped" to 4.0 and logged as a repair.
+  Whether that happened depended on the platform's floating point: on Windows
+  nfz-head-on logged 82 such repairs, on the Linux runners none, so
+  `tests/test_sweep.py`'s pinned repair counts held here and failed on
+  GitHub. The clamp (and the FSM's mirror of it, `KinematicCaps.clamp`) now
+  has the check's tolerance. Repair counts move (nfz-head-on 346 -> 264,
+  corridor-curfew-in-hours 412 -> 300, standoff-reclassified 360 -> 300);
+  every final position, status and fail-safe figure is unchanged, and
+  `docs/data/scenario_sweep.json` is republished with only `repair_count`
+  moving (97 of 195 episodes).
+- `tests/test_shield.py`'s 50-rule timing test asserted the desktop's 5 ms
+  budget on GitHub's shared runners, where the 48-moving-zone path measured
+  5.71 ms. On a runner its bound is now 15 ms, still well under the 31 ms of
+  the per-fence loop it guards against; the 5 ms bound stays for the
+  desktop. Its docstring claimed a margin of at least 10x; that holds for the
+  static and window-edge samples (0.36 ms), not for the moving zones (2.6 ms
+  on a quiet desktop, so about 2x). The same code at 10451bc measures the
+  same, so this is no regression, but it is a risk for the slower Orin.
+
+#### Tests
+- New: `test_a_float_rounding_excess_over_a_cap_is_not_a_repair`
+  (`tests/test_shield.py`), failing on the strict clamp. `tests/test_sweep.py`
+  89/90 (1 visible skip) with the Linux runner's repair counts.
+
 ### 2026-10-12 — the 8 Oct follow's defects fixed in replay, the compiler and harness conform, gRPC over mTLS, the Orin defined for JetPack 6.2
 
 Work of 9-12 Oct, in six packages and four integration packages, each

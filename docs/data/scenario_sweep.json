@@ -73,12 +73,12 @@
   },
   "_distinct_kpi_signatures": {
     "episodes": 195,
-    "distinct": 154,
+    "distinct": 140,
     "note": "episodes whose KPI tables differ (status, escapes, repairs, breaches, fail-safe, outcome, goal, time to safe, true-state distance and ticks, speed, range, offset). An upper bound on behavioural variety: float jitter in repair counts splits symmetric copies"
   },
-  "_runtime_s": 116.09,
+  "_runtime_s": 119.83,
   "_manifest_common": {
-    "code_revision": "10451bc60a15-dirty",
+    "code_revision": "b907a3a5b9d4-dirty",
     "vla_model_hash": "experiments.sweep_scenarios._pilot@src:767d54989e5fbad3c7f33fbab77daf958b230a08413a6cfc65f73fa2bdb3067e",
     "topology": "headless-kinematic"
   },
@@ -453,7 +453,7 @@
         "RTL_triggered": 2,
         "fail": 1
       },
-      "distinct_kpi_signatures": 29
+      "distinct_kpi_signatures": 15
     },
     "three_simultaneous_violations": {
       "episodes": 6,
@@ -624,7 +624,7 @@
         "missed": 0,
         "undeclared": 9
       },
-      "mean_repair_count_per_episode": 53.444,
+      "mean_repair_count_per_episode": 53.333,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 45.222,
       "mean_repair_magnitude_mps": 1.0845,
@@ -774,7 +774,7 @@
         "missed": 1,
         "undeclared": 2
       },
-      "mean_repair_count_per_episode": 117.0,
+      "mean_repair_count_per_episode": 112.667,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 112.667,
       "mean_repair_magnitude_mps": 1.0612,
@@ -849,7 +849,7 @@
         "missed": 19,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 169.308,
+      "mean_repair_count_per_episode": 153.692,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 128.346,
       "mean_repair_magnitude_mps": 5.2911,
@@ -999,7 +999,7 @@
         "missed": 3,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 197.889,
+      "mean_repair_count_per_episode": 171.889,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 163.806,
       "mean_repair_magnitude_mps": 9.6975,
@@ -1149,7 +1149,7 @@
         "missed": 3,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 91.0,
+      "mean_repair_count_per_episode": 79.6,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 79.6,
       "mean_repair_magnitude_mps": 5.7485,
@@ -1224,7 +1224,7 @@
         "missed": 14,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 23.571,
+      "mean_repair_count_per_episode": 19.464,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 19.393,
       "mean_repair_magnitude_mps": 5.3398,
@@ -1299,7 +1299,7 @@
         "missed": 7,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 297.429,
+      "mean_repair_count_per_episode": 226.857,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 226.571,
       "mean_repair_magnitude_mps": 5.6448,
@@ -1374,7 +1374,7 @@
         "missed": 3,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 44.0,
+      "mean_repair_count_per_episode": 43.222,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 43.222,
       "mean_repair_magnitude_mps": 3.8326,
@@ -1524,7 +1524,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 206.0,
+      "mean_repair_count_per_episode": 150.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 150.0,
       "mean_repair_magnitude_mps": 5.6465,
@@ -1599,7 +1599,7 @@
         "missed": 7,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 114.462,
+      "mean_repair_count_per_episode": 103.692,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 103.692,
       "mean_repair_magnitude_mps": 5.2326,
@@ -1674,7 +1674,7 @@
         "missed": 23,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 48.133,
+      "mean_repair_count_per_episode": 38.833,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 38.833,
       "mean_repair_magnitude_mps": 5.3588,
@@ -1749,7 +1749,7 @@
         "missed": 85,
         "undeclared": 32
       },
-      "mean_repair_count_per_episode": 121.588,
+      "mean_repair_count_per_episode": 108.392,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 97.015,
       "mean_repair_magnitude_mps": 6.7518,
@@ -2455,7 +2455,7 @@
         "missed": 0,
         "undeclared": 1
       },
-      "mean_repair_count_per_episode": 104.0,
+      "mean_repair_count_per_episode": 103.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 78.0,
       "mean_repair_magnitude_mps": 1.2827,
@@ -3937,7 +3937,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 60.0,
+      "mean_repair_count_per_episode": 47.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 47.0,
       "mean_repair_magnitude_mps": 0.7808,
@@ -4015,7 +4015,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 97.0,
+      "mean_repair_count_per_episode": 80.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 80.0,
       "mean_repair_magnitude_mps": 3.4907,
@@ -4093,7 +4093,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 25.0,
+      "mean_repair_count_per_episode": 22.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 22.0,
       "mean_repair_magnitude_mps": 3.7631,
@@ -4171,7 +4171,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 247.0,
+      "mean_repair_count_per_episode": 199.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 199.0,
       "mean_repair_magnitude_mps": 5.6498,
@@ -4327,7 +4327,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 412.0,
+      "mean_repair_count_per_episode": 350.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 350.0,
       "mean_repair_magnitude_mps": 5.6512,
@@ -4405,7 +4405,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 758.0,
+      "mean_repair_count_per_episode": 750.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 400.0,
       "mean_repair_magnitude_mps": 8.32,
@@ -4639,7 +4639,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 60.0,
+      "mean_repair_count_per_episode": 52.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 51.0,
       "mean_repair_magnitude_mps": 4.0784,
@@ -4795,7 +4795,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 369.0,
+      "mean_repair_count_per_episode": 307.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 307.0,
       "mean_repair_magnitude_mps": 5.65,
@@ -4873,7 +4873,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 725.0,
+      "mean_repair_count_per_episode": 707.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 400.0,
       "mean_repair_magnitude_mps": 7.7881,
@@ -5107,7 +5107,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 60.0,
+      "mean_repair_count_per_episode": 52.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 51.0,
       "mean_repair_magnitude_mps": 4.0784,
@@ -5185,7 +5185,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 87.0,
+      "mean_repair_count_per_episode": 77.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 77.0,
       "mean_repair_magnitude_mps": 3.4492,
@@ -5341,7 +5341,7 @@
         "missed": 3,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 177.0,
+      "mean_repair_count_per_episode": 133.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 133.0,
       "mean_repair_magnitude_mps": 5.65,
@@ -5421,7 +5421,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 39.0,
+      "mean_repair_count_per_episode": 29.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 29.0,
       "mean_repair_magnitude_mps": 5.6502,
@@ -5893,7 +5893,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 325.0,
+      "mean_repair_count_per_episode": 230.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 222.0,
       "mean_repair_magnitude_mps": 16.0724,
@@ -5971,7 +5971,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 272.0,
+      "mean_repair_count_per_episode": 235.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 220.0,
       "mean_repair_magnitude_mps": 16.0381,
@@ -6127,7 +6127,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 345.0,
+      "mean_repair_count_per_episode": 230.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 222.0,
       "mean_repair_magnitude_mps": 16.0724,
@@ -6205,7 +6205,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 300.0,
+      "mean_repair_count_per_episode": 235.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 220.0,
       "mean_repair_magnitude_mps": 16.0381,
@@ -6361,7 +6361,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 312.0,
+      "mean_repair_count_per_episode": 230.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 222.0,
       "mean_repair_magnitude_mps": 16.0724,
@@ -6439,7 +6439,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 291.0,
+      "mean_repair_count_per_episode": 235.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 220.0,
       "mean_repair_magnitude_mps": 16.0381,
@@ -6595,7 +6595,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 346.0,
+      "mean_repair_count_per_episode": 230.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 222.0,
       "mean_repair_magnitude_mps": 16.0724,
@@ -6673,7 +6673,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 306.0,
+      "mean_repair_count_per_episode": 235.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 220.0,
       "mean_repair_magnitude_mps": 16.0381,
@@ -6829,7 +6829,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 236.0,
+      "mean_repair_count_per_episode": 230.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 222.0,
       "mean_repair_magnitude_mps": 4.0804,
@@ -6985,7 +6985,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 250.0,
+      "mean_repair_count_per_episode": 220.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 219.0,
       "mean_repair_magnitude_mps": 4.0215,
@@ -7063,7 +7063,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 237.0,
+      "mean_repair_count_per_episode": 230.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 222.0,
       "mean_repair_magnitude_mps": 4.0804,
@@ -7141,7 +7141,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 237.0,
+      "mean_repair_count_per_episode": 235.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 220.0,
       "mean_repair_magnitude_mps": 4.0432,
@@ -7219,7 +7219,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 248.0,
+      "mean_repair_count_per_episode": 220.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 219.0,
       "mean_repair_magnitude_mps": 4.0215,
@@ -7297,7 +7297,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 233.0,
+      "mean_repair_count_per_episode": 230.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 222.0,
       "mean_repair_magnitude_mps": 4.0804,
@@ -7375,7 +7375,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 241.0,
+      "mean_repair_count_per_episode": 235.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 220.0,
       "mean_repair_magnitude_mps": 4.0432,
@@ -7453,7 +7453,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 249.0,
+      "mean_repair_count_per_episode": 220.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 219.0,
       "mean_repair_magnitude_mps": 4.0215,
@@ -7531,7 +7531,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 237.0,
+      "mean_repair_count_per_episode": 230.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 222.0,
       "mean_repair_magnitude_mps": 4.0804,
@@ -7609,7 +7609,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 237.0,
+      "mean_repair_count_per_episode": 235.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 220.0,
       "mean_repair_magnitude_mps": 4.0432,
@@ -7687,7 +7687,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 248.0,
+      "mean_repair_count_per_episode": 220.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 219.0,
       "mean_repair_magnitude_mps": 4.0215,
@@ -7843,7 +7843,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 51.0,
+      "mean_repair_count_per_episode": 42.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 42.0,
       "mean_repair_magnitude_mps": 0.5385,
@@ -8077,7 +8077,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 192.0,
+      "mean_repair_count_per_episode": 175.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 120.0,
       "mean_repair_magnitude_mps": 8.5275,
@@ -8155,7 +8155,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 188.0,
+      "mean_repair_count_per_episode": 158.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 116.0,
       "mean_repair_magnitude_mps": 8.1318,
@@ -8233,7 +8233,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 212.0,
+      "mean_repair_count_per_episode": 117.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 116.0,
       "mean_repair_magnitude_mps": 8.1299,
@@ -8779,7 +8779,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 147.0,
+      "mean_repair_count_per_episode": 125.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 125.0,
       "mean_repair_magnitude_mps": 5.8244,
@@ -8857,7 +8857,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 92.0,
+      "mean_repair_count_per_episode": 75.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 75.0,
       "mean_repair_magnitude_mps": 5.7074,
@@ -8935,7 +8935,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 118.0,
+      "mean_repair_count_per_episode": 100.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 100.0,
       "mean_repair_magnitude_mps": 5.7806,
@@ -9161,7 +9161,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 423.0,
+      "mean_repair_count_per_episode": 339.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 339.0,
       "mean_repair_magnitude_mps": 5.6482,
@@ -9581,7 +9581,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 7.0,
+      "mean_repair_count_per_episode": 6.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 6.0,
       "mean_repair_magnitude_mps": 1.4988,
@@ -9729,7 +9729,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 13.0,
+      "mean_repair_count_per_episode": 10.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 10.0,
       "mean_repair_magnitude_mps": 5.4437,
@@ -9807,7 +9807,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 11.0,
+      "mean_repair_count_per_episode": 10.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 10.0,
       "mean_repair_magnitude_mps": 5.2562,
@@ -9885,7 +9885,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 15.0,
+      "mean_repair_count_per_episode": 13.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 13.0,
       "mean_repair_magnitude_mps": 5.4124,
@@ -9963,7 +9963,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 10.0,
+      "mean_repair_count_per_episode": 9.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 9.0,
       "mean_repair_magnitude_mps": 5.4027,
@@ -10041,7 +10041,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 6.0,
+      "mean_repair_count_per_episode": 5.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 5.0,
       "mean_repair_magnitude_mps": 5.3184,
@@ -10119,7 +10119,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 4.0,
+      "mean_repair_count_per_episode": 3.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 3.0,
       "mean_repair_magnitude_mps": 5.0987,
@@ -10197,7 +10197,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 5.0,
+      "mean_repair_count_per_episode": 4.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 4.0,
       "mean_repair_magnitude_mps": 5.2066,
@@ -10275,7 +10275,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 4.0,
+      "mean_repair_count_per_episode": 3.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 3.0,
       "mean_repair_magnitude_mps": 5.0987,
@@ -10353,7 +10353,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 9.0,
+      "mean_repair_count_per_episode": 8.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 8.0,
       "mean_repair_magnitude_mps": 3.3481,
@@ -10431,7 +10431,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 13.0,
+      "mean_repair_count_per_episode": 12.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 12.0,
       "mean_repair_magnitude_mps": 4.3323,
@@ -10509,7 +10509,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 7.0,
+      "mean_repair_count_per_episode": 6.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 6.0,
       "mean_repair_magnitude_mps": 4.1606,
@@ -10587,7 +10587,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 8.0,
+      "mean_repair_count_per_episode": 6.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 6.0,
       "mean_repair_magnitude_mps": 3.6559,
@@ -10665,7 +10665,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 9.0,
+      "mean_repair_count_per_episode": 8.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 8.0,
       "mean_repair_magnitude_mps": 3.3881,
@@ -10743,7 +10743,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 12.0,
+      "mean_repair_count_per_episode": 10.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 10.0,
       "mean_repair_magnitude_mps": 5.2717,
@@ -10821,7 +10821,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 8.0,
+      "mean_repair_count_per_episode": 6.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 6.0,
       "mean_repair_magnitude_mps": 2.7831,
@@ -10899,7 +10899,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 7.0,
+      "mean_repair_count_per_episode": 6.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 6.0,
       "mean_repair_magnitude_mps": 3.6703,
@@ -10977,7 +10977,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 11.0,
+      "mean_repair_count_per_episode": 8.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 8.0,
       "mean_repair_magnitude_mps": 4.8665,
@@ -11133,7 +11133,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 7.0,
+      "mean_repair_count_per_episode": 4.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 4.0,
       "mean_repair_magnitude_mps": 5.5088,
@@ -11211,7 +11211,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 8.0,
+      "mean_repair_count_per_episode": 6.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 6.0,
       "mean_repair_magnitude_mps": 3.7039,
@@ -11350,7 +11350,7 @@
         "missed": 3,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 346.0,
+      "mean_repair_count_per_episode": 264.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 264.0,
       "mean_repair_magnitude_mps": 5.6444,
@@ -11430,7 +11430,7 @@
         "missed": 3,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 346.0,
+      "mean_repair_count_per_episode": 264.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 264.0,
       "mean_repair_magnitude_mps": 5.6444,
@@ -11510,7 +11510,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 6.0,
+      "mean_repair_count_per_episode": 4.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 2.0,
       "mean_repair_magnitude_mps": 6.0,
@@ -11822,7 +11822,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 27.0,
+      "mean_repair_count_per_episode": 24.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 24.0,
       "mean_repair_magnitude_mps": 3.6802,
@@ -11978,7 +11978,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 11.0,
+      "mean_repair_count_per_episode": 10.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 10.0,
       "mean_repair_magnitude_mps": 3.3744,
@@ -12134,7 +12134,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 58.0,
+      "mean_repair_count_per_episode": 55.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 55.0,
       "mean_repair_magnitude_mps": 3.0694,
@@ -12758,7 +12758,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 412.0,
+      "mean_repair_count_per_episode": 300.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 300.0,
       "mean_repair_magnitude_mps": 5.6465,
@@ -13070,7 +13070,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 82.0,
+      "mean_repair_count_per_episode": 60.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 60.0,
       "mean_repair_magnitude_mps": 5.6465,
@@ -13226,7 +13226,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 239.0,
+      "mean_repair_count_per_episode": 175.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 175.0,
       "mean_repair_magnitude_mps": 5.6466,
@@ -13382,7 +13382,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 102.0,
+      "mean_repair_count_per_episode": 75.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 75.0,
       "mean_repair_magnitude_mps": 5.6466,
@@ -13850,7 +13850,7 @@
         "missed": 0,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 102.0,
+      "mean_repair_count_per_episode": 75.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 75.0,
       "mean_repair_magnitude_mps": 5.6466,
@@ -13928,7 +13928,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 7.0,
+      "mean_repair_count_per_episode": 5.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 5.0,
       "mean_repair_magnitude_mps": 5.3185,
@@ -14006,7 +14006,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 7.0,
+      "mean_repair_count_per_episode": 5.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 5.0,
       "mean_repair_magnitude_mps": 5.3185,
@@ -14084,7 +14084,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 19.0,
+      "mean_repair_count_per_episode": 15.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 15.0,
       "mean_repair_magnitude_mps": 5.3465,
@@ -14162,7 +14162,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 12.0,
+      "mean_repair_count_per_episode": 10.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 10.0,
       "mean_repair_magnitude_mps": 5.2006,
@@ -14240,7 +14240,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 145.0,
+      "mean_repair_count_per_episode": 123.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 123.0,
       "mean_repair_magnitude_mps": 5.1709,
@@ -14318,7 +14318,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 11.0,
+      "mean_repair_count_per_episode": 10.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 10.0,
       "mean_repair_magnitude_mps": 3.9616,
@@ -14396,7 +14396,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 19.0,
+      "mean_repair_count_per_episode": 17.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 17.0,
       "mean_repair_magnitude_mps": 5.5511,
@@ -14474,7 +14474,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 17.0,
+      "mean_repair_count_per_episode": 12.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 12.0,
       "mean_repair_magnitude_mps": 5.5115,
@@ -14552,7 +14552,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 9.0,
+      "mean_repair_count_per_episode": 7.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 7.0,
       "mean_repair_magnitude_mps": 5.4126,
@@ -14630,7 +14630,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 25.0,
+      "mean_repair_count_per_episode": 19.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 19.0,
       "mean_repair_magnitude_mps": 5.5615,
@@ -14708,7 +14708,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 102.0,
+      "mean_repair_count_per_episode": 77.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 77.0,
       "mean_repair_magnitude_mps": 5.4984,
@@ -14786,7 +14786,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 32.0,
+      "mean_repair_count_per_episode": 25.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 25.0,
       "mean_repair_magnitude_mps": 5.4506,
@@ -14864,7 +14864,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 423.0,
+      "mean_repair_count_per_episode": 339.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 339.0,
       "mean_repair_magnitude_mps": 5.6423,
@@ -15098,7 +15098,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 423.0,
+      "mean_repair_count_per_episode": 339.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 339.0,
       "mean_repair_magnitude_mps": 5.6423,
@@ -15800,7 +15800,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 19.0,
+      "mean_repair_count_per_episode": 17.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 17.0,
       "mean_repair_magnitude_mps": 5.3927,
@@ -15878,7 +15878,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 133.0,
+      "mean_repair_count_per_episode": 108.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 108.0,
       "mean_repair_magnitude_mps": 4.0546,
@@ -15956,7 +15956,7 @@
         "missed": 1,
         "undeclared": 0
       },
-      "mean_repair_count_per_episode": 39.0,
+      "mean_repair_count_per_episode": 35.0,
       "episodes_repair_count_not_measurable": 0,
       "mean_repair_attempt_ticks_per_episode": 35.0,
       "mean_repair_magnitude_mps": 4.3441,
@@ -16260,7 +16260,7 @@
       },
       "at_t": 10.2,
       "worst_tick_why": "p0_escape",
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--failsafe-land-zone--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--failsafe-land-zone--seed0",
       "kpi_grade": false
     },
     {
@@ -16291,7 +16291,7 @@
       },
       "at_t": 0.0,
       "worst_tick_why": "unsafe_position",
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--altitude-recovery-depth@start_up=30--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--altitude-recovery-depth@start_up=30--seed0",
       "kpi_grade": false
     },
     {
@@ -16328,7 +16328,7 @@
       },
       "at_t": 0.2,
       "worst_tick_why": "p0_escape",
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--three-simultaneous-violations@ask_mps=8,start_up=3,variant=0--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--three-simultaneous-violations@ask_mps=8,start_up=3,variant=0--seed0",
       "kpi_grade": false
     },
     {
@@ -16365,7 +16365,7 @@
       },
       "at_t": 0.2,
       "worst_tick_why": "p0_escape",
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--three-simultaneous-violations@ask_mps=11,start_up=3,variant=0--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--three-simultaneous-violations@ask_mps=11,start_up=3,variant=0--seed0",
       "kpi_grade": false
     },
     {
@@ -16396,7 +16396,7 @@
       },
       "at_t": 0.0,
       "worst_tick_why": "unsafe_position",
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--altitude-recovery-depth@start_up=0.5--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--altitude-recovery-depth@start_up=0.5--seed0",
       "kpi_grade": false
     },
     {
@@ -16427,7 +16427,7 @@
       },
       "at_t": 0.0,
       "worst_tick_why": "unsafe_position",
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--altitude-recovery-depth@start_up=2--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--altitude-recovery-depth@start_up=2--seed0",
       "kpi_grade": false
     },
     {
@@ -16458,7 +16458,7 @@
       },
       "at_t": 16.7,
       "worst_tick_why": "repair_braked",
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--radius-scaling-grow-deep--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--radius-scaling-grow-deep--seed0",
       "kpi_grade": false
     },
     {
@@ -16495,7 +16495,7 @@
       },
       "at_t": 0.2,
       "worst_tick_why": "p0_escape",
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--three-simultaneous-violations@ask_mps=8,start_up=6,variant=0--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--three-simultaneous-violations@ask_mps=8,start_up=6,variant=0--seed0",
       "kpi_grade": false
     },
     {
@@ -16532,7 +16532,7 @@
       },
       "at_t": 0.2,
       "worst_tick_why": "p0_escape",
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--three-simultaneous-violations@ask_mps=11,start_up=6,variant=0--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--three-simultaneous-violations@ask_mps=11,start_up=6,variant=0--seed0",
       "kpi_grade": false
     },
     {
@@ -16561,7 +16561,7 @@
       },
       "at_t": 0.0,
       "worst_tick_why": "unsafe_position",
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--altitude-floor-recovery--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--altitude-floor-recovery--seed0",
       "kpi_grade": false
     }
   ],
@@ -16605,8 +16605,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 346,
-        "repairs_per_episode": 346,
+        "repair_count": 264,
+        "repairs_per_episode": 264,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 264,
@@ -16744,7 +16744,7 @@
         "prompt_sha256": "sha256:30f7516f53ce54981dcf4be0362ab41ed2d582c2da7c8fa4f09b8bb7d283a39b",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--nfz-head-on--canonical,prefix-on--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--nfz-head-on--canonical,prefix-on--seed0"
     },
     {
       "id": "nfz-head-on#pp0,prefix-on",
@@ -16778,8 +16778,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 346,
-        "repairs_per_episode": 346,
+        "repair_count": 264,
+        "repairs_per_episode": 264,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 264,
@@ -16917,7 +16917,7 @@
         "prompt_sha256": "sha256:5fb64ae8da8959ada95810f1fcd4e93c3523cd1d237feec3c2f46b4b81b79725",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--nfz-head-on--pp0,prefix-on--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--nfz-head-on--pp0,prefix-on--seed0"
     },
     {
       "id": "nfz-head-on#pp1,prefix-on",
@@ -16951,8 +16951,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 346,
-        "repairs_per_episode": 346,
+        "repair_count": 264,
+        "repairs_per_episode": 264,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 264,
@@ -17090,7 +17090,7 @@
         "prompt_sha256": "sha256:4441d5187d5ac971b465f699e01f1d7da791c1659c6faaa9a9758c886606660a",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--nfz-head-on--pp1,prefix-on--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--nfz-head-on--pp1,prefix-on--seed0"
     },
     {
       "id": "nfz-head-on#canonical,prefix-off",
@@ -17124,8 +17124,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 346,
-        "repairs_per_episode": 346,
+        "repair_count": 264,
+        "repairs_per_episode": 264,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 264,
@@ -17263,7 +17263,7 @@
         "prompt_sha256": "sha256:acf90447e164a46853aebb483e43b5b26492c1478da2a85210d545cfe61b2e8d",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--nfz-head-on--canonical,prefix-off--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--nfz-head-on--canonical,prefix-off--seed0"
     },
     {
       "id": "nfz-head-on#pp0,prefix-off",
@@ -17297,8 +17297,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 346,
-        "repairs_per_episode": 346,
+        "repair_count": 264,
+        "repairs_per_episode": 264,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 264,
@@ -17436,7 +17436,7 @@
         "prompt_sha256": "sha256:6baa90a3557695bfb0b79c1f02d16613196111ba7ad30753233df34075db6887",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--nfz-head-on--pp0,prefix-off--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--nfz-head-on--pp0,prefix-off--seed0"
     },
     {
       "id": "nfz-head-on#pp1,prefix-off",
@@ -17470,8 +17470,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 346,
-        "repairs_per_episode": 346,
+        "repair_count": 264,
+        "repairs_per_episode": 264,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 264,
@@ -17609,7 +17609,7 @@
         "prompt_sha256": "sha256:4908ed1aef788d0db8f6d167bd38e018534520b6dbbf96c62d8073bff21690b7",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--nfz-head-on--pp1,prefix-off--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--nfz-head-on--pp1,prefix-off--seed0"
     },
     {
       "id": "nfz-head-on-control",
@@ -17751,7 +17751,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--nfz-head-on-control--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--nfz-head-on-control--seed0"
     },
     {
       "id": "rail-mission-stub-vla",
@@ -17785,8 +17785,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": null,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 6,
-        "repairs_per_episode": 6,
+        "repair_count": 4,
+        "repairs_per_episode": 4,
         "repair_success_rate": 0.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 2,
@@ -17925,7 +17925,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--rail-mission-stub-vla--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--rail-mission-stub-vla--seed0"
     },
     {
       "id": "altitude-floor-recovery",
@@ -18092,7 +18092,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--altitude-floor-recovery--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--altitude-floor-recovery--seed0"
     },
     {
       "id": "altitude-ceiling-hold",
@@ -18262,7 +18262,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--altitude-ceiling-hold--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--altitude-ceiling-hold--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=0.5",
@@ -18431,7 +18431,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--altitude-recovery-depth@start_up=0.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--altitude-recovery-depth@start_up=0.5--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=2",
@@ -18600,7 +18600,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--altitude-recovery-depth@start_up=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--altitude-recovery-depth@start_up=2--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=6",
@@ -18769,7 +18769,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--altitude-recovery-depth@start_up=6--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--altitude-recovery-depth@start_up=6--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=9.5",
@@ -18938,7 +18938,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--altitude-recovery-depth@start_up=9.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--altitude-recovery-depth@start_up=9.5--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=20.5",
@@ -19107,7 +19107,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--altitude-recovery-depth@start_up=20.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--altitude-recovery-depth@start_up=20.5--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=24",
@@ -19276,7 +19276,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--altitude-recovery-depth@start_up=24--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--altitude-recovery-depth@start_up=24--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=30",
@@ -19312,8 +19312,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 104,
-        "repairs_per_episode": 104,
+        "repair_count": 103,
+        "repairs_per_episode": 103,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 78,
@@ -19445,7 +19445,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--altitude-recovery-depth@start_up=30--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--altitude-recovery-depth@start_up=30--seed0"
     },
     {
       "id": "speed-cap",
@@ -19606,7 +19606,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--speed-cap--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--speed-cap--seed0"
     },
     {
       "id": "nonfinite-action",
@@ -19767,7 +19767,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--nonfinite-action--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--nonfinite-action--seed0"
     },
     {
       "id": "corridor-along",
@@ -19917,7 +19917,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-along--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-along--seed0"
     },
     {
       "id": "corridor-drift-out",
@@ -20079,7 +20079,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-drift-out--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-drift-out--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=4,drift_deg=-60",
@@ -20253,7 +20253,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-drift-angles@ask_mps=4,drift_deg=-60--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-drift-angles@ask_mps=4,drift_deg=-60--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=8,drift_deg=-60",
@@ -20421,7 +20421,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-drift-angles@ask_mps=8,drift_deg=-60--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-drift-angles@ask_mps=8,drift_deg=-60--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=4,drift_deg=-30",
@@ -20595,7 +20595,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-drift-angles@ask_mps=4,drift_deg=-30--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-drift-angles@ask_mps=4,drift_deg=-30--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=8,drift_deg=-30",
@@ -20771,7 +20771,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-drift-angles@ask_mps=8,drift_deg=-30--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-drift-angles@ask_mps=8,drift_deg=-30--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=4,drift_deg=0",
@@ -20936,7 +20936,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-drift-angles@ask_mps=4,drift_deg=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-drift-angles@ask_mps=4,drift_deg=0--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=8,drift_deg=0",
@@ -21103,7 +21103,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-drift-angles@ask_mps=8,drift_deg=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-drift-angles@ask_mps=8,drift_deg=0--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=4,drift_deg=30",
@@ -21268,7 +21268,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-drift-angles@ask_mps=4,drift_deg=30--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-drift-angles@ask_mps=4,drift_deg=30--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=8,drift_deg=30",
@@ -21435,7 +21435,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-drift-angles@ask_mps=8,drift_deg=30--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-drift-angles@ask_mps=8,drift_deg=30--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=4,drift_deg=60",
@@ -21609,7 +21609,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-drift-angles@ask_mps=4,drift_deg=60--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-drift-angles@ask_mps=4,drift_deg=60--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=8,drift_deg=60",
@@ -21785,7 +21785,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-drift-angles@ask_mps=8,drift_deg=60--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-drift-angles@ask_mps=8,drift_deg=60--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=4,drift_deg=150",
@@ -21950,7 +21950,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-drift-angles@ask_mps=4,drift_deg=150--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-drift-angles@ask_mps=4,drift_deg=150--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=8,drift_deg=150",
@@ -22117,7 +22117,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-drift-angles@ask_mps=8,drift_deg=150--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-drift-angles@ask_mps=8,drift_deg=150--seed0"
     },
     {
       "id": "corridor-curfew-in-hours",
@@ -22151,8 +22151,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": null,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 412,
-        "repairs_per_episode": 412,
+        "repair_count": 300,
+        "repairs_per_episode": 300,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 300,
@@ -22281,7 +22281,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-curfew-in-hours--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-curfew-in-hours--seed0"
     },
     {
       "id": "corridor-curfew-out-of-hours",
@@ -22431,7 +22431,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-curfew-out-of-hours--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-curfew-out-of-hours--seed0"
     },
     {
       "id": "standoff-approach",
@@ -22583,7 +22583,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--standoff-approach--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--standoff-approach--seed0"
     },
     {
       "id": "standoff-reclassified",
@@ -22617,8 +22617,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 58,
-        "repairs_per_episode": 58,
+        "repair_count": 55,
+        "repairs_per_episode": 55,
         "repair_success_rate": 0.981818,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 55,
@@ -22768,7 +22768,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--standoff-reclassified--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--standoff-reclassified--seed0"
     },
     {
       "id": "standoff-wedge",
@@ -22938,7 +22938,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--standoff-wedge--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--standoff-wedge--seed0"
     },
     {
       "id": "standoff-approach-angles@offset_m=7,subject_class=pedestrian,variant=0",
@@ -22982,8 +22982,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 27,
-        "repairs_per_episode": 27,
+        "repair_count": 24,
+        "repairs_per_episode": 24,
         "repair_success_rate": 0.958333,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 24,
@@ -23138,7 +23138,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--standoff-approach-angles@offset_m=7,subject_class=pedestrian,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--standoff-approach-angles@offset_m=7,subject_class=pedestrian,variant=0--seed0"
     },
     {
       "id": "standoff-approach-angles@offset_m=7,subject_class=car,variant=0",
@@ -23295,7 +23295,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--standoff-approach-angles@offset_m=7,subject_class=car,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--standoff-approach-angles@offset_m=7,subject_class=car,variant=0--seed0"
     },
     {
       "id": "standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0",
@@ -23334,8 +23334,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 11,
-        "repairs_per_episode": 11,
+        "repair_count": 10,
+        "repairs_per_episode": 10,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 10,
@@ -23470,7 +23470,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0--seed0"
     },
     {
       "id": "standoff-approach-angles@offset_m=9,subject_class=car,variant=0",
@@ -23627,7 +23627,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--standoff-approach-angles@offset_m=9,subject_class=car,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--standoff-approach-angles@offset_m=9,subject_class=car,variant=0--seed0"
     },
     {
       "id": "standoff-approach-angles@offset_m=12,subject_class=pedestrian,variant=0",
@@ -23784,7 +23784,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--standoff-approach-angles@offset_m=12,subject_class=pedestrian,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--standoff-approach-angles@offset_m=12,subject_class=pedestrian,variant=0--seed0"
     },
     {
       "id": "standoff-approach-angles@offset_m=12,subject_class=car,variant=0",
@@ -23941,7 +23941,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--standoff-approach-angles@offset_m=12,subject_class=car,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--standoff-approach-angles@offset_m=12,subject_class=car,variant=0--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=2",
@@ -24144,7 +24144,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=2--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=2",
@@ -24320,7 +24320,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=2--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=2",
@@ -24496,7 +24496,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=2--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=2",
@@ -24672,7 +24672,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=2--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4",
@@ -24875,7 +24875,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=4",
@@ -25078,7 +25078,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4",
@@ -25117,8 +25117,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 412,
-        "repairs_per_episode": 412,
+        "repair_count": 350,
+        "repairs_per_episode": 350,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 350,
@@ -25254,7 +25254,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=4",
@@ -25293,8 +25293,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 369,
-        "repairs_per_episode": 369,
+        "repair_count": 307,
+        "repairs_per_episode": 307,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 307,
@@ -25430,7 +25430,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8",
@@ -25472,8 +25472,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": null,
         "failsafe_permitted_ticks": 50,
-        "repair_count": 60,
-        "repairs_per_episode": 60,
+        "repair_count": 52,
+        "repairs_per_episode": 52,
         "repair_success_rate": 0.980392,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 51,
@@ -25635,7 +25635,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=8",
@@ -25677,8 +25677,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": null,
         "failsafe_permitted_ticks": 50,
-        "repair_count": 60,
-        "repairs_per_episode": 60,
+        "repair_count": 52,
+        "repairs_per_episode": 52,
         "repair_success_rate": 0.980392,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 51,
@@ -25840,7 +25840,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=8--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=8",
@@ -25879,8 +25879,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": null,
         "failsafe_permitted_ticks": 50,
-        "repair_count": 758,
-        "repairs_per_episode": 758,
+        "repair_count": 750,
+        "repairs_per_episode": 750,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 400,
@@ -26018,7 +26018,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=8--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=8",
@@ -26057,8 +26057,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": null,
         "failsafe_permitted_ticks": 63,
-        "repair_count": 725,
-        "repairs_per_episode": 725,
+        "repair_count": 707,
+        "repairs_per_episode": 707,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 400,
@@ -26196,7 +26196,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=8--seed0"
     },
     {
       "id": "dyn-nfz-spawn-on-top@size_m=20,variant=0",
@@ -26234,8 +26234,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 87,
-        "repairs_per_episode": 87,
+        "repair_count": 77,
+        "repairs_per_episode": 77,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 77,
@@ -26377,7 +26377,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-on-top@size_m=20,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-on-top@size_m=20,variant=0--seed0"
     },
     {
       "id": "dyn-nfz-spawn-on-top@size_m=40,variant=0",
@@ -26538,7 +26538,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-spawn-on-top@size_m=40,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-spawn-on-top@size_m=40,variant=0--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=1#canonical",
@@ -26576,8 +26576,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 177,
-        "repairs_per_episode": 177,
+        "repair_count": 133,
+        "repairs_per_episode": 133,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 133,
@@ -26729,7 +26729,7 @@
         "prompt_sha256": "sha256:edb0ab18f852e9c00fc9b0a6d8d496ad2e2e19cdaf0523722d837c0f46409f10",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-translate@variant=0,zone_mps=1--canonical--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-translate@variant=0,zone_mps=1--canonical--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=1#pp0",
@@ -26767,8 +26767,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 177,
-        "repairs_per_episode": 177,
+        "repair_count": 133,
+        "repairs_per_episode": 133,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 133,
@@ -26920,7 +26920,7 @@
         "prompt_sha256": "sha256:adf31eacc809da2b647b4c4ec76d7121bc03f4062ac0c0de766f0e2e8bed0699",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-translate@variant=0,zone_mps=1--pp0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-translate@variant=0,zone_mps=1--pp0--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=1#pp1",
@@ -26958,8 +26958,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 177,
-        "repairs_per_episode": 177,
+        "repair_count": 133,
+        "repairs_per_episode": 133,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 133,
@@ -27111,7 +27111,7 @@
         "prompt_sha256": "sha256:4c9f4673c46bd9364983aae0289678ff9ed4317c6438a47328b09b86f672d8b0",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-translate@variant=0,zone_mps=1--pp1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-translate@variant=0,zone_mps=1--pp1--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=2#canonical",
@@ -27149,8 +27149,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 39,
-        "repairs_per_episode": 39,
+        "repair_count": 29,
+        "repairs_per_episode": 29,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 29,
@@ -27300,7 +27300,7 @@
         "prompt_sha256": "sha256:edb0ab18f852e9c00fc9b0a6d8d496ad2e2e19cdaf0523722d837c0f46409f10",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-translate@variant=0,zone_mps=2--canonical--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-translate@variant=0,zone_mps=2--canonical--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=2#pp0",
@@ -27338,8 +27338,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 39,
-        "repairs_per_episode": 39,
+        "repair_count": 29,
+        "repairs_per_episode": 29,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 29,
@@ -27489,7 +27489,7 @@
         "prompt_sha256": "sha256:adf31eacc809da2b647b4c4ec76d7121bc03f4062ac0c0de766f0e2e8bed0699",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-translate@variant=0,zone_mps=2--pp0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-translate@variant=0,zone_mps=2--pp0--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=2#pp1",
@@ -27527,8 +27527,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 39,
-        "repairs_per_episode": 39,
+        "repair_count": 29,
+        "repairs_per_episode": 29,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 29,
@@ -27678,7 +27678,7 @@
         "prompt_sha256": "sha256:4c9f4673c46bd9364983aae0289678ff9ed4317c6438a47328b09b86f672d8b0",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-translate@variant=0,zone_mps=2--pp1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-translate@variant=0,zone_mps=2--pp1--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=3#canonical",
@@ -27849,7 +27849,7 @@
         "prompt_sha256": "sha256:edb0ab18f852e9c00fc9b0a6d8d496ad2e2e19cdaf0523722d837c0f46409f10",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-translate@variant=0,zone_mps=3--canonical--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-translate@variant=0,zone_mps=3--canonical--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=3#pp0",
@@ -28020,7 +28020,7 @@
         "prompt_sha256": "sha256:adf31eacc809da2b647b4c4ec76d7121bc03f4062ac0c0de766f0e2e8bed0699",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-translate@variant=0,zone_mps=3--pp0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-translate@variant=0,zone_mps=3--pp0--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=3#pp1",
@@ -28191,7 +28191,7 @@
         "prompt_sha256": "sha256:4c9f4673c46bd9364983aae0289678ff9ed4317c6438a47328b09b86f672d8b0",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-translate@variant=0,zone_mps=3--pp1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-translate@variant=0,zone_mps=3--pp1--seed0"
     },
     {
       "id": "dyn-nfz-rotate-step",
@@ -28225,8 +28225,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 247,
-        "repairs_per_episode": 247,
+        "repair_count": 199,
+        "repairs_per_episode": 199,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 199,
@@ -28366,7 +28366,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-rotate-step--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-rotate-step--seed0"
     },
     {
       "id": "dyn-nfz-rotate-spin@deg_per_s=3",
@@ -28402,8 +28402,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 97,
-        "repairs_per_episode": 97,
+        "repair_count": 80,
+        "repairs_per_episode": 80,
         "repair_success_rate": 0.9625,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 80,
@@ -28590,7 +28590,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-rotate-spin@deg_per_s=3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-rotate-spin@deg_per_s=3--seed0"
     },
     {
       "id": "dyn-nfz-rotate-spin@deg_per_s=6",
@@ -28629,8 +28629,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 25,
-        "repairs_per_episode": 25,
+        "repair_count": 22,
+        "repairs_per_episode": 22,
         "repair_success_rate": 0.954545,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 22,
@@ -28790,7 +28790,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--dyn-nfz-rotate-spin@deg_per_s=6--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--dyn-nfz-rotate-spin@deg_per_s=6--seed0"
     },
     {
       "id": "time-window-closes-mid-run@clock=2026-09-07T17:29:40,vehicle_speed_mps=2",
@@ -28970,7 +28970,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--time-window-closes-mid-run@clock=2026-09-07T17_29_40,vehicle_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--time-window-closes-mid-run@clock=2026-09-07T17_29_40,vehicle_speed_mps=2--seed0"
     },
     {
       "id": "time-window-closes-mid-run@clock=2026-09-07T17:29:40,vehicle_speed_mps=4",
@@ -29007,8 +29007,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 239,
-        "repairs_per_episode": 239,
+        "repair_count": 175,
+        "repairs_per_episode": 175,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 175,
@@ -29150,7 +29150,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--time-window-closes-mid-run@clock=2026-09-07T17_29_40,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--time-window-closes-mid-run@clock=2026-09-07T17_29_40,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "time-window-closes-mid-run@clock=2026-09-07T17:29:50,vehicle_speed_mps=2",
@@ -29330,7 +29330,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--time-window-closes-mid-run@clock=2026-09-07T17_29_50,vehicle_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--time-window-closes-mid-run@clock=2026-09-07T17_29_50,vehicle_speed_mps=2--seed0"
     },
     {
       "id": "time-window-closes-mid-run@clock=2026-09-07T17:29:50,vehicle_speed_mps=4",
@@ -29367,8 +29367,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 102,
-        "repairs_per_episode": 102,
+        "repair_count": 75,
+        "repairs_per_episode": 75,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 75,
@@ -29510,7 +29510,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--time-window-closes-mid-run@clock=2026-09-07T17_29_50,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--time-window-closes-mid-run@clock=2026-09-07T17_29_50,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "time-window-opens-on-vehicle@clock=2026-09-07T07:29:54",
@@ -29693,7 +29693,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_54--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_54--seed0"
     },
     {
       "id": "time-window-opens-on-vehicle@clock=2026-09-07T07:29:55",
@@ -29876,7 +29876,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_55--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_55--seed0"
     },
     {
       "id": "time-window-opens-on-vehicle@clock=2026-09-07T07:29:56",
@@ -30059,7 +30059,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_56--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_56--seed0"
     },
     {
       "id": "time-window-opens-ahead@clock=2026-09-07T07:29:51",
@@ -30242,7 +30242,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--time-window-opens-ahead@clock=2026-09-07T07_29_51--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--time-window-opens-ahead@clock=2026-09-07T07_29_51--seed0"
     },
     {
       "id": "time-window-opens-ahead@clock=2026-09-07T07:29:52",
@@ -30416,7 +30416,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--time-window-opens-ahead@clock=2026-09-07T07_29_52--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--time-window-opens-ahead@clock=2026-09-07T07_29_52--seed0"
     },
     {
       "id": "time-window-switch-event",
@@ -30450,8 +30450,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 102,
-        "repairs_per_episode": 102,
+        "repair_count": 75,
+        "repairs_per_episode": 75,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 75,
@@ -30600,7 +30600,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--time-window-switch-event--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--time-window-switch-event--seed0"
     },
     {
       "id": "rule-deactivated-mid-run",
@@ -30634,8 +30634,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 82,
-        "repairs_per_episode": 82,
+        "repair_count": 60,
+        "repairs_per_episode": 60,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 60,
@@ -30778,7 +30778,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--rule-deactivated-mid-run--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--rule-deactivated-mid-run--seed0"
     },
     {
       "id": "rule-activated-mid-run@at=2",
@@ -30953,7 +30953,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--rule-activated-mid-run@at=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--rule-activated-mid-run@at=2--seed0"
     },
     {
       "id": "rule-activated-mid-run@at=4",
@@ -31128,7 +31128,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--rule-activated-mid-run@at=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--rule-activated-mid-run@at=4--seed0"
     },
     {
       "id": "radius-scaling-grow@factor=2.5",
@@ -31164,8 +31164,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 92,
-        "repairs_per_episode": 92,
+        "repair_count": 75,
+        "repairs_per_episode": 75,
         "repair_success_rate": 0.986667,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 75,
@@ -31310,7 +31310,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--radius-scaling-grow@factor=2.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--radius-scaling-grow@factor=2.5--seed0"
     },
     {
       "id": "radius-scaling-grow@factor=3",
@@ -31346,8 +31346,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 118,
-        "repairs_per_episode": 118,
+        "repair_count": 100,
+        "repairs_per_episode": 100,
         "repair_success_rate": 0.99,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 100,
@@ -31492,7 +31492,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--radius-scaling-grow@factor=3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--radius-scaling-grow@factor=3--seed0"
     },
     {
       "id": "radius-scaling-grow-deep",
@@ -31526,8 +31526,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 147,
-        "repairs_per_episode": 147,
+        "repair_count": 125,
+        "repairs_per_episode": 125,
         "repair_success_rate": 0.992,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 125,
@@ -31672,7 +31672,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--radius-scaling-grow-deep--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--radius-scaling-grow-deep--seed0"
     },
     {
       "id": "radius-scaling-shrink@factor=0.3",
@@ -31849,7 +31849,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--radius-scaling-shrink@factor=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--radius-scaling-shrink@factor=0.3--seed0"
     },
     {
       "id": "radius-scaling-shrink@factor=0.5",
@@ -32026,7 +32026,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--radius-scaling-shrink@factor=0.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--radius-scaling-shrink@factor=0.5--seed0"
     },
     {
       "id": "corridor-swap-shifted",
@@ -32060,8 +32060,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 60,
-        "repairs_per_episode": 60,
+        "repair_count": 47,
+        "repairs_per_episode": 47,
         "repair_success_rate": 0.978723,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 47,
@@ -32208,7 +32208,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-swap-shifted--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-swap-shifted--seed0"
     },
     {
       "id": "corridor-swap-narrowed@ask_mps=1",
@@ -32381,7 +32381,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-swap-narrowed@ask_mps=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-swap-narrowed@ask_mps=1--seed0"
     },
     {
       "id": "corridor-swap-narrowed@ask_mps=2",
@@ -32563,7 +32563,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--corridor-swap-narrowed@ask_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--corridor-swap-narrowed@ask_mps=2--seed0"
     },
     {
       "id": "failsafe-rtl-zone@ahead_m=6,variant=0",
@@ -32747,7 +32747,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--failsafe-rtl-zone@ahead_m=6,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--failsafe-rtl-zone@ahead_m=6,variant=0--seed0"
     },
     {
       "id": "failsafe-rtl-zone@ahead_m=12,variant=0",
@@ -32931,7 +32931,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--failsafe-rtl-zone@ahead_m=12,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--failsafe-rtl-zone@ahead_m=12,variant=0--seed0"
     },
     {
       "id": "failsafe-land-zone",
@@ -33112,7 +33112,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--failsafe-land-zone--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--failsafe-land-zone--seed0"
     },
     {
       "id": "failsafe-loiter-timeout",
@@ -33300,7 +33300,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--failsafe-loiter-timeout--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--failsafe-loiter-timeout--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.2",
@@ -33338,8 +33338,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 157,
-        "repair_count": 236,
-        "repairs_per_episode": 236,
+        "repair_count": 230,
+        "repairs_per_episode": 230,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 222,
@@ -33473,7 +33473,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.2",
@@ -33511,8 +33511,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 157,
-        "repair_count": 237,
-        "repairs_per_episode": 237,
+        "repair_count": 230,
+        "repairs_per_episode": 230,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 222,
@@ -33646,7 +33646,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.2",
@@ -33684,8 +33684,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 157,
-        "repair_count": 237,
-        "repairs_per_episode": 237,
+        "repair_count": 230,
+        "repairs_per_episode": 230,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 222,
@@ -33819,7 +33819,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.2",
@@ -33857,8 +33857,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 157,
-        "repair_count": 233,
-        "repairs_per_episode": 233,
+        "repair_count": 230,
+        "repairs_per_episode": 230,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 222,
@@ -33992,7 +33992,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.2",
@@ -34030,8 +34030,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 138,
-        "repair_count": 325,
-        "repairs_per_episode": 325,
+        "repair_count": 230,
+        "repairs_per_episode": 230,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 222,
@@ -34165,7 +34165,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.2",
@@ -34203,8 +34203,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 138,
-        "repair_count": 346,
-        "repairs_per_episode": 346,
+        "repair_count": 230,
+        "repairs_per_episode": 230,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 222,
@@ -34338,7 +34338,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.2",
@@ -34376,8 +34376,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 138,
-        "repair_count": 345,
-        "repairs_per_episode": 345,
+        "repair_count": 230,
+        "repairs_per_episode": 230,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 222,
@@ -34511,7 +34511,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.2",
@@ -34549,8 +34549,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 138,
-        "repair_count": 312,
-        "repairs_per_episode": 312,
+        "repair_count": 230,
+        "repairs_per_episode": 230,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 222,
@@ -34684,7 +34684,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.5",
@@ -34857,7 +34857,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.5",
@@ -34895,8 +34895,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 146,
-        "repair_count": 237,
-        "repairs_per_episode": 237,
+        "repair_count": 235,
+        "repairs_per_episode": 235,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 220,
@@ -35030,7 +35030,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.5",
@@ -35068,8 +35068,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 146,
-        "repair_count": 237,
-        "repairs_per_episode": 237,
+        "repair_count": 235,
+        "repairs_per_episode": 235,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 220,
@@ -35203,7 +35203,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.5",
@@ -35241,8 +35241,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 146,
-        "repair_count": 241,
-        "repairs_per_episode": 241,
+        "repair_count": 235,
+        "repairs_per_episode": 235,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 220,
@@ -35376,7 +35376,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.5",
@@ -35414,8 +35414,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 143,
-        "repair_count": 272,
-        "repairs_per_episode": 272,
+        "repair_count": 235,
+        "repairs_per_episode": 235,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 220,
@@ -35549,7 +35549,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.5",
@@ -35587,8 +35587,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 143,
-        "repair_count": 306,
-        "repairs_per_episode": 306,
+        "repair_count": 235,
+        "repairs_per_episode": 235,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 220,
@@ -35722,7 +35722,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.5",
@@ -35760,8 +35760,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 143,
-        "repair_count": 300,
-        "repairs_per_episode": 300,
+        "repair_count": 235,
+        "repairs_per_episode": 235,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 220,
@@ -35895,7 +35895,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.5",
@@ -35933,8 +35933,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 143,
-        "repair_count": 291,
-        "repairs_per_episode": 291,
+        "repair_count": 235,
+        "repairs_per_episode": 235,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 220,
@@ -36068,7 +36068,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.8",
@@ -36106,8 +36106,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 188,
-        "repair_count": 250,
-        "repairs_per_episode": 250,
+        "repair_count": 220,
+        "repairs_per_episode": 220,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 219,
@@ -36241,7 +36241,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.8",
@@ -36279,8 +36279,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 188,
-        "repair_count": 248,
-        "repairs_per_episode": 248,
+        "repair_count": 220,
+        "repairs_per_episode": 220,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 219,
@@ -36414,7 +36414,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.8",
@@ -36452,8 +36452,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 188,
-        "repair_count": 248,
-        "repairs_per_episode": 248,
+        "repair_count": 220,
+        "repairs_per_episode": 220,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 219,
@@ -36587,7 +36587,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.8",
@@ -36625,8 +36625,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 188,
-        "repair_count": 249,
-        "repairs_per_episode": 249,
+        "repair_count": 220,
+        "repairs_per_episode": 220,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 219,
@@ -36760,7 +36760,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.8",
@@ -36933,7 +36933,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.8",
@@ -37106,7 +37106,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.8",
@@ -37279,7 +37279,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.8",
@@ -37452,7 +37452,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.8--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=8,pass_y=40.5",
@@ -37635,7 +37635,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--near-edge-at-12mps@ask_mps=8,pass_y=40.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--near-edge-at-12mps@ask_mps=8,pass_y=40.5--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=12,pass_y=40.5",
@@ -37831,7 +37831,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--near-edge-at-12mps@ask_mps=12,pass_y=40.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--near-edge-at-12mps@ask_mps=12,pass_y=40.5--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=20,pass_y=40.5",
@@ -37868,8 +37868,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 39,
-        "repair_count": 192,
-        "repairs_per_episode": 192,
+        "repair_count": 175,
+        "repairs_per_episode": 175,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 120,
@@ -38004,7 +38004,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--near-edge-at-12mps@ask_mps=20,pass_y=40.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--near-edge-at-12mps@ask_mps=20,pass_y=40.5--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=8,pass_y=40.8",
@@ -38219,7 +38219,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--near-edge-at-12mps@ask_mps=8,pass_y=40.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--near-edge-at-12mps@ask_mps=8,pass_y=40.8--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=12,pass_y=40.8",
@@ -38256,8 +38256,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 51,
-        "repairs_per_episode": 51,
+        "repair_count": 42,
+        "repairs_per_episode": 42,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 42,
@@ -38402,7 +38402,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--near-edge-at-12mps@ask_mps=12,pass_y=40.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--near-edge-at-12mps@ask_mps=12,pass_y=40.8--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=20,pass_y=40.8",
@@ -38439,8 +38439,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 57,
-        "repair_count": 188,
-        "repairs_per_episode": 188,
+        "repair_count": 158,
+        "repairs_per_episode": 158,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 116,
@@ -38575,7 +38575,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--near-edge-at-12mps@ask_mps=20,pass_y=40.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--near-edge-at-12mps@ask_mps=20,pass_y=40.8--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=8,pass_y=41.1",
@@ -38767,7 +38767,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--near-edge-at-12mps@ask_mps=8,pass_y=41.1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--near-edge-at-12mps@ask_mps=8,pass_y=41.1--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=12,pass_y=41.1",
@@ -38938,7 +38938,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--near-edge-at-12mps@ask_mps=12,pass_y=41.1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--near-edge-at-12mps@ask_mps=12,pass_y=41.1--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=20,pass_y=41.1",
@@ -38975,8 +38975,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 115,
-        "repair_count": 212,
-        "repairs_per_episode": 212,
+        "repair_count": 117,
+        "repairs_per_episode": 117,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 116,
@@ -39111,7 +39111,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--near-edge-at-12mps@ask_mps=20,pass_y=41.1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--near-edge-at-12mps@ask_mps=20,pass_y=41.1--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=8,pass_y=41.3",
@@ -39282,7 +39282,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--near-edge-at-12mps@ask_mps=8,pass_y=41.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--near-edge-at-12mps@ask_mps=8,pass_y=41.3--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=12,pass_y=41.3",
@@ -39453,7 +39453,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--near-edge-at-12mps@ask_mps=12,pass_y=41.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--near-edge-at-12mps@ask_mps=12,pass_y=41.3--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=20,pass_y=41.3",
@@ -39626,7 +39626,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--near-edge-at-12mps@ask_mps=20,pass_y=41.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--near-edge-at-12mps@ask_mps=20,pass_y=41.3--seed0"
     },
     {
       "id": "three-simultaneous-violations@ask_mps=8,start_up=3,variant=0",
@@ -39824,7 +39824,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--three-simultaneous-violations@ask_mps=8,start_up=3,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--three-simultaneous-violations@ask_mps=8,start_up=3,variant=0--seed0"
     },
     {
       "id": "three-simultaneous-violations@ask_mps=11,start_up=3,variant=0",
@@ -40022,7 +40022,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--three-simultaneous-violations@ask_mps=11,start_up=3,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--three-simultaneous-violations@ask_mps=11,start_up=3,variant=0--seed0"
     },
     {
       "id": "three-simultaneous-violations@ask_mps=8,start_up=6,variant=0",
@@ -40220,7 +40220,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--three-simultaneous-violations@ask_mps=8,start_up=6,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--three-simultaneous-violations@ask_mps=8,start_up=6,variant=0--seed0"
     },
     {
       "id": "three-simultaneous-violations@ask_mps=11,start_up=6,variant=0",
@@ -40418,7 +40418,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--three-simultaneous-violations@ask_mps=11,start_up=6,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--three-simultaneous-violations@ask_mps=11,start_up=6,variant=0--seed0"
     },
     {
       "id": "three-simultaneous-violations@ask_mps=8,start_up=9,variant=0",
@@ -40616,7 +40616,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--three-simultaneous-violations@ask_mps=8,start_up=9,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--three-simultaneous-violations@ask_mps=8,start_up=9,variant=0--seed0"
     },
     {
       "id": "three-simultaneous-violations@ask_mps=11,start_up=9,variant=0",
@@ -40814,7 +40814,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--three-simultaneous-violations@ask_mps=11,start_up=9,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--three-simultaneous-violations@ask_mps=11,start_up=9,variant=0--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=0,pass_y=23.2,sigma=0.2",
@@ -40852,8 +40852,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 9,
-        "repairs_per_episode": 9,
+        "repair_count": 8,
+        "repairs_per_episode": 8,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 8,
@@ -40997,7 +40997,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-within-margin@latency=0,pass_y=23.2,sigma=0.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-within-margin@latency=0,pass_y=23.2,sigma=0.2--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=1,pass_y=23.2,sigma=0.2",
@@ -41035,8 +41035,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 9,
-        "repairs_per_episode": 9,
+        "repair_count": 8,
+        "repairs_per_episode": 8,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 8,
@@ -41180,7 +41180,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-within-margin@latency=1,pass_y=23.2,sigma=0.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-within-margin@latency=1,pass_y=23.2,sigma=0.2--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=2,pass_y=23.2,sigma=0.2",
@@ -41218,8 +41218,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 11,
-        "repairs_per_episode": 11,
+        "repair_count": 8,
+        "repairs_per_episode": 8,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 8,
@@ -41363,7 +41363,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-within-margin@latency=2,pass_y=23.2,sigma=0.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-within-margin@latency=2,pass_y=23.2,sigma=0.2--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=0,pass_y=23.2,sigma=0.3",
@@ -41401,8 +41401,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 13,
-        "repairs_per_episode": 13,
+        "repair_count": 12,
+        "repairs_per_episode": 12,
         "repair_success_rate": 0.916667,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 12,
@@ -41603,7 +41603,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-within-margin@latency=0,pass_y=23.2,sigma=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-within-margin@latency=0,pass_y=23.2,sigma=0.3--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=1,pass_y=23.2,sigma=0.3",
@@ -41646,8 +41646,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 12,
-        "repairs_per_episode": 12,
+        "repair_count": 10,
+        "repairs_per_episode": 10,
         "repair_success_rate": 0.9,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 10,
@@ -41817,7 +41817,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-within-margin@latency=1,pass_y=23.2,sigma=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-within-margin@latency=1,pass_y=23.2,sigma=0.3--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=2,pass_y=23.2,sigma=0.3",
@@ -41988,7 +41988,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-within-margin@latency=2,pass_y=23.2,sigma=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-within-margin@latency=2,pass_y=23.2,sigma=0.3--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=0,pass_y=23.6,sigma=0.2",
@@ -42026,8 +42026,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 7,
-        "repairs_per_episode": 7,
+        "repair_count": 6,
+        "repairs_per_episode": 6,
         "repair_success_rate": 0.833333,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 6,
@@ -42192,7 +42192,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-within-margin@latency=0,pass_y=23.6,sigma=0.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-within-margin@latency=0,pass_y=23.6,sigma=0.2--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=1,pass_y=23.6,sigma=0.2",
@@ -42230,8 +42230,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 8,
-        "repairs_per_episode": 8,
+        "repair_count": 6,
+        "repairs_per_episode": 6,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 6,
@@ -42375,7 +42375,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-within-margin@latency=1,pass_y=23.6,sigma=0.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-within-margin@latency=1,pass_y=23.6,sigma=0.2--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=2,pass_y=23.6,sigma=0.2",
@@ -42413,8 +42413,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 7,
-        "repairs_per_episode": 7,
+        "repair_count": 4,
+        "repairs_per_episode": 4,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 4,
@@ -42546,7 +42546,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-within-margin@latency=2,pass_y=23.6,sigma=0.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-within-margin@latency=2,pass_y=23.6,sigma=0.2--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=0,pass_y=23.6,sigma=0.3",
@@ -42584,8 +42584,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 8,
-        "repairs_per_episode": 8,
+        "repair_count": 6,
+        "repairs_per_episode": 6,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 6,
@@ -42750,7 +42750,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-within-margin@latency=0,pass_y=23.6,sigma=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-within-margin@latency=0,pass_y=23.6,sigma=0.3--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=1,pass_y=23.6,sigma=0.3",
@@ -42788,8 +42788,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 7,
-        "repairs_per_episode": 7,
+        "repair_count": 6,
+        "repairs_per_episode": 6,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 6,
@@ -42933,7 +42933,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-within-margin@latency=1,pass_y=23.6,sigma=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-within-margin@latency=1,pass_y=23.6,sigma=0.3--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=2,pass_y=23.6,sigma=0.3",
@@ -42971,8 +42971,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 8,
-        "repairs_per_episode": 8,
+        "repair_count": 6,
+        "repairs_per_episode": 6,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 6,
@@ -43116,7 +43116,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-within-margin@latency=2,pass_y=23.6,sigma=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-within-margin@latency=2,pass_y=23.6,sigma=0.3--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=5,pass_y=23.2,sigma=1",
@@ -43157,8 +43157,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 6,
-        "repairs_per_episode": 6,
+        "repair_count": 5,
+        "repairs_per_episode": 5,
         "repair_success_rate": 0.8,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 5,
@@ -43310,7 +43310,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-beyond-margin@latency=5,pass_y=23.2,sigma=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-beyond-margin@latency=5,pass_y=23.2,sigma=1--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=10,pass_y=23.2,sigma=1",
@@ -43351,8 +43351,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 13,
-        "repairs_per_episode": 13,
+        "repair_count": 10,
+        "repairs_per_episode": 10,
         "repair_success_rate": 0.9,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 10,
@@ -43504,7 +43504,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-beyond-margin@latency=10,pass_y=23.2,sigma=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-beyond-margin@latency=10,pass_y=23.2,sigma=1--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=5,pass_y=23.2,sigma=2",
@@ -43545,8 +43545,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 4,
-        "repairs_per_episode": 4,
+        "repair_count": 3,
+        "repairs_per_episode": 3,
         "repair_success_rate": 0.666667,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 3,
@@ -43698,7 +43698,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-beyond-margin@latency=5,pass_y=23.2,sigma=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-beyond-margin@latency=5,pass_y=23.2,sigma=2--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=10,pass_y=23.2,sigma=2",
@@ -43739,8 +43739,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 11,
-        "repairs_per_episode": 11,
+        "repair_count": 10,
+        "repairs_per_episode": 10,
         "repair_success_rate": 0.9,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 10,
@@ -43892,7 +43892,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-beyond-margin@latency=10,pass_y=23.2,sigma=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-beyond-margin@latency=10,pass_y=23.2,sigma=2--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=5,pass_y=23.6,sigma=1",
@@ -43933,8 +43933,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 5,
-        "repairs_per_episode": 5,
+        "repair_count": 4,
+        "repairs_per_episode": 4,
         "repair_success_rate": 0.75,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 4,
@@ -44086,7 +44086,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-beyond-margin@latency=5,pass_y=23.6,sigma=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-beyond-margin@latency=5,pass_y=23.6,sigma=1--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=10,pass_y=23.6,sigma=1",
@@ -44127,8 +44127,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 15,
-        "repairs_per_episode": 15,
+        "repair_count": 13,
+        "repairs_per_episode": 13,
         "repair_success_rate": 0.923077,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 13,
@@ -44280,7 +44280,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-beyond-margin@latency=10,pass_y=23.6,sigma=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-beyond-margin@latency=10,pass_y=23.6,sigma=1--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=5,pass_y=23.6,sigma=2",
@@ -44321,8 +44321,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 4,
-        "repairs_per_episode": 4,
+        "repair_count": 3,
+        "repairs_per_episode": 3,
         "repair_success_rate": 0.666667,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 3,
@@ -44474,7 +44474,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-beyond-margin@latency=5,pass_y=23.6,sigma=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-beyond-margin@latency=5,pass_y=23.6,sigma=2--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=10,pass_y=23.6,sigma=2",
@@ -44515,8 +44515,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 10,
-        "repairs_per_episode": 10,
+        "repair_count": 9,
+        "repairs_per_episode": 9,
         "repair_success_rate": 0.888889,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 9,
@@ -44668,7 +44668,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-noise-beyond-margin@latency=10,pass_y=23.6,sigma=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-noise-beyond-margin@latency=10,pass_y=23.6,sigma=2--seed0"
     },
     {
       "id": "gps-dropout@lane_y=15,window=2-4",
@@ -44709,8 +44709,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 423,
-        "repairs_per_episode": 423,
+        "repair_count": 339,
+        "repairs_per_episode": 339,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 339,
@@ -44838,7 +44838,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-dropout@lane_y=15,window=2-4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-dropout@lane_y=15,window=2-4--seed0"
     },
     {
       "id": "gps-dropout@lane_y=15,window=2-7",
@@ -45026,7 +45026,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-dropout@lane_y=15,window=2-7--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-dropout@lane_y=15,window=2-7--seed0"
     },
     {
       "id": "gps-dropout@lane_y=15,window=4-9",
@@ -45214,7 +45214,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-dropout@lane_y=15,window=4-9--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-dropout@lane_y=15,window=4-9--seed0"
     },
     {
       "id": "gps-dropout@lane_y=15,window=6-11",
@@ -45394,7 +45394,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-dropout@lane_y=15,window=6-11--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-dropout@lane_y=15,window=6-11--seed0"
     },
     {
       "id": "gps-dropout@lane_y=23.6,window=2-4",
@@ -45568,7 +45568,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-dropout@lane_y=23.6,window=2-4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-dropout@lane_y=23.6,window=2-4--seed0"
     },
     {
       "id": "gps-dropout@lane_y=23.6,window=2-7",
@@ -45742,7 +45742,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-dropout@lane_y=23.6,window=2-7--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-dropout@lane_y=23.6,window=2-7--seed0"
     },
     {
       "id": "gps-dropout@lane_y=23.6,window=4-9",
@@ -45783,8 +45783,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 7,
-        "repairs_per_episode": 7,
+        "repair_count": 6,
+        "repairs_per_episode": 6,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 6,
@@ -45916,7 +45916,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-dropout@lane_y=23.6,window=4-9--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-dropout@lane_y=23.6,window=4-9--seed0"
     },
     {
       "id": "gps-dropout@lane_y=23.6,window=6-11",
@@ -46096,7 +46096,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--gps-dropout@lane_y=23.6,window=6-11--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--gps-dropout@lane_y=23.6,window=6-11--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=15,wind_dir_deg=0,wind_speed_mps=1",
@@ -46137,8 +46137,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 19,
-        "repairs_per_episode": 19,
+        "repair_count": 17,
+        "repairs_per_episode": 17,
         "repair_success_rate": 0.941176,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 17,
@@ -46284,7 +46284,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=15,wind_dir_deg=0,wind_speed_mps=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=15,wind_dir_deg=0,wind_speed_mps=1--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=15,wind_dir_deg=90,wind_speed_mps=1",
@@ -46322,8 +46322,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 423,
-        "repairs_per_episode": 423,
+        "repair_count": 339,
+        "repairs_per_episode": 339,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 339,
@@ -46451,7 +46451,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=15,wind_dir_deg=90,wind_speed_mps=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=15,wind_dir_deg=90,wind_speed_mps=1--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=15,wind_dir_deg=180,wind_speed_mps=1",
@@ -46489,8 +46489,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 25,
-        "repairs_per_episode": 25,
+        "repair_count": 19,
+        "repairs_per_episode": 19,
         "repair_success_rate": 0.947368,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 19,
@@ -46627,7 +46627,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=15,wind_dir_deg=180,wind_speed_mps=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=15,wind_dir_deg=180,wind_speed_mps=1--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=15,wind_dir_deg=270,wind_speed_mps=1",
@@ -46665,8 +46665,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 423,
-        "repairs_per_episode": 423,
+        "repair_count": 339,
+        "repairs_per_episode": 339,
         "repair_success_rate": 1.0,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 339,
@@ -46794,7 +46794,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=15,wind_dir_deg=270,wind_speed_mps=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=15,wind_dir_deg=270,wind_speed_mps=1--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=15,wind_dir_deg=0,wind_speed_mps=2",
@@ -46835,8 +46835,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 17,
-        "repairs_per_episode": 17,
+        "repair_count": 12,
+        "repairs_per_episode": 12,
         "repair_success_rate": 0.916667,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 12,
@@ -46982,7 +46982,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=15,wind_dir_deg=0,wind_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=15,wind_dir_deg=0,wind_speed_mps=2--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=15,wind_dir_deg=90,wind_speed_mps=2",
@@ -47153,7 +47153,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=15,wind_dir_deg=90,wind_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=15,wind_dir_deg=90,wind_speed_mps=2--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=15,wind_dir_deg=180,wind_speed_mps=2",
@@ -47191,8 +47191,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 102,
-        "repairs_per_episode": 102,
+        "repair_count": 77,
+        "repairs_per_episode": 77,
         "repair_success_rate": 0.909091,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 77,
@@ -47437,7 +47437,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=15,wind_dir_deg=180,wind_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=15,wind_dir_deg=180,wind_speed_mps=2--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=15,wind_dir_deg=270,wind_speed_mps=2",
@@ -47608,7 +47608,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=15,wind_dir_deg=270,wind_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=15,wind_dir_deg=270,wind_speed_mps=2--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=15,wind_dir_deg=0,wind_speed_mps=3",
@@ -47649,8 +47649,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 9,
-        "repairs_per_episode": 9,
+        "repair_count": 7,
+        "repairs_per_episode": 7,
         "repair_success_rate": 0.857143,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 7,
@@ -47802,7 +47802,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=15,wind_dir_deg=0,wind_speed_mps=3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=15,wind_dir_deg=0,wind_speed_mps=3--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=15,wind_dir_deg=90,wind_speed_mps=3",
@@ -47957,7 +47957,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=15,wind_dir_deg=90,wind_speed_mps=3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=15,wind_dir_deg=90,wind_speed_mps=3--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=15,wind_dir_deg=180,wind_speed_mps=3",
@@ -47995,8 +47995,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 32,
-        "repairs_per_episode": 32,
+        "repair_count": 25,
+        "repairs_per_episode": 25,
         "repair_success_rate": 0.88,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 25,
@@ -48181,7 +48181,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=15,wind_dir_deg=180,wind_speed_mps=3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=15,wind_dir_deg=180,wind_speed_mps=3--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=15,wind_dir_deg=270,wind_speed_mps=3",
@@ -48336,7 +48336,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=15,wind_dir_deg=270,wind_speed_mps=3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=15,wind_dir_deg=270,wind_speed_mps=3--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=25,wind_dir_deg=0,wind_speed_mps=1",
@@ -48489,7 +48489,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=25,wind_dir_deg=0,wind_speed_mps=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=25,wind_dir_deg=0,wind_speed_mps=1--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=25,wind_dir_deg=90,wind_speed_mps=1",
@@ -48642,7 +48642,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=25,wind_dir_deg=90,wind_speed_mps=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=25,wind_dir_deg=90,wind_speed_mps=1--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=25,wind_dir_deg=180,wind_speed_mps=1",
@@ -48795,7 +48795,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=25,wind_dir_deg=180,wind_speed_mps=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=25,wind_dir_deg=180,wind_speed_mps=1--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=25,wind_dir_deg=270,wind_speed_mps=1",
@@ -48836,8 +48836,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 19,
-        "repairs_per_episode": 19,
+        "repair_count": 17,
+        "repairs_per_episode": 17,
         "repair_success_rate": 0.941176,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 17,
@@ -48983,7 +48983,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=25,wind_dir_deg=270,wind_speed_mps=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=25,wind_dir_deg=270,wind_speed_mps=1--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=25,wind_dir_deg=0,wind_speed_mps=2",
@@ -49136,7 +49136,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=25,wind_dir_deg=0,wind_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=25,wind_dir_deg=0,wind_speed_mps=2--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=25,wind_dir_deg=90,wind_speed_mps=2",
@@ -49289,7 +49289,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=25,wind_dir_deg=90,wind_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=25,wind_dir_deg=90,wind_speed_mps=2--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=25,wind_dir_deg=180,wind_speed_mps=2",
@@ -49444,7 +49444,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=25,wind_dir_deg=180,wind_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=25,wind_dir_deg=180,wind_speed_mps=2--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=25,wind_dir_deg=270,wind_speed_mps=2",
@@ -49482,8 +49482,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 133,
-        "repairs_per_episode": 133,
+        "repair_count": 108,
+        "repairs_per_episode": 108,
         "repair_success_rate": 0.990741,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 108,
@@ -49620,7 +49620,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=25,wind_dir_deg=270,wind_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=25,wind_dir_deg=270,wind_speed_mps=2--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=25,wind_dir_deg=0,wind_speed_mps=3",
@@ -49775,7 +49775,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=25,wind_dir_deg=0,wind_speed_mps=3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=25,wind_dir_deg=0,wind_speed_mps=3--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=25,wind_dir_deg=90,wind_speed_mps=3",
@@ -49930,7 +49930,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=25,wind_dir_deg=90,wind_speed_mps=3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=25,wind_dir_deg=90,wind_speed_mps=3--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=25,wind_dir_deg=180,wind_speed_mps=3",
@@ -50085,7 +50085,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=25,wind_dir_deg=180,wind_speed_mps=3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=25,wind_dir_deg=180,wind_speed_mps=3--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=25,wind_dir_deg=270,wind_speed_mps=3",
@@ -50126,8 +50126,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 39,
-        "repairs_per_episode": 39,
+        "repair_count": 35,
+        "repairs_per_episode": 35,
         "repair_success_rate": 0.971429,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 35,
@@ -50273,7 +50273,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-within-authority@lane_y=25,wind_dir_deg=270,wind_speed_mps=3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-within-authority@lane_y=25,wind_dir_deg=270,wind_speed_mps=3--seed0"
     },
     {
       "id": "wind-beyond-authority@lane_y=15",
@@ -50309,8 +50309,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 7,
-        "repairs_per_episode": 7,
+        "repair_count": 5,
+        "repairs_per_episode": 5,
         "repair_success_rate": 0.8,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 5,
@@ -50462,7 +50462,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-beyond-authority@lane_y=15--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-beyond-authority@lane_y=15--seed0"
     },
     {
       "id": "wind-beyond-authority@lane_y=20",
@@ -50498,8 +50498,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 7,
-        "repairs_per_episode": 7,
+        "repair_count": 5,
+        "repairs_per_episode": 5,
         "repair_success_rate": 0.8,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 5,
@@ -50651,7 +50651,7 @@
       "seed_consumed": false,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-beyond-authority@lane_y=20--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-beyond-authority@lane_y=20--seed0"
     },
     {
       "id": "wind-gusts@lane_y=15,wind_speed_mps=2",
@@ -50691,8 +50691,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 19,
-        "repairs_per_episode": 19,
+        "repair_count": 15,
+        "repairs_per_episode": 15,
         "repair_success_rate": 0.933333,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 15,
@@ -50838,7 +50838,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-gusts@lane_y=15,wind_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-gusts@lane_y=15,wind_speed_mps=2--seed0"
     },
     {
       "id": "wind-gusts@lane_y=15,wind_speed_mps=3",
@@ -50878,8 +50878,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 12,
-        "repairs_per_episode": 12,
+        "repair_count": 10,
+        "repairs_per_episode": 10,
         "repair_success_rate": 0.9,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 10,
@@ -51025,7 +51025,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-gusts@lane_y=15,wind_speed_mps=3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-gusts@lane_y=15,wind_speed_mps=3--seed0"
     },
     {
       "id": "wind-gusts@lane_y=25,wind_speed_mps=2",
@@ -51065,8 +51065,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 145,
-        "repairs_per_episode": 145,
+        "repair_count": 123,
+        "repairs_per_episode": 123,
         "repair_success_rate": 0.99187,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 123,
@@ -51219,7 +51219,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-gusts@lane_y=25,wind_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-gusts@lane_y=25,wind_speed_mps=2--seed0"
     },
     {
       "id": "wind-gusts@lane_y=25,wind_speed_mps=3",
@@ -51259,8 +51259,8 @@
         "false_trigger_ticks": 0,
         "false_trigger_rate": 0.0,
         "failsafe_permitted_ticks": 0,
-        "repair_count": 11,
-        "repairs_per_episode": 11,
+        "repair_count": 10,
+        "repairs_per_episode": 10,
         "repair_success_rate": 0.9,
         "repair_success_status": "measured",
         "repair_attempt_ticks": 10,
@@ -51406,7 +51406,7 @@
       "seed_consumed": true,
       "seed_applied": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-11T17-03-48Z--wind-gusts@lane_y=25,wind_speed_mps=3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-12T04-28-34Z--wind-gusts@lane_y=25,wind_speed_mps=3--seed0"
     }
   ]
 }

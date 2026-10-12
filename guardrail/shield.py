@@ -1739,20 +1739,28 @@ class Shield:
     # ---------------- repair operators ---------------- #
 
     def _repair_kinematic(self, a: Action4D, repairs: list[Repair]) -> Action4D:
+        # The same 1e-9 tolerance as _check_kinematic. Until 2026-10-12 these
+        # tests were strict, so an action another operator had already scaled
+        # to the cap, and that came out 4.000000000000001 m/s, was "clamped"
+        # to 4.0 and logged as a SpeedClamp repair the check would never have
+        # flagged. Whether that happened depended on the platform's floating
+        # point: on Windows nfz-head-on logged 82 such repairs, on Linux (the
+        # CI runners) none, which is why tests/test_sweep.py's pinned repair
+        # counts failed on GitHub only.
         vx, vy, vz, yr = a.vx, a.vy, a.vz_up, a.yaw_rate
         for k in self._kins:
             h = (vx ** 2 + vy ** 2) ** 0.5
-            if h > k.speed_max_mps:
+            if h > k.speed_max_mps + 1e-9:
                 s = k.speed_max_mps / h
                 vx, vy = vx * s, vy * s
                 repairs.append(Repair(operator="SpeedClamp",
                                       detail=f"h-speed {h:.2f} -> {k.speed_max_mps}"))
-            if abs(vz) > k.climb_rate_max_mps:
+            if abs(vz) > k.climb_rate_max_mps + 1e-9:
                 new = k.climb_rate_max_mps * (1 if vz > 0 else -1)
                 repairs.append(Repair(operator="ClimbClamp", detail=f"vz {vz:.2f} -> {new:.2f}"))
                 vz = new
             ymax = math.radians(k.yaw_rate_max_dps)
-            if abs(yr) > ymax:
+            if math.degrees(abs(yr)) > k.yaw_rate_max_dps + 1e-9:
                 new = ymax * (1 if yr > 0 else -1)
                 repairs.append(Repair(
                     operator="YawClamp",

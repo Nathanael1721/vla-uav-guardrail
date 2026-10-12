@@ -605,12 +605,13 @@ class KinematicCaps:
 
     def clamp(self, vx: float, vy: float, vz: float) -> tuple[float, float, float]:
         """shield.py's SpeedClamp and ClimbClamp, exactly: scale the horizontal
-        vector onto the speed cap, clip |vz| to the climb cap."""
+        vector onto the speed cap, clip |vz| to the climb cap (with the Shield's
+        1e-9 tolerance, so a float-rounding excess is left alone)."""
         h = math.hypot(vx, vy)
-        if h > self.speed_max_mps:
+        if h > self.speed_max_mps + 1e-9:
             s = self.speed_max_mps / h
             vx, vy = vx * s, vy * s
-        if abs(vz) > self.climb_rate_max_mps:
+        if abs(vz) > self.climb_rate_max_mps + 1e-9:
             vz = math.copysign(self.climb_rate_max_mps, vz)
         return vx, vy, vz
 

@@ -9,6 +9,7 @@ Every test states its story in one line. The key invariant everywhere:
 whatever the Shield emits must itself pass a re-check (P0 escape = 0).
 """
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -850,8 +851,13 @@ def test_the_50_rule_monitor_fits_the_grant_budget():
     used to fail worst (1-8 m outside a fence's margin, flying at it). Also on
     the two slow paths: windows with an edge inside the lookahead, and 48
     moving zones (31 ms per _check before the swept-box skip). Desktop
-    numbers; the margin is >= 10x, so a loaded machine still passes and a
-    return of the per-fence loop does not."""
+    numbers. The margin is not the same on every path: about 10x on the
+    static and edge samples (0.36 ms) but about 2x on the 48 moving zones
+    (2.6 ms), and a loaded desktop measured 6.5 ms there on 2026-10-12. So on
+    a shared CI runner (GITHUB_ACTIONS, where moving read 5.71 ms) the bound
+    is 15 ms: still well under the 31 ms of the per-fence loop it guards
+    against, but not a claim about the grant's budget, which is measured on
+    the target (experiments/bench_shield_50rules.py, and the hil Orin)."""
     import statistics
     import time
     from datetime import datetime
@@ -874,7 +880,8 @@ def test_the_50_rule_monitor_fits_the_grant_budget():
             ms_filter.append((time.perf_counter() - t0) * 1e3)
         med = statistics.median(ms_check)
         p99 = sorted(ms_filter)[98]
-        assert med <= 5.0, f"{label}: _check median {med:.2f} ms > 5 ms at 50 rules"
+        bound = 15.0 if os.environ.get("GITHUB_ACTIONS") == "true" else 5.0
+        assert med <= bound, f"{label}: _check median {med:.2f} ms > {bound:g} ms at 50 rules"
         assert p99 <= 100.0, f"{label}: filter() p99 {p99:.1f} ms > the 100 ms tick"
 
 
@@ -1499,6 +1506,35 @@ def test_rule_status_reports_no_breach_for_a_rule_out_of_its_window():
     row = Shield(_windowed(), now=lambda: datetime(2026, 10, 7, 12, 0)).rule_status(inside)[0]
     assert (row["inside"], row["in_force"], row["breach"]) == (True, True, True), row
 
+
+
+
+def test_a_float_rounding_excess_over_a_cap_is_not_a_repair():
+    """REGRESSION (2026-10-12, CI red on GitHub only). The repair operator
+    compared with the cap strictly while the check allowed 1e-9, so an action
+    another operator had already scaled onto the cap, arriving at
+    4.000000000000001 m/s, was logged as a SpeedClamp "4.00 -> 4.0" on Windows
+    and not on Linux. The clamp now has the check's tolerance: one ULP over is
+    no repair, a real excess still is, on every cap."""
+    s = make_shield()
+    k = next(iter(s._kins))
+    cap = k.speed_max_mps
+    ulp = math.nextafter(cap, math.inf)
+    reps = []
+    out = s._repair_kinematic(Action4D(vx=ulp, vy=0.0, vz_up=0.0), reps)
+    assert reps == [] and out.vx == ulp, reps
+    out = s._repair_kinematic(Action4D(vx=cap + 0.01, vy=0.0, vz_up=0.0), reps)
+    assert [r.operator for r in reps] == ["SpeedClamp"] and abs(out.vx - cap) < 1e-12
+    reps = []
+    climb = math.nextafter(k.climb_rate_max_mps, math.inf)
+    s._repair_kinematic(Action4D(vx=0.0, vy=0.0, vz_up=climb), reps)
+    assert reps == [], reps
+    yaw = math.nextafter(math.radians(k.yaw_rate_max_dps), math.inf)
+    s._repair_kinematic(Action4D(vx=0.0, vy=0.0, vz_up=0.0, yaw_rate=yaw), reps)
+    assert reps == [], reps
+    s._repair_kinematic(Action4D(vx=0.0, vy=0.0, vz_up=0.0,
+                                 yaw_rate=math.radians(k.yaw_rate_max_dps + 1.0)), reps)
+    assert [r.operator for r in reps] == ["YawClamp"], reps
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

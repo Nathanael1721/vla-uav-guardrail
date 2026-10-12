@@ -1,13 +1,14 @@
 {
  "generated_by": "tools/deck/build_progress_oct_data.py",
- "generated": "2026-10-11T20:09:54Z",
- "code_revision": "10451bc60a15-dirty",
+ "generated": "2026-10-12T05:01:34Z",
+ "code_revision": "b907a3a5b9d4-dirty",
  "status_date": "2026-10-12",
  "release": {
   "source": "CHANGELOG.md",
   "status_date": "2026-10-12",
-  "section": "2026-10-12 — the 8 Oct follow's defects fixed in replay, the compiler and harness conform, gRPC over mTLS, the Orin defined for JetPack 6.2",
+  "section": "2026-10-12 (later) — CI green: a clamp that repaired rounding errors, and a timing test fit for shared runners",
   "sections": [
+   "2026-10-12",
    "2026-10-12",
    "2026-10-08",
    "2026-10-07",
@@ -42,7 +43,7 @@
  },
  "wp2": {
   "command": "python -m guardrail.compiler report --policies policies --budget 256 --exact",
-  "code_revision": "10451bc60a15-dirty",
+  "code_revision": "b907a3a5b9d4-dirty",
   "budget_tokens": 256,
   "exact_counter": "openvla-llama2-sp@8f5e2869e180",
   "table_counter": "openvla-table-v1",
@@ -94,7 +95,7 @@
    "poses_per_check": 50,
    "machine": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
    "git": {
-    "rev": "10451bc",
+    "rev": "b907a3a",
     "dirty_guardrail": true
    },
    "command": "python experiments/bench_shield_50rules.py --horizon 5 --dt 0.1 --legacy-cap 40",
@@ -109,101 +110,73 @@
    "clear/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.184,
-     "p99_ms": 0.265
+     "median_ms": 0.194,
+     "p99_ms": 0.323
     },
     "legacy": {
      "n": 40,
-     "median_ms": 194.996,
-     "p99_ms": 241.164
+     "median_ms": 232.363,
+     "p99_ms": 324.613
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.157,
-     "p99_ms": 0.81
+     "median_ms": 0.158,
+     "p99_ms": 0.629
     }
    },
    "near/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.828,
-     "p99_ms": 2.468
+     "median_ms": 0.869,
+     "p99_ms": 3.216
     },
     "legacy": {
      "n": 40,
-     "median_ms": 218.609,
-     "p99_ms": 275.131
+     "median_ms": 224.892,
+     "p99_ms": 262.099
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.156,
-     "p99_ms": 0.581
+     "median_ms": 0.157,
+     "p99_ms": 0.695
     }
    },
    "near/filter": {
     "current": {
      "n": 300,
-     "median_ms": 5.496,
-     "p99_ms": 11.6
+     "median_ms": 5.562,
+     "p99_ms": 14.142
     },
     "legacy": {
      "n": 40,
-     "median_ms": 1087.176,
-     "p99_ms": 1163.76
+     "median_ms": 1132.261,
+     "p99_ms": 1235.251
     },
     "floor": {
      "n": 300,
-     "median_ms": 0.184,
-     "p99_ms": 0.883
+     "median_ms": 0.185,
+     "p99_ms": 0.945
     }
    },
    "grid/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.422,
-     "p99_ms": 3.117
+     "median_ms": 0.392,
+     "p99_ms": 2.349
     },
     "legacy": {
      "n": 40,
-     "median_ms": 216.58,
-     "p99_ms": 269.84
+     "median_ms": 85.429,
+     "p99_ms": 234.051
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.15,
-     "p99_ms": 0.472
+     "median_ms": 0.154,
+     "p99_ms": 0.427
     }
    },
-   "code_sha": "841b0345c6579c58",
-   "measured": "2026-10-11T19:54:24Z",
-   "load_check": [
-    {
-     "why": "an earlier run of the same code, superseded by a run on an equally or less loaded machine",
-     "measured": "2026-10-11T19:46:58Z",
-     "floor_ms": 0.154,
-     "near_check_ms": {
-      "legacy": 221.209,
-      "current": 0.845
-     },
-     "near_filter_ms": {
-      "legacy": 1140.471,
-      "current": 5.43
-     }
-    },
-    {
-     "why": "an earlier run of the same code, superseded by a run on an equally or less loaded machine",
-     "measured": "2026-10-11T19:51:06Z",
-     "floor_ms": 0.152,
-     "near_check_ms": {
-      "legacy": 217.569,
-      "current": 0.835
-     },
-     "near_filter_ms": {
-      "legacy": 1127.829,
-      "current": 5.423
-     }
-    }
-   ]
+   "code_sha": "be3afe292e55977f",
+   "measured": "2026-10-12T05:01:13Z"
   },
   "default_3s": {
    "horizon_s": 3.0,
@@ -217,7 +190,7 @@
    "poses_per_check": 6,
    "machine": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
    "git": {
-    "rev": "10451bc",
+    "rev": "b907a3a",
     "dirty_guardrail": true
    },
    "command": "python experiments/bench_shield_50rules.py --horizon 3 --dt 0.5 --legacy-cap 100",
@@ -232,101 +205,73 @@
    "clear/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.054,
-     "p99_ms": 0.073
+     "median_ms": 0.055,
+     "p99_ms": 0.119
     },
     "legacy": {
      "n": 100,
-     "median_ms": 12.571,
-     "p99_ms": 13.517
+     "median_ms": 12.475,
+     "p99_ms": 13.993
     },
     "floor": {
      "n": 1000,
      "median_ms": 0.015,
-     "p99_ms": 0.029
+     "p99_ms": 0.028
     }
    },
    "near/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.118,
-     "p99_ms": 0.426
+     "median_ms": 0.116,
+     "p99_ms": 0.263
     },
     "legacy": {
      "n": 100,
-     "median_ms": 13.38,
-     "p99_ms": 22.195
+     "median_ms": 13.538,
+     "p99_ms": 18.617
     },
     "floor": {
      "n": 1000,
      "median_ms": 0.015,
-     "p99_ms": 0.027
+     "p99_ms": 0.04
     }
    },
    "near/filter": {
     "current": {
      "n": 300,
-     "median_ms": 0.611,
-     "p99_ms": 1.313
+     "median_ms": 0.619,
+     "p99_ms": 1.551
     },
     "legacy": {
      "n": 100,
-     "median_ms": 66.395,
-     "p99_ms": 85.519
+     "median_ms": 65.705,
+     "p99_ms": 82.848
     },
     "floor": {
      "n": 300,
-     "median_ms": 0.032,
-     "p99_ms": 0.103
+     "median_ms": 0.039,
+     "p99_ms": 0.197
     }
    },
    "grid/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.058,
-     "p99_ms": 0.223
+     "median_ms": 0.059,
+     "p99_ms": 0.205
     },
     "legacy": {
      "n": 100,
-     "median_ms": 13.119,
-     "p99_ms": 19.43
+     "median_ms": 12.827,
+     "p99_ms": 21.032
     },
     "floor": {
      "n": 1000,
      "median_ms": 0.015,
-     "p99_ms": 0.026
+     "p99_ms": 0.023
     }
    },
-   "code_sha": "841b0345c6579c58",
-   "measured": "2026-10-11T19:54:43Z",
-   "load_check": [
-    {
-     "why": "an earlier run of the same code, superseded by a run on an equally or less loaded machine",
-     "measured": "2026-10-11T19:47:38Z",
-     "floor_ms": 0.032,
-     "near_check_ms": {
-      "legacy": 32.457,
-      "current": 0.246
-     },
-     "near_filter_ms": {
-      "legacy": 167.044,
-      "current": 1.331
-     }
-    },
-    {
-     "why": "an earlier run of the same code, superseded by a run on an equally or less loaded machine",
-     "measured": "2026-10-11T19:51:47Z",
-     "floor_ms": 0.033,
-     "near_check_ms": {
-      "legacy": 33.272,
-      "current": 0.262
-     },
-     "near_filter_ms": {
-      "legacy": 166.023,
-      "current": 1.335
-     }
-    }
-   ]
+   "code_sha": "be3afe292e55977f",
+   "measured": "2026-10-12T05:01:31Z"
   }
  },
  "bench_pick_rule": {

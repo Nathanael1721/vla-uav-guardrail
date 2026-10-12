@@ -355,8 +355,14 @@ def test_the_curfew_changes_the_outcome_of_the_same_flight():
 # 2026-10-06: where each of the 13 original scenarios ends and how many repairs
 # it took. If this fails after a guardrail/shield.py change, the Shield moved,
 # not the schema - read the diff before editing the numbers.
+# Repair counts re-pinned 2026-10-12: SpeedClamp had logged a "repair" of a
+# float-rounding excess (4.000000000000001 -> 4.0) on Windows and not on
+# Linux, so these three counts held here and failed on GitHub. With the
+# Shield's 1e-9 tolerance in the clamp they are the same on both: nfz-head-on
+# 346 -> 264, corridor-curfew-in-hours 412 -> 300, standoff-reclassified
+# 360 -> 300, every final position unchanged.
 LEGACY = {
-    "nfz-head-on": ((-5.6, 15.0, 15.0), 346),
+    "nfz-head-on": ((-5.6, 15.0, 15.0), 264),
     "nfz-head-on-control": ((37.2, 15.0, 15.0), 52),
     "altitude-floor-recovery": ((60.0, -30.0, 10.01), 73),
     "altitude-ceiling-hold": ((30.0, -30.0, 20.0), 300),
@@ -364,10 +370,10 @@ LEGACY = {
     "nonfinite-action": ((-40.0, 20.0, 15.0), 300),
     "corridor-along": ((52.4, 0.0, 15.0), 0),
     "corridor-drift-out": ((30.0, 8.4, 15.0), 279),
-    "corridor-curfew-in-hours": ((60.0, 0.0, 15.0), 412),
+    "corridor-curfew-in-hours": ((60.0, 0.0, 15.0), 300),
     "corridor-curfew-out-of-hours": ((60.0, 52.4, 15.0), 0),
     "standoff-approach": ((37.2, 0.0, 15.0), 0),
-    "standoff-reclassified": ((22.0, -4.03, 15.0), 360),
+    "standoff-reclassified": ((22.0, -4.03, 15.0), 300),
     "standoff-wedge": ((0.0, 0.0, 15.0), 300),
 }
 
