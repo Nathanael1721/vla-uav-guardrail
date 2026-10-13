@@ -264,6 +264,22 @@ Against the defects above: (a) is not tested by this run, because the car never 
 
 Found on this run: 43 depth returns were refused and the car ranged by box width at 56-156 m, up to 122 m off the nearest depth-ranged tick (`docs/FINDING-the-escape-that-stayed-inside-the-ring.md`, "The re-fly of 2026-10-12"). Rows now carry `subject_depth` (the depth range and the rule that refused it).
 
+## Flown 2026-10-13: G1 again, and the follow flown close with the Shield on and off
+
+G1 passed again after the fence parameter change (`demo/out/g1_20261013_203404`: 3/3 runs, EKF p95 0.82-0.83 m, frozen-position null 18.96-18.98 m, 0 fence breaches).
+
+The red-car follow with `--want-width 0.5` (the pilot closes until the car fills half the frame), from the signed `follow_car_citylife` bundle:
+
+| | Shield on (`pas_ap_close_on`) | Shield off (`pas_ap_close_off`) |
+|---|---|---|
+| ticks | 532 (FSM sent it home at 58.1 s) | 1100 (120 s) |
+| P0 escape ticks (rate) | 0 (0.0) | 749 (0.661): building clearance 710, stand-off 22, kinematic 22 |
+| FSM | Brake -> Loiter twice (repairs of 2.08 m and 2.14 m over theta 2.0 m), X7 in the second hold (illegal depth grew 2.95 m in 2.07 s), RTL home | not run (Shield off) |
+| hold | BRAKE, 7.99-8.01 m over 42 ticks | - |
+| ArduPilot real-time factor, fence breaches | 0.966, 0 | 0.946, 0 |
+
+This is the first flight evidence of the BRAKE hold and the rail's first Shield-off control. The subject's ground truth (Car_10, read every tick) disagrees with every detector estimate by a median 258-264 m (truth north-east, estimates south-east), so either the truth frame or the detector's target is wrong; no truth-based number from these runs is used until that is resolved.
+
 ## How to run it
 
 Steps 0-3 below were run on 2026-10-08 (see "Measured 2026-10-08"). The `dev` and `hil` paths after them have not been run.

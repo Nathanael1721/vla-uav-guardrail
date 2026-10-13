@@ -1,13 +1,14 @@
 {
  "generated_by": "tools/deck/build_progress_oct_data.py",
- "generated": "2026-10-13T12:23:35Z",
- "code_revision": "4418ae03dad5-dirty",
+ "generated": "2026-10-13T13:00:15Z",
+ "code_revision": "d2054f433b1a-dirty",
  "status_date": "2026-10-13",
  "release": {
   "source": "CHANGELOG.md",
   "status_date": "2026-10-13",
-  "section": "2026-10-13 — the grant's forecast in the harness, rule clocks and hot-apply on the flying rails, a faster Shield, and the WP4 outputs",
+  "section": "2026-10-13 (later) — G1 holds after the fence change; the perception rail flown close with the Shield on and off",
   "sections": [
+   "2026-10-13",
    "2026-10-13",
    "2026-10-12",
    "2026-10-12",
@@ -44,7 +45,7 @@
  },
  "wp2": {
   "command": "python -m guardrail.compiler report --policies policies --budget 256 --exact",
-  "code_revision": "4418ae03dad5-dirty",
+  "code_revision": "d2054f433b1a-dirty",
   "budget_tokens": 256,
   "exact_counter": "openvla-llama2-sp@8f5e2869e180",
   "table_counter": "openvla-table-v1",
@@ -568,20 +569,20 @@
   "shield_repaired_ticks": 0
  },
  "g1": {
-  "tag": "g1_20261008_223259",
-  "date": "2026-10-08",
+  "tag": "g1_20261013_203404",
+  "date": "2026-10-13",
   "passed": true,
   "runs_ok": 3,
   "runs_expected": 3,
   "ekf_p95_m": [
-   0.8143,
-   0.8194
+   0.8207,
+   0.8266
   ],
-  "landing_error_m_max": 0.18,
+  "landing_error_m_max": 0.09,
   "alt_m": [
    15.0
   ],
-  "source": "demo/out/g1_20261008_223259/g1_verdict.json"
+  "source": "demo/out/g1_20261013_203404/g1_verdict.json"
  },
  "chart": {
   "path": "docs/share/2026-10-ITRI/_build/nfz2_track.png",

@@ -3,7 +3,7 @@
  "as_of": "2026-10-13",
  "tracker_text_from": "tracker",
  "sources": {
-  "CHANGELOG.md": "6040d7adf467",
+  "CHANGELOG.md": "365f1923d8ff",
   "docs/progress/_src/site.json": "de76edd9a7a9",
   "docs/progress/_src/tracker_extract.json": "15ff9b2e7e0a"
  },
@@ -60,6 +60,7 @@
  "changelog_sections_after_as_of": [],
  "changelog_watch": {
   "Unreleased": "0a8abc12843c",
+  "2026-10-13 (later)": "000fbbda38ff",
   "2026-10-13": "c042bcb552ed",
   "2026-10-12": "c3ef378227ea",
   "2026-10-08": "72e6f6f94149",

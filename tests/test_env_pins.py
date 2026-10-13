@@ -627,6 +627,11 @@ def _upstream():
     ap = repo("ardupilot")
     (ap / "version.h").write_bytes(b'#define THISFIRMWARE "ArduCopter V4.5.7-rc1"\n')
     (ap / "waf").write_bytes(FAKE_WAF.encode())
+    # Executable on disk too: on Linux (core.fileMode true) the later
+    # `git add -A` re-reads the file's mode, so the index bit alone was
+    # dropped again and the clone's ./waf was not executable (GitHub CI,
+    # 2026-10-13: "./waf: Permission denied"). Windows ignores the mode.
+    os.chmod(ap / "waf", 0o755)
     _g(ap, "add", "-A")
     _g(ap, "update-index", "--chmod=+x", "waf")
     _g(ap, "commit", "-qm", "release candidate")

@@ -57,6 +57,7 @@ param(
     [ValidateSet("BRAKE", "LOITER")]
     [string]$HoldMode   = "BRAKE",
     [string]$G1Verdict  = "",           # default: the newest demo\out\g1_*\g1_verdict.json
+    [string[]]$NodeArgs = @(),          # -Step node: passed on to perception_node.py as given (e.g. "--want-width","0.5","--shield","off")
     [string]$Orin    = "",              # Jetson Orin address: adds a MAVLink UDP output to it
     [int]$SimWidth   = 960,
     [int]$SimHeight  = 540,
@@ -273,6 +274,7 @@ try {
             $a += Get-PolicyArgs
             $a += @("--hold-mode", $HoldMode)
             if ($ClockStart) { $a += @("--clock-start", $ClockStart) }
+            if ($NodeArgs) { Say "node args: $($NodeArgs -join ' ')"; $a += $NodeArgs }
             if (-not $G1Verdict) {
                 $v = Get-ChildItem (Join-Path $Out "g1_*\g1_verdict.json") -ErrorAction SilentlyContinue |
                      Sort-Object LastWriteTime -Descending | Select-Object -First 1

@@ -16,6 +16,66 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-13 (later) — G1 holds after the fence change; the perception rail flown close with the Shield on and off
+
+Flights on Project AirSim + ArduPilot SITL (pymavlink, none of the grant's
+topologies, not KPI-grade), after the wave-A commit, plus two CI fixes.
+
+#### Flown
+- **Gate G1 passed again** after `citylife-quad.param` changed (FENCE_TYPE 7,
+  AVOID_ENABLE 0; `demo/out/g1_20261013_203404`): 3/3 runs, all four
+  conditions. EKF p95 0.82-0.83 m against the 1.0 m limit (frozen-position
+  null 18.96-18.98 m), climb 14.47 m from rest, landing 0.06-0.09 m from
+  take-off, 0 fence breaches, 0 airborne collisions.
+- **The red-car follow with an aggressive pilot** (`--want-width 0.5`, the
+  pilot closes until the car fills half the frame), 120 s, flying the signed
+  bundle of `follow_car_citylife` (signature verified; the first signed
+  flight on this rail):
+  - Shield on (`demo/out/pas_ap_close_on`): 532 ticks, 0 P0 escape ticks,
+    173 interventions (AltitudeFix 103, ClearanceFix 85, YawClamp 19,
+    StandoffHold 3). The FSM escalated twice to Loiter (a stand-off repair
+    of 2.08 m and a building-clearance repair of 2.14 m, over theta 2.0 m);
+    in the second hold the illegal depth kept growing (2.95 m in 2.07 s,
+    fitted) and X7 sent the aircraft home; RTL reached home at 58.1 s. The
+    hold flew as ArduCopter BRAKE and held 7.99-8.01 m over 42 ticks: the
+    first flight evidence for the BRAKE hold, which had rested on a SITL
+    probe.
+  - Shield off, the same pilot and route (`demo/out/pas_ap_close_off`): 1100
+    ticks, 749 P0 escape ticks (rate 0.661): building clearance 710,
+    stand-off 22, kinematic caps 22. This is the rail's first Shield-off
+    control.
+  - ArduPilot real-time factor 0.966 (on) and 0.946 (off, just under the
+    0.95 band); 0 fence breaches on both; the follow policy declares no
+    keep-out zone, so no GeoFence zone was uploaded.
+
+#### Found
+- **The subject's ground truth and the detector disagree.** The truth reader
+  logged Car_10 (the level's one red car) on every tick, 119-235 m from the
+  aircraft to the north-east, while every estimate the detector produced sat
+  45-164 m to the south-east; the median gap is 258-264 m. Either the truth
+  pose is in another frame than the Shield's, or the detector follows
+  something other than Car_10. Unresolved: no truth-based number from these
+  runs is used.
+
+#### Fixed
+- Two tests added to CI with wave A failed on GitHub only:
+  `tests/test_env_pins.py`'s stand-in `waf` lost its executable bit on Linux
+  (the later `git add -A` re-read the file mode; Windows ignores it), and
+  `tests/test_harnesstruth_bundles.py` needed the gitignored
+  `bundles/fase3-sim-demo-v0.1.1.tar.gz`; it now skips visibly without it.
+  `test_env_pins` was run on Linux (WSL): the eight setup and verify tests
+  that failed there pass; the one left failing is that WSL venv's own numpy
+  2.5.0 against the 2.4.6 pin.
+
+#### Changed
+- `scripts/run_pas_ardupilot.ps1 -NodeArgs` passes extra arguments to the
+  perception node as given.
+
+#### Tests
+- `tests/test_env_pins.py` 37/37 on Windows, 36/37 on Linux (WSL's numpy);
+  `tests/test_harnesstruth_bundles.py` 11/11 here, 10/11 + 1 skip in a clean
+  copy.
+
 ### 2026-10-13 — the grant's forecast in the harness, rule clocks and hot-apply on the flying rails, a faster Shield, and the WP4 outputs
 
 Four packages built in parallel on disjoint files from a re-verified inventory
