@@ -208,6 +208,11 @@ WITHDRAWN = (
     "所有飛行的 P0 違規逃逸率都是 0.00",
     "每次飛行的 P0 違規逃逸率均為 0.00",
     "P0 違規逃逸率在每一次飛行中都是 0",
+    # The 13 Oct Shield-off close approach: 749 counted ticks that flew a
+    # violation of any priority, not P0 escape ticks (withdrawn 2026-10-14).
+    "Shield off: 749 P0 escape ticks of 1100",
+    "the off run's escape ticks numbered 749",
+    "Shield 關閉：1100 個 tick 中有 749 個 P0 逃逸 tick",
 )
 NEUTRAL = (
     "Obstacle clearance is 3 m.", "Risk grading 0.5 / 0.3 / 0.2.", "Shield corrections 0",
@@ -228,6 +233,10 @@ NEUTRAL = (
     "every run's escape rate is 0.0053",
     "所有飛行的逃逸率為 0.0053",
     "Acceptance KPI, target 0. Measured on every run as the share of ticks",
+    # The corrected and the new close-approach counts; 749 about something else.
+    "Shield off: 736 P0 escape ticks of 1099 (rate 0.6697)",
+    "a P0 escape rate of 0.661 with the Shield off",
+    "the clip has 749 frames", "7490 escape-free ticks", "P0 escape 0.0749",
 )
 
 
@@ -679,8 +688,146 @@ def test_every_image_is_reviewed_and_unchanged():
     # The two figures withdrawn from the site stay off it: one repeats wording
     # the project corrected, the other comes from a different run set.
     pages, _ = committed_build()
-    for gone in ("flowchart_system.png", "fig2_simultaneity.png", "hil_nfz_off_on.png"):
+    # The evidence-chain figure of 14 Oct stays off as well: its text says
+    # "KPI-grade" and "dev only by waiver", wording the text scan refuses.
+    for gone in ("flowchart_system.png", "fig2_simultaneity.png", "hil_nfz_off_on.png",
+                 "explainer_arch_evidence", "arch_evidence"):
         assert not any(gone in h for h in pages.values()), f"{gone} is on a page"
+
+
+def test_the_flow_and_work_package_figures_are_shown_and_reviewed():
+    """The figures of the whole system (14 Oct) are on How it works and on the
+    work-package pages, each inside a figure with its caption, and like every
+    image they need a review entry and an existing file."""
+    content, extract = load_committed()
+    pages, _ = committed_build()
+    figs = content.get("flow_figures", {})
+    assert {"end_to_end", "components", "tick", "topologies"} <= set(figs), sorted(figs)
+    for lg in B.LANGS:
+        flow = pages[f"{lg}/flow.html"]
+        for key, f in figs.items():
+            name = Path(f["image"]).name
+            assert f'<figure class="fig"><a class="shot" href="../assets/img/{name}"' in flow, (lg, key)
+        for k in B.WP_KEYS:
+            f = content["wps"][k].get("figure")
+            assert f, f"{k} has no figure"
+            html = pages[f"{lg}/{k.lower()}.html"]
+            assert Path(f["image"]).name in html.split('<figure class="fig">', 1)[1], (lg, k)
+    # Refusals: an unreviewed figure, and a figure whose file is missing.
+    c = copy.deepcopy(content)
+    c["reviewed_images"].pop(figs["end_to_end"]["image"])
+    assert refuses(lambda: B.build(c, extract, names=set()), B.PolicyViolation)
+    c = copy.deepcopy(content)
+    c["flow_figures"]["tick"]["image"] = "docs/progress/assets/img/no_such_figure.png"
+    msg = refuses(lambda: B.build(c, extract, names=set()), B.BuildError)
+    assert msg and "does not exist" in msg
+    # The null: without flow_figures the page still builds, with no figure.
+    c = copy.deepcopy(content)
+    c.pop("flow_figures")
+    for k in B.WP_KEYS:
+        c["wps"][k].pop("figure")
+    used = {f["image"] for f in figs.values()} | {content["wps"][k]["figure"]["image"] for k in B.WP_KEYS}
+    others = {g.get("file") for g in c["gallery"]} | {g.get("poster") for g in c["gallery"]}
+    for rel in used - others:
+        c["reviewed_images"].pop(rel, None)
+    bare, _ = B.build(c, extract, names=set())
+    assert '<figure class="fig">' not in bare["en/flow.html"]
+
+
+# The ArduPilot perception rail's close-approach flights (13 and 14 Oct): the
+# detector's box was on a red traffic signal, not on the car (CHANGELOG
+# 2026-10-14). Content policy 1: a safety score of a run with an open defect
+# is stated only with the defect beside it, and content policy 7: the run
+# names its MAVLink link (pymavlink, none of the grant's topologies). A change
+# entry is read as a whole, so the defect may sit in another of its points.
+_CLOSE_SCORES = re.compile(r"(?<![\d.])(?:736|0\.6697|388|532|0\.661)(?![\d])")
+_DEFECT = {"en": re.compile(r"(?i)traffic signal|not on the car"), "zh": re.compile(r"號誌|沒有對準車|不是車上")}
+
+
+def close_approach_scores_without_their_defect(content):
+    """Where curated text states a close-approach score without the detector
+    defect or the pymavlink label, in either language."""
+    groups: dict[str, dict[str, str]] = {}
+    for path, unit, _src in B.text_units(content):
+        m = re.match(r"\$\.changes\[\d+\]", path)
+        key = m.group(0) if m else path
+        g = groups.setdefault(key, {"en": "", "zh": ""})
+        for lg in B.LANGS:
+            g[lg] += " " + unit[lg]
+    bad = []
+    for key, g in groups.items():
+        if not _CLOSE_SCORES.search(g["en"]):
+            continue
+        for lg in B.LANGS:
+            if not _DEFECT[lg].search(g[lg]) or "pymavlink" not in g[lg]:
+                bad.append(f"{key}.{lg}")
+    return bad
+
+
+def test_close_approach_scores_carry_the_detector_defect():
+    content, _ = load_committed()
+    n = sum(1 for _p, u, _s in B.text_units(content) if _CLOSE_SCORES.search(u["en"]))
+    assert n >= 3, f"only {n} curated sentences state the close-approach scores: the check ran on little"
+    bad = close_approach_scores_without_their_defect(content)
+    assert not bad, f"a close-approach score without the detector defect or the pymavlink label at {bad}"
+    # The null: the score alone is caught, and so is a Chinese text that drops the defect.
+    alone = {"x": {"en": "Shield off: 736 P0 escape ticks of 1099 on pymavlink.",
+                   "zh": "Shield 關閉：1099 個 tick 中有 736 個 P0 逃逸 tick（pymavlink）。"}}
+    assert close_approach_scores_without_their_defect(alone) == ["$.x.en", "$.x.zh"]
+    half = {"x": {"en": "736 P0 escape ticks over pymavlink; the box was on a red traffic signal.",
+                  "zh": "736 個 P0 逃逸 tick（pymavlink）。"}}
+    assert close_approach_scores_without_their_defect(half) == ["$.x.zh"]
+
+
+# The Shield-on zero of those flights counts the commands the Shield sent,
+# judged by a forecast that starts from the command. On the recorded 14 Oct
+# flight the aircraft itself still stood inside a P0 margin on 71 of 517 ticks
+# (docs/DESIGN-projectairsim-ardupilot.md, "Recorded 2026-10-14"); on 13 Oct
+# only under ArduPilot's hold and return. A Shield-on score (388 Shield-flown
+# ticks, the 532-tick flight) is stated only beside where the aircraft stood.
+_SHIELD_ON_SCORES = re.compile(r"(?<![\d.])(?:388|532)(?![\d])")
+_WHERE_IT_STOOD = {"en": re.compile(r"inside a P0 margin"), "zh": re.compile(r"P0 安全邊界之內")}
+
+# The 13 Oct city re-fly's zero: the follow controller never commanded a P0
+# violation (kpi.json p0_violation_ticks 0), so the zero tested nothing.
+_CITY_ZERO = re.compile(r"(?s)^(?=.*escape rate 0\.0(?![\d.]*[1-9]))(?=.*\b0\.991\b)")
+_NOTHING_TESTED = {"en": re.compile(r"never commanded a P0 violation"), "zh": re.compile(r"從未下達違反 P0")}
+
+
+def zeros_without_what_they_hide(content):
+    """Where curated text states a Shield-on close-approach zero without the
+    aircraft's unsafe position, or the city re-fly's zero without saying it
+    tested nothing, in either language."""
+    groups: dict[str, dict[str, str]] = {}
+    for path, unit, _src in B.text_units(content):
+        m = re.match(r"\$\.changes\[\d+\]", path)
+        key = m.group(0) if m else path
+        g = groups.setdefault(key, {"en": "", "zh": ""})
+        for lg in B.LANGS:
+            g[lg] += " " + unit[lg]
+    bad = []
+    for key, g in groups.items():
+        for score, needed in ((_SHIELD_ON_SCORES, _WHERE_IT_STOOD), (_CITY_ZERO, _NOTHING_TESTED)):
+            if score.search(g["en"]):
+                bad += [f"{key}.{lg}" for lg in B.LANGS if not needed[lg].search(g[lg])]
+    return bad
+
+
+def test_shield_on_and_city_zeros_say_what_they_do_not_show():
+    content, _ = load_committed()
+    n_on = sum(1 for _p, u, _s in B.text_units(content) if _SHIELD_ON_SCORES.search(u["en"]))
+    n_city = sum(1 for _p, u, _s in B.text_units(content) if _CITY_ZERO.search(u["en"]))
+    assert n_on >= 3 and n_city >= 2, f"the check ran on little ({n_on} Shield-on, {n_city} city)"
+    bad = zeros_without_what_they_hide(content)
+    assert not bad, f"a zero stated without what it does not show at {bad}"
+    # The nulls: the bare score is caught, and so is a Chinese text that drops the fact.
+    bare = {"x": {"en": "Shield on: 0 P0 escape ticks in the 388 ticks the Shield flew.",
+                  "zh": "Shield 負責飛行的 388 個 tick 中 P0 逃逸 tick 為 0。"}}
+    assert zeros_without_what_they_hide(bare) == ["$.x.en", "$.x.zh"]
+    city = {"x": {"en": "P0 escape rate 0.0, the car within 30 m for 0.991 of the time; "
+                        "the follow controller never commanded a P0 violation.",
+                  "zh": "P0 逃逸率 0.0，0.991 的時間與車保持 30 m 以內。"}}
+    assert zeros_without_what_they_hide(city) == ["$.x.zh"]
 
 
 # --------------------------------------------------- the build end to end

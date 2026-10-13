@@ -223,6 +223,12 @@ textarea { width: 100%; min-height: 110px; font: inherit; padding: 10px; border-
 .ex .yes::before { content: "✓ "; color: var(--done); font-weight: 700; }
 .ex .no::before { content: "⚠ "; color: var(--partial); font-weight: 700; }
 
+/* figures drawn from code: white pictures, kept white in dark mode */
+.fig { display: flex; flex-direction: column; gap: 8px; }
+.fig .media { border-radius: 8px; overflow: hidden; background: #fff; border: 1px solid var(--line); cursor: zoom-in; }
+.fig .media img { width: 100%; display: block; }
+.fig p { margin: 0; }
+
 .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%) translateY(80px); background: var(--ink); color: var(--panel); padding: 9px 16px;
   border-radius: 8px; z-index: 70; transition: transform .2s; font-weight: 600; font-size: .9rem; }
 .toast.show { transform: translateX(-50%); }

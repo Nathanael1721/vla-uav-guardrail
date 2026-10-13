@@ -179,6 +179,14 @@ FORBIDDEN_TEXT = (
      r"逃逸率[^。；.;]{0,10}?(?:每一?次|所有)[^。；.;]{0,12}?飛行[^。；.;]{0,6}?(?:都是|均為|皆為|都為|為|是)\s*"
      r"(?:0(?:\.0+)?|零)(?!\.?\d)",
      "a zero escape rate is scoped to the runs it was measured on"),
+    # Recorded on 13 Oct as the Shield-off close approach's P0 escape ticks;
+    # 749 counted ticks that flew a violation of any priority (the 22 P1
+    # speed-cap ticks included), so it is withdrawn as a P0 figure (CHANGELOG
+    # 2026-10-14). Either order within one clause, in both languages.
+    ("withdrawn",
+     r"(?i)(?<![\d.,])749(?![\d.,]*\d)[^.;。；]{0,40}?(?:P0|escape|逃逸)|"
+     r"(?:P0|escape|逃逸)[^.;。；]{0,40}?(?<![\d.,])749(?![\d.,]*\d)",
+     "749 counted violations of any priority, not P0 escape ticks"),
     ("contract-status", r"(?i)contract(ual)?\s+KPI|KPI-grade|合約\s*KPI", "no KPI status claims"),
     ("internal", r"(?i)(grant|contract)\s+audit|\baudit\s*:|AUDIT-KONTRAK", "audit verdicts are internal"),
     ("internal", r"\b(DRIFT|PARTIAL|MISSING)\b", "audit verdict words"),
@@ -1003,6 +1011,19 @@ class Site:
         return (f'<section class="page-head"><p class="kicker">{esc(kicker)}</p>'
                 f"<h1>{esc(title)}</h1>{lead_html}</section>")
 
+    def figure(self, lang: str, f: dict) -> str:
+        """A reviewed figure with its title and caption; the picture links to
+        the full-size file."""
+        href = self.img_href(f["image"])
+        return (f'<figure class="fig"><a class="shot" href="{href}"><img src="{href}" '
+                f'alt="{esc(f["title"][lang])}" loading="lazy"></a><figcaption><strong>'
+                f'{self.t(f["title"], lang)}</strong> {self.t(f["caption"], lang)}</figcaption></figure>')
+
+    def flow_figure(self, lang: str, key: str) -> str:
+        """site.json "flow_figures"[key] as a figure, or nothing."""
+        f = self.c.get("flow_figures", {}).get(key)
+        return self.figure(lang, f) if f else ""
+
     def roadmap_next(self, wp: str | None = None) -> list[dict]:
         out = []
         for win in self.c["roadmap"]["next"]:
@@ -1189,18 +1210,24 @@ class Site:
             f'<h3>{self.t(t["where"], lang)}</h3><p>{self.t(t["purpose"], lang)}</p>'
             f'<p><span class="pill {esc(t["stage"])}">{esc(self.ui(lang, "stage_" + t["stage"]))}</span></p></div>'
             for t in c["topologies"])
+        e2e = self.flow_figure(lang, "end_to_end")
+        e2e_section = (f'<section class="panel">\n<h2>{esc(self.ui(lang, "h_e2e"))}</h2>\n'
+                       f'<p>{inline(self.ui(lang, "e2e_lead"))}</p>\n{e2e}\n</section>' if e2e else "")
         body = f"""
 {self.page_head(lang, self.ui(lang, "kicker_flow"), self.ui(lang, "nav_flow"), inline(self.ui(lang, "flow_lead")))}
+{e2e_section}
 <section class="panel">
 <h2>{esc(self.ui(lang, "h_arch"))}</h2>
 <p>{inline(self.ui(lang, "arch_lead"))}</p>
 <div class="scroll-x">{self.architecture_svg(lang)}</div>
 <ol class="legend">{legend}</ol>
+{self.flow_figure(lang, "components")}
 </section>
 <section class="panel">
 <h2>{esc(self.ui(lang, "h_tick"))}</h2>
 <p>{inline(self.ui(lang, "tick_lead"))}</p>
 <ol class="steps">{steps}</ol>
+{self.flow_figure(lang, "tick")}
 </section>
 <section>
 <h2>{esc(self.ui(lang, "h_pipeline"))}</h2>
@@ -1219,6 +1246,7 @@ class Site:
 <h2>{esc(self.ui(lang, "h_topo"))}</h2>
 <p>{inline(self.ui(lang, "topo_lead"))}</p>
 <div class="grid g3">{topo}</div>
+{self.flow_figure(lang, "topologies")}
 </section>
 """
         return self.layout(lang, "flow", self.ui(lang, "nav_flow"), body)
@@ -1250,6 +1278,8 @@ class Site:
         i = WP_KEYS.index(key)
         prev_l = (f'<a href="{self.wp_page(WP_KEYS[i - 1])}">← {WP_KEYS[i - 1]}</a>' if i > 0 else "<span></span>")
         next_l = (f'<a href="{self.wp_page(WP_KEYS[i + 1])}">{WP_KEYS[i + 1]} →</a>' if i < 3 else "<span></span>")
+        fig = (f'<section class="panel">\n<h2>{esc(self.ui(lang, "h_wp_figure"))}</h2>\n'
+               f'{self.figure(lang, cw["figure"])}\n</section>' if cw.get("figure") else "")
         body = f"""
 {self.page_head(lang, f"{key} · {self.ui(lang, 'kicker_wp')}", wp[lang]["name"], inline(wp[lang]["plain"]))}
 <section class="panel">
@@ -1257,6 +1287,7 @@ class Site:
 <blockquote>“{inline(wp["grant_quote"])}”<cite>{esc(self.ui(lang, "grant_page", page=wp["grant_page"]))}</cite></blockquote>
 <p class="files">{esc(self.ui(lang, "main_files"))}{esc(self.ui(lang, "colon"))}{files}</p>
 </section>
+{fig}
 <section>
 <h2>{esc(self.ui(lang, "h_built"))}</h2>
 <ul class="built">{done}</ul>

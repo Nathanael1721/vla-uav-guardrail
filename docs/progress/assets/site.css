@@ -145,6 +145,11 @@ ul.built li { background: var(--panel); border: 1px solid var(--line); border-le
 ul.built li p { margin-bottom: .4em; }
 .shot { display: block; margin: -4px -4px 10px; border-radius: 8px; overflow: hidden; background: var(--bg); }
 .shot img { display: block; width: 100%; }
+/* a figure drawn on white: keep it on white in dark mode too */
+.fig { margin: 14px 0 0; }
+.fig .shot { margin: 0 0 8px; background: #fff; border: 1px solid var(--line); }
+.fig figcaption { color: var(--muted); font-size: .9rem; }
+.fig figcaption strong { color: var(--ink); }
 ul.next-list { list-style: none; padding: 0; }
 ul.next-list li { padding: 7px 0; border-bottom: 1px solid var(--line); }
 ul.next-list li:last-child { border-bottom: 0; }

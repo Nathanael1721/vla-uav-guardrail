@@ -25,6 +25,10 @@
 <blockquote>“Inject constraints — summarised, compressed, and risk-graded — into the VLA / planner input”<cite>Grant, Prefix Compiler page</cite></blockquote>
 <p class="files">Main files: <code>guardrail/compiler.py</code> <code>guardrail/csp.py</code> <code>guardrail/paraphraser.py</code> <code>demo/real_vla_demo.py</code></p>
 </section>
+<section class="panel">
+<h2>In one picture</h2>
+<figure class="fig"><a class="shot" href="../assets/img/arch_components.png"><img src="../assets/img/arch_components.png" alt="The components and their files." loading="lazy"></a><figcaption><strong>The components and their files.</strong> WP2, second from the left, turns the compiled zones into the rule summary (CSP) that goes in front of the VLA&#x27;s prompt; the VLA&#x27;s raw action then goes to the Shield.</figcaption></figure>
+</section>
 <section>
 <h2>Built</h2>
 <ul class="built"><li><h3>A typed Constraint Summary Pack</h3><p>The compiler turns the policy into a Constraint Summary Pack with the 14 fields the grant locks, described by a JSON Schema.</p><p class="files"><code>guardrail/csp.py</code> <code>guardrail/csp.schema.json</code></p></li><li><h3>Filtering, risk grading and a token budget</h3><p>Rules are filtered by mission area and time, graded by risk (0.5 severity + 0.3 proximity + 0.2 time-criticality) and fitted into a configurable budget of 256 tokens. P0 rules are always kept; if they alone exceed the budget, the compiler raises <code>CSPBudgetExceeded</code> instead of cutting silently.</p><p class="files"><code>guardrail/csp.py</code></p></li><li><h3>Readable rule sentences</h3><p>Each kept rule becomes a sentence from a Jinja2 template, with the reason it was kept. A time-windowed rule carries its window, and drops out of the pack outside it. The moving no-fly zone, the time-window switch, the corridor swap and the circle fence have their own templates, so a policy file with a switch or a swap loads for flight with its rule summary.</p><p class="files"><code>guardrail/templates/</code></p></li><li><h3>A cost map</h3><p>The compiler can also draw a policy as a cost map in the grant&#x27;s conventions, where a hard no-fly zone costs infinity, a preferred corridor 0 and the area outside it 50, and write it beside the rule summary. On 24 project policies, 0 points that the Shield forbids were priced cheaper than the grant&#x27;s conventions allow.</p><p class="files"><code>guardrail/compiler.py</code> <code>docs/DESIGN-cost-map-adapter.md</code></p></li><li><h3>The pack reaches OpenVLA&#x27;s prompt</h3><p>With <code>--csp on</code>, the real-VLA demo places the pack before OpenVLA&#x27;s instruction and logs, for every inference, the exact prompt, its token count, and the pack and policy hashes. A prompt over budget is refused before the model loads.</p><p class="files"><code>demo/real_vla_demo.py</code></p></li><li><h3>A paraphraser</h3><p>112 free-form paraphrases (14 sets × 8) of task instructions and rule summaries for the VLA&#x27;s prompt, generated once and stored with the prompt that produced them, a seeded template fallback, and a validator that compares each paraphrase&#x27;s mission slots with the original.</p><p class="files"><code>guardrail/paraphraser.py</code> <code>experiments/paraphrases/</code></p></li></ul>
@@ -42,7 +46,7 @@
 
 </main>
 <footer>
-<p>As of 13 Oct 2026. Built from the project repository by <code>tools/build_public_site.py</code>.</p>
+<p>As of 14 Oct 2026. Built from the project repository by <code>tools/build_public_site.py</code>.</p>
 <p class="muted">ITRI ICL subcontract (collaborative research) · Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs · PI: Prof. Kuan-Ting Lai, NTUT AIoT Lab</p>
 </footer>
 </body>

@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="780" viewBox="0 0 1600 780">
+<defs><marker id="ah" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0,0.5 L12,6 L0,11.5 z" fill="#56626C"/></marker></defs>
+<rect width="1600" height="780" fill="#FFFFFF"/>
+<text x="30" y="40" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="34" font-weight="700" fill="#1A1A1A" text-anchor="start">dev</text>
+<text x="105" y="38" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">one desktop</text>
+<rect x="26" y="54" width="494" height="38" rx="19" fill="#EAF6F8" stroke="#1A7484" stroke-width="2"/>
+<text x="273" y="80" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#1A7484" text-anchor="middle" letter-spacing="1.5">FLOWN TODAY AS TWO RAILS</text>
+<text x="557" y="40" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="34" font-weight="700" fill="#1A1A1A" text-anchor="start">hil</text>
+<text x="632" y="38" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">desktop + Jetson Orin</text>
+<rect x="553" y="54" width="494" height="38" rx="19" fill="#FFFFFF" stroke="#249DB2" stroke-width="2" stroke-dasharray="8,6"/>
+<text x="800" y="80" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#1A7484" text-anchor="middle" letter-spacing="1.5">KPI CONFIG · DEFINED, NOT RUN</text>
+<text x="1084" y="40" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="34" font-weight="700" fill="#1A1A1A" text-anchor="start">flight</text>
+<text x="1216" y="38" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">Orin on the drone</text>
+<rect x="1080" y="54" width="494" height="38" rx="19" fill="#FFFFFF" stroke="#9AA3AD" stroke-width="2" stroke-dasharray="8,6"/>
+<text x="1327" y="80" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#3F4A54" text-anchor="middle" letter-spacing="1.5">PLANNED · NO AIRFRAME YET</text>
+<rect x="26" y="104" width="494" height="514" rx="16" fill="#EAF6F8" stroke="#1A7484" stroke-width="2.2"/>
+<text x="44" y="136" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#1A1A1A" text-anchor="start">Desktop (Windows + WSL 2)</text>
+<rect x="44" y="150" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="273" y="172.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">Project AirSim</text>
+<text x="273" y="200.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">the CityLife city, camera</text>
+<rect x="44" y="216" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="273" y="238.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">ArduPilot SITL</text>
+<text x="273" y="266.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">Copter-4.5.7</text>
+<rect x="44" y="282" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="273" y="304.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">mavlink-router</text>
+<text x="273" y="332.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">fans MAVLink out</text>
+<rect x="44" y="348" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#249DB2" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="273" y="370.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">Mission Planner</text>
+<text x="273" y="398.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">port measured; app not attached</text>
+<rect x="44" y="414" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="273" y="436.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">MAVROS 2</text>
+<text x="273" y="464.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">ROS 2 Jazzy, in WSL</text>
+<rect x="44" y="480" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="273" y="502.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">Safety Shield</text>
+<text x="273" y="530.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">ROS 2 node or perception node</text>
+<rect x="44" y="546" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="273" y="568.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">Pilot</text>
+<text x="273" y="596.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">VLA stub or follow controller</text>
+<rect x="26" y="628" width="494" height="144" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="44" y="650.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="start">Flown as two rails</text>
+<text x="44" y="682.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">• A: SITL + MAVROS 2 + Shield</text>
+<text x="57" y="708.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">node; its manifest says dev</text>
+<text x="44" y="734.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">• B: Project AirSim + SITL over</text>
+<text x="57" y="760.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">pymavlink: no grant topology</text>
+<rect x="553" y="104" width="494" height="316" rx="16" fill="#FFFFFF" stroke="#249DB2" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="571" y="136" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#1A1A1A" text-anchor="start">Desktop</text>
+<rect x="571" y="150" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#249DB2" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="800" y="172.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">Project AirSim</text>
+<text x="800" y="200.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">UDP 9002/9003 with SITL</text>
+<rect x="571" y="216" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#249DB2" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="800" y="238.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">ArduPilot SITL</text>
+<text x="800" y="266.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">Copter-4.5.7</text>
+<rect x="571" y="282" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#249DB2" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="800" y="304.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">mavlink-router</text>
+<text x="800" y="332.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">from SITL on UDP 14550</text>
+<rect x="571" y="348" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#249DB2" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="800" y="370.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">Mission Planner</text>
+<text x="800" y="398.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">UDP 14550</text>
+<rect x="553" y="494" width="494" height="250" rx="16" fill="#FFFFFF" stroke="#249DB2" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="571" y="526" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#1A1A1A" text-anchor="start">Jetson Orin (JetPack 6.2)</text>
+<rect x="571" y="540" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#249DB2" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="800" y="562.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">MAVROS 2</text>
+<text x="800" y="590.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">its fcu_url names the desktop</text>
+<rect x="571" y="606" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#249DB2" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="800" y="628.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">Safety Shield node</text>
+<text x="800" y="656.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">the same image as flight</text>
+<rect x="571" y="672" width="458" height="62" rx="12" fill="#FFFFFF" stroke="#249DB2" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="800" y="694.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">VLA</text>
+<text x="800" y="722.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">in its own container</text>
+<path d="M633,420 L633,494" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)" marker-start="url(#ah)"/>
+<text x="649" y="450" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="500" fill="#1A7484" text-anchor="start" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">Ethernet: MAVLink, UDP 14555</text>
+<text x="649" y="476" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="500" fill="#1A7484" text-anchor="start" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">camera frames, TCP 8989/8990</text>
+<rect x="1080" y="104" width="494" height="452" rx="16" fill="#FFFFFF" stroke="#9AA3AD" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="1098" y="136" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#3F4A54" text-anchor="start">Drone</text>
+<text x="1098" y="162" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#4B5563" text-anchor="start">no simulator, no desktop</text>
+<rect x="1098" y="178" width="458" height="248" rx="16" fill="#FFFFFF" stroke="#9AA3AD" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="1116" y="210" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#3F4A54" text-anchor="start">Orin companion computer</text>
+<rect x="1114" y="222" width="426" height="62" rx="12" fill="#FFFFFF" stroke="#9AA3AD" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="1327" y="244.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#3F4A54" text-anchor="middle">MAVROS 2</text>
+<text x="1327" y="272.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#4B5563" text-anchor="middle">serial link to the autopilot</text>
+<rect x="1114" y="288" width="426" height="62" rx="12" fill="#FFFFFF" stroke="#9AA3AD" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="1327" y="310.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#3F4A54" text-anchor="middle">Safety Shield node</text>
+<text x="1327" y="338.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#4B5563" text-anchor="middle">the same image as hil</text>
+<rect x="1114" y="354" width="426" height="62" rx="12" fill="#FFFFFF" stroke="#9AA3AD" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="1327" y="376.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#3F4A54" text-anchor="middle">VLA</text>
+<text x="1327" y="404.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#4B5563" text-anchor="middle">the same image as hil</text>
+<rect x="1098" y="476" width="458" height="64" rx="12" fill="#FFFFFF" stroke="#9AA3AD" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="1327" y="499.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#3F4A54" text-anchor="middle">ArduPilot autopilot</text>
+<text x="1327" y="527.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#4B5563" text-anchor="middle">a real flight controller</text>
+<path d="M1327,426 L1327,476" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)" marker-start="url(#ah)"/>
+<text x="1343" y="459" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="start" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">serial</text>
+<rect x="1080" y="616" width="494" height="64" rx="12" fill="#FFFFFF" stroke="#9AA3AD" stroke-width="2.2" stroke-dasharray="8,6"/>
+<text x="1327" y="639.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#3F4A54" text-anchor="middle">Mission Planner on the ground</text>
+<text x="1327" y="667.41" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#4B5563" text-anchor="middle">over its own telemetry radio</text>
+<path d="M1327,616 L1327,556" fill="none" stroke="#56626C" stroke-width="2.6" stroke-dasharray="9,7" marker-end="url(#ah)" marker-start="url(#ah)"/>
+</svg>

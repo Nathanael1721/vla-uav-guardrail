@@ -346,6 +346,7 @@ RETRACTIONS: dict[str, str] = {
     "brake to loiter seven times": "not a sentence: an event count, recounted from metrics.json",
     "dev topology on one desktop": "not a sentence: a topology label on one run, corrected",
     "published library sweep": "not a sentence: a sweep figure, republished",
+    "749 p0 escape ticks": "not a sentence: a tick count, recounted by priority (kpi.json p0_escapes)",
 }
 
 # The quotation is marked as withdrawn when one of these is near it. Only

@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="784" viewBox="0 0 1600 784">
+<defs><marker id="ah" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0,0.5 L12,6 L0,11.5 z" fill="#56626C"/></marker></defs>
+<rect width="1600" height="784" fill="#FFFFFF"/>
+<text x="40" y="28" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#1A7484" text-anchor="start" letter-spacing="1.5">BEFORE TAKE-OFF</text>
+<text x="1280" y="28" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#1A7484" text-anchor="start" letter-spacing="1.5">ANY TIME IN FLIGHT</text>
+<rect x="330" y="11" width="34" height="24" rx="6" fill="#EAF6F8" stroke="#249DB2" stroke-width="2"/>
+<text x="376" y="30" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">guardrail (ours)</text>
+<rect x="596" y="11" width="34" height="24" rx="6" fill="#12545F" stroke="#12545F" stroke-width="2"/>
+<text x="642" y="30" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">Safety Shield</text>
+<rect x="829" y="11" width="34" height="24" rx="6" fill="#F2F4F6" stroke="#9AA3AD" stroke-width="2"/>
+<text x="875" y="30" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">not ours</text>
+<rect x="1007" y="11" width="34" height="24" rx="6" fill="#FFFFFF" stroke="#1A7484" stroke-width="2"/>
+<text x="1053" y="30" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">evidence</text>
+<rect x="40" y="56" width="280" height="138" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="180" y="96.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">Policy in YAML</text>
+<text x="180" y="129.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">the grant's own form;</text>
+<text x="180" y="156.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">regulation, site and</text>
+<text x="180" y="183.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">mission layers</text>
+<rect x="242" y="40" width="64" height="32" rx="16" fill="#1A7484" stroke="#FFFFFF" stroke-width="2"/>
+<text x="274" y="63.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle">WP1</text>
+<circle cx="44" cy="58" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="44" y="65.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">1</text>
+<rect x="350" y="56" width="280" height="138" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="490" y="96.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">Validated, merged</text>
+<text x="490" y="129.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">Pydantic v2: unknown</text>
+<text x="490" y="156.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">keys refused; no layer</text>
+<text x="490" y="183.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">relaxes a hard rule</text>
+<rect x="552" y="40" width="64" height="32" rx="16" fill="#1A7484" stroke="#FFFFFF" stroke-width="2"/>
+<text x="584" y="63.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle">WP1</text>
+<circle cx="354" cy="58" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="354" y="65.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">2</text>
+<rect x="660" y="56" width="280" height="138" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="800" y="96.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">Signed bundle</text>
+<text x="800" y="129.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">policy_hash: SHA-256</text>
+<text x="800" y="156.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">of the IR; Ed25519</text>
+<text x="800" y="183.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">signature; semver</text>
+<rect x="862" y="40" width="64" height="32" rx="16" fill="#1A7484" stroke="#FFFFFF" stroke-width="2"/>
+<text x="894" y="63.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle">WP1</text>
+<circle cx="664" cy="58" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="664" y="65.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">3</text>
+<rect x="970" y="56" width="280" height="138" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="1110" y="96.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">Mission start</text>
+<text x="1110" y="129.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">the rule clock starts;</text>
+<text x="1110" y="156.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">the CSP is compiled</text>
+<text x="1110" y="183.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">for the VLA's prompt</text>
+<rect x="1172" y="40" width="64" height="32" rx="16" fill="#1A7484" stroke="#FFFFFF" stroke-width="2"/>
+<text x="1204" y="63.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle">WP2</text>
+<circle cx="974" cy="58" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="974" y="65.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">4</text>
+<rect x="1280" y="56" width="280" height="138" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="1420" y="96.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">Hot-apply events</text>
+<text x="1420" y="129.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">dynamic_nfz,</text>
+<text x="1420" y="156.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">time_window_switch,</text>
+<text x="1420" y="183.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">corridor_swap</text>
+<rect x="1482" y="40" width="64" height="32" rx="16" fill="#1A7484" stroke="#FFFFFF" stroke-width="2"/>
+<text x="1514" y="63.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle">WP3</text>
+<path d="M320,125 L350,125" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M630,125 L660,125" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M940,125 L970,125" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<rect x="20" y="236" width="1560" height="344" rx="18" fill="#F6F9FA" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="40" y="260" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#1A7484" text-anchor="start" letter-spacing="1.5">THE LOOP, EVERY 0.1 S (10 HZ)</text>
+<rect x="40" y="284" width="350" height="112" rx="12" fill="#F2F4F6" stroke="#9AA3AD" stroke-width="2.2"/>
+<text x="215" y="324.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">Camera frame + task</text>
+<text x="215" y="357.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">image + instruction,</text>
+<text x="215" y="384.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">with the CSP in the prompt</text>
+<circle cx="44" cy="286" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="44" y="293.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">5</text>
+<rect x="430" y="284" width="350" height="112" rx="12" fill="#F2F4F6" stroke="#9AA3AD" stroke-width="2.2"/>
+<text x="605" y="324.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">VLA: swappable pilot</text>
+<text x="605" y="357.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">a 4-D body-frame action:</text>
+<text x="605" y="384.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">vx, vy, vz, yaw_rate</text>
+<circle cx="434" cy="286" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="434" y="293.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">6</text>
+<rect x="820" y="284" width="350" height="112" rx="12" fill="#12545F" stroke="#12545F" stroke-width="2.2"/>
+<text x="995" y="324.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#FFFFFF" text-anchor="middle">Safety Shield</text>
+<text x="995" y="357.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#DDF0F3" text-anchor="middle">forecast 5 s at 0.1 s, 50 poses;</text>
+<text x="995" y="384.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#DDF0F3" text-anchor="middle">checks rules, repairs</text>
+<rect x="1092" y="268" width="64" height="32" rx="16" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="2"/>
+<text x="1124" y="291.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#12545F" text-anchor="middle">WP3</text>
+<circle cx="824" cy="286" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="824" y="293.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">7</text>
+<rect x="1210" y="284" width="350" height="112" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="1385" y="324.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">Escalation FSM</text>
+<text x="1385" y="357.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">Normal, Brake, Loiter, RTL,</text>
+<text x="1385" y="384.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">Land; Loiter flown as BRAKE</text>
+<rect x="1482" y="268" width="64" height="32" rx="16" fill="#1A7484" stroke="#FFFFFF" stroke-width="2"/>
+<text x="1514" y="291.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle">WP3</text>
+<circle cx="1214" cy="286" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="1214" y="293.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">8</text>
+<rect x="1210" y="456" width="350" height="112" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="1385" y="496.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">MAVLink adapter</text>
+<text x="1385" y="529.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">body frame to local NED;</text>
+<text x="1385" y="556.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">SET_MODE, fence upload</text>
+<rect x="1482" y="440" width="64" height="32" rx="16" fill="#1A7484" stroke="#FFFFFF" stroke-width="2"/>
+<text x="1514" y="463.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle">WP3</text>
+<circle cx="1214" cy="458" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="1214" y="465.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">9</text>
+<rect x="820" y="456" width="350" height="112" rx="12" fill="#F2F4F6" stroke="#9AA3AD" stroke-width="2.2"/>
+<text x="995" y="496.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">ArduPilot</text>
+<text x="995" y="529.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">flies the setpoint; its</text>
+<text x="995" y="556.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">GeoFence is the backstop</text>
+<circle cx="824" cy="458" r="21" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="824" y="465.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">10</text>
+<rect x="430" y="456" width="350" height="112" rx="12" fill="#F2F4F6" stroke="#9AA3AD" stroke-width="2.2"/>
+<text x="605" y="496.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">Drone / simulator</text>
+<text x="605" y="529.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">SITL or Project AirSim</text>
+<text x="605" y="556.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">today; an airframe later</text>
+<circle cx="434" cy="458" r="21" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="434" y="465.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">11</text>
+<polygon points="215,462.0 365.0,512.0 215,562.0 65.0,512.0" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="215" y="520" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">Mission over?</text>
+<path d="M390,340 L430,340" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M780,340 L820,340" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M1170,340 L1210,340" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M1385,396 L1385,456" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="1371" y="430" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="end" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">setpoint + mode</text>
+<path d="M1210,512 L1170,512" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M820,512 L780,512" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M430,512 L365,512" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M995,456 L995,396" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="981" y="430" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="end" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">state: pose, heading</text>
+<path d="M215,462 L215,396" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="229" y="430" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="start" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">no: next tick</text>
+<path d="M1010,194 L1010,284" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="998" y="264" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="end" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">rules + clock</text>
+<path d="M1010,224 L605,224 L605,284" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="800" y="214" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="middle" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">CSP into the prompt</text>
+<path d="M1420,194 L1420,224 L1066,224 L1066,284" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="1408" y="214" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="end" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">new generation</text>
+<text x="290" y="606" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#1A7484" text-anchor="start" letter-spacing="1.5">WHAT EVERY RUN LEAVES BEHIND</text>
+<path d="M215,562 L215,630" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="229" y="600" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="start" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">yes</text>
+<rect x="40" y="630" width="400" height="124" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="240" y="654.89" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">Run folder</text>
+<text x="240" y="687.89" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">flight_log.jsonl: every tick</text>
+<text x="240" y="714.89" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">audit.jsonl: each changed action</text>
+<text x="240" y="741.89" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">manifest.json: the six fields</text>
+<rect x="362" y="614" width="64" height="32" rx="16" fill="#1A7484" stroke="#FFFFFF" stroke-width="2"/>
+<text x="394" y="637.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle">WP4</text>
+<circle cx="44" cy="632" r="21" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="44" y="639.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">12</text>
+<rect x="490" y="630" width="350" height="124" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="665" y="654.89" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">Replay bundle</text>
+<text x="665" y="687.89" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">signed; every file</text>
+<text x="665" y="714.89" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">digested; it re-derives</text>
+<text x="665" y="741.89" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">its own KPIs</text>
+<rect x="762" y="614" width="64" height="32" rx="16" fill="#1A7484" stroke="#FFFFFF" stroke-width="2"/>
+<text x="794" y="637.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle">WP4</text>
+<circle cx="494" cy="632" r="21" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="494" y="639.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">13</text>
+<rect x="890" y="630" width="300" height="124" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="1040" y="654.89" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">KPI report</text>
+<text x="1040" y="687.89" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">n/m where nothing</text>
+<text x="1040" y="714.89" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">ran; a null beside</text>
+<text x="1040" y="741.89" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">each score</text>
+<rect x="1112" y="614" width="64" height="32" rx="16" fill="#1A7484" stroke="#FFFFFF" stroke-width="2"/>
+<text x="1144" y="637.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle">WP4</text>
+<circle cx="894" cy="632" r="21" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="894" y="639.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">14</text>
+<rect x="1240" y="630" width="320" height="124" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="1400" y="668.39" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="middle">Episode exporters</text>
+<text x="1400" y="701.39" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">step and episode</text>
+<text x="1400" y="728.39" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="middle">records, JSONL</text>
+<rect x="1482" y="614" width="64" height="32" rx="16" fill="#1A7484" stroke="#FFFFFF" stroke-width="2"/>
+<text x="1514" y="637.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle">WP4</text>
+<circle cx="1244" cy="632" r="21" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="1244" y="639.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">15</text>
+<path d="M440,692 L490,692" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M840,692 L890,692" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M790,754 L790,770 L1400,770 L1400,754" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+</svg>

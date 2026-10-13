@@ -14,8 +14,11 @@ Pinned:
 - bad requests are refused with JSON errors instead of dropping the connection;
 - videos seek: HTTP Range answers 206 with the right bytes, 416 when
   unsatisfiable;
-- nothing outside the three media folders and the site is reachable, and the
+- nothing outside the media folders and the site is reachable, and the
   working files under data/_* stay hidden however the path is spelled;
+- the recorded runs (demo/out, /media/run/) seek like the other videos, and
+  only media files are served from there: the flight logs, audit records and
+  replay bundles beside them are not;
 - /api/content merges every content file and turns a broken one into a
   load_error entry instead of a 500.
 """
@@ -49,9 +52,14 @@ def _fixture(tmp: Path) -> None:
     (d / "content_overview.json").write_text(json.dumps({"project": {}}), encoding="utf-8")
     (d / "content_flow.json").write_text(json.dumps({"glossary": []}), encoding="utf-8")
     (d / "updates.json").write_text(json.dumps({"schema": 1, "entries": [{"seq": 1}]}), encoding="utf-8")
-    for k in ("img", "video", "share"):
+    for k in ("img", "video", "share", "run"):
         (tmp / k).mkdir()
     (tmp / "video" / "clip.mp4").write_bytes(CLIP)
+    (tmp / "run" / "r1").mkdir()
+    (tmp / "run" / "r1" / "r1_demo.mp4").write_bytes(CLIP)
+    (tmp / "run" / "r1" / "still.JPG").write_bytes(b"\xff\xd8....")
+    (tmp / "run" / "r1" / "flight_log.jsonl").write_text('{"tick": 0}\n', encoding="utf-8")
+    (tmp / "run" / "r1" / "kpi.json").write_text("{}", encoding="utf-8")
     (tmp / "img" / "a.png").write_bytes(b"\x89PNG....")
     (tmp / "secret.txt").write_text("secret", encoding="utf-8")
     (tmp / "VERSION").write_text("0.5.1\n", encoding="utf-8")
@@ -64,7 +72,8 @@ def server():
     try:
         _fixture(tmp)
         serve.HERE, serve.DATA, serve.STATE = tmp, tmp / "data", tmp / "data" / "state.json"
-        serve.MEDIA = {"img": tmp / "img", "video": tmp / "video", "share": tmp / "share"}
+        serve.MEDIA = {"img": tmp / "img", "video": tmp / "video", "share": tmp / "share",
+                       "run": tmp / "run"}
         serve.VERSION_FILE = tmp / "VERSION"
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
         th = threading.Thread(target=httpd.serve_forever, daemon=True)
@@ -209,7 +218,27 @@ def test_the_api_is_never_cached():
             assert h.get("Cache-Control") == "no-store", p
 
 
+def test_a_recorded_run_seeks_like_the_other_videos():
+    with server() as (port, _):
+        s, h, b = req(port, "GET", "/media/run/r1/r1_demo.mp4", headers={"Range": "bytes=100-199"})
+        assert s == 206 and b == CLIP[100:200] and h["Content-Range"] == "bytes 100-199/1000"
+        assert h.get("Content-Type") == "video/mp4"
+        s, _, b = req(port, "GET", "/media/run/r1/still.JPG")
+        assert s == 200 and b.startswith(b"\xff\xd8")
+
+
 # ------------------------------------------------------------------ paths
+def test_only_media_files_are_served_from_the_run_folder():
+    with server() as (port, _):
+        for p in ("/media/run/r1/flight_log.jsonl", "/media/run/r1/kpi.json", "/media/run/r1/",
+                  "/media/run/../secret.txt", "/media/run/r1/%2e%2e/%2e%2e/secret.txt",
+                  "/media/run/r1/missing.mp4"):
+            s, _, b = req(port, "GET", p)
+            assert s == 404 and b"secret" not in b and b"tick" not in b, (p, s)
+        # The other folders keep serving any file in them, as before.
+        assert req(port, "GET", "/media/video/clip.mp4")[0] == 200
+
+
 def test_nothing_outside_the_site_and_media_is_reachable():
     with server() as (port, _):
         for p in ("/media/img/../secret.txt", "/media/img/%2e%2e/secret.txt", "/media/img/..%2fsecret.txt",

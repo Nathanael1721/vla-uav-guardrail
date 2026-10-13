@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="760" viewBox="0 0 1600 760">
+<defs><marker id="ah" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0,0.5 L12,6 L0,11.5 z" fill="#56626C"/></marker></defs>
+<rect width="1600" height="760" fill="#FFFFFF"/>
+<rect x="500" y="8" width="440" height="78" rx="12" fill="#F2F4F6" stroke="#9AA3AD" stroke-width="2.2"/>
+<text x="720" y="37.15" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="24" font-weight="600" fill="#1A1A1A" text-anchor="middle">VLA (swappable pilot)</text>
+<text x="720" y="69.15" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">OpenVLA-7B, stub, follow controller</text>
+<rect x="1200" y="8" width="360" height="78" rx="12" fill="#F2F4F6" stroke="#9AA3AD" stroke-width="2.2"/>
+<text x="1380" y="37.15" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="24" font-weight="600" fill="#1A1A1A" text-anchor="middle">ArduPilot + simulator</text>
+<text x="1380" y="69.15" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="middle">SITL, Project AirSim</text>
+<rect x="40" y="120" width="330" height="398" rx="16" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="58" y="152" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#1A1A1A" text-anchor="start">WP1 · Policy DSL</text>
+<text x="58" y="178" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">rules in, signed bundle out</text>
+<rect x="54" y="192" width="302" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="66" y="217" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">models.py</text>
+<text x="66" y="242" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">rules, the grant's YAML</text>
+<rect x="54" y="256" width="302" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="66" y="281" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">projection.py</text>
+<text x="66" y="306" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">WGS84 to local metres</text>
+<rect x="54" y="320" width="302" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="66" y="345" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">ir.py</text>
+<text x="66" y="370" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">compiled zones, STRtree</text>
+<rect x="54" y="384" width="302" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="66" y="409" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">bundle.py</text>
+<text x="66" y="434" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">SHA-256 + Ed25519</text>
+<rect x="54" y="448" width="302" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="66" y="473" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">geo_to_policy.py</text>
+<text x="66" y="498" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">GeoJSON / KML import</text>
+<rect x="430" y="120" width="322" height="398" rx="16" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="448" y="152" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#1A1A1A" text-anchor="start">WP2 · Prefix Compiler</text>
+<text x="448" y="178" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">rules into the prompt</text>
+<rect x="444" y="192" width="294" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="456" y="217" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">compiler.py</text>
+<text x="456" y="242" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">ranks rules; 256 tokens</text>
+<rect x="444" y="256" width="294" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="456" y="281" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">csp.py</text>
+<text x="456" y="306" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">typed CSP, Pydantic v2</text>
+<rect x="444" y="320" width="294" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="456" y="345" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">paraphraser.py</text>
+<text x="456" y="370" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">stored paraphrases</text>
+<rect x="444" y="384" width="294" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="456" y="409" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">templates/</text>
+<text x="456" y="434" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">a sentence per rule</text>
+<rect x="812" y="120" width="748" height="398" rx="16" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="830" y="152" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#1A1A1A" text-anchor="start">WP3 · Safety Shield</text>
+<text x="830" y="178" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">check, repair, escalate, hand over to ArduPilot</text>
+<rect x="826" y="192" width="352" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="838" y="217" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">shield.py</text>
+<text x="838" y="242" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">forecast, checks, hot-apply</text>
+<rect x="826" y="256" width="352" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="838" y="281" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">repair.py</text>
+<text x="838" y="306" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">repair operator library</text>
+<rect x="826" y="320" width="352" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="838" y="345" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">fsm.py</text>
+<text x="838" y="370" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">escalation state machine</text>
+<rect x="826" y="384" width="352" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="838" y="409" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">rtl_path.py</text>
+<text x="838" y="434" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">is the way home clear?</text>
+<rect x="826" y="448" width="352" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="838" y="473" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">fence_export.py</text>
+<text x="838" y="498" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">zones for the GeoFence</text>
+<rect x="1194" y="192" width="352" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="1206" y="217" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">frames.py</text>
+<text x="1206" y="242" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">body &lt;-&gt; world frame</text>
+<rect x="1194" y="256" width="352" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="1206" y="281" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">audit.py</text>
+<text x="1206" y="306" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">the audit record</text>
+<rect x="1194" y="320" width="352" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="1206" y="345" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">api.py</text>
+<text x="1206" y="370" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">REST hot-apply</text>
+<rect x="1194" y="384" width="352" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="1206" y="409" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">ros2_shield_node.py</text>
+<text x="1206" y="434" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">the ROS 2 Shield node</text>
+<rect x="1194" y="448" width="352" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="1206" y="473" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">mavlink_adapter_node.py</text>
+<text x="1206" y="498" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">body to NED, MAVROS 2</text>
+<rect x="40" y="568" width="1520" height="180" rx="16" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="58" y="600" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#1A1A1A" text-anchor="start">WP4 · Stress Testing</text>
+<text x="310" y="600" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">run, score, package</text>
+<rect x="56" y="614" width="362" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="68" y="639" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">scenario_spec.py</text>
+<text x="68" y="664" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">ScenarioSpec, events</text>
+<rect x="430" y="614" width="362" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="442" y="639" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">sweep_scenarios.py</text>
+<text x="442" y="664" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">the headless harness</text>
+<rect x="804" y="614" width="362" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="816" y="639" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">harness_service.py</text>
+<text x="816" y="664" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">gRPC over mutual TLS</text>
+<rect x="1178" y="614" width="362" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="1190" y="639" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">manifest.py</text>
+<text x="1190" y="664" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">six-field manifest</text>
+<rect x="56" y="678" width="362" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="68" y="703" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">kpi.py</text>
+<text x="68" y="728" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">the KPIs of one flight</text>
+<rect x="430" y="678" width="362" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="442" y="703" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">kpi_report.py</text>
+<text x="442" y="728" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">the KPI report</text>
+<rect x="804" y="678" width="362" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="816" y="703" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">replay.py</text>
+<text x="816" y="728" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">signed replay bundle</text>
+<rect x="1178" y="678" width="362" height="60" rx="8" fill="#FFFFFF" stroke="#E3E8EC" stroke-width="1.5"/>
+<text x="1190" y="703" font-family="Consolas, &apos;Cascadia Mono&apos;, monospace" font-size="22" font-weight="700" fill="#12545F" text-anchor="start">export_episodes.py</text>
+<text x="1190" y="728" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">step + episode records</text>
+<path d="M370,319 L430,319" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="400" y="309" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="middle" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">IR</text>
+<path d="M640,120 L640,86" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="628" y="110" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="end" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">CSP prefix</text>
+<path d="M880,86 L880,120" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="868" y="110" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="end" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">raw 4-D action</text>
+<path d="M1290,120 L1290,86" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="1278" y="110" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="end" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">setpoint, mode, fences</text>
+<path d="M1500,86 L1500,120" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="1488" y="110" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="end" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">telemetry</text>
+<path d="M330,518 L330,532 L900,532 L900,518" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="615" y="556" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="middle" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">rules: the signed bundle</text>
+<path d="M140,518 L140,568" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="152" y="556" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="start" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">bundle, pinned by hash</text>
+<path d="M1010,518 L1010,568" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="1022" y="550" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="start" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">audit + flight logs</text>
+<path d="M1500,568 L1500,518" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="1488" y="550" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="end" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">scenarios, hot-apply</text>
+</svg>

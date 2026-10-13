@@ -954,7 +954,10 @@ constraints:
 
 class TruthCamera(T.FakeCamera):
     """A simulator that knows where the car is: `value` (fixed), a NaN, an
-    error, or 2 m east of the aircraft (the default)."""
+    error, or 2 m east of the aircraft (the default). Asked for the aircraft
+    itself (pn.AIRCRAFT_ACTOR: the truth's frame check), it answers where
+    the link has it; those reads are counted apart (`aircraft_reads`), so
+    `names`, `script` and `sent_at_read` stay the subject's."""
 
     def __init__(self, link, log=None, value=None, raises=None, script=()):
         super().__init__(link, log)
@@ -963,8 +966,12 @@ class TruthCamera(T.FakeCamera):
         self.script = list(script)
         # How many setpoints had gone out when each pose was read.
         self.sent_at_read = []
+        self.aircraft_reads = 0
 
     def object_xy(self, name):
+        if name == getattr(pn, "AIRCRAFT_ACTOR", None):
+            self.aircraft_reads += 1
+            return (self.link.x, self.link.y)
         self.names.append(name)
         self.sent_at_read.append(len(self.link.sent))
         step = self.script.pop(0) if self.script else None

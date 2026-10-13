@@ -10,6 +10,9 @@ Standard library only. Serves:
   /media/img/...     docs/img        (read only)
   /media/video/...   docs/video      (read only, with HTTP Range so videos seek)
   /media/share/...   docs/share      (read only)
+  /media/run/...     demo/out        (read only, videos and images only, with
+                     HTTP Range: the recorded runs, which are too large to
+                     copy into docs/video)
   GET  /api/content  every content file merged into one JSON (cards, pages,
                      the update log and the project VERSION)
   GET  /api/state    the board's saved state (tracker/data/state.json)
@@ -42,7 +45,11 @@ MEDIA = {
     "img": ROOT / "docs" / "img",
     "video": ROOT / "docs" / "video",
     "share": ROOT / "docs" / "share",
+    "run": ROOT / "demo" / "out",
 }
+# demo/out also holds flight logs, audit records and replay bundles; from
+# there only media files are served.
+MEDIA_SUFFIXES = {"run": {".mp4", ".webm", ".png", ".jpg", ".jpeg"}}
 MAX_STATE_BYTES = 5 * 1024 * 1024
 _state_lock = threading.Lock()
 
@@ -172,11 +179,14 @@ class Handler(SimpleHTTPRequestHandler):
 
     # ------------------------------------------------------------ media
     def _media(self, path: str):
-        m = re.match(r"^/media/(img|video|share)/(.+)$", path)
-        if not m:
+        m = re.match(r"^/media/([a-z]+)/(.+)$", path)
+        if not m or m.group(1) not in MEDIA:
             return self.send_error(HTTPStatus.NOT_FOUND)
         f = safe_join(MEDIA[m.group(1)], m.group(2))
         if f is None or not f.is_file():
+            return self.send_error(HTTPStatus.NOT_FOUND)
+        allowed = MEDIA_SUFFIXES.get(m.group(1))
+        if allowed is not None and f.suffix.lower() not in allowed:
             return self.send_error(HTTPStatus.NOT_FOUND)
         size = f.stat().st_size
         ctype = mimetypes.guess_type(f.name)[0] or "application/octet-stream"

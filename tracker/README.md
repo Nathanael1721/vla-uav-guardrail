@@ -12,10 +12,10 @@ The server uses the Python standard library only and listens on 127.0.0.1, so it
 | Page | Content |
 |---|---|
 | Overview | What the project is, days left to the 30 Nov gate, progress by audit verdict and by your board, mental model, work packages, delivery gates, open PI decisions, latest update. |
-| How it works | Clickable diagrams: the city pipeline as built; the grant's architecture (green built, amber partly built, red not built); one Shield tick, ours against the grant's; an annotated policy HUD. |
+| How it works | Clickable diagrams: the city pipeline as built; the grant's architecture (green built, amber partly built, red not built); the five system figures drawn from code on 14 Oct (end-to-end flow, components, topologies, one Shield tick, evidence chain; click to enlarge); one Shield tick, ours against the grant's; an annotated policy HUD. The overview shows the end-to-end figure. |
 | Grant | Each work package as the grant states it, the KPI table, the dev / hil / flight topologies, and the grant timeline with a line for today. |
 | Checklist | 148 cards from the 2026-10-05 grant audit, in five columns: Needs PI decision, To do, In progress, Done, Waived. Drag a card between columns, or open it. An open card shows what exists, what is missing, why it matters, next steps, the grant quote, evidence and examples, and your notes. |
-| Examples | Images and videos, each with what it shows and what it does not show, plus a flight-results table with a note on where each number comes from. |
+| Examples | Images and videos, each with what it shows and what it does not show (the recorded runs of 13-14 Oct first), the system figures, and a flight-results table with a note on where each number comes from. |
 | Glossary | Terms used on the site. |
 | Updates | **Version log:** every update to the project, newest first, with a timeline, what changed (retractions in red), related cards, proof and source. **Board activity:** your card moves and note edits, with times. |
 
@@ -49,4 +49,4 @@ The rules are tested in `tests/test_add_update.py`.
 | `tracker/data/content_overview.json`, `content_flow.json` | Page content. |
 | `tracker/data/updates.json` | The update log. |
 | `tracker/data/state.json` | Your board (columns, notes, history). Personal and gitignored. Back it up with **Export** on the Checklist page. If two tabs are open, the last one to save wins. |
-| `/media/...` | Served read-only from `docs/img`, `docs/video` and `docs/share`. |
+| `/media/...` | Served read-only from `docs/img`, `docs/video` and `docs/share`, and `/media/run/...` from `demo/out` (videos and images only, so the logs beside them stay unserved). Videos seek (HTTP Range). A media key in `tracker/assets/app.js` `MEDIA` is `[folder, file]`, with folder `img`, `video`, `share` or `run`. The recorded runs' full-resolution `_demo.mp4` files are MPEG-4 Part 2, which browsers do not play, so the site links their H.264 `_share` / `_phone` copies and the compare video. |

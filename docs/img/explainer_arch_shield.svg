@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="786" viewBox="0 0 1600 786">
+<defs><marker id="ah" viewBox="0 0 12 12" refX="11" refY="6" markerWidth="12" markerHeight="12" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M0,0.5 L12,6 L0,11.5 z" fill="#56626C"/></marker></defs>
+<rect width="1600" height="786" fill="#FFFFFF"/>
+<text x="40" y="30" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#1A7484" text-anchor="start" letter-spacing="1.5">ONE TICK OF THE SAFETY SHIELD, EVERY 0.1 S</text>
+<rect x="40" y="56" width="490" height="164" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="58" y="98.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="start">Inputs</text>
+<text x="58" y="130.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• vehicle state: pose, heading</text>
+<text x="58" y="156.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• raw action, body to world frame</text>
+<text x="58" y="182.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• the rules in force on the</text>
+<text x="72" y="208.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">tick's clock</text>
+<circle cx="44" cy="58" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="44" y="65.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">1</text>
+<rect x="555" y="56" width="490" height="164" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="573" y="98.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="start">Forecast</text>
+<text x="573" y="130.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• 5 s ahead in 0.1 s steps: 50 poses</text>
+<text x="573" y="156.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• each pose judged by the rules</text>
+<text x="587" y="182.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">in force at its own time</text>
+<circle cx="559" cy="58" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="559" y="65.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">2</text>
+<rect x="1070" y="56" width="490" height="164" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="1088" y="98.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="start">Spatial index</text>
+<text x="1088" y="130.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• STRtree over the zones' margins</text>
+<text x="1088" y="156.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• moving zone: reach bound first,</text>
+<text x="1102" y="182.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">its polygon only where the</text>
+<text x="1102" y="208.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">forecast can meet it</text>
+<circle cx="1074" cy="58" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="1074" y="65.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">3</text>
+<rect x="40" y="260" width="490" height="164" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="58" y="302.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="start">Rule checks</text>
+<text x="58" y="334.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• hard before soft, P0 &gt; P1 &gt; P2</text>
+<text x="58" y="360.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• zones, altitude, speed,</text>
+<text x="72" y="386.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">clearance, stand-off, corridor</text>
+<text x="58" y="412.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• monitor_only: logged, not fixed</text>
+<circle cx="44" cy="262" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="44" y="269.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">4</text>
+<rect x="555" y="260" width="490" height="164" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="573" y="302.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="start">Repair chain</text>
+<text x="573" y="334.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• KinematicClamp, AltitudeClamp,</text>
+<text x="587" y="360.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">then up to 3 passes: Clearance,</text>
+<text x="587" y="386.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">Standoff, Corridor, Lateral</text>
+<text x="573" y="412.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• opt-in: first-feasible, PathRepair</text>
+<circle cx="559" cy="262" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="559" y="269.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">5</text>
+<rect x="1070" y="260" width="490" height="164" rx="12" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="1088" y="302.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="start">Re-check</text>
+<text x="1088" y="334.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• the repaired action is checked</text>
+<text x="1102" y="360.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">again; still illegal: a recovery</text>
+<text x="1088" y="386.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• soft rules given up, lowest first</text>
+<text x="1088" y="412.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• else BRAKE, only where legal</text>
+<circle cx="1074" cy="262" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="1074" y="269.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">6</text>
+<path d="M530,138 L555,138" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M1045,138 L1070,138" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M530,342 L555,342" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M1045,342 L1070,342" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<path d="M1315,220 L1315,232 L285,232 L285,260" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<rect x="40" y="458" width="1070" height="320" rx="16" fill="#EAF6F8" stroke="#249DB2" stroke-width="2.2"/>
+<text x="74" y="490" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="700" fill="#1A1A1A" text-anchor="start">Escalation FSM</text>
+<circle cx="44" cy="460" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="44" y="467.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">7</text>
+<rect x="64" y="544" width="130" height="50" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="129" y="574.28" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">Normal</text>
+<rect x="286" y="544" width="130" height="50" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="351" y="574.28" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">Brake</text>
+<rect x="508" y="544" width="130" height="50" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="573" y="574.28" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#1A1A1A" text-anchor="middle">Loiter</text>
+<rect x="730" y="544" width="130" height="50" rx="12" fill="#12545F" stroke="#12545F" stroke-width="2.2"/>
+<text x="795" y="574.28" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#FFFFFF" text-anchor="middle">RTL</text>
+<rect x="952" y="544" width="130" height="50" rx="12" fill="#12545F" stroke="#12545F" stroke-width="2.2"/>
+<text x="1017" y="574.28" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="600" fill="#FFFFFF" text-anchor="middle">Land</text>
+<path d="M194,578 L286,578" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="240" y="562" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="500" fill="#1A7484" text-anchor="middle" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">G1</text>
+<path d="M416,578 L508,578" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="462" y="562" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="500" fill="#1A7484" text-anchor="middle" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">G2, G3</text>
+<path d="M638,578 L730,578" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="684" y="562" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="500" fill="#1A7484" text-anchor="middle" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">G4, G5</text>
+<path d="M860,578 L952,578" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="906" y="562" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="500" fill="#1A7484" text-anchor="middle" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">G6</text>
+<path d="M326,594 L326,616 L154,616 L154,594" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="278" y="616" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="500" fill="#1A7484" text-anchor="middle" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">G7</text>
+<path d="M572,594 L572,642 L104,642 L104,594" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="500" y="642" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="500" fill="#1A7484" text-anchor="middle" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">G8</text>
+<path d="M382,544 L382,518 L770,518 L770,544" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="573" y="510" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="500" fill="#1A7484" text-anchor="middle" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">X6, X7 (ours)</text>
+<path d="M548,544 L548,518" fill="none" stroke="#56626C" stroke-width="2.6"/>
+<text x="60" y="678" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">G1 a repair within theta: 2.0 m lateral, 0.5 m vertical;  G2 N = 3 onsets in T = 5 s</text>
+<text x="60" y="704" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">G3 a repair over theta;  G4 N new onsets in Loiter;  G5 30 s in Loiter;  G6 RTL fails</text>
+<text x="60" y="730" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">G7, G8 back to Normal after T_recover = 2 s clear;  X6, X7 a position illegal or worse</text>
+<text x="60" y="756" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="400" fill="#3F4A54" text-anchor="start">Loiter is flown as ArduCopter BRAKE: LOITER sinks with no pilot on the throttle</text>
+<rect x="1150" y="458" width="410" height="320" rx="12" fill="#FFFFFF" stroke="#1A7484" stroke-width="2.2"/>
+<text x="1168" y="500.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="25" font-weight="600" fill="#1A1A1A" text-anchor="start">Emitted action + audit</text>
+<text x="1168" y="532.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• the action, back to body frame</text>
+<text x="1168" y="558.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• SET_MODE when the FSM</text>
+<text x="1182" y="584.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">changes state</text>
+<text x="1168" y="610.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">• an audit record: policy_hash,</text>
+<text x="1182" y="636.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">generation, raw and emitted</text>
+<text x="1182" y="662.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">action, every operator tried,</text>
+<text x="1182" y="688.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="400" fill="#3F4A54" text-anchor="start">pass by pass</text>
+<circle cx="1154" cy="460" r="19" fill="#12545F" stroke="#FFFFFF" stroke-width="2.5"/>
+<text x="1154" y="467.5" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="21" font-weight="700" fill="#FFFFFF" text-anchor="middle" class="ordinal">8</text>
+<path d="M345,424 L345,458" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="359" y="452" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="start" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">no violation</text>
+<path d="M1090,424 L1090,458" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+<text x="1076" y="452" font-family="Poppins, &apos;Segoe UI&apos;, Arial, sans-serif" font-size="22" font-weight="500" fill="#1A7484" text-anchor="end" stroke="#FFFFFF" stroke-width="7" stroke-linejoin="round" paint-order="stroke">repaired action</text>
+<path d="M1110,618 L1150,618" fill="none" stroke="#56626C" stroke-width="2.6" marker-end="url(#ah)"/>
+</svg>

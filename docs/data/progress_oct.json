@@ -1,13 +1,14 @@
 {
  "generated_by": "tools/deck/build_progress_oct_data.py",
- "generated": "2026-10-13T13:00:15Z",
- "code_revision": "d2054f433b1a-dirty",
- "status_date": "2026-10-13",
+ "generated": "2026-10-13T21:27:50Z",
+ "code_revision": "5cf7a08e5eee-dirty",
+ "status_date": "2026-10-14",
  "release": {
   "source": "CHANGELOG.md",
-  "status_date": "2026-10-13",
-  "section": "2026-10-13 (later) — G1 holds after the fence change; the perception rail flown close with the Shield on and off",
+  "status_date": "2026-10-14",
+  "section": "2026-10-14 — recorded videos of both rails, the ground-truth question answered, an English explainer pack",
   "sections": [
+   "2026-10-14",
    "2026-10-13",
    "2026-10-13",
    "2026-10-12",
@@ -45,7 +46,7 @@
  },
  "wp2": {
   "command": "python -m guardrail.compiler report --policies policies --budget 256 --exact",
-  "code_revision": "d2054f433b1a-dirty",
+  "code_revision": "5cf7a08e5eee-dirty",
   "budget_tokens": 256,
   "exact_counter": "openvla-llama2-sp@8f5e2869e180",
   "table_counter": "openvla-table-v1",

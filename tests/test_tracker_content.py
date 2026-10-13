@@ -27,7 +27,12 @@ What is pinned, and why each one exists:
   do not resolve;
 - tools/check_claims.py finds no live withdrawn claim in the two page files;
 - every rail and media key the content uses has a UI label in all three
-  languages (tracker/assets/i18n.js) and a file behind it (app.js MEDIA);
+  languages (tracker/assets/i18n.js) and a file behind it (app.js MEDIA; a
+  "run" entry is a recorded run under demo/out, served by /media/run/);
+- the figures drawn from code (content_flow.json "figures") each have a
+  picture, a title and a caption in the three languages, and the recorded
+  videos of 13-14 Oct are on the Examples page with the browser-playable
+  (H.264) copy, not the MPEG-4 Part 2 original;
 - the 8 Oct ArduPilot-flown run is labelled with its own rail, and the
   Examples page carries the Gate G1 frame.
 
@@ -159,12 +164,18 @@ def _ui_blocks():
     return out
 
 
-def _media_table():
-    """{id: (kind, file)} from tracker/assets/app.js MEDIA."""
-    js = (ASSETS / "app.js").read_text(encoding="utf-8")
+# The folders a MEDIA entry can name, as tracker/serve.py serves them.
+MEDIA_ROOTS = {"img": ROOT / "docs" / "img", "video": ROOT / "docs" / "video",
+               "share": ROOT / "docs" / "share", "run": ROOT / "demo" / "out"}
+_MEDIA_ENTRY = re.compile(r'(\w+): \["(img|video|share|run)", "([^"]+)"\]')
+
+
+def _media_table(js=None):
+    """{id: (folder, file)} from tracker/assets/app.js MEDIA."""
+    js = js if js is not None else (ASSETS / "app.js").read_text(encoding="utf-8")
     m = re.search(r"const MEDIA = \{(.*?)\n  \};", js, re.S)
     assert m, "app.js has no MEDIA table"
-    return {k: (kind, f) for k, kind, f in re.findall(r'(\w+): \["(img|video)", "([^"]+)"\]', m.group(1))}
+    return {k: (kind, f) for k, kind, f in _MEDIA_ENTRY.findall(m.group(1))}
 
 
 # ------------------------------------------------------------------ cards
@@ -430,6 +441,7 @@ def test_every_media_key_resolves_to_a_file():
     used = [("example", x["media"]) for x in fl["examples"] if x.get("media")]
     used += [(c["id"], m) for c in _cards(by_file) for m in c.get("media", [])]
     used += [(f"wps.{w['key']}", m) for w in ov["wps"] for m in w.get("media", [])]
+    used += [(f"figure {x.get('key')}", x["media"]) for x in fl.get("figures", [])]
     bad = []
     for who, mid in used:
         if "/" in mid:
@@ -439,9 +451,85 @@ def test_every_media_key_resolves_to_a_file():
         else:
             bad.append(f"{who}: media {mid!r} not in app.js MEDIA")
             continue
-        if not (ROOT / "docs" / kind / f).is_file():
-            bad.append(f"{who}: {mid} -> docs/{kind}/{f} does not exist")
+        if not (MEDIA_ROOTS[kind] / f).is_file():
+            bad.append(f"{who}: {mid} -> {MEDIA_ROOTS[kind].relative_to(ROOT).as_posix()}/{f} does not exist")
     assert not bad, bad
+
+
+def test_the_media_table_reads_run_entries():
+    js = 'const MEDIA = {\n    a: ["img", "x.png"], b: ["run", "t/v.mp4"], c: ["share", "d/e.pdf"],\n  };'
+    assert _media_table(js) == {"a": ("img", "x.png"), "b": ("run", "t/v.mp4"), "c": ("share", "d/e.pdf")}
+
+
+def test_the_figures_and_the_recorded_videos_are_on_the_site():
+    d = _load()
+    if d is None:
+        return _skip("tracker/data/cards is not here (local-only data)")
+    _, _, fl = d
+    table = _media_table()
+    figs = fl.get("figures", [])
+    want = {"explainer_flowchart_end_to_end.png", "explainer_arch_components.png",
+            "explainer_arch_topologies.png", "explainer_arch_shield.png", "explainer_arch_evidence.png"}
+    have = {table[f["media"]][1] for f in figs if f.get("media") in table}
+    assert want <= have, f"figures missing from content_flow.json: {sorted(want - have)}"
+    for f in figs:
+        for L in LANGS:
+            assert all(f["i18n"][L].get(k) for k in ("title", "caption")), (f.get("key"), L)
+    assert sum(1 for f in figs if f.get("overview")) == 1, "exactly one figure goes on the overview"
+    # The recorded runs of 13-14 Oct, each on the Examples page once, with its own rail.
+    runs = {"pas_ap_video_compare_20261014.mp4": "pas_ap",
+            "pas_ap_video_on_20261014_demo_phone.mp4": "pas_ap",
+            "pas_ap_video_off_20261014_demo_phone.mp4": "pas_ap",
+            "citylife_redcar_nfz_20261013_demo_share.mp4": "airsim"}
+    shown = {}
+    for x in fl["examples"]:
+        kind, f = table.get(x.get("media"), (None, ""))
+        if kind == "run":
+            shown.setdefault(Path(f).name, []).append(x.get("rail"))
+    for name, rail in runs.items():
+        assert shown.get(name) == [rail], f"{name}: on the Examples page as {shown.get(name)}, want [{rail!r}]"
+    # The full-resolution recordings are MPEG-4 Part 2, which no browser
+    # plays: only their H.264 copies (_share, _phone) or the compare video.
+    wired = [f for k, f in table.values() if k == "run" and f.endswith("_demo.mp4")]
+    assert not wired, f"MPEG-4 Part 2 originals wired: {wired}"
+
+
+# The recorded 14 Oct close approach's Shield-on zero counts the commands the
+# Shield sent; the aircraft itself still stood inside a P0 margin on 71 of 517
+# ticks (docs/DESIGN-projectairsim-ardupilot.md, "Recorded 2026-10-14"). A text
+# that states that zero (388 Shield-flown ticks, or "0 vs 736") says so too, in
+# each language of the same block.
+_ON_ZERO_14OCT = re.compile(r"(?<![\d.])388(?!\d)|\b0 vs 736\b")
+_IN_MARGIN = {"en": re.compile(r"inside a P0 margin"), "id": re.compile(r"di dalam margin P0"),
+              "zh": re.compile(r"P0 安全邊界之內")}
+
+
+def _zero_without_the_margin(node_list):
+    bad = []
+    for path, node in node_list:
+        texts = {L: " ".join(s for _, s in _strings(node.get(L, ""))) for L in LANGS}
+        if _ON_ZERO_14OCT.search(texts["en"]):
+            bad += [f"{'.'.join(map(str, path))}.{L}" for L in LANGS if not _IN_MARGIN[L].search(texts[L])]
+    return bad
+
+
+def test_the_shield_on_zero_of_14_oct_is_stated_with_where_the_aircraft_stood():
+    d = _load()
+    if d is None:
+        return _skip("tracker/data/cards is not here (local-only data)")
+    by_file, ov, fl = d
+    nodes = [(("cards", c["id"]) + p, n) for c in _cards(by_file) for p, n in _trilingual_nodes(c)]
+    nodes += [(("overview",) + p, n) for p, n in _trilingual_nodes(ov)]
+    nodes += [(("flow",) + p, n) for p, n in _trilingual_nodes(fl)]
+    stating = [p for p, n in nodes if _ON_ZERO_14OCT.search(" ".join(s for _, s in _strings(n.get("en", ""))))]
+    assert len(stating) >= 4, f"only {len(stating)} blocks state the zero: the check ran on little"
+    bad = _zero_without_the_margin(nodes)
+    assert not bad, f"the 14 Oct Shield-on zero without the aircraft's unsafe position at {bad}"
+    # The null: a block that drops the fact in one language is caught.
+    null = [(("x",), {"en": "0 P0 escape ticks in 388 Shield-flown ticks; inside a P0 margin on 71.",
+                      "id": "0 tick P0 escape dari 388 tick.",
+                      "zh": "388 個 tick 中 P0 逃逸 tick 為 0；71 個位於 P0 安全邊界之內。"})]
+    assert _zero_without_the_margin(null) == ["x.id"]
 
 
 def test_the_ardupilot_flown_run_has_its_own_rail_and_g1_is_shown():

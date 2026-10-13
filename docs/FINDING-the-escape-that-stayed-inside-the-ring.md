@@ -9,8 +9,8 @@ over 937 Shield-flown ticks.
 **Status:** fixed in `guardrail/shield.py` (`_check_standoff`,
 `_recover_from_overhead`, `_rescue` / `_deepens`) and
 `demo/pas_ardupilot/perception_node.py` (`depth_implausible`). Every number
-below is an offline replay of the logged ticks; no flight has been flown with
-the fix.
+below is an offline replay of the logged ticks, flown before the fix; the
+flights since are in the last two sections.
 
 ## What it was for
 
@@ -170,12 +170,13 @@ readings).
 The node flew the same 120 s red-car follow with these fixes
 (`demo/out/pas_ap_20261012_033329`, pymavlink, not KPI-grade): 1098 ticks,
 43 Shield interventions, 0 escape ticks, and the FSM never reached Loiter.
-That run does not test this fix. The car was tracked on 129 ticks (269 on
-8 Oct) and never came nearer than 16.5 m, so the 5 m ring was never
-approached and no range-0 placement could happen.
+That run does not test this fix. The detector's estimate was tracked on 129
+ticks (269 on 8 Oct) and never came nearer than 16.5 m, so the 5 m ring was
+never approached and no range-0 placement could happen. That run logged no
+ground truth, so it cannot say the estimate was the car.
 
 It did answer part of the question above. 43 depth returns were refused and
-the car ranged by box width instead, at 56-156 m; on the 31 refused ticks
+the subject ranged by box width instead, at 56-156 m; on the 31 refused ticks
 with a depth-ranged tick within 5 ticks, the two ranges disagree by up to
 122 m (width farther on 22, nearer on 9). "Places nothing inside a ring"
 still holds for these, but the width fallback is not a close second
@@ -183,3 +184,28 @@ estimate. The log did not keep the refused depth or the rule, so whether the
 refusals were right cannot be told; since this run the node logs both
 (`subject_depth` on every row, from `depth_check`). The depth image itself
 arrives quantised to 1 m.
+
+## The close flights of 2026-10-13 and 2026-10-14
+
+Four close-approach flights flew with these fixes and a pilot that closes
+until its box fills half the frame (`demo/out/pas_ap_close_on`,
+`pas_ap_close_off`, `pas_ap_video_on_20261014`, `pas_ap_video_off_20261014`;
+pymavlink, not KPI-grade). Neither Shield-on flight had a P0 escape tick.
+None of the four tests this fix against the car, because the detector was not
+on the car: across the four close flights 0 estimates came within 6 m of it, and
+the 2026-10-14 video shows the box on a red traffic signal (CHANGELOG
+2026-10-14).
+
+No estimate collapsed onto the aircraft. From each `flight_log.jsonl` (the
+logged `subject` position against the aircraft's `x`, `y`), the nearest
+estimate was 16.5 m and 15.3 m from the aircraft on the two Shield-on
+flights and 5.3 m and 8.3 m on the two Shield-off flights; none came within
+1 m.
+
+The last sentence of the first point under "What this does not fix" no
+longer holds; the rest of that point does (the depth is still erratic, and a
+wrong but possible range still reaches the Shield). Since 2026-10-13 the rail
+logs the followed car's simulator pose (`--subject-actor`, for evaluation
+only), and that truth is what showed the detector off the car. The stand-off
+numbers can now be checked against the car; on these flights the subject was
+not the car, so there was nothing to check.

@@ -124,7 +124,7 @@ After take-off the node also reads the GeoFence parameters back from the autopil
 
 **The VLA-to-Shield hop is in-process** on this node. With `--link mavros`, record copies of the raw and filtered actions go on `/pas/raw_action_4d` and `/pas/safe_action_4d`. They are deliberately not on `/vla/action_4d`, the input of `sitl/ros2_shield_node.py`: if that chain were up on the same ROS graph, a second Shield would filter the action and two Shields would command one aircraft.
 
-**Not reused yet.** `follow_vlm.fly()`'s target estimator, identity tiers, re-acquisition, trail following, fence guard and landing-site choice live inside that function. Reusing them needs a refactor of `follow_vlm.py`. Until then the node tracks with the servo law on the detector's box. Its runs carry no tracking score: `frac_within_30m` is `None`, never 0, because no subject ground truth is read.
+**Not reused yet.** `follow_vlm.fly()`'s start gate (it waits until it sees the car), target estimator, identity tiers, re-acquisition, trail following, fence guard and landing-site choice live inside that function. Reusing them needs a refactor of `follow_vlm.py`. Until then the node tracks with the servo law on the detector's box. Since 2026-10-13 the node logs the followed car's simulator pose for evaluation (`--subject-actor`), so its runs carry a tracking score; on every close flight of 2026-10-13 and 2026-10-14 it is 0 (`frac_within_30m` 0.0), because the detector was not on the car: 0 estimates came within 6 m of it, and the 2026-10-14 video shows the box on a red traffic signal (see "Flown 2026-10-13"). Before 2026-10-13 `frac_within_30m` was `None`, because no subject ground truth was read.
 
 ## Topology and KPI grade: what this rail is, and how it moves to the drone
 
@@ -252,7 +252,7 @@ The same follow (red car, 120 s, same policy and seed) flown with the 9-12 Oct f
 | ticks, loop rate | 1101, 9.16 Hz | 1098, 9.14 Hz |
 | detector rate | 3.75 Hz | 4.26 Hz |
 | ticks with the car tracked | 269 | 129 |
-| nearest the car came (logged estimate) | 0.0 m (the range-0 placements) | 16.5 m |
+| nearest the detector's estimate came (logged) | 0.0 m (the range-0 placements) | 16.5 m |
 | Shield interventions | 85 | 43 (yaw caps, building clearance) |
 | P0 escape ticks | 5 | 0 |
 | FSM | 27 edges, 8 Brake to Loiter | 6 edges, Normal to Brake 3 times and back; never Loiter |
@@ -273,12 +273,37 @@ The red-car follow with `--want-width 0.5` (the pilot closes until the car fills
 | | Shield on (`pas_ap_close_on`) | Shield off (`pas_ap_close_off`) |
 |---|---|---|
 | ticks | 532 (FSM sent it home at 58.1 s) | 1100 (120 s) |
-| P0 escape ticks (rate) | 0 (0.0) | 749 (0.661): building clearance 710, stand-off 22, kinematic 22 |
+| P0 escape ticks (rate) | 0 (0.0) | 727 (0.661): building clearance alone 705, stand-off alone 17, both 5. A further 22 ticks broke only the P1 kinematic caps; the 749 first written here counted them too and was retracted on 2026-10-14 |
 | FSM | Brake -> Loiter twice (repairs of 2.08 m and 2.14 m over theta 2.0 m), X7 in the second hold (illegal depth grew 2.95 m in 2.07 s), RTL home | not run (Shield off) |
 | hold | BRAKE, 7.99-8.01 m over 42 ticks | - |
 | ArduPilot real-time factor, fence breaches | 0.966, 0 | 0.946, 0 |
 
-This is the first flight evidence of the BRAKE hold and the rail's first Shield-off control. The subject's ground truth (Car_10, read every tick) disagrees with every detector estimate by a median 258-264 m (truth north-east, estimates south-east), so either the truth frame or the detector's target is wrong; no truth-based number from these runs is used until that is resolved.
+This is the first flight evidence of the BRAKE hold and the rail's first Shield-off control.
+
+**The subject's ground truth was right; the detector was not on the car** (resolved 2026-10-14, CHANGELOG). The truth (Car_10, read every tick) sat a median 258-264 m from every detector estimate, and the question was which of the two was wrong. The rail's Car_10 poses lie on follow_vlm's validated Car_10 track (median 0.52-0.54 m), so the truth frame is right. The recorded Shield-on video of 2026-10-14 shows the detector's box on a red traffic signal; across the four close flights 0 estimates came within 6 m of the car. On the 13 Oct Shield-on flight the car was in the camera's view on 10 of its 149 estimate ticks; on the 14 Oct Shield-on and Shield-off flights, on 4 of 156 and 0 of 132 (`metrics.json`, `subject_truth.view`). The rail starts with the car about 151-152 m away (`subject_range_m` on the first tick of each close flight's `flight_log.jsonl`: 150.8-151.9 m) and has no start gate (follow_vlm waits until it sees the car). Until one is ported, this rail's follow scores stay at 0 and its flights test the Shield, not tracking. The Shield never reads the truth; it is logged for evaluation only.
+
+### Recorded 2026-10-14
+
+The same close approach (`--want-width 0.5`, the signed bundle) flown again with `--save-view` at `5cf7a08e5eee-dirty`, pymavlink, not KPI-grade:
+
+| | Shield on (`pas_ap_video_on_20261014`) | Shield off (`pas_ap_video_off_20261014`) |
+|---|---|---|
+| ticks | 517 (the run ended at 57.6 s, when RTL reached home) | 1099 (120 s) |
+| P0 escape ticks (rate) | 0 in 388 Shield-flown ticks (0.0) | 736 (0.6697): building clearance alone 731, stand-off alone 2, both 3 |
+| FSM | Normal -> Brake, then X7 -> RTL from Brake (the position stayed illegal and its depth grew); no hold flown | not run (Shield off) |
+| ticks inside a P0 margin (unsafe position) | 71: 20 while the Shield flew its corrected command, 51 under RTL | 739 |
+| ArduPilot real-time factor, fence breaches | 0.935 (under the 0.95 band), 0 | 0.954, 0 |
+| frames recorded | 1105 at 19.19 Hz | 2372 at 19.75 Hz |
+
+- **Inside the margin while the Shield flew.** Unlike 2026-10-13, where every unsafe-position tick fell under ArduPilot's BRAKE hold and RTL, 20 of these came while the Shield was still flying its corrected commands in Brake, up to 1.0 m deep. kpi.json still counts 0 P0 escapes, because every emitted command was legal by the forecast.
+- **How.** At 40.7 s the Shield held the stand-off from the detector's target (StandoffHold, edge G1 to Brake); from the next tick ClearanceFix pushed each command away from the building at 0.50-0.86 m/s (horizontal speed of the emitted command). The aircraft was flying at 3.2 m/s and carried 3.3 m on while it slowed.
+- **Why the forecast did not see it.** The forecast is constant-velocity from the commanded action (`guardrail/shield.py` `_predict`; `State` has no velocity), so each push-away read as recovering (2.70 m to 4.64 m on the first) while the aircraft was still stopping. The position stayed illegal and its depth grew, so X7 sent the aircraft home from Brake.
+- **Not fixed:** a forecast that starts from the aircraft's own velocity, beside the hold that stops clear of the margin.
+- **The subject.** The detector boxed a red traffic signal, not the car, and the rail has no start gate, so this pair shows the Shield, not tracking.
+- **The videos** (local, not committed; `demo/out` is gitignored):
+  - `pas_ap_video_on_20261014_demo.mp4` (58 s) and `pas_ap_video_off_20261014_demo.mp4` (120 s) in their run folders: the drone's camera with the policy HUD (the FSM state, or SHIELD OFF on the control arm) beside the chase camera. MPEG-4 Part 2, which browsers do not play.
+  - A `_demo_phone.mp4` H.264 re-encode beside each.
+  - `demo/out/pas_ap_video_compare_20261014.mp4` (120 s, H.264): the two stacked from take-off, with its phone re-encode `pas_ap_video_compare_20261014_phone.mp4` beside it.
 
 ## How to run it
 
@@ -287,9 +312,15 @@ Steps 0-3 below were run on 2026-10-08 (see "Measured 2026-10-08"). The `dev` an
 **Since 2026-10-13** (rail inputs, CHANGELOG):
 - The node flies the signed bundle of its policy from `bundles/` (gitignored; build it with `python tools/build_flight_bundles.py` where the lab key is, and again after any policy edit, since a stale bundle is refused). A YAML policy flies only with `--dev-yaml`; `run_pas_ardupilot.ps1` passes the bundle when it is present and otherwise `--policy <yaml> --dev-yaml`, and says which. The MAVROS commands for dev and hil below need the same: the bundle on that host, or `--dev-yaml`.
 - `--clock-start ISO8601` / `--clock-tz` give the Shield and the CSP a rule clock (wall clock in +08:00 without them, recorded either way); `-ClockStart` on the script.
-- Before arming, the policy's clock-proof zones go up to ArduPilot's GeoFence over the node's own link (`--no-fence-upload` turns it off); `citylife-quad.param` now sets FENCE_TYPE 7 (the polygon bit) and AVOID_ENABLE 0, as `sitl/fence/guardrail_fence.parm` does. G1 has not been re-run since that parameter change.
+- Before arming, the policy's clock-proof zones go up to ArduPilot's GeoFence over the node's own link (`--no-fence-upload` turns it off); `citylife-quad.param` now sets FENCE_TYPE 7 (the polygon bit) and AVOID_ENABLE 0, as `sitl/fence/guardrail_fence.parm` does. G1 passed again after that change (2026-10-13, `demo/out/g1_20261013_203404`).
 - `--subject-actor` (default `auto`, Car_10 for a red car) logs the followed car's simulator pose for evaluation; the Shield still uses the estimate.
 - `--hold-mode LOITER` (SITL) holds the FSM's Loiter as the literal LOITER mode with an RC3 override of 1500; BRAKE stays the default. Over MAVROS this needs `mavros_node -p system_id:=255` (SYSID_MYGCS), which `start_ardupilot.sh --mavros` now sets.
+
+**Since 2026-10-14** (recording, CHANGELOG):
+- `-SaveView` on `-Step node` passes `--save-view` and records the demo video as `demo/follow_vlm.py` does: the drone's camera with the policy HUD (rule panel, the Shield / escalation-FSM banner, minimap) to `demo\out\<tag>\view\fpv`, the chase camera to `view\tps`, and `view\recorder.json` with the rate the recorder measured. The recorder runs off the control loop. The node's own flags are `--record-hz` (the 2026-10-14 pair used 20) and `--record-height` (720).
+- `view\` is a junction to `-OffloadRoot\<tag>\view` on C: (default `C:\Users\natha\vla_drone_offload\demo_out`), because D: is near full; `-OffloadRoot ""` keeps the frames under `demo\out`. The 120 s Shield-off flight of 2026-10-14 wrote 0.71 GB of frames, the 58 s Shield-on flight 0.33 GB (the 260 s city flight of 2026-10-13, 1.5 GB).
+- `python tools\make_demo_video.py --tag <tag> --height 720` turns a recorded run into `<tag>_demo.mp4` at the measured rate; the launcher prints that line when the flight ends.
+- `python tools\make_compare_video.py --a <Shield-on tag> --b <Shield-off tag> --out <file>.mp4` stacks two recorded runs (`--layout side` puts them side by side, `--panel fpv|tps` keeps one view), both from take-off, each half at its own run's measured rate. It refuses an existing output unless `--force`.
 
 ```powershell
 # 0. once: pymavlink in the flight env (pin as in sitl/setup_sitl.sh), and optionally
@@ -319,6 +350,14 @@ Steps 0-3 below were run on 2026-10-08 (see "Measured 2026-10-08"). The `dev` an
 #    projectairsim-ardupilot-pymavlink, not one of the grant's topologies.
 #    The node picks up the newest G1 verdict.
 .\scripts\run_pas_ardupilot.ps1 -Step node -Object "a red car" -Seconds 120
+
+# 4. the close approach recorded on video with the Shield on and off (the pair of
+#    2026-10-14), then the stacked video. Each flight writes demo\out\<tag>\view.
+.\scripts\run_pas_ardupilot.ps1 -Step node -Seconds 120 -SaveView -Tag <on tag> -NodeArgs "--want-width","0.5"
+.\scripts\run_pas_ardupilot.ps1 -Step node -Seconds 120 -SaveView -Tag <off tag> -NodeArgs "--want-width","0.5","--shield","off"
+python tools\make_demo_video.py --tag <on tag> --height 720
+python tools\make_demo_video.py --tag <off tag> --height 720
+python tools\make_compare_video.py --a <on tag> --b <off tag> --out demo\out\<name>_compare.mp4
 ```
 
 `-Step node -Link mavros` is refused before anything starts: the Windows env has no ROS 2. The MAVROS node, which is what the grant's `dev` and `hil` labels need, runs in WSL or on the Orin and attaches to a scene the desktop loaded.
@@ -381,6 +420,6 @@ Settled by the runs of 2026-10-08 and moved to "Measured 2026-10-08": whether th
 - The MAVROS link (including `request_mode`, `time_reference`, `statustext` and `extended_state`) and the ROS 2 camera source were exercised only against stand-ins, never against a live MAVROS.
 - The `dev` path: no WSL environment holds ROS 2 + MAVROS together with `torch`, `transformers` and the `projectairsim` client yet, so the MAVROS node has not been started in WSL either.
 - The Orin path (`hil`): attach mode against a live simulator, the projectairsim client on aarch64, MAVROS's reply path through the router under WSL NAT, and DDS.
-- The KPI-evidence step (`guardrail.replay.kpi_evidence_grade`, which demotes a graded run whose replay bundle lacks a trusted signature) is wired as on the SITL rails but has never been reached. G1 has passed, but the only live run so far used pymavlink, which is offered no grant label, and `build_manifest()` still refuses `dev`/`hil` beside a Project AirSim scene.
-- The escalation FSM on this rail reached Loiter 8 times on the live follow and never RTL or Land, so those two edges are tested with stand-ins only. What Loiter did to the altitude is defect (c) above.
-- A Shield-off control run on this rail, which the P0 escape rate of the follow needs as its null.
+- The KPI-evidence step (`guardrail.replay.kpi_evidence_grade`, which demotes a graded run whose replay bundle lacks a trusted signature) is wired as on the SITL rails but has never been reached. G1 has passed, but every live run so far (2026-10-08 to 2026-10-14) used pymavlink, which is offered no grant label, and `build_manifest()` still refuses `dev`/`hil` beside a Project AirSim scene.
+- Land on this rail. On the live follow of 2026-10-08 the escalation FSM reached Loiter 8 times and never RTL or Land (what Loiter did to the altitude is defect (c) above). RTL has flown since: X7 sent the aircraft home on 2026-10-13 and 2026-10-14. Land is still tested with stand-ins only.
+- Tracking on this rail. The Shield-off control, which the follow's P0 escape rate needed as its null, was flown on 2026-10-13 and 2026-10-14. What no run has shown yet is the detector on the car: it boxed a red traffic signal, and the rail has no start gate (see "Flown 2026-10-13").

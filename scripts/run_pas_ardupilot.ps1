@@ -3,6 +3,7 @@
 #   .\scripts\run_pas_ardupilot.ps1 -Step check          # addresses, firewall, deps, rendered configs
 #   .\scripts\run_pas_ardupilot.ps1 -Step g1             # gate G1: three square-mission runs + verdict
 #   .\scripts\run_pas_ardupilot.ps1 -Step node -Object "a red car" -Seconds 120
+#   .\scripts\run_pas_ardupilot.ps1 -Step node -SaveView # ... and record the demo video
 #   .\scripts\run_pas_ardupilot.ps1 -Step scene          # load the scene only, leave it running
 #   .\scripts\run_pas_ardupilot.ps1 -Step sitl           # SITL + router (+ -Mavros) after -Step scene
 #
@@ -34,6 +35,15 @@
 # LOITER flies the FSM's Loiter as ArduCopter's LOITER with the throttle
 # centred by the node (SITL only; BRAKE is the default).
 #
+# VIDEO: -Step node -SaveView records the demo video as follow_vlm does
+# (perception_node.py --save-view): the first-person frame with the policy HUD
+# (rule panel, the Shield / escalation-FSM banner, minimap) to
+# demo\out\<tag>\view\fpv, the Chase camera to view\tps, and view\recorder.json.
+# view\ is a junction to -OffloadRoot\<tag>\view on C:, as run_citylife_follow.ps1
+# makes it (its CityLife flights wrote 1-2 GB of frames each, more than D: had
+# free at the time; -OffloadRoot "" keeps them under demo\out). The closing lines print the make_demo_video command; tools\make_compare_video.py
+# puts a Shield-on and a Shield-off run (-NodeArgs "--shield","off") in one.
+#
 # WARNING, as in every launcher here: starting the simulator closes any process
 # holding PASBlocks\Blocks.uproject. An open EDITOR is refused, not killed.
 
@@ -61,6 +71,9 @@ param(
     [string]$Orin    = "",              # Jetson Orin address: adds a MAVLink UDP output to it
     [int]$SimWidth   = 960,
     [int]$SimHeight  = 540,
+    [switch]$SaveView,                  # -Step node: record the demo video (--save-view)
+    # Frames go to C: through a junction, as run_citylife_follow.ps1; "" = under demo\out.
+    [string]$OffloadRoot = "C:\Users\natha\vla_drone_offload\demo_out",
     [switch]$Mavros,                    # -Step sitl: also start MAVROS 2 in WSL (dev)
     [switch]$SkipSim,
     [switch]$KeepSim
@@ -180,6 +193,62 @@ function Start-Sim {
     throw "simulator did not open port 8989"
 }
 
+# ---- -SaveView: demo\out\<tag>\view as a junction to the C: offload folder --
+# The same rules as run_citylife_follow.ps1, which has the history behind each.
+function Set-ViewJunction([string]$RunTag) {
+    $viewLink = Join-Path $Out "$RunTag\view"
+    if (-not $OffloadRoot) { Say "frames -> $viewLink (-OffloadRoot `"`": no junction)"; return }
+    $viewDest = Join-Path $OffloadRoot "$RunTag\view"
+    # Get-Item on the link itself, not Test-Path: Test-Path is True for a
+    # junction whose target was deleted, and nothing would recreate it.
+    $view = Get-Item -Force -LiteralPath $viewLink -ErrorAction SilentlyContinue
+    if (-not $view) {
+        New-Item -ItemType Directory -Force (Split-Path $viewLink) | Out-Null
+        New-Item -ItemType Directory -Force $viewDest | Out-Null
+        New-Item -ItemType Junction -Path $viewLink -Target $viewDest | Out-Null
+        Say "frames -> $viewDest (junction)"
+    } elseif ($view.LinkType) {
+        # Windows PowerShell 5.1 returns Target as string[], 7 as a string.
+        $target = @($view.Target)[0]
+        if (-not [IO.Path]::IsPathRooted($target)) { $target = Join-Path (Split-Path $viewLink) $target }
+        if (-not (Test-Path -LiteralPath $target)) {
+            New-Item -ItemType Directory -Force $target | Out-Null
+            Say "frames -> $target (junction; its target was missing, recreated)"
+        } else {
+            Say "frames -> $target (junction)"
+        }
+        $under = [IO.Path]::GetFullPath($OffloadRoot).TrimEnd('\') + '\'
+        if (-not [IO.Path]::GetFullPath($target).StartsWith($under, [StringComparison]::OrdinalIgnoreCase)) {
+            Warn "$viewLink points at $target, outside -OffloadRoot $OffloadRoot. The frames go there."
+        }
+    } else {
+        # A real folder. Only files or links count as content: a run that
+        # failed early leaves the empty view\tps and view\fpv and nothing else.
+        $content = @(Get-ChildItem -Force -Recurse -LiteralPath $viewLink |
+                     Where-Object { -not $_.PSIsContainer -or $_.LinkType })
+        if ($content.Count -eq 0) {
+            Remove-Item -Recurse -Force -LiteralPath $viewLink
+            New-Item -ItemType Directory -Force $viewDest | Out-Null
+            New-Item -ItemType Junction -Path $viewLink -Target $viewDest | Out-Null
+            Say "frames -> $viewDest (junction; replaced an empty view folder)"
+        } else {
+            # Never delete frames here and never send them to D: silently. The
+            # recorder itself clears view\tps and view\fpv of *.jpg when it
+            # starts (demo/recorder.py, _clear), and the warning says so.
+            $free = (Get-PSDrive (Split-Path -Qualifier $viewLink).TrimEnd(':')).Free / 1GB
+            Warn ("$viewLink is a real folder that already holds frames, so this run writes to " +
+                  "$(Split-Path -Qualifier $viewLink) ($('{0:N1}' -f $free) GB free; a flight is 1-2 GB), " +
+                  "not to $viewDest, and its recorder deletes the old tps/fpv frames there when it " +
+                  "starts. To keep them, stop this run (Ctrl+C) and move the folder's contents to " +
+                  "$viewDest, or fly under a new -Tag.")
+        }
+    }
+}
+
+if ($SaveView -and $Step -ne "node") {
+    throw "-SaveView records the perception node's flight; it needs -Step node"
+}
+
 if ($Step -eq "g1-summary") {
     # Summarising a tag nobody named would summarise an empty, fresh folder.
     if (-not $Tag) { throw "-Step g1-summary needs -Tag <the g1_... tag of the runs to summarise>" }
@@ -282,8 +351,23 @@ try {
             }
             if ($G1Verdict) { Say "G1 verdict: $G1Verdict"; $a += @("--g1-verdict", $G1Verdict) }
             else { Warn "no G1 verdict under demo\out\g1_*: this run cannot be KPI-grade (run -Step g1 first)" }
+            if ($SaveView) {
+                Set-ViewJunction $Tag
+                $a += @("--save-view")
+            }
             & $Py @a
             if ($LASTEXITCODE -ne 0) { throw "perception node exited $LASTEXITCODE" }
+            if ($SaveView) {
+                $side = Join-Path $Out "$Tag\view\recorder.json"
+                if (Test-Path -LiteralPath $side) {
+                    Say "frames and recorder.json in demo\out\$Tag\view. Build the video:"
+                } else {
+                    Warn "no demo\out\$Tag\view\recorder.json: make_demo_video falls back to a guessed rate"
+                }
+                Write-Host "    python tools\make_demo_video.py --tag $Tag --height 720"
+                Write-Host "  or, beside a run flown with -NodeArgs `"--shield`",`"off`":"
+                Write-Host "    python tools\make_compare_video.py --a $Tag --b <shield-off tag>"
+            }
         }
         "g1" {
             for ($r = 1; $r -le $Runs; $r++) {

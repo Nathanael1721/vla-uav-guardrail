@@ -39,6 +39,13 @@
     v_before_after: ["video", "progress_0930_before_after.mp4"], v_demo_nfz: ["video", "demo_nfz.mp4"],
     v_retarget: ["video", "retarget_smooth.mp4"], v_demo_follow: ["video", "demo_follow.mp4"],
     v_ped: ["video", "citylife_ped_final.mp4"],
+    fig_e2e: ["img", "explainer_flowchart_end_to_end.png"], fig_components: ["img", "explainer_arch_components.png"],
+    fig_topologies: ["img", "explainer_arch_topologies.png"], fig_shield: ["img", "explainer_arch_shield.png"],
+    fig_evidence: ["img", "explainer_arch_evidence.png"],
+    v_close_compare: ["run", "pas_ap_video_compare_20261014.mp4"],
+    v_close_on: ["run", "pas_ap_video_on_20261014/pas_ap_video_on_20261014_demo_phone.mp4"],
+    v_close_off: ["run", "pas_ap_video_off_20261014/pas_ap_video_off_20261014_demo_phone.mp4"],
+    v_city_nfz_1013: ["run", "citylife_redcar_nfz_20261013/citylife_redcar_nfz_20261013_demo_share.mp4"],
   };
 
   // ------------------------------------------------------------ helpers
@@ -53,10 +60,22 @@
   const list = (a, cls = "") => (a && a.length ? `<ul class="${cls}">${a.map((x) => `<li>${esc(x)}</li>`).join("")}</ul>` : `<p class="muted">${t("empty")}</p>`);
   const pill = (v) => `<span class="pill v-${v}" title="${esc(t("verdict_help_" + v))}">${esc(t("verdict_" + v))}</span>`;
   const pct = (x) => (x == null ? t("empty") : `${(x * 100).toFixed(1)} %`);
+  // A MEDIA entry is [folder, file]: img, video and share are under docs/, run is demo/out (the
+  // recorded runs, served read-only). Whether it shows as a picture or a video follows the file.
+  const isVideo = (f) => /\.(mp4|webm)$/i.test(f);
   function mediaOf(id) {
-    if (id && id.includes("/")) { const kind = id.startsWith("video/") ? "video" : "img"; return { id, kind, src: `/media/${id}` }; }
-    const m = MEDIA[id]; return m ? { id, kind: m[0], src: `/media/${m[0]}/${m[1]}` } : null;
+    if (id && id.includes("/")) { const kind = isVideo(id) ? "video" : "img"; return { id, kind, src: `/media/${id}` }; }
+    const m = MEDIA[id]; return m ? { id, kind: isVideo(m[1]) ? "video" : "img", src: `/media/${m[0]}/${m[1]}` } : null;
   }
+  // Figures drawn from code (content_flow.json "figures"): a picture on white with its caption;
+  // a click opens it full size.
+  function figureCard(f) {
+    const m = mediaOf(f.media); const x = L(f); if (!m) return "";
+    return `<div class="panel fig"><div class="media" data-media="${esc(m.id)}" data-cap="${esc(x.title)}"><img src="${m.src}" alt="${esc(x.title)}" loading="lazy"></div>
+      <div class="row"><h3 style="margin:0">${esc(x.title)}</h3><span class="spacer"></span>${f.date ? `<span class="chip">${esc(f.date)}</span>` : ""}</div>
+      <p class="small">${fmt(x.caption)}</p>${f.source ? `<div class="small muted"><code>${esc(f.source)}</code></div>` : ""}</div>`;
+  }
+  function figures() { const f = S.content.flow || {}; return Array.isArray(f.figures) ? f.figures : []; }
   const fmt = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>");
   const tf = (k, o) => t(k).replace(/\{(\w+)\}/g, (_, x) => (o && o[x] != null ? o[x] : ""));
   const fdate = (d) => { try { return new Date(d + "T00:00:00").toLocaleDateString(LOCALE[S.lang], { day: "numeric", month: "short", year: "numeric" }); } catch (e) { return d; } };
@@ -163,6 +182,8 @@
         </div>
       </section>
 
+      ${figures().filter((f) => f.overview).map((f) => `<h2>${esc(t("fig_overview"))}</h2>${figureCard(f)}`).join("")}
+
       <h2>${esc(t("mental_model"))}</h2>
       <div class="grid g3">${(ov.mental_model || []).map((m) => { const x = L(m); return `
         <div class="panel role">${ICON[m.role_key] || ""}<div>
@@ -243,6 +264,9 @@
           <div class="meta row">${sel.built ? `<span class="chip">${esc(t("built_" + sel.built))}</span>` : ""}${sel.rate ? `<span class="chip">${esc(sel.rate)}</span>` : ""}${sel.file ? `<code>${esc(sel.file)}</code>` : ""}</div>
           <p><b>${esc(sx.short)}</b></p><p>${esc(sx.detail)}</p>` : ""}</div>
       </div>
+
+      ${figures().length ? `<h2>${esc(t("fig_title"))}</h2><p class="small muted">${esc(t("fig_lead"))}</p>
+      <div class="grid g2">${figures().map(figureCard).join("")}</div>` : ""}
 
       <h2>${esc(t("shield_tick"))}</h2>
       <div class="grid g2">
@@ -407,6 +431,9 @@
         <div class="panel ex">${m ? `<div class="media" data-media="${m.id}" data-cap="${esc(x.title)}">${m.kind === "img" ? `<img src="${m.src}" alt="${esc(x.title)}">` : `<video src="${m.src}#t=6" preload="metadata" muted></video><div class="play">▶</div>`}</div>` : ""}
           <div class="row"><h3 style="margin:0">${esc(x.title)}</h3><span class="spacer"></span><span class="chip">${esc(e.date || "")}</span><span class="chip">${esc(t("rail_" + (e.rail || "airsim")))}</span></div>
           <dl><dt>${esc(t("what_you_see"))}</dt><dd>${esc(x.what)}</dd><dt>${esc(t("proves"))}</dt><dd class="yes">${esc(x.proves)}</dd><dt>${esc(t("not_proves"))}</dt><dd class="no">${esc(x.not_proves)}</dd></dl></div>`; }).join("")}</div>
+
+      ${figures().length ? `<h2>${esc(t("fig_title"))}</h2><p class="small muted">${esc(t("fig_lead"))}</p>
+      <div class="grid g2">${figures().map(figureCard).join("")}</div>` : ""}
 
       <h2>${esc(t("results"))}</h2>
       <div class="panel callout warn small">${esc(t("not_contract"))}</div>

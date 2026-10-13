@@ -16,6 +16,80 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-14 — recorded videos of both rails, the ground-truth question answered, an English explainer pack
+
+#### Flown
+- **The usual demo video, re-flown on today's code**
+  (`demo/out/citylife_redcar_nfz_20261013`, simple_flight rail, the CityLife
+  red car with the no-fly zone and the policy indicator): P0 escape 0.0,
+  0.0 s in the zone, 0.991 of the time within 30 m of the car, minimum
+  separation 12.0 m; 5011 frames at 19.28 Hz. Video
+  `citylife_redcar_nfz_20261013_demo.mp4` (260 s).
+- **The ArduPilot rail recorded for the first time**, the close approach
+  with the Shield on and off (Project AirSim + ArduPilot SITL over pymavlink,
+  none of the grant's topologies, not KPI-grade):
+  - Shield on (`demo/out/pas_ap_video_on_20261014`): 517 ticks, 0 P0 escape
+    ticks in 388 Shield-flown ticks; the FSM braked, then sent the aircraft
+    home (RTL); real-time factor 0.935 (under the 0.95 band); 1105 frames
+    at 19.19 Hz.
+  - Shield off (`demo/out/pas_ap_video_off_20261014`): 1099 ticks, 736 P0
+    escape ticks (rate 0.6697), the raw command flown into the
+    building-clearance margin; 2372 frames at 19.75 Hz.
+  - `demo/out/pas_ap_video_compare_20261014.mp4` stacks the two (120 s).
+  - Where the aircraft was, not only what was flown: with the Shield on it
+    was inside a P0 margin (building clearance) on 71 of 517 ticks, 20 of
+    them while the Shield flew (up to 1.0 m deep, no emitted command
+    breaking a rule) and 51 under RTL; with the Shield off, on 739. The
+    Shield's forecast starts from the commanded velocity, not the aircraft's
+    own (`_predict`; `State` carries no velocity), so the aircraft's carry
+    while it slowed from about 3.2 m/s went unseen. Next: a forecast from the
+    aircraft's own velocity and a hold that stops clear of the margin.
+- **The ground-truth question is answered: the truth was right, the detector
+  was not on the car.** The 13 Oct gap between the truth (Car_10) and the
+  detector was not a frame error: the rail's Car_10 poses lie on
+  follow_vlm's validated Car_10 track (median 0.52-0.54 m). The recorded
+  Shield-on video shows the detector's box on a red traffic signal; across
+  the close flights 0 estimates came within 6 m of the car, and Car_10 was
+  in the camera's view on 10 of the 149 estimate ticks. The rail starts with
+  the car 119-152 m away and has no start gate (follow_vlm waits until it
+  sees the car); until one is ported, this rail's follow scores stay at 0
+  and its flights test the Shield, not tracking.
+
+#### Added
+- The perception node records like the usual demos (`--save-view`,
+  `--record-hz`, `--record-height`; `run_pas_ardupilot.ps1 -SaveView`): the
+  drone's camera with the policy indicator (FSM state, Shield-off banner)
+  and the chase camera, off the control loop (loop 9.15 -> 9.12 Hz beside a
+  CPU-bound detector stand-in). `tools/make_compare_video.py` stacks two
+  runs and refuses to overwrite an existing file.
+- A frame check for the subject's ground truth (the aircraft read through
+  the same simulator call as the car). On the CityLife build the aircraft's
+  actor name (UnrealRobot) is not found, so the check reports partial: only
+  the EKF against the simulator's kinematics was measured (median 0.388 m).
+- An English explainer pack (`docs/share/2026-10-14-Explainer/`, local):
+  a 22-slide deck built from `tools/deck/build_explainer_deck.js` on the usual
+  template, an English and an Indonesian cheatsheet, and likely questions
+  with model answers; five figures drawn from code
+  (`tools/deck/build_explainer_figures.py`, `docs/img/explainer_*`): the
+  end-to-end flowchart, the components, the topologies, the Shield per tick
+  and the evidence chain.
+
+#### Changed
+- The perception node's report says what its counters count: "flown-violation
+  ticks" (any priority) beside the P0 escape ticks from kpi.json.
+
+#### Retracted
+- The 749 P0 escape ticks of the 13 Oct Shield-off close approach (13 Oct
+  (later) entry): 749 counted ticks that flew a violation of any priority,
+  the 22 P1 speed-cap ticks included; the P0 escape ticks were 727 (building
+  clearance 705, stand-off 17, both 5), which is what the 0.661 rate was
+  computed from.
+
+#### Tests
+- New: `tests/test_railvideo_{recording,compare,truth_frame}.py`,
+  `tests/test_explainer_{figures,deck}.py`; each failed on a pristine copy of
+  5cf7a08 and passes now.
+
 ### 2026-10-13 (later) — G1 holds after the fence change; the perception rail flown close with the Shield on and off
 
 Flights on Project AirSim + ArduPilot SITL (pymavlink, none of the grant's

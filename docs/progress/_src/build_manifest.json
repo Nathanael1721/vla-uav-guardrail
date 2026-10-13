@@ -1,10 +1,10 @@
 {
  "generator": "tools/build_public_site.py",
- "as_of": "2026-10-13",
+ "as_of": "2026-10-14",
  "tracker_text_from": "tracker",
  "sources": {
-  "CHANGELOG.md": "365f1923d8ff",
-  "docs/progress/_src/site.json": "de76edd9a7a9",
+  "CHANGELOG.md": "0e3d0aa99ed9",
+  "docs/progress/_src/site.json": "e0f7619273c0",
   "docs/progress/_src/tracker_extract.json": "15ff9b2e7e0a"
  },
  "pages": [
@@ -31,9 +31,11 @@
   "zh/wp4.html"
  ],
  "page_count": 21,
- "numbers_checked": 256,
- "images_reviewed": 10,
+ "numbers_checked": 341,
+ "images_reviewed": 17,
  "video_placeholders": [
+  "pas_ap_video_compare_20261014.mp4",
+  "citylife_redcar_nfz_20261013_demo_share.mp4",
   "citylife_redcar_nfz_policy_hud.mp4",
   "citylife_redcar_identity.mp4",
   "progress_0930_before_after.mp4",
@@ -55,11 +57,14 @@
   "2026-10-07",
   "2026-10-08",
   "2026-10-12",
-  "2026-10-13"
+  "2026-10-13",
+  "2026-10-13 (later)",
+  "2026-10-14"
  ],
  "changelog_sections_after_as_of": [],
  "changelog_watch": {
   "Unreleased": "0a8abc12843c",
+  "2026-10-14": "2c41ab32d37d",
   "2026-10-13 (later)": "000fbbda38ff",
   "2026-10-13": "c042bcb552ed",
   "2026-10-12": "c3ef378227ea",

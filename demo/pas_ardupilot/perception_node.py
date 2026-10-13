@@ -83,6 +83,19 @@ RULE CLOCK, MISSION, POLICY, BACKSTOP, TRUTH (2026-10-12, as on the SITL rails)
     keeps the depth / width estimate below. An unread pose is None with the
     reason, never 0; failed reads back off and retry; the follow is scored
     only when TRUTH_MIN_COVERAGE of the ticks were read.
+  * The truth checks its own frame (since 2026-10-14): every 0.5 s the
+    AIRCRAFT is read through the subject's own RPC and projection
+    (World.get_object_poses on AIRCRAFT_ACTOR, scene_to_anchor) and set
+    against the EKF position the Shield flies on, and every 0.5 s between
+    those the EKF against the simulator's kinematics (ekf_vs_sim)
+    (`subject_truth.frame_check`). Over TRUTH_FRAME_MAX_M the truth scores
+    nothing and leaves the rows' scoring fields; the cause says whether the
+    truth's frame or the EKF was off. Without the first check (the aircraft
+    not found) the frame is only PARTLY checked and never "agrees".
+    `subject_truth.view` says, on the ticks with an estimate, whether the
+    subject was even in the camera's field of view. pas_ap_close_on/off
+    (2026-10-13) needed both: the subject was behind the aircraft on most
+    estimate ticks, the detector on something else (truth_view).
   * `--hold-mode LOITER` on SITL centres the throttle (RC3 override 1500)
     every tick the FSM holds and the autopilot is in LOITER, so ArduCopter's
     LOITER holds its altitude with no pilot - the grant's literal mode. A
@@ -111,6 +124,21 @@ attach (the hil node on the Jetson Orin) never loads: the desktop has already
 run `-Step scene` and `-Step sitl`, and the node only subscribes. --scene-only
 loads the scene and exits, which is what `-Step scene` runs.
 
+RECORDING (--save-view, 2026-10-14). The usual demo video, as follow_vlm
+records it: demo/recorder.FrameRecorder on its own thread writes the
+first-person FrontCamera frame with the policy HUD (follow_vlm.annotate ->
+demo/policy_hud.py: rule panel, banner, minimap) to <out>/view/fpv and the
+robot's Chase camera to view/tps at --record-hz, and view/recorder.json with
+the rate it measured, which tools/make_demo_video.py --tag <tag> takes as the
+video's fps. The banner adds what only this rail has (rail_banner): the
+escalation FSM's state (Brake, Loiter(<the ArduCopter hold mode>), RTL,
+Land), the autopilot taking the aircraft, and SHIELD OFF on the control arm,
+whose panel shows the rules broken and flown (hud_decision), never a Shield
+correction. The loop pays for the indicator's rule_status and one handover
+per tick, after the setpoint is sent; metrics.json `recording.hud_ms` and
+`tick_work_ms` measure it. tools/make_compare_video.py puts two recorded runs
+(Shield on / off) in one video.
+
 RUN
     # check everything that can be checked without a simulator
     python demo/pas_ardupilot/perception_node.py --dry-run --network nat \
@@ -119,6 +147,7 @@ RUN
     # a YAML policy, a scripted rule clock, the grant's literal LOITER:
     #   ... --policy policies/follow_car_citylife_nfz.yaml --dev-yaml \
     #       --clock-start 2026-10-12T17:29:50 --hold-mode LOITER
+    # the demo video: ... --save-view   (scripts/run_pas_ardupilot.ps1 -SaveView)
 """
 from __future__ import annotations
 
@@ -134,6 +163,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -156,8 +186,8 @@ from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E4
                            THETA_HORIZON_S, EscalationFSM, FSMConfig,
                            FSMState, tick_input_from_decision)
 from guardrail.kpi import compute_from_dir, null_hover_mission        # noqa: E402
-from guardrail.manifest import (DEV_YAML_FLAG, NO_VLA, TOPOLOGY_DEV,  # noqa: E402
-                                TOPOLOGY_HIL, build_manifest,
+from guardrail.manifest import (DEV_YAML_FLAG, MAX_HEADING_ERR_DEG,   # noqa: E402
+                                NO_VLA, TOPOLOGY_DEV, TOPOLOGY_HIL, build_manifest,
                                 flight_bundle_path, flight_policy_choice,
                                 is_kpi_grade)
 from guardrail.models import (Action4D, AltitudeEnvelope,             # noqa: E402
@@ -246,6 +276,45 @@ TRUTH_RETRY_MAX_TICKS = 100
 # (frac_within_30m, follow_scored, a zero stand-off dwell). Below it a dwell
 # that was seen is reported as the lower bound it is, and nothing else.
 TRUTH_MIN_COVERAGE = 0.95
+# The truth's FRAME CHECK (SubjectTruth.check_frame): every TRUTH_FRAME_PERIOD_S
+# the AIRCRAFT is read through the subject's own RPC (World.get_object_poses,
+# the actor AIRCRAFT_ACTOR), taken down the subject pose's projection
+# (scene_to_anchor) and set against the EKF position the Shield flies on. A
+# frame that agrees leaves the EKF's own error, which gate G1 holds to a p95 of
+# 1.0 m (g1_check.EKF_TOL_M); the limit is twice that, for the read's time skew
+# against the EKF fix. Over it (median of the checks), the truth is in another
+# frame and scores nothing. Added 2026-10-14 after pas_ap_close_on/off left
+# "the truth's frame or the detector's target" open for a day; on review the
+# same day it moved from the vehicle's kinematics RPC to get_object_poses, so
+# an offset in the level-actor poses alone - the hypothesis it is for - shows.
+TRUTH_FRAME_MAX_M = 2.0
+TRUTH_FRAME_PERIOD_S = 0.5
+# The heading in the same answer (the actor's rotation) against the EKF's: a
+# heading off by more than guardrail.manifest's MAX_HEADING_ERR_DEG makes
+# "was the subject in the camera's view" luck (its words for the start
+# heading), so truth_view's verdict is then withheld. Positions still score.
+TRUTH_FRAME_MAX_YAW_DEG = MAX_HEADING_ERR_DEG
+# The aircraft as World.get_object_poses finds it. The plugin spawns the robot
+# as an AUnrealRobot with no name of its own (UnrealScene.cpp,
+# SpawnActorDeferred<AUnrealRobot>), the robot's root link is the actor's root
+# component (UnrealRobot.cpp CreateLink), and FindActor matches an actor whose
+# NAME CONTAINS the query or that carries it as a tag (UnrealHelpers.h): the
+# robot's engine name "UnrealRobot_<n>" answers to "UnrealRobot", the scene's
+# robot id ("Drone1") names no actor. Both poses leave the engine through the
+# same conversion (UnrealTransform::ToGlobalNed / NeuToNedLinear), so in the
+# plugin source the aircraft's object pose IS its kinematic position. Read
+# from the Project AirSim plugin source on this desktop
+# (D:/ProjectAirSim/Blocks/ProjectAirsim_plugin-Linux-UE5.7-PAS_v0.2.0); not
+# yet answered by the CityLife build. One robot per rail scene. A NaN answer
+# leaves only the partial check (ekf_vs_sim), said so.
+AIRCRAFT_ACTOR = "UnrealRobot"
+# An estimate within this of the truth is "on the subject": track_truth.
+# score_estimate's near_m, the figure follow_vlm reports as
+# metrics.estimate_on_subject.
+ESTIMATE_NEAR_M = 6.0
+# How old a found box may be and still steer (FollowPilot's "fresh"), and so
+# how far back the frame behind an estimate can lie (capture_window_start).
+DETECTION_STALE_S = 1.0
 # A fence upload in flight blocks the 10 Hz loop (one mission-protocol round
 # trip per item, twice): each phase gets this long, so an autopilot that does
 # not answer costs at most about 6 ticks, not the 2 x 10 s of the pre-arm one.
@@ -310,7 +379,7 @@ class FollowPilot:
     def __init__(self, detections, hfov_deg: float, yaw_gain: float = 1.2,
                  want_w_frac: float = 0.10, speed_max: float = 4.0,
                  cruise_alt: float = 8.0, alt_gain: float = 0.6,
-                 climb_max: float = 1.8, stale_s: float = 1.0,
+                 climb_max: float = 1.8, stale_s: float = DETECTION_STALE_S,
                  sweep_deg: float = 25.0, sweep_period_s: float = 4.0,
                  servo=None, sweep=None):
         fv = None if (servo and sweep) else _fv()
@@ -512,18 +581,29 @@ class ProjectAirSimCamera:
                   is loaded. The node then checks the simulator really serves
                   this scene's robot topics and refuses if it does not, so a
                   node on the Orin cannot attach to the wrong scene in silence.
+
+    chase=True    also subscribe the robot's "Chase" scene camera (the
+                  third-person view 16 m behind and 7 m above the airframe,
+                  robot_citylife_ardupilot.jsonc) for --save-view. Its
+                  messages are only buffered (SemanticObs.put_chase); the
+                  recorder thread decodes them through `get_chase_native()`,
+                  never the control loop. `get_front_native()` is the
+                  FrontCamera frame the detector sees, at its captured size.
     """
 
     def __init__(self, obs, sim_cfg: dict, address: str = "127.0.0.1",
                  projectairsim=None, view_switch: int = 1,
-                 robot: str = rail.ROBOT_NAME, attach: bool = False):
+                 robot: str = rail.ROBOT_NAME, attach: bool = False,
+                 chase: bool = False):
         self.obs, self.cfg, self.address = obs, sim_cfg, address
         self.pas = projectairsim
         self.view_switch, self.robot, self.attach = view_switch, robot, attach
+        self.chase = chase
         self.client = self.world = self.drone = None
         self.collisions: list[dict] = []
         self.collisions_subscribed = False
         self.have_depth = False
+        self.have_chase = False
         self.truth_source = None
         self.scene_record: dict = {"mode": "attach" if attach else "load",
                                    "scene_id": sim_cfg.get("scene_id")}
@@ -592,6 +672,30 @@ class ProjectAirSimCamera:
             self.have_depth = True
         except Exception as exc:                              # noqa: BLE001
             print(f"[range] no depth stream ({exc}); range from apparent width")
+        if self.chase:
+            # As follow_vlm --save-view: the callback stores the message and
+            # nothing else, so a 20 Hz camera costs the receive thread a
+            # pointer assignment, not a decode.
+            try:
+                self.client.subscribe(self.drone.sensors["Chase"]["scene_camera"],
+                                      lambda _, m: self.obs.put_chase(m))
+                self.have_chase = True
+            except Exception as exc:                          # noqa: BLE001
+                print(f"[view] no Chase camera in this robot config "
+                      f"({type(exc).__name__}: {exc}); the first-person view is "
+                      f"recorded alone")
+            self.scene_record["chase_subscribed"] = self.have_chase
+
+    # The two frames the recorder (demo/recorder.FrameRecorder) asks for, on
+    # ITS thread. Each decodes the latest buffered message; None when none
+    # has arrived (or the buffer cannot decode), which the recorder counts.
+    def get_front_native(self):
+        get = getattr(self.obs, "get_front_native", None)
+        return get() if callable(get) else None
+
+    def get_chase_native(self):
+        get = getattr(self.obs, "get_chase_native", None)
+        return get() if callable(get) and self.have_chase else None
 
     def truth_geo(self) -> dict | None:
         """{lat, lon, alt} of the simulated vehicle, or None."""
@@ -603,16 +707,22 @@ class ProjectAirSimCamera:
         except Exception:                                     # noqa: BLE001
             return None
 
-    def object_xy(self, name: str) -> tuple[float, float]:
-        """(x North, y East) of a level actor in the simulator's NED metres
-        about the scene's home-geo-point (World.get_object_poses ->
+    def object_pose(self, name: str) -> tuple[float, float, float | None]:
+        """(x North, y East, yaw deg) of a level actor in the simulator's NED
+        metres about the scene's home-geo-point (World.get_object_poses ->
         WorldSimApi::getObjectPose -> UnrealHelpers::FindActor, which matches
-        an actor's name or TAG; demo/level_actors.py). NaN when no actor
-        matches; an RPC failure raises. For the RECORD only."""
+        an actor's name or TAG; demo/level_actors.py). The yaw is the actor's
+        heading from its rotation (NED, clockwise from north, as the EKF's),
+        None when the answer has no rotation. NaN when no actor matches; an
+        RPC failure raises. For the RECORD only: the subject's truth, and the
+        aircraft's own pose for the truth's frame check (AIRCRAFT_ACTOR)."""
         pose = self.world.get_object_poses([name])[0]
-        t = pose["translation"] if isinstance(pose, dict) else pose.translation
-        return (float(t["x"] if isinstance(t, dict) else t.x),
-                float(t["y"] if isinstance(t, dict) else t.y))
+        return pose_xy_yaw(pose)
+
+    def object_xy(self, name: str) -> tuple[float, float]:
+        """(x North, y East) of a level actor: object_pose without the yaw."""
+        x, y, _ = self.object_pose(name)
+        return x, y
 
     def stop(self) -> None:
         try:
@@ -735,6 +845,26 @@ def resolve_policy(args, default_bundle=None) -> tuple[str | None, str | None, d
                         else default_bundle))
 
 
+def _field(obj, key):
+    return obj[key] if isinstance(obj, dict) else getattr(obj, key)
+
+
+def pose_xy_yaw(pose) -> tuple[float, float, float | None]:
+    """(x, y, yaw deg) of a Project AirSim Pose ({"translation": {x, y, z},
+    "rotation": {w, x, y, z}}, a dict or its attribute form). The yaw is
+    demo/semantic_demo.quat_yaw's - the heading follow_vlm reads off the
+    kinematics' orientation - in degrees; None without a rotation."""
+    t = _field(pose, "translation")
+    x, y = float(_field(t, "x")), float(_field(t, "y"))
+    try:
+        q = _field(pose, "rotation")
+        w, qx, qy, qz = (float(_field(q, k)) for k in ("w", "x", "y", "z"))
+    except (KeyError, AttributeError, TypeError, ValueError):
+        return x, y, None
+    yaw = math.degrees(math.atan2(2 * (w * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)))
+    return x, y, (yaw if math.isfinite(yaw) else None)
+
+
 def scene_to_anchor(x: float, y: float, scene_home, anchor) -> tuple[float, float] | None:
     """(x North, y East) in the simulator's NED metres about the scene's
     home-geo-point, in the anchor's frame (the Shield's). The same point when
@@ -814,12 +944,29 @@ class SubjectTruth:
     with truth_geo, so it cannot move to a thread: one Req0 socket, one
     request at a time), made after the tick's setpoint went out. Its
     latency is recorded (`summary()["read_ms"]`). After TRUTH_MAX_ERRORS
-    failed reads in a row it backs off and retries, never stops."""
+    failed reads in a row it backs off and retries, never stops.
+
+    `check_frame(state)` is the reader's own frame check: the AIRCRAFT read
+    through the subject's own RPC (World.get_object_poses on AIRCRAFT_ACTOR)
+    and the subject's own projection (scene_to_anchor), against the EKF
+    position the Shield flies on; `note_ekf_vs_sim(m)` takes the loop's other
+    check, the EKF against the simulator's kinematics (ekf_vs_sim_horiz_m).
+    `frame_summary()` judges both (TRUTH_FRAME_MAX_M). Without them, a truth
+    in another frame and a detector on another object look the same in the
+    record (pas_ap_close_on/off, 2026-10-13: truth 119-235 m north-east,
+    estimates south-east; the frames turned out to agree, see truth_view).
+
+    What the check cannot see: an offset of ONE actor's pose (a pivot away
+    from the mesh), since only the aircraft's own actor is read beside the
+    subject's. That Car_10's actor sits where the car is seen rests on
+    follow_vlm, whose tracker followed it to a median 1.89 m
+    (demo/out/citylife_redcar_nfz_20261013 metrics.estimate_on_subject)."""
 
     def __init__(self, camera, actor: str | None, why: str | None, scene_home, anchor,
-                 timer=time.perf_counter):
+                 timer=time.perf_counter, aircraft_actor: str = AIRCRAFT_ACTOR):
         self.camera, self.actor, self.scene_home, self.anchor = camera, actor, scene_home, anchor
         self.timer = timer
+        self.aircraft_actor = aircraft_actor
         self.why_off = why
         if why is None and not hasattr(camera, "object_xy"):
             self.why_off = ("this camera source reads no simulator poses (no subject "
@@ -832,6 +979,21 @@ class SubjectTruth:
         self.last_why: str | None = None
         self.attempts = self.failures = self.backoffs = 0
         self.read_ms: list[float] = []
+        # The frame check (check_frame): metres between the two views of the
+        # aircraft and the heading between them, one per check; the checks
+        # that could not be made, and their own back-off (in checks, each
+        # TRUTH_FRAME_PERIOD_S apart), so an aircraft the simulator cannot
+        # find is not asked for every 0.5 s of the flight.
+        self.frame_err: list[float] = []
+        self.frame_yaw_err: list[float] = []
+        self.frame_ms: list[float] = []
+        self.frame_attempts = self.frame_failures = self.frame_backoffs = 0
+        self.frame_errors = 0                 # consecutive failed checks
+        self.frame_wait = 0                   # checks left to skip before a retry
+        self.frame_backoff = TRUTH_RETRY_TICKS
+        self.frame_last_why: str | None = None
+        # The loop's EKF-against-kinematics check (note_ekf_vs_sim).
+        self.ekf_err: list[float] = []
 
     @property
     def source(self) -> str | None:
@@ -872,9 +1034,313 @@ class SubjectTruth:
                 "backoffs": self.backoffs,
                 "read_ms": spread([round(v, 3) for v in self.read_ms])}
 
+    def frame_off(self) -> str | None:
+        """Why the frame cannot be checked through get_object_poses, or None."""
+        if self.why_off:
+            return self.why_off
+        if not callable(getattr(self.camera, "object_xy", None)):
+            return ("this camera source reads no simulator poses, so the truth's "
+                    "frame is not checked")
+        return None
+
+    def _aircraft_pose(self) -> tuple[float, float, float | None]:
+        get = getattr(self.camera, "object_pose", None)
+        if callable(get):
+            return get(self.aircraft_actor)
+        x, y = self.camera.object_xy(self.aircraft_actor)
+        return x, y, None
+
+    def check_frame(self, state) -> dict | None:
+        """One frame check: where the subject's RPC and projection put the
+        aircraft, against where the Shield's EKF puts it. {"sim_xy": (x, y)
+        in the Shield's frame, "err_m": metres, "yaw_err_deg": the actor's
+        heading minus the EKF's, or None} - or None (not checkable, backing
+        off, or the read failed: counted, and after TRUTH_MAX_ERRORS failures
+        in a row the next TRUTH_RETRY_TICKS checks are skipped, doubling to
+        TRUTH_RETRY_MAX_TICKS). One RPC; the loop calls it after the tick's
+        setpoint went out, like read()."""
+        if self.frame_off():
+            return None
+        if self.frame_wait > 0:
+            self.frame_wait -= 1
+            return None
+        self.frame_attempts += 1
+        t0 = self.timer()
+        why = None
+        try:
+            vx, vy, vyaw = self._aircraft_pose()
+            if not (math.isfinite(vx) and math.isfinite(vy)):
+                why = (f"the simulator found no actor matching {self.aircraft_actor!r} "
+                       f"(GetObjectPoses answered NaN)")
+        except Exception as exc:                              # noqa: BLE001
+            why = (f"GetObjectPoses({self.aircraft_actor!r}) failed: "
+                   f"{type(exc).__name__}: {exc}")
+        self.frame_ms.append((self.timer() - t0) * 1000.0)
+        if why is not None:
+            self.frame_errors += 1
+            self.frame_failures += 1
+            self.frame_last_why = why
+            if self.frame_errors >= TRUTH_MAX_ERRORS:
+                self.frame_wait = self.frame_backoff
+                self.frame_backoffs += 1
+                self.frame_backoff = min(2 * self.frame_backoff, TRUTH_RETRY_MAX_TICKS)
+            return None
+        self.frame_errors, self.frame_backoff = 0, TRUTH_RETRY_TICKS
+        sx, sy = scene_to_anchor(vx, vy, self.scene_home, self.anchor)
+        err = math.hypot(sx - state.x, sy - state.y)
+        self.frame_err.append(err)
+        yaw_err = None
+        if vyaw is not None and getattr(state, "yaw_deg", None) is not None:
+            yaw_err = _wrap_deg(vyaw - float(state.yaw_deg))
+            self.frame_yaw_err.append(abs(yaw_err))
+        return {"sim_xy": (sx, sy), "err_m": err, "yaw_err_deg": yaw_err}
+
+    def note_ekf_vs_sim(self, err_m: float) -> None:
+        """The loop's EKF-against-the-simulator's-kinematics check, in metres
+        (the figure metrics.json ekf_vs_sim_horiz_m spreads)."""
+        self.ekf_err.append(float(err_m))
+
+    def frame_verdict(self) -> tuple[bool | None, str | None]:
+        """`(agrees, cause)`. agrees: True only from the check through
+        get_object_poses; False when it disagrees, or - without it - when the
+        EKF disagrees with the simulator's kinematics; None otherwise. cause:
+        "frame" (the object poses sit in another frame than the EKF's while
+        the EKF agrees with the kinematics) or "ekf" (the EKF is off the
+        simulator, so a range from it is off whatever the truth's frame)."""
+        ekf_bad = bool(self.ekf_err) and float(np.median(self.ekf_err)) > TRUTH_FRAME_MAX_M
+        if self.frame_err:
+            if float(np.median(self.frame_err)) <= TRUTH_FRAME_MAX_M:
+                return True, None
+            return False, ("ekf" if ekf_bad else "frame")
+        return (False, "ekf") if ekf_bad else (None, None)
+
+    def frame_disagrees(self) -> bool:
+        """True once the checks so far put the truth's ranges in doubt
+        (frame_verdict False): the HUD then shows no true range."""
+        return self.frame_verdict()[0] is False
+
+    def heading_agrees(self) -> bool | None:
+        """The actor's heading against the EKF's (median of |difference|
+        within TRUTH_FRAME_MAX_YAW_DEG); None when no answer carried one."""
+        if not self.frame_yaw_err:
+            return None
+        return bool(float(np.median(self.frame_yaw_err)) <= TRUTH_FRAME_MAX_YAW_DEG)
+
+    def frame_summary(self) -> dict:
+        """metrics.json `subject_truth.frame_check`. `checked`: the check
+        through get_object_poses ran; `partial`: it did not, and only the
+        EKF against the kinematics was measured. `agrees` is None when
+        nothing proves it, never True by default (frame_verdict)."""
+        agrees, cause = self.frame_verdict()
+        rec = {"max_m": TRUTH_FRAME_MAX_M, "period_s": TRUTH_FRAME_PERIOD_S,
+               "aircraft_actor": self.aircraft_actor,
+               "path": (f"the aircraft through the subject's own RPC "
+                        f"(World.get_object_poses([{self.aircraft_actor!r}])) and "
+                        f"projection (scene_to_anchor), against the EKF position the "
+                        f"Shield flies on"),
+               "attempts": self.frame_attempts, "failures": self.frame_failures,
+               "backoffs": self.frame_backoffs, "last_failure": self.frame_last_why,
+               "check_ms": spread([round(v, 3) for v in self.frame_ms]),
+               "ekf_vs_sim_m": spread([round(v, 3) for v in self.ekf_err]),
+               "yaw_err_deg": spread([round(v, 2) for v in self.frame_yaw_err]),
+               "max_yaw_deg": TRUTH_FRAME_MAX_YAW_DEG,
+               "heading_agrees": self.heading_agrees(),
+               "agrees": agrees, "cause": cause}
+        if self.frame_err:
+            return dict(rec, checked=True, partial=False,
+                        err_m=spread([round(v, 3) for v in self.frame_err]), why=None)
+        why = self.frame_off() or (f"no check succeeded ({self.frame_failures} failed; "
+                                   f"last: {self.frame_last_why})"
+                                   if self.frame_failures else "no check was made")
+        if self.ekf_err:
+            why = (f"{why}; only the EKF against the simulator's kinematics was "
+                   f"measured (median {rec['ekf_vs_sim_m']['median']} m), which "
+                   f"does not test the frame of get_object_poses")
+        return dict(rec, checked=False, partial=bool(self.ekf_err), err_m=spread([]),
+                    why=why)
+
+
+def _wrap_deg(a: float) -> float:
+    """An angle in degrees, wrapped into [-180, 180)."""
+    return (a + 180.0) % 360.0 - 180.0
+
+
+def capture_window_start(rows: list[dict], i: int,
+                         stale_s: float = DETECTION_STALE_S) -> int:
+    """The first row whose heading the frame behind row i's estimate could
+    have been taken at. The box it steers on was FOUND up to `stale_s`
+    before row i (FollowPilot's "fresh"; a row's det_seq is the latest
+    inference, which may have found nothing while the older box stays):
+    so from the earliest row j within `stale_s` of row i, carrying det_seq
+    q. The inference that found it ran on the frame the grounder took when
+    the inference before it ended (follow_vlm.Grounder._worker), no earlier
+    than result q - 1 was published - which the first row carrying det_seq
+    q - 1 or later follows by up to a tick; one row more (when it is a tick
+    away, not across a gap) covers the frame's own age. Rows without `t` or
+    det_seq narrow the window to what they say."""
+    j = i
+    t_i = rows[i].get("t")
+    if t_i is not None:
+        while j > 0 and rows[j - 1].get("t") is not None \
+                and rows[j - 1]["t"] >= t_i - stale_s:
+            j -= 1
+    q = rows[j].get("det_seq")
+    if q is None:
+        return j
+    while j > 0 and rows[j - 1].get("det_seq") is not None \
+            and rows[j - 1]["det_seq"] >= q - 1:
+        j -= 1
+    if j > 0 and (rows[j].get("t") is None or rows[j - 1].get("t") is None
+                  or rows[j]["t"] - rows[j - 1]["t"] <= 1.5 * TICK):
+        j -= 1
+    return j
+
+
+def truth_view(rows: list[dict], hfov_deg: float | None, width_m: float | None = None
+               ) -> dict:
+    """Could the detector have been looking at the subject? Over the ticks
+    whose row carries both the estimate the Shield flew on (`subject`) and
+    the truth (`subject_truth`): where the truth was against the camera's
+    field of view - at the tick's heading, and at any heading the aircraft
+    held since the frame behind the estimate could have been captured
+    (capture_window_start) - how far the estimate's bearing was from the
+    truth's (both from the aircraft), the two ranges, the angle the
+    subject's own width (`width_m`) subtends at its true range, and the
+    estimates within ESTIMATE_NEAR_M of it (track_truth.score_estimate's
+    on-subject test).
+
+    The verdict says the estimates were of something else only when BOTH
+    hold: the subject was outside the field of view at every heading in
+    every estimate's capture window, and no estimate came within
+    ESTIMATE_NEAR_M of it.
+
+    Pure, over flight-log rows, so a stored flight can be re-read with it:
+    pas_ap_close_on (2026-10-13) had the subject inside the 90 deg field on
+    10 of its 149 estimate ticks at the tick's heading, and no estimate
+    within 6 m."""
+    half = None if hfov_deg is None else float(hfov_deg) / 2.0
+    off_at: dict[int, float] = {}
+    for i, r in enumerate(rows):
+        if r.get("subject_truth") is None or r.get("yaw_deg") is None \
+                or r.get("x") is None:
+            continue
+        tx, ty = r["subject_truth"][0], r["subject_truth"][1]
+        tb = math.degrees(math.atan2(ty - r["y"], tx - r["x"]))
+        off_at[i] = _wrap_deg(tb - r["yaw_deg"])
+    off, cap, gap, rt, re, wdeg, near = [], [], [], [], [], [], 0
+    gap_in_view = []
+    for i, o in off_at.items():
+        r = rows[i]
+        s = r.get("subject")
+        if s is None:
+            continue
+        tx, ty = r["subject_truth"][0], r["subject_truth"][1]
+        tb = math.degrees(math.atan2(ty - r["y"], tx - r["x"]))
+        eb = math.degrees(math.atan2(s[1] - r["y"], s[0] - r["x"]))
+        off.append(o)
+        cap.append(min(abs(off_at[j]) for j in range(capture_window_start(rows, i), i + 1)
+                       if j in off_at))
+        g = abs(_wrap_deg(tb - eb))
+        gap.append(g)
+        if half is not None and abs(o) <= half:
+            gap_in_view.append(g)
+        d_t = math.hypot(tx - r["x"], ty - r["y"])
+        rt.append(d_t)
+        re.append(math.hypot(s[0] - r["x"], s[1] - r["y"]))
+        if width_m:
+            wdeg.append(2.0 * math.degrees(math.atan2(width_m / 2.0, max(d_t, 1e-6))))
+        near += int(math.hypot(s[0] - tx, s[1] - ty) <= ESTIMATE_NEAR_M)
+    n = len(off)
+    in_view = None if half is None else sum(1 for o in off if abs(o) <= half)
+    maybe = None if half is None else sum(1 for c in cap if c <= half)
+    rec = {
+        "hfov_deg": hfov_deg, "ticks_truth_read": len(off_at),
+        "truth_in_view_ticks": (None if half is None else
+                                sum(1 for o in off_at.values() if abs(o) <= half)),
+        "estimate_ticks": n,
+        # At the tick's own heading.
+        "estimate_ticks_truth_in_view": in_view,
+        # At any heading since the estimate's frame could have been taken.
+        "estimate_ticks_truth_maybe_in_view": maybe,
+        "capture_window": (f"from {DETECTION_STALE_S:g} s before the estimate's row, back "
+                           f"to one row before the previous det_seq first appears, up to "
+                           f"the estimate's own row (capture_window_start)"),
+        "truth_off_nose_deg": spread([round(abs(v), 2) for v in off]),
+        "truth_off_nose_capture_deg": spread([round(v, 2) for v in cap]),
+        "bearing_gap_deg": spread([round(v, 2) for v in gap]),
+        "bearing_gap_in_view_deg": spread([round(v, 2) for v in gap_in_view]),
+        "truth_range_m": spread([round(v, 2) for v in rt]),
+        "estimate_range_m": spread([round(v, 2) for v in re]),
+        "subject_width_m": width_m,
+        "truth_width_deg": spread([round(v, 3) for v in wdeg]),
+        "estimate_on_subject": (None if not n else
+                                {"near_m": ESTIMATE_NEAR_M, "ticks": near,
+                                 "frac": round(near / n, 4)}),
+    }
+    if not off_at:
+        verdict = None
+    elif not n:
+        verdict = "no tick carried both an estimate and the subject's pose"
+    elif half is None:
+        verdict = (f"{near} of {n} estimates within {ESTIMATE_NEAR_M:g} m of the "
+                   f"subject; the camera's field of view is unknown")
+    else:
+        verdict = (f"the subject was inside the camera's {hfov_deg:g} deg field of "
+                   f"view on {in_view} of the {n} ticks with an estimate at the "
+                   f"tick's heading, and on {maybe} at any heading since the frame "
+                   f"could have been taken (|bearing off the nose| median "
+                   f"{np.median([abs(v) for v in off]):.0f} deg); {near} of the {n} "
+                   f"estimates were within {ESTIMATE_NEAR_M:g} m of it (true range "
+                   f"median {np.median(rt):.0f} m, estimated {np.median(re):.0f} m)")
+        if maybe == 0 and near == 0:
+            verdict += ": every estimate the Shield flew on was of something else"
+        elif gap_in_view:
+            verdict += (f"; on the ticks it was in view the estimate's bearing was a "
+                        f"median {np.median(gap_in_view):.0f} deg from the subject's")
+    rec["verdict"] = verdict
+    return rec
+
+
+TRUTH_POSITION_FIELDS = ("subject_truth", "tgt_x", "tgt_y", "subject_range_m",
+                         "subject_gap_m", "subject_truth_off_nose_deg",
+                         "subject_bearing_gap_deg")
+
+
+def quarantine_truth_rows(rows: list[dict], why: str) -> int:
+    """After a failed frame check: take the truth's position out of the
+    flight log's scoring fields - tgt_x / tgt_y are what guardrail.kpi,
+    demo/track_truth and tools/rescore_kpis score against - and keep it,
+    labelled, under `subject_truth_as_read`. Returns the rows changed."""
+    n = 0
+    for r in rows:
+        if r.get("subject_truth") is None:
+            continue
+        r["subject_truth_as_read"] = {k: r.pop(k) for k in TRUTH_POSITION_FIELDS if k in r}
+        r["subject_truth"] = None
+        r["subject_truth_why"] = why
+        n += 1
+    return n
+
+
+def frame_disagreement(frame: dict) -> str:
+    """Why the truth's ranges are not ranges to the subject, by the frame
+    check's cause (SubjectTruth.frame_verdict), with its figures."""
+    ekf = (frame.get("ekf_vs_sim_m") or {}).get("median")
+    if frame.get("cause") == "ekf":
+        return (f"the aircraft's EKF position is off the simulator's by a median "
+                f"{ekf} m (ekf_vs_sim, limit {TRUTH_FRAME_MAX_M:g} m), so a range "
+                f"from it is not the subject's true range")
+    return (f"the truth's frame disagrees with the Shield's: the aircraft read through "
+            f"get_object_poses sits a median {frame['err_m']['median']} m from its "
+            f"EKF position (limit {TRUTH_FRAME_MAX_M:g} m)"
+            + (f" while the EKF agrees with the simulator's kinematics (median {ekf} m)"
+               if ekf is not None else "")
+            + ", so where the subject was is not known")
+
 
 def truth_summary(rows: list[dict], truth: SubjectTruth, ring_m: float | None,
-                  tick_s: float) -> dict:
+                  tick_s: float, hfov_deg: float | None = None,
+                  width_m: float | None = None) -> dict:
     """metrics.json `subject_truth`: the true horizontal range to the subject
     (nearest, and the dwell inside the stand-off ring as seconds and as the
     fraction of ticks it was read), and how far the estimate the Shield flew
@@ -886,19 +1352,44 @@ def truth_summary(rows: list[dict], truth: SubjectTruth, ring_m: float | None,
     was seen is kept as a lower bound (it happened, and fails the mission as
     it should), a zero dwell and the follow fraction are None - never a
     success read off the ticks that happened to answer (review 2026-10-13:
-    three failed reads made 5 of 20 ticks the flight, standoff_s 0.0)."""
+    three failed reads made 5 of 20 ticks the flight, standoff_s 0.0).
+
+    They also need the truth's ranges to be ranges to where the subject was
+    (`frame_check`, SubjectTruth.frame_summary): a frame check through
+    get_object_poses over TRUTH_FRAME_MAX_M (cause "frame"), or an EKF off
+    the simulator's kinematics by that much (cause "ekf"), makes every
+    position figure None and keeps them, labelled, in `as_read`. A frame
+    only partly checked, or not at all, scores as before and the basis says
+    which. `view` (truth_view) says whether the estimates could have been of
+    the subject at all; with the EKF heading off the simulator's by more
+    than TRUTH_FRAME_MAX_YAW_DEG its verdict is withheld."""
     read = [r for r in rows if r.get("subject_truth") is not None]
     ranges = [r["subject_range_m"] for r in read]
     gaps = [r["subject_gap_m"] for r in read if r.get("subject_gap_m") is not None]
     unread = collections.Counter(r.get("subject_truth_why") for r in rows
                                  if r.get("subject_truth") is None)
+    frame = (truth.frame_summary() if callable(getattr(truth, "frame_summary", None))
+             else None)
+    frame_bad = frame is not None and frame.get("agrees") is False
     n_ring = (None if ring_m is None or not read
               else sum(1 for d in ranges if d < ring_m))
     coverage = None if not rows else round(len(read) / len(rows), 4)
     complete = coverage is not None and coverage >= TRUTH_MIN_COVERAGE
     frac30 = (None if not read else
               round(sum(1 for d in ranges if d <= FOLLOW_RANGE_M) / len(read), 4))
-    if n_ring is None:
+    view = truth_view(rows, hfov_deg, width_m)
+    as_read = None
+    if frame_bad:
+        as_read = {"min_range_m": None if not ranges else round(min(ranges), 2),
+                   "mean_range_m": (None if not ranges
+                                    else round(float(np.mean(ranges)), 2)),
+                   "ticks_in_ring": n_ring, "frac_within_30m_of_read": frac30,
+                   "estimate_gap_m": spread(gaps), "view": view}
+        standoff_s, complete = None, False
+        basis = ("not measured: " + frame_disagreement(frame)
+                 + "; the figures as read are in as_read")
+        ranges, gaps, n_ring, frac30, view = [], [], None, None, None
+    elif n_ring is None:
         standoff_s, basis = None, ("no stand-off rule binds the subject" if read
                                    else "the subject's pose was never read")
     elif complete:
@@ -913,9 +1404,25 @@ def truth_summary(rows: list[dict], truth: SubjectTruth, ring_m: float | None,
         basis = (f"not measured: the pose was read on only {len(read)}/{len(rows)} "
                  f"ticks (coverage {coverage} < {TRUTH_MIN_COVERAGE}), none in the "
                  f"ring, and an unread tick may have been")
+    if read and not frame_bad and frame is not None:
+        basis += (f"; the truth's frame agrees with the Shield's (the aircraft through "
+                  f"get_object_poses, median {frame['err_m']['median']} m)"
+                  if frame.get("agrees") else
+                  f"; the truth's frame was only PARTLY checked ({frame.get('why')})"
+                  if frame.get("partial") else
+                  f"; the truth's frame was NOT checked ({frame.get('why')})")
+    if view is not None and frame is not None and frame.get("heading_agrees") is False:
+        # The field of view is reckoned from the EKF heading: off the
+        # simulator's, "in view" is luck (guardrail.manifest's words).
+        view = dict(view, verdict=(
+            f"not judged: the EKF heading is off the simulator's by a median "
+            f"{frame['yaw_err_deg']['median']} deg (limit {TRUTH_FRAME_MAX_YAW_DEG:g} "
+            f"deg), and the field of view is reckoned from it; as computed: "
+            f"{view.get('verdict')}"))
     return {
         "actor": truth.actor, "source": truth.source,
         "frame": "the Shield's scene frame (x North, y East)",
+        "frame_check": frame,
         "range_basis": ("horizontal, from the aircraft's EKF position (its error "
                         "against the simulator: ekf_vs_sim_horiz_m) to the "
                         "subject's simulator pose"),
@@ -938,6 +1445,9 @@ def truth_summary(rows: list[dict], truth: SubjectTruth, ring_m: float | None,
         "ticks_estimate_without_truth": sum(1 for r in rows
                                             if r.get("subject") is not None
                                             and r.get("subject_truth") is None),
+        # Whether those estimates could have been of the subject at all.
+        "view": view,
+        "as_read": as_read,
     }
 
 
@@ -1226,6 +1736,265 @@ class ThrottleHold:
 
 
 # --------------------------------------------------------------------------- #
+# Recording (--save-view): the demo video, off the control loop
+# --------------------------------------------------------------------------- #
+#
+# The same recorder the simple_flight demos use (demo/recorder.FrameRecorder:
+# its own thread, a fixed poll rate, dropped frames rather than back-pressure,
+# recorder.json with the measured rate) and the same overlay
+# (follow_vlm.annotate -> demo/policy_hud.py: the rule panel, the Shield
+# banner, the minimap). What this rail adds is what only it has: the
+# escalation FSM's state and ArduPilot's own hold mode, the autopilot taking
+# the aircraft, and the Shield-off control arm, which must never look like a
+# Shield that had nothing to do.
+#
+# The loop pays for ONE thing per tick: PolicyIndicator.update() (the Shield's
+# own rule_status at this position) and a small dict handed over under a
+# lock, AFTER the setpoint was sent and the subject truth read. Decoding,
+# drawing, encoding and writing happen on the recorder thread. metrics.json
+# `recording.hud_ms` is that per-tick cost, measured on every run.
+
+# The banner policy_hud draws per escalation state: (COLOURS level, text).
+# The FSM's states are spelled as the grant spells them (guardrail.fsm.
+# FSMState); its Loiter carries the ArduCopter mode it is flown as. Brake is
+# not here: it is the Shield intervening inside GUIDED (guardrail/fsm.py),
+# which streams the Shield's own action on most ticks, so its banner is the
+# Shield's rule event prefixed with the state - except on a tick the FSM
+# streams a zero setpoint (FSM_STOP_BANNER).
+FSM_BANNERS = {
+    FSMState.LOITER.value: ("hold", "FSM {label} - AUTOPILOT HOLDING POSITION"),
+    FSMState.RTL.value: ("brake", "FSM {label} - AUTOPILOT RETURNING TO LAUNCH"),
+    FSMState.LAND.value: ("brake", "FSM {label} - AUTOPILOT LANDING"),
+}
+FSM_STOP_BANNER = ("brake", "FSM {label} - FULL STOP, ZERO SETPOINT SENT")
+# policy_hud's words for a rule the Shield did not correct, rewritten for the
+# Shield-off arm, where nothing was ever going to correct it.
+SHIELD_OFF_WORDS = (("P0 RULE STILL BROKEN AFTER SHIELD", "P0 RULE BROKEN, FLOWN UNCORRECTED"),
+                    ("MONITORED, NOT CORRECTED", "FLOWN UNCORRECTED"))
+SHIELD_OFF_IDLE = "SHIELD OFF - CONTROL ARM, RAW COMMANDS FLOWN"
+TRACK_WORDS = {"track": "TARGET LOCKED", "search": "SEARCHING ..."}
+
+
+def fsm_label(state, hold_ap_mode: str = DEFAULT_HOLD_MODE) -> str:
+    """The FSM state as the HUD names it: Normal, Brake, RTL, Land, and Loiter
+    with the ArduCopter mode it is flown as - "Loiter(BRAKE)" by default,
+    "Loiter(LOITER)" with --hold-mode LOITER."""
+    v = getattr(state, "value", state)
+    return f"{v}({hold_ap_mode})" if v == FSMState.LOITER.value else str(v)
+
+
+def rail_banner(banner: dict, *, shield_on: bool, fsm_state=None,
+                hold_ap_mode: str = DEFAULT_HOLD_MODE, takeover_mode: str | None = None,
+                fsm_fault: str | None = None, setpoint: str = "pass") -> tuple[dict, str]:
+    """`(banner, kind)`: what the recording's banner says this tick.
+
+    policy_hud's banner (the Shield's rule events, latched) unless something
+    above the Shield owns the aircraft, most important first:
+      takeover    the autopilot took the aircraft (fence RTL, failsafe, a
+                  pilot): the node commands nothing;
+      fault       the FSM refused an input: held, nothing streamed;
+      shield_off  the control arm: every banner says SHIELD OFF, and a rule
+                  event reads "flown uncorrected", never "monitored";
+      fsm         the escalation FSM in Loiter(<hold mode>), RTL or Land, or
+                  in Brake on a tick it streams a zero setpoint;
+      fsm_brake   the FSM in Brake streaming the Shield's action: policy_hud's
+                  banner prefixed "FSM Brake | ";
+      policy      policy_hud's banner unchanged (FSM Normal, or none run).
+    `banner` is policy_hud's {"level", "text"}; levels are its COLOURS keys;
+    `setpoint` the FSM's choice this tick (pass / brake / none)."""
+    if takeover_mode is not None:
+        return ({"level": "brake",
+                 "text": f"AUTOPILOT TOOK THE AIRCRAFT ({takeover_mode}) - NODE NOT COMMANDING"},
+                "takeover")
+    if fsm_fault is not None:
+        return ({"level": "brake",
+                 "text": f"FSM FAULT - HELD IN {hold_ap_mode}, NOTHING STREAMED"}, "fault")
+    if not shield_on:
+        if banner.get("level") in ("ok", "idle", None):
+            return {"level": "watch", "text": SHIELD_OFF_IDLE}, "shield_off"
+        text = str(banner.get("text", ""))
+        for old, new in SHIELD_OFF_WORDS:
+            text = text.replace(old, new)
+        return {"level": banner["level"], "text": f"SHIELD OFF - {text}"}, "shield_off"
+    v = getattr(fsm_state, "value", fsm_state)
+    label = fsm_label(v, hold_ap_mode)
+    if v in FSM_BANNERS:
+        level, fmt = FSM_BANNERS[v]
+        return {"level": level, "text": fmt.format(label=label)}, "fsm"
+    if v == FSMState.BRAKE.value:
+        if setpoint == "brake":
+            level, fmt = FSM_STOP_BANNER
+            return {"level": level, "text": fmt.format(label=label)}, "fsm"
+        return ({"level": banner.get("level", "ok"),
+                 "text": f"FSM {label} | {banner.get('text', '')}"}, "fsm_brake")
+    return dict(banner), "policy"
+
+
+def hud_decision(d, raw, *, shield_on: bool, setpoint: str = "pass"):
+    """The decision the policy indicator reads. Shield on: the Shield's own.
+    Shield off: the same checks with NO repair and no brake, the raw action
+    as the one emitted, and its violations as flown (none on a tick nothing
+    was sent) - so the panel shows WATCH and the P0 escape count, never an
+    ACTING row or a "Shield corrections" count for a Shield that was not in
+    the loop (guardrail.replay.flown_fields is the same rule)."""
+    if shield_on:
+        return d
+    return SimpleNamespace(violations=list(d.violations), repairs=[], braked=False,
+                           touched=False, emitted=raw,
+                           emitted_violations=[] if setpoint == "none" else list(d.violations))
+
+
+class RailHud:
+    """The per-tick HUD dict for the recorder, in follow_vlm's shape
+    (follow_vlm.annotate reads it), with the rail's banner (rail_banner).
+
+    An escalation banner is latched for the indicator's hold_s (1.5 s, as
+    policy_hud latches its own), so a one-tick Brake is readable on video;
+    a latched one never hides a policy banner at HOLD or above. A fault in
+    the indicator stops it for the rest of the flight - the frames go on
+    with the plain HUD - and is recorded (`error`), never raised into the
+    loop."""
+
+    def __init__(self, indicator, *, query: str, shield_on: bool,
+                 hold_ap_mode: str = DEFAULT_HOLD_MODE):
+        self.ind = indicator
+        self.query, self.shield_on, self.hold_ap_mode = query, shield_on, hold_ap_mode
+        self.hold_s = float(getattr(indicator, "hold_s", 1.5) or 1.5)
+        self.error: str | None = None
+        self._latch: tuple[dict, str, float] | None = None
+        self.shown: collections.Counter = collections.Counter()
+
+    def _indicator(self, now, decision, state, subject_xy, subject_class, yaw_rad):
+        if self.ind is None or self.error is not None:
+            return None
+        try:
+            sh = self.ind.shield
+            return self.ind.update(
+                now, decision, state, subject_xy=subject_xy, subject_class=subject_class,
+                clearance_m=(sh.clearance_at(state.x, state.y)
+                             if sh.has_obstacle_map else None),
+                off_map=sh.off_map(state.x, state.y), est_xy=subject_xy, yaw_rad=yaw_rad)
+        except Exception as exc:                              # noqa: BLE001
+            self.error = f"{type(exc).__name__}: {exc}"
+            print(f"[hud]    policy indicator stopped: {self.error}; frames go on "
+                  f"with the plain HUD")
+            return None
+
+    def tick(self, now: float, *, decision, state, yaw_rad: float, info: dict,
+             subject_xy=None, subject_class=None, fsm_state=None,
+             takeover_mode: str | None = None, fsm_fault: str | None = None,
+             setpoint: str = "pass", flown=None, sep_m: float | None = None,
+             touched: bool = False) -> dict:
+        """`flown` is the action SENT this tick (scene frame; None: nothing
+        sent): the HUD's forward speed is its component along the heading,
+        so the Shield's cap shows on screen as what was flown, not what the
+        pilot asked for. `sep_m` the subject's TRUE range when it was read
+        (as follow_vlm's HUD), else None ("separation n/a")."""
+        pol = self._indicator(now, decision, state, subject_xy, subject_class, yaw_rad)
+        if pol is not None:
+            ban, kind = rail_banner(pol["banner"], shield_on=self.shield_on,
+                                    fsm_state=fsm_state, hold_ap_mode=self.hold_ap_mode,
+                                    takeover_mode=takeover_mode, fsm_fault=fsm_fault,
+                                    setpoint=setpoint)
+            key = (f"{kind}:{fsm_label(fsm_state, self.hold_ap_mode)}"
+                   if kind in ("fsm", "fsm_brake") else kind)
+            if kind in ("takeover", "fault", "fsm"):
+                self._latch = (ban, key, now + self.hold_s)
+            elif (kind in ("policy", "fsm_brake") and self._latch is not None
+                  and now < self._latch[2]
+                  and _banner_rank(pol["banner"]["level"]) < _banner_rank("hold")):
+                ban, key = dict(self._latch[0]), self._latch[1] + "_latched"
+            self.shown[key] += 1
+            pol = dict(pol, banner=ban)
+        if takeover_mode is not None:
+            arm = f"AUTOPILOT {takeover_mode}"
+        elif not self.shield_on:
+            arm = "SHIELD OFF"
+        elif fsm_state is not None:
+            arm = f"FSM {fsm_label(fsm_state, self.hold_ap_mode)}"
+        else:
+            arm = "FSM not run"
+        bearing = info.get("bearing")
+        fwd = (0.0 if flown is None else
+               float(flown.vx) * math.cos(yaw_rad) + float(flown.vy) * math.sin(yaw_rad))
+        return {"t": float(now), "sep": sep_m,
+                "brg": 0.0 if bearing is None else math.degrees(bearing),
+                "fwd": fwd, "alt": float(state.up), "shield": bool(touched),
+                "query": self.query, "mode": info.get("mode"),
+                "mode_label": f"{TRACK_WORDS.get(info.get('mode'), 'SCANNING for target')} | {arm}",
+                "tier": None, "fence_d": None, "fence_hold": False, "fence_mode": None,
+                "fence_kind": None, "policy": pol}
+
+    def summary(self) -> dict:
+        ind = self.ind
+        return {"enabled": ind is not None, "error": self.error,
+                "banners_shown": dict(self.shown),
+                "counts": None if ind is None else dict(ind.counts),
+                "banner_ticks": None if ind is None else dict(ind.banner_ticks)}
+
+
+def _banner_rank(level: str) -> int:
+    from policy_hud import SEVERITY
+    return SEVERITY.get(level, 0)
+
+
+def build_policy_hud(policy, shield, smap, citymap):
+    """policy_hud.PolicyIndicator over the flight's own Shield, with the
+    obstacle map (and the street mask beside it, when there is one) as the
+    minimap's base - follow_vlm's indicator, without its FenceGuard."""
+    from policy_hud import PolicyIndicator, render_base_map
+    street = None
+    sm = Path(citymap).parent / "street.npz"
+    if smap is not None and sm.is_file():
+        try:
+            from build_street_mask import load_street
+            street = load_street(sm)
+        except Exception as exc:                              # noqa: BLE001
+            print(f"[hud]    street mask unreadable ({exc}); minimap without roads")
+    return PolicyIndicator(policy, base_map=render_base_map(smap, street), shield=shield)
+
+
+def start_recorder(args, out: Path, camera, obs, *, annotate=None, recorder_cls=None):
+    """`(recorder, view_dir, why_not)`: a started FrameRecorder writing to
+    <out>/view/fpv and view/tps, or None and the reason. The frame source is
+    the camera when it serves get_front_native() (ProjectAirSimCamera), else
+    the observation buffer (the ROS 2 image path: first-person only)."""
+    source = camera if callable(getattr(camera, "get_front_native", None)) else obs
+    if not callable(getattr(source, "get_front_native", None)):
+        return None, None, ("--save-view: neither the camera nor the observation "
+                            "buffer serves frames (get_front_native)")
+    if recorder_cls is None:
+        from recorder import FrameRecorder as recorder_cls
+    view_dir = out / "view"
+    (view_dir / "tps").mkdir(parents=True, exist_ok=True)
+    (view_dir / "fpv").mkdir(parents=True, exist_ok=True)
+    rec = recorder_cls(source, view_dir, annotate or _fv().annotate,
+                       hz=args.record_hz, height=args.record_height,
+                       live_view=args.live_view, live_height=args.live_height)
+    rec.start()
+    print(f"[view]   recording {args.record_hz:g} Hz at {args.record_height}p on its "
+          f"own thread -> {view_dir}")
+    return rec, view_dir, None
+
+
+def stop_recorder(recorder, view_dir) -> dict | None:
+    """Stop the thread and write recorder.json (the rate
+    tools/make_demo_video.py takes as the video's fps). Returns the summary
+    without the per-frame times; None when nothing was recording."""
+    if recorder is None:
+        return None
+    recorder.stop()
+    recorder.join(timeout=5.0)
+    s = recorder.write_sidecar(Path(view_dir) / "recorder.json")
+    s = {k: v for k, v in s.items() if k != "frame_t"}
+    print(f"[view]   recorder: {s.get('frames')} frames at {s.get('achieved_hz')} Hz "
+          f"(target {s.get('target_hz')}) over {s.get('writing_seconds')} s; late "
+          f"{s.get('late_slots')}, empty {s.get('empty_captures')}, failed {s.get('failed')}"
+          + (f"; {s['WARNING']}" if s.get("WARNING") else ""))
+    return s
+
+
+# --------------------------------------------------------------------------- #
 # The node
 # --------------------------------------------------------------------------- #
 
@@ -1311,6 +2080,25 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--colour-min", type=float, default=0.10)
     ap.add_argument("--dry-run", action="store_true",
                     help="render configs, print the plan and the commands, exit")
+    # the demo video, as follow_vlm records it (demo/recorder.py)
+    ap.add_argument("--save-view", action="store_true",
+                    help="record the first-person frame with the policy HUD to "
+                         "<out>/view/fpv and the Chase camera to view/tps, on the "
+                         "recorder's own thread, plus view/recorder.json with the "
+                         "measured rate (tools/make_demo_video.py --tag <tag>)")
+    ap.add_argument("--record-hz", type=float, default=20.0,
+                    help="frames per second the recorder writes, off the control "
+                         "loop (follow_vlm's default)")
+    ap.add_argument("--record-height", type=int, default=720,
+                    help="height the frames are written at; the first-person frame "
+                         "is enlarged to it BEFORE the overlay is drawn")
+    ap.add_argument("--live-view", action="store_true",
+                    help="also show the two views in a window while flying (needs "
+                         "--save-view; drawn on the recorder thread)")
+    ap.add_argument("--live-height", type=int, default=480)
+    ap.add_argument("--no-policy-hud", action="store_true",
+                    help="with --save-view: the old one-line HUD instead of the "
+                         "rule panel, the Shield / FSM banner and the minimap")
     return ap
 
 
@@ -1325,6 +2113,9 @@ def check_args(args) -> None:
     if args.scene_only and (args.camera != "projectairsim" or args.scene_mode != "load"):
         raise SystemExit("--scene-only loads the Project AirSim scene; it needs "
                          "--camera projectairsim --scene-mode load")
+    if getattr(args, "live_view", False) and not getattr(args, "save_view", False):
+        raise SystemExit("--live-view needs --save-view: the window draws the frames "
+                         "the recorder produces, and without it none are captured")
 
 
 def sim_configs(args, out: Path):
@@ -1422,9 +2213,11 @@ def load_scene_only(args, out: Path, camera=None) -> int:
 
 
 def run(args, *, link=None, camera=None, grounder=None, obs=None,
-        clock=time.time, sleep=time.sleep, popen=None, run_cmd=None) -> int:
+        clock=time.time, sleep=time.sleep, popen=None, run_cmd=None,
+        recorder_cls=None) -> int:
     """Fly one run. Every collaborator is injectable so the loop can be tested
-    without a simulator, an autopilot or a GPU (tests/test_pas_ardupilot.py)."""
+    without a simulator, an autopilot or a GPU (tests/test_pas_ardupilot.py);
+    `recorder_cls` stands in for demo/recorder.FrameRecorder (--save-view)."""
     popen = popen or subprocess.Popen
     run_cmd = run_cmd or subprocess.run
     tag = args.tag or time.strftime("pas_ap_%Y%m%d_%H%M%S")
@@ -1524,12 +2317,38 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         from semantic_demo import SemanticObs
         obs = SemanticObs()
     sitl_proc = sitl_log = None
+    save_view = bool(getattr(args, "save_view", False))
     if camera is None and args.camera == "projectairsim":
         camera = ProjectAirSimCamera(obs, sim_cfg, address=args.sim_host,
-                                     attach=args.scene_mode == "attach")
+                                     attach=args.scene_mode == "attach",
+                                     chase=save_view)
+    recorder = view_dir = rhud = None
+    rec_why = None if save_view else "--save-view not given"
+    rec_summary = None
+    hud_ms: list[float] = []
+    hud_failed = 0
     try:
         if camera is not None:
             camera.start()                     # loads the scene: BEFORE SITL starts
+        if save_view:
+            # Started now, writing nothing until the loop's first set_hud():
+            # the video begins at mission start (after the take-off to cruise),
+            # as follow_vlm's does, and recorder.json measures the rate over
+            # the frames actually written.
+            recorder, view_dir, rec_why = start_recorder(args, out, camera, obs,
+                                                         recorder_cls=recorder_cls)
+            if recorder is None:
+                print(f"[view]   *** not recording: {rec_why}")
+            else:
+                try:
+                    ind = (None if getattr(args, "no_policy_hud", False) else
+                           build_policy_hud(policy, shield, smap, args.citymap))
+                except Exception as exc:                      # noqa: BLE001
+                    ind = None
+                    print(f"[hud]    no policy indicator ({type(exc).__name__}: {exc}); "
+                          f"the plain HUD is drawn")
+                rhud = RailHud(ind, query=args.object, shield_on=shield_on,
+                               hold_ap_mode=hold_ap_mode)
         if args.start_sitl and plan is not None:
             cmd = rail.wsl_start_command(args.wsl_distro, plan,
                                          mavros=(args.link == "mavros"))
@@ -1637,6 +2456,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
 
         # ---- loop ----------------------------------------------------------------
         rows, traj, ekf_err = [], [], []
+        # Each tick's work before its sleep, on the loop's clock: what a
+        # recorder or anything else on the flight path costs, even while the
+        # loop still holds its rate.
+        work_ms: list[float] = []
         n_touched = n_braked = n_escaped = n_no_state = n_subject = 0
         subject_src: dict = {}
         # What was asked of the autopilot, in the FSM's words and ArduCopter's,
@@ -1659,7 +2482,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         rec.event("mission_start", t=0.0, autopilot_mode=prev_mode,
                   fsm=None if fsm is None else fsm.config.to_dict(),
                   rule_clock_reading=rule_now().isoformat(timespec="seconds"))
-        t_truth = 0.0
+        # The two simulator checks (SIM_CHECKS, below), half a period apart.
+        t_frame, t_geo = -math.inf, t0 - TRUTH_FRAME_PERIOD_S / 2.0
         try:
             while clock() - t0 < args.max_s:
                 t_tick = clock()
@@ -1805,6 +2629,28 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 # given the estimate.
                 tr = truth.read()
                 truth_xy = tr["xy"]
+                # SIM_CHECKS, RECORD ONLY, after the setpoint went out: each
+                # every TRUTH_FRAME_PERIOD_S, half a period apart, and never
+                # both on one tick (the geo read waits a tick if they meet).
+                # (a) The truth's frame check: the aircraft through the
+                # subject's own RPC and projection, against the EKF position
+                # the Shield was given above. (b) The EKF against the
+                # simulator's kinematics (ekf_vs_sim_horiz_m), which the frame
+                # check needs to tell a truth in another frame from an EKF off
+                # the simulator. Nothing above read either.
+                frame_chk = None
+                if t_tick - t_frame >= TRUTH_FRAME_PERIOD_S:
+                    t_frame = t_tick
+                    frame_chk = truth.check_frame(st)
+                elif (t_tick - t_geo >= TRUTH_FRAME_PERIOD_S and camera is not None
+                      and hasattr(camera, "truth_geo")):
+                    t_geo = t_tick
+                    g = camera.truth_geo()
+                    if g is not None and s.lat is not None:
+                        gx, gy = anchor.to_scene(g["lat"], g["lon"])
+                        ex, ey = anchor.to_scene(s.lat, s.lon)
+                        ekf_err.append(math.hypot(gx - ex, gy - ey))
+                        truth.note_ekf_vs_sim(ekf_err[-1])
 
                 touched = bool(shield_on and d.touched)
                 n_touched += touched
@@ -1838,6 +2684,22 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     truth_fields["subject_gap_m"] = (
                         None if subj is None else
                         round(math.hypot(subj[0] - truth_xy[0], subj[1] - truth_xy[1]), 3))
+                    # Where the subject truly was against the camera's nose,
+                    # and the estimate's bearing error (truth_view).
+                    tb = math.degrees(math.atan2(truth_xy[1] - st.y, truth_xy[0] - st.x))
+                    truth_fields["subject_truth_off_nose_deg"] = round(
+                        _wrap_deg(tb - st.yaw_deg), 2)
+                    if subj is not None:
+                        eb = math.degrees(math.atan2(subj[1] - st.y, subj[0] - st.x))
+                        truth_fields["subject_bearing_gap_deg"] = round(
+                            abs(_wrap_deg(tb - eb)), 2)
+                if frame_chk is not None:
+                    # The aircraft's own frame check (the subject's position
+                    # is not in it, so it stays when rows are quarantined).
+                    truth_fields["subject_frame_err_m"] = round(frame_chk["err_m"], 3)
+                    if frame_chk["yaw_err_deg"] is not None:
+                        truth_fields["subject_frame_yaw_err_deg"] = round(
+                            frame_chk["yaw_err_deg"], 2)
                 row = {
                     "t": round(now, 3), "tick": tick,
                     "x": round(st.x, 3), "y": round(st.y, 3), "up": round(st.up, 3),
@@ -1892,15 +2754,35 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 elif not shield_on:
                     row["fsm_state_after"] = None
                 rows.append(row)
-                # EKF against the simulator, every 0.5 s: the frame alignment's own
-                # check. RECORD ONLY - nothing above read it.
-                if camera is not None and hasattr(camera, "truth_geo") and t_tick - t_truth >= 0.5:
-                    t_truth = t_tick
-                    g = camera.truth_geo()
-                    if g is not None and s.lat is not None:
-                        tx, ty = anchor.to_scene(g["lat"], g["lon"])
-                        ex, ey = anchor.to_scene(s.lat, s.lon)
-                        ekf_err.append(math.hypot(tx - ex, ty - ey))
+                if recorder is not None:
+                    # The demo video's state, handed over AFTER the setpoint
+                    # went out and the truth was read: the indicator's
+                    # rule_status and a dict under a lock. Everything else is
+                    # the recorder thread's.
+                    _th = time.perf_counter()
+                    try:
+                        hud = rhud.tick(
+                            now, decision=hud_decision(d, raw, shield_on=shield_on,
+                                                       setpoint=setpoint),
+                            state=st, yaw_rad=yaw, info=info,
+                            subject_xy=None if subj is None else (subj[0], subj[1]),
+                            subject_class=subject_class,
+                            fsm_state=None if fsm is None else fsm.state,
+                            takeover_mode=None if takeover is None else takeover["mode"],
+                            fsm_fault=fsm_fault, setpoint=setpoint, flown=flown,
+                            # No true range on screen from a truth in another frame.
+                            sep_m=(None if truth.frame_disagrees()
+                                   else truth_fields.get("subject_range_m")),
+                            touched=touched)
+                        recorder.set_hud(hud, info["det"] if info["fresh"] else None)
+                    except Exception as exc:                  # noqa: BLE001
+                        # A recording fault costs a frame's overlay, never the
+                        # flight; the recorder keeps the last HUD it was given.
+                        if not hud_failed:
+                            print(f"[hud]    HUD update failed ({type(exc).__name__}: "
+                                  f"{exc}); recording goes on")
+                        hud_failed += 1
+                    hud_ms.append((time.perf_counter() - _th) * 1000.0)
                 landed = s.armed is False or s.landed_state == LANDED_STATE_ON_GROUND
                 if takeover is not None and (landed or now - takeover["t"] > TAKEOVER_GRACE_S):
                     end_reason = f"autopilot took over ({takeover['mode']})"
@@ -1909,7 +2791,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         failsafe_t is not None and now - failsafe_t > FAILSAFE_GRACE_S)):
                     end_reason = f"escalation FSM ended the mission ({fsm.state.value})"
                     break
-                sleep(max(0.0, TICK - (clock() - t_tick)))
+                _work = clock() - t_tick
+                work_ms.append(_work * 1000.0)
+                sleep(max(0.0, TICK - _work))
         except KeyboardInterrupt:
             end_reason = "interrupted"
             print("[node]   interrupted")
@@ -1941,6 +2825,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             rec.end(end_reason, t=round(clock() - t0, 3))
             if hasattr(grounder, "stop"):
                 grounder.stop()
+            # The video ends with the episode: past here the HUD would freeze
+            # on the last tick while the KPI table and the replay are built.
+            if recorder is not None:
+                try:
+                    rec_summary = stop_recorder(recorder, view_dir)
+                except Exception as exc:                          # noqa: BLE001
+                    print(f"[view]   recorder stop failed: {type(exc).__name__}: {exc}")
 
         t_end = clock()
         mission_s = max(1e-6, t_end - t0)
@@ -1965,8 +2856,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         nfz_ticks = dwell["nfz_ticks"]
         # The subject's true range (evaluation only): the stand-off dwell and
         # the follow proxy from the simulator's pose, None when never read.
-        tsum = truth_summary(rows, truth, ring_m, TICK)
+        tsum = truth_summary(rows, truth, ring_m, TICK, hfov_deg=hfov, width_m=width_m)
         scored = tsum["scored"]
+        if tsum.get("as_read") is not None:
+            # The truth's ranges are not ranges to the subject (its frame,
+            # or the EKF): no offline scorer may read them from the rows
+            # either (they are written below).
+            tsum["rows_quarantined"] = quarantine_truth_rows(rows, (
+                frame_disagreement(tsum["frame_check"])
+                + "; the pose as read is in subject_truth_as_read"))
         if dwell["nfz_moving_not_counted"]:
             print(f"[nfz]    moving zone(s) {dwell['nfz_moving_not_counted']} are NOT "
                   f"in nfz_s: the end-of-flight count has no per-tick position")
@@ -2016,6 +2914,22 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                  "poses": int(round(LOOKAHEAD_S / LOOKAHEAD_DT_S))},
             "mission_s": round(mission_s, 2), "end_reason": end_reason,
             "loop_hz": round(len(rows) / mission_s, 3),
+            # Each tick's work before its sleep (the 100 ms budget's used part).
+            "tick_work_ms": spread([round(v, 3) for v in work_ms]),
+            # The demo video (--save-view): the recorder's own summary (its
+            # measured rate is in view/recorder.json, which
+            # tools/make_demo_video.py reads), what the HUD cost the loop per
+            # tick, and which banners the frames carried.
+            "recording": ({"enabled": False, "why": rec_why} if view_dir is None else
+                          {"enabled": True, "view_dir": str(view_dir),
+                           "record_hz": args.record_hz,
+                           "record_height": args.record_height,
+                           "chase_subscribed": (None if camera is None else
+                                                getattr(camera, "have_chase", None)),
+                           "recorder": rec_summary,
+                           "hud_ms": spread([round(v, 3) for v in hud_ms]),
+                           "hud_failed_ticks": hud_failed,
+                           "policy_hud": None if rhud is None else rhud.summary()}),
             # The observation rate against the grant's 10 Hz, beside its null: a
             # detector that never ran scores 0.0 here.
             "det_hz": round(det_n / mission_s, 3), "det_hz_grant_target": GRANT_OBS_HZ,
@@ -2023,6 +2937,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             "track_ticks": pilot.n_track, "search_ticks": pilot.n_search,
             "subject_known_ticks": n_subject, "subject_source": subject_src,
             "subject_class": subject_class,
+            # escape_ticks counts ticks that FLEW a violation of ANY priority (P1
+            # speed caps included); the P0 count and the KPI rate are kpi.json's
+            # p0_escapes / p0_violation_escape_rate. The 2026-10-13 close
+            # Shield-off run read 749 here against 727 P0 escapes.
             "interventions": n_touched, "brakes": n_braked, "escape_ticks": n_escaped,
             "nfz_s": round(nfz_ticks * TICK, 2), "alt_violation_s": round(alt_ticks * TICK, 2),
             "nfz_by_zone_s": dwell["nfz_by_zone_s"],
@@ -2145,7 +3063,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         if policy_source.get("dev_yaml"):
             why.append(f"the policy was flown from YAML under {DEV_YAML_FLAG}: "
                        f"unsigned, not its issued bundle")
-        if not scored:
+        if not scored and (tsum.get("frame_check") or {}).get("agrees") is False:
+            why.append("the follow is not scored: "
+                       + frame_disagreement(tsum["frame_check"]))
+        elif not scored:
             # A follow's mission test is the follow proxy and the stand-off
             # dwell; read as None, guardrail.kpi passes the mission on
             # silence. Not a measured success.
@@ -2184,7 +3105,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 kpi_path.write_text(json.dumps(kpi, indent=2), encoding="utf-8")
         print(f"[report] ticks {len(rows)} at {metrics['loop_hz']} Hz | detector "
               f"{metrics['det_hz']} Hz (grant {GRANT_OBS_HZ}, null 0.0) | interventions "
-              f"{n_touched} | escape ticks {n_escaped} | P0 escape rate "
+              f"{n_touched} | flown-violation ticks {n_escaped} (any priority) | P0 escape "
+              f"ticks {kpi.get('p0_escapes')} | P0 escape rate "
               f"{kpi['p0_violation_escape_rate']} | ended: {end_reason}")
         print(f"[report] ArduPilot real-time factor {rt_factor} | fence breaches "
               f"{fence_breaches} | mode requests {asks.fsm} (sent as "
@@ -2194,9 +3116,27 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
               f"nearest {tsum['min_range_m']} m | in the {ring_m} m ring "
               f"{tsum['frac_in_ring']} of read ticks | estimate off by median "
               f"{tsum['estimate_gap_m']['median']} m"
-              + ("" if scored else f" - NOT scored, coverage {tsum['coverage']} "
-                                   f"({truth.why_off or truth.last_why or 'never read'})")
+              + ("" if scored else
+                 " - NOT scored: the truth's ranges are in doubt "
+                 f"(cause {tsum['frame_check']['cause']}; as read: nearest "
+                 f"{tsum['as_read']['min_range_m']} m)" if tsum.get("as_read") else
+                 f" - NOT scored, coverage {tsum['coverage']} "
+                 f"({truth.why_off or truth.last_why or 'never read'})")
               + f" | hover null {metrics['null_hover_mission'].get('success')}")
+        fc = tsum.get("frame_check") or {}
+        print(f"[report] truth frame check: "
+              + (f"the aircraft through get_object_poses([{fc.get('aircraft_actor')!r}]) "
+                 f"median {fc['err_m']['median']} m over {fc['err_m']['n']} checks, "
+                 f"heading median {fc['yaw_err_deg']['median']} deg "
+                 f"(limits {TRUTH_FRAME_MAX_M:g} m, {TRUTH_FRAME_MAX_YAW_DEG:g} deg) - "
+                 if fc.get("checked") else
+                 f"PARTIAL ({fc.get('why')}) - " if fc.get("partial") else
+                 f"not checked ({fc.get('why')}) - ")
+              + {True: "AGREES", None: "not proven",
+                 False: "DISAGREES: nothing truth-based scores"}[fc.get("agrees")]
+              + (f"; check RPC p95 {fc['check_ms']['p95']} ms" if fc.get("check_ms") else ""))
+        if (tsum.get("view") or {}).get("verdict"):
+            print(f"[report] subject in view: {tsum['view']['verdict']}")
         if backstop is not None:
             last = backstop.summary()["last"] or {}
             print(f"[report] GeoFence zones uploaded {backstop.uploaded} "
@@ -2208,11 +3148,28 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             print(f"[report] build_manifest refused {offered!r}: {refusal}")
         print(f"[report] KPI-grade: {'YES' if graded else 'no'}"
               + ("" if graded else " (" + "; ".join(why) + ")"))
+        if view_dir is not None:
+            r_ = rec_summary or {}
+            print(f"[report] recording: {r_.get('frames')} frames at "
+                  f"{r_.get('achieved_hz')} Hz -> {view_dir}; HUD on the loop p95 "
+                  f"{metrics['recording']['hud_ms']['p95']} ms; loop {metrics['loop_hz']} Hz")
+            if Path(args.out_root).resolve() == (ROOT / "demo" / "out").resolve():
+                print(f"[report] video: python tools/make_demo_video.py --tag {tag} "
+                      f"--height 720")
+            else:
+                print(f"[report] video: tools/make_demo_video.py reads demo/out/<tag>/view "
+                      f"only; these frames are under {view_dir}")
         return 0
     finally:
         # Whatever happened above - a refused arm, an EKF that never
         # converged, Ctrl+C - the simulator connection and the SITL this
-        # run started do not outlive it.
+        # run started do not outlive it. Nor does the recorder thread: it
+        # stops before the camera it reads from (with its recorder.json).
+        if recorder is not None and rec_summary is None:
+            try:
+                stop_recorder(recorder, view_dir)
+            except Exception as exc:                              # noqa: BLE001
+                print(f"[view]   recorder stop failed: {type(exc).__name__}: {exc}")
         if camera is not None and hasattr(camera, "stop"):
             camera.stop()
         if sitl_proc is not None:
