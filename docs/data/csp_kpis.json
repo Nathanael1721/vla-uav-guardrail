@@ -2,7 +2,7 @@
  "_what": "Prefix Compiler KPIs (Prefix Compiler p5): at the default budget and at the largest budget where the naive cut drops a P0 rule (tools/kpi_report.py wp2_section)",
  "generated": "2026-10-13",
  "command": "python tools/kpi_report.py --wp2-only",
- "code_revision": "4418ae03dad5-dirty",
+ "code_revision": "30bead37a860-dirty",
  "policies_dir": "policies",
  "default": {
   "source": "guardrail.compiler.coverage_report",
