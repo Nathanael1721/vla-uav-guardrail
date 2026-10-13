@@ -89,6 +89,13 @@ and `verify_replay` refuses a bundle whose log or audit records name a policy
 hash that none of the archived generations has, which is exactly the WP2-15
 defect, now a check that can fail.
 
+Since 2026-10-12 the `episode_start` event also names the RULE CLOCK the
+episode's Shield and CSPs read (`rule_clock`: scripted from a start, the wall
+clock in the mission's time zone, or none), and each generation row the
+clock's reading its CSP was compiled at (`rule_clock_reading`); see
+`rule_clock` below. A generation hot-applied over the REST API is written by
+guardrail.api.FlightHotApply through `hot_applied`, like any other.
+
 ONE EPISODE, NOT TWO (since 2026-10-07)
 
 A run tag is reused on purpose, and a re-run that crashed before it wrote its
@@ -131,6 +138,7 @@ import re
 import shutil
 import tarfile
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1059,8 +1067,18 @@ def flown_fields(shield, state, decision, *, shield_on: bool,
 DWELL_ZONE_TYPES = ("polygon_fence", "circle_fence", "dynamic_nfz")
 
 
+def _clock_reading(value) -> datetime | None:
+    if value is None or isinstance(value, datetime):
+        return value
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
 def zone_dwell(shield, points, tick_s: float, *,
-               live_from: dict[str, float] | None = None) -> dict[str, Any]:
+               live_from: dict[str, float] | None = None,
+               clock_key: str | None = None) -> dict[str, Any]:
     """Time spent inside keep-out zones (`nfz_s`), read from the Shield's own
     rule checker, the same way on every rail.
 
@@ -1076,11 +1094,22 @@ def zone_dwell(shield, points, tick_s: float, *,
 
     A MOVING dynamic_nfz is not counted: rule_status places it where it is
     at the END of the flight, not where it was at each point. It is named in
-    `nfz_moving_not_counted` instead of scoring zero. Time windows and
-    switches are not applied, as in follow_vlm (a zone counts whenever the
-    aircraft was in it): the count can be too high, never too low. The rule
-    set is the Shield's at the end of the flight, so a zone removed before
-    then is not counted.
+    `nfz_moving_not_counted` instead of scoring zero. The rule set is the
+    Shield's at the end of the flight, so a zone removed before then is not
+    counted.
+
+    Time windows and switches: with `clock_key`, each point carries the rail's
+    rule-clock reading under that key (an ISO string or a datetime; since
+    2026-10-12 both SITL rails record it, "clock" on each trajectory point),
+    and a zone counts at a point only while it is in force at that reading,
+    decided by the Shield's own switch logic (guardrail.compiler._RuleClock,
+    held to Shield.rule_status by tests/test_csp.py) on the end-of-flight
+    rule set. Time inside a zone that was off is reported apart, as
+    `nfz_off_by_clock_s`. Until that date the rails flew with no clock, so
+    every zone was in force whenever the aircraft was in it; without
+    `clock_key`, or at a point without a reading, that is still the count, as
+    in follow_vlm: too high, never too low. A switch hot-applied mid-flight is
+    read with its own window over the whole flight.
 
     `points` are dicts with x, y, up (and t, in the units of `live_from`).
     `live_from` maps a zone hot-applied mid-flight to the time it went live;
@@ -1092,7 +1121,8 @@ def zone_dwell(shield, points, tick_s: float, *,
 
     Returns nfz_s, nfz_ticks, nfz_by_zone_s, nfz_first_index (the first
     point inside a counted zone, or None), nfz_counted_zones,
-    nfz_moving_not_counted and nfz_live_from_unknown.
+    nfz_moving_not_counted and nfz_live_from_unknown; with `clock_key` also
+    nfz_off_by_clock_s (by zone) and nfz_points_without_clock.
     """
     from .models import State
     tick_s = float(tick_s)
@@ -1104,10 +1134,18 @@ def zone_dwell(shield, points, tick_s: float, *,
     counted = [r.rule.id for r in fences
                if not r.moving and r.rule.type in DWELL_ZONE_TYPES]
     known = {r.rule.id for r in fences}
+    rule_clock_on = None
+    if clock_key is not None:
+        from .compiler import _RuleClock
+        rule_clock_on = _RuleClock(shield.policy).on
     by_zone: dict[str, int] = {}
+    off_by_clock: dict[str, int] = {}
+    no_reading = 0
     first = None
     for i, p in enumerate(points):
         st = State(x=float(p["x"]), y=float(p["y"]), up=float(p["up"]))
+        when = _clock_reading(p.get(clock_key)) if clock_key is not None else None
+        no_reading += int(clock_key is not None and when is None)
         for r in shield.rule_status(st):
             if r["type"] not in DWELL_ZONE_TYPES or r["id"] in moving:
                 continue
@@ -1121,19 +1159,148 @@ def zone_dwell(shield, points, tick_s: float, *,
                                      f"force there cannot be decided")
                 if float(p["t"]) < float(t0):
                     continue
+            if when is not None and not rule_clock_on(r["rule"], when):
+                off_by_clock[r["id"]] = off_by_clock.get(r["id"], 0) + 1
+                continue
             by_zone[r["id"]] = by_zone.get(r["id"], 0) + 1
             if first is None:
                 first = i
     n = sum(by_zone.values())
-    return {"nfz_s": n * tick_s, "nfz_ticks": n,
-            "nfz_by_zone_s": {k: round(v * tick_s, 3) for k, v in sorted(by_zone.items())},
-            "nfz_first_index": first,
-            "nfz_counted_zones": counted,
-            "nfz_moving_not_counted": moving,
-            "nfz_live_from_unknown": sorted(k for k in live_from if k not in known)}
+    out = {"nfz_s": n * tick_s, "nfz_ticks": n,
+           "nfz_by_zone_s": {k: round(v * tick_s, 3) for k, v in sorted(by_zone.items())},
+           "nfz_first_index": first,
+           "nfz_counted_zones": counted,
+           "nfz_moving_not_counted": moving,
+           "nfz_live_from_unknown": sorted(k for k in live_from if k not in known)}
+    if clock_key is not None:
+        out["nfz_off_by_clock_s"] = {k: round(v * tick_s, 3)
+                                     for k, v in sorted(off_by_clock.items())}
+        out["nfz_points_without_clock"] = no_reading
+    return out
 
 
-def rail_shield(policy: Policy, *, lookahead_s: float, dt: float, **kw):
+# --------------------------------------------------------------------------- #
+# The rule clock a flight rail gives its Shield and every generation's CSP
+# --------------------------------------------------------------------------- #
+#
+# Until 2026-10-12 no flight rail passed a clock: Shield(now=None) holds every
+# scheduled rule in force and ignores every time_window_switch's window, and
+# each CSP was compiled with no clock either, so time windows and switches did
+# nothing in flight (the stress harness alone gave them one, its scenario
+# clock). `rule_clock` builds the ONE callable a rail hands to `rail_shield`
+# (`clock=`) and to `EpisodeRecord` (`clock=`), and the record of which clock
+# it is (`EpisodeRecord(clock_record=...)`, metrics.json `rule_clock`).
+#
+# The reading is the policy's local time, as Shield(now=...) and the compiler
+# take it (guardrail/compiler.py `_issue_stamp`: no time zone is stored in a
+# policy). The WSL rails run on UTC and Windows on +08:00, so the machine's
+# own local time is never used: the wall clock is read in the mission's time
+# zone, by default Taiwan's (the lab's and every shipped geographic policy's),
+# and the record says which zone and why.
+
+# Taiwan has kept UTC+08:00 with no daylight saving since 1979, so a fixed
+# offset is exact and needs no time-zone database (Windows ships none, and
+# `tzdata` is not installed in either environment here).
+DEFAULT_RULE_TZ = "+08:00"
+DEFAULT_RULE_TZ_NAME = "Asia/Taipei (UTC+08:00, no daylight saving)"
+_OFFSET_RE = re.compile(r"^(?:UTC|GMT)?([+-])(\d{1,2})(?::?(\d{2}))?$")
+
+
+def parse_clock_start(text: str | datetime) -> datetime:
+    """`--clock-start` as a datetime: ISO 8601, a trailing "Z" accepted on
+    Python 3.10 too. An offset, when written, is kept (the reading is that
+    zone's wall time, as the stress harness keeps a scenario's clock_start)."""
+    if isinstance(text, datetime):
+        return text
+    s = str(text).strip()
+    try:
+        return datetime.fromisoformat(s[:-1] + "+00:00" if s.endswith("Z") else s)
+    except ValueError:
+        raise ValueError(f"--clock-start must be ISO 8601 (e.g. "
+                         f"2026-10-12T17:29:50), got {text!r}") from None
+
+
+def rule_tz(spec: str | None = None) -> tuple[Any, str, str]:
+    """`(tzinfo, label, source)` for the mission's time zone. `spec` is a UTC
+    offset ("+08:00", "-0530", "UTC", "Z") or an IANA name (needs a time-zone
+    database: on Windows the `tzdata` package); None is DEFAULT_RULE_TZ. An
+    unknown name is refused, never replaced by the machine's zone."""
+    from datetime import timedelta
+    source = "argument" if spec else "default"
+    s = (spec or DEFAULT_RULE_TZ).strip()
+    if s.upper() in ("UTC", "Z", "GMT"):
+        return timezone.utc, "UTC", source
+    m = _OFFSET_RE.match(s)
+    if m:
+        sign = 1 if m.group(1) == "+" else -1
+        hours, mins = int(m.group(2)), int(m.group(3) or 0)
+        if hours > 14 or mins > 59:
+            raise ValueError(f"time zone offset {spec!r} is out of range")
+        tz = timezone(sign * timedelta(hours=hours, minutes=mins))
+        label = f"{m.group(1)}{hours:02d}:{mins:02d}"
+        if label == DEFAULT_RULE_TZ:
+            label = f"{label} ({DEFAULT_RULE_TZ_NAME})"
+        return tz, label, source
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(s), s, source
+    except Exception as exc:                              # noqa: BLE001
+        raise ValueError(
+            f"time zone {spec!r} is neither a UTC offset (+08:00) nor a zone "
+            f"this machine's time-zone database knows ({type(exc).__name__}); "
+            f"pass an offset") from None
+
+
+def rule_clock(start: str | datetime | None = None, *,
+               elapsed: Callable[[], float | None] | None = None,
+               tz: str | None = None,
+               wall: Callable[[Any], datetime] | None = None
+               ) -> tuple[Callable[[], datetime], dict[str, Any]]:
+    """`(clock, record)`: the rule clock of one flight, and what it is.
+
+    With `start` (the rails' `--clock-start`) the clock is SCRIPTED: it reads
+    `start` plus the mission time `elapsed()` returns (None before the
+    mission starts, read as 0 s). It advances with the rail's mission clock,
+    which is simulated time when SIM_SPEEDUP is 1 (the KPI condition), so a
+    flight that starts at 17:29:50 crosses a 17:30 window edge 10 s in, the
+    way the stress harness's scenario clock does.
+
+    Without it the clock is the WALL clock in the mission's time zone
+    (`rule_tz(tz)`), read as naive local time on every call. `wall` replaces
+    datetime.now (tests). The record names the kind, the start or the zone
+    and where each came from, and the first reading."""
+    if start is not None:
+        t0 = parse_clock_start(start)
+        if elapsed is None:
+            raise ValueError("a scripted rule clock needs the rail's mission "
+                             "time (elapsed) to advance with")
+
+        def scripted() -> datetime:
+            from datetime import timedelta
+            s = elapsed()
+            return t0 + timedelta(seconds=float(s or 0.0))
+        return scripted, {
+            "kind": "scripted", "start": t0.isoformat(),
+            "source": "--clock-start",
+            "advances_with": "the rail's mission time (simulated time at "
+                             "SIM_SPEEDUP 1); reads the start until the "
+                             "mission starts"}
+    zone, label, source = rule_tz(tz)
+    now = wall or (lambda z: datetime.now(z))
+
+    def wall_clock() -> datetime:
+        return now(zone).replace(tzinfo=None)
+    return wall_clock, {
+        "kind": "wall", "tz": label,
+        "tz_source": ("--clock-tz" if source == "argument" else
+                      "default: the mission's time zone (no --clock-tz)"),
+        "first_reading": wall_clock().isoformat(timespec="seconds"),
+        "note": "no --clock-start: time windows and switches are evaluated "
+                "on the wall clock in this zone, read as naive local time"}
+
+
+def rail_shield(policy: Policy, *, lookahead_s: float, dt: float,
+                clock: Callable[[], datetime] | None = None, **kw):
     """A flight rail's Shield, without an escalation FSM of its own.
 
     The rail runs THE FSM itself, fed with what only the rail sees (the
@@ -1141,10 +1308,17 @@ def rail_shield(policy: Policy, *, lookahead_s: float, dt: float, **kw):
     the Shield, stepping on the same decisions without those inputs, made the
     audit disagree with the flight log (module docstring, "One escalation FSM
     per rail"). A Shield that has no `escalation` parameter has no FSM to
-    switch off."""
+    switch off.
+
+    `clock` is the rail's rule clock (`rule_clock`), the same callable the
+    rail gives `EpisodeRecord`, so the Shield and every generation's CSP read
+    one clock. None keeps the Shield clockless (every scheduled rule in
+    force), which is what every rail flew until 2026-10-12."""
     from .shield import Shield
     if "escalation" in inspect.signature(Shield).parameters:
         kw.setdefault("escalation", False)
+    if clock is not None:
+        kw["now"] = clock
     return Shield(policy, lookahead_s=lookahead_s, dt=dt, **kw)
 
 
@@ -1197,6 +1371,13 @@ class EpisodeRecord:
     costmap_csp_g<N>.npz / .json and named in its `cost_map_ref`. A map that
     cannot be drawn or is refused is a `cost_map_failed` event, and the CSP
     is still written, without one.
+
+    `clock` is the rail's rule clock, the callable it also gives the Shield
+    (`rule_clock`, `rail_shield(clock=...)`); every generation's CSP is
+    compiled at its reading. `clock_record` (rule_clock's record) goes into
+    the `episode_start` event as `rule_clock`, so an episode says which clock
+    its rules were evaluated on; a rail that passes no clock is recorded as
+    `{"kind": "none"}` (every scheduled rule in force).
     """
 
     def __init__(self, run_dir: str | Path, policy: Policy, mission=None, *,
@@ -1204,24 +1385,29 @@ class EpisodeRecord:
                  clock: Callable[[], datetime] | None = None,
                  rotate: bool = True,
                  wall_ns: Callable[[], int] = time.time_ns,
-                 cost_map: bool = False) -> None:
+                 cost_map: bool = False,
+                 clock_record: dict | None = None) -> None:
         self.dir = Path(run_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.policy = policy
         self.mission = mission
         self.lookahead_s = lookahead_s
         self.clock = clock
+        self.clock_record = (dict(clock_record) if clock_record is not None else
+                             {"kind": "none" if clock is None else "unrecorded"})
         self.cost_map = bool(cost_map)
         self._wall_ns = wall_ns
         self.moved = rotate_stale_episode(self.dir) if rotate else []
         self.events_path = self.dir / "events.jsonl"
+        self._events_lock = threading.Lock()
         self.generations: list[dict] = []
         self.episode_id: int = int(wall_ns())
         self.ended = False
         self.event("episode_start", wall_ns=self.episode_id,
                    episode_id=self.episode_id,
                    policy_id=policy.policy_id, policy_hash=policy.policy_hash,
-                   generation=policy.generation, moved_aside=self.moved)
+                   generation=policy.generation, moved_aside=self.moved,
+                   rule_clock=self.clock_record)
         self.write_generation("take-off")
 
     def end(self, why: str, t: float | None = None, **data) -> dict:
@@ -1243,7 +1429,10 @@ class EpisodeRecord:
                    timespec="milliseconds")}
         for k, v in data.items():
             rec[f"data_{k}" if k in rec else k] = v
-        with open(self.events_path, "a", encoding="utf-8", newline="\n") as fh:
+        # One whole line per call: since 2026-10-12 a rail's REST hot-apply
+        # thread writes events beside its ROS callbacks.
+        with self._events_lock, open(self.events_path, "a", encoding="utf-8",
+                                     newline="\n") as fh:
             fh.write(json.dumps(rec, default=str) + "\n")
         return rec
 
@@ -1253,6 +1442,9 @@ class EpisodeRecord:
         pol_file.write_bytes(self.policy.canonical_bytes())
         csp_file, err = self.dir / f"csp_g{g}.json", None
         cm_ref = cm_err = None
+        # ONE clock reading for the CSP and its map (compile_csp refuses a
+        # map drawn at any other instant), recorded with the generation.
+        now = self.clock() if self.clock else None
         if self.mission is None:
             err = "no mission given, so no CSP can be compiled"
             if self.cost_map:
@@ -1263,9 +1455,6 @@ class EpisodeRecord:
                 comp = ConstraintCompiler(self.policy)
                 kw = {} if self.lookahead_s is None else {
                     "lookahead_s": self.lookahead_s}
-                # ONE clock reading for the CSP and its map: compile_csp
-                # refuses a map drawn at any other instant.
-                now = self.clock() if self.clock else None
                 cm = None
                 if self.cost_map:
                     try:
@@ -1289,6 +1478,8 @@ class EpisodeRecord:
                 err = f"{type(exc).__name__}: {exc}"
         row = {"generation": g, "policy_hash": self.policy.policy_hash,
                "reason": reason, "csp": err is None}
+        if now is not None:
+            row["rule_clock_reading"] = now.isoformat(timespec="seconds")
         if self.cost_map:
             row["cost_map_ref"] = cm_ref
         self.generations.append(row)

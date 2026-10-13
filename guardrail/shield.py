@@ -69,6 +69,13 @@ ENFORCEMENT (2026-10-07; docs/DESIGN-shield-enforcement.md has the whole story)
   * `rule_status(state)` reports each rule's distance, state and breach from
     this module's own geometry, so the on-screen panel and the controller's
     FenceGuard read the one rule checker instead of keeping their own.
+  * Since 2026-10-12 the repair stack runs as guardrail/repair.py's operator
+    library: the chain above, decision for decision, each call recorded
+    (`ShieldDecision.trace`, the audit record's `repair_passes`), with the
+    grant's first-feasible selection, PathRepair and a forecast segment check
+    behind constructor flags, all off by default. A moving zone's polygon is
+    built only when its anchor box meets the forecast (guardrail/ir.py
+    `anchor_reach`).
 """
 from __future__ import annotations
 
@@ -78,15 +85,18 @@ import time
 from collections import Counter, deque
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from functools import lru_cache
 from typing import Any, Literal, NamedTuple
 
 import numpy as np
-from pydantic import BaseModel
-from shapely.geometry import Point
+import shapely
+from pydantic import BaseModel, Field
+from shapely.geometry import LineString, Point
 
 from . import fsm as _fsm
+from . import repair as _repair
 from .geometry import nearest_on_polyline, point_in_fence, push_out_direction
-from .ir import FENCE_TYPES, FenceRecord, PolicyIR, compile_fence, is_fence
+from .ir import FENCE_TYPES, FenceRecord, PolicyIR, anchor_reach, compile_fence, is_fence
 from .models import (
     DAYS,
     DEFAULT_LAYER,
@@ -212,6 +222,7 @@ def as_dynamic_nfz(fence: PolygonFence, motion: dict | None = None) -> DynamicNF
 _DAY_S = 86400.0
 
 
+@lru_cache(maxsize=512)
 def _hhmm_s(hhmm: str, end: bool = False) -> float:
     h, _, m = hhmm.partition(":")
     s = (int(h) * 60 + int(m)) * 60.0
@@ -486,6 +497,16 @@ class ShieldDecision(BaseModel):
     # repaired) and soft rules given up (`relaxed`), of any priority; filter to
     # P0 for the grant's escape KPI.
     emitted_violations: list[Violation] = []
+    # How the decision was reached, for the audit record (guardrail/audit.py)
+    # and nothing else: the heading the body frame is taken at (`yaw_deg`),
+    # every repair operator considered pass by pass, in every chain run, with
+    # its result and the reason for a skip (`passes`, `iterations`,
+    # `chain_runs`, `flown_run`), the pass each Repair came from
+    # (`repair_iterations`, index for index with `repairs`), the repair
+    # mode and flags, and the rules whose violation a window edge inside the
+    # lookahead caused (`window_edge`). Excluded from model_dump(), so flight
+    # logs, digests and every comparison of dumped decisions are unchanged.
+    trace: dict | None = Field(default=None, exclude=True)
 
     @property
     def touched(self) -> bool:
@@ -499,6 +520,15 @@ class ShieldDecision(BaseModel):
         P0 escape rate is this filtered to P0 rules, as guardrail/kpi.py and
         the policy HUD do; the decision does not carry priorities."""
         return bool(self.emitted_violations)
+
+
+class _Pose(NamedTuple):
+    """One forecast pose (Shield._predict): State's four fields, unvalidated
+    because they are computed from validated floats."""
+    x: float
+    y: float
+    up: float
+    yaw_deg: float
 
 
 class TickRecord(NamedTuple):
@@ -599,11 +629,15 @@ class _Schedule:
     tick and is read once. Without a clock every rule is in force, as
     ConstraintBase.active_at has always said ("absent means active").
     """
-    __slots__ = ("rt", "when", "eps", "grid", "const", "_cache")
+    __slots__ = ("rt", "when", "eps", "grid", "const", "_cache", "_shared")
 
     def __init__(self, rt: _Runtime, when, eps: float, grid: tuple):
         self.rt, self.when, self.eps, self.grid = rt, when, eps, grid
         self._cache: dict = {}
+        # tau -> in force, per weekly window, shared by every PLAIN rule with
+        # that window (`_plain_key`): 50 rules on one schedule read it once
+        # per pose instead of 50 times.
+        self._shared: dict = {}
         if not rt.timed or when is None:
             self.const = True
         else:
@@ -670,7 +704,9 @@ class _Schedule:
             if self.const:
                 m = self.on(rule, self.when)
             else:
-                memo: dict = {}
+                plain = self._plain_key(rule)
+                memo: dict = ({} if plain is None
+                              else self._shared.setdefault(plain, {}))
 
                 def m(tau, _rule=rule, _memo=memo):
                     k = round(tau, 9)
@@ -680,6 +716,22 @@ class _Schedule:
                     return v
             self._cache[key] = m
         return m
+
+    def _plain_key(self, rule):
+        """The weekly window of a rule whose in-force state is its own window
+        and nothing else (no switch or swap targets it, and it is neither):
+        `on` then reads only `valid_time.recurrence`, so two such rules with
+        the same window are in force at exactly the same instants. None for
+        every other rule."""
+        rt = self.rt
+        if (isinstance(rule, (TimeWindowSwitch, CorridorSwap))
+                or rule.id in rt.switches_on or rule.id in rt.swaps_on):
+            return None
+        vt = rule.valid_time
+        if vt is None or vt.recurrence is None:
+            return None
+        r = vt.recurrence
+        return (r.start_time, r.end_time, tuple(r.days))
 
     def anywhere(self, rule) -> bool:
         m = self.mask(rule)
@@ -702,7 +754,7 @@ class _Tick:
     monitor clock, and the rule ids the repair chain is told to leave alone
     (monitor_only rules, and soft rules it has given up)."""
     __slots__ = ("rt", "sched", "t", "skip", "_lists", "_moving", "_swept", "unsafe",
-                 "_t_first", "given_up")
+                 "_t_first", "given_up", "chain_runs", "ledger")
 
     def __init__(self, rt: _Runtime, sched: _Schedule, t: float, t_first: float | None):
         self.rt, self.sched, self.t, self._t_first = rt, sched, t, t_first
@@ -714,6 +766,12 @@ class _Tick:
         self._moving: dict = {}
         self._swept: dict = {}
         self.unsafe = None
+        # How many times the repair stack ran on this tick (1 + one per soft-
+        # rule relaxation level tried); the audit record's `chain_runs`. Each
+        # run's passes, in order: [(run, passes)], so a run that failed and
+        # was retried with soft rules given up stays on the record.
+        self.chain_runs = 0
+        self.ledger: list = []
 
     def rules(self, name: str):
         key = (name, self.skip)
@@ -789,6 +847,24 @@ class _Tick:
             out.append(self.current(r) if r.moving else r)
         return out
 
+    def anchors(self, ir: PolicyIR) -> list[FenceRecord]:
+        """`fences`, but a moving zone is left as its ANCHOR record: nothing is
+        materialised. The hot paths materialise a moving zone only once its
+        anchor box (`anchor_box`) meets the forecast's."""
+        if not self.rt.timed and not self.skip:
+            return ir.fences
+        return [r for r in ir.fences
+                if r.rule.id not in self.skip and self.sched.anywhere(r.rule)]
+
+    def anchor_box(self, rec: FenceRecord, horizon: float) -> tuple:
+        """ir.anchor_reach at this tick: a superset of `swept` on the zone's
+        materialised record, from its anchor geometry (cached per tick)."""
+        key = ("anchor", rec.index, horizon)
+        b = self._swept.get(key)
+        if b is None:
+            b = self._swept[key] = anchor_reach(rec, self._age(rec.rule), horizon)
+        return b
+
 
 def _to_zone_frame(p: State, tau: float, mv) -> tuple[float, float]:
     """A forecast pose at time tau, in the frame of a moving zone at the tick's
@@ -806,7 +882,9 @@ class Shield:
     def __init__(self, policy: Policy, lookahead_s: float = LOOKAHEAD_S,
                  dt: float = LOOKAHEAD_DT_S, obstacle_map: dict | None = None,
                  now=None, escalation: "_fsm.FSMConfig | bool | None" = True,
-                 theta_horizon_s: float | None = _fsm.DEFAULT_THETA_HORIZON_S):
+                 theta_horizon_s: float | None = _fsm.DEFAULT_THETA_HORIZON_S, *,
+                 repair_mode: str = "chain", path_repair: bool = False,
+                 segment_check: bool = False, repair_order: tuple | None = None):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
@@ -837,7 +915,43 @@ class Shield:
         literally); it is not the default because under the shipped speed
         caps it can never exceed theta (docs/DESIGN-escalation-fsm.md,
         "Theta: two readings, one default"). Another number measures |dv|
-        over that horizon."""
+        over that horizon.
+
+        repair_mode / path_repair / segment_check: the repair library's modes
+        (guardrail/repair.py), all off by default, where the decisions are
+        the chain's as they have always been. "first_feasible" is the
+        grant's selection (the first operator whose action clears the
+        earliest violation within theta wins); `path_repair` adds the grant's
+        PathRepair (a body-frame detour waypoint) after the lateral
+        projection; `segment_check` also judges the straight segment between
+        each pair of consecutive forecast poses against every zone's margin
+        ring and every corridor's boundary, so a zone thinner than one
+        forecast step is not stepped over. `repair_operators` is this
+        Shield's copy of the operator registry.
+
+        repair_order: operator names (registry keys) that replace the
+        iterated loop's stack (repair.CHAIN_LOOP) in chain mode, or the
+        priority order (repair.FIRST_FEASIBLE) in first-feasible mode - how a
+        registered operator of a new name is put to work. None (the default)
+        keeps the stacks above. A name the registry does not hold is refused
+        here."""
+        if repair_mode not in _repair.REPAIR_MODES:
+            raise ValueError(f"repair_mode must be one of {_repair.REPAIR_MODES}, "
+                             f"got {repair_mode!r}")
+        self.repair_mode = repair_mode
+        self.path_repair = bool(path_repair)
+        self.segment_check = bool(segment_check)
+        self.repair_operators: dict = dict(_repair.REGISTRY)
+        if repair_order is not None:
+            repair_order = tuple(repair_order)
+            unknown = [n for n in repair_order if n not in self.repair_operators]
+            if not repair_order:
+                raise ValueError("repair_order is empty: no operator would run")
+            if unknown:
+                raise ValueError(f"repair_order names unregistered operator(s) {unknown}; "
+                                 f"registered: {sorted(self.repair_operators)}")
+        self.repair_order = repair_order
+        self._tubes: dict = {}
         why = self.unenforceable(policy)
         if why:
             raise ValueError("the Shield does not enforce every rule of "
@@ -1054,6 +1168,40 @@ class Shield:
             tick = self._new_tick(None)
         return tick.fences(ir)
 
+    def _fence_anchors(self, ir: PolicyIR) -> tuple[list[FenceRecord], "_Tick | None"]:
+        """`_fence_records` without materialising the moving zones (each is
+        its anchor record), and the tick to materialise them in (`_reach`).
+        With no moving zone the two lists are the same, and this one is read
+        through `_fence_records`, as it is whenever a subclass overrides that
+        method (tests/test_profile_shield_tick.py blinds a Shield that way)."""
+        tick = self._tick_ctx()
+        rt = tick.rt if tick is not None else self._rt
+        if not rt.moving_ids or type(self)._fence_records is not Shield._fence_records:
+            return self._fence_records(ir), tick
+        if tick is None:
+            tick = self._new_tick(None)
+        return tick.anchors(ir), tick
+
+    def _reach(self, rec: FenceRecord, tick: "_Tick | None", box: tuple,
+               horizon: float) -> FenceRecord | None:
+        """The record to judge for `rec` against a forecast in `box`, or None
+        when the zone cannot meet it. A static zone is itself. A moving zone
+        is asked `_may_reach` twice: first as its ANCHOR record, whose box
+        (ir.anchor_reach) needs no polygon, and only if that box meets `box`
+        is the zone built at the tick's time and asked again, by its own
+        swept box, exactly as before. The anchor box contains the swept box,
+        so the zones judged are the same ones; what is saved is building the
+        polygon of every zone that cannot be reached. Building all 48 moving
+        zones of the 50-rule load was 70 % of a `_check` (2026-10-12
+        profile). A subclass whose `_may_reach` says True judges every zone
+        at every pose, as it did before."""
+        if not rec.moving or tick is None:
+            return rec                      # no tick: a static view, as before
+        if not self._may_reach(rec, box, horizon):
+            return None
+        cur = tick.current(rec)
+        return cur if self._may_reach(cur, box, horizon) else None
+
     @staticmethod
     def _fence_candidates(ir: PolicyIR, state: State, poses) -> set[int]:
         """Indices of the fences the forecast `poses` could touch.
@@ -1097,7 +1245,11 @@ class Shield:
         tick = self._tick_ctx()
         if tick is None:
             return True
-        sx0, sy0, sx1, sy1 = tick.swept(rec, horizon)
+        # An anchor record (compiled from the authored vertices, with its
+        # multi-scale ring) is bounded without building it; a record built
+        # at the tick's time (no coarse ring) by its own swept box.
+        sx0, sy0, sx1, sy1 = (tick.anchor_box(rec, horizon) if rec.coarse
+                              else tick.swept(rec, horizon))
         bx0, by0, bx1, by1 = box
         return sx0 <= bx1 and sx1 >= bx0 and sy0 <= by1 and sy1 >= by0
 
@@ -1105,7 +1257,8 @@ class Shield:
         """The predicted trajectory the fence and altitude rules judge: (t, pose)
         pairs over the lookahead. Public so the sliding window's "predicted
         trajectory" can be rebuilt for any entry - see TickRecord."""
-        return list(self._predict(state, action))
+        return [(t, State(x=p.x, y=p.y, up=p.up, yaw_deg=p.yaw_deg))
+                for t, p in self._predict(state, action)]
 
     @property
     def history(self) -> tuple[TickRecord, ...]:
@@ -1267,8 +1420,12 @@ class Shield:
         endpoint checked."""
         horizon = self.lookahead_s if horizon_s is None else horizon_s
         t = 0.0
+        # A _Pose, not a State: the four values are already floats (sums and
+        # products of a validated State's and Action4D's), and validating
+        # each of 51 poses again was a fifth of a 50-rule filter() (2026-10-12
+        # profile). `forecast` still returns States.
         while True:
-            yield t, State(
+            yield t, _Pose(
                 x=state.x + action.vx * t,
                 y=state.y + action.vy * t,
                 up=state.up + action.vz_up * t,
@@ -1393,9 +1550,14 @@ class Shield:
                 n += sum(1 for so in self._standoffs
                          if so.binds(self._subject_class) and enforced_hard(so)
                          and self._standoff_inside(so, d) and closing > 1e-9)
-        for rec in self._fence_records(self._ir):
+        anchors, tick = self._fence_anchors(self._ir)
+        here = (state.x, state.y, state.x, state.y)
+        for rec in anchors:
             f = rec.rule
-            if not enforced_hard(f) or not point_in_fence(
+            if not enforced_hard(f):
+                continue
+            rec = self._reach(rec, tick, here, 0.0)
+            if rec is None or not point_in_fence(
                     state.x, state.y, state.up, f, rec.polygon, rec.buffered):
                 continue
             ox, oy = push_out_direction(state.x, state.y, rec.polygon)
@@ -1531,6 +1693,8 @@ class Shield:
         if alive is False:
             return []
         mv = self._motion_of(f)
+        if self.segment_check and poses is None:
+            poses = list(self._predict(state, action))
         if (alive is True or alive(0.0)) and point_in_fence(
                 state.x, state.y, state.up, f, poly, buffered):
             ox, oy = push_out_direction(state.x, state.y, poly)
@@ -1552,7 +1716,99 @@ class Shield:
                 return [Violation(
                     rule_id=f.id, category="geofence", predicted_at_s=t,
                     detail=f"predicted pos ({p.x:.1f},{p.y:.1f}) inside NFZ at t+{t:.1f}s")]
+        if self.segment_check:
+            ring = buffered if buffered is not None else poly.buffer(f.margin_m)
+            hit = self._segment_crossing(f, ring, poses, alive, mv)
+            if hit is not None:
+                t_in, _, (x0, y0, t0), (x1, y1, t1) = hit
+                return [Violation(
+                    rule_id=f.id, category="geofence", predicted_at_s=t_in,
+                    detail=(f"predicted segment ({x0:.1f},{y0:.1f})->({x1:.1f},{y1:.1f}) "
+                            f"crosses NFZ between t+{t0:.1f}s and t+{t1:.1f}s"))]
         return []
+
+    # ---------------- segment check (Shield(segment_check=True)) ---------------- #
+    #
+    # The grant's geometric check (Safety Shield page, "Violation checking"):
+    # "Position point in NFZ? Predicted trajectory segment crosses polygon /
+    # corridor boundary?". The pose checks above answer the first question at
+    # each forecast pose. Between two poses the aircraft covers speed x dt -
+    # 1.2 m at 12 m/s on the grant's 0.1 s grid, 6 m on the sweep's 0.5 s - and
+    # a margin ring thinner than that can lie wholly between them. With the
+    # flag on, the straight segment joining each pair of consecutive poses is
+    # tested too, in the zone's frame for a moving zone. Off by default: it
+    # changes decisions (it finds violations the poses miss).
+
+    @staticmethod
+    def _segment_crossing(f, ring, poses, alive, mv):
+        """The first pair of consecutive forecast poses whose straight segment
+        passes through the INTERIOR of `ring` (the same open set the pose
+        test's `contains` reads), with the zone in force at either end and
+        the segment's altitude span meeting the zone's band. Returns (entry
+        time, depth, (x0, y0, t0), (x1, y1, t1)) in world coordinates, or
+        None. The entry time interpolates along the segment; `depth` is how
+        far inside the ring the segment's inside part reaches at its
+        midpoint."""
+        if ring is None or ring.is_empty:
+            return None
+        rx0, ry0, rx1, ry1 = ring.bounds
+        lo_band, hi_band = f.altitude_floor_m, f.altitude_ceiling_m
+        prev = None
+        for t, p in poses:
+            on = alive is True or alive(t)
+            px, py = _to_zone_frame(p, t, mv) if mv else (p.x, p.y)
+            if prev is not None and (prev[4] or on):
+                t0, x0, y0, u0, _, wx0, wy0 = prev
+                if (max(u0, p.up) >= lo_band and min(u0, p.up) <= hi_band
+                        and max(x0, px) >= rx0 and min(x0, px) <= rx1
+                        and max(y0, py) >= ry0 and min(y0, py) <= ry1):
+                    seg = LineString([(x0, y0), (px, py)])
+                    if seg.length > 0.0 and ring.relate_pattern(seg, "T********"):
+                        inside = ring.intersection(seg)
+                        s = min(seg.project(Point(c)) for c in shapely.get_coordinates(inside))
+                        depth = max((ring.boundary.distance(part.interpolate(0.5, normalized=True))
+                                     for part in shapely.get_parts(inside)
+                                     if part.geom_type == "LineString"), default=0.0)
+                        t_in = t0 + (t - t0) * s / seg.length
+                        return t_in, depth, (wx0, wy0, t0), (p.x, p.y, t)
+            prev = (t, px, py, p.up, on, p.x, p.y)
+        return None
+
+    def _corridor_tube(self, c):
+        """Corridor `c`'s keep-in tube as a polygon that CONTAINS the true
+        tube (points within half_width_m of the centerline): GEOS puts a round
+        join's vertices on its circle, so its chords cut inside; buffering by
+        half / cos(pi/64) (16 segments a quadrant) moves every chord outside.
+        A segment it does not cover leaves the true tube; one that leaves the
+        true tube by less than 0.12 % of the half-width is not seen. Built
+        once per rule object."""
+        key = id(c)
+        hit = self._tubes.get(key)
+        if hit is None or hit[0] is not c:
+            tube = LineString(c.points()).buffer(c.half_width_m / math.cos(math.pi / 64.0),
+                                                 quad_segs=16)
+            hit = self._tubes[key] = (c, tube)
+        return hit[1]
+
+    def _corridor_segment_exit(self, c, poses, alive):
+        """The first pair of consecutive forecast poses (the rule in force at
+        either end) whose straight segment leaves corridor `c`'s tube - two
+        poses inside it on either side of a bend, the line between them
+        through open air. Called after the pose checks found every pose
+        inside. (exit time, (x0, y0, t0), (x1, y1, t1)) or None."""
+        tube = self._corridor_tube(c)
+        prev = None
+        for t, p in poses:
+            on = alive is True or alive(t)
+            if prev is not None and (prev[3] or on):
+                t0, x0, y0, _ = prev
+                seg = LineString([(x0, y0), (p.x, p.y)])
+                if seg.length > 0.0 and not tube.covers(seg):
+                    out = seg.difference(tube)
+                    s = min(seg.project(Point(q)) for q in shapely.get_coordinates(out))
+                    return t0 + (t - t0) * s / seg.length, (x0, y0, t0), (p.x, p.y, t)
+            prev = (t, p.x, p.y, on)
+        return None
 
     def _corridor_geom(self, c, x: float, y: float):
         """(lateral distance from centerline, unit vector pointing back to it)."""
@@ -1619,6 +1875,15 @@ class Shield:
                     detail=(f"predicted alt {p.up:.1f}m outside corridor band "
                             f"[{c.altitude_floor_m}, {c.altitude_ceiling_m}] "
                             f"at t+{t:.1f}s"))]
+        if self.segment_check:
+            hit = self._corridor_segment_exit(c, self._predict(state, action), alive)
+            if hit is not None:
+                t_out, (x0, y0, t0), (x1, y1, t1) = hit
+                return [Violation(
+                    rule_id=c.id, category="corridor", predicted_at_s=t_out,
+                    detail=(f"predicted segment ({x0:.1f},{y0:.1f})->({x1:.1f},{y1:.1f}) "
+                            f"leaves the corridor between t+{t0:.1f}s and t+{t1:.1f}s, "
+                            f"half-width {half:.1f}m"))]
         return []
 
     def _clear_forecast(self, state: State, action: Action4D):
@@ -1707,7 +1972,7 @@ class Shield:
             for so in self._standoffs:
                 found += self._check_standoff(so, state, action)
         ir = self._ir                       # one IR for the whole check, even
-        recs = self._fence_records(ir)      # if hot_apply swaps it meanwhile
+        recs, tick = self._fence_anchors(ir)    # if hot_apply swaps it meanwhile
         if recs:
             # One forecast for every fence (it was rebuilt per fence), and only
             # the fences the forecast's bounding box reaches. Policy order is
@@ -1717,7 +1982,10 @@ class Shield:
             near = self._fence_candidates(ir, state, poses)
             box, horizon = self._forecast_box(state, poses)
             for r in recs:
-                if r.index in near and self._may_reach(r, box, horizon):
+                if r.index not in near:
+                    continue
+                r = self._reach(r, tick, box, horizon)
+                if r is not None:
                     found += self._check_fence(r.rule, r.polygon, state, action,
                                                poses, r.buffered)
         for c in self._corridors:
@@ -1974,14 +2242,18 @@ class Shield:
         # `if not hit: continue`, decided without the per-pose tests.
         ir = self._ir
         near_for = poses = near = box = horizon = None
-        for rec in self._fence_records(ir):
+        anchors, tick = self._fence_anchors(ir)
+        for rec in anchors:
             if near_for != (vx, vy):
                 probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
                 poses = list(self._predict(state, probe))
                 near = self._fence_candidates(ir, state, poses)
                 box, horizon = self._forecast_box(state, poses)
                 near_for = (vx, vy)
-            if rec.index not in near or not self._may_reach(rec, box, horizon):
+            if rec.index not in near:
+                continue
+            rec = self._reach(rec, tick, box, horizon)
+            if rec is None:
                 continue
             f, poly, ring = rec.rule, rec.polygon, rec.buffered
             # A moving zone: its velocity, turn rate and centre at this tick.
@@ -2052,6 +2324,12 @@ class Shield:
                     # far inside the ring its deepest pose lies (the grant's
                     # magnitude_m for a lateral projection).
                     depth = max(depth, ring.boundary.distance(Point(px, py)))
+            if not hit and self.segment_check:
+                # A ring that lies wholly between two poses: the slide acts on
+                # it as on a pose inside, sized by the segment's own depth.
+                seg = self._segment_crossing(f, ring, poses, alive, mv)
+                if seg is not None:
+                    hit, depth = True, seg[1]
             if not hit:
                 continue
 
@@ -2473,9 +2751,14 @@ class Shield:
                 d_lat, _ = self._corridor_geom(c, x, y)
                 total += (max(0.0, d_lat - c.half_width_m)
                           + max(0.0, c.altitude_floor_m - up, up - c.altitude_ceiling_m))
-        for rec in self._fence_records(self._ir):
+        anchors, tick = self._fence_anchors(self._ir)
+        for rec in anchors:
             f = rec.rule
-            if f.id in ids and point_in_fence(x, y, up, f, rec.polygon, rec.buffered):
+            if f.id not in ids:
+                continue
+            if rec.moving and tick is not None:
+                rec = tick.current(rec)     # only the zones a violation names
+            if point_in_fence(x, y, up, f, rec.polygon, rec.buffered):
                 total += rec.buffered.boundary.distance(Point(x, y))
         return total
 
@@ -3094,43 +3377,144 @@ class Shield:
         return any(rt.hard.get(v.rule_id, True)
                    and self._act(rt, v.rule_id) != "monitor_only" for v in tick.unsafe)
 
+    def _stack(self, base: tuple) -> tuple:
+        """An operator stack (names): the caller's `repair_order` in place of
+        `base` when one was given, with PathRepair when it is switched on."""
+        stack = self.repair_order if self.repair_order is not None else base
+        if self.path_repair and "PathRepair" not in stack:
+            return _repair.with_path_repair(stack)
+        return stack
+
     def _repair_chain(self, tick: _Tick, state: State, raw: Action4D,
-                      skip: frozenset, repairs: list) -> tuple[Action4D, list, list]:
+                      skip: frozenset, repairs: list, raw_violations=()
+                      ) -> tuple[Action4D, list, list, list]:
         """The repair stack, run for every enforced rule but those in `skip`.
-        Returns (repaired action, repairs, what it still violates)."""
+        Returns (repaired action, repairs, what it still violates, passes):
+        `passes` is [(pass number, [RepairAttempt, ...]), ...], every operator
+        considered in every pass (pass 0 runs before the iterated loop); it is
+        also kept on the tick's ledger as this run's (`tick.ledger`).
+
+        The default mode runs the operators of guardrail/repair.py in the
+        order this method always called the `_repair_*` methods it wraps,
+        with the same arguments, so its decisions are the old chain's."""
         prev, tick.skip = tick.skip, frozenset(skip)
+        tick.chain_runs += 1
+        ops, ir = self.repair_operators, tick.rt.ir
+        ctx = _repair.RepairContext(self, state, repairs, raw, tuple(raw_violations),
+                                    tuple(raw_violations))
+        passes: list = []
+        tick.ledger.append((tick.chain_runs, passes))
         try:
-            fixed = self._repair_kinematic(raw, repairs)
-            fixed = self._repair_altitude(state, fixed, repairs)
-            # Clearance and geofence are COUPLED: the anti-stall tangent can leave
-            # the clearance ring violated and the clearance push can aim into a
-            # fence, so the chain is iterated to a fixed point. Running it once as a
-            # pipeline leaves whatever the LAST operator produced un-repaired, which
-            # is exactly what the P0 guard then brakes on — every tick, forever.
-            for _ in range(_REPAIR_PASSES):
-                fixed = self._repair_clearance(state, fixed, repairs)
-                fixed = self._repair_standoff(state, fixed, repairs)
-                fixed = self._repair_corridor(state, fixed, repairs)
-                fixed = self._repair_geofence(state, fixed, repairs)
-                # ...and the caps last: AltitudeFix sizes vz to reach the band in one
-                # lookahead, which can overshoot the climb cap on a deep recovery.
-                fixed = self._repair_kinematic(fixed, repairs)
-                if not self._check(state, fixed):
-                    break
+            if self.repair_mode == "first_feasible":
+                fixed = self._first_feasible(tick, ctx, passes)
+            else:
+                fixed, pre = raw, []
+                for name in _repair.CHAIN_PRE:
+                    att = ops[name].repair(fixed, None, ir, ctx=ctx)
+                    pre.append(att)
+                    fixed = att.action
+                passes.append((0, pre))
+                # Clearance and geofence are COUPLED: the anti-stall tangent can
+                # leave the clearance ring violated and the clearance push can aim
+                # into a fence, so the chain is iterated to a fixed point. Running
+                # it once as a pipeline leaves whatever the LAST operator produced
+                # un-repaired, which is exactly what the P0 guard then brakes on -
+                # every tick, forever. The caps close each pass: AltitudeFix sizes
+                # vz to reach the band in one lookahead, which can overshoot the
+                # climb cap on a deep recovery.
+                loop = self._stack(_repair.CHAIN_LOOP)
+                for k in range(1, _REPAIR_PASSES + 1):
+                    ctx.pass_no = k
+                    atts = []
+                    for name in loop:
+                        att = ops[name].repair(fixed, None, ir, ctx=ctx)
+                        atts.append(att)
+                        fixed = att.action
+                    passes.append((k, atts))
+                    still = self._check(state, fixed)
+                    if not still:
+                        break
+                    ctx.open_violations, ctx.open_label = tuple(still), f"after pass {k}"
             # P0 escape guard: repaired action must re-check clean.
             blocking = self._check(state, fixed)
         finally:
             tick.skip = prev
-        return fixed, repairs, blocking
+        return fixed, repairs, blocking, passes
+
+    def _first_feasible(self, tick: _Tick, ctx, passes: list) -> Action4D:
+        """The grant's selection (Safety Shield page: "Tried in priority order.
+        First operator that produces a feasible action with magnitude <=
+        threshold wins", inside "a bounded loop (default 3 iterations)").
+
+        Each iteration targets the earliest open violation. Operators are
+        tried in `repair.FIRST_FEASIBLE` order; one whose class does not cover
+        the target is skipped. An attempt is FEASIBLE when the monitor no
+        longer reports the target on its action and every non-recovery repair
+        it logged is within theta (the FSM's, 2.0 m lateral / 0.5 m vertical
+        by default; recoveries are exempt, as in the reference). The first
+        feasible attempt is applied and the next iteration re-checks; when no
+        operator is feasible the loop ends and `_decide`'s fallback (rescue,
+        then brake where a stop is legal) decides. An attempt that is not
+        applied leaves no Repair behind."""
+        state, ir, ops = ctx.state, tick.rt.ir, self.repair_operators
+        cfg = self.fsm.config if self.fsm is not None else _fsm.FSMConfig()
+        order = self._stack(_repair.FIRST_FEASIBLE)
+        fixed = ctx.raw
+        open_ = self._check(state, fixed)
+        ctx.open_violations = tuple(open_)
+        for k in range(1, _REPAIR_PASSES + 1):
+            if not open_:
+                break
+            ctx.pass_no = k
+            target = min(open_, key=lambda v: v.predicted_at_s)
+            atts, won = [], False
+            for name in order:
+                op = ops[name]
+                if target.category not in op.categories:
+                    atts.append(_repair.RepairAttempt(
+                        name, "skip", fixed,
+                        f"not a {target.category} violation ({target.rule_id})", (), k))
+                    continue
+                trial = list(ctx.repairs)
+                att = op.repair(fixed, target, ir, ctx=replace(ctx, repairs=trial))
+                if att.result != "ok":
+                    atts.append(att)
+                    continue
+                after = self._check(state, att.action)
+                if any(v.rule_id == target.rule_id for v in after):
+                    atts.append(replace(att, result="fail",
+                                        reason=f"{target.rule_id} still violated: {att.reason}"))
+                    continue
+                over = [r for r in att.repairs
+                        if not r.recovery and r.magnitude_m is not None
+                        and r.magnitude_m > (cfg.theta_vertical_m if r.axis == "vertical"
+                                             else cfg.theta_lateral_m) + 1e-9]
+                if over:
+                    w = max(over, key=lambda r: r.magnitude_m)
+                    atts.append(replace(att, result="fail", reason=(
+                        f"{w.operator} {w.magnitude_m:.2f} m over theta ({w.axis}): "
+                        f"{att.reason}")))
+                    continue
+                ctx.repairs[:] = trial
+                fixed, open_ = att.action, after
+                ctx.open_violations, ctx.open_label = tuple(after), f"after pass {k}"
+                atts.append(att)
+                won = True
+                break
+            passes.append((k, atts))
+            if not won:
+                break
+        return fixed
 
     def _relax(self, tick: _Tick, state: State, raw: Action4D, pool: list,
-               skip: frozenset, head: list):
+               skip: frozenset, head: list, raw_violations=()):
         """Give up soft rules, lowest priority first, until the hard ones (and
         the soft ones still kept) can all be satisfied (card WP1-12; the grant's
         severity order "hard >> soft, P0 > P1 > P2", Prefix Compiler page).
-        Returns (action, repairs, relaxed ids) or None. A hard rule is never
-        given up: when hard rules conflict, the fallback below stops or
-        recovers, and the FSM escalates."""
+        Returns (action, repairs, relaxed ids, passes) or None, `passes` being
+        the run that succeeded (every run, failed ones too, is on the tick's
+        ledger). A hard rule is never given up: when hard rules conflict, the
+        fallback below stops or recovers, and the FSM escalates."""
         rt = tick.rt
         prio = {c.id: c.priority for c in rt.constraints}
         soft = {v.rule_id for v in pool if not rt.hard.get(v.rule_id, True)
@@ -3143,13 +3527,78 @@ class Shield:
             if not add:
                 continue
             given |= add
-            fixed, reps, blocking = self._repair_chain(tick, state, raw,
-                                                       skip | frozenset(given), list(head))
+            fixed, reps, blocking, passes = self._repair_chain(
+                tick, state, raw, skip | frozenset(given), list(head), raw_violations)
             if not blocking:
                 broken = {v.rule_id for v in self._check(state, fixed)}
                 tick.given_up = frozenset(given)
-                return fixed, reps, sorted(given & broken)
+                return fixed, reps, sorted(given & broken), passes
         return None
+
+    def _window_edge(self, tick: _Tick, violations: list) -> list[str]:
+        """Rules whose violation a window edge inside the lookahead caused:
+        not in force now (on either side of the instant) yet violated later
+        in the forecast, so it comes into force in between. The grant's third
+        violation category, "time-window" (Safety Shield page). Empty when no
+        schedule has an edge in the horizon (`_Schedule.const`)."""
+        rt = tick.rt
+        if not rt.timed or tick.sched.const:
+            return []
+        by_id = {c.id: c for c in rt.constraints}
+        out = set()
+        for v in violations:
+            c = by_id.get(v.rule_id)
+            if c is None or c.id not in rt.timed:
+                continue
+            m = tick.sched.mask(c)
+            if m is not True and m is not False and not m(0.0):
+                out.add(c.id)
+        return sorted(out)
+
+    @staticmethod
+    def _traced(d: ShieldDecision, state: State, tick: _Tick, passes: list,
+                final: list, edge: list, mode: str, flags: dict,
+                first: list = ()) -> ShieldDecision:
+        """Attach the audit trace (ShieldDecision.trace) to a decision.
+
+        `passes` is the chain run whose action was flown; the ledger holds
+        EVERY run of the tick (`tick.ledger`: a run that failed before soft
+        rules were given up too), each pass tagged with its run (1, 2, ...;
+        None on the one synthetic pass of a tick where no chain ran).
+        `first` holds what ran before the chain (Sanitise), recorded at the
+        head of the first pass 0; `final` what came after it (SoftRelax, a
+        fallback), recorded in the last pass any run made.
+
+        `iterations` counts the loop passes (pass >= 1) of every run: the
+        work done on the tick, 0 on a passthrough. `repair_iterations` is,
+        per Repair of the decision (index for index), the pass of the flown
+        run that first logged it - `_dedupe` keeps the first of each
+        (operator, detail), so the same operator logging a new detail in a
+        later pass gets that pass - 0 for Sanitise, None for the last
+        resorts (Brake, ClearanceEscape, SoftRelax)."""
+        led = [{"run": run, **p} for run, ps in tick.ledger
+               for p in _repair.ledger_record(ps)]
+        if not led or led[0]["pass"] != 0:
+            led.insert(0, {"run": tick.ledger[0][0] if tick.ledger else None,
+                           "pass": 0, "attempts": []})
+        led[0]["attempts"][:0] = list(first)
+        led[-1]["attempts"].extend(final)
+        first_pass: dict = {}
+        for k, atts in passes:
+            for a in atts:
+                if a.result == "ok":            # an attempt not applied logged nothing
+                    for r in a.repairs:
+                        first_pass.setdefault((r.operator, r.detail), k)
+        d.trace = {"yaw_deg": float(state.yaw_deg), "mode": mode, **flags,
+                   "passes": led,
+                   "iterations": sum(1 for p in led if p["pass"] >= 1),
+                   "chain_runs": tick.chain_runs,
+                   "flown_run": next((run for run, ps in tick.ledger if ps is passes), None),
+                   "repair_iterations": [0 if r.operator == "Sanitise"
+                                         else first_pass.get((r.operator, r.detail))
+                                         for r in d.repairs],
+                   "window_edge": edge}
+        return d
 
     def _decide(self, state: State, raw: Action4D) -> ShieldDecision:
         tick = self._tick_ctx()
@@ -3157,6 +3606,8 @@ class Shield:
             with self._scope(self._new_tick(None)):
                 return self._decide(state, raw)
         rt = tick.rt
+        flags = {"path_repair": self.path_repair, "segment_check": self.segment_check}
+        mode = self.repair_mode
         # Finiteness first: every check below is a comparison, and NaN loses them
         # all, so an unsanitised action would be declared legal and passed
         # straight through. See _sanitise().
@@ -3171,22 +3622,32 @@ class Shield:
         if not violations:
             # Nothing was wrong with it, so the re-check is empty by
             # construction and does not need running again.
-            return ShieldDecision(raw=raw, emitted=raw)   # untouched passthrough
+            return self._traced(ShieldDecision(raw=raw, emitted=raw),   # passthrough
+                                state, tick, [], [], [], mode, flags)
+        edge = self._window_edge(tick, violations)
 
         enforced = [v for v in violations if self._act(rt, v.rule_id) != "monitor_only"]
         if not enforced:
             # monitor_only rules only: recorded, and the command flies as given.
             # Its re-check is the check above, so a P0 monitor_only rule shows
             # up in the escape count, which is the honest place for it.
-            return ShieldDecision(raw=raw, emitted=raw, violations=violations,
-                                  emitted_violations=list(violations))
+            return self._traced(ShieldDecision(raw=raw, emitted=raw, violations=violations,
+                                               emitted_violations=list(violations)),
+                                state, tick, [], [], edge, mode, flags)
         monitor = frozenset(v.rule_id for v in violations
                             if self._act(rt, v.rule_id) == "monitor_only")
 
+        def last_resort(op: str, result: str, detail: str) -> dict:
+            return {"operator": op, "result": result, "reason": detail,
+                    "iterations": None, "repairs": [op]}
+
         head: list[Repair] = []
+        first: list[dict] = []
+        final: list[dict] = []
         if nonfinite:
             head.append(Repair(operator="Sanitise",
                                detail=f"{','.join(nonfinite)} -> 0.0"))
+            first.append({**last_resort("Sanitise", "ok", head[-1].detail), "iterations": 0})
 
         # A rule whose action is brake / loiter / RTL / land skips projection
         # and stops - where a stop is legal. Where it is not (inside a zone,
@@ -3203,22 +3664,27 @@ class Shield:
             reps = head + [Repair(operator="Brake",
                                   detail=f"{gov}: violation_action {strongest} -> "
                                          f"projection skipped, stop")]
-            return ShieldDecision(raw=raw, emitted=BRAKE, violations=violations,
-                                  repairs=_dedupe(reps), braked=True,
-                                  emitted_violations=self._check(state, BRAKE))
+            return self._traced(
+                ShieldDecision(raw=raw, emitted=BRAKE, violations=violations,
+                               repairs=_dedupe(reps), braked=True,
+                               emitted_violations=self._check(state, BRAKE)),
+                state, tick, [], [last_resort("Brake", "fallback", reps[-1].detail)],
+                edge, mode, flags, first)
 
-        fixed, repairs, blocking = self._repair_chain(tick, state, raw, monitor, list(head))
+        fixed, repairs, blocking, passes = self._repair_chain(
+            tick, state, raw, monitor, list(head), violations)
         relaxed: list[str] = []
         if blocking:
-            r = self._relax(tick, state, raw, enforced + blocking, monitor, head)
+            r = self._relax(tick, state, raw, enforced + blocking, monitor, head, violations)
             if r is not None:
-                fixed, repairs, relaxed = r
+                fixed, repairs, relaxed, passes = r
                 blocking = []
                 if relaxed:
                     repairs.append(Repair(
                         operator="SoftRelax",
                         detail=(f"soft rule(s) {', '.join(relaxed)} given up so the "
                                 f"rest can be satisfied (lowest priority first)")))
+                    final.append(last_resort("SoftRelax", "relaxed", repairs[-1].detail))
 
         if blocking:
             # BRAKE is a fail-safe only where standing still is legal. Inside
@@ -3242,9 +3708,12 @@ class Shield:
                 fixed = clean
             elif not stop_illegal:
                 repairs.append(Repair(operator="Brake", detail="repair not converged -> stop"))
-                return ShieldDecision(raw=raw, emitted=BRAKE, violations=violations,
-                                      repairs=_dedupe(repairs), braked=True,
-                                      emitted_violations=self._check(state, BRAKE))
+                final.append(last_resort("Brake", "fallback", repairs[-1].detail))
+                return self._traced(
+                    ShieldDecision(raw=raw, emitted=BRAKE, violations=violations,
+                                   repairs=_dedupe(repairs), braked=True,
+                                   emitted_violations=self._check(state, BRAKE)),
+                    state, tick, passes, final, edge, mode, flags, first)
             elif best is not None:
                 repairs.append(Repair(
                     operator="ClearanceEscape",
@@ -3252,17 +3721,23 @@ class Shield:
                 fixed = best
             else:
                 repairs.append(Repair(operator="Brake", detail="repair not converged -> stop"))
-                return ShieldDecision(raw=raw, emitted=BRAKE, violations=violations,
-                                      repairs=_dedupe(repairs), braked=True,
-                                      emitted_violations=self._check(state, BRAKE))
+                final.append(last_resort("Brake", "fallback", repairs[-1].detail))
+                return self._traced(
+                    ShieldDecision(raw=raw, emitted=BRAKE, violations=violations,
+                                   repairs=_dedupe(repairs), braked=True,
+                                   emitted_violations=self._check(state, BRAKE)),
+                    state, tick, passes, final, edge, mode, flags, first)
+            final.append(last_resort("ClearanceEscape", "fallback", repairs[-1].detail))
 
         # One more _check, on the action that is actually leaving the building.
         # In the common case `fixed` already re-checked clean inside the loop
         # above and this is a repeat; in the `best is not None` branch it is the
         # only check that has ever been run against what gets flown.
-        return ShieldDecision(raw=raw, emitted=fixed, violations=violations,
-                              repairs=_dedupe(repairs), relaxed=relaxed,
-                              emitted_violations=self._check(state, fixed))
+        return self._traced(
+            ShieldDecision(raw=raw, emitted=fixed, violations=violations,
+                           repairs=_dedupe(repairs), relaxed=relaxed,
+                           emitted_violations=self._check(state, fixed)),
+            state, tick, passes, final, edge, mode, flags, first)
 
     def _applied_caps(self, tick: _Tick, d: ShieldDecision) -> "_fsm.KinematicCaps | None":
         """The speed and climb caps the repair chain clamped against on this

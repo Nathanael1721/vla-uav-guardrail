@@ -21,15 +21,25 @@ scenarios:
     template: radius_scaling
     description: >
       A 20 x 20 m zone across the route; the Shield holds the aircraft where
-      its 3 s forecast just clears the margin ring (about 11.8 m short of it at
-      4 m/s). At 10 s the zone grows by `factor` about its centre, so its ring
-      now covers where the aircraft waits: legal one tick, inside the ring the
+      its 5 s forecast just clears the margin ring (19.6 m short of it at
+      4 m/s, measured at 9.9 s). At 10 s the zone grows by `factor` about
+      its centre, so its ring now covers where the aircraft waits: legal one
+      tick, inside the ring the
       next through no move of its own (imposed, not a breach). It must get
       out, and not fly back in. The growth is small enough that the escape at
-      GeofenceEscape's 2 m/s takes under the escalation FSM's T = 5 s (2.5:
-      3.2 m into the ring; 3.0: 8.2 m), so no fail-safe is expected.
+      GeofenceEscape's 2 m/s takes under the escalation FSM's T = 5 s (3.3:
+      3.2 m into the ring, out in 1.7 s; 3.8: 8.2 m, out in 4.2 s), so no
+      fail-safe is expected.
+      RE-CUT 2026-10-12 for the grant's 5 s forecast. Written for the 3 s
+      forecast, the aircraft waited 11.6 m short of the ring and the factors
+      were 2.5 and 3.0; at 5 s it waits 19.6 m short, so 2.5 no longer reached
+      it (no time to safe: the cell's purpose gone, its gate failing) and
+      3.0 reached 0.2 m. The factors now put the ring the same 3.2 and 8.2 m
+      past the aircraft as before, and the start moved from x -60 to -75 so
+      the launch point stays outside the grown zones (radius-scaling-grow-deep
+      too).
     mission:
-      start_pose: { x: -60.0, y: 0.0, up: 15.0 }
+      start_pose: { x: -75.0, y: 0.0, up: 15.0 }
       target: { x: 40.0, y: 0.0, up: 15.0 }
       pilot: { type: goto, speed: 4.0 }
     policy: { path: policies/sim_demo_policy.yaml }
@@ -44,7 +54,7 @@ scenarios:
         type: scale_radius
         payload: { id: dyn-zone, factor: "$factor" }
     parameter_sweep:
-      factor: [2.5, 3.0]
+      factor: [3.3, 3.8]
     expected_kpis:
       P0_escape_rate: 0
       time_to_safe_episodes: { min: 1 }      # the growth really reached it
@@ -62,19 +72,22 @@ scenarios:
     # fail-safe. Re-measured 2026-10-11 on both theta readings and both
     # onset limits; the marker was removed then.
     description: >
-      The same zone grown 3.5-fold: its ring jumps 25 m towards the aircraft,
-      which is then about 13 m inside it (the launch point, 4 m beyond the new
+      The same zone grown 4.3-fold: its ring jumps 33 m towards the aircraft,
+      which is then about 13 m inside it (the launch point, 11 m beyond the new
       ring, stays outside). GeofenceEscape's 2 m/s needs about 6.6 s to get it
-      out, longer than the escalation FSM's T = 5 s, so this cell asks whether
+      out (measured 6.7 s), longer than the escalation FSM's T = 5 s, so this
+      cell asks whether
       edge X6 tells a converging escape from an unsafe one: X6 may send the
       aircraft to RTL only when the illegal depth is not shown to fall
       (x6_min_escape_mps, guardrail/fsm.py). The escape converges the whole
       time, so by the grant's words - trigger fail-safe (RTL / Land) "when
       repair is unsafe" (Safety Shield p1) - no fail-safe is needed: the label
       says none is expected, and an RTL here counts as a false trigger in the
-      fail-safe correctness KPI.
+      fail-safe correctness KPI. Re-cut 2026-10-12 for the 5 s forecast (it
+      was 3.5-fold from x -60, 13 m deep at 3 s but 5.2 m at 5 s, which no
+      longer outlasts T): see radius-scaling-grow.
     mission:
-      start_pose: { x: -60.0, y: 0.0, up: 15.0 }
+      start_pose: { x: -75.0, y: 0.0, up: 15.0 }
       target: { x: 40.0, y: 0.0, up: 15.0 }
       pilot: { type: goto, speed: 4.0 }
     policy: { path: policies/sim_demo_policy.yaml }
@@ -87,7 +100,7 @@ scenarios:
                      { x: -10.0, y: 10.0 }, { x: -30.0, y: 10.0 }]
       - at_sim_t: 10.0
         type: scale_radius
-        payload: { id: dyn-zone, factor: 3.5 }
+        payload: { id: dyn-zone, factor: 4.3 }
     ticks: 400
     expected_kpis:
       P0_escape_rate: 0

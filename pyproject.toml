@@ -36,8 +36,13 @@ requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2,<3",
     "pyyaml",
-    "shapely",
-    "numpy",
+    # Pinned since 2026-10-12 (requirements.txt says why). The numpy line for
+    # Python < 3.11 never applies to an install of this package
+    # (requires-python >= 3.11); it is here because the two lists must be
+    # identical, and it is what the vla-real env (3.10) runs from source.
+    "shapely==2.1.2",
+    'numpy==1.26.4; python_version < "3.11"',
+    'numpy==2.4.6; python_version >= "3.11"',
     # guardrail/compiler.py renders every rule sentence and the CSP text from
     # guardrail/templates/*.j2 ("NL template renderer - Jinja2 templates +
     # Python function", Prefix Compiler p6). build_prompt() and summary_pack()
@@ -73,6 +78,10 @@ tokens = ["tokenizers"]
 # experiments/sweep_scenarios.py from the source tree, so it runs from a
 # checkout, not from a wheel alone.
 harness = ["grpcio>=1.84.0", "protobuf>=7.35.1", "cryptography"]
+# Columnar export of episode bundles and KPI tables (Parquet) for the WP4
+# outputs tooling. Imported lazily by whatever writes Parquet, so nothing in
+# the Shield's import path needs it.
+export = ["pyarrow"]
 
 [tool.setuptools]
 # Explicit, so setuptools' flat-layout discovery can never pick up demo/,

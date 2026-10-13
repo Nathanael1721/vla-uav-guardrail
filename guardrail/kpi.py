@@ -103,6 +103,17 @@ SINCE 2026-10-07 (the stress harness flies the Shield's escalation FSM)
     rollup() publishes the pooled tick figure ONLY as `p0_acted_tick_share`.
   * `per_paraphrase_robustness` (WP4) and `compiler_kpis` (the Prefix
     Compiler's numbers, from guardrail.compiler.coverage_report).
+
+SINCE 2026-10-12 (additive: no key changed meaning)
+
+  * The mean repair magnitude per governing priority (P0 / P1 / P2) and per
+    operator class (the grant's AltitudeClamp / LateralProjection /
+    PathRepair, and this Shield's extensions), with the sums rollup() pools
+    (`repair_magnitude_by_priority`, `repair_magnitude_by_operator_class`).
+  * rollup()'s `vacuous_zeros`: a 0 that counts an event which could not
+    happen (an escape rate with no P0 violation to escape, a false-trigger
+    count on logs with no escalation state) is named, so a report prints it
+    as vacuous rather than as a measured 0.
 """
 from __future__ import annotations
 
@@ -252,6 +263,95 @@ def _repair_magnitude(row: dict) -> tuple[float, float] | None:
         return None
     trans = math.sqrt(sum((ev[k] - rv[k]) ** 2 for k in ("vx", "vy", "vz_up")))
     return trans, math.degrees(abs(ev["yaw_rate"] - rv["yaw_rate"]))
+
+
+# --------------------------------------------------------------------------- #
+# repair magnitude, broken down by priority and by operator class
+# --------------------------------------------------------------------------- #
+
+PRIORITY_LEVELS = ("P0", "P1", "P2")
+# The grant's repair operators (Safety Shield p3: "Priority 1 AltitudeClamp,
+# Priority 2 LateralProjection, Priority 3 PathRepair") as CLASSES, with the
+# operators of guardrail/shield.py in each. The Shield has operators the grant
+# does not name (the kinematic clamps, the recoveries, Brake, Sanitise,
+# SoftRelax); they are classed here as this project's extensions, under names
+# of our own, never folded into a grant class. PathRepair is the operator of
+# guardrail/repair.py (the detour around a zone; off unless the Shield is
+# built with path_repair=True), so on a flight without it the class reads
+# "never acted" - a class that did not run, not a zero. An operator this
+# table does not list lands in UNCLASSIFIED, which the report shows as a
+# column of its own whenever it is not empty.
+OPERATOR_CLASSES: dict[str, tuple[str, ...]] = {
+    "AltitudeClamp": ("AltitudeFix", "CorridorAltitudeFix"),
+    "LateralProjection": ("GeofenceSlide", "ClearanceFix", "CorridorReturn",
+                          "StandoffHold"),
+    "PathRepair": ("PathRepair",),
+    "KinematicClamp": ("SpeedClamp", "ClimbClamp", "YawClamp"),
+    "Recovery": ("GeofenceEscape", "StandoffRecover", "ClearanceEscape"),
+    "Fallback": ("Brake",),
+    "Sanitise": ("Sanitise",),
+    "SoftRelax": ("SoftRelax",),
+}
+GRANT_OPERATOR_CLASSES = ("AltitudeClamp", "LateralProjection", "PathRepair")
+UNCLASSIFIED = "Unclassified"
+_CLASS_OF = {op: cls for cls, ops in OPERATOR_CLASSES.items() for op in ops}
+
+
+def operator_class(operator: Any) -> str:
+    """The class of a repair operator (OPERATOR_CLASSES); an operator this
+    table does not list is "Unclassified", never guessed into a grant class."""
+    return _CLASS_OF.get(str(operator), UNCLASSIFIED)
+
+
+def governing_priority(violations: list[dict], priorities: dict[str, str]) -> str | None:
+    """The highest priority among a tick's violations (P0 above P1 above P2),
+    an unknown rule counted as P0 as everywhere in this file; None for a tick
+    with no violation. The WP4 auto-label `risk_level` of a tick."""
+    levels = {priorities.get(str(v.get("rule_id", "")), "P0") for v in violations or []}
+    for lvl in PRIORITY_LEVELS:
+        if lvl in levels:
+            return lvl
+    return sorted(levels)[0] if levels else None
+
+
+class _MagnitudeBreakdown:
+    """|emitted - raw| (m/s) of repaired ticks, summed per governing priority
+    and per operator class, so rollup() can pool exactly.
+
+    A tick is attributed to ONE priority, the highest among its violations (a
+    repaired tick with no violation at all is "unattributed"), and to EVERY
+    operator class that acted on it: the tick's correction is the joint effect
+    of its operators and cannot be split between them, so a class's mean is
+    over the ticks it took part in, and `sole_*` over the ticks on which it
+    acted alone - the clean attribution."""
+
+    def __init__(self) -> None:
+        self.by_level = {k: [0, 0.0] for k in (*PRIORITY_LEVELS, "unattributed")}
+        self.by_class = {k: [0, 0.0, 0, 0.0] for k in OPERATOR_CLASSES}
+
+    def add(self, mag: float, level: str | None, reps: list[dict]) -> None:
+        cell = self.by_level.setdefault(level or "unattributed", [0, 0.0])
+        cell[0] += 1
+        cell[1] += mag
+        classes = {operator_class(r.get("operator")) for r in reps}
+        for cls in classes:
+            c = self.by_class.setdefault(cls, [0, 0.0, 0, 0.0])
+            c[0] += 1
+            c[1] += mag
+            if len(classes) == 1:
+                c[2] += 1
+                c[3] += mag
+
+    def tables(self) -> tuple[dict, dict]:
+        def mean(s, n):
+            return round(s / n, 4) if n else None
+        lv = {k: {"ticks": n, "sum_mps": round(s, 6), "mean_mps": mean(s, n)}
+              for k, (n, s) in self.by_level.items()}
+        cl = {k: {"ticks": n, "sum_mps": round(s, 6), "mean_mps": mean(s, n),
+                  "sole_ticks": sn, "sole_sum_mps": round(ss, 6),
+                  "sole_mean_mps": mean(ss, sn)}
+              for k, (n, s, sn, ss) in self.by_class.items()}
+        return lv, cl
 
 
 def _episodes(rows: list[dict], is_bad, prefix: str) -> dict[str, Any]:
@@ -1186,6 +1286,7 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
     # called it false; there were no such brakes to miscount.)
     violation_free = permitted = false_trig = 0
     prev_state = "Normal"
+    breakdown = _MagnitudeBreakdown()
 
     for r in rows:
         if _not_flown_by_shield(r):
@@ -1210,6 +1311,7 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
             else:
                 trans_mags.append(mag[0])
                 yaw_mags.append(mag[1])
+                breakdown.add(mag[0], governing_priority(vios, priorities), reps)
 
         levels = set()
         for v in vios:
@@ -1306,10 +1408,26 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
         # Not an outcome failure - nothing was seen to go wrong - but a run
         # with unmeasured P0 ticks cannot claim mission success (2026-08 rule).
         reasons.append("p0_not_measurable")
+    # A follow the rail could not score (no subject ground truth: the
+    # perception rail says so with follow_scored False) has None for
+    # frac_within_30m and standoff_s, which the checks above read as "no
+    # failure". So it would claim success on the stand-off it never measured
+    # (railinputs, 2026-10-13). Not a failure either: not measurable.
+    follow_unscored = metrics.get("follow_scored") is False
+    if follow_unscored:
+        reasons.append("follow_not_scored")
 
     n = max(1, len(rows) - n_autopilot)
     p0_acted = (None if not failsafe_expected else
                 round(failsafe_correct / failsafe_expected, 6))
+    mag_by_level, mag_by_class = breakdown.tables()
+    if arm == "off":
+        # A control arm flew the raw action: its listed repairs were never
+        # applied, so there is no magnitude to break down (not a 0.0).
+        mag_by_level = mag_by_class = None
+        mag_breakdown = "shield_off"
+    else:
+        mag_breakdown = "measured" if trans_mags else "no_repaired_tick"
     return {
         "kpi_version": "1.0",
         "ticks": len(rows),
@@ -1373,14 +1491,21 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
                                 if yaw_mags else None),
         "repaired_ticks": len(trans_mags),
         "repair_ticks_not_measurable": n_repair_unknown,
+        # The same magnitude per governing priority and per operator class
+        # (_MagnitudeBreakdown). A level or class with no repaired tick has
+        # `mean_mps` None: it never acted, which is not a gentle 0.0.
+        "repair_magnitude_by_priority": mag_by_level,
+        "repair_magnitude_by_operator_class": mag_by_class,
+        "repair_magnitude_breakdown_status": mag_breakdown,
         # --- mean time to safe ----------------------------------------------
         # Position-based, not action-based. See _time_to_safe() for why the
         # difference is the whole point of the metric.
         **_time_to_safe(rows),
         # Reported alongside it, and never confused with it.
         **_intervention_episodes(rows),
-        "mission_success": (outcome == "success" and n_p0_escapes == 0
-                            and n_p0_unknown == 0),
+        "mission_success": (None if follow_unscored and outcome == "success"
+                            else (outcome == "success" and n_p0_escapes == 0
+                                  and n_p0_unknown == 0)),
         "mission_fail_reasons": reasons,
         "unsafe_p0_ticks": unsafe["ticks"],
         "mission_started_unsafe": unsafe["started_unsafe"],
@@ -1686,6 +1811,7 @@ def rollup(episodes: list[dict]) -> dict[str, Any]:
     mag_n = sum(w for _, w in mag_w)
     mags_max = [e["max_repair_magnitude_mps"]
                 for e in _carrying(episodes, "max_repair_magnitude_mps")]
+    mag_by_level, mag_by_class, mag_lv_eps, mag_cl_eps = _pool_breakdowns(episodes)
 
     # --- repair success -----------------------------------------------------
     rs_eps = [e for e in _carrying(episodes, "repair_attempt_ticks", "repair_success_ticks")
@@ -1754,6 +1880,10 @@ def rollup(episodes: list[dict]) -> dict[str, Any]:
     fs_outcomes = {o: sum(1 for e in episodes
                           if (e.get("mission_outcome") or e.get("outcome")) == o)
                    for o in OUTCOMES}
+    p0_rate = round(esc / p0_ticks, 6) if p0_ticks else None
+    ft_rate = round(ft_bad / ft_n, 6) if ft_n else None
+    inst = [e.get("failsafe_instrumented") for e in ft_eps
+            if isinstance(e.get("failsafe_instrumented"), bool)]
     return {
         "episodes": n,
         "ticks": ticks,
@@ -1763,7 +1893,7 @@ def rollup(episodes: list[dict]) -> dict[str, Any]:
         # RTL_triggered | Land_triggered).
         "outcomes": fs_outcomes,
         # --- P0 escape ------------------------------------------------------
-        "p0_escape_rate": (round(esc / p0_ticks, 6) if p0_ticks else None),
+        "p0_escape_rate": p0_rate,
         "p0_escapes": esc if p0_eps else None,
         "episodes_with_p0_escape": sum(1 for e in p0_eps if e["p0_escapes"] > 0),
         "episodes_p0_escape_not_measurable": n - len(p0_eps),
@@ -1780,7 +1910,7 @@ def rollup(episodes: list[dict]) -> dict[str, Any]:
         "p0_acted_tick_share": (round(corr / exp, 6) if exp else None),
         "failsafe_expected_ticks": exp if fs_n else None,
         "episodes_failsafe_not_measurable": n - fs_n,
-        "false_trigger_rate": (round(ft_bad / ft_n, 6) if ft_n else None),
+        "false_trigger_rate": ft_rate,
         "false_trigger_ticks": ft_bad if ft_eps else None,
         "violation_free_ticks": ft_n if ft_eps else None,
         "episodes_false_trigger_not_measurable": n - len(ft_eps),
@@ -1802,6 +1932,16 @@ def rollup(episodes: list[dict]) -> dict[str, Any]:
         "mean_repair_magnitude_mps": (round(sum(m * w for m, w in mag_w) / mag_n, 4)
                                       if mag_n else None),
         "max_repair_magnitude_mps": (round(max(mags_max), 4) if mags_max else None),
+        # Pooled over repaired ticks, per governing priority and per operator
+        # class (compute()'s breakdown); None per level / class that never
+        # acted, and None overall when no episode carries the breakdown.
+        "mean_repair_magnitude_by_priority": mag_by_level,
+        "mean_repair_magnitude_by_operator_class": mag_by_class,
+        # Episodes carrying no class table (Shield-off arms, stored tables),
+        # and, apart, those carrying no priority table (those, plus runs
+        # whose policy did not resolve).
+        "episodes_repair_magnitude_breakdown_not_measurable": n - mag_cl_eps,
+        "episodes_repair_magnitude_by_priority_not_measurable": n - mag_lv_eps,
         "repair_success_rate": rs_rate,
         "repair_success_status": rs_status,
         "repair_success_basis": rs_basis,
@@ -1832,7 +1972,66 @@ def rollup(episodes: list[dict]) -> dict[str, Any]:
         "null_hover_mission_success_rate": (round(sum(hover_known) / len(hover_known), 6)
                                             if hover_known else None),
         "null_hover_known_episodes": len(hover_known),
+        # --- zeros whose rule never ran -------------------------------------
+        "vacuous_zeros": _vacuous_zeros(p0_rate, p0t if pt_eps else None,
+                                        ft_rate, inst),
     }
+
+
+def _pool_breakdowns(episodes: list[dict]) -> tuple[dict | None, dict | None, int, int]:
+    """compute()'s per-priority and per-class magnitude sums, pooled over the
+    episodes that carry them: (by priority, by class, episodes carrying the
+    priority table, episodes carrying the class table). The two are pooled
+    independently: the class table needs no priorities, so a run whose policy
+    did not resolve (tools/kpi_report.py withholds its priority table)
+    still adds its classes. A Shield-off arm carries neither (nothing it
+    logged was flown)."""
+    lv: dict[str, list] = {}
+    cl: dict[str, list] = {}
+    n_lv = n_cl = 0
+    for e in episodes:
+        a, b = e.get("repair_magnitude_by_priority"), e.get("repair_magnitude_by_operator_class")
+        if isinstance(a, dict):
+            n_lv += 1
+            for k, c in a.items():
+                cell = lv.setdefault(k, [0, 0.0])
+                cell[0] += int(c.get("ticks") or 0)
+                cell[1] += float(c.get("sum_mps") or 0.0)
+        if isinstance(b, dict):
+            n_cl += 1
+            for k, c in b.items():
+                cell = cl.setdefault(k, [0, 0.0, 0, 0.0])
+                cell[0] += int(c.get("ticks") or 0)
+                cell[1] += float(c.get("sum_mps") or 0.0)
+                cell[2] += int(c.get("sole_ticks") or 0)
+                cell[3] += float(c.get("sole_sum_mps") or 0.0)
+
+    def mean(s, n):
+        return round(s / n, 4) if n else None
+    return ({k: {"ticks": n, "mean_mps": mean(s, n)} for k, (n, s) in lv.items()}
+            if n_lv else None,
+            {k: {"ticks": n, "mean_mps": mean(s, n), "sole_ticks": sn,
+                 "sole_mean_mps": mean(ss, sn)}
+             for k, (n, s, sn, ss) in cl.items()} if n_cl else None,
+            n_lv, n_cl)
+
+
+def _vacuous_zeros(p0_rate, p0_ticks, ft_rate, instrumented: list[bool]) -> dict[str, str]:
+    """Figures that are 0 only because the event they count could not happen
+    (the `silence-reads-as-success` rule: a zero from a rule that never ran
+    looks exactly like a rule that held). Name -> why; a report prints these
+    as vacuous, never as a measured 0."""
+    out: dict[str, str] = {}
+    if p0_rate == 0 and p0_ticks == 0:
+        why = ("no P0 violation in the raw commands: there was nothing to escape, "
+               "so 0 says nothing about the Shield")
+        out["p0_escape_rate"] = why
+        out["null_passthrough_p0_escape_rate"] = why
+    if ft_rate == 0 and instrumented and not any(instrumented):
+        out["false_trigger_rate"] = ("no escalation state in any log: a stateless "
+                                     "Shield cannot trigger on a clean tick, so 0 "
+                                     "false triggers was never in question")
+    return out
 
 
 def _severity(e: dict) -> tuple:

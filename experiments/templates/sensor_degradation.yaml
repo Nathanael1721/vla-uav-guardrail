@@ -40,6 +40,9 @@ scenarios:
       (2026-10-12, the library and the nightly profile). The
       limit is the PI's question 11 (docs/DESIGN-escalation-fsm.md,
       Questions for the PI): if the PI picks 0 s, the pins come back.
+      At the grant's 5 s forecast (later on 2026-10-12) the seeds that
+      flicker moved again: only latency 0 / 23.2 / 0.3 fails, on 1001 and
+      1003; the comment above known_failures lists what came off.
     mission:
       start_pose: { x: -30.0, y: "$pass_y", up: 15.0 }
       target: { x: 60.0, y: "$pass_y", up: 15.0 }
@@ -65,6 +68,14 @@ scenarios:
       # passed on every seed measured were removed then, and three that named
       # every seed were narrowed to the seeds where the cell still fails (see
       # the description).
+      # Re-measured again later that day at the grant's 5 s forecast (library
+      # seed 0, nightly 1001-1003): the flicker moved. latency 0 / 23.2 / 0.3
+      # still fails on 1001 (G1>G2>G4>G9) and now also on 1003 (G1>G2>G4>G9,
+      # pinned); four pins pass on their seed and came off: latency 1 / 23.2
+      # / 0.3 on 0, latency 0 / 23.2 / 0.3 on 1002, latency 0 / 23.6 / 0.3 on
+      # 1002 and latency 1 / 23.6 / 0.3 on 1002. Which seeds flicker depends
+      # on where the forecast's poses meet the ring under the noise, so it
+      # moves with the forecast.
       - params: { latency: 0, pass_y: 23.2, sigma: 0.3, random_seed: 1001 }
         description: &noiseflicker >
           False fail-safe through N-in-T under sensor noise (measured
@@ -76,13 +87,7 @@ scenarios:
           entered and the Shield's own count stays clean; the FSM counts noise
           as violations. Where it shows on some seeds only, the pin names the
           seed (0 is the library run's, 1001-1003 the nightly profile's).
-      - params: { latency: 0, pass_y: 23.2, sigma: 0.3, random_seed: 1002 }
-        description: *noiseflicker
-      - params: { latency: 0, pass_y: 23.6, sigma: 0.3, random_seed: 1002 }
-        description: *noiseflicker
-      - params: { latency: 1, pass_y: 23.2, sigma: 0.3, random_seed: 0 }
-        description: *noiseflicker
-      - params: { latency: 1, pass_y: 23.6, sigma: 0.3, random_seed: 1002 }
+      - params: { latency: 0, pass_y: 23.2, sigma: 0.3, random_seed: 1003 }
         description: *noiseflicker
 
   - scenario_id: gps-noise-beyond-margin
@@ -123,10 +128,21 @@ scenarios:
       what a bridge that forwards the last pose would do. The Shield's State
       has no fix-quality field, so it cannot know the pose is stale, and the
       grant names no Shield response to GPS loss. Measured 2026-10-06 on the
-      head-on lane: frozen while parked at the lookahead edge (6-11 s), the
-      Shield keeps permitting the ~3.9 m/s it would allow from 11.6 m out and
-      the aircraft ends 7 m inside the polygon; a 2-4 s window at 2 s never
-      reaches it. Gated only on what must hold whatever the sensor does - the
+      head-on lane, at the 3 s forecast flown then: frozen while parked at the
+      lookahead edge (6-11 s), the Shield keeps permitting the ~3.9 m/s it
+      would allow from 11.6 m out and the aircraft ends 7 m inside the
+      polygon; a 2-4 s window at 2 s never reaches it.
+      RE-CUT 2026-10-12 for the grant's 5 s forecast. The long windows were
+      5 s, the old lookahead plus 2 s, starting at 2, 4 and 6 s; at 5 s the
+      Shield brakes the head-on lane 20.6 m out by 5 s, so a dropout from
+      6 s froze a pose it was already holding and changed nothing (no
+      entry). The long windows are now the new lookahead plus 2 s (7 s),
+      from 2, 4 and 6 s: frozen at 4 s, still at 4 m/s about 24 m out, the
+      Shield keeps permitting 4 m/s for 7 s and the aircraft ends 7 m inside
+      the polygon (4-11 s, the cell the finding is pinned on); from 2 s it
+      stops on the ring (1.0 m from the polygon), and from 6 s it is
+      already held and nothing changes (20.6 m). The 2-4 s window still
+      never reaches it. On the edge lane (23.6) no window enters. Gated only on what must hold whatever the sensor does - the
       Shield never emits an action it has itself found illegal, never a
       non-finite one - and on the dropout having actually frozen the pose
       (a window that froze nothing would otherwise pass as a clean run).
@@ -141,7 +157,7 @@ scenarios:
     stress: { gps_dropout_s: "$window" }
     parameter_sweep:
       lane_y: [15.0, 23.6]
-      window: [[2.0, 4.0], [2.0, 7.0], [4.0, 9.0], [6.0, 11.0]]
+      window: [[2.0, 4.0], [2.0, 9.0], [4.0, 11.0], [6.0, 13.0]]
     expected_kpis:
       P0_escape_rate: 0
       all_actions_finite: { equals: true }

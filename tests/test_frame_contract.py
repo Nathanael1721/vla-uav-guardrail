@@ -237,6 +237,31 @@ def test_the_shield_is_allowed_to_convert_because_the_cap_is_in_degrees():
         encoding="utf-8")
 
 
+def test_the_frames_docstring_names_every_module_that_crosses_the_boundary():
+    """guardrail/frames.py said, until 2026-10-12, that nothing in production
+    called from_body / to_body - while sitl/ros2_shield_node.py did, at the
+    grant's ROS 2 boundary. Its "WHO CALLS THIS" section must now name every
+    non-test module that imports the module, and must not say nobody does."""
+    import guardrail.frames as frames_mod
+    doc = frames_mod.__doc__
+    assert "WHO CALLS THIS" in doc
+    who = doc.split("WHO CALLS THIS", 1)[1]
+    assert "Nothing in production, today" not in who
+    pat = re.compile(r"^\s*(from\s+guardrail(\.frames)?\s+import\s+.*\bframes\b|"
+                     r"from\s+guardrail\.frames\s+import|from\s+\.frames\s+import|"
+                     r"import\s+guardrail\.frames)", re.M)
+    users = []
+    for d in ("guardrail", "sitl", "demo", "demo/pas_ardupilot", "tools"):
+        for p in sorted((ROOT / d).glob("*.py")):
+            if p.name == "frames.py" and d == "guardrail":
+                continue
+            if pat.search(p.read_text(encoding="utf-8", errors="replace")):
+                users.append(p.relative_to(ROOT).as_posix())
+    assert "sitl/ros2_shield_node.py" in users, users
+    missing = [u for u in users if u not in who]
+    assert not missing, f"frames.py's WHO CALLS THIS does not name {missing}"
+
+
 if __name__ == "__main__":
     # A test that short-circuits on a missing fixture must NOT print PASS - on a
     # clean clone demo/out/ is gitignored and those tests assert nothing. See

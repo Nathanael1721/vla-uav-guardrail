@@ -115,6 +115,18 @@ Suite 242 → 250.
 
 ## Still open
 
+*Status on 2026-10-12, for the list below as written on 28 Aug:* the scenario
+sweep harness exists (`experiments/sweep_scenarios.py`, smoke / nightly /
+broad profiles); corridors and time windows are in the DSL and enforced
+(`corridor`, `valid_time`, `time_window_switch`, `corridor_swap`); mean repair
+magnitude and mean time to safe are computed (`guardrail/kpi.py`) and reported
+beside their nulls; `mavlink-router` fans out to Mission Planner's UDP 14550
+(Gate G1, 8 Oct). Still open: perception on the KPI-grade rail (the
+perception node flies Project AirSim + ArduPilot SITL over pymavlink, not yet
+over MAVROS 2 or on the Orin), and Mission Planner's own window recorded
+attached to a run.
+
+
 - **Perception on this rail.** ArduPilot SITL has no renderer, so all tracking
   evidence stays AirSim-only and outside the gate. The midterm report already
   names this as "the largest remaining piece of work".

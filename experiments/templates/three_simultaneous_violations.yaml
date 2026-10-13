@@ -23,8 +23,9 @@ scenarios:
       must climb out exactly once and never enter the zone.
       KNOWN FAILURE IN EVERY CELL since the escalation FSM was wired into the
       Shield (measured 2026-10-07): a FALSE fail-safe through theta and X6.
-      The first repair's AltitudeFix is 13-14 m against the grant's 0.5 m
-      vertical theta, so the FSM abandons projection at once (X1 then G3:
+      The first repair's AltitudeFix is 12-18 m at the grant's 5 s forecast
+      (8-14 m at 3 s) against the grant's 0.5 m vertical theta, so the FSM
+      abandons projection at once (X1 then G3:
       Brake -> Loiter); ArduPilot's LOITER holds the aircraft where it is,
       below the floor, and five seconds of an illegal position later X6 sends
       it home. RTL climbs to 15 m and the episode ends safe, P0 clean, the
@@ -66,4 +67,7 @@ scenarios:
           the aircraft enters the ring by 0.02 m. The grant asks whether the
           predicted SEGMENT crosses the boundary (Safety Shield p2), not
           whether sampled points land in it. Same in all six cells of this
-          variant; the polygon itself is not entered.
+          variant; the polygon itself is not entered. At the grant's forecast
+          (5 s at 0.1 s, since 2026-10-12) it is gone: the poses are 0.1 s
+          apart and the clip is seen, so with the FSM off the aircraft keeps
+          1.18 m from the zone in all six cells (0.98 m at 3 s / 0.5 s).

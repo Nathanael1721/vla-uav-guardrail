@@ -84,6 +84,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from guardrail.frames import from_body, to_local_ned                     # noqa: E402
+# time_controls and zone_clearance_m are re-exported: this module's callers
+# and tests read them here, where they lived until 2026-10-12.
+from guardrail.fence_export import (deferral, is_enforced, iter_zones,    # noqa: E402,F401
+                                    time_controls, zone_clearance_m)
+from guardrail.fence_export import zones_near as _zones_near             # noqa: E402
 from guardrail.fsm import MODE_FOR, FSMState                             # noqa: E402
 from guardrail.projection import LocalProjection                         # noqa: E402
 
@@ -313,161 +318,44 @@ def setpoint_from_body(body: list | tuple, heading_deg: float) -> dict:
 # Policy fences -> ArduPilot fence items
 # --------------------------------------------------------------------------- #
 
-def _xy(p) -> tuple[float, float]:
-    if isinstance(p, dict):
-        return float(p["x"]), float(p["y"])
-    if isinstance(p, (list, tuple)):
-        return float(p[0]), float(p[1])
-    return float(p.x), float(p.y)
-
-
-def _point_in_polygon(x: float, y: float, verts: list) -> bool:
-    inside = False
-    n = len(verts)
-    for i in range(n):
-        (x1, y1), (x2, y2) = verts[i], verts[(i + 1) % n]
-        if (y1 > y) != (y2 > y):
-            xc = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
-            if x < xc:
-                inside = not inside
-    return inside
-
-
-def _segment_distance(px, py, ax, ay, bx, by) -> float:
-    dx, dy = bx - ax, by - ay
-    L2 = dx * dx + dy * dy
-    t = 0.0 if L2 == 0 else max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / L2))
-    return math.hypot(px - (ax + t * dx), py - (ay + t * dy))
-
-
-def zone_clearance_m(fence: dict, x: float, y: float) -> float:
-    """Signed horizontal distance from (x, y) to an exported zone's edge:
-    positive outside, negative inside (the depth)."""
-    if fence["kind"] == "circle":
-        cx, cy = fence["center"]
-        return math.hypot(x - cx, y - cy) - fence["radius_m"]
-    verts = [tuple(v) for v in fence["vertices"]]
-    d = min(_segment_distance(x, y, *verts[i], *verts[(i + 1) % len(verts)])
-            for i in range(len(verts)))
-    return -d if _point_in_polygon(x, y, verts) else d
-
-
-def time_controls(rule, off_switches=()) -> list[str]:
-    """What can switch `rule` off by the clock: its own time window
-    (`valid_time` with a recurrence; absent, or without one, means always)
-    and the ids of the time_window_switches that turn it off. [] = in force
-    for the whole flight."""
-    out = []
-    vt = getattr(rule, "valid_time", None)
-    if vt is not None and getattr(vt, "recurrence", None) is not None:
-        out.append("it has a time window (valid_time)")
-    if off_switches:
-        out.append(f"time_window_switch {', '.join(sorted(off_switches))} can "
-                   f"switch it off")
-    return out
+# The selection itself - which zones a clockless 2-D autopilot fence may hold
+# exactly as the policy does - is guardrail.fence_export.policy_zones since
+# 2026-10-12, so the perception rail shares it; this module keeps its names.
 
 
 def policy_fences(policy, column_m: float | None,
                   position: tuple[float, float] | None = None,
-                  margin_m: float = FENCE_MARGIN_M
+                  margin_m: float = FENCE_MARGIN_M, enforced=None
                   ) -> tuple[list[dict], list[dict]]:
     """The policy's keep-out zones the autopilot fence can enforce NOW.
 
-    Returns `(fences, skipped)`. A polygon_fence, and a dynamic_nfz without
-    motion (what a mid-flight zone becomes where the Shield enforces the
-    grant's update model), become an exclusion polygon; a moving dynamic_nfz
-    is skipped (the autopilot fence is static); a circle_fence (centre +
-    radius, read by duck type) an exclusion circle. ArduPilot's polygon and
-    circle fences are 2-D: they apply at
-    every altitude. So a zone is exported only if its altitude band covers
-    the whole column the autopilot fence guards (0 .. FENCE_ALT_MAX);
-    otherwise the backstop would forbid airspace the policy allows, and
-    would fire before the Shield. With `column_m` unknown nothing is
-    exported. Keep-in rules (corridors) are not exported: an inclusion fence
-    around a corridor would breach on the take-off pad.
+    Returns `(fences, skipped)`. The zones are guardrail.fence_export's
+    clock-proof selection (`policy_zones`; its docstring has the rules): a
+    polygon_fence and a static dynamic_nfz become an exclusion polygon, a
+    circle_fence an exclusion circle; a corridor, a moving dynamic_nfz, a zone
+    a clock can turn off (`time_controlled: True`), and a zone whose altitude
+    band does not cover the column 0 .. `column_m` (FENCE_ALT_MAX) are
+    skipped with why. With `column_m` unknown nothing is exported.
 
     `position` is the aircraft's (x North, y East). A zone the aircraft is
     inside, or within `margin_m` of, is held back (`deferred: True` in
     `skipped`): uploading it would breach the autopilot fence at once and
     ArduPilot would RTL while the Shield is still steering out - the grant's
     GeoFence is to "fire only if the Shield itself crashes or fails to emit".
-    The caller uploads it once the aircraft is clear.
+    The caller uploads it once the aircraft is clear. The skip list keeps the
+    policy's order, deferred zones in place, as before the move.
 
-    A zone a CLOCK can turn off is not exported either (2026-10-11): one with
-    a time window (`valid_time` with a recurrence), and one a
-    time_window_switch can switch off (`active: false` naming it). ArduPilot's
-    fence has no clock, so it would hold such a zone at times the policy
-    does not - stricter than the Shield, an RTL at the fence edge on a flight
-    the Shield allows. It is listed in `skipped` (`time_controlled: True`)
-    with why; the Shield alone enforces it. Until this date every zone was
-    exported whatever its window or switch.
+    `enforced` (id -> zone as last uploaded with success): a zone the
+    autopilot already holds with that shape is never held back, since every
+    upload replaces the whole list (guardrail.fence_export.defer_near).
     """
     fences, skipped = [], []
-    constraints = list(getattr(policy, "constraints", []))
-    # Rule id -> the switches that can turn it OFF. A switch that holds its
-    # target ON adds no off-time to it.
-    switched_off: dict[str, list[str]] = {}
-    for c in constraints:
-        if getattr(c, "type", "") == "time_window_switch" \
-                and getattr(c, "active", True) is False:
-            switched_off.setdefault(c.target_id, []).append(c.id)
-    for c in constraints:
-        ctype = getattr(c, "type", "")
-        if ctype not in ("polygon_fence", "circle_fence", "dynamic_nfz"):
-            if ctype == "corridor":
-                skipped.append({"id": c.id, "why": "keep-in corridor: not "
-                                "exported as an autopilot inclusion fence"})
-            continue
-        clock = time_controls(c, switched_off.get(c.id, ()))
-        if clock:
-            skipped.append({"id": c.id, "time_controlled": True, "why": (
-                f"{'; '.join(clock)}: the autopilot fence has no clock and "
-                f"would enforce the zone while the policy has it off - "
-                f"stricter than the policy, so the Shield alone enforces it")})
-            continue
-        if ctype == "dynamic_nfz" and getattr(c, "motion", None) is not None:
-            skipped.append({"id": c.id, "why": "moving dynamic_nfz: the "
-                            "autopilot fence is static, so the Shield alone "
-                            "enforces it"})
-            continue
-        if column_m is None:
-            skipped.append({"id": c.id, "why": "the autopilot's FENCE_ALT_MAX "
-                            "is unknown, so whether a 2-D fence would be "
-                            "stricter than the policy cannot be decided"})
-            continue
-        lo = float(getattr(c, "altitude_floor_m", 0.0) or 0.0)
-        hi = getattr(c, "altitude_ceiling_m", None)
-        hi = float("inf") if hi is None else float(hi)
-        if lo > 0.0 or hi < column_m:
-            skipped.append({"id": c.id, "why": (
-                f"altitude band {lo:g}-{hi:g} m does not cover the fence "
-                f"column 0-{column_m:g} m; a 2-D autopilot fence would be "
-                f"stricter than the policy")})
-            continue
-        if ctype in ("polygon_fence", "dynamic_nfz"):
-            f = {"id": c.id, "kind": "polygon",
-                 "vertices": [list(_xy(v)) for v in c.vertices]}
-        else:
-            centre = getattr(c, "center", None) or getattr(c, "centre", None)
-            radius = getattr(c, "radius_m", None) or getattr(c, "radius", None)
-            if centre is None or not radius:
-                skipped.append({"id": c.id, "why": "circle_fence without a "
-                                "centre and radius this exporter can read"})
-                continue
-            f = {"id": c.id, "kind": "circle", "center": list(_xy(centre)),
-                 "radius_m": float(radius)}
-        if position is not None:
-            clr = zone_clearance_m(f, float(position[0]), float(position[1]))
-            if clr < margin_m:
-                skipped.append({"id": c.id, "deferred": True,
-                                "clearance_m": round(clr, 2), "why": (
-                                    f"aircraft {'inside' if clr < 0 else 'within'}"
-                                    f" {abs(clr):.1f} m of the zone (margin "
-                                    f"{margin_m:g} m): deferred until clear, "
-                                    f"so the upload cannot breach the "
-                                    f"autopilot fence on arrival")})
-                continue
-        fences.append(f)
+    for kind, entry in iter_zones(policy, column_m=column_m):
+        if kind == "zone" and position is not None                 and not is_enforced(entry, enforced):
+            held = deferral(entry, position, margin_m)
+            if held is not None:
+                kind, entry = "skipped", held
+        (fences if kind == "zone" else skipped).append(entry)
     return fences, skipped
 
 
@@ -480,8 +368,7 @@ def zones_near(fences: list[dict], x: float, y: float,
     into. Flown 2026-10-07 with policies/poly_test.yaml, whose tri-nfz has a
     vertex on the origin: held back at take-off, uploaded once clear, then
     "Fence Breached" when the RTL brought the aircraft home."""
-    return [f["id"] for f in fences
-            if zone_clearance_m(f, float(x), float(y)) < margin_m]
+    return _zones_near(fences, x, y, margin_m)
 
 
 def policy_ceiling_m(policy, fallback_m: float | None = None) -> tuple[float | None, str]:

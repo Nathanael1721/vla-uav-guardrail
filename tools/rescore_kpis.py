@@ -115,6 +115,10 @@ NEW_FIELDS = (
     "failsafe_instrumented",
     # ... the counts behind fail-safe correctness, and its false-trigger half
     "failsafe_expected_ticks", "failsafe_correct_ticks",
+    # 2026-10-12: the P0-acted tick share under its own name. A table that has
+    # it only as `failsafe_trigger_correctness` (the grant KPI's name, which it
+    # is not) keeps that delivered key; this tool never writes it.
+    "p0_acted_tick_share",
     "violation_free_ticks", "false_trigger_ticks", "false_trigger_rate",
     "failsafe_permitted_ticks",
     # ... and why a mission failed
@@ -130,7 +134,7 @@ NEW_FIELDS = (
 # and neither does the false-trigger half: its denominator is ticks that broke
 # no rule at all.
 NEEDS_PRIORITIES = (
-    "failsafe_expected_ticks", "failsafe_correct_ticks",
+    "failsafe_expected_ticks", "failsafe_correct_ticks", "p0_acted_tick_share",
     "failsafe_permitted_ticks", "repair_outcomes",
     "mission_fail_reasons", "unsafe_p0_ticks", "mission_started_unsafe",
 )
@@ -155,7 +159,12 @@ CORRECTABLE = (
 # The figures that must not move. If recomputation changes one of these, the
 # artefact and the code have diverged and a human needs to look.
 INVARIANTS = ("p0_violation_escape_rate", "p0_escapes", "p0_violation_ticks",
-              "p0_ticks_not_measurable", "failsafe_trigger_correctness")
+              "p0_ticks_not_measurable", "p0_acted_tick_share")
+# An invariant a stored table may carry only under an older name: the P0-acted
+# tick share was written as `failsafe_trigger_correctness` until 2026-10-07.
+# Read from there, compared and reported under its own name (2026-10-12: a
+# drift line used to print the share as the grant's fail-safe KPI).
+LEGACY_NAMES = {"p0_acted_tick_share": "failsafe_trigger_correctness"}
 
 # metrics.json dwell field <- the Violation.category whose unsafe ticks it counts
 DWELL_FIELDS = {"nfz_s": "geofence", "alt_violation_s": "altitude",
@@ -450,8 +459,9 @@ def rescore(run: Path, by_hash: dict, by_id: dict | None = None) -> dict | None:
     drift = []
     if pol is not None:
         for f in INVARIANTS:
-            if f in stored and stored[f] != fresh.get(f):
-                drift.append(f"{f}: {stored[f]} -> {fresh.get(f)}")
+            key = f if f in stored else LEGACY_NAMES.get(f)
+            if key in stored and stored[key] != fresh.get(f):
+                drift.append(f"{f}: {stored[key]} -> {fresh.get(f)}")
 
     withheld = []
     # An id-resolved policy is a claim about which rules flew; the dwell the

@@ -444,15 +444,19 @@ def _three_runs(td):
 
 def test_kpi_grade_and_other_runs_are_tabulated_apart_never_pooled():
     KR = _report_module()
-    real = KR.is_kpi_grade
+    real, real_ev = KR.is_kpi_grade, KR.evidence_grade
     KR.is_kpi_grade = lambda m, me: ((True, []) if me.get("shield") == "on"
                                      and me.get("reached") else (False, ["test"]))
+    # Since 2026-10-12 a graded run must also carry a verified replay bundle
+    # (tests/test_wp4outputs_kpi_report.py checks that); this test is about the
+    # tables, so the evidence check passes the manifest's verdict through.
+    KR.evidence_grade = lambda run, g, why, trust=None: (g, list(why), None)
     try:
         with tempfile.TemporaryDirectory() as td:
             _three_runs(td)
             rep = KR.build_report([str(Path(td) / "*")], [], 10, False, "cmd")
     finally:
-        KR.is_kpi_grade = real
+        KR.is_kpi_grade, KR.evidence_grade = real, real_ev
     g, o = rep["families"]["kpi_grade"], rep["families"]["other"]
     assert sum(f["episodes"] for f in g.values()) == 1, g
     assert sum(f["episodes"] for f in o.values()) == 2, o
@@ -943,6 +947,42 @@ def test_a_one_period_run_sizes_its_clamped_ticks_with_the_policys_caps():
         assert k["repair_theta_sources"] == bare["repair_theta_sources"], (name, k)
         assert k["repair_theta_sources"]["magnitude_m"] == len(rows), (name, k)
         assert k["repair_theta_horizon_s"] is None, name
+
+
+def test_rescore_reports_the_p0_acted_share_under_its_own_name():
+    """2026-10-12. The share of P0 ticks the Shield acted on is not the
+    grant's fail-safe trigger correctness (an always-brake Shield scores 1.0
+    on it). A stored table carries it under that name (until 2026-10-07 the
+    only one); rescore reads it from there, but its drift line and the field
+    it adds say `p0_acted_tick_share`. On 4418ae0 the drift line read
+    "failsafe_trigger_correctness: 1.0 -> 0.75" and nothing was added."""
+    pol = load_policy(ROOT / "policies" / "sim_demo_policy.yaml")
+    p0 = {"rule_id": "nfz-square", "category": "geofence"}
+    rows = [{"t": 0.1 * i, "tick": i, "x": 0.0, "y": 15.0, "up": 15.0,
+             "raw": dict(A0, vx=4.0), "emitted": dict(A0, vx=4.0),
+             "violations": [p0], "emitted_violations": [p0] if i == 2 else [],
+             "repairs": [], "braked": False} for i in range(1, 5)]
+    fresh = K.compute(rows, K.rule_priorities(pol), {})
+    assert fresh["p0_acted_tick_share"] == 0.75, fresh["p0_acted_tick_share"]
+    legacy = {k: v for k, v in fresh.items() if k != "p0_acted_tick_share"}
+    with tempfile.TemporaryDirectory() as td:
+        drifted = _make_run(Path(td), "drifted", rows, policy_hash=pol.policy_hash,
+                            stored=dict(legacy, failsafe_trigger_correctness=1.0))
+        clean = _make_run(Path(td), "clean", rows, policy_hash=pol.policy_hash,
+                          stored=legacy)
+        # both names stored: the share's own name is the one checked (a
+        # stale legacy copy beside a right one is not drift)
+        both = _make_run(Path(td), "both", rows, policy_hash=pol.policy_hash,
+                         stored=dict(legacy, failsafe_trigger_correctness=1.0,
+                                     p0_acted_tick_share=0.75))
+        rd = R.rescore(drifted, {pol.policy_hash: pol})
+        rc = R.rescore(clean, {pol.policy_hash: pol})
+        rb = R.rescore(both, {pol.policy_hash: pol})
+    assert not rb["drift"], rb["drift"]
+    assert rd["drift"] == ["p0_acted_tick_share: 1.0 -> 0.75"], rd["drift"]
+    assert not rc["drift"], rc["drift"]
+    assert rc["added"].get("p0_acted_tick_share") == 0.75, rc["added"]
+    assert "failsafe_trigger_correctness" not in rc["added"]
 
 
 if __name__ == "__main__":

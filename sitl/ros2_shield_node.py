@@ -100,12 +100,55 @@ or the launch file in sitl/ros2_ws):
 
     ~/venv-ros/bin/python sitl/ros2_shield_node.py --shield on [--dynamic]
     ~/venv-ros/bin/python sitl/ros2_shield_node.py --bundle bundles/fase3-sim-demo-v0.1.1.tar.gz
+    ~/venv-ros/bin/python sitl/ros2_shield_node.py --policy P.yaml --dev-yaml
 
 POLICY. `--bundle` flies the signed bundle (guardrail/bundle.py): the policy
 the run used is then the issued artefact, not whatever the YAML says today.
-`--policy` (or the default YAML) stays as the fallback and is recorded as
-unsigned. The VLA node announces its own identity and policy hash on
-/vla/identity; a mismatch with this node's policy is logged and recorded.
+Since 2026-10-12 a YAML policy flies only with `--dev-yaml`, recorded in the
+policy source (`dev_yaml: true`, in metrics.json, kpi.json and the replay
+index) and as a reason the run is not KPI-grade; with neither option the node
+flies the signed bundle of policies/sim_demo_policy.yaml when it is in
+bundles/ (tools/build_flight_bundles.py), and refuses otherwise
+(guardrail.manifest.flight_policy_choice). The VLA node announces its own
+identity and policy hash on /vla/identity; a mismatch with this node's policy
+is logged and recorded.
+
+RULE CLOCK (2026-10-12). Until this date the node gave neither its Shield nor
+its CSPs a clock, so every scheduled rule was in force and every
+time_window_switch inert in flight. Now one clock (guardrail.replay.
+rule_clock) goes to both: `--clock-start ISO8601` scripts it (it advances
+with the mission time, from the start); without it the wall clock in the
+mission's time zone (`--clock-tz`, default Taiwan's +08:00), read as the
+policy's naive local time. Which clock a run used is in the episode_start
+event and metrics.json `rule_clock`.
+
+HOT-APPLY ON THE FLYING SHIELD (2026-10-12). `--hotapply-port` serves the REST
+hot-apply API (guardrail.api.FlightHotApply), started on the pad so a listener
+that cannot start stops the run before arming: 127.0.0.1 by default, mutual
+TLS with the harness CA (`--hotapply-pki`, the folder
+`python -m guardrail.harness_service gen-pki` writes) for any other address.
+The Shield's rules are swapped under the lock the control tick holds (the
+REST server runs on its own thread beside the rclpy executor); each accepted
+event writes its generation's policy and CSP, re-publishes the fences
+(holding back a zone the aircraft is near) and records its receipt-to-swap
+time against the grant's 50 ms target. After the episode ends it answers 503.
+
+STALE ACTIONS (2026-10-12). Until this date a pilot whose action stream
+stopped left the node flying its last action until the time cap. If no
+/vla/action_4d arrives for `--action-timeout-s` (default 0.5 s: five of the
+grant's 10 Hz ticks), the node holds the aircraft the way the escalation FSM
+holds it: LOITER through the adapter, flown as ArduCopter BRAKE, after one
+tick of the Shield's own answer to a stop; the FSM does not step while held,
+and the pilot's next action returns the aircraft to GUIDED. Every spell is in
+events.jsonl and metrics.json `action_watchdog`; rows carry `action_stale`.
+
+TICK LATENCY (2026-10-12). Each row records `e2e_ms` (an action's receipt to
+the publication of the first setpoint flown from it), `action_age_ms` (the
+age of the action a published setpoint came from) and `tick_ms` (the tick
+callback's own time to publication); metrics.json `tick_latency` gives p50 /
+p99 / max against the grant's 100 ms monitor tick budget. The node ticks on
+its own 10 Hz timer, so e2e includes the wait for the next tick: up to one
+tick period on top of the processing, by construction.
 """
 from __future__ import annotations
 
@@ -114,6 +157,7 @@ import json
 import math
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -127,14 +171,15 @@ from guardrail.bundle import load_for_flight                              # noqa
 from guardrail.compiler import ConstraintCompiler                         # noqa: E402
 from guardrail.frames import from_body, to_body                           # noqa: E402
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,     # noqa: E402
-                           THETA_HORIZON_S, EscalationFSM, FSMConfig,
+                           MODE_FOR, THETA_HORIZON_S, EscalationFSM, FSMConfig,
                            tick_input_from_decision)
 from guardrail.geometry import fence_polygon                              # noqa: E402
 from guardrail.kpi import compute_from_dir                                # noqa: E402
-from guardrail.manifest import (TOPOLOGY_ARDUPILOT_SITL, UNRESOLVED,      # noqa: E402
-                                build_manifest, collect_host_evidence,
-                                decode_custom_version,
+from guardrail.manifest import (DEV_YAML_FLAG, TOPOLOGY_ARDUPILOT_SITL,   # noqa: E402
+                                UNRESOLVED, build_manifest,
+                                collect_host_evidence, decode_custom_version,
                                 describe_autopilot_version, detect_topology,
+                                flight_bundle_path, flight_policy_choice,
                                 is_kpi_grade, mavros_location,
                                 network_link_evidence, pilot_record,
                                 scan_local_processes)
@@ -142,7 +187,7 @@ from guardrail.models import (AltitudeEnvelope, PolygonFence,             # noqa
                               SubjectStandoff, XY)
 from guardrail.replay import (EpisodeRecord, audit_tick,                  # noqa: E402
                               episode_row_fields, flown_fields,
-                              kpi_evidence_grade, rail_shield,
+                              kpi_evidence_grade, rail_shield, rule_clock,
                               verify_replay, write_replay, zone_dwell)
 from mavlink_adapter_node import (DEFAULT_HOLD_MODE, FENCE_MARGIN_M,      # noqa: E402
                                   HOLD_MODES, TOPIC_FENCES, TOPIC_MODE_REQUEST,
@@ -208,6 +253,19 @@ TAKEOVER_GRACE_S = 25.0
 # How long after the FSM or the autopilot entered RTL / Land to wait for the
 # landing before the episode is ended anyway.
 FAILSAFE_GRACE_S = 40.0
+# The stale-action watchdog's default: this many missed ticks of the grant's
+# 10 Hz action rate (Safety Shield page: "Monitor rate: 10 Hz, matching the
+# VLA action rate"). A pilot slower than 10 Hz (OpenVLA-7B makes about one
+# decision per second) needs a longer --action-timeout-s, which is recorded.
+ACTION_TIMEOUT_TICKS = 5
+ACTION_TIMEOUT_S = ACTION_TIMEOUT_TICKS * TICK
+# The grant's monitor tick budget, end to end (Safety Shield page,
+# "Performance targets": <= 100 ms (10 Hz) end-to-end).
+TICK_BUDGET_MS = 100.0
+# The policy flown when neither --bundle nor --policy is given: its signed
+# bundle when bundles/ holds it, this YAML only under --dev-yaml.
+DEFAULT_POLICY_YAML = ROOT / "policies" / "sim_demo_policy.yaml"
+DEFAULT_HOTAPPLY_HOST = "127.0.0.1"
 
 
 # --------------------------------------------------------------------------- #
@@ -339,6 +397,127 @@ def percentile(values: list[float], q: float) -> float | None:
     return round(s[k], 3)
 
 
+def check_expected_hash(policy, expected: str | None) -> dict:
+    """The `--expected-hash` pin: `{}` when none was given, else the record
+    for the policy source. Raises ValueError, before take-off, when the
+    policy that loaded is not the one the caller pinned - the stress
+    harness passes the hash it expects with every bundle it sends
+    (experiments/sweep_scenarios.py build_sitl_cmd), and until 2026-10-13
+    this node did not declare the flag, so parse_known_args dropped it and a
+    different bundle would have flown unchallenged."""
+    if not expected:
+        return {}
+    got = policy.policy_hash
+    want = expected if expected.startswith("sha256:") else f"sha256:{expected}"
+    if got != want:
+        raise ValueError(f"--expected-hash {want} but the policy that loaded is {got}: "
+                         f"refusing to fly a policy other than the one pinned")
+    return {"expected_hash": want, "expected_hash_ok": True}
+
+
+def resolve_policy(args) -> tuple[str | None, str | None, dict]:
+    """`(bundle, yaml, record)` for load_for_flight: --bundle, or --policy
+    with --dev-yaml, or the default policy's signed bundle
+    (guardrail.manifest.flight_policy_choice). Raises ValueError, before
+    anything flies, for a YAML policy without --dev-yaml."""
+    return flight_policy_choice(
+        args.bundle, args.policy, dev_yaml=getattr(args, "dev_yaml", False),
+        default_yaml=DEFAULT_POLICY_YAML,
+        default_bundle=flight_bundle_path(DEFAULT_POLICY_YAML))
+
+
+class ActionWatchdog:
+    """Is the pilot's action stream alive?
+
+    `received(t)` on every valid action; `check(t)` once per tick returns
+    "stale" on the tick the stream is declared quiet (no action for longer
+    than `timeout_s`, counted from the last action, or from `start(t)` when
+    none has arrived since), "resumed" on the first tick after an action
+    arrives during a stale spell, and None otherwise. `t` is seconds on one
+    monotonic clock. Each spell is kept in `spells`."""
+
+    def __init__(self, timeout_s: float = ACTION_TIMEOUT_S) -> None:
+        timeout_s = float(timeout_s)
+        if not (timeout_s > 0.0 and math.isfinite(timeout_s)):
+            raise ValueError(f"the action timeout must be a positive number of "
+                             f"seconds, got {timeout_s!r}")
+        self.timeout_s = timeout_s
+        self.t0: float | None = None
+        self.last_rx: float | None = None
+        self.stale = False
+        self._rx_in_spell = False
+        self.spells: list[dict] = []
+
+    def start(self, t: float) -> None:
+        self.t0 = float(t)
+
+    def received(self, t: float) -> None:
+        self.last_rx = float(t)
+        if self.stale:
+            self._rx_in_spell = True
+
+    def age(self, t: float) -> float | None:
+        ref = self.last_rx if self.last_rx is not None else self.t0
+        return None if ref is None else float(t) - ref
+
+    def check(self, t: float) -> str | None:
+        if self.stale:
+            if self._rx_in_spell:
+                self.stale = self._rx_in_spell = False
+                self.spells[-1]["t_end"] = float(t)
+                return "resumed"
+            return None
+        age = self.age(t)
+        if age is not None and age > self.timeout_s:
+            self.stale = True
+            self.spells.append({"t_start": float(t), "age_s": round(age, 3),
+                                "t_end": None})
+            return "stale"
+        return None
+
+    def summary(self, to_mission_t=None) -> dict:
+        conv = to_mission_t or (lambda v: v)
+        spells = [{"t_start": round(conv(s["t_start"]), 3),
+                   "t_end": (None if s["t_end"] is None
+                             else round(conv(s["t_end"]), 3)),
+                   "quiet_s_at_onset": s["age_s"]} for s in self.spells]
+        return {"timeout_s": self.timeout_s, "spells": spells,
+                "n_spells": len(spells),
+                "stale_at_end": self.stale}
+
+
+def latency_fields(tick_ns: int, pub_ns: int | None, rx_ns: int | None,
+                   fresh: bool) -> dict:
+    """One row's latency, in ms on time.monotonic_ns(): `tick_ms` (the tick
+    callback's entry to the setpoint's publication), `action_age_ms` (the
+    receipt of the action the setpoint came from to its publication) and
+    `e2e_ms` (the same, on the first tick that flies a newly received
+    action; None on a tick that re-flies one, publishes nothing, or holds)."""
+    if pub_ns is None:
+        return {"tick_ms": None, "action_age_ms": None, "e2e_ms": None}
+    age = None if rx_ns is None else round((pub_ns - rx_ns) / 1e6, 3)
+    return {"tick_ms": round((pub_ns - tick_ns) / 1e6, 3),
+            "action_age_ms": age, "e2e_ms": age if fresh else None}
+
+
+def latency_summary(rows: list[dict], budget_ms: float = TICK_BUDGET_MS) -> dict:
+    """p50 / p99 / max of the rows' e2e_ms, action_age_ms and tick_ms, and the
+    ticks over the grant's budget. The null is a node doing nothing per tick:
+    with a pilot on its own 10 Hz clock, e2e then sits anywhere in 0-100 ms,
+    the phase between the two clocks."""
+    out: dict = {"budget_ms": budget_ms}
+    for key in ("e2e_ms", "action_age_ms", "tick_ms"):
+        vals = [r[key] for r in rows if isinstance(r.get(key), (int, float))]
+        out[key] = {"n": len(vals), "p50": percentile(vals, 50),
+                    "p99": percentile(vals, 99),
+                    "max": round(max(vals), 3) if vals else None,
+                    "over_budget": sum(1 for v in vals if v > budget_ms)}
+    out["note"] = ("e2e_ms: an action's receipt to the first setpoint flown "
+                   "from it; the node ticks on its own 10 Hz timer, so up to "
+                   "one tick period of it is the wait for the next tick")
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # The node (needs rclpy + mavros_msgs)
 # --------------------------------------------------------------------------- #
@@ -373,13 +552,16 @@ if HAVE_ROS:
             self.out = out
             self.max_s = float(args.max_s)
 
-            # The signed bundle when one is given; otherwise the YAML, recorded
-            # as unsigned. Refuses before take-off, never mid-air.
+            # The signed bundle (given, or the default policy's); a YAML only
+            # under --dev-yaml, recorded so. Refuses before take-off, never
+            # mid-air.
+            bundle, yaml_path, choice = resolve_policy(args)
             self.policy, self.policy_source = load_for_flight(
-                args.bundle,
-                args.policy or (None if args.bundle else
-                                ROOT / "policies" / "sim_demo_policy.yaml"),
+                bundle, yaml_path,
                 allow_unverified=args.allow_unverified_bundle)
+            self.policy_source.update(choice)
+            self.policy_source.update(check_expected_hash(
+                self.policy, getattr(args, "expected_hash", None)))
             self.get_logger().info(
                 f"policy {self.policy.policy_id} v{self.policy.version} "
                 f"{self.policy.policy_hash} from {self.policy_source['kind']} "
@@ -399,17 +581,31 @@ if HAVE_ROS:
                 self.mission = self.mission.model_copy(
                     update={"speed_pref_mps": float(args.speed)})
 
+            # The rule clock, one callable for the Shield and every
+            # generation's CSP (guardrail.replay.rule_clock): scripted from
+            # --clock-start with the mission time, else the wall clock in the
+            # mission's time zone. Mission time is None until mission start.
+            self.mission_t0: float | None = None
+            self.clock, self.clock_record = rule_clock(
+                getattr(args, "clock_start", None), elapsed=self._t,
+                tz=getattr(args, "clock_tz", None))
             # Episode record FIRST: it moves an earlier flight's audit and
             # generation files aside, so the logger below starts a fresh file.
             self.rec = EpisodeRecord(out, self.policy, self.mission,
                                      lookahead_s=LOOKAHEAD_S,
-                                     cost_map=getattr(args, "cost_map", False))
+                                     cost_map=getattr(args, "cost_map", False),
+                                     clock=self.clock,
+                                     clock_record=self.clock_record)
             (out / "prompt.yaml").write_text(compiler.build_prompt(self.mission),
                                              encoding="utf-8")
             # No escalation FSM inside the Shield: this node runs THE FSM,
             # because only it sees the autopilot (guardrail.replay.rail_shield).
             self.shield = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S,
-                                      dt=LOOKAHEAD_DT_S)
+                                      dt=LOOKAHEAD_DT_S, clock=self.clock)
+            # Held by every control tick and by the REST hot-apply thread
+            # while it swaps the Shield's rules and records the generation.
+            self._lock = threading.RLock()
+            self.hot = None             # guardrail.api.FlightHotApply, if served
             self.audit = AuditLogger(out / "audit.jsonl", self.policy,
                                      episode_id=str(self.rec.episode_id))
 
@@ -445,6 +641,14 @@ if HAVE_ROS:
             self.state: State | None = None
             self.raw_body = Action4D()
             self.n_actions = 0
+            # The action stream: its watchdog, and the receipt of the latest
+            # action (sequence number and monotonic ns) for the tick latency.
+            self.watchdog = ActionWatchdog(getattr(args, "action_timeout_s",
+                                                   ACTION_TIMEOUT_S))
+            self._stale_hold = False
+            self._action_seq = 0
+            self._action_rx_ns: int | None = None
+            self._flown_seq = 0
             self.mav_connected = False
             self.mode: str | None = None
             self.landed: bool | None = None
@@ -472,11 +676,16 @@ if HAVE_ROS:
             self.fence_margin_m: float = FENCE_MARGIN_M
             self.deferred_fences: list[str] = []
             self.zones_over_home: list[str] = []
+            # The zones the autopilot holds (the adapter confirmed the
+            # upload): never held back again, since each upload replaces the
+            # list (guardrail.fence_export.defer_near). And the last list
+            # sent, which the adapter's confirmation is matched against.
+            self.fences_enforced: dict = {}
+            self._fences_sent: dict | None = None
             self.sim_speedup: float | None = None
             self.n_touched = self.n_braked = 0
             self.spawn_t = self.spawn_pos = None
             self.dynamic_fence_id: str | None = None
-            self.mission_t0: float | None = None
             self.done = False
             self.reached = False
             self.takeover: dict | None = None
@@ -573,6 +782,9 @@ if HAVE_ROS:
             if len(d) >= 4 and all(math.isfinite(v) for v in d[:4]):
                 self.raw_body = Action4D(vx=d[0], vy=d[1], vz_up=d[2], yaw_rate=d[3])
                 self.n_actions += 1
+                self._action_rx_ns = time.monotonic_ns()
+                self._action_seq += 1
+                self.watchdog.received(self._action_rx_ns / 1e9)
 
         def _on_identity(self, msg: String) -> None:
             try:
@@ -585,7 +797,9 @@ if HAVE_ROS:
             # cannot be shown to be on the Orin (manifest._vla_host_missing).
             self.hil_evidence["vla_host"] = host if isinstance(host, dict) else None
             vh = self.vla_identity.get("policy_hash")
-            if vh and not self.policy.matches_hash(vh):
+            with self._lock:            # not mid-way through a REST swap
+                same = (not vh) or self.policy.matches_hash(vh)
+            if not same:
                 # In the ros2_ped_* runs the two nodes read different files and
                 # nothing showed it (audit card WP1-23).
                 self.get_logger().warn(
@@ -601,12 +815,24 @@ if HAVE_ROS:
                 return
             if rec.get("kind") == "fence_upload":
                 self.fence_status.append(rec)
+                with self._lock:
+                    sent = self._fences_sent
+                    if (rec.get("success") is True and sent is not None
+                            and rec.get("generation") == sent["generation"]
+                            and sorted(rec.get("fence_ids") or []) == sent["ids"]):
+                        self.fences_enforced = {f["id"]: f for f in sent["fences"]}
             self.rec.event(f"adapter_{rec.get('kind', 'status')}", t=self._t(),
                            **{k: v for k, v in rec.items() if k not in ("kind", "t")})
 
         # ---------------- outputs ---------------- #
 
         def _publish_fences(self, reason: str) -> None:
+            """This generation's keep-out zones to the adapter, under the lock
+            the REST hot-apply thread also publishes them under."""
+            with self._lock:
+                self._publish_fences_locked(reason)
+
+        def _publish_fences_locked(self, reason: str) -> None:
             """This generation's keep-out zones to the adapter, minus any the
             aircraft is in or near (`deferred_fences`, re-sent from _tick once
             clear). The column is the autopilot's own FENCE_ALT_MAX as read
@@ -622,7 +848,7 @@ if HAVE_ROS:
                 pos, pos_src = (0.0, 0.0), "assumed home: no pose yet (on the pad)"
             fences, skipped = policy_fences(
                 self.policy, column_m=self.fence_column_m, position=pos,
-                margin_m=self.fence_margin_m)
+                margin_m=self.fence_margin_m, enforced=self.fences_enforced)
             self.deferred_fences = sorted(s["id"] for s in skipped
                                           if s.get("deferred"))
             # Zones over home (the local origin in SITL): an RTL flies back
@@ -646,6 +872,9 @@ if HAVE_ROS:
                    "origin": (None if origin is None else
                               {"lat": origin[0], "lon": origin[1]}),
                    "backstop_active": self.autopilot_fence.get("backstop_active")}
+            self._fences_sent = {"generation": doc["generation"],
+                                 "ids": sorted(f["id"] for f in fences),
+                                 "fences": fences}
             self.pub_fences.publish(String(data=json.dumps(doc)))
             self.rec.event("fences_published", t=self._t(), reason=reason,
                            generation=doc["generation"],
@@ -881,6 +1110,7 @@ if HAVE_ROS:
 
         def bring_up(self) -> None:
             log = self.get_logger()
+            self.serve_hot_apply()
             t_end = time.time() + 180
             while time.time() < t_end and not self.mav_connected:
                 rclpy.spin_once(self, timeout_sec=0.5)
@@ -985,20 +1215,95 @@ if HAVE_ROS:
             # established; the record keeps it visible if it recurs.
             if self.state is not None:
                 warm = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S,
-                                   dt=LOOKAHEAD_DT_S)
+                                   dt=LOOKAHEAD_DT_S, clock=self.clock)
                 b = self.raw_body
                 warm.filter(self.state, from_body(b.vx, b.vy, b.vz_up,
                                                   b.yaw_rate, self.state.yaw_deg))
                 self.rec.event("shield_warmup", t=None,
                                ms=round(warm.history[-1].elapsed_ms, 3))
             self.mission_t0 = time.monotonic()
+            self.watchdog.start(self.mission_t0)
             self.rec.event("mission_start", t=0.0,
                            target=[self.mission.target_x, self.mission.target_y],
                            speed_pref_mps=self.mission.speed_pref_mps,
-                           shield=self.args.shield)
+                           shield=self.args.shield,
+                           rule_clock_reading=self.clock().isoformat(
+                               timespec="seconds"),
+                           action_timeout_s=self.watchdog.timeout_s)
             self.create_timer(TICK, self._tick)
 
+        def serve_hot_apply(self) -> None:
+            """The REST hot-apply API on this Shield (--hotapply-port), started
+            on the pad by bring_up(): a listener that cannot start (FastAPI
+            missing from the venv, the port taken, the PKI absent) stops the
+            run before arming, never mid-air. Events before mission start
+            change the mission-start policy (Shield.hot_apply)."""
+            port = getattr(self.args, "hotapply_port", None)
+            if not port:
+                return
+            from guardrail.api import FlightHotApply
+            self.hot = FlightHotApply(self.shield, self.rec, self._lock,
+                                      mission_t=self._t,
+                                      after=self._after_hot_apply,
+                                      log_fn=self.get_logger().info)
+            th = self.hot.start(self.args.hotapply_host, int(port),
+                                pki_dir=self.args.hotapply_pki,
+                                server_name=self.args.hotapply_server_cert,
+                                allowed_clients=self.args.hotapply_client)
+            self.get_logger().info(f"hot-apply API at {th.url}")
+
+        def _after_hot_apply(self, result: dict, t: float | None) -> None:
+            """A REST hot-apply was accepted (under the tick's lock): the new
+            generation's zones go to the adapter, a zone the aircraft is in
+            or near held back as for every other generation."""
+            self._publish_fences(f"hot_apply {result['applied']} "
+                                 f"({result['op']} {result['type']}) over REST")
+
         def _tick(self) -> None:
+            tick_ns = time.monotonic_ns()
+            # The REST hot-apply thread swaps the Shield's rules under the
+            # same lock (guardrail.api.FlightHotApply): a tick never sees half
+            # a swap, and a swap never lands between a decision and its row.
+            with self._lock:
+                self._tick_locked(tick_ns)
+
+        def _streaming(self) -> bool:
+            """Is this node flying the aircraft with its setpoints (no
+            autopilot takeover, no FSM fault, the FSM in a GUIDED state)?"""
+            return (self.takeover is None and self.fsm_fault is None
+                    and (self.fsm is None
+                         or MODE_FOR[self.fsm.state] == "GUIDED"))
+
+        def _watch_actions(self, now: float) -> tuple[bool, bool]:
+            """The stale-action watchdog, once per tick: `(stale, hold_onset)`.
+            A stream quiet for longer than the timeout is held the way the
+            FSM holds the aircraft (LOITER through the adapter, flown as
+            BRAKE) while this node is the one flying it; the next action
+            returns it to GUIDED."""
+            edge = self.watchdog.check(time.monotonic())
+            age = self.watchdog.age(time.monotonic())
+            if edge == "stale":
+                self.get_logger().warn(
+                    f"no /vla/action_4d for {age:.2f} s (timeout "
+                    f"{self.watchdog.timeout_s:g} s): holding")
+                self.rec.event("action_stale", t=now, quiet_s=round(age, 3),
+                               timeout_s=self.watchdog.timeout_s,
+                               actions_received=self.n_actions)
+            elif edge == "resumed":
+                self.get_logger().info("/vla/action_4d resumed")
+                self.rec.event("action_resumed", t=now,
+                               held=self._stale_hold)
+                if self._stale_hold:
+                    self._stale_hold = False
+                    self._request_mode("GUIDED", "action stream resumed")
+            onset = False
+            if self.watchdog.stale and not self._stale_hold and self._streaming():
+                self._stale_hold = onset = True
+                self._request_mode("LOITER", f"action stream stale: no "
+                                   f"/vla/action_4d for {age:.2f} s")
+            return self.watchdog.stale, onset
+
+        def _tick_locked(self, tick_ns: int) -> None:
             if self.done or self.state is None:
                 return
             now = time.monotonic() - self.mission_t0
@@ -1036,7 +1341,11 @@ if HAVE_ROS:
                 self._finish("target reached")
                 return
 
-            body = self.raw_body
+            # A quiet action stream is not flown: the Shield checks a stop
+            # instead, and the node holds (stale-action watchdog).
+            stale, hold_onset = self._watch_actions(now)
+            body = Action4D() if stale else self.raw_body
+            seq, rx_ns = self._action_seq, self._action_rx_ns
             # This tick's row number (1-based), bound once: the audit record
             # and the log row of one decision carry the same tick.
             tick_no = len(self.traj) + 1
@@ -1052,8 +1361,9 @@ if HAVE_ROS:
             setpoint = "pass"
             # Once the autopilot has taken the aircraft (a GeoFence RTL), the
             # FSM no longer steps: its mode requests would fight the autopilot.
+            # Nor while this node holds it for a quiet action stream.
             if self.fsm is not None and self.fsm_fault is None \
-                    and self.takeover is None:
+                    and self.takeover is None and not self._stale_hold:
                 try:
                     stop_illegal = self.shield.state_is_unsafe(st)
                     # How far from legal: X6's progress and X7's losing-ground
@@ -1092,6 +1402,11 @@ if HAVE_ROS:
                     self.failsafe_t = now
             if self.fsm_fault is not None or self.takeover is not None:
                 setpoint = "none"
+            elif self._stale_hold:
+                # The hold's first tick flies the Shield's answer to a stop
+                # (a stop where it is legal) while SET_MODE goes through, as
+                # the FSM's own hand-over does; then the autopilot holds.
+                setpoint = "pass" if hold_onset else "none"
             # After the FSM stepped, with ITS verdict (not a Shield-internal
             # FSM's): the audit and the flight log describe one state machine.
             audit_tick(self.audit, tick_no, decision, fsm_out=fsm_out,
@@ -1107,12 +1422,21 @@ if HAVE_ROS:
                     "fsm": fsm_out.state.value if fsm_out else None})))
 
             flown = {"pass": em_body, "brake": Action4D(), "none": None}[setpoint]
+            pub_ns = None
             if flown is not None:
                 self._publish_body(flown)
+                pub_ns = time.monotonic_ns()
+            lat = latency_fields(tick_ns, pub_ns, rx_ns,
+                                 fresh=(not stale and seq != self._flown_seq))
+            if pub_ns is not None and not stale:
+                self._flown_seq = seq
 
+            # The rule clock's reading rides with each point, so the zone
+            # dwell applies the windows the Shield flew under.
             self.traj.append({"t": round(now, 2), "x": st.x, "y": st.y,
                               "up": st.up,
-                              "touched": bool(self.shield_on and decision.touched)})
+                              "touched": bool(self.shield_on and decision.touched),
+                              "clock": self.clock().isoformat()})
             self.rows.append(build_row(
                 now=now, tick=tick_no, state=st, body=body,
                 decision=decision, raw_world=raw_w, emitted_world=em_w,
@@ -1120,6 +1444,8 @@ if HAVE_ROS:
                 subject=self.subject, fsm_out=fsm_out,
                 stop_illegal=stop_illegal, mode=self.mode, setpoint=setpoint,
                 shield=self.shield, unsafe_depth=unsafe_depth))
+            self.rows[-1].update(lat, action_seq=seq, action_stale=stale,
+                                 stale_hold=self._stale_hold)
 
             # The episode ends when the autopilot has the aircraft and is done
             # with it: landed, or a bounded wait so a run stays short.
@@ -1151,6 +1477,9 @@ if HAVE_ROS:
 
         def _finish(self, why: str) -> None:
             self.done = True
+            if self.hot is not None:
+                # Later events would land after this episode's records.
+                self.hot.close(f"the episode ended ({why})")
             self.rec.end(why, t=self._t())
             # The mission-end LAND is not a fail-safe. If the FSM or the
             # autopilot already has the aircraft in RTL / LAND, leave it be.
@@ -1169,11 +1498,13 @@ if HAVE_ROS:
             # scored where it was declared (as it was until 2026-10-11). The
             # spawn time on the trajectory's 0.01 s grid (traj "t" is rounded
             # so), or the spawn tick is dropped when the clock read past it.
-            self.dwell = zone_dwell(
-                self.shield, self.traj, TICK,
-                live_from=({self.dynamic_fence_id: round(self.spawn_t, 2)}
-                           if self.dynamic_fence_id and self.spawn_t is not None
-                           else None))
+            # A zone spawned over REST counts from its arrival too (its mission
+            # time, on the same grid; guardrail.api.FlightHotApply.live_from).
+            live = dict(self.hot.live_from) if self.hot is not None else {}
+            if self.dynamic_fence_id and self.spawn_t is not None:
+                live[self.dynamic_fence_id] = round(self.spawn_t, 2)
+            self.dwell = zone_dwell(self.shield, self.traj, TICK,
+                                    live_from=live or None, clock_key="clock")
             nfz_s = self.dwell["nfz_s"]
             if self.dwell["nfz_moving_not_counted"]:
                 self.get_logger().warn(
@@ -1256,6 +1587,7 @@ if HAVE_ROS:
                 "nfz_s": round(nfz_s, 2),
                 "nfz_by_zone_s": self.dwell["nfz_by_zone_s"],
                 "nfz_moving_not_counted": self.dwell["nfz_moving_not_counted"],
+                "nfz_off_by_clock_s": self.dwell["nfz_off_by_clock_s"],
                 **self._standoff_metrics(),
                 "alt_violation_s": round(alt_s, 2),
                 "interventions": self.n_touched,
@@ -1286,6 +1618,13 @@ if HAVE_ROS:
                 "zones_over_home": self.zones_over_home,
                 "autopilot_fence": self.autopilot_fence or None,
                 "generations": self.rec.generations,
+                # Which clock the rules were evaluated on (scripted or wall).
+                "rule_clock": self.clock_record,
+                "hot_apply": (self.hot.summary() if self.hot is not None
+                              else None),
+                "action_watchdog": self.watchdog.summary(
+                    lambda v: v - self.mission_t0),
+                "tick_latency": latency_summary(self.rows),
                 # Beside the manifest, which is exactly the grant's six fields.
                 "hil_evidence": self.hil_evidence,
                 "policy_source": self.policy_source,
@@ -1318,6 +1657,10 @@ if HAVE_ROS:
                                                   "start_heading_err_deg": None})
             if self.fsm_fault:
                 graded, why = False, why + [f"FSM fault: {self.fsm_fault}"]
+            if self.policy_source.get("dev_yaml"):
+                graded, why = False, why + [
+                    f"the policy was flown from YAML under {DEV_YAML_FLAG}: "
+                    f"unsigned, not its issued bundle"]
             kpi_res["kpi_grade"] = graded
             kpi_res["kpi_grade_reasons"] = why
             kpi_res["manifest"] = manifest
@@ -1379,7 +1722,11 @@ if HAVE_ROS:
 | Autopilot | {self.hil_evidence.get('ardupilot_version')} ({self.hil_evidence.get('ardupilot_version_source')}) |
 | Pilot | `{model_id}` |
 | Policy | `{self.policy.policy_id}` `{self.policy.policy_hash}` |
-| Policy source | {self.policy_source['kind']} `{self.policy_source['path']}` - signature **{self.policy_source['signature']}** |
+| Policy source | {self.policy_source['kind']} `{self.policy_source['path']}` - signature **{self.policy_source['signature']}**{' (--dev-yaml)' if self.policy_source.get('dev_yaml') else ''} |
+| Rule clock | {self.clock_record.get('kind')}: {self.clock_record.get('start') or self.clock_record.get('tz')} |
+| Hot-apply API | {f"{metrics['hot_apply']['n_applied']} event(s) at {metrics['hot_apply']['endpoint']['url']}, receipt to swap max {metrics['hot_apply']['receipt_to_swap_ms_max']} ms" if self.hot is not None else 'not served'} |
+| Action stream | {self.n_actions} received; {self.watchdog.summary()['n_spells']} stale spell(s) (timeout {self.watchdog.timeout_s:g} s) |
+| Tick latency (e2e p50 / p99 / max) | {metrics['tick_latency']['e2e_ms']['p50']} / {metrics['tick_latency']['e2e_ms']['p99']} / {metrics['tick_latency']['e2e_ms']['max']} ms, budget {TICK_BUDGET_MS:g} ms |
 | Topology | `{manifest['topology']}` |
 | Target reached | {'yes' if self.reached else 'NO'} |
 | Ticks | {len(self.traj)} ({metrics['ticks_flown']} flown, {metrics['ticks_not_flown']} held by the autopilot or a fault) |
@@ -1409,12 +1756,47 @@ def make_parser() -> argparse.ArgumentParser:
                          "unsafe and time to safe is measured")
     ap.add_argument("--tag", default=None)
     ap.add_argument("--policy", default=None,
-                    help="policy YAML; defaults to policies/sim_demo_policy.yaml. "
-                         "Recorded as UNSIGNED.")
+                    help="policy YAML; flown only with --dev-yaml, recorded as "
+                         "UNSIGNED. Without --policy and --bundle the signed "
+                         "bundle of policies/sim_demo_policy.yaml flies")
     ap.add_argument("--bundle", default=None,
                     help="signed policy bundle. Refused unless its signature "
                          "verifies.")
     ap.add_argument("--allow-unverified-bundle", action="store_true")
+    ap.add_argument("--expected-hash", default=None, metavar="SHA256",
+                    help="refuse to fly unless the loaded policy has this hash "
+                         "(the stress harness pins every bundle it sends)")
+    ap.add_argument(DEV_YAML_FLAG, dest="dev_yaml", action="store_true",
+                    help="fly a YAML policy (--policy, or the default YAML): a "
+                         "development run, recorded as such and never "
+                         "KPI-grade")
+    ap.add_argument("--clock-start", default=None, metavar="ISO8601",
+                    help="script the rule clock: it reads this at mission start "
+                         "and advances with the mission time. Without it the "
+                         "wall clock in the mission's time zone (--clock-tz)")
+    ap.add_argument("--clock-tz", default=None,
+                    help="the mission's time zone for the wall rule clock: a UTC "
+                         "offset (+08:00, the default: Taiwan) or an IANA name")
+    ap.add_argument("--hotapply-port", type=int, default=None,
+                    help="serve the REST hot-apply API (guardrail/api.py) on "
+                         "this port, started on the pad before arming")
+    ap.add_argument("--hotapply-host", default=DEFAULT_HOTAPPLY_HOST,
+                    help="address for --hotapply-port (default 127.0.0.1; any "
+                         "other needs --hotapply-pki)")
+    ap.add_argument("--hotapply-pki", default=None, metavar="DIR",
+                    help="mutual TLS with the harness CA: a folder written by "
+                         "python -m guardrail.harness_service gen-pki")
+    ap.add_argument("--hotapply-server-cert", default=None, metavar="NAME",
+                    help="the server certificate's name in --hotapply-pki "
+                         "(default harness-server)")
+    ap.add_argument("--hotapply-client", action="append", default=None,
+                    metavar="CN",
+                    help="client certificate common name allowed in (repeat; "
+                         "default harness-client)")
+    ap.add_argument("--action-timeout-s", type=float, default=ACTION_TIMEOUT_S,
+                    help="hold the aircraft once /vla/action_4d has been quiet "
+                         f"this long (default {ACTION_TIMEOUT_S:g} s: "
+                         f"{ACTION_TIMEOUT_TICKS} ticks at 10 Hz)")
     ap.add_argument("--command", default=None,
                     help="mission text (default: fly to the northeast pad at 6 m/s)")
     ap.add_argument("--target", default=None, metavar="X,Y",
@@ -1451,6 +1833,15 @@ def make_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> None:
     args, ros_args = make_parser().parse_known_args(argv)
+    # Refused before ROS starts and before anything flies: a YAML policy
+    # without --dev-yaml, no policy and no signed default bundle, a clock
+    # start or zone that cannot be read, a timeout that is not one.
+    try:
+        resolve_policy(args)
+        rule_clock(args.clock_start, elapsed=lambda: None, tz=args.clock_tz)
+        ActionWatchdog(args.action_timeout_s)
+    except ValueError as exc:
+        raise SystemExit(f"[safety_shield] REFUSED: {exc}")
     if not HAVE_ROS:
         raise SystemExit("ros2_shield_node needs rclpy and mavros_msgs: source "
                          "/opt/ros/jazzy/setup.bash and use ~/venv-ros/bin/python")

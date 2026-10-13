@@ -146,6 +146,24 @@ SINCE 2026-10-07
     through guardrail.bundle.load_for_flight): a bundle's signature status is
     recorded, not required, and `expected_hash` is matched under every form
     the policy knows (`Policy.matches_hash`).
+
+SINCE 2026-10-12: THE GRANT'S FORECAST, AND A 3 S COMPARISON ARM
+
+The Safety Shield page locks the lookahead: "5 s of predicted trajectory at
+10 Hz = 50 future poses". Until 2026-10-12 the library's default was 3.0 s
+and the harness built every Shield at a 0.5 s step (6 poses), so no headless
+KPI came from the grant's Shield configuration. The defaults are now
+guardrail.shield's LOOKAHEAD_S / LOOKAHEAD_DT_S (5.0 s at 0.1 s), and a spec
+may override either (`lookahead_s`, `lookahead_dt_s`). The old forecast is
+kept as a labelled comparison ARM, never as a default: an episode's
+`forecast` is "grant" or "3s" (FORECAST_ARMS), the 3 s arm multiplies
+episodes like the prefix arms do (never cells), and the sweep keeps its
+results out of every headline number and marks its rollups non-grant.
+
+`stress.battery_critical_at_s` is the battery fail-safe hook of the RTL
+hand-over (guardrail/rtl_path.py): from that time the battery reports
+critical, so an RTL in progress fails (the grant's "RTL fails (battery /
+blocked path)", FSM edge G6).
 """
 from __future__ import annotations
 
@@ -164,6 +182,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # The grant's outcome vocabulary lives in guardrail.kpi; one copy, not two.
 from .kpi import OUTCOMES
+# The grant's forecast (5 s at 0.1 s) lives in guardrail.shield; one copy.
+from .shield import LOOKAHEAD_DT_S, LOOKAHEAD_S
 
 # --------------------------------------------------------------------------- #
 # vocabularies
@@ -223,6 +243,14 @@ EVENT_PAYLOADS: dict[str, tuple[frozenset, frozenset]] = {
 # Directions a translating zone may move in, relative to the vehicle's heading
 # when the event fires (the grant's example: "perpendicular_left").
 TRANSLATE_DIRECTIONS = ("perpendicular_left", "perpendicular_right", "along", "against")
+
+# The forecast an episode's Shields are built with (module docstring, "SINCE
+# 2026-10-12"). "grant": the spec's lookahead_s / lookahead_dt_s, else the
+# library defaults (the grant's 5 s at 0.1 s). "3s": the harness's forecast
+# until 2026-10-12 (the spec's lookahead_s, else 3.0 s, at 0.5 s), flown only
+# as a labelled comparison; experiments/sweep_scenarios.py forecast_for()
+# holds the numbers.
+FORECAST_ARMS = ("grant", "3s")
 
 # Grant KPI names -> the field that measures each one in a sweep result.
 #
@@ -591,6 +619,13 @@ class Stress(_Strict):
                      reference design lists "GPS denial" among the dynamic
                      actors stress scenarios need (docs/03-simulation/
                      layer-requirements.md, L2), which is all this answers.
+    battery_critical_at_s  from this simulated time on, the battery reports
+                     critical (guardrail/rtl_path.py BatteryHook). It acts
+                     only on an RTL in progress, which then fails: the
+                     grant's "RTL fails (battery / blocked path)", FSM edge
+                     G6 (RTL -> Land). The grant's FSM gives the battery no
+                     other edge, and ArduPilot's own battery fail-safe
+                     (BATT_FS_*) is not modelled.
     """
     gps_noise_m: float = Field(default=0.0, ge=0)
     latency_ticks: int = Field(default=0, ge=0)
@@ -599,6 +634,7 @@ class Stress(_Strict):
     gust_mps: float = Field(default=0.0, ge=0)
     start_jitter_m: float = Field(default=0.0, ge=0)
     gps_dropout_s: tuple[float, float] | None = None
+    battery_critical_at_s: float | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def _dropout_window(self) -> "Stress":
@@ -607,6 +643,9 @@ class Stress(_Strict):
             if not (math.isfinite(lo) and math.isfinite(hi) and 0 <= lo < hi):
                 raise ValueError("gps_dropout_s must be [start, end) with "
                                  "0 <= start < end")
+        if self.battery_critical_at_s is not None \
+                and not math.isfinite(self.battery_critical_at_s):
+            raise ValueError("battery_critical_at_s must be finite")
         return self
 
     @property
@@ -766,7 +805,10 @@ class ScenarioSpec(_Strict):
     parameter_sample: dict[str, SampleSpec] = Field(default_factory=dict)
     ticks: int | None = Field(default=None, gt=0)
     dt: float | None = Field(default=None, gt=0)
+    # The Shields' forecast horizon and step; None takes the library's
+    # defaults, which are the grant's 5 s at 0.1 s (module docstring).
     lookahead_s: float | None = Field(default=None, gt=0)
+    lookahead_dt_s: float | None = Field(default=None, gt=0)
     # The escalation FSM decides what is flown (see the module docstring).
     escalation: bool = True
     # Arms (see ParaphraseSpec, and the module docstring): which wordings, and
@@ -1046,9 +1088,13 @@ def _episode_id(sid: str, parts: dict[str, Any]) -> str:
 
 
 class Defaults(_Strict):
+    """The library's defaults for what a spec leaves unset. The forecast is the
+    grant's (guardrail.shield LOOKAHEAD_S / LOOKAHEAD_DT_S); until 2026-10-12
+    `lookahead_s` defaulted to 3.0 and the step was a hard-coded 0.5 s."""
     dt: float = Field(default=0.1, gt=0)
     ticks: int = Field(default=300, gt=0)
-    lookahead_s: float = Field(default=3.0, gt=0)
+    lookahead_s: float = Field(default=LOOKAHEAD_S, gt=0)
+    lookahead_dt_s: float = Field(default=LOOKAHEAD_DT_S, gt=0)
 
 
 class Library:
@@ -1157,6 +1203,11 @@ class Profile(_Strict):
     # declares `paraphrase`; prefix_ab true / false forces the A/B on / off.
     paraphrase_k: int | None = Field(default=None, ge=0, le=8)
     prefix_ab: bool | None = None
+    # Forecast arms (FORECAST_ARMS): "grant" always, "3s" adds the labelled
+    # comparison episodes (the pre-2026-10-12 forecast), kept out of every
+    # headline number by the sweep.
+    forecast_arms: list[Literal[FORECAST_ARMS]] = Field(
+        default_factory=lambda: ["grant"])
     # The grant's last column: smoke and nightly "feed the final KPI report";
     # the broad sweep's results "are tracked but not part of the final KPI
     # numbers". Recorded in every run of the profile.
@@ -1169,7 +1220,25 @@ class Profile(_Strict):
             raise ValueError("expected_cells must be [lo, hi] with 0 < lo <= hi")
         if len(set(self.seeds)) != len(self.seeds):
             raise ValueError("seeds must be distinct")
+        check_forecast_arms(self.forecast_arms)
         return self
+
+
+def check_forecast_arms(arms) -> list[str]:
+    """`arms` as a list, refused when it is empty, repeats an arm, names one
+    that is not in FORECAST_ARMS, or leaves out "grant": a run made of the
+    comparison arm alone would put a non-grant forecast in every headline
+    number, which is what the arm exists to keep out of them."""
+    arms = list(arms)
+    bad = [a for a in arms if a not in FORECAST_ARMS]
+    if bad:
+        raise ValueError(f"forecast arm(s) {bad}: each is one of {list(FORECAST_ARMS)}")
+    if len(set(arms)) != len(arms):
+        raise ValueError(f"forecast arms {arms} repeat an arm")
+    if "grant" not in arms:
+        raise ValueError(f"forecast arms {arms} leave out \"grant\": the 3 s arm is a "
+                         f"comparison beside the grant's forecast, never instead of it")
+    return arms
 
 
 def load_profile(path: str | Path) -> Profile:
@@ -1188,6 +1257,10 @@ class Episode(BaseModel):
     prefix: Literal["on", "off"] = "on"
     # True when this episode is one side of a prefix A/B (both arms flown).
     ab: bool = False
+    # The forecast its Shields are built with (FORECAST_ARMS). Unlike the
+    # paraphrase and prefix arms this one CHANGES the flight: "3s" is the
+    # labelled comparison, kept out of every headline number.
+    forecast: Literal[FORECAST_ARMS] = "grant"
 
     @property
     def episode_id(self) -> str:
@@ -1196,13 +1269,16 @@ class Episode(BaseModel):
 
     @property
     def arm_tag(self) -> str:
-        """"" for an episode without arms; else e.g. "pp2,prefix-off"."""
+        """"" for an episode without arms; else e.g. "pp2,prefix-off" or
+        "forecast-3s"."""
         parts = []
         if self.paraphrase_arm is not None:
             parts.append("canonical" if self.paraphrase_arm < 0
                          else f"pp{self.paraphrase_arm}")
         if self.prefix != "on" or self.ab:
             parts.append(f"prefix-{self.prefix}")
+        if self.forecast != "grant":
+            parts.append(f"forecast-{self.forecast}")
         return ",".join(parts)
 
     @property
@@ -1240,7 +1316,8 @@ def episode_arms(spec: ScenarioSpec, profile: Profile | None = None
 
 
 def expand(lib: Library, profile: Profile | None = None, seed: int | None = None,
-           only: list[str] | None = None) -> tuple[list[Episode], dict[str, Any]]:
+           only: list[str] | None = None, forecast_arms: list[str] | None = None
+           ) -> tuple[list[Episode], dict[str, Any]]:
     """Every episode a run will execute, plus a record of how the count arose.
 
     Seeds, highest precedence first: `seed` (the --seed flag, one seed), the
@@ -1261,7 +1338,15 @@ def expand(lib: Library, profile: Profile | None = None, seed: int | None = None
     profile's `paraphrase_k` / `prefix_ab` overriding. `info["arms"]` says how
     many episodes are arms, so a count of episodes is never read as a count
     of distinct flights.
+
+    Forecast arms (`forecast_arms`, else the profile's, else ["grant"]): every
+    episode above once per arm, the "3s" copy tagged `forecast-3s`. They are
+    counted apart (`info["arms"]["forecast_comparison_episodes"]`) because
+    they are a different Shield configuration, not more scenarios.
     """
+    arms_fc = check_forecast_arms(forecast_arms if forecast_arms is not None
+                                  else (profile.forecast_arms if profile is not None
+                                        else ["grant"]))
     fams = lib.families
     if profile is not None and profile.families != "all":
         known = lib.by_id()
@@ -1309,19 +1394,31 @@ def expand(lib: Library, profile: Profile | None = None, seed: int | None = None
             pp_arms, prefixes = episode_arms(c.spec, profile)
             for s in seeds:
                 n_seed_slots += 1
-                for pfx in prefixes:
-                    for pa in pp_arms:
-                        episodes.append(Episode(cell=c, seed=s, paraphrase_arm=pa,
-                                                prefix=pfx, ab=len(prefixes) > 1))
+                for fc in arms_fc:
+                    for pfx in prefixes:
+                        for pa in pp_arms:
+                            episodes.append(Episode(cell=c, seed=s, paraphrase_arm=pa,
+                                                    prefix=pfx, ab=len(prefixes) > 1,
+                                                    forecast=fc))
 
-    info: dict[str, Any] = {"cells": n_cells, "episodes": len(episodes),
+    n_grant = sum(1 for e in episodes if e.forecast == "grant")
+    # `episodes` counts the grant forecast's; the 3 s comparison copies are
+    # in `episodes_with_comparison` and arms.forecast_comparison_episodes.
+    info: dict[str, Any] = {"cells": n_cells, "episodes": n_grant,
+                            "episodes_with_comparison": len(episodes),
                             "arms": {
                                 "cell_seed_slots": n_seed_slots,
-                                "extra_arm_episodes": len(episodes) - n_seed_slots,
+                                # Paraphrase and prefix arms of the grant
+                                # forecast (the comparison copies are below).
+                                "extra_arm_episodes": n_grant - n_seed_slots,
                                 "paraphrase_arm_episodes": sum(
-                                    1 for e in episodes if e.paraphrase_arm is not None),
+                                    1 for e in episodes if e.paraphrase_arm is not None
+                                    and e.forecast == "grant"),
                                 "prefix_off_episodes": sum(
-                                    1 for e in episodes if e.prefix == "off")},
+                                    1 for e in episodes if e.prefix == "off"
+                                    and e.forecast == "grant"),
+                                "forecast_arms": arms_fc,
+                                "forecast_comparison_episodes": len(episodes) - n_grant},
                             "cells_per_family": per_family,
                             "only_unmatched": sorted(only_set - matched),
                             "duplicate_cells": [list(p) for p in
@@ -1350,16 +1447,16 @@ def duplicate_cells(cells: list[Cell], defaults: "Defaults | None" = None
     Compared on behaviour only (BEHAVIOUR_EXCLUDED): two cells that differ in
     their id, family name, description, task prompt, gates or labels are still
     one flight, and counting them twice is the padding this exists to catch. A
-    cell that leaves dt / ticks / lookahead_s to the library defaults is
-    compared with the defaults filled in, so writing `ticks: 300` explicitly
-    does not make a new scenario either.
+    cell that leaves dt / ticks / lookahead_s / lookahead_dt_s to the library
+    defaults is compared with the defaults filled in, so writing `ticks: 300`
+    explicitly does not make a new scenario either.
     """
     seen: dict[str, str] = {}
     dups = []
     dfl = defaults or Defaults()
     for c in cells:
         body = _behaviour(c.spec.model_dump(mode="json", by_alias=True))
-        for k in ("dt", "ticks", "lookahead_s"):
+        for k in ("dt", "ticks", "lookahead_s", "lookahead_dt_s"):
             if body.get(k) is None:
                 body[k] = getattr(dfl, k)
         key = repr(sorted(_flatten(body)))

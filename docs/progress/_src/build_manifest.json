@@ -1,10 +1,10 @@
 {
  "generator": "tools/build_public_site.py",
- "as_of": "2026-10-12",
+ "as_of": "2026-10-13",
  "tracker_text_from": "tracker",
  "sources": {
-  "CHANGELOG.md": "bcc1c8c65be6",
-  "docs/progress/_src/site.json": "06bfcfc08668",
+  "CHANGELOG.md": "6040d7adf467",
+  "docs/progress/_src/site.json": "de76edd9a7a9",
   "docs/progress/_src/tracker_extract.json": "15ff9b2e7e0a"
  },
  "pages": [
@@ -31,7 +31,7 @@
   "zh/wp4.html"
  ],
  "page_count": 21,
- "numbers_checked": 243,
+ "numbers_checked": 256,
  "images_reviewed": 10,
  "video_placeholders": [
   "citylife_redcar_nfz_policy_hud.mp4",
@@ -54,12 +54,13 @@
   "2026-10-06",
   "2026-10-07",
   "2026-10-08",
-  "2026-10-12"
+  "2026-10-12",
+  "2026-10-13"
  ],
  "changelog_sections_after_as_of": [],
  "changelog_watch": {
   "Unreleased": "0a8abc12843c",
-  "2026-10-12 (later)": "e433cc5faf2e",
+  "2026-10-13": "c042bcb552ed",
   "2026-10-12": "c3ef378227ea",
   "2026-10-08": "72e6f6f94149",
   "2026-10-07": "632bfe27b123",

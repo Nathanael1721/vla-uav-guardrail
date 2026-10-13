@@ -749,8 +749,10 @@ FAKE_MSGS = SimpleNamespace(
     PositionTarget=FakePositionTarget, Float32MultiArray=FakeArray, MavState=object,
     NavSatFix=object, Float64=object, PoseStamped=object, RCOut=object, Image=object,
     ExtendedState=object, StatusText=object, TimeReference=object,
+    RCIn=object, OverrideRCIn=SimpleNamespace, Waypoint=SimpleNamespace,
     SetMode=_SRV, CommandBool=_SRV, CommandTOL=_SRV, StreamRate=_SRV,
-    GetParameters=_SRV, VehicleInfoGet=_SRV, qos_sensor=None)
+    GetParameters=_SRV, VehicleInfoGet=_SRV, WaypointPush=_SRV, WaypointPull=_SRV,
+    qos_sensor=None)
 FAKE_RCLPY = SimpleNamespace(ok=lambda: True, spin_once=lambda node, timeout_sec=0: None,
                              spin_until_future_complete=lambda node, fut, timeout_sec=None: None)
 
@@ -995,7 +997,7 @@ def test_g1_qualification_is_reported_never_assumed():
     assert topo.classify(_ev(g1={"passed": False}))["rail_qualified_by_g1"] is False
 
 
-def test_the_manifest_takes_the_rail_s_label_and_keeps_its_old_guard():
+def test_the_manifest_takes_the_rail_s_label_and_the_grant_label_on_evidence():
     out = _tmp()
     cfg = rail.write_sim_configs(out, rail.plan_network("mirrored"))
     scene = out / cfg["scene"]
@@ -1004,11 +1006,21 @@ def test_the_manifest_takes_the_rail_s_label_and_keeps_its_old_guard():
     assert m["topology"] == topo.TOPOLOGY_PAS_ARDUPILOT_MAVROS and m["sim_speedup"] == 1.0
     ok, why = is_kpi_grade(m, {})
     assert not ok and any("topology" in r for r in why)
-    # Complete dev evidence AND a scene: still refused, on the scene. That is
-    # the guard this rail must not get around (docs/DESIGN-...: what
-    # manifest.py needs).
+    # Complete dev evidence beside this rail's scene: accepted since
+    # 2026-10-12, because guardrail.manifest READS the robot config the
+    # simulator was given and finds ArduCopterApi there (docs/DESIGN-...:
+    # what manifest.py needs). Until then refused, on the scene.
+    m = build_manifest("ph", "x", 1, scene_path=scene, topology=TOPOLOGY_DEV,
+                       hil_evidence=_ev()["topology_evidence"])
+    assert m["topology"] == TOPOLOGY_DEV, m
+    # The guard this rail must not get around: the same files with the
+    # simulator's own controller are refused, on the controller.
+    robot = out / cfg["robot"]
+    doc = json.loads(robot.read_text(encoding="utf-8"))
+    doc["controller"]["type"] = "simple-flight-api"
+    robot.write_text(json.dumps(doc), encoding="utf-8")
     _raises(build_manifest, "ph", "x", 1, scene_path=scene, topology=TOPOLOGY_DEV,
-            hil_evidence=_ev()["topology_evidence"], contains="scene")
+            hil_evidence=_ev()["topology_evidence"], contains="simple-flight-api")
 
 
 # =========================================================================== #
@@ -1349,7 +1361,7 @@ def _fly(shield="on", link_cls=None, policy=CAP_POLICY, extra=(), link_kw=None,
         "--out-root", str(out), "--tag", "run", "--policy", str(pol), "--max-s", max_s,
         "--hfov", "90", "--citymap", str(out / "no_map.npz"), "--network", "nat",
         "--windows-ip", WIN, "--wsl-ip", WSL, "--shield", shield, "--speed-max", "4",
-        *extra])
+        "--dev-yaml", *extra])
     clk = Clock()
     anchor = ap.FrameAnchor(35.6895, 139.6917, 40.0, "scene.home-geo-point")
     link = (link_cls or FakeLink)(clk, anchor, **(link_kw or {}))
@@ -1434,7 +1446,7 @@ def test_a_link_that_dies_mid_flight_ends_the_episode_with_the_real_reason():
     (out / "p.yaml").write_text(CAP_POLICY, encoding="utf-8")
     args = pn.build_parser().parse_args([
         "--out-root", str(out), "--tag", "d", "--policy", str(out / "p.yaml"),
-        "--hfov", "90", "--network", "mirrored", "--max-s", "5"])
+        "--hfov", "90", "--network", "mirrored", "--max-s", "5", "--dev-yaml"])
     clk = Clock()
     link = Dying(clk, ap.FrameAnchor(35.6895, 139.6917, 40.0, "s"))
     try:
@@ -2001,7 +2013,7 @@ def test_a_refused_bring_up_still_releases_the_simulator():
     (out / "p.yaml").write_text(CAP_POLICY, encoding="utf-8")
     args = pn.build_parser().parse_args([
         "--out-root", str(out), "--tag", "r", "--policy", str(out / "p.yaml"),
-        "--hfov", "90", "--network", "mirrored"])
+        "--hfov", "90", "--network", "mirrored", "--dev-yaml"])
     clk = Clock()
     link = Refusing(clk, ap.FrameAnchor(35.6895, 139.6917, 40.0, "s"))
     _raises(pn.run, args, link=link, camera=Watched(link), grounder=FakeDetections(clk),
@@ -2013,13 +2025,14 @@ def test_the_dry_run_names_every_missing_package():
     old = pn.module_available
     try:
         pn.module_available = lambda n: n != "pymavlink"
-        args = pn.build_parser().parse_args(["--dry-run", "--network", "mirrored"])
+        args = pn.build_parser().parse_args(["--dry-run", "--network", "mirrored",
+                                             "--dev-yaml"])
         rep = pn.dry_run(args, _tmp())
         assert not rep["ok"] and any("pymavlink" in p for p in rep["problems"])
         pn.module_available = lambda n: True
         assert pn.dry_run(args, _tmp())["ok"]
         args = pn.build_parser().parse_args(["--dry-run", "--scene-mode", "attach",
-                                             "--link", "mavros"])
+                                             "--link", "mavros", "--dev-yaml"])
         rep = pn.dry_run(args, _tmp())
         assert rep["sim_config"]["network"]["mode"] == "attach" and "sitl_args" not in rep
     finally:

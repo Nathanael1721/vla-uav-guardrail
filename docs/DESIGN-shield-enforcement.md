@@ -9,6 +9,13 @@ Code: `guardrail/shield.py`, `guardrail/ir.py`, `guardrail/fsm.py`,
 Tests: `tests/test_shield.py`, `tests/test_shield_events.py`, `tests/test_api.py`,
 `tests/test_ir.py`, `tests/test_fsm.py`, `tests/test_policy_hud.py`,
 `tests/test_fenceguard.py`.
+2026-10-12 (section 9): `guardrail/repair.py` (new), `guardrail/audit.py`,
+`guardrail/ir.py`, `guardrail/shield.py`, `guardrail/frames.py`,
+`policies/audit_record.schema.json` (new); tests
+`tests/test_shieldcore_repair.py`, `tests/test_shieldcore_audit.py`,
+`tests/test_shieldcore_identity.py` (new), `tests/test_flight_pas_ap_20261008.py`,
+`tests/test_shield.py`, `tests/test_frame_contract.py`, fixtures in
+`tests/fixtures/`.
 
 ## The problem
 
@@ -421,8 +428,9 @@ count and map shape compared per tick. 2 flights (`vlm_nfz_smooth`,
 log"): `ts`, `policy_hash` and `generation` (the decision's own, so a
 hot-apply between ticks cannot restamp it), `monitor_tick`, `raw_action`,
 `violations` with `boundary_intersect_at_s` and the grant's `category`
-written as `grant_category` (geometric / envelope; the grant's third,
-time-window, never occurs because a rule out of its window raises nothing).
+written as `grant_category` (geometric / envelope, and since 2026-10-12 the
+grant's third, time-window, for a rule a window edge inside the lookahead
+brings into force; section 9).
 The record's own `category` field is NOT the grant's: it keeps this project's
 finer vocabulary (geofence, corridor, altitude, kinematic, clearance,
 standoff) for the readers that already use it, and `contract` (a non-finite
@@ -430,9 +438,10 @@ command zeroed) is this project's extension, written as itself under both
 names. `repair_attempts` (operator, result ok / fallback /
 relaxed, reason, `magnitude_m`, `axis`, `recovery`), `emitted_action`,
 `fsm_state_before`, `fsm_state_after`, plus the edge, edge source, requested
-mode, setpoint, reason and FSM config hash. The grant's `iterations` is not
-written: the chain iterates as a whole and does not count per operator, and a
-number nobody measured is not written down. A record is written when the
+mode, setpoint, reason and FSM config hash. Until 2026-10-12 the grant's
+`iterations` was not written (the chain iterated as a whole and did not count
+per operator); it is now measured, with every operator considered per pass,
+and the record is a validated Pydantic model (section 9). A record is written when the
 decision saw a violation and also when the FSM changed state, requested a
 mode or refused its input, so a Brake -> Normal recovery on a clean tick is
 on record. `AuditLogger.for_episode(dir, policy, episode_id)` writes one
@@ -476,7 +485,227 @@ eight Brake -> Loiter edges. What changed in the Shield because of it:
   its trend to leave a working recovery alone, and its X7 to send home a
   recovery that is losing ground (docs/DESIGN-escalation-fsm.md).
 
+### 9. Headroom, the audit record as a model, the repair library (2026-10-12)
+
+**The moving-zone budget.** At the grant's load (50 rules, 5 s at 0.1 s) the
+48-moving-zone `_check` had a median of 2.6 ms on a quiet desktop, 6.5 ms on
+a loaded one and 5.71 ms on GitHub's runner, against 5 ms, and the Orin will
+be slower. Profiled (cProfile, 200 near samples): 70 % of it was building
+each moving zone's polygon at the tick's time (`compile_fence`, a `buffer()`
+each) - all 48 on every check, reachable or not, because the swept-box skip
+of 2026-10-07 judged a zone's box only after building it. `ir.anchor_reach`
+now bounds where a moving zone can be over the horizon from its anchor record
+alone: a translating zone's margin ring is the anchor ring moved by its
+velocity times its age; a turning one stays within (farthest vertex + margin)
+of its moving centre, for the buffer GEOS builds at any rotation; a 1e-6 m
+pad covers rounding. `Shield._reach` builds a zone only when that box meets
+the forecast's, and then applies the old swept-box test to the built zone,
+so the zones judged are exactly the old ones (the anchor box contains the
+built zone's swept box: `test_the_anchor_box_contains_the_materialised_swept_box`;
+the answers equal the old judgement on 3600 `_check` / `filter()` samples of
+translating, turning and mixed zones aged 0-90 s). In 200 near checks the
+zones built fall from 9600 to 199. Two savings on every path, both exact:
+plain rules that share a weekly window read it once per pose
+(`_Schedule._plain_key`), and forecast poses are a NamedTuple instead of a
+validated State (a fifth of a static `filter()`; `forecast()` still returns
+States). Numbers in "Measurements"; `tests/test_check_contract.py` is
+unchanged and passes.
+
+**The audit record.** `guardrail/audit.py` now builds an `AuditRecord`
+(Pydantic v2, `extra="forbid"`) and validates it before writing; a record
+with an undeclared key or a result nobody defined is refused and nothing is
+written. Its JSON Schema is `policies/audit_record.schema.json` (`python -m
+guardrail.audit schema`; a test fails when file and model disagree). New
+fields, the old keys all kept: `raw_action_body` / `emitted_action_body` in
+the grant's keys {vx, vy, vz, yaw_rate} (`frames.to_body` at the tick's
+heading, `body_yaw_deg`; null for a decision that does not carry its
+heading, never a guessed one), `repair_passes` (every repair operator
+considered, pass by pass, in every run of the repair stack - each pass
+carries its `run`, so a run that failed before soft rules were given up
+stays on the record, and `flown_run` names the run whose action flew - with
+result ok / skip / fail / fallback / relaxed and the reason for every skip),
+the measured `iterations` (loop passes that ran, summed over the runs; 0 on
+a passthrough) and `chain_runs`, `repair_mode`, `record_version` (2), a
+`priority` per violation when the logger holds the policy, and `iterations`
+on each `repair_attempts` entry: the pass of the flown run that first logged
+that repair, operator and detail (`ShieldDecision.trace["repair_iterations"]`,
+index for index with `repairs`, keeping `_dedupe`'s first-of-each rule). The
+first version mapped that pass by operator name, so a second repair the same
+operator logged in a later pass (the ClimbClamp that closes pass 1 after one
+in pass 0) inherited the first one's pass: wrong on 1324 of 4257 records over
+the 28 policies and the 50-rule load (150 seeded ticks each, CityLife map),
+0 now. It also kept only the flown run's passes, so a soft-rule conflict
+read chain_runs 2, iterations 1; it now reads 2 and 4 (review, 2026-10-13).
+A violation of a rule
+not in force now that the forecast breaks after a window edge brings it into
+force is `grant_category: "time-window"` (`ShieldDecision.trace`, which the
+Shield attaches to every decision and `model_dump()` leaves out, so logs and
+digests are unchanged). The grant's example lists skips inside
+`repair_attempts`; here they live in `repair_passes`, so `repair_attempts`
+still means "repairs made" for the readers that count it. `read_audit`
+reads all three shapes stored since July (no `emitted_violations`; no
+generation or FSM fields; the grant's fields) into the model; what a shape
+did not record stays null, never an empty list. It reads every audit stored
+one or two folders under `demo/out`: 22123 records in 73 files (2026-10-13;
+a reviewer timed a recursive walk at 62 s through the frame-folder
+junctions; the bounded glob plus reading every record took 3.9 s here). An
+old record's derived results (Brake and ClearanceEscape
+"fallback", SoftRelax "relaxed") and `boundary_intersect_at_s` are pinned
+by a test, on the one stored old-shape record that ends in a fallback and
+on a synthetic July-shape record holding a Brake and a SoftRelax (no stored
+record of those shapes holds either).
+
+**The repair operator library.** `guardrail/repair.py`: a `RepairOperator`
+Protocol (`name`, `categories`, `repair(action, violation, ir, *, ctx) ->
+RepairAttempt`; `ctx` carries what the grant's three arguments leave
+implicit, as the reference's `state` and `cfg` do), a registry, and the six
+existing operators wrapped (KinematicClamp, AltitudeClamp,
+ClearanceProjection, StandoffProjection, CorridorProjection,
+LateralProjection), each calling its `_repair_*` method on the Shield by
+name so a subclass override still runs. An operator written to the grant's
+signature exactly (three arguments, no `ctx`, no `categories`) is accepted
+by `register`, which wraps it (`GrantOperator`: it covers every category,
+and a change it makes without logging a Repair is logged in its name), and
+`Shield(repair_order=...)` puts a registered name to work, in place of the
+iterated loop's stack or the first-feasible priority order (default None:
+the stacks below). The default chain calls them in the
+old order with the old arguments: its decisions equal a verbatim copy of the
+old `_repair_chain` on every policy in policies/ (`test_the_default_chain_decides_as_the_old_chain_on_every_policy`,
+1980 ticks, 1825 of them repaired, most by a speed clamp). Three modes, each off by default:
+
+- `repair_mode="first_feasible"`: the grant's selection. Per iteration (up
+  to 3) the earliest open violation is the target; operators are tried in
+  priority order; the first whose action clears the target with every
+  non-recovery repair's `magnitude_m` within theta (2.0 m lateral, 0.5 m
+  vertical) wins; an attempt that says ok but leaves its target violated is
+  a fail, and a recovery is exempt from theta. Head-on 6 m outside a zone at
+  4 m/s the chain slides (a 13 m GeofenceSlide, left for the FSM to judge);
+  first-feasible refuses it and the fallback stops. Sinking to 1.9 m under a
+  floor, the chain's AltitudeFix is applied and first-feasible's is refused
+  (over the vertical theta).
+- `path_repair=True`: the grant's PathRepair, a detour waypoint logged in
+  body frame (metres forward / right of the heading), taken when projection
+  has lost at least half the commanded progress and only if the detour
+  re-checks clean under every rule the chain enforces. A stand-off ring is
+  passed at the tangent of a circle its soft margin (at least 1 m) outside
+  it; a static zone at a corner of its margin ring's coarse ring pushed 1 m
+  out. It frees the standoff-wedge scenario (FSM off, as tests/test_sweep.py
+  flies the LEGACY set): without it the aircraft hovers at (0, 0) for the
+  whole episode (300 StandoffHold repairs, goal not reached); with it the
+  goal is reached, the closest range is 10.022 m against the 10 m ring and no
+  tick flies a P0 violation (60 StandoffHold, 49 PathRepair; the 10.022 m is
+  StandoffHold sliding along the ring on the ticks where projection keeps at
+  least half the progress - the detour itself aims at the tangent of the
+  12 m circle, pinned by a test). A detour whose leg would enter another
+  zone is not taken. With the FSM
+  on, the detour's magnitude (the 10 m the raw forecast went into the ring)
+  is over theta and the FSM goes X1 > G3: theta's call, unchanged here.
+- `segment_check=True`: the straight segment between consecutive forecast
+  poses is judged against every zone's margin ring (its interior, the set the
+  pose test reads, in the zone's frame for a moving zone) and every
+  corridor's tube (a polygon that contains the true tube, so it never flags a
+  segment the pose test would pass; it misses an exit shallower than 0.12 %
+  of the half-width). At 12 m/s on the 0.1 s grid a 0.5 m ring between the
+  poses at x = 3.6 and 4.8 m was flown straight through; it is now a
+  violation at t + 0.321 s, and the slide repairs it. Off by default because
+  it changes decisions.
+
+Each mode keeps the budgets ("Measurements"). The 13 LEGACY scenarios and
+the 8 Oct replay are unchanged with the flags spelled out off. Two
+optimisations of the default path that no earlier test reached are pinned
+against their memo-less form (review, 2026-10-13): the shared window memo
+(`_plain_key`; rules on the same clock window but other days or another end,
+a switched-off and a switched-on rule beside a plain one, at a window edge,
+and 500 answers of the 50-rule edge load), and `unsafe_depth` measuring a
+moving zone where it has moved to.
+
+**The 8 Oct regression on CI.** `tests/test_flight_pas_ap_20261008.py` and
+the stored-audit test read the run folder in `demo/out`, which git ignores,
+so they reported SKIP on every CI run: the 8 Oct fix had never been checked
+on GitHub. `tests/fixtures/` now holds the flight trimmed to what the replay
+reads (all 1101 ticks, 18 row fields, 53 KB gzipped), its policy, the
+CityLife 6-14 m map (1.7 KB) and a 12-record October audit; the full log is
+still read where the folder exists, and a test checks fixture and folder
+agree field for field. Shown to matter: with the 8 Oct range-0 fix reverted
+in a scratch copy with no `demo/out`, the fixture replay fails with escapes on
+exactly the five logged ticks; the HEAD test file there reports 0/2, 2 skipped.
+`tests/test_shieldcore_identity.py` pins the 81 decisions 4418ae0 made on the
+replay (the other 1020 ticks pass the raw action untouched). These files
+make a CI run possible; they are not yet in the test list of
+`.github/workflows/tests.yml` (the lead's file), and until they are listed
+the regression still does not run on GitHub.
+
 ## Measurements
+
+### 2026-10-13 (after the review of section 9)
+
+The same bench, re-run back to back on three scratch copies: 4418ae0, the
+section 9 code as reviewed, and this code (two rounds each; `--horizon 5
+--dt 0.1 --variant <v> --impl current --n-check 300 --n-filter 150`, near
+and grid; median / p99 `_check`, ms, FSM off). The desktop was quieter than
+on 2026-10-12, so 4418ae0's moving figures are lower than the table below:
+
+| variant | samples | 4418ae0 | reviewed | now |
+|---|---|---|---|---|
+| static | near | 0.346-0.347 / 0.74-0.75 | 0.293-0.296 / 0.68-0.69 | 0.296-0.299 / 0.68-0.71 |
+| edge | near | 0.807-0.820 / 1.19-1.22 | 0.564-0.572 / 0.78-0.83 | 0.563-0.570 / 0.79 |
+| moving (48 zones) | near | 2.526-2.642 / 3.06-3.51 | 0.447-0.452 / 0.85-0.87 | 0.448-0.454 / 0.88-0.89 |
+| moving (48 zones) | grid | 5.908-6.160 / 11.66-13.65 | 0.297-0.304 / 0.91 | 0.299-0.302 / 0.92 |
+
+`filter()` near, median: static 2.30-2.32 / 2.07-2.08 / 2.09-2.12 ms, edge
+2.75-2.80 / 2.18-2.27 / 2.21-2.22 ms, moving 3.40-3.43 / 0.92-0.95 /
+0.92-0.93 ms. So the review's fixes (the per-tick ledger, the per-repair
+pass) cost nothing measurable. The nulls, this session, this code: the
+per-fence loop 222.0 / 248.6 ms per `_check` and 1047.6 / 1083.9 ms per
+`filter()` (50 samples each, near), every moving zone built and judged at
+every pose 76.0 / 82.6 ms near and 79.4 / 99.5 ms grid per `_check`; decisions
+identical to `current` on every compared sample (50 + 50, 300 + 150 + 300 +
+150).
+
+### 2026-10-12 (section 9)
+
+Desktop as below, shared with three other jobs throughout; HEAD (4418ae0, a
+pristine `git archive` copy) and this tree timed back to back in one
+session, `experiments/bench_shield_50rules.py --horizon 5 --dt 0.1 --variant
+<v> --impl current --n-check 400 --n-filter 150` (median / p99, ms, FSM off):
+
+| variant | samples | `_check` HEAD | `_check` now | `filter()` HEAD | `filter()` now |
+|---|---|---|---|---|---|
+| static | near | 0.386 / 0.847 | 0.320 / 0.749 | 2.494 / 4.294 | 2.223 / 3.940 |
+| static | clear | 0.211 / 0.345 | 0.153 / 0.210 | | |
+| edge | near | 0.845 / 1.310 | 0.576 / 0.860 | 2.929 / 4.138 | 2.229 / 3.483 |
+| moving (48 zones) | near | 6.925 / 9.995 | 0.446 / 0.914 | 8.859 / 19.746 | 0.905 / 4.096 |
+| moving (48 zones) | grid | 5.673 / 8.865 | 0.295 / 0.960 | | |
+
+The nulls, same session: the per-fence loop (`tests/legacy_fence_loop.py`,
+static) 210.6 / 232.6 ms per `_check` and 1068 / 1128 ms per `filter()` at
+this forecast; every moving zone built and judged at every pose (bench
+`--impl allzones`) 77.5 / 89.3 ms and 86.7 / 395.4 ms, with decisions
+identical to `current` on 400 + 150 + 400 + 150 + 400 + 150 samples. The test
+methodology (`tests/test_shield.py`, 200 near samples, seed 3, FSM on),
+medians: static 0.37 -> 0.31 ms, edge 0.83 -> 0.65 ms, moving 2.55-2.79 ->
+0.43-0.49 ms; `filter()` 2.7 -> 2.4, 3.1 -> 2.9, 4.4-4.6 -> 1.7-2.1 ms.
+
+With each new mode on (same test methodology, medians `_check` / `filter()`,
+p99 `filter()`): first_feasible 0.31 / 2.90 / 3.9 static, 0.45 / 1.89 / 21.5
+moving; path_repair 0.32 / 6.00 / 7.5 static, 0.44 / 1.79 / 5.0 moving;
+segment_check 0.31 / 2.40 / 3.8 static, 0.45 / 1.73 / 5.1 moving; all three
+0.31 / 7.33 / 11.5 static, 0.46 / 2.05 / 24.1 moving. Every `_check` median
+is under 5 ms and every `filter()` p99 under 100 ms
+(`test_every_new_mode_keeps_the_50_rule_budget`). PathRepair triples the
+static `filter()` median: on the near samples it runs on most ticks (head-on
+into a zone), with a monitor check per candidate waypoint. The heaviest tail
+is first-feasible on the moving zones: where it refuses an over-theta slide,
+the rescue search runs (24 headings, a monitor check each), 20-25 ms on a
+quiet moment; a reviewer's loaded desktop read 79 ms for all three modes
+there, and on 2026-10-13 this desktop, loaded by three other jobs, read
+65.4 ms once. The test therefore re-measures a configuration that is over a
+bound once and judges the better run, and prints its figures.
+`tests/test_shield.py`'s 50-rule test keeps its 15 ms `_check` bound on a
+shared CI runner (5 ms elsewhere) until a GitHub run has printed the three
+medians it now prints; the new path has not been timed on GitHub.
+
+### 2026-10-07
 
 Desktop (Intel64 Family 6 Model 183, Python 3.10.20, shapely 2.1.2 / GEOS 3.13.1), shared
 with other work while measuring; results swing up to 2x between runs.
@@ -581,6 +810,84 @@ the panel's WATCH shown as ACTING, any violation counted as a correction,
 the uncorrected-log rule and the WATCH banner removed). 20 of 20 caught,
 each by the test written for it (`scratchpad` script `mutrun3.py`, six owned
 test files).
+
+### 2026-10-12 (section 9)
+
+Run against a pristine `git archive` of 4418ae0 with the new test files and
+fixtures copied in (scratch copy):
+
+| test | on 4418ae0 | now |
+|---|---|---|
+| tests/test_shieldcore_repair.py | ImportError: no `guardrail.repair` | 24/24 |
+| tests/test_shieldcore_audit.py | ImportError: no `AuditRecord` | 11/11 |
+| tests/test_shieldcore_identity.py | 5/7: the flags and `anchor_reach` do not exist; the 8 Oct pin, the fast-path comparison and the memo, edge-load and moving-depth tests pass by construction (they pin what 4418ae0 did) | 7/7 |
+| `test_a_50_rule_moving_check_builds_only_the_zones_it_can_reach` | fails: 9600 zones built in 200 checks | 199 |
+| `test_the_frames_docstring_names_every_module_that_crosses_the_boundary` | fails: "Nothing in production" | passes |
+| tests/test_flight_pas_ap_20261008.py with no demo/out, as on CI | 0/2, 2 skipped (the file as it was) | 2/3, 1 skipped (the folder-vs-fixture check) |
+
+(Counts are the files as they stand after the review below.)
+
+The behaviour the new modes change, probed on 4418ae0: a 12 m/s command at a
+0.5 m ring lying between two poses flies straight through it, no violation; a
+window-edge violation is written `grant_category: "geometric"`; the record
+has no body-frame key and no `iterations`. Mutations, each in a scratch copy:
+the 8 Oct range-0 fix reverted makes both fixture replays fail (escapes on
+ticks 857, 927, 928, 999 and 1100); `anchor_reach` without the zone's
+displacement fails the containment and fast-path identity tests, and without
+the horizon sweep both again; two chain stages swapped fails the old-chain
+comparison on its 10th follow_car_citylife tick. One regression the first
+version had and the suite caught: `_check` no longer read `_fence_records`, so
+tests/test_profile_shield_tick.py's fence-blind Shield was no longer blind
+(its test failed); `_fence_anchors` now reads through `_fence_records` when a
+subclass overrides it or no zone moves, and `_reach` asks `_may_reach` of the
+anchor record first, so a subclass whose `_may_reach` says True still judges
+every zone at every pose (tests/test_shield_events.py's prefilter test).
+
+### After the 2026-10-13 review
+
+Two reviews of section 9 found one defect and a set of behaviours no test
+pinned. The defect: `repair_attempts[].iterations` was mapped by operator
+name, so a second repair the same operator logged in a later pass carried
+the first one's pass (1324 of 4257 seeded records; section 9). Fixed, with
+the ledger now holding every chain run. Also from the reviews: a 3-argument
+operator is accepted (`GrantOperator`) and `repair_order` can run a new
+name; the bench's `--flags` no longer reports a FAIL against a flag-less
+null; the stored-audit test globs two levels instead of walking the
+junctions; `tests/test_shield.py` keeps 15 ms on CI and prints its medians;
+`test_the_replay_is_the_same_with_every_new_repair_flag_spelled_off` was
+dropped (it compared the defaults with themselves; the 4418ae0 pin in
+`tests/test_shieldcore_identity.py` is the identity test).
+
+The new tests against the section 9 code as the reviews saw it (a scratch
+copy of 4418ae0 with that code and the new tests; no demo/out):
+`tests/test_shieldcore_audit.py` 9/11 - the per-repair pass test fails with
+the name-mapped `[..., ("GeofenceSlide", 1), ...]` where 2 is right, and the
+every-run test finds no `flown_run`; `tests/test_shieldcore_repair.py` 22/24
+- the 3-argument operator is refused (TypeError) in both tests that use one;
+the rest pass, as they pin behaviour that was already right.
+
+Those are checked the other way, by mutation (`scratchpad` script
+`mutants.py`, each mutation alone in a scratch copy of 4418ae0 plus this
+unit's files, the owning test file run): 30 mutations, the reviews'
+surviving ones and one per fix - the per-repair pass constant, last-pass or
+name-keyed; `chain_runs` or `iterations` hard-coded to 1; the fallback filed
+in pass 0; only the flown run kept; the window memo shared with a switch
+target or a swap target, or keyed without the days or without the end; the
+time-window label without its not-in-force-now test; `unsafe_depth` on a
+moving zone's anchor geometry; first-feasible targeting the latest
+violation, holding a vertical repair to the lateral theta, accepting an ok
+that leaves its target violated, without the recovery exemption or the
+category skip; a hook "ok" only when it logged a Repair; PathRepair without
+its clean re-check, its leg-visibility filter or its waypoint clearance, or
+at the end of the stack; `register` refusing the grant's signature; the
+segment check needing the rule at both ends, ignoring the altitude band,
+on an unenlarged corridor tube, or sizing its slide at 0 m; the reader
+deriving every old result as ok or dropping `boundary_intersect_at_s`. 30
+of 30 caught. One needed a second try: a memo keyed without the end
+survived the first memo test, whose sharing rule sat outside the forecast's
+box and so was read only at the first pose time; the sharer now sits inside
+the box, beside the path. Equivalent and not tested: PathRepair's speed cap
+(the KinematicClamp after it caps the speed anyway).
 
 ## Findings: the silent defects this unit fixed
 
@@ -719,8 +1026,33 @@ known to carry the claim. *Fix:* WATCH (section 6);
 - The Shield's own FSM never hears from an autopilot unless the caller passes
   `rtl_failed` / `home_reached` / `landed`; the rails use their own FSM.
 - The sliding window (`history`) is still a record; no rule reads past actions.
-- PathRepair (a detour waypoint) is not built; a forecast that tunnels through
-  a thin zone between two poses at 0.1 s is not segment-checked.
+- PathRepair and the segment check exist (section 9) but are off by default,
+  and no flight has flown either. PathRepair's detour has no planner behind
+  it (one waypoint, a tangent or a hull corner); it leaves moving zones and
+  corridors to projection, and with the FSM on theta still escalates the
+  head-on cases it was built for. A segment found by the segment check
+  inside a corridor bend has no repair operator of its own (CorridorReturn
+  reads the lateral offset, not segments): the chain does not converge and
+  the rescue / brake fallback decides.
+- First-feasible mode reads theta from the Shield's FSM configuration (the
+  grant's 2.0 / 0.5 m without one); whether the grant's selection should
+  replace the chain is a decision for the PI, not taken here.
+- The 2026-10-12 and 2026-10-13 timings are this desktop's; nothing was
+  measured on the Orin or on GitHub's runner. `tests/test_shield.py` keeps
+  15 ms on CI until a run prints the new medians, and
+  `test_every_new_mode_keeps_the_50_rule_budget` has never run on a shared
+  runner (its heaviest configuration read 65 ms once here under load,
+  against 100 ms).
+- `tests/test_flight_pas_ap_20261008.py` and the three
+  `tests/test_shieldcore_*.py` files are not in `.github/workflows/tests.yml`
+  (the lead's file), so CI does not yet run the 8 Oct regression.
+- `repair_passes` skip reasons come from the violations open at the start of
+  the pass, not a re-check per operator. `time-window` is written only for a
+  window that opens inside the lookahead; a closing edge cannot cause a
+  violation. A record's per-violation `priority` is read from the logger's
+  live policy, not the decision's generation.
+- The jsonschema check of written records runs only where jsonschema is
+  installed (not a project dependency; it says so when it skips).
 - A window shorter than eps (zero-length in particular) is not guaranteed to
   be seen (section 3).
 - The REST channel has no authentication; the layer rule only stops it from

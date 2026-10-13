@@ -24,7 +24,7 @@
 <p class="kicker">進度</p>
 <h1>Guardrail：語言指令無人機的安全層</h1>
 <p class="lead">介於無人機的 AI 駕駛（VLA）與自動駕駛系統（ArduPilot）之間的安全層：飛行規則只寫在一個檔案裡，先摘要給 AI，再在每個指令送到無人機之前逐一檢查。</p>
-<p class="muted small">資料截至 2026 年 10 月 12 日 · 距離 2026 年 11 月 30 日 期末交付還有 49 天</p>
+<p class="muted small">資料截至 2026 年 10 月 13 日 · 距離 2026 年 11 月 30 日 期末交付還有 48 天</p>
 </div>
 <dl class="panel facts"><div><dt>計畫類別</dt><dd>工研院資通所（ICL）委託合作研究</dd></div><div><dt>計畫名稱</dt><dd>Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs</dd></div><div><dt>計畫主持人</dt><dd>Kuan-Ting Lai 教授（國立臺北科技大學 AIoT 實驗室）</dd></div><div><dt>執行期間</dt><dd>2026 年 2 月 1 日 – 2026 年 11 月 30 日</dd></div></dl>
 </section>
@@ -46,7 +46,7 @@
 <div class="grid two"><a class="card wp" href="wp1.html"><p class="kicker">WP1</p><h3>Policy DSL / IR / 簽章 bundle</h3><p>用 YAML 或 JSON 檔撰寫飛行規則的固定格式（Policy DSL），以及其他模組讀取的記憶體內解析結果（IR）。規則打包成附 hash 的簽章 bundle，之後可以用當次飛行實際使用的規則來核對。</p><p class="counts"><span class="pill done">已完成 9 項</span> <span class="pill next">下一步 1 項</span></p></a><a class="card wp" href="wp2.html"><p class="kicker">WP2</p><h3>Prefix Constraint Compiler</h3><p>把 policy 轉成簡短的 Constraint Summary Pack（CSP），供 VLA 的提示詞使用，讓 VLA 在選擇動作之前就知道規則。目的是減少違規指令，讓 Shield 需要修正的次數變少。</p><p class="counts"><span class="pill done">已完成 6 項</span> <span class="pill next">下一步 3 項</span></p></a><a class="card wp" href="wp3.html"><p class="kicker">WP3</p><h3>Suffix Safety Shield</h3><p>WP3 交付位於 VLA 與 MAVROS 2 之間的 ROS 2 節點：檢查每個指令，若會違規就修正。在計畫書的設計中，修正不安全時還會升級為 Brake、Loiter、RTL 或 Land，並以 ArduPilot 本身的 GeoFence 作為最後一道防線。</p><p class="counts"><span class="pill done">已完成 8 項</span> <span class="pill next">下一步 3 項</span></p></a><a class="card wp" href="wp4.html"><p class="kicker">WP4</p><h3>動態情境壓力測試</h3><p>WP4 交付一組測試情境，規則會在飛行中改變（移動的 NFZ、時間窗切換、走廊替換），以及執行這些情境並計算 KPI 的測試框架（harness）。依計畫書，期末報告中的每一個 KPI 都來自這個 harness。</p><p class="counts"><span class="pill done">已完成 8 項</span> <span class="pill next">下一步 6 項</span></p></a></div>
 </section>
 <section class="grid g2">
-<div class="panel"><h2>最新更新</h2><ul class="dated"><li><span class="date">2026 年 10 月 12 日</span> 規則變更範本、成本地圖、套件帶參考實作雜湊值、測試框架控制介面，以及針對 JetPack 6.2 定義的 Orin</li><li><span class="date">2026 年 10 月 8 日</span> 通過 Gate G1：ArduPilot 飛行 Project AirSim，Mission Planner 的連接埠收到整段飛行</li><li><span class="date">2026 年 10 月 7 日</span> 計畫書的規則格式、會升級的 Shield、飛行中的規則變更與 ROS 2 介面</li></ul>
+<div class="panel"><h2>最新更新</h2><ul class="dated"><li><span class="date">2026 年 10 月 13 日</span> 壓力測試框架採用計畫書的預測、飛行軌道上的規則時鐘與規則變更，以及 WP4 產出</li><li><span class="date">2026 年 10 月 12 日</span> 規則變更範本、成本地圖、套件帶參考實作雜湊值、測試框架控制介面，以及針對 JetPack 6.2 定義的 Orin</li><li><span class="date">2026 年 10 月 8 日</span> 通過 Gate G1：ArduPilot 飛行 Project AirSim，Mission Planner 的連接埠收到整段飛行</li></ul>
 <p><a href="changes.html">全部更新紀錄 →</a></p></div>
 <div class="panel"><h2>下一步</h2><ul class="dated"><li><span class="date">2026 年 10 月</span> 建置 Jetson Orin，在上面執行 VLA 與 Shield，模擬器留在桌機（計畫書的 hil 拓撲），並在計畫書訂定預算時所依據的負載下（50 條規則、每個 tick 檢查 50 個未來位置）量測 Shield 的耗時，對照 5 ms 的查詢預算。</li><li><span class="date">2026 年 10 月</span> 讓感知節點經由 MAVROS 2 飛行：先在桌機的 WSL 中（計畫書的 dev 拓撲），再到 Jetson Orin 上（hil）。</li><li><span class="date">2026 年 10 月</span> 讓升級機制的定點步驟在 ArduPilot 上把機體維持在高度範圍內，並把 fail-safe 觸發正確率提高到計畫書至少 99 % 的目標。</li><li><span class="date">2026 年 10 月</span> 宣告移動禁航區的規則檔可以載入飛行；在飛行中套用移動禁航區目前已經可以運作。</li></ul>
 <p><a href="roadmap.html">完整路線圖 →</a></p></div>
@@ -54,7 +54,7 @@
 
 </main>
 <footer>
-<p>資料截至 2026 年 10 月 12 日。由 <code>tools/build_public_site.py</code> 依專案原始碼庫產生。</p>
+<p>資料截至 2026 年 10 月 13 日。由 <code>tools/build_public_site.py</code> 依專案原始碼庫產生。</p>
 <p class="muted">工研院資通所（ICL）委託合作研究 · Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs · 計畫主持人：Kuan-Ting Lai 教授（國立臺北科技大學 AIoT 實驗室）</p>
 </footer>
 </body>

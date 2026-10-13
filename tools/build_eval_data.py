@@ -171,7 +171,14 @@ def kpi_rail():
             "outcome": k.get("outcome"),
             "p0_violation_escape_rate": k.get("p0_violation_escape_rate"),
             "p0_ticks_not_measurable": k.get("p0_ticks_not_measurable"),
-            "failsafe_trigger_correctness": k.get("failsafe_trigger_correctness"),
+            # The share of P0 ticks the Shield acted on, under its own name.
+            # These flights stored it as `failsafe_trigger_correctness`, the
+            # grant KPI's name (it is not that KPI: an always-brake Shield
+            # scores 1.0 on it); read from either key, written only as this
+            # one (2026-10-12). docs/data/eval_sep2026.json, built before,
+            # keeps the old key and is not rebuilt.
+            "p0_acted_tick_share": k.get("p0_acted_tick_share",
+                                         k.get("failsafe_trigger_correctness")),
             "mean_repair_magnitude_mps": k.get("mean_repair_magnitude_mps"),
             "max_repair_magnitude_mps": k.get("max_repair_magnitude_mps"),
             "mean_time_to_safe_s": k.get("mean_time_to_safe_s"),
@@ -188,7 +195,7 @@ def kpi_rail():
         }
         say(tag, {x: runs[tag][x] for x in (
             "kpi_grade", "p0_violation_escape_rate", "mean_repair_magnitude_mps",
-            "mean_time_to_safe_s", "failsafe_trigger_correctness", "nfz_s",
+            "mean_time_to_safe_s", "p0_acted_tick_share", "nfz_s",
             "standoff_min_range_m")})
     n_grade = sum(1 for f in _kpi_files()
                   if json.loads(Path(f).read_text(encoding="utf-8")).get("kpi_grade"))

@@ -417,6 +417,108 @@ def sim_speedup_from_scene(scene_path: str | Path) -> float | None:
     return round(float(rate) / float(step), 4)
 
 
+# Project AirSim's ArduCopterApi: the robot config's controller when ArduPilot
+# SITL, not the simulator's own simple_flight, flies the simulated vehicle
+# (demo/pas_ardupilot/robot_citylife_ardupilot.jsonc).
+ARDUPILOT_CONTROLLER = "ardupilot-api"
+
+
+def _strip_jsonc(text: str) -> str:
+    """// and /* */ comments OUTSIDE string literals removed (a robot config
+    has comments inside objects, and a mesh path such as "/Drone/Quad" must
+    survive). demo/pas_ardupilot/rail.strip_jsonc, which guardrail/ cannot
+    import."""
+    out, i, n, in_str = [], 0, len(text), False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(c)
+            if c == "\\" and i + 1 < n:
+                out.append(text[i + 1])
+                i += 2
+                continue
+            in_str = c != '"'
+            i += 1
+        elif c == '"':
+            in_str = True
+            out.append(c)
+            i += 1
+        elif text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def scene_controllers(scene_path: str | Path) -> tuple[list[dict], list[str]]:
+    """Whose controller flew each robot of a Project AirSim scene, READ from
+    the scene file and the robot config it names (the files the simulator was
+    given, kept with the run): `([{"robot", "robot_config", "controller"}],
+    problems)`. A file that cannot be read, a scene with no robot, or a robot
+    config that cannot be found is a problem, never a guess."""
+    problems: list[str] = []
+    scene_path = Path(scene_path)
+    try:
+        scene = json.loads(_strip_jsonc(scene_path.read_text(encoding="utf-8")))
+    except (OSError, ValueError) as exc:
+        return [], [f"the scene file {str(scene_path)!r} could not be read "
+                    f"({type(exc).__name__})"]
+    robots = [a for a in scene.get("actors") or []
+              if isinstance(a, dict) and a.get("type") == "robot"]
+    if not robots:
+        return [], [f"the scene {str(scene_path)!r} names no robot actor"]
+    found = []
+    for a in robots:
+        name = a.get("robot-config")
+        cfg_path = scene_path.parent / str(name or "")
+        try:
+            cfg = json.loads(_strip_jsonc(cfg_path.read_text(encoding="utf-8")))
+            ctl = (cfg.get("controller") or {}).get("type")
+        except (OSError, ValueError, AttributeError) as exc:
+            problems.append(f"robot {a.get('name')!r}: its robot config "
+                            f"{str(cfg_path)!r} could not be read "
+                            f"({type(exc).__name__})")
+            continue
+        found.append({"robot": a.get("name"), "robot_config": str(name),
+                      "controller": ctl})
+    return found, problems
+
+
+def _scene_not_ardupilot(scene_path: str | Path) -> list[str]:
+    """Why ArduPilot is not shown to have flown this scene's robot. Empty =
+    every robot config names the ArduCopterApi controller."""
+    found, problems = scene_controllers(scene_path)
+    for r in found:
+        if r["controller"] != ARDUPILOT_CONTROLLER:
+            problems.append(
+                f"robot {r['robot']!r} uses controller {r['controller']!r} "
+                f"({r['robot_config']}), not {ARDUPILOT_CONTROLLER!r}: the "
+                f"simulator's own controller flew it, and a MAVLink link to an "
+                f"ArduPilot that flies nothing is not an ArduPilot run")
+    return problems
+
+
+def _mavros_link_missing(ev: dict | None) -> list[str]:
+    """dev or hil beside a scene: the link evidence must be MAVROS's own. A
+    run whose evidence names the pymavlink link, or names no MAVLink URL
+    MAVROS flew over, does not show the grant's MAVROS 2 safety path."""
+    ev = ev or {}
+    link = ev.get("link")
+    if link is not None and link != "mavros":
+        return [f"the autopilot link is {link!r}, not MAVROS 2 (the grant's "
+                f"topologies fly the Shield's setpoints through MAVROS)"]
+    nl = ev.get("network_link")
+    if not isinstance(nl, dict) or not nl.get("fcu_url"):
+        return ["no MAVROS link evidence: network_link names no fcu_url, so "
+                "nothing shows which MAVLink link MAVROS flew over"]
+    return []
+
+
 def check_hil_evidence(ev: dict | None) -> list[str]:
     """What is missing before a run may call itself `dev`. Empty = nothing.
 
@@ -930,6 +1032,19 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
     ROS 2 Shield node gathers the Orin's own evidence (device tree, L4T /
     JetPack, the MAVLink link it flies over; see `check_topology_evidence`),
     so the labels are accepted on that evidence and refused without it.
+
+    A SCENE FILE BESIDE A GRANT LABEL (2026-10-12). A Project AirSim scene
+    used to refuse dev, hil and flight outright: every scene then meant
+    simple_flight, the simulator's own controller. The Project AirSim +
+    ArduPilot rail (demo/pas_ardupilot) gives the scene's robot Project
+    AirSim's ArduCopterApi controller, so ArduPilot SITL flies the simulated
+    vehicle. `dev` and `hil` are now accepted beside a scene when the scene
+    file and the robot config it names say `ardupilot-api` (READ from the
+    files, `scene_controllers`), AND the evidence holds as without a scene:
+    the live MAVROS chain for dev (check_hil_evidence), the Orin's evidence
+    for hil, and for both MAVROS's own link (an fcu_url, and no pymavlink
+    link). A simple_flight scene is refused as before, so is a pymavlink
+    link, and `flight` (a real airframe) never has a simulator scene.
     """
     topology = normalize_topology(topology)
     if topology in (TOPOLOGY_HIL, TOPOLOGY_FLIGHT):
@@ -941,11 +1056,19 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
                 + "; ".join(missing)
                 + f". A desktop ArduPilot SITL + MAVROS 2 run is "
                   f"{TOPOLOGY_DEV!r}.")
-        if scene_path is not None:
+        if scene_path is not None and topology == TOPOLOGY_FLIGHT:
             raise ValueError(
-                f"{topology!r} runs the Shield on an Orin against ArduPilot; "
-                f"a Project AirSim scene file ({str(scene_path)!r}) on this "
-                f"host contradicts that")
+                f"{topology!r} flies a real ArduPilot airframe; a Project "
+                f"AirSim scene file ({str(scene_path)!r}) contradicts that")
+        if scene_path is not None:
+            why = _scene_not_ardupilot(scene_path) + _mavros_link_missing(
+                hil_evidence)
+            if why:
+                raise ValueError(
+                    f"{topology!r} runs the Shield on an Orin against "
+                    f"ArduPilot; beside the Project AirSim scene "
+                    f"{str(scene_path)!r} that needs ArduPilot to have flown "
+                    f"the scene's robot through MAVROS: " + "; ".join(why))
     if topology == TOPOLOGY_DEV:
         # The guard opens on EVIDENCE, never on the caller's word. `dev` is the
         # one label that becomes KPI-eligible if the PI grants the waiver
@@ -975,12 +1098,24 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
         # dict the caller assembles. Our own Project AirSim scene passed
         # straight through and got stamped with the MAVROS label, the one this
         # module treats as waiver-eligible.
+        #
+        # Since 2026-10-12 the one exception is a scene whose robot ArduPilot
+        # flies (the docstring, "A scene file beside a grant label"): the
+        # controller is READ from the scene's own files, and the MAVROS link
+        # evidence must hold too. A simple_flight scene is still refused,
+        # whatever evidence accompanies it.
         if scene_path is not None:
-            raise ValueError(
-                "dev here is the ArduPilot SITL + MAVROS 2 topology and has "
-                f"no simulator scene file, but scene_path={str(scene_path)!r} was "
-                f"given. A run with a Project AirSim scene is "
-                f"{TOPOLOGY_PROJECTAIRSIM!r}, whatever evidence accompanies it.")
+            why = _scene_not_ardupilot(scene_path) + _mavros_link_missing(
+                hil_evidence)
+            if why:
+                raise ValueError(
+                    "dev here is the ArduPilot SITL + MAVROS 2 topology; beside "
+                    f"a simulator scene (scene_path={str(scene_path)!r}) it "
+                    f"needs ArduPilot to have flown the scene's robot through "
+                    f"MAVROS: " + "; ".join(why) + ". A run whose scene the "
+                    f"simulator's own controller flew is "
+                    f"{TOPOLOGY_PROJECTAIRSIM!r}, whatever evidence "
+                    f"accompanies it.")
     speedup = (sim_speedup if scene_path is None
                else sim_speedup_from_scene(scene_path))
     return {
@@ -1091,6 +1226,121 @@ def policy_source_record(kind: str, path: str | None, policy_hash: str,
                                    "attests who issued it")
     rec.update(extra)
     return rec
+
+
+# A flight rail flies a YAML policy only when told this (2026-10-12). Until
+# then both SITL rails flew policies/sim_demo_policy.yaml, unsigned, whenever
+# no --bundle was given, so a run's policy was "whatever the YAML said that
+# day", identified by its hash and attested by nobody.
+DEV_YAML_FLAG = "--dev-yaml"
+BUNDLES_DIR = Path(__file__).resolve().parents[1] / "bundles"
+
+
+def flight_bundle_path(policy, bundles_dir: str | Path | None = None) -> Path:
+    """Where the signed bundle of `policy` (a Policy or a policy file) lives:
+    bundles/<policy_id>-v<version>.tar.gz, the name `python -m
+    guardrail.bundle` and tools/build_flight_bundles.py write."""
+    if not hasattr(policy, "policy_id"):
+        from .models import load_policy
+        policy = load_policy(policy, runtime=False)
+    base = Path(bundles_dir) if bundles_dir is not None else BUNDLES_DIR
+    return base / f"{policy.policy_id}-v{policy.version}.tar.gz"
+
+
+def flight_bundle_status(yaml_path, bundle=None,
+                         bundles_dir: str | Path | None = None) -> dict[str, Any]:
+    """Is the signed bundle of `yaml_path` on disk, and is it STILL that YAML's
+    policy? `{bundle, present, bundle_hash, yaml_hash, matches, why}`.
+
+    A bundle is named by policy id and version alone (`flight_bundle_path`),
+    and bundles/ is a gitignored build product: a YAML edited without a
+    version bump keeps its bundle's name while the bundle flies the old
+    rules (review 2026-10-13: an edited follow_car_citylife.yaml flew
+    sha256:4f7ebad6... from its stale bundle against the YAML's
+    sha256:59883... with no word said). `matches` is None when the bundle is
+    absent or cannot be read (the flight loader then refuses it with its own
+    reason); the signature is not judged here."""
+    from .models import load_policy
+    pol = load_policy(yaml_path, runtime=False)
+    path = Path(bundle) if bundle is not None else flight_bundle_path(pol, bundles_dir)
+    out: dict[str, Any] = {"bundle": str(path), "present": path.is_file(),
+                           "bundle_hash": None, "yaml_hash": pol.policy_hash,
+                           "matches": None, "why": None}
+    if not out["present"]:
+        out["why"] = "no bundle on disk"
+        return out
+    try:
+        from .bundle import check_bundle
+        chk = check_bundle(path)
+        out["bundle_hash"] = chk.source_record()["loaded_policy_hash"]
+    except Exception as exc:                                  # noqa: BLE001
+        out["why"] = f"bundle unreadable here: {type(exc).__name__}: {exc}"
+        return out
+    out["matches"] = out["bundle_hash"] == out["yaml_hash"]
+    if not out["matches"]:
+        out["why"] = (f"{path.name} flies {out['bundle_hash']}, but {yaml_path} is "
+                      f"now {out['yaml_hash']} (edited without a version bump?): "
+                      f"rebuild it (python tools/build_flight_bundles.py)")
+    return out
+
+
+def flight_policy_choice(bundle, yaml_path, *, dev_yaml: bool,
+                         default_yaml, default_bundle=None
+                         ) -> tuple[str | None, str | None, dict[str, Any]]:
+    """Which policy a flight rail loads: `(bundle, yaml, record)`, the first
+    two for guardrail.bundle.load_for_flight, `record` for its policy source.
+
+      --bundle B             B (signature-verified by load_for_flight);
+                             with --dev-yaml too, refused: two answers.
+      --policy P             refused unless --dev-yaml: P is unsigned.
+      --policy P --dev-yaml  P, recorded `dev_yaml: true`.
+      neither                the signed bundle of the rail's default policy
+                             (`default_bundle`) when it is on disk, recorded
+                             `default_bundle: true`; with --dev-yaml the
+                             default YAML instead; with neither, refused,
+                             naming both ways out. A default bundle that no
+                             longer flies the default YAML's policy (edited
+                             without a version bump: flight_bundle_status) is
+                             refused, naming both hashes.
+
+    Both --bundle and --policy are handed on unchanged, so load_for_flight
+    refuses them with its own message ("not both")."""
+    if bundle and yaml_path:
+        return bundle, yaml_path, {}
+    if bundle:
+        if dev_yaml:
+            raise ValueError(f"{DEV_YAML_FLAG} is for flying a YAML policy, and "
+                             f"--bundle flies the signed artefact: give one")
+        return str(bundle), None, {}
+    if yaml_path or dev_yaml:
+        if not dev_yaml:
+            raise ValueError(
+                f"{yaml_path} is a YAML policy: unsigned, so nothing attests "
+                f"who issued it. Fly its signed bundle (python "
+                f"tools/build_flight_bundles.py builds them into bundles/, "
+                f"then --bundle bundles/<policy_id>-v<version>.tar.gz), or "
+                f"pass {DEV_YAML_FLAG} to fly the YAML as a development run, "
+                f"recorded as such")
+        return None, str(yaml_path or default_yaml), {
+            "dev_yaml": True,
+            "dev_yaml_note": f"flown from YAML under {DEV_YAML_FLAG}: a "
+                             f"development run, not the issued artefact"}
+    if default_bundle is not None and Path(default_bundle).is_file():
+        try:
+            st = flight_bundle_status(default_yaml, bundle=default_bundle)
+        except Exception:                                     # noqa: BLE001
+            st = {"matches": None}          # the YAML unreadable: the bundle decides
+        if st["matches"] is False:
+            raise ValueError(
+                f"the default policy's signed bundle is stale: {st['why']}; or "
+                f"pass {DEV_YAML_FLAG} to fly {default_yaml} unsigned, recorded "
+                f"as such")
+        return str(default_bundle), None, {"default_bundle": True}
+    raise ValueError(
+        f"no policy given, and the signed bundle of the default policy is not "
+        f"on disk ({default_bundle}). Build it (python "
+        f"tools/build_flight_bundles.py), give --bundle, or pass "
+        f"{DEV_YAML_FLAG} to fly {default_yaml} unsigned, recorded as such")
 
 
 def resolve_run_policy(manifest: dict, candidates) -> tuple[Any, str | None,

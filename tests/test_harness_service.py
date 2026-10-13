@@ -547,35 +547,46 @@ def test_unknown_names_are_not_found():
         assert _refused(c.start_episode, scenario_yaml=bad_policy)[0] == "NOT_FOUND"
 
 
-def test_the_pages_rpcs_that_are_not_built_answer_unimplemented():
-    """StartSession, InjectPolicy, IssueTask and the streams are on the
-    Stress Testing page but not in the .proto: a client must get
-    UNIMPLEMENTED, not a hang or a silent empty reply. The built ones answer."""
+def test_the_pages_ten_rpcs_and_get_status_are_served():
+    """The Stress Testing page's ten RPCs and GetStatus are all served since
+    2026-10-12 (until then StartSession, StopSession, InjectPolicy, IssueTask
+    and the two streams answered UNIMPLEMENTED). Each is called raw with an
+    empty request and must reach the servicer - a validation code, never
+    UNIMPLEMENTED; the control, a method the .proto does not have, still
+    answers UNIMPLEMENTED from gRPC itself."""
     if _M is None:
         return SKIP
     grpc = _M.grpc
+    pb = _M.pb
+    want = {"StartSession": None, "StopSession": "NOT_FOUND",
+            "InjectPolicy": "NOT_FOUND", "HotApply": "NOT_FOUND",
+            "StartEpisode": "INVALID_ARGUMENT", "IssueTask": "INVALID_ARGUMENT",
+            "EmitEvent": "NOT_FOUND", "GetStatus": "NOT_FOUND", "EndEpisode": "NOT_FOUND",
+            "StreamTelemetry": "NOT_FOUND", "StreamEvents": "NOT_FOUND"}
+    served = set(pb.DESCRIPTOR.services_by_name["StressHarness"].methods_by_name)
+    assert served == set(want), sorted(served ^ set(want))
     with _server() as srv, grpc.insecure_channel(srv.address) as ch:
-        for rpc in ("StartSession", "StopSession", "InjectPolicy", "IssueTask",
-                    "StreamTelemetry", "StreamEvents"):
-            call = ch.unary_unary(f"/guardrail.harness.v1.StressHarness/{rpc}",
-                                  request_serializer=lambda b: b,
-                                  response_deserializer=lambda b: b)
+        for rpc, code in want.items():
+            kind = ch.unary_stream if rpc.startswith("Stream") else ch.unary_unary
+            call = kind(f"/guardrail.harness.v1.StressHarness/{rpc}",
+                        request_serializer=lambda b: b, response_deserializer=lambda b: b)
             try:
-                call(b"", timeout=10)
+                out = call(b"", timeout=10)
+                if rpc.startswith("Stream"):
+                    list(out)
             except grpc.RpcError as e:
-                assert e.code() == grpc.StatusCode.UNIMPLEMENTED, (rpc, e.code())
+                assert e.code().name == code, (rpc, e.code(), e.details())
             else:
-                raise AssertionError(f"{rpc} answered")
-        # Control: the same raw call to a built RPC reaches the servicer.
-        call = ch.unary_unary("/guardrail.harness.v1.StressHarness/GetStatus",
+                assert code is None, f"{rpc} answered an empty request"
+        call = ch.unary_unary("/guardrail.harness.v1.StressHarness/CancelEpisode",
                               request_serializer=lambda b: b,
                               response_deserializer=lambda b: b)
         try:
-            call(_M.pb.EpisodeRef(episode_id="ep-nope").SerializeToString(), timeout=10)
+            call(b"", timeout=10)
         except grpc.RpcError as e:
-            assert e.code() == grpc.StatusCode.NOT_FOUND, e.code()
+            assert e.code() == grpc.StatusCode.UNIMPLEMENTED, e.code()
         else:
-            raise AssertionError("GetStatus of an unknown episode answered")
+            raise AssertionError("a method the .proto lacks answered")
 
 
 def test_server_side_failures_map_to_their_codes():
@@ -919,7 +930,21 @@ def test_a_windowed_switch_flies_as_written():
     assert _log(hot) == _log(written), "the hot-applied window flew differently"
     _, _, always = _h_fly(h, CLOCKED, hot=[(3.0, ZONE), (5.0, SW_OFF)], keep_log=True)
     assert _log(always) != _log(hot), "the window changed nothing: the comparison is empty"
-    assert json.loads(always["kpi_json"])["repair_count"] < json.loads(hot["kpi_json"])["repair_count"]
+
+    # Which way it changed: on a Monday the Tuesday-only switch leaves the zone
+    # in force, so it still raises violations after 5 s; switched off with no
+    # window it raises none. (Until 2026-10-12 this compared repair counts.
+    # On 4418ae0 the Monday flight's 250 zone ticks after the switch were
+    # Shield-flown Brake ticks, 257 repairs against 7; on the 2026-10-12
+    # tree the escalation FSM hands the zone to LOITER, so those ticks are
+    # autopilot ticks, which compute() does not count as repairs, and the
+    # two flights log 2 repairs each. The zone ticks separate them on both.)
+    def zone_ticks_after_switch(b):
+        rows = [json.loads(x) for x in _log(b).decode("utf-8").splitlines()]
+        return sum(1 for r in rows if r["t"] >= 5.0
+                   and any(v["rule_id"] == "nfz-hot" for v in r["violations"]))
+    assert zone_ticks_after_switch(hot) > 0, "the Monday flight never met the zone"
+    assert zone_ticks_after_switch(always) == 0, "the switch did not turn the zone off"
 
 
 def test_a_schedule_that_never_happens_is_refused_at_start():

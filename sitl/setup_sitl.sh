@@ -165,9 +165,14 @@ fi
 # prompt.yaml, so the existing ~/venv-ap, which has no jinja2, cannot run that rail
 # until this step re-runs, or until `~/venv-ap/bin/pip install jinja2==3.1.6`
 # (no rebuild needed). 3.1.6 is what vla-real and vla-drone run.
+# Since 2026-10-13 numpy is 2.4.6, the pin requirements.txt gives every
+# Python >= 3.11 (this venv is 3.12; one built before then keeps 2.5.0
+# until this step re-runs), and fastapi / uvicorn (pyproject's `api` extra, at
+# the versions vla-drone runs) let run_sitl_demo.py serve --hotapply-port.
 ~/venv-ap/bin/pip install -q "empy==3.3.4" "pexpect==4.9.0" "future==1.0.0" \
   "pymavlink==2.4.49" "MAVProxy==1.8.74" \
-  "pydantic==2.13.4" "pyyaml==6.0.3" "shapely==2.1.2" "numpy==2.5.0" "jinja2==3.1.6"
+  "pydantic==2.13.4" "pyyaml==6.0.3" "shapely==2.1.2" "numpy==2.4.6" "jinja2==3.1.6" \
+  "fastapi==0.139.0" "uvicorn==0.50.2"
 echo "venv ready"
 
 echo "=== [3/5] waf configure ==="

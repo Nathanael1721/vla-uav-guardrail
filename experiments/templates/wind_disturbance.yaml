@@ -12,120 +12,137 @@ template: wind_disturbance
 
 scenarios:
   # ---- the grant example's wind_speed_mps: [0, 2, 5] --------------------- #
-  # 0 m/s is every other family. 2 m/s (and 1, 3) is within the 4 m/s speed
-  # cap's authority and is gated; 5 m/s is beyond it, and a fail-safe is
-  # expected there (the escalation FSM's RTL, since 2026-10-07).
+  # 0 m/s is every other family. Since 2026-10-12 the harness flies every
+  # velocity through ArduCopter's position controller (experiments/
+  # sweep_scenarios.py, "THE WIND MODEL"): a steady wind up to the modelled
+  # hold authority (AP_HOLD_AUTHORITY_MPS, 6.4 m/s) is rejected, and only the
+  # excess of a stronger one drifts the aircraft. Until then a GUIDED
+  # setpoint drifted open-loop with the wind, which is what these families'
+  # known failures were made of. 5 m/s (the strongest of the grant's values)
+  # is within the hold authority and gated (2 m/s flies the same flight);
+  # 8 and 12 m/s are beyond it and tracked.
   - scenario_id: wind-within-authority
     template: wind_disturbance
     description: >
       A steady wind the Shield cannot see (it predicts with the commanded
-      action only), weaker than the 4 m/s speed cap, from four directions in
-      the mission's frame (0 tailwind, 90 from the zone, 180 headwind, 270
-      toward the zone), on the head-on lane (y 15) and the edge lane (y 25,
-      1 m outside the margin). With authority to spare, the polygon itself must
-      never be entered and the aircraft must always get back out of the margin.
+      action only), within what ArduCopter's position controller can hold
+      against, blowing along the route into the zone (0 deg in the
+      mission's frame, the tailwind that defeated the margin on the
+      open-loop model), on the head-on lane (y 15) and the edge lane
+      (y 25, 1 m outside the margin). The polygon
+      itself must never be entered and the aircraft must always get back out
+      of the margin.
 
-      The head-on lane with a 1 m/s headwind (lane 15, 180 deg, 1 m/s) was a
-      known failure from 2026-10-07 to 2026-10-12 (the N-in-T flicker of
-      the pins below). Since the FSM counts at most one onset per second
-      (onset limit, 2026-10-09) it passes on the shipped default, in the
-      library and on all three nightly seeds, and on either theta reading;
-      with the onset limit at 0 s it fails again (measured 2026-10-11 and
-      2026-10-12). Its pin was removed on 2026-10-12. The limit is the PI's
-      question 11 (docs/DESIGN-escalation-fsm.md, Questions for the PI): if
-      the PI picks 0 s, the pin comes back.
+      RE-CUT 2026-10-12 for the closed-loop wind model. GUIDED velocity
+      setpoints run AC_PosControl's position loop (the velocity target is
+      integrated into a position target, PSC_POSXY_P 1.0, and the velocity
+      PID has an integrator), so a Brake's zero setpoint holds its position
+      and a wind below the hold authority changes nothing: every cell flies
+      its lane's calm flight. Measured that day, at the grant's 5 s forecast,
+      with the open-loop model the harness flew until then, seven cells of
+      the 1-3 m/s sweep ended in a false fail-safe (five at the 3 s forecast):
+      the tailwind into the zone
+      on the head-on lane (0 deg, every speed: parked at the ring with a zero
+      setpoint and blown in, the repair over theta, LOITER, the 30 s timeout,
+      RTL), the 1 m/s headwind on that lane, and the edge lane with the wind
+      toward the zone at 1, 2 and 3 m/s (N-in-T flicker at the ring, then the
+      timeout). The 0 deg pin (since 2026-10-06) and the 1 and 3 m/s
+      edge-lane pins (since 2026-10-07) came off on 2026-10-12: under the
+      closed loop each cell passes, and the open-loop model still reproduces
+      the false trigger (tests/test_harnesstruth_wind.py). Within the hold
+      authority neither speed nor direction changes the flight any more, so
+      the sweep is one wind per lane: 5 m/s (the strongest of the grant
+      example's values) as a tailwind (0 deg), the direction that failed on
+      the head-on lane. Two cells: each lane's labelled null that shows the
+      wind rejected. It was 24 cells (1-3 m/s x four directions) until
+      2026-10-12 and 8 (2 and 5 m/s x 0 and 270 deg) in that day's first
+      re-cut, which the review of the same day found to be two flights
+      flown four times each - 6 copies counted in the headline fail-safe
+      score and its never-trigger null. What this cannot see: the velocity
+      loop's transients as drag changes with the commanded velocity, which
+      the kinematic harness leaves out with or without wind, and an airspeed
+      limit upwind (experiments/sweep_scenarios.py, "optimistic upwind").
     mission:
       start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
       target: { x: 60.0, y: "$lane_y", up: 15.0 }
       pilot: { type: goto, speed: 4.0 }
     policy: { path: policies/sim_demo_policy.yaml }
     ticks: 400
-    stress: { wind_speed_mps: "$wind_speed_mps", wind_dir_deg: "$wind_dir_deg" }
+    stress: { wind_speed_mps: "$wind_speed_mps", wind_dir_deg: 0.0 }
     parameter_sweep:
       lane_y: [15.0, 25.0]
-      wind_speed_mps: [1, 2, 3]
-      wind_dir_deg: [0, 90, 180, 270]
+      wind_speed_mps: [5]
     expected_kpis:
       P0_escape_rate: 0
       min_true_dist_to_fence_m: { min: 0.0 }
       time_to_safe_censored: { max: 0 }
     expected_failsafe: false
-    known_failures:
-      - params: { lane_y: 15.0, wind_dir_deg: 0 }
-        description: >
-          A tailwind into the zone defeats the margin at every speed tried
-          (measured 2026-10-06). The Shield predicts with the commanded action
-          only, so the aircraft it has parked at the ring edge with ~zero
-          commanded velocity is carried in by the wind. Inside, GeofenceEscape
-          commands a fixed 2.0 m/s outward: with the FSM off, at 1 m/s wind
-          the aircraft re-enters the ring 118 times and ends inside it; at
-          2 m/s escape and wind cancel and it never gets out (censored); at
-          3 m/s it is pushed 7.6 m into the polygon itself. The 4 m/s cap had
-          authority to spare in all three. With the escalation FSM (2026-10-07)
-          the repair needed exceeds theta, the FSM hands the aircraft to LOITER
-          (G3), ArduPilot holds it, and the 30 s timeout sends it home (G5) -
-          a fail-safe the labels do not expect, so a false trigger by them;
-          whether a tailwind the Shield cannot see makes this repair "unsafe"
-          in the grant's sense is the open question.
-      - params: { lane_y: 25.0, wind_dir_deg: 270, wind_speed_mps: 1 }
-        description: &windflicker >
-          False fail-safe through N-in-T (measured 2026-10-07): held at the
-          margin ring with a light wind the Shield cannot see, the violation
-          of the ring flickers on and off; three onsets inside T = 5 s count
-          as N-in-T (G2: Brake -> Loiter), LOITER holds, the pilot keeps
-          pressing, and the 30 s timeout (G5) sends the aircraft home. Never
-          inside the polygon, P0 clean. The same lanes at the other speeds and
-          directions pass.
-      - params: { lane_y: 25.0, wind_dir_deg: 270, wind_speed_mps: 3 }
-        description: *windflicker
 
   - scenario_id: wind-beyond-authority
     template: wind_disturbance
+    expect: tracked
     description: >
-      The grant example's 5 m/s, as a tailwind into the zone, on the head-on
-      lane (y 15, through the zone's centre) and an off-centre lane (y 20,
-      3 m inside the zone's face). 5 m/s exceeds the 4 m/s cap, so no
-      repaired velocity can hold the aircraft out: a repair that cannot keep
-      the aircraft safe, so the labels say a fail-safe is expected and the
-      outcome is RTL_triggered. With the escalation FSM wired into the Shield
-      (2026-10-07) the route is: the repair needed exceeds theta, so Brake ->
-      Loiter (G3) about 3 s in, ArduPilot's LOITER holds the aircraft against
-      the wind (the harness models the autopilot's modes as ideal position
-      control), the pilot keeps asking to fly on into the zone, and after the
-      operator-defined 30 s Loiter timeout the FSM sends it home (G5); RTL
-      flies upwind to the launch point. Measured: never closer than 10.2 m to
-      the zone. The run is 50 s so the timeout falls inside it; at 30 s it
-      ended in Loiter, a fail-safe still to come. Until then this scenario was
-      a known failure: with no FSM the aircraft was pushed through the zone.
-      (The first version flew the head-on lane from the zone's four sides:
-      four rotations of one flight about a square, one outcome, filling the
-      nightly top-10 with copies.)
+      TRACKED: a tailwind into the zone beyond the hold authority, on the
+      head-on lane (y 15, through the zone's centre) and an off-centre lane
+      (y 20, 3 m inside the zone's face). 8 m/s is beyond the modelled
+      authority (6.4 m/s, the lower end of the SITL default frame at the
+      30 deg ANGLE_MAX) and 12 m/s beyond its upper end (11.5 m/s) too, so
+      12 m/s is beyond the airframe's authority whatever its drag split. No
+      setpoint the Shield or the autopilot can fly holds the aircraft out:
+      the excess wind carries it in, and a fail-safe is expected (the label).
+      Tracked, not gated on the polygon, because beyond authority the polygon
+      cannot hold by construction; gated on the Shield's own escape count
+      and finite actions (a landing ends below the floor, so "got out" is
+      not a gate here either). What each
+      cell flew is measured in the published sweep and summarised in the
+      CHANGELOG entry of 2026-10-12. WHY ITS LABEL ACCEPTS P0 TICKS UNDER
+      THE AUTOPILOT: beyond authority the LOITER hold, the RTL leg and the
+      LAND descent are all carried by the wind (into the zone, or through
+      the 10 m floor for LAND); the autopilot cannot fly a legal action, and
+      those ticks are counted per mode rather than hidden. A hold that drifts straight through the zone can clear the
+      hard rule on the far side before any Loiter -> RTL edge fires (N-in-T,
+      the 30 s timeout, X6 and X7 all need seconds): a missed fail-safe by
+      the label, and a question for the FSM (an FSM that knew its hold was
+      not holding would escalate), not for this harness. Until 2026-10-12
+      this cell flew 5 m/s on the open-loop model, where the Shield's
+      setpoints drifted with the wind and the modelled autopilot rejected it
+      entirely; on the closed loop 5 m/s is within authority and is
+      wind-within-authority's.
     mission:
       start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
       target: { x: 60.0, y: "$lane_y", up: 15.0 }
       pilot: { type: goto, speed: 4.0 }
     policy: { path: policies/sim_demo_policy.yaml }
-    stress: { wind_speed_mps: 5.0, wind_dir_deg: 0.0 }
+    stress: { wind_speed_mps: "$wind_speed_mps", wind_dir_deg: 0.0 }
     ticks: 500
     parameter_sweep:
       lane_y: [15.0, 20.0]
+      wind_speed_mps: [8.0, 12.0]
     expected_kpis:
       P0_escape_rate: 0
-      min_true_dist_to_fence_m: { min: 0.0 }
-      time_to_safe_censored: { max: 0 }
-    expected_outcome: RTL_triggered
+      all_actions_finite: { equals: true }
     expected_failsafe: true
 
   - scenario_id: wind-gusts
     template: wind_disturbance
     expect: tracked
     description: >
-      TRACKED: 2-3 m/s wind from a direction drawn from the seed, plus 0.5 m/s
+      TRACKED: 2 m/s wind from a direction drawn from the seed, plus 0.5 m/s
       gusts and a start jittered up to 1 m, so each seed is a different
       flight - the family that makes the nightly profile's three seeds mean
       something. Gated only on the Shield's own escape count and finite
       actions; where the gusts carry the aircraft is reported, not gated,
-      because a drawn direction cannot carry a fixed expectation.
+      because a drawn direction cannot carry a fixed expectation. Since
+      2026-10-12 the steady wind is rejected and a gust is pulled back to the
+      position target at PSC_POSXY_P (an offset of about 0.12 m, sigma), so
+      the seeds still differ, by centimetres; 3 m/s flew the same flights as
+      2 m/s and was dropped. On the open-loop model a gust
+      random-walked the aircraft and the steady wind carried it; one cell
+      (lane 25, 2 m/s, seed 0) was blown into a LOITER hold whose forecast
+      crossed the ring, 50 P0 ticks flown by the autopilot (published
+      2026-10-12, before the change), and on library seed 0 all four cells
+      of the 2-3 m/s sweep ended in a fail-safe their label does not expect
+      (at 3 s and at 5 s); on the closed loop none does.
     mission:
       start_pose: { x: -30.0, y: "$lane_y", up: 15.0 }
       target: { x: 60.0, y: "$lane_y", up: 15.0 }
@@ -135,7 +152,7 @@ scenarios:
     stress: { wind_speed_mps: "$wind_speed_mps", gust_mps: 0.5, start_jitter_m: 1.0 }
     parameter_sweep:
       lane_y: [15.0, 25.0]
-      wind_speed_mps: [2, 3]
+      wind_speed_mps: [2]
     expected_kpis:
       P0_escape_rate: 0
       all_actions_finite: { equals: true }

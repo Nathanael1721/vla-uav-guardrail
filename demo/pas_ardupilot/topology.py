@@ -24,13 +24,14 @@ simulator sat on the node's own desktop.
 TWO LABELS PER RUN
 
   `grant`  dev / hil / flight, or None when the evidence supports none of them.
-  `stamp`  what goes into manifest.json today. build_manifest() refuses `dev`,
-           `hil` and `flight` together with a Project AirSim scene file - a
-           guard written when every scene meant simple_flight. On this rail the
-           scene's controller is ArduPilot, so that guard needs teaching
-           (docs/DESIGN-projectairsim-ardupilot.md, "What manifest.py needs");
-           until it is, this rail stamps its own label and records the grant
-           label beside it in metrics.json. Nothing here loosens the guard.
+  `stamp`  the rail's own label, stamped whenever the grant label is withheld
+           or refused. build_manifest() used to refuse `dev`, `hil` and
+           `flight` beside any Project AirSim scene file - a guard written
+           when every scene meant simple_flight. Since 2026-10-12 it accepts
+           `dev` and `hil` beside a scene whose robot config it READS as
+           ardupilot-api, on the live MAVROS evidence (an fcu_url, no
+           pymavlink link), and still refuses `flight` and a simple_flight
+           scene. The guard is the only judge; nothing here loosens it.
 
 G1. Whether the rail itself is qualified - gate G1's closed-loop checks
 (g1_check.py) - is separate from where the processes ran. Both are recorded;

@@ -4,10 +4,14 @@ Audit cards **WP4-05** (no gRPC control service for the harness) and **X-15**
 (SROS 2 security on the ROS 2 graph, with the harness mTLS reusing its root
 CA). **SROS 2 is not enabled: the ROS 2 graph is still unsecured.** What this
 note covers for X-15 is preparation only: the gRPC side's mutual TLS, a lab
-root CA built to be shared, and a procedure for seeding a SROS 2 keystore with
-it that has not been run. Built 2026-10-08, revised 2026-10-09 after review.
-Nothing here was flown on a rail: the service drives the headless harness,
-whose episodes are never KPI-grade.
+root CA built to be shared, and a script that seeds a SROS 2 keystore with it
+(`tools/sros2_setup.sh`), checked with `bash -n` and `--dry-run` but not run
+on a ROS 2 host. Built 2026-10-08, revised 2026-10-09 after review; on
+2026-10-12 the service gained the page's other six RPCs (StartSession,
+StopSession, InjectPolicy, IssueTask, the two streams), a live mode that
+injects events while an episode flies, forwarding of a session's HotApply to
+a REST endpoint, and a reserved SITL backend. Nothing here was flown on a rail: the
+service drives the headless harness, whose episodes are never KPI-grade.
 
 ## What the grant asks
 
@@ -28,11 +32,14 @@ dashboards, scenario authoring).
 
 | File | What it is |
 |---|---|
-| `guardrail/protos/harness.proto` | The service `StressHarness`, in the page's message names |
+| `guardrail/protos/harness.proto` | The service `StressHarness`: the page's ten RPCs in its message names, plus GetStatus |
 | `guardrail/protos/harness_pb2.py`, `harness_pb2_grpc.py` | Generated, committed (command below) |
 | `guardrail/harness_service.py` | `Harness` (no transport), the servicer, `serve()`, the PKI, a CLI |
-| `tools/harness_client.py` | `HarnessClient` and a CLI that prints the KPI row with its nulls |
-| `tests/test_harness_service.py` | 47 tests, standalone runner; the logic tests drive `Harness` without gRPC |
+| `tools/harness_client.py` | `HarnessClient` (all eleven RPCs) and a CLI: `run` (with a session when given a policy, a prompt or `--live`), `forward`, `status` |
+| `tools/sros2_setup.sh` | The SROS 2 keystore and enclaves of the dev graph, seeded with the harness CA (not run here) |
+| `tools/rerun_episode.py` | Re-flies a bundle and compares the flight logs (used here on a live episode's bundle) |
+| `tests/test_harness_service.py` | 49 tests, standalone runner; the logic tests drive `Harness` without gRPC |
+| `tests/test_wp4outputs_harness.py` | 12 tests: live mode, sessions, InjectPolicy, IssueTask, REST forwarding, the streams, the lifecycle over mTLS |
 
 Regenerating the stubs, from the repository root:
 
@@ -45,24 +52,28 @@ grpcio >= 1.84.0 and protobuf >= 7.35.1 (installed: vla-real has grpcio
 an older one. Its header says "NO CHECKED-IN PROTOBUF GENCODE", which is
 protobuf's general advice; the grant's Outputs table asks for the stubs, so
 they are committed, and a test regenerates them into a temporary folder and
-fails if the committed files differ.
+fails if the committed files differ. Every field number of the 2026-10-09
+messages is unchanged, so a client built against those stubs still works.
 
 ### The RPC surface against the page's
 
-| Page's RPC | Here | Why |
-|---|---|---|
-| StartEpisode | built | arms one ScenarioSpec cell with a seed, an arm and optionally a profile |
-| HotApply | built | the Policy DSL's REST hot-apply body, validated by `guardrail.api.apply_event` |
-| EmitEvent | built | a ScenarioEvent, the grant's seven types |
-| EndEpisode | built | flies, scores, writes the episode bundle (three of the grant's six items, see below), returns it with the KPI row |
-| GetStatus | ours | state, queued events, verdict, bundle path, error, client name |
-| StartSession / StopSession | not built | the headless runner has no simulator session to open; needed once the service drives the hil rail |
-| InjectPolicy | not built | the policy is part of the ScenarioSpec (`policy: {path}` or `{bundle_path, expected_hash}`) |
-| IssueTask | not built | the headless pilot reads no text; meaningful once a VLA flies |
-| StreamTelemetry / StreamEvents | not built | an episode is flown inside EndEpisode, so there is nothing live to stream yet |
+| Page's RPC | Here (headless backend) |
+|---|---|
+| StartSession | opens a session: backend (HEADLESS; SITL is reserved and answers UNIMPLEMENTED), the page's scene and airframe (recorded, not used: no simulator to load), a default seed, an optional REST endpoint the session is bound to |
+| StopSession | closes it: ARMED episodes fail, a live one stops (FAILED, no bundle), a scheduled one already flying finishes; the streams end |
+| InjectPolicy | the policy the session's later episodes fly: a bundle or policy YAML under `policies/` or `bundles/`, or the archive's bytes, pinned to `expected_hash` (required); in a REST-bound session the endpoint must be flying it |
+| HotApply | to an episode: the Policy DSL's REST hot-apply body, validated by `guardrail.api.apply_event`, flown at `at_sim_t` (or `now`, live); to a REST-bound session: POSTed to `<endpoint>/hot_apply` |
+| StartEpisode | arms one ScenarioSpec cell with a seed, an arm, optionally a profile and a session; `live` starts it flying at `pace` |
+| IssueTask | records the prompt's SHA-256 (manifest_extras.json) for an ARMED episode or the session's later ones; the headless pilot reads no text |
+| EmitEvent | a ScenarioEvent, the grant's seven types, at `at_sim_t` (or `now`, live) |
+| EndEpisode | flies (or lets a live episode finish, unpaced), scores, writes the episode bundle (three of the grant's six items, see below), returns it with the KPI row |
+| StreamTelemetry | every tick of the session's episodes: a clock frame per live tick, then each episode's flown rows |
+| StreamEvents | the session's lifecycle and each episode's run events (hot-applies with generation and hash, refusals), from the start |
+| GetStatus (ours) | state, queued events, verdict, bundle path, error, client name; for a live episode the next tick and ticks flown |
 
-A client calling an RPC that is not in the .proto gets UNIMPLEMENTED from gRPC
-(a test calls all six by name and checks the code).
+A raw call of each with an empty request reaches the servicer (a validation
+code, never UNIMPLEMENTED), and a method the .proto lacks still answers
+UNIMPLEMENTED (`test_the_pages_ten_rpcs_and_get_status_are_served`).
 
 ## How an episode flows
 
@@ -82,16 +93,24 @@ A client calling an RPC that is not in the .proto gets UNIMPLEMENTED from gRPC
    with FAILED_PRECONDITION; before 9 Oct it was accepted and then failed at
    EndEpisode as INTERNAL. The draw is a function of (cell, seed, arm), so
    when it is made does not change what flies.
-2. **HotApply** and **EmitEvent** each carry `at_sim_t`. They are validated
-   when they arrive (a HotApply at its place in flight order, below) and
-   queued.
+   In a **session** (`session_id`), the episode flies the session's injected
+   policy instead of the scenario's (the dry run starts from it too), takes
+   the session's seed when it names none, and carries the session's task.
+   A **live** episode is set up here (EpisodeRunner flies its setup to the
+   start of tick 0, so a scenario the runner refuses creates no episode) and
+   starts flying on a thread of its own.
+2. **HotApply** and **EmitEvent** each carry `at_sim_t` (or `now`, on a live
+   episode). They are validated when they arrive (a HotApply at its place in
+   flight order, below) and queued, and on a live episode injected into the
+   runner as well.
 3. **EndEpisode** adds the queued events to the cell's own, flies the episode
    with `experiments/sweep_scenarios.py`'s `run_episode`, scores it with
    `score`, `label_failures` and `check_gates`, writes the episode bundle with
    `episode_manifest` and `write_bundle`, and returns the bundle path, the
    verdict, the full KPI table (JSON), the episode's KPI-report row (typed,
    each score beside its null) and the hot-apply events as they were applied
-   in flight (generation, policy hash, refusals).
+   in flight (generation, policy hash, refusals). On a live episode it lets
+   the flight finish unpaced, then does the same.
 
 The per-episode verdict (pass, tracked, fail, known_failure,
 unexpected_pass) is the sweep's own: since 2026-10-11 both the sweep's
@@ -102,9 +121,7 @@ tests still check it: one reaches every status
 from one synthetic scenario by changing only its labels, and one runs the
 sweep's own `main()` on five smoke-profile families and flies each of its
 episodes again through the harness, comparing status, failed gates, label
-failures and the known-failure reason episode by episode. Moving the verdict
-into a public function that both call is listed below as a change outside
-this note's files.
+failures and the known-failure reason episode by episode.
 
 ### The episode bundle, against the grant's
 
@@ -112,31 +129,58 @@ The Stress Testing page's episode bundle is `manifest.json`,
 `policy_bundle.tar.gz`, `episode.bag2/`, `shield_audit.jsonl`,
 `harness_events.jsonl` and `kpi.json`. The headless runner writes three of
 them: `manifest.json` (the six fields), `harness_events.jsonl` and `kpi.json`.
-The service adds `harness_request.json` (the request and every event as it
-arrived, so the episode can be asked for again), and the sweep's
-`write_bundle` adds `manifest_extras.json` when the episode has an arm record
-and `flight_log.jsonl` when asked. **Not written:** `policy_bundle.tar.gz`
+The service adds `harness_request.json` (the request, every event as it
+arrived with the time it was flown at, and the IssueTask prompt, so the
+episode can be asked for again) and `manifest_extras.json` (the arm's keys,
+the self-contained keys `tools/rerun_episode.py` re-flies the episode from,
+the task's hash and the session), and the sweep's `write_bundle` adds
+`flight_log.jsonl` when asked. **Not written:** `policy_bundle.tar.gz`
 (the episode records the policy's hash, not a copy), `episode.bag2/` (there is
 no ROS 2 graph on the headless path to record) and `shield_audit.jsonl` (no
 audit writer runs on this path). Those three belong to a rail episode.
 
-### Events are scheduled, not live
+### Scheduled and live episodes
 
-`run_episode` flies a whole episode in one call (about 0.3-0.4 s for 30
-simulated seconds) and has no hook to pause between ticks. So an event does
-not act "now": it acts at its `at_sim_t` when EndEpisode flies the episode,
-applied by the runner's own `apply_event`, exactly as the same event written
-in the scenario's `events:` would be. The tests check that equivalence byte
-for byte on the flight log: a hot-applied zone, a hot-applied corridor swap
-(against the library's own `corridor-swap-shifted`) and an EmitEvent.
+**Scheduled** (the default). `run_episode` flies a whole episode in one call
+(about 0.3-0.4 s for 30 simulated seconds on 9 Oct; see Measured below for
+today's), so an event does not act "now": it acts at its `at_sim_t` when
+EndEpisode flies the episode, applied by the runner's own `apply_event`,
+exactly as the same event written in the scenario's `events:` would be. The
+tests check that equivalence byte for byte on the flight log: a hot-applied
+zone, a hot-applied corridor swap (against the library's own
+`corridor-swap-shifted`) and an EmitEvent. The flight is a function of
+(cell, seed, arm, scheduled events) and of the code.
 
-This is also what makes an episode reproducible: the flight is a function of
-(cell, seed, arm, scheduled events) and of the code. A live mode, where an
-event lands at whatever tick the episode has reached, needs a steppable runner.
-Since 2026-10-11 `experiments/sweep_scenarios.py` has one, `EpisodeRunner`
-(`step()`, `inject(event)`, `finish()`; since 2026-10-12 it fails fast after
-an error instead of hanging), but this service does not use it yet; it is the first thing the
-hil rail will need, because a real autopilot cannot be paused.
+**Live** (`StartEpisode(live=true, pace)`, since 2026-10-12). The service
+drives `experiments/sweep_scenarios.py` `EpisodeRunner` through its public
+`step()`, `inject()` and `finish()` only: a thread steps one tick at a time,
+paced so that tick *t* flies at `start + t / pace` wall seconds (1.0 real
+time, 0 unpaced), holding the episode's lock for the tick (so an injection
+never lands mid-tick) and the flight lock for the step (so a scheduled
+episode and a live one never interleave inside a tick). A HotApply or
+EmitEvent is validated as for a scheduled episode, then handed to
+`EpisodeRunner.inject()`: at `at_sim_t` when that is no earlier than the next
+tick, or at the next tick itself with `now`; a time already flown is
+OUT_OF_RANGE. The ack reports the time it was injected at, and the queue
+records it. `inject()` is documented (and tested in tests/test_sweep.py) to
+apply an event exactly as the same event written last in `events:`, so a live
+episode's bundle re-flies as a scheduled one: the tests compare a live flight
+with a hot-apply at 3.0 s, and one with a `now` hot-apply at whatever tick it
+landed on, byte for byte against the scheduled episode with the event at the
+acked time, beside the null (the live flight without the hot-apply differs),
+and `tools/rerun_episode.py` re-flies a live bundle made over mTLS to an
+identical log. EndEpisode on a live episode sets its pace to 0 and waits for
+it; one nobody ends finishes on its own and is bundled. StopSession stops it
+between ticks (FAILED, nothing bundled).
+
+What live mode cannot show: `EpisodeRunner` exposes no per-tick state while it
+flies (its rows come out of `finish()`), so StreamTelemetry sends a clock
+frame per live tick (tick, simulated time, wall time) with the pose unset and
+the reason, and the flown rows once the episode ends. A public per-tick row
+on the runner (outside this note's files) would let the live frames carry the
+pose. The manifest's `sim_speedup` of a live episode is measured as for any
+other (about `pace`), and the topology is still `headless-kinematic`: a live
+episode at pace 1.0 is not KPI-grade either.
 
 ### HotApply goes through the REST endpoint's own handler
 
@@ -181,9 +225,11 @@ the episode's EmitEvents act on the flying vehicle (a zone spawned
 `ahead_of_vehicle_m` needs the aircraft's position), so the dry run cannot
 replay them. A HotApply aimed at a rule only they create is NOT_FOUND (use an
 EmitEvent for it), and a HotApply that collides with one of them (re-using
-the id of a zone they spawn) is acknowledged and then fails at EndEpisode
-with FAILED_PRECONDITION and the runner's reason. Closing that needs the
-service to drive `EpisodeRunner` (above), which it does not yet.
+the id of a zone they spawn) is acknowledged and then fails when it flies
+(at EndEpisode, or in the live episode's tick) with FAILED_PRECONDITION and
+the runner's reason. Live mode does not close this: `EpisodeRunner` exposes
+no Shield to dry-run against, so the dry run still knows only the
+hot-applies.
 
 ### Lifecycle
 
@@ -200,20 +246,111 @@ service to drive `EpisodeRunner` (above), which it does not yet.
   after a refused HotApply, for one) wedged the server until it restarted.
   The client tool now names the episode it leaves ARMED. There is no
   CancelEpisode RPC.
+- **Idle sessions expire** (2026-10-13). A session left OPEN with no call on
+  it (StartEpisode or IssueTask in it, InjectPolicy, a session HotApply, a
+  stream poll) for the server's session TTL (default one hour,
+  `serve --session-ttl`) and with no episode of it ARMED or RUNNING is
+  stopped as StopSession would stop it; its event stream says
+  `session_expired`, then `session_stopped`. Until then the 64-session cap
+  could be filled by clients that died (the client tool prints "session ...
+  was left OPEN" when it fails), and StartSession answered RESOURCE_EXHAUSTED
+  until the server restarted. Expired sessions are swept when a new one is
+  opened, and checked whenever a call names one.
+- **`ticks_flown` is unset until it is known** (2026-10-13). GetStatus counts
+  a live episode's ticks as they fly and reports a scheduled episode's flown
+  rows once it has ENDED; before that the field is unset (proto3 `optional`,
+  same field number), because a scheduled episode flies in one call and a 0
+  would read as "flew nothing".
+
+## Sessions, InjectPolicy, IssueTask, the streams
+
+A **session** (`ss-` + 12 hex) holds a backend, the page's scene and airframe
+(recorded), a default seed, an optional REST endpoint, the injected policy,
+the issued task, its episodes, and two append-only buffers the streams read
+from the start: events (`session_started`, `policy_injected`, `task_issued`,
+`episode_started`, `hot_apply`, `hot_apply_forwarded`, `emit_event`,
+`run_event` - each of an episode's harness events, hot-applies with their
+generation and hash -, `episode_ended`, `episode_failed`, `session_expired`,
+`session_stopped`)
+and telemetry frames (capped at 200 000 per session; past that they are
+counted in `telemetry_dropped`, not kept). At most 64 sessions are open; 256
+stopped ones are kept for their streams. Episodes started without a session
+behave exactly as before 2026-10-12.
+
+**InjectPolicy** loads the bundle through `PolicyRef.load_with_source`
+(`guardrail.bundle.load_for_flight`: integrity always enforced, an
+unverified signature accepted and recorded - the ack's `signature`), checks
+it hashes to `expected_hash` (every form `Policy.matches_hash` knows), and
+keeps a `PolicyRef` pinned to that hash for the session's later episodes, so
+a file changed afterwards stops an episode instead of flying another policy.
+An archive sent as bytes (at most 16 MiB) is kept under the runs folder
+(`sessions/<id>/policy-<sha>.tar.gz`). Episodes already started keep the
+policy they started with.
+
+**IssueTask** records the prompt's SHA-256 and length in the bundle's
+`manifest_extras.json` (`task_prompt_sha256`, `task_prompt_chars`,
+`task_read_by_pilot: false`) and the prompt itself in
+`harness_request.json`; TaskAck says `pilot_reads_text: false`. A test checks
+that an episode with a task flies the same log as without one: on this
+backend the field is a record, not an input.
+
+**The streams** (`StreamTelemetry`, `StreamEvents`) replay the session from
+its first item, then wait for more (checking every 0.5 s that the client is
+still there), and end once the session is stopped and everything has been
+sent; the stop event and the state change are made under one lock, so a
+stream cannot end before it has sent `session_stopped`. Each open stream
+holds a server worker thread (`serve(max_workers=16)` by default).
+
+The episode bundle's `manifest_extras.json` also carries the self-contained
+keys `experiments/sweep_scenarios.py` `episode_extras` writes (where the sweep
+has it: the expanded spec with every event the episode flew, hot-applies and
+EmitEvents included, the library defaults, the seed, the arm, the policy as
+injected and every generation), so `tools/rerun_episode.py` re-flies a gRPC
+episode from its bundle alone. A failure to build them is recorded as
+`episode_extras_error`, not raised: the episode flew and is bundled.
+
+## HotApply forwarded to a REST endpoint
+
+A session started with `rest_endpoint` is **bound** to that hot-apply endpoint
+(`guardrail/api.py`, e.g. a rail's live Shield served by
+`api.serve_in_background`). A HotApply addressed to the session
+(`session_id`, no `episode_id`) is POSTed as it is to `<endpoint>/hot_apply`
+(the route that takes any of the three hot-applicable types), and the
+endpoint's answer comes back in the PolicyAck: `rule_id`, `op`, `type`, the
+`generation` and `policy_hash` the endpoint's policy has after it, and
+`forwarded_to`. The endpoint's refusals keep their meaning (409
+ALREADY_EXISTS, 404 NOT_FOUND, 422 INVALID_ARGUMENT); an endpoint that does
+not answer, or answers 5xx, is UNAVAILABLE; one that answers something that
+is not a JSON object is FAILED_PRECONDITION. A HotApply addressed to an
+episode is never forwarded: the address decides, so one call cannot act on
+two Shields. InjectPolicy in a bound session reads `GET <endpoint>/health`
+and refuses a policy the endpoint is not flying (hot-applies forwarded to it
+would act on rules the session did not inject).
+
+The server makes the request, so the endpoint is a place a client can make
+the server send to: only a loopback endpoint is accepted unless the server
+allows its host (`serve --allow-rest-host H`, `Harness(rest_hosts=...)`); no
+query, fragment or credentials; and the request goes out with no proxy (an
+environment `HTTP_PROXY` would otherwise see a loopback request - a test sets
+one and checks the forward still reaches the endpoint). The tests run the
+endpoint as a standard-library HTTP server calling `guardrail/api.py`'s own
+`apply_event` and `health` on a live Shield (FastAPI is not installed in
+every environment), with FastAPI's error shape (`{"detail": ...}`); the
+FastAPI app itself (`api.build_app`) is not what they call.
 
 ## Status codes
 
 | Code | When |
 |---|---|
-| INVALID_ARGUMENT | the spec, cell, seed, arm or event fails validation (pydantic's message is passed through); a paraphrase arm on a protected (AerialVLA) prompt; a REST 422 |
-| NOT_FOUND | an unknown scenario, cell, profile, episode or policy file; a REST 404 |
+| INVALID_ARGUMENT | the spec, cell, seed, arm, event, pace or session request fails validation (pydantic's message is passed through); a paraphrase arm on a protected (AerialVLA) prompt; an injected archive or policy the loader refuses; `now` on a scheduled episode; a REST 422 |
+| NOT_FOUND | an unknown scenario, cell, profile, episode, session or policy file; a REST 404 |
 | ALREADY_EXISTS | a REST 409 (a rule id in use) |
-| OUT_OF_RANGE | an event after the episode's last tick |
-| PERMISSION_DENIED | a client certificate not on the allow-list; a client-sent scenario whose policy is outside `policies/` and `bundles/` |
-| FAILED_PRECONDITION | an event for an episode no longer ARMED (ended, failed or expired); an episode the runner refused in flight (GetStatus says why); a paraphrase arm this server cannot draw; a hot-apply that would make an earlier-acknowledged one fail later in the flight; a package or source file missing on the server |
-| UNIMPLEMENTED | a hot-apply field the runner cannot carry |
-| RESOURCE_EXHAUSTED | 256 open episodes, or 512 events in one |
-| UNAVAILABLE | (gRPC) a failed TLS handshake: no client certificate, one from another CA, plaintext on the TLS port |
+| OUT_OF_RANGE | an event after the episode's last tick, or before the next tick a live episode flies |
+| PERMISSION_DENIED | a client certificate not on the allow-list; a policy (a client-sent scenario's, an InjectPolicy path) outside `policies/` and `bundles/`; a REST endpoint off loopback the server does not allow |
+| FAILED_PRECONDITION | an event for an episode no longer taking them (ended, failed, expired, or a scheduled one being flown); an episode the runner refused in flight (GetStatus says why); a paraphrase arm this server cannot draw; a hot-apply that would make an earlier-acknowledged one fail later in the flight; a stopped session; a session HotApply with no endpoint bound; an injected policy that does not hash to `expected_hash`, or an endpoint flying another policy; a package or source file missing on the server |
+| UNIMPLEMENTED | a hot-apply field the runner cannot carry; the reserved SITL backend |
+| RESOURCE_EXHAUSTED | 256 open episodes, 64 open sessions, 512 events in one episode, or an InjectPolicy archive over 16 MiB |
+| UNAVAILABLE | (gRPC) a failed TLS handshake: no client certificate, one from another CA, plaintext on the TLS port; (service) a bound REST endpoint that does not answer, or answers 5xx |
 
 ## The KPI row and its nulls
 
@@ -230,8 +367,9 @@ Stress Testing report's per-family row), with the null beside each score:
 
 Every figure is a proto3 `optional`. A figure the episode has no value for is
 left unset, and `KpiRow.unset` says why (`never_unsafe`, `shield_off`, "no
-expected_failsafe label"). It is never sent as 0. Measured on
-`nfz-head-on`, seed 1001: P0 escape 0.0 beside a passthrough null of 0.88,
+expected_failsafe label"). It is never sent as 0. Measured on 9 Oct on
+`nfz-head-on`, seed 1001: P0 escape 0.0 beside a passthrough null of 0.88
+(0.947 on the 12 Oct tree, Measured below),
 fail-safe correctness 1.0 beside never-trigger 1.0 and always-trigger 0.0 (one
 labelled episode, so the score does not beat its never-trigger null); on its
 Shield-off control `nfz-head-on-control`, the escape rate equals its own
@@ -286,91 +424,184 @@ from the allow-list or rotating the CA; there is no CRL.
 
 Plaintext (`--insecure`) is refused on any address that is not loopback.
 
-## The same root CA for SROS 2 (a procedure; not run here)
+## The same root CA for SROS 2 (a script; not run here)
 
 The file names are sros2's own: a keystore keeps its CA as
 `public/ca.cert.pem` and `private/ca.key.pem`, and the curve is the one
-sros2 generates (P-256). The steps, on the ROS 2 host (Humble):
+sros2 generates (P-256). `tools/sros2_setup.sh` does the whole procedure on
+the ROS 2 host (WSL Ubuntu on the desktop, or the Orin's ROS 2 container),
+with ROS 2 sourced and openssl on the PATH:
 
-    # 1. Seed a keystore with the lab CA.
-    mkdir -p keystore/public keystore/private
-    cp <pki>/ca.cert.pem keystore/public/ca.cert.pem
-    cp <pki>/ca.key.pem  keystore/private/ca.key.pem
-    ros2 security create_keystore keystore
+    bash tools/sros2_setup.sh --pki /mnt/c/Users/<you>/AppData/Local/vla-guardrail/harness_pki \
+        --keystore ~/sros2_keystore            # --dry-run prints every command, runs none
 
-    # 2. Check that sros2 used it rather than making its own.
-    openssl x509 -noout -fingerprint -sha256 -in keystore/public/identity_ca.cert.pem
-    openssl x509 -noout -fingerprint -sha256 -in keystore/public/permissions_ca.cert.pem
-    #    both must equal the fingerprint gen-pki printed (also: python -c
-    #    "from guardrail.harness_service import fingerprint; print(fingerprint('<pki>/ca.cert.pem'))")
+1. It copies the lab CA into `keystore/public/ca.cert.pem` and
+   `keystore/private/ca.key.pem` (umask 077, the key chmod 600), refusing a
+   keystore that already holds another CA key (`--force` on purpose) and a
+   keystore under `/mnt/` - a Windows drive, where chmod is not enforced and
+   the folder may be synced (`--allow-mnt` on purpose).
+2. `ros2 security create_keystore keystore`. It relies on sros2 reusing a CA
+   pair it finds in `public/` and `private/` ("found CA key/cert pair") and
+   pointing `identity_ca` and `permissions_ca` at it. That is our reading of
+   the sros2 source, not something run here (no ROS 2 on this host), so:
+3. it compares the SHA-256 fingerprints of `identity_ca.cert.pem` and
+   `permissions_ca.cert.pem` with the lab CA's, and stops if either differs
+   (sros2 made its own CA; the keystore has to be rebuilt). The fingerprint
+   gen-pki prints is the same one (`python -c "from guardrail.harness_service
+   import fingerprint; print(fingerprint('<pki>/ca.cert.pem'))"`).
+4. One enclave per process of the dev graph (`ros2 security create_enclave`):
+   `/guardrail/safety_shield`, `/guardrail/mavlink_adapter`,
+   `/guardrail/vla_stub` (the rclpy node names of
+   `sitl/ros2_ws/src/safety_shield/launch/guardrail_rail.launch.py`),
+   `/guardrail/mavros` and `/guardrail/bag_recorder` (the MAVROS node and
+   the `ros2 bag record` that `sitl/run_ros2_demo.sh` starts).
+5. `openssl verify -CAfile <pki>/ca.cert.pem` on each enclave's `cert.pem`.
+6. It prints the environment that enforces security
+   (`ROS_SECURITY_KEYSTORE`, `ROS_SECURITY_ENABLE=true`,
+   `ROS_SECURITY_STRATEGY=Enforce`) and the enclave each process runs with:
+   `ROS_SECURITY_ENCLAVE_OVERRIDE=/guardrail/<node>` for the three Python
+   nodes (the launch file gives them one shared environment, so each needs
+   its own), `--ros-args --enclave ...` for MAVROS and `ros2 bag record`.
 
-    # 3. One enclave per node of sitl/ros2_ws (node names safety_shield,
-    #    mavlink_adapter, vla_stub), each checked against the same CA.
-    ros2 security create_enclave keystore /guardrail/safety_shield
-    ros2 security create_enclave keystore /guardrail/mavlink_adapter
-    ros2 security create_enclave keystore /guardrail/vla_stub
-    openssl verify -CAfile <pki>/ca.cert.pem keystore/enclaves/guardrail/safety_shield/cert.pem
+Checked here: `bash -n tools/sros2_setup.sh` (Git Bash) and a `--dry-run`
+that prints the commands above with the given paths and refuses a `/mnt/`
+keystore. Not checked: any of it on a ROS 2 host. The CA key should leave
+the lab desktop only to seed the keystore: the Orin and the drone carry
+enclave keys, never the CA key.
 
-    # 4. Run with security enforced; each node is started with its enclave
-    #    (--ros-args --enclave /guardrail/safety_shield).
-    export ROS_SECURITY_KEYSTORE=$PWD/keystore
-    export ROS_SECURITY_ENABLE=true
-    export ROS_SECURITY_STRATEGY=Enforce
-
-Step 1 relies on `create_keystore` reusing a CA pair it finds in
-`public/` and `private/` instead of generating one. That is our reading of
-the sros2 source, not something run on this host (no ROS 2 here): step 2 is
-the check, and if a fingerprint differs, sros2 made its own CA and the
-keystore has to be rebuilt. The CA key should leave the lab desktop only to
-seed the keystore: the Orin and the drone carry enclave keys, never the CA
-key.
-
-Until those steps run on the ROS 2 host, X-15 is open: there is no keystore
-and no enclave, and the Shield node, the MAVLink adapter and the VLA stub
-still run unsecured on the ROS 2 graph. The CA and this procedure are
-preparation for it, not part of it.
+The script does not change who may publish what: `create_enclave` writes
+sros2's default permissions, which allow every topic. Topic-level policies
+(the Shield alone publishes `/shield/setpoint`, the VLA only
+`/vla/action_4d`, ...) are a permissions XML per enclave, still to be
+written. Until the script runs on the ROS 2 host and the launch file starts
+each node with its enclave, X-15 is open: there is no keystore and no
+enclave, and the Shield node, the MAVLink adapter and the VLA stub still run
+unsecured on the ROS 2 graph.
 
 ## What is not done
 
-- **Live events.** Events are scheduled at `at_sim_t`; a live mode needs the
-  service to drive `EpisodeRunner` (it exists since 2026-10-11; the service
-  does not use it yet).
+- **The SITL backend.** `BACKEND_SITL` is a reserved value that answers
+  UNIMPLEMENTED; the rails (`sitl/run_ros2_demo.sh`, the pymavlink rail) fly
+  their own episodes. A REST-bound session can already forward hot-applies to
+  a rail's live endpoint, which is the part of the hil lifecycle that works
+  today.
+- **Pose in the live telemetry.** `EpisodeRunner` exposes no per-tick row
+  while it flies; live frames carry the clock and the pose comes with the
+  flown rows when the episode ends.
 - **A dry run that knows the whole timeline.** HotApply is validated against
   the other hot-applies only; a conflict with the scenario's own events or an
-  EmitEvent is found at EndEpisode (FAILED_PRECONDITION with the runner's
-  reason), not when the HotApply arrives. Needs the service on
-  `EpisodeRunner`.
-- **The session RPCs, InjectPolicy, IssueTask and the streams** (table above),
-  and no CancelEpisode: an episode a client gives up on expires after the
-  idle TTL instead.
+  EmitEvent is found when it flies (FAILED_PRECONDITION with the runner's
+  reason), in live mode too.
 - **The grant's full episode bundle.** `policy_bundle.tar.gz`,
   `episode.bag2/` and `shield_audit.jsonl` are not written on the headless
   path (above).
-- **SROS 2 on the ROS 2 graph (card X-15).** Not enabled: no keystore, no
-  enclaves, the ROS 2 nodes run unsecured. The CA and the procedure above are
-  preparation only.
-- **Packaging.** `pyproject.toml` has no `harness` extra and does not list
-  `guardrail.protos`; until it does, `tests/test_env_pins.py` fails 2 of its
-  34 tests: the `grpc` / `google` imports are declared nowhere, and
-  `protos/harness.proto` is not shipped as package data. Those two failures
-  are that test doing its job. The fix is outside this note's files:
-  `pyproject.toml` gains `harness = ["grpcio>=1.84.0", "protobuf>=7.35.1",
-  "cryptography"]`, `packages = ["guardrail", "guardrail.protos"]` and
-  `"protos/*.proto"` in package-data; `tests/test_env_pins.py` maps the
-  import names `grpc` and `google` to the `harness` extra (and to their
-  distribution names, grpcio and protobuf, which differ from the import
-  names). The service needs a checkout anyway: it drives
-  `experiments/sweep_scenarios.py`, which no wheel carries.
+- **SROS 2 on the ROS 2 graph (card X-15).** Not enabled: the script exists,
+  has not been run on a ROS 2 host, and the launch file does not yet start
+  each node with its enclave. Topic-level permissions are not written.
+- **No CancelEpisode**: an episode a client gives up on expires after the
+  idle TTL (ARMED), finishes on its own (live), or is closed by StopSession;
+  a session a client gives up on expires after the session TTL once nothing
+  of it is armed or flying. A StopSession (or an expiry) that lands while a
+  live episode is already writing its bundle leaves the bundle folder on
+  disk with the episode reading FAILED.
+- **Packaging** is done: `pyproject.toml` has the `harness` extra
+  (`grpcio>=1.84.0`, `protobuf>=7.35.1`, `cryptography`) and ships
+  `guardrail.protos` with `protos/*.proto`, and `tests/test_env_pins.py`
+  maps the `grpc` and `google` imports to it (37/37 on 3.10, 2026-10-12).
+  The 2026-10-09 note that it failed 2 of its 34 tests is out of date. The
+  service still needs a checkout: it drives `experiments/sweep_scenarios.py`,
+  which no wheel carries.
 - **The verdict copy is gone** (2026-10-11): both paths call
   `experiments/sweep_scenarios.py` `episode_verdict`.
-- **CI.** Since 2026-10-11 `.github/workflows/tests.yml` runs this test file
-  and installs grpcio in the 3.10 and 3.11 jobs.
-- **Throughput.** One episode is flown at a time per server (a lock around
-  `run_episode`); the reference design's answer to its risk R9 is parallel
-  hosts. Episodes live in memory: a restarted server forgets them, while
-  their bundles stay on disk.
+- **CI.** Since 2026-10-11 `.github/workflows/tests.yml` runs
+  `tests/test_harness_service.py` and installs grpcio in the 3.10 and 3.11
+  jobs; whether it runs `tests/test_wp4outputs_harness.py` is the lead's to
+  add.
+- **Throughput.** Scheduled episodes fly one at a time per server (a lock
+  around `run_episode`; a live episode takes it a tick at a time); the
+  reference design's answer to its risk R9 is parallel hosts. Episodes and
+  sessions live in memory: a restarted server forgets them, while their
+  bundles stay on disk.
 - **KPI-grade numbers.** None: the headless topology fails
   `is_kpi_grade`, and EpisodeBundle says so with the reasons.
+
+## Measured (2026-10-13, development desktop, after review)
+
+    python tests/test_wp4outputs_harness.py   # 16/16 on 3.10.20 and on 3.11.15
+    python tests/test_harness_service.py      # 49/49 on 3.10.20 and on 3.11.15
+
+- Four tests added after review: a live EmitEvent (a zone spawned 15 m ahead
+  at 5 s) flies byte for byte as the scheduled episode with that event, and
+  not as the null without it; a session's seed is its episodes' default (an
+  unset StartSession seed stays unset over gRPC); an idle session expires
+  and frees its slot under MAX_OPEN_SESSIONS while one with an ARMED episode
+  does not; `ticks_flown` is unset until a scheduled episode has ENDED, then
+  300 on the 30 s episode. Three existing tests were tightened: StopSession
+  must stop the stepping thread (`ticks_flown` stays put, well under the
+  episode's 300 ticks), EndEpisode must finish a live episode paced at 0.05
+  within 60 s (paced, its rest would take about ten minutes), and a
+  telemetry frame's `executed` must equal the row's `emitted` on a tick the
+  Shield changed the command.
+- All four fail on the 2026-10-12 service (no `session_idle_ttl_s`,
+  `ticks_flown` always present) or on 4418ae0 (0/16 there: no sessions).
+  Deliberate breaks of the service, each alone in a copy of the tree: the
+  live EmitEvent not injected, the session seed ignored, an unset seed read
+  as 0, `executed` taken from the raw command, the stop ignored by the
+  loop, EndEpisode leaving a live episode paced (the wake removed too: the
+  pause event stays set once woken, so dropping only `pace = 0` changes
+  nothing), the session TTL never firing, an ARMED episode not protecting
+  its session, a call not counting as activity, `ticks_flown` always
+  reported, and the flown rows not counted: eleven, all caught (the paced
+  EndEpisode by the 150 s timeout of the run).
+- `test_a_windowed_switch_flies_as_written`: repair counts stopped
+  separating the two flights because the escalation FSM changed, not the
+  repair chain. On 4418ae0 the Monday flight's 250 zone ticks after the 5 s
+  switch were Shield-flown Brake ticks (257 repairs, against 7 switched
+  off); on this tree the FSM hands the zone to LOITER, so they are
+  autopilot ticks, which `compute()` does not count as repairs (2 and 2).
+  The zone ticks (250 against 0) separate the flights on both trees.
+
+## Measured (2026-10-12, development desktop)
+
+    python tests/test_wp4outputs_harness.py   # 12/12 on 3.10.20 and on 3.11.15
+    python tests/test_harness_service.py      # 49/49 on 3.10.20 and on 3.11.15
+
+- `test_a_windowed_switch_flies_as_written` checked which way the window
+  changed the flight by comparing repair counts; on this wave's Shield both
+  flights log 2 repairs (the 2026-10-09 service fails the same way on this
+  tree), so it now checks the zone itself: on the Monday flight it still
+  raises violations after the 5 s switch (250 ticks), switched off with no
+  window it raises none (0). The byte-for-byte comparison with the same
+  switch written in the scenario is unchanged.
+- The page's lifecycle over mutual TLS on 127.0.0.1, ten rounds after one
+  warm-up, medians: StartSession 0.001 s, InjectPolicy (a policy YAML) 0.007
+  s, IssueTask 0.001 s, StartEpisode 0.011 s, EndEpisode (scheduled,
+  `nfz-head-on` seed 1001) 1.709 s, StopSession 0.001 s. EndEpisode was
+  0.375 s on 9 Oct: the flight itself is slower on today's tree (a profile
+  puts 2.1 of 2.5 s in `Shield.filter`, code another package is changing,
+  and the desktop was running other packages' tests at the time). P0 escape
+  0.0 beside a passthrough null of 0.947 (0.88 on 9 Oct).
+- A live `nfz-head-on` (30 simulated seconds) at pace 10 took 3.11 s of wall
+  time and its manifest measured `sim_speedup` 10.0; at pace 1.0, 30.01 s and
+  `sim_speedup` 1.0. Both stay not KPI-grade (topology
+  `headless-kinematic`), and the stream carried 600 frames for each (300
+  clock frames while it flew, 300 flown rows after).
+- Thirteen deliberate breaks of this round's service code, each applied alone
+  to a copy of the tree: live injection skipped, `now` landing a tick late,
+  the already-flown check removed, StopSession leaving a live episode flying,
+  the REST request through the environment's proxy, the loopback rule
+  removed, InjectPolicy's endpoint check and its hash pin removed, the
+  session's policy not flown, the task's hash not recorded, the flown rows
+  not streamed, the SITL refusal removed, and a stream handing out one item
+  per poll. Twelve fail a test; the last is slower, not wrong (every item
+  still arrives), and survives. The late `now` survived the first run and is
+  what `test_now_lands_on_the_next_tick_to_fly` was added for.
+- Shown failing first: against the 4418ae0 tree, every test of
+  `tests/test_wp4outputs_harness.py` fails (0/11 of the first eleven, run
+  there: the new RPCs and keywords do not exist), and the reworked `test_the_pages_ten_rpcs_and_get_status_are_served`
+  fails there: the 4418ae0 .proto lacks six of its eleven methods
+  (InjectPolicy, IssueTask, StartSession, StopSession, StreamEvents,
+  StreamTelemetry).
 
 ## Measured (2026-10-09, development desktop)
 

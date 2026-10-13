@@ -30,6 +30,11 @@ scenarios:
       6.3 s and completes. Re-measured 2026-10-11 on both theta readings and
       with the onset limit at 1 s and 0 s; the marker was removed then. With
       the FSM off the flight is the LEGACY one (tests/test_sweep.py).
+      At the grant's 5 s forecast (2026-10-12) it reaches the band at 10.3 s
+      (G1 at 0 s, G7 at 12.3 s): AltitudeFix sizes the climb to arrive in one
+      LOOKAHEAD, so a longer lookahead climbs more gently (see
+      altitude-recovery-depth for the arithmetic). Still one recovery, no
+      fail-safe, and the purpose holds.
     mission:
       start_pose: { x: -30.0, y: -30.0, up: 3.0 }
       pilot: { type: constant, action: { vx: 3.0 } }
@@ -60,8 +65,28 @@ scenarios:
     description: >
       altitude-floor-recovery from seven more depths: 0.5-9.5 m against the
       10 m floor and 20.5-30 m against the 20 m ceiling. One recovery each,
-      never censored, and no slower than the depth at the 2 m/s climb cap plus
-      one 3 s lookahead (8 s at the deepest). 3 m is not swept: that is
+      never censored, and no slower than the Shield's own recovery law
+      allows. AltitudeFix aims 1 m inside the band (the re-entry margin) and
+      sizes the climb to get there in one lookahead L, capped at the policy's
+      2 m/s: from D metres short of that aim it climbs at the cap until
+      D = 2 L, then follows D(t) = D1 exp(-t / L) and crosses the band edge
+      when D = 1 m. Time to safe = max(0, D0 - 2 L) / 2 + L ln(min(D0, 2 L)).
+      At the grant's L = 5 s (2026-10-12) that is 12.0 s from the deepest
+      cell (30 m, D0 = 11 m) and measured 11.9 s; the gate is 12.1 s, one tick
+      above. THE GATE IS IMPLEMENTATION-DERIVED: it certifies that the
+      recovery follows AltitudeFix's own law, not that it meets a
+      requirement. The grant sets no target for mean time to safe (Safety
+      Shield, KPI table: "tracked"); its one figure, `mean_time_to_safe_s:
+      "<=2.0"` in Stress Testing's example ScenarioSpec, belongs to a
+      dynamic-NFZ sweep, and against it these recoveries (10.9-11.9 s at 5 s,
+      6.8-7.8 s at 3 s) would all fail. Until 2026-10-12 the harness flew
+      L = 3 s and the gate read "the
+      depth at the cap plus one 3 s lookahead (8 s at the deepest)", which
+      held with 0.2 s to spare (7.6, 6.8, 7.8 s); at 5 s those three cells
+      take 11.7, 10.9 and 11.9 s and failed it. The finding: at the grant's
+      forecast a recovery from below the floor is about 1.5 times slower,
+      because the climb is sized to the lookahead, not to the cap. 3 m is not
+      swept: that is
       altitude-floor-recovery's own flight, and the sweep refuses to count one
       flight as two scenarios. 0.5, 2 and 30 m were known failures from
       2026-10-07 to 2026-10-09 (X6 sent a converging recovery to RTL after
@@ -72,7 +97,10 @@ scenarios:
       ArduPilot's RTL entered above RTL_ALT (15 m) returns at its current
       altitude, so an RTL from above the 20 m ceiling would reach home
       still above it; whether a ceiling breach should make RTL descend
-      first is a design question the grant does not answer.
+      first is a design question the grant does not answer. Since
+      2026-10-12 guardrail/rtl_path.py reports such a leg as blocked (its
+      return altitude is outside the band), so an RTL from there takes G6
+      and lands; no cell here reaches RTL, so it is not exercised here.
     mission:
       start_pose: { x: -30.0, y: -30.0, up: "$start_up" }
       pilot: { type: constant, action: { vx: 3.0 } }
@@ -84,6 +112,8 @@ scenarios:
       ended_safe: { equals: true }
       time_to_safe_episodes: { equals: 1 }
       time_to_safe_censored: { max: 0 }
-      mean_time_to_safe_s: "<=8.0"
+      # The recovery law's bound at L = 5 s (description); 8.0 at L = 3 s.
+      # Implementation-derived: the grant sets no time-to-safe target.
+      mean_time_to_safe_s: "<=12.1"
     expected_outcome: success
     expected_failsafe: false

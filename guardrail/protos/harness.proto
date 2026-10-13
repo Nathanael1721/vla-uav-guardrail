@@ -4,16 +4,15 @@
 //   "Control plane: gRPC over mTLS. Same root CA as SROS 2 for cert reuse."
 // and "Outputs": "RPC harness - Python service + gRPC stubs".
 //
-// The service surface follows the page's "Service surface (proto-ish)": the
-// service is `StressHarness`, and the episode RPCs keep its message names
-// (StartEpisodeRequest -> EpisodeRef, HotApplyRequest -> PolicyAck,
-// EmitEventRequest -> EventAck, EndEpisode(EpisodeRef) -> EpisodeBundle).
-// GetStatus is ours. The page's session RPCs (StartSession / StopSession),
-// InjectPolicy, IssueTask and the two streams are NOT here: the headless
-// harness this drives has no simulator session to start, takes its policy
-// from the ScenarioSpec, and has no pilot that reads a task. A client calling
-// them gets UNIMPLEMENTED from gRPC itself. docs/DESIGN-harness-grpc.md says
-// what each would need.
+// The service surface is the page's "Service surface (proto-ish)", its ten
+// RPCs in its message names (StartSessionRequest -> SessionRef, StopSession
+// (SessionRef) -> StopResponse, InjectPolicyRequest / HotApplyRequest ->
+// PolicyAck, StartEpisodeRequest -> EpisodeRef, IssueTaskRequest -> TaskAck,
+// EmitEventRequest -> EventAck, EndEpisode(EpisodeRef) -> EpisodeBundle,
+// StreamTelemetry(SessionRef) -> stream TelemetryFrame, StreamEvents
+// (SessionRef) -> stream HarnessEvent). GetStatus is ours. Until 2026-10-12
+// only five were here; docs/DESIGN-harness-grpc.md says what each does on the
+// headless backend and what it cannot do there.
 //
 // Implementation: guardrail/harness_service.py. Generated stubs, committed
 // (regenerate after any change here, from the repository root):
@@ -26,7 +25,8 @@
 //
 // NUMBERS THAT WERE NOT MEASURED ARE UNSET, NEVER 0. Every KPI below is a
 // proto3 `optional` field: HasField() is false when the episode has no value
-// for it, and `KpiRow.unset` names the field and says why.
+// for it, and `KpiRow.unset` names the field and says why. The same holds for
+// a telemetry frame's pose (`TelemetryFrame.unset`).
 
 syntax = "proto3";
 
@@ -35,38 +35,151 @@ package guardrail.harness.v1;
 import "google/protobuf/struct.proto";
 
 service StressHarness {
-  // Arm one episode: a ScenarioSpec cell, a seed and (optionally) a profile.
-  // Nothing is flown yet. A spec the schema refuses is INVALID_ARGUMENT and
-  // no episode is created. An episode left ARMED with no StartEpisode,
-  // HotApply or EmitEvent call for the server's idle TTL (default one hour)
-  // expires: FAILED, nothing flown, its slot freed.
-  rpc StartEpisode (StartEpisodeRequest) returns (EpisodeRef);
+  // ---- session lifecycle ------------------------------------------------
+
+  // Open a session: the backend that flies its episodes, the page's
+  // (scene, airframe, seed), and optionally a REST hot-apply endpoint
+  // (guardrail/api.py) the session is BOUND to: a HotApply addressed to the
+  // session is then forwarded there as an HTTP POST. BACKEND_SITL is
+  // reserved and answers UNIMPLEMENTED. An endpoint off loopback is
+  // PERMISSION_DENIED unless the server allows its host. A session left
+  // OPEN with no call on it and nothing armed or flying for the server's
+  // session TTL (default one hour) is stopped, its event stream saying
+  // `session_expired` first; StopSession is still the way to close one.
+  rpc StartSession (StartSessionRequest) returns (SessionRef);
+
+  // Close the session: ARMED episodes in it fail ("session stopped"), a live
+  // episode stops flying (FAILED, nothing bundled), a scheduled one already
+  // flying finishes; both streams end after their last item.
+  rpc StopSession (SessionRef) returns (StopResponse);
+
+  // ---- policy -----------------------------------------------------------
+
+  // The policy every later episode of the session flies, from a bundle (or
+  // policy YAML) under the server's policies/ or bundles/, or the archive's
+  // bytes, pinned to `expected_hash` (required; a bundle that hashes to
+  // anything else is FAILED_PRECONDITION). In a REST-bound session the
+  // endpoint must be flying that policy (GET /health), or the session would
+  // hot-apply onto rules it did not inject: FAILED_PRECONDITION.
+  rpc InjectPolicy (InjectPolicyRequest) returns (PolicyAck);
 
   // A mid-flight policy event in the Policy DSL's REST hot-apply form
-  // (guardrail/api.py: dynamic_nfz, time_window_switch, corridor_swap),
-  // validated by the same handler the REST endpoint runs and scheduled at
-  // `at_sim_t`. It is validated where it will fly: against the injected
-  // policy plus this episode's hot-applies in at_sim_t order (ties by
-  // arrival), not in arrival order. Refusals carry the REST endpoint's
-  // meaning: 409 is ALREADY_EXISTS, 404 NOT_FOUND, 422 INVALID_ARGUMENT; a
-  // body that would make an earlier-acked hot-apply fail later in the flight
-  // is FAILED_PRECONDITION. The dry run does NOT know the scenario's own
-  // events or this episode's EmitEvents (they act on the flying vehicle), so
-  // a conflict with one of those surfaces only at EndEpisode.
+  // (guardrail/api.py: dynamic_nfz, time_window_switch, corridor_swap).
+  //
+  // Addressed to an EPISODE (`episode_id`): validated by the same handler the
+  // REST endpoint runs, against the injected policy plus this episode's
+  // hot-applies in at_sim_t order (ties by arrival), and flown at `at_sim_t`
+  // - or, on a live episode with `now`, at the next tick it flies. Refusals
+  // carry the REST endpoint's meaning: 409 is ALREADY_EXISTS, 404 NOT_FOUND,
+  // 422 INVALID_ARGUMENT; a body that would make an earlier-acked hot-apply
+  // fail later in the flight is FAILED_PRECONDITION; a time a live episode
+  // has already flown is OUT_OF_RANGE. The dry run does NOT know the
+  // scenario's own events or this episode's EmitEvents (they act on the
+  // flying vehicle), so a conflict with one of those surfaces when it flies.
+  //
+  // Addressed to a SESSION (`session_id`) bound to a REST endpoint: POSTed to
+  // <endpoint>/hot_apply as it is, and the endpoint's answer returned (its
+  // 409 / 404 / 422 as above; an endpoint that does not answer UNAVAILABLE).
   rpc HotApply (HotApplyRequest) returns (PolicyAck);
 
-  // A ScenarioEvent (the grant's seven event types), scheduled at `at_sim_t`.
+  // ---- episode ----------------------------------------------------------
+
+  // Arm one episode: a ScenarioSpec cell, a seed and (optionally) a profile,
+  // in a session or on its own. Scheduled (the default): nothing is flown
+  // until EndEpisode, and an episode left ARMED with no call for the
+  // server's idle TTL (default one hour) expires. `live`: it starts flying
+  // now, stepped at `pace` simulated seconds per wall second, and takes
+  // HotApply / EmitEvent while it flies.
+  rpc StartEpisode (StartEpisodeRequest) returns (EpisodeRef);
+
+  // The natural-language task, for an ARMED episode or for the session's
+  // later episodes. The headless pilot reads no text: the prompt's SHA-256
+  // is recorded in the bundle's manifest_extras.json and no flown action
+  // depends on it (TaskAck.pilot_reads_text is false).
+  rpc IssueTask (IssueTaskRequest) returns (TaskAck);
+
+  // A ScenarioEvent (the grant's seven event types), at `at_sim_t` (or, on a
+  // live episode with `now`, at the next tick).
   rpc EmitEvent (EmitEventRequest) returns (EventAck);
 
   rpc GetStatus (EpisodeRef) returns (EpisodeStatus);
 
-  // Fly the episode headless with every scheduled event, score it with the
-  // contractual KPIs, write the episode bundle and return it. Idempotent: a
-  // second call returns the same bundle, and a call made while another call
-  // is flying the episode waits for that flight and returns its bundle (or
-  // its failure). An episode the runner refuses in flight (an event the
-  // Shield rejects, say) is FAILED_PRECONDITION.
+  // Fly the episode headless with every scheduled event (a live one: let it
+  // finish, unpaced), score it with the contractual KPIs, write the episode
+  // bundle and return it. Idempotent: a second call returns the same bundle,
+  // and a call made while another call is flying the episode waits for that
+  // flight and returns its bundle (or its failure). An episode the runner
+  // refuses in flight (an event the Shield rejects, say) is
+  // FAILED_PRECONDITION.
   rpc EndEpisode (EpisodeRef) returns (EpisodeBundle);
+
+  // ---- streams ----------------------------------------------------------
+
+  // Every tick of the session's episodes: while a live episode flies, one
+  // clock frame per tick (the steppable runner exposes no pose until the
+  // episode ends, so the pose is unset with the reason); once any episode
+  // ends, its flown rows (pose, raw and flown action, FSM state). A late
+  // subscriber gets everything from the start. Ends when the session stops.
+  rpc StreamTelemetry (SessionRef) returns (stream TelemetryFrame);
+
+  // The session's lifecycle and each episode's run events (hot-applies with
+  // their generation and hash, refusals, start and end), in order, from the
+  // start. Ends when the session stops.
+  rpc StreamEvents (SessionRef) returns (stream HarnessEvent);
+}
+
+enum Backend {
+  BACKEND_UNSPECIFIED = 0;   // read as BACKEND_HEADLESS
+  BACKEND_HEADLESS = 1;      // experiments/sweep_scenarios.py, kinematic, never KPI-grade
+  BACKEND_SITL = 2;          // RESERVED (the ArduPilot SITL rail): UNIMPLEMENTED
+}
+
+message StartSessionRequest {
+  Backend backend = 1;
+  // The page's StartSession(scene, airframe, seed). The headless backend has
+  // no scene or airframe to load: both are recorded, not used.
+  string scene = 2;
+  string airframe = 3;
+  // The default seed of this session's episodes (a StartEpisode seed wins).
+  optional int64 seed = 4;
+  // http(s)://host:port of a REST hot-apply endpoint (guardrail/api.py).
+  string rest_endpoint = 5;
+  string label = 6;
+}
+
+message SessionRef {
+  string session_id = 1;
+  Backend backend = 2;
+  string rest_endpoint = 3;
+  // The client certificate's common name ("" on an insecure channel).
+  string client = 4;
+  optional int64 seed = 5;
+  // The injected policy's hash; "" before InjectPolicy.
+  string policy_hash = 6;
+  string state = 7;          // OPEN | STOPPED
+}
+
+message StopResponse {
+  string session_id = 1;
+  int32 episodes = 2;
+  // ARMED or live episodes the stop closed before they ended.
+  int32 episodes_closed_unfinished = 3;
+  int64 telemetry_frames = 4;
+  // Frames past the server's per-session cap: counted, not kept.
+  int64 telemetry_dropped = 5;
+  int64 events = 6;
+}
+
+message InjectPolicyRequest {
+  string session_id = 1;
+  oneof bundle {
+    // Under the server's policies/ or bundles/: a policy bundle (.tar.gz) or
+    // a policy YAML.
+    string bundle_path = 2;
+    // A policy bundle archive (.tar.gz), kept by the server for the session.
+    bytes bundle_tar_gz = 3;
+  }
+  string expected_hash = 4;
 }
 
 message StartEpisodeRequest {
@@ -81,8 +194,9 @@ message StartEpisodeRequest {
   // The parameter cell (an episode id such as "nfz-x@speed=4"). Empty: the
   // family must expand to exactly one cell.
   string cell_id = 3;
-  // random_seed. Unset: the profile's seed (when it has exactly one), else
-  // the spec's parameter_sweep.random_seed (when exactly one), else 0.
+  // random_seed. Unset: the session's seed, else the profile's seed (when it
+  // has exactly one), else the spec's parameter_sweep.random_seed (when
+  // exactly one), else 0.
   optional int64 seed = 4;
   // smoke | nightly | broad (experiments/profiles/<name>.yaml), or empty.
   // A profile applies its sweep overrides and samples, and the seed must be
@@ -93,6 +207,14 @@ message StartEpisodeRequest {
   string arm = 6;
   // Also write flight_log.jsonl into the bundle.
   bool keep_flight_log = 7;
+  // In this session: it flies the session's injected policy (when one was
+  // injected) and carries the session's task.
+  string session_id = 8;
+  // Fly it now, stepped (experiments/sweep_scenarios.py EpisodeRunner).
+  bool live = 9;
+  // Live: simulated seconds per wall second. Unset: 1.0 (real time); 0: as
+  // fast as the host flies it.
+  optional double pace = 10;
 }
 
 // Returned by StartEpisode; only `episode_id` is read when it is sent back.
@@ -108,6 +230,8 @@ message EpisodeRef {
   double run_end_sim_t = 8;
   // The policy as injected at t = 0.
   string policy_hash = 9;
+  string session_id = 10;
+  bool live = 11;
 }
 
 message HotApplyRequest {
@@ -116,6 +240,10 @@ message HotApplyRequest {
   // The REST body, e.g. {"type": "dynamic_nfz", "id": "nfz-1",
   // "vertices": [{"x": 10, "y": -26}, ...]}.
   google.protobuf.Struct body = 3;
+  // Instead of `episode_id`: forward the body to this session's REST endpoint.
+  string session_id = 4;
+  // A live episode: at the next tick it flies (`at_sim_t` is then ignored).
+  bool now = 5;
 }
 
 message PolicyAck {
@@ -134,6 +262,35 @@ message PolicyAck {
   string validated_policy_hash = 8;
   // The ScenarioEvent the headless runner applies at at_sim_t, as JSON.
   string scenario_event_json = 9;
+  string session_id = 10;
+  // InjectPolicy: the injected policy (generation 0). A forwarded HotApply:
+  // the endpoint's policy after the body.
+  string policy_hash = 11;
+  int64 generation = 12;
+  // A forwarded HotApply: the URL it was POSTed to.
+  string forwarded_to = 13;
+  // InjectPolicy: the bundle's signature status as guardrail.bundle reports
+  // it (verified, unsigned, untrusted-signer, ...).
+  string signature = 14;
+  // InjectPolicy in a REST-bound session: the policy the endpoint flies.
+  string endpoint_policy_hash = 15;
+}
+
+message IssueTaskRequest {
+  string session_id = 1;
+  // An ARMED episode; empty: the session's later episodes.
+  string episode_id = 2;
+  string natural_language_prompt = 3;
+}
+
+message TaskAck {
+  string session_id = 1;
+  string episode_id = 2;
+  string prompt_sha256 = 3;
+  int32 chars = 4;
+  // False on the headless backend: no flown action reads the prompt.
+  bool pilot_reads_text = 5;
+  string note = 6;
 }
 
 message EmitEventRequest {
@@ -143,6 +300,8 @@ message EmitEventRequest {
   // activate_rule | deactivate_rule | swap_corridor | scale_radius
   string type = 3;
   google.protobuf.Struct payload = 4;
+  // A live episode: at the next tick it flies.
+  bool now = 5;
 }
 
 message EventAck {
@@ -155,9 +314,9 @@ message EventAck {
 enum EpisodeState {
   EPISODE_STATE_UNSPECIFIED = 0;
   ARMED = 1;      // started; events may still be added
-  RUNNING = 2;    // EndEpisode is flying it
+  RUNNING = 2;    // flying: EndEpisode is flying it, or it is live
   ENDED = 3;      // flown, scored, bundle written
-  FAILED = 4;     // the runner refused it in flight, or it expired idle; see `error`
+  FAILED = 4;     // the runner refused it in flight, it expired idle, or its session stopped; see `error`
 }
 
 message QueuedEvent {
@@ -186,6 +345,14 @@ message EpisodeStatus {
   string error = 14;
   // The client certificate's common name ("" on an insecure channel).
   string client = 15;
+  string session_id = 16;
+  bool live = 17;
+  // Live and still flying: the simulated time of the next tick.
+  optional double next_tick_sim_t = 18;
+  // Ticks flown: counted as they fly on a live episode, and the flown rows
+  // once a scheduled episode has ENDED. Unset otherwise (a scheduled
+  // episode flies in one call; 0 would read as "flew nothing").
+  optional int64 ticks_flown = 19;
 }
 
 // One row of the Stress Testing KPI report ("per-scenario-family stats
@@ -225,10 +392,12 @@ message AppliedEvent {
 
 // The episode bundle as the headless runner writes it, in `bundle_path`:
 // manifest.json (the grant's six fields), kpi.json, harness_events.jsonl and
-// harness_request.json, plus manifest_extras.json (when the episode has an
-// arm record) and, when asked, flight_log.jsonl. The grant's bundle also lists policy_bundle.tar.gz,
-// episode.bag2/ and shield_audit.jsonl: the headless runner writes none of
-// them (no ROS 2 graph to record, no audit writer on this path).
+// harness_request.json, manifest_extras.json (the arm, the task's hash, and
+// the self-contained keys tools/rerun_episode.py re-flies the episode from)
+// and, when asked, flight_log.jsonl. The grant's bundle also lists
+// policy_bundle.tar.gz, episode.bag2/ and shield_audit.jsonl: the headless
+// runner writes none of them (no ROS 2 graph to record, no audit writer on
+// this path).
 message EpisodeBundle {
   string episode_id = 1;
   string bundle_path = 2;
@@ -245,4 +414,52 @@ message EpisodeBundle {
   bool kpi_grade = 10;
   repeated string kpi_grade_reasons = 11;
   repeated AppliedEvent applied_events = 12;
+  string session_id = 13;
+  // The IssueTask prompt's SHA-256 ("" when no task was issued).
+  string task_prompt_sha256 = 14;
+  bool live = 15;
+}
+
+message Action4D {
+  double vx = 1;
+  double vy = 2;
+  double vz_up = 3;
+  double yaw_rate = 4;
+}
+
+message TelemetryFrame {
+  string session_id = 1;
+  string episode_id = 2;
+  int64 tick = 3;
+  double sim_t = 4;
+  // True: sent as the live tick flew (its clock only). False: the flown row,
+  // sent once the episode ended.
+  bool live = 5;
+  double wall_time = 6;
+  optional double x = 7;
+  optional double y = 8;
+  optional double up = 9;
+  // The pilot's raw command and the action that flew (headless rows: the
+  // Shield's output, the raw action with the Shield off, the stop in Brake,
+  // the autopilot's action in LOITER / RTL / LAND).
+  Action4D planner_output = 10;
+  Action4D executed = 11;
+  string fsm_state = 12;
+  int32 violations = 13;
+  int32 repairs = 14;
+  optional bool unsafe = 15;
+  // Every optional field above that is unset -> why.
+  map<string, string> unset = 20;
+}
+
+message HarnessEvent {
+  string session_id = 1;
+  string episode_id = 2;
+  int64 seq = 3;
+  double wall_time = 4;
+  // session_started | policy_injected | task_issued | episode_started |
+  // hot_apply | hot_apply_forwarded | emit_event | run_event |
+  // episode_ended | episode_failed | session_stopped
+  string kind = 5;
+  string detail_json = 6;
 }

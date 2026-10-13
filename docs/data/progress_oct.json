@@ -1,13 +1,14 @@
 {
  "generated_by": "tools/deck/build_progress_oct_data.py",
- "generated": "2026-10-12T05:01:34Z",
- "code_revision": "b907a3a5b9d4-dirty",
- "status_date": "2026-10-12",
+ "generated": "2026-10-13T12:23:35Z",
+ "code_revision": "4418ae03dad5-dirty",
+ "status_date": "2026-10-13",
  "release": {
   "source": "CHANGELOG.md",
-  "status_date": "2026-10-12",
-  "section": "2026-10-12 (later) — CI green: a clamp that repaired rounding errors, and a timing test fit for shared runners",
+  "status_date": "2026-10-13",
+  "section": "2026-10-13 — the grant's forecast in the harness, rule clocks and hot-apply on the flying rails, a faster Shield, and the WP4 outputs",
   "sections": [
+   "2026-10-13",
    "2026-10-12",
    "2026-10-12",
    "2026-10-08",
@@ -16,12 +17,12 @@
   ],
   "suite": {
    "python": "3.10",
-   "passed": 2291,
-   "total": 2296,
-   "files": 74,
+   "passed": 2526,
+   "total": 2536,
+   "files": 92,
    "guardrail_passes_on_311": true
   },
-  "suite_section": "2026-10-12"
+  "suite_section": "2026-10-13"
  },
  "wp1": {
   "source": "docs/data/wp1_roundtrip.json",
@@ -43,7 +44,7 @@
  },
  "wp2": {
   "command": "python -m guardrail.compiler report --policies policies --budget 256 --exact",
-  "code_revision": "b907a3a5b9d4-dirty",
+  "code_revision": "4418ae03dad5-dirty",
   "budget_tokens": 256,
   "exact_counter": "openvla-llama2-sp@8f5e2869e180",
   "table_counter": "openvla-table-v1",
@@ -95,7 +96,7 @@
    "poses_per_check": 50,
    "machine": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
    "git": {
-    "rev": "b907a3a",
+    "rev": "4418ae0",
     "dirty_guardrail": true
    },
    "command": "python experiments/bench_shield_50rules.py --horizon 5 --dt 0.1 --legacy-cap 40",
@@ -110,73 +111,73 @@
    "clear/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.194,
-     "p99_ms": 0.323
+     "median_ms": 0.137,
+     "p99_ms": 0.226
     },
     "legacy": {
      "n": 40,
-     "median_ms": 232.363,
-     "p99_ms": 324.613
+     "median_ms": 78.354,
+     "p99_ms": 80.529
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.158,
-     "p99_ms": 0.629
+     "median_ms": 0.05,
+     "p99_ms": 0.072
     }
    },
    "near/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.869,
-     "p99_ms": 3.216
+     "median_ms": 0.307,
+     "p99_ms": 0.745
     },
     "legacy": {
      "n": 40,
-     "median_ms": 224.892,
-     "p99_ms": 262.099
+     "median_ms": 78.789,
+     "p99_ms": 81.675
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.157,
-     "p99_ms": 0.695
+     "median_ms": 0.05,
+     "p99_ms": 0.074
     }
    },
    "near/filter": {
     "current": {
      "n": 300,
-     "median_ms": 5.562,
-     "p99_ms": 14.142
+     "median_ms": 2.124,
+     "p99_ms": 3.911
     },
     "legacy": {
      "n": 40,
-     "median_ms": 1132.261,
-     "p99_ms": 1235.251
+     "median_ms": 396.984,
+     "p99_ms": 420.947
     },
     "floor": {
      "n": 300,
-     "median_ms": 0.185,
-     "p99_ms": 0.945
+     "median_ms": 0.072,
+     "p99_ms": 0.32
     }
    },
    "grid/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.392,
-     "p99_ms": 2.349
+     "median_ms": 0.147,
+     "p99_ms": 0.727
     },
     "legacy": {
      "n": 40,
-     "median_ms": 85.429,
-     "p99_ms": 234.051
+     "median_ms": 78.125,
+     "p99_ms": 80.649
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.154,
-     "p99_ms": 0.427
+     "median_ms": 0.05,
+     "p99_ms": 0.07
     }
    },
-   "code_sha": "be3afe292e55977f",
-   "measured": "2026-10-12T05:01:13Z"
+   "code_sha": "2b2f6fb066eb1786",
+   "measured": "2026-10-13T12:18:40Z"
   },
   "default_3s": {
    "horizon_s": 3.0,
@@ -190,7 +191,7 @@
    "poses_per_check": 6,
    "machine": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
    "git": {
-    "rev": "b907a3a",
+    "rev": "4418ae0",
     "dirty_guardrail": true
    },
    "command": "python experiments/bench_shield_50rules.py --horizon 3 --dt 0.5 --legacy-cap 100",
@@ -205,73 +206,73 @@
    "clear/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.055,
-     "p99_ms": 0.119
+     "median_ms": 0.048,
+     "p99_ms": 0.098
     },
     "legacy": {
      "n": 100,
-     "median_ms": 12.475,
-     "p99_ms": 13.993
+     "median_ms": 12.251,
+     "p99_ms": 13.136
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.015,
+     "median_ms": 0.012,
      "p99_ms": 0.028
     }
    },
    "near/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.116,
-     "p99_ms": 0.263
+     "median_ms": 0.107,
+     "p99_ms": 0.173
     },
     "legacy": {
      "n": 100,
-     "median_ms": 13.538,
-     "p99_ms": 18.617
+     "median_ms": 12.069,
+     "p99_ms": 12.755
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.015,
-     "p99_ms": 0.04
+     "median_ms": 0.012,
+     "p99_ms": 0.029
     }
    },
    "near/filter": {
     "current": {
      "n": 300,
-     "median_ms": 0.619,
-     "p99_ms": 1.551
+     "median_ms": 0.614,
+     "p99_ms": 0.895
     },
     "legacy": {
      "n": 100,
-     "median_ms": 65.705,
-     "p99_ms": 82.848
+     "median_ms": 60.806,
+     "p99_ms": 63.471
     },
     "floor": {
      "n": 300,
-     "median_ms": 0.039,
-     "p99_ms": 0.197
+     "median_ms": 0.033,
+     "p99_ms": 0.14
     }
    },
    "grid/_check": {
     "current": {
      "n": 1000,
-     "median_ms": 0.059,
-     "p99_ms": 0.205
+     "median_ms": 0.051,
+     "p99_ms": 0.149
     },
     "legacy": {
      "n": 100,
-     "median_ms": 12.827,
-     "p99_ms": 21.032
+     "median_ms": 12.23,
+     "p99_ms": 13.157
     },
     "floor": {
      "n": 1000,
-     "median_ms": 0.015,
-     "p99_ms": 0.023
+     "median_ms": 0.012,
+     "p99_ms": 0.019
     }
    },
-   "code_sha": "be3afe292e55977f",
-   "measured": "2026-10-12T05:01:31Z"
+   "code_sha": "2b2f6fb066eb1786",
+   "measured": "2026-10-13T12:18:56Z"
   }
  },
  "bench_pick_rule": {
@@ -390,8 +391,8 @@
  "wp4": {
   "profiles": {
    "smoke": {
-    "cells": 52,
-    "episodes": 59,
+    "cells": 55,
+    "episodes": 62,
     "seeds": [
      1001
     ],
@@ -399,8 +400,8 @@
     "cadence": "per build (CI)"
    },
    "nightly": {
-    "cells": 240,
-    "episodes": 789,
+    "cells": 221,
+    "episodes": 732,
     "seeds": [
      1001,
      1002,
@@ -430,12 +431,12 @@
   ],
   "n_templates": 16,
   "stressors": [
+   "battery_critical_at_s",
    "gps_dropout_s",
    "gps_noise_m",
    "gust_mps",
    "latency_ticks",
    "start_jitter_m",
-   "wind_dir_deg",
    "wind_speed_mps"
   ],
   "manifest_fields": [

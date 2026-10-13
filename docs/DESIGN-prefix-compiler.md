@@ -674,7 +674,7 @@ caught by the test named in that version.
 |---|---|
 | `sitl/ros2_shield_node.py`, `sitl/run_sitl_demo.py` | Pass the Shield's clock (`now`) when each generation's CSP is written, so the CSP's time filter is on in flight. |
 | `guardrail/kpi.py` (WP2-02/03) | Add the compiler KPIs (budget, P0 coverage, raised count, explained count) by calling `compiler.coverage_report`. |
-| `docs/data/csp_kpis.json` | Generate with `python -m guardrail.compiler report --exact --json docs/data/csp_kpis.json` (vla-real env). |
+| `docs/data/csp_kpis.json` | Written since 2026-10-13 by `python tools/kpi_report.py --wp2-only` (the KPI report's WP2 section: default budget, scan, and the budget where a naive cut drops P0). `python -m guardrail.compiler report --exact --json <path>` still prints the compiler's own report; give it another path, so the file has one writer. |
 | `demo/real_vla_demo.py` (WP2-01) | Log `csp.csp_content_hash(csp)` beside `csp_hash`, or pass `issued_at=` explicitly, so two runs of the same flight can be matched by content. Its CSPs are compiled without a clock and are stamped from the wall clock (`selection.issued_at_source == "wall_clock"`). |
 
 Done since the first version of this note, by other units: `demo/real_vla_demo.py`

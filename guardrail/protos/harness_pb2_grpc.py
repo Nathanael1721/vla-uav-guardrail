@@ -26,7 +26,8 @@ if _version_not_supported:
 
 
 class StressHarnessStub:
-    """Missing associated documentation comment in .proto file."""
+    """---- session lifecycle ------------------------------------------------
+    """
 
     def __init__(self, channel):
         """Constructor.
@@ -34,15 +35,35 @@ class StressHarnessStub:
         Args:
             channel: A grpc.Channel.
         """
-        self.StartEpisode = channel.unary_unary(
-                '/guardrail.harness.v1.StressHarness/StartEpisode',
-                request_serializer=guardrail_dot_protos_dot_harness__pb2.StartEpisodeRequest.SerializeToString,
-                response_deserializer=guardrail_dot_protos_dot_harness__pb2.EpisodeRef.FromString,
+        self.StartSession = channel.unary_unary(
+                '/guardrail.harness.v1.StressHarness/StartSession',
+                request_serializer=guardrail_dot_protos_dot_harness__pb2.StartSessionRequest.SerializeToString,
+                response_deserializer=guardrail_dot_protos_dot_harness__pb2.SessionRef.FromString,
+                _registered_method=True)
+        self.StopSession = channel.unary_unary(
+                '/guardrail.harness.v1.StressHarness/StopSession',
+                request_serializer=guardrail_dot_protos_dot_harness__pb2.SessionRef.SerializeToString,
+                response_deserializer=guardrail_dot_protos_dot_harness__pb2.StopResponse.FromString,
+                _registered_method=True)
+        self.InjectPolicy = channel.unary_unary(
+                '/guardrail.harness.v1.StressHarness/InjectPolicy',
+                request_serializer=guardrail_dot_protos_dot_harness__pb2.InjectPolicyRequest.SerializeToString,
+                response_deserializer=guardrail_dot_protos_dot_harness__pb2.PolicyAck.FromString,
                 _registered_method=True)
         self.HotApply = channel.unary_unary(
                 '/guardrail.harness.v1.StressHarness/HotApply',
                 request_serializer=guardrail_dot_protos_dot_harness__pb2.HotApplyRequest.SerializeToString,
                 response_deserializer=guardrail_dot_protos_dot_harness__pb2.PolicyAck.FromString,
+                _registered_method=True)
+        self.StartEpisode = channel.unary_unary(
+                '/guardrail.harness.v1.StressHarness/StartEpisode',
+                request_serializer=guardrail_dot_protos_dot_harness__pb2.StartEpisodeRequest.SerializeToString,
+                response_deserializer=guardrail_dot_protos_dot_harness__pb2.EpisodeRef.FromString,
+                _registered_method=True)
+        self.IssueTask = channel.unary_unary(
+                '/guardrail.harness.v1.StressHarness/IssueTask',
+                request_serializer=guardrail_dot_protos_dot_harness__pb2.IssueTaskRequest.SerializeToString,
+                response_deserializer=guardrail_dot_protos_dot_harness__pb2.TaskAck.FromString,
                 _registered_method=True)
         self.EmitEvent = channel.unary_unary(
                 '/guardrail.harness.v1.StressHarness/EmitEvent',
@@ -59,17 +80,55 @@ class StressHarnessStub:
                 request_serializer=guardrail_dot_protos_dot_harness__pb2.EpisodeRef.SerializeToString,
                 response_deserializer=guardrail_dot_protos_dot_harness__pb2.EpisodeBundle.FromString,
                 _registered_method=True)
+        self.StreamTelemetry = channel.unary_stream(
+                '/guardrail.harness.v1.StressHarness/StreamTelemetry',
+                request_serializer=guardrail_dot_protos_dot_harness__pb2.SessionRef.SerializeToString,
+                response_deserializer=guardrail_dot_protos_dot_harness__pb2.TelemetryFrame.FromString,
+                _registered_method=True)
+        self.StreamEvents = channel.unary_stream(
+                '/guardrail.harness.v1.StressHarness/StreamEvents',
+                request_serializer=guardrail_dot_protos_dot_harness__pb2.SessionRef.SerializeToString,
+                response_deserializer=guardrail_dot_protos_dot_harness__pb2.HarnessEvent.FromString,
+                _registered_method=True)
 
 
 class StressHarnessServicer:
-    """Missing associated documentation comment in .proto file."""
+    """---- session lifecycle ------------------------------------------------
+    """
 
-    def StartEpisode(self, request, context):
-        """Arm one episode: a ScenarioSpec cell, a seed and (optionally) a profile.
-        Nothing is flown yet. A spec the schema refuses is INVALID_ARGUMENT and
-        no episode is created. An episode left ARMED with no StartEpisode,
-        HotApply or EmitEvent call for the server's idle TTL (default one hour)
-        expires: FAILED, nothing flown, its slot freed.
+    def StartSession(self, request, context):
+        """Open a session: the backend that flies its episodes, the page's
+        (scene, airframe, seed), and optionally a REST hot-apply endpoint
+        (guardrail/api.py) the session is BOUND to: a HotApply addressed to the
+        session is then forwarded there as an HTTP POST. BACKEND_SITL is
+        reserved and answers UNIMPLEMENTED. An endpoint off loopback is
+        PERMISSION_DENIED unless the server allows its host. A session left
+        OPEN with no call on it and nothing armed or flying for the server's
+        session TTL (default one hour) is stopped, its event stream saying
+        `session_expired` first; StopSession is still the way to close one.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StopSession(self, request, context):
+        """Close the session: ARMED episodes in it fail ("session stopped"), a live
+        episode stops flying (FAILED, nothing bundled), a scheduled one already
+        flying finishes; both streams end after their last item.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def InjectPolicy(self, request, context):
+        """---- policy -----------------------------------------------------------
+
+        The policy every later episode of the session flies, from a bundle (or
+        policy YAML) under the server's policies/ or bundles/, or the archive's
+        bytes, pinned to `expected_hash` (required; a bundle that hashes to
+        anything else is FAILED_PRECONDITION). In a REST-bound session the
+        endpoint must be flying that policy (GET /health), or the session would
+        hot-apply onto rules it did not inject: FAILED_PRECONDITION.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -77,23 +136,54 @@ class StressHarnessServicer:
 
     def HotApply(self, request, context):
         """A mid-flight policy event in the Policy DSL's REST hot-apply form
-        (guardrail/api.py: dynamic_nfz, time_window_switch, corridor_swap),
-        validated by the same handler the REST endpoint runs and scheduled at
-        `at_sim_t`. It is validated where it will fly: against the injected
-        policy plus this episode's hot-applies in at_sim_t order (ties by
-        arrival), not in arrival order. Refusals carry the REST endpoint's
-        meaning: 409 is ALREADY_EXISTS, 404 NOT_FOUND, 422 INVALID_ARGUMENT; a
-        body that would make an earlier-acked hot-apply fail later in the flight
-        is FAILED_PRECONDITION. The dry run does NOT know the scenario's own
-        events or this episode's EmitEvents (they act on the flying vehicle), so
-        a conflict with one of those surfaces only at EndEpisode.
+        (guardrail/api.py: dynamic_nfz, time_window_switch, corridor_swap).
+
+        Addressed to an EPISODE (`episode_id`): validated by the same handler the
+        REST endpoint runs, against the injected policy plus this episode's
+        hot-applies in at_sim_t order (ties by arrival), and flown at `at_sim_t`
+        - or, on a live episode with `now`, at the next tick it flies. Refusals
+        carry the REST endpoint's meaning: 409 is ALREADY_EXISTS, 404 NOT_FOUND,
+        422 INVALID_ARGUMENT; a body that would make an earlier-acked hot-apply
+        fail later in the flight is FAILED_PRECONDITION; a time a live episode
+        has already flown is OUT_OF_RANGE. The dry run does NOT know the
+        scenario's own events or this episode's EmitEvents (they act on the
+        flying vehicle), so a conflict with one of those surfaces when it flies.
+
+        Addressed to a SESSION (`session_id`) bound to a REST endpoint: POSTed to
+        <endpoint>/hot_apply as it is, and the endpoint's answer returned (its
+        409 / 404 / 422 as above; an endpoint that does not answer UNAVAILABLE).
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StartEpisode(self, request, context):
+        """---- episode ----------------------------------------------------------
+
+        Arm one episode: a ScenarioSpec cell, a seed and (optionally) a profile,
+        in a session or on its own. Scheduled (the default): nothing is flown
+        until EndEpisode, and an episode left ARMED with no call for the
+        server's idle TTL (default one hour) expires. `live`: it starts flying
+        now, stepped at `pace` simulated seconds per wall second, and takes
+        HotApply / EmitEvent while it flies.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def IssueTask(self, request, context):
+        """The natural-language task, for an ARMED episode or for the session's
+        later episodes. The headless pilot reads no text: the prompt's SHA-256
+        is recorded in the bundle's manifest_extras.json and no flown action
+        depends on it (TaskAck.pilot_reads_text is false).
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def EmitEvent(self, request, context):
-        """A ScenarioEvent (the grant's seven event types), scheduled at `at_sim_t`.
+        """A ScenarioEvent (the grant's seven event types), at `at_sim_t` (or, on a
+        live episode with `now`, at the next tick).
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -106,12 +196,35 @@ class StressHarnessServicer:
         raise NotImplementedError('Method not implemented!')
 
     def EndEpisode(self, request, context):
-        """Fly the episode headless with every scheduled event, score it with the
-        contractual KPIs, write the episode bundle and return it. Idempotent: a
-        second call returns the same bundle, and a call made while another call
-        is flying the episode waits for that flight and returns its bundle (or
-        its failure). An episode the runner refuses in flight (an event the
-        Shield rejects, say) is FAILED_PRECONDITION.
+        """Fly the episode headless with every scheduled event (a live one: let it
+        finish, unpaced), score it with the contractual KPIs, write the episode
+        bundle and return it. Idempotent: a second call returns the same bundle,
+        and a call made while another call is flying the episode waits for that
+        flight and returns its bundle (or its failure). An episode the runner
+        refuses in flight (an event the Shield rejects, say) is
+        FAILED_PRECONDITION.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamTelemetry(self, request, context):
+        """---- streams ----------------------------------------------------------
+
+        Every tick of the session's episodes: while a live episode flies, one
+        clock frame per tick (the steppable runner exposes no pose until the
+        episode ends, so the pose is unset with the reason); once any episode
+        ends, its flown rows (pose, raw and flown action, FSM state). A late
+        subscriber gets everything from the start. Ends when the session stops.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def StreamEvents(self, request, context):
+        """The session's lifecycle and each episode's run events (hot-applies with
+        their generation and hash, refusals, start and end), in order, from the
+        start. Ends when the session stops.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -120,15 +233,35 @@ class StressHarnessServicer:
 
 def add_StressHarnessServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'StartEpisode': grpc.unary_unary_rpc_method_handler(
-                    servicer.StartEpisode,
-                    request_deserializer=guardrail_dot_protos_dot_harness__pb2.StartEpisodeRequest.FromString,
-                    response_serializer=guardrail_dot_protos_dot_harness__pb2.EpisodeRef.SerializeToString,
+            'StartSession': grpc.unary_unary_rpc_method_handler(
+                    servicer.StartSession,
+                    request_deserializer=guardrail_dot_protos_dot_harness__pb2.StartSessionRequest.FromString,
+                    response_serializer=guardrail_dot_protos_dot_harness__pb2.SessionRef.SerializeToString,
+            ),
+            'StopSession': grpc.unary_unary_rpc_method_handler(
+                    servicer.StopSession,
+                    request_deserializer=guardrail_dot_protos_dot_harness__pb2.SessionRef.FromString,
+                    response_serializer=guardrail_dot_protos_dot_harness__pb2.StopResponse.SerializeToString,
+            ),
+            'InjectPolicy': grpc.unary_unary_rpc_method_handler(
+                    servicer.InjectPolicy,
+                    request_deserializer=guardrail_dot_protos_dot_harness__pb2.InjectPolicyRequest.FromString,
+                    response_serializer=guardrail_dot_protos_dot_harness__pb2.PolicyAck.SerializeToString,
             ),
             'HotApply': grpc.unary_unary_rpc_method_handler(
                     servicer.HotApply,
                     request_deserializer=guardrail_dot_protos_dot_harness__pb2.HotApplyRequest.FromString,
                     response_serializer=guardrail_dot_protos_dot_harness__pb2.PolicyAck.SerializeToString,
+            ),
+            'StartEpisode': grpc.unary_unary_rpc_method_handler(
+                    servicer.StartEpisode,
+                    request_deserializer=guardrail_dot_protos_dot_harness__pb2.StartEpisodeRequest.FromString,
+                    response_serializer=guardrail_dot_protos_dot_harness__pb2.EpisodeRef.SerializeToString,
+            ),
+            'IssueTask': grpc.unary_unary_rpc_method_handler(
+                    servicer.IssueTask,
+                    request_deserializer=guardrail_dot_protos_dot_harness__pb2.IssueTaskRequest.FromString,
+                    response_serializer=guardrail_dot_protos_dot_harness__pb2.TaskAck.SerializeToString,
             ),
             'EmitEvent': grpc.unary_unary_rpc_method_handler(
                     servicer.EmitEvent,
@@ -145,6 +278,16 @@ def add_StressHarnessServicer_to_server(servicer, server):
                     request_deserializer=guardrail_dot_protos_dot_harness__pb2.EpisodeRef.FromString,
                     response_serializer=guardrail_dot_protos_dot_harness__pb2.EpisodeBundle.SerializeToString,
             ),
+            'StreamTelemetry': grpc.unary_stream_rpc_method_handler(
+                    servicer.StreamTelemetry,
+                    request_deserializer=guardrail_dot_protos_dot_harness__pb2.SessionRef.FromString,
+                    response_serializer=guardrail_dot_protos_dot_harness__pb2.TelemetryFrame.SerializeToString,
+            ),
+            'StreamEvents': grpc.unary_stream_rpc_method_handler(
+                    servicer.StreamEvents,
+                    request_deserializer=guardrail_dot_protos_dot_harness__pb2.SessionRef.FromString,
+                    response_serializer=guardrail_dot_protos_dot_harness__pb2.HarnessEvent.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'guardrail.harness.v1.StressHarness', rpc_method_handlers)
@@ -154,7 +297,116 @@ def add_StressHarnessServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class StressHarness:
-    """Missing associated documentation comment in .proto file."""
+    """---- session lifecycle ------------------------------------------------
+    """
+
+    @staticmethod
+    def StartSession(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/guardrail.harness.v1.StressHarness/StartSession',
+            guardrail_dot_protos_dot_harness__pb2.StartSessionRequest.SerializeToString,
+            guardrail_dot_protos_dot_harness__pb2.SessionRef.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StopSession(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/guardrail.harness.v1.StressHarness/StopSession',
+            guardrail_dot_protos_dot_harness__pb2.SessionRef.SerializeToString,
+            guardrail_dot_protos_dot_harness__pb2.StopResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def InjectPolicy(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/guardrail.harness.v1.StressHarness/InjectPolicy',
+            guardrail_dot_protos_dot_harness__pb2.InjectPolicyRequest.SerializeToString,
+            guardrail_dot_protos_dot_harness__pb2.PolicyAck.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def HotApply(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/guardrail.harness.v1.StressHarness/HotApply',
+            guardrail_dot_protos_dot_harness__pb2.HotApplyRequest.SerializeToString,
+            guardrail_dot_protos_dot_harness__pb2.PolicyAck.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
 
     @staticmethod
     def StartEpisode(request,
@@ -184,7 +436,7 @@ class StressHarness:
             _registered_method=True)
 
     @staticmethod
-    def HotApply(request,
+    def IssueTask(request,
             target,
             options=(),
             channel_credentials=None,
@@ -197,9 +449,9 @@ class StressHarness:
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/guardrail.harness.v1.StressHarness/HotApply',
-            guardrail_dot_protos_dot_harness__pb2.HotApplyRequest.SerializeToString,
-            guardrail_dot_protos_dot_harness__pb2.PolicyAck.FromString,
+            '/guardrail.harness.v1.StressHarness/IssueTask',
+            guardrail_dot_protos_dot_harness__pb2.IssueTaskRequest.SerializeToString,
+            guardrail_dot_protos_dot_harness__pb2.TaskAck.FromString,
             options,
             channel_credentials,
             insecure,
@@ -281,6 +533,60 @@ class StressHarness:
             '/guardrail.harness.v1.StressHarness/EndEpisode',
             guardrail_dot_protos_dot_harness__pb2.EpisodeRef.SerializeToString,
             guardrail_dot_protos_dot_harness__pb2.EpisodeBundle.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamTelemetry(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/guardrail.harness.v1.StressHarness/StreamTelemetry',
+            guardrail_dot_protos_dot_harness__pb2.SessionRef.SerializeToString,
+            guardrail_dot_protos_dot_harness__pb2.TelemetryFrame.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def StreamEvents(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_stream(
+            request,
+            target,
+            '/guardrail.harness.v1.StressHarness/StreamEvents',
+            guardrail_dot_protos_dot_harness__pb2.SessionRef.SerializeToString,
+            guardrail_dot_protos_dot_harness__pb2.HarnessEvent.FromString,
             options,
             channel_credentials,
             insecure,

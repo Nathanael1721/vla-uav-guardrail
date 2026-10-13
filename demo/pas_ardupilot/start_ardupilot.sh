@@ -135,9 +135,15 @@ echo "           Mission Planner: UDP port 14550 (sent to $GCS_ADDRESS), or TCP 
 if [ "$MAVROS" = "1" ]; then
   # shellcheck disable=SC1091
   source /opt/ros/jazzy/setup.bash
-  nohup ros2 run mavros mavros_node --ros-args -p fcu_url:=udp://:14555@ \
-      > "$RUN_DIR/mavros.log" 2>&1 &
-  echo "mavros   : fcu_url udp://:14555@  (log $RUN_DIR/mavros.log)"
+  # system_id 255 = SYSID_MYGCS: ArduPilot takes RC overrides (the perception
+  # node's --hold-mode LOITER throttle hold) only from that system id, and
+  # MAVROS defaults to 1, which is also SYSID_THISMAV. Mission Planner is 255
+  # too, on another component (190; MAVROS 191). MAVROS_FCU_URL is exported
+  # and recorded so a node on this host finds the url for its dev evidence.
+  export MAVROS_FCU_URL="udp://:14555@"
+  nohup ros2 run mavros mavros_node --ros-args -p fcu_url:="$MAVROS_FCU_URL" \
+      -p system_id:=255 > "$RUN_DIR/mavros.log" 2>&1 &
+  echo "mavros   : fcu_url $MAVROS_FCU_URL, system_id 255  (log $RUN_DIR/mavros.log)"
 fi
 
 python3 - "$RUN_DIR/endpoints.json" <<EOF
@@ -145,7 +151,8 @@ import json, sys
 json.dump({"sim_address": "$SIM_ADDRESS", "gcs_address": "$GCS_ADDRESS",
            "node_address": "$NODE_ADDRESS", "orin": "$ORIN" or None,
            "router": "$USED", "gcs_tcp_port": $GCS_TCP,
-           "mavros": bool($MAVROS), "pin": """$PIN""",
+           "mavros": bool($MAVROS), "mavros_fcu_url": "${MAVROS_FCU_URL:-}" or None,
+           "pin": """$PIN""",
            "sitl_args": """${ARGS[*]}"""}, open(sys.argv[1], "w"), indent=2)
 EOF
 echo "running  : SITL pid $SITL_PID; logs in $RUN_DIR (Ctrl+C stops everything)"

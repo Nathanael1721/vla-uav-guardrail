@@ -1,0 +1,79 @@
+# Nightly profile of the stress harness, headless, on a schedule.
+#
+# Grant, Stress Testing, "Test scheduling":
+#   Nightly KPI | nightly | ~200 scenarios x 3 seeds | sim_speedup 1.0 (KPI-grade, HIL topology)
+#
+# IT DOES NOT RUN YET. GitHub fires `schedule` (and offers `workflow_dispatch`)
+# only for workflow files on the repository's DEFAULT branch. On GitHub that
+# is `main`, whose .github/workflows holds only ci.yml; this file, tests.yml
+# and every push are on `master` (checked 2026-10-13 with gh: defaultBranchRef
+# main; contents/.github/workflows?ref=main lists ci.yml only). Until master
+# becomes the default branch or the workflows are brought onto main - the
+# lead's decision - nothing below has run on GitHub.
+#
+# Once it can run, this job runs experiments/profiles/nightly.yaml every night
+# on the headless backend: the grant's SCOPE, not its rail. Every manifest says
+# `headless-kinematic` with a measured sim_speedup in the hundreds, so
+# guardrail.manifest.is_kpi_grade refuses every episode and nothing from this
+# job may feed the final KPI report (the profile file says the same). It is
+# the regression net between builds: the smoke step in tests.yml flies about
+# 50 scenarios on one seed per push; this flies the whole nightly profile on
+# its three seeds.
+#
+# WHAT IT KEEPS. The results JSON, one episode bundle per episode (the
+# six-field manifest, kpi.json, harness_events.jsonl and a self-contained
+# manifest_extras.json from which experiments/sweep_scenarios.py
+# rerun_from_extras re-flies the episode) and kpi_report.md, uploaded as the
+# artifact `nightly-<run number>` for 30 days, whatever the exit code.
+#
+# EXIT CODE. As the sweep's: known failures and tracked episodes are
+# reported, not failed; a new failure, a pinned defect that starts passing
+# (exit 1), a refused run (2) or a run that scored nothing (3) turns it red.
+#
+# COST. Since 2026-10-12 every Shield flies the grant's 5 s forecast at 0.1 s
+# (50 poses per tick, 6 before). The nightly profile took 477 s on the desktop
+# before that change (240 scenarios, 789 episodes) and 1251 s after (221, 732;
+# measured 2026-10-13, one process). The smoke step ran faster on GitHub's
+# runners than on the desktop at 4418ae0 (20-29 s against 33 s), but nothing
+# guarantees that, so the timeout leaves a wide margin. The broad profile (an
+# estimated 7.1 h on the desktop) does not fit one GitHub-hosted job and is
+# not scheduled here.
+
+name: nightly
+
+on:
+  schedule:
+    # 18:17 UTC = 02:17 in Taipei, off the hour (GitHub delays jobs queued
+    # on the hour).
+    - cron: "17 18 * * *"
+  workflow_dispatch:
+
+jobs:
+  nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # requirements.txt pins shapely and numpy (2026-10-12), so the night's
+      # numbers come from named versions.
+      - name: Install the guardrail's dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Nightly profile (stress harness, headless)
+        run: >
+          python experiments/sweep_scenarios.py --profile nightly
+          --out nightly/sweep.json --runs nightly/episodes
+
+      - name: Keep the results, episode bundles and KPI report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ github.run_number }}
+          path: nightly/
+          retention-days: 30
+          if-no-files-found: warn

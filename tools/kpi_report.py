@@ -52,6 +52,29 @@ WHAT IT REFUSES TO BLUR
   * The stored figure vs the recomputed one. Where they differ the report
     says so (e.g. `ros2_ped_off`'s time to safe, corrected 2026-10-06), and
     `tools/rescore_kpis.py` is what writes corrections back.
+
+SINCE 2026-10-12 (the WP4 outputs the final report rests on)
+
+  * KPI grade is the manifest AND the evidence: a run `is_kpi_grade` passes
+    is demoted unless the replay bundle beside it verifies with a trusted
+    signature (`evidence_grade`, guardrail.replay.kpi_evidence_grade) and
+    holds the very flight_log.jsonl and manifest.json the report scores the
+    run from (`bundle_binding`, since 2026-10-13: a signed bundle of another
+    flight, or a log edited after packing, verified as well); the
+    manifest's own verdict stays beside it (`kpi_grade_manifest`).
+  * A zero that counts an event which could not happen is printed vacuous
+    (rollup()'s `vacuous_zeros`), never as a measured 0.
+  * The mean repair magnitude per priority and per operator class.
+  * WP1 (docs/data/wp1_roundtrip.json, every key it holds, nulls beside),
+    WP2 (the compiler's KPIs at the default budget and at the largest budget
+    where the naive cut drops a P0 rule: written to docs/data/csp_kpis.json
+    by --wp2-only, recomputed for a report by --wp2, else read from that
+    file and labelled as read), the tick budget (stored profiles and the
+    flown logs' `shield_ms`), and the A/B and per-paraphrase sections, n/m
+    until a pilot that reads the prompt flies them.
+  * --baseline <report.json>: new, fixed and gone failures and per-family
+    deltas against an earlier report; the JSON now carries `failures` for
+    the next comparison.
 """
 from __future__ import annotations
 
@@ -62,6 +85,7 @@ import math
 import shlex
 import subprocess
 import sys
+import tarfile
 from datetime import date
 from pathlib import Path
 
@@ -100,7 +124,7 @@ PRIORITY_FIELDS = (
     "p0_acted_tick_share", "failsafe_expected_ticks", "failsafe_correct_ticks",
     "failsafe_permitted_ticks", "violations_by_risk_level", "repair_outcomes",
     "outcome", "mission_success", "mission_fail_reasons", "unsafe_p0_ticks",
-    "mission_started_unsafe",
+    "mission_started_unsafe", "repair_magnitude_by_priority",
 )
 
 # Headline fields compared between the stored kpi.json and the recomputation.
@@ -179,7 +203,9 @@ def shield_off_table(k: dict) -> dict:
               "repair_unmeasured_ticks": 0, "repair_outcomes": None,
               "repair_success_basis": None, "repair_theta_unchecked_ticks": 0,
               "mean_repair_magnitude_mps": None, "max_repair_magnitude_mps": None,
-              "repaired_ticks": 0})
+              "repaired_ticks": 0, "repair_magnitude_by_priority": None,
+              "repair_magnitude_by_operator_class": None,
+              "repair_magnitude_breakdown_status": "shield_off"})
     return k
 
 
@@ -187,12 +213,125 @@ def shield_off_table(k: dict) -> dict:
 # one flown episode
 # --------------------------------------------------------------------------- #
 
-def load_run(run: Path, by_hash: dict, by_id: dict) -> dict:
+def bundle_binding(run: Path, bundle: Path) -> list[str]:
+    """Why `bundle` is not THIS run's evidence; empty when it is.
+
+    The report scores a run from the files in its folder, so the bundle must
+    hold those same files: the run's flight_log.jsonl (else, for a stored
+    table, its kpi.json) and its manifest.json, byte for byte once line
+    endings are LF (a checkout may convert them). A signed bundle of another
+    flight, or a folder log edited after packing, verifies as a bundle and
+    still says nothing about the figures recomputed here."""
+    from guardrail.replay import EPISODE
+    names = ["flight_log.jsonl" if (run / "flight_log.jsonl").is_file() else "kpi.json",
+             "manifest.json"]
+    out: list[str] = []
+    try:
+        with tarfile.open(bundle, "r:gz") as tar:
+            members = {m.name: m for m in tar.getmembers()}
+            for n in names:
+                f = run / n
+                if not f.is_file():
+                    continue
+                m = members.get(EPISODE + n)
+                if m is None:
+                    out.append(f"it carries no {n}, so nothing ties it to the run "
+                               f"folder's {n}")
+                elif (tar.extractfile(m).read().replace(b"\r\n", b"\n")
+                      != f.read_bytes().replace(b"\r\n", b"\n")):
+                    out.append(f"its {n} is not the run folder's (another flight's "
+                               f"bundle, or the folder's file was edited after packing)")
+    except (OSError, tarfile.TarError, EOFError) as e:
+        return [f"it cannot be opened: {e}"]
+    return out
+
+
+def evidence_grade(run: Path, graded: bool, reasons: list[str],
+                   trust_store=None) -> tuple[bool, list[str], str | None]:
+    """The KPI grade once the run's replay bundle has been checked as evidence.
+
+    `is_kpi_grade` judges the manifest and cannot see the bundle; a run it
+    passes is demoted unless the replay bundle beside it verifies with a
+    trusted signature (guardrail.replay.kpi_evidence_grade, which re-derives
+    the KPIs from the archived log) AND holds the files this report scores
+    the run from (`bundle_binding`). A graded run with NO bundle is demoted
+    too: nothing would let a reader re-derive its figures. The bundle is
+    `<run>.replay.tar.gz` when present, else the newest `*.replay.tar.gz`
+    that is bound to the run (else the newest, which then fails the binding).
+    Returns (graded, reasons, the bundle checked or None)."""
+    own = run / f"{run.name}.replay.tar.gz"
+    found = sorted(run.glob("*.replay.tar.gz"), key=lambda p: p.stat().st_mtime,
+                   reverse=True)
+    pick = own if own.is_file() else (found[0] if found else None)
+    if not graded:
+        return False, list(reasons), _rel(pick) if pick else None
+    if pick is None:
+        return False, list(reasons) + [
+            "no replay bundle beside the run (*.replay.tar.gz): nothing lets a "
+            "reader re-derive its figures, so it cannot serve as KPI evidence"], None
+    unbound = bundle_binding(run, pick)
+    if unbound and not own.is_file():
+        bound = next((p for p in found[1:] if not bundle_binding(run, p)), None)
+        if bound is not None:
+            pick, unbound = bound, []
+    from guardrail.replay import kpi_evidence_grade
+    g, why = kpi_evidence_grade(graded, reasons, pick, trust_store)
+    if unbound:
+        g, why = False, list(why) + [
+            f"its replay bundle {pick.name} is not this run's evidence: "
+            + "; ".join(unbound)]
+    return g, why, _rel(pick)
+
+
+TICK_BUDGET_MS = 100.0          # Safety Shield p6: "Monitor tick budget <= 100 ms (10 Hz)"
+
+
+def _pct(vals: list[float], q: float) -> float | None:
+    if not vals:
+        return None
+    s = sorted(vals)
+    return round(s[min(len(s) - 1, max(0, math.ceil(q * len(s)) - 1))], 3)
+
+
+def tick_timing(rows: list[dict]) -> dict | None:
+    """What a flown log says about the 100 ms tick budget: the Shield's own
+    filter() time per tick (`shield_ms`, logged since 2026-10-06) and the
+    loop period between logged ticks (the end-to-end rate the rail achieved).
+    Nearest-rank percentiles; None when the log has neither."""
+    ms = [float(r["shield_ms"]) for r in rows
+          if isinstance(r.get("shield_ms"), (int, float))
+          and not isinstance(r.get("shield_ms"), bool)]
+    ts = [float(r["t"]) for r in rows if isinstance(r.get("t"), (int, float))]
+    per = [round(1000.0 * (b - a), 3) for a, b in zip(ts, ts[1:]) if b > a]
+    if not ms and not per:
+        return None
+    return {"shield_ms": {"n": len(ms), "p50": _pct(ms, 0.5), "p99": _pct(ms, 0.99),
+                          "max": round(max(ms), 3) if ms else None,
+                          "over_budget": sum(1 for v in ms if v > TICK_BUDGET_MS)},
+            "period_ms": {"n": len(per), "p50": _pct(per, 0.5), "p99": _pct(per, 0.99),
+                          "max": max(per) if per else None,
+                          "over_budget": sum(1 for v in per if v > TICK_BUDGET_MS)}}
+
+
+def _arms_of(doc: dict) -> dict | None:
+    """The arm record a stress-harness bundle stored (kpi.json `arm_record`),
+    reduced to what the A/B and paraphrase sections need."""
+    rec = doc.get("arm_record")
+    if not isinstance(rec, dict):
+        return None
+    para = rec.get("paraphrase") if isinstance(rec.get("paraphrase"), dict) else {}
+    return {"arm": rec.get("arm"), "prefix": rec.get("prefix"),
+            "pilot_reads_text": rec.get("pilot_reads_text"),
+            "paraphrase_id": para.get("paraphrase_id"), "backend": para.get("backend"),
+            "cell": doc.get("id_cell") or doc.get("id"), "seed": doc.get("seed")}
+
+
+def load_run(run: Path, by_hash: dict, by_id: dict, trust_store=None) -> dict:
     """Score one run folder. Returns an episode dict, or {"skipped": reason}."""
     log = run / "flight_log.jsonl"
     if not log.is_file():
         if (run / "kpi.json").is_file():
-            return load_stored(run)
+            return load_stored(run, trust_store)
         return {"id": run.name, "source": _rel(run),
                 "skipped": "no flight_log.jsonl and no kpi.json"}
     rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()
@@ -206,7 +345,7 @@ def load_run(run: Path, by_hash: dict, by_id: dict) -> dict:
     if isinstance(stored.get("kpi"), dict) and stored.get("template"):
         # A stress-harness bundle written with --keep-logs: re-scored from its
         # own log, under its template and parameter cell (load_bundle_log).
-        return load_bundle_log(run, rows, stored, manifest)
+        return load_bundle_log(run, rows, stored, manifest, trust_store)
     if isinstance(stored.get("kpi"), dict):
         stored = stored["kpi"]
     pol, how, note = R.resolve_policy(run, manifest, by_hash, by_id)
@@ -248,6 +387,11 @@ def load_run(run: Path, by_hash: dict, by_id: dict) -> dict:
         priority_source = ("stored kpi.json, computed in flight against the real "
                            "policy" if stored else
                            "n/m: no resolvable policy and no stored kpi.json")
+        if (not isinstance(k.get("repair_magnitude_by_priority"), dict)
+                and isinstance(k.get("repair_magnitude_by_operator_class"), dict)):
+            # The class table needs no priorities and stays; the priority
+            # table was withheld, and the status says which half is missing.
+            k["repair_magnitude_breakdown_status"] = "priorities_unresolved"
     k["null_hover_mission"] = K.null_hover_mission(rows, metrics)
     wt = K.worst_tick(rows, prios)
     if wt is not None and pol is None:
@@ -256,6 +400,8 @@ def load_run(run: Path, by_hash: dict, by_id: dict) -> dict:
 
     graded, reasons = (is_kpi_grade(manifest, metrics) if manifest
                        else (False, ["no manifest.json"]))
+    manifest_grade = graded
+    graded, reasons, ev_bundle = evidence_grade(run, graded, reasons, trust_store)
     goal = k["mission_goal_status"]
     mission = ("waypoint" if goal != "undeclared" else
                "follow" if metrics.get("frac_within_30m") is not None else "other")
@@ -300,6 +446,10 @@ def load_run(run: Path, by_hash: dict, by_id: dict) -> dict:
         "id": run.name, "source": _rel(run), "kind": "flight", "recomputed": True,
         "family": family, "arm": arm, "rail": rail, "cell": cell,
         "kpi_grade": graded, "kpi_grade_reasons": reasons,
+        # What the manifest alone said, before the replay bundle was checked
+        # as evidence (evidence_grade), and the bundle that was checked.
+        "kpi_grade_manifest": manifest_grade, "evidence_bundle": ev_bundle,
+        "tick_timing": tick_timing(rows),
         # The verdict written at flight time, under the rule of that day. Kept
         # beside today's: is_kpi_grade has tightened since (2026-10-06: the
         # desktop canonical-hil rail now reads as 'dev'), and a reader must be
@@ -367,15 +517,35 @@ def time_to_safe_basis(sources: dict, pol) -> str:
 # a stress-harness episode bundle WITH its per-tick log (--keep-logs)
 # --------------------------------------------------------------------------- #
 
+def forecast_suffix(*docs) -> str:
+    """"/forecast-<arm>" for an episode flown on a comparison forecast (the
+    stress harness's labelled 3 s arm, experiments/sweep_scenarios.py
+    --forecast-arms), "" for the grant's 5 s / 0.1 s. Without it a report over
+    --publish bundles pooled the 3 s comparison with the grant rows. The arm
+    is read from the KPI table (`forecast_arm`) or the extras' `forecast.arm`;
+    a run id carrying "forecast-3s" says the same."""
+    for d in docs:
+        if not isinstance(d, dict):
+            continue
+        fc = d.get("forecast") if isinstance(d.get("forecast"), dict) else {}
+        arm = d.get("forecast_arm") or (d.get("kpi") or {}).get("forecast_arm") or fc.get("arm")
+        if arm and arm != "grant":
+            return f"/forecast-{arm}"
+        if "forecast-3s" in str(d.get("id") or ""):
+            return "/forecast-3s"
+    return ""
+
+
 def _bundle_family(doc: dict, sid, params: dict, arm: str) -> str:
     template = doc.get("template") or str(sid).split("-")[0]
     fam = f"stress-bundle/{template}/{cell_name(sid, params)}/shield-{arm}"
     if doc.get("prefix") == "off":
         fam += "/prefix-off"
-    return fam
+    return fam + forecast_suffix(doc)
 
 
-def load_bundle_log(run: Path, rows: list[dict], doc: dict, manifest: dict) -> dict:
+def load_bundle_log(run: Path, rows: list[dict], doc: dict, manifest: dict,
+                    trust_store=None) -> dict:
     """One episode bundle written by experiments/sweep_scenarios.py with
     --keep-logs: RE-SCORED from its own flight_log.jsonl with
     guardrail.kpi.compute (follow-up #37: until 2026-10-07 the profiles ran
@@ -405,6 +575,8 @@ def load_bundle_log(run: Path, rows: list[dict], doc: dict, manifest: dict) -> d
     seed = doc.get("seed", manifest.get("random_seed"))
     graded, reasons = (is_kpi_grade(manifest, {}) if manifest
                        else (False, ["no manifest.json"]))
+    manifest_grade = graded
+    graded, reasons, ev_bundle = evidence_grade(run, graded, reasons, trust_store)
     diffs = {f: {"stored": k_stored[f], "recomputed": k.get(f)} for f in _COMPARE
              if f in k_stored and k_stored[f] != k.get(f)}
     arm_tag = ((doc.get("arm_record") or {}).get("arm") or "")
@@ -415,10 +587,11 @@ def load_bundle_log(run: Path, rows: list[dict], doc: dict, manifest: dict) -> d
         "arm": arm, "rail": RAIL.get(manifest.get("topology"),
                                      manifest.get("topology") or "no-manifest"),
         "kpi_grade": graded, "kpi_grade_reasons": reasons,
+        "kpi_grade_manifest": manifest_grade, "evidence_bundle": ev_bundle,
         "kpi_grade_at_flight": doc.get("kpi_grade"),
         "code_revision": manifest.get("code_revision"),
         "time_to_safe_basis": "logged by the harness (true position)",
-        "bundle": _rel(run),
+        "bundle": _rel(run), "arms": _arms_of(doc), "prefix": doc.get("prefix"),
         "params": {"template": doc.get("template"), "cell": params or None,
                    "seed": seed, "scenario_id": sid},
         "stored_vs_recomputed": diffs,
@@ -432,7 +605,7 @@ def load_bundle_log(run: Path, rows: list[dict], doc: dict, manifest: dict) -> d
 # a stress-harness episode bundle (stored table, no per-tick log)
 # --------------------------------------------------------------------------- #
 
-def load_stored(run: Path) -> dict:
+def load_stored(run: Path, trust_store=None) -> dict:
     """One episode bundle written by experiments/sweep_scenarios.py's profiles.
 
     The bundle holds the grant's manifest, the KPI table the harness computed
@@ -469,6 +642,8 @@ def load_stored(run: Path) -> dict:
         k = shield_off_table(k)
     graded, reasons = (is_kpi_grade(manifest, {}) if manifest
                        else (False, ["no manifest.json"]))
+    manifest_grade = graded
+    graded, reasons, ev_bundle = evidence_grade(run, graded, reasons, trust_store)
     goal = k.get("reached_goal")
     arm_tag = ((doc.get("arm_record") or {}).get("arm") or "")
     k.update({
@@ -480,9 +655,11 @@ def load_stored(run: Path) -> dict:
         "arm": arm, "rail": RAIL.get(manifest.get("topology"),
                                      manifest.get("topology") or "no-manifest"),
         "kpi_grade": graded, "kpi_grade_reasons": reasons,
+        "kpi_grade_manifest": manifest_grade, "evidence_bundle": ev_bundle,
         "kpi_grade_at_flight": doc.get("kpi_grade"),
         "code_revision": manifest.get("code_revision"),
         "time_to_safe_basis": "logged by the harness (true position)",
+        "arms": _arms_of(doc), "prefix": doc.get("prefix"),
         "null_hover_mission": (
             {"success": False, "basis": "declared goal; a hover does not travel"}
             if goal is not None else
@@ -562,7 +739,8 @@ def load_sweep(path: Path) -> list[dict]:
             "id": r.get("id") or sid, "scenario_id": sid, "source": _rel(path),
             "kind": "sweep-json", "recomputed": False,
             "family": (f"sweep-json/{template}/{cell_name(sid, cell)}/shield-{arm}"
-                       + ("/prefix-off" if r.get("prefix") == "off" else "")),
+                       + ("/prefix-off" if r.get("prefix") == "off" else "")
+                       + forecast_suffix(r, r.get("kpi"))),
             "arm": arm, "rail": "headless-kinematic",
             "kpi_grade": False,
             "kpi_grade_reasons": [
@@ -627,6 +805,11 @@ def _f(v, nd=3, pct=False):
 _BASIS_NOTE = {"recheck_only_theta_not_applied": " (theta unchecked)",
                "recheck_and_theta_partial": " (theta partial)"}
 
+# How a zero that could not have been anything else is printed (rollup()'s
+# `vacuous_zeros`): named for what it is, never as a measured 0.
+VACUOUS = {"p0_escape_rate": "vacuous (no P0 tick)",
+           "false_trigger_rate": "vacuous (no FSM state logged)"}
+
 
 def _rs(row: dict) -> str:
     st = row.get("repair_success_status")
@@ -654,9 +837,11 @@ def _family_table(fams: dict[str, dict]) -> list[str]:
             "Mean time to safe (s) |")
     lines = [head, "|" + "---|" * 11]
     for name, s in fams.items():
+        vac = s.get("vacuous_zeros") or {}
         ms = ("n/m" if s["mission_success_rate"] is None else
               f"{s['mission_successes']}/{s['episodes_mission_scored']}")
         ft = ("n/m" if s["false_trigger_rate"] is None else
+              VACUOUS["false_trigger_rate"] if "false_trigger_rate" in vac else
               f"{s['false_trigger_ticks']}")
         st = s.get("time_to_safe_status")
         tts = ("never unsafe" if st == "never_unsafe" else
@@ -673,9 +858,12 @@ def _family_table(fams: dict[str, dict]) -> list[str]:
         # the labelled column beside it.
         fsc = ("no P0 tick" if s["failsafe_expected_ticks"] == 0 else
                _f(s.get("p0_acted_tick_share"), 3))
-        esc = _f(s["p0_escape_rate"], 4)
-        if s["p0_escapes"] is not None:
-            esc += f" ({s['p0_escapes']})"
+        if "p0_escape_rate" in vac:
+            esc = VACUOUS["p0_escape_rate"]
+        else:
+            esc = _f(s["p0_escape_rate"], 4)
+            if s["p0_escapes"] is not None:
+                esc += f" ({s['p0_escapes']})"
         lines.append(
             f"| `{name}` | {s['episodes']} | {esc} | {fsc} | {_labelled(s)} | "
             f"{ft} | {ms} | {_f(s['mean_repair_count_per_episode'], 1)} | "
@@ -698,9 +886,13 @@ def _null_table(fams: dict[str, dict]) -> list[str]:
                 f"{_f(lab['failsafe_trigger_correctness'], pct=True)} / "
                 f"{_f(lab.get('null_always_trigger'), pct=True)} / "
                 f"{_f(lab.get('null_never_trigger'), pct=True)}")
+        vac = s.get("vacuous_zeros") or {}
+        esc = (VACUOUS["p0_escape_rate"] if "p0_escape_rate" in vac
+               else _f(s["p0_escape_rate"], 4))
+        nul = (VACUOUS["p0_escape_rate"] if "null_passthrough_p0_escape_rate" in vac
+               else _f(s["null_passthrough_p0_escape_rate"], 4))
         lines.append(
-            f"| `{name}` | {_f(s['p0_escape_rate'], 4)} / "
-            f"{_f(s['null_passthrough_p0_escape_rate'], 4)} | {_rs(s)} / "
+            f"| `{name}` | {esc} / {nul} | {_rs(s)} / "
             f"{_f(s['null_always_brake_repair_success_rate'], pct=True)} | "
             f"{_f(s['mission_success_rate'], pct=True)} / {hov} | {labt} |")
     return lines
@@ -727,6 +919,508 @@ def params_brief(p: dict | None, limit: int = 70) -> str:
         bits.append(",".join(f"{a}={b}" for a, b in sorted(cell.items())))
     txt = "; ".join(bits) or "-"
     return txt if len(txt) <= limit else txt[:limit - 3] + "..."
+
+
+# --------------------------------------------------------------------------- #
+# the sections beyond the per-family table (2026-10-12)
+# --------------------------------------------------------------------------- #
+
+DEFAULT_WP1 = "docs/data/wp1_roundtrip.json"
+DEFAULT_CSP_JSON = "docs/data/csp_kpis.json"
+DEFAULT_TICK_PROFILES = "deploy/evidence/*/shield_tick_profile*.json"
+WP2_SCAN_STEP = 8               # tokens between the budgets the WP2 scan tries
+WP2_SCAN_FLOOR = 16
+
+
+def wp1_section(path: Path) -> dict | None:
+    """WP1's acceptance ("policy load round-trip; bundle replayability") as
+    tools/wp1_roundtrip_kpi.py measured it: its `kpi` block and every null
+    block (`null_*`), whatever keys they hold. None without the file."""
+    d = _read_json(path)
+    if not d:
+        return None
+    nulls = {k: v for k, v in d.items() if k.startswith("null") and isinstance(v, dict)}
+    return {"source": _rel(path), "generated": d.get("generated"),
+            "command": d.get("command"), "code_revision": d.get("code_revision"),
+            "kpi": d.get("kpi") if isinstance(d.get("kpi"), dict) else {},
+            "nulls": nulls}
+
+
+def _scan_row(budget: int, rep: dict) -> dict:
+    t = rep["totals"]
+    return {"budget_tokens": budget, "n_compiled": t["n_compiled"],
+            "n_raised_budget_exceeded": t["n_raised_budget_exceeded"],
+            "n_p0_in_scope": t["n_p0_in_scope"], "n_p0_covered": t["n_p0_covered"],
+            "p0_coverage": t["p0_coverage"],
+            "baseline_n_p0_covered": t["baseline_n_p0_covered"],
+            "baseline_p0_coverage": t["baseline_p0_coverage"],
+            "null_p0_coverage": t["null_p0_coverage"],
+            "kpi_discriminates": t["kpi_discriminates"],
+            "max_tokens_used": t["max_tokens_used"]}
+
+
+def wp2_section(policies_dir: str | Path, budget: int | None = None,
+                step: int = WP2_SCAN_STEP, floor: int = WP2_SCAN_FLOOR) -> dict:
+    """The Prefix Compiler's KPIs (guardrail.kpi.compiler_kpis) at the default
+    budget, AND at the largest budget where the naive cut drops a P0 rule.
+
+    At the default 256 tokens every policy fits whole, so the naive baseline
+    also covers every P0 rule and `kpi_discriminates` is False: the 100 %
+    shows only that nothing had to be cut. The scan walks the budget down by
+    `step` tokens until the baseline (guardrail.compiler.naive_prefix_baseline,
+    no priority and no risk) first loses a P0 rule the compiler keeps, and
+    reports both there, with the policies whose P0 rules the naive cut lost.
+    `discriminating` is None when no budget down to `floor` separates them."""
+    from guardrail.compiler import DEFAULT_BUDGET_TOKENS, coverage_report
+    b0 = int(budget or DEFAULT_BUDGET_TOKENS)
+    pdir = Path(policies_dir) if Path(policies_dir).is_absolute() else ROOT / policies_dir
+    scan, chosen = [], None
+    for b in range(b0, floor - 1, -step):
+        rep = coverage_report(pdir, b)
+        scan.append(_scan_row(b, rep))
+        if rep["totals"]["kpi_discriminates"]:
+            chosen = (b, rep)
+            break
+    out = {"policies_dir": _rel(pdir), "default": K.compiler_kpis(pdir, b0),
+           "scan": scan, "scan_step_tokens": step, "scan_floor_tokens": floor,
+           "discriminating": None}
+    if chosen is not None:
+        b, rep = chosen
+        lost = [{"file": r["file"], "policy_id": r["policy_id"],
+                 "baseline_p0_missing": r["baseline_p0_missing"],
+                 "compiler_p0_missing": r["p0_missing"]}
+                for r in rep["rows"] if r["baseline_p0_missing"]]
+        out["discriminating"] = {**K.compiler_kpis(pdir, b),
+                                 "policies_where_the_naive_cut_drops_p0": lost,
+                                 "raised": [{"file": r["file"], "p0_tokens": r["p0_tokens"]}
+                                            for r in rep["raised"]]}
+    return out
+
+
+def tick_budget_section(profile_glob: str, episodes: list[dict]) -> dict:
+    """The Safety Shield's 100 ms tick budget and the Policy DSL's 5 ms query
+    budget: the stored profiles of tools/profile_shield_tick.py (attach_summary
+    of each), and the timing the flown logs carry (tick_timing), per rail.
+    A profile is evidence for the grant's budget only on a Jetson Orin in the
+    hil topology; every other host's is a baseline."""
+    profiles = []
+    pattern = profile_glob if Path(profile_glob).is_absolute() else str(ROOT / profile_glob)
+    paths = sorted(glob.glob(pattern))
+    if paths:
+        import profile_shield_tick as P
+        for p in paths:
+            prof = _read_json(Path(p))
+            if prof:
+                profiles.append(P.attach_summary(prof, Path(p)))
+    rails: dict[str, dict] = {}
+    for e in episodes:
+        tt = e.get("tick_timing")
+        if not isinstance(tt, dict):
+            continue
+        # Episodes are counted per measure: a log with periods but no
+        # `shield_ms` (flown before 2026-10-06) is behind the period columns,
+        # not behind the Shield's, and counting it there would overstate how
+        # many flights the Shield's p99 rests on.
+        r = rails.setdefault(e.get("rail") or "unknown", {
+            "episodes_with_timing": 0, "shield_episodes": 0, "shield_ticks": 0,
+            "shield_worst_p99_ms": None, "shield_max_ms": None, "shield_over_budget": 0,
+            "period_episodes": 0, "period_ticks": 0, "period_worst_p50_ms": None,
+            "period_worst_p99_ms": None, "period_over_budget": 0})
+        p50 = (tt.get("period_ms") or {}).get("p50")
+        if p50 is not None:
+            r["period_worst_p50_ms"] = max(p50, r["period_worst_p50_ms"] or 0.0)
+        r["episodes_with_timing"] += 1
+        for src, pre in (("shield_ms", "shield"), ("period_ms", "period")):
+            c = tt.get(src) or {}
+            if not c.get("n"):
+                continue
+            r[f"{pre}_episodes"] += 1
+            r[f"{pre}_ticks"] += c["n"]
+            r[f"{pre}_over_budget"] += c.get("over_budget") or 0
+            if c.get("p99") is not None:
+                r[f"{pre}_worst_p99_ms"] = max(c["p99"], r[f"{pre}_worst_p99_ms"] or 0.0)
+            if pre == "shield" and c.get("max") is not None:
+                r["shield_max_ms"] = max(c["max"], r["shield_max_ms"] or 0.0)
+    return {"budget_ms": TICK_BUDGET_MS, "profiles": profiles, "flown_by_rail": rails}
+
+
+def arms_sections(episodes: list[dict]) -> tuple[dict, dict]:
+    """The Prefix Compiler's A/B (prefix on / off, same seed: "the KPI report
+    shows the delta", Prefix Compiler p6) and WP4's per-paraphrase robustness.
+    Measured only over episodes whose pilot READS the prompt
+    (`pilot_reads_text`): a headless pilot ignores text, so its arms are one
+    flight by construction and their pairs are plumbing checks. Until such
+    episodes are flown both sections are n/m, with the headless count beside."""
+    armed = [e for e in episodes if isinstance(e.get("arms"), dict)]
+    reads = [e for e in armed if e["arms"].get("pilot_reads_text") is True]
+    blind = [e for e in armed if e["arms"].get("pilot_reads_text") is not True]
+
+    def pairs(eps):
+        g: dict[tuple, dict] = {}
+        for e in eps:
+            a = e["arms"]
+            g.setdefault((a.get("cell"), a.get("seed"), a.get("paraphrase_id")),
+                         {}).setdefault(a.get("prefix"), []).append(e)
+        return [v for v in g.values() if "on" in v and "off" in v]
+
+    def rate(eps):
+        v = [K.mission_success_with_goal(e) for e in eps]
+        v = [x for x in v if x is not None]
+        return (round(sum(v) / len(v), 6), len(v)) if v else (None, 0)
+
+    flown, headless = pairs(reads), pairs(blind)
+    if flown:
+        on = [e for p in flown for e in p["on"]]
+        off = [e for p in flown for e in p["off"]]
+        (r_on, n_on), (r_off, n_off) = rate(on), rate(off)
+        ab = {"status": "measured", "pairs": len(flown),
+              "mission_success_prefix_on": r_on, "scored_on": n_on,
+              "mission_success_prefix_off": r_off, "scored_off": n_off,
+              "delta_on_minus_off": (round(r_on - r_off, 6)
+                                     if r_on is not None and r_off is not None else None),
+              "p0_escapes_prefix_on": sum(e.get("p0_escapes") or 0 for e in on),
+              "p0_escapes_prefix_off": sum(e.get("p0_escapes") or 0 for e in off),
+              "headless_pairs": len(headless)}
+    else:
+        ab = {"status": "n/m", "pairs": 0, "headless_pairs": len(headless),
+              "why": "no prefix on/off pair has been flown by a pilot that reads "
+                     "the prompt; the headless pilots ignore text, so their pairs "
+                     "are plumbing checks, not an A/B"}
+    trials = [{"paraphrase_id": e["arms"]["paraphrase_id"],
+               "backend": e["arms"].get("backend"),
+               "mission_success": K.mission_success_with_goal(e)}
+              for e in reads if e["arms"].get("paraphrase_id")]
+    n_blind = sum(1 for e in blind if e["arms"].get("paraphrase_id"))
+    if trials:
+        para = {"status": "measured", "trials": len(trials), "headless_trials": n_blind,
+                **K.per_paraphrase_robustness(trials)}
+    else:
+        para = {"status": "n/m", "trials": 0, "headless_trials": n_blind,
+                "why": "no paraphrase arm has been flown by a pilot that reads the "
+                       "prompt; per-paraphrase robustness needs one"}
+    return ab, para
+
+
+# Family figures the baseline comparison reports (rollup() keys).
+BASELINE_FIELDS = ("episodes", "p0_escape_rate", "p0_escapes", "mission_success_rate",
+                   "mean_repair_count_per_episode", "mean_repair_magnitude_mps",
+                   "repair_success_rate", "mean_time_to_safe_s")
+
+
+def failure_index(episodes: list[dict], include_controls: bool = False) -> dict[str, dict]:
+    """Every failing episode (guardrail.kpi.failure_categories non-empty),
+    keyed `<family>::<id>`; Shield-off control arms only when asked for, as in
+    the top-K table. Written into the report JSON as `failures`, so a later
+    run can compare against it (--baseline)."""
+    out = {}
+    for e in episodes:
+        if not include_controls and e.get("arm") == "off":
+            continue
+        cats = K.failure_categories(e)
+        if cats:
+            out[f"{e.get('family')}::{e.get('id')}"] = {
+                "id": e.get("id"), "family": e.get("family"),
+                "failure_category": cats, "kpi_grade": bool(e.get("kpi_grade"))}
+    return out
+
+
+def _flat_families(rep: dict) -> dict[str, dict]:
+    out = {}
+    for group in ("kpi_grade", "kpi_grade_at_flight_only", "other"):
+        for name, row in ((rep.get("families") or {}).get(group) or {}).items():
+            out.setdefault(name, dict(row, grade_group=group))
+    return out
+
+
+def compare_baseline(now: dict, base: dict, base_path: str,
+                     include_controls: bool = False) -> dict:
+    """Against an earlier report JSON (--baseline): failures that are NEW
+    (failing now, not failing or absent then), FIXED (failing then, present
+    and not failing now), GONE (failing then, absent now - not counted as
+    fixed), and those failing in both whose categories changed; and per
+    family the change in each BASELINE_FIELDS figure. A baseline written
+    before `failures` existed is read from its `episodes`."""
+    if isinstance(base.get("failures"), dict):
+        before = base["failures"]
+    else:
+        before = failure_index(base.get("episodes") or [], include_controls)
+    after = now["failures"]
+    present = {f"{e.get('family')}::{e.get('id')}" for e in now.get("episodes") or []}
+    had = ({f"{e.get('family')}::{e.get('id')}" for e in base.get("episodes") or []}
+           | set(before))
+    # `was`: "passing" - a regression of an episode the baseline had and did
+    # not count as failing; "absent" - an episode the baseline did not have.
+    new = [dict(v, key=k, was="passing" if k in had else "absent")
+           for k, v in sorted(after.items()) if k not in before]
+    fixed = [dict(v, key=k) for k, v in sorted(before.items())
+             if k not in after and k in present]
+    gone = [dict(v, key=k) for k, v in sorted(before.items())
+            if k not in after and k not in present]
+    changed = [{"key": k, "id": after[k]["id"], "family": after[k]["family"],
+                "baseline": before[k]["failure_category"],
+                "now": after[k]["failure_category"]}
+               for k in sorted(set(before) & set(after))
+               if before[k]["failure_category"] != after[k]["failure_category"]]
+    fa, fb = _flat_families(now), _flat_families(base)
+    deltas = {}
+    for name in sorted(set(fa) & set(fb)):
+        row = {}
+        for f in BASELINE_FIELDS:
+            a, b = K._n(fb[name].get(f)), K._n(fa[name].get(f))
+            if a is None and b is None:
+                continue
+            if a is not None and b is not None and abs(a - b) <= 1e-12:
+                continue
+            row[f] = {"baseline": a, "now": b,
+                      "delta": (round(b - a, 6) if a is not None and b is not None
+                                else None)}
+        if row:
+            deltas[name] = row
+    return {"path": base_path, "generated": base.get("generated"),
+            "code_revision": base.get("code_revision"),
+            "new_failures": new, "fixed_failures": fixed, "gone_failures": gone,
+            "changed_failures": changed, "family_deltas": deltas,
+            "families_added": sorted(set(fa) - set(fb)),
+            "families_removed": sorted(set(fb) - set(fa))}
+
+
+def _cell(v) -> str:
+    if v is None:
+        return "-"
+    if isinstance(v, list):
+        return ", ".join(str(x) for x in v) if v else "none"
+    if isinstance(v, dict):
+        return json.dumps(v, sort_keys=True)
+    return str(v)
+
+
+def _render_wp1(w: dict | None) -> list[str]:
+    L = ["## WP1 - policy load round trip and bundle replayability", ""]
+    if not w:
+        return L + [f"n/m: no `{DEFAULT_WP1}` (run `python tools/wp1_roundtrip_kpi.py`).", ""]
+    L += [f"From `{w['source']}` (`{w.get('command')}`, generated {w.get('generated')} at "
+          f"`{w.get('code_revision')}`), as it stands; every figure it holds, each null "
+          f"beside it.", ""]
+    names = list(w["kpi"])
+    for nb in w["nulls"].values():
+        names += [k for k in nb if k != "why" and k not in names]
+    cols = list(w["nulls"])
+    L += ["| Figure | Measured | " + " | ".join(f"`{c}`" for c in cols) + " |",
+          "|---|---|" + "---|" * len(cols)]
+    for n in names:
+        L.append(f"| `{n}` | {_cell(w['kpi'].get(n))} | "
+                 + " | ".join(_cell(w["nulls"][c].get(n)) for c in cols) + " |")
+    L.append("")
+    for c in cols:
+        if w["nulls"][c].get("why"):
+            L.append(f"- `{c}`: {w['nulls'][c]['why']}")
+    return L + [""]
+
+
+def _render_wp2(w: dict | None) -> list[str]:
+    L = ["## WP2 - Prefix Compiler KPIs", ""]
+    if not w:
+        return L + [f"(not computed, and no `{DEFAULT_CSP_JSON}` to read: `--wp2` "
+                    "computes it for this report; `--wp2-only` computes it and writes "
+                    "that file)", ""]
+    if w.get("read_from"):
+        L += [f"Read from `{w['read_from']}` (generated {w.get('generated')} at "
+              f"`{w.get('code_revision')}` by `{w.get('command')}`), not recomputed by "
+              "this report; `--wp2` recomputes it.", ""]
+
+    def line(k: dict, label: str) -> str:
+        disc = k.get("kpi_discriminates")
+        return (f"- {label}: P0 coverage {_f(k.get('p0_coverage'), pct=True)} over "
+                f"{k.get('n_compiled')} compiled of {k.get('n_policies')} policies; null "
+                f"{_f(k.get('p0_coverage_null'), pct=True)}; naive baseline "
+                f"{_f(k.get('p0_coverage_baseline'), pct=True)}; "
+                f"{k.get('csp_budget_exceeded')} raised CSPBudgetExceeded; largest CSP "
+                f"{k.get('max_tokens_used')} tokens. "
+                + ("The naive cut scores the same, so the figure shows only that "
+                   "nothing had to be cut." if disc is False else
+                   "The KPI separates the compiler from the naive cut." if disc
+                   else "Nothing compiled: n/m."))
+    d = w["default"]
+    L += [line(d, f"At the default {d['budget_tokens']} tokens")]
+    c = w.get("discriminating")
+    if c:
+        L += [line(c, f"At {c['budget_tokens']} tokens, the largest budget (scanned down "
+                      f"in steps of {w['scan_step_tokens']}) where the naive cut drops a "
+                      f"P0 rule")]
+        for p in c["policies_where_the_naive_cut_drops_p0"]:
+            L.append(f"  - `{p['file']}`: the naive cut drops "
+                     f"{', '.join(p['baseline_p0_missing'])}; the compiler drops "
+                     f"{', '.join(p['compiler_p0_missing']) or 'none'}")
+    else:
+        L += [f"- No budget down to {w['scan_floor_tokens']} tokens separates the "
+              f"compiler from the naive cut: n/m."]
+    L += ["", "| Budget | Compiled | Raised | P0 coverage | Naive baseline | Null | "
+              "Discriminates |", "|---|---|---|---|---|---|---|"]
+    for r in w["scan"]:
+        L.append(f"| {r['budget_tokens']} | {r['n_compiled']} | "
+                 f"{r['n_raised_budget_exceeded']} | {r['n_p0_covered']}/{r['n_p0_in_scope']} | "
+                 f"{r['baseline_n_p0_covered']}/{r['n_p0_in_scope']} | "
+                 f"{_f(r['null_p0_coverage'], pct=True)} | {_f(r['kpi_discriminates'])} |")
+    return L + [""]
+
+
+def _render_tick_budget(t: dict | None) -> list[str]:
+    L = ["## Tick budget", "",
+         "Safety Shield p6: \"Monitor tick budget <= 100 ms (10 Hz) end-to-end\"; Policy "
+         "DSL: monitor query <= 5 ms with 50 active rules. Evidence for the grant's "
+         "budget only from a Jetson Orin in the hil topology; any other host is a "
+         "baseline.", ""]
+    if not t:
+        return L + ["(not computed)", ""]
+    if t["profiles"]:
+        L += ["| Profile | Topology | Orin | Query p99 / budget (ms) | Shield step p99 / "
+              "budget (ms) | Within budget |", "|---|---|---|---|---|---|"]
+        for p in t["profiles"]:
+            within = {True: "yes", False: "no", None: "undetermined"}[p.get("within_budget")]
+            L.append(f"| `{p.get('path')}` | {p.get('topology')} | "
+                     f"{'yes' if p.get('host_is_orin') else 'no'} | "
+                     f"{_f(p.get('check_p99_ms'), 2)} / {_f(p.get('check_budget_ms'), 0)} | "
+                     f"{_f(p.get('filter_p99_ms'), 2)} / {_f(p.get('filter_budget_ms'), 0)} | "
+                     f"{within} |")
+        L.append("")
+    else:
+        L += ["No stored profile (`python tools/profile_shield_tick.py profile`): n/m.", ""]
+    if t["flown_by_rail"]:
+        L += ["Flown logs (the Shield's own `shield_ms` per tick, and the period between "
+              "logged ticks):", "",
+              "| Rail | Shield episodes | Shield ticks | Worst p99 (ms) | Max (ms) | "
+              "Over 100 ms | Period episodes | Period ticks | Worst median period (ms) | "
+              "Worst period p99 (ms) | Periods over 100 ms |",
+              "|---|---|---|---|---|---|---|---|---|---|---|"]
+        for rail, r in sorted(t["flown_by_rail"].items()):
+            L.append(f"| {rail} | {r['shield_episodes']} | {r['shield_ticks']} | "
+                     f"{_f(r['shield_worst_p99_ms'], 2)} | {_f(r['shield_max_ms'], 2)} | "
+                     f"{r['shield_over_budget'] if r['shield_ticks'] else 'n/m'} | "
+                     f"{r['period_episodes']} | "
+                     f"{r['period_ticks']} | {_f(r['period_worst_p50_ms'], 1)} | "
+                     f"{_f(r['period_worst_p99_ms'], 1)} | "
+                     f"{r['period_over_budget'] if r['period_ticks'] else 'n/m'} |")
+        L += ["", "Periods are read from the logged `t`, rounded to 1 ms: a loop at "
+                  "exactly 10 Hz logs periods of 100 and 101 ms, so the count over "
+                  "100 ms is read beside the median period, not alone."]
+        L.append("")
+    return L
+
+
+def _render_arms(ab: dict | None, para: dict | None) -> list[str]:
+    L = ["## A/B: prefix on / off", ""]
+    if not ab or ab["status"] != "measured":
+        L += [f"n/m - {(ab or {}).get('why', 'not computed')} "
+              f"({(ab or {}).get('headless_pairs', 0)} headless pairs).", ""]
+    else:
+        L += [f"- {ab['pairs']} pairs: mission success prefix on "
+              f"{_f(ab['mission_success_prefix_on'], pct=True)} ({ab['scored_on']} scored), "
+              f"off {_f(ab['mission_success_prefix_off'], pct=True)} ({ab['scored_off']}); "
+              f"delta {_f(ab['delta_on_minus_off'])}; P0 escapes on "
+              f"{ab['p0_escapes_prefix_on']}, off {ab['p0_escapes_prefix_off']}.", ""]
+    L += ["## Per-paraphrase robustness", ""]
+    if not para or para["status"] != "measured":
+        L += [f"n/m - {(para or {}).get('why', 'not computed')} "
+              f"({(para or {}).get('headless_trials', 0)} headless trials).", ""]
+    else:
+        L += [f"- {para['trials']} trials: canonical "
+              f"{_f(para.get('canonical_success_rate'), pct=True)} over "
+              f"{para.get('canonical_trials')}; {para.get('paraphrase_arms')} paraphrase "
+              f"arms, min {_f(para.get('paraphrase_min_success_rate'), pct=True)}, worst "
+              f"drop {_f(para.get('worst_drop_vs_canonical'))}.", ""]
+    return L
+
+
+def _render_magnitudes(groups: dict[str, dict]) -> list[str]:
+    classes = list(K.OPERATOR_CLASSES)
+    # An operator kpi.OPERATOR_CLASSES does not list is counted Unclassified;
+    # its column is printed whenever any family has such a tick, so a repair
+    # by an operator nobody classed is never hidden.
+    if any(((s.get("mean_repair_magnitude_by_operator_class") or {})
+            .get(K.UNCLASSIFIED) or {}).get("ticks")
+           for g in groups.values() for s in (g or {}).values()):
+        classes.append(K.UNCLASSIFIED)
+    L = ["## Mean repair magnitude by priority and by operator class", "",
+         "|emitted - raw| (m/s) on repaired ticks, pooled. A tick counts under the "
+         "highest priority it violated, and under every operator class that acted on "
+         "it (the class's ticks in brackets). `never` = no repaired tick of that "
+         "priority or class: it never acted, which is not a 0. The grant's classes "
+         "(Safety Shield p3) are AltitudeClamp, LateralProjection and PathRepair; the "
+         "others (*) are this Shield's extensions"
+         + (f", and {K.UNCLASSIFIED} an operator no class lists" if K.UNCLASSIFIED in classes
+            else "") + ".", "",
+         "| Family | " + " | ".join(K.PRIORITY_LEVELS) + " | unattributed | "
+         + " | ".join(c if c in (*K.GRANT_OPERATOR_CLASSES, K.UNCLASSIFIED) else c + "*"
+                      for c in classes)
+         + " |", "|---|" + "---|" * (len(K.PRIORITY_LEVELS) + 1 + len(classes))]
+
+    def cell(c: dict | None) -> str:
+        if not c or not c.get("ticks"):
+            return "never"
+        return f"{_f(c.get('mean_mps'), 3)} ({c['ticks']})"
+    n = 0
+    for key in ("kpi_grade", "kpi_grade_at_flight_only", "other"):
+        for name, s in (groups.get(key) or {}).items():
+            lv, cl = s.get("mean_repair_magnitude_by_priority"), \
+                s.get("mean_repair_magnitude_by_operator_class")
+            if lv is None and cl is None:
+                continue
+            n += 1
+            # One half without the other: the class table needs no
+            # priorities, so a family whose policy did not resolve keeps it.
+            L.append(f"| `{name}` | " + " | ".join(
+                cell(lv.get(k)) if lv is not None else "n/m (priorities unresolved)"
+                for k in (*K.PRIORITY_LEVELS, "unattributed"))
+                + " | " + " | ".join(cell(cl.get(c)) if cl is not None else "n/m"
+                                     for c in classes) + " |")
+    if not n:
+        L.append("| (no family carries the breakdown: stored tables and Shield-off arms "
+                 "do not) |" + " |" * (len(K.PRIORITY_LEVELS) + 1 + len(classes)))
+    return L + [""]
+
+
+def _render_baseline(b: dict | None) -> list[str]:
+    if not b:
+        return []
+    L = [f"## Against the baseline `{b['path']}`", "",
+         f"Baseline generated {b.get('generated')} at `{b.get('code_revision')}`. "
+         f"{len(b['new_failures'])} new failures ("
+         f"{sum(1 for r in b['new_failures'] if r.get('was') == 'passing')} of episodes "
+         f"the baseline had and did not count as failing, "
+         f"{sum(1 for r in b['new_failures'] if r.get('was') == 'absent')} of episodes it "
+         f"did not have), {len(b['fixed_failures'])} fixed, "
+         f"{len(b['gone_failures'])} no longer in the inputs (not counted as fixed), "
+         f"{len(b['changed_failures'])} still failing for other reasons.", ""]
+    for title, rows in (("New failures: regressions",
+                         [r for r in b["new_failures"] if r.get("was") == "passing"]),
+                        ("New failures: episodes the baseline did not have",
+                         [r for r in b["new_failures"] if r.get("was") != "passing"]),
+                        ("Fixed failures", b["fixed_failures"]),
+                        ("Gone (absent now, not fixed)", b["gone_failures"])):
+        if rows:
+            L += [f"### {title}", "", "| Episode | Family | Failure category |",
+                  "|---|---|---|"]
+            L += [f"| `{r['id']}` | `{r['family']}` | {', '.join(r['failure_category'])} |"
+                  for r in rows] + [""]
+    if b["changed_failures"]:
+        L += ["### Still failing, other reasons", "", "| Episode | Baseline | Now |",
+              "|---|---|---|"]
+        L += [f"| `{r['id']}` | {', '.join(r['baseline'])} | {', '.join(r['now'])} |"
+              for r in b["changed_failures"]] + [""]
+    if b["family_deltas"]:
+        L += ["### Per-family deltas", "", "| Family | Figure | Baseline | Now | Delta |",
+              "|---|---|---|---|---|"]
+        for name, row in b["family_deltas"].items():
+            for f, v in row.items():
+                L.append(f"| `{name}` | `{f}` | {_f(v['baseline'], 4)} | {_f(v['now'], 4)} | "
+                         f"{_f(v['delta'], 4)} |")
+        L.append("")
+    for title, names in (("Families added", b["families_added"]),
+                         ("Families removed", b["families_removed"])):
+        if names:
+            L += [f"{title}: " + ", ".join(f"`{n}`" for n in names[:40])
+                  + (" ..." if len(names) > 40 else ""), ""]
+    return L
 
 
 def render_markdown(rep: dict) -> str:
@@ -791,6 +1485,13 @@ def render_markdown(rep: dict) -> str:
             continue
         L += _family_table(fams) + [""]
         L += ["Nulls beside the scores:", ""] + _null_table(fams) + [""]
+        vac = sorted({w for s in fams.values()
+                      for w in (s.get("vacuous_zeros") or {}).values()})
+        if vac:
+            L += ["Vacuous zeros in this table (a 0 that could not have been anything "
+                  "else, so it is not printed as one):", ""] + [f"- {w}" for w in vac] + [""]
+
+    L += _render_magnitudes(rep["families"])
 
     L += [f"## Top-{rep['top_k']} failure cases", "",
           "Ranked (`guardrail.kpi.top_failures`): P0 escapes, then unsafe "
@@ -829,6 +1530,12 @@ def render_markdown(rep: dict) -> str:
             L.append("")
     else:
         L += ["(no failing episode)", ""]
+
+    L += _render_wp1(rep.get("wp1"))
+    L += _render_wp2(rep.get("wp2"))
+    L += _render_tick_budget(rep.get("tick_budget"))
+    L += _render_arms(rep.get("ab"), rep.get("paraphrase"))
+    L += _render_baseline(rep.get("baseline"))
 
     if rep["stored_vs_recomputed"]:
         L += ["## Stored figure vs recomputed", "",
@@ -1058,6 +1765,23 @@ DEFINITIONS = {
         "censored (never-recovered) episodes are counted, not averaged. Logs "
         "without `unsafe` are reconstructed from the pose where the policy "
         "resolves; a dynamic (hot-applied) run cannot be and stays n/m.",
+    "KPI-grade": "`guardrail.manifest.is_kpi_grade` on the manifest (hil topology "
+        "with its evidence, sim_speedup 1.0, a clean revision), AND the replay "
+        "bundle beside the run verified with a trusted signature, its KPIs "
+        "re-derived from its own log (`guardrail.replay.kpi_evidence_grade`), "
+        "and holding the run folder's own flight_log.jsonl and manifest.json "
+        "(`bundle_binding`). A run whose manifest passes but whose bundle is "
+        "missing, unsigned, untrusted or another flight's is not KPI-grade "
+        "(`kpi_grade_manifest` keeps the manifest's verdict).",
+    "Vacuous": "a 0 that counts an event which could not happen: an escape "
+        "rate where no raw command violated a P0 rule, a false-trigger count on "
+        "logs with no escalation state (rollup()'s `vacuous_zeros`). Printed as "
+        "vacuous, never as a measured 0.",
+    "Repair magnitude by priority / class": "the mean repair magnitude split by "
+        "the highest priority a repaired tick violated (P0 / P1 / P2) and by the "
+        "operator classes that acted on it (the grant's AltitudeClamp, "
+        "LateralProjection, PathRepair, and this Shield's extensions); `never` "
+        "where a priority or class had no repaired tick.",
 }
 
 
@@ -1213,7 +1937,19 @@ def headline(episodes: list[dict]) -> list[str]:
 
 
 def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
-                 include_controls: bool, command: str) -> dict:
+                 include_controls: bool, command: str, *,
+                 wp1_path: str | Path | None = DEFAULT_WP1, wp2: bool = False,
+                 csp_json: str | Path | None = DEFAULT_CSP_JSON,
+                 policies_dir: str | Path = "policies",
+                 tick_profiles: str | None = DEFAULT_TICK_PROFILES,
+                 baseline: str | Path | None = None, trust_store=None) -> dict:
+    """The report as a dict (render_markdown prints it). The keyword arguments
+    are the sections added on 2026-10-12: WP1 from `wp1_path`, WP2 (the
+    budget scan takes seconds, so it is computed only with `wp2`; otherwise
+    the stored `csp_json` is read and labelled as read), the tick budget
+    from `tick_profiles`, a comparison against an earlier report JSON
+    (`baseline`), and the trust store each replay bundle is checked against
+    as KPI evidence (None: guardrail.bundle's default)."""
     loaded = R.load_policies()
     by_hash, by_id = R.policies_by_hash(loaded), R.policies_by_id(loaded)
 
@@ -1226,7 +1962,7 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
             if not run.is_dir() or run.resolve() in seen:
                 continue
             seen.add(run.resolve())
-            e = load_run(run, by_hash, by_id)
+            e = load_run(run, by_hash, by_id, trust_store)
             key = e.pop("_dedupe", None)
             if key is not None and key in kept:
                 # The smoke profile re-flies the nightly profile's first seed;
@@ -1264,7 +2000,22 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
     def compact(e):
         return {k: v for k, v in e.items() if k not in ("violations_by_type",)}
 
-    return {
+    ab, para = arms_sections(episodes)
+    wp1 = None
+    if wp1_path:
+        wp1_p = Path(wp1_path) if Path(wp1_path).is_absolute() else ROOT / wp1_path
+        wp1 = wp1_section(wp1_p)
+    if wp2:
+        wp2_doc = wp2_section(policies_dir)
+    else:
+        # Never recomputed, and never written, as a side effect: the stored
+        # file is read and the section says so (read_from, its provenance).
+        stored = (_read_json(Path(csp_json) if Path(csp_json).is_absolute()
+                             else ROOT / csp_json) if csp_json else {})
+        wp2_doc = (dict(stored, read_from=_rel(Path(csp_json) if Path(csp_json).is_absolute()
+                                               else ROOT / csp_json))
+                   if isinstance(stored.get("default"), dict) else None)
+    rep = {
         "_what": "KPI rollup across episodes (Stress Testing p6: KPI report). "
                  "Flights recomputed from per-episode logs with "
                  "guardrail.kpi.compute; stress bundles and sweep JSON as stored.",
@@ -1300,7 +2051,33 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                                  for e in episodes if e.get("stored_vs_recomputed")],
         "skipped": skipped,
         "episodes": [compact(e) for e in episodes],
+        "failures": failure_index(episodes, include_controls),
+        "wp1": wp1,
+        "wp2": wp2_doc,
+        "tick_budget": (tick_budget_section(tick_profiles, episodes)
+                        if tick_profiles else None),
+        "ab": ab, "paraphrase": para, "baseline": None,
     }
+    if baseline:
+        bp = Path(baseline) if Path(baseline).is_absolute() else ROOT / baseline
+        base = json.loads(bp.read_text(encoding="utf-8"))
+        rep["baseline"] = compare_baseline(json_safe(rep), base, _rel(bp),
+                                           include_controls)
+    return rep
+
+
+def write_csp_json(wp2: dict, path: str | Path, command: str) -> Path:
+    """docs/data/csp_kpis.json: the WP2 section with its provenance, LF."""
+    out = Path(path) if Path(path).is_absolute() else ROOT / path
+    out.parent.mkdir(parents=True, exist_ok=True)
+    doc = {"_what": "Prefix Compiler KPIs (Prefix Compiler p5): at the default budget "
+                    "and at the largest budget where the naive cut drops a P0 rule "
+                    "(tools/kpi_report.py wp2_section)",
+           "generated": date.today().isoformat(), "command": command,
+           "code_revision": code_revision(ROOT), **wp2}
+    with open(out, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(json_safe(doc), indent=1, allow_nan=False) + "\n")
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1315,12 +2092,44 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--top-k", type=int, default=10)
     ap.add_argument("--include-controls", action="store_true",
                     help="list Shield-off control arms among the top-K failures")
+    ap.add_argument("--wp1", default=DEFAULT_WP1,
+                    help="WP1 round-trip JSON (tools/wp1_roundtrip_kpi.py)")
+    ap.add_argument("--wp2", action="store_true",
+                    help="recompute the Prefix Compiler section for this report (its "
+                         "budget scan takes seconds); without it the report reads "
+                         f"{DEFAULT_CSP_JSON} and says so")
+    ap.add_argument("--wp2-only", action="store_true",
+                    help="compute only the Prefix Compiler section, write it to "
+                         f"--csp-json (default {DEFAULT_CSP_JSON}), print it")
+    ap.add_argument("--policies", default="policies", help="policy folder for WP2")
+    ap.add_argument("--csp-json", default=None,
+                    help="the WP2 file: written by --wp2-only, and by a full report "
+                         "only when it is given explicitly together with --wp2; read "
+                         f"otherwise (default {DEFAULT_CSP_JSON})")
+    ap.add_argument("--tick-profiles", default=DEFAULT_TICK_PROFILES,
+                    help="stored Shield tick profiles (tools/profile_shield_tick.py)")
+    ap.add_argument("--baseline", default=None,
+                    help="an earlier report JSON: list new / fixed failures and "
+                         "per-family deltas")
+    ap.add_argument("--trust-store", default=None,
+                    help="trust store for the replay-bundle evidence check "
+                         "(default: guardrail.bundle's)")
     args = ap.parse_args(argv)
 
     command = "python tools/kpi_report.py" + (
         " " + " ".join(shlex.quote(a) for a in argv) if argv else "")
+    if args.wp2_only:
+        w = wp2_section(args.policies)
+        out = write_csp_json(w, args.csp_json or DEFAULT_CSP_JSON, command)
+        print("\n".join(_render_wp2(w)))
+        print(f"wrote {_rel(out)}")
+        return 0
     rep = build_report(args.runs, [] if args.no_sweep else args.sweep,
-                       args.top_k, args.include_controls, command)
+                       args.top_k, args.include_controls, command,
+                       wp1_path=args.wp1, wp2=args.wp2,
+                       csp_json=args.csp_json or DEFAULT_CSP_JSON,
+                       policies_dir=args.policies, tick_profiles=args.tick_profiles,
+                       baseline=args.baseline, trust_store=args.trust_store)
     nonfinite: list[str] = []
     rep = json_safe(rep, "", nonfinite)
     md = render_markdown(rep)
@@ -1335,11 +2144,22 @@ def main(argv: list[str] | None = None) -> int:
         with open(stem.with_suffix(".json"), "w", encoding="utf-8", newline="\n") as fh:
             fh.write(json.dumps(rep, indent=1, allow_nan=False, default=str) + "\n")
         print(f"wrote {_rel(stem.with_suffix('.md'))} and {_rel(stem.with_suffix('.json'))}")
+        # The tracked WP2 file is written only when asked for by name: a
+        # report written anywhere (a test's temp folder, a review copy) must
+        # not rewrite docs/data/csp_kpis.json with its own provenance.
+        if args.wp2 and args.csp_json:
+            print(f"wrote {_rel(write_csp_json(rep['wp2'], args.csp_json, command))}")
     else:
         print(md)
     c = rep["counts"]
     print(f"{c['episodes']} episodes ({c['kpi_grade']} KPI-grade), "
           f"{c['skipped']} inputs skipped")
+    if rep.get("baseline"):
+        b = rep["baseline"]
+        reg = sum(1 for r in b["new_failures"] if r.get("was") == "passing")
+        print(f"against {b['path']}: {len(b['new_failures'])} new failures ({reg} "
+              f"regressions), {len(b['fixed_failures'])} fixed, "
+              f"{len(b['gone_failures'])} gone")
     print(f"reproduce: {command}")
     return 0
 

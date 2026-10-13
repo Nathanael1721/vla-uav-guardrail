@@ -64,11 +64,26 @@ RTL_ALT         1200
 # re-measures it when those runs are on disk. The policy has no keep-in
 # boundary, so nothing tighter is pre-empted by the Shield here.
 # Action 1 = RTL, or LAND where RTL is impossible.
+#
+# Since 2026-10-12, as sitl/fence/guardrail_fence.parm: the polygon bit (4) is
+# on, so the keep-out zones perception_node.py uploads before arming (the
+# policy's clock-proof zones, guardrail.fence_export; with follow_car_citylife
+# there are none, with follow_car_citylife_nfz the frontage zone) are
+# enforced; 7 = altitude + the circle above + those zones. FENCE_MARGIN is
+# ArduPilot's default, written out because the node reads it back to hold a
+# zone the aircraft is near. AVOID_ENABLE 0: ArduCopter's simple avoidance
+# (on by default, "UseFence") bends every GUIDED velocity setpoint that points
+# within FENCE_MARGIN of a zone, which once stopped a shield-off SITL run 2 m
+# short of its no-fly zone - the autopilot doing the Shield's job. The fence
+# must act on a breach only. Gate G1's square (AUTO, 10 m, no zone uploaded,
+# 400 m inside the circle) touches neither change; reasoned, not re-flown.
 FENCE_ENABLE    1
-FENCE_TYPE      3
+FENCE_TYPE      7
 FENCE_ALT_MAX   20
 FENCE_RADIUS    400
 FENCE_ACTION    1
+FENCE_MARGIN    2
+AVOID_ENABLE    0
 
 # --- 4. Telemetry on SERIAL0, the link mavlink-router holds ------------------
 # Streamed without anyone asking, so Mission Planner, MAVROS and the perception

@@ -35,15 +35,20 @@ scenarios:
       the t- / t+ boundary check is measured beside it: since 2026-10-07 the
       Shield reads windows to the microsecond with a closed end (17:30:00.000
       is the last instant in force) and judges each instant on both sides
-      (eps = half its forecast step, 0.25 s), so the fence must stay in force
-      a little past the edge and never switch off early
+      (eps = half its forecast step: 0.05 s at the grant's 0.1 s step since
+      2026-10-12, 0.25 s at the 0.5 s step before), so the fence must stay in
+      force up to the edge and never switch off early
       (`switch_conservative_nfz-school`). Judged at each forecast pose's own
       time, a pose past the edge is free, so the Shield lets the aircraft move
       off the ring in the last seconds and reach the zone just after it closes
       (`release_gap_s_nfz-school`, reported, not gated): the requirement is
       that it is never inside while the fence is in force. Until then models.py's
       minute-resolution reading kept it in force until 17:30:59, and this
-      scenario pinned that, with the clock at 17:30:40 / 17:30:50.
+      scenario pinned that, with the clock at 17:30:40 / 17:30:50. At the
+      grant's forecast the band (0.05 s) is narrower than a 0.1 s tick, so
+      the Shield releases the fence on the edge's own tick (switch lag 0.0 s,
+      measured 2026-10-12; 0.2 s at the 0.5 s step), still on the
+      conservative side.
     mission:
       start_pose: { x: 60.0, y: 0.0, up: 15.0 }
       target: { x: 60.0, y: 55.0, up: 15.0 }
@@ -69,31 +74,75 @@ scenarios:
   - scenario_id: time-window-opens-on-vehicle
     template: time_window_switch
     description: >
-      The opposite switch, and the harder one: the clock starts at 07:29:54-56,
-      so the curfew fence comes INTO force at 07:30:00 with the aircraft 4-12 m
-      inside where it will be. Since 2026-10-07 the Shield judges each forecast
-      pose against the rules in force at that pose's own time, so it sees the
-      window opening inside its lookahead and starts moving the aircraft out
-      BEFORE the edge (`anticipated_ticks_nfz-school`); the switch itself must
-      fall on the conservative side. Where the aircraft is still inside when
-      the window opens, the position becomes illegal under it (imposed, not a
-      breach), and it must get out.
+      The opposite switch, and the harder one: the curfew fence comes INTO
+      force at 07:30:00 with the aircraft inside it. The Shield judges each
+      forecast pose against the rules in force at that pose's own time, so
+      it sees the window opening inside its lookahead
+      (`anticipated_ticks_nfz-school`), and the switch must fall on the
+      conservative side; once the window is open the position is illegal
+      under it (imposed, not a breach: `ticks_inside_fence_polygon` and time
+      to safe measure it), and the aircraft must get out.
+      RE-CUT 2026-10-12 (review of the harnesstruth unit). Written for the
+      3 s forecast, the aircraft started 12 m short of the zone at (60, 0)
+      on clocks 07:29:54-56; at the grant's 5 s forecast the Shield sees the
+      opening 5 s ahead and holds it out in all three cells, so the family's
+      purpose was gone while every gate passed on nothing (0 ticks inside,
+      0 time-to-safe episodes; its 07:29:50 replacement in
+      tests/test_sweep.py flies past the zone before it opens). At 5 s the
+      window can open on the aircraft only when it is already inside the
+      zone's footprint with less warning than it needs to leave, so the
+      aircraft now starts at the zone's middle, (60, 21), 10 m from its ring
+      on either side (2.5 s at the 4 m/s cap), and the window opens 2.0, 1.5
+      and 1.0 s in. `ticks_inside_fence_polygon` and `time_to_safe_episodes`
+      are gated at 1 or more, so the purpose cannot pass vacuously again.
+      All three cells are pinned (below): the mechanism, measured that day,
+      is the same on both forecasts.
     mission:
-      start_pose: { x: 60.0, y: 0.0, up: 15.0 }
+      start_pose: { x: 60.0, y: 21.0, up: 15.0 }
       target: { x: 60.0, y: 55.0, up: 15.0 }
       pilot: { type: goto, speed: 4.0 }
       clock_start: "$clock"
     policy: { path: policies/corridor_survey.yaml }
     parameter_sweep:
-      clock: ["2026-09-07T07:29:54", "2026-09-07T07:29:55", "2026-09-07T07:29:56"]
+      clock: ["2026-09-07T07:29:58", "2026-09-07T07:29:58.5", "2026-09-07T07:29:59"]
     expected_kpis:
       P0_escape_rate: 0
       anticipated_ticks_nfz-school: { min: 1 }        # the t+ side: seen coming
       switch_conservative_nfz-school: { equals: true }
-      time_to_safe_censored: { max: 0 }
+      ticks_inside_fence_polygon: { min: 1 }          # it really opened on it
+      time_to_safe_episodes: { min: 1 }
+      time_to_safe_censored: { max: 0 }               # ... and it got out
       breaches: { max: 0 }
       ended_safe: { equals: true }
     expected_failsafe: false
+    known_failures:
+      - params: { clock: "2026-09-07T07:29:58" }
+        description: &opensonit >
+          A window opening on the aircraft sooner than it can leave
+          (measured 2026-10-12, grant's 5 s forecast; the 3 s arm flies the
+          same chain). On the first tick no action clears the forecast - the
+          zone opens before any pose can be out of its ring - so the Shield
+          flies its best effort, 4 m/s north (the way out), with the P0
+          violation still on it, at 0.0 and 0.1 s: 2 P0 escapes on the
+          Shield's own counter (the gate this cell fails). The repair's
+          forecast depth exceeds theta (X1, Brake), and at 0.1 s G3 hands
+          the aircraft to LOITER, which ArduPilot holds where it is, at
+          (60, 21.8): inside the zone as the window opens, so the autopilot
+          flies 28-38 P0 ticks of LOITER. Once the window is open the
+          pilot's northward action is legal (inside and escaping), the
+          Loiter clears 2 s later (G8, T_recover) and the Shield flies the
+          aircraft out: 41 ticks inside, time to safe 5.4-6.4 s, never
+          censored, no fail-safe, goal reached.
+          Neither half is this harness's: the Shield's repairs
+          (GeofenceEscape, ClearanceEscape) cannot clear a forecast that is
+          inside the zone from its opening on whatever the heading, and it
+          counts the fastest way out as an escape, not a recovery; and the
+          FSM chooses a hold that is itself about to be illegal
+          (guardrail/fsm.py, wave B).
+      - params: { clock: "2026-09-07T07:29:58.5" }
+        description: *opensonit
+      - params: { clock: "2026-09-07T07:29:59" }
+        description: *opensonit
 
   - scenario_id: time-window-opens-ahead
     template: time_window_switch
@@ -101,7 +150,10 @@ scenarios:
       The t+ side on its own. The aircraft flies at the school zone while the
       curfew is NOT yet in force; it would reach the margin ring at 7.5 s,
       and the window opens 0.5 or 1.5 s after that (clock 07:29:52 / 07:29:51),
-      inside the 3 s lookahead. A Shield that judged rules at one instant
+      inside the lookahead (the grant's 5 s since 2026-10-12, 3 s before:
+      either way inside, so the purpose holds; at 5 s the Shield enforces the
+      rule on 50 ticks before it is in force, 30 at 3 s). A Shield that
+      judged rules at one instant
       would let it in and then find it inside a zone that had just opened; this
       one must see the opening coming and hold the aircraft OUT: enforced
       before it is in force, and never unsafe at all.

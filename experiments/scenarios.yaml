@@ -46,7 +46,8 @@
 # Shield's escalation FSM decides what is flown; default true), stress (GPS
 # noise, latency, wind, start jitter), parameter_sample (seeded geometry
 # draws), paraphrase / prefix / ab (arms: what the pilot is shown), ticks / dt /
-# lookahead_s.
+# lookahead_s / lookahead_dt_s (the forecast, below), and
+# stress.battery_critical_at_s (the RTL hand-over's battery hook, 2026-10-12).
 #
 # FAIL-SAFE LABELS (since 2026-10-07)
 #
@@ -69,7 +70,9 @@
 # "tracked", counted apart from "pass", with its polygon entries beside it.
 #
 # The 13 scenarios of the library as it stood before the schema keep their
-# behaviour with the escalation FSM off (tests/test_sweep.py compares them).
+# behaviour with the escalation FSM off on the 3 s comparison arm, the
+# forecast they were measured with (tests/test_sweep.py compares them, and
+# pins them at the grant's 5 s beside it, LEGACY_GRANT).
 #
 # THE STRESS HARNESS (2026-10-06)
 #
@@ -85,10 +88,23 @@
 # breaks the requirement it is pinned under `known_failures` with the
 # mechanism, measured; any other cell that fails is a new failure.
 
+# THE FORECAST (2026-10-12)
+#
+# lookahead_s / lookahead_dt_s are the Shields' forecast: the grant's 5 s at
+# 0.1 s (Safety Shield p2, "5 s of predicted trajectory at 10 Hz = 50 future
+# poses"; guardrail.shield LOOKAHEAD_S / LOOKAHEAD_DT_S). Until 2026-10-12
+# this said 3.0 and the harness built every Shield at a 0.5 s step (6 poses),
+# so no headless number came from the grant's configuration. The old forecast
+# flies only as the labelled comparison arm (`--forecast-arms grant 3s`;
+# `--publish` flies both), kept out of every headline number. Each family
+# whose purpose was written around the 3 s lookahead was re-checked at 5 s;
+# its description says what changed.
+
 defaults:
   dt: 0.1
   ticks: 300
-  lookahead_s: 3.0
+  lookahead_s: 5.0
+  lookahead_dt_s: 0.1
 
 templates:
   - templates/static_nfz.yaml

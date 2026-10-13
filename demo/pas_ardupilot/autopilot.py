@@ -40,6 +40,24 @@ follows. pymavlink 2.4.49's mavlink_connection() tries a refused TCP connect
 retries=3 times about a second apart and then raises, so a single call failed
 every --start-sitl run long before its heartbeat timeout began. connect() now
 retries the connect itself until the same deadline the heartbeat wait uses.
+
+THE GEOFENCE ZONES AND THE THROTTLE (2026-10-12)
+
+`upload_fence` puts the policy's clock-proof keep-out zones (chosen by
+guardrail.fence_export; perception_node.FenceBackstop) on the autopilot with
+the MAVLink mission protocol, mission_type FENCE, and reads them back. It
+refuses on a MAVLink 1 link: mission_type is a MAVLink 2 extension, and
+without it ArduPilot would take the zones as its AUTO mission. `read_fence`
+reads the list the autopilot held before (2026-10-13), so a ground
+station's fence the upload replaces is on record.
+
+`override_throttle` centres channel 3 with RC_CHANNELS_OVERRIDE for the
+literal LOITER hold (`--hold-mode LOITER` on SITL): ArduCopter's LOITER
+climbs at the throttle stick's rate and sank with no pilot on 7 and 8 Oct.
+ArduPilot takes an override only from its ground station's system id
+(SYSID_MYGCS, read here), so that one message is sent as that id; an
+override lapses after RC_OVERRIDE_TIME unless re-sent, so the node sends it
+every tick of the hold.
 """
 from __future__ import annotations
 
@@ -76,6 +94,15 @@ MAV_CMD_REQUEST_MESSAGE = 512
 MAV_CMD_REQUEST_AUTOPILOT_CAPABILITIES = 520
 MSG_AUTOPILOT_VERSION = 148
 MAV_RESULT_ACCEPTED = 0
+# The mission protocol for the GeoFence's zones (MAV_MISSION_TYPE_FENCE).
+MAV_MISSION_TYPE_FENCE = 1
+MAV_MISSION_ACCEPTED = 0
+# RC_CHANNELS_OVERRIDE, channels 1-8: UINT16_MAX leaves a channel alone, 0
+# hands it back to the radio (common.xml).
+RC_OVERRIDE_IGNORE = 65535
+RC_OVERRIDE_RELEASE = 0
+# ArduPilot's SYSID_MYGCS default: the only system it takes an override from.
+DEFAULT_SYSID_MYGCS = 255
 # BRAKE (17) is where the escalation FSM's Loiter goes on this rail: ArduCopter's
 # LOITER takes its climb rate from the throttle stick and sinks with no pilot
 # (sitl/mavlink_adapter_node.py, DEFAULT_HOLD_MODE).
@@ -101,6 +128,10 @@ STREAMS = {
     # The autopilot's own fence (the grant's backstop, citylife-quad.param):
     # without this stream a breach would be invisible to the node's record.
     "FENCE_STATUS": (162, 2.0),
+    # The RC inputs as the autopilot uses them, overrides included: whether a
+    # throttle override took is read here (citylife-quad.param's SR0_RC_CHAN
+    # rate, so asking for it changes nothing on the shared link).
+    "RC_CHANNELS": (65, 10.0),
 }
 
 # The autopilot parameters that make its GeoFence the grant's backstop, read
@@ -242,6 +273,10 @@ class Snapshot:
     t_fence: float | None = None
     # Where time_boot_ms came from (SYSTEM_TIME, or MAVROS's time_reference).
     fcu_clock_source: str | None = None
+    # Channel 3 (throttle) as the autopilot reports its RC input, an override
+    # included (RC_CHANNELS, or MAVROS's /mavros/rc/in); None until reported.
+    rc3: int | None = None
+    t_rc: float | None = None
 
 
 class PymavlinkLink:
@@ -277,6 +312,8 @@ class PymavlinkLink:
         self.autopilot_version: dict | None = None
         self.autopilot_kind: str | None = None   # "sitl" | "hardware" | None
         self.sim_speedup: float | None = None
+        # The system id a throttle override is sent as (rc_override_plan).
+        self.override_sysid: int = DEFAULT_SYSID_MYGCS
 
     # ---- connection --------------------------------------------------- #
 
@@ -402,6 +439,8 @@ class PymavlinkLink:
             s.fcu_clock_source = "SYSTEM_TIME.time_boot_ms"
         elif kind == "GPS_RAW_INT":
             s.gps_fix = int(msg.fix_type)
+        elif kind == "RC_CHANNELS":
+            s.rc3, s.t_rc = int(msg.chan3_raw), t
         elif kind == "FENCE_STATUS":
             n = int(msg.breach_count)
             if s.fence_breach_count is not None and n > s.fence_breach_count:
@@ -485,15 +524,21 @@ class PymavlinkLink:
         return {**{n: self.read_param(n) for n in FENCE_PARAMS},
                 "source": "PARAM_VALUE (pymavlink)"}
 
-    def bring_up(self, alt_m: float, ekf_timeout: float = 180.0) -> None:
+    def bring_up(self, alt_m: float, ekf_timeout: float = 180.0,
+                 before_arm=None) -> None:
         """Identify -> EKF usable -> GUIDED -> armed -> take-off to alt_m. Raises
-        with the autopilot's own pre-arm messages if a step does not happen."""
+        with the autopilot's own pre-arm messages if a step does not happen.
+        `before_arm()` runs once the position is usable and before GUIDED is
+        asked for: the node puts the GeoFence zones in place there, so the
+        backstop holds them from take-off (as sitl/ros2_shield_node.py does)."""
         self.identify()
         if not self.wait(lambda s: ekf_ready(s.ekf_flags) and s.lat is not None,
                          timeout=ekf_timeout):
             raise RuntimeError(f"EKF never reported a usable position "
                                f"(flags {self.snap.ekf_flags}); last messages: "
                                f"{self.snap.statustext[-5:]}")
+        if before_arm is not None:
+            before_arm()
         if not self.set_mode("GUIDED"):
             raise RuntimeError("GUIDED was not accepted")
         if not self.arm():
@@ -515,6 +560,176 @@ class PymavlinkLink:
 
     def land(self) -> bool:
         return self.set_mode("LAND", timeout=5.0)
+
+    # ---- the GeoFence's zones and the throttle ---------------------------- #
+
+    def _recv_mission(self, kinds: tuple, deadline: float):
+        """The next mission-protocol message of `kinds` from the vehicle for
+        the FENCE list, or None at `deadline`. Everything else that arrives
+        goes through _handle(), as in read_param: a mode change or a fence
+        breach during an upload is the autopilot's own action, kept."""
+        while self.clock() < deadline:
+            msg = self.m.recv_match(blocking=True, timeout=0.2)
+            if msg is None:
+                continue
+            kind = msg.get_type()
+            if kind not in kinds:
+                self._handle(msg, self.clock())
+                continue
+            if not self._from_vehicle(msg):
+                continue
+            if int(getattr(msg, "mission_type", MAV_MISSION_TYPE_FENCE)) \
+                    != MAV_MISSION_TYPE_FENCE:
+                continue
+            return msg
+        return None
+
+    def upload_fence(self, items: list[dict], timeout: float = 10.0) -> dict:
+        """Replace the autopilot's fence list with `items` and read it back.
+
+        `items` are mavlink_adapter_node.fence_items() dicts (frame, command,
+        param1, x_lat, y_long; lat/lon in degrees), sent as MISSION_ITEM_INT
+        with mission_type FENCE. Returns {"success", "items", "transferred",
+        "ack", "read_back", "read_back_match", "why", "upload_ms"}: success
+        needs the ACCEPTED ack after every item AND a read-back of the same
+        items. Blocks for up to `timeout` per phase; the node records the
+        time it took."""
+        t_start = self.clock()
+        n = len(items)
+        out = {"via": "MAVLink mission protocol, mission_type FENCE (pymavlink)",
+               "items": n, "transferred": 0, "ack": None, "read_back": None,
+               "read_back_match": None}
+
+        def done(ok: bool, why: str | None) -> dict:
+            out.update(success=bool(ok), why=why,
+                       upload_ms=round((self.clock() - t_start) * 1000.0, 1))
+            return out
+        if getattr(self.m, "WIRE_PROTOCOL_VERSION", "2.0") != "2.0":
+            return done(False, "the link speaks MAVLink 1, which has no mission_type: "
+                               "the zones would replace the autopilot's AUTO mission")
+        wire = [dict(it, x=int(round(float(it["x_lat"]) * 1e7)),
+                     y=int(round(float(it["y_long"]) * 1e7))) for it in items]
+        ts, tc, mav = self.target_system, self.target_component, self.m.mav
+        mav.mission_count_send(ts, tc, n, mission_type=MAV_MISSION_TYPE_FENCE)
+        sent: set[int] = set()
+        deadline = self.clock() + timeout
+        while True:
+            msg = self._recv_mission(("MISSION_REQUEST_INT", "MISSION_REQUEST",
+                                      "MISSION_ACK"), deadline)
+            if msg is None:
+                return done(False, f"timed out after {len(sent)}/{n} items")
+            if msg.get_type() == "MISSION_ACK":
+                out["ack"] = int(msg.type)
+                out["transferred"] = len(sent)
+                if out["ack"] != MAV_MISSION_ACCEPTED or len(sent) != n:
+                    return done(False, f"ACK type {out['ack']} after "
+                                       f"{len(sent)}/{n} items")
+                break
+            seq = int(msg.seq)
+            if not 0 <= seq < n:
+                return done(False, f"ArduPilot asked for item {seq} of {n}")
+            it = wire[seq]
+            mav.mission_item_int_send(ts, tc, seq, it["frame"], it["command"], 0, 1,
+                                      float(it["param1"]), 0, 0, 0, it["x"], it["y"],
+                                      0.0, mission_type=MAV_MISSION_TYPE_FENCE)
+            sent.add(seq)
+        # Read back what the autopilot now holds, item by item.
+        res = self._read_fence_list(self.clock() + timeout, want=n)
+        if res is None:
+            return done(False, "uploaded, but the read-back count never came")
+        count, got_items = res
+        out["read_back"] = count
+        match = count == n and len(got_items) == n
+        for got, want in zip(got_items, wire):
+            if (int(got.command), int(got.x), int(got.y)) != (
+                    int(want["command"]), want["x"], want["y"]) \
+                    or abs(float(got.param1) - float(want["param1"])) > 1e-3:
+                match = False
+        out["read_back_match"] = match
+        return done(match, None if match else
+                    f"read back {count} item(s), not the {n} sent" if count != n
+                    else "read back items that differ from those sent")
+
+    def _read_fence_list(self, deadline: float, want: int | None = None):
+        """`(count, items)`: the autopilot's FENCE list, the MISSION_ITEM_INTs
+        in order (at most `want`), stopping at the first that never came; None
+        when no MISSION_COUNT came by `deadline`."""
+        ts, tc, mav = self.target_system, self.target_component, self.m.mav
+        mav.mission_request_list_send(ts, tc, mission_type=MAV_MISSION_TYPE_FENCE)
+        msg = self._recv_mission(("MISSION_COUNT",), deadline)
+        if msg is None:
+            return None
+        count = int(msg.count)
+        items = []
+        for seq in range(count if want is None else min(count, want)):
+            mav.mission_request_int_send(ts, tc, seq, mission_type=MAV_MISSION_TYPE_FENCE)
+            got = None
+            while got is None:
+                m = self._recv_mission(("MISSION_ITEM_INT",), deadline)
+                if m is None:
+                    break
+                if int(m.seq) == seq:
+                    got = m
+            if got is None:
+                break
+            items.append(got)
+        mav.mission_ack_send(ts, tc, MAV_MISSION_ACCEPTED,
+                             mission_type=MAV_MISSION_TYPE_FENCE)
+        return count, items
+
+    def read_fence(self, timeout: float = 5.0) -> dict:
+        """The fence list the autopilot holds NOW, read before the node
+        replaces it, so whose fence was replaced (a ground station's, an
+        earlier run's) is on record: {"count", "items", "via", "why"}, count
+        None when it was not read."""
+        out = {"via": "MAVLink mission protocol, mission_type FENCE (pymavlink)",
+               "count": None, "items": None, "why": None}
+        if getattr(self.m, "WIRE_PROTOCOL_VERSION", "2.0") != "2.0":
+            out["why"] = "the link speaks MAVLink 1, which has no mission_type"
+            return out
+        res = self._read_fence_list(self.clock() + timeout)
+        if res is None:
+            out["why"] = "no MISSION_COUNT for the FENCE list"
+            return out
+        count, items = res
+        out["count"] = count
+        out["items"] = [{"seq": int(m.seq), "command": int(m.command),
+                         "lat": int(m.x) / 1e7, "lon": int(m.y) / 1e7,
+                         "param1": float(m.param1)} for m in items]
+        if len(items) != count:
+            out["why"] = f"read {len(items)} of {count} item(s)"
+        return out
+
+    def rc_override_plan(self) -> dict:
+        """Whether ArduPilot will take this link's throttle override, and as
+        which system id it is sent: SYSID_MYGCS read from the autopilot
+        (ArduPilot ignores RC_CHANNELS_OVERRIDE from any other system). An
+        unread SYSID_MYGCS leaves ArduPilot's default 255 and says so."""
+        gcs = self.read_param("SYSID_MYGCS")
+        self.override_sysid = int(gcs) if gcs is not None else DEFAULT_SYSID_MYGCS
+        return {"via": "RC_CHANNELS_OVERRIDE (pymavlink), sent as the ground "
+                       "station's system id",
+                "sysid": self.override_sysid,
+                "sysid_source": ("SYSID_MYGCS read from the autopilot"
+                                 if gcs is not None else
+                                 "ArduPilot's default 255: SYSID_MYGCS was not read"),
+                "accepted_expected": True if gcs is not None else None}
+
+    def override_throttle(self, pwm: int | None) -> bool:
+        """Channel 3 to `pwm`, or back to the radio (None); the other
+        channels are left alone. Sent as `override_sysid`, the node's own
+        system id restored at once."""
+        chans = [RC_OVERRIDE_IGNORE] * 8
+        chans[2] = RC_OVERRIDE_RELEASE if pwm is None else int(pwm)
+        mav = self.m.mav
+        own = getattr(mav, "srcSystem", self.source_system)
+        mav.srcSystem = self.override_sysid
+        try:
+            mav.rc_channels_override_send(self.target_system, self.target_component,
+                                          *chans)
+        finally:
+            mav.srcSystem = own
+        return True
 
     def read_param(self, name: str, timeout: float = 3.0) -> float | None:
         """A parameter read, or None. Used for SIM_SPEEDUP, whose presence

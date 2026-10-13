@@ -115,7 +115,9 @@ Planner on its default UDP port 14550 on the Windows host:
 same fan-out on MAVProxy 1.8.74 (already in `~/venv-ap`), with
 `--streamrate=-1` so it never changes the stream rates MAVROS asks for. The run
 record names the one used (`hil_evidence.mavlink_router`); in every flight
-below it was MAVProxy. MAVProxy is itself a ground station: it downloads the
+below it was MAVProxy. Since 2026-10-08 `mavlink-routerd` is built into
+`~/.local/bin` and is what the rails start (Gate G1 and the 8 Oct follow ran
+on it); the flights in this section predate it. MAVProxy is itself a ground station: it downloads the
 autopilot's parameter set (1381 parameters over MAVLink FTP) at start, and the
 replies reach every output.
 
@@ -146,8 +148,11 @@ sensors and rendering; ArduPilot flies the drone and speaks MAVLink like any
 SITL, so Mission Planner attaches to it over UDP 14550 - directly through
 `sim_vehicle.py`'s MAVProxy output, or through this router beside MAVROS.
 The IAMAI example script's own docstring says Mission Planner can be used to
-control the drone. That combination has not been run in this unit (Project
-AirSim was not started here); the router side has, with the results above.
+control the drone. That combination had not been run when this section was
+written; it has since: Gate G1 passed on Project AirSim + ArduPilot SITL with
+the router's UDP 14550 stream on 2026-10-08
+(`docs/DESIGN-projectairsim-ardupilot.md`). Mission Planner's own window has
+not yet been recorded attached to a run.
 
 ## The GeoFence backstop
 
@@ -420,8 +425,9 @@ the ROS 2 node numbered each audit record one below its log row
 
 ## Scope and next steps
 
-- The router runs on MAVProxy until `mavlink-routerd` is built and installed;
-  `start_router.sh` switches by itself and the run record names the router.
+- `mavlink-routerd` has been built and installed since 2026-10-08;
+  `start_router.sh` still falls back to MAVProxy where it is absent, and the
+  run record names the router.
 - Mission Planner itself has not yet been attached to a run; `gcs_listen.py`
   stands in for it on the same port.
 - The first Orin run follows `docs/RUNBOOK-orin-hil.md`; the hil and flight

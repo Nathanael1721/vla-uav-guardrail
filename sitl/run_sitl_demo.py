@@ -16,15 +16,28 @@ Run inside WSL (SITL listening on tcp:127.0.0.1:5760):
     ~/venv-ap/bin/python run_sitl_demo.py --shield off
     ~/venv-ap/bin/python run_sitl_demo.py --shield on --dynamic
     ~/venv-ap/bin/python run_sitl_demo.py --bundle ../bundles/fase3-sim-demo-v0.1.1.tar.gz
+    ~/venv-ap/bin/python run_sitl_demo.py --policy ../policies/X.yaml --dev-yaml
 
 Policy note: `--bundle` flies the signed policy bundle (guardrail/bundle.py) and
 refuses one whose signature does not verify, unless `--allow-unverified-bundle`
 says to fly it recorded as unverified. This venv has no `cryptography`; the
 signature is checked by the pure-Python RFC 8032 verifier in guardrail/bundle.py
-instead, so "verified" means the same here as on Windows. `--policy`
-(default policies/sim_demo_policy.yaml) is the YAML fallback, recorded as
-unsigned. Either way the source lands in metrics.json, kpi.json and the replay
-bundle.
+instead, so "verified" means the same here as on Windows. Since 2026-10-12 a
+YAML policy (`--policy`, or the default policies/sim_demo_policy.yaml) flies
+only with `--dev-yaml`, recorded as unsigned and `dev_yaml: true` and never
+KPI-grade; with no policy option the signed bundle of the default policy flies
+when tools/build_flight_bundles.py has put it in bundles/
+(guardrail.manifest.flight_policy_choice). Either way the source lands in
+metrics.json, kpi.json and the replay bundle.
+
+Since 2026-10-12, as on the ROS 2 rail: the Shield and every generation's CSP
+read one rule clock (guardrail.replay.rule_clock; `--clock-start` scripts it
+with the mission time, else the wall clock in the mission's time zone,
+`--clock-tz`), recorded as `rule_clock`; and `--hotapply-port` serves the REST
+hot-apply API on the flying Shield (guardrail.api.FlightHotApply), its events
+landing between ticks (the loop holds the rail's lock except while it
+sleeps), each recorded as a generation with its receipt-to-swap time. This
+rail uploads no zones to the autopilot, so nothing is re-published.
 
 Frames note: SITL has no camera — that stays AirSim's job (perception rail vs
 functional rail, same split the grant makes).
@@ -65,6 +78,7 @@ import argparse
 import json
 import math
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -82,16 +96,17 @@ from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E4
                            tick_input_from_decision)
 from guardrail.geometry import fence_polygon                           # noqa: E402
 from guardrail.kpi import compute_from_dir                             # noqa: E402
-from guardrail.manifest import (TOPOLOGY_ARDUPILOT_SITL,               # noqa: E402
+from guardrail.manifest import (DEV_YAML_FLAG, TOPOLOGY_ARDUPILOT_SITL,  # noqa: E402
                                 ardupilot_version_from_mavlink,
-                                build_manifest, is_kpi_grade,
+                                build_manifest, flight_bundle_path,
+                                flight_policy_choice, is_kpi_grade,
                                 sim_speedup_from_mavlink)
 from guardrail.models import (AltitudeEnvelope, PolygonFence,
                               SubjectStandoff, XY)        # noqa: E402
 from guardrail.models import Action4D                                  # noqa: E402
 from guardrail.replay import (EpisodeRecord, audit_tick,               # noqa: E402
                               episode_row_fields, flown_fields,
-                              kpi_evidence_grade, rail_shield,
+                              kpi_evidence_grade, rail_shield, rule_clock,
                               verify_replay, write_replay, zone_dwell)
 from guardrail.vla_stub import StubVLA                                 # noqa: E402
 from mavlink_adapter_node import (DEFAULT_HOLD_MODE, HOLD_MODES,       # noqa: E402
@@ -115,6 +130,10 @@ FENCE_PARAMS = ("FENCE_ENABLE", "FENCE_ALT_MAX", "FENCE_ACTION", "FENCE_TYPE",
 # can never fire under the shipped caps (docs/DESIGN-escalation-fsm.md).
 # After the FSM entered RTL / Land, how long to keep recording.
 FAILSAFE_GRACE_S = 40.0
+
+# The policy flown with no policy option: its signed bundle when bundles/
+# holds it, this YAML only under --dev-yaml.
+DEFAULT_POLICY_YAML = ROOT / "policies" / "sim_demo_policy.yaml"
 
 DYNAMIC_AT_S = 8.0
 DYNAMIC_FENCE = PolygonFence(
@@ -312,8 +331,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--command", default="fly to the northeast pad at 6 m/s")
     ap.add_argument("--policy", default=None,
-                    help="policy YAML (default policies/sim_demo_policy.yaml); "
-                         "recorded as UNSIGNED")
+                    help="policy YAML; flown only with --dev-yaml, recorded as "
+                         "UNSIGNED. Without --policy and --bundle the signed "
+                         "bundle of policies/sim_demo_policy.yaml flies")
+    ap.add_argument(DEV_YAML_FLAG, dest="dev_yaml", action="store_true",
+                    help="fly a YAML policy (--policy, or the default YAML): a "
+                         "development run, recorded as such and never KPI-grade")
     ap.add_argument("--bundle", default=None,
                     help="signed policy bundle; refused unless its signature "
                          "verifies")
@@ -357,6 +380,25 @@ def main() -> int:
                     help="give every generation's CSP its cost map (costmap_csp_g<N>"
                          ".npz/.json, named in cost_map_ref; guardrail.replay."
                          "EpisodeRecord)")
+    ap.add_argument("--clock-start", default=None, metavar="ISO8601",
+                    help="script the rule clock: it reads this at mission start "
+                         "and advances with the mission time. Without it the "
+                         "wall clock in the mission's time zone (--clock-tz)")
+    ap.add_argument("--clock-tz", default=None,
+                    help="the mission's time zone for the wall rule clock: a UTC "
+                         "offset (+08:00, the default: Taiwan) or an IANA name")
+    ap.add_argument("--hotapply-port", type=int, default=None,
+                    help="serve the REST hot-apply API (guardrail/api.py) on the "
+                         "flying Shield")
+    ap.add_argument("--hotapply-host", default="127.0.0.1",
+                    help="address for --hotapply-port (any but loopback needs "
+                         "--hotapply-pki)")
+    ap.add_argument("--hotapply-pki", default=None, metavar="DIR",
+                    help="mutual TLS with the harness CA (python -m "
+                         "guardrail.harness_service gen-pki)")
+    ap.add_argument("--hotapply-server-cert", default=None, metavar="NAME")
+    ap.add_argument("--hotapply-client", action="append", default=None,
+                    metavar="CN", help="client common name allowed in (repeat)")
     ap.add_argument("--tag", default=None)
     args = ap.parse_args()
 
@@ -364,15 +406,27 @@ def main() -> int:
     theta_h = theta_horizon(args.theta_horizon_s)
     tag = args.tag or (f"sitl_shield_{args.shield}" + ("_dynamic" if args.dynamic else ""))
 
-    # The signed bundle when one is given, else the YAML (recorded unsigned).
-    # Both at once is refused: a run with two candidate policies has none.
-    # Loaded BEFORE the output folder is touched, so a refused run leaves an
-    # earlier run of the same tag exactly as it was.
+    # The signed bundle (given, or the default policy's); a YAML only under
+    # --dev-yaml, recorded so. Both at once is refused: a run with two
+    # candidate policies has none. Loaded BEFORE the output folder is
+    # touched, so a refused run leaves an earlier run of the same tag exactly
+    # as it was.
+    bundle, yaml_path, choice = flight_policy_choice(
+        args.bundle, args.policy, dev_yaml=args.dev_yaml,
+        default_yaml=DEFAULT_POLICY_YAML,
+        default_bundle=flight_bundle_path(DEFAULT_POLICY_YAML))
     policy, policy_source = load_for_flight(
-        args.bundle,
-        args.policy or (None if args.bundle
-                        else ROOT / "policies" / "sim_demo_policy.yaml"),
-        allow_unverified=args.allow_unverified_bundle)
+        bundle, yaml_path, allow_unverified=args.allow_unverified_bundle)
+    policy_source.update(choice)
+    # The rule clock: one callable for the Shield and every generation's CSP
+    # (guardrail.replay.rule_clock), refused here, before anything is written,
+    # if --clock-start or --clock-tz cannot be read. Mission time is None
+    # until the mission loop starts.
+    mission_t0: list = [None]
+    clock, clock_record = rule_clock(
+        args.clock_start, tz=args.clock_tz,
+        elapsed=lambda: (None if mission_t0[0] is None
+                         else time.time() - mission_t0[0]))
     out = ROOT / "demo" / "out" / tag
     out.mkdir(parents=True, exist_ok=True)
     compiler = ConstraintCompiler(policy)
@@ -380,7 +434,8 @@ def main() -> int:
     # The episode record FIRST: it moves an earlier run's audit and
     # generation files aside, and writes generation 0's policy and CSP.
     rec = EpisodeRecord(out, policy, mission, lookahead_s=LOOKAHEAD_S,
-                        cost_map=args.cost_map)
+                        cost_map=args.cost_map, clock=clock,
+                        clock_record=clock_record)
     try:
         (out / "prompt.yaml").write_text(compiler.build_prompt(mission),
                                          encoding="utf-8")
@@ -398,12 +453,28 @@ def main() -> int:
     vla = StubVLA(mission)
     # No escalation FSM inside the Shield: this rail runs THE FSM below, fed
     # with the autopilot's state (guardrail.replay.rail_shield).
-    shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
+    shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
+                         clock=clock)
     # The POLICY, not a snapshot of its hash. This rail hot-applies a fence
     # mid-flight, and AuditLogger reads the hash live so records written after
     # that carry the generation that was actually in force.
     audit = AuditLogger(out / "audit.jsonl", policy,
                         episode_id=str(rec.episode_id))
+    # The REST hot-apply API on this Shield, started on the pad so a listener
+    # that cannot start stops the run before take-off. The mission loop holds
+    # `lock` except while it sleeps, so an event lands between two ticks.
+    lock = threading.RLock()
+    hot = None
+    if args.hotapply_port:
+        from guardrail.api import FlightHotApply
+        hot = FlightHotApply(shield, rec, lock, mission_t=lambda: (
+            None if mission_t0[0] is None else time.time() - mission_t0[0]),
+            log_fn=lambda m: print(f"[hotapply] {m}"))
+        print(f"[hotapply] API at "
+              + hot.start(args.hotapply_host, args.hotapply_port,
+                          pki_dir=args.hotapply_pki,
+                          server_name=args.hotapply_server_cert,
+                          allowed_clients=args.hotapply_client).url)
 
     subject = None
     if args.subject:
@@ -453,9 +524,14 @@ def main() -> int:
     n_touched = n_braked = 0
     spawn_t = spawn_pos = None
     t0 = time.time()
+    mission_t0[0] = t0
     tick = 0
     reached = False
     end_why = "time cap"
+    # Released only while the loop sleeps: a REST hot-apply lands between two
+    # ticks, never between a decision and its row (guardrail.api). (An
+    # exception ends the process, and the daemon listener with it.)
+    lock.acquire()
     while time.time() - t0 < MAX_S:
         tick += 1
         now = time.time() - t0
@@ -550,8 +626,10 @@ def main() -> int:
             n_braked += int(decision.braked)
 
         touched_now = bool(shield_on and decision.touched)
+        # The rule clock's reading rides with each point, so the zone dwell
+        # applies the windows the Shield flew under (guardrail.replay.zone_dwell).
         traj.append({"t": round(now, 2), "x": state.x, "y": state.y, "up": state.up,
-                     "touched": touched_now})
+                     "touched": touched_now, "clock": clock().isoformat()})
 
         # Per-tick row in the shape guardrail/kpi.py reads. NOT audit.jsonl:
         # AuditLogger writes `raw_action`/`emitted_action` and only for touched
@@ -608,7 +686,13 @@ def main() -> int:
             end_why = "escalation FSM ended the mission"
             print(f"[fsm]      {fsm.state.value}: the autopilot has the aircraft")
             break
+        lock.release()
         time.sleep(TICK)
+        lock.acquire()
+    lock.release()
+    if hot is not None:
+        # Later events would land after this episode's records.
+        hot.close(f"the episode ended ({end_why})")
 
     # The episode is complete only with this event (guardrail.replay refuses
     # an episode without it as unfinished).
@@ -634,9 +718,13 @@ def main() -> int:
     # zone where it was declared. The spawn time goes in on the trajectory's
     # own 0.01 s grid (traj "t" is rounded so): compared unrounded, the spawn
     # tick itself was dropped whenever the clock read past the rounded value.
-    dwell = zone_dwell(shield, traj, TICK,
-                       live_from=({DYNAMIC_FENCE.id: round(spawn_t, 2)}
-                                  if spawn_t is not None else None))
+    # A zone spawned over REST counts from its arrival too (its mission time,
+    # on the same grid; guardrail.api.FlightHotApply.live_from).
+    live = dict(hot.live_from) if hot is not None else {}
+    if spawn_t is not None:
+        live[DYNAMIC_FENCE.id] = round(spawn_t, 2)
+    dwell = zone_dwell(shield, traj, TICK, live_from=live or None,
+                       clock_key="clock")
     nfz_seconds = dwell["nfz_s"]
     if dwell["nfz_moving_not_counted"]:
         print(f"[nfz]      moving zone(s) {dwell['nfz_moving_not_counted']} are "
@@ -690,6 +778,8 @@ def main() -> int:
         "nfz_s": round(nfz_seconds, 2),
         "nfz_by_zone_s": dwell["nfz_by_zone_s"],
         "nfz_moving_not_counted": dwell["nfz_moving_not_counted"],
+        # Inside a zone while its window or a switch had it off: not dwell.
+        "nfz_off_by_clock_s": dwell["nfz_off_by_clock_s"],
         "standoff_s": round(standoff_seconds, 2),
         "standoff_min_range_m": standoff_min_m,
         "subject": ({"class": args.subject_class, "x": subject[0], "y": subject[1],
@@ -713,6 +803,10 @@ def main() -> int:
         "mode_requests": list(asks.fsm),
         "autopilot_mode_requests": list(asks.autopilot),
         "generations": rec.generations,
+        # Which clock the rules were evaluated on (scripted or wall), and
+        # the hot-applies served over REST.
+        "rule_clock": clock_record,
+        "hot_apply": hot.summary() if hot is not None else None,
         # The autopilot as it named itself, beside the manifest (ARCH-31).
         "autopilot": autopilot,
         "ardupilot_version": autopilot["ardupilot_version"] if autopilot else None,
@@ -742,6 +836,10 @@ def main() -> int:
     # quotable as contractual figures - which is the single thing the grade
     # exists to say. demo/follow_vlm.py has recorded it this way all along.
     graded, why = is_kpi_grade(manifest, metrics)
+    if policy_source.get("dev_yaml"):
+        graded, why = False, why + [
+            f"the policy was flown from YAML under {DEV_YAML_FLAG}: unsigned, "
+            f"not its issued bundle"]
     kpi["kpi_grade"] = graded
     kpi["kpi_grade_reasons"] = why
     kpi["manifest"] = manifest
@@ -823,7 +921,9 @@ def main() -> int:
 | Adapter | MAVLink SET_POSITION_TARGET_LOCAL_NED @ 10 Hz |
 | Command | `{args.command}` |
 | Policy | `{policy.policy_id}` `{policy.policy_hash}` |
-| Policy source | {policy_source['kind']} `{policy_source['path']}` - signature **{policy_source['signature']}** |
+| Policy source | {policy_source['kind']} `{policy_source['path']}` - signature **{policy_source['signature']}**{' (--dev-yaml)' if policy_source.get('dev_yaml') else ''} |
+| Rule clock | {clock_record.get('kind')}: {clock_record.get('start') or clock_record.get('tz')} |
+| Hot-apply API | {f"{metrics['hot_apply']['n_applied']} event(s) at {metrics['hot_apply']['endpoint']['url']}" if hot is not None else 'not served'} |
 | Target reached | {'yes' if reached else 'NO'} |
 | Ticks | {len(traj)} |
 | Shield interventions | {n_touched} |

@@ -268,6 +268,13 @@ Found on this run: 43 depth returns were refused and the car ranged by box width
 
 Steps 0-3 below were run on 2026-10-08 (see "Measured 2026-10-08"). The `dev` and `hil` paths after them have not been run.
 
+**Since 2026-10-13** (rail inputs, CHANGELOG):
+- The node flies the signed bundle of its policy from `bundles/` (gitignored; build it with `python tools/build_flight_bundles.py` where the lab key is, and again after any policy edit, since a stale bundle is refused). A YAML policy flies only with `--dev-yaml`; `run_pas_ardupilot.ps1` passes the bundle when it is present and otherwise `--policy <yaml> --dev-yaml`, and says which. The MAVROS commands for dev and hil below need the same: the bundle on that host, or `--dev-yaml`.
+- `--clock-start ISO8601` / `--clock-tz` give the Shield and the CSP a rule clock (wall clock in +08:00 without them, recorded either way); `-ClockStart` on the script.
+- Before arming, the policy's clock-proof zones go up to ArduPilot's GeoFence over the node's own link (`--no-fence-upload` turns it off); `citylife-quad.param` now sets FENCE_TYPE 7 (the polygon bit) and AVOID_ENABLE 0, as `sitl/fence/guardrail_fence.parm` does. G1 has not been re-run since that parameter change.
+- `--subject-actor` (default `auto`, Car_10 for a red car) logs the followed car's simulator pose for evaluation; the Shield still uses the estimate.
+- `--hold-mode LOITER` (SITL) holds the FSM's Loiter as the literal LOITER mode with an RC3 override of 1500; BRAKE stays the default. Over MAVROS this needs `mavros_node -p system_id:=255` (SYSID_MYGCS), which `start_ardupilot.sh --mavros` now sets.
+
 ```powershell
 # 0. once: pymavlink in the flight env (pin as in sitl/setup_sitl.sh), and optionally
 #    mavlink-router in WSL (otherwise the MAVProxy fallback is used and labelled).

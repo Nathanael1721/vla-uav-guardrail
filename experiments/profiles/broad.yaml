@@ -10,10 +10,17 @@
 # This profile exists so the third row of the grant's table is a file, checked
 # like the other two: tests/test_scenario_spec.py expands it, requires the
 # count to land in `expected_cells`, and requires that no two of its cells fly
-# the same episode. It has not been run end to end: about 15 000 episodes on
-# the headless backend is an estimated 70 minutes on the desktop, scaled from
-# the nightly profile's rate (789 episodes in about 220 s) - an estimate, not
-# a measurement. When it is run, its manifests say `headless-kinematic` with
+# the same episode. It has not been run end to end. About 15 000 episodes
+# (14 930 since the review of 2026-10-12) on the headless backend is an
+# estimated 7.1 hours on the desktop at the grant's 5 s forecast, scaled from
+# the nightly profile's measured rate on 2026-10-13 (732 episodes in 1251 s,
+# 1.71 s per episode; 747 in 1207 s, 1.62 s, on 2026-10-12; 789 in 477 s,
+# 0.60 s, at the 3 s forecast flown before, which scales to 2.5 hours; the
+# "70 minutes" written here on 2026-10-07 was scaled from a faster nightly
+# measurement). An estimate, not a measurement, and longer than one
+# GitHub-hosted job may run (6 h), so it is not scheduled in
+# .github/workflows/nightly.yml. When it is run, its manifests say
+# `headless-kinematic` with
 # a measured sim_speedup in the hundreds - the grant's "> 1.0, functional
 # rail only" - and the run records `grant_profile_kpi_bearing: false` and
 # `kpi_bearing_this_run: false`, so nothing from it can be read as a KPI.

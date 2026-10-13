@@ -25,6 +25,11 @@
 #      so its stale-stub check runs (without grpcio-tools that one test
 #      SKIPs). On the requirements-only job its logic tests, which drive
 #      Harness directly, run and the gRPC / mTLS tests SKIP visibly.
+#      tests/test_harnesstruth_*.py (2026-10-12) hold the harness to the
+#      grant's forecast, the closed-loop wind model, the RTL hand-over, the
+#      self-contained bundles and this file. tests/test_env_pins.py is not
+#      listed: its setup_sitl.sh tests build throwaway git repositories with
+#      a bash it probes for, and it has not been run on a Linux runner yet.
 #   2. The smoke profile of the stress harness (experiments/profiles/smoke.yaml,
 #      ~50 scenarios x 1 seed, with the escalation FSM flying, since
 #      2026-10-07). Known failures and tracked episodes are reported and do
@@ -33,15 +38,32 @@
 #      run writes its KPI report (one row per template and parameter cell) to
 #      ci-smoke/episodes/kpi_report.md, kept with the bundles.
 #
-# NOT YET RUN ON GITHUB. This file was written and checked locally; nothing has
-# been pushed. Two things to check on the first run:
-#   * Some smoke gates sit close to their thresholds (closest approach 1.003 m
-#     against the 1 m margin ring in high-speed-near-edge). Linux floating point
-#     could move a cell across a gate; if one flips, re-measure it, do not
-#     loosen the gate.
-#   * The listed tests depend on files other work in progress is changing.
-#     Commit them together, or the first run fails for reasons unrelated to
-#     the code.
+# ON GITHUB SINCE 2026-10-08; GREEN SINCE 4418ae0 (2026-10-12). Every push
+# from 8 Oct to 12 Oct failed before the smoke step ran: SpeedClamp logged
+# "repairs" of float-rounding excesses on Windows and not on Linux, so pinned
+# repair counts held on the desktop and failed here, and a 5 ms timing bound
+# was asserted on shared runners (CHANGELOG, 2026-10-12 later). Linux floating
+# point can still move a cell that sits on a gate (closest approach 1.003 m
+# against the 1 m ring in high-speed-near-edge): if one flips, re-measure it,
+# never loosen the gate.
+#
+# THE SMOKE STEP SINCE 2026-10-12 flies the grant's forecast (5 s at 0.1 s,
+# 50 poses per tick, where it flew 3 s at 0.5 s, 6 poses), the closed-loop
+# wind model and three more cells (52 -> 55), so it costs more: measured on
+# the desktop (one process) at 32.8 s before and 89.9 s after (104 s on
+# 2026-10-13, after the review's re-cut, with the desktop shared). On GitHub
+# at 4418ae0 the step took 20-29 s, so about 55-80 s is to be expected there
+# (scaled, not measured). The standalone-test step grows too: on the desktop
+# tests/test_sweep.py took 85 s at 4418ae0 and 228 s on 2026-10-13 (its
+# episodes fly the 5 s forecast), and the five test_harnesstruth_* files add
+# 65 s, about 3.5 minutes per job in all; on GitHub, where that step took
+# 2:36-3:54 at 4418ae0, roughly 5-8 minutes is to be expected (scaled, not
+# measured). Both fit the 30-minute timeout. The requirements are pinned
+# (shapely, numpy by interpreter) since the same day. The nightly profile is
+# defined in .github/workflows/nightly.yml, not here, and has not run: GitHub
+# schedules only the default branch's workflows, which is `main` on GitHub,
+# while this file, nightly.yml and every push are on `master` (that file's
+# header).
 #
 # WHAT DOES NOT RUN HERE, AND WHY
 #
@@ -113,7 +135,12 @@ jobs:
               tests/test_manifest.py \
               tests/test_bundle.py \
               tests/test_frame_contract.py \
-              tests/test_harness_service.py; do
+              tests/test_harness_service.py \
+              tests/test_harnesstruth_forecast.py \
+              tests/test_harnesstruth_rtl.py \
+              tests/test_harnesstruth_wind.py \
+              tests/test_harnesstruth_bundles.py \
+              tests/test_harnesstruth_ci.py; do
             echo "::group::$t"
             if ! python "$t"; then
               echo "::error file=$t::$t failed"

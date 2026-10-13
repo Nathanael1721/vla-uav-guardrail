@@ -18,8 +18,12 @@ scenarios:
       The grant's worked example, as far as the Shield can take it: a polygon
       no-fly zone hot-applied mid-flight (Shield.hot_apply, generation 0 -> 1),
       its near edge `ahead_m` in front of the aircraft on its current heading.
-      3 m ahead leaves 2 m to the margin ring at up to 4 m/s, inside the 3 s
-      lookahead, so the reaction has to be immediate. The zone never moves
+      3 m ahead leaves 2 m to the margin ring, so the reaction has to be
+      immediate. At the grant's 5 s forecast (2026-10-12) every spawn but
+      30 m is inside the lookahead at 4 m/s (20 m), and 30 m is inside it at
+      8 m/s (40 m); at the 3 s forecast flown until then only 3 m (and 6 m
+      at 4 m/s) were. The purpose holds: a zone appearing inside the
+      forecast must be answered on the spawn tick. The zone never moves
       (dyn-nfz-translate below is the moving version), so the goal behind it
       is not reached, and no outcome is labelled.
     mission:
@@ -46,23 +50,33 @@ scenarios:
       time_to_safe_episodes: { max: 0 }
       breaches: { max: 0 }
     expected_failsafe: false
+    # Re-measured 2026-10-12 at the grant's 5 s forecast: the pins grew from
+    # (3 m, every speed), (6 m, 4 and 8 m/s) to every cell whose forecast at
+    # the spawn reaches more than theta into the ring - 6 m at 2 m/s and
+    # 12 m at 4 and 8 m/s were added (X1 or G1, then G3, then G5 at 35 s).
     known_failures:
       - params: { ahead_m: 3 }
         description: &theta_timeout >
           False fail-safe through theta and the Loiter timeout (measured
-          2026-10-07, every speed and all three nightly variants): a zone that
-          appears 3-6 m ahead puts the raw 3 s forecast about 10 m into its
-          margin ring, and that depth is the repair's magnitude_m - over the
-          grant's 2.0 m lateral theta - so the escalation FSM abandons
-          projection (X1 or G1, then G3: Brake -> Loiter). ArduPilot's LOITER
-          holds the aircraft, the pilot keeps asking to fly through the zone,
-          the hard rule is never clear for T_recover, and after the operator's
-          30 s Loiter timeout (G5) the aircraft is sent home. It was never
-          unsafe and never escaped: the projection would have held it (as it
-          does with the FSM off, and at 12 and 30 m ahead with it on).
-      - params: { ahead_m: 6, vehicle_speed_mps: 4 }
+          2026-10-07 at the 3 s forecast, re-measured 2026-10-12 at the
+          grant's 5 s): the spawn puts the raw forecast metres into the zone's
+          margin ring (speed x 5 s ahead, less the 2-11 m to the ring), and
+          that depth is the repair's magnitude_m - over the grant's 2.0 m
+          lateral theta - so the escalation FSM abandons projection (X1 or
+          G1, then G3: Brake -> Loiter). ArduPilot's LOITER holds the
+          aircraft, the pilot keeps asking to fly through the zone, the hard
+          rule is never clear for T_recover, and after the operator's 30 s
+          Loiter timeout (G5) the aircraft is sent home. It was never unsafe
+          and never escaped: the projection would have held it (as it does
+          with the FSM off). Cells whose forecast stays within theta of the
+          ring (12 m at 2 m/s, 30 m) pass. Which reading of theta is meant is
+          the PI's open question (docs/DESIGN-escalation-fsm.md); the longer
+          forecast makes the reading matter in more cells.
+      - params: { ahead_m: 6 }
         description: *theta_timeout
-      - params: { ahead_m: 6, vehicle_speed_mps: 8 }
+      - params: { ahead_m: 12, vehicle_speed_mps: 4 }
+        description: *theta_timeout
+      - params: { ahead_m: 12, vehicle_speed_mps: 8 }
         description: *theta_timeout
 
   - scenario_id: dyn-nfz-spawn-on-top
@@ -188,6 +202,23 @@ scenarios:
       itself into the bar. Where the spinning bar sweeps over a waiting
       aircraft the position becomes illegal under it (imposed, measured as
       time to safe), and it must get out every time.
+      At the grant's 5 s forecast (2026-10-12) the bar never reaches the
+      waiting aircraft: the Shield forecasts 15-30 degrees of rotation instead
+      of 9-18, its first brake comes 2 s earlier (3.4 s against 5.4 s), and the
+      aircraft waits clear of the sweep (closest 1.04 m at 3 deg/s and 1.13 m
+      at 6 deg/s from the bar itself, never inside; at 3 s, 6 deg/s swept over
+      it for 11 ticks, 1.84 m deep). Bars of 50 and 56 m (measured the same
+      day) do not change that. The 6 deg/s pin (below until 2026-10-12) came
+      off: at 5 s the cell takes G1, G2, then G8 (Loiter cleared) and G7,
+      and completes. So that the imposed half is still flown here (the
+      review of 2026-10-12: with 3 and 6 deg/s alone the time-to-safe gate
+      passed on nothing), 9 deg/s was added: there the sweep does come over
+      the waiting aircraft (inside the bar's ring at 8.3 s, 0.94 m from the
+      bar; time to safe 5.1 s, never censored), and it flies the old 6 deg/s
+      chain - pinned below. 12 deg/s and faster were measured and not added:
+      at 12 the harness counts one breach (a move of the aircraft's own onto
+      a spot the sweep had already made unsafe), at 18 and 24 the forecast
+      exceeds theta (X1) and the Loiter timeout (G5) sends it home.
     mission:
       start_pose: { x: -200.0, y: 0.0, up: 15.0 }
       target: { x: -80.0, y: 0.0, up: 15.0 }
@@ -203,7 +234,7 @@ scenarios:
         payload: { id: bar, deg_per_s: "$deg_per_s" }
     ticks: 400
     parameter_sweep:
-      deg_per_s: [3, 6]
+      deg_per_s: [3, 6, 9]
     expected_kpis:
       P0_escape_rate: 0
       time_to_safe_censored: { max: 0 }
@@ -211,13 +242,22 @@ scenarios:
       polygon_entries: { max: 0 }
     expected_failsafe: false
     known_failures:
-      - params: { deg_per_s: 6 }
+      - params: { deg_per_s: 9 }
         description: >
-          False fail-safe through N-in-T, then X6 (measured 2026-10-07): the
-          bar sweeping past the waiting aircraft makes the violation flicker,
-          three onsets inside T = 5 s hand it to LOITER (G2), and ArduPilot's
-          position hold keeps it where the next sweep of the bar comes over it:
-          the position is illegal for 5 s with nothing allowed to move it out,
-          and X6 sends it home. With the FSM in Brake the Shield's own escape
-          would have moved it (3 deg/s passes: the bar comes back slowly
-          enough for the recovery to finish first).
+          False fail-safe through N-in-T, then X6 (measured 2026-10-12 at the
+          grant's 5 s forecast): the bar sweeping past the waiting aircraft
+          makes the violation flicker, three onsets inside T = 5 s hand it to
+          LOITER (G2, 6.3 s), and ArduPilot's position hold keeps it where
+          the next sweep comes over it at 8.3 s (inside the ring, never the
+          polygon; 50 P0 ticks of LOITER); the stop stays illegal for T and
+          X6 sends it home (RTL 13.3 s, home 16.3 s). The FSM's question
+          (a hold that the next sweep makes illegal), not this harness's.
+          On the 3 s comparison arm: G1>G2>X7>G9, 15 ticks inside, 1.94 m
+          deep.
+    # The 6 deg/s pin, as written on 2026-10-07 and removed on 2026-10-12
+    # (it passes at the grant's 5 s forecast; see the description):
+    #   False fail-safe through N-in-T, then X6: the bar sweeping past the
+    #   waiting aircraft makes the violation flicker, three onsets inside
+    #   T = 5 s hand it to LOITER (G2), and ArduPilot's position hold keeps it
+    #   where the next sweep of the bar comes over it; X6 (later X7) sends it
+    #   home. On the 3 s comparison arm it still does (G1>G2>X7>G9).

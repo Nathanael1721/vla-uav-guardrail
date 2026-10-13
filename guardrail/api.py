@@ -64,11 +64,37 @@ other refusal (a locked class, a bad polygon, a corridor_swap aimed at a
 fence, a layer above mission, a relaxation across layers). The request
 handling is plain functions (`apply_*` below) so it is testable where FastAPI
 is not installed; `build_app` only routes to them.
+
+ON A FLYING NODE (2026-10-12). Until this date only demo/run_demo.py served
+this API; no SITL rail did, so the grant's hot-apply channel never reached an
+aircraft flown by ArduPilot. `FlightHotApply` puts it on a flying Shield
+(sitl/ros2_shield_node.py and sitl/run_sitl_demo.py, `--hotapply-port`):
+
+  * the routes and bodies above are unchanged; `build_app` takes three
+    optional hooks. `lock` is the rail's own lock (an RLock), held by its
+    control tick, so a swap and a tick never interleave; `on_applied(result,
+    received_ns=, applied_ns=)` runs under it after each accepted event (the
+    rail records the generation and re-publishes its fences); `refuse_when()`
+    names why the episode takes no more events (it ended), answered 503
+    before the Shield is touched;
+  * the listener binds 127.0.0.1 by default. Any other address needs mutual
+    TLS with the stress harness's lab CA (guardrail/harness_service.py
+    gen-pki): the server presents <server_name>.cert.pem, requires a client
+    certificate signed by ca.cert.pem, and drops a connection whose common
+    name is not on the allow-list (default harness-client), as the gRPC
+    harness does - the same CA will sign every SROS 2 node's identity, so a
+    valid chain alone is not enough;
+  * each accepted event's receipt-to-swap time (handler entry, before the
+    lock, to the Shield's swap) is recorded beside the grant's 50 ms target
+    for a dynamic_nfz spawn (Policy DSL page, "Hot-apply latency").
 """
 from __future__ import annotations
 
+import logging
+import math
 import threading
-from typing import Any
+import time
+from typing import Any, Callable
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -286,20 +312,48 @@ def apply_legacy_nfz(shield: Shield, body: dict) -> dict:
 
 # ------------------------------------------------------------------ the app
 
-def build_app(shield: Shield):
+log = logging.getLogger("guardrail.api")
+
+
+def build_app(shield: Shield, *, lock=None,
+              on_applied: Callable[..., Any] | None = None,
+              refuse_when: Callable[[], str | None] | None = None):
+    """The FastAPI app. The three keywords are for a flying node (module
+    docstring, "On a flying node"); without them it is the app it always was.
+
+    `lock` serialises every route against the caller's own use of the Shield
+    (pass an RLock when `on_applied` takes it again). `on_applied(result,
+    received_ns=, applied_ns=)` runs under it after an accepted event, with
+    time.monotonic_ns() at handler entry and right after the swap; an
+    exception it raises is logged, never turned into a refusal, because the
+    Shield has already swapped. `refuse_when()` returning a reason refuses a
+    mutating request with 503 before the Shield is touched."""
     from fastapi import Body, FastAPI, HTTPException
 
     app = FastAPI(title="Guardrail hot-apply API", version="0.2")
     # Events are serialised by the Shield's own lock; this one also orders the
     # read of hash + generation in /health against them.
-    lock = threading.Lock()
+    lock = lock if lock is not None else threading.Lock()
 
-    def call(fn, *args):
+    def call(fn, *args, mutating: bool = False):
+        received = time.monotonic_ns()
         with lock:
+            if mutating and refuse_when is not None:
+                why = refuse_when()
+                if why:
+                    raise HTTPException(503, why)
             try:
-                return fn(shield, *args)
+                res = fn(shield, *args)
             except ApiError as e:
                 raise HTTPException(e.status, e.detail) from None
+            if mutating and on_applied is not None:
+                applied = time.monotonic_ns()
+                try:
+                    on_applied(res, received_ns=received, applied_ns=applied)
+                except Exception:                          # noqa: BLE001
+                    log.exception("on_applied failed after %s was applied",
+                                  res.get("applied"))
+            return res
 
     @app.get("/health")
     def get_health():
@@ -317,44 +371,232 @@ def build_app(shield: Shield):
 
     @app.post("/dynamic_nfz")
     def post_dynamic_nfz(body: dict = Body(...)):
-        return call(apply_dynamic_nfz, body)
+        return call(apply_dynamic_nfz, body, mutating=True)
 
     @app.patch("/dynamic_nfz/{zone_id}")
     def patch_dynamic_nfz(zone_id: str, body: dict = Body(...)):
-        return call(apply_nfz_edit, zone_id, body)
+        return call(apply_nfz_edit, zone_id, body, mutating=True)
 
     @app.delete("/dynamic_nfz/{zone_id}")
     def delete_dynamic_nfz(zone_id: str):
-        return call(apply_nfz_expire, zone_id)
+        return call(apply_nfz_expire, zone_id, mutating=True)
 
     @app.post("/time_window_switch")
     def post_switch(body: dict = Body(...)):
-        return call(apply_time_window_switch, body)
+        return call(apply_time_window_switch, body, mutating=True)
 
     @app.post("/corridor_swap")
     def post_swap(body: dict = Body(...)):
-        return call(apply_corridor_swap, body)
+        return call(apply_corridor_swap, body, mutating=True)
 
     @app.post("/hot_apply")
     def post_hot_apply(body: dict = Body(...)):
-        return call(apply_event, body)
+        return call(apply_event, body, mutating=True)
 
     @app.post("/nfz")
     def add_nfz(body: dict = Body(...)):
-        return call(apply_legacy_nfz, body)
+        return call(apply_legacy_nfz, body, mutating=True)
 
     return app
 
 
+def peer_common_name(cert: dict | None) -> str | None:
+    """The subject common name of a peer certificate as ssl.getpeercert()
+    returns it, or None."""
+    for rdn in (cert or {}).get("subject", ()):
+        for key, value in rdn:
+            if key == "commonName":
+                return value
+    return None
+
+
+def _common_name_gate(allowed: set[str]):
+    """uvicorn's own HTTP protocol, closing a TLS connection whose client
+    certificate's common name is not in `allowed` (the CA's chain was already
+    verified by the handshake: ssl.CERT_REQUIRED)."""
+    from uvicorn.config import HTTP_PROTOCOLS
+    from uvicorn.importer import import_from_string
+    base = import_from_string(HTTP_PROTOCOLS["auto"])
+
+    class CommonNameGate(base):
+        def connection_made(self, transport):
+            super().connection_made(transport)
+            cn = peer_common_name(transport.get_extra_info("peercert"))
+            if cn not in allowed:
+                log.warning("hot-apply: client certificate %r is not on the "
+                            "allow-list %s; connection closed", cn, sorted(allowed))
+                transport.close()
+    return CommonNameGate
+
+
 def serve_in_background(shield: Shield, host: str = "127.0.0.1",
-                        port: int = 8071) -> threading.Thread:
+                        port: int = 8071, *, lock=None,
+                        on_applied: Callable[..., Any] | None = None,
+                        refuse_when: Callable[[], str | None] | None = None,
+                        pki_dir=None, server_name: str | None = None,
+                        allowed_clients=None,
+                        wait_s: float = 5.0) -> threading.Thread:
     """Start uvicorn in a daemon thread so the 10 Hz mission loop stays the
-    main thread. Returns the thread (daemon: dies with the mission)."""
+    main thread. Returns the thread (daemon: dies with the mission) once the
+    server listens (RuntimeError if it has not within `wait_s`); its
+    `server` attribute is the uvicorn.Server (`server.should_exit = True`
+    stops it) and `url` the address it serves.
+
+    Plaintext on a loopback address only. `pki_dir` (a folder written by
+    `python -m guardrail.harness_service gen-pki`) serves mutual TLS:
+    <server_name>.cert.pem (default harness-server), a client certificate
+    signed by its ca.cert.pem required, and its common name required to be
+    in `allowed_clients` (default harness-client)."""
+    import ssl as _ssl
+
     import uvicorn
 
-    app = build_app(shield)
-    config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+    from .harness_service import (DEFAULT_CLIENT_CN, SERVER_CN, is_loopback,
+                                  pki_paths)
+    if pki_dir is None and not is_loopback(host):
+        raise ValueError(f"refusing a plaintext hot-apply listener on {host!r}: "
+                         f"plaintext is for loopback only; give pki_dir (the "
+                         f"harness CA, guardrail.harness_service gen-pki) for "
+                         f"mutual TLS")
+    app = build_app(shield, lock=lock, on_applied=on_applied,
+                    refuse_when=refuse_when)
+    kw: dict[str, Any] = {}
+    if pki_dir is not None:
+        allowed = set(allowed_clients or (DEFAULT_CLIENT_CN,))
+        ca, cert, key = pki_paths(pki_dir, server_name or SERVER_CN)
+        for f in (ca, cert, key):
+            if not f.is_file():
+                raise FileNotFoundError(f"{f} is missing: write the lab PKI with "
+                                        f"python -m guardrail.harness_service gen-pki")
+        kw = {"ssl_certfile": str(cert), "ssl_keyfile": str(key),
+              "ssl_ca_certs": str(ca), "ssl_cert_reqs": _ssl.CERT_REQUIRED,
+              "http": _common_name_gate(allowed)}
+    config = uvicorn.Config(app, host=host, port=port, log_level="warning", **kw)
     server = uvicorn.Server(config)
     t = threading.Thread(target=server.run, daemon=True, name="guardrail-api")
+    t.server = server
+    shown = f"[{host}]" if ":" in host else host
+    t.url = f"{'https' if pki_dir is not None else 'http'}://{shown}:{port}"
     t.start()
+    # uvicorn binds on its own thread and only logs a failure there (a taken
+    # port, a bad certificate). Wait for it, so a listener that is not
+    # listening is an error here and not a silent absence.
+    deadline = time.monotonic() + wait_s
+    while not server.started and t.is_alive() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    if not server.started:
+        server.should_exit = True
+        raise RuntimeError(f"the hot-apply listener did not start on {t.url} "
+                           f"within {wait_s:g} s (port taken, or a TLS file "
+                           f"refused; uvicorn's log says which)")
     return t
+
+
+# ------------------------------------------------------- on a flying node
+
+# The grant's hot-apply latency target for a dynamic_nfz spawn (Policy DSL
+# page, "Performance targets": <= 50 ms).
+HOT_APPLY_TARGET_MS = 50.0
+
+
+class FlightHotApply:
+    """The REST hot-apply listener on a FLYING Shield: one per episode.
+
+        hot = FlightHotApply(shield, rec, lock, mission_t=node_t, after=refence)
+        hot.start("127.0.0.1", 8071)                    # or pki_dir=... for mTLS
+        ...                                             # ticks take `lock`
+        hot.close("episode ended")                      # later events: 503
+        metrics["hot_apply"] = hot.summary()
+
+    `record` is the rail's guardrail.replay.EpisodeRecord: each accepted event
+    writes the new generation's policy_g<N>.json and csp_g<N>.json
+    (`hot_applied`) and a `hot_apply_rest` event with its receipt-to-swap
+    time. `after(result, t)` runs next, under the lock (the ROS node
+    re-publishes its fences there, keeping a zone the aircraft is near held
+    back). `mission_t()` is the rail's mission time, or None before take-off.
+    A dynamic_nfz spawned this way is named in `live_from` with its mission
+    time on the trajectory's 0.01 s grid, for guardrail.replay.zone_dwell.
+    """
+
+    def __init__(self, shield: Shield, record, lock, *,
+                 mission_t: Callable[[], float | None],
+                 after: Callable[[dict, float | None], None] | None = None,
+                 log_fn: Callable[[str], None] | None = None) -> None:
+        self.shield = shield
+        self.rec = record
+        self.lock = lock
+        self.mission_t = mission_t
+        self.after = after
+        self.log = log_fn or (lambda msg: log.info("%s", msg))
+        self.applied: list[dict] = []
+        self.live_from: dict[str, float] = {}
+        self.closed: str | None = None
+        self.thread: threading.Thread | None = None
+        self.endpoint: dict | None = None
+
+    def refuse_when(self) -> str | None:
+        return self.closed
+
+    def on_applied(self, result: dict, *, received_ns: int,
+                   applied_ns: int) -> dict:
+        t = self.mission_t()
+        entry = {"op": result["op"], "type": result["type"],
+                 "rule_id": result["applied"],
+                 "generation": result["generation"],
+                 "policy_hash": result["policy_hash"],
+                 "receipt_to_swap_ms": round((applied_ns - received_ns) / 1e6, 3)}
+        self.rec.hot_applied(result["applied"], t=t)
+        if entry["op"] == "spawn" and entry["type"] == "dynamic_nfz" \
+                and t is not None:
+            self.live_from[entry["rule_id"]] = round(t, 2)
+        self.applied.append({"t": None if t is None else round(t, 3), **entry})
+        self.rec.event("hot_apply_rest", t=t, **entry)
+        if self.after is not None:
+            self.after(result, t)
+        self.log(f"hot-apply over REST: {entry['op']} {entry['type']} "
+                 f"{entry['rule_id']!r} -> generation {entry['generation']}, "
+                 f"receipt to swap {entry['receipt_to_swap_ms']:.2f} ms")
+        return entry
+
+    def start(self, host: str = "127.0.0.1", port: int = 8071, *,
+              pki_dir=None, server_name: str | None = None,
+              allowed_clients=None) -> threading.Thread:
+        self.thread = serve_in_background(
+            self.shield, host, port, lock=self.lock, on_applied=self.on_applied,
+            refuse_when=self.refuse_when, pki_dir=pki_dir,
+            server_name=server_name, allowed_clients=allowed_clients)
+        self.endpoint = {"url": self.thread.url, "mutual_tls": pki_dir is not None,
+                         "pki_dir": None if pki_dir is None else str(pki_dir),
+                         "allowed_clients": (sorted(allowed_clients)
+                                             if pki_dir is not None and allowed_clients
+                                             else None)}
+        self.rec.event("hot_apply_listener", **self.endpoint)
+        return self.thread
+
+    def close(self, why: str) -> None:
+        """No more events (they would land after the episode's records are
+        written): later requests get 503 with `why`, and the server stops."""
+        with self.lock:
+            self.closed = why
+        if self.thread is not None:
+            self.thread.server.should_exit = True
+
+    def summary(self) -> dict:
+        lat = sorted(e["receipt_to_swap_ms"] for e in self.applied)
+
+        def pct(q):                     # nearest rank, as the rails' percentile
+            if not lat:
+                return None
+            return lat[min(len(lat) - 1, max(0, math.ceil(q / 100 * len(lat)) - 1))]
+        spawns = [e["receipt_to_swap_ms"] for e in self.applied
+                  if e["op"] == "spawn"]
+        return {"endpoint": self.endpoint, "n_applied": len(self.applied),
+                "events": list(self.applied),
+                "receipt_to_swap_ms_p50": pct(50),
+                "receipt_to_swap_ms_max": lat[-1] if lat else None,
+                "spawn_target_ms": HOT_APPLY_TARGET_MS,
+                "spawns_over_target": sum(1 for v in spawns
+                                          if v > HOT_APPLY_TARGET_MS),
+                "measured": "handler entry (before the rail's lock) to the "
+                            "Shield's swap; the generation's policy and CSP "
+                            "are written after it, still under the lock"}

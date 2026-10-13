@@ -95,8 +95,88 @@ thing the Shield is responsible for. What it therefore CANNOT test: the
 autopilot's tracking, timing under load, or perception. Once the FSM hands the
 aircraft to LOITER, RTL or LAND, ArduCopter's own modes are modelled as ideal
 position control (AP_* below: hold, climb to 15 m and return at 5 m/s, descend
-at 0.5 m/s), with wind and gusts rejected; a GUIDED setpoint keeps the
-pessimistic open-loop disturbance of `stress`.
+at 0.5 m/s).
+
+THE SHIELD'S FORECAST (2026-10-12)
+
+Every Shield of an episode - the flying one, the ground-truth oracle and the
+autopilot checker - is built with the grant's forecast, guardrail.shield's
+LOOKAHEAD_S / LOOKAHEAD_DT_S (5 s at 0.1 s, 50 poses; Safety Shield p2,
+"5 s of predicted trajectory at 10 Hz = 50 future poses"), unless the spec
+overrides it. Until then they were built at 3 s / 0.5 s (6 poses), so no
+headless KPI came from the grant's configuration. The old forecast is kept as
+a labelled comparison arm (`--forecast-arms grant 3s`, forecast_for): its
+episodes carry `forecast-3s` in their id, their bundles say so in
+manifest_extras, and their results sit in `_forecast_comparison` and in
+`_cell_rollup` rows marked `grant_config: false` - never in `_counts`,
+`_failsafe_labels`, `_true_state` or the exit code. `--publish` flies both.
+
+THE WIND MODEL (2026-10-12)
+
+Every velocity the harness flies - the Shield's setpoint, a Brake's zero, the
+raw pilot of a control arm, the modelled LOITER / RTL / LAND - reaches the
+vehicle through ArduCopter's position controller. GUIDED velocity setpoints
+run SubMode::VelAccel (ArduCopter/mode_guided.cpp, velaccel_control_run, at
+the Copter-4.5.7 pin): AC_PosControl::input_vel_accel_xy integrates the
+velocity target into a POSITION target (update_pos_vel_accel_xy), and
+update_xy_controller closes a P loop on the position error (PSC_POSXY_P 1.0)
+plus a PID velocity loop with an integrator (PSC_VELXY_P 2.0, I 1.0). A steady
+wind is therefore rejected: a zero-velocity Brake holds its position. Until
+2026-10-12 a GUIDED setpoint drifted open-loop with the wind (this harness's
+kinematic integrator added the wind to the commanded velocity), which is what
+parked aircraft at a margin ring and blew them in.
+
+The model (`--wind-model guided`, the default; `open_loop` is the old one,
+kept for comparison):
+  * steady wind: the commanded ground velocity is flown, the wind rejected up
+    to AP_HOLD_AUTHORITY_MPS; of a stronger wind only the excess drifts the
+    aircraft downwind (the position target does not run away:
+    update_pos_vel_accel_xy stops it on the limited axis). The airframe's
+    own speed limit is NOT modelled: in still air every family flies what
+    it is commanded (12 m/s in near-edge-at-12mps), as before, so the change
+    touches only the families that blow a wind;
+  * gusts: a gust moves the aircraft off its position target, and the P loop
+    pulls it back at PSC_POSXY_P (an Ornstein-Uhlenbeck offset; the velocity
+    loop's own rejection is left out, so this is the pessimistic side of the
+    closed loop);
+  * not modelled: the velocity loop's transients (its integrator re-trimming
+    as drag changes with the commanded velocity). They exist with no wind
+    too, and the kinematic integrator ignores them in both;
+  * optimistic upwind: the authority is applied to the WIND, not to the
+    airspeed the frame must hold (|commanded - wind|). A command into a wind
+    within authority is flown exactly even when it needs more airspeed than
+    AP_HOLD_AUTHORITY_MPS (a 4 m/s leg into a 5 m/s headwind needs 9 m/s; an
+    airframe capped at 6.4 m/s of airspeed would make 1.4 m/s over the
+    ground), and beyond authority the command is flown plus the excess (a
+    5 m/s RTL into 12 m/s drifts back at 0.6 m/s, where that airframe would
+    drift at 5.6 m/s; both are "no progress home"). Capping the airspeed
+    (ground = wind + clip(commanded - wind, A)) would also cap still-air
+    flight at 6.4 m/s, which near-edge-at-12mps flies at 12, so the model
+    would contradict the families that assume the commanded speed is
+    reachable. Where it matters in the library: the Shield-flown legs of
+    wind_disturbance are tailwinds, but an RTL home flies INTO them - into
+    wind-beyond-authority's 8 m/s it makes 3.4 m/s of progress here, where
+    the capped airframe would be carried away at 1.6 m/s (into 12 m/s both
+    are "no progress"), and into wind-gusts' 2 m/s it needs up to 7 m/s.
+AP_HOLD_AUTHORITY_MPS is 6.4 m/s: the airspeed ArduPilot's SITL default frame
+reaches at ArduCopter's 30 deg ANGLE_MAX (config.h DEFAULT_ANGLE_MAX 3000)
+when all its drag is momentum drag. SIM_Frame.h puts that frame at 15.08 m/s
+at 45 deg (refSpd / refAngle); with all its drag quadratic the 30 deg figure
+would be 11.5 m/s. The lower end is used, so the model claims wind rejection
+only where that frame has it whatever its drag split. No SITL run with wind
+exists in demo/out: the rails' scripts set no SIM_WIND_* parameter, so the
+ros2fix* flights flew SITL's still air, where an open-loop and a closed-loop
+model of a zero setpoint agree. The model rests on the source, not on a
+flight; a SITL run with SIM_WIND_SPD set is what would test it.
+
+THE RTL HAND-OVER (2026-10-12)
+
+While the FSM is in RTL, guardrail/rtl_path.py RTLWatch judges the modelled
+RTL each tick - the straight leg home at RTL_ALT against the P0 zones and the
+altitude band, progress toward home over the grant's T, and the battery hook
+(`stress.battery_critical_at_s`) - and its verdict is passed as
+`rtl_failed`, so the FSM's RTL -> Land edge (G6) can fire. P0 ticks the
+autopilot flew are counted per mode (`autopilot_p0_flown_ticks_by_mode`).
 
 It is not KPI-grade and is built so it cannot be mistaken for it. Its manifest
 names the topology `headless-kinematic`, and `sim_speedup` is MEASURED (simulated
@@ -152,6 +232,7 @@ than doing nothing, and is said so.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import math
@@ -159,6 +240,7 @@ import random
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -169,12 +251,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from guardrail import kpi as K                                     # noqa: E402
+from guardrail import rtl_path as RP                               # noqa: E402
 from guardrail.models import (Action4D, CorridorSwap, DynamicNFZ,  # noqa: E402
                               State, TimeWindowSwitch)
-from guardrail.scenario_spec import (GRANT_EVENT_TYPES, Defaults,  # noqa: E402
-                                     Library, ScenarioEvent, ScenarioSpec,
-                                     expand, load_profile)
-from guardrail.shield import Shield, recurrence_active             # noqa: E402
+from guardrail.scenario_spec import (FORECAST_ARMS,                # noqa: E402
+                                     GRANT_EVENT_TYPES, Defaults, Library,
+                                     ScenarioEvent, ScenarioSpec,
+                                     check_forecast_arms, expand, load_profile)
+from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S, Shield,  # noqa: E402
+                              recurrence_active)
 
 LIB = ROOT / "experiments" / "scenarios.yaml"
 PROFILES = ROOT / "experiments" / "profiles"
@@ -203,6 +288,21 @@ AP_LAND_MPS = 0.5
 AP_HOME_TOL_M = 2.0              # "home reached": horizontally over the launch point
 AP_LANDED_M = 0.05
 
+# The wind model (module docstring, "THE WIND MODEL"). PSC_POSXY_P's default
+# (POSCONTROL_POS_XY_P, AC_PosControl.cpp at Copter-4.5.7), and the strongest
+# airspeed - so the strongest steady wind - the modelled airframe can hold.
+WIND_MODELS = ("guided", "open_loop")
+DEFAULT_WIND_MODEL = "guided"
+AP_POSXY_P = 1.0
+AP_HOLD_AUTHORITY_MPS = 6.4
+
+# The forecast of the "3s" comparison arm: the harness's own until
+# 2026-10-12 (the spec's lookahead_s, else 3.0 s, at a 0.5 s step).
+LEGACY_LOOKAHEAD_S = 3.0
+LEGACY_LOOKAHEAD_DT_S = 0.5
+# `--publish` flies the grant's forecast and the labelled 3 s comparison.
+PUBLISH_FORECAST_ARMS = ("grant", "3s")
+
 SITL_SCRIPT = "sitl/run_ros2_demo.sh"
 SITL_NODE = "sitl/ros2_shield_node.py"
 # The rail's own mission, as sitl/ros2_shield_node.py and ros2_vla_stub_node.py
@@ -218,6 +318,10 @@ SITL_RAIL_START = (0.0, 0.0)
 SITL_RAIL_TARGET = (30.0, 30.0)
 SITL_RAIL_CRUISE_M = 15.0
 SITL_RAIL_PILOT = "guardrail.vla_stub.StubVLA (sitl/ros2_vla_stub_node.py)"
+# The node's policy-reference flags (build_sitl_cmd, "POLICY REFERENCES"):
+# a YAML policy flies only with --dev-yaml; a bundle with the hash it must hold.
+SITL_DEV_YAML_FLAG = "--dev-yaml"
+SITL_EXPECTED_HASH_FLAG = "--expected-hash"
 # The published library sweep. Written only with --publish (see the docstring).
 PUBLISHED_SWEEP = ROOT / "docs" / "data" / "scenario_sweep.json"
 # The grant's acceptance target for fail-safe trigger correctness (Stress
@@ -351,6 +455,50 @@ def _autopilot(mode: str | None, st: State, home: tuple[float, float],
     if mode == "LAND":
         return Action4D(vz_up=-min(AP_LAND_MPS, max(0.0, st.up) / dt))
     return Action4D()
+
+
+def guided_ground_velocity(vx: float, vy: float, wind: tuple[float, float],
+                           authority_mps: float = AP_HOLD_AUTHORITY_MPS
+                           ) -> tuple[float, float]:
+    """The ground velocity ArduCopter's position controller flies for a
+    commanded ground velocity (vx, vy) in a steady wind (module docstring,
+    "THE WIND MODEL"): the command itself, the wind rejected up to
+    `authority_mps`, and only the excess of a stronger wind added. The
+    airframe's own speed limit is not modelled: in still air the harness
+    flies whatever it is commanded, as it always has, and a command into
+    the wind is flown as if the airspeed it needs were available (the
+    module docstring's "optimistic upwind")."""
+    w = math.hypot(wind[0], wind[1])
+    if w <= authority_mps + 1e-12:
+        return vx, vy
+    k = 1.0 - authority_mps / w
+    return vx + wind[0] * k, vy + wind[1] * k
+
+
+def forecast_for(spec: ScenarioSpec, defaults: Defaults | None = None,
+                 arm: str = "grant") -> dict[str, Any]:
+    """The forecast an episode's Shields are built with (module docstring,
+    "THE SHIELD'S FORECAST"), as recorded in its extras and manifest_extras.
+
+    grant  the spec's lookahead_s / lookahead_dt_s, else the library defaults
+           (the grant's 5 s at 0.1 s); `grant_config` says whether the result
+           IS the grant's (a spec may override it).
+    3s     the labelled comparison: the spec's lookahead_s, else 3.0 s, at
+           0.5 s - exactly what every Shield of the harness was built with
+           until 2026-10-12. Never the grant's configuration."""
+    if arm not in FORECAST_ARMS:
+        raise ValueError(f"forecast arm {arm!r}: one of {list(FORECAST_ARMS)}")
+    dfl = _as_defaults(defaults)
+    if arm == "grant":
+        look = float(spec.lookahead_s or dfl.lookahead_s)
+        step = float(spec.lookahead_dt_s or dfl.lookahead_dt_s)
+        grant = (abs(look - LOOKAHEAD_S) < 1e-9 and abs(step - LOOKAHEAD_DT_S) < 1e-9)
+    else:
+        look = float(spec.lookahead_s or LEGACY_LOOKAHEAD_S)
+        step = LEGACY_LOOKAHEAD_DT_S
+        grant = False
+    return {"arm": arm, "lookahead_s": look, "lookahead_dt_s": step,
+            "poses": int(round(look / step)), "grant_config": grant}
 
 
 # --------------------------------------------------------------------------- #
@@ -661,12 +809,16 @@ def _as_defaults(d) -> Defaults:
     return Defaults.model_validate(d or {})
 
 
-def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None) -> EpisodeRun:
+def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
+                forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL
+                ) -> EpisodeRun:
     """One headless episode. `arm` (paraphrase / prefix record) is RECORDED in
     the episode_start event and changes nothing else: no headless pilot reads
-    text. Flown by EpisodeRunner without a pause, so a stepped episode and
-    this one share one integrator."""
-    return EpisodeRunner(sc, defaults, seed, arm).finish()
+    text. `forecast` (forecast_for) and `wind_model` (WIND_MODELS) DO change
+    the flight. Flown by EpisodeRunner without a pause, so a stepped episode
+    and this one share one integrator."""
+    return EpisodeRunner(sc, defaults, seed, arm, forecast=forecast,
+                         wind_model=wind_model).finish()
 
 
 class EpisodeRunner:
@@ -701,9 +853,10 @@ class EpisodeRunner:
     dead generator left `done` False for ever, so finish() spun without end.
     """
 
-    def __init__(self, sc, defaults=None, seed: int = 0, arm: dict | None = None):
+    def __init__(self, sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
+                 forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL):
         self._box: dict[str, Any] = {}
-        self._gen = _episode(sc, defaults, seed, arm, self._box)
+        self._gen = _episode(sc, defaults, seed, arm, self._box, forecast, wind_model)
         self.result: EpisodeRun | None = None
         self.error: BaseException | None = None
         self._failed_t: float | None = None     # the tick that raised
@@ -786,7 +939,8 @@ class EpisodeRunner:
         return self.result
 
 
-def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
+def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
+             forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL):
     """The integrator behind run_episode and EpisodeRunner: a generator that
     yields (tick, t) at the start of every tick, before that tick's scheduled
     events are applied, and returns the EpisodeRun. `box` receives the
@@ -796,7 +950,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
     dfl = _as_defaults(defaults)
     dt = float(spec.dt or dfl.dt)
     ticks = int(spec.ticks or dfl.ticks)
-    look = float(spec.lookahead_s or dfl.lookahead_s)
+    fc = forecast_for(spec, dfl, forecast)
+    look, step = fc["lookahead_s"], fc["lookahead_dt_s"]
+    if wind_model not in WIND_MODELS:
+        raise ValueError(f"wind model {wind_model!r}: one of {list(WIND_MODELS)}")
 
     t_end = (ticks - 1) * dt
     late = [e for e in spec.events if e.at_sim_t > t_end + 1e-9]
@@ -817,6 +974,11 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
         # tick would leave a "GPS denial" scenario that never denied anything.
         raise ValueError(f"gps_dropout_s starts at {drop[0]} s and never "
                          f"happens: the run ends at {t_end:.1f} s")
+    batt_at = spec.stress.battery_critical_at_s
+    if batt_at is not None and batt_at > t_end + 1e-9:
+        # Same reasoning: a "low battery" cell whose battery never went low.
+        raise ValueError(f"battery_critical_at_s is {batt_at} s and never "
+                         f"happens: the run ends at {t_end:.1f} s")
 
     policy, source = spec.policy.load_with_source(ROOT)
     hash0 = policy.policy_hash
@@ -829,7 +991,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
     # The FSM's verdict is flown only by the Shield arm with escalation on. The
     # control arm flies the raw action; its Shield runs without an FSM.
     esc = on and spec.escalation
-    shield = Shield(policy, lookahead_s=look, dt=0.5, now=clock, escalation=esc)
+    # Every Shield of the episode on one forecast: the grant's 5 s at 0.1 s
+    # unless the spec overrides it, or the labelled 3 s comparison arm
+    # (forecast_for). Until 2026-10-12 all three were built at 3 s / 0.5 s.
+    shield = Shield(policy, lookahead_s=look, dt=step, now=clock, escalation=esc)
 
     stress = spec.stress
     # Ground truth under degraded perception comes from a SECOND Shield kept in
@@ -837,12 +1002,12 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
     # It is asked about the TRUE state. Re-using the flying Shield would put
     # the oracle's queries into its sliding window (`history`), which the
     # Shield keeps for its own decisions.
-    oracle = (Shield(spec.policy.load(ROOT), lookahead_s=look, dt=0.5, now=clock,
+    oracle = (Shield(spec.policy.load(ROOT), lookahead_s=look, dt=step, now=clock,
                      escalation=False)
               if stress.degrades_perception else None)
     # When the autopilot flies (LOITER / RTL / LAND), what it flew is checked
     # by a third Shield, never by the flying one (whose FSM it would feed).
-    checker = (Shield(spec.policy.load(ROOT), lookahead_s=look, dt=0.5, now=clock,
+    checker = (Shield(spec.policy.load(ROOT), lookahead_s=look, dt=step, now=clock,
                       escalation=False) if esc else None)
     rng_gps = random.Random(f"{seed}:gps")
     rng_wind = random.Random(f"{seed}:wind")
@@ -888,6 +1053,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
         "task_prompt_read_by": None if not spec.mission.task_prompt else
         "nobody: the headless pilot is not a language model",
         "arm": arm,
+        "forecast": fc,
+        "wind_model": wind_model,
         "wind_mps": [round(wind[0], 3), round(wind[1], 3)]}]
     es = _EventState(shields=shields)
     st = m.start
@@ -932,7 +1099,16 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
     ap_mode: str | None = None
     owner_ticks = {"shield": 0, "autopilot": 0, "pilot": 0}
     ap_mode_ticks: dict[str, int] = {}
+    ap_p0_by_mode: dict[str, int] = {}
     terminated_s = None
+    # The RTL hand-over, judged each RTL tick (guardrail/rtl_path.py).
+    rtl_watch = (RP.RTLWatch(home=m.home, rtl_alt_m=AP_RTL_ALT_M,
+                             battery=RP.BatteryHook(critical_at_s=batt_at))
+                 if esc else None)
+    rtl_failed_ticks = 0
+    rtl_failures: list[dict] = []
+    # The gust offset from the position target (wind model "guided").
+    gust_off = [0.0, 0.0]
     # The t- / t+ boundary measurements (module docstring).
     req_state: dict[int, bool] = {}
     req_edges: dict[str, list[float]] = {}
@@ -999,6 +1175,7 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
 
         raw = _pilot(m, kind, st)
         flags = {}
+        rtl_note = None
         if esc:
             # What the autopilot reports this tick, for the FSM's terminal
             # edges (G9 home reached, G10 landed). Home is reached at the end
@@ -1007,6 +1184,25 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
                      and st.up >= AP_RTL_ALT_M - 0.1
                      and math.hypot(st.x - m.home[0], st.y - m.home[1]) <= AP_HOME_TOL_M,
                      "landed": ap_mode == "LAND" and st.up <= AP_LANDED_M}
+            # G6, RTL -> Land: the straight leg home blocked by a P0 zone or
+            # outside the band, no progress home over T, or a critical
+            # battery (guardrail/rtl_path.py). Judged on the true position,
+            # which is the autopilot's own (it flies on its estimate).
+            if ap_mode == "RTL":
+                v = rtl_watch.assess(t_now, st.x, st.y, st.up,
+                                     RP.zones_from_shield(checker),
+                                     RP.band_from_shield(checker, st))
+                flags["rtl_failed"] = v.failed
+                if v.failed:
+                    rtl_note = v.note
+                    rtl_failed_ticks += 1
+                    if len(rtl_failures) < 5:
+                        rtl_failures.append({"t": round(t_now, 4),
+                                             "reasons": list(v.reasons)})
+            else:
+                # Defensive: the FSM leaves RTL only for Land or the end
+                # (G6, G9, X5), so an RTL is never re-entered today.
+                rtl_watch.reset()
         d = shield.filter(seen, raw, t=t_now, **flags)
         if esc and d.set_mode:
             ap_mode = d.set_mode
@@ -1113,6 +1309,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
                            "stop_illegal"))
             if d.fsm_fault:
                 row["fsm_fault"] = d.fsm_fault
+            if rtl_note:
+                row["rtl_failed"] = rtl_note
             if owner == "autopilot":
                 # guardrail.kpi leaves these ticks out of the Shield's own
                 # counts: the Shield did not decide what flew.
@@ -1128,8 +1326,12 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
                 # The modelled LOITER / RTL / LAND flew a P0-violating action
                 # (RTL's straight line home, a landing through a floor). Out of
                 # the Shield's escape rate by definition (guardrail.kpi,
-                # "AUTOPILOT TICKS"), so it is counted here instead of nowhere.
+                # "AUTOPILOT TICKS"), so it is counted here instead of nowhere,
+                # and per mode: a LOITER hold, an RTL leg and a landing are
+                # three different hand-overs.
                 autopilot_p0_ticks += 1
+                key = ap_mode or "none"
+                ap_p0_by_mode[key] = ap_p0_by_mode.get(key, 0) + 1
         if unsafe and not prev_unsafe and not imposed and moved_into_unsafe:
             # The aircraft carried ITSELF in: the position it moved to was
             # already unsafe at the previous instant, under the rules of that
@@ -1202,16 +1404,30 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
             terminated_s = t_now
             break
 
+        # Drawn on every tick, whoever flies, so the gust sequence of a seed
+        # does not depend on the hand-over.
         gx = rng_wind.gauss(0, stress.gust_mps) if stress.gust_mps else 0.0
         gy = rng_wind.gauss(0, stress.gust_mps) if stress.gust_mps else 0.0
-        if owner == "autopilot":
-            gx = gy = 0.0                    # position control rejects them
-            wx = wy = 0.0
+        if wind_model == "open_loop":
+            # The model until 2026-10-12: the autopilot's modes rejected wind
+            # and gusts, every other velocity drifted open-loop with both.
+            if owner == "autopilot":
+                gx = gy = 0.0
+                wx = wy = 0.0
+            else:
+                wx, wy = wind
+            vgx, vgy = flown.vx + wx + gx, flown.vy + wy + gy
         else:
-            wx, wy = wind
+            # ArduCopter's position controller flies every velocity (module
+            # docstring, "THE WIND MODEL"): the steady wind is rejected within
+            # the hold authority, a gust is pulled back at PSC_POSXY_P.
+            ux, uy = guided_ground_velocity(flown.vx, flown.vy, wind)
+            px, py = AP_POSXY_P * gust_off[0], AP_POSXY_P * gust_off[1]
+            gust_off[0] += (gx - px) * dt
+            gust_off[1] += (gy - py) * dt
+            vgx, vgy = ux + gx - px, uy + gy - py
         prev_st = st
-        st = State(x=st.x + (flown.vx + wx + gx) * dt,
-                   y=st.y + (flown.vy + wy + gy) * dt,
+        st = State(x=st.x + vgx * dt, y=st.y + vgy * dt,
                    up=st.up + flown.vz_up * dt, yaw_deg=st.yaw_deg)
         # Where the move landed, judged NOW - before the clock and the next
         # tick's events advance: was it already unsafe / inside a zone? (See
@@ -1307,6 +1523,17 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict):
         # P0 escape rate is the Shield's counter and leaves these out; this is
         # where a reader sees what the modelled fail-safe flew through.
         "autopilot_p0_flown_ticks": autopilot_p0_ticks,
+        # ... per autopilot mode (LOITER / RTL / LAND; "none" for a fault
+        # latched before a mode was named), so a reader can tell a hold from
+        # an RTL leg from a landing. Sums to autopilot_p0_flown_ticks.
+        "autopilot_p0_flown_ticks_by_mode": ap_p0_by_mode,
+        # RTL ticks the RTL watch failed (G6's input), and the first reasons.
+        "rtl_failed_ticks": rtl_failed_ticks if esc else None,
+        "rtl_failures": rtl_failures,
+        # The forecast every Shield of the episode was built with, and the
+        # wind model it flew (module docstring).
+        "forecast": fc,
+        "wind_model": wind_model,
         "harness_events": len(events) - 1,
         "policy_generation_final": shield.policy.generation,
         # None when the scenario declares no dropout; otherwise the ticks the
@@ -1448,6 +1675,134 @@ def manifest_extras(arm: dict | None) -> dict | None:
     return out
 
 
+# The version of the self-contained keys episode_extras() adds; a reader
+# (rerun_from_extras, the WP4 outputs tools) refuses a schema it does not know.
+EXTRAS_SCHEMA = "sweep-episode-extras/1"
+
+
+# A signed policy bundle up to this size is carried in the episode's extras
+# (base64), so the episode re-runs with no checkout at all. The repository's
+# bundles are about 1 kB; a larger archive is referenced by path and hash.
+MAX_INLINE_BUNDLE_BYTES = 1 << 20
+
+
+def _policy_record(spec: ScenarioSpec, policy_hash: str) -> dict:
+    """The policy as injected at t = 0, carried in the bundle: a YAML policy's
+    whole text, or a signed bundle's archive (base64, up to
+    MAX_INLINE_BUNDLE_BYTES), so the episode re-runs with no checkout of
+    policies/ or bundles/; always the source path and the file's hash."""
+    p = Path(spec.policy.source)
+    p = p if p.is_absolute() else ROOT / p
+    rec: dict[str, Any] = {"source": spec.policy.source, "policy_hash": policy_hash,
+                           "kind": "yaml" if spec.policy.path is not None else "bundle",
+                           "yaml_text": None, "bundle_b64": None, "file_sha256": None}
+    if p.is_file():
+        data = p.read_bytes()
+        rec["file_sha256"] = "sha256:" + hashlib.sha256(data).hexdigest()
+        if spec.policy.path is not None:
+            rec["yaml_text"] = data.decode("utf-8")
+        elif len(data) <= MAX_INLINE_BUNDLE_BYTES:
+            import base64
+            rec["bundle_b64"] = base64.b64encode(data).decode("ascii")
+    return rec
+
+
+def policy_generations(events: list[dict]) -> list[dict]:
+    """Every policy generation of an episode, from its harness events: the one
+    injected at t = 0 and each hot-apply the Shield accepted after it, with
+    the hash it produced (a refused event made no generation)."""
+    out = []
+    for e in events:
+        if e.get("type") == "episode_start":
+            out.append({"generation": e.get("generation"), "policy_hash": e.get("policy_hash"),
+                        "t": 0.0, "event": None})
+        elif e.get("type") == "hot_apply" and not e.get("refused"):
+            out.append({"generation": e.get("generation"), "policy_hash": e.get("policy_hash"),
+                        "t": e.get("t"), "event": e.get("event"),
+                        "rule_id": e.get("rule_id") or e.get("zone") or e.get("target")})
+    return out
+
+
+def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
+                   arm: dict | None = None, forecast: str = "grant",
+                   wind_model: str = DEFAULT_WIND_MODEL, episode=None) -> dict:
+    """The keys that make an episode bundle self-contained (manifest_extras.json,
+    beside the grant's six-field manifest): the expanded ScenarioSpec cell
+    with every parameter bound, its events, the library defaults it relied
+    on, the seed, the arm (paraphrase / prefix record, forecast, wind model),
+    the policy as injected and every generation after it. rerun_from_extras()
+    re-flies the episode from these keys alone; the key names are listed in
+    the CHANGELOG entry of 2026-10-12 for the WP4 outputs tools."""
+    dfl = _as_defaults(defaults)
+    out: dict[str, Any] = {
+        "extras_schema": EXTRAS_SCHEMA,
+        "scenario_id": spec.scenario_id,
+        "template": spec.template,
+        "random_seed": int(seed),
+        "arm": {"record": arm, "forecast": forecast, "wind_model": wind_model},
+        "forecast": run.extra.get("forecast") or forecast_for(spec, dfl, forecast),
+        "wind_model": wind_model,
+        "library_defaults": dfl.model_dump(mode="json"),
+        "scenario_spec": spec.model_dump(mode="json", by_alias=True),
+        "scenario_events": [e.model_dump(mode="json") for e in spec.events],
+        "policy": _policy_record(spec, run.policy_hash_start),
+        "generations": policy_generations(run.events),
+        "rerun": "experiments/sweep_scenarios.py rerun_from_extras(<this JSON>)",
+    }
+    if episode is not None:
+        out.update(episode_id=episode.episode_id, run_id=episode.run_id,
+                   params=episode.cell.params, arm_tag=episode.arm_tag)
+    return out
+
+
+def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
+    """Re-fly one headless episode from its bundle's manifest_extras alone.
+
+    A YAML policy is written from `policy.yaml_text` to a temporary file and
+    pinned to the recorded hash (`expected_hash`), so a policy that differs
+    from the one flown stops the re-run instead of flying something else. A
+    bundle policy is written from `policy.bundle_b64` the same way (its file
+    hash checked first); one too large to have been inlined is read from its
+    recorded path under `root` and pinned the same way."""
+    if extras.get("extras_schema") != EXTRAS_SCHEMA:
+        raise ValueError(f"manifest_extras schema {extras.get('extras_schema')!r}, "
+                         f"this harness reads {EXTRAS_SCHEMA!r}")
+    body = copy.deepcopy(extras["scenario_spec"])
+    pol = extras["policy"]
+    tmp = None
+    try:
+        if pol.get("yaml_text") is not None:
+            tmp = tempfile.TemporaryDirectory(prefix="rerun-policy-")
+            path = Path(tmp.name) / "policy.yaml"
+            path.write_text(pol["yaml_text"], encoding="utf-8", newline="")
+            body["policy"] = {"path": str(path), "expected_hash": pol["policy_hash"]}
+        elif pol.get("bundle_b64") is not None:
+            import base64
+            data = base64.b64decode(pol["bundle_b64"])
+            got = "sha256:" + hashlib.sha256(data).hexdigest()
+            if pol.get("file_sha256") and got != pol["file_sha256"]:
+                raise ValueError(f"the inlined policy bundle hashes to {got}, the "
+                                 f"extras record {pol['file_sha256']}")
+            tmp = tempfile.TemporaryDirectory(prefix="rerun-policy-")
+            path = Path(tmp.name) / PurePath(pol["source"]).name
+            path.write_bytes(data)
+            body["policy"] = {"bundle_path": str(path), "expected_hash": pol["policy_hash"]}
+        else:
+            src = Path(pol["source"])
+            if not src.is_absolute():
+                src = Path(root or ROOT) / src
+            body["policy"] = {"bundle_path": str(src), "expected_hash": pol["policy_hash"]}
+        spec = ScenarioSpec.model_validate(body)
+        arm = extras.get("arm") or {}
+        return run_episode(spec, Defaults.model_validate(extras["library_defaults"]),
+                           int(extras["random_seed"]), arm=arm.get("record"),
+                           forecast=arm.get("forecast", "grant"),
+                           wind_model=arm.get("wind_model", DEFAULT_WIND_MODEL))
+    finally:
+        if tmp is not None:
+            tmp.cleanup()
+
+
 # --------------------------------------------------------------------------- #
 # the SITL backend (ArduPilot SITL + MAVROS 2)
 # --------------------------------------------------------------------------- #
@@ -1513,7 +1868,8 @@ def sitl_refusal(spec: ScenarioSpec) -> str | None:
     if spec.events:
         why.append("mid-flight events")
     s = spec.stress
-    if s.degrades_perception or s.wind_speed_mps or s.gust_mps or s.start_jitter_m:
+    if (s.degrades_perception or s.wind_speed_mps or s.gust_mps or s.start_jitter_m
+            or s.battery_critical_at_s is not None):
         why.append("stressors")
     if spec.mission.clock_start is not None:
         why.append("a scenario clock")
@@ -1524,6 +1880,44 @@ def sitl_refusal(spec: ScenarioSpec) -> str | None:
         why.append("its own mission - so this scenario's "
                    + "; ".join(mismatch) + " would not be what was flown")
     return ("the SITL rail cannot reproduce " + ", ".join(why)) if why else None
+
+
+def sitl_node_flags(script: Path | None = None) -> set[str]:
+    """Every option string the rail's node declares, read from its source (it
+    imports rclpy, which this host need not have). A flag given as a name -
+    a module-level string constant, or one imported from guardrail, as
+    `DEV_YAML_FLAG` is from guardrail.manifest - is resolved to its value.
+    build_sitl_cmd asks it before passing a flag only some versions of the
+    node take: the node parses with parse_known_args, so a flag it does not
+    declare is not an error there, it goes to rclpy.init and is ignored."""
+    import ast
+    import importlib
+    tree = ast.parse((script or ROOT / SITL_NODE).read_text(encoding="utf-8"))
+    consts: dict[str, str] = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)):
+            consts.update({t.id: node.value.value for t in node.targets
+                           if isinstance(t, ast.Name)})
+        elif (isinstance(node, ast.ImportFrom) and node.module
+              and node.module.split(".")[0] == "guardrail"):
+            for alias in node.names:
+                try:
+                    val = getattr(importlib.import_module(node.module), alias.name, None)
+                except Exception:                                # noqa: BLE001
+                    val = None
+                if isinstance(val, str):
+                    consts[alias.asname or alias.name] = val
+    flags = set()
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "add_argument"):
+            for a in node.args:
+                v = (a.value if isinstance(a, ast.Constant)
+                     else consts.get(a.id) if isinstance(a, ast.Name) else None)
+                if isinstance(v, str) and v.startswith("--"):
+                    flags.add(v)
+    return flags
 
 
 def build_sitl_cmd(spec: ScenarioSpec, tag: str, seed: int = 0,
@@ -1544,13 +1938,43 @@ def build_sitl_cmd(spec: ScenarioSpec, tag: str, seed: int = 0,
     took them (2026-10-07): `--seed` (the manifest's random_seed was a
     hard-coded 0), `--target` (turned by the mission's rotation), `--speed`
     and `--max-s` (the scenario's ticks x dt).
+
+    POLICY REFERENCES (2026-10-12). A launch flies a signed bundle unless it
+    says otherwise: a YAML policy needs `--dev-yaml` beside `--policy`
+    (sitl/ros2_shield_node.py, sitl/run_sitl_demo.py and the PAS perception
+    node take it), so every `--policy <yaml>` here carries it. A bundle goes
+    with the hash it must hold (SITL_EXPECTED_HASH_FLAG): the spec's
+    `expected_hash` (the grant's PolicyRef pairs it with bundle_path), else
+    the hash of the bundle as this harness loads it now, so the rail flies
+    the policy the scenario was scored against. A bundle this host cannot
+    read cannot be pinned, and is refused (UnsupportedScenario) rather than
+    sent unpinned. So is EVERY bundle while the node does not declare the
+    hash flag (sitl_node_flags): it parses with parse_known_args, so an
+    undeclared `--expected-hash <hash>` would not stop the launch - it would
+    be handed to rclpy.init and the bundle flown unpinned, silently (review
+    of 2026-10-12; the node had not taken the flag that day).
     """
     cmd = ["wsl", "bash", SITL_SCRIPT, "on" if spec.shield else "off", "",
            "--tag", tag, "--seed", str(int(seed))]
     if spec.policy.bundle_path is not None:
-        cmd += ["--bundle", spec.policy.bundle_path]
+        if SITL_EXPECTED_HASH_FLAG not in sitl_node_flags():
+            raise UnsupportedScenario(
+                f"policy bundle {spec.policy.bundle_path}: {SITL_NODE} does not "
+                f"declare {SITL_EXPECTED_HASH_FLAG}, so the bundle cannot be pinned "
+                f"to the hash it was scored against (the node would drop the flag "
+                f"and fly it unpinned)")
+        want = spec.policy.expected_hash
+        if want is None:
+            try:
+                want = spec.policy.load(ROOT).policy_hash
+            except Exception as e:                       # noqa: BLE001
+                raise UnsupportedScenario(
+                    f"policy bundle {spec.policy.bundle_path} cannot be read here "
+                    f"({type(e).__name__}: {e}), so its hash cannot be pinned for "
+                    f"the rail; give the scenario an expected_hash") from e
+        cmd += ["--bundle", spec.policy.bundle_path, SITL_EXPECTED_HASH_FLAG, want]
     else:
-        cmd += ["--policy", spec.policy.path]
+        cmd += ["--policy", spec.policy.path, SITL_DEV_YAML_FLAG]
     m = spec.mission
     if m.target is not None:
         try:
@@ -1785,6 +2209,18 @@ def failsafe_summary(scored: list[dict]) -> dict:
     score_ = round(correct / n, 6) if n else None
     never = round((n - expected) / n, 6) if n else None
     always = round(expected / n, 6) if n else None
+    # Distinct FLIGHTS beside the episodes (review of 2026-10-12): cells and
+    # seeds of one family that flew the same KPI table under the same label
+    # are one flight, counted once. A deterministic cell flown on three seeds,
+    # or wind cells the closed loop rejects alike, otherwise weigh their
+    # verdict three or four times.
+    flights: dict[tuple, float] = {}
+    for r in fs:
+        flights[(r.get("scenario_id"), r.get("template"), kpi_signature(r),
+                 r["kpi"]["failsafe_matches_label"],
+                 r["kpi"]["failsafe_triggered"])] = r["kpi"]["failsafe_matches_label"]
+    n_fl = len(flights)
+    correct_fl = sum(1 for v in flights.values() if v == 1.0)
     # Which FSM edge sent each triggered episode to RTL / Land (guardrail/fsm.py
     # EDGES: G3 theta / no convergence -> Loiter, then G4 N-in-T persists, G5
     # the Loiter timeout, X6 a stop illegal for T, G11 / G12 a rule's own
@@ -1823,6 +2259,10 @@ def failsafe_summary(scored: list[dict]) -> dict:
         "correct": correct, "false_triggers": false_t, "missed_triggers": missed,
         "triggers_by_edge": by_edge,
         "fail_safe_correctness": score_,
+        "labelled_distinct_flights": n_fl,
+        "correct_distinct_flights": correct_fl,
+        "fail_safe_correctness_distinct_flights": (round(correct_fl / n_fl, 6)
+                                                   if n_fl else None),
         "null_never_trigger": never,
         "null_always_trigger": always,
         "beats_never_trigger": (None if score_ is None else score_ > never),
@@ -1872,6 +2312,15 @@ def true_state_summary(scored: list[dict]) -> dict:
     by_status: dict[str, int] = {}
     for r in entered:
         by_status[r["status"]] = by_status.get(r["status"], 0) + 1
+    # Which autopilot mode flew them, and how long each mode flew at all: a
+    # LOITER hold, an RTL leg and a landing are different hand-overs.
+    p0_by_mode: dict[str, int] = {}
+    ticks_by_mode: dict[str, int] = {}
+    for r in on:
+        for mode, n in (r["kpi"].get("autopilot_p0_flown_ticks_by_mode") or {}).items():
+            p0_by_mode[mode] = p0_by_mode.get(mode, 0) + n
+        for mode, n in (r["kpi"].get("autopilot_mode_ticks") or {}).items():
+            ticks_by_mode[mode] = ticks_by_mode.get(mode, 0) + n
     return {
         "shield_on_episodes": len(on),
         # Flew itself across a polygon edge: the incursions.
@@ -1889,6 +2338,9 @@ def true_state_summary(scored: list[dict]) -> dict:
         # Of true_p0_flown_ticks, the ones the modelled LOITER / RTL / LAND flew.
         "autopilot_p0_flown_ticks": sum(r["kpi"].get("autopilot_p0_flown_ticks") or 0
                                         for r in on),
+        "autopilot_p0_flown_ticks_by_mode": dict(sorted(p0_by_mode.items())),
+        "autopilot_ticks_by_mode": dict(sorted(ticks_by_mode.items())),
+        "episodes_rtl_failed": sum(1 for r in on if (r["kpi"].get("rtl_failed_ticks") or 0) > 0),
         "episodes_autopilot_p0_flown": len(ap_p0),
         "episodes_autopilot_p0_flown_by_status": ap_by_status,
         "autopilot_polygon_entries": sum(r["kpi"].get("autopilot_polygon_entries") or 0
@@ -1947,6 +2399,135 @@ def arms_summary(scored: list[dict]) -> dict | None:
                  "arms are the same flight by construction and any difference "
                  "would be a harness defect. A robustness number needs a pilot "
                  "that reads language."),
+    }
+
+
+def family_summary(scored: list[dict]) -> dict[str, dict]:
+    """Per template: statuses, true-state counts, outcomes and how many KPI
+    signatures its episodes produced (the `_families` block)."""
+    families: dict[str, dict] = {}
+    sigs_by_family: dict[str, set] = {}
+    for r in scored:
+        f = families.setdefault(r["template"], {"episodes": 0, "pass": 0, "tracked": 0,
+                                                "fail": 0, "known_failure": 0,
+                                                "episodes_with_breach": 0,
+                                                "episodes_entering_polygon": 0,
+                                                "episodes_inside_polygon": 0,
+                                                "true_p0_flown_ticks": 0,
+                                                "autopilot_p0_flown_ticks": 0,
+                                                "min_true_dist_to_fence_m": None,
+                                                "fsm_outcomes": {}})
+        f["episodes"] += 1
+        f[r["status"] if r["status"] in ("pass", "tracked", "known_failure")
+          else "fail"] += 1
+        k = r["kpi"]
+        f["episodes_with_breach"] += int((k.get("breaches") or 0) > 0)
+        f["episodes_entering_polygon"] += int((k.get("polygon_entries") or 0) > 0)
+        f["episodes_inside_polygon"] += int((k.get("ticks_inside_fence_polygon") or 0) > 0)
+        f["true_p0_flown_ticks"] += k.get("true_p0_flown_ticks") or 0
+        f["autopilot_p0_flown_ticks"] += k.get("autopilot_p0_flown_ticks") or 0
+        mo = k.get("mission_outcome")
+        f["fsm_outcomes"][mo] = f["fsm_outcomes"].get(mo, 0) + 1
+        d = k.get("min_true_dist_to_fence_m")
+        if d is not None:
+            cur = f["min_true_dist_to_fence_m"]
+            f["min_true_dist_to_fence_m"] = d if cur is None else min(cur, d)
+        sigs_by_family.setdefault(r["template"], set()).add(kpi_signature(r))
+    for name, f in families.items():
+        f["distinct_kpi_signatures"] = len(sigs_by_family[name])
+    return families
+
+
+def cell_extras(tables: list[dict]) -> dict:
+    """What a `_cell_rollup` row adds to guardrail.kpi.rollup's: whether it is
+    the grant's Shield configuration, and the P0 ticks the AUTOPILOT flew,
+    labelled by mode (outside the Shield's escape rate by definition, so
+    they are stated here rather than left out of the row)."""
+    by_mode: dict[str, int] = {}
+    ticks_mode: dict[str, int] = {}
+    for t in tables:
+        for mode, n in (t.get("autopilot_p0_flown_ticks_by_mode") or {}).items():
+            by_mode[mode] = by_mode.get(mode, 0) + n
+        for mode, n in (t.get("autopilot_mode_ticks") or {}).items():
+            ticks_mode[mode] = ticks_mode.get(mode, 0) + n
+    arms = {t.get("forecast_arm", "grant") for t in tables}
+    fcs = [t.get("forecast") for t in tables]
+    return {"forecast_arm": arms.pop() if len(arms) == 1 else sorted(arms),
+            # None, not False, for a row whose episodes recorded no forecast:
+            # the SITL rail's node builds its own Shield (at LOOKAHEAD_S /
+            # LOOKAHEAD_DT_S), which this harness neither chose nor saw.
+            "grant_config": (None if any(f is None for f in fcs)
+                             else all(f.get("grant_config") is True for f in fcs)),
+            "autopilot_p0_flown_ticks": sum(t.get("autopilot_p0_flown_ticks") or 0
+                                            for t in tables),
+            "autopilot_p0_flown_ticks_by_mode": dict(sorted(by_mode.items())),
+            "autopilot_ticks_by_mode": dict(sorted(ticks_mode.items())),
+            "episodes_rtl_failed": sum(1 for t in tables
+                                       if (t.get("rtl_failed_ticks") or 0) > 0)}
+
+
+def _twin_id(run_id: str) -> str:
+    """The grant-forecast episode a comparison episode shadows."""
+    return run_id.replace(",forecast-3s", "").replace("#forecast-3s", "")
+
+
+# What a comparison row reports of each side.
+_CMP_FIELDS = ("status", "mission_outcome", "failsafe_triggered", "p0_escapes",
+               "true_p0_flown_ticks", "autopilot_p0_flown_ticks", "breaches",
+               "polygon_entries", "repair_count", "reached_goal")
+
+
+def _cmp_side(r: dict) -> dict:
+    k = r.get("kpi") or {}
+    out = {f: (r.get(f) if f == "status" else k.get(f)) for f in _CMP_FIELDS}
+    out["fsm_edges"] = ">".join(str(t.get("edge")) for t in
+                                ((k.get("fsm") or {}).get("transitions") or []))
+    return out
+
+
+def forecast_comparison(grant: list[dict], cmp_scored: list[dict],
+                        cmp_counts: dict, cmp_rows: list[dict]) -> dict:
+    """The 3 s comparison arm beside the grant's forecast (module docstring):
+    its own counts and summaries, and every episode whose KPI table moved
+    between the two forecasts (status, outcome, fail-safe, P0 and true-state
+    counts, repairs, goal, the FSM's edges). Never merged into a headline."""
+    twins = {(r["id"], r["seed"]): r for r in grant}
+    moved, by_family = [], {}
+    for r in cmp_scored:
+        g = twins.get((_twin_id(r["id"]), r["seed"]))
+        if g is None:
+            continue
+        a, b = _cmp_side(g), _cmp_side(r)
+        fam = by_family.setdefault(r["template"], {"episodes": 0, "moved": 0,
+                                                   "status_changed": 0,
+                                                   "outcome_changed": 0,
+                                                   "failsafe_changed": 0})
+        fam["episodes"] += 1
+        if a != b:
+            fam["moved"] += 1
+            fam["status_changed"] += int(a["status"] != b["status"])
+            fam["outcome_changed"] += int(a["mission_outcome"] != b["mission_outcome"])
+            fam["failsafe_changed"] += int(a["failsafe_triggered"] != b["failsafe_triggered"])
+            moved.append({"id": g["id"], "seed": r["seed"], "family": r["template"],
+                          "grant": a, "3s": b})
+    fc = next((r["kpi"].get("forecast") for r in cmp_scored if r["kpi"].get("forecast")),
+              None)
+    return {
+        "arm": "3s", "grant_config": False, "forecast": fc,
+        "note": ("the forecast every headless Shield used until 2026-10-12 (3 s at a "
+                 "0.5 s step, 6 poses), flown beside the grant's 5 s at 0.1 s for "
+                 "comparison only: never in _counts, _failsafe_labels, _true_state, "
+                 "the top failures or the exit code"),
+        "counts": cmp_counts,
+        "failsafe_labels": failsafe_summary(cmp_scored),
+        "true_state": true_state_summary(cmp_scored),
+        "outcomes": {o: sum(1 for r in cmp_scored if r["kpi"].get("mission_outcome") == o)
+                     for o in K.OUTCOMES},
+        "families": family_summary(cmp_scored),
+        "moved_by_family": by_family,
+        "episodes_moved": len(moved),
+        "moved": moved,
+        "results": cmp_rows,
     }
 
 
@@ -2123,6 +2704,14 @@ def published_view(doc: dict) -> dict:
                 "bundle and the full run file keep them"}
     out["results"] = [{k: v for k, v in r.items() if k not in PUBLISHED_DROPS}
                       for r in doc.get("results") or []]
+    cmp_ = doc.get("_forecast_comparison")
+    if cmp_ and "results" in cmp_:
+        # The comparison arm's per-episode items double the file; its
+        # per-cell deltas, rollups and summaries stay (since 2026-10-12).
+        out["_forecast_comparison"] = {k: v for k, v in cmp_.items() if k != "results"}
+        out["_published_drops"]["comparison"] = (
+            "_forecast_comparison.results (the 3 s arm's per-episode items) is in "
+            "the full run file and the bundles only")
     return out
 
 
@@ -2147,10 +2736,13 @@ def _rollup(eps: list[dict]) -> dict | None:
 def cell_key(table: dict) -> str:
     """The grant's KPI-report row, "(scenario template, parameter cell)", plus
     the Shield arm and the prefix arm, which are different experiments.
-    Seeds and paraphrase arms of one cell pool in its row."""
+    Seeds and paraphrase arms of one cell pool in its row. The 3 s forecast
+    comparison arm is its own row, `/forecast-3s`, marked non-grant."""
     key = f"{table['family']}/{table['cell']}/shield-{table['arm']}"
     if table.get("prefix") == "off":
         key += "/prefix-off"
+    if table.get("forecast_arm", "grant") != "grant":
+        key += f"/forecast-{table['forecast_arm']}"
     return key
 
 
@@ -2178,13 +2770,22 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--keep-logs", action="store_true",
                     help="also write each episode's flight_log.jsonl, so "
                          "tools/kpi_report.py can re-score the bundles")
+    ap.add_argument("--forecast-arms", nargs="+", choices=FORECAST_ARMS, default=None,
+                    help="grant (always) and optionally 3s, the labelled "
+                         "comparison with the pre-2026-10-12 forecast (default: "
+                         "the profile's, else grant; --publish flies both)")
+    ap.add_argument("--wind-model", choices=WIND_MODELS, default=DEFAULT_WIND_MODEL,
+                    help="guided (ArduCopter's position controller, the default) "
+                         "or open_loop (the model until 2026-10-12, for comparison)")
     args = ap.parse_args(argv)
 
-    if args.publish and (args.out or args.profile or args.only or args.seed is not None):
+    if args.publish and (args.out or args.profile or args.only or args.seed is not None
+                         or args.forecast_arms is not None
+                         or args.wind_model != DEFAULT_WIND_MODEL):
         # The published file is the WHOLE library on its declared seeds; a
         # partial or profiled run written there would replace it with less.
         print("REFUSED: --publish writes the full library run; it takes no "
-              "--out, --profile, --only or --seed")
+              "--out, --profile, --only, --seed, --forecast-arms or --wind-model")
         return 2
 
     t_run = time.perf_counter()
@@ -2193,7 +2794,20 @@ def main(argv: list[str] | None = None) -> int:
     if not lib_path.is_absolute():
         lib_path = ROOT / lib_path
     lib = Library(lib_path)
-    episodes, info = expand(lib, profile, args.seed, args.only)
+    fc_arms = list(PUBLISH_FORECAST_ARMS) if args.publish else args.forecast_arms
+    try:
+        if fc_arms is not None:
+            check_forecast_arms(fc_arms)
+    except ValueError as e:
+        print(f"REFUSED: {e}")
+        return 2
+    if args.backend == "sitl" and fc_arms and "3s" in fc_arms:
+        # The rail's node builds its own Shield; the arm is a headless one.
+        print("REFUSED: the 3 s forecast arm is a headless comparison; the SITL "
+              "rail flies the node's own Shield")
+        return 2
+    episodes, info = expand(lib, profile, args.seed, args.only, forecast_arms=fc_arms)
+    info["wind_model"] = args.wind_model
     tag = profile.profile if profile else None
     out = results_path(args.out, args.publish, tag)
     runs = Path(args.runs) if args.runs else (
@@ -2202,10 +2816,14 @@ def main(argv: list[str] | None = None) -> int:
     verbose = len(episodes) <= 80
 
     arms = info.get("arms") or {}
-    print(f"{info['cells']} scenarios, {len(episodes)} episodes"
+    print(f"{info['cells']} scenarios, {info['episodes']} episodes"
           + (f" ({arms.get('extra_arm_episodes')} of them extra arms)"
              if arms.get("extra_arm_episodes") else "")
-          + f", backend={args.backend}" + (f", profile={tag}" if tag else "") + "\n")
+          + (f" + {arms.get('forecast_comparison_episodes')} on the 3 s comparison "
+             f"forecast" if arms.get("forecast_comparison_episodes") else "")
+          + f", backend={args.backend}" + (f", profile={tag}" if tag else "")
+          + (f", wind model {args.wind_model}" if args.backend == "headless" else "")
+          + "\n")
     refusals = preflight_refusals(info, profile is not None, bool(args.only))
     if refusals:
         for r in refusals:
@@ -2222,16 +2840,26 @@ def main(argv: list[str] | None = None) -> int:
     tables_on: list[dict] = []
     tables_off: list[dict] = []
     n_pass = n_fail = n_skip = n_known = n_tracked = 0
+    # The 3 s comparison arm: scored and judged like any episode, but kept
+    # apart - never in _counts, the headline summaries or the exit code.
+    cmp_rows: list[dict] = []
+    cmp_tables_on: list[dict] = []
+    cmp_tables_off: list[dict] = []
+    cmp_counts = {s: 0 for s in ("pass", "tracked", "fail", "known_failure",
+                                 "unexpected_pass", "skipped", "error")}
     one_seed = len(episodes) == len({(e.run_id) for e in episodes})
 
     for ep in episodes:
         spec = ep.cell.spec
         eid = ep.run_id
+        is_cmp = ep.forecast != "grant"
+        sink = cmp_rows if is_cmp else rows_out
         label = eid if one_seed else f"{eid} seed={ep.seed}"
         common = {"id": eid, "id_cell": ep.episode_id, "scenario_id": ep.cell.scenario_id,
                   "template": spec.template, "params": ep.cell.params,
                   "seed": ep.seed, "arm": "on" if spec.shield else "off",
                   "prefix": ep.prefix, "expect": spec.expect,
+                  "forecast_arm": ep.forecast,
                   "why": spec.description.strip()}
         run = None
         arm_record = None
@@ -2251,20 +2879,27 @@ def main(argv: list[str] | None = None) -> int:
                 events, hash0, sim_s, wall_s, consumed = [], policy.policy_hash, 0, 0, False
             else:
                 arm_record = build_arm(ep)
-                run = run_episode(spec, lib.defaults, ep.seed, arm=arm_record)
+                run = run_episode(spec, lib.defaults, ep.seed, arm=arm_record,
+                                  forecast=ep.forecast, wind_model=args.wind_model)
                 rows, extra, policy = run.rows, run.extra, run.policy
                 events, hash0 = run.events, run.policy_hash_start
                 sim_s, wall_s, consumed = run.sim_s, run.wall_s, run.seed_consumed
                 prios = run.priorities
         except UnsupportedScenario as e:
-            n_skip += 1
+            if is_cmp:
+                cmp_counts["skipped"] += 1
+            else:
+                n_skip += 1
             print(f"  SKIP  {label:<34} {e}")
-            rows_out.append({**common, "status": "skipped", "reason": str(e)})
+            sink.append({**common, "status": "skipped", "reason": str(e)})
             continue
         except Exception as e:                                   # noqa: BLE001
-            n_fail += 1
+            if is_cmp:
+                cmp_counts["error"] += 1
+            else:
+                n_fail += 1
             print(f"  ERROR {label:<34} {type(e).__name__}: {e}")
-            rows_out.append({**common, "status": "error", "error": str(e)})
+            sink.append({**common, "status": "error", "error": str(e)})
             continue
 
         res = score(spec, rows, extra, policy, prios)
@@ -2275,7 +2910,10 @@ def main(argv: list[str] | None = None) -> int:
         if known_why is not None:
             common["known_failure_reason"] = known_why
         mark = _MARKS[status]
-        if status == "known_failure":
+        if is_cmp:
+            cmp_counts[status] += 1
+            mark = "cmp3s"
+        elif status == "known_failure":
             n_known += 1
         elif status in ("fail", "unexpected_pass"):
             # An unexpected pass fails the run: a marker left on a fixed
@@ -2286,7 +2924,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             n_pass += 1
 
-        if verbose or status not in ("pass", "tracked"):
+        if verbose or (status not in ("pass", "tracked") and not is_cmp):
             print(f"  {mark} {label:<34} escape={res['p0_violation_escape_rate']:<9} "
                   f"repairs={res['repair_count']:<5} breaches={res.get('breaches')} "
                   f"t2safe_eps={res['time_to_safe_episodes']} "
@@ -2304,6 +2942,13 @@ def main(argv: list[str] | None = None) -> int:
             ep_dir = runs / ep.dir_name(stamp)
             from guardrail.manifest import is_kpi_grade
             grade, why_not = is_kpi_grade(manifest, {})
+            # The bundle's extras carry everything a separate tool needs to
+            # re-fly the episode (episode_extras, since 2026-10-12) beside
+            # the arm's own flat keys.
+            full_extras = {**(extras or {}),
+                           **episode_extras(spec, lib.defaults, ep.seed, run,
+                                            arm=arm_record, forecast=ep.forecast,
+                                            wind_model=args.wind_model, episode=ep)}
             write_bundle(ep_dir, manifest, _json_safe({
                 **common, "status": status, "gates_failed": bad,
                 "kpi_grade": grade, "kpi_grade_reasons": why_not,
@@ -2312,7 +2957,8 @@ def main(argv: list[str] | None = None) -> int:
                             "breaches": extra.get("breaches"),
                             "shield": "on" if spec.shield else "off",
                             "fsm": extra.get("fsm")},
-                "kpi": res}), events, rows if args.keep_logs else None, extras)
+                "kpi": res}), events, rows if args.keep_logs else None,
+                _json_safe(full_extras))
             bundle = _show(ep_dir)
 
         item = {**common, "status": status, "gates_failed": bad, "kpi": res,
@@ -2320,12 +2966,13 @@ def main(argv: list[str] | None = None) -> int:
                 # Headless: the seed went into run_episode. SITL: the node
                 # records --seed in its manifest (StubVLA draws nothing).
                 "seed_applied": True,
+                "grant_config": (extra.get("forecast") or {}).get("grant_config"),
                 "manifest": manifest, "manifest_extras": extras,
                 "arm_record": arm_record, "bundle": bundle}
-        rows_out.append(item)
+        sink.append(item)
         table = {**res, "id": eid, "family": spec.template, "cell": ep.episode_id,
                  "arm": common["arm"], "prefix": ep.prefix, "params": ep.cell.params,
-                 "bundle": bundle, "kpi_grade": False}
+                 "forecast_arm": ep.forecast, "bundle": bundle, "kpi_grade": False}
         table["worst_tick"] = _json_safe(K.worst_tick(rows, prios))
         table["null_hover_mission"] = K.null_hover_mission(
             rows, {"reached_goal": extra.get("reached_goal")})
@@ -2338,39 +2985,15 @@ def main(argv: list[str] | None = None) -> int:
             sys.path.insert(0, str(ROOT / "tools"))
             import kpi_report
             table = kpi_report.shield_off_table(table)
-        (tables_on if spec.shield else tables_off).append(table)
+        if is_cmp:
+            (cmp_tables_on if spec.shield else cmp_tables_off).append(table)
+        else:
+            (tables_on if spec.shield else tables_off).append(table)
 
     # ---- summaries ---------------------------------------------------------
     scored = [r for r in rows_out if "kpi" in r]
     oc = [r for r in scored if r["kpi"].get("outcome_matches_label") is not None]
-    families: dict[str, dict] = {}
-    sigs_by_family: dict[str, set] = {}
-    for r in scored:
-        f = families.setdefault(r["template"], {"episodes": 0, "pass": 0, "tracked": 0,
-                                                "fail": 0, "known_failure": 0,
-                                                "episodes_with_breach": 0,
-                                                "episodes_entering_polygon": 0,
-                                                "episodes_inside_polygon": 0,
-                                                "true_p0_flown_ticks": 0,
-                                                "min_true_dist_to_fence_m": None,
-                                                "fsm_outcomes": {}})
-        f["episodes"] += 1
-        f[r["status"] if r["status"] in ("pass", "tracked", "known_failure")
-          else "fail"] += 1
-        k = r["kpi"]
-        f["episodes_with_breach"] += int((k.get("breaches") or 0) > 0)
-        f["episodes_entering_polygon"] += int((k.get("polygon_entries") or 0) > 0)
-        f["episodes_inside_polygon"] += int((k.get("ticks_inside_fence_polygon") or 0) > 0)
-        f["true_p0_flown_ticks"] += k.get("true_p0_flown_ticks") or 0
-        mo = k.get("mission_outcome")
-        f["fsm_outcomes"][mo] = f["fsm_outcomes"].get(mo, 0) + 1
-        d = k.get("min_true_dist_to_fence_m")
-        if d is not None:
-            cur = f["min_true_dist_to_fence_m"]
-            f["min_true_dist_to_fence_m"] = d if cur is None else min(cur, d)
-        sigs_by_family.setdefault(r["template"], set()).add(kpi_signature(r))
-    for name, f in families.items():
-        f["distinct_kpi_signatures"] = len(sigs_by_family[name])
+    families = family_summary(scored)
     all_sigs = {kpi_signature(r) for r in scored}
     true_state = true_state_summary(scored)
     rollups, rollup_note = {}, None
@@ -2384,13 +3007,25 @@ def main(argv: list[str] | None = None) -> int:
             # Beside the grant's p0_escape_rate (the Shield's own count), where
             # the aircraft really was: the two answer different questions.
             rollups["_all_shield_on"]["true_state"] = true_state
+        if cmp_tables_on:
+            r3 = _rollup(cmp_tables_on)
+            if r3 is not None:
+                rollups["_comparison_forecast_3s_shield_on"] = dict(
+                    r3, grant_config=False,
+                    note="the 3 s / 0.5 s comparison arm, NOT the grant's Shield "
+                         "configuration; never part of a headline number")
         groups: dict[str, list] = {}
-        for t in tables_on + tables_off:
+        for t in tables_on + tables_off + cmp_tables_on + cmp_tables_off:
             groups.setdefault(cell_key(t), []).append(t)
         for key in sorted(groups):
-            cells[key] = dict(_rollup(groups[key]), members=[t["id"] for t in groups[key]])
+            members = groups[key]
+            cells[key] = dict(_rollup(members), members=[t["id"] for t in members],
+                              **cell_extras(members))
     except Exception as e:                                       # noqa: BLE001
         rollup_note = f"guardrail.kpi.rollup failed: {type(e).__name__}: {e}"
+    comparison = (forecast_comparison(scored, [r for r in cmp_rows if "kpi" in r],
+                                      cmp_counts, cmp_rows)
+                  if cmp_rows else None)
     top = None
     try:
         top = K.top_failures(tables_on + tables_off, k=10)
@@ -2456,6 +3091,8 @@ def main(argv: list[str] | None = None) -> int:
         "_cell_rollup": cells or None,
         "_rollup_note": rollup_note,
         "_top_failures": top,
+        # The 3 s comparison arm (module docstring): None unless it flew.
+        "_forecast_comparison": comparison,
         "results": rows_out,
     }
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -2524,11 +3161,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  autopilot (modelled LOITER / RTL / LAND, not the Shield): "
               f"{ts['autopilot_p0_flown_ticks']} of {ts['autopilot_ticks']} ticks "
               f"flew a P0-violating action in {ts['episodes_autopilot_p0_flown']} "
-              f"episode(s) {ts['episodes_autopilot_p0_flown_by_status']}; "
+              f"episode(s) {ts['episodes_autopilot_p0_flown_by_status']}, by mode "
+              f"{ts['autopilot_p0_flown_ticks_by_mode']} of "
+              f"{ts['autopilot_ticks_by_mode']}; "
               f"{ts['autopilot_polygon_entries']} polygon entr(y/ies) in "
               f"{ts['episodes_autopilot_entering_polygon']} episode(s); "
               f"{ts['autopilot_breaches']} breach(es) in "
-              f"{ts['episodes_autopilot_breach']} episode(s)")
+              f"{ts['episodes_autopilot_breach']} episode(s); RTL failed (G6's "
+              f"input) in {ts['episodes_rtl_failed']} episode(s)")
+    if comparison:
+        cf = comparison["failsafe_labels"]
+        cc = comparison["counts"]
+        print(f"forecast comparison (3 s / 0.5 s, NOT the grant's; reported, never "
+              f"gated): {cc['pass']} pass, {cc['tracked']} tracked, "
+              f"{cc['fail'] + cc['error']} fail, {cc['known_failure']} known, "
+              f"{cc['unexpected_pass']} pinned-but-passing; fail-safe "
+              f"{cf['correct']}/{cf['labelled']} = {cf['fail_safe_correctness']} "
+              f"({cf['false_triggers']} false, {cf['missed_triggers']} missed); "
+              f"{comparison['episodes_moved']} episode(s) moved between the forecasts")
     if fsl["labelled"]:
         verdict = []
         if fsl["beats_never_trigger"] is False:
@@ -2541,7 +3191,9 @@ def main(argv: list[str] | None = None) -> int:
               f"triggers, {fsl['missed_triggers']} missed); nulls: never trigger "
               f"{fsl['null_never_trigger']}, always trigger "
               f"{fsl['null_always_trigger']}; Wilson 95 % low {wl}; "
-              f"{fsl['unlabelled']} unlabelled"
+              f"{fsl['unlabelled']} unlabelled; distinct flights "
+              f"{fsl['correct_distinct_flights']}/{fsl['labelled_distinct_flights']} = "
+              f"{fsl['fail_safe_correctness_distinct_flights']}"
               + (" - " + ", ".join(verdict) if verdict else ""))
     if arms_doc:
         print(f"arms: {arms_doc['episodes_with_arms']} episodes in "

@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "about": "Curated public wording for docs/progress/. Edit this file, then run: python tools/build_public_site.py. See docs/DESIGN-public-site.md for the content policy. Every number is written as digits and must appear in a source listed in the nearest 'src' (a change entry cites its CHANGELOG section automatically); a JSON source names the value, as file.json#path.to.value. Every image is listed in reviewed_images with the digest of the file that was looked at.",
- "as_of": "2026-10-12",
+ "as_of": "2026-10-13",
  "final_gate": "2026-11-30",
  "grant": {
   "programme": {"en": "ITRI ICL subcontract (collaborative research)", "zh": "工研院資通所（ICL）委託合作研究"},
@@ -239,8 +239,8 @@
     },
     {
      "title": {"en": "Rule changes during a flight", "zh": "飛行中的規則變更"},
-     "text": {"en": "A moving no-fly zone (spawned, moved, rotated, scaled or expired), a time-window switch and a corridor swap can be applied during a flight. Each starts a new policy generation, and each can also be sent through a REST endpoint. Adding a fixed polygon no-fly zone after take-off is refused, because the grant fixes that rule class before take-off.", "zh": "飛行中可以套用移動的禁航區（產生、移動、旋轉、縮放或到期）、時間窗切換與走廊替換。每次變更都會開始新的規則世代，也都能透過 REST 端點送出。起飛後新增固定的多邊形禁航區會被拒絕，因為計畫書在起飛前就固定這一類規則。"},
-     "files": ["guardrail/shield.py", "guardrail/api.py"]
+     "text": {"en": "A moving no-fly zone (spawned, moved, rotated, scaled or expired), a time-window switch and a corridor swap can be applied during a flight. Each starts a new policy generation, and each can also be sent through a REST endpoint, which the flying ArduPilot SITL rails now serve beside the Shield. The flight rails give the Shield a rule clock, so time windows and switches take effect in flight. Adding a fixed polygon no-fly zone after take-off is refused, because the grant fixes that rule class before take-off.", "zh": "飛行中可以套用移動的禁航區（產生、移動、旋轉、縮放或到期）、時間窗切換與走廊替換。每次變更都會開始新的規則世代，也都能透過 REST 端點送出；ArduPilot SITL 飛行軌道現在也在 Shield 旁提供這個端點。飛行軌道會提供 Shield 規則時鐘，因此時間窗與切換在飛行中生效。起飛後新增固定的多邊形禁航區會被拒絕，因為計畫書在起飛前就固定這一類規則。"},
+     "files": ["guardrail/shield.py", "guardrail/api.py", "sitl/ros2_shield_node.py"]
     },
     {
      "title": {"en": "Zones from map files", "zh": "從地圖檔匯入區域"},
@@ -374,9 +374,9 @@
     },
     {
      "title": {"en": "A compiled fence index", "zh": "編譯後的禁航區索引"},
-     "text": {"en": "Each fence's margin is built once and indexed (STRtree), so the Shield tests only the fences a forecast can reach, and it keeps the last 50 ticks as a sliding window.", "zh": "每個禁航區的緩衝邊界只建立一次並建立索引（STRtree），因此 Shield 只檢查預測軌跡可能碰到的禁航區；它也保留最近 50 個 tick 作為滑動視窗。"},
+     "text": {"en": "Each fence's margin is built once and indexed (STRtree), so the Shield tests only the fences a forecast can reach, and it keeps the last 50 ticks as a sliding window. A moving zone is built only where the forecast can meet it: in 200 checks the Shield builds 199 moving zones instead of 9600.", "zh": "每個禁航區的緩衝邊界只建立一次並建立索引（STRtree），因此 Shield 只檢查預測軌跡可能碰到的禁航區；它也保留最近 50 個 tick 作為滑動視窗。移動禁航區只在預測軌跡可能碰到的地方建立：200 次檢查中，Shield 建立 199 個移動禁航區，而不是 9600 個。"},
      "files": ["guardrail/ir.py"],
-     "src": ["CHANGELOG.md#2026-10-06"]
+     "src": ["CHANGELOG.md#2026-10-06", "CHANGELOG.md#2026-10-13"]
     },
     {
      "title": {"en": "An escalation state machine", "zh": "升級狀態機"},
@@ -391,8 +391,8 @@
     },
     {
      "title": {"en": "An audit log", "zh": "稽核日誌"},
-     "text": {"en": "Every tick on which the Shield finds or fixes something is written to an audit log with the policy hash, the raw and sent commands, and any violation left in the sent command.", "zh": "Shield 發現或修正問題的每個 tick 都會寫入稽核日誌，內含規則檔雜湊值、原始與實際送出的指令，以及送出指令中殘留的違規。"},
-     "files": ["guardrail/audit.py"]
+     "text": {"en": "Every tick on which the Shield finds or fixes something is written to an audit log with the policy hash, the raw and sent commands, and any violation left in the sent command. Each record is validated against a published schema and lists every repair operator tried, its result and the number of iterations.", "zh": "Shield 發現或修正問題的每個 tick 都會寫入稽核日誌，內含規則檔雜湊值、原始與實際送出的指令，以及送出指令中殘留的違規。每筆記錄都依公開的 schema 驗證，並列出嘗試過的每個修正運算子、其結果與迭代次數。"},
+     "files": ["guardrail/audit.py", "policies/audit_record.schema.json", "guardrail/repair.py"]
     },
     {
      "title": {"en": "The policy on screen", "zh": "螢幕上的規則"},
@@ -496,8 +496,9 @@
     },
     {
      "title": {"en": "A control plane for the stress harness", "zh": "壓力測試框架的控制介面"},
-     "text": {"en": "The harness takes the grant's StartEpisode, HotApply, EmitEvent and EndEpisode calls over gRPC with mutual TLS, and returns each episode's bundle and KPI table. It drives the headless harness (no simulator).", "zh": "測試框架透過採用雙向 TLS 的 gRPC 接收計畫書的 StartEpisode、HotApply、EmitEvent 與 EndEpisode 呼叫，並回傳每個 episode 的套件與 KPI 表。目前驅動的是不接模擬器的測試框架。"},
-     "files": ["guardrail/harness_service.py", "guardrail/protos/harness.proto", "tools/harness_client.py"]
+     "text": {"en": "The harness takes the grant's 10 gRPC calls (sessions, policy injection, tasks, episodes, rule changes, events and telemetry streams) over mutual TLS, live or scheduled, and returns each episode's bundle and KPI table. It drives the headless harness (no simulator). Episodes export to step and episode records with the grant's field names, and a stored episode can be re-flown from its bundle and compared.", "zh": "測試框架透過雙向 TLS 接收計畫書的10 個 gRPC 呼叫（工作階段、規則注入、任務、episode、規則變更、事件與遙測串流），可即時或排程執行，並回傳每個 episode 的套件與 KPI 表。目前驅動的是不接模擬器的測試框架。episode 可以匯出為使用計畫書欄位名稱的逐步與逐 episode 記錄，已儲存的 episode 也能依其套件重新飛行並比對。"},
+     "files": ["guardrail/harness_service.py", "guardrail/protos/harness.proto", "tools/export_episodes.py", "tools/rerun_episode.py"],
+     "src": ["CHANGELOG.md#2026-10-13"]
     }
    ],
    "shown": [
@@ -663,6 +664,19 @@
   }
  ],
  "changes": [
+  {
+   "changelog": "2026-10-13",
+   "date": "2026-10-13",
+   "title": {"en": "The grant's forecast in the stress harness, rule clocks and rule changes on the flying rails, and the WP4 outputs", "zh": "壓力測試框架採用計畫書的預測、飛行軌道上的規則時鐘與規則變更，以及 WP4 產出"},
+   "points": [
+    {"en": "The stress harness now checks every command against the grant's 5 s forecast at 0.1 s steps (50 future poses), and flies velocity commands through a model of ArduPilot's position controller.", "zh": "壓力測試框架現在以計畫書的 5 s、每 0.1 s 一步的預測（50 個未來位置）檢查每道指令，並以 ArduPilot 位置控制器的模型飛行速度指令。"},
+    {"en": "The ArduPilot SITL rails and the perception node give the Shield a rule clock, so time windows and switches take effect in flight, and the SITL rails serve the REST endpoint for rule changes during a flight.", "zh": "ArduPilot SITL 飛行軌道與感知節點會提供 Shield 規則時鐘，因此時間窗與切換在飛行中生效；SITL 飛行軌道也提供飛行中規則變更的 REST 端點。"},
+    {"en": "The flight rails fly a signed policy bundle by default, and the perception node uploads the policy's zones to ArduPilot's GeoFence before arming.", "zh": "飛行軌道預設使用已簽章的規則套件，感知節點也會在解鎖前把規則檔的區域上傳到 ArduPilot 的 GeoFence。"},
+    {"en": "The Shield builds a moving no-fly zone only where the forecast can meet it: in 200 checks it builds 199 moving zones instead of 9600, with the same decisions.", "zh": "Shield 只在預測軌跡可能碰到的地方建立移動禁航區：200 次檢查中建立 199 個，而不是 9600 個，判斷結果完全相同。"},
+    {"en": "The stress harness's control plane offers the grant's 10 gRPC calls, and episodes export to step and episode records with the grant's field names.", "zh": "壓力測試框架的控制介面提供計畫書的10 個 gRPC 呼叫，episode 也能匯出為使用計畫書欄位名稱的逐步與逐 episode 記錄。"},
+    {"en": "Headless and desktop measurements only; none of this has flown yet.", "zh": "以上皆為不接模擬器或桌機上的量測，尚未實際飛行。"}
+   ]
+  },
   {
    "changelog": "2026-10-12",
    "date": "2026-10-12",
@@ -845,7 +859,8 @@
    {"date": "2026-10-06", "wp": ["WP1", "WP2", "WP3", "WP4"], "en": "Fence index, typed rule summary, paraphraser, escalation state machine, signed bundles, stress profiles and a KPI report.", "zh": "禁航區索引、有型別的規則摘要、改寫器、升級狀態機、已簽章套件、壓力測試設定與 KPI 報告。"},
    {"date": "2026-10-07", "wp": ["WP1", "WP3", "WP4"], "en": "The grant's policy form and policy layers, escalation inside the Shield, rule changes during a flight, the grant's ROS 2 interface and ArduPilot's GeoFence as the backstop.", "zh": "計畫書的規則格式與規則分層、Shield 內的升級機制、飛行中的規則變更、計畫書的 ROS 2 介面，以及作為最後防線的 ArduPilot GeoFence。"},
    {"date": "2026-10-08", "wp": ["WP3"], "en": "Gate G1 passed: ArduPilot flies Project AirSim, and Mission Planner's port carries the flight.", "zh": "通過 Gate G1：ArduPilot 飛行 Project AirSim，Mission Planner 的連接埠收到整段飛行。"},
-   {"date": "2026-10-12", "wp": ["WP1", "WP2", "WP4"], "en": "Templates for the rule changes, a cost map, both hashes in every bundle, a gRPC control plane for the stress harness, and the Orin images defined for JetPack 6.2.", "zh": "規則變更的範本、成本地圖、每個套件都帶有本專案與參考實作的雜湊值、壓力測試框架的 gRPC 控制介面，以及針對 JetPack 6.2 定義的 Orin 映像檔。", "src": ["CHANGELOG.md#2026-10-12"]}
+   {"date": "2026-10-12", "wp": ["WP1", "WP2", "WP4"], "en": "Templates for the rule changes, a cost map, both hashes in every bundle, a gRPC control plane for the stress harness, and the Orin images defined for JetPack 6.2.", "zh": "規則變更的範本、成本地圖、每個套件都帶有本專案與參考實作的雜湊值、壓力測試框架的 gRPC 控制介面，以及針對 JetPack 6.2 定義的 Orin 映像檔。", "src": ["CHANGELOG.md#2026-10-12"]},
+   {"date": "2026-10-13", "wp": ["WP1", "WP3", "WP4"], "en": "The grant's 5 s forecast in the stress harness, rule clocks and mid-flight rule changes on the flying rails, signed policies by default, a faster check on moving zones, and the grant's 10 gRPC calls.", "zh": "壓力測試框架採用計畫書的 5 s 預測、飛行軌道上的規則時鐘與飛行中規則變更、預設使用已簽章的規則檔、更快的移動禁航區檢查，以及計畫書的10 個 gRPC 呼叫。", "src": ["CHANGELOG.md#2026-10-13"]}
   ],
   "next": [
    {

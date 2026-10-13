@@ -533,7 +533,12 @@ def test_a_tracked_family_is_a_valid_expectation_and_not_a_known_failure():
     assert s.expect == "tracked" and s.known_failure_for({}) is None
     _refused(lambda: ScenarioSpec.model_validate(_minimal(expect="tracked-ish")), "expect")
     tracked = {f.scenario_id for f in Library(LIB).families if f.first.spec.expect == "tracked"}
-    assert tracked == {"gps-noise-beyond-margin", "gps-dropout", "wind-gusts"}, tracked
+    # wind-beyond-authority joined on 2026-10-12: on the closed-loop wind
+    # model its winds are beyond what the airframe can hold against, so the
+    # polygon cannot hold by construction (experiments/templates/
+    # wind_disturbance.yaml).
+    assert tracked == {"gps-noise-beyond-margin", "gps-dropout", "wind-gusts",
+                       "wind-beyond-authority"}, tracked
 
 
 def test_the_smoke_profile_runs_every_stressor_of_the_shield_matrix():
@@ -627,9 +632,12 @@ def test_arms_multiply_episodes_never_cells():
             "canonical,prefix-off", "pp0,prefix-off", "pp1,prefix-off"}
         assert len({e.run_id for e in armed}) == 6
         assert len({e.dir_name("s") for e in eps}) == len(eps)
+        # forecast_arms / forecast_comparison_episodes since 2026-10-12: the
+        # 3 s comparison arm is counted apart (here not flown).
         assert info["arms"] == {"cell_seed_slots": 2, "extra_arm_episodes": 5,
                                 "paraphrase_arm_episodes": 6,
-                                "prefix_off_episodes": 3}, info["arms"]
+                                "prefix_off_episodes": 3, "forecast_arms": ["grant"],
+                                "forecast_comparison_episodes": 0}, info["arms"]
         base = dict(profile="p", cadence="c", grant_scope="g", grant_sim_speedup="s",
                     seeds=[1], expected_cells=[1, 5])
         off, _ = expand(lib, Profile(**base, paraphrase_k=0, prefix_ab=False))

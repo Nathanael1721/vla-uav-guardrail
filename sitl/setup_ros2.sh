@@ -24,9 +24,11 @@ bash /opt/ros/jazzy/lib/mavros/install_geographiclib_datasets.sh > /dev/null 2>&
   echo "(datasets script warning ignored if already installed)"
 
 echo "=== [4/4] python venv with ROS access ==="
+# fastapi + uvicorn are pyproject's `api` extra: the Shield node's REST
+# hot-apply listener (sitl/ros2_shield_node.py --hotapply-port) imports them.
 sudo -u nathan bash -c '
   if [ ! -d ~/venv-ros ]; then python3 -m venv --system-site-packages ~/venv-ros; fi
-  ~/venv-ros/bin/pip install -q "pydantic>=2,<3" pyyaml shapely matplotlib
+  ~/venv-ros/bin/pip install -q "pydantic>=2,<3" pyyaml shapely matplotlib fastapi uvicorn
 '
 echo "=== DONE ==="
 ls /opt/ros/jazzy/setup.bash

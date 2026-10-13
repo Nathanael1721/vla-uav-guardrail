@@ -3,6 +3,8 @@
     python experiments/bench_shield_50rules.py                     # 3 s / 0.5 s
     python experiments/bench_shield_50rules.py --horizon 5 --dt 0.1
     python experiments/bench_shield_50rules.py --impl current --json out.json
+    python experiments/bench_shield_50rules.py --horizon 5 --dt 0.1 --variant moving
+    python experiments/bench_shield_50rules.py --horizon 5 --dt 0.1 --flags segment_check=1
 
 WHY THIS EXISTS
 
@@ -51,6 +53,28 @@ IDENTICAL decisions on every sample - violations, repairs, emitted action - and
 none. Without (b) a Shield that skipped every fence would post the best time in
 the table.
 
+THE VARIANTS (--variant, 2026-10-12)
+
+The same 50 rules on the Shield's two slower paths, as tests/test_shield.py
+`_fifty_variant` builds them:
+
+  edge     every rule with a weekly window ending 17:30, the clock at
+           17:29:57, so the window's edge falls inside the lookahead and every
+           pose reads the schedule on both sides of its instant;
+  moving   every polygon fence a dynamic_nfz drifting North at 1 m/s.
+
+The legacy loop knows neither (it predates windows read to the second and
+moving zones), so a variant is timed against its own null: for `moving`,
+`allzones` - the Shield with every moving zone built at the tick's time and
+judged at every pose, no box test (the per-fence loop the swept-box skip and
+then ir.anchor_reach replaced) - and the run fails unless `current` and
+`allzones` decide identically. `--flags` passes the repair library's modes
+(repair_mode=first_feasible, path_repair=1, segment_check=1) to `current`
+and to `allzones`, so the moving variant is still compared decision for
+decision; the legacy loop has no flags, so with `--flags` on the static
+variant the agreement check is skipped (and says so) rather than failing on
+the decisions a flag is meant to change.
+
 Desktop numbers only. The grant's budget is for the onboard computer (a Jetson
 Orin), which this machine is not; re-run this script there before quoting a
 margin against it.
@@ -67,6 +91,7 @@ import statistics
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -113,6 +138,30 @@ def fifty_rule_policy(with_fences: bool = True) -> Policy:
                     altitude_ceiling_m=120.0 if (r + c) % 2 == 0 else 25.0,
                     margin_m=MARGIN_M))
     return Policy(policy_id="bench-50", constraints=rules)
+
+
+# The clock of the `edge` variant: the 17:30 window edge is 3 s ahead.
+EDGE_NOW = datetime(2026, 10, 7, 17, 29, 57)
+
+
+def variant_policy(kind: str) -> Policy:
+    """The 50-rule policy on one of the Shield's slow paths (module
+    docstring, "The variants"); "static" is fifty_rule_policy() itself."""
+    if kind == "static":
+        return fifty_rule_policy()
+    if kind not in ("edge", "moving"):
+        raise ValueError(kind)
+    data = fifty_rule_policy().model_dump(mode="json", exclude_none=True)
+    for c in data["constraints"]:
+        if kind == "edge":
+            c["valid_time"] = {"recurrence": {"start_time": "07:30", "end_time": "17:30"}}
+        elif c["type"] == "polygon_fence":
+            c.update(type="dynamic_nfz", motion={"vx_mps": 1.0})
+    return Policy.model_validate(data)
+
+
+def _n_zones(policy: Policy) -> int:
+    return sum(1 for c in policy.constraints if c.type in ("polygon_fence", "dynamic_nfz"))
 
 
 def _action(rng: random.Random, vx: float, vy: float) -> Action4D:
@@ -195,20 +244,42 @@ def _stats(ms: list[float]) -> dict:
             "max_ms": s[-1], "mean_ms": statistics.fmean(s)}
 
 
-def _make(impl: str, policy: Policy, horizon: float, dt: float) -> Shield:
+class AllZonesShield(Shield):
+    """The null for the moving variant: every moving zone built at the tick's
+    time and judged at every pose, with no box test at all."""
+
+    def _reach(self, rec, tick, box, horizon):
+        return tick.current(rec) if (rec.moving and tick is not None) else rec
+
+
+def _make(impl: str, policy: Policy, horizon: float, dt: float, now=None,
+          flags: dict | None = None) -> Shield:
     # "current" and "legacy" are compared decision for decision, so both run
     # without the escalation FSM: the frozen legacy repairs carry no
     # magnitude_m, and the FSM would fault on them (tests/test_ir.py compares
     # the same way). "current_fsm" is the Shield as it flies, FSM on, and is
     # timed only.
+    flags = flags or {}
     if impl == "current":
-        return Shield(policy, lookahead_s=horizon, dt=dt, escalation=False)
+        return Shield(policy, lookahead_s=horizon, dt=dt, escalation=False, now=now, **flags)
     if impl == "current_fsm":
-        return Shield(policy, lookahead_s=horizon, dt=dt)
+        return Shield(policy, lookahead_s=horizon, dt=dt, now=now, **flags)
     if impl == "legacy":
         from legacy_fence_loop import LegacyFenceShield
         return LegacyFenceShield(policy, lookahead_s=horizon, dt=dt, escalation=False)
+    if impl == "allzones":
+        return AllZonesShield(policy, lookahead_s=horizon, dt=dt, escalation=False, now=now,
+                              **flags)
     raise ValueError(impl)
+
+
+def _flags(text: str) -> dict:
+    """"repair_mode=first_feasible,path_repair=1" as keyword arguments."""
+    out: dict = {}
+    for kv in filter(None, (t.strip() for t in text.split(","))):
+        k, _, v = kv.partition("=")
+        out[k] = (v in ("1", "true", "True")) if k in ("path_repair", "segment_check") else v
+    return out
 
 
 def _git() -> dict:
@@ -224,8 +295,14 @@ def _git() -> dict:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--impl", nargs="+", default=["current", "legacy"],
-                    choices=["current", "legacy"])
+    ap.add_argument("--impl", nargs="+", default=None,
+                    choices=["current", "legacy", "allzones"],
+                    help="default: current legacy (static), current allzones "
+                         "(moving), current (edge)")
+    ap.add_argument("--variant", default="static", choices=["static", "edge", "moving"])
+    ap.add_argument("--flags", default="",
+                    help="Shield flags for 'current', e.g. repair_mode=first_feasible,"
+                         "path_repair=1,segment_check=1")
     ap.add_argument("--horizon", type=float, default=3.0)
     ap.add_argument("--dt", type=float, default=0.5)
     ap.add_argument("--n-check", type=int, default=1000)
@@ -236,13 +313,22 @@ def main(argv=None) -> int:
     ap.add_argument("--scenarios", nargs="+", default=["clear", "grid", "near"])
     ap.add_argument("--json", type=Path, default=None)
     args = ap.parse_args(argv)
+    if args.impl is None:
+        args.impl = {"static": ["current", "legacy"], "moving": ["current", "allzones"],
+                     "edge": ["current"]}[args.variant]
+    if "legacy" in args.impl and args.variant != "static":
+        ap.error("the legacy loop predates windows read to the second and moving zones; "
+                 "use --impl current allzones with --variant moving")
+    flags = _flags(args.flags)
+    now = (lambda: EDGE_NOW) if args.variant == "edge" else None
 
-    full, floor = fifty_rule_policy(True), fifty_rule_policy(False)
+    full, floor = variant_policy(args.variant), fifty_rule_policy(False)
     assert len(full.constraints) == 50, len(full.constraints)
     print(f"policy: {len(full.constraints)} rules "
-          f"({len(full.by_type(PolygonFence))} polygon fences), "
+          f"({_n_zones(full)} keep-out zones), "
           f"horizon {args.horizon:g} s at dt {args.dt:g} s "
-          f"({int(round(args.horizon / args.dt)) + 1} poses per forecast)")
+          f"({int(round(args.horizon / args.dt)) + 1} poses per forecast), "
+          f"variant {args.variant}, flags {flags or 'none'}")
     print(f"python {platform.python_version()}  shapely {shapely.__version__}  "
           f"GEOS {'.'.join(map(str, shapely.geos_version))}  {platform.processor()}")
 
@@ -262,12 +348,13 @@ def main(argv=None) -> int:
                 if impl == "legacy" and args.legacy_cap:
                     use = pairs[:args.legacy_cap]
                 sh = (_make("current", floor, args.horizon, args.dt) if impl == "floor"
-                      else _make(impl, full.model_copy(deep=True), args.horizon, args.dt))
+                      else _make(impl, full.model_copy(deep=True), args.horizon, args.dt,
+                                 now=now, flags=flags))
                 ms, outs = _time(getattr(sh, fn_name), use)
                 row[impl] = _stats(ms)
-                if impl in ("current", "legacy"):
+                if impl in ("current", "legacy", "allzones"):
                     decisions[impl] = outs
-                if impl == "current" or (impl == "legacy" and "current" not in args.impl):
+                if impl == "current" or (impl != "floor" and "current" not in args.impl):
                     if fn_name == "_check":
                         n_geo = sum(any(v.category == "geofence" for v in o) for o in outs)
                     else:
@@ -275,13 +362,17 @@ def main(argv=None) -> int:
                                     for o in outs)
                     sanity[f"{sc}/{fn_name}"] = {"samples": len(outs),
                                                  "with_geofence_violation": n_geo}
-            if "current" in decisions and "legacy" in decisions:
-                k = len(decisions["legacy"])
+            null = next((n for n in ("legacy", "allzones") if n in decisions), None)
+            if "current" in decisions and null == "legacy" and flags:
+                agree[f"{sc}/{fn_name}"] = {"skipped": "the legacy loop has no flags",
+                                            "null": null}
+            elif "current" in decisions and null is not None:
+                k = len(decisions[null])
                 same = sum(
                     (json.dumps([v.model_dump() for v in a]) == json.dumps([v.model_dump() for v in b]))
                     if fn_name == "_check" else (_decision_key(a) == _decision_key(b))
-                    for a, b in zip(decisions["current"][:k], decisions["legacy"]))
-                agree[f"{sc}/{fn_name}"] = {"identical": same, "compared": k}
+                    for a, b in zip(decisions["current"][:k], decisions[null]))
+                agree[f"{sc}/{fn_name}"] = {"identical": same, "compared": k, "null": null}
             results[f"{sc}/{fn_name}"] = row
 
     # Building the IR moved work to construction and to hot_apply, which have
@@ -289,12 +380,12 @@ def main(argv=None) -> int:
     # <= 1 s, hot-apply <= 50 ms). Shield construction here is only the IR part
     # of a cold start - no YAML parse, no bundle signature check.
     life: dict = {}
-    for impl in args.impl:
+    for impl in [i for i in args.impl if i != "allzones"]:
         ms_new, ms_hot = [], []
         for i in range(30):
             pol = full.model_copy(deep=True)
             t0 = time.perf_counter()
-            sh = _make(impl, pol, args.horizon, args.dt)
+            sh = _make(impl, pol, args.horizon, args.dt, now=now, flags=flags)
             ms_new.append((time.perf_counter() - t0) * 1e3)
             fence = PolygonFence(id=f"hot-{i}", type="polygon_fence",
                                  vertices=[{"x": -30, "y": -30}, {"x": -20, "y": -30},
@@ -325,12 +416,15 @@ def main(argv=None) -> int:
         print(f"sanity {key:<16} geofence violation on {s['with_geofence_violation']}"
               f"/{s['samples']} samples")
     for key, s in agree.items():
-        print(f"agree  {key:<16} identical decisions {s['identical']}/{s['compared']}")
+        if "skipped" in s:
+            print(f"agree  {key:<16} not compared: {s['skipped']} ({', '.join(flags)} on)")
+        else:
+            print(f"agree  {key:<16} identical decisions {s['identical']}/{s['compared']}")
 
     failures = []
     for key, s in agree.items():
-        if s["identical"] != s["compared"]:
-            failures.append(f"{key}: new and legacy disagree on "
+        if "skipped" not in s and s["identical"] != s["compared"]:
+            failures.append(f"{key}: current and {s['null']} disagree on "
                             f"{s['compared'] - s['identical']} samples")
     for key, s in sanity.items():
         if key.startswith("near/") and s["with_geofence_violation"] == 0:
@@ -350,8 +444,8 @@ def main(argv=None) -> int:
             "python": platform.python_version(), "shapely": shapely.__version__,
             "geos": ".".join(map(str, shapely.geos_version)),
             "machine": platform.processor(), "horizon_s": args.horizon, "dt_s": args.dt,
-            "rules": len(full.constraints),
-            "fences": len(full.by_type(PolygonFence)),
+            "rules": len(full.constraints), "variant": args.variant, "flags": flags,
+            "fences": _n_zones(full),
             "budgets_ms": {"_check": QUERY_BUDGET_MS, "filter": TICK_BUDGET_MS},
             "results": results, "lifecycle": life, "agreement": agree,
             "sanity": sanity,

@@ -1,7 +1,15 @@
 # VLA Drone Guardrail — core deps (Fase 3, pure-Python phase)
 # conda env: vla-drone (Python 3.11)
+#
+# Pinned since 2026-10-12, so the Shield's geometry and the headless sweep's
+# numbers come from named versions (pyproject.toml carries the same list; CI
+# installs from here). shapely is the version every env runs. numpy has two
+# pins, by interpreter: 1.26.4 for Python 3.10, which is what the vla-real
+# OpenVLA env runs and keeps re-pinned (docs/DESIGN-python-versions.md), and
+# 2.4.6 for 3.11+, what vla-drone and pas run (numpy 2.4 requires 3.11).
 pydantic>=2,<3
 pyyaml
-shapely
-numpy
+shapely==2.1.2
+numpy==1.26.4; python_version < "3.11"
+numpy==2.4.6; python_version >= "3.11"
 jinja2

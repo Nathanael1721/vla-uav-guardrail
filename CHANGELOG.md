@@ -16,6 +16,162 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-13 — the grant's forecast in the harness, rule clocks and hot-apply on the flying rails, a faster Shield, and the WP4 outputs
+
+Four packages built in parallel on disjoint files from a re-verified inventory
+of everything still open (the grant pages, the 5 Oct audit, the tracker and
+the KPI evidence chain), each challenged by two reviewers who tried to break
+it, then fixed. Nothing here has flown: every number is headless or a
+desktop measurement. The Jetson Orin and the drone are not available.
+
+#### Fixed
+- **The stress harness flew a Shield the grant does not describe.** Its
+  flying, oracle and checker Shields used a 3 s forecast at 0.5 s (6 poses);
+  the grant locks 5 s at 0.1 s (50 poses). All three now use
+  `guardrail.shield.LOOKAHEAD_S` / `LOOKAHEAD_DT_S` unless a spec overrides
+  them, and a labelled 3 s comparison arm is kept out of every headline.
+  Cells written around the 3 s lookahead were re-cut for their purpose at
+  5 s, each mechanism in its description.
+- **GUIDED setpoints flew open-loop under wind.** Every velocity the harness
+  flies now goes through one closed-loop model of ArduCopter's position
+  controller (Copter-4.5.7 `mode_guided.cpp`, `AC_PosControl`): steady wind
+  is rejected up to 6.4 m/s, derived from the SITL default frame, not
+  measured. `--wind-model open_loop` keeps the old model.
+- **The FSM's RTL -> Land edge (G6) had no input.** `guardrail/rtl_path.py`
+  judges every RTL tick: the straight leg home against the P0 zones and band,
+  progress over 5 s, and a battery hook.
+- **Time windows and switches were inert in flight.** No rail gave its
+  Shield or its CSP a clock. Both SITL rails and the perception node now pass
+  one rule clock to both (`--clock-start ISO8601` scripts it; otherwise the
+  wall clock in +08:00, recorded either way), and zone dwell skips time in a
+  zone the clock had switched off.
+- **A YAML policy flew with no acknowledgement.** The flight rails fly the
+  signed bundle of their policy (`tools/build_flight_bundles.py`, into the
+  gitignored `bundles/`); a YAML flies only with `--dev-yaml`, is recorded so
+  and is never KPI-grade. The stress harness passes `--dev-yaml` for YAML
+  references and pins every bundle with `--expected-hash`, which the ROS 2
+  node now declares and checks before take-off (it had dropped the flag).
+- **A pilot whose action stream stopped kept being flown** by the ROS 2
+  node. A stale-action watchdog (0.5 s, five missed 10 Hz ticks) now holds
+  the aircraft through the FSM's path.
+- **The Shield's moving-zone path was over the grant's 5 ms query budget**
+  on GitHub's runner (5.71 ms) and close to it on a loaded desktop: 70 % of
+  the time went into rebuilding every zone's polygon on every check.
+  `guardrail/ir.py anchor_reach` now builds a zone only where the forecast
+  can meet it; in 200 checks the Shield builds 199 zones instead of 9600.
+  `_check` median at the grant's load, same session: moving 2.53-2.64 ->
+  0.45 ms, static 0.35 -> 0.30 ms; decisions identical on every compared
+  sample; the per-fence loop (the null) takes 222 ms.
+- **The audit's per-repair iteration count was wrong** on 1324 of 4257
+  seeded multi-pass records (keyed by operator name), and a relaxed chain's
+  failed run vanished from the record. Both fixed.
+- **A follow the perception rail could not score claimed mission success**:
+  with no subject ground truth, `frac_within_30m` and `standoff_s` were None,
+  which `guardrail/kpi.py` read as no failure. It is now not measurable.
+
+#### Added
+- **The REST hot-apply API on the flying Shield** (`--hotapply-port` on both
+  SITL rails): loopback by default, mutual TLS with the harness CA off it,
+  rules swapped under the rail's lock between ticks, each event recorded as a
+  new policy generation with its receipt-to-swap time.
+- **The perception rail**: a follow mission so a CSP is written per
+  generation; the policy's clock-proof zones uploaded to ArduPilot's GeoFence
+  before arming (`citylife-quad.param` now FENCE_TYPE 7, AVOID_ENABLE 0; G1
+  not re-run since); the followed car's simulator pose logged for evaluation
+  only (`--subject-actor`, Car_10 for a red car), with the true nearest range
+  and the stand-off dwell; `--hold-mode LOITER` flying the literal LOITER with
+  an RC3 override of 1500 on SITL (BRAKE stays the default); the MAVROS path
+  brought to parity, and `dev` offered for Project AirSim + ArduPilot over
+  live MAVROS evidence (never over pymavlink).
+- **The audit record as a Pydantic v2 model** (`AuditRecord`,
+  `policies/audit_record.schema.json`) with body-frame actions in the grant's
+  keys, every operator considered per pass with its result and skip reason, a
+  measured iteration count and a `time-window` category; a reader upgrades
+  every stored shape (22 123 records in 73 files).
+- **Repair operators as a pluggable library** (`guardrail/repair.py`, a
+  `RepairOperator` Protocol), decision-identical by default, plus three modes
+  off by default: the grant's first-feasible selection, PathRepair (frees
+  standoff-wedge: goal reached, minimum range 10.022 m against the 10 m
+  ring), and a segment check between forecast poses (catches a 0.5 m ring
+  between two poses at 12 m/s).
+- **Self-contained harness bundles** (the expanded cell, events, arm, seed,
+  policy and generations in `manifest_extras.json`) and
+  `tools/rerun_episode.py`, which re-flies one and compares the flight log by
+  hash (a changed seed is the null).
+- **Episode exporters** (`tools/export_episodes.py`): step and episode
+  records with the grant's names, JSONL always, Parquet when pyarrow is
+  installed (it is not, in either env); audit records joined only to the
+  flight they belong to.
+- **The KPI report's missing sections**: WP1 and WP2 (written to
+  `docs/data/csp_kpis.json`: at 120 tokens the compiler keeps 105/105 P0
+  rules where a naive cut keeps 104/105; null 0/105), the 100 ms tick budget
+  per rail, A/B and paraphrase printed n/m until flown, repair magnitude by
+  priority and operator class, vacuous zeros named, a `--baseline` diff, and
+  evidence bound to the run's own signed replay bundle.
+- **The grant's 10 gRPC RPCs** (StartSession, StopSession, InjectPolicy,
+  IssueTask, StreamTelemetry, StreamEvents added), a live mode driving the
+  episode runner, HotApply forwarded to a bound REST endpoint, idle sessions
+  expiring. Headless only.
+- `tools/sros2_setup.sh`: the SROS 2 keystore and enclaves seeded with the
+  harness CA, checked with `bash -n` and `--dry-run`. SROS 2 is not enabled.
+- Pins: shapely 2.1.2; numpy 1.26.4 on Python 3.10, 2.4.6 on 3.11+.
+- `.github/workflows/nightly.yml` (the nightly profile, headless). It cannot
+  run yet: GitHub fires scheduled workflows only from the default branch,
+  which on this repository is `main`, while the workflows are on `master`.
+
+#### Changed
+- `docs/data/scenario_sweep.json` republished on the grant's forecast and the
+  closed-loop wind model: 132 pass, 22 tracked, 0 fail, 22 known failures over 176 episodes (165
+  cells; the 3 s arm reported apart); P0 escape 0.000133 over 175 Shield-on
+  episodes (6 Shield-flown ticks, all in the time-window-opens-on-vehicle
+  known failures; passthrough null 0.236); fail-safe trigger correctness
+  0.838 (140/167; 26 false, 1 missed; 100/122 = 0.820 over distinct flights),
+  below the never-trigger null 0.940 and the grant's 0.99; autopilot-flown
+  P0 ticks 1738 of 14 287 (LAND 1004, LOITER 529, RTL 205) in 17 episodes,
+  RTL refused (G6's input) in 3. Profiles: library 165 cells, smoke 55
+  (62 episodes), nightly 221 (732).
+- The KPI report keeps the 3 s comparison arm in its own `/forecast-3s`
+  rows instead of pooling it with the grant's.
+- `sitl/setup_sitl.sh` pins numpy 2.4.6 (as requirements.txt does for
+  3.11+) and installs fastapi / uvicorn for `run_sitl_demo.py
+  --hotapply-port`; `start_ardupilot.sh --mavros` starts MAVROS as system id
+  255 (SYSID_MYGCS, so ArduPilot takes its RC override) and records its fcu
+  url. Neither was re-run in WSL.
+- The ROS 2 node's rows carry the end-to-end tick latency; no flight value
+  exists yet.
+
+#### Retracted
+- The published library sweep of 12 Oct (152 pass, P0 escape 0.0 over 194
+  Shield-on episodes, fail-safe correctness 0.823) was flown on a 3 s / 0.5 s
+  forecast the grant does not describe; on the grant's 5 s / 0.1 s with the
+  closed-loop wind model it reads as above.
+
+#### Not fixed (found, for the FSM and Shield work next)
+- When a time window opens over the aircraft and no action clears the
+  forecast, the Shield flies its best effort out with the P0 violation on it:
+  6 ticks over the library's three time-window-opens-on-vehicle cells, all
+  known failures. This is why the library's P0 escape headline is no longer
+  0.0.
+- The FSM can hold LOITER on a spot about to become illegal, or one a sweep
+  returns to; a hold can drift through a zone that clears before any Loiter
+  -> RTL edge; G6 lands in place, which can be inside a zone.
+
+#### Tests
+- New test files: `test_harnesstruth_{forecast,rtl,wind,bundles,ci}`,
+  `test_railinputs_{fence_export,clock,policy,manifest,node,hotapply,perception}`,
+  `test_shieldcore_{repair,audit,identity}`,
+  `test_wp4outputs_{kpi_report,exporters,harness}`; each failed on a pristine
+  copy of 4418ae0 and passes now. Deliberate defects applied to copies of
+  the code: harness 38 (36 caught, 2 equivalent), rail inputs 45, Shield 30,
+  WP4 outputs 48, all caught. `tests/fixtures/` lets
+  the 8 Oct regression run without `demo/out`.
+- Full suite on Python 3.10: 2526 of 2536 over 92 test files. On 3.11 the
+  guardrail package's tests pass (2494 of 2534 overall: demo tests that need
+  cv2, Pillow or projectairsim cannot run there, plus visible skips). On
+  3.10 the ten not passing are nine visible skips (FastAPI is not installed
+  in that environment; one sweep test) and the ITRI deck-pack check, which
+  passes once the deck is rebuilt from a clean tree.
+
 ### 2026-10-12 (later) — CI green: a clamp that repaired rounding errors, and a timing test fit for shared runners
 
 GitHub's test workflow had failed on every push since 8 Oct, so its smoke

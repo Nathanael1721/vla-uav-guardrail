@@ -50,13 +50,52 @@ replay bundle carries every policy generation and binds its files by the
 episode id. audit.jsonl carries this node's FSM verdict (audit_tick), the
 same one the flight log does. These are the contracts both SITL rails follow.
 
+RULE CLOCK, MISSION, POLICY, BACKSTOP, TRUTH (2026-10-12, as on the SITL rails)
+
+  * One rule clock (guardrail.replay.rule_clock) for the Shield and every
+    generation's CSP: `--clock-start` scripts it with the mission time, else
+    the wall clock in the mission's time zone (`--clock-tz`, default +08:00).
+    Each trajectory point carries its reading, so zone dwell applies the
+    windows the Shield flew under. Before this the Shield had no clock: every
+    scheduled rule was in force and no time_window_switch did anything.
+  * A follow Mission (`follow_mission`): the task text, the start (the
+    scene's spawn point in the Shield's frame) and, as the subject-follow
+    target proxy, the start again - the subject's position is not known
+    before the flight, and no ground truth may stand in for it. With it the
+    episode record compiles csp_g<N>.json for each generation; without it
+    every run recorded csp_failed "no mission given".
+  * A YAML policy flies only with `--dev-yaml`, recorded and never KPI-grade;
+    with no policy option the signed bundle of follow_car_citylife flies when
+    tools/build_flight_bundles.py has put it in bundles/, and nothing flies
+    otherwise (guardrail.manifest.flight_policy_choice).
+  * The autopilot's GeoFence gets the policy's clock-proof keep-out zones
+    (`FenceBackstop`: guardrail.fence_export's selection, a zone the aircraft
+    is in or near held back until it is clear), uploaded over the node's own
+    link before arming. Until then the rail only read the fence parameters
+    back, so the backstop held a 400 m circle and an altitude, never a zone.
+    A zone already on the fence is never held back again, the list held
+    before is recorded, and with nothing to upload the list is cleared.
+  * The followed subject's simulator pose (`SubjectTruth`, World.
+    get_object_poses on the level actor's tag - Car_10, the CityLife red
+    car) is logged per tick for EVALUATION only (tgt_x / tgt_y, read after
+    the setpoint is sent), with the true range, the stand-off dwell and the
+    estimate's error in metrics.json. The Shield is never given it: it
+    keeps the depth / width estimate below. An unread pose is None with the
+    reason, never 0; failed reads back off and retry; the follow is scored
+    only when TRUTH_MIN_COVERAGE of the ticks were read.
+  * `--hold-mode LOITER` on SITL centres the throttle (RC3 override 1500)
+    every tick the FSM holds and the autopilot is in LOITER, so ArduCopter's
+    LOITER holds its altitude with no pilot - the grant's literal mode. A
+    mode the node did not ask for, from GUIDED or from its hold, is a
+    takeover and hands channel 3 back. BRAKE stays the default.
+
 WHAT THIS IS NOT. follow_vlm.fly()'s further layers - the target estimator,
 identity tiers, re-acquisition, trail following, the fence guard, the landing
 site - live inside that 2,500-line function and are not reused here; moving
 them needs a refactor of follow_vlm.py. Until then this node tracks with the
-servo law on the detector's box, its runs carry no tracking score (no subject
-ground truth is read), and its numbers are not comparable with the
-simple_flight CityLife flights.
+servo law on the detector's box, and its numbers are not comparable with the
+simple_flight CityLife flights. Its tracking score comes from the subject
+truth above when the scene provides it (None otherwise).
 
 TOPOLOGY. topology.classify() decides the label the evidence supports. The
 grant label is OFFERED to build_manifest only when the rail is qualified: gate
@@ -77,12 +116,17 @@ RUN
     python demo/pas_ardupilot/perception_node.py --dry-run --network nat \
         --windows-ip 172.x.x.1 --wsl-ip 172.x.x.y
     # fly (the launcher fills in the addresses): scripts/run_pas_ardupilot.ps1 -Step node
+    # a YAML policy, a scripted rule clock, the grant's literal LOITER:
+    #   ... --policy policies/follow_car_citylife_nfz.yaml --dev-yaml \
+    #       --clock-start 2026-10-12T17:29:50 --hold-mode LOITER
 """
 from __future__ import annotations
 
 import argparse
+import collections
 import importlib
 import importlib.util
+import inspect
 import json
 import math
 import random
@@ -105,22 +149,29 @@ if str(ROOT / "sitl") not in sys.path:
 
 from guardrail import AuditLogger, State                             # noqa: E402
 from guardrail.bundle import load_for_flight                          # noqa: E402
+from guardrail.compiler import ConstraintCompiler, Mission            # noqa: E402
+from guardrail.fence_export import (defer_near, is_enforced,       # noqa: E402
+                                    policy_zones, zone_clearance_m, zones_near)
 from guardrail.fsm import (DEFAULT_THETA_HORIZON_S, FAILSAFE_STATES,  # noqa: E402
                            THETA_HORIZON_S, EscalationFSM, FSMConfig,
-                           tick_input_from_decision)
-from guardrail.kpi import compute_from_dir                            # noqa: E402
-from guardrail.manifest import (NO_VLA, TOPOLOGY_DEV, TOPOLOGY_HIL,   # noqa: E402
-                                build_manifest, is_kpi_grade)
+                           FSMState, tick_input_from_decision)
+from guardrail.kpi import compute_from_dir, null_hover_mission        # noqa: E402
+from guardrail.manifest import (DEV_YAML_FLAG, NO_VLA, TOPOLOGY_DEV,  # noqa: E402
+                                TOPOLOGY_HIL, build_manifest,
+                                flight_bundle_path, flight_policy_choice,
+                                is_kpi_grade)
 from guardrail.models import (Action4D, AltitudeEnvelope,             # noqa: E402
-                              ObstacleClearance)
+                              ObstacleClearance, SubjectStandoff)
+from guardrail.projection import LocalProjection                      # noqa: E402
 from guardrail.replay import (EpisodeRecord, audit_tick,               # noqa: E402
                               episode_row_fields, flown_fields,
-                              kpi_evidence_grade, rail_shield,
+                              kpi_evidence_grade, rail_shield, rule_clock,
                               verify_replay, write_replay, zone_dwell)
 from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S               # noqa: E402
-from mavlink_adapter_node import (DEFAULT_HOLD_MODE, HOLD_MODES,       # noqa: E402
-                                  ModeRequests, autopilot_mode,
-                                  fence_alt_plan, policy_ceiling_m)
+from mavlink_adapter_node import (DEFAULT_HOLD_MODE, FENCE_MARGIN_M,   # noqa: E402
+                                  HOLD_MODES, ModeRequests,
+                                  autopilot_mode, fence_alt_plan,
+                                  fence_items, policy_ceiling_m)
 
 import rail                                                           # noqa: E402
 import topology as topo                                               # noqa: E402
@@ -171,6 +222,36 @@ LANDED_STATE_ON_GROUND = 1
 # real-time-update-rate), and this is what the run MEASURED. Outside the band
 # the run is not KPI-grade and the grant label is not offered.
 RT_FACTOR_BAND = (0.95, 1.05)
+# The literal LOITER hold (--hold-mode LOITER on SITL): ArduCopter's LOITER
+# climbs at the throttle stick's rate, so the node holds channel 3 at the
+# centre of SITL's 1100-1900 range, inside the throttle dead zone.
+LOITER_THROTTLE_PWM = 1500
+# The CityLife red car: the one red car in the level
+# (tools/citylife_mcp/one_red_car.py), tagged Car_10 there so the simulator's
+# FindActor resolves it in a -game build (demo/level_actors.py).
+RED_CAR_ACTOR = "Car_10"
+# The follow rails' proximity radius (guardrail.kpi FOLLOW_RANGE_M, compute()'s
+# frac_within_30m).
+FOLLOW_RANGE_M = 30.0
+# Consecutive failed pose reads (an RPC error, or a NaN answer: no actor with
+# that tag) after which the truth reader backs off - it retries after
+# TRUTH_RETRY_TICKS, doubling to TRUTH_RETRY_MAX_TICKS while it keeps failing -
+# rather than paying a failed read every tick. Until 2026-10-13 it stopped for
+# good, so a 0.3 s hiccup left the rest of the flight unread and the read
+# ticks were scored as the flight's.
+TRUTH_MAX_ERRORS = 3
+TRUTH_RETRY_TICKS = 10
+TRUTH_RETRY_MAX_TICKS = 100
+# The share of ticks whose pose must be read for the truth to SCORE the follow
+# (frac_within_30m, follow_scored, a zero stand-off dwell). Below it a dwell
+# that was seen is reported as the lower bound it is, and nothing else.
+TRUTH_MIN_COVERAGE = 0.95
+# A fence upload in flight blocks the 10 Hz loop (one mission-protocol round
+# trip per item, twice): each phase gets this long, so an autopilot that does
+# not answer costs at most about 6 ticks, not the 2 x 10 s of the pre-arm one.
+MIDFLIGHT_FENCE_TIMEOUT_S = 0.3
+# Reading the fence list the autopilot held before the first upload.
+FENCE_READ_TIMEOUT_S = 5.0
 
 
 def theta_horizon(arg: str | None = "auto") -> float | None:
@@ -522,6 +603,17 @@ class ProjectAirSimCamera:
         except Exception:                                     # noqa: BLE001
             return None
 
+    def object_xy(self, name: str) -> tuple[float, float]:
+        """(x North, y East) of a level actor in the simulator's NED metres
+        about the scene's home-geo-point (World.get_object_poses ->
+        WorldSimApi::getObjectPose -> UnrealHelpers::FindActor, which matches
+        an actor's name or TAG; demo/level_actors.py). NaN when no actor
+        matches; an RPC failure raises. For the RECORD only."""
+        pose = self.world.get_object_poses([name])[0]
+        t = pose["translation"] if isinstance(pose, dict) else pose.translation
+        return (float(t["x"] if isinstance(t, dict) else t.x),
+                float(t["y"] if isinstance(t, dict) else t.y))
+
     def stop(self) -> None:
         try:
             if self.client is not None:
@@ -588,20 +680,26 @@ def autopilot_fence_record(link, policy, cruise_alt_m: float) -> dict | None:
     """The autopilot's GeoFence as it holds it, judged by the rule both SITL
     rails apply (sitl/mavlink_adapter_node.fence_alt_plan): its altitude
     fence must sit above every altitude the policy allows, or the backstop
-    fires on a flight the Shield considers legal. Recorded only - this node
-    never changes an autopilot parameter. None when the link cannot read
-    parameters; a value the autopilot did not answer stays None, so an
-    unread fence is never reported as off or as fine."""
+    fires on a flight the Shield considers legal. This node never changes an
+    autopilot PARAMETER (it uploads the policy's zones: FenceBackstop), so
+    whether the zones are enforced at all - FENCE_TYPE's polygon bit (4),
+    which covers the uploaded exclusion circles too - is recorded beside
+    them. None when the link cannot read parameters; a value the autopilot
+    did not answer stays None, so an unread fence is never reported as off
+    or as fine."""
     if not hasattr(link, "autopilot_fence"):
         return None
     vals = link.autopilot_fence()
     ceiling, ceiling_src = policy_ceiling_m(policy, cruise_alt_m)
     alt_max, enabled = vals.get("FENCE_ALT_MAX"), vals.get("FENCE_ENABLE")
+    ftype = vals.get("FENCE_TYPE")
     plan = fence_alt_plan(ceiling, alt_max)
     return {**vals, "policy_ceiling_m": ceiling, "policy_ceiling_source": ceiling_src,
             "backstop_active": None if enabled is None else enabled >= 1.0,
             "stricter_than_policy": (None if alt_max is None or ceiling is None
                                      else not plan["ok"]),
+            "zones_enforced": (None if ftype is None
+                               else bool(int(ftype) & 4)),
             "why": plan["why"], "changed_by_node": False}
 
 
@@ -613,6 +711,520 @@ def percentile(vals, q: float):
     return None if not vals else round(float(np.percentile(np.asarray(vals), q)), 3)
 
 
+def spread(vals) -> dict:
+    """{n, median, p95, max} of a list of metres; None for each when empty."""
+    return {"n": len(vals), "median": percentile(vals, 50), "p95": percentile(vals, 95),
+            "max": None if not vals else round(max(vals), 3)}
+
+
+# --------------------------------------------------------------------------- #
+# Policy, mission, frames
+# --------------------------------------------------------------------------- #
+
+def resolve_policy(args, default_bundle=None) -> tuple[str | None, str | None, dict]:
+    """`(bundle, yaml, record)` for load_for_flight, as both SITL rails
+    choose (guardrail.manifest.flight_policy_choice): --bundle; --policy only
+    with --dev-yaml; neither, the signed bundle of DEFAULT_POLICY when it is
+    in bundles/ (`default_bundle` overrides where to look). ValueError, before
+    anything starts, for a YAML policy without --dev-yaml and for no policy
+    when the default bundle is not on disk."""
+    return flight_policy_choice(
+        args.bundle, args.policy, dev_yaml=getattr(args, "dev_yaml", False),
+        default_yaml=DEFAULT_POLICY,
+        default_bundle=(flight_bundle_path(DEFAULT_POLICY) if default_bundle is None
+                        else default_bundle))
+
+
+def scene_to_anchor(x: float, y: float, scene_home, anchor) -> tuple[float, float] | None:
+    """(x North, y East) in the simulator's NED metres about the scene's
+    home-geo-point, in the anchor's frame (the Shield's). The same point when
+    the anchor IS the scene's home; else through lat/lon with the projection
+    every frame here uses (guardrail/projection.py). None without a home."""
+    if scene_home is None:
+        return None
+    lat0, lon0 = float(scene_home[0]), float(scene_home[1])
+    if abs(lat0 - anchor.lat) < 1e-12 and abs(lon0 - anchor.lon) < 1e-12:
+        return float(x), float(y)
+    return anchor.to_scene(*LocalProjection(lat0, lon0).to_latlon(float(x), float(y)))
+
+
+def scene_spawn_xy(scene: dict | None, anchor, robot: str = rail.ROBOT_NAME
+                   ) -> tuple[tuple[float, float], str]:
+    """Where the aircraft is armed, in the anchor's frame, and how that is
+    known: the scene's robot origin (the vehicle spawns there and takes off
+    vertically), or - with no scene and no policy origin, when the anchor IS
+    the EKF's first fix - (0, 0)."""
+    if anchor is None:
+        return (0.0, 0.0), ("the frame's origin: no policy origin and no scene, so "
+                            "the EKF's first fix (the arming point) anchors it")
+    if scene:
+        for a in scene.get("actors", []):
+            if a.get("type") == "robot" and a.get("name") == robot:
+                xyz = str((a.get("origin") or {}).get("xyz", "")).split()
+                if len(xyz) == 3:
+                    xy = scene_to_anchor(float(xyz[0]), float(xyz[1]),
+                                         rail.home_geo_point(scene), anchor)
+                    return ((round(xy[0], 3), round(xy[1], 3)),
+                            f"the scene's {robot} origin (where it spawns), in the "
+                            f"{anchor.source} frame")
+    return (0.0, 0.0), (f"unknown before arming (anchor {anchor.source}, no scene "
+                        f"spawn point): (0, 0) assumed")
+
+
+def follow_mission(object_text: str, start_xy, cruise_alt_m: float,
+                   speed_pref_mps: float) -> Mission:
+    """The mission context a follow flight's CSPs are compiled for (the
+    Prefix Compiler's "pose, home, target"). A follow has no fixed target:
+    where the subject will be is not known before the flight, and ground
+    truth may not stand in for it, so the target proxy is the start itself -
+    the CSP then ranks zones by their distance from where the follow begins.
+    The speed preference is the pilot's own cap (--speed-max)."""
+    sx, sy = float(start_xy[0]), float(start_xy[1])
+    return Mission(task_text=f"follow {object_text}", target_x=sx, target_y=sy,
+                   cruise_alt_m=float(cruise_alt_m),
+                   speed_pref_mps=float(speed_pref_mps), start_x=sx, start_y=sy)
+
+
+# --------------------------------------------------------------------------- #
+# Subject ground truth (evaluation only)
+# --------------------------------------------------------------------------- #
+
+def subject_actor_for(arg: str | None, object_text: str, subject_class: str | None
+                      ) -> tuple[str | None, str | None]:
+    """`(actor tag, why not)` for the subject truth reader. --subject-actor
+    TAG names it; 'auto' knows one: the CityLife red car, Car_10, for a red
+    car; 'none' reads nothing."""
+    a = (arg or "auto").strip()
+    if a.lower() == "none":
+        return None, "--subject-actor none: the subject's pose is not read"
+    if a.lower() != "auto":
+        return a, None
+    if subject_class == "car" and "red" in str(object_text).lower():
+        return RED_CAR_ACTOR, None
+    return None, (f"no level actor is known for {object_text!r}; name its tag with "
+                  f"--subject-actor")
+
+
+class SubjectTruth:
+    """The followed subject's simulator pose, read once a tick for the RECORD:
+    `read()` -> {"xy": (x, y) in the Shield's frame, or None, "why": None or
+    the reason}. Nothing the Shield or the pilot sees comes from here.
+
+    The read is a synchronous RPC on the simulator's service socket (shared
+    with truth_geo, so it cannot move to a thread: one Req0 socket, one
+    request at a time), made after the tick's setpoint went out. Its
+    latency is recorded (`summary()["read_ms"]`). After TRUTH_MAX_ERRORS
+    failed reads in a row it backs off and retries, never stops."""
+
+    def __init__(self, camera, actor: str | None, why: str | None, scene_home, anchor,
+                 timer=time.perf_counter):
+        self.camera, self.actor, self.scene_home, self.anchor = camera, actor, scene_home, anchor
+        self.timer = timer
+        self.why_off = why
+        if why is None and not hasattr(camera, "object_xy"):
+            self.why_off = ("this camera source reads no simulator poses (no subject "
+                            "ground truth without Project AirSim)")
+        if why is None and scene_home is None:
+            self.why_off = "no scene home-geo-point, so a simulator pose has no frame"
+        self.errors = 0                       # consecutive failed reads
+        self.wait = 0                         # ticks left to skip before a retry
+        self.backoff = TRUTH_RETRY_TICKS
+        self.last_why: str | None = None
+        self.attempts = self.failures = self.backoffs = 0
+        self.read_ms: list[float] = []
+
+    @property
+    def source(self) -> str | None:
+        return (None if self.actor is None or self.why_off else
+                f"World.get_object_poses([{self.actor!r}]) (Project AirSim)")
+
+    def read(self) -> dict:
+        if self.why_off:
+            return {"xy": None, "why": self.why_off}
+        if self.wait > 0:
+            self.wait -= 1
+            return {"xy": None, "why": (f"backing off after {self.errors} failed reads in "
+                                        f"a row (retry in {self.wait + 1} tick(s)); "
+                                        f"last: {self.last_why}")}
+        self.attempts += 1
+        t0 = self.timer()
+        try:
+            x, y = self.camera.object_xy(self.actor)
+            why = (None if math.isfinite(x) and math.isfinite(y) else
+                   f"the simulator found no actor tagged {self.actor!r} "
+                   f"(GetObjectPoses answered NaN)")
+        except Exception as exc:                              # noqa: BLE001
+            why = f"GetObjectPoses failed: {type(exc).__name__}: {exc}"
+        self.read_ms.append((self.timer() - t0) * 1000.0)
+        if why is None:
+            self.errors, self.backoff = 0, TRUTH_RETRY_TICKS
+            return {"xy": scene_to_anchor(x, y, self.scene_home, self.anchor), "why": None}
+        self.errors += 1
+        self.failures += 1
+        self.last_why = why
+        if self.errors >= TRUTH_MAX_ERRORS:
+            self.wait, self.backoffs = self.backoff, self.backoffs + 1
+            self.backoff = min(2 * self.backoff, TRUTH_RETRY_MAX_TICKS)
+        return {"xy": None, "why": why}
+
+    def summary(self) -> dict:
+        return {"attempts": self.attempts, "failures": self.failures,
+                "backoffs": self.backoffs,
+                "read_ms": spread([round(v, 3) for v in self.read_ms])}
+
+
+def truth_summary(rows: list[dict], truth: SubjectTruth, ring_m: float | None,
+                  tick_s: float) -> dict:
+    """metrics.json `subject_truth`: the true horizontal range to the subject
+    (nearest, and the dwell inside the stand-off ring as seconds and as the
+    fraction of ticks it was read), and how far the estimate the Shield flew
+    on was from it. Every figure is None when the pose was never read.
+
+    The figures that SCORE the flight (`scored`, `standoff_s`,
+    `frac_within_30m`) need the pose read on TRUTH_MIN_COVERAGE of the ticks:
+    an unread tick may have been inside the ring. Below that, a dwell that
+    was seen is kept as a lower bound (it happened, and fails the mission as
+    it should), a zero dwell and the follow fraction are None - never a
+    success read off the ticks that happened to answer (review 2026-10-13:
+    three failed reads made 5 of 20 ticks the flight, standoff_s 0.0)."""
+    read = [r for r in rows if r.get("subject_truth") is not None]
+    ranges = [r["subject_range_m"] for r in read]
+    gaps = [r["subject_gap_m"] for r in read if r.get("subject_gap_m") is not None]
+    unread = collections.Counter(r.get("subject_truth_why") for r in rows
+                                 if r.get("subject_truth") is None)
+    n_ring = (None if ring_m is None or not read
+              else sum(1 for d in ranges if d < ring_m))
+    coverage = None if not rows else round(len(read) / len(rows), 4)
+    complete = coverage is not None and coverage >= TRUTH_MIN_COVERAGE
+    frac30 = (None if not read else
+              round(sum(1 for d in ranges if d <= FOLLOW_RANGE_M) / len(read), 4))
+    if n_ring is None:
+        standoff_s, basis = None, ("no stand-off rule binds the subject" if read
+                                   else "the subject's pose was never read")
+    elif complete:
+        standoff_s = round(n_ring * tick_s, 2)
+        basis = f"measured: the pose was read on {len(read)}/{len(rows)} ticks"
+    elif n_ring:
+        standoff_s = round(n_ring * tick_s, 2)
+        basis = (f"a LOWER BOUND: in the ring on {n_ring} of the {len(read)}/"
+                 f"{len(rows)} ticks read; the unread ticks may add to it")
+    else:
+        standoff_s = None
+        basis = (f"not measured: the pose was read on only {len(read)}/{len(rows)} "
+                 f"ticks (coverage {coverage} < {TRUTH_MIN_COVERAGE}), none in the "
+                 f"ring, and an unread tick may have been")
+    return {
+        "actor": truth.actor, "source": truth.source,
+        "frame": "the Shield's scene frame (x North, y East)",
+        "range_basis": ("horizontal, from the aircraft's EKF position (its error "
+                        "against the simulator: ekf_vs_sim_horiz_m) to the "
+                        "subject's simulator pose"),
+        "ticks_read": len(read), "ticks_unread": len(rows) - len(read),
+        "coverage": coverage, "coverage_min": TRUTH_MIN_COVERAGE,
+        "scored": complete,
+        "unread_why": dict(unread),
+        "reader": truth.summary() if hasattr(truth, "summary") else None,
+        "min_range_m": None if not ranges else round(min(ranges), 2),
+        "mean_range_m": None if not ranges else round(float(np.mean(ranges)), 2),
+        "standoff_ring_m": ring_m,
+        "ticks_in_ring": n_ring,
+        "standoff_s": standoff_s, "standoff_basis": basis,
+        "frac_in_ring": None if n_ring is None else round(n_ring / len(read), 4),
+        # Of the ticks read; the scoring field below only when complete.
+        "frac_within_30m_of_read": frac30,
+        "frac_within_30m": frac30 if complete else None,
+        # The estimate the Shield's stand-off rules flew on, against the truth.
+        "estimate_gap_m": spread(gaps),
+        "ticks_estimate_without_truth": sum(1 for r in rows
+                                            if r.get("subject") is not None
+                                            and r.get("subject_truth") is None),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# The autopilot's GeoFence and the throttle
+# --------------------------------------------------------------------------- #
+
+class FenceBackstop:
+    """The policy's keep-out zones on the autopilot's own GeoFence, the
+    grant's backstop behind the Shield ("fire only if the Shield itself
+    crashes or fails to emit").
+
+    The zones are guardrail.fence_export's clock-proof selection: only those
+    a clockless 2-D fence holds exactly as the policy does (a zone a time
+    window or a switch can turn off, a moving zone, a keep-in corridor and a
+    zone whose altitude band does not cover 0 .. FENCE_ALT_MAX are left to
+    the Shield alone, each with why). A zone the aircraft is in or within
+    FENCE_MARGIN of is held back - uploading it would breach the fence at
+    once - and uploaded once the aircraft is clear of it and the Shield no
+    longer finds the position unsafe under it, as on the ROS 2 rail. They
+    are projected about the frame's anchor, the projection the node reads
+    the EKF's position back with, and uploaded over the node's own link
+    (PymavlinkLink / MavrosLink .upload_fence), which replaces the
+    autopilot's fence list whole.
+
+    Since 2026-10-13 (review):
+      * a zone the autopilot already holds (`enforced`: the last upload that
+        succeeded) is never held back again, so a re-upload for a cleared
+        zone cannot take an enforced one off the fence while the aircraft is
+        next to it;
+      * the list the autopilot held before the first upload is read and
+        recorded (`previous`), so a ground station's fence that is replaced
+        is on record, and warned about;
+      * with no zone to upload the list is CLEARED (an empty upload, as the
+        ROS 2 adapter pushes), unless it is known to be empty already: a
+        list left from an earlier run or another policy would otherwise stay
+        enforced under FENCE_TYPE's polygon bit, stricter than and unrelated
+        to the flown policy;
+      * an upload in flight (`recheck`) gets MIDFLIGHT_FENCE_TIMEOUT_S per
+        phase, and its cost against the 100 ms tick is recorded."""
+
+    def __init__(self, policy, link, rec, anchor, ap_fence: dict | None, *,
+                 now=None, enabled: bool = True, home_xy=None) -> None:
+        self.policy, self.link, self.rec, self.anchor = policy, link, rec, anchor
+        self.now = now
+        self.enabled = enabled
+        ap_fence = ap_fence or {}
+        self.column_m = ap_fence.get("FENCE_ALT_MAX")
+        margin = ap_fence.get("FENCE_MARGIN")
+        self.margin_m = float(margin) if margin is not None else FENCE_MARGIN_M
+        self.zones_enforced = ap_fence.get("zones_enforced")
+        self.backstop_active = ap_fence.get("backstop_active")
+        self.home_xy = home_xy
+        self.zones: list[dict] = []
+        self.deferred: list[str] = []
+        self.uploaded: list[str] = []
+        self.enforced: dict = {}              # id -> zone, as last uploaded with success
+        self.previous: dict | None = None     # the list held before the first upload
+        self.uploads: list[dict] = []
+        self.failed = False
+
+    def _read_previous(self) -> dict:
+        if not hasattr(self.link, "read_fence"):
+            return {"count": None, "items": None,
+                    "why": f"the {getattr(self.link, 'name', '?')} link cannot read "
+                           f"the fence list"}
+        try:
+            return self.link.read_fence(timeout=FENCE_READ_TIMEOUT_S)
+        except Exception as exc:                              # noqa: BLE001
+            return {"count": None, "items": None,
+                    "why": f"read failed: {type(exc).__name__}: {exc}"}
+
+    def publish(self, position, reason: str, t: float | None = None,
+                timeout: float | None = None) -> dict:
+        """Choose the zones for `position` and upload them (`timeout` per
+        phase: given in flight; None before arming, the link's default)."""
+        zones, skipped = policy_zones(self.policy,
+                                      now=self.now() if self.now else None,
+                                      column_m=self.column_m)
+        self.zones = zones
+        if position is None:
+            now_z, held = [], [{"id": z["id"], "deferred": True,
+                                "why": "the aircraft's position is unknown, so "
+                                       "whether it is in the zone cannot be told"}
+                               for z in zones]
+            kept_near = []
+        else:
+            now_z, held = defer_near(zones, position, self.margin_m,
+                                     enforced=self.enforced)
+            kept_near = [z["id"] for z in now_z if is_enforced(z, self.enforced)
+                         and zone_clearance_m(z, float(position[0]),
+                                              float(position[1])) < self.margin_m]
+        self.deferred = sorted(h["id"] for h in held)
+        over_home = (None if self.home_xy is None else
+                     zones_near(zones, self.home_xy[0], self.home_xy[1], self.margin_m))
+        out = {"reason": reason, "generation": self.policy.generation,
+               "policy_hash": self.policy.policy_hash,
+               "fence_alt_max_m": self.column_m, "margin_m": self.margin_m,
+               "position": None if position is None else [round(float(position[0]), 2),
+                                                          round(float(position[1]), 2)],
+               "zone_ids": [z["id"] for z in now_z], "skipped": skipped + held,
+               "deferred": list(self.deferred), "zones_over_home": over_home,
+               # Already on the fence and near the aircraft: kept, not dropped.
+               "kept_near": kept_near,
+               "zones_enforced": self.zones_enforced,
+               "backstop_active": self.backstop_active,
+               "anchor": self.anchor.to_dict()}
+        if not self.enabled:
+            out.update(sent=False, success=False,
+                       why="--no-fence-upload: the zones are the Shield's alone, and "
+                           "the autopilot's fence list is left as it was")
+        elif not hasattr(self.link, "upload_fence"):
+            out.update(sent=False, success=False,
+                       why=f"the {getattr(self.link, 'name', '?')} link cannot upload "
+                           f"a fence")
+        else:
+            if self.previous is None:
+                self.previous = self._read_previous()
+                out["previous"] = self.previous
+                if self.previous.get("count"):
+                    print(f"[fence]  *** the autopilot held {self.previous['count']} "
+                          f"fence item(s) this run did not write (a ground station's, "
+                          f"or an earlier run's): replaced by the policy's zones")
+            if not now_z and self.previous.get("count") == 0 and not self.uploaded:
+                out.update(sent=False, success=None,
+                           why="no zone can be uploaded now (none exported, or every "
+                               "one held back), and the autopilot's fence list is "
+                               "already empty")
+            else:
+                kw = ({"timeout": timeout} if timeout is not None and "timeout" in
+                      inspect.signature(self.link.upload_fence).parameters else {})
+                res = self.link.upload_fence(fence_items(now_z, self.anchor.lat,
+                                                         self.anchor.lon), **kw)
+                out.update(sent=True, **res)
+                if not now_z and res.get("success"):
+                    out["why"] = ("no zone can be uploaded now (none exported, or every "
+                                  "one held back): the list was CLEARED, so no zone "
+                                  "of another policy or an earlier run stays enforced")
+                if timeout is not None:
+                    # In flight the upload blocked the loop: its cost in ticks.
+                    ms = res.get("upload_ms")
+                    out.update(in_flight=True, timeout_s=timeout,
+                               tick_budget_ms=round(TICK * 1000.0),
+                               ticks_missed=(None if ms is None
+                                             else int(float(ms) // (TICK * 1000.0))))
+                if res.get("success"):
+                    self.uploaded = [z["id"] for z in now_z]
+                    self.enforced = {z["id"]: z for z in now_z}
+                else:
+                    # Not retried: a link that cannot take the fence would cost
+                    # an upload timeout on every later tick.
+                    self.failed = True
+        self.uploads.append(out)
+        self.rec.event("fence_upload", t=t, **out)
+        print(f"[fence]  {reason}: upload {out.get('success')} "
+              f"({len(now_z)} zone(s) {out['zone_ids']}, deferred {self.deferred}"
+              + (f", kept near {kept_near}" if kept_near else "")
+              + (f"; {out['why']}" if out.get("why") else "") + ")")
+        if over_home:
+            print(f"[fence]  *** zone(s) {over_home} cover the arming point: an RTL "
+                  f"lands in them and the GeoFence reports a breach there")
+        return out
+
+    def recheck(self, position, unsafe_rules, t: float | None = None) -> dict | None:
+        """Upload held-back zones the aircraft is now clear of (in flight: a
+        short timeout per phase, MIDFLIGHT_FENCE_TIMEOUT_S)."""
+        if not self.deferred or not self.enabled or self.failed or position is None:
+            return None
+        _, held = defer_near(self.zones, position, self.margin_m)
+        still = {h["id"] for h in held}
+        cleared = [i for i in self.deferred
+                   if i not in still and i not in (unsafe_rules or ())]
+        if not cleared:
+            return None
+        return self.publish(position, f"deferred zone(s) {', '.join(cleared)} now clear",
+                            t, timeout=MIDFLIGHT_FENCE_TIMEOUT_S)
+
+    def summary(self) -> dict:
+        return {"uploads": len(self.uploads),
+                "last": self.uploads[-1] if self.uploads else None,
+                "uploaded_zone_ids": list(self.uploaded),
+                "still_deferred": list(self.deferred),
+                "previous": self.previous}
+
+
+def autopilot_kind_of(link) -> str | None:
+    """"sitl" | "hardware" | None, as the link read it from the autopilot."""
+    k = getattr(link, "autopilot_kind", None)
+    if k:
+        return k
+    hil = getattr(link, "hil_evidence", None)
+    if isinstance(hil, dict) and hil.get("autopilot_kind"):
+        return hil["autopilot_kind"]
+    try:
+        return (link.evidence().get("topology_evidence") or {}).get("autopilot_kind")
+    except Exception:                                         # noqa: BLE001
+        return None
+
+
+class ThrottleHold:
+    """The literal LOITER hold: channel 3 held at LOITER_THROTTLE_PWM every
+    tick the escalation FSM holds the aircraft in ArduCopter's LOITER, and
+    handed back to the radio when the hold ends - including the tick the
+    autopilot leaves LOITER for a mode the node did not ask for (the node's
+    `holding` reads the autopilot's own mode, 2026-10-13).
+
+    Sent only with --hold-mode LOITER, only to SITL, and only on a link that
+    can: on an airframe the safety pilot holds the throttle, and an override
+    would take it from them. ArduPilot takes it only from SYSID_MYGCS and
+    lets it lapse after RC_OVERRIDE_TIME, so it is re-sent every tick; whether
+    it took is read back from the autopilot's own RC report (`rc3`). The
+    hold lives in this node: once the node stops, LOITER descends again."""
+
+    def __init__(self, link, hold_mode: str, kind: str | None, rec) -> None:
+        self.link, self.rec = link, rec
+        self.pwm = LOITER_THROTTLE_PWM
+        self.plan = None
+        if hold_mode != "LOITER":
+            self.enabled, self.why = False, (f"--hold-mode {hold_mode}: ArduCopter's "
+                                             f"{hold_mode} holds altitude with no "
+                                             f"pilot input, so no override")
+        elif kind != "sitl":
+            self.enabled, self.why = False, (
+                f"autopilot_kind is {kind!r}: the override is sent to SITL only; on "
+                f"an airframe the safety pilot holds the throttle")
+        elif not hasattr(link, "override_throttle"):
+            self.enabled, self.why = False, (f"the {getattr(link, 'name', '?')} link "
+                                             f"cannot send an RC override")
+        else:
+            self.enabled, self.why = True, None
+            if hasattr(link, "rc_override_plan"):
+                self.plan = link.rc_override_plan()
+                if self.plan.get("accepted_expected") is False:
+                    # ArduPilot would drop every override (MAVROS sends as its
+                    # system_id, 1 by default; ArduPilot takes SYSID_MYGCS,
+                    # 255): sending them would only count ticks that held
+                    # nothing (review 2026-10-13).
+                    self.enabled, self.why = False, (
+                        f"{self.plan.get('why')}: ArduPilot would ignore the "
+                        f"override, so none is sent and LOITER holds no altitude "
+                        f"without a pilot (fly --hold-mode BRAKE, or align the ids)")
+                    print(f"[hold]   *** {self.why}")
+        self.active = False
+        self.ticks = 0
+        self.spells: list[dict] = []
+        self.rc3_seen: list[int] = []
+
+    def tick(self, now: float, holding: bool, snap, why: str = "the hold ended"
+             ) -> int | None:
+        """Send (or release, saying `why`) this tick's override; returns the
+        PWM sent."""
+        if not self.enabled:
+            return None
+        if not holding:
+            if self.active:
+                self.release(now, why)
+            return None
+        self.link.override_throttle(self.pwm)
+        if not self.active:
+            self.active = True
+            self.spells.append({"t_start": round(now, 3), "t_end": None})
+            self.rec.event("rc_override", t=now, action="hold", channel=3, pwm=self.pwm)
+            print(f"[hold]   RC3 override {self.pwm}: LOITER holds its altitude")
+        self.ticks += 1
+        t_rc = getattr(snap, "t_rc", None)
+        if getattr(snap, "rc3", None) is not None and t_rc is not None:
+            self.rc3_seen.append(int(snap.rc3))
+        return self.pwm
+
+    def release(self, now: float, why: str) -> None:
+        if not self.active:
+            return
+        self.link.override_throttle(None)
+        self.active = False
+        self.spells[-1]["t_end"] = round(now, 3)
+        self.rec.event("rc_override", t=now, action="release", channel=3, why=why)
+
+    def summary(self) -> dict:
+        at = sum(1 for v in self.rc3_seen if abs(v - self.pwm) <= 10)
+        return {"enabled": self.enabled, "why": self.why, "channel": 3, "pwm": self.pwm,
+                "plan": self.plan, "ticks_sent": self.ticks, "spells": self.spells,
+                # The autopilot's own RC report during the hold: how often it
+                # read channel 3 at the override (None: never reported).
+                "rc3_reported": {"ticks": len(self.rc3_seen), "at_pwm": at}
+                if self.rc3_seen else None}
+
+
 # --------------------------------------------------------------------------- #
 # The node
 # --------------------------------------------------------------------------- #
@@ -622,9 +1234,30 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--object", default="a red car")
     ap.add_argument("--tag", default=None)
     ap.add_argument("--out-root", default=str(ROOT / "demo" / "out"))
-    ap.add_argument("--policy", default=None)
+    ap.add_argument("--policy", default=None,
+                    help="policy YAML; flown only with --dev-yaml, recorded as "
+                         "UNSIGNED. Without --policy and --bundle the signed bundle "
+                         "of policies/follow_car_citylife.yaml flies")
+    ap.add_argument(DEV_YAML_FLAG, dest="dev_yaml", action="store_true",
+                    help="fly a YAML policy (--policy, or the default YAML): a "
+                         "development run, recorded as such and never KPI-grade")
     ap.add_argument("--bundle", default=None)
     ap.add_argument("--allow-unverified-bundle", action="store_true")
+    ap.add_argument("--clock-start", default=None, metavar="ISO8601",
+                    help="script the rule clock: it reads this at mission start and "
+                         "advances with the mission time. Without it the wall clock "
+                         "in the mission's time zone (--clock-tz)")
+    ap.add_argument("--clock-tz", default=None,
+                    help="the mission's time zone for the wall rule clock: a UTC "
+                         "offset (+08:00, the default: Taiwan) or an IANA name")
+    ap.add_argument("--subject-actor", default="auto",
+                    help="the level actor tag of the followed subject, whose "
+                         "simulator pose is logged for EVALUATION only (never given "
+                         "to the Shield): 'auto' (Car_10 for a red car), a tag, or "
+                         "'none'")
+    ap.add_argument("--no-fence-upload", action="store_true",
+                    help="do not upload the policy's keep-out zones to the "
+                         "autopilot's GeoFence")
     ap.add_argument("--shield", choices=["on", "off"], default="on")
     ap.add_argument("--fsm-config", default=None,
                     help="escalation FSM thresholds YAML (guardrail.fsm.FSMConfig)")
@@ -637,8 +1270,9 @@ def build_parser() -> argparse.ArgumentParser:
                          "period; pending the PI)")
     ap.add_argument("--hold-mode", choices=list(HOLD_MODES), default=HOLD_MODE,
                     help="ArduCopter mode the FSM's Loiter is flown as: BRAKE (default; "
-                         "holds with no pilot input) or LOITER (sinks unless a pilot "
-                         "centres the throttle)")
+                         "holds with no pilot input) or LOITER (the grant's word; on "
+                         "SITL the node centres the throttle with an RC3 override "
+                         "while it holds, elsewhere a pilot must)")
     ap.add_argument("--seed", type=int, default=20261006)
     ap.add_argument("--max-s", type=float, default=120.0)
     # where things are
@@ -732,6 +1366,13 @@ def dry_run(args, out: Path) -> dict:
         if not deps[n]:
             report["ok"] = False
             report["problems"].append(f"{n} is not importable in {sys.executable}")
+    # The policy the run would fly, refused here as the run would refuse it.
+    try:
+        bundle, yaml_path, choice = resolve_policy(args)
+        report["policy"] = {"bundle": bundle, "yaml": yaml_path, **choice}
+    except ValueError as exc:
+        report["ok"] = False
+        report["problems"].append(str(exc))
     return report
 
 
@@ -801,13 +1442,29 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     random.seed(args.seed)
     np.random.seed(args.seed % (2 ** 32))
 
+    # The signed bundle (given, or the default policy's); a YAML only under
+    # --dev-yaml, recorded so. Refused here, before anything starts.
+    try:
+        bundle, yaml_path, choice = resolve_policy(args)
+    except ValueError as exc:
+        raise SystemExit(f"[policy] {exc}") from None
     policy, policy_source = load_for_flight(
-        args.bundle, args.policy or (None if args.bundle else DEFAULT_POLICY),
-        allow_unverified=args.allow_unverified_bundle)
+        bundle, yaml_path, allow_unverified=args.allow_unverified_bundle)
+    policy_source.update(choice)
     smap, map_note = load_obstacle_map(policy, Path(args.citymap))
     print(f"[policy] {policy.policy_id} {policy.policy_hash} from "
-          f"{policy_source['kind']} - signature {policy_source['signature']}")
+          f"{policy_source['kind']} - signature {policy_source['signature']}"
+          + (f" ({DEV_YAML_FLAG})" if policy_source.get("dev_yaml") else ""))
     print(f"[map]    {map_note}")
+    # The rule clock: one callable for the Shield and every generation's CSP
+    # (guardrail.replay.rule_clock), refused here if --clock-start or
+    # --clock-tz cannot be read. Mission time is None until the loop starts.
+    mission_t0: list = [None]
+    rule_now, clock_record = rule_clock(
+        getattr(args, "clock_start", None), tz=getattr(args, "clock_tz", None),
+        elapsed=lambda: None if mission_t0[0] is None else clock() - mission_t0[0])
+    print(f"[clock]  rules read the {clock_record['kind']} clock: "
+          f"{clock_record.get('start') or clock_record.get('tz')}")
     # The grant's lookahead (guardrail.shield: 5 s at 10 Hz, 50 future poses),
     # as on both SITL rails, and NO escalation FSM inside the Shield: this
     # node runs THE FSM below, fed with what only it sees (the autopilot's
@@ -815,20 +1472,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     # audit.jsonl would record one state machine and flight_log.jsonl another
     # (guardrail.replay, "ONE ESCALATION FSM PER RAIL").
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
-                         obstacle_map=smap)
-    # The episode record before the audit log: it moves an earlier run's files
-    # aside and writes generation 0. A follow mission has no compiler target,
-    # so its CSP is recorded as not compiled (an event), not skipped.
-    rec = EpisodeRecord(out, policy, None, lookahead_s=LOOKAHEAD_S)
-    audit = AuditLogger(out / "audit.jsonl", policy)
+                         obstacle_map=smap, clock=rule_now)
     shield_on = args.shield == "on"
     fsm = (EscalationFSM(FSMConfig.from_yaml(args.fsm_config) if args.fsm_config
                          else FSMConfig())
            if shield_on and not args.no_fsm else None)
     horizon = theta_horizon(getattr(args, "theta_horizon_s", "auto"))
     hold_mode = getattr(args, "hold_mode", HOLD_MODE)
+    hold_ap_mode = autopilot_mode("LOITER", hold_mode)    # what ArduCopter holds in
 
-    # ---- simulator configs and camera -------------------------------------
+    # ---- simulator configs, frame and mission ------------------------------
     sim_cfg, plan = sim_configs(args, out)
     scene, scene_path = None, None
     if sim_cfg is not None:
@@ -840,6 +1493,33 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                   f"sends to {plan.ardupilot_ip}:{rail.SITL_SENSOR_PORT})")
         else:
             print(f"[sim]    attaching to scene {sim_cfg['scene_id']} on {args.sim_host}")
+    scene_home = rail.home_geo_point(scene) if scene else None
+    # The policy's own origin, else the scene's home-geo-point; with neither,
+    # the EKF's first fix (set at the pre-arm step below).
+    anchor = FrameAnchor.choose(policy, scene_home)
+    # The follow mission the CSPs are compiled for: from the spawn point, the
+    # target proxy the start itself (follow_mission).
+    start_xy, start_src = scene_spawn_xy(scene, anchor)
+    mission = follow_mission(args.object, start_xy, args.cruise_alt, args.speed_max)
+    mission_rec = {"task": mission.task_text, "start": list(start_xy),
+                   "start_source": start_src,
+                   "target": [mission.target_x, mission.target_y],
+                   "target_source": ("the start (proxy): a follow mission's subject "
+                                     "position is not known before the flight"),
+                   "cruise_alt_m": mission.cruise_alt_m,
+                   "speed_pref_mps": mission.speed_pref_mps}
+    # The episode record before the audit log: it moves an earlier run's files
+    # aside and writes generation 0's policy and CSP, at the rule clock's
+    # reading.
+    rec = EpisodeRecord(out, policy, mission, lookahead_s=LOOKAHEAD_S,
+                        clock=rule_now, clock_record=clock_record)
+    rec.event("mission", **mission_rec)
+    try:
+        (out / "prompt.yaml").write_text(ConstraintCompiler(policy).build_prompt(mission),
+                                         encoding="utf-8")
+    except Exception as exc:                                  # noqa: BLE001
+        rec.event("prompt_failed", error=f"{type(exc).__name__}: {exc}")
+    audit = AuditLogger(out / "audit.jsonl", policy)
     if obs is None:
         from semantic_demo import SemanticObs
         obs = SemanticObs()
@@ -869,31 +1549,63 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 link = MavrosLink()
                 if args.camera == "ros2":
                     Ros2ImageSource(link.node, obs, args.image_topic)
+        ap_fence = backstop = None
+        pre_arm: dict = {}
+
+        def before_arm(phase: str = "before arming") -> None:
+            """With the position usable and before GUIDED / arming: the frame's
+            anchor (the first fix, when nothing else anchors it), the
+            autopilot's own GeoFence as it holds it (recorded; no parameter is
+            changed), and the policy's zones uploaded onto it."""
+            nonlocal anchor, ap_fence, backstop
+            if pre_arm:
+                return
+            pre_arm["phase"] = phase
+            link.pump()
+            if anchor is None:
+                s = link.snap
+                anchor = FrameAnchor(s.lat, s.lon, s.alt_msl,
+                                     "ekf.first-fix (no policy origin, no scene)")
+            print(f"[frame]  scene frame anchored at {anchor.to_dict()}")
+            ap_fence = autopilot_fence_record(link, policy, args.cruise_alt)
+            if ap_fence is not None:
+                rec.event("autopilot_fence", **ap_fence)
+                print(f"[fence]  ENABLE {ap_fence['FENCE_ENABLE']}  ALT_MAX "
+                      f"{ap_fence['FENCE_ALT_MAX']}  RADIUS {ap_fence['FENCE_RADIUS']}  "
+                      f"ACTION {ap_fence['FENCE_ACTION']}  TYPE {ap_fence['FENCE_TYPE']}")
+                if ap_fence["stricter_than_policy"]:
+                    print(f"[fence]  *** {ap_fence['why']}")
+                if ap_fence["zones_enforced"] is False:
+                    print("[fence]  *** FENCE_TYPE has no polygon bit: the uploaded "
+                          "zones are held but not enforced")
+            st0 = link.state(anchor)
+            pos0 = None if st0 is None else (st0.x, st0.y)
+            backstop = FenceBackstop(policy, link, rec, anchor, ap_fence, now=rule_now,
+                                     enabled=not getattr(args, "no_fence_upload", False),
+                                     home_xy=pos0)
+            backstop.publish(pos0, phase)
+
         print(f"[link]   {link.name}: bring-up to {args.cruise_alt} m")
-        link.bring_up(args.cruise_alt)
+        if "before_arm" in inspect.signature(link.bring_up).parameters:
+            link.bring_up(args.cruise_alt, before_arm=before_arm)
+        else:
+            link.bring_up(args.cruise_alt)
+        before_arm("after take-off: this link has no pre-arm step")
         # Read from the autopilot during bring-up (identify()); None if unreadable,
         # which the manifest then records as unresolved - never an assumed 1.0.
         speedup = getattr(link, "sim_speedup", None)
-        anchor = FrameAnchor.choose(policy, rail.home_geo_point(scene) if scene else None)
-        if anchor is None:
-            s = link.snap
-            anchor = FrameAnchor(s.lat, s.lon, s.alt_msl, "ekf.first-fix (no policy origin, no scene)")
-        print(f"[frame]  scene frame anchored at {anchor.to_dict()}")
-        # The autopilot's own GeoFence, the grant's backstop, as the autopilot
-        # holds it: recorded, never changed by this node.
-        ap_fence = autopilot_fence_record(link, policy, args.cruise_alt)
-        if ap_fence is not None:
-            rec.event("autopilot_fence", **ap_fence)
-            print(f"[fence]  ENABLE {ap_fence['FENCE_ENABLE']}  ALT_MAX "
-                  f"{ap_fence['FENCE_ALT_MAX']}  RADIUS {ap_fence['FENCE_RADIUS']}  "
-                  f"ACTION {ap_fence['FENCE_ACTION']}")
-            if ap_fence["stricter_than_policy"]:
-                print(f"[fence]  *** {ap_fence['why']}")
         # The arming point, for the FSM's "home reached" (RTL): the vehicle
         # took off vertically from it.
         link.pump()
         st_home = link.state(anchor)
         home_xy = None if st_home is None else (st_home.x, st_home.y)
+        if home_xy is not None:
+            rec.event("mission_start_check", planned_start=list(start_xy),
+                      arming_point=[round(home_xy[0], 3), round(home_xy[1], 3)],
+                      gap_m=round(math.hypot(home_xy[0] - start_xy[0],
+                                             home_xy[1] - start_xy[1]), 3))
+        # The literal LOITER hold's throttle (--hold-mode LOITER on SITL only).
+        throttle = ThrottleHold(link, hold_mode, autopilot_kind_of(link), rec)
 
         # ---- detector and pilot --------------------------------------------------
         fv = None
@@ -913,6 +1625,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                             want_w_frac=args.want_width, speed_max=args.speed_max,
                             cruise_alt=args.cruise_alt, alt_gain=args.alt_gain,
                             climb_max=args.climb_max)
+        # The subject's simulator pose, for EVALUATION only (SubjectTruth): the
+        # Shield below is given the estimate, never this.
+        actor, actor_why = subject_actor_for(getattr(args, "subject_actor", "auto"),
+                                             args.object, subject_class)
+        truth = SubjectTruth(camera, actor, actor_why, scene_home, anchor)
+        rings = [c.min_range_m for c in policy.by_type(SubjectStandoff)
+                 if c.binds(subject_class)]
+        ring_m = max(rings) if rings else None
+        print(f"[truth]  subject pose: {truth.source or truth.why_off}")
 
         # ---- loop ----------------------------------------------------------------
         rows, traj, ekf_err = [], [], []
@@ -934,8 +1655,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # the current wall time read a perfect real-time run as 0.97x.
         tb0 = (link.snap.time_boot_ms, getattr(link.snap, "t_time_boot", None))
         t0 = clock()
+        mission_t0[0] = t0
         rec.event("mission_start", t=0.0, autopilot_mode=prev_mode,
-                  fsm=None if fsm is None else fsm.config.to_dict())
+                  fsm=None if fsm is None else fsm.config.to_dict(),
+                  rule_clock_reading=rule_now().isoformat(timespec="seconds"))
         t_truth = 0.0
         try:
             while clock() - t0 < args.max_s:
@@ -951,12 +1674,17 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 mode = s.mode
                 if fence0 is None:
                     fence0 = s.fence_breach_count
-                # The autopilot left GUIDED without this node asking: its fence
-                # fired RTL, a failsafe, or a pilot in Mission Planner. From here
-                # it has the aircraft, and nothing more is commanded.
+                # The autopilot left GUIDED - or a hold this node asked for -
+                # for a mode the node did not ask for: its fence fired RTL, a
+                # failsafe, or a pilot in Mission Planner. From here it has the
+                # aircraft, and nothing more is commanded. (Until 2026-10-13
+                # only a change out of GUIDED counted, so a pilot taking the
+                # aircraft out of the FSM's LOITER went unseen, and the
+                # throttle override went on holding channel 3.)
                 if mode == "GUIDED" and prev_mode != "GUIDED":
                     asks.entered_guided()
-                if (takeover is None and prev_mode == "GUIDED" and mode != "GUIDED"
+                if (takeover is None and mode != prev_mode and mode != "GUIDED"
+                        and (prev_mode == "GUIDED" or asks.explains(prev_mode))
                         and not asks.explains(mode)):
                     takeover = {"t": round(now, 3), "mode": mode, "previous": prev_mode,
                                 "fence_breach_count": s.fence_breach_count,
@@ -983,6 +1711,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 else:
                     shield.set_subject(None)
                 d = shield.filter(st, raw)
+                # The rule clock's reading for this tick, taken with the
+                # Shield's: the trajectory point and the row carry this one,
+                # not a later reading after a send or a fence upload.
+                clock_now = rule_now()
                 tick = len(rows) + 1
                 # The episode id binds every row to this episode's events
                 # (guardrail.replay: "ONE EPISODE, NOT TWO").
@@ -1040,12 +1772,39 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         print(f"[fsm]    input refused, {hold}: {exc}")
                 if fsm_fault is not None or takeover is not None:
                     setpoint = "none"
+                # The literal LOITER hold centres the throttle while the FSM
+                # (or a fault) holds the aircraft AND the autopilot is in the
+                # hold mode (or still in GUIDED, the request not yet reported,
+                # where the throttle is not read), and hands it back after -
+                # at once if the autopilot took the aircraft or left the hold
+                # for any other mode (ThrottleHold).
+                holding = (takeover is None
+                           and link.snap.mode in (hold_ap_mode, "GUIDED")
+                           and (fsm_fault is not None
+                                or (fsm is not None and fsm.state == FSMState.LOITER)))
+                rc3 = throttle.tick(
+                    now, holding, s,
+                    why=(f"the autopilot took the aircraft ({takeover['mode']})"
+                         if takeover is not None else
+                         f"the autopilot is in {link.snap.mode}, not {hold_ap_mode}"
+                         if link.snap.mode not in (hold_ap_mode, "GUIDED") else
+                         "the hold ended"))
                 # After the FSM stepped, with ITS verdict: one state machine on
                 # record, in audit.jsonl and flight_log.jsonl alike.
                 audit_tick(audit, tick, d, fsm_out=fsm_out, fsm_fault=fsm_fault)
                 flown = {"pass": emitted, "brake": Action4D(), "none": None}[setpoint]
                 if flown is not None:
                     link.send(flown, raw_body=body)
+                # A zone held back from the autopilot's fence goes up once the
+                # aircraft is clear of it (FenceBackstop).
+                if backstop is not None and takeover is None:
+                    backstop.recheck((st.x, st.y), extra.get("unsafe_rules"), t=now)
+                # The subject's simulator pose: evaluation only, read after the
+                # setpoint went out, so its RPC is never between the action
+                # and the autopilot (review 2026-10-13); the Shield above was
+                # given the estimate.
+                tr = truth.read()
+                truth_xy = tr["xy"]
 
                 touched = bool(shield_on and d.touched)
                 n_touched += touched
@@ -1058,8 +1817,27 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 # aircraft) - no action flew, so none can have escaped.
                 ff = flown_fields(shield, st, d, shield_on=shield_on, setpoint=setpoint)
                 n_escaped += bool(ff["emitted_violations"])
+                # The rule clock's reading rides with each point, so the zone
+                # dwell applies the windows the Shield flew under.
                 traj.append({"t": round(now, 2), "x": st.x, "y": st.y, "up": st.up,
-                             "touched": touched})
+                             "touched": touched, "clock": clock_now.isoformat()})
+                truth_fields = {"subject_truth": None if truth_xy is None else
+                                [round(truth_xy[0], 2), round(truth_xy[1], 2)]}
+                if truth_xy is None:
+                    truth_fields["subject_truth_why"] = tr["why"]
+                else:
+                    # The repo's subject-position convention (both SITL rails,
+                    # the AirSim follows): guardrail.kpi's hover null,
+                    # demo/track_truth and tools/rescore_kpis read tgt_x/tgt_y.
+                    # Here it is the TRUTH; what the Shield flew on is `subject`.
+                    truth_fields["tgt_x"] = round(truth_xy[0], 3)
+                    truth_fields["tgt_y"] = round(truth_xy[1], 3)
+                    # The true horizontal range, and the estimate's error.
+                    truth_fields["subject_range_m"] = round(
+                        math.hypot(st.x - truth_xy[0], st.y - truth_xy[1]), 3)
+                    truth_fields["subject_gap_m"] = (
+                        None if subj is None else
+                        round(math.hypot(subj[0] - truth_xy[0], subj[1] - truth_xy[1]), 3))
                 row = {
                     "t": round(now, 3), "tick": tick,
                     "x": round(st.x, 3), "y": round(st.y, 3), "up": round(st.up, 3),
@@ -1085,6 +1863,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     "subject": None if subj is None else [round(subj[0], 2), round(subj[1], 2), subj[2]],
                     # The depth range in the box and the rule that refused it, if any.
                     "subject_depth": subj_depth,
+                    # The subject's simulator pose and the true range: the
+                    # record's, never the Shield's (None with the reason).
+                    **truth_fields,
+                    # The throttle override sent this tick (--hold-mode LOITER).
+                    "rc3_override": rc3,
+                    # The rule clock's reading the Shield evaluated this tick at.
+                    "rule_clock": clock_now.isoformat(timespec="seconds"),
                     **extra,
                 }
                 if fsm_out is not None:
@@ -1135,6 +1920,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             end_reason = f"crashed: {type(exc).__name__}: {exc}"
             raise
         finally:
+            # The throttle goes back to the radio first: an override must not
+            # outlive the hold it was for.
+            try:
+                throttle.release(round(clock() - t0, 3), f"episode end ({end_reason})")
+            except Exception as exc:                              # noqa: BLE001
+                print(f"[hold]   override release failed: {exc}")
             # A mission end lands. A fail-safe the FSM asked for, or a mode the
             # autopilot chose itself, is left to the autopilot to finish.
             autopilot_owns = takeover is not None or (
@@ -1167,9 +1958,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # shares (guardrail.replay.zone_dwell): polygon and circle fences and
         # every dynamic_nfz that does not move; a moving one is named
         # (nfz_moving_not_counted), not scored 0. Until 2026-10-11 this walked
-        # policy.by_type(PolygonFence), which a dynamic_nfz is not.
-        dwell = zone_dwell(shield, traj, TICK)
+        # policy.by_type(PolygonFence), which a dynamic_nfz is not. Each point's
+        # rule-clock reading gates each zone: time inside a zone its window or
+        # a switch had off is nfz_off_by_clock_s, not dwell.
+        dwell = zone_dwell(shield, traj, TICK, clock_key="clock")
         nfz_ticks = dwell["nfz_ticks"]
+        # The subject's true range (evaluation only): the stand-off dwell and
+        # the follow proxy from the simulator's pose, None when never read.
+        tsum = truth_summary(rows, truth, ring_m, TICK)
+        scored = tsum["scored"]
         if dwell["nfz_moving_not_counted"]:
             print(f"[nfz]    moving zone(s) {dwell['nfz_moving_not_counted']} are NOT "
                   f"in nfz_s: the end-of-flight count has no per-tick position")
@@ -1230,14 +2027,32 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             "nfz_s": round(nfz_ticks * TICK, 2), "alt_violation_s": round(alt_ticks * TICK, 2),
             "nfz_by_zone_s": dwell["nfz_by_zone_s"],
             "nfz_moving_not_counted": dwell["nfz_moving_not_counted"],
-            # No subject ground truth is read on this rail, so there is no tracking
-            # score and no stand-off dwell to report. None, never 0.
-            "frac_within_30m": None, "standoff_s": None, "follow_scored": False,
+            "nfz_off_by_clock_s": dwell["nfz_off_by_clock_s"],
+            # Which clock the rules were evaluated on (scripted or wall).
+            "rule_clock": clock_record,
+            # The follow mission each generation's CSP was compiled for.
+            "mission": mission_rec,
+            # The tracking score and the stand-off dwell come from the
+            # subject's simulator pose when it was read on enough ticks
+            # (subject_truth, TRUTH_MIN_COVERAGE); with no pose, or too few,
+            # there is none to report: None, never 0 - except a dwell that
+            # WAS seen, kept as its lower bound (standoff_basis says which).
+            "frac_within_30m": tsum["frac_within_30m"],
+            "standoff_s": tsum["standoff_s"],
+            "standoff_basis": tsum["standoff_basis"],
+            "standoff_min_range_m": tsum["min_range_m"],
+            "follow_scored": scored,
+            "subject_truth": tsum,
             "fsm": (dict(fsm.summary(), fault=fsm_fault,
                          theta_basis=theta_basis(horizon),
                          hold_mode={"fsm_mode": "LOITER",
                                     "autopilot_mode": autopilot_mode("LOITER", hold_mode)})
                     if fsm is not None else None),
+            # The FSM's LOITER as flown, and the throttle override that makes
+            # ArduCopter's LOITER hold altitude (--hold-mode LOITER on SITL).
+            "hold": {"fsm_mode": "LOITER",
+                     "autopilot_mode": autopilot_mode("LOITER", hold_mode),
+                     "rc_override": throttle.summary()},
             # The FSM's words (LOITER, RTL, LAND; LAND also at mission end) and
             # what ArduCopter was asked for (the FSM's LOITER as BRAKE).
             "mode_requests": list(asks.fsm),
@@ -1253,15 +2068,19 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # The GeoFence as the autopilot held it (None: the link reads no
             # parameters), judged against the policy's ceiling.
             "autopilot_fence": ap_fence,
+            # The policy's zones on that fence (FenceBackstop): when each upload
+            # was made (pre_arm), what went up, what was held back and why.
+            "fence_upload": None if backstop is None else backstop.summary()["last"],
+            "fence_uploads": [] if backstop is None else backstop.uploads,
+            "fences_still_deferred": None if backstop is None else backstop.deferred,
+            "fence_upload_phase": pre_arm.get("phase"),
             "generations": rec.generations,
             # Every contact the simulator reported, take-off and landing included
             # (g1_check.airborne_collisions separates those); None = not subscribed.
             "sim_contacts_all": (None if camera is None
                                  or not getattr(camera, "collisions_subscribed", False)
                                  else len(camera.collisions)),
-            "ekf_vs_sim_horiz_m": {"n": len(ekf_err), "median": percentile(ekf_err, 50),
-                                   "p95": percentile(ekf_err, 95),
-                                   "max": None if not ekf_err else round(max(ekf_err), 3)},
+            "ekf_vs_sim_horiz_m": spread(ekf_err),
             "ardupilot_rt_factor": rt_factor, "rt_factor_band": list(RT_FACTOR_BAND),
             "fcu_clock_source": getattr(link.snap, "fcu_clock_source", None),
             "sim_speedup_param": speedup,
@@ -1273,9 +2092,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             "params": {k: getattr(args, k) for k in ("object", "cruise_alt", "yaw_gain",
                                                      "want_width", "speed_max", "alt_gain",
                                                      "climb_max", "det_thresh", "colour_min",
-                                                     "seed", "link", "camera", "scene_mode")},
+                                                     "seed", "link", "camera", "scene_mode",
+                                                     "hold_mode", "subject_actor",
+                                                     "clock_start", "clock_tz")},
             "detector": "google/owlvit-base-patch32 (demo/follow_vlm.DETECTOR_ID)",
         }
+        # The null beside the follow proxy (guardrail.kpi.null_hover_mission):
+        # would an aircraft that never left its start pass the same test? It
+        # reads the truth from the rows' tgt_x / tgt_y.
+        metrics["null_hover_mission"] = null_hover_mission(rows, metrics)
         (out / "flight_log.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows),
                                               encoding="utf-8")
         (out / "trajectory.json").write_text(json.dumps(traj), encoding="utf-8")
@@ -1285,9 +2110,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # qualified (G1 passed, real time measured); the manifest's guard then
         # judges it on the evidence and the scene. On refusal, or when the
         # label was withheld, the rail's own label is stamped and the reason
-        # recorded. Today manifest.py refuses dev/hil beside any Project
-        # AirSim scene, so this rail stamps its own label; the guard stays the
-        # only judge of the grant label.
+        # recorded. Since 2026-10-12 manifest.py accepts dev / hil beside a
+        # scene whose robot config names ardupilot-api, on the live MAVROS
+        # evidence (an fcu_url, no pymavlink link); the guard stays the only
+        # judge of the grant label.
         common = dict(policy_hash=policy.policy_hash, model_id=NO_VLA, seed=args.seed,
                       scene_path=scene_path, sim_speedup=None if scene_path else speedup)
         refusal = None
@@ -1316,6 +2142,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             why.append("the Project AirSim + ArduPilot rail is not qualified by gate G1")
         if fsm_fault is not None:
             why.append(f"the escalation FSM refused an input mid-flight: {fsm_fault}")
+        if policy_source.get("dev_yaml"):
+            why.append(f"the policy was flown from YAML under {DEV_YAML_FLAG}: "
+                       f"unsigned, not its issued bundle")
+        if not scored:
+            # A follow's mission test is the follow proxy and the stand-off
+            # dwell; read as None, guardrail.kpi passes the mission on
+            # silence. Not a measured success.
+            why.append(f"the follow is not scored: the subject's pose was read on "
+                       f"{tsum['ticks_read']}/{len(rows)} ticks (needs "
+                       f"{TRUTH_MIN_COVERAGE:.0%}; {truth.why_off or truth.last_why or 'never read'})")
         graded = graded and not why
         kpi.update(kpi_grade=graded, kpi_grade_reasons=why, manifest=manifest,
                    policy_source=policy_source, episode_id=rec.episode_id)
@@ -1354,6 +2190,18 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
               f"{fence_breaches} | mode requests {asks.fsm} (sent as "
               f"{asks.autopilot}) | autopilot took "
               f"over: {takeover['mode'] if takeover else 'no'}")
+        print(f"[report] subject truth: {tsum['ticks_read']}/{len(rows)} ticks read | "
+              f"nearest {tsum['min_range_m']} m | in the {ring_m} m ring "
+              f"{tsum['frac_in_ring']} of read ticks | estimate off by median "
+              f"{tsum['estimate_gap_m']['median']} m"
+              + ("" if scored else f" - NOT scored, coverage {tsum['coverage']} "
+                                   f"({truth.why_off or truth.last_why or 'never read'})")
+              + f" | hover null {metrics['null_hover_mission'].get('success')}")
+        if backstop is not None:
+            last = backstop.summary()["last"] or {}
+            print(f"[report] GeoFence zones uploaded {backstop.uploaded} "
+                  f"({pre_arm.get('phase')}); still held back {backstop.deferred}"
+                  + (f"; last: {last.get('why')}" if last.get("why") else ""))
         print(f"[report] topology stamped {manifest['topology']!r}; grant label "
               f"{cls['grant']!r}: " + "; ".join(cls["reasons"] + withheld))
         if refusal:

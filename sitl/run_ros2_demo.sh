@@ -12,7 +12,15 @@
 # Extra args go to BOTH the Shield node and the VLA node; each takes its own
 # and ignores the rest: --policy P | --bundle B, --subject X,Y, --target X,Y,
 # --speed V, --yaw-rate R (VLA), --seed N, --tag T, --max-s S,
-# --dynamic-zone route|on-aircraft (Shield, with --dynamic).
+# --dynamic-zone route|on-aircraft (Shield, with --dynamic), and the Shield
+# node's --dev-yaml, --clock-start ISO8601, --clock-tz TZ, --hotapply-port N,
+# --action-timeout-s S.
+#
+# The policy (2026-10-12): a YAML flies only with --dev-yaml (a development
+# run, recorded so). With no --policy / --bundle the signed bundle of
+# policies/sim_demo_policy.yaml is given to both nodes when bundles/ holds it
+# (python tools/build_flight_bundles.py, on a machine with the lab key);
+# without it the run is refused here, before SITL starts.
 #
 # After the launch the replay bundle is re-packed with the closed bag; pack
 # REFUSES an episode that never ended (a Shield node that died) rather than
@@ -75,6 +83,27 @@ trap cleanup EXIT
 
 source /opt/ros/jazzy/setup.bash
 PY=~/venv-ros/bin/python
+
+HAS_POLICY=0
+HAS_DEV_YAML=0
+for a in "${EXTRA[@]}"; do
+  case "$a" in
+    --policy | --policy=* | --bundle | --bundle=*) HAS_POLICY=1 ;;
+    --dev-yaml) HAS_DEV_YAML=1 ;;
+  esac
+done
+if [ "$HAS_POLICY" = "0" ] && [ "$HAS_DEV_YAML" = "0" ]; then
+  DEFAULT_BUNDLE="$(cd "$ROOT" && "$PY" -c 'from guardrail.manifest import flight_bundle_path; print(flight_bundle_path("policies/sim_demo_policy.yaml"))')"
+  if [ -f "$DEFAULT_BUNDLE" ]; then
+    echo "[policy] signed bundle $DEFAULT_BUNDLE"
+    EXTRA+=(--bundle "$DEFAULT_BUNDLE")
+  else
+    echo "[policy] REFUSED: no --policy / --bundle, and no signed bundle at"
+    echo "         $DEFAULT_BUNDLE. Build it (python tools/build_flight_bundles.py),"
+    echo "         give --bundle B, or pass --dev-yaml to fly the YAML unsigned."
+    exit 2
+  fi
+fi
 
 echo "=== clean slate ==="
 cleanup

@@ -55,13 +55,13 @@ sweep_overrides:
     clock: ["2026-09-07T17:29:50"]
     vehicle_speed_mps: [4]
   time-window-opens-on-vehicle:
-    clock: ["2026-09-07T07:29:56"]
+    clock: ["2026-09-07T07:29:58"]
   time-window-opens-ahead:
     clock: ["2026-09-07T07:29:52"]
   rule-activated-mid-run:
     at: [2.0]
   radius-scaling-grow:
-    factor: [2.5]
+    factor: [3.3]
   radius-scaling-shrink:
     factor: [0.5]
   corridor-swap-narrowed:
@@ -88,10 +88,7 @@ sweep_overrides:
     latency: [5]
   gps-dropout:
     lane_y: [15.0, 23.6]
-    window: [[6.0, 11.0]]
-  wind-within-authority:
-    wind_speed_mps: [2]
-    wind_dir_deg: [270]
+    window: [[4.0, 11.0]]
   wind-beyond-authority:
     lane_y: [15.0]
   wind-gusts:

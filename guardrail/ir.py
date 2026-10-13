@@ -33,8 +33,12 @@ Every keep-out polygon: `polygon_fence`, `circle_fence` (a PolygonFence whose
 (the grant's hot-applicable "polygon with motion"). A dynamic zone that MOVES is
 compiled at its anchor position and flagged `moving`: the STRtree cannot know
 where it will be, so a moving record is left out of the tree and returned by
-every query (the Shield materialises its current polygon once per tick and
-transforms each forecast pose into the zone's frame; guardrail/shield.py).
+every query. `anchor_reach` bounds where it can be over a forecast horizon
+from the anchor record alone, and the Shield builds the zone's polygon at the
+tick's time only when that box meets the forecast's (then transforms each
+forecast pose into the zone's frame; guardrail/shield.py `_reach`). Until
+2026-10-12 every moving zone was built on every check, reachable or not:
+70 % of a 48-moving-zone `_check`.
 
 WHERE THE LOOKAHEAD TRAVEL GOES
 
@@ -167,6 +171,13 @@ class FenceRecord:
     `coarse` is the multi-scale coarse ring (see the module docstring); empty
     for a record materialised per tick. `moving` marks a dynamic_nfz with
     motion: such a record is never left out by a box query.
+
+    `centre` and `radius` are set on a moving zone's ANCHOR record (the one
+    compiled from its authored vertices): the vertex mean `DynamicNFZ.ring_at`
+    rotates about, and a bound on the distance from it to any point of the
+    margin ring (farthest vertex + margin). Both are invariant under the
+    zone's rigid motion, so the Shield bounds where the zone is without
+    building its polygon (`anchor_reach`).
     """
     index: int                                  # order among the policy's fences
     rule: PolygonFence
@@ -175,6 +186,8 @@ class FenceRecord:
     bounds: tuple[float, float, float, float]   # envelope of `buffered`
     coarse: tuple = ()
     moving: bool = False
+    centre: tuple = ()
+    radius: float = 0.0
 
 
 def compile_fence(index: int, fence, ring: list[Pt] | None = None,
@@ -187,10 +200,61 @@ def compile_fence(index: int, fence, ring: list[Pt] | None = None,
     # pure function of (polygon, distance), so the cached ring is the ring the
     # old per-test rebuild produced, coordinate for coordinate.
     buffered = poly.buffer(fence.margin_m)
+    moving = is_moving(fence)
+    centre, radius = (), 0.0
+    if moving and ring is None and not buffered.is_empty:
+        # Every point of a margin ring lies within `margin` of the polygon,
+        # so within (farthest vertex + margin) of the centre - for the
+        # buffer GEOS builds at ANY rotation, whose round joins are chords
+        # of those circles.
+        pts = [(v.x, v.y) for v in fence.vertices]
+        cx = sum(p[0] for p in pts) / len(pts)
+        cy = sum(p[1] for p in pts) / len(pts)
+        centre = (cx, cy)
+        radius = (max(math.hypot(x - cx, y - cy) for x, y in pts)
+                  + max(0.0, float(fence.margin_m)))
     return FenceRecord(index=index, rule=fence, polygon=poly, buffered=buffered,
                        bounds=tuple(buffered.bounds),
                        coarse=tuple(coarse_ring(poly)) if multiscale else (),
-                       moving=is_moving(fence))
+                       moving=moving, centre=centre, radius=radius)
+
+
+# Padding (metres) on a box computed from a moving zone's anchor geometry
+# rather than from its polygon at the tick's time. The two differ only by
+# floating-point rounding (rebuilding a translated ring, buffering it again):
+# about 1e-16 of the coordinates, so 1e-6 m covers any local frame smaller
+# than 1e9 m. The pad keeps the anchor box a superset of the materialised
+# one; a larger pad costs only a polygon built that was not needed, never an
+# answer.
+ANCHOR_PAD_M = 1e-6
+
+
+def anchor_reach(rec: FenceRecord, age_s: float, horizon_s: float) -> tuple:
+    """Bounding box of every place the moving zone `rec` (its ANCHOR record)
+    can occupy from `age_s` to `age_s + horizon_s` seconds after its anchor,
+    from its anchor geometry alone: no polygon is built. It contains the box
+    the Shield computes from the zone materialised at `age_s` (shield.py
+    `_Tick.swept`), so a forecast box that misses it misses that one too.
+
+    A translating zone's margin ring at age a is the anchor ring moved by
+    (vx, vy) x a. A turning one stays within `radius` of its centre, which
+    moves at (vx, vy). The pad covers rounding."""
+    m = rec.rule.motion
+    ux, uy = m.vx_mps, m.vy_mps
+    dx0, dy0 = ux * age_s, uy * age_s
+    if m.yaw_rate_dps != 0.0 and rec.centre:
+        cx, cy = rec.centre[0] + dx0, rec.centre[1] + dy0
+        r = rec.radius + ANCHOR_PAD_M * (1.0 + rec.radius)
+        minx, miny, maxx, maxy = cx - r, cy - r, cx + r, cy + r
+    else:
+        # An empty ring (NaN bounds) gives a NaN box, which meets nothing -
+        # as the materialised record's NaN box does in `_Tick.swept`.
+        b, pad = rec.bounds, ANCHOR_PAD_M
+        minx, miny = b[0] + dx0 - pad, b[1] + dy0 - pad
+        maxx, maxy = b[2] + dx0 + pad, b[3] + dy0 + pad
+    dx, dy = ux * horizon_s, uy * horizon_s
+    return (minx + min(0.0, dx), miny + min(0.0, dy),
+            maxx + max(0.0, dx), maxy + max(0.0, dy))
 
 
 class PolicyIR:

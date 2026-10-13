@@ -65,6 +65,12 @@ scenarios:
       escape count and counted in `true_p0_flown_ticks` (the true-state
       record), so a reader sees the floor broken by the landing rather than
       a clean figure. Labelled Land_triggered with a fail-safe expected.
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT: a landing ends below
+      any altitude floor by definition, so every LAND tick whose forecast
+      crosses the 10 m floor is a P0 tick the autopilot flew
+      (`autopilot_p0_flown_ticks_by_mode` LAND, 249 of 300 at the grant's 5 s
+      forecast; 229 at 3 s, where the forecast saw the floor later). The
+      rule asked for the landing; the floor cannot hold under it.
     mission:
       start_pose: { x: -200.0, y: 0.0, up: 15.0 }
       target: { x: -80.0, y: 0.0, up: 15.0 }
@@ -108,4 +114,89 @@ scenarios:
       breaches: { max: 0 }
       polygon_entries: { max: 0 }
     expected_outcome: RTL_triggered
+    expected_failsafe: true
+
+  # ---- the hand-over made answerable to P0 (2026-10-12) ------------------ #
+  # The FSM's RTL -> Land edge, "RTL fails (battery / blocked path)" (Safety
+  # Shield p4, G6), had no input until guardrail/rtl_path.py: the harness
+  # never passed rtl_failed, so these two cells would have flown RTL home
+  # through the zone and on a flat battery.
+  - scenario_id: failsafe-rtl-blocked
+    template: failsafe_escalation
+    description: >
+      The way home is blocked. At 4 s a zone is hot-applied BEHIND the
+      aircraft, across the line between it and the launch point; at 5 s a
+      zone whose breach action is RTL appears 12 m ahead, so the FSM goes
+      straight to RTL (G11). ArduPilot's RTL would fly the straight leg home
+      at 15 m through the first zone. guardrail/rtl_path.py tests that leg
+      against every P0 zone in force on the first RTL tick, reports it
+      blocked, and the FSM takes the grant's RTL -> Land edge (G6, "RTL fails
+      (battery / blocked path)"), then lands where it is (G10). Labelled
+      Land_triggered with a fail-safe expected; the autopilot must never
+      enter either zone. WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT:
+      the landing goes through the demo policy's 10 m floor, as in
+      failsafe-land-zone, so the LAND ticks whose forecast crosses it are P0
+      ticks the autopilot flew. Whether the FSM should hold instead of
+      landing when the way home is blocked is the FSM's question (it lands,
+      as the grant's diagram draws it).
+    mission:
+      start_pose: { x: -200.0, y: 0.0, up: 15.0 }
+      target: { x: -80.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    events:
+      - at_sim_t: 4.0
+        type: spawn_polygon_fence
+        payload:
+          id: home-side-zone
+          vertices: [{ x: -196.0, y: -10.0 }, { x: -190.0, y: -10.0 },
+                     { x: -190.0, y: 10.0 }, { x: -196.0, y: 10.0 }]
+      - at_sim_t: 5.0
+        type: spawn_polygon_fence
+        payload: { id: rtl-zone, width_m: 30, height_m: 20,
+                   ahead_of_vehicle_m: 12, violation_action: RTL }
+    ticks: 420
+    expected_kpis:
+      P0_escape_rate: 0
+      breaches: { max: 0 }
+      polygon_entries: { max: 0 }
+      autopilot_polygon_entries: { max: 0 }
+      rtl_failed_ticks: { min: 1 }
+    expected_outcome: Land_triggered
+    expected_failsafe: true
+
+  - scenario_id: failsafe-low-battery
+    template: failsafe_escalation
+    description: >
+      The battery goes critical during the RTL. A zone whose breach action is
+      RTL appears 12 m ahead at 10 s; the FSM goes to RTL (G11) and the
+      autopilot flies home, 40 m behind. At 14 s, halfway home, the battery
+      reports critical (stress.battery_critical_at_s, the battery hook of
+      guardrail/rtl_path.py): the RTL in progress fails and the FSM takes the
+      grant's RTL -> Land edge (G6), then lands where it is (G10). With no
+      critical battery the same flight reaches home (G9). Labelled
+      Land_triggered with a fail-safe expected; never inside either zone.
+      WHY ITS LABEL ACCEPTS P0 TICKS UNDER THE AUTOPILOT: the LAND descent
+      goes through the demo policy's 10 m floor (see failsafe-land-zone), so
+      its ticks whose forecast crosses the floor are P0 ticks the autopilot
+      flew.
+    mission:
+      start_pose: { x: -200.0, y: 0.0, up: 15.0 }
+      target: { x: -80.0, y: 0.0, up: 15.0 }
+      pilot: { type: goto, speed: 4.0 }
+    policy: { path: policies/sim_demo_policy.yaml }
+    events:
+      - at_sim_t: 10.0
+        type: spawn_polygon_fence
+        payload: { id: rtl-zone, width_m: 30, height_m: 20,
+                   ahead_of_vehicle_m: 12, violation_action: RTL }
+    stress: { battery_critical_at_s: 14.0 }
+    ticks: 500
+    expected_kpis:
+      P0_escape_rate: 0
+      breaches: { max: 0 }
+      polygon_entries: { max: 0 }
+      autopilot_polygon_entries: { max: 0 }
+      rtl_failed_ticks: { min: 1 }
+    expected_outcome: Land_triggered
     expected_failsafe: true

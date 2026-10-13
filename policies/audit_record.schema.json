@@ -1,0 +1,702 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:guardrail:audit-record:2",
+  "$defs": {
+    "BodyAction": {
+      "additionalProperties": false,
+      "description": "The grant's action keys: body frame (vx forward, vy right), vz up,\nyaw rate rad/s (guardrail/frames.py).",
+      "properties": {
+        "vx": {
+          "title": "Vx",
+          "type": "number"
+        },
+        "vy": {
+          "title": "Vy",
+          "type": "number"
+        },
+        "vz": {
+          "title": "Vz",
+          "type": "number"
+        },
+        "yaw_rate": {
+          "title": "Yaw Rate",
+          "type": "number"
+        }
+      },
+      "required": [
+        "vx",
+        "vy",
+        "vz",
+        "yaw_rate"
+      ],
+      "title": "BodyAction",
+      "type": "object"
+    },
+    "PassAttempt": {
+      "additionalProperties": false,
+      "description": "One repair operator, one call (guardrail/repair.py RepairAttempt).",
+      "properties": {
+        "operator": {
+          "title": "Operator",
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "ok",
+            "skip",
+            "fail",
+            "fallback",
+            "relaxed"
+          ],
+          "title": "Result",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Iterations"
+        },
+        "repairs": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Repairs",
+          "type": "array"
+        },
+        "magnitude_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Magnitude M"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Axis"
+        }
+      },
+      "required": [
+        "operator",
+        "result"
+      ],
+      "title": "PassAttempt",
+      "type": "object"
+    },
+    "RepairAttemptRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "operator": {
+          "title": "Operator",
+          "type": "string"
+        },
+        "result": {
+          "enum": [
+            "ok",
+            "skip",
+            "fail",
+            "fallback",
+            "relaxed"
+          ],
+          "title": "Result",
+          "type": "string"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "magnitude_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Magnitude M"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Axis"
+        },
+        "recovery": {
+          "default": false,
+          "title": "Recovery",
+          "type": "boolean"
+        },
+        "iterations": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Iterations"
+        }
+      },
+      "required": [
+        "operator",
+        "result"
+      ],
+      "title": "RepairAttemptRecord",
+      "type": "object"
+    },
+    "RepairPass": {
+      "additionalProperties": false,
+      "description": "One pass of one run of the repair stack. `run` numbers the chain runs\nof the tick (1, 2, ... - more than one when soft rules were relaxed);\nnull on the one pass of a tick where no chain ran (a Brake on a stop\nrule, or a Sanitise alone).",
+      "properties": {
+        "run": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Run"
+        },
+        "pass": {
+          "title": "Pass",
+          "type": "integer"
+        },
+        "attempts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PassAttempt"
+          },
+          "title": "Attempts",
+          "type": "array"
+        }
+      },
+      "required": [
+        "pass"
+      ],
+      "title": "RepairPass",
+      "type": "object"
+    },
+    "RepairRecord": {
+      "additionalProperties": false,
+      "description": "One `Repair` of the decision (guardrail/shield.py).",
+      "properties": {
+        "operator": {
+          "title": "Operator",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "magnitude_m": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Magnitude M"
+        },
+        "axis": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Axis"
+        },
+        "recovery": {
+          "default": false,
+          "title": "Recovery",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "operator"
+      ],
+      "title": "RepairRecord",
+      "type": "object"
+    },
+    "ViolationRecord": {
+      "additionalProperties": false,
+      "properties": {
+        "rule_id": {
+          "title": "Rule Id",
+          "type": "string"
+        },
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "detail": {
+          "default": "",
+          "title": "Detail",
+          "type": "string"
+        },
+        "predicted_at_s": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Predicted At S"
+        },
+        "boundary_intersect_at_s": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Boundary Intersect At S"
+        },
+        "grant_category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grant Category"
+        },
+        "priority": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Priority"
+        }
+      },
+      "required": [
+        "rule_id",
+        "category"
+      ],
+      "title": "ViolationRecord",
+      "type": "object"
+    },
+    "WorldAction": {
+      "additionalProperties": false,
+      "description": "This project's Action4D: world frame, vz up-positive, yaw rate rad/s.",
+      "properties": {
+        "vx": {
+          "title": "Vx",
+          "type": "number"
+        },
+        "vy": {
+          "title": "Vy",
+          "type": "number"
+        },
+        "vz_up": {
+          "title": "Vz Up",
+          "type": "number"
+        },
+        "yaw_rate": {
+          "title": "Yaw Rate",
+          "type": "number"
+        }
+      },
+      "required": [
+        "vx",
+        "vy",
+        "vz_up",
+        "yaw_rate"
+      ],
+      "title": "WorldAction",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "One audit line. Field order is the order written.",
+  "properties": {
+    "ts": {
+      "title": "Ts",
+      "type": "string"
+    },
+    "policy_hash": {
+      "title": "Policy Hash",
+      "type": "string"
+    },
+    "generation": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Generation"
+    },
+    "monitor_tick": {
+      "title": "Monitor Tick",
+      "type": "integer"
+    },
+    "tick": {
+      "title": "Tick",
+      "type": "integer"
+    },
+    "episode_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Episode Id"
+    },
+    "raw_action": {
+      "$ref": "#/$defs/WorldAction"
+    },
+    "violations": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/ViolationRecord"
+      },
+      "title": "Violations",
+      "type": "array"
+    },
+    "repairs": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RepairRecord"
+      },
+      "title": "Repairs",
+      "type": "array"
+    },
+    "repair_attempts": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/RepairAttemptRecord"
+      },
+      "title": "Repair Attempts",
+      "type": "array"
+    },
+    "emitted_action": {
+      "$ref": "#/$defs/WorldAction"
+    },
+    "emitted_violations": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/ViolationRecord"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Emitted Violations"
+    },
+    "braked": {
+      "default": false,
+      "title": "Braked",
+      "type": "boolean"
+    },
+    "relaxed": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Relaxed"
+    },
+    "fsm_state_before": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fsm State Before"
+    },
+    "fsm_state_after": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fsm State After"
+    },
+    "fsm_edge": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fsm Edge"
+    },
+    "fsm_fault": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fsm Fault"
+    },
+    "fsm_edge_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fsm Edge Source"
+    },
+    "fsm_set_mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fsm Set Mode"
+    },
+    "fsm_setpoint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fsm Setpoint"
+    },
+    "fsm_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fsm Reason"
+    },
+    "fsm_config_hash": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fsm Config Hash"
+    },
+    "record_version": {
+      "default": 1,
+      "title": "Record Version",
+      "type": "integer"
+    },
+    "body_yaw_deg": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Body Yaw Deg"
+    },
+    "raw_action_body": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BodyAction"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "emitted_action_body": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/BodyAction"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "repair_mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Repair Mode"
+    },
+    "iterations": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Iterations"
+    },
+    "chain_runs": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Chain Runs"
+    },
+    "flown_run": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Flown Run"
+    },
+    "repair_passes": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/RepairPass"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Repair Passes"
+    }
+  },
+  "required": [
+    "ts",
+    "policy_hash",
+    "monitor_tick",
+    "tick",
+    "raw_action",
+    "emitted_action"
+  ],
+  "title": "AuditRecord",
+  "type": "object"
+}

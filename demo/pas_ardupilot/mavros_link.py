@@ -45,6 +45,24 @@ gives the real-time factor). MAVROS 2 publishes no FENCE_STATUS, so on this
 link a fence breach shows only as the autopilot leaving GUIDED on its own (the
 node records that as a takeover) and the fence breach count stays None, never 0.
 
+WHAT THE PYMAVLINK LINK DOES, THIS ONE DOES TOO (2026-10-12): the body pitch
+and roll from /mavros/local_position/pose (the depth rules read the pitch; it
+was always None here, so they judged every box at level), the GeoFence zones
+through /mavros/geofence/push and a read-back through /mavros/geofence/pull,
+the throttle override for the literal LOITER hold on /mavros/rc/override
+(with /mavros/rc/in to see it took), the fcu_url from the node MAVROS 2
+declares it on (/mavros_node; then /mavros, then the router's fcu_urls array -
+the manifest's dev label beside this rail's scene needs it, and every stored
+ROS 2 run found none on /mavros), else the launch script's MAVROS_FCU_URL,
+the fence list held before the upload (`read_fence`), and the hil evidence
+sitl/ros2_shield_node.py
+records beside it (which processes run on this host, and so where MAVROS
+runs), without which an Orin node's run behind mavlink-router
+(`udp://:14555@`) could never show the autopilot runs elsewhere. MAVROS
+sends an RC override as its own system id (its `system_id` parameter), and
+ArduPilot takes one only from SYSID_MYGCS: the plan reads both and says
+whether they match.
+
 rclpy and the message classes are injectable (`rclpy=`, `msgs=`) so the tests
 can drive this module with stand-ins; nothing here is exercised against a live
 MAVROS by the test suite.
@@ -67,33 +85,41 @@ for _p in (ROOT, HERE):
 from guardrail.manifest import (collect_host_evidence,               # noqa: E402
                                 decode_custom_version,
                                 describe_autopilot_version,
-                                network_link_evidence)
+                                mavros_location, network_link_evidence,
+                                scan_local_processes)
 from guardrail.models import Action4D, State                         # noqa: E402
 
-from autopilot import (COPTER_MODES, FENCE_PARAMS, FrameAnchor,      # noqa: E402
-                       Snapshot, enu_position_target)
+from autopilot import (COPTER_MODES, FENCE_PARAMS, RC_OVERRIDE_IGNORE,  # noqa: E402
+                       RC_OVERRIDE_RELEASE, FrameAnchor, Snapshot,
+                       enu_position_target)
 
 TOPIC_SETPOINT = "/mavros/setpoint_raw/local"
 # Record copies only; see the module docstring for why these are not the
 # grant's /vla/action_4d.
 TOPIC_RAW_ACTION = "/pas/raw_action_4d"
 TOPIC_SAFE_ACTION = "/pas/safe_action_4d"
+# The literal LOITER hold's throttle (created on first use, so a BRAKE run
+# publishes nothing there).
+TOPIC_RC_OVERRIDE = "/mavros/rc/override"
 LANDED_STATE_ON_GROUND = 1
 
 
 def load_msgs() -> SimpleNamespace:
     """The ROS 2 message and service types this module uses."""
     from geometry_msgs.msg import PoseStamped
-    from mavros_msgs.msg import ExtendedState, PositionTarget, RCOut, StatusText
+    from mavros_msgs.msg import (ExtendedState, OverrideRCIn, PositionTarget, RCIn,
+                                 RCOut, StatusText, Waypoint)
     from mavros_msgs.msg import State as MavState
     from mavros_msgs.srv import (CommandBool, CommandTOL, SetMode, StreamRate,
-                                 VehicleInfoGet)
+                                 VehicleInfoGet, WaypointPull, WaypointPush)
     from rcl_interfaces.srv import GetParameters
     from rclpy.qos import qos_profile_sensor_data
     from sensor_msgs.msg import Image, NavSatFix, TimeReference
     from std_msgs.msg import Float32MultiArray, Float64
     return SimpleNamespace(
         PoseStamped=PoseStamped, PositionTarget=PositionTarget, RCOut=RCOut,
+        RCIn=RCIn, OverrideRCIn=OverrideRCIn, Waypoint=Waypoint,
+        WaypointPush=WaypointPush, WaypointPull=WaypointPull,
         MavState=MavState, CommandBool=CommandBool, CommandTOL=CommandTOL,
         SetMode=SetMode, StreamRate=StreamRate, GetParameters=GetParameters,
         VehicleInfoGet=VehicleInfoGet, qos_sensor=qos_profile_sensor_data,
@@ -112,6 +138,18 @@ def enu_quat_to_ned_yaw(q) -> float:
                          1.0 - 2.0 * (q.y * q.y + q.z * q.z))
     h = math.pi / 2.0 - yaw_enu
     return math.atan2(math.sin(h), math.cos(h))
+
+
+def enu_quat_to_ned_pitch_roll(q) -> tuple[float, float]:
+    """MAVROS pose orientation (ENU, base_link FLU) -> (pitch, roll) in the
+    NED / FRD convention MAVLink's ATTITUDE uses, rad: nose up and right
+    wing down positive. The ZYX angles of the FLU body in ENU have the same
+    roll and the opposite pitch (FLU's y axis points left, so a nose-up
+    rotation is negative about it)."""
+    roll = math.atan2(2.0 * (q.w * q.x + q.y * q.z),
+                      1.0 - 2.0 * (q.x * q.x + q.y * q.y))
+    s = max(-1.0, min(1.0, 2.0 * (q.w * q.y - q.z * q.x)))
+    return -math.asin(s), roll
 
 
 class MavrosLink:
@@ -157,9 +195,13 @@ class MavrosLink:
                                  self._on_text, 10)
         node.create_subscription(m.TimeReference, "/mavros/time_reference",
                                  self._on_time_ref, 10)
+        node.create_subscription(m.RCIn, "/mavros/rc/in", self._on_rc_in, 10)
         self.pub_sp = node.create_publisher(m.PositionTarget, TOPIC_SETPOINT, 10)
         self.pub_raw = node.create_publisher(m.Float32MultiArray, TOPIC_RAW_ACTION, 10)
         self.pub_safe = node.create_publisher(m.Float32MultiArray, TOPIC_SAFE_ACTION, 10)
+        self.pub_rc = None
+        self.cli_fence_push = node.create_client(m.WaypointPush, "/mavros/geofence/push")
+        self.cli_fence_pull = node.create_client(m.WaypointPull, "/mavros/geofence/pull")
         self.cli_mode = node.create_client(m.SetMode, "/mavros/set_mode")
         self.cli_arm = node.create_client(m.CommandBool, "/mavros/cmd/arming")
         self.cli_tol = node.create_client(m.CommandTOL, "/mavros/cmd/takeoff")
@@ -168,6 +210,17 @@ class MavrosLink:
                                             "/mavros/param/get_parameters")
         self.cli_mavros_param = node.create_client(m.GetParameters,
                                                    "/mavros/get_parameters")
+        # MAVROS 2's mavros_node executable is three nodes: /mavros_node
+        # declares fcu_url (what `-p fcu_url:=...` sets) and hands it to the
+        # router /mavros_router as the string array fcu_urls; the UAS node
+        # /mavros has none, which is why every stored ROS 2 rail run
+        # (ros2fix2_*, ros2_shield_*) found none there and fell back to the
+        # launch script's MAVROS_FCU_URL. Names from MAVROS 2's mavros_node.cpp
+        # as recalled (review 2026-10-13), not yet read off a live MAVROS.
+        self.cli_node_param = node.create_client(m.GetParameters,
+                                                 "/mavros_node/get_parameters")
+        self.cli_router_param = node.create_client(m.GetParameters,
+                                                   "/mavros_router/get_parameters")
         self.cli_info = node.create_client(m.VehicleInfoGet, "/mavros/vehicle_info_get")
 
     # ---- subscriptions ---------------------------------------------------- #
@@ -197,11 +250,18 @@ class MavrosLink:
         self.snap.rel_alt = float(msg.data)
 
     def _on_pose(self, msg) -> None:
-        self.snap.yaw = enu_quat_to_ned_yaw(msg.pose.orientation)
+        q = msg.pose.orientation
+        self.snap.yaw = enu_quat_to_ned_yaw(q)
+        self.snap.pitch, self.snap.roll = enu_quat_to_ned_pitch_roll(q)
 
     def _on_rc_out(self, msg) -> None:
         self.snap.servo = list(msg.channels[:4])
         self.snap.t_servo = self.clock()
+
+    def _on_rc_in(self, msg) -> None:
+        ch = list(msg.channels)
+        if len(ch) >= 3:
+            self.snap.rc3, self.snap.t_rc = int(ch[2]), self.clock()
 
     def _on_ext(self, msg) -> None:
         self.snap.landed_state = int(msg.landed_state)
@@ -249,12 +309,14 @@ class MavrosLink:
 
     # ---- commands ------------------------------------------------------- #
 
-    def _get_params(self, client, names: list[str]) -> dict:
-        """ROS 2 parameters by name; a string, a number, or None when unset.
-        MAVROS reports SIM_SPEEDUP as INTEGER with the value in double_value,
-        so a numeric value is taken from whichever field carries one."""
+    def _get_params(self, client, names: list[str], timeout: float = 5.0) -> dict:
+        """ROS 2 parameters by name; a string, a number, a list (an array
+        parameter, such as the router's fcu_urls), or None when unset. MAVROS
+        reports SIM_SPEEDUP as INTEGER with the value in double_value, so a
+        numeric value is taken from whichever field carries one."""
         try:
-            res = self._call(client, self.msgs.GetParameters.Request(names=names), 5.0)
+            res = self._call(client, self.msgs.GetParameters.Request(names=names),
+                             timeout)
         except Exception:                                     # noqa: BLE001
             return {}
         out: dict = {}
@@ -264,6 +326,15 @@ class MavrosLink:
                     out[n] = None
                 elif v.type == 4:                     # PARAMETER_STRING
                     out[n] = v.string_value
+                elif v.type == 9:                     # PARAMETER_STRING_ARRAY
+                    out[n] = [str(x) for x in (getattr(v, "string_array_value",
+                                                       None) or [])]
+                elif v.type in (5, 6, 7, 8):          # the other arrays
+                    out[n] = list(getattr(v, {5: "byte_array_value",
+                                              6: "bool_array_value",
+                                              7: "integer_array_value",
+                                              8: "double_array_value"}[v.type],
+                                          None) or [])
                 else:
                     out[n] = float(v.double_value) or float(v.integer_value)
         return out
@@ -290,10 +361,26 @@ class MavrosLink:
                     break
             self.rclpy.spin_once(self.node, timeout_sec=0.5)
         self.sim_speedup = self.read_sim_speedup(timeout=timeout)
-        url = self._get_params(self.cli_mavros_param, ["fcu_url"]).get("fcu_url")
+        # The link MAVROS flies over, and which MAVLink actors run on THIS
+        # host - as sitl/ros2_shield_node.py read_link() records them: where
+        # SITL and MAVROS are decides dev vs hil, whatever the URL says.
+        url = src = None
+        for cli, name, key in ((self.cli_node_param, "/mavros_node", "fcu_url"),
+                               (self.cli_mavros_param, "/mavros", "fcu_url"),
+                               (self.cli_router_param, "/mavros_router", "fcu_urls")):
+            got = self._get_params(cli, [key], timeout=2.0).get(key)
+            if isinstance(got, list):         # the router's string array
+                got = next((u for u in got if u), None)
+            if isinstance(got, str) and got:
+                url, src = got, f"{name} {key} parameter"
+                break
+        if not url:
+            url, src = os.environ.get("MAVROS_FCU_URL"), "MAVROS_FCU_URL (launch script)"
         self.hil_evidence["network_link"] = {**network_link_evidence(url),
-                                             "source": "/mavros fcu_url parameter"
-                                             if url else None}
+                                             "source": src if url else None}
+        self.hil_evidence["mavlink_router"] = os.environ.get("MAVLINK_ROUTER")
+        self.hil_evidence["local_processes"] = scan_local_processes()
+        self.hil_evidence["mavros_on"] = mavros_location(self.hil_evidence)
 
     def autopilot_fence(self, timeout: float = 20.0) -> dict:
         """The GeoFence parameters as the autopilot holds them, through
@@ -311,7 +398,9 @@ class MavrosLink:
         return {**{n: vals.get(n) for n in FENCE_PARAMS},
                 "source": "/mavros/param/get_parameters"}
 
-    def bring_up(self, alt_m: float, timeout: float = 180.0) -> None:
+    def bring_up(self, alt_m: float, timeout: float = 180.0, before_arm=None) -> None:
+        """As PymavlinkLink.bring_up: `before_arm()` runs once the position is
+        known and before GUIDED is asked for (the GeoFence zones)."""
         m = self.msgs
         if not self.wait(lambda s: s.connected, timeout=timeout):
             raise RuntimeError("MAVROS never reported a connected FCU")
@@ -321,6 +410,8 @@ class MavrosLink:
         if not self.wait(lambda s: s.snap.lat is not None and s.snap.rel_alt is not None,
                          timeout=timeout):
             raise RuntimeError("no global position from MAVROS (EKF not ready?)")
+        if before_arm is not None:
+            before_arm()
         for name, req, ok in (
                 ("GUIDED", (self.cli_mode, m.SetMode.Request(custom_mode="GUIDED")),
                  lambda s: s.snap.mode == "GUIDED"),
@@ -371,6 +462,91 @@ class MavrosLink:
     def land(self) -> bool:
         res = self._call(self.cli_mode, self.msgs.SetMode.Request(custom_mode="LAND"))
         return bool(res and getattr(res, "mode_sent", False))
+
+    # ---- the GeoFence's zones and the throttle ---------------------------- #
+
+    def upload_fence(self, items: list[dict], timeout: float = 10.0) -> dict:
+        """Replace the autopilot's fence list with `items` (fence_items()
+        dicts) through /mavros/geofence/push, then read it back through
+        /mavros/geofence/pull, as sitl/mavlink_adapter_node.py does. Same
+        result keys as PymavlinkLink.upload_fence; the read-back is MAVROS's
+        count of what it pulled."""
+        t_start = self.clock()
+        m, n = self.msgs, len(items)
+        out = {"via": "/mavros/geofence/push", "items": n, "transferred": 0,
+               "ack": None, "read_back": None, "read_back_match": None}
+
+        def done(ok: bool, why: str | None) -> dict:
+            out.update(success=bool(ok), why=why,
+                       upload_ms=round((self.clock() - t_start) * 1000.0, 1))
+            return out
+        wps = []
+        for it in items:
+            wp = m.Waypoint()
+            wp.frame, wp.command = int(it["frame"]), int(it["command"])
+            wp.is_current, wp.autocontinue = False, True
+            wp.param1 = float(it["param1"])
+            wp.param2 = wp.param3 = wp.param4 = 0.0
+            wp.x_lat, wp.y_long, wp.z_alt = float(it["x_lat"]), float(it["y_long"]), 0.0
+            wps.append(wp)
+        res = self._call(self.cli_fence_push,
+                         m.WaypointPush.Request(start_index=0, waypoints=wps), timeout)
+        if res is None:
+            return done(False, "/mavros/geofence/push is not available")
+        out["transferred"] = int(getattr(res, "wp_transfered", 0) or 0)
+        if not getattr(res, "success", False):
+            return done(False, f"MAVROS refused the push after {out['transferred']}/{n}")
+        pulled = self._call(self.cli_fence_pull, m.WaypointPull.Request(), timeout)
+        if pulled is None or not getattr(pulled, "success", False):
+            return done(False, "pushed, but /mavros/geofence/pull did not read it back")
+        out["read_back"] = got = int(pulled.wp_received)
+        out["read_back_match"] = got == n
+        return done(got == n, None if got == n else
+                    f"read back {got} item(s), not the {n} pushed")
+
+    def read_fence(self, timeout: float = 5.0) -> dict:
+        """The fence list the autopilot holds NOW, before the node replaces
+        it: MAVROS's count of what /mavros/geofence/pull read (the items are
+        not read here). Same keys as PymavlinkLink.read_fence."""
+        out = {"via": "/mavros/geofence/pull", "count": None, "items": None,
+               "why": None}
+        res = self._call(self.cli_fence_pull, self.msgs.WaypointPull.Request(), timeout)
+        if res is None or not getattr(res, "success", False):
+            out["why"] = "/mavros/geofence/pull did not answer with success"
+            return out
+        out["count"] = int(res.wp_received)
+        return out
+
+    def rc_override_plan(self) -> dict:
+        """Whether ArduPilot will take /mavros/rc/override: MAVROS sends it
+        as its own system id (its `system_id` parameter), and ArduPilot takes
+        an override only from SYSID_MYGCS. Both are read; a mismatch means the
+        throttle stays where the radio has it and LOITER sinks."""
+        gcs = self._get_params(self.cli_param, ["SYSID_MYGCS"]).get("SYSID_MYGCS")
+        mine = self._get_params(self.cli_mavros_param, ["system_id"]).get("system_id")
+        ok = None if gcs is None or mine is None else int(gcs) == int(mine)
+        return {"via": TOPIC_RC_OVERRIDE, "sysid": None if mine is None else int(mine),
+                "sysid_source": "/mavros system_id parameter" if mine is not None
+                                else "unread",
+                "SYSID_MYGCS": None if gcs is None else int(gcs),
+                "accepted_expected": ok,
+                "why": (None if ok else
+                        "SYSID_MYGCS or MAVROS's system_id was not read" if ok is None
+                        else f"ArduPilot takes overrides from SYSID_MYGCS {int(gcs)}, "
+                             f"and MAVROS sends as {int(mine)}: set one to the other")}
+
+    def override_throttle(self, pwm: int | None) -> bool:
+        """Channel 3 to `pwm`, or back to the radio (None), on
+        /mavros/rc/override; every other channel unchanged."""
+        if self.pub_rc is None:
+            self.pub_rc = self.node.create_publisher(self.msgs.OverrideRCIn,
+                                                     TOPIC_RC_OVERRIDE, 10)
+        msg = self.msgs.OverrideRCIn()
+        ch = [RC_OVERRIDE_IGNORE] * 18
+        ch[2] = RC_OVERRIDE_RELEASE if pwm is None else int(pwm)
+        msg.channels = ch
+        self.pub_rc.publish(msg)
+        return True
 
     def read_sim_speedup(self, timeout: float = 20.0) -> float | None:
         """SIM_SPEEDUP through /mavros/param's ROS 2 parameters, polled until

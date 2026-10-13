@@ -829,6 +829,27 @@ def test_fences_out_of_the_forecasts_reach_are_not_tested():
     assert near > 0, "no fence was tested beside a fence"
 
 
+def test_a_50_rule_moving_check_builds_only_the_zones_it_can_reach():
+    """The 48 moving zones of the 50-rule load used to be rebuilt (a buffer()
+    each) on every _check, reachable or not: 9600 polygons in 200 checks,
+    70 % of the check's time. A zone is now built only when its anchor box
+    (guardrail/ir.py anchor_reach) meets the forecast's box; the answers are
+    the same (tests/test_shieldcore_identity.py compares them with the old
+    judgement on 3600 samples)."""
+    import guardrail.shield as S
+    B = _fifty()
+    sh = Shield(_fifty_variant("moving"))
+    pairs = B.samples("near", 200, seed=3)
+    box, restore = _count_calls(S, "compile_fence")
+    try:
+        for st, a in pairs:
+            sh._check(st, a)
+    finally:
+        restore()
+    assert box["n"] <= 4 * len(pairs), f"{box['n']} zones built in {len(pairs)} checks"
+    assert box["n"] > 0, "no moving zone was built beside one: they were skipped"
+
+
 def _fifty_variant(kind):
     """The bench's 50-rule policy on one of the Shield's slow paths: "edge",
     every rule with a weekly window whose end falls inside the lookahead (the
@@ -851,19 +872,27 @@ def test_the_50_rule_monitor_fits_the_grant_budget():
     used to fail worst (1-8 m outside a fence's margin, flying at it). Also on
     the two slow paths: windows with an edge inside the lookahead, and 48
     moving zones (31 ms per _check before the swept-box skip). Desktop
-    numbers. The margin is not the same on every path: about 10x on the
-    static and edge samples (0.36 ms) but about 2x on the 48 moving zones
-    (2.6 ms), and a loaded desktop measured 6.5 ms there on 2026-10-12. So on
-    a shared CI runner (GITHUB_ACTIONS, where moving read 5.71 ms) the bound
-    is 15 ms: still well under the 31 ms of the per-fence loop it guards
-    against, but not a claim about the grant's budget, which is measured on
-    the target (experiments/bench_shield_50rules.py, and the hil Orin)."""
+    numbers. Until 2026-10-12 the moving path ran at 2.6 ms (6.5 ms on a
+    loaded desktop, 5.71 ms on GitHub's runner) because every moving zone's
+    polygon was rebuilt on every check. Each zone is now built only when its
+    anchor box meets the forecast (guardrail/ir.py anchor_reach): measured
+    2026-10-12 on a desktop shared with three other jobs, medians static
+    0.31 / edge 0.65 / moving 0.49 ms, a margin of 7x or more under 5 ms
+    here. On a shared CI runner (GITHUB_ACTIONS) the bound stays 15 ms - the
+    runner has not yet been timed on the new path, and 5 ms on shared runners
+    was one cause of the red CI of 8-12 Oct - and the three medians are
+    printed, so one green run gives the number to tighten it on. Still well
+    under the 31 ms of the per-fence loop it guards against; not a claim
+    about the grant's budget on the target, which is measured there
+    (experiments/bench_shield_50rules.py, and the hil Orin)."""
     import statistics
     import time
     from datetime import datetime
     B = _fifty()
     pairs = B.samples("near", 200, seed=3)
     edge = datetime(2026, 10, 7, 17, 29, 57)            # the 17:30 edge is 3 s ahead
+    bound = 15.0 if os.environ.get("GITHUB_ACTIONS") == "true" else 5.0
+    medians = {}
     for label, pol, now in (("static", B.fifty_rule_policy(), None),
                             ("edge", _fifty_variant("edge"), lambda: edge),
                             ("moving", _fifty_variant("moving"), None)):
@@ -880,9 +909,11 @@ def test_the_50_rule_monitor_fits_the_grant_budget():
             ms_filter.append((time.perf_counter() - t0) * 1e3)
         med = statistics.median(ms_check)
         p99 = sorted(ms_filter)[98]
-        bound = 15.0 if os.environ.get("GITHUB_ACTIONS") == "true" else 5.0
+        medians[label] = (med, p99)
         assert med <= bound, f"{label}: _check median {med:.2f} ms > {bound:g} ms at 50 rules"
         assert p99 <= 100.0, f"{label}: filter() p99 {p99:.1f} ms > the 100 ms tick"
+    print("      50 rules, _check median / filter() p99: " + ", ".join(
+        f"{k} {m:.2f} / {q:.1f} ms" for k, (m, q) in medians.items()) + f" (bound {bound:g} ms)")
 
 
 def test_history_keeps_the_last_50_ticks_oldest_first():

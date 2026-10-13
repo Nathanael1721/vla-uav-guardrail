@@ -70,6 +70,15 @@ scenarios:
       2026-10-11 and 2026-10-12). Its pin was removed on 2026-10-12. The
       limit is the PI's question 11 (docs/DESIGN-escalation-fsm.md,
       Questions for the PI): if the PI picks 0 s, the pin comes back.
+
+      RE-PINNED 2026-10-12 at the grant's 5 s forecast (the cells are
+      deterministic, so one run measures every seed). The flicker moved:
+      40.5 m at 12 m/s, 40.8 m at 8 m/s and 41.1 m at 8 m/s now pass
+      (G1>G7>G1>G7, the goal reached), and 40.5 m at 8 m/s (G1>G7>G1>G2>G5)
+      and 40.8 m at 12 m/s (G1>G2>G5>G9) now fail by the same mechanism.
+      Which cells flicker depends on where along the face the forecast's
+      poses land on the ring, so it moves with the forecast; the pins follow
+      the measurement.
     mission:
       start_pose: { x: -70.0, y: "$pass_y", up: 15.0 }
       target: { x: 70.0, y: "$pass_y", up: 15.0 }
@@ -88,9 +97,10 @@ scenarios:
     expected_outcome: success
     expected_failsafe: false
     known_failures:
-      - params: { pass_y: 40.5, ask_mps: 12 }
+      - params: { pass_y: 40.5, ask_mps: 8 }
         description: &edgeflicker >
-          The escalation FSM stops the pass (measured 2026-10-07): sliding
+          The escalation FSM stops the pass (measured 2026-10-07 at the 3 s
+          forecast, re-measured 2026-10-12 at the grant's 5 s): sliding
           along the zone's face at 8-12 m/s, 1.2 m per tick, the violation of
           the margin ring flickers on and off; three onsets inside T = 5 s
           count as N-in-T (G2: Brake -> Loiter), and with the pilot still
@@ -98,8 +108,6 @@ scenarios:
           Loiter timeout (G5) sends the aircraft home - or, in the 40 s run,
           it is still loitering at the end. Never inside the polygon, P0
           clean; the goal is not reached, and where RTL fires it is a false
-          trigger. The other eight cells pass with the FSM on.
-      - params: { pass_y: 40.8, ask_mps: 8 }
-        description: *edgeflicker
-      - params: { pass_y: 41.1, ask_mps: 8 }
+          trigger. The other ten cells pass with the FSM on.
+      - params: { pass_y: 40.8, ask_mps: 12 }
         description: *edgeflicker

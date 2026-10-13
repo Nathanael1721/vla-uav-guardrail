@@ -200,12 +200,40 @@ def test_the_committed_file_is_the_september_view():
     assert d["unflown"]["camera_768x432"]["flight_artefacts"] == []
 
 
+def test_the_p0_acted_share_is_written_under_its_own_name():
+    """2026-10-12. kpi_rail() wrote each dev-rail flight's P0-acted tick share
+    as `failsafe_trigger_correctness`, the grant KPI's name (it is not that
+    KPI: an always-brake Shield scores 1.0 on it), and printed it so. It now
+    reads either stored key and writes and prints only `p0_acted_tick_share`.
+    Needs the five delivered ros2_* runs; SKIP where they are absent. On
+    4418ae0 the key and the printed name were the grant's."""
+    tags = ("ros2_shield_off", "ros2_shield_on", "ros2_shield_on_dynamic",
+            "ros2_ped_off", "ros2_ped_on")
+    if not all((ROOT / "demo/out" / t / "kpi.json").is_file() for t in tags):
+        print("      SKIP: the five ros2_* runs are not on this machine")
+        return "SKIP"
+    import contextlib
+    import io
+    with _with_as_of(None), contextlib.redirect_stdout(io.StringIO()) as buf:
+        out = B.kpi_rail()
+    for tag, run in out["runs"].items():
+        assert "failsafe_trigger_correctness" not in run, tag
+        stored = json.loads((ROOT / "demo/out" / tag / "kpi.json").read_text(encoding="utf-8"))
+        assert run["p0_acted_tick_share"] == stored.get(
+            "p0_acted_tick_share", stored.get("failsafe_trigger_correctness")), tag
+    assert "failsafe_trigger_correctness" not in buf.getvalue()
+    assert "p0_acted_tick_share" in buf.getvalue()
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == "SKIP":
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -213,5 +241,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

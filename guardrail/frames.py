@@ -38,16 +38,35 @@ looked like the careful thing to do was the bug.
 
 WHO CALLS THIS
 
-Nothing in production, today. `from_body` and `to_body` are imported only by
-`tests/test_frame_contract.py`; `to_local_ned` documents what
-`sitl/run_sitl_demo.py` does without being called by it. That is deliberate and
-worth stating rather than leaving a reader to assume otherwise: the module
-exists so that when a body-frame producer IS wired in, it crosses here once,
-with tests, instead of a conversion appearing at the call site. It is not
-exported from `guardrail/__init__.py`, which lists only the core contract types
-- `bundle`, `kpi`, `manifest`, `compiler`, `projection` and `audit` are all
-absent from `__all__` too, so this follows the package's convention rather than
-departing from it.
+The flight rails, at their boundary with a body-frame producer. (Until
+2026-10-12 this paragraph said nothing in production did; that stopped being
+true once the body-frame producers were wired in, and the paragraph was not
+updated.) As of that date:
+
+  * `sitl/ros2_shield_node.py` (`shield_step`): the grant's ROS 2 boundary.
+    `/vla/action` arrives in body frame, crosses to world frame once with
+    `from_body` at the heading of the same pose, goes through
+    `Shield.filter()`, and the emitted action crosses back with `to_body` at
+    that heading before it is published on /shield/setpoint.
+  * `sitl/mavlink_adapter_node.py`: the body -> local-NED crossing of
+    /shield/setpoint, `from_body` then `to_local_ned`.
+  * `sitl/ros2_vla_stub_node.py`: `to_body`, so the stub publishes
+    /vla/action in the body frame the grant's VLA contract names.
+  * `demo/pas_ardupilot/autopilot.py` (`body_to_world`, used by
+    `perception_node.py`): `from_body` on the way in, `to_local_ned` for the
+    MAVLink setpoint on the way out.
+  * `demo/real_vla_demo.py`: `from_body` for the OpenVLA action.
+  * `guardrail/audit.py`: `to_body` writes each audit record's raw and
+    emitted actions in the grant's body-frame keys, at the tick's heading.
+  * `guardrail/repair.py`: `to_body` logs PathRepair's detour waypoint in
+    body frame (metres forward / right of the heading).
+
+`sitl/run_sitl_demo.py` does what `to_local_ned` documents without calling it.
+`tests/test_frame_contract.py` pins the conversions themselves. The module is
+not exported from `guardrail/__init__.py`, which lists only the core contract
+types - `bundle`, `kpi`, `manifest`, `compiler`, `projection` and `audit` are
+all absent from `__all__` too, so this follows the package's convention rather
+than departing from it.
 """
 from __future__ import annotations
 

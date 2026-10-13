@@ -68,12 +68,6 @@ def _run(sid, seed=0):
     return S.run_headless(BY_ID[sid], DEFAULTS, seed)
 
 
-def _run_nofsm(sid, seed=0):
-    """The same flight with the escalation FSM off: what the Shield's own
-    action does, before the FSM decides to stop, loiter or go home."""
-    return S.run_headless(_with(BY_ID[sid], escalation=False), DEFAULTS, seed)
-
-
 def _cell(sid, **params):
     """The cell of a family whose parameters include `params`."""
     for c in FAMILIES[sid].cells(samples=3):
@@ -153,14 +147,37 @@ def test_the_sitl_backend_reports_unavailable_rather_than_pretending():
 
 def _argparse_flags(script: Path) -> set[str]:
     """Every option string the script's argparse declares, read from its source
-    (the node imports rclpy, which this machine need not have)."""
+    (the node imports rclpy, which this machine need not have). A flag passed
+    as a name (since 2026-10-12 the node declares `DEV_YAML_FLAG`, imported
+    from guardrail.manifest) is resolved from the script's own module-level
+    string constants or from the guardrail module it was imported from."""
+    import importlib
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    consts: dict[str, str] = {}
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)):
+            for tgt in node.targets:
+                if isinstance(tgt, ast.Name):
+                    consts[tgt.id] = node.value.value
+        elif (isinstance(node, ast.ImportFrom) and node.module
+              and node.module.split(".")[0] == "guardrail"):
+            for alias in node.names:
+                try:
+                    val = getattr(importlib.import_module(node.module), alias.name, None)
+                except Exception:                            # noqa: BLE001
+                    val = None
+                if isinstance(val, str):
+                    consts[alias.asname or alias.name] = val
     flags = set()
-    for node in ast.walk(ast.parse(script.read_text(encoding="utf-8"))):
+    for node in ast.walk(tree):
         if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
                 and node.func.attr == "add_argument"):
             for a in node.args:
-                if isinstance(a, ast.Constant) and str(a.value).startswith("--"):
-                    flags.add(a.value)
+                v = (a.value if isinstance(a, ast.Constant)
+                     else consts.get(a.id) if isinstance(a, ast.Name) else None)
+                if isinstance(v, str) and v.startswith("--"):
+                    flags.add(v)
     return flags
 
 
@@ -169,6 +186,9 @@ def test_every_sitl_flag_is_one_the_node_accepts():
     sitl/run_sitl_demo.py, which has no such argument, so `--backend sitl` could
     only ever die in argparse. It now drives run_ros2_demo.sh, which forwards
     $3.. to ros2_shield_node.py - checked here flag by flag."""
+    # Every flag, the policy-reference ones included: until the review of
+    # 2026-10-12 --dev-yaml and --expected-hash were added to the node's
+    # set here, so this check could not catch a flag the node drops.
     node_flags = _argparse_flags(ROOT / S.SITL_NODE)
     assert "--out" not in node_flags, "the check would not catch the old bug"
     assert "--out" not in _argparse_flags(ROOT / "sitl" / "run_sitl_demo.py")
@@ -256,13 +276,25 @@ def test_the_rail_mission_constants_are_the_nodes_own():
 
 def test_a_bundle_policy_goes_to_the_nodes_bundle_flag():
     """`--policy` takes a YAML; a signed bundle passed there would be refused
-    by the node (or worse, read as YAML). bundle_path maps to --bundle."""
+    by the node (or worse, read as YAML). bundle_path maps to --bundle.
+    Since 2026-10-12 a bundle travels with the hash it must hold
+    (`--expected-hash`), and while the node does not declare that flag the
+    bundle is refused instead: it would be dropped and the bundle flown
+    unpinned (tests/test_harnesstruth_bundles.py). Re-pinned on the review
+    of 2026-10-12, which removed the allow-list that had let the undeclared
+    flag through this check."""
     spec = _with(BY_ID["nfz-head-on"],
-                 policy={"bundle_path": "demo/out/x/policy_bundle.tar.gz"})
-    cmd = S.build_sitl_cmd(spec, "t")
+                 policy={"bundle_path": "demo/out/x/policy_bundle.tar.gz",
+                         "expected_hash": "sha256:" + "0" * 64})
+    node = _argparse_flags(ROOT / S.SITL_NODE)
+    try:
+        cmd = S.build_sitl_cmd(spec, "t")
+    except S.UnsupportedScenario as e:
+        assert S.SITL_EXPECTED_HASH_FLAG not in node and S.SITL_EXPECTED_HASH_FLAG in str(e), e
+        return None
     assert cmd[cmd.index("--bundle") + 1] == "demo/out/x/policy_bundle.tar.gz"
     assert "--policy" not in cmd
-    assert {a for a in cmd[5:] if a.startswith("--")} <= _argparse_flags(ROOT / S.SITL_NODE)
+    assert {a for a in cmd[5:] if a.startswith("--")} <= node
 
 
 def test_a_stale_rail_log_is_refused_not_scored():
@@ -378,19 +410,58 @@ LEGACY = {
 }
 
 
+# The same 13 at the grant's forecast (5 s at 0.1 s), FSM off, measured
+# 2026-10-12 when the harness moved to it. What moved and why: nfz-head-on is
+# held 8 m further from the zone (the forecast reaches 20 m ahead at 4 m/s,
+# not 12: -5.6 -> -13.6) with 284 repairs (264); its control arm's
+# counterfactual repairs 52 -> 72 (a longer forecast flags more ticks);
+# altitude-floor-recovery climbs more gently (AltitudeFix sizes the climb to
+# one lookahead) and ends at 10.0 m with 103 repairs (10.01 m, 73);
+# corridor-drift-out is stopped 0.4 m off the centreline instead of 8.4 m
+# (the drift is stopped when the 5 s forecast reaches the wall), 299
+# repairs (279); standoff-reclassified ends 0.01 m further (-4.04). The other
+# eight end exactly where they did.
+LEGACY_GRANT = {
+    "nfz-head-on": ((-13.6, 15.0, 15.0), 284),
+    "nfz-head-on-control": ((37.2, 15.0, 15.0), 72),
+    "altitude-floor-recovery": ((60.0, -30.0, 10.0), 103),
+    "altitude-ceiling-hold": ((30.0, -30.0, 20.0), 300),
+    "speed-cap": ((80.0, -40.0, 15.0), 300),
+    "nonfinite-action": ((-40.0, 20.0, 15.0), 300),
+    "corridor-along": ((52.4, 0.0, 15.0), 0),
+    "corridor-drift-out": ((30.0, 0.4, 15.0), 299),
+    "corridor-curfew-in-hours": ((60.0, 0.0, 15.0), 300),
+    "corridor-curfew-out-of-hours": ((60.0, 52.4, 15.0), 0),
+    "standoff-approach": ((37.2, 0.0, 15.0), 0),
+    "standoff-reclassified": ((22.0, -4.04, 15.0), 300),
+    "standoff-wedge": ((0.0, 0.0, 15.0), 300),
+}
+
+
+def _moved(pins: dict, forecast: str) -> list[str]:
+    moved = []
+    for sid, (final, reps) in pins.items():
+        run = S.run_episode(_with(BY_ID[sid], escalation=False), DEFAULTS, 0,
+                            forecast=forecast)
+        got = (run.extra["final"]["x"], run.extra["final"]["y"], run.extra["final"]["up"])
+        n = sum(len(r["repairs"]) for r in run.rows)
+        if got != final or n != reps:
+            moved.append(f"{sid}: final {got} (was {final}), repairs {n} (was {reps})")
+    return moved
+
+
 def test_the_13_original_scenarios_fly_exactly_as_before_the_schema():
     """Migration must be a change of FORM. Rows and extras were compared one to
     one against the old code before this commit; this pins the end state.
     With the escalation FSM OFF (2026-10-07): the split into one file per
     template, the events, the arms and the new measurements must not move a
-    single flight of the Shield's own action."""
-    moved = []
-    for sid, (final, reps) in LEGACY.items():
-        rows, extra = _run_nofsm(sid)
-        got = (extra["final"]["x"], extra["final"]["y"], extra["final"]["up"])
-        n = sum(len(r["repairs"]) for r in rows)
-        if got != final or n != reps:
-            moved.append(f"{sid}: final {got} (was {final}), repairs {n} (was {reps})")
+    single flight of the Shield's own action. Since 2026-10-12 LEGACY is
+    flown on the 3 s comparison arm, the forecast it was measured with: the
+    arm must reproduce the old flights exactly (it is what makes the arm a
+    comparison), and LEGACY_GRANT pins the same 13 at the grant's forecast."""
+    moved = _moved(LEGACY, "3s")
+    assert not moved, "the 3 s arm is not the old forecast:\n      " + "\n      ".join(moved)
+    moved = _moved(LEGACY_GRANT, "grant")
     assert not moved, "\n      ".join(moved)
 
 
@@ -414,17 +485,30 @@ LEGACY_FSM = {
 }
 
 
+# ... and at the grant's forecast (measured 2026-10-12): two move from G1 to
+# X1>G3. Theta reads each operator's magnitude_m, the depth of the forecast
+# it corrected; a 5 s forecast runs 20 m ahead at 4 m/s, so the curfew fence
+# and the wedged stand-off are first met more than 2.0 m deep and the FSM
+# abandons projection on the first tick (X1), then hands the hold to LOITER
+# (G3). Neither reaches a fail-safe. Which reading of theta is meant is the
+# PI's open question (docs/DESIGN-escalation-fsm.md).
+LEGACY_FSM_GRANT = dict(LEGACY_FSM, **{"corridor-curfew-in-hours": "X1>G3",
+                                       "standoff-wedge": "X1>G3"})
+
+
 def test_the_13_original_scenarios_under_the_fsm_take_the_edges_measured():
     """Pinned so a change in the FSM or in the harness's hand-over cannot move
     these silently. A pinned edge that changes is a finding to re-measure,
-    not a number to edit."""
+    not a number to edit. LEGACY_FSM on the 3 s comparison arm (it was
+    measured there), LEGACY_FSM_GRANT at the grant's forecast."""
     moved = []
-    for sid, chain in LEGACY_FSM.items():
-        run = S.run_episode(BY_ID[sid], DEFAULTS, 0)
-        got = ">".join(t["edge"] for t in ((run.extra.get("fsm") or {})
-                                            .get("transitions") or []))
-        if got != chain:
-            moved.append(f"{sid}: {got!r} (was {chain!r})")
+    for pins, fc in ((LEGACY_FSM, "3s"), (LEGACY_FSM_GRANT, "grant")):
+        for sid, chain in pins.items():
+            run = S.run_episode(BY_ID[sid], DEFAULTS, 0, forecast=fc)
+            got = ">".join(t["edge"] for t in ((run.extra.get("fsm") or {})
+                                                .get("transitions") or []))
+            if got != chain:
+                moved.append(f"{fc} {sid}: {got!r} (was {chain!r})")
     assert not moved, "\n      ".join(moved)
 
 
@@ -648,16 +732,21 @@ def test_the_window_closing_mid_run_is_seen_and_splits_the_flight():
     instant), no longer from models.py's minute-resolution active_at, which
     held a 17:30 window until 17:30:59: the old harness, on this 17:29:50
     clock, saw the window close at 70 s - never, in a 45 s run. The Shield
-    closes it at 17:30:00 plus its half-step band (0.25 s), so the switch
-    lands at 10.3 s, on the conservative side of the edge (switch_lag +0.3 s)."""
+    closes it at 17:30:00 plus its half-step band. Re-pinned 2026-10-12: at
+    the grant's 0.1 s forecast step the band is 0.05 s, inside one 0.1 s
+    tick, so the switch lands on the edge's own tick, 10.1 s (switch_lag
+    0.0, still not early); at the 0.5 s step it was 0.25 s and the switch
+    landed at 10.3 s (lag +0.3 s), which the 3 s comparison arm still flies."""
     spec = _cell("time-window-closes-mid-run",
                  clock="2026-09-07T17:29:50", vehicle_speed_mps=4)
     run = S.run_episode(spec, DEFAULTS, 0)
     sw = [e for e in run.events if e["type"] == "time_window_switch"]
     assert len(sw) == 1 and sw[0]["deactivated"] == ["nfz-school"], sw
-    assert abs(sw[0]["t"] - 10.3) < 1e-6, sw[0]["t"]
+    assert abs(sw[0]["t"] - 10.1) < 1e-6, sw[0]["t"]
     assert "rule_status" in sw[0]["read_from"]
-    assert run.extra["switch_lag_s_nfz-school"] > 0, "a closing window switched early"
+    assert run.extra["switch_lag_s_nfz-school"] >= 0, "a closing window switched early"
+    old = S.run_episode(spec, DEFAULTS, 0, forecast="3s")
+    assert [e["t"] for e in old.events if e["type"] == "time_window_switch"] == [10.3]
     assert run.extra["switch_conservative_nfz-school"] is True
     assert run.extra["phase0_violation_ticks_nfz-school"] > 0
     assert run.extra["phase1_violation_ticks_nfz-school"] == 0
@@ -767,11 +856,13 @@ def test_gps_dropout_freezes_the_pose_the_shield_sees_and_not_the_vehicle():
     """GPS denial (audit card X-14): for the window the Shield is handed the
     last fix while the aircraft keeps moving; outside it, the live pose. (FSM
     off: a LOITER would stop the aircraft, which is the FSM's business, not
-    the stressor's.)"""
-    spec = _with(_cell("gps-dropout", lane_y=15.0, window=[6.0, 11.0]), escalation=False)
+    the stressor's.) Re-pinned 2026-10-12: the family's windows were re-cut
+    for the grant's 5 s forecast (experiments/templates/sensor_degradation.yaml)
+    and the long one is now 4-11 s, 70 ticks."""
+    spec = _with(_cell("gps-dropout", lane_y=15.0, window=[4.0, 11.0]), escalation=False)
     run = S.run_episode(spec, DEFAULTS, 0)
-    inside = [r for r in run.rows if 6.0 - 1e-9 <= r["t"] < 11.0 - 1e-9]
-    assert len(inside) == 50 == run.extra["gps_dropout_ticks"], run.extra["gps_dropout_ticks"]
+    inside = [r for r in run.rows if 4.0 - 1e-9 <= r["t"] < 11.0 - 1e-9]
+    assert len(inside) == 70 == run.extra["gps_dropout_ticks"], run.extra["gps_dropout_ticks"]
     held = {(r["perceived"]["x"], r["perceived"]["y"]) for r in inside}
     assert len(held) == 1, "the pose the Shield saw moved during the dropout"
     assert inside[-1]["x"] - inside[0]["x"] > 5.0, "the vehicle stopped too: nothing was stale"
@@ -786,8 +877,10 @@ def test_gps_dropout_on_the_head_on_lane_is_a_measured_polygon_entry():
     silently: the Shield trusts a frozen pose and lets the aircraft into the
     zone, while its own re-check stays clean (it repaired against the pose it
     was given). If this stops holding, the description in scenarios.yaml is
-    wrong and must be re-measured."""
-    spec = _cell("gps-dropout", lane_y=15.0, window=[6.0, 11.0])
+    wrong and must be re-measured. Re-measured 2026-10-12 at the grant's 5 s
+    forecast: the entry is the 4-11 s window's (frozen still at speed, 24 m
+    out); the old 6-11 s window freezes a pose the Shield already holds."""
+    spec = _cell("gps-dropout", lane_y=15.0, window=[4.0, 11.0])
     run = S.run_episode(spec, DEFAULTS, 0)
     res = _kpi(spec, run.rows, run.extra, run.policy)
     assert res["p0_escapes"] == 0, "the Shield's own re-check should be clean"
@@ -801,7 +894,7 @@ def test_gps_dropout_on_the_head_on_lane_is_a_measured_polygon_entry():
 def test_a_dropout_that_froze_nothing_fails_its_gate_and_one_after_the_run_is_refused():
     """Silence reads as success: with no frozen tick, the family's
     `gps_dropout_ticks` gate must fail rather than score a clean run."""
-    spec = _cell("gps-dropout", lane_y=15.0, window=[6.0, 11.0])
+    spec = _cell("gps-dropout", lane_y=15.0, window=[4.0, 11.0])
     assert S.check_gates(spec.gates, {"gps_dropout_ticks": 0,
                                       "p0_violation_escape_rate": 0,
                                       "all_actions_finite": True})
@@ -817,13 +910,23 @@ def test_a_dropout_that_froze_nothing_fails_its_gate_and_one_after_the_run_is_re
 
 
 def test_wind_moves_the_aircraft_and_the_shield_never_sees_it():
+    """The Shield never sees the wind (it predicts with the commanded action
+    only). Re-pinned 2026-10-12: on the open-loop model the harness flew until
+    then, a 2 m/s wind carries the aircraft 60 m in 30 s; on the closed-loop
+    default (ArduCopter's position controller, tests/test_harnesstruth_wind.py)
+    the same wind is rejected and the aircraft ends where the calm flight
+    does. Either way the Shield emits exactly what it emits in still air."""
     still = BY_ID["speed-cap"]
     windy = _with(still, **{"stress.wind_speed_mps": 2.0, "stress.wind_dir_deg": 90.0})
     r0, e0 = S.run_headless(still, DEFAULTS)
-    r1, e1 = S.run_headless(windy, DEFAULTS)
+    run = S.run_episode(windy, DEFAULTS, 0, wind_model="open_loop")
+    r1, e1 = run.rows, run.extra
     assert [r["emitted"] for r in r0] == [r["emitted"] for r in r1], (
         "the Shield reacted to wind it cannot see")
     assert abs((e1["final"]["y"] - e0["final"]["y"]) - 2.0 * 30.0) < 0.5, (e0, e1)
+    r2, e2 = S.run_headless(windy, DEFAULTS)
+    assert [r["emitted"] for r in r0] == [r["emitted"] for r in r2]
+    assert e2["final"] == e0["final"], (e0["final"], e2["final"])
 
 
 def test_a_declared_wind_direction_turns_with_the_mission():
@@ -844,12 +947,15 @@ def test_gusts_are_a_velocity_disturbance_the_shield_never_commands():
     """REGRESSION (review 2026-10-06: replacing the gust draw with 0 passed
     every test and the smoke run). The per-tick residual between where the
     aircraft went and what was commanded plus the steady wind IS the gust: a
-    0.5 m/s sigma must show up there, and nowhere when gust_mps is 0."""
+    0.5 m/s sigma must show up there, and nowhere when gust_mps is 0. On the
+    open-loop model (the default until 2026-10-12): on the closed loop the
+    wind is rejected and the gust pulled back, which
+    tests/test_harnesstruth_wind.py measures."""
     spec = _with(_cell("wind-gusts", lane_y=15.0, wind_speed_mps=2), escalation=False)
     assert spec.stress.gust_mps == 0.5
 
     def residuals(s):
-        run = S.run_episode(s, DEFAULTS, 1001)
+        run = S.run_episode(s, DEFAULTS, 1001, wind_model="open_loop")
         w = run.events[0]["wind_mps"]
         dt = DEFAULTS.dt
         rs = run.rows
@@ -939,7 +1045,12 @@ def test_a_sweep_writes_one_bundle_per_episode_and_survives_an_out_outside_the_r
         man = json.loads((dirs[0] / "manifest.json").read_text(encoding="utf-8"))
         assert len(man) == 6 and man["random_seed"] == 1001
         assert man["topology"] == S.TOPOLOGY_HEADLESS
-        assert not (dirs[0] / "manifest_extras.json").exists(), "no arm, no extras"
+        # Re-pinned 2026-10-12: every headless bundle now carries
+        # manifest_extras.json, the keys that re-fly the episode
+        # (episode_extras); until then only an armed episode had one.
+        ex = json.loads((dirs[0] / "manifest_extras.json").read_text(encoding="utf-8"))
+        assert ex["extras_schema"] == S.EXTRAS_SCHEMA and ex["random_seed"] == 1001
+        assert ex["arm"]["record"] is None and "paraphrase_id" not in ex, "no arm"
         kpi = json.loads((dirs[0] / "kpi.json").read_text(encoding="utf-8"))
         assert kpi["kpi_grade"] is False and kpi["status"] == "pass"
         ev = (dirs[0] / "harness_events.jsonl").read_text(encoding="utf-8").splitlines()
@@ -1018,7 +1129,7 @@ def test_a_tracked_episode_is_never_counted_as_a_pass():
     """gps-dropout on the head-on lane passes its gates (the Shield's own log
     is clean) while the aircraft flies 7 m into the zone. It must be reported
     "tracked", counted apart, with the incursion in the true-state summary."""
-    fam = _raw("gps-dropout", parameter_sweep={"lane_y": [15.0], "window": [[6.0, 11.0]]})
+    fam = _raw("gps-dropout", parameter_sweep={"lane_y": [15.0], "window": [[4.0, 11.0]]})
     rc, doc = _sweep_lib([fam])
     r = doc["results"][0]
     assert r["status"] == "tracked" and rc == 0, (r["status"], rc)
@@ -1039,7 +1150,7 @@ def test_an_imposed_polygon_is_not_an_entry_and_a_flown_one_is():
     on_top = S.run_episode(_cell("dyn-nfz-spawn-on-top", size_m=40, variant=0),
                            DEFAULTS, 0).extra
     assert on_top["ticks_inside_fence_polygon"] > 0 and on_top["polygon_entries"] == 0, on_top
-    flown = S.run_episode(_cell("gps-dropout", lane_y=15.0, window=[6.0, 11.0]),
+    flown = S.run_episode(_cell("gps-dropout", lane_y=15.0, window=[4.0, 11.0]),
                           DEFAULTS, 0).extra
     assert flown["polygon_entries"] >= 1, flown
     ctrl = _run("nfz-head-on-control")[1]
@@ -1340,7 +1451,9 @@ def test_a_zone_moving_onto_a_waiting_aircraft_is_imposed_not_its_breach():
     illegal at the previous instant, under the rules of that instant. The
     negative control is the unshielded flight into a static zone, which IS
     its own entry."""
-    run = S.run_episode(_cell("radius-scaling-grow", factor=3.0), DEFAULTS, 0)
+    # factor 3.8 since 2026-10-12 (the family re-cut for the 5 s forecast;
+    # 3.0 was the 8.2 m-deep cell at 3 s, 3.8 is it at 5 s).
+    run = S.run_episode(_cell("radius-scaling-grow", factor=3.8), DEFAULTS, 0)
     ex = run.extra
     assert ex["ticks_inside_fence_polygon"] > 0 or any(r["unsafe"] for r in run.rows)
     assert ex["breaches"] == 0 and ex["polygon_entries"] == 0, ex
@@ -1350,7 +1463,18 @@ def test_a_zone_moving_onto_a_waiting_aircraft_is_imposed_not_its_breach():
     # A window opening INSIDE the lookahead makes the spot unsafe on an
     # ordinary tick, seconds before the switch: imposed by time, not by the
     # move - and only the "judged at the previous instant" test knows it.
-    tw = S.run_episode(_cell("time-window-opens-on-vehicle", clock="2026-09-07T07:29:54"),
+    # Re-pinned 2026-10-12: at the grant's 5 s forecast the family's old
+    # clocks (07:29:54-56) never left the aircraft where the zone opens (the
+    # Shield anticipates the window and holds it out), so the clock starts 4 s
+    # earlier: from 07:29:50 the spot is unsafe from 5.0 s, five seconds
+    # before the 10.0 s switch, on no event tick. The family itself was
+    # re-cut the same day to start INSIDE the zone (its first unsafe tick is
+    # tick 0, imposed whatever the test), so this flies the old route start,
+    # (60, 0), explicitly.
+    tw = S.run_episode(_with(_cell("time-window-opens-on-vehicle",
+                                   clock="2026-09-07T07:29:58"),
+                             **{"mission.clock_start": "2026-09-07T07:29:50",
+                                "mission.start_pose.y": 0.0}),
                        DEFAULTS, 0)
     first_unsafe = next(r["t"] for r in tw.rows if r["unsafe"])
     switch = [e["t"] for e in tw.events if e["type"] == "time_window_switch"][0]
@@ -1506,7 +1630,13 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
     not vanish either: the run-level true-state summary reports it apart.
     Since 2026-10-09 X6 leaves this cell's working exit alone (G1, G7), so
     the modelled RTL through the zone is recreated by flying the same cell
-    with X6's progress test off (G1>X6>G9)."""
+    with X6's progress test off (G1>X6>G9).
+    Re-pinned on the review of 2026-10-12: the RTL watch (guardrail/
+    rtl_path.py) now refuses that leg - it starts inside the zone and runs
+    12.3 m deeper through it before it leaves, which is a traversal, not an
+    exit - so G6 lands the aircraft where it is, inside the zone, and the
+    autopilot's P0 ticks are LAND's (counted apart, by mode). The RTL
+    through the zone this test needs is flown with the watch silenced."""
     from guardrail.fsm import FSMConfig
 
     class NoProgressTest(S.Shield):
@@ -1522,9 +1652,24 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
     real = S.Shield
     S.Shield = NoProgressTest
     try:
-        run = S.run_episode(spec, DEFAULTS, 0)
+        watched = S.run_episode(spec, DEFAULTS, 0)
+        assess = S.RP.RTLWatch.assess
+
+        def silent(self, *a, **k):
+            v = assess(self, *a, **k)
+            return S.RP.RTLVerdict(False, (), v.leg, False, False)
+        S.RP.RTLWatch.assess = silent
+        try:
+            run = S.run_episode(spec, DEFAULTS, 0)
+        finally:
+            S.RP.RTLWatch.assess = assess
     finally:
         S.Shield = real
+    wx = watched.extra
+    assert [t["edge"] for t in wx["fsm"]["transitions"]] == ["G1", "X6", "G6"], wx["fsm"]
+    assert "crosses dyn-nfz" in " ".join(wx["rtl_failures"][0]["reasons"]), wx["rtl_failures"]
+    assert set(wx["autopilot_p0_flown_ticks_by_mode"]) == {"LAND"}, wx
+    assert wx["autopilot_polygon_entries"] == 0, wx
     edges = [t["edge"] for t in (run.extra.get("fsm") or {}).get("transitions") or []]
     assert "X6" in edges, f"the RTL this test needs did not happen: {edges}"
     ex = run.extra
@@ -1599,9 +1744,11 @@ def test_a_second_motion_event_starts_from_where_the_first_left_the_zone():
 
 def test_the_switch_band_is_half_the_forecast_step_plus_a_tick_end_to_end():
     """REVIEW (mutant R44 survived: eps = 4 x dt instead of dt / 2). The claim
-    "eps = dt / 2" is the Shield's forecast step (0.5 s) halved, with the
-    harness tick (0.1 s) on top; pinned at the call run_episode makes, not
-    only in switch_conservative's own unit test."""
+    "eps = dt / 2" is the Shield's forecast step halved, with the harness tick
+    (0.1 s) on top; pinned at the call run_episode makes, not only in
+    switch_conservative's own unit test. Re-pinned 2026-10-12: the grant's
+    forecast step is 0.1 s, so eps is 0.05 s (0.25 s at the 0.5 s step, which
+    the 3 s comparison arm still uses)."""
     seen = []
     real = S.switch_conservative
 
@@ -1614,7 +1761,7 @@ def test_the_switch_band_is_half_the_forecast_step_plus_a_tick_end_to_end():
     finally:
         S.switch_conservative = real
     assert seen, "no scheduled switch was judged"
-    assert set(seen) == {(0.25, 0.1)}, seen
+    assert set(seen) == {(0.05, 0.1)}, seen
     assert run.extra["switch_conservative_nfz-school"] is True
     # A lag past the band is not conservative, on either side.
     assert not real(False, 0.36, 0.25, 0.1) and not real(True, -0.36, 0.25, 0.1)

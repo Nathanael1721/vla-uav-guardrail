@@ -112,6 +112,38 @@ def test_the_rendered_report_carries_no_withdrawn_claim():
         assert not hits, [(h.claim, h.text) for h in hits]
 
 
+def test_the_p0_acted_share_is_never_printed_as_the_fail_safe_kpi():
+    """2026-10-12. The share of P0 ticks that did not escape restates the
+    escape rate (an always-brake Shield scores 1.0 on it); the grant's
+    fail-safe trigger correctness is another figure. The September numbers
+    file stores the share as `failsafe_trigger_correctness`; the generator
+    reads it from there (or from `p0_acted_tick_share`) and prints it only
+    under its own name. On 4418ae0 the KPI table had a "Fail-safe
+    correctness" row of these values."""
+    d = json.loads(EVAL.read_text(encoding="utf-8"))
+    runs = d["kpi"]["runs"]
+    want = " | ".join(f"{runs[t]['failsafe_trigger_correctness']:.1f}" for t in
+                      ("ros2_shield_on", "ros2_shield_on_dynamic", "ros2_ped_on",
+                       "ros2_shield_off"))
+
+    def renamed(dd):
+        for r in dd["kpi"]["runs"].values():
+            r["p0_acted_tick_share"] = r.pop("failsafe_trigger_correctness")
+
+    def both(dd):
+        # a rebuilt file beside a stale legacy copy: the share's own name wins
+        for r in dd["kpi"]["runs"].values():
+            r["p0_acted_tick_share"] = r["failsafe_trigger_correctness"]
+            r["failsafe_trigger_correctness"] = 0.123
+    for md in (_render(), _render(renamed), _render(both)):
+        assert "| Fail-safe correctness |" not in md
+        assert "fail-safe figure of" not in md
+        row = next(line for line in md.splitlines()
+                   if line.startswith("| P0-acted tick share"))
+        assert row.endswith(f"| {want} |"), (row, want)
+        assert "P0-acted tick share of" in md
+
+
 if __name__ == "__main__":
     import contextlib
     import io

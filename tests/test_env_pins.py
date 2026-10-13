@@ -70,7 +70,8 @@ DESIGN_DOC = ROOT / "docs" / "DESIGN-python-versions.md"
 CORE = {"pydantic": "pydantic", "pydantic_core": "pydantic", "yaml": "pyyaml",
         "shapely": "shapely", "numpy": "numpy", "jinja2": "jinja2"}
 EXTRA = {"cryptography": "signing", "fastapi": "api", "uvicorn": "api",
-         "tokenizers": "tokens", "grpc": "harness", "google": "harness"}
+         "tokenizers": "tokens", "grpc": "harness", "google": "harness",
+         "pyarrow": "export"}
 # Import name -> distribution name, where the two differ.
 DIST_OF = {"grpc": "grpcio", "google": "protobuf"}
 # Whole modules that exist only for an extra; importing them needs the extra.
@@ -214,6 +215,77 @@ def test_the_version_is_read_from_VERSION_not_copied():
 def test_signing_is_an_extra_named_signing_that_brings_cryptography():
     extras = _pyproject()["project"].get("optional-dependencies", {})
     assert any(_norm_req(r) == "cryptography" for r in extras.get("signing", [])), extras
+
+
+def test_export_is_an_extra_that_brings_pyarrow():
+    """Parquet export of bundles and KPI tables (2026-10-12): optional, so the
+    Shield's import path never needs pyarrow."""
+    extras = _pyproject()["project"].get("optional-dependencies", {})
+    assert [_dist(r) for r in extras.get("export", [])] == ["pyarrow"], extras.get("export")
+    assert EXTRA.get("pyarrow") == "export"
+
+
+def _requirements():
+    return [r for r in (ln.split("#", 1)[0].strip() for ln in
+                        REQUIREMENTS.read_text(encoding="utf-8").splitlines()) if r]
+
+
+def _split_marker(req):
+    """(name, version pin or None, marker text or None) of one requirement."""
+    body, _, marker = req.partition(";")
+    m = re.match(r"\s*([A-Za-z0-9_.\-]+)\s*(==\s*([^\s,;]+))?", body)
+    return m.group(1).lower(), (m.group(3) if m.group(2) else None), (marker.strip() or None)
+
+
+def _marker_holds(marker, version=None):
+    """Evaluate a `python_version` marker for this interpreter (or `version`,
+    "3.10" style). Only the comparisons the requirements use are read; any
+    other marker fails the test that asked, rather than being guessed."""
+    if marker is None:
+        return True
+    m = re.fullmatch(r'python_version\s*(<|>=)\s*["\'](\d+)\.(\d+)["\']', marker)
+    assert m, f"unexpected marker {marker!r}"
+    have = tuple(int(x) for x in (version.split(".") if version else sys.version_info[:2]))
+    want = (int(m.group(2)), int(m.group(3)))
+    return have < want if m.group(1) == "<" else have >= want
+
+
+def test_shapely_and_numpy_are_pinned_for_both_interpreters():
+    """REGRESSION (2026-10-12, reproducibility). shapely and numpy were
+    unpinned, so the Shield's geometry and the sweep's numbers came from
+    whatever pip resolved that day. shapely is pinned to the version every env
+    runs (2.1.2); numpy twice, by interpreter: 1.26.4 below 3.11 (the vla-real
+    OpenVLA env, which keeps it re-pinned) and one pin from 3.11 on (numpy 2.4
+    needs 3.11). Every interpreter gets exactly one numpy pin."""
+    reqs = [_split_marker(r) for r in _requirements()]
+    shapely = [r for r in reqs if r[0] == "shapely"]
+    assert shapely == [("shapely", "2.1.2", None)], shapely
+    numpy = [r for r in reqs if r[0] == "numpy"]
+    assert len(numpy) == 2 and all(v for _, v, _ in numpy), numpy
+    for ver in ("3.10", "3.11", "3.12", "3.13"):
+        hits = [v for _, v, mk in numpy if _marker_holds(mk, ver)]
+        assert len(hits) == 1, (ver, hits)
+    assert [v for _, v, mk in numpy if _marker_holds(mk, "3.10")] == ["1.26.4"]
+
+
+def test_this_interpreter_runs_the_pinned_versions():
+    """The pins describe the envs, not a wish: the interpreter running this
+    test has the shapely and numpy its marker selects (vla-real: numpy 1.26.4;
+    vla-drone and CI's 3.11 jobs: the 3.11+ pin). A machine with other
+    versions fails here, which is the point of pinning."""
+    from importlib import metadata
+    got = []
+    for name, ver, mk in (_split_marker(r) for r in _requirements()):
+        if ver is None or not _marker_holds(mk):
+            continue
+        try:
+            have = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            got.append(f"{name} not installed (pinned {ver})")
+            continue
+        if have != ver:
+            got.append(f"{name} {have} (pinned {ver}{'; ' + mk if mk else ''})")
+    assert not got, got
 
 
 def test_only_the_guardrail_package_is_packaged():

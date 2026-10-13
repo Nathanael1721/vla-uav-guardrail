@@ -951,7 +951,10 @@ def _fly_pymavlink_rail(args: list[str], patch=None, path: Path | None = None):
     R.ROOT = tmp
     if patch is not None:
         patch(R)
-    with _argv(["run_sitl_demo.py", "--policy", str(POLICY), "--tag", "t"] + args):
+    # A YAML policy flies only as a development run (--dev-yaml) since
+    # 2026-10-12; tests/test_railinputs_policy.py checks the refusal.
+    with _argv(["run_sitl_demo.py", "--policy", str(POLICY), "--dev-yaml",
+                "--tag", "t"] + args):
         assert R.main() == 0
     out = tmp / "demo" / "out" / "t"
     metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
@@ -1168,7 +1171,10 @@ def test_the_pymavlink_rail_writes_each_generations_cost_map_when_asked():
 def test_the_ros2_rail_passes_cost_map_and_live_from():
     """The ROS 2 node cannot fly here (rclpy), so its wiring is read: the
     --cost-map flag reaches EpisodeRecord, and the dynamic zone's spawn time
-    reaches zone_dwell as live_from, on the trajectory's 0.01 s grid."""
+    reaches zone_dwell as live_from, on the trajectory's 0.01 s grid - since
+    2026-10-12 beside every zone spawned over the REST hot-apply API
+    (guardrail.api.FlightHotApply.live_from), which zone_dwell counted over
+    the whole flight before."""
     N = _node()
     assert N.make_parser().parse_args(["--cost-map"]).cost_map is True
     assert N.make_parser().parse_args([]).cost_map is False
@@ -1183,15 +1189,15 @@ def test_the_ros2_rail_passes_cost_map_and_live_from():
     kw = {k.arg: k.value for k in dwell[0].keywords}
     assert "live_from" in kw, list(kw)
     # The shape, not just the names: {zone: spawn time on the 0.01 s grid}
-    # once the zone went live, None before (a `None and {...}` or a constant
-    # condition would still name both).
-    lf = kw["live_from"]
-    assert isinstance(lf, ast.IfExp) and isinstance(lf.body, ast.Dict), ast.unparse(lf)
-    assert ast.unparse(lf.body) == "{self.dynamic_fence_id: round(self.spawn_t, 2)}", \
-        ast.unparse(lf)
-    assert ast.unparse(lf.test) == "self.dynamic_fence_id and self.spawn_t is not None", \
-        ast.unparse(lf)
-    assert ast.unparse(lf.orelse) == "None", ast.unparse(lf)
+    # once the zone went live, the REST-spawned zones beside it, None when
+    # there is none (a `None and {...}` or a constant condition would still
+    # name both).
+    assert ast.unparse(kw["live_from"]) == "live or None", ast.unparse(kw["live_from"])
+    src = (SITL / "ros2_shield_node.py").read_text(encoding="utf-8")
+    body = src[src.index("def _report"):src.index("self.dwell = zone_dwell(")]
+    assert "live = dict(self.hot.live_from) if self.hot is not None else {}" in body
+    assert "if self.dynamic_fence_id and self.spawn_t is not None:" in body
+    assert "live[self.dynamic_fence_id] = round(self.spawn_t, 2)" in body
 
 
 # ------------------------------------------------------- every rail, one count

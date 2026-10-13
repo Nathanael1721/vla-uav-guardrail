@@ -26,6 +26,14 @@
 # before a scene (re)load lets the simulator's clock reset run ArduPilot's
 # clock backwards.
 #
+# POLICY: -Step node (and -Step check's dry run) fly the SIGNED bundle of the
+# policy (-PolicyFile, default policies\follow_car_citylife.yaml) when
+# tools\build_flight_bundles.py has built it into bundles\; otherwise they pass
+# the YAML with --dev-yaml and say so: a development run, recorded as such and
+# never KPI-grade. -ClockStart scripts the rule clock (ISO 8601); -HoldMode
+# LOITER flies the FSM's Loiter as ArduCopter's LOITER with the throttle
+# centred by the node (SITL only; BRAKE is the default).
+#
 # WARNING, as in every launcher here: starting the simulator closes any process
 # holding PASBlocks\Blocks.uproject. An open EDITOR is refused, not killed.
 
@@ -45,6 +53,9 @@ param(
     [double]$SideM   = 10,
     [double]$AltM    = 10,
     [string]$PolicyFile = "",
+    [string]$ClockStart = "",           # ISO 8601: the rule clock's start (default: wall clock, +08:00)
+    [ValidateSet("BRAKE", "LOITER")]
+    [string]$HoldMode   = "BRAKE",
     [string]$G1Verdict  = "",           # default: the newest demo\out\g1_*\g1_verdict.json
     [string]$Orin    = "",              # Jetson Orin address: adds a MAVLink UDP output to it
     [int]$SimWidth   = 960,
@@ -72,6 +83,33 @@ function ConvertTo-WslPath([string]$p) {
     $p = $p -replace '\\', '/'
     if ($p -match '^([A-Za-z]):(.*)$') { return "/mnt/" + $Matches[1].ToLower() + $Matches[2] }
     return $p
+}
+
+# ---- the policy: its signed bundle, else the YAML under --dev-yaml ----------
+# The node refuses a YAML policy without --dev-yaml (guardrail.manifest.
+# flight_policy_choice); the bundle's name comes from the same function the
+# node and tools\build_flight_bundles.py use. A bundle is named by policy id
+# and version only, so one python call also checks it still flies THIS
+# YAML's policy (guardrail.manifest.flight_bundle_status): an edited YAML
+# whose version was not bumped keeps a stale bundle's name.
+function Get-PolicyArgs([string]$BundlesDir = (Join-Path $Root "bundles")) {
+    $yaml = if ($PolicyFile) { $PolicyFile } else { Join-Path $Root "policies\follow_car_citylife.yaml" }
+    $code = "import json, sys; sys.path.insert(0, sys.argv[1]); from guardrail.manifest import flight_bundle_status; print(json.dumps(flight_bundle_status(sys.argv[2], bundles_dir=sys.argv[3])))"
+    $out = (& $Py -c $code $Root $yaml $BundlesDir | Select-Object -Last 1)
+    if ($LASTEXITCODE -ne 0 -or -not $out) { throw "could not check the signed bundle of $yaml" }
+    $st = "$out" | ConvertFrom-Json
+    if ($st.present -and $st.matches -ne $false) {
+        Say "policy: the signed bundle $($st.bundle)"
+        return @("--bundle", $st.bundle)
+    }
+    if ($st.present) {
+        Warn "the signed bundle $($st.bundle) is STALE: it flies $($st.bundle_hash),"
+        Warn "and $yaml is now $($st.yaml_hash) (python tools\build_flight_bundles.py rebuilds it):"
+    } else {
+        Warn "no signed bundle of $yaml at $($st.bundle) (python tools\build_flight_bundles.py builds it):"
+    }
+    Warn "flying the YAML with --dev-yaml - a development run, recorded as such and never KPI-grade"
+    return @("--policy", $yaml, "--dev-yaml")
 }
 
 # ---- WSL2 networking: which address each side must use --------------------
@@ -192,7 +230,8 @@ if ($Step -eq "check") {
     else { Say "mavlink-routerd: $rt" }
     wsl.exe -d $Distro -- bash "$(ConvertTo-WslPath $Root)/sitl/setup_sitl.sh" --verify
     Say "node dry run (renders this run's configs, lists missing Python packages)"
-    & $Py $Node --dry-run --tag "$Tag" --link $Link @net
+    $pol = Get-PolicyArgs
+    & $Py $Node --dry-run --tag "$Tag" --link $Link @net @pol
     exit $LASTEXITCODE
 }
 
@@ -231,7 +270,9 @@ try {
         }
         "node" {
             $a = @($Node, "--object", $Object, "--tag", $Tag, "--max-s", "$Seconds", "--start-sitl", "--link", $Link) + $net
-            if ($PolicyFile) { $a += @("--policy", $PolicyFile) }
+            $a += Get-PolicyArgs
+            $a += @("--hold-mode", $HoldMode)
+            if ($ClockStart) { $a += @("--clock-start", $ClockStart) }
             if (-not $G1Verdict) {
                 $v = Get-ChildItem (Join-Path $Out "g1_*\g1_verdict.json") -ErrorAction SilentlyContinue |
                      Sort-Object LastWriteTime -Descending | Select-Object -First 1

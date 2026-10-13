@@ -37,6 +37,16 @@
 # high-speed-near-edge flies three of the square zone's four faces (the
 # fourth is a rotation of the same geometry).
 #
+# SINCE 2026-10-12: the grant's forecast (5 s at 0.1 s) in every Shield, the
+# closed-loop wind model, and 221 scenarios (240 before: wind-within-authority
+# 24 -> 2, wind-beyond-authority 2 -> 4, wind-gusts 4 -> 2, dyn-nfz-rotate-spin
+# 2 -> 3, two new fail-safe cells; experiments/templates say why). Measured on
+# the desktop on 2026-10-13: 732 episodes in 1251 s (789 in 477 s before the
+# change), 508 pass, 66 tracked, 0 fail, 158 known failures. A scheduled job
+# for it is defined in .github/workflows/nightly.yml but has not run: GitHub
+# schedules only the default branch's workflows, `main` on GitHub, while that
+# file is on `master` (its header says what the lead must decide).
+#
 #   python experiments/sweep_scenarios.py --profile nightly
 
 profile: nightly

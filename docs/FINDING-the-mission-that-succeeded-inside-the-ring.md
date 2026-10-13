@@ -98,6 +98,13 @@ recorded in `mission_fail_reasons` (`unsafe_never_recovered`,
 
 ## What is still open
 
+*Status on 2026-10-12:* the first item is closed for new flights. Every rail
+(`sitl/ros2_shield_node.py`, `sitl/run_sitl_demo.py`,
+`demo/pas_ardupilot/perception_node.py`) logs `unsafe` and `unsafe_rules` per
+tick through `guardrail.replay.episode_row_fields`; the 18 flights below stay
+reconstructions because they were flown before. The second item stands.
+
+
 - The rails do not log `unsafe` in flight. Every one of the 18 rests on a
   reconstruction (`sitl/ros2_shield_node.py` and `sitl/run_sitl_demo.py` are to
   log it per tick, with the subject declared on each row).

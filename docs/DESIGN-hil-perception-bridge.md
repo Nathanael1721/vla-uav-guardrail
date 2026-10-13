@@ -3,6 +3,12 @@
 **Date:** 2026-09-07
 **Status:** scoping only. **No code written**, deliberately — this cannot fit
 before 18 September and starting it would put the demo at risk.
+**Superseded in part (2026-10-12):** the perception node this note scoped now
+exists (`demo/pas_ardupilot/perception_node.py`) and flew on Project AirSim
+with ArduPilot SITL over pymavlink on 8 and 12 Oct
+(`docs/DESIGN-projectairsim-ardupilot.md`). Its MAVROS 2 path (the grant's
+dev topology) and the Orin (hil) have not flown yet. The rest of this note is
+the September scoping, kept as written.
 **Purpose:** be able to answer *"when will HIL be done?"* with something better
 than silence. That was the one question from the 2 September review with no
 answer.

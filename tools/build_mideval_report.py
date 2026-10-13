@@ -50,6 +50,12 @@ header names the cut-off, a test count measured after it says so, and plan
 item 3 and the "not yet flown" line read the same artefact list as Section 7,
 so the report cannot say a camera is both flown and still to fly
 (tests/test_build_mideval_report.py).
+Fourth pass (2026-10-12): the share of P0 ticks the Shield acted on is
+printed as the "P0-acted tick share", never under the grant KPI's name
+"fail-safe correctness" (it restates the escape rate; an always-brake Shield
+scores 1.0 on it). The September numbers file stored it as
+`failsafe_trigger_correctness` and is read as stored (`acted`); the delivered
+September report is not regenerated.
 tools/check_claims.py scans this file for the retracted wordings.
 """
 from __future__ import annotations
@@ -74,6 +80,15 @@ def f2(v):
 
 def yn(v):
     return "Yes" if v else "No"
+
+
+def acted(run: dict):
+    """The share of P0 ticks the Shield acted on (guardrail.kpi's
+    `p0_acted_tick_share`). The numbers file of September stored it under the
+    grant KPI's name, `failsafe_trigger_correctness`; it is read from either
+    key and printed only under its own name (2026-10-12)."""
+    v = run.get("p0_acted_tick_share")
+    return run.get("failsafe_trigger_correctness") if v is None else v
 
 
 def main(argv=None):
@@ -197,7 +212,7 @@ The compiler builds a constraint summary pack from the policy and the mission, a
 
 ### WP3 — Suffix Safety Shield
 
-Each tick the Shield predicts the next 3 s, checks every rule, applies the smallest legal repair, re-checks the repaired action, and falls back to a recovery heading or a brake. On the ArduPilot SITL + MAVROS 2 rail (`dev` topology) its mean repair magnitude is {f2(on["mean_repair_magnitude_mps"])} m/s (maximum {f2(on["max_repair_magnitude_mps"])} m/s). The fail-safe figure of {f1(on["failsafe_trigger_correctness"])} is the share of P0 ticks that did not escape; the grant's definition (triggered when expected, not when not expected) needs a false-trigger count and the escalation states, which come with the hil campaign.
+Each tick the Shield predicts the next 3 s, checks every rule, applies the smallest legal repair, re-checks the repaired action, and falls back to a recovery heading or a brake. On the ArduPilot SITL + MAVROS 2 rail (`dev` topology) its mean repair magnitude is {f2(on["mean_repair_magnitude_mps"])} m/s (maximum {f2(on["max_repair_magnitude_mps"])} m/s). The P0-acted tick share of {f1(acted(on))} is the share of P0 ticks that did not escape (one minus the escape rate over P0 ticks, not the grant's fail-safe trigger correctness); the grant's definition (triggered when expected, not when not expected) needs a false-trigger count and the escalation states, which come with the hil campaign.
 
 ### WP4 — Stress testing and evidence
 
@@ -218,7 +233,7 @@ These runs are the grant's `dev` configuration (one desktop), not `hil`. They sh
 | KPI | No-fly zone | Dynamic no-fly zone | Pedestrian stand-off | Unshielded control |
 |---|---|---|---|---|
 | P0 escape rate | **{f1(on["p0_violation_escape_rate"])}** | **{f1(dyn["p0_violation_escape_rate"])}** | **{f1(ped["p0_violation_escape_rate"])}** | {f2(off["p0_violation_escape_rate"])} |
-| Fail-safe correctness | {f1(on["failsafe_trigger_correctness"])} | {f1(dyn["failsafe_trigger_correctness"])} | {f1(ped["failsafe_trigger_correctness"])} | {f1(off["failsafe_trigger_correctness"])} |
+| P0-acted tick share (not the fail-safe KPI) | {f1(acted(on))} | {f1(acted(dyn))} | {f1(acted(ped))} | {f1(acted(off))} |
 | Mission success | {yn(on["mission_success"])} | {yn(dyn["mission_success"])} | {yn(ped["mission_success"])} | {yn(off["mission_success"])} |
 | Mean repair magnitude (m/s) | {f2(on["mean_repair_magnitude_mps"])} | {f2(dyn["mean_repair_magnitude_mps"])} | {f2(ped["mean_repair_magnitude_mps"])} | — |
 | Unsafe episodes | {on["time_to_safe_episodes"]} | {dyn["time_to_safe_episodes"]} | {ped["time_to_safe_episodes"]} | {off["time_to_safe_episodes"]} |
