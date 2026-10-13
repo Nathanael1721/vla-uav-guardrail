@@ -25,6 +25,10 @@
 #      so its stale-stub check runs (without grpcio-tools that one test
 #      SKIPs). On the requirements-only job its logic tests, which drive
 #      Harness directly, run and the gRPC / mTLS tests SKIP visibly.
+#      Since 2026-10-13 the loop also runs the wave-A files (test_shieldcore_*,
+#      test_railinputs_*, test_wp4outputs_*, test_flight_pas_ap_20261008 on its
+#      tests/fixtures/ copy of the 8 Oct flight, test_env_pins), each checked
+#      first in a clean `git archive` copy with and without the optional extras.
 #      tests/test_harnesstruth_*.py (2026-10-12) hold the harness to the
 #      grant's forecast, the closed-loop wind model, the RTL hand-over, the
 #      self-contained bundles and this file. tests/test_env_pins.py is not
@@ -140,7 +144,22 @@ jobs:
               tests/test_harnesstruth_rtl.py \
               tests/test_harnesstruth_wind.py \
               tests/test_harnesstruth_bundles.py \
-              tests/test_harnesstruth_ci.py; do
+              tests/test_harnesstruth_ci.py \
+              tests/test_env_pins.py \
+              tests/test_flight_pas_ap_20261008.py \
+              tests/test_shieldcore_repair.py \
+              tests/test_shieldcore_audit.py \
+              tests/test_shieldcore_identity.py \
+              tests/test_railinputs_fence_export.py \
+              tests/test_railinputs_clock.py \
+              tests/test_railinputs_policy.py \
+              tests/test_railinputs_manifest.py \
+              tests/test_railinputs_node.py \
+              tests/test_railinputs_hotapply.py \
+              tests/test_railinputs_perception.py \
+              tests/test_wp4outputs_kpi_report.py \
+              tests/test_wp4outputs_exporters.py \
+              tests/test_wp4outputs_harness.py; do
             echo "::group::$t"
             if ! python "$t"; then
               echo "::error file=$t::$t failed"
