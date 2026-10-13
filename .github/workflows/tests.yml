@@ -159,7 +159,12 @@ jobs:
               tests/test_railinputs_perception.py \
               tests/test_wp4outputs_kpi_report.py \
               tests/test_wp4outputs_exporters.py \
-              tests/test_wp4outputs_harness.py; do
+              tests/test_wp4outputs_harness.py \
+              tests/test_railvideo_truth_frame.py \
+              tests/test_railvideo_recording.py \
+              tests/test_railvideo_compare.py \
+              tests/test_explainer_figures.py \
+              tests/test_explainer_deck.py; do
             echo "::group::$t"
             if ! python "$t"; then
               echo "::error file=$t::$t failed"
