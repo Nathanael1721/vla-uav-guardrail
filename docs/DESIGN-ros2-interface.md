@@ -311,6 +311,18 @@ breach), the node records the takeover, stops streaming and stops stepping the
 FSM. The adapter forwards setpoints only while the Shield node is the single
 publisher on `/shield/setpoint`.
 
+**Changed on 2026-10-19.** A takeover is now any change, out of GUIDED or out
+of a hold the node asked for (BRAKE -> LAND by a pilot or a failsafe), to a
+mode no pending request explains, as on the perception rail since
+2026-10-13; before, a pilot taking the aircraft out of the node's hold went
+unseen, and the node later sent GUIDED over the pilot. After a takeover the
+node sends no mode request: no GUIDED when a stale input resumes, and no
+mission-end LAND whatever the mode (it used to skip LAND only for RTL /
+Land). Mode requests go to the adapter only when a subscriber named
+`mavlink_adapter` is on `/shield/mode_request`, not any subscriber: rosbag2
+subscribes to it in every recorded run, so the direct-MAVROS fallback could
+never run.
+
 **One FSM per rail.** Since 2026-10-07 the Shield can also run the escalation
 FSM inside `filter()` (`Shield(escalation=...)`, on by default), and
 `AuditLogger.log` records that FSM's verdict unless the caller passes its own.

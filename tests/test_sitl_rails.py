@@ -1137,6 +1137,177 @@ def test_the_pymavlink_rail_lands_at_mission_end_and_records_it():
     assert sim.modes == [MODE_IDS["LAND"]], sim.modes
 
 
+class _PoseStream:
+    """pymavlink as MavlinkAdapter.state() meets it: one LOCAL_POSITION_NED
+    every 100 ms of a virtual clock (ms), until `last_ms` if given.
+    recv_match hands back the OLDEST unread message (pymavlink reads only the
+    bytes it needs, so the backlog waits in the socket buffer); None when
+    nothing new has arrived and it may not block; when it may, it waits for
+    the next arrival, or returns None after `timeout` if none comes."""
+
+    def __init__(self, last_ms: float | None = None):
+        self.now_ms = 0.0
+        self.read = 0                     # index of the oldest unread message
+        self.last_ms = last_ms
+
+    def _arrived(self) -> int:
+        t = self.now_ms if self.last_ms is None else min(self.now_ms, self.last_ms)
+        return int(t // 100) + 1          # message k arrives at k * 100 ms
+
+    def recv_match(self, type=None, blocking=False, timeout=None):
+        assert type == "LOCAL_POSITION_NED", type
+        if self.read >= self._arrived():
+            due = self.read * 100.0
+            if not blocking:
+                return None
+            if (self.last_ms is not None and due > self.last_ms) \
+                    or due - self.now_ms > timeout * 1000.0:
+                self.now_ms += timeout * 1000.0
+                return None
+            self.now_ms = due
+        k, self.read = self.read, self.read + 1
+        return types.SimpleNamespace(time_boot_ms=k * 100, x=float(k), y=0.0, z=-15.0)
+
+
+def _pymavlink_rail_module():
+    fakes = {}
+    if importlib.util.find_spec("pymavlink") is None:
+        pm = types.ModuleType("pymavlink")
+        pm.mavutil = types.SimpleNamespace()
+        fakes["pymavlink"] = pm
+    return _load(SITL / "run_sitl_demo.py", "run_sitl_demo_pose", fakes)
+
+
+def test_the_pymavlink_rail_flies_on_the_newest_pose_not_the_oldest():
+    """bh_final sitl-ros2/pymavlink-fifo-stale-pose: state() took ONE
+    blocking recv_match per tick, which returns pymavlink's oldest unread
+    message. The loop ran at 8.9-9.4 Hz against the 10 Hz stream, so the
+    pose the Shield, the FSM and the stub used fell further behind all
+    flight (6.6 s by 110 s on sitl_ped_on). Driven here at 9 Hz for 60 s:
+    the pose handed back must stay within one stream period of the newest,
+    and a stream that stops must read as no pose, not as an old one."""
+    R = _pymavlink_rail_module()
+    link = object.__new__(R.MavlinkAdapter)           # __init__ would connect
+    link.m = stream = _PoseStream(last_ms=60_000.0)
+    ages = []
+    for i in range(540):                              # 9 Hz, 60 s
+        stream.now_ms = max(stream.now_ms, i * 1000.0 / 9.0)
+        st = link.state()
+        assert st is not None, f"no pose at tick {i}"
+        ages.append(stream.now_ms - st.x * 100.0)     # x carries the message index
+    assert max(ages) <= 100.0, (
+        f"the pose fell {max(ages) / 1000:.1f} s behind the stream (oldest-first "
+        f"queue); ages at 10/30/60 s: {ages[89]:.0f} / {ages[269]:.0f} / {ages[-1]:.0f} ms")
+    stream.now_ms = 61_000.0                          # the stream stopped at 60 s
+    st = link.state(timeout=1.0)
+    assert st is not None and st.x * 100.0 == 60_000.0, "the last pose sent was not read"
+    st = link.state(timeout=1.0)
+    assert st is None, f"a dead stream returned a pose from {st.x * 100:.0f} ms"
+
+
+def test_the_pymavlink_rail_ticks_at_10_hz_however_long_the_work_takes():
+    """The loop slept a fixed TICK AFTER the work, so it ticked every 0.1 s
+    plus the work. zone_dwell, alt_seconds and standoff_seconds count ticks x
+    TICK, which matched the poses only while each tick consumed one 0.1 s
+    message from the queue; with the newest pose read each tick, the ticks
+    themselves must be TICK apart. Here every tick's work takes 7 ms of the
+    virtual clock (inside sleep, where the stand-in's clock moves)."""
+    def patch(R):
+        sleep = R.time.sleep
+        R.time = types.SimpleNamespace(time=R.time.time,
+                                       sleep=lambda dt: sleep(dt + 0.007))
+    _, metrics, rows, _, _, R = _fly_pymavlink_rail(["--shield", "off"], patch)
+    t = [r["t"] for r in rows]
+    assert len(t) > 20, f"only {len(t)} ticks flown"
+    dts = sorted(b - a for a, b in zip(t[1:], t[2:]))  # the first tick sets the phase
+    mean = (t[-1] - t[1]) / (len(t) - 2)
+    assert abs(dts[len(dts) // 2] - R.TICK) < 0.0015 and abs(mean - R.TICK) < 0.0015, (
+        f"ticks {mean * 1000:.1f} ms apart (median {dts[len(dts) // 2] * 1000:.1f} ms), "
+        f"not {R.TICK * 1000:.0f}")
+
+
+def _parse(parser, argv):
+    """parse_known_args, with argparse's exit (status 2) as a test failure
+    instead of the end of the run."""
+    try:
+        return parser.parse_known_args(argv)
+    except SystemExit as e:
+        raise AssertionError(f"{argv} refused by the parser (exit {e.code})")
+
+
+def test_every_rail_takes_a_negative_x_for_its_xy_options():
+    """bh_final sitl-ros2/xy-args-negative-crash: argparse takes a separate
+    value that starts with '-' for an option unless it reads as a negative
+    NUMBER, and '-20,15' does not (the comma). So `--target -20,15` - a
+    target south of home - exited with status 2 on the Shield node and the
+    VLA stub, and `--subject -5.5,3` on the pymavlink rail, on the 3.11 and
+    3.12.3 interpreters the rails run; the stress harness passes the value as
+    its own argv element (experiments/sweep_scenarios.py build_sitl_cmd)."""
+    N = _node()
+    import ros2_vla_stub_node as V
+    for argv, want in ((["--target", "-20,15", "--subject", "-5.5,3"], ("-20,15", "-5.5,3")),
+                       (["--target=-20,15", "--subject=-5.5,3"], ("-20,15", "-5.5,3")),
+                       (["--target", "-.5,15", "--subject", "-5,-3"], ("-.5,15", "-5,-3"))):
+        a, rest = _parse(N.make_parser(), argv)
+        assert (a.target, a.subject, rest) == (*want, []), (argv, a.target, a.subject, rest)
+    a, rest = _parse(V.make_parser(), ["--target", "-20.5,15", "--yaw-rate", "0.2"])
+    assert (a.target, a.yaw_rate, rest) == ("-20.5,15", 0.2, []), (a, rest)
+    a, _ = _parse(N.make_parser(), ["--target", "20,-15"])
+    assert a.target == "20,-15"
+    # A real option after the flag is never taken for its value.
+    from mavlink_adapter_node import join_negative_xy as J
+    assert J(["--target", "--tag", "x"]) == ["--target", "--tag", "x"]
+    assert J(["--subject", "-5,3", "--target", "1,2"]) == ["--subject=-5,3", "--target", "1,2"]
+    # The pymavlink rail, through its own main().
+    try:
+        _, metrics, *_ = _fly_pymavlink_rail(["--shield", "off", "--subject", "-5.5,3"])
+    except SystemExit as e:
+        raise AssertionError(f"run_sitl_demo.py refused --subject -5.5,3 (exit {e.code})")
+    assert (metrics["subject"]["x"], metrics["subject"]["y"]) == (-5.5, 3.0), metrics["subject"]
+
+
+def test_the_shield_node_routes_mode_requests_to_the_adapter_by_name():
+    """bh_final sitl-ros2/mode-request-fallback-dead-under-bag: rosbag2
+    subscribes to /shield/mode_request in every recorded run, so 'any
+    subscriber' could never fall back to MAVROS with the adapter down."""
+    N = _node()
+    assert N.adapter_listening(["mavlink_adapter"])
+    assert N.adapter_listening(["rosbag2_recorder", "mavlink_adapter"])
+    assert not N.adapter_listening(["rosbag2_recorder"])
+    assert not N.adapter_listening([])
+    import mavlink_adapter_node as A
+    assert A.ADAPTER_NODE_NAME == "mavlink_adapter"
+    src = (SITL / "mavlink_adapter_node.py").read_text(encoding="utf-8")
+    assert "super().__init__(ADAPTER_NODE_NAME)" in src
+
+
+def test_the_shield_node_watches_the_pose_stream_with_its_own_timeout():
+    """bh_final sitl-ros2/frozen-pose-undetected: a pose that stopped was
+    re-checked every tick and nothing said so. The node now runs a second
+    watchdog on the pose; its default sits under the Shield's lookahead, so
+    the hold comes while the forecast from the last pose still covers the
+    path, and above the 0.6-0.7 s simulator stall seen on ros2if_on_dyn_yaw."""
+    N = _node()
+    assert 0.7 < N.POSE_TIMEOUT_S < N.LOOKAHEAD_S
+    a, _ = _parse(N.make_parser(), [])
+    assert a.pose_timeout_s == N.POSE_TIMEOUT_S
+    w = N.ActionWatchdog(a.pose_timeout_s, what="pose")
+    w.start(0.0)
+    for t in (0.1, 0.2, 0.3):
+        w.received(t)
+        assert w.check(t) is None
+    assert w.check(1.25) is None and w.check(1.35) == "stale"
+    assert abs(w.age(1.35) - 1.05) < 1e-9 and w.stale
+    w.received(1.4)
+    assert w.check(1.4) == "resumed" and not w.stale
+    try:
+        N.ActionWatchdog(0.0, what="pose")
+    except ValueError as e:
+        assert "pose timeout" in str(e), e
+    else:
+        raise AssertionError("a zero pose timeout was accepted")
+
+
 def test_the_pymavlink_rail_writes_each_generations_cost_map_when_asked():
     """--cost-map: every generation's CSP names its map, both files are on
     disk and load as that map, and the replay bundle carries them and still

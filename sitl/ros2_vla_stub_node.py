@@ -49,7 +49,8 @@ from guardrail.compiler import ConstraintCompiler              # noqa: E402
 from guardrail.frames import to_body                           # noqa: E402
 from guardrail.manifest import collect_host_evidence           # noqa: E402
 from guardrail.vla_stub import StubVLA                         # noqa: E402
-from mavlink_adapter_node import heading_deg_from_enu_quaternion  # noqa: E402
+from mavlink_adapter_node import (XYArgumentParser,            # noqa: E402
+                                  heading_deg_from_enu_quaternion)
 
 MODEL_ID = "guardrail.vla_stub.StubVLA"
 
@@ -81,7 +82,9 @@ def identity_record(policy, source: dict, mission, *, yaw_rate: float,
 
 
 def make_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser()
+    # `--target -20,15` (negative X) parses as a value instead of exiting
+    # with status 2 (mavlink_adapter_node.join_negative_xy).
+    ap = XYArgumentParser()
     ap.add_argument("--policy", default=None)
     ap.add_argument("--bundle", default=None)
     ap.add_argument("--allow-unverified-bundle", action="store_true")

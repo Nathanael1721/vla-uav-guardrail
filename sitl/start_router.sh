@@ -31,8 +31,24 @@ SITL_PORT="${SITL_ROUTER_PORT:-14550}"
 MAVROS_PORT="${MAVROS_UDP_PORT:-14555}"
 GCS_PORT="${GCS_UDP_PORT:-14550}"
 CONF="$RUN/mavlink-router.conf"
+for p in "$SITL_PORT" "$MAVROS_PORT" "$GCS_PORT"; do
+  [[ "$p" =~ ^[0-9]+$ ]] || { echo "router: port '$p' is not a number"; exit 64; }
+done
+# Each endpoint's Port line is set within its own section. Until 2026-10-19
+# only the mavros one was (`s/^Port = 14555/...`): SITL_ROUTER_PORT and
+# GCS_UDP_PORT reached the banner and the MAVProxy fallback but not
+# mavlink-routerd, which kept 14550 for both, so SITL sent to a port nobody
+# listened on while the banner named it. main.conf keeps its literal ports.
 sed -e "s/@GCS_HOST@/$GCS_HOST/" -e "s/@MAVROS_HOST@/$MAVROS_HOST/" \
-    -e "s/^Port = 14555/Port = $MAVROS_PORT/" "$DIR/mavlink-router/main.conf" > "$CONF"
+    -e "/^\[UdpEndpoint sitl\]/,/^\[/ s/^Port = .*/Port = $SITL_PORT/" \
+    -e "/^\[UdpEndpoint mavros\]/,/^\[/ s/^Port = .*/Port = $MAVROS_PORT/" \
+    -e "/^\[UdpEndpoint mission_planner\]/,/^\[/ s/^Port = .*/Port = $GCS_PORT/" \
+    "$DIR/mavlink-router/main.conf" > "$CONF"
+for want in "sitl $SITL_PORT" "mavros $MAVROS_PORT" "mission_planner $GCS_PORT"; do
+  sec="${want% *}" port="${want##* }"
+  sed -n "/^\[UdpEndpoint $sec\]/,/^\[/p" "$CONF" | grep -x "Port = $port" > /dev/null \
+    || { echo "router: $CONF does not give endpoint $sec port $port"; exit 65; }
+done
 
 echo "router: SITL udp:$SITL_PORT -> MAVROS $MAVROS_HOST:$MAVROS_PORT + GCS $GCS_HOST:$GCS_PORT"
 if command -v mavlink-routerd > /dev/null 2>&1; then

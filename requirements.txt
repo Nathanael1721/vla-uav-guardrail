@@ -7,6 +7,8 @@
 # pins, by interpreter: 1.26.4 for Python 3.10, which is what the vla-real
 # OpenVLA env runs and keeps re-pinned (docs/DESIGN-python-versions.md), and
 # 2.4.6 for 3.11+, what vla-drone and pas run (numpy 2.4 requires 3.11).
+# The two Docker images keep numpy 1.26.4 (ROS Jazzy's Ubuntu numpy; the VLA
+# stack needs 1.x) and drop these numpy lines at build (deploy/README.md).
 pydantic>=2,<3
 pyyaml
 shapely==2.1.2
