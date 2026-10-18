@@ -86,6 +86,77 @@ def test_an_accepted_event_is_recorded_as_a_generation_with_its_latency():
     assert hot.refuse_when() == "over"
 
 
+def test_a_failed_record_write_still_counts_the_event_and_runs_after():
+    """2026-10-19 bug hunt: the generation record was written first, so a
+    write that raised (a full or locked disk) skipped the bookkeeping and the
+    `after` hook - on the ROS node, the fence re-publication - while the
+    Shield already flew the new zone. Shown failing on 1b95383: `after` never
+    ran, n_applied 0, live_from {}."""
+    sh, rec, d = _flying()
+    seen = []
+    hot = A.FlightHotApply(sh, rec, threading.RLock(), mission_t=lambda: 2.0,
+                           after=lambda res, t: seen.append((res["applied"], t)))
+
+    def disk_full(*a, **kw):
+        raise OSError(28, "No space left on device")
+    rec.write_generation = disk_full
+    res = A.apply_dynamic_nfz(sh, dict(ZONE))
+    try:
+        hot.on_applied(res, received_ns=0, applied_ns=1_000_000)
+    except OSError:
+        pass                             # re-raised: build_app's call() logs it
+    else:
+        raise AssertionError("a failed record write was swallowed, not re-raised")
+    assert seen == [("nfz-rest", 2.0)], "the fences did not follow the swap"
+    s = hot.summary()
+    assert s["n_applied"] == 1 and s["n_record_failed"] == 1, s
+    assert "OSError" in s["events"][0]["record_failed"], s["events"]
+    assert hot.live_from == {"nfz-rest": 2.0}
+    # With nothing failing, nothing is marked.
+    sh2, rec2, _ = _flying()
+    hot2 = A.FlightHotApply(sh2, rec2, threading.RLock(), mission_t=lambda: 1.0)
+    hot2.on_applied(A.apply_dynamic_nfz(sh2, dict(ZONE)), received_ns=0, applied_ns=0)
+    s2 = hot2.summary()
+    assert s2["n_record_failed"] == 0 and "record_failed" not in s2["events"][0], s2
+
+
+def test_the_listener_record_names_the_allow_list_the_gate_enforces():
+    """2026-10-19 bug hunt: with --hotapply-pki and no --hotapply-client the
+    listener admitted only harness-client, but its hot_apply_listener event
+    and metrics endpoint said allowed_clients null (read: any client of the
+    CA). Shown failing on 1b95383 (None)."""
+    try:
+        import uvicorn  # noqa: F401
+        from guardrail import harness_service as H
+        H._crypto()
+    except Exception:                                   # noqa: BLE001
+        return SKIP
+    pki = Path(tempfile.mkdtemp(prefix="pki_"))
+    H.generate_pki(pki)
+    for given, want in ((None, ["harness-client"]),
+                        (["ops", "harness-client", "ops"], ["harness-client", "ops"])):
+        sh, rec, d = _flying()
+        hot = A.FlightHotApply(sh, rec, threading.RLock(), mission_t=lambda: None)
+        th = hot.start("127.0.0.1", _free_port(), pki_dir=pki, allowed_clients=given)
+        try:
+            assert hot.endpoint["allowed_clients"] == want, hot.endpoint
+            assert th.allowed_clients == want, th.allowed_clients
+            assert hot.summary()["endpoint"]["allowed_clients"] == want
+            ev = [json.loads(x) for x in (d / "events.jsonl").read_text(
+                encoding="utf-8").splitlines() if '"hot_apply_listener"' in x]
+            assert ev and ev[0]["allowed_clients"] == want and ev[0]["mutual_tls"], ev
+        finally:
+            hot.close("test over")
+    # Plaintext (loopback) has no client identity to list.
+    sh, rec, d = _flying()
+    hot = A.FlightHotApply(sh, rec, threading.RLock(), mission_t=lambda: None)
+    hot.start("127.0.0.1", _free_port())
+    try:
+        assert hot.endpoint["allowed_clients"] is None and not hot.endpoint["mutual_tls"]
+    finally:
+        hot.close("test over")
+
+
 def test_the_app_runs_the_hook_under_the_callers_lock_and_refuses_when_told():
     sh, rec, d = _flying()
     lock = threading.RLock()

@@ -50,7 +50,13 @@ answer returned, 409 / 404 / 422 mapped as below; the session's InjectPolicy
 checks the endpoint flies that policy (GET /health). Only a loopback endpoint
 is accepted unless the server allows its host (`rest_hosts`,
 --allow-rest-host): the server makes the request, so an endpoint is a place a
-client can make the server send to. No proxy is used for it.
+client can make the server send to. No proxy is used for it. guardrail/api.py
+serves plaintext on loopback only and mutual TLS anywhere else, so an https
+endpoint needs the server's own REST TLS identity (`rest_pki_dir`,
+serve --rest-pki: the lab CA and a client certificate on the endpoint's
+allow-list, harness-client unless --rest-client names another); without one an
+https endpoint is refused at StartSession. The endpoint's server certificate
+must name the address the session uses (gen-pki --host, issue --server-host).
 
 TWO WAYS TO FLY AN EPISODE.
 
@@ -111,7 +117,10 @@ way: OPEN, with no call on it (StartEpisode, InjectPolicy, IssueTask, a
 session HotApply, a stream poll) for `session_idle_ttl_s` (default one hour)
 and no episode of it ARMED or RUNNING, it is stopped as StopSession would
 stop it, its event stream says `session_expired` first, and it stops
-counting against MAX_OPEN_SESSIONS.
+counting against MAX_OPEN_SESSIONS. StopSession lets a scheduled episode that
+is already flying finish and WAITS for it (at most one run_episode): that
+episode's telemetry rows, run events and `episode_ended` reach both streams
+before `session_stopped`, the last item of each, and StopResponse counts them.
 
 WHAT IT IS NOT
 
@@ -133,7 +142,8 @@ STATUS CODES (what a client can rely on)
 
     INVALID_ARGUMENT     the spec, cell, seed, arm, event, session request or
                          policy fails validation (pydantic's message is
-                         passed through); a REST 422
+                         passed through); a NaN or Infinity number in a
+                         HotApply body or EmitEvent payload; a REST 422
     NOT_FOUND            unknown scenario_id, cell, profile, episode, session,
                          policy file; a REST 404
     ALREADY_EXISTS       a REST 409 (a rule id already in use)
@@ -153,8 +163,11 @@ STATUS CODES (what a client can rely on)
                          stopped, or not bound to a REST endpoint for a
                          session HotApply; an injected bundle that does not
                          hash to `expected_hash`, or an endpoint flying
-                         another policy; a package or source file missing on
-                         the server
+                         another policy; an https endpoint this server has no
+                         TLS identity for, or one whose TLS handshake fails
+                         (certificate not the lab CA's, wrong host, ours
+                         refused); a package or source file missing on the
+                         server
     UNIMPLEMENTED        a hot-apply field the headless runner cannot carry;
                          the reserved SITL backend
     RESOURCE_EXHAUSTED   too many open episodes or sessions, events in one
@@ -599,7 +612,10 @@ class _Session:
     telemetry_dropped: int = 0
     stopped_at: float = 0.0
     idle_since: float = field(default_factory=time.monotonic)   # last call on it
-    cond: threading.Condition = field(default_factory=threading.Condition)
+    # Flights of its episodes (scheduled or live) that may still append rows
+    # or events: StopSession waits for 0 before `session_stopped`.
+    flying: int = 0
+    cond: threading.Condition = field(default_factory=threading.Condition)   # an RLock
 
 
 def _act4(a) -> dict:
@@ -683,7 +699,9 @@ class Harness:
                  library: str | Path | None = None,
                  manifest_base: dict | None = None,
                  armed_idle_ttl_s: float | None = None,
-                 rest_hosts=(), session_idle_ttl_s: float | None = None):
+                 rest_hosts=(), session_idle_ttl_s: float | None = None,
+                 rest_pki_dir: str | Path | None = None,
+                 rest_client_name: str = DEFAULT_CLIENT_CN):
         self.runs_dir = Path(runs_dir) if runs_dir else DEFAULT_RUNS_DIR
         self.armed_idle_ttl_s = float(ARMED_IDLE_TTL_S if armed_idle_ttl_s is None
                                       else armed_idle_ttl_s)
@@ -704,6 +722,26 @@ class Harness:
         self._sessions: dict[str, _Session] = {}
         # Hosts a session's REST endpoint may name besides loopback.
         self.rest_hosts = frozenset(rest_hosts or ())
+        # The identity this server presents to an https REST endpoint: the lab
+        # CA to trust it by, and a client certificate for its common-name
+        # allow-list (guardrail/api.py serves plaintext on loopback only and
+        # mutual TLS everywhere else). Until 2026-10-19 the forward had none,
+        # so an https endpoint - every rail's off-loopback hot-apply port -
+        # failed every call as UNAVAILABLE (CERTIFICATE_VERIFY_FAILED, or a
+        # dropped cert-less client), a code that tells a client to retry.
+        self.rest_client_name = None
+        self._rest_tls = None
+        if rest_pki_dir is not None:
+            import ssl
+            ca, cert, key = pki_paths(rest_pki_dir, rest_client_name)
+            for f in (ca, cert, key):
+                if not f.is_file():
+                    raise FileNotFoundError(
+                        f"{f} is missing: the REST client identity is written by "
+                        f"gen-pki (or issue --name {rest_client_name})")
+            ctx = ssl.create_default_context(cafile=str(ca))
+            ctx.load_cert_chain(str(cert), str(key))
+            self._rest_tls, self.rest_client_name = ctx, rest_client_name
         self._lock = threading.Lock()
         self._run_lock = threading.Lock()
 
@@ -1210,6 +1248,7 @@ class Harness:
         queued gets the episode, not an error. A live episode is let finish
         unpaced, and its bundle returned."""
         e = self._get(episode_id)
+        s = self._flight_session(e)          # before e.lock: self._lock is never taken under it
         with e.lock:
             self._expire_if_idle(e)
             if e.state == "ENDED":
@@ -1226,6 +1265,11 @@ class Harness:
             else:
                 e.state = "RUNNING"
                 queued = list(e.queued)
+                if s is not None:
+                    # Counted in the step that makes it RUNNING: a StopSession
+                    # either finds it ARMED (and fails it) or waits for it.
+                    with s.cond:
+                        s.flying += 1
         if flying_elsewhere:
             e.done.wait()            # set by _finish, whatever the flight's outcome
             with e.lock:
@@ -1234,6 +1278,14 @@ class Harness:
                     return e.result
                 raise HarnessError("FAILED_PRECONDITION",
                                    f"episode {episode_id} failed: {e.error}")
+        try:
+            return self._fly_scheduled(e, queued)
+        finally:
+            self._flight_over(s)
+
+    def _fly_scheduled(self, e: _Episode, queued: list[_Queued]) -> dict:
+        """end_episode's own flight: fly, close the episode, and append its
+        rows, run events and end (or its failure) to its session."""
         try:
             result, run = self._fly(e, queued)
             e.ticks_flown = len(run.rows)
@@ -1273,6 +1325,20 @@ class Harness:
     # ---- live episodes -------------------------------------------------- #
 
     def _live_loop(self, e: _Episode) -> None:
+        """A live episode's thread: _fly_live, counted as a flight of its
+        session. Counted before its first RUNNING check, so a StopSession
+        that has not failed it yet waits for every frame it appends (one is
+        appended outside e.lock) before `session_stopped`."""
+        s = self._flight_session(e)
+        if s is not None:
+            with s.cond:
+                s.flying += 1
+        try:
+            self._fly_live(e)
+        finally:
+            self._flight_over(s)
+
+    def _fly_live(self, e: _Episode) -> None:
         """Fly a live episode one tick at a time, paced at e.pace simulated
         seconds per wall second, then score and bundle it as EndEpisode
         would. Stops, unbundled, when its session stops."""
@@ -1342,6 +1408,21 @@ class Harness:
             raise HarnessError("NOT_FOUND", f"no session {session_id!r}")
         return s
 
+    def _flight_session(self, e: _Episode) -> _Session | None:
+        """The session an episode's flight appends to (None: it has none)."""
+        if not e.session_id:
+            return None
+        with self._lock:
+            return self._sessions.get(e.session_id)
+
+    @staticmethod
+    def _flight_over(s: _Session | None) -> None:
+        """A flight of `s` has appended all it will: StopSession may close."""
+        if s is not None:
+            with s.cond:
+                s.flying -= 1
+                s.cond.notify_all()
+
     def _open_session(self, session_id: str) -> _Session:
         """An OPEN session for a call on it (which counts as activity)."""
         s = self._session(session_id)
@@ -1372,12 +1453,13 @@ class Harness:
         now = time.monotonic() if now is None else now
         if not self._session_is_idle(s, now):
             return False
-        self._emit(s, "session_expired", "", {
+        # Emitted by stop_session only if THIS call stops it: two sweeps that
+        # both found it idle wrote session_expired (and session_stopped) twice.
+        self.stop_session(s.session_id, first=("session_expired", {
             "idle_s": round(now - s.idle_since, 3),
             "why": f"no call on the session for {self.session_idle_ttl_s:g} s (the "
                    f"server's limit) and no episode of it armed or flying; stopped "
-                   f"as StopSession would stop it"})
-        self.stop_session(s.session_id)
+                   f"as StopSession would stop it"}))
         return True
 
     def _emit(self, s: _Session, kind: str, episode_id: str, detail: dict) -> None:
@@ -1430,6 +1512,13 @@ class Harness:
             if len(v) > 256:
                 raise HarnessError("INVALID_ARGUMENT", f"{name} is longer than 256 characters")
         endpoint = check_endpoint(rest_endpoint, self.rest_hosts) if rest_endpoint else ""
+        if endpoint.lower().startswith("https:") and self._rest_tls is None:
+            # Refused here, not later as an UNAVAILABLE on every forward: a
+            # guardrail/api.py https endpoint requires a client certificate.
+            raise HarnessError("FAILED_PRECONDITION",
+                               f"rest_endpoint {endpoint} is https, and this server has no "
+                               f"TLS identity for it (serve --rest-pki: the lab CA and a "
+                               f"client certificate the endpoint's allow-list admits)")
         # Sessions left OPEN by clients that went away are stopped here,
         # before they are counted against MAX_OPEN_SESSIONS.
         now = time.monotonic()
@@ -1442,7 +1531,7 @@ class Harness:
                      seed=None if seed is None else int(seed), rest_endpoint=endpoint,
                      label=label, client=client)
         with self._lock:
-            open_n = sum(1 for x in self._sessions.values() if x.state == "OPEN")
+            open_n = sum(1 for x in self._sessions.values() if x.state != "STOPPED")
             if open_n >= MAX_OPEN_SESSIONS:
                 raise HarnessError("RESOURCE_EXHAUSTED", f"{open_n} sessions are open; stop "
                                                          f"some first")
@@ -1451,10 +1540,31 @@ class Harness:
                                               "airframe": airframe, "label": label})
         return self._session_ref(s)
 
-    def stop_session(self, session_id: str) -> dict:
+    def stop_session(self, session_id: str, *,
+                     first: tuple[str, dict] | None = None) -> dict:
+        """Fail the session's ARMED and live episodes, let a scheduled one
+        already flying finish, then end both streams with `session_stopped`
+        - after that flight's rows, run events and episode_ended, so it
+        blocks for the rest of the flight (at most one run_episode). Until
+        2026-10-19 the streams ended at once and that episode's items landed
+        after `session_stopped`, where no open stream delivered them. A call
+        that finds the session already stopping waits for it to stop. The
+        call that stops it emits `first` (kind, detail) before anything else
+        (the expiry's session_expired)."""
         s = self._session(session_id)
         closed = 0
-        if s.state == "OPEN":
+        with s.cond:
+            # Check and set under one lock: of two StopSessions, or a stop and
+            # an expiry sweep, one stops the session, once.
+            mine = s.state == "OPEN"
+            if mine:
+                s.state = "STOPPING"
+                if first is not None:
+                    self._emit(s, first[0], "", first[1])
+        if not mine:
+            with s.cond:
+                s.cond.wait_for(lambda: s.state == "STOPPED")
+        else:
             with self._lock:
                 eps = [self._episodes.get(i) for i in list(s.episodes)]
             for e in eps:
@@ -1471,6 +1581,10 @@ class Harness:
                         e.wake.set()
                         closed += 1
             with s.cond:
+                # Every flight of it has appended all it will (the failed
+                # live ones return at their next tick; the wait releases the
+                # lock they append under).
+                s.cond.wait_for(lambda: s.flying <= 0)
                 # The last event and the state change under one lock, so a
                 # stream cannot see STOPPED before it has seen the stop.
                 s.events.append({"session_id": s.session_id, "episode_id": "",
@@ -1600,13 +1714,23 @@ class Harness:
     def _rest(self, s: _Session, method: str, path: str, body: dict | None = None) -> dict:
         """One request to the session's REST endpoint, with no proxy (an
         environment proxy would otherwise see a loopback request), its
-        refusals mapped to gRPC codes."""
+        refusals mapped to gRPC codes. An https endpoint is reached with the
+        server's REST TLS identity (rest_pki_dir); a TLS failure that is a
+        configuration error (an endpoint certificate the lab CA did not sign
+        or that does not name the host, a TLS alert refusing ours) is
+        FAILED_PRECONDITION, not UNAVAILABLE: retrying cannot fix it. A common
+        name off the endpoint's allow-list is a connection reset (api.py's
+        gate aborts it), which the network can also cause: UNAVAILABLE."""
+        import ssl
         url = s.rest_endpoint + path
         data = None if body is None else json.dumps(body).encode("utf-8")
         req = urllib.request.Request(url, data=data, method=method,
                                      headers={"Content-Type": "application/json",
                                               "Accept": "application/json"})
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        handlers: list = [urllib.request.ProxyHandler({})]
+        if self._rest_tls is not None:      # replaces build_opener's default HTTPSHandler
+            handlers.append(urllib.request.HTTPSHandler(context=self._rest_tls))
+        opener = urllib.request.build_opener(*handlers)
         try:
             with opener.open(req, timeout=REST_TIMEOUT_S) as r:
                 raw = r.read()
@@ -1621,6 +1745,14 @@ class Harness:
             raise HarnessError(code, f"the REST endpoint refused it ({err.code} at {url}): "
                                      f"{detail}") from None
         except (urllib.error.URLError, OSError) as err:
+            why = err.reason if isinstance(err, urllib.error.URLError) else err
+            # An SSLEOFError (the peer just went away) may be the network, so
+            # it stays UNAVAILABLE; a verify failure or a TLS alert is not.
+            if isinstance(why, ssl.SSLError) and not isinstance(why, ssl.SSLEOFError):
+                raise HarnessError("FAILED_PRECONDITION",
+                                   f"the REST endpoint {url} failed the TLS handshake: {why} "
+                                   f"(its certificate must be the lab CA's and name the "
+                                   f"host; this server's must be on its allow-list)") from None
             raise HarnessError("UNAVAILABLE", f"the REST endpoint {url} did not answer: "
                                               f"{err}") from None
         try:
@@ -1665,17 +1797,18 @@ class Harness:
                     timeout: float) -> tuple[list[dict], int, bool]:
         """The session's events or telemetry from `index` on, waiting up to
         `timeout` for one to arrive. Returns (items, next index, finished):
-        finished once the session is stopped and nothing is left to send."""
+        finished once the session is STOPPED (not merely stopping: a flight
+        still appending) and nothing is left to send."""
         s = self._session(session_id)
         if s.state == "OPEN":
             s.idle_since = time.monotonic()          # a client is still reading it
         with s.cond:
             buf = s.events if which == "events" else s.telemetry
-            if index >= len(buf) and s.state == "OPEN":
+            if index >= len(buf) and s.state != "STOPPED":
                 s.cond.wait(timeout)
             items = buf[index:]
             nxt = index + len(items)
-            return list(items), nxt, s.state != "OPEN" and nxt >= len(buf)
+            return list(items), nxt, s.state == "STOPPED" and nxt >= len(buf)
 
     # ---- flying, scoring, the bundle ----------------------------------- #
 
@@ -1813,9 +1946,19 @@ class Harness:
 # gRPC: the servicer, credentials, the server
 # --------------------------------------------------------------------------- #
 
-def _struct_to_dict(msg) -> dict:
+def _struct_to_dict(msg, what: str = "body") -> dict:
+    """A google.protobuf.Struct as a dict. A NaN or Infinity number_value (a
+    proto3 double carries one, and Struct.update stores it without
+    complaint) makes json_format refuse the message with ValueError: that is
+    the client's input failing validation, INVALID_ARGUMENT, not a server
+    fault. Until 2026-10-19 it surfaced as INTERNAL."""
     M = _grpc_modules()
-    return M.json_format.MessageToDict(msg) if msg is not None else {}
+    if msg is None:
+        return {}
+    try:
+        return M.json_format.MessageToDict(msg)
+    except ValueError as e:
+        raise HarnessError("INVALID_ARGUMENT", f"{what}: {e}") from None
 
 
 _BACKEND_NAME = {0: "headless", 1: "headless", 2: "sitl"}
@@ -1911,7 +2054,7 @@ class StressHarnessServicer:
 
         def run(_client):
             ack = self.harness.hot_apply(request.episode_id, request.at_sim_t,
-                                         _struct_to_dict(request.body),
+                                         _struct_to_dict(request.body, "body"),
                                          session_id=request.session_id, now=request.now)
             return pb.PolicyAck(**ack)
         return self._call(context, run)
@@ -1949,7 +2092,8 @@ class StressHarnessServicer:
 
         def run(_client):
             ack = self.harness.emit_event(request.episode_id, request.at_sim_t, request.type,
-                                          _struct_to_dict(request.payload), now=request.now)
+                                          _struct_to_dict(request.payload, "payload"),
+                                          now=request.now)
             return pb.EventAck(**ack)
         return self._call(context, run)
 
@@ -2359,6 +2503,15 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--allow-rest-host", action="append", default=None,
                    help="a host a session's REST endpoint may name besides loopback "
                         "(repeat)")
+    s.add_argument("--rest-pki", default=None,
+                   help="a gen-pki folder: the lab CA and the client certificate this "
+                        "server presents to an https REST endpoint (a rail's "
+                        "--hotapply-pki listener); without it only http endpoints bind")
+    s.add_argument("--rest-client", default=DEFAULT_CLIENT_CN,
+                   help=f"the client certificate name in --rest-pki (default "
+                        f"{DEFAULT_CLIENT_CN}; a dedicated one, e.g. issue --name "
+                        f"harness-forwarder allowed on the rail with --hotapply-client, "
+                        f"keeps gRPC clients from holding the rail's identity)")
     args = ap.parse_args(argv)
 
     try:
@@ -2384,7 +2537,9 @@ def main(argv: list[str] | None = None) -> int:
         srv = serve(Harness(runs_dir=args.runs, library=args.library,
                             armed_idle_ttl_s=args.armed_ttl,
                             session_idle_ttl_s=args.session_ttl,
-                            rest_hosts=tuple(args.allow_rest_host or ())), host=args.host,
+                            rest_hosts=tuple(args.allow_rest_host or ()),
+                            rest_pki_dir=args.rest_pki,
+                            rest_client_name=args.rest_client), host=args.host,
                     port=args.port, pki_dir=None if args.insecure else args.pki,
                     allowed_clients=tuple(args.allow_client or (DEFAULT_CLIENT_CN,)))
     except (HarnessUnavailable, FileExistsError, FileNotFoundError, ValueError,

@@ -250,8 +250,14 @@ def render_bundle(b) -> str:
 # --------------------------------------------------------------------------- #
 
 def _load_body(path: str) -> dict:
+    """A hot-apply body file. Every way it can be wrong raises OSError or
+    ValueError (yaml.YAMLError is not a ValueError: it is wrapped), so the
+    pre-flight block in main() answers "cannot start", exit 2."""
     import yaml
-    doc = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    try:
+        doc = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise ValueError(f"{path}: not valid JSON/YAML: {e}") from None
     if not isinstance(doc, dict):
         raise ValueError(f"{path}: a hot-apply body is one JSON/YAML object")
     return doc
@@ -297,17 +303,30 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("episode_id")
     args = ap.parse_args(argv)
 
+    # Every file and argument is read and checked HERE, before any call: a
+    # usage error is "cannot start" (exit 2), never a traceback with exit 1
+    # (which reads as a failed episode), and never a refusal after
+    # StartEpisode that leaves an episode ARMED. Until 2026-10-19 `forward`
+    # loaded its body inside the gRPC block (a missing file: traceback, exit
+    # 1), malformed YAML escaped as yaml.YAMLError, and an --event payload
+    # that was not an object failed in Struct.update after StartEpisode. The
+    # client is built last, so a refusal here leaves no channel open.
     try:
-        client = HarnessClient(args.target, insecure=args.insecure, pki_dir=args.pki,
-                               name=args.name, timeout=args.timeout)
+        fwd_body = _load_body(args.body_file) if args.cmd == "forward" else None
         hot = [(float(at), _load_body(p)) for at, p in args.hot_apply] \
             if args.cmd == "run" else []
         evs = [(float(at), t, json.loads(pl)) for at, t, pl in args.event] \
             if args.cmd == "run" else []
+        for _, t, pl in evs:
+            if pl is not None and not isinstance(pl, dict):     # null: no payload
+                raise ValueError(f"--event {t}: PAYLOAD_JSON must be a JSON object, "
+                                 f"got {type(pl).__name__}")
         if args.cmd == "run" and args.expected_hash and not args.policy_bundle:
             raise ValueError("--expected-hash goes with --policy-bundle")
         yml = (Path(args.scenario_file).read_text(encoding="utf-8")
                if args.cmd == "run" and args.scenario_file else "")
+        client = HarnessClient(args.target, insecure=args.insecure, pki_dir=args.pki,
+                               name=args.name, timeout=args.timeout)
     except (H.HarnessUnavailable, OSError, ValueError) as e:
         print(f"cannot start: {type(e).__name__}: {e}", file=sys.stderr)
         return 2
@@ -321,9 +340,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(st)
                 return 0
             if args.cmd == "forward":
-                body = _load_body(args.body_file)
                 session = client.start_session(rest_endpoint=args.rest_endpoint).session_id
-                ack = client.hot_apply("", 0.0, body, session_id=session)
+                ack = client.hot_apply("", 0.0, fwd_body, session_id=session)
                 print(f"forwarded to {ack.forwarded_to}: {ack.type} {ack.rule_id} "
                       f"({ack.op}), generation {ack.generation} {ack.policy_hash}")
                 client.stop_session(session)

@@ -37,8 +37,15 @@ What must hold, and how each test tries to break it:
     is reached on a synthetic scenario, and the sweep's own run is compared
     episode by episode.
   * Lifecycle: an idle ARMED episode expires and frees its slot; a second
-    EndEpisode waits for the flight in progress; the lab PKI defaults to a
-    folder outside the checkout and refuses a cloud-synced one.
+    EndEpisode waits for the flight in progress; StopSession waits for a
+    scheduled episode already flying, so its rows and end reach the streams
+    before `session_stopped`; the lab PKI defaults to a folder outside the
+    checkout and refuses a cloud-synced one.
+  * A session's REST forward speaks mutual TLS to an https endpoint (the
+    lab CA, a client certificate), and an https endpoint the server has no
+    identity for is refused at StartSession, not retried as UNAVAILABLE.
+  * A client's bad input is the client's error: a lat/lon that is not a
+    number, a NaN in a Struct, a bad body file for the client tool.
 
 The logic tests drive `Harness` directly, so they run without grpcio; tests
 that need grpcio (or cryptography) print SKIP where it is absent (never
@@ -846,6 +853,166 @@ def test_hot_apply_refusals_carry_the_rest_endpoints_codes_and_queue_nothing():
         [("spawn_polygon_fence", 1), ("deactivate_rule", 2)], list(b.applied_events)
 
 
+def test_a_lat_lon_that_is_not_a_number_is_invalid_argument_not_internal():
+    """2026-10-19 bug hunt: on an episode flying a policy with a frame, a
+    HotApply whose lat was "abc" or null raised a raw ValueError / TypeError
+    out of api._points (the dry run catches only api.ApiError), which the
+    servicer mapped to INTERNAL. The REST endpoint now refuses it with 422,
+    so the harness answers INVALID_ARGUMENT, and nothing is queued."""
+    h = _harness()
+    framed = OPEN.replace("policies/sim_demo_policy.yaml", "policies/wgs84_taipei.yaml")
+    eid = h.start_episode(scenario_yaml=framed)["episode_id"]
+    for bad in ("abc", None):
+        body = {"type": "dynamic_nfz", "id": "g", "vertices": [
+            {"lat": bad, "lon": 121.56}, {"lat": 25.041, "lon": 121.56},
+            {"lat": 25.041, "lon": 121.561}]}
+        code, why = _h_refused(h.hot_apply, eid, 3.0, body)
+        assert code == "INVALID_ARGUMENT" and "lat/lon must be numbers" in why, (code, why)
+    assert h.status(eid)["events"] == [], "a refused hot-apply was queued"
+    if _M is None:
+        return
+    with _server() as srv, _client(srv, insecure=True) as c:
+        eid = c.start_episode(scenario_yaml=framed).episode_id
+        code, why = _refused(c.hot_apply, eid, 3.0, {
+            "type": "dynamic_nfz", "id": "g", "vertices": [
+                {"lat": "abc", "lon": 121.56}, {"lat": 25.041, "lon": 121.56},
+                {"lat": 25.041, "lon": 121.561}]})
+        assert code == "INVALID_ARGUMENT", (code, why)
+
+
+def test_a_non_finite_number_in_a_struct_is_invalid_argument_not_internal():
+    """2026-10-19 bug hunt: a NaN or Infinity inside a HotApply body or an
+    EmitEvent payload (google.protobuf.Struct carries one) made json_format
+    raise ValueError in the servicer, answered INTERNAL - a client's bad
+    input read as a server fault. Shown failing on 1b95383 (INTERNAL
+    'ValueError: Fail to serialize NaN ...')."""
+    if _M is None:
+        return SKIP
+    nan, inf = float("nan"), float("inf")
+    with _server() as srv, _client(srv, insecure=True) as c:
+        eid = c.start_episode(scenario_yaml=OPEN).episode_id
+        inf_vertex = dict(ZONE, vertices=[{"x": inf, "y": -30}] + ZONE["vertices"][1:])
+        for body in (dict(ZONE, margin_m=nan), inf_vertex):
+            code, why = _refused(c.hot_apply, eid, 3.0, body)
+            assert code == "INVALID_ARGUMENT" and why.startswith("body:"), (code, why)
+        code, why = _refused(c.emit_event, eid, 3.0, "spawn_polygon_fence",
+                             {"width_m": nan, "height_m": 4})
+        assert code == "INVALID_ARGUMENT" and why.startswith("payload:"), (code, why)
+        assert list(c.status(eid).events) == [], "a refused event was queued"
+        # The finite body is still accepted: the refusal is the number, not the zone.
+        assert c.hot_apply(eid, 3.0, ZONE).validated_generation == 1
+
+
+class _TlsEndpoint:
+    """guardrail/api.py's /hot_apply and /health on a live Shield over MUTUAL
+    TLS, as api.serve_in_background serves every off-loopback rail (the lab
+    CA's server certificate, a client certificate required) - served by the
+    standard library, so this runs wherever cryptography does (no uvicorn).
+    Records the common name of each client that got through."""
+
+    def __init__(self, pki: Path, policy: str = "policies/sim_demo_policy.yaml"):
+        import ssl
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from guardrail import api, load_policy
+        from guardrail.shield import Shield
+        self.shield = Shield(load_policy(ROOT / policy), escalation=False)
+        self.peers: list = []
+        ep = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, status, doc):
+                data = json.dumps(doc).encode("utf-8")
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):
+                ep.peers.append(api.peer_common_name(self.connection.getpeercert()))
+                self._send(200, api.health(ep.shield))
+
+            def do_POST(self):
+                ep.peers.append(api.peer_common_name(self.connection.getpeercert()))
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                try:
+                    self._send(200, api.apply_event(ep.shield, body))
+                except api.ApiError as e:
+                    self._send(e.status, {"detail": e.detail})
+
+        ca, cert, key = H.pki_paths(pki, H.SERVER_CN)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(str(cert), str(key))
+        ctx.load_verify_locations(cafile=str(ca))
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.socket = ctx.wrap_socket(self.server.socket, server_side=True)
+        self.url = f"https://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def test_a_session_forwards_to_an_https_endpoint_over_mutual_tls():
+    """2026-10-19 bug hunt: the forward used a plain urllib opener - no lab CA,
+    no client certificate - while guardrail/api.py serves mutual TLS on every
+    address but loopback, so a session bound to a rail's https hot-apply port
+    (serve --allow-rest-host, the HIL layout) failed every InjectPolicy and
+    HotApply as UNAVAILABLE ('did not answer: CERTIFICATE_VERIFY_FAILED'), a
+    code that tells a client to retry. Shown failing on 1b95383 (the https
+    endpoint was accepted at StartSession and Harness took no rest_pki_dir)."""
+    try:
+        H._crypto()
+    except H.HarnessUnavailable:
+        return SKIP
+    from guardrail import load_policy
+    pki = _pki()
+    ep = _TlsEndpoint(pki)
+    try:
+        # No TLS identity: refused at StartSession, not later as UNAVAILABLE.
+        code, why = _h_refused(_harness().start_session, rest_endpoint=ep.url)
+        assert code == "FAILED_PRECONDITION" and "rest-pki" in why, (code, why)
+        h = _own_harness("rest_tls_", rest_pki_dir=pki)
+        assert h.rest_client_name == H.DEFAULT_CLIENT_CN
+        s = h.start_session(rest_endpoint=ep.url)["session_id"]
+        sim = load_policy(ROOT / "policies/sim_demo_policy.yaml")
+        ack = h.inject_policy(s, bundle_path="policies/sim_demo_policy.yaml",
+                              expected_hash=sim.policy_hash)
+        assert ack["endpoint_policy_hash"] == sim.policy_hash, ack
+        ack = h.hot_apply("", 0.0, ZONE, session_id=s)
+        assert ack["generation"] == 1 and ack["forwarded_to"] == ep.url + "/hot_apply", ack
+        assert ep.shield.policy.generation == 1
+        assert ep.peers == [H.DEFAULT_CLIENT_CN] * 2, ep.peers
+        # The endpoint's refusals still carry their codes over TLS.
+        assert _h_refused(h.hot_apply, "", 0.0, ZONE, session_id=s)[0] == "ALREADY_EXISTS"
+        # A TLS identity from another CA cannot verify the endpoint: a
+        # configuration error (FAILED_PRECONDITION), never a retryable
+        # UNAVAILABLE, and nothing reaches the Shield.
+        other = _tmpdir("rest_tls_other_")
+        H.generate_pki(other)
+        h2 = _own_harness("rest_tls2_", rest_pki_dir=other)
+        s2 = h2.start_session(rest_endpoint=ep.url)["session_id"]
+        code, why = _h_refused(h2.hot_apply, "", 0.0, FAR, session_id=s2)
+        assert code == "FAILED_PRECONDITION" and "CERTIFICATE_VERIFY_FAILED" in why, (code, why)
+        assert ep.shield.policy.generation == 1
+        # A folder without the client's files is refused when the server starts.
+        try:
+            _own_harness("rest_tls3_", rest_pki_dir=other, rest_client_name="nobody")
+        except FileNotFoundError as e:
+            assert "nobody.cert.pem" in str(e), e
+        else:
+            raise AssertionError("a REST identity with no certificate was accepted")
+        # Plain http on loopback needs no identity, as before.
+        assert h.start_session(rest_endpoint="http://127.0.0.1:9")["rest_endpoint"]
+    finally:
+        ep.close()
+
+
 def test_hot_applies_are_validated_in_flight_order():
     """run_episode applies events by at_sim_t (ties by arrival), so that is
     the order a hot-apply must be validated in. Before 9 Oct the dry run
@@ -1062,6 +1229,75 @@ def test_a_second_end_episode_waits_for_the_flight_in_progress():
                 assert isinstance(out[k], H.HarnessError) and \
                     out[k].code == "FAILED_PRECONDITION" and "no-zone" in out[k].message, out[k]
         assert e.waiters == 0 and h.status(eid)["state"] == ("ENDED" if ok else "FAILED")
+
+
+def test_stop_session_waits_for_a_flying_scheduled_episode_and_ends_the_streams_after_it():
+    """2026-10-19 bug hunt: StopSession lets a scheduled episode already flying
+    finish (harness.proto), but both streams ended at `session_stopped` at
+    once, and that episode's 300 rows, run events and episode_ended were
+    appended to the stopped session afterwards: no open stream delivered
+    them, and StopResponse did not count them. Shown failing on 1b95383 (the
+    stop returned while the flight was held; the live readers saw only
+    session_started, episode_started, session_stopped). The flight is held in
+    run_episode by taking the harness's run lock, so the stop surely lands
+    while it flies."""
+    h = _own_harness("stop_flying_")
+    s = h.start_session()["session_id"]
+    eid = h.start_episode(scenario_yaml=OPEN, session_id=s)["episode_id"]
+    got: dict = {"events": [], "telemetry": []}
+
+    def follow(which):
+        i, done = 0, False
+        while not done:
+            items, i, done = h.wait_stream(s, which, i, 0.05)
+            got[which].extend(items)
+
+    readers = [threading.Thread(target=follow, args=(w,), daemon=True) for w in got]
+    stops: list = []
+    h._run_lock.acquire()
+    try:
+        for r in readers:
+            r.start()
+        flier = threading.Thread(target=h.end_episode, args=(eid,), daemon=True)
+        flier.start()
+        deadline = time.monotonic() + 30
+        while h.status(eid)["state"] != "RUNNING" and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert h.status(eid)["state"] == "RUNNING"
+        # Two at once (and an expiry sweep would be a third): one stops it, once.
+        stoppers = [threading.Thread(target=lambda: stops.append(h.stop_session(s)),
+                                     daemon=True) for _ in range(2)]
+        for t in stoppers:
+            t.start()
+        time.sleep(0.3)
+        assert not stops, f"StopSession returned while the episode flew: {stops}"
+        assert all(r.is_alive() for r in readers), "a stream ended while the episode flew"
+        assert h._session(s).state == "STOPPING"
+        assert _h_refused(h.start_episode, scenario_yaml=OPEN, session_id=s)[0] == \
+            "FAILED_PRECONDITION"
+    finally:
+        h._run_lock.release()
+    for t in [flier, *stoppers, *readers]:
+        t.join(60)
+        assert not t.is_alive(), f"{t.name} did not finish"
+    kinds = [x["kind"] for x in got["events"]]
+    assert kinds[-1] == "session_stopped" and kinds.count("session_stopped") == 1, kinds
+    assert "episode_ended" in kinds, f"the flying episode's end never reached the stream: {kinds}"
+    assert h.status(eid)["state"] == "ENDED"
+    assert len(got["telemetry"]) == h.status(eid)["ticks_flown"] == 300, len(got["telemetry"])
+    assert len(stops) == 2 and all(x == stops[0] for x in stops), stops
+    assert stops[0]["events"] == len(kinds) and stops[0]["episodes_closed_unfinished"] == 0
+    assert stops[0]["telemetry_frames"] == len(got["telemetry"]), stops[0]
+    # A late subscriber sees the same, ending at the same place.
+    items, _, done = h.wait_stream(s, "events", 0, 0.1)
+    assert done and [x["kind"] for x in items] == kinds
+    # The null: with nothing flying, StopSession returns at once, stop last.
+    s2 = h.start_session()["session_id"]
+    t0 = time.monotonic()
+    h.stop_session(s2)
+    assert time.monotonic() - t0 < 1.0
+    items, _, done = h.wait_stream(s2, "events", 0, 0.1)
+    assert done and items[-1]["kind"] == "session_stopped", items
 
 
 def test_an_idle_armed_episode_expires_and_frees_its_slot():
@@ -1502,6 +1738,33 @@ def test_the_client_tool_prints_each_score_beside_its_null():
         rc, out, err = _tool("--target", srv.address, "--pki", str(_pki()), "--name",
                              "other-client", "status", "ep-x")
         assert rc == 2 and "REFUSED PERMISSION_DENIED" in err, (rc, err)
+
+
+def test_the_client_tool_refuses_a_bad_body_or_payload_before_any_call():
+    """2026-10-19 bug hunt: `forward` loaded its body inside the gRPC block,
+    so a missing or non-object file was a traceback with exit 1 - the code of
+    a failed episode, not of a client that could not start (2). Malformed
+    YAML escaped `run --hot-apply` the same way (yaml.YAMLError is not a
+    ValueError), and an --event payload that was not an object failed after
+    StartEpisode. Nothing listens on the target: each must be refused before
+    any call. Guarded by grpcio, because without it HarnessUnavailable also
+    exits 2 and the test would pass for the wrong reason."""
+    if _M is None:
+        return SKIP
+    d = _tmpdir("tool_bad_")
+    (d / "list.yaml").write_text("[1, 2]\n", encoding="utf-8")
+    (d / "broken.yaml").write_text("a: [1, 2\n", encoding="utf-8")
+    nowhere = ("--insecure", "--target", "127.0.0.1:1", "--timeout", "5")
+    for f in ("missing.json", "list.yaml", "broken.yaml"):
+        rc, out, err = _tool(*nowhere, "forward", "--rest-endpoint", "http://127.0.0.1:1",
+                             str(d / f))
+        assert rc == 2 and "cannot start" in err and "Traceback" not in err, (f, rc, err)
+    rc, out, err = _tool(*nowhere, "run", "--scenario", "x", "--hot-apply", "1",
+                         str(d / "broken.yaml"))
+    assert rc == 2 and "cannot start" in err, (rc, err)
+    rc, out, err = _tool(*nowhere, "run", "--scenario", "x", "--event", "1",
+                         "spawn_polygon_fence", "[1]")
+    assert rc == 2 and "cannot start" in err and "PAYLOAD_JSON" in err, (rc, err)
 
 
 if __name__ == "__main__":

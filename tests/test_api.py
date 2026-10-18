@@ -130,6 +130,66 @@ def test_a_lat_lon_zone_lands_in_the_policys_own_frame():
         {"lat": 25.001, "lon": 121.501}]}).status == 422
 
 
+BIG = "1" + "0" * 400                    # a JSON integer no float can hold
+
+
+def _geo_square(**first) -> list[dict]:
+    """Three WGS-84 vertices, the first overridden with `first`."""
+    return [{"lat": 25.04, "lon": 121.56, **first}, {"lat": 25.041, "lon": 121.56},
+            {"lat": 25.041, "lon": 121.561}]
+
+
+def test_a_lat_lon_that_is_not_a_number_is_a_422_not_a_crash():
+    """2026-10-19 bug hunt: on a policy with a frame, float() on a lat of
+    "abc" or null (or an integer too big for a float) raised out of the
+    handler, so FastAPI answered 500, the harness dry run INTERNAL and a
+    forwarded body a retryable UNAVAILABLE - for a client's mistake. Shown
+    failing on 1b95383 (raw ValueError / TypeError / OverflowError)."""
+    sh = _flying(WGS)
+    for bad in ("abc", None, int(BIG)):
+        e = _err(A.apply_dynamic_nfz, sh, {"id": "g", "vertices": _geo_square(lat=bad)})
+        assert e.status == 422 and "lat/lon must be numbers" in e.detail, e.detail
+        e = _err(A.apply_event, sh, {"type": "dynamic_nfz", "id": "g",
+                                     "vertices": _geo_square(lon=bad)})
+        assert e.status == 422, e.detail
+        e = _err(A.apply_corridor_swap, sh, {"id": "c", "target_id": "x", "width_m": 10,
+                                             "centerline": _geo_square(lat=bad)[:2]})
+        assert e.status == 422, e.detail
+        e = _err(A.apply_nfz_edit, sh, "g", {"op": "move", "vertices": _geo_square(lat=bad)})
+        assert e.status == 422, e.detail
+    A.apply_dynamic_nfz(sh, {"id": "g", "margin_m": 0.0, "vertices": _geo_square()})
+    for edit in ({"op": "translate", "dx": int(BIG)}, {"op": "rotate", "angle_deg": int(BIG)},
+                 {"op": "scale", "factor": int(BIG)}):
+        assert _err(A.apply_nfz_edit, sh, "g", edit).status == 422, edit
+    assert sh.policy.generation == 1                     # only the good spawn
+
+
+def test_routes_answer_422_for_a_lat_lon_that_is_not_a_number():
+    sh = _flying(WGS)
+    c = _client(sh)
+    if c is None:
+        return SKIP
+    body = {"id": "g", "vertices": _geo_square(lat="abc")}
+    for path, b in (("/dynamic_nfz", body), ("/hot_apply", {**body, "type": "dynamic_nfz"}),
+                    ("/corridor_swap", {"id": "c", "target_id": "x", "width_m": 10,
+                                        "centerline": _geo_square(lat=None)[:2]}),
+                    ("/hot_apply", {"type": "corridor_swap", "id": "c", "target_id": "x",
+                                    "width_m": 10, "centerline": _geo_square(lat=None)[:2]})):
+        r = c.post(path, json=b)
+        assert r.status_code == 422, (path, r.status_code, r.text)
+    # json= cannot carry a 400-digit integer; the raw body can.
+    raw = ('{"id": "g", "vertices": [{"lat": %s, "lon": 121.56}, {"lat": 25.041, '
+           '"lon": 121.56}, {"lat": 25.041, "lon": 121.561}]}' % BIG)
+    r = c.post("/dynamic_nfz", content=raw, headers={"Content-Type": "application/json"})
+    assert r.status_code == 422, (r.status_code, r.text[:200])
+    assert c.post("/dynamic_nfz", json={"id": "g", "margin_m": 0.0,
+                                        "vertices": _geo_square()}).status_code == 200
+    r = c.patch("/dynamic_nfz/g", content='{"op": "translate", "dx": %s}' % BIG,
+                headers={"Content-Type": "application/json"})
+    assert r.status_code == 422, (r.status_code, r.text[:200])
+    assert c.get("/health").json()["generation"] == 1
+
+
 def _layered_shield() -> Shield:
     """A hard regulation-layer zone merged with a mission layer, flying."""
     from guardrail.models import Policy, merge_layers
