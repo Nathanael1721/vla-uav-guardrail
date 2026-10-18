@@ -437,8 +437,16 @@ class AuditLogger:
                 "iterations": its[i] if its is not None else None}
                 for i, r in enumerate(decision.repairs)],
             "emitted_action": decision.emitted.model_dump(),
-            # What is still wrong with the action that was FLOWN. Empty is the
-            # good case; non-empty is a P0 escape, the grant's hard KPI.
+            # The Shield's re-check of `emitted_action` (the repair stack's
+            # output), of ANY priority: it also lists monitor_only rules and
+            # soft rules given up (`relaxed`), so filter on priority == "P0"
+            # for the grant's escape KPI. It is the FLOWN action only when the
+            # Shield is on and `fsm_setpoint` is "pass" (or null: no FSM). On
+            # "brake" a zero action flew, on "none" nothing did, and on a
+            # Shield-off run the raw action flew. The KPI's escape count comes
+            # from the rails' flown re-check (guardrail.replay.flown_fields),
+            # not from this file. (Until 2026-10-19 this comment called it the
+            # flown action and any non-empty list a P0 escape.)
             "emitted_violations": [violation(v) for v in decision.emitted_violations],
             "braked": decision.braked,
             "relaxed": list(decision.relaxed),

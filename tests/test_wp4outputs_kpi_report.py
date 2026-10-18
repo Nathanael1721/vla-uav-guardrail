@@ -455,9 +455,108 @@ def test_a_false_trigger_count_on_logs_without_fsm_state_is_vacuous():
     rows, prios = _breakdown_rows()
     r = K.rollup([K.compute(rows, prios, {"shield": "on"})])
     assert r["false_trigger_rate"] == 0.0 and "false_trigger_rate" in r["vacuous_zeros"]
-    with_fsm = [dict(x, fsm_state_before="Normal", fsm_state_after="Normal") for x in rows]
-    r2 = K.rollup([K.compute(with_fsm, prios, {"shield": "on"})])
-    assert r2["false_trigger_rate"] == 0.0 and "false_trigger_rate" not in r2["vacuous_zeros"]
+    assert r["vacuous_zeros"]["false_trigger_rate"].startswith("no escalation state")
+
+
+def _fsm_episode(rng, n=200):
+    """One episode of the REAL escalation FSM on random ticks - clean,
+    repaired (inside and over theta), blocked; hard, soft, kinematic and
+    monitor_only rules; every action; stop_illegal, RTL failed, home reached,
+    landed - logged the way every writer logs it: the row's `violations` are
+    the FSM's own input (shield._escalate, sweep_scenarios, both SITL rails)."""
+    from guardrail.fsm import ACTIONS, EscalationFSM, RepairMagnitude, RuleHit
+    rules = [("nfz", "hard", "P0", False), ("fence", "hard", "P0", False),
+             ("env", "soft", "P1", False), ("speed", "hard", "P1", True),
+             ("watch", "hard", "P2", False)]
+    # Mostly projections, so episodes live long enough to recover to Normal
+    # and trigger again; the stop and mode actions still fire.
+    weights = {"monitor_only": 1, "project_fix": 12, "brake": 3, "loiter": 1,
+               "RTL": 0.5, "land": 0.5}
+    f, rows, t = EscalationFSM(), [], 0.0
+    for _ in range(n):
+        t += 0.1
+        if f.summary()["terminal"]:
+            f = EscalationFSM()          # the next flight of the same log
+        st = f.state.value
+        hits = []
+        if rng.random() < 0.2:
+            for rid, ctype, prio, kin in rng.sample(rules, rng.randint(1, 2)):
+                act = ("monitor_only" if rid == "watch" else
+                       rng.choices(ACTIONS, [weights[a] for a in ACTIONS])[0])
+                hits.append(RuleHit(rid, act, ctype, prio, kinematic=kin))
+        if not any(h.effective_action != "monitor_only" for h in hits):
+            outcome, mag = "clean", None
+        elif rng.random() < 0.5:
+            outcome = "repaired"
+            mag = RepairMagnitude(rng.uniform(0.0, 3.0), rng.uniform(0.0, 0.8))
+        else:
+            outcome, mag = "blocked", None
+        o = f.tick(t, outcome, hits, mag, stop_illegal=rng.random() < 0.2,
+                   rtl_failed=st == "RTL" and rng.random() < 0.1,
+                   home_reached=st == "RTL" and rng.random() < 0.1,
+                   landed=st == "Land" and rng.random() < 0.2)
+        rows.append({
+            "t": round(t, 3), "raw": dict(A0, vx=4.0), "emitted": dict(A0, vx=4.0),
+            "violations": [{"rule_id": h.rule_id, "category": "geofence"} for h in hits],
+            "repairs": ([{"operator": "GeofenceSlide", "detail": ""}] if outcome == "repaired"
+                        else [{"operator": "Brake", "detail": ""}] if outcome == "blocked"
+                        else []),
+            "braked": outcome == "blocked", "emitted_violations": [],
+            "fsm_state_before": o.before.value, "fsm_state_after": o.state.value,
+            "setpoint": o.setpoint})
+    return rows, {r[0]: r[2] for r in rules}
+
+
+def test_the_tick_false_trigger_count_is_vacuous_on_fsm_logs_and_the_column_shows_the_labelled_one():
+    """REGRESSION (2026-10-19 review). compute() counts a false trigger on a
+    violation-free row whose FSM left Normal - and guardrail/fsm.py leaves
+    Normal only on an enforced violation, which every writer logs as the
+    row's `violations`. So the tick count is 0 by construction, FSM states
+    logged or not. rollup() flagged that 0 as vacuous only when NO log carried
+    FSM state, so every stress family printed a measured 0 False triggers
+    beside its labelled column (the stored nightly report: 195 such cells, 209
+    labelled false triggers). Here the real FSM drives 60 episodes; on the
+    pre-change tree the 0 is not in `vacuous_zeros` and the family cell
+    prints "0" where the labelled episodes hold 1 false trigger."""
+    import random
+    rng = random.Random(20261019)
+    eps, left_normal, clean = [], 0, 0
+    for _ in range(60):
+        rows, prios = _fsm_episode(rng)
+        for r in rows:
+            if r["fsm_state_before"] == "Normal" and r["fsm_state_after"] != "Normal":
+                left_normal += 1
+                assert r["violations"], ("the FSM left Normal on a clean tick", r)
+        k = K.compute(rows, prios, {"shield": "on"})
+        assert k["failsafe_instrumented"] is True
+        assert k["false_trigger_ticks"] == 0, k["false_trigger_ticks"]
+        clean += k["violation_free_ticks"]
+        eps.append(k)
+    # The FSM did trigger, often, and there were clean ticks to trigger on:
+    # the 0 below is not an empty sample.
+    assert left_normal > 50 and clean > 1000, (left_normal, clean)
+    r = K.rollup(eps)
+    assert r["false_trigger_rate"] == 0.0 and r["false_trigger_ticks"] == 0
+    why = r["vacuous_zeros"].get("false_trigger_rate") or ""
+    assert why.startswith("structurally 0"), r["vacuous_zeros"]
+    cell = KR._false_triggers(r)
+    assert cell == KR.VACUOUS["false_trigger_rate"], cell
+    # With labels (the stress harness's failsafe_triggered / matches_label):
+    # one fail-safe that fired when not expected, one that fired when
+    # expected, one correct non-trigger. The column shows the labelled count.
+    for e, (trig, match) in zip(eps, ((True, 0.0), (True, 1.0), (False, 1.0))):
+        e.update(failsafe_triggered=trig, failsafe_matches_label=match)
+    lab = K.rollup(eps)
+    assert lab["failsafe_labelled_episodes"]["false_triggers"] == 1
+    table = "\n".join(KR._family_table({"lab": lab, "unlab": r}))
+    row_lab = next(x for x in table.splitlines() if "`lab`" in x)
+    row_unlab = next(x for x in table.splitlines() if "`unlab`" in x)
+    assert row_lab.split("|")[6].strip() == "1 of 2 ep", row_lab
+    assert row_unlab.split("|")[6].strip() == KR.VACUOUS["false_trigger_rate"], row_unlab
+    # A non-zero tick count (a writer that logged other violations than the
+    # FSM saw) is shown as the logging fault it is, never hidden.
+    fault = dict(r, false_trigger_ticks=2, false_trigger_rate=0.001, vacuous_zeros={})
+    assert "logging fault" in KR._false_triggers(fault), KR._false_triggers(fault)
 
 
 # --------------------------------------------------------------------------- #
@@ -677,11 +776,68 @@ def test_the_3s_comparison_arm_is_its_own_family_row():
     assert KR.forecast_suffix({"kpi": {"forecast_arm": "3s"}}) == "/forecast-3s"
     assert KR.forecast_suffix({"forecast": {"arm": "3s", "grant_config": False}}) == "/forecast-3s"
     assert KR.forecast_suffix({"id": "nfz-head-on#canonical,forecast-3s"}) == "/forecast-3s"
-    assert KR.forecast_suffix({}, None) == ""
-    grant = KR._bundle_family({"template": "nfz"}, "nfz-head-on", {}, "on")
+    # Re-pinned 2026-10-19: no label at all is NOT the grant's configuration
+    # (every bundle before 2026-10-13 flew the 3 s forecast); the KPI table's
+    # own `forecast` dict is read too.
+    assert KR.forecast_suffix({}, None) == "/forecast-unlabelled"
+    assert KR.forecast_suffix({"kpi": {"forecast": {"arm": "grant"}}}) == ""
+    assert KR.forecast_suffix({"kpi": {"forecast": {"arm": "3s"}}}) == "/forecast-3s"
+    grant = KR._bundle_family({"template": "nfz", "forecast_arm": "grant"},
+                              "nfz-head-on", {}, "on")
     cmp_ = KR._bundle_family({"template": "nfz", "kpi": {"forecast_arm": "3s"}},
                              "nfz-head-on", {}, "on")
     assert cmp_ == grant + "/forecast-3s", (grant, cmp_)
+
+
+def test_an_unlabelled_or_open_loop_wind_bundle_is_not_filed_under_the_grant_row():
+    """REGRESSION (2026-10-19 review). forecast_suffix returned "" when it
+    found no label, which its own docstring defines as the grant's 5 s /
+    0.1 s, so every bundle written before the harness labelled its forecast
+    (2026-10-13) - flown on 3 s / 0.5 s and open-loop wind - took the grant
+    family's name; and no term read the wind model, so a `--wind-model
+    open_loop` comparison pooled with the guided rows. The pre-change tool
+    gives one family name for all three docs below."""
+    grant = {"template": "t", "forecast_arm": "grant", "kpi": {"wind_model": "guided"}}
+    legacy = {"template": "t"}
+    open_loop = {"template": "t", "forecast_arm": "grant",
+                 "kpi": {"wind_model": "open_loop"}}
+    names = [KR._bundle_family(d, "s", {}, "on") for d in (grant, legacy, open_loop)]
+    assert len(set(names)) == 3, names
+    assert names[0] == "stress-bundle/t/s/shield-on", names[0]
+    assert names[1].endswith("/forecast-unlabelled"), names[1]
+    assert names[2].endswith("/wind-open_loop"), names[2]
+    # The harness's episode_start event labels a stored table too.
+    start = {"type": "episode_start", "forecast": {"arm": "grant"}, "wind_model": "guided"}
+    assert KR._bundle_family(legacy, "s", {}, "on", start) == names[0]
+    assert KR.wind_suffix({}, None) == "" and KR.wind_suffix(
+        {"wind_model": "guided"}) == ""
+
+
+def test_the_repair_headline_is_built_from_the_counts_not_from_fixed_text():
+    """REGRESSION (2026-10-19 review). The headline said, as fixed text,
+    that theta "could not be applied ... because no log gives a repair size
+    in metres, and no rail logs RTL/Land" - written on 7 Oct, and false
+    beside its own counts for the FSM-instrumented flights of 13-14 Oct
+    (pas_ap_close_on: 25 ticks sized from the FSM record, 0 unsized, RTL
+    logged). The warning must stay where it is true."""
+    oc = {k: 0 for k in K.REPAIR_OUTCOMES}
+    new = {"kind": "flight", "arm": "on", "repair_attempt_ticks": 25,
+           "repair_success_ticks": 24, "repair_unmeasured_ticks": 0,
+           "repair_outcomes": dict(oc, converged=24, failsafe=1),
+           "repair_theta_unchecked_ticks": 0, "failsafe_instrumented": True,
+           "outcome": "RTL_triggered"}
+    h = " ".join(KR.headline([new]))
+    for stale in ("no rail logs RTL/Land", "no log gives a repair size",
+                  "NOT the grant's full test"):
+        assert stale not in h, (stale, h)
+    assert "none of the 24 converged ticks lacked a repair size" in h, h
+    assert "RTL/Land 1" in h and "1 of 1 logs could record" in h and "1 recorded one" in h, h
+    old = dict(new, repair_outcomes=dict(oc, converged=24, braked=1),
+               repair_theta_unchecked_ticks=5, failsafe_instrumented=False,
+               outcome="success")
+    h2 = " ".join(KR.headline([old]))
+    assert "NOT the grant's full test" in h2 and "could not be applied to 5 of the 24" in h2, h2
+    assert "0 of 1 logs could record" in h2 and "0 recorded one" in h2, h2
 
 
 def test_a_follow_the_rail_could_not_score_is_not_a_success():
