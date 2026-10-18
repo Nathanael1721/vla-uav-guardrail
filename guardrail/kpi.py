@@ -72,8 +72,10 @@ WHAT THE LOG HAS TO SAY, AND WHAT HAPPENS WHEN IT DOES NOT (2026-10-06 review)
     `fsm_state_after` with the states Normal / Brake / Loiter / RTL / Land
     (Safety Shield p5), and guardrail/fsm.py writes the same names. Those are
     what this file reads, at the top level of a row or nested under `fsm`. A
-    `failsafe` field is still accepted as an alias; no rail has ever written
-    either, which is why `failsafe_instrumented` is reported.
+    `failsafe` field is still accepted as an alias. The stress harness and
+    the Shield-on SITL rails have written `fsm_state_after` since 2026-10-07
+    (a Shield-off arm writes it as null: no FSM ran); older logs carry
+    neither, which is why `failsafe_instrumented` is reported.
   * The theta cap. The grant's "Converged? magnitude < theta?" (Safety Shield
     p3-p4, theta = 2.0 m lateral / 0.5 m vertical) needs a repair size in
     METRES. It is read from the FSM record's `theta_exceeded` when the row
@@ -111,9 +113,37 @@ SINCE 2026-10-12 (additive: no key changed meaning)
     PathRepair, and this Shield's extensions), with the sums rollup() pools
     (`repair_magnitude_by_priority`, `repair_magnitude_by_operator_class`).
   * rollup()'s `vacuous_zeros`: a 0 that counts an event which could not
-    happen (an escape rate with no P0 violation to escape, a false-trigger
-    count on logs with no escalation state) is named, so a report prints it
-    as vacuous rather than as a measured 0.
+    happen (an escape rate with no P0 violation to escape, the per-tick
+    false-trigger count, which is 0 by construction on every log) is named,
+    so a report prints it as vacuous rather than as a measured 0.
+
+SINCE 2026-10-19 (two keys changed meaning, one key added)
+
+  * `vacuous_zeros.false_trigger_rate` is listed on EVERY log whose
+    per-tick false-trigger rate is 0, with the reason for each case: a
+    stateless log cannot trigger on a clean tick, and an FSM-instrumented
+    one cannot either (guardrail/fsm.py leaves Normal only on an enforced
+    violation, and a row's violations are the FSM's input; compute(), "not
+    when not expected"). Until then it was listed only when no log carried
+    FSM state, so every stress family printed a measured 0. The grant's
+    false triggers are `failsafe_labelled_episodes.false_triggers`.
+  * `failsafe_instrumented` is decided by the VALUE of `fsm_state_after`,
+    not the key (`_instrumented`), so a Shield-off arm that logs
+    `fsm_state_after: null` (both SITL rails) now reads False. Stored
+    kpi.json files keep the value they were written with: tools/rescore_kpis
+    never overwrites a field that is present.
+  * `repair_floored_ticks` (added). Since 2026-10-19 the Shield FLOORS a
+    crawl out of a breach (Shield._floor_the_escape): from a position a
+    stop would leave illegal, a legal action that leaves too slowly is sped
+    up by the recovery floors, with nothing violated (`violations` [],
+    `emitted_violations` []) and the floors' repairs logged. Such a tick -
+    every repair a recovery floor or a kinematic clamp, none theta judges
+    (`_floored`) - is not a repair ATTEMPT: there was no violation to
+    repair, and read as one it re-checks clean and scores "converged", so
+    every crawl would raise the repair success rate. It is counted here
+    instead, and in the magnitude breakdown under its own `floored` level
+    rather than `unattributed`. `mean_repair_magnitude_mps` still includes
+    it (every tick that lists a repair, as replay bundles verify).
 """
 from __future__ import annotations
 
@@ -319,7 +349,8 @@ class _MagnitudeBreakdown:
     and per operator class, so rollup() can pool exactly.
 
     A tick is attributed to ONE priority, the highest among its violations (a
-    repaired tick with no violation at all is "unattributed"), and to EVERY
+    tick the Shield floored with nothing violated is "floored", `_floored`;
+    any other repaired tick with no violation is "unattributed"), and to EVERY
     operator class that acted on it: the tick's correction is the joint effect
     of its operators and cannot be split between them, so a class's mean is
     over the ticks it took part in, and `sole_*` over the ticks on which it
@@ -519,10 +550,23 @@ def _held(row: dict, ops: set[str]) -> bool:
 
 
 def _instrumented(rows: list[dict]) -> bool:
-    """Can this log record an escalation at all?"""
-    return any("fsm_state_after" in r or "failsafe" in r
-               or (isinstance(r.get("fsm"), dict) and "fsm_state_after" in r["fsm"])
-               for r in rows)
+    """Can this log record an escalation at all?
+
+    The VALUE decides, not the key. Both SITL rails write
+    `fsm_state_after: null` on the Shield-off arm to say that no FSM ran
+    (sitl/ros2_shield_node.py, demo/pas_ardupilot/perception_node.py;
+    docs/DESIGN-escalation-fsm.md, "the control arm records
+    `fsm_state_after: null`"), while the other two writers leave the key out
+    for the same fact. Read by key, those control arms scored as
+    instrumented and their 0 false triggers printed as measured
+    (pas_ap_close_off, pas_ap_video_off_20261014; 2026-10-19 review). Any
+    non-null `failsafe` alias counts, a string ("RTL") as much as a bool."""
+    def after(r: dict) -> bool:
+        if r.get("fsm_state_after") is not None:
+            return True
+        f = r.get("fsm")
+        return isinstance(f, dict) and f.get("fsm_state_after") is not None
+    return any(after(r) or r.get("failsafe") is not None for r in rows)
 
 
 def _arm(v: Any) -> str | None:
@@ -707,15 +751,60 @@ def _ops(row: dict) -> set[str]:
             if isinstance(r, dict)}
 
 
+def _floored(row: dict) -> bool:
+    """Did the Shield FLOOR a legal action on this tick, rather than repair a
+    violation?
+
+    Since 2026-10-19 the Shield runs its recovery floors on an action that
+    violates nothing when the POSITION is one a stop would leave illegal
+    (Shield._floor_the_escape: GeofenceEscape to min(2.0, cap),
+    StandoffRecover and the band operators to the rate that leaves in one
+    lookahead, with the speed and climb caps closing each pass). Before, a
+    crawl of 0.15 m/s out of a zone passed untouched unless an unrelated rule
+    happened to be broken. Such a tick logs the floors' repairs with
+    `violations` [] and `emitted_violations` [] (the floored action is flown
+    only if it re-checks clean against every rule).
+
+    Read as a repair attempt it is always "converged": it re-checks clean
+    and theta exempts recoveries. So every crawl would raise the repair
+    success rate - a grant KPI - with a success there was no violation to
+    earn, and its |emitted - raw| would sit in the magnitude breakdown as an
+    `unattributed` repair. A floored tick is therefore: the log says nothing
+    was violated and the re-check is clean (both lists present and empty -
+    a log that predates `emitted_violations` predates the floor too), and
+    every repair other than Brake is one theta does not judge (a recovery
+    floor, a kinematic clamp; `_theta_governs`). Judged with
+    stop_illegal=True, because the floor runs only where a stop is illegal.
+    A tick that also carries a projection theta judges is NOT floored: it
+    reshaped a legal action (the F1 review's corridor case,
+    CorridorAltitudeFix recovery=False, 4.55 m) and stays an attempt, where
+    theta can catch it."""
+    if not isinstance(row.get("violations"), list) or row["violations"]:
+        return False
+    if row.get("emitted_violations") != []:
+        return False
+    worked = [r for r in (row.get("repairs") or [])
+              if not (isinstance(r, dict) and r.get("operator") == "Brake")]
+    return bool(worked) and all(isinstance(r, dict) and not _theta_governs(r, True)
+                                for r in worked)
+
+
 def _repair_outcome(row: dict, priorities: dict[str, str], arm: str | None = None,
                     theta: tuple[float, float] | None = None,
                     caps: Any = None, horizon_s: float | None = None) -> str | None:
-    """Classify one tick's repair attempt; None if the Shield did not try, and
-    "not_applied" if it logged a repair that was never flown.
+    """Classify one tick's repair attempt; None if the Shield did not try,
+    "not_applied" if it logged a repair that was never flown, and "floored"
+    if it floored a legal action with nothing violated (`_floored`).
 
     An ATTEMPT is a tick whose log names a repair operator other than Brake,
     or that stopped or escalated on a tick with a violation. A tick with
-    violations and no repair is not an attempt.
+    violations and no repair is not an attempt, and neither is a floored
+    one (since 2026-10-19): there was nothing to repair, and it would score
+    "converged" on every crawl out of a breach. It is not an attempt
+    whatever the FSM did on it - a Brake hold through T_recover, or an
+    escalation on a clean tick, is not a repair that fell through, by the
+    same rule that keeps a stop on a clean tick out of the attempts. A
+    floored tick the Shield did not fly is "not_applied", as before.
 
     NOT APPLIED. The headless sweep's Shield-off arm logs the repairs the
     Shield WOULD have made and flies the raw action (sweep_scenarios.py:
@@ -734,9 +823,16 @@ def _repair_outcome(row: dict, priorities: dict[str, str], arm: str | None = Non
       failsafe        RTL / Land on this tick (`fsm_state_after`, the grant's
                       audit field; `failsafe` / `outcome_label` as aliases).
                       `failsafe_instrumented` says whether the log could record
-                      one at all - no rail does yet (WP3-07).
-      braked          the chain did not converge and the Shield stopped: the
-                      `braked` flag, a "Brake" repair, or FSM Brake / Loiter.
+                      one at all (False on logs that predate the FSM wiring of
+                      2026-10-07, and on a Shield-off arm).
+      braked          the Shield stopped: the `braked` flag, a "Brake" repair,
+                      or FSM Brake / Loiter. Usually the chain did not
+                      converge; a rule whose action is brake (or a soft rule
+                      capped at brake) is also answered by a stop, where a stop
+                      is legal, with projection skipped on purpose (shield.py's
+                      stop-rule branch), and lands here too. Whether that stop
+                      is a failed repair is a definition the PI has not ruled
+                      on; no shipped policy has such a rule.
       not_measurable  the row predates `emitted_violations`, so whether the
                       flown action was legal is unknown.
       residual_p0     the flown action still violated a P0 rule - an escape.
@@ -771,6 +867,8 @@ def _repair_outcome(row: dict, priorities: dict[str, str], arm: str | None = Non
         return "not_applied"
     if a is None and worked and not held and not esc and _flew_raw(row):
         return "not_applied"
+    if _floored(row):
+        return "floored"
     if esc:
         return "failsafe"
     if held:
@@ -828,7 +926,8 @@ def _repair_success(rows: list[dict], priorities: dict[str, str],
       recheck_and_theta_partial  some were checked, some carried no size;
       recheck_only_theta_not_applied  none of the theta-governed successes
                           carried a size: the rate is the Shield's own re-check
-                          and nothing else. Every delivered log is here today.
+                          and nothing else. Every flight log older than the
+                          FSM wiring (2026-10-07) is here.
 
     The re-check is the same `_check` that drives the repair, so a bug shared
     by both would read as success. `repairs_converged_while_unsafe` is the one
@@ -858,11 +957,14 @@ def _repair_success(rows: list[dict], priorities: dict[str, str],
     counts = {k: 0 for k in REPAIR_OUTCOMES}
     sources = {"fsm_record": 0, "magnitude_m": 0, "action_per_period": 0,
                "not_governed": 0, "no_magnitude": 0}
-    not_applied = standstill = while_unsafe = autopilot_not_applied = 0
+    not_applied = standstill = while_unsafe = autopilot_not_applied = floored = 0
     unsafe_known = any("unsafe" in r for r in rows)
     for r in rows:
         oc = _repair_outcome(r, priorities, arm, theta, caps, horizon_s)
         if oc is None:
+            continue
+        if oc == "floored":
+            floored += 1
             continue
         if oc == "not_applied":
             if _not_flown_by_shield(r):
@@ -909,6 +1011,10 @@ def _repair_success(rows: list[dict], priorities: dict[str, str],
         # as attempts: a repair the Shield logged but did not fly, or a
         # violation in an escalated state. Not attempts.
         "repair_not_applied_autopilot_ticks": autopilot_not_applied,
+        # Ticks the Shield FLOORED a legal action from an illegal position,
+        # with nothing violated (`_floored`, since 2026-10-19): not attempts,
+        # so a crawl out of a breach does not score as a converged repair.
+        "repair_floored_ticks": floored,
         "repairs_to_standstill": standstill,
         "repairs_converged_while_unsafe": while_unsafe if unsafe_known else None,
         "repair_success_basis": basis,
@@ -918,9 +1024,10 @@ def _repair_success(rows: list[dict], priorities: dict[str, str],
         # each repair's magnitude_m (the default); a number, |dv| x that.
         "repair_theta_horizon_s": horizon_s,
         "repair_theta_m": {"lateral": theta[0], "vertical": theta[1]},
-        # Can this log record an escalation at all? False on every artefact
-        # today, so `repair_outcomes["failsafe"] == 0` is "not instrumented",
-        # not "never happened".
+        # Can this log record an escalation at all? False on logs that
+        # predate the FSM wiring (2026-10-07) and on a Shield-off arm, where
+        # `repair_outcomes["failsafe"] == 0` is "not instrumented", not
+        # "never happened": check it before reading a 0 fail-safe count.
         "failsafe_instrumented": _instrumented(rows),
     }
 
@@ -1284,6 +1391,20 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
     # Normal -> Brake on any violation it cannot repair (Safety Shield p4), so
     # a brake there is permitted, not false. (The first version of this field
     # called it false; there were no such brakes to miscount.)
+    #
+    # On any log this repository writes the count is 0 BY CONSTRUCTION, FSM
+    # states logged or not (2026-10-19 review). guardrail/fsm.py leaves
+    # Normal only on an enforced violation (EscalationFSM._decide: a direct
+    # edge or `if violated`), and every writer logs the FSM's own input as
+    # the row's `violations` (shield._escalate's tick_input_from_decision;
+    # sweep_scenarios, both SITL rails). A stateless Shield brakes only on a
+    # violation. Measured: 0 of 285,940 violation-free FSM rows of the stored
+    # stress bundles left Normal, beside 445 episodes whose labelled
+    # fail-safe fired when not expected. So the figure is an invariant check,
+    # not a KPI: rollup() always lists a 0 in `vacuous_zeros`, a non-zero is
+    # a logging fault (the row's violations are not what the FSM saw), and
+    # the grant's false triggers are the LABELLED episodes'
+    # (`failsafe_labelled_episodes`).
     violation_free = permitted = false_trig = 0
     prev_state = "Normal"
     breakdown = _MagnitudeBreakdown()
@@ -1311,7 +1432,13 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
             else:
                 trans_mags.append(mag[0])
                 yaw_mags.append(mag[1])
-                breakdown.add(mag[0], governing_priority(vios, priorities), reps)
+                # A floored tick (`_floored`, since 2026-10-19) has no
+                # violation to take a priority from; it is the Shield's floor
+                # on a legal action, not an unattributed repair, and is
+                # counted under its own level so the P-levels and
+                # `unattributed` keep meaning what they did.
+                breakdown.add(mag[0], ("floored" if _floored(r) else
+                                       governing_priority(vios, priorities)), reps)
 
         levels = set()
         for v in vios:
@@ -1458,9 +1585,10 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
         # averaging ratios of different-sized denominators.
         "failsafe_expected_ticks": failsafe_expected,
         "failsafe_correct_ticks": failsafe_correct,
-        # The "not when not expected" half. A stateless Shield brakes only on a
-        # violation, so on its logs this is structurally 0; it becomes
-        # informative once the FSM's states are logged (fsm_state_before/after).
+        # The "not when not expected" half, per tick. Structurally 0 on every
+        # log this repository writes, with or without the FSM's states (see
+        # the loop above): an invariant check, never the grant's false
+        # triggers, which are rollup()'s `failsafe_labelled_episodes`.
         "violation_free_ticks": violation_free,
         "false_trigger_ticks": false_trig,
         "false_trigger_rate": (None if not violation_free else
@@ -1660,6 +1788,9 @@ def failure_categories(k: dict) -> list[str]:
     if sum(oc.get(x, 0) or 0 for x in _REPAIR_FELL_THROUGH):
         out.append("repair_fell_through")
     if (k.get("false_trigger_ticks") or 0) > 0:
+        # Cannot fire on a log this repository writes (compute(): the tick
+        # figure is structurally 0); a non-zero is a logging fault worth a
+        # row. The episode case is `failsafe_label_mismatch` below.
         out.append("false_fail_safe")
     fs = k.get("mission_outcome") or k.get("outcome")
     if fs in ("RTL_triggered", "Land_triggered"):
@@ -1852,6 +1983,7 @@ def rollup(episodes: list[dict]) -> dict[str, Any]:
     rs_basis = (None if not kinds else kinds.pop() if len(kinds) == 1
                 else "recheck_and_theta_partial")
     wu_eps = _carrying(rs_eps, "repairs_converged_while_unsafe")
+    fl_eps = _carrying(episodes, "repair_floored_ticks")
 
     # --- time to safe, pooled over unsafe episodes ---------------------------
     t_eps = [e for e in episodes if e.get("time_to_safe_not_measurable") is False]
@@ -1947,6 +2079,11 @@ def rollup(episodes: list[dict]) -> dict[str, Any]:
         "repair_success_basis": rs_basis,
         "repair_attempt_ticks": rs_att,
         "repair_success_ticks": rs_ok,
+        # Floored ticks (compute(), `_floored`), outside the attempts above.
+        # None when no episode carries the count: tables written before
+        # 2026-10-19, when the Shield did not floor a legal action.
+        "repair_floored_ticks": (sum(e["repair_floored_ticks"] for e in fl_eps)
+                                 if fl_eps else None),
         "repair_theta_unchecked_ticks": th_unchecked if th_eps else None,
         "repairs_converged_while_unsafe": (
             sum(e["repairs_converged_while_unsafe"] for e in wu_eps) if wu_eps else None),
@@ -2027,10 +2164,21 @@ def _vacuous_zeros(p0_rate, p0_ticks, ft_rate, instrumented: list[bool]) -> dict
                "so 0 says nothing about the Shield")
         out["p0_escape_rate"] = why
         out["null_passthrough_p0_escape_rate"] = why
-    if ft_rate == 0 and instrumented and not any(instrumented):
-        out["false_trigger_rate"] = ("no escalation state in any log: a stateless "
-                                     "Shield cannot trigger on a clean tick, so 0 "
-                                     "false triggers was never in question")
+    # The tick-level false-trigger 0 is vacuous on EVERY log, not only on a
+    # stateless one (compute(), "not when not expected"). Until 2026-10-19 it
+    # was listed only when no log carried FSM state, so the stress families -
+    # all FSM-instrumented - printed a measured 0 false triggers beside a
+    # labelled column of 0/3. The reason still says which case it is.
+    if ft_rate == 0:
+        out["false_trigger_rate"] = (
+            "structurally 0: the escalation FSM leaves Normal only on an enforced "
+            "violation (guardrail/fsm.py EscalationFSM._decide) and a row's "
+            "violations are its input, so no violation-free tick can trigger; the "
+            "grant's false triggers are the labelled episodes' "
+            "(failsafe_labelled_episodes.false_triggers)"
+            if any(instrumented) else
+            "no escalation state in any log: a stateless Shield cannot trigger on "
+            "a clean tick, so 0 false triggers was never in question")
     return out
 
 

@@ -490,8 +490,9 @@ def test_a_repair_into_a_hover_is_visible():
 
 
 def test_escalation_is_reported_as_not_instrumented_rather_than_never():
-    """No rail logs RTL/Land yet, so a 0 fail-safe count must come with the
-    flag that says the log could not have recorded one."""
+    """A log older than the FSM wiring (2026-10-07) cannot record RTL/Land,
+    so a 0 fail-safe count must come with the flag that says the log could
+    not have recorded one."""
     res = K.compute([_rep_row(0.0, "converged")], P0P1, {})
     assert res["repair_outcomes"]["failsafe"] == 0
     assert res["failsafe_instrumented"] is False, res
@@ -501,6 +502,30 @@ def test_escalation_is_reported_as_not_instrumented_rather_than_never():
     assert res["failsafe_instrumented"] is True
     assert res["repair_outcomes"]["failsafe"] == 1
     assert res["repair_success_rate"] == 0.5
+
+
+def test_a_shield_off_arm_logging_a_null_fsm_state_is_not_instrumented():
+    """REGRESSION (2026-10-19 review). Both SITL rails write
+    `fsm_state_after: null` on the Shield-off arm to say no FSM ran
+    (sitl/ros2_shield_node.py, demo/pas_ardupilot/perception_node.py).
+    `_instrumented` tested the KEY, so pas_ap_close_off scored
+    failsafe_instrumented True and its 0 false triggers read as measured:
+    the pre-change kpi.py gives True here and no vacuous reason."""
+    rows = [dict(_row(0.1 * i), fsm_state_after=None, setpoint=None)
+            for i in range(5)]
+    k = K.compute(rows, P0P1, {"shield": "off"})
+    assert k["failsafe_instrumented"] is False, k["failsafe_instrumented"]
+    assert k["false_trigger_rate"] == 0.0 and k["violation_free_ticks"] == 5, k
+    why = K.rollup([k])["vacuous_zeros"].get("false_trigger_rate") or ""
+    assert why.startswith("no escalation state"), why
+    nested = [dict(_row(0.0), fsm={"fsm_state_after": None})]
+    assert K.compute(nested, P0P1, {})["failsafe_instrumented"] is False
+    # Controls: a real state, top level or nested, and the string alias stay
+    # instrumented (the `failsafe="RTL"` case above is the third).
+    on = [dict(_row(0.0), fsm_state_before="Normal", fsm_state_after="Normal")]
+    assert K.compute(on, P0P1, {"shield": "on"})["failsafe_instrumented"] is True
+    nested_on = [dict(_row(0.0), fsm={"fsm_state_after": "Normal"})]
+    assert K.compute(nested_on, P0P1, {})["failsafe_instrumented"] is True
 
 
 # --------------------------------------------------------------------------- #
@@ -519,7 +544,10 @@ def test_a_brake_on_a_violation_free_tick_is_a_false_trigger():
     """"Triggered when expected, NOT WHEN NOT EXPECTED" (Stress Testing p6).
     A brake where the raw action broke no rule at all is the second half, and
     the field the replay bundles verify bit-for-bit must not move because of
-    it."""
+    it. The row is hand-made: no Shield or FSM of this repository emits it
+    (the tick figure is 0 by construction, guardrail/kpi.py compute()), so
+    this pins the invariant check's arithmetic, which a logging fault would
+    exercise."""
     rows = [_clean_brake(0.0), _row(0.1), _row(0.2)]
     res = K.compute(rows, P0P1, {})
     assert res["failsafe_trigger_correctness"] is None, "no P0 tick, nothing expected"
@@ -544,7 +572,10 @@ def test_a_brake_after_an_unrepairable_p1_violation_is_permitted_not_false():
 def test_an_fsm_state_held_through_t_recover_is_not_a_new_trigger():
     """With the FSM's record, a trigger is a move OUT of Normal. Staying in
     Brake after the violation clears is T_recover doing its job. The record can
-    sit at the top level of the row or nested under `fsm`."""
+    sit at the top level of the row or nested under `fsm`. (Row `a`, Normal ->
+    Brake on a violation-free tick, is hand-made: the real FSM never leaves
+    Normal without an enforced violation - tests/test_wp4outputs_kpi_report.py
+    drives it to show that.)"""
     a = dict(_row(0.0), fsm_state_before="Normal", fsm_state_after="Brake")
     b = dict(_row(0.1), fsm_state_before="Brake", fsm_state_after="Brake")
     c = dict(_row(0.2), fsm={"fsm_state_before": "Brake", "fsm_state_after": "Normal"})
@@ -1056,7 +1087,9 @@ def test_rollup_does_not_pool_a_missing_correctness_as_zero():
 
 def test_rollup_counts_false_triggers_when_there_are_some():
     """Mutation M25 (the rollup rate hard-coded to 0.0) survived every test:
-    the report's False triggers column could have been a constant."""
+    the pooled tick figure could have been a constant. (Hand-made rows; on a
+    real log the figure is 0 by construction and the report's False triggers
+    column shows the labelled episodes instead.)"""
     s = K.rollup([K.compute([_clean_brake(0.0), _row(0.1)], P0P1, {}),
                   K.compute([_row(0.0), _row(0.1)], P0P1, {})])
     assert s["false_trigger_ticks"] == 1, s
@@ -1340,6 +1373,87 @@ def test_a_rail_tick_that_flew_nothing_is_not_a_converged_repair():
                             fsm_state_before="Brake", fsm_state_after="Loiter",
                             mode="GUIDED")
     assert K._repair_outcome(hand, pri, "on") == "braked"
+
+
+def _floored_row(t, **kw):
+    """A tick Shield._floor_the_escape writes (since 2026-10-19): 1 m inside
+    a zone, leaving at 0.15 m/s, nothing violated; the recovery floor takes
+    it to 2.0 m/s and the speed cap closes the pass. The floored action
+    re-checks clean."""
+    r = _row(t, raw={"vx": -0.15}, em={"vx": -2.0})
+    r["repairs"] = [{"operator": "GeofenceEscape", "detail": "floor 2.0 m/s",
+                     "magnitude_m": 1.0, "axis": "lateral", "recovery": True},
+                    {"operator": "SpeedClamp", "detail": "cap 4.0 m/s"}]
+    r["unsafe"] = True
+    r.update(kw)
+    return r
+
+
+def test_a_floored_crawl_out_of_a_breach_is_not_a_repair_attempt():
+    """REGRESSION (F1 review, 2026-10-19). The Shield now FLOORS a crawl out
+    of a breach: from a position a stop would leave illegal, a legal action
+    that leaves too slowly is sped up by the recovery floors, with nothing
+    violated and the re-check clean. _repair_outcome counted any row with a
+    non-Brake repair as an attempt, so every floored tick scored as a
+    CONVERGED repair (theta exempts recoveries) and its |emitted - raw| sat
+    in the magnitude breakdown as `unattributed`. Here one real repair fails
+    (a P0 residual) beside three floored ticks: the pre-change kpi.py scores
+    repair success 3/4 = 0.75 for a Shield whose only repair failed; it is
+    0/1, and the three are counted in `repair_floored_ticks`."""
+    pri = {"r": "P0"}
+    fl = _floored_row(0.0)
+    assert K._floored(fl) and K._repair_outcome(fl, pri, "on") == "floored"
+    failed = _row(0.1, raw={"vx": 3.0}, em={"vx": 1.0}, vio=True, reps=1)
+    failed["emitted_violations"] = [{"rule_id": "r", "category": "fence"}]
+    rows = [failed] + [_floored_row(0.2 + 0.1 * i) for i in range(3)]
+    k = K.compute(rows, pri, {"shield": "on"})
+    assert k["repair_attempt_ticks"] == 1 and k["repair_floored_ticks"] == 3, k
+    assert k["repair_success_rate"] == 0.0, k["repair_success_rate"]
+    assert k["repair_outcomes"]["converged"] == 0, k["repair_outcomes"]
+    # The magnitude: still every tick that lists a repair (replay bundles
+    # verify the mean), but the floors are under their own level.
+    assert k["repaired_ticks"] == 4, k["repaired_ticks"]
+    lv = k["repair_magnitude_by_priority"]
+    assert lv["floored"]["ticks"] == 3 and abs(lv["floored"]["mean_mps"] - 1.85) < 1e-6, lv
+    assert lv["unattributed"]["ticks"] == 0 and lv["P0"]["ticks"] == 1, lv
+    # Floors alone: the Shield repaired nothing, which is not a 1.0.
+    only = K.compute([_floored_row(0.1 * i) for i in range(5)], pri, {"shield": "on"})
+    assert only["repair_success_status"] == "no_repairs_attempted", only["repair_success_status"]
+    assert only["repair_success_rate"] is None and only["repair_floored_ticks"] == 5, only
+    # Not an attempt whatever the FSM did on the clean tick: a Brake hold
+    # through T_recover, or an escalation, is not a repair that fell through.
+    for fsm in ({"setpoint": "brake", "fsm_state_after": "Brake"},
+                {"fsm_state_before": "Loiter", "fsm_state_after": "RTL",
+                 "setpoint": "brake"}):
+        assert K._repair_outcome(_floored_row(0.0, **fsm), pri, "on") == "floored", fsm
+    # A floor the Shield did not fly is "not applied", as before: the
+    # control arm, or the autopilot's tick.
+    assert K._repair_outcome(fl, pri, "off") == "not_applied"
+    assert K._repair_outcome(_floored_row(0.0, flown=False, setpoint="none"),
+                             pri, "on") == "not_applied"
+    # NOT floored, and still an attempt:
+    #  * a projection theta judges on the same tick (the F1 review's corridor
+    #    case: CorridorAltitudeFix, recovery False, 4.55 m vertical) - it
+    #    reshaped a legal action, and theta must be able to catch it;
+    proj = _floored_row(0.0)
+    proj["repairs"] = proj["repairs"] + [{"operator": "CorridorAltitudeFix",
+                                          "magnitude_m": 4.55, "axis": "vertical"}]
+    assert not K._floored(proj)
+    assert K._repair_outcome(proj, pri, "on") == "converged_over_theta"
+    #  * a row that does not say its re-check was clean (a log older than
+    #    `emitted_violations`, which is older than the floor);
+    legacy = {k: v for k, v in _floored_row(0.0).items() if k != "emitted_violations"}
+    assert not K._floored(legacy) and K._repair_outcome(legacy, pri, "on") == "not_measurable"
+    #  * a tick with a violation is a repair, recovery or not.
+    vio = _floored_row(0.0, violations=[{"rule_id": "r", "category": "fence"}])
+    assert not K._floored(vio) and K._repair_outcome(vio, pri, "on") == "converged"
+    # rollup() pools the count, and says None - not 0 - for tables written
+    # before the field existed.
+    r = K.rollup([k, only])
+    assert r["repair_floored_ticks"] == 8 and r["repair_attempt_ticks"] == 1, r
+    assert r["mean_repair_magnitude_by_priority"]["floored"]["ticks"] == 8, r
+    old = {f: v for f, v in k.items() if f != "repair_floored_ticks"}
+    assert K.rollup([old])["repair_floored_ticks"] is None
 
 
 def test_both_rails_divide_the_escape_rate_by_the_ticks_the_shield_flew():

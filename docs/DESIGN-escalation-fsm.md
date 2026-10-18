@@ -407,7 +407,7 @@ never presented as a contract term. One transition per tick at most.
 |---|---|---|---|---|
 | G1 | Normal → Brake | enforced violation, repair converged, magnitude ≤ θ | – | grant p4 |
 | G2 | Brake → Loiter | ≥ N hard-rule onsets within the last T s | LOITER | grant p4 |
-| G3 | Brake → Loiter | a hard, non-kinematic `project_fix` rule's repair is over θ, or did not converge | LOITER | grant p4 (diagram + conservative cap) |
+| G3 | Brake → Loiter | a hard, non-kinematic `project_fix` rule's repair is over θ, or did not converge; not on a tick whose strongest action is `brake` where a stop is legal (the Shield skipped projection, so that rule was never projected; since 2026-10-19) | LOITER | grant p4 (diagram + conservative cap) |
 | G4 | Loiter → RTL | ≥ N new hard onsets within T, counted from Loiter entry | RTL | grant p4 |
 | G5 | Loiter → RTL | time in Loiter ≥ `loiter_timeout_s` | RTL | grant p4 ("operator-defined timeout") |
 | G6 | RTL → Land | autopilot side reports `rtl_failed` | LAND | grant p4 |
@@ -841,7 +841,12 @@ changes in three ways:
    direct fail-safe skip projection entirely"), and return `braked=True,
    emitted=BRAKE`. If one is `brake`, return BRAKE without projecting. (The
    FSM keeps a hard `brake` rule in Brake however long it stays blocked; that
-   is pinned by a test.)
+   is pinned by a test. Since 2026-10-19 it also stays in Brake when a hard
+   `project_fix` rule is violated beside the `brake` rule where a stop is
+   legal: that rule was never projected, so the blocked tick is not an
+   untrusted repair and does not take G3. Before, a soft P1 brake envelope
+   beside a hard NFZ took the aircraft to LOITER. Pinned by tests too, with
+   the stop-illegal control, where the chain does run and G3 still fires.)
 2. **Report the position correction per operator.** Add
    `magnitude_m: float | None = None`,
    `axis: Literal["lateral", "vertical"] | None = None` and

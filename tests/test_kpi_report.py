@@ -589,17 +589,23 @@ def test_an_unresolvable_policy_does_not_count_every_rule_as_p0():
 
 
 def _bundle(root: Path, name: str, *, sid, template, params, seed, shield, kpi,
-            code="abc123", policy_hash="sha256:" + "a" * 64) -> Path:
+            code="abc123", policy_hash="sha256:" + "a" * 64,
+            forecast_arm="grant") -> Path:
+    """A stress bundle as the harness writes it. Labelled with the grant's
+    forecast by default (top-level `forecast_arm`, since 2026-10-13); pass
+    forecast_arm=None for a bundle written before the label existed."""
     d = root / name
     d.mkdir(parents=True)
     (d / "manifest.json").write_text(json.dumps({
         "code_revision": code, "vla_model_hash": "pilot", "policy_hash": policy_hash,
         "random_seed": seed, "sim_speedup": 300.0, "topology": "headless-kinematic"}),
         encoding="utf-8")
-    (d / "kpi.json").write_text(json.dumps({
-        "id": KR_cell(sid, params), "scenario_id": sid, "template": template,
-        "params": params, "seed": seed, "status": "pass", "kpi_grade": False,
-        "kpi": kpi}), encoding="utf-8")
+    doc = {"id": KR_cell(sid, params), "scenario_id": sid, "template": template,
+           "params": params, "seed": seed, "status": "pass", "kpi_grade": False,
+           "kpi": kpi}
+    if forecast_arm is not None:
+        doc["forecast_arm"] = forecast_arm
+    (d / "kpi.json").write_text(json.dumps(doc), encoding="utf-8")
     (d / "harness_events.jsonl").write_text(json.dumps(
         {"t": 0.0, "type": "episode_start", "scenario_id": sid, "seed": seed,
          "shield": shield}) + "\n", encoding="utf-8")
@@ -677,6 +683,41 @@ def test_a_bundle_flown_twice_counts_once():
         rep = KR.build_report([str(Path(td) / "*" / "episode-*")], [], 10, False, "cmd")
     assert rep["counts"]["episodes"] == 1, rep["counts"]
     assert any("duplicate of" in s["skipped"] for s in rep["skipped"]), rep["skipped"]
+
+
+def test_a_comparison_run_is_neither_dropped_as_a_duplicate_nor_pooled_with_the_grant_row():
+    """REGRESSION (2026-10-19 review). The duplicate key held no forecast
+    or wind term, so at one code revision a `--wind-model open_loop` bundle
+    and a 3s forecast-arm bundle (build_arm records no arm for a
+    forecast-only arm, so `arm_tag` was "" too) were dropped as "duplicates"
+    of the grant episode of the same cell and seed. And a bundle with no
+    forecast label - every one before 2026-10-13, flown on 3 s / 0.5 s - at
+    another revision pooled into the grant row. The pre-change tool keeps 2
+    of these 4 episodes, in one family."""
+    KR = _report_module()
+    on = K.compute([_rep_row_conv(0.0)], {}, {})
+    with tempfile.TemporaryDirectory() as td:
+        _bundle(Path(td), "episode-A--x--seed1", sid="x", template="t", params={},
+                seed=1, shield="on", kpi=dict(on, wind_model="guided"))
+        _bundle(Path(td), "episode-B--x--seed1", sid="x", template="t", params={},
+                seed=1, shield="on", kpi=dict(on, wind_model="open_loop"))
+        _bundle(Path(td), "episode-C--x--forecast-3s--seed1", sid="x", template="t",
+                params={}, seed=1, shield="on", forecast_arm="3s",
+                kpi=dict(on, wind_model="guided"))
+        _bundle(Path(td), "episode-D--x--seed1", sid="x", template="t", params={},
+                seed=1, shield="on", kpi=on, code="1d09786", forecast_arm=None)
+        rep = KR.build_report([str(Path(td) / "episode-*")], [], 10, False, "cmd")
+    assert rep["counts"]["episodes"] == 4, rep["skipped"]
+    fams = rep["families"]["other"]
+    assert sorted(fams) == ["stress-bundle/t/x/shield-on",
+                            "stress-bundle/t/x/shield-on/forecast-3s",
+                            "stress-bundle/t/x/shield-on/forecast-unlabelled",
+                            "stress-bundle/t/x/shield-on/wind-open_loop"], sorted(fams)
+    assert all(f["episodes"] == 1 for f in fams.values())
+    assert fams["stress-bundle/t/x/shield-on"]["code_revisions"] == ["abc123"]
+    # A row that pools two revisions says so in the table.
+    two = dict(fams["stress-bundle/t/x/shield-on"], code_revisions=["1d09786", "abc123"])
+    assert "(2 code revisions pooled)" in "\n".join(KR._family_table({"two": two}))
 
 
 def test_two_cells_of_one_template_are_two_family_rows():

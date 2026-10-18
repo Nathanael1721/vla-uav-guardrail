@@ -520,28 +520,74 @@ def time_to_safe_basis(sources: dict, pol) -> str:
 def forecast_suffix(*docs) -> str:
     """"/forecast-<arm>" for an episode flown on a comparison forecast (the
     stress harness's labelled 3 s arm, experiments/sweep_scenarios.py
-    --forecast-arms), "" for the grant's 5 s / 0.1 s. Without it a report over
-    --publish bundles pooled the 3 s comparison with the grant rows. The arm
-    is read from the KPI table (`forecast_arm`) or the extras' `forecast.arm`;
-    a run id carrying "forecast-3s" says the same."""
+    --forecast-arms), "" for one LABELLED with the grant's 5 s / 0.1 s, and
+    "/forecast-unlabelled" for one that carries no label at all. Without the
+    suffix a report over --publish bundles pooled the 3 s comparison with the
+    grant rows. The arm is read from the KPI table (`forecast_arm`, top level
+    or under `kpi`), the extras' or the KPI table's `forecast.arm`, or the
+    harness's `episode_start` event; a run id carrying "forecast-3s" says
+    the same.
+
+    Unlabelled is not grant (2026-10-19 review). The harness has written
+    these labels only since 2026-10-13 (93dcb10); every bundle before that
+    was flown on the old 3 s / 0.5 s forecast and open-loop wind (the
+    CHANGELOG of 2026-10-13 retracts the 12 Oct sweep for that reason), and
+    some without the FSM. Read as "", all 2396 stored stress bundles - two
+    code revisions, FSM-less and FSM - filed under the grant family names,
+    and a new grant-config profile run would have pooled with them."""
+    labelled = False
     for d in docs:
         if not isinstance(d, dict):
             continue
-        fc = d.get("forecast") if isinstance(d.get("forecast"), dict) else {}
-        arm = d.get("forecast_arm") or (d.get("kpi") or {}).get("forecast_arm") or fc.get("arm")
+        kpi = d.get("kpi") if isinstance(d.get("kpi"), dict) else {}
+        fc = (d.get("forecast") if isinstance(d.get("forecast"), dict)
+              else kpi.get("forecast") if isinstance(kpi.get("forecast"), dict) else {})
+        arm = d.get("forecast_arm") or kpi.get("forecast_arm") or fc.get("arm")
         if arm and arm != "grant":
             return f"/forecast-{arm}"
         if "forecast-3s" in str(d.get("id") or ""):
             return "/forecast-3s"
+        if arm == "grant":
+            labelled = True
+    return "" if labelled else "/forecast-unlabelled"
+
+
+def wind_suffix(*docs) -> str:
+    """"/wind-<model>" for an episode flown on a wind model other than the
+    harness's default `guided` (experiments/sweep_scenarios.py
+    `--wind-model open_loop`, "kept for comparison"), read from the KPI
+    table's or the episode_start event's `wind_model`; "" for guided or no
+    label (an unlabelled bundle is already apart, under
+    /forecast-unlabelled). Until 2026-10-19 no family term read it, so an
+    open_loop run pooled with the guided rows - or, at the same code
+    revision, was dropped as a "duplicate" of them (`_run_labels`)."""
+    for d in docs:
+        if not isinstance(d, dict):
+            continue
+        kpi = d.get("kpi") if isinstance(d.get("kpi"), dict) else {}
+        m = d.get("wind_model") or kpi.get("wind_model")
+        if m and m != "guided":
+            return f"/wind-{m}"
     return ""
 
 
-def _bundle_family(doc: dict, sid, params: dict, arm: str) -> str:
+def _run_labels(*docs) -> str:
+    """The configuration a stress episode was flown in that its scenario,
+    cell and seed do not name: forecast arm and wind model. Part of the
+    family name AND of the duplicate key - two episodes of one cell and seed
+    at one revision on different forecasts or winds are two experiments,
+    and the duplicate key once dropped the comparison arm as a copy of the
+    grant one (build_arm records no arm for a forecast-only arm, so the
+    `arm_tag` in the key was "" for both)."""
+    return forecast_suffix(*docs) + wind_suffix(*docs)
+
+
+def _bundle_family(doc: dict, sid, params: dict, arm: str, start: dict | None = None) -> str:
     template = doc.get("template") or str(sid).split("-")[0]
     fam = f"stress-bundle/{template}/{cell_name(sid, params)}/shield-{arm}"
     if doc.get("prefix") == "off":
         fam += "/prefix-off"
-    return fam + forecast_suffix(doc)
+    return fam + _run_labels(doc, start)
 
 
 def load_bundle_log(run: Path, rows: list[dict], doc: dict, manifest: dict,
@@ -596,7 +642,8 @@ def load_bundle_log(run: Path, rows: list[dict], doc: dict, manifest: dict,
                    "seed": seed, "scenario_id": sid},
         "stored_vs_recomputed": diffs,
         "_dedupe": ("stress-log", sid, json.dumps(params, sort_keys=True), seed,
-                    arm_tag, manifest.get("policy_hash"), manifest.get("code_revision")),
+                    arm_tag, manifest.get("policy_hash"), manifest.get("code_revision"),
+                    _run_labels(doc)),
     })
     return k
 
@@ -651,7 +698,7 @@ def load_stored(run: Path, trust_store=None) -> dict:
         "scenario_id": sid,
         "source": _rel(run), "kind": "stored-table", "recomputed": False,
         "source_note": "stored table, not recomputed (bundle has no flight_log.jsonl)",
-        "family": _bundle_family(doc, sid, params, arm),
+        "family": _bundle_family(doc, sid, params, arm, start),
         "arm": arm, "rail": RAIL.get(manifest.get("topology"),
                                      manifest.get("topology") or "no-manifest"),
         "kpi_grade": graded, "kpi_grade_reasons": reasons,
@@ -669,7 +716,8 @@ def load_stored(run: Path, trust_store=None) -> dict:
                    "scenario_id": sid},
         "stored_vs_recomputed": {},
         "_dedupe": ("stored-table", sid, json.dumps(params, sort_keys=True), seed,
-                    arm_tag, manifest.get("policy_hash"), manifest.get("code_revision")),
+                    arm_tag, manifest.get("policy_hash"), manifest.get("code_revision"),
+                    _run_labels(doc, start)),
     })
     return k
 
@@ -740,7 +788,7 @@ def load_sweep(path: Path) -> list[dict]:
             "kind": "sweep-json", "recomputed": False,
             "family": (f"sweep-json/{template}/{cell_name(sid, cell)}/shield-{arm}"
                        + ("/prefix-off" if r.get("prefix") == "off" else "")
-                       + forecast_suffix(r, r.get("kpi"))),
+                       + _run_labels(r, r.get("kpi"))),
             "arm": arm, "rail": "headless-kinematic",
             "kpi_grade": False,
             "kpi_grade_reasons": [
@@ -806,9 +854,11 @@ _BASIS_NOTE = {"recheck_only_theta_not_applied": " (theta unchecked)",
                "recheck_and_theta_partial": " (theta partial)"}
 
 # How a zero that could not have been anything else is printed (rollup()'s
-# `vacuous_zeros`): named for what it is, never as a measured 0.
+# `vacuous_zeros`): named for what it is, never as a measured 0. The
+# false-trigger reason (stateless log or FSM-instrumented) is listed in full
+# under each table.
 VACUOUS = {"p0_escape_rate": "vacuous (no P0 tick)",
-           "false_trigger_rate": "vacuous (no FSM state logged)"}
+           "false_trigger_rate": "vacuous (tick figure, 0 by construction)"}
 
 
 def _rs(row: dict) -> str:
@@ -830,6 +880,38 @@ def _labelled(s: dict) -> str:
     return f"{round(c * lab['scored'])}/{lab['scored']}"
 
 
+def _false_triggers(s: dict) -> str:
+    """The False triggers cell: the LABELLED episodes' (the grant's "not when
+    not expected", `failsafe_labelled_episodes`), as "k of m ep" with m the
+    episodes labelled NOT to expect a fail-safe.
+
+    The per-tick figure is 0 by construction on every log (guardrail/kpi.py
+    compute(), "not when not expected"), so it is printed only as vacuous -
+    or, non-zero, as the logging fault it would be. Until 2026-10-19 this
+    cell printed that tick figure, a plain "0" on every FSM-instrumented
+    stress family, beside a labelled column of 0/3 (the nightly report:
+    209 labelled false triggers, 195 cells reading 0)."""
+    lab = s.get("failsafe_labelled_episodes") or {}
+    txt = None
+    if lab.get("false_triggers") is not None:
+        neg = round((lab.get("null_never_trigger") or 0) * (lab.get("scored") or 0))
+        txt = f"{lab['false_triggers']} of {neg} ep"
+        if not neg:
+            # Every labelled episode expected a fail-safe, so none could
+            # trigger falsely: a 0 over an empty denominator, said as such
+            # (6 of the 72 families of the stored stress_smoke report).
+            txt += " (none labelled not to trigger)"
+    elif s.get("false_trigger_rate") is None:
+        txt = "n/m"
+    elif "false_trigger_rate" in (s.get("vacuous_zeros") or {}):
+        txt = VACUOUS["false_trigger_rate"]
+    if s.get("false_trigger_ticks"):
+        fault = (f"{s['false_trigger_ticks']} violation-free tick(s) left Normal: "
+                 f"a logging fault")
+        txt = fault if txt in (None, "n/m") else f"{txt}; {fault}"
+    return txt or "n/m"
+
+
 def _family_table(fams: dict[str, dict]) -> list[str]:
     head = ("| Family | Episodes | P0 escape rate | P0-acted tick share | "
             "Fail-safe, labelled episodes | False triggers | Mission success | "
@@ -840,9 +922,7 @@ def _family_table(fams: dict[str, dict]) -> list[str]:
         vac = s.get("vacuous_zeros") or {}
         ms = ("n/m" if s["mission_success_rate"] is None else
               f"{s['mission_successes']}/{s['episodes_mission_scored']}")
-        ft = ("n/m" if s["false_trigger_rate"] is None else
-              VACUOUS["false_trigger_rate"] if "false_trigger_rate" in vac else
-              f"{s['false_trigger_ticks']}")
+        ft = _false_triggers(s)
         st = s.get("time_to_safe_status")
         tts = ("never unsafe" if st == "never_unsafe" else
                "none recovered" if st == "never_recovered" else
@@ -864,8 +944,10 @@ def _family_table(fams: dict[str, dict]) -> list[str]:
             esc = _f(s["p0_escape_rate"], 4)
             if s["p0_escapes"] is not None:
                 esc += f" ({s['p0_escapes']})"
+        revs = s.get("code_revisions") or []
+        tag = f" ({len(revs)} code revisions pooled)" if len(revs) > 1 else ""
         lines.append(
-            f"| `{name}` | {s['episodes']} | {esc} | {fsc} | {_labelled(s)} | "
+            f"| `{name}`{tag} | {s['episodes']} | {esc} | {fsc} | {_labelled(s)} | "
             f"{ft} | {ms} | {_f(s['mean_repair_count_per_episode'], 1)} | "
             f"{mag} | {_rs(s)} | {tts} |")
     return lines
@@ -1340,6 +1422,13 @@ def _render_magnitudes(groups: dict[str, dict]) -> list[str]:
             .get(K.UNCLASSIFIED) or {}).get("ticks")
            for g in groups.values() for s in (g or {}).values()):
         classes.append(K.UNCLASSIFIED)
+    # A tick the Shield floored with nothing violated (kpi._floored, since
+    # 2026-10-19) has no priority to sit under; it has its own level, and
+    # its column is printed whenever any family has one, like Unclassified.
+    levels = [*K.PRIORITY_LEVELS, "unattributed"]
+    if any(((s.get("mean_repair_magnitude_by_priority") or {}).get("floored") or {})
+           .get("ticks") for g in groups.values() for s in (g or {}).values()):
+        levels.append("floored")
     L = ["## Mean repair magnitude by priority and by operator class", "",
          "|emitted - raw| (m/s) on repaired ticks, pooled. A tick counts under the "
          "highest priority it violated, and under every operator class that acted on "
@@ -1348,11 +1437,14 @@ def _render_magnitudes(groups: dict[str, dict]) -> list[str]:
          "(Safety Shield p3) are AltitudeClamp, LateralProjection and PathRepair; the "
          "others (*) are this Shield's extensions"
          + (f", and {K.UNCLASSIFIED} an operator no class lists" if K.UNCLASSIFIED in classes
-            else "") + ".", "",
-         "| Family | " + " | ".join(K.PRIORITY_LEVELS) + " | unattributed | "
+            else "") + "."
+         + (" `floored` = ticks the Shield floored a legal action from an illegal "
+            "position with nothing violated (not repair attempts)."
+            if "floored" in levels else ""), "",
+         "| Family | " + " | ".join(levels) + " | "
          + " | ".join(c if c in (*K.GRANT_OPERATOR_CLASSES, K.UNCLASSIFIED) else c + "*"
                       for c in classes)
-         + " |", "|---|" + "---|" * (len(K.PRIORITY_LEVELS) + 1 + len(classes))]
+         + " |", "|---|" + "---|" * (len(levels) + len(classes))]
 
     def cell(c: dict | None) -> str:
         if not c or not c.get("ticks"):
@@ -1370,12 +1462,12 @@ def _render_magnitudes(groups: dict[str, dict]) -> list[str]:
             # priorities, so a family whose policy did not resolve keeps it.
             L.append(f"| `{name}` | " + " | ".join(
                 cell(lv.get(k)) if lv is not None else "n/m (priorities unresolved)"
-                for k in (*K.PRIORITY_LEVELS, "unattributed"))
+                for k in levels)
                 + " | " + " | ".join(cell(cl.get(c)) if cl is not None else "n/m"
                                      for c in classes) + " |")
     if not n:
         L.append("| (no family carries the breakdown: stored tables and Shield-off arms "
-                 "do not) |" + " |" * (len(K.PRIORITY_LEVELS) + 1 + len(classes)))
+                 "do not) |" + " |" * (len(levels) + len(classes)))
     return L + [""]
 
 
@@ -1703,7 +1795,13 @@ DEFINITIONS = {
         "of one cell are pooled. Flights carry no template: their family is "
         "rail / policy / mission, and the cell is whether the policy was "
         "hot-applied in flight and where a declared subject stood. AirSim "
-        "follow flights of one policy share a row: they declare no cell.",
+        "follow flights of one policy share a row: they declare no cell. A "
+        "stress row flown on a comparison configuration says so "
+        "(`/forecast-3s`, `/wind-open_loop`); `/forecast-unlabelled` marks "
+        "bundles that predate the labels (before 2026-10-13: the 3 s / 0.5 s "
+        "forecast and open-loop wind), not the grant's configuration. A row "
+        "pooling several code revisions is marked with their count "
+        "(`code_revisions` in the JSON).",
     "P0 escape rate": "P0 escapes / ticks, pooled over the family's ticks. An "
         "escape is a P0 violation still present in the action FLOWN "
         "(`emitted_violations`). Null: a passthrough Shield escapes on every P0 "
@@ -1723,27 +1821,42 @@ DEFINITIONS = {
         "`score_failsafe_triggers` with its always-trigger and never-trigger "
         "nulls. Where both this and the tick figure exist, this is the one "
         "that matches the grant's wording.",
-    "False triggers": "ticks whose RAW action broke no rule at all on which the "
-        "Shield newly braked or escalated (with the FSM's record: left Normal; "
-        "a Brake held through T_recover is not a new trigger). A brake after "
-        "a P1/P2 violation is permitted (Safety Shield p4, Normal -> Brake on "
-        "violation), not false. A stateless Shield brakes only on a violation, "
-        "so on today's logs this is structurally 0. n/m on stored tables.",
+    "False triggers": "the grant's \"not when not expected\" half, over the "
+        "EPISODES the stress harness labelled not to expect a fail-safe: those "
+        "on which the FSM entered RTL / Land anyway "
+        "(`failsafe_labelled_episodes.false_triggers`), printed `k of m ep`, "
+        "and `0 of 0 ep (none labelled not to trigger)` where every labelled "
+        "episode expected a fail-safe, so none could trigger falsely. Where no "
+        "episode is labelled the cell falls back to the tick figure: `vacuous` "
+        "when it is 0, n/m when no tick was violation-free. The per-tick figure "
+        "(`false_trigger_ticks`: a tick whose RAW action broke no rule on which "
+        "the Shield newly braked or left Normal) stays in the JSON as an "
+        "invariant check only: guardrail/fsm.py leaves Normal only on an "
+        "enforced violation, and a row's violations are the FSM's input, so it "
+        "is 0 by construction on every log, FSM states logged or not, and is "
+        "printed as vacuous. A non-zero would be a logging fault, not a false "
+        "trigger.",
     "Repair success": "(converged + converged via ClearanceEscape) / (ticks with a "
         "repair attempt - ticks whose log cannot say). Failures: fell through to "
         "Brake / Loiter, escalated to RTL / Land (`fsm_state_after`), flew a "
         "still-violating action, or converged with a repair larger than theta "
         "(2.0 m lateral / 0.5 m vertical, Safety Shield p4). Theta is applied "
-        "only where the log gives a size in metres (`magnitude_m`, or the FSM's "
-        "`theta_exceeded`); no delivered flight log does, so a flight's rate is "
-        "the Shield's re-check alone and is printed `(theta unchecked)`; the "
-        "stress harness logs both (basis `recheck_and_theta`). `none "
-        "attempted` = zero attempts; `shield off` = repairs logged on a "
-        "control arm and never flown. Null: an always-brake Shield scores 0 %. "
-        "No flight rail logs RTL/Land yet (WP3-07); the headless stress harness "
-        "does (guardrail/fsm.py through Shield.filter, since 2026-10-07), so "
-        "there the outcome comes from the FSM and autopilot ticks are not "
-        "repair attempts.",
+        "only where the row gives a size in metres: the FSM's "
+        "`fsm.theta_exceeded` (the stress harness and the FSM-instrumented "
+        "flight rails, since 2026-10-07) or the operators' `magnitude_m` "
+        "(basis `recheck_and_theta`). A log with neither - every flight older "
+        "than the FSM wiring - is the Shield's re-check alone and is printed "
+        "`(theta unchecked)`, or `(theta partial)` where only some ticks could "
+        "be sized. `none attempted` = zero attempts; `shield off` = repairs "
+        "logged on a control arm and never flown. Null: an always-brake Shield "
+        "scores 0 %. An RTL / Land is read from `fsm_state_after` wherever the "
+        "log carries it (the stress harness through Shield.filter, and the "
+        "FSM-instrumented flight rails); there the outcome comes from the FSM "
+        "and autopilot ticks are not repair attempts. `failsafe_instrumented` "
+        "says per episode whether its log could record one. Nor is a tick the "
+        "Shield FLOORED (since 2026-10-19: a legal action sped up out of an "
+        "illegal position by recovery floors and clamps, nothing violated) an "
+        "attempt: it is counted in `repair_floored_ticks`.",
     "Mission success": "episodes with no P0 escape, no unmeasured P0 tick, no "
         "dwell in a zone or ring (`nfz_s`, `alt_violation_s`, `standoff_s`), no "
         "P0 unsafe position the aircraft entered or never left, and the "
@@ -1774,14 +1887,18 @@ DEFINITIONS = {
         "missing, unsigned, untrusted or another flight's is not KPI-grade "
         "(`kpi_grade_manifest` keeps the manifest's verdict).",
     "Vacuous": "a 0 that counts an event which could not happen: an escape "
-        "rate where no raw command violated a P0 rule, a false-trigger count on "
-        "logs with no escalation state (rollup()'s `vacuous_zeros`). Printed as "
-        "vacuous, never as a measured 0.",
+        "rate where no raw command violated a P0 rule, the per-tick "
+        "false-trigger count (0 by construction on every log; rollup()'s "
+        "`vacuous_zeros` says whether the logs were stateless or carried the "
+        "FSM's states). Printed as vacuous, never as a measured 0.",
     "Repair magnitude by priority / class": "the mean repair magnitude split by "
         "the highest priority a repaired tick violated (P0 / P1 / P2) and by the "
         "operator classes that acted on it (the grant's AltitudeClamp, "
         "LateralProjection, PathRepair, and this Shield's extensions); `never` "
-        "where a priority or class had no repaired tick.",
+        "where a priority or class had no repaired tick. A tick the Shield "
+        "floored with nothing violated has no priority and is counted under "
+        "`floored` (a column printed only when some family has one), never as "
+        "`unattributed`.",
 }
 
 
@@ -1811,21 +1928,82 @@ def headline(episodes: list[dict]) -> list[str]:
         att = sum(e.get("repair_attempt_ticks") or 0 for e in tried)
         unk = sum(e.get("repair_unmeasured_ticks") or 0 for e in tried)
         ok = sum(e.get("repair_success_ticks") or 0 for e in tried)
-        unchecked = sum(e.get("repair_theta_unchecked_ticks") or 0 for e in tried)
+        conv = (oc["converged"] + oc["converged_via_rescue"]
+                + oc["converged_over_theta"])
+        # Built from the counts. Until 2026-10-19 this sentence said, as fixed
+        # text, that no log gives a repair size in metres and no rail logs
+        # RTL/Land - true when written (7 Oct), and false beside its own
+        # numbers once the FSM-instrumented flights (13-14 Oct) carried
+        # `fsm.theta_exceeded` and RTL on every row.
+        #
+        # From the per-tick theta SOURCES, not from the unsized count alone
+        # (2026-10-19 review of that fix): a converged tick is sized (the
+        # FSM record, magnitude_m, or the one-period reading), not governed
+        # (only clamps / recoveries, which theta does not judge) or unsized.
+        # Read off "0 unsized" alone, a flight whose converged ticks were all
+        # kinematic clamps was told theta "was applied wherever it governs:
+        # none of the 5 converged ticks lacked a repair size" - theta had
+        # judged none of them. A table without the sources (one written
+        # before they were recorded) has its converged ticks counted as of
+        # unknown basis, never as sized.
+        src = {k: 0 for k in ("fsm_record", "magnitude_m", "action_per_period",
+                              "not_governed", "no_magnitude")}
+        for e in tried:
+            s = e.get("repair_theta_sources")
+            if isinstance(s, dict):
+                for k in src:
+                    src[k] += s.get(k) or 0
+            else:
+                src["no_magnitude"] += e.get("repair_theta_unchecked_ticks") or 0
+        sized = src["fsm_record"] + src["magnitude_m"] + src["action_per_period"]
+        not_gov, unsized = src["not_governed"], src["no_magnitude"]
+        unknown = max(0, conv - sized - not_gov - unsized)
+        cap = "(\"magnitude < theta\", 2.0 m / 0.5 m)"
+        rest = "; ".join(x for x in (
+            f"{not_gov} carried only repairs theta does not judge (kinematic "
+            f"clamps, recoveries)" if not_gov else "",
+            f"{unsized} could not be sized, on logs that carry neither "
+            f"`fsm.theta_exceeded` nor `magnitude_m`" if unsized else "",
+            f"{unknown} are on tables that do not record how they were judged"
+            if unknown else "") if x)
+        if not conv:
+            theta_txt = f"No repair converged, so theta {cap} judged nothing."
+        elif unsized or unknown:
+            theta_txt = (f"This is the Shield's OWN re-check finding the repaired "
+                         f"action legal, NOT the grant's full test: theta {cap} was "
+                         f"applied to {sized} of the {conv} converged ticks; {rest}.")
+        elif not sized:
+            theta_txt = (f"Theta {cap} governed none of the {conv} converged ticks: "
+                         f"each carried only repairs theta does not judge (kinematic "
+                         f"clamps, recoveries), so the rate rests on the Shield's "
+                         f"re-check alone, with nothing for theta to test.")
+        else:
+            theta_txt = (f"Theta {cap} was applied to {sized} of the {conv} converged "
+                         f"ticks" + (f"; {rest}" if rest else "") + ".")
+        # Ticks the Shield floored with nothing violated (kpi._floored, since
+        # 2026-10-19) are not attempts; said, so the rate is not read as
+        # covering them.
+        floored = sum(e.get("repair_floored_ticks") or 0 for e in flown_on)
+        floored_txt = (f" {floored} ticks of the {len(flown_on)} shielded flights "
+                       f"were floored - a legal action sped up out of an illegal "
+                       f"position, nothing violated - and are not repair attempts."
+                       if floored else "")
+        n_instr = sum(1 for e in tried if e.get("failsafe_instrumented"))
+        n_fs = sum(1 for e in tried
+                   if (e.get("mission_outcome") or e.get("outcome"))
+                   in ("RTL_triggered", "Land_triggered")
+                   or (e.get("repair_outcomes") or {}).get("failsafe"))
         out.append(
             f"Repair success (Safety Shield KPI): {ok}/{att - unk} measured repair "
             f"ticks converged across {len(tried)} shielded flights that attempted "
             f"a repair ({unk} more could not be measured: old logs without "
-            f"`emitted_violations`). Brake {oc['braked']}, residual violation "
+            f"`emitted_violations`).{floored_txt} Brake {oc['braked']}, RTL/Land "
+            f"{oc['failsafe']}, residual violation "
             f"{oc['residual_p0'] + oc['residual_other']}, rescue heading "
             f"{oc['converged_via_rescue']}, over theta {oc['converged_over_theta']}. "
-            f"Null: an always-brake Shield scores 0 %. This is the Shield's OWN "
-            f"re-check finding the repaired action legal, NOT the grant's full "
-            f"test: theta (\"magnitude < theta\", 2.0 m / 0.5 m) could not be "
-            f"applied to {unchecked} of the converged ticks because no log gives "
-            f"a repair size in metres, and no rail logs RTL/Land "
-            f"({sum(1 for e in tried if e.get('failsafe_instrumented'))} of "
-            f"{len(tried)} logs could record one).")
+            f"Null: an always-brake Shield scores 0 %. {theta_txt} "
+            f"{n_instr} of {len(tried)} logs could record an RTL/Land escalation "
+            f"(`failsafe_instrumented`), and {n_fs} recorded one.")
         prox, why = _sum_proxy(tried)
         if prox:
             nj = max(v["not_judged"] for v in prox.values())
@@ -1861,8 +2039,9 @@ def headline(episodes: list[dict]) -> list[str]:
             f"Brake fired on 0 ticks in all {len(flown)} flown episodes. The "
             f"Brake share of repair outcomes and the false-trigger count are "
             f"therefore zeros of an event that never happened in these logs, "
-            f"not a tested 'no false alarm' (a stateless Shield cannot brake on a "
-            f"violation-free tick at all): the metrics' ability to see a brake is "
+            f"not a tested 'no false alarm' (neither a stateless Shield nor the "
+            f"escalation FSM can trigger on a violation-free tick at all): the "
+            f"metrics' ability to see a brake is "
             f"shown only by tests/test_kpi_magnitudes.py. Silence reads as success.")
     ctrl = [e for e in episodes if e.get("arm") == "off"
             and (e.get("repair_count_counterfactual") or e.get("repair_not_applied_ticks"))]
@@ -1970,7 +2149,8 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                 # counting it twice would double its weight in its family.
                 skipped.append({"id": e.get("id"), "source": e.get("source"),
                                 "skipped": f"duplicate of {kept[key]} (same "
-                                           f"scenario, cell, seed, policy, code)"})
+                                           f"scenario, cell, seed, policy, code, "
+                                           f"forecast and wind)"})
                 continue
             if key is not None:
                 kept[key] = e.get("source")
@@ -1987,7 +2167,14 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
         groups: dict[str, list] = {}
         for e in eps:
             groups.setdefault(e["family"], []).append(e)
-        return {name: dict(K.rollup(g), members=[e["id"] for e in g])
+        # The code revisions a row pools. Not part of the family name - that
+        # would split every row per commit and break --baseline's
+        # `<family>::<id>` keys - but a row that spans several is marked in
+        # the table (the legacy stress bundles pool 1d09786, flown without
+        # the escalation FSM, with 401305a; 2026-10-19 review).
+        return {name: dict(K.rollup(g), members=[e["id"] for e in g],
+                           code_revisions=sorted({str(e["code_revision"]) for e in g
+                                                  if e.get("code_revision")}))
                 for name, g in sorted(groups.items())}
 
     graded = [e for e in episodes if e.get("kpi_grade")]

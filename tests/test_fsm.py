@@ -747,14 +747,114 @@ def test_x6_with_the_real_shield_held_inside_nfz_square_for_60_s():
 
 def test_a_hard_brake_rule_that_stays_blocked_stays_in_brake():
     """A `brake` rule is answered by the stop itself, not by projection, so an
-    unconverged tick under it is not an untrusted REPAIR. Only the
-    project_fix filter keeps it from loitering on tick 2, and integration
+    unconverged tick under it is not an untrusted REPAIR. Alone, the
+    project_fix filter keeps it from loitering on tick 2; beside a hard
+    project_fix rule, the stop-rule gate does (the next test). Integration
     step 2 makes shield.py return braked=True for every brake rule."""
     f = EscalationFSM()
     for t in clock(100):
         o = f.tick(t, "blocked", [hit("hold", action="brake")])
         assert (o.state, o.setpoint, o.set_mode) == (S.BRAKE, "brake", None), o.reason
     assert f.summary()["max_state"] == "Brake"
+
+
+def test_a_brake_rule_beside_a_hard_projection_stays_in_brake_where_a_stop_is_legal():
+    """REGRESSION (2026-10-19 review). Where a stop is legal the Shield
+    answers a brake rule by stopping and skips projection (shield.py's
+    stop-rule branch: braked, "projection skipped, stop"), and
+    tick_input_from_decision maps every braked decision to `blocked`. A hard
+    NFZ violated on the same tick was never projected, yet it made the tick
+    a "hard untrusted repair": G3 took the aircraft to LOITER on tick 2,
+    citing the soft rule - a soft rule changing the flight mode. The
+    pre-change fsm.py gives Brake -> Loiter [G3] here, and an X1 reason of
+    "no operator converged"."""
+    vios = [hit("envelope-default", "brake", "soft", "P1"), hit("nfz")]
+    for brake_rule in (vios, [hit("hold", "brake"), hit("nfz")]):
+        f = EscalationFSM()
+        o = f.tick(0.0, "blocked", brake_rule)
+        assert (o.state, o.edge) == (S.BRAKE, "X1"), o.reason
+        assert "rule asks for brake" in o.reason, o.reason
+        for t in clock(60, t0=0.1):
+            o = f.tick(t, "blocked", brake_rule)
+            assert (o.state, o.setpoint, o.set_mode) == (S.BRAKE, "brake", None), o.reason
+        assert f.summary()["max_state"] == "Brake", f.summary()
+    # Control: where a stop is ILLEGAL the Shield does run the repair chain,
+    # so the same blocked tick is a real unconverged hard repair, and G3 holds.
+    f = EscalationFSM()
+    o = f.tick(0.0, "blocked", vios, stop_illegal=True)
+    assert o.edge == "X1" and "no operator converged" in o.reason, o.reason
+    o = f.tick(0.1, "blocked", vios, stop_illegal=True)
+    assert (o.state, o.edge, o.set_mode) == (S.LOITER, "G3", "LOITER"), o.reason
+
+
+def test_a_soft_brake_rule_beside_a_hard_nfz_never_loiters_with_the_real_shield():
+    """The same with the real Shield (the review's repro): the demo square
+    NFZ (hard P0 project_fix) beside the grant's soft P1 brake envelope
+    (Policy DSL PDF p4's envelope-default). The NFZ alone is a trusted slide
+    (G1, GUIDED). Adding the soft rule turned that into a LOITER on the
+    second tick before the stop-rule gate; it now stays in Brake, GUIDED,
+    on every tick."""
+    from guardrail import Action4D, Shield, State
+    from guardrail.models import Policy
+
+    def pol(env: bool):
+        cons = [{"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+                 "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7},
+                              {"x": 23, "y": 23}, {"x": 7, "y": 23}]}]
+        if env:
+            cons.append({"id": "envelope-default", "type": "altitude_envelope",
+                         "alt_min_m": 1, "alt_max_m": 6, "constraint_type": "soft",
+                         "priority": "P1", "violation_action": "brake"})
+        return Policy.model_validate({"policy_id": "p", "constraints": cons})
+
+    st, raw = State(x=0, y=15, up=4), Action4D(vx=1.5, vz_up=0.6)
+    for env in (False, True):
+        sh = Shield(pol(env))
+        for k in range(3):
+            d = sh.filter(st, raw, t=0.1 * k)
+            assert {v.rule_id for v in d.violations} >= {"nfz"}, d.violations
+            assert (d.fsm_state_after, d.set_mode) == ("Brake", None), \
+                (env, k, d.fsm_record.get("reason"))
+            if env:
+                assert d.braked and d.setpoint == "brake", d.fsm_record.get("reason")
+        if env:
+            assert "projection skipped" in d.repairs[-1].detail, d.repairs
+
+
+def test_a_replay_without_unsafe_keeps_the_stop_rule_gate_only_on_a_clean_brake():
+    """What step()'s comment and the G3 descriptions say about a replay that
+    does not know stop_illegal (review P5, 2026-10-19): tick_input_from_row
+    on a log without `unsafe` reads it off the decision. A brake that
+    re-checked clean is a legal stop - the stop-rule branch - so the gate
+    holds and the FSM stays in Brake; a brake that re-checked dirty reads
+    illegal, the gate is off and G3 fires, the conservative side."""
+    from guardrail.fsm import tick_input_from_row
+    from guardrail.models import Policy
+    pol = Policy.model_validate({"policy_id": "p", "constraints": [
+        {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+         "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7},
+                      {"x": 23, "y": 23}, {"x": 7, "y": 23}]},
+        {"id": "envelope-default", "type": "altitude_envelope", "alt_min_m": 1,
+         "alt_max_m": 6, "constraint_type": "soft", "priority": "P1",
+         "violation_action": "brake"}]})
+    vios = [{"rule_id": "envelope-default", "category": "altitude"},
+            {"rule_id": "nfz", "category": "geofence"}]
+    brake = [{"operator": "Brake", "detail": "violation_action brake -> projection "
+                                             "skipped, stop"}]
+
+    def run(em_v):
+        f, out = EscalationFSM(), []
+        for k in range(3):
+            row = {"t": 0.1 * k, "violations": vios, "repairs": brake, "braked": True,
+                   "emitted_violations": em_v}
+            inp = tick_input_from_row(row, pol)
+            out.append((inp.stop_illegal, f.step(inp)))
+        return out
+    for stop, o in run([]):
+        assert stop is False and (o.state, o.set_mode) == (S.BRAKE, None), o.reason
+    illegal = run([{"rule_id": "nfz", "category": "geofence"}])
+    assert all(stop is True for stop, _ in illegal)
+    assert (illegal[1][1].state, illegal[1][1].edge) == (S.LOITER, "G3"), illegal[1][1].reason
 
 
 def test_a_direct_rtl_beats_g3_in_brake():
