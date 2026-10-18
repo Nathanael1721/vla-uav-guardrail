@@ -65,11 +65,11 @@ DYNAMIC_RUNS = "sha256:77d64d2e5e94ac39"
 
 
 # Fields the grant-form change (2026-10-06, later the same day) added to the
-# IR. Every one is None for any policy the old code could have held, so the old
-# formula's dump of that era simply did not have them; a geographic point then
-# held x/y only.
+# IR, and `locked_by` (layer-merge provenance, 2026-10-19). Every one is None
+# for any policy the old code could have held, so the old formula's dump of
+# that era simply did not have them; a geographic point then held x/y only.
 GRANT_FORM_FIELDS = frozenset({"scope", "layer", "altitude_ref", "issued_at",
-                               "layers_merged"})
+                               "layers_merged", "locked_by"})
 
 
 def _era_dump(node):

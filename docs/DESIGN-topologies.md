@@ -217,7 +217,9 @@ on the Orin names the commit that flew. An image with the code baked in would
 report `unversioned`, and `is_kpi_grade()` refuses that. The desktop and the
 Orin must be on the same commit; the runbook checks it.
 
-A modified checkout records `-dirty`, which the KPI gate also refuses. So
+A modified checkout records `-dirty`, which the KPI gate also refuses (so
+does an untracked file git does not ignore: `git status --porcelain` lists
+both, and `code_revision` reads that). So
 nothing measured on the Orin is written into a tracked path: the Orin compose
 file sets `VLAGUARD_EVIDENCE_OUT=deploy/evidence/incoming/`, which git ignores
 (`deploy/evidence/incoming/.gitignore`), and runs land in `demo/out/`, also

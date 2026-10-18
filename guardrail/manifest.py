@@ -152,12 +152,22 @@ def code_revision(repo: str | Path | None = None) -> str:
             if not _tracks_our_code(cand):
                 continue
             rev = head.stdout.strip()[:12]
-            st = subprocess.run(["git", "-C", str(cand), "status", "--porcelain"],
-                                capture_output=True, text=True, timeout=20)
-            dirty = bool(st.stdout.strip()) if st.returncode == 0 else None
+            # Its own try: once HEAD resolved in a repo that tracks the code,
+            # a status that times out or fails says only "could not tell
+            # whether the tree is clean" (-unknown). Until 2026-10-19 the
+            # timeout fell through to the outer except, the candidate was
+            # dropped, and the known HEAD came back as "unversioned".
+            try:
+                st = subprocess.run(["git", "-C", str(cand), "status", "--porcelain"],
+                                    capture_output=True, text=True, timeout=20)
+                dirty = bool(st.stdout.strip()) if st.returncode == 0 else None
+            except (OSError, subprocess.SubprocessError):
+                dirty = None
             suffix = "-dirty" if dirty else ("" if dirty is False else "-unknown")
             return f"{rev}{suffix}"
         except (OSError, subprocess.SubprocessError):
+            # rev-parse or the ownership check failed: this candidate cannot
+            # be shown to hold the code, so it is not reported.
             continue
     return "unversioned"
 
@@ -272,7 +282,8 @@ def file_sha256(path: str | Path, cache: dict | None = None) -> str:
 
 def weights_digest(weight_paths: list[str | Path],
                    cache_path: str | Path | None = None) -> str | None:
-    """One SHA-256 over every weight file's own SHA-256, or None if no file.
+    """One SHA-256 over every weight file's own SHA-256, or None if no file -
+    or if any named weight could not be read.
 
     The grant's manifest field is "vla_model_hash: <SHA-256 of model weights>"
     (reference data-flow.md). Until 2026-10-06 this module hashed each file's
@@ -284,11 +295,18 @@ def weights_digest(weight_paths: list[str | Path],
     plus its full digest, sorted, so the result does not depend on where the
     weights live on disk. Logs and JSONL files are skipped, as before: they
     are written beside adapters during training and are not weights.
+
+    A named path that does not exist, a dangling link (a missing blob in an
+    interrupted HuggingFace download) and a file that cannot be read make the
+    result None. Until 2026-10-19 each was skipped without a word and the
+    digest of the REST came back as the weights hash - two checkpoints that
+    differed only in an unreadable shard shared it, and the KPI gate passed it.
     """
     cpath = Path(cache_path) if cache_path else _digest_cache_path()
     cache = _load_digest_cache(cpath)
     before = dict(cache)
     lines: list[str] = []
+    missing: list[str] = []
     for p in weight_paths:
         p = Path(p)
         if p.is_dir():
@@ -296,15 +314,19 @@ def weights_digest(weight_paths: list[str | Path],
         elif p.is_file():
             files = [(p.name, p)]
         else:
-            files = []
+            missing.append(str(p))
+            continue
         for rel, f in files:
-            if not f.is_file() or f.suffix in (".log", ".jsonl"):
+            if f.suffix in (".log", ".jsonl") or f.is_dir():
+                continue
+            if not f.is_file():                 # dangling link, special file
+                missing.append(rel)
                 continue
             try:
                 lines.append(f"{rel}  {file_sha256(f, cache)}")
             except OSError:
-                continue
-    if not lines:
+                missing.append(rel)
+    if missing or not lines:
         return None
     if cache != before:
         try:
@@ -330,10 +352,26 @@ def model_hash(model_id: str, weight_paths: list[str | Path] | None = None) -> s
     if model_id == NO_VLA:
         return NO_VLA
     rev = hf_snapshot_revision(model_id)
+    if rev and rev.startswith("ambiguous:"):
+        # Several snapshots cached: the id does not say which weights ran.
+        # Until 2026-10-19 this was cut to 16 characters ("org/m@ambiguous:
+        # aaaaaa") BEFORE anything looked at it, and is_kpi_grade, which
+        # refuses only "unresolved", passed it as a resolved weights hash.
+        if not weight_paths:
+            return f"{model_id}@{UNRESOLVED}:{rev}"        # whole text, not cut
+        # The bytes hashed below pin the weights; mixing cache-dependent text
+        # into that digest would hide the ambiguity and move the hash whenever
+        # an unrelated snapshot is added or removed.
+        rev = None
     if rev and not weight_paths:
         return f"{model_id}@{rev[:16]}"
 
     digest = weights_digest(list(weight_paths)) if weight_paths else None
+    if digest is None and weight_paths:
+        # Weights were NAMED but could not all be read (weights_digest says
+        # None for a missing path, a dangling link or an unreadable file):
+        # never an @src: or @sha256: hash over whatever was left.
+        return f"{model_id}@{UNRESOLVED}"
     if digest is None:
         # A code-only pilot has no weights and no HuggingFace revision, but it is
         # not unresolved: it is fully determined by its source. Hashing that file
@@ -398,23 +436,38 @@ def sim_speedup_from_scene(scene_path: str | Path) -> float | None:
     would defeat the requirement entirely. The scene declares a steppable clock
     with `step-ns` and `real-time-update-rate`; equal means real time. None means
     it could not be read, which `is_kpi_grade` treats as a failure.
+
+    The ratio is step-ns / real-time-update-rate: every real-time-update-rate
+    ns of wall time the clock advances step-ns of sim time, so this is sim
+    seconds per wall second - the convention of ArduPilot's SIM_SPEEDUP, which
+    `sim_speedup_from_mavlink` writes into the same manifest field. Project
+    AirSim's own example settles the direction (client/python/
+    airsimv1_scripts_migrated/multirotor/clock_speed.py: step 1.5 ms at a 3 ms
+    update rate makes a 3 s move take 6 s of wall time, i.e. 0.5). Until
+    2026-10-19 this returned the reciprocal; equal values gave 1.0 either way,
+    so the KPI gate never decided differently, but a non-real-time scene was
+    recorded upside down (a 0.25x clock as 4.0). Comments are stripped with
+    _strip_jsonc (trailing // and /* */ too; only whole-line // were before).
     """
     try:
         raw = Path(scene_path).read_text(encoding="utf-8")
     except OSError:
         return None
-    # jsonc: strip // comments before parsing
-    stripped = re.sub(r"^\s*//.*$", "", raw, flags=re.M)
     try:
-        cfg = json.loads(stripped)
-    except json.JSONDecodeError:
+        cfg = json.loads(_strip_jsonc(raw))
+    except ValueError:                       # json.JSONDecodeError is one
         return None
-    clock = cfg.get("clock") or {}
+    clock = cfg.get("clock") if isinstance(cfg, dict) else None
+    if not isinstance(clock, dict):
+        return None
     step = clock.get("step-ns")
     rate = clock.get("real-time-update-rate")
     if not step or not rate:
         return None
-    return round(float(rate) / float(step), 4)
+    try:
+        return round(float(step) / float(rate), 4)
+    except (TypeError, ValueError):
+        return None
 
 
 # Project AirSim's ArduCopterApi: the robot config's controller when ArduPilot
@@ -1183,12 +1236,17 @@ def is_kpi_grade(manifest: dict, metrics: dict,
 
     # A dirty tree means the named commit is not the code that flew: checking it
     # out would give you something else. "-unknown" is the same problem wearing a
-    # politer word - git could not say whether the tree was clean.
+    # politer word - git could not say whether the tree was clean. "-dirty"
+    # also covers an untracked file git does not ignore (`git status
+    # --porcelain` lists it; an untracked .py really changes what runs), so the
+    # reason says so: on 2026-10-18 a tool's private, unignored folder was the
+    # only entry, and "uncommitted changes" sent the reader looking for code.
     rev = str(manifest.get("code_revision", ""))
     if rev.endswith("-dirty"):
         reasons.append(
-            f"code_revision is {rev!r}: the working tree had uncommitted changes, "
-            f"so checking out that commit does not reproduce this run")
+            f"code_revision is {rev!r}: the working tree had uncommitted changes "
+            f"or untracked files git does not ignore (`git status --porcelain` "
+            f"names them), so checking out that commit does not reproduce this run")
     elif rev.endswith("-unknown"):
         reasons.append(
             f"code_revision is {rev!r}: git could not report whether the tree was "

@@ -601,6 +601,47 @@ def test_an_episode_with_no_log_is_refused_rather_than_packaged_empty():
     shutil.rmtree(d, ignore_errors=True)
 
 
+def test_an_episode_whose_log_holds_no_rows_is_refused_not_a_perfect_run():
+    """A rail that aborts before its first tick still writes an EMPTY
+    flight_log.jsonl beside kpi.json. Only the log's existence was checked,
+    so the bundle was written, and verify_replay recomputed compute([]) -
+    escape rate 0.0, its denominator being max(1, ...) - against the stored
+    compute([]) and called the run re-derived. Shown failing before
+    2026-10-19: the empty log was packaged, and the keyless repack below
+    verified True. No fixture needed: the episode is synthetic."""
+    d = _tmp()
+    run, policy, rec, _ = _episode(d)
+    _scored(run, policy, rec)
+    good = write_replay(run, policy, d / "good.tar.gz", signer=None)
+    log = run / "flight_log.jsonl"
+    for body in ("", "\n\n", "not json\n{truncated\n"):
+        log.write_text(body, encoding="utf-8")
+        try:
+            write_replay(run, policy, d / "r.tar.gz", signer=None)
+        except ValueError as exc:
+            assert "holds no rows" in str(exc), exc
+        else:
+            raise AssertionError(f"a log of {body!r} was packaged")
+    # A bundle written before the refusal (or by other code): empty log and
+    # the KPI table compute([]) gives, every digest redone - verify says no.
+    metrics = json.loads((run / "metrics.json").read_text(encoding="utf-8"))
+    empty_kpi = compute([], rule_priorities(policy), metrics)
+    empty_kpi["episode_id"] = rec.episode_id
+    with tarfile.open(good, "r:gz") as tar:
+        index = json.loads(tar.extractfile(INDEX_NAME).read())
+    kb = json.dumps(empty_kpi).encode()
+    index["members"][EPISODE + "flight_log.jsonl"] = _digest(b"")
+    index["members"][EPISODE + "kpi.json"] = _digest(kb)
+    ib = json.dumps(index, indent=2, sort_keys=True).encode()
+    bad = _rewrite_many(good, d / "empty.tar.gz", {
+        EPISODE + "flight_log.jsonl": b"", EPISODE + "kpi.json": kb,
+        INDEX_NAME: ib, SIGNATURE_NAME: f"{_digest(ib)} {B.UNSIGNED}\n".encode()})
+    assert read_replay(bad)["rows"] == []          # the repack itself is sound
+    ok, why = verify_replay(bad)
+    assert ok is False and any("holds no rows" in w for w in why), (ok, why)
+    shutil.rmtree(d, ignore_errors=True)
+
+
 def test_an_unscored_episode_bundles_and_says_so_instead_of_passing_quietly():
     if not _have_fixture():
         return SKIP

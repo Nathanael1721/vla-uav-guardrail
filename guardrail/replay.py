@@ -159,7 +159,8 @@ POLICY = "policy/"
 
 # The episode files, and whether a bundle may be written without each. The log
 # is the one thing a replay bundle cannot be missing — without it there is
-# nothing to replay and the artefact is a filing cabinet.
+# nothing to replay and the artefact is a filing cabinet. A log that holds no
+# rows is refused the same way (write_replay and verify_replay, 2026-10-19).
 EPISODE_FILES = {
     "flight_log.jsonl": True,
     "metrics.json": False,
@@ -550,6 +551,18 @@ def write_replay(run_dir: str | Path, policy: Policy, out_path: str | Path,
             raise ValueError(
                 f"{run} has no {name}; there is nothing to replay. A replay "
                 f"bundle without the episode log is a filing cabinet.")
+    # A log with no rows is the same filing cabinet. Until 2026-10-19 only the
+    # file's EXISTENCE was checked: a rail that aborted before its first tick
+    # still wrote an empty flight_log.jsonl plus kpi.json, the bundle was
+    # written, and verify_replay recomputed compute([]) - escape rate 0.0
+    # (its denominator is max(1, ...)) - against the stored compute([]) and
+    # called it re-derived. Read with _jsonl, so a log of unparseable lines
+    # counts as empty too.
+    if not _jsonl(members.get(EPISODE + "flight_log.jsonl")):
+        raise ValueError(
+            f"{run}: flight_log.jsonl holds no rows; nothing was recorded, so "
+            f"there is nothing to replay (a run that recorded no tick is not a "
+            f"perfect run)")
 
     # Every policy generation the episode recorded, and its CSP. Checked
     # HERE as well as on read: a bundle is not written around an episode
@@ -815,6 +828,11 @@ def verify_replay(path: str | Path,
         got = read_replay(path, trust_store)
     except (ValueError, KeyError, tarfile.TarError, OSError) as exc:
         return False, [str(exc)]
+    if not got["rows"]:
+        # write_replay refuses this since 2026-10-19; a bundle written before,
+        # or by other code, must not "re-derive" compute([])'s 0.0 escape rate.
+        return False, ["the flight log holds no rows: nothing was recorded, so "
+                       "there is nothing to replay"]
 
     flown = (got["manifest"] or {}).get("policy_hash")
     if flown and not got["policy"].matches_hash(flown):

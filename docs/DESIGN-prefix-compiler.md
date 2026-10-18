@@ -380,7 +380,20 @@ bind at once. The spec's worked example intersects them the same way: a
 intersected envelopes only, so `corridor_survey` (a 10-20 m corridor, no
 envelope) reported no band, which means "unbounded" by the class's own
 definition, while the Shield held 10-20 m. It was the only fixture affected.
-Bands that cannot all hold raise `ValueError` naming every rule involved.
+
+"All of them bind at once" holds for the rules in force at the same instant.
+With a clock, the compiler checks each instant it samples in the lookahead
+window (`now` and every minute boundary, padded where a switch or swap acts).
+It publishes the intersection of every in-scope band when that is not empty.
+When it is empty only because the window crosses a schedule edge (a day band
+until 17:59, a night band from 18:00), it publishes the band in force at
+`now`. It never publishes a hull, which would admit heights no rule allows.
+Bands that cannot all hold at one instant raise `CSPAltitudeConflict` (a
+`ValueError`) naming the rules involved. With no clock every rule is read as
+in force, so two scheduled bands that never meet in time still clash there,
+and `coverage_report` lists such a file under `altitude_conflict` instead of
+stopping. Until 2026-10-19 every in-scope band was intersected whatever its
+schedule, so a policy the lint accepts crashed the compiler.
 
 `action_violations` maps the CSP onto `Action4D`. The one conversion it does is
 the yaw cap, from deg/s to rad/s. Comparing the raw numbers would admit

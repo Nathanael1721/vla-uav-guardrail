@@ -1115,6 +1115,33 @@ def test_corridor_clearance_and_standoff_explanations_change_with_the_mission():
     assert "does not ask to follow" in fly.relevance_explanations["standoff-any"]
 
 
+def test_a_class_specific_standoff_says_it_binds_to_the_followed_subject_only():
+    """models.SubjectStandoff.binds: "pedestrian" binds only while the ONE
+    tracked subject is classified pedestrian; bystanders are never protected
+    (the Shield holds one subject). The CSP's reason said "so this binds to
+    any pedestrian": in the 14 Oct red-car flight (subject_class car,
+    standoff-pedestrian 0 bound ticks) it justified a 10 m bubble around
+    every person that nothing enforced. Shown failing before 2026-10-19.
+    The "*" rule's reason is unchanged, byte for byte."""
+    _need()
+    cc = ConstraintCompiler(load_policy(ROOT / "policies" / "follow_car_citylife.yaml"))
+    for text in ("follow the red car to (30, 30)", "fly to (30, 30)"):
+        why = cc.compile_csp(_mission(text=text), now=None).relevance_explanations
+        ped = why["standoff-pedestrian"]
+        assert "any pedestrian" not in ped, ped
+        assert "the subject being followed" in ped, ped
+        assert "only while it is classified pedestrian" in ped, ped
+        assert "any other pedestrian near the aircraft is outside this rule" in ped, ped
+        follow = text.startswith("follow")
+        assert why["standoff-any"] == (
+            "the mission text asks to follow a subject, so this binds to any "
+            "followed subject; the subject's position comes from perception at "
+            "run time" if follow else
+            "the mission text does not ask to follow anything; this binds to any "
+            "followed subject only if one is tracked; the subject's position "
+            "comes from perception at run time"), why["standoff-any"]
+
+
 # --------------------------------------------------------------------------- #
 # WP2-08: Jinja2 templates, and backward compatibility
 # --------------------------------------------------------------------------- #
@@ -1461,6 +1488,78 @@ def test_a_corridor_altitude_band_bounds_the_action_set():
         assert "corridor-river-east" in str(e) and "low" in str(e), e
     else:
         raise AssertionError("a 30-80 m corridor and a 5-20 m envelope compiled")
+
+
+def test_bands_that_are_never_in_force_together_do_not_crash_the_compiler():
+    """A day band (10-30 m, 08:00-17:59) and a night band (40-60 m,
+    18:00-07:59) never overlap in height and never bind at the same instant;
+    the lint accepts the pair (models._envelope_conflicts checks
+    _times_overlap). _action_sets intersected every in-scope band whatever
+    its schedule, so compile_csp raised a bare ValueError with no clock - and
+    coverage_report, which catches only CSPBudgetExceeded, died on the one
+    file - and with a clock in the seconds before 18:00, while the Shield
+    enforced each band at its own time. Shown failing before 2026-10-19: the
+    17:59:58 compile and the report both raised."""
+    _need()
+    import yaml
+    day_night = {"policy_id": "day-night", "version": "0.1.0", "constraints": [
+        {"id": "day-band", "type": "altitude_envelope", "alt_min_m": 10, "alt_max_m": 30,
+         "valid_time": {"recurrence": {"start_time": "08:00", "end_time": "17:59"}}},
+        {"id": "night-band", "type": "altitude_envelope", "alt_min_m": 40,
+         "alt_max_m": 60,
+         "valid_time": {"recurrence": {"start_time": "18:00", "end_time": "07:59"}}}]}
+    pol = Policy.model_validate(day_night)
+    assert pol.lint() == [] and pol.flight_problems() == []
+    cc = ConstraintCompiler(pol)
+    noon = cc.compile_csp(_mission(), now=MONDAY_0800.replace(hour=12))
+    assert noon.allowed_action_set.altitude_band_m_agl == (10.0, 30.0), noon
+    # The 5 s window crosses 18:00: the band in force NOW is published (never a
+    # hull - 30-40 m is allowed by no rule), the upcoming one stays named.
+    edge = cc.compile_csp(_mission(), now=MONDAY_0800.replace(hour=17, minute=59,
+                                                              second=58))
+    a = edge.allowed_action_set
+    assert a.altitude_band_m_agl == (10.0, 30.0), a
+    assert set(a.source_rules) == {"day-band", "night-band"}, a.source_rules
+    night = cc.compile_csp(_mission(), now=MONDAY_0800.replace(hour=22))
+    assert night.allowed_action_set.altitude_band_m_agl == (40.0, 60.0)
+    # No clock: every rule is read as in force (compile_csp's documented
+    # reading), so the clash is real - and said by its own ValueError class.
+    try:
+        cc.compile_csp(_mission(), now=None)
+    except K.CSPAltitudeConflict as e:
+        assert isinstance(e, ValueError) and e.when is None, e
+        assert e.rule_ids == ["day-band", "night-band"], e.rule_ids
+    else:
+        raise AssertionError("two clashing bands compiled with no clock")
+    # Two bands in force at the SAME instant still clash, clock or not.
+    both = Policy.model_validate({**day_night, "constraints": [
+        day_night["constraints"][0],
+        {**day_night["constraints"][1], "valid_time": None}]})
+    try:
+        ConstraintCompiler(both).compile_csp(_mission(),
+                                             now=MONDAY_0800.replace(hour=12))
+    except K.CSPAltitudeConflict as e:
+        assert e.when == MONDAY_0800.replace(hour=12), e.when
+        assert "day-band" in str(e) and "night-band" in str(e), e
+    else:
+        raise AssertionError("two bands in force together compiled")
+    # The folder-wide report lists the file and scores the others as before.
+    d = Path(tempfile.mkdtemp())
+    survey_src = SURVEY.read_text(encoding="utf-8")
+    (d / "corridor_survey.yaml").write_text(survey_src, encoding="utf-8")
+    alone = K.coverage_report(d)["totals"]
+    (d / "day_night.yaml").write_text(yaml.safe_dump(day_night, sort_keys=False),
+                                      encoding="utf-8")
+    rep = K.coverage_report(d)
+    t = rep["totals"]
+    assert t["n_policies"] == 2 and t["n_compiled"] == 1, t
+    assert t["n_altitude_conflict"] == 1, t
+    bad = rep["altitude_conflict"][0]
+    assert bad["policy_id"] == "day-night", bad
+    assert bad["rule_ids"] == ["day-band", "night-band"], bad
+    assert [r["policy_id"] for r in rep["rows"]] == [load_policy(SURVEY).policy_id]
+    for k in ("n_p0_in_scope", "n_p0_covered", "p0_coverage", "baseline_n_p0_covered"):
+        assert t[k] == alone[k], (k, t[k], alone[k])
 
 
 def test_several_envelopes_intersect_to_the_tightest_bounds():

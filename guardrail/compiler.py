@@ -810,9 +810,16 @@ def _relevance(rule, act: dict, ctx: _Ctx) -> str:
     elif isinstance(rule, ObstacleClearance):
         facts = {"length": math.hypot(tx - sx, ty - sy)}
     elif isinstance(rule, SubjectStandoff):
-        who = ("any followed subject" if rule.subject_class == "*"
-               else f"any {rule.subject_class}")
-        facts = {"follow": bool(_FOLLOW_WORDS.search(m.task_text)), "who": who}
+        # A class-specific stand-off binds to the ONE subject being followed,
+        # and only while perception classifies it as that class
+        # (models.SubjectStandoff.binds; the Shield holds one subject). Until
+        # 2026-10-19 this said "binds to any pedestrian": in the red-car demo
+        # the CSP justified a 10 m bubble around every person that the Shield
+        # never enforced (standoff-pedestrian: 0 bound ticks on a car follow).
+        star = rule.subject_class == "*"
+        facts = {"follow": bool(_FOLLOW_WORDS.search(m.task_text)),
+                 "who": "any followed subject" if star else "the subject being followed",
+                 "cls": None if star else rule.subject_class}
     else:                                     # pragma: no cover - new rule type
         raise TypeError(f"no relevance template for {type(rule).__name__}")
     facts["time_fact"] = tf
@@ -823,7 +830,65 @@ def _relevance(rule, act: dict, ctx: _Ctx) -> str:
 # Action sets
 # --------------------------------------------------------------------------- #
 
-def _action_sets(rules: list) -> tuple[AllowedActionSet, ForbiddenActionSet]:
+class CSPAltitudeConflict(ValueError):
+    """The hard altitude bands (envelopes and corridors) in force TOGETHER
+    have no height in common: no CSP's altitude band can hold.
+
+    A ValueError, so a caller's `except ValueError` (demo/real_vla_demo.py's
+    no-prompt path) still catches it as before; its own class so
+    coverage_report can list the file and carry on instead of dying, as it
+    does for CSPBudgetExceeded. `rule_ids` names the clashing rules, `when`
+    the instant they clash (None: no clock, every rule read as in force).
+    """
+
+    def __init__(self, bands: list, when: datetime | None = None):
+        self.rule_ids = [b[0] for b in bands]
+        self.when = when
+        at = "" if when is None else f" at {when.isoformat(timespec='seconds')}"
+        super().__init__("altitude bands in scope (envelopes and corridors) "
+                         f"do not overlap{at}: "
+                         + ", ".join(f"{i} {b0:g}-{b1:g} m" for i, b0, b1 in bands))
+
+
+def _in_force_sets(rules: list, clock: "_RuleClock", now: datetime,
+                   lookahead_s: float) -> list[tuple[datetime, frozenset]]:
+    """The ids of `rules` in force at each instant the time filter samples,
+    `now` first.
+
+    The instants and the test are the ones that put each rule in scope:
+    `_activity`'s (`now` and every minute boundary up to now + lookahead,
+    `active_at`) for an ordinary rule, `_RuleClock.activity`'s (the window
+    padded by _SWITCH_PAD_S, each boundary and one microsecond after it,
+    `_RuleClock.on`) for a rule a switch or swap touches. An instant outside a
+    rule's own sampled window counts it as not in force there, which can only
+    make a set smaller, never add a rule the scope test did not see."""
+    end = now + timedelta(seconds=lookahead_s)
+    pad = timedelta(seconds=_SWITCH_PAD_S)
+    ts = {now}
+    t = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    while t <= end:
+        ts.add(t)
+        t += timedelta(minutes=1)
+    if any(clock.involved(r) for r in rules):
+        lo, hi = now - pad, end + pad
+        ts.update((lo, hi))
+        t = lo.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        while t <= hi:
+            ts.add(t)
+            if t + _JUST_AFTER <= hi:
+                ts.add(t + _JUST_AFTER)
+            t += timedelta(minutes=1)
+
+    def on(r, x) -> bool:
+        if clock.involved(r):
+            return now - pad <= x <= end + pad and clock.on(r, x)
+        return now <= x <= end and r.active_at(x)
+    return [(x, frozenset(r.id for r in rules if on(r, x)))
+            for x in [now] + sorted(ts - {now})]
+
+
+def _action_sets(rules: list, in_force: list | None = None
+                 ) -> tuple[AllowedActionSet, ForbiddenActionSet]:
     """The action-set adapter's content, from every in-scope HARD rule.
 
     In-scope, not just kept: the token budget limits the text a language model
@@ -840,6 +905,25 @@ def _action_sets(rules: list) -> tuple[AllowedActionSet, ForbiddenActionSet]:
     2026-10-06 only envelopes were intersected, and corridor_survey (a 10-20 m
     corridor, no envelope) reported no band at all - "unbounded" by this
     class's own definition while the Shield held 10-20 m.
+
+    PER INSTANT, NOT ACROSS SCHEDULES. "All of them bind at once" holds only
+    for the rules in force at the same instant. With a clock, `in_force`
+    (`_in_force_sets`, `now` first) says which in-scope rules are in force
+    at each sampled instant of the window. The band published is the
+    intersection over every in-scope band, as before, whenever that is not
+    empty (a height legal for the whole window); when it is empty only
+    because the window crosses a schedule edge (a day band 10-30 m until
+    17:59, a night band 40-60 m from 18:00, `now` 17:59:58), it is the band in
+    force at `now`, and the upcoming rule stays in `source_rules` and in its
+    P0 entry's `in_force` text. Never a hull: that would admit heights no rule
+    allows. CSPAltitudeConflict is raised only when the rules in force at ONE
+    instant have no height in common - with no clock (`in_force` None) every
+    rule is read as in force, so that is the intersection of them all, as
+    compile_csp documents. Until 2026-10-19 every in-scope band was
+    intersected whatever its schedule, so a policy the lint accepts (disjoint
+    bands that are never in force together) raised a bare ValueError: on
+    every clockless compile, which took the whole coverage_report down, and
+    with a clock in the seconds before the switch.
     """
     hard = [r for r in rules if r.constraint_type == "hard"]
     kins = [r for r in hard if isinstance(r, KinematicEnvelope)]
@@ -860,13 +944,26 @@ def _action_sets(rules: list) -> tuple[AllowedActionSet, ForbiddenActionSet]:
     bands = ([(a.id, a.alt_min_m, a.alt_max_m) for a in alts]
              + [(c.id, c.altitude_floor_m, c.altitude_ceiling_m) for c in cors])
     if bands:
-        lo = max(b[1] for b in bands)
-        hi = min(b[2] for b in bands)
+        def meet(group):
+            return max(b[1] for b in group), min(b[2] for b in group)
+        lo, hi = meet(bands)
         if lo > hi:
-            raise ValueError("altitude bands in scope (envelopes and corridors) "
-                             "do not overlap: "
-                             + ", ".join(f"{i} {b0:g}-{b1:g} m" for i, b0, b1 in bands))
-        kw["altitude_band_m_agl"] = (lo, hi)
+            if in_force is None:
+                raise CSPAltitudeConflict(bands)
+            at_now = None
+            for i, (x, ids) in enumerate(in_force):
+                group = [b for b in bands if b[0] in ids]
+                if not group:
+                    continue
+                g_lo, g_hi = meet(group)
+                if g_lo > g_hi:
+                    raise CSPAltitudeConflict(group, x)
+                if i == 0:
+                    at_now = (g_lo, g_hi)
+            if at_now is not None:
+                kw["altitude_band_m_agl"] = at_now
+        else:
+            kw["altitude_band_m_agl"] = (lo, hi)
         src += [b[0] for b in bands]
     allowed = AllowedActionSet(source_rules=src, **kw)
     forbidden = ForbiddenActionSet(
@@ -1881,7 +1978,9 @@ class ConstraintCompiler:
                           always carried structurally (P0_constraints vs the
                           summaries, and the order of the sentences).
 
-        Raises CSPBudgetExceeded if the P0 sentences alone exceed the budget,
+        Raises CSPAltitudeConflict (a ValueError) if the hard altitude bands
+        in force at one instant have no height in common (_action_sets),
+        CSPBudgetExceeded if the P0 sentences alone exceed the budget,
         CSPUnenforcedRules if the policy carries a declarable-only rule
         type the Shield does not enforce (models.RUNTIME_TYPES) or an MSL
         altitude, and ValueError for a cost map that is not this CSP's
@@ -2061,7 +2160,10 @@ class ConstraintCompiler:
             p2 = None                 # "only if budget allows"; selection says why
 
         in_scope_rules = [r["rule"] for r in rows.values() if "risk" in r]
-        allowed, forbidden = _action_sets(in_scope_rules)
+        allowed, forbidden = _action_sets(
+            in_scope_rules,
+            None if now is None else _in_force_sets(in_scope_rules, clock, now,
+                                                    lookahead_s))
 
         decisions = []
         for c in pol.constraints:
@@ -2233,7 +2335,12 @@ def coverage_report(policies_dir: str | Path,
     A policy whose P0 rules alone exceed the budget raises CSPBudgetExceeded
     (KPI 3). It has no CSP, so it is listed under `raised` and left out of
     every coverage share - and if no policy compiled, the shares are None, not
-    100 %: "nothing measured" must not read as a pass.
+    100 %: "nothing measured" must not read as a pass. A policy whose hard
+    altitude bands cannot all hold at once (CSPAltitudeConflict: with no clock
+    every rule is in force, so two scheduled bands the lint accepts because
+    they never meet in time clash here) is listed the same way, under
+    `altitude_conflict` with the rule ids. Until 2026-10-19 that one file
+    raised a bare ValueError and stopped the whole report.
 
     Two floors are reported, because they answer different questions:
       null      - the same scorer on an emptied CSP: can the scorer say 0 %?
@@ -2250,6 +2357,7 @@ def coverage_report(policies_dir: str | Path,
     rows: list[dict] = []
     raised: list[dict] = []
     not_flyable: list[dict] = []
+    altitude_conflict: list[dict] = []
     for f in files:
         # A file the Shield cannot fly as written (a declarable-only rule type,
         # an unplaceable frame: Policy.flight_problems) has no CSP - the CSP
@@ -2282,6 +2390,10 @@ def coverage_report(policies_dir: str | Path,
                            "baseline_n_p0": naive["n_p0"],
                            "baseline_n_p0_covered": naive["n_p0_covered"],
                            "baseline_p0_missing": naive["missing"]})
+            continue
+        except CSPAltitudeConflict as e:
+            altitude_conflict.append({**base, "rule_ids": e.rule_ids,
+                                      "problem": str(e)})
             continue
         cov = p0_coverage(csp, pol)
         null = p0_coverage(csp.model_copy(update={"P0_constraints": [],
@@ -2336,6 +2448,7 @@ def coverage_report(policies_dir: str | Path,
             "n_compiled": len(rows),
             "n_raised_budget_exceeded": len(raised),
             "n_not_flyable": len(not_flyable),
+            "n_altitude_conflict": len(altitude_conflict),
             "n_p0_in_scope": tot("n_p0_in_scope"),
             "n_p0_covered": tot("n_p0_covered"),
             "p0_coverage": cov,
@@ -2362,6 +2475,7 @@ def coverage_report(policies_dir: str | Path,
         "rows": rows,
         "raised": raised,
         "not_flyable": not_flyable,
+        "altitude_conflict": altitude_conflict,
     }
 
 

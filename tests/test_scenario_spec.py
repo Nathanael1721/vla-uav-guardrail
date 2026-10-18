@@ -123,6 +123,10 @@ def test_every_event_payload_is_checked_at_load():
                                         "motion": {"vx": 1}}), "vx")
     _refused(ev("activate_rule", {"rule_id": "x", "window": {"start_time": "25:99"}}),
              "out of range")
+    # A window that names no day is never in force: the switch would do
+    # nothing and the scenario still pass (accepted before 2026-10-19).
+    _refused(ev("activate_rule", {"rule_id": "x", "window": {"days": []}}),
+             "names no day")
     _refused(ev("activate_rule", {"rule_id": "x", "expect_refused": "yes"}),
              "expect_refused")
     ScenarioEvent.model_validate({"at_sim_t": 1.0, "type": "translate_polygon_fence",

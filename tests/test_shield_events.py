@@ -630,6 +630,66 @@ def test_a_switch_may_not_turn_off_a_hard_rule_of_another_layer():
     assert reg.set_rule_active("nfz-airport", False, layer="regulation")["op"] == "switch_off"
 
 
+def test_a_tightened_lower_rule_stays_locked_to_its_lower_layer():
+    """Found 2026-10-18: a mission layer that TIGHTENED the regulation
+    airport zone - what the grant allows - left a merged rule labelled
+    "mission", and a mission-layer switch-off (the REST channel's layer)
+    then turned the regulation zone off: a 4 m/s command flew into it
+    unrepaired. The merged rule now names the layer it overrode
+    (models.ConstraintBase.locked_by) and no single layer's switch-off, zone
+    edit or loose swap is accepted. Shown failing on 1b95383: the mission
+    switch-off, the mission expire and the wide swap all applied."""
+    from guardrail.models import merge_layers
+    big = [{"x": 6, "y": 6}, {"x": 24, "y": 6}, {"x": 24, "y": 24}, {"x": 6, "y": 24}]
+    pol = _layered(extra_mis=[{"id": "nfz-airport", "type": "polygon_fence",
+                               "vertices": big}])
+    airport = next(c for c in pol.constraints if c.id == "nfz-airport")
+    assert (airport.effective_layer, airport.locked_by) == ("mission", ["regulation"])
+    sh = Shield(pol)
+    st, a = State(x=0, y=15, up=4), Action4D(vx=4.0)
+    sh.filter(st, a)
+    for layer in ("mission", "regulation"):
+        e = _raises(LayerRelaxation, sh.set_rule_active, "nfz-airport", False,
+                    layer=layer)
+        assert "overriding a hard regulation-layer copy" in str(e), str(e)
+    assert sh.events == []
+    d = sh.filter(st, a)
+    assert [v.rule_id for v in d.violations] == ["nfz-airport"] and d.repairs
+    assert sh.set_rule_active("nfz-airport", True)["op"] == "switch_on"   # holding it on
+    # A re-declared regulation zone may not be expired from the mission layer...
+    tfr = {"id": "tfr", "type": "dynamic_nfz", "vertices": _SQ}
+    reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
+        {**tfr, "layer": "regulation"}]})
+    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "constraints": [
+        tfr, {"id": "alt", "type": "altitude_envelope", "alt_min_m": 2, "alt_max_m": 40}]})
+    sh = Shield(merge_layers([reg, mis]))
+    sh.filter(State(x=0, y=15, up=4), Action4D())
+    _raises(LayerRelaxation, sh.expire_nfz, "tfr")
+    _raises(LayerRelaxation, sh.scale_nfz, "tfr", 0.1)
+    assert sh.policy.generation == 0
+    # ...nor a re-declared regulation corridor swapped wide from it.
+    lane = {"id": "lane", "type": "corridor", "width_m": 20,
+            "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}],
+            "altitude_floor_m": 5, "altitude_ceiling_m": 30}
+    reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
+        {**lane, "layer": "regulation"}]})
+    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "constraints": [
+        lane]})
+    sh = Shield(merge_layers([reg, mis]))
+    sh.filter(State(x=0, y=0, up=10), Action4D())
+    wide = CorridorSwap.model_validate({
+        "id": "wide", "type": "corridor_swap", "target_id": "lane", "width_m": 500,
+        "centerline": [{"x": -100, "y": 0}, {"x": 100, "y": 0}],
+        "altitude_floor_m": 0, "altitude_ceiling_m": 300})
+    e = _raises(LayerRelaxation, sh.hot_apply, wide)
+    assert "overriding a hard regulation-layer copy" in str(e), str(e)
+    narrow = CorridorSwap.model_validate({
+        "id": "narrow", "type": "corridor_swap", "target_id": "lane", "width_m": 10,
+        "centerline": [{"x": -50, "y": 0}, {"x": 50, "y": 0}],
+        "altitude_floor_m": 8, "altitude_ceiling_m": 25})
+    assert sh.hot_apply(narrow)["op"] == "swap"
+
+
 def test_a_switch_may_not_override_another_layers_switch_holding_a_rule_on():
     """The last switch in force decides, so appending a mission switch-off
     after a regulation switch that holds the rule on would overrule it."""
