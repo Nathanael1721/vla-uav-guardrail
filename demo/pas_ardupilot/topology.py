@@ -122,7 +122,9 @@ def classify(ev: dict) -> dict:
                           given (None when there is no simulator)
       sim_same_desktop    sim_on_this_desktop(<simulator address>)
       link                "mavros" | "pymavlink"
-      autopilot           {"heartbeat": bool, "is_ardupilot": bool}
+      autopilot           {"heartbeat": bool, "is_ardupilot": bool, and
+                          optionally "heartbeat_seen": bool - connected at
+                          some point, where "heartbeat" is at the end}
       topology_evidence   the dict check_topology_evidence() reads: the MAVROS
                           chain, ardupilot_version, autopilot_kind,
                           network_link and collect_host_evidence()'s host keys
@@ -160,7 +162,14 @@ def classify(ev: dict) -> dict:
                 "reasons": reasons}
 
     if not (apv.get("heartbeat") and apv.get("is_ardupilot")):
-        reasons.append("no ArduPilot heartbeat was received, so nothing shows "
+        # A link that was up and dropped before the end (MAVROS's connected
+        # False at the end) is not "no heartbeat": ArduPilot was in the loop,
+        # and the evidence stops short of the end (2026-10-19).
+        reasons.append("ArduPilot's heartbeat was received, but the flight controller "
+                       "was not connected at the end of the run (the link dropped), so "
+                       "the evidence does not hold to the end"
+                       if apv.get("heartbeat_seen") and not apv.get("heartbeat") else
+                       "no ArduPilot heartbeat was received, so nothing shows "
                        "ArduPilot was in the loop")
         return out()
     if link == "pymavlink":

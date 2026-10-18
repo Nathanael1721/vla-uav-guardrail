@@ -2638,10 +2638,16 @@ class Grounder:
                     self._t_det = time.time()
                     self._det_tier = det_tier
                     self._det_feat = det_feat
+                    # range_m: the box's range read from THIS capture's depth
+                    # frame (None without one), so a consumer that places the
+                    # box later - demo/pas_ardupilot/perception_node.py, up
+                    # to a second on - never indexes it into a newer frame.
                     self._det_cap = {"t_cap": t_cap, "t_capture": t_capture,
                                      "pose": cap_pose,
                                      "depth_src": dep_src,
-                                     "depth_dt_ms": dep_dt}
+                                     "depth_dt_ms": dep_dt,
+                                     "range_m": (None if dep is None
+                                                 else range_from_depth(dep, det))}
                     self._n_seen += 1
                     last = (det[0], time.time())
                 else:

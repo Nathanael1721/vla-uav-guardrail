@@ -1095,6 +1095,23 @@ def test_the_ring_is_strict_and_coverage_decides_what_scores():
     assert not s["scored"] and s["standoff_s"] == 0.9 and "LOWER BOUND" in s["standoff_basis"]
 
 
+def test_the_standoff_dwell_is_the_time_the_rows_span_not_ticks_times_a_tenth():
+    """REGRESSION (2026-10-19). standoff_s was the count of ticks in the ring
+    times 0.1 s, so a loop at 9.16 Hz under-reported it by ~9 % and a stall
+    inside the ring counted as a tenth of a second. Rows that carry their
+    time ("t", as the node writes them) are weighted by it: here 10 ticks in
+    the ring at a 0.11 s period, one of them followed by a 0.6 s stall.
+    Failed before: 1.0 s."""
+    truth = SimpleNamespace(actor="Car_10", source="s", summary=lambda: None)
+    ts = [round(0.11 * i, 3) for i in range(10)]
+    ts = ts[:5] + [t + 0.6 for t in ts[5:]] + [ts[-1] + 0.6 + 0.11]
+    rows = [{"t": t, "subject_truth": [0.0, 0.0], "subject_range_m": 3.0} for t in ts[:10]]
+    rows.append({"t": ts[10], "subject_truth": [0.0, 0.0], "subject_range_m": 9.0})
+    s = pn.truth_summary(rows, truth, 5.0, 0.1)
+    assert s["ticks_in_ring"] == 10 and s["scored"], s
+    assert s["standoff_s"] == round(10 * 0.11 + 0.6, 2), s["standoff_s"]
+
+
 def test_an_unread_subject_pose_is_none_with_its_reason_never_zero():
     cases = (
         ({"camera_cls": TruthCamera, "camera_kw": {"value": (float("nan"), float("nan"))}},

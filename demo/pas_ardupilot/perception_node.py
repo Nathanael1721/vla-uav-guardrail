@@ -208,6 +208,14 @@ import topology as topo                                               # noqa: E4
 from autopilot import FrameAnchor, PymavlinkLink, body_to_world       # noqa: E402
 
 TICK = 0.1
+# The loop-rate gate the project's evaluation holds every camera flight to
+# (tools/build_eval_data.py, gate loop_hz_min). Every pas_ap run up to
+# 2026-10-14 flew at 8.97-9.16 Hz under it: the loop slept TICK minus the
+# tick's work, relative to the tick's own start, so each sleep's round-up to
+# the OS timer was lost for good (~11 ms a tick on the vla-real Python 3.10).
+# The loop now paces to an absolute deadline, as demo/follow_vlm.py does since
+# 2026-09; a run below the gate says so in metrics.json (loop_hz_below_gate).
+LOOP_HZ_GATE = 9.5
 # Architecture constraints: "Camera / IMU / GPS - 10 Hz observation". Every
 # run reports its detector rate against this, beside the zero-skill null.
 GRANT_OBS_HZ = 10.0
@@ -321,6 +329,28 @@ DETECTION_STALE_S = 1.0
 MIDFLIGHT_FENCE_TIMEOUT_S = 0.3
 # Reading the fence list the autopilot held before the first upload.
 FENCE_READ_TIMEOUT_S = 5.0
+# A FROZEN LINK IS NOT A HOVERING AIRCRAFT (2026-10-19). link.state() answers
+# from the last position the link ever received, so a SITL that died behind
+# mavlink-router (the socket stays open and simply goes quiet), a closed TCP
+# socket (pymavlink prints "EOF on TCP socket" and does not reconnect) or a
+# MAVROS that lost its FCU left the loop filtering, commanding and logging a
+# frozen position as flown until max_s - with no word in metrics.json. Each
+# tick now asks the link how old its position fix and the vehicle's heartbeat
+# are (link_age()): a position older than POS_STALE_S (GLOBAL_POSITION_INT
+# comes at 20 Hz on pymavlink, 10 Hz through MAVROS; the slack is for WSL NAT
+# hiccups), a heartbeat older than HEARTBEAT_STALE_S (1 Hz) or MAVROS saying
+# the FCU is disconnected makes the tick STALE: nothing is commanded, the FSM
+# is not stepped and no flown row is written - ArduCopter's GUIDED stops a
+# velocity target nobody refreshes after its GUID_TIMEOUT (3 s by default, the
+# param file does not change it). Staleness that lasts LINK_LOST_S ends the
+# episode as "link lost", which lands the aircraft unless the autopilot owns
+# it. Every stale span is an event and counted (metrics.json link_freshness).
+POS_STALE_S = 1.0
+HEARTBEAT_STALE_S = 3.0
+LINK_LOST_S = 3.0
+# The OS timer the loop's sleep wakes on (main(), _fine_timer_begin): None
+# until measured - run() alone, as the tests call it, never touches it.
+TIMER_RESOLUTION_MS = None
 
 
 def theta_horizon(arg: str | None = "auto") -> float | None:
@@ -373,7 +403,10 @@ class FollowPilot:
 
     `detections` is anything with follow_vlm.Grounder's latest() shape:
     {"det": (cx, cy, w, h, score, W, H, colour) | None, "t_det", "seq",
-     "n_seen", "n_miss"}.
+     "n_seen", "n_miss"}, and "cap" (the published box's capture: pose,
+    times, depth source and range) when the Grounder has one. step() hands
+    the box on with the "cap" and "t_det" of the SAME latest() answer: a
+    second latest() call could pair box N with capture N+1.
     """
 
     def __init__(self, detections, hfov_deg: float, yaw_gain: float = 1.2,
@@ -416,7 +449,7 @@ class FollowPilot:
         return ((float(fwd), 0.0, vz, float(yaw_rate)),
                 {"mode": mode, "fresh": bool(fresh), "seq": lat.get("seq"),
                  "bearing": None if bearing is None else float(bearing),
-                 "det": det})
+                 "det": det, "cap": lat.get("cap"), "t_det": t_det})
 
 
 def ray_depression_rad(row_px: float, img_w: float, img_h: float, hfov_deg: float,
@@ -496,7 +529,8 @@ def depth_implausible(det, r: float, up: float, hfov_deg: float, fv=None,
 
 
 def subject_estimate(det, depth, state: State, yaw_rad: float, hfov_deg: float,
-                     width_m: float, fv=None, body_pitch_rad: float = 0.0):
+                     width_m: float, fv=None, body_pitch_rad: float = 0.0,
+                     range_m: float | None = None):
     """(x, y, source) of the detected subject in the scene frame, or None.
 
     Range from the depth image inside the box (follow_vlm.range_from_depth),
@@ -504,6 +538,11 @@ def subject_estimate(det, depth, state: State, yaw_rad: float, hfov_deg: float,
     column. Slant range becomes horizontal range with the height difference.
     No ground truth enters: this is what lets the Shield's stand-off rules bind
     on the real drone too.
+
+    `range_m`, when given, is that depth range already read inside the box
+    from the depth frame of the box's own capture (follow_vlm.Grounder's
+    cap["range_m"]) and stands in for `depth`; `state`, `yaw_rad` and
+    `body_pitch_rad` are then the capture's pose (`estimate_inputs`).
 
     A depth range the subject cannot have (`depth_implausible`) is dropped
     for the width range, and the source says so ("width:depth-rejected"). A
@@ -516,7 +555,12 @@ def subject_estimate(det, depth, state: State, yaw_rad: float, hfov_deg: float,
         return None
     fv = fv or _fv()
     b = fv.box_bearing(float(det[0]), float(det[5]), hfov_deg)
-    r, src = (fv.range_from_depth(depth, det), "depth") if depth is not None else (None, None)
+    if range_m is not None:
+        r, src = float(range_m), "depth"
+    elif depth is not None:
+        r, src = fv.range_from_depth(depth, det), "depth"
+    else:
+        r, src = None, None
     if r is not None and math.isfinite(r) and r > 0 and \
             depth_implausible(det, r, state.up, hfov_deg, fv, body_pitch_rad):
         r, src = None, "depth-rejected"
@@ -533,23 +577,67 @@ def subject_estimate(det, depth, state: State, yaw_rad: float, hfov_deg: float,
 
 
 def depth_check(det, depth, state: State, hfov_deg: float, fv=None,
-                body_pitch_rad: float = 0.0) -> dict | None:
+                body_pitch_rad: float = 0.0,
+                range_m: float | None = None) -> dict | None:
     """The depth range inside the box and why `depth_implausible` refused it
     (`refused` None: accepted), for the flight log; None with no box or no
-    depth image.
+    depth image (and no capture `range_m`, as subject_estimate takes it).
 
     Added after the 2026-10-12 re-fly (pas_ap_20261012_033329): 43 depth
     returns were refused and ranged by box width at 56-156 m; within 5 ticks
     of a depth-ranged tick the two ranges disagreed by up to 122 m, and the
     log kept neither the refused range nor the rule that refused it."""
-    if det is None or depth is None:
+    if det is None or (depth is None and range_m is None):
         return None
     fv = fv or _fv()
-    r = fv.range_from_depth(depth, det)
+    r = float(range_m) if range_m is not None else fv.range_from_depth(depth, det)
     if r is None or not math.isfinite(r) or r <= 0:
         return {"r_m": None, "refused": None}
     return {"r_m": round(float(r), 2),
             "refused": depth_implausible(det, r, state.up, hfov_deg, fv, body_pitch_rad)}
+
+
+def estimate_inputs(info: dict, state: State, yaw_rad: float, pitch_rad: float,
+                    obs, t_now: float) -> tuple:
+    """What `subject_estimate` and `depth_check` place the box from:
+    (state, yaw_rad, pitch_rad, depth image, capture range, pairing record).
+
+    THE BOX'S OWN CAPTURE, NOT THIS TICK (2026-10-19). Until then the node
+    placed a box from a frame up to ~1.1 s old (the detector's ~0.3 s, then
+    up to DETECTION_STALE_S held) with the CURRENT tick's position, heading
+    and pitch, and read its range from whatever depth frame had arrived LAST:
+    on pas_ap_video_on_20261014, pas_ap_close_on and pas_ap_20261012_033329
+    the heading had turned a p95 of 17-29 deg (max 42-44 deg) since the
+    capture, so at a 20 m range the stand-off ring was drawn 6-14 m to the
+    side of the subject, and the old box indexed a newer depth frame on road
+    or background. follow_vlm's Grounder pairs every inference with the pose
+    interpolated at its capture and that capture's depth frame (2026-09-29)
+    and publishes both with the box (latest()["cap"]: "pose", "range_m",
+    "depth_src"); this takes them from the SAME latest() answer as the box
+    (FollowPilot.step's info["cap"]).
+
+    The pose ring the capture pose is read from is filled by this loop
+    (put_pose_full: yaw and pitch in radians, as here). With no capture pose
+    (a Grounder started before the ring had a pose, or a stand-in without
+    "cap") the old pairing is used and the record says so ("tick" pose,
+    "latest" depth), never in silence. The estimate is where the subject was
+    at the capture: for a moving subject that lags by the box's age times its
+    speed, far less than range times the heading change it replaces."""
+    cap = info.get("cap") or {}
+    pose = cap.get("pose")
+    t_c = cap.get("t_capture") or cap.get("t_cap")
+    age = None if t_c is None else round(t_now - float(t_c), 3)
+    if pose is not None:
+        yaw_c, pitch_c = float(pose["yaw"]), float(pose.get("pitch") or 0.0)
+        origin = State(x=float(pose["x"]), y=float(pose["y"]), up=float(pose["up"]),
+                       yaw_deg=math.degrees(yaw_c))
+        return (origin, yaw_c, pitch_c, None, cap.get("range_m"),
+                {"pose": f"capture:{pose.get('src', 'ring')}",
+                 "depth": cap.get("depth_src") or "none", "box_age_s": age})
+    depth = obs.get_depth() if hasattr(obs, "get_depth") else None
+    return (state, yaw_rad, pitch_rad, depth, None,
+            {"pose": "tick", "depth": "latest" if depth is not None else "none",
+             "box_age_s": age})
 
 
 # --------------------------------------------------------------------------- #
@@ -1338,6 +1426,22 @@ def frame_disagreement(frame: dict) -> str:
             + ", so where the subject was is not known")
 
 
+def point_durations(ts: list, tick_s: float) -> list[float]:
+    """Each point's own share of the flight, in seconds: the time from it to
+    the next point (the last one gets `tick_s`, the loop's period).
+
+    Dwell figures were tick counts times 0.1 s, so a loop running at 9.16 Hz
+    under-reported every one of them by ~9 %: the 279 ticks below the floor
+    of pas_ap_20261008_224440 were recorded as 27.9 s and span 30.4 s of its
+    timestamps. A stall (a 0.73 s tick on pas_ap_video_on_20261014) is time
+    spent where the aircraft last was, and is charged to that point; so is a
+    gap with no usable state (ticks without state, a stale link), the
+    position last known - as zone_dwell's other approximations, the count
+    is of where the record says the aircraft was."""
+    t = [float(v) for v in ts]
+    return [max(0.0, b - a) for a, b in zip(t, t[1:])] + ([float(tick_s)] if t else [])
+
+
 def truth_summary(rows: list[dict], truth: SubjectTruth, ring_m: float | None,
                   tick_s: float, hfov_deg: float | None = None,
                   width_m: float | None = None) -> dict:
@@ -1353,6 +1457,9 @@ def truth_summary(rows: list[dict], truth: SubjectTruth, ring_m: float | None,
     it should), a zero dwell and the follow fraction are None - never a
     success read off the ticks that happened to answer (review 2026-10-13:
     three failed reads made 5 of 20 ticks the flight, standoff_s 0.0).
+
+    The dwell is time-weighted (point_durations over the rows' "t") when
+    every row carries its time, else the count times `tick_s`.
 
     They also need the truth's ranges to be ranges to where the subject was
     (`frame_check`, SubjectTruth.frame_summary): a frame check through
@@ -1373,6 +1480,12 @@ def truth_summary(rows: list[dict], truth: SubjectTruth, ring_m: float | None,
     frame_bad = frame is not None and frame.get("agrees") is False
     n_ring = (None if ring_m is None or not read
               else sum(1 for d in ranges if d < ring_m))
+    ring_s = None
+    if n_ring is not None:
+        w = (point_durations([r["t"] for r in rows], tick_s)
+             if all(r.get("t") is not None for r in rows) else [tick_s] * len(rows))
+        ring_s = sum(wi for r, wi in zip(rows, w) if r.get("subject_truth") is not None
+                     and r["subject_range_m"] < ring_m)
     coverage = None if not rows else round(len(read) / len(rows), 4)
     complete = coverage is not None and coverage >= TRUTH_MIN_COVERAGE
     frac30 = (None if not read else
@@ -1393,10 +1506,10 @@ def truth_summary(rows: list[dict], truth: SubjectTruth, ring_m: float | None,
         standoff_s, basis = None, ("no stand-off rule binds the subject" if read
                                    else "the subject's pose was never read")
     elif complete:
-        standoff_s = round(n_ring * tick_s, 2)
+        standoff_s = round(ring_s, 2)
         basis = f"measured: the pose was read on {len(read)}/{len(rows)} ticks"
     elif n_ring:
-        standoff_s = round(n_ring * tick_s, 2)
+        standoff_s = round(ring_s, 2)
         basis = (f"a LOWER BOUND: in the ring on {n_ring} of the {len(read)}/"
                  f"{len(rows)} ticks read; the unread ticks may add to it")
     else:
@@ -2212,6 +2325,88 @@ def load_scene_only(args, out: Path, camera=None) -> int:
         camera.stop()
 
 
+def next_tick_deadline(deadline: float | None, t_tick: float, now: float,
+                       tick: float = TICK) -> float:
+    """The loop's next ABSOLUTE deadline (demo/follow_vlm.py's pacing).
+
+    The loop slept `TICK - work` from each tick's own start, so every
+    sleep's round-up to the OS timer was lost for good: 8.97-9.16 Hz on
+    every pas_ap run (pas_ap_video_off_20261014: work p95 23.8 ms, period
+    median 110 ms). Stepping a running deadline by TICK lets a late wake be
+    repaid by the next tick's shorter sleep. A stall of more than a whole
+    tick is not repaid - that would be a burst of back-to-back commands -
+    the deadline restarts from now instead."""
+    deadline = (t_tick if deadline is None else deadline) + tick
+    return now if deadline < now - tick else deadline
+
+
+def link_staleness(link) -> tuple[str | None, dict | None]:
+    """(why the link's state is not live on this tick, or None; the ages it
+    was judged on). (None, None) for a link that cannot say (no link_age()):
+    the run then records freshness as not measured, never as fresh."""
+    age = getattr(link, "link_age", None)
+    if not callable(age):
+        return None, None
+    a = age()
+    p, h = a.get("pos_age_s"), a.get("heartbeat_age_s")
+    why = []
+    if p is None or p > POS_STALE_S:
+        why.append("no position fix received" if p is None
+                   else f"no position fix for {p:.1f} s (limit {POS_STALE_S:g} s)")
+    if h is None or h > HEARTBEAT_STALE_S:
+        why.append("no vehicle heartbeat received" if h is None
+                   else f"no vehicle heartbeat for {h:.1f} s (limit {HEARTBEAT_STALE_S:g} s)")
+    if a.get("connected") is False:
+        why.append("MAVROS reports the flight controller disconnected")
+    return ("; ".join(why) or None), a
+
+
+def _measure_sleep_ms(n: int = 20) -> float:
+    """Median wall time of `time.sleep(0.001)`: the wait this loop's pacing
+    does. (follow_vlm measures asyncio.sleep, the wait ITS loop does; from
+    Python 3.11 time.sleep has its own high-resolution timer, and on the
+    flight env's 3.10 it wakes on the system timer that timeBeginPeriod
+    sets.)"""
+    ts = []
+    for _ in range(n):
+        a = time.perf_counter()
+        time.sleep(0.001)
+        ts.append((time.perf_counter() - a) * 1000.0)
+    return round(float(np.median(ts)), 2)
+
+
+def _fine_timer_begin():
+    """timeBeginPeriod(1) for the life of the flight, as follow_vlm's main()
+    asks it (THE OS TIMER THE TICK SLEEPS ON there): the deadline pacing
+    repays a late wake, the 1 ms timer makes the wakes late by less. The
+    resolution obtained is MEASURED (TIMER_RESOLUTION_MS, metrics.json
+    timer_resolution_ms), because Windows 11 may decline it."""
+    global TIMER_RESOLUTION_MS
+    winmm = None
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            winmm = ctypes.WinDLL("winmm")
+            if winmm.timeBeginPeriod(1) != 0:             # TIMERR_NOERROR
+                winmm = None
+        except Exception as exc:                          # noqa: BLE001
+            print(f"[timer]  timeBeginPeriod unavailable ({type(exc).__name__})")
+            winmm = None
+    TIMER_RESOLUTION_MS = _measure_sleep_ms()
+    asked = ("" if sys.platform != "win32" else
+             f"1 ms timer {'requested' if winmm is not None else 'NOT granted'}; ")
+    print(f"[timer]  {asked}a 1 ms sleep measures {TIMER_RESOLUTION_MS} ms")
+    return winmm
+
+
+def _fine_timer_end(winmm) -> None:
+    if winmm is not None:
+        try:
+            winmm.timeEndPeriod(1)
+        except Exception:                                 # noqa: BLE001
+            pass
+
+
 def run(args, *, link=None, camera=None, grounder=None, obs=None,
         clock=time.time, sleep=time.sleep, popen=None, run_cmd=None,
         recorder_cls=None) -> int:
@@ -2440,6 +2635,27 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                    log_path=out / "detections.jsonl")
             grounder.start()
         width_m, subject_class = (fv or _fv()).subject_width(args.object)
+        # The stand-off rules this subject's class binds. An UNCLASSIFIED
+        # subject (a phrase follow_vlm's tables do not know: "a child", "a
+        # jogger", "people") still binds the catch-all "*" rules - the
+        # policies' own words: "including a subject that could not be
+        # classified" (sitl_pedestrian.yaml), "whatever is being tracked"
+        # (follow_car_citylife.yaml) - and follow_vlm gives the Shield the
+        # subject whatever its class. Until 2026-10-19 this node gave the
+        # Shield no subject at all when the class was None, so every
+        # stand-off went inert while the record (standoff_ring_m, the HUD's
+        # rule panel) still showed the catch-all ring in force.
+        standoff_ids = [c.id for c in policy.by_type(SubjectStandoff)
+                        if c.binds(subject_class)]
+        unclassified = None
+        if subject_class is None:
+            unclassified = {"object": args.object, "width_m": width_m,
+                            "binding_rules": standoff_ids}
+            rec.event("subject_unclassified", **unclassified)
+            print(f"[subject] WARNING no class known for {args.object!r}: only the "
+                  f"catch-all stand-off(s) {standoff_ids or 'none'} bind it, and the "
+                  f"width range assumes {width_m:.2f} m, a car - a subject that is "
+                  f"not car-sized is ranged wrong by the ratio")
         pilot = FollowPilot(grounder, hfov, yaw_gain=args.yaw_gain,
                             want_w_frac=args.want_width, speed_max=args.speed_max,
                             cruise_alt=args.cruise_alt, alt_gain=args.alt_gain,
@@ -2462,6 +2678,19 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         work_ms: list[float] = []
         n_touched = n_braked = n_escaped = n_no_state = n_subject = 0
         subject_src: dict = {}
+        # Where each estimate's pose and depth came from (estimate_inputs),
+        # and how old its box was when it was placed.
+        pairing_pose: dict = {}
+        pairing_depth: dict = {}
+        box_ages: list[float] = []
+        # The pacing's running deadline (next_tick_deadline).
+        tick_deadline = None
+        # Ticks whose state was not live (link_staleness), and each span of
+        # them: when it began, why, how many ticks, how long.
+        n_stale = 0
+        stale_spans: list[dict] = []
+        stale_since = None
+        freshness_measured = callable(getattr(link, "link_age", None))
         # What was asked of the autopilot, in the FSM's words and ArduCopter's,
         # and which request can explain a mode change (ModeRequests).
         asks = ModeRequests(hold_mode)
@@ -2491,8 +2720,46 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 st = link.state(anchor)
                 if st is None:
                     n_no_state += 1
-                    sleep(TICK)
+                    _now = clock()
+                    tick_deadline = next_tick_deadline(tick_deadline, t_tick, _now)
+                    sleep(max(0.0, tick_deadline - _now))
                     continue
+                # A position or heartbeat the link stopped refreshing is not
+                # the aircraft's state (POS_STALE_S): nothing is commanded
+                # from it, the FSM is not stepped and no row is written, as
+                # on a tick without state; LINK_LOST_S of it ends the episode.
+                stale, ages = link_staleness(link)
+                if stale is not None:
+                    n_stale += 1
+                    if stale_since is None:
+                        stale_since = t_tick
+                        stale_spans.append({"t": round(t_tick - t0, 3), "why": stale,
+                                            "ticks": 0, "s": None, "recovered": False})
+                        rec.event("link_stale", t=t_tick - t0, why=stale,
+                                  ages={k: round(v, 3) if isinstance(v, float) else v
+                                        for k, v in (ages or {}).items()})
+                        print(f"[link]   *** state not live ({stale}): nothing is "
+                              f"commanded until it is")
+                    stale_spans[-1]["ticks"] += 1
+                    stale_spans[-1]["s"] = round(t_tick - stale_since, 3)
+                    if t_tick - stale_since >= LINK_LOST_S:
+                        end_reason = (f"link lost: {stale}, for "
+                                      f"{t_tick - stale_since:.1f} s")
+                        print(f"[link]   *** {end_reason}; the episode ends")
+                        break
+                    _now = clock()
+                    tick_deadline = next_tick_deadline(tick_deadline, t_tick, _now)
+                    sleep(max(0.0, tick_deadline - _now))
+                    continue
+                if stale_since is not None:
+                    stale_spans[-1].update(recovered=True,
+                                           s=round(t_tick - stale_since, 3))
+                    rec.event("link_fresh", t=t_tick - t0,
+                              stale_s=round(t_tick - stale_since, 3),
+                              stale_ticks=stale_spans[-1]["ticks"])
+                    print(f"[link]   state live again after "
+                          f"{t_tick - stale_since:.1f} s")
+                    stale_since = None
                 now = t_tick - t0
                 s = link.snap
                 mode = s.mode
@@ -2521,14 +2788,23 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 obs.put_pose_full(t_tick, st.x, st.y, st.up, yaw, s.pitch or 0.0, s.roll or 0.0)
                 body, info = pilot.step(t_tick, st.up)
                 raw = body_to_world(*body, yaw)
-                subj = subj_depth = None
+                subj = subj_depth = pairing = None
                 if info["fresh"]:
-                    depth = obs.get_depth() if hasattr(obs, "get_depth") else None
-                    subj = subject_estimate(info["det"], depth, st, yaw, hfov, width_m, fv,
-                                            body_pitch_rad=s.pitch or 0.0)
-                    subj_depth = depth_check(info["det"], depth, st, hfov, fv,
-                                             body_pitch_rad=s.pitch or 0.0)
-                if subj is not None and subject_class is not None:
+                    # Placed from the box's own capture: its pose and its
+                    # depth frame's range (estimate_inputs), not this tick's.
+                    e_st, e_yaw, e_pitch, depth, cap_range, pairing = estimate_inputs(
+                        info, st, yaw, s.pitch or 0.0, obs, t_tick)
+                    subj = subject_estimate(info["det"], depth, e_st, e_yaw, hfov, width_m,
+                                            fv, body_pitch_rad=e_pitch, range_m=cap_range)
+                    subj_depth = depth_check(info["det"], depth, e_st, hfov, fv,
+                                             body_pitch_rad=e_pitch, range_m=cap_range)
+                    pairing_pose[pairing["pose"]] = pairing_pose.get(pairing["pose"], 0) + 1
+                    pairing_depth[pairing["depth"]] = pairing_depth.get(pairing["depth"], 0) + 1
+                    if pairing["box_age_s"] is not None:
+                        box_ages.append(pairing["box_age_s"])
+                # With no class (unclassified) only the catch-all rules bind:
+                # SubjectStandoff.binds(None) is True for "*" alone.
+                if subj is not None:
                     shield.set_subject(subj[0], subj[1], subject_class)
                     n_subject += 1
                     subject_src[subj[2]] = subject_src.get(subj[2], 0) + 1
@@ -2725,6 +3001,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     "subject": None if subj is None else [round(subj[0], 2), round(subj[1], 2), subj[2]],
                     # The depth range in the box and the rule that refused it, if any.
                     "subject_depth": subj_depth,
+                    # Whose pose and depth placed the box, and the box's age.
+                    "subject_pairing": pairing,
                     # The subject's simulator pose and the true range: the
                     # record's, never the Shield's (None with the reason).
                     **truth_fields,
@@ -2791,9 +3069,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         failsafe_t is not None and now - failsafe_t > FAILSAFE_GRACE_S)):
                     end_reason = f"escalation FSM ended the mission ({fsm.state.value})"
                     break
-                _work = clock() - t_tick
+                # PACE TO AN ABSOLUTE DEADLINE (next_tick_deadline), as
+                # follow_vlm does: a late wake is repaid by the next sleep.
+                _now = clock()
+                _work = _now - t_tick
                 work_ms.append(_work * 1000.0)
-                sleep(max(0.0, TICK - _work))
+                tick_deadline = next_tick_deadline(tick_deadline, t_tick, _now)
+                sleep(max(0.0, tick_deadline - _now))
         except KeyboardInterrupt:
             end_reason = "interrupted"
             print("[node]   interrupted")
@@ -2814,12 +3096,19 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # autopilot chose itself, is left to the autopilot to finish.
             autopilot_owns = takeover is not None or (
                 fsm is not None and (fsm.terminal or fsm.state in FAILSAFE_STATES))
+            # What the LAND request returned (None: not asked): over a dead
+            # link PymavlinkLink.land() tries for 5 s and returns False, and
+            # that is on record, not dropped.
+            land_accepted = None
             if not autopilot_owns:
                 try:
                     asks.ask("LAND")
-                    link.land()
+                    land_accepted = bool(link.land())
                 except Exception as exc:                          # noqa: BLE001
+                    land_accepted = False
                     print(f"[link]   LAND failed: {exc}")
+                if land_accepted is False:
+                    print("[link]   *** LAND was not confirmed by the autopilot")
             # EpisodeRecord.end(): the one mission_end write_replay requires
             # before it packs an episode.
             rec.end(end_reason, t=round(clock() - t0, 3))
@@ -2851,8 +3140,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # (nfz_moving_not_counted), not scored 0. Until 2026-10-11 this walked
         # policy.by_type(PolygonFence), which a dynamic_nfz is not. Each point's
         # rule-clock reading gates each zone: time inside a zone its window or
-        # a switch had off is nfz_off_by_clock_s, not dwell.
-        dwell = zone_dwell(shield, traj, TICK, clock_key="clock")
+        # a switch had off is nfz_off_by_clock_s, not dwell. Since 2026-10-19
+        # the seconds are the points' own durations from their timestamps
+        # (point_durations), not the count times TICK: the count stays beside
+        # them (nfz_ticks, alt_violation_ticks).
+        traj_s = point_durations([p["t"] for p in traj], TICK)
+        dwell = zone_dwell(shield, traj, TICK, clock_key="clock", point_s=traj_s)
         nfz_ticks = dwell["nfz_ticks"]
         # The subject's true range (evaluation only): the stand-off dwell and
         # the follow proxy from the simulator's pose, None when never read.
@@ -2869,7 +3162,14 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             print(f"[nfz]    moving zone(s) {dwell['nfz_moving_not_counted']} are NOT "
                   f"in nfz_s: the end-of-flight count has no per-tick position")
         env = policy.by_type(AltitudeEnvelope)
-        alt_ticks = sum(1 for p in traj for e in env if not (e.alt_min_m <= p["up"] <= e.alt_max_m))
+        alt_out = [(p, w) for p, w in zip(traj, traj_s) for e in env
+                   if not (e.alt_min_m <= p["up"] <= e.alt_max_m)]
+        alt_ticks, alt_s = len(alt_out), sum(w for _, w in alt_out)
+        loop_hz = round(len(rows) / mission_s, 3)
+        if loop_hz < LOOP_HZ_GATE:
+            print(f"[loop]   *** the loop ran at {loop_hz} Hz, under the {LOOP_HZ_GATE:g} Hz "
+                  f"gate (tick work p95 "
+                  f"{spread([round(v, 3) for v in work_ms]).get('p95')} ms)")
 
         link_ev = link.evidence()
         ev = {"camera_source": args.camera,
@@ -2877,7 +3177,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
               "sim_same_desktop": (topo.sim_on_this_desktop(args.sim_host)
                                    if args.camera == "projectairsim" else None),
               "link": link.name,
-              "autopilot": {k: link_ev.get(k) for k in ("heartbeat", "is_ardupilot")},
+              "autopilot": {k: link_ev.get(k) for k in ("heartbeat", "is_ardupilot",
+                                                        "heartbeat_seen")},
               "topology_evidence": link_ev.get("topology_evidence") or {},
               "g1": g1_status(args.g1_verdict)}
         cls = topo.classify(ev)
@@ -2913,7 +3214,29 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             "shield_lookahead": {"horizon_s": LOOKAHEAD_S, "dt_s": LOOKAHEAD_DT_S,
                                  "poses": int(round(LOOKAHEAD_S / LOOKAHEAD_DT_S))},
             "mission_s": round(mission_s, 2), "end_reason": end_reason,
-            "loop_hz": round(len(rows) / mission_s, 3),
+            "loop_hz": loop_hz,
+            # The project's loop gate, and how the loop was paced to it
+            # (next_tick_deadline) on which OS timer (None: not measured,
+            # run() was called without main()).
+            "loop_hz_gate": LOOP_HZ_GATE, "loop_hz_below_gate": loop_hz < LOOP_HZ_GATE,
+            "tick_pacing": "absolute-deadline",
+            "timer_resolution_ms": TIMER_RESOLUTION_MS,
+            # Ticks whose position or heartbeat the link had stopped refreshing
+            # (link_staleness): nothing was commanded on them and no row was
+            # written. Each span with its reason; an episode the staleness
+            # ended says "link lost" in end_reason.
+            "ticks_state_stale": n_stale,
+            "link_freshness": {
+                "measured": freshness_measured,
+                "why": None if freshness_measured else
+                       f"the {link.name} link has no link_age(): staleness not measured",
+                "pos_stale_s": POS_STALE_S, "heartbeat_stale_s": HEARTBEAT_STALE_S,
+                "lost_after_s": LINK_LOST_S, "ticks_stale": n_stale,
+                "spans": stale_spans,
+                "fcu_connected_at_end": link_ev.get("fcu_connected_at_end")},
+            # What the mission-end LAND request returned (None: not asked, the
+            # autopilot owned the aircraft).
+            "mission_end_land_accepted": land_accepted,
             # Each tick's work before its sleep (the 100 ms budget's used part).
             "tick_work_ms": spread([round(v, 3) for v in work_ms]),
             # The demo video (--save-view): the recorder's own summary (its
@@ -2937,12 +3260,29 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             "track_ticks": pilot.n_track, "search_ticks": pilot.n_search,
             "subject_known_ticks": n_subject, "subject_source": subject_src,
             "subject_class": subject_class,
+            # The width the range from box width assumed, the stand-off rules
+            # that class binds (only "*" ones for an unclassified subject), and
+            # the unclassified record (None: the phrase named a class).
+            "subject_width_m": width_m, "subject_standoff_rules": standoff_ids,
+            "subject_unclassified": unclassified,
+            # Whose pose and depth placed each estimate (estimate_inputs:
+            # "capture:<pose src>" and the Grounder's depth source, or the
+            # "tick" pose and "latest" depth when the box had no capture pose),
+            # and how old the box was when it was placed.
+            "subject_pairing": {"pose": pairing_pose, "depth": pairing_depth,
+                                "box_age_s": spread(box_ages)},
             # escape_ticks counts ticks that FLEW a violation of ANY priority (P1
             # speed caps included); the P0 count and the KPI rate are kpi.json's
             # p0_escapes / p0_violation_escape_rate. The 2026-10-13 close
             # Shield-off run read 749 here against 727 P0 escapes.
             "interventions": n_touched, "brakes": n_braked, "escape_ticks": n_escaped,
-            "nfz_s": round(nfz_ticks * TICK, 2), "alt_violation_s": round(alt_ticks * TICK, 2),
+            # Dwell in seconds from the points' own timestamps (point_durations),
+            # the tick counts beside them.
+            "nfz_s": round(dwell["nfz_s"], 2), "alt_violation_s": round(alt_s, 2),
+            "nfz_ticks": nfz_ticks, "alt_violation_ticks": alt_ticks,
+            "dwell_basis": ("time-weighted: each trajectory point's time to the next "
+                            f"(the last point {TICK:g} s); counts in nfz_ticks / "
+                            "alt_violation_ticks"),
             "nfz_by_zone_s": dwell["nfz_by_zone_s"],
             "nfz_moving_not_counted": dwell["nfz_moving_not_counted"],
             "nfz_off_by_clock_s": dwell["nfz_off_by_clock_s"],
@@ -3060,6 +3400,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             why.append("the Project AirSim + ArduPilot rail is not qualified by gate G1")
         if fsm_fault is not None:
             why.append(f"the escalation FSM refused an input mid-flight: {fsm_fault}")
+        if end_reason.startswith("link lost"):
+            why.append(f"the autopilot link was lost mid-flight ({end_reason}); the "
+                       f"episode ended early")
+        elif n_stale:
+            why.append(f"the autopilot link's state was not live on {n_stale} tick(s) "
+                       f"({len(stale_spans)} span(s)); nothing was commanded on them and "
+                       f"the record has a gap")
+        if not freshness_measured:
+            why.append(f"the {link.name} link cannot say how old its state is "
+                       f"(no link_age()): a frozen position would pass as live")
         if policy_source.get("dev_yaml"):
             why.append(f"the policy was flown from YAML under {DEV_YAML_FLAG}: "
                        f"unsigned, not its issued bundle")
@@ -3112,6 +3462,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
               f"{fence_breaches} | mode requests {asks.fsm} (sent as "
               f"{asks.autopilot}) | autopilot took "
               f"over: {takeover['mode'] if takeover else 'no'}")
+        print(f"[report] link state not live on {n_stale} tick(s) in "
+              f"{len(stale_spans)} span(s)"
+              + ("" if freshness_measured else " (NOT measured: the link has no link_age())")
+              + f" | loop {loop_hz} Hz against the {LOOP_HZ_GATE:g} Hz gate "
+              f"(absolute-deadline pacing, timer {TIMER_RESOLUTION_MS} ms)"
+              + ("" if unclassified is None else
+                 f" | subject UNCLASSIFIED: only {standoff_ids or 'no'} stand-off(s) bind"))
         print(f"[report] subject truth: {tsum['ticks_read']}/{len(rows)} ticks read | "
               f"nearest {tsum['min_range_m']} m | in the {ring_m} m ring "
               f"{tsum['frac_in_ring']} of read ticks | estimate off by median "
@@ -3180,7 +3537,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
 
 
 def main(argv=None) -> int:
-    return run(build_parser().parse_args(argv))
+    args = build_parser().parse_args(argv)
+    # A flight asks the OS for its 1 ms timer for its whole life, as
+    # follow_vlm's main() does (_fine_timer_begin); a dry run or a scene load
+    # sleeps on nothing.
+    fine = None if (args.dry_run or args.scene_only) else _fine_timer_begin()
+    try:
+        return run(args)
+    finally:
+        _fine_timer_end(fine)
 
 
 if __name__ == "__main__":

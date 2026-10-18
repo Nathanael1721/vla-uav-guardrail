@@ -1078,7 +1078,8 @@ def _clock_reading(value) -> datetime | None:
 
 def zone_dwell(shield, points, tick_s: float, *,
                live_from: dict[str, float] | None = None,
-               clock_key: str | None = None) -> dict[str, Any]:
+               clock_key: str | None = None,
+               point_s: list[float] | None = None) -> dict[str, Any]:
     """Time spent inside keep-out zones (`nfz_s`), read from the Shield's own
     rule checker, the same way on every rail.
 
@@ -1119,6 +1120,14 @@ def zone_dwell(shield, points, tick_s: float, *,
     An id in `live_from` that the Shield does not hold is named in
     `nfz_live_from_unknown`, not dropped.
 
+    `point_s` (opt-in, 2026-10-19): each point's own duration in seconds, as
+    long as `points`; a counted point then adds its duration, not `tick_s`,
+    to nfz_s, nfz_by_zone_s and nfz_off_by_clock_s (nfz_ticks stays the
+    count). A rail whose loop does not hold its period - the Project AirSim
+    + ArduPilot node ran at 9.16 Hz, so count x 0.1 s read 279 ticks as
+    27.9 s against 30.4 s of their timestamps - passes its points' times to
+    the next point. Without it, the count times `tick_s`, as every rail had.
+
     Returns nfz_s, nfz_ticks, nfz_by_zone_s, nfz_first_index (the first
     point inside a counted zone, or None), nfz_counted_zones,
     nfz_moving_not_counted and nfz_live_from_unknown; with `clock_key` also
@@ -1128,6 +1137,13 @@ def zone_dwell(shield, points, tick_s: float, *,
     tick_s = float(tick_s)
     if not (tick_s > 0.0 and tick_s < float("inf")):
         raise ValueError(f"tick_s must be a positive number of seconds, got {tick_s!r}")
+    points = list(points)
+    if point_s is not None:
+        point_s = [float(v) for v in point_s]
+        if len(point_s) != len(points) or not all(
+                v >= 0.0 and v < float("inf") for v in point_s):
+            raise ValueError(f"point_s must hold one finite duration >= 0 per point "
+                             f"({len(points)}), got {len(point_s)}")
     live_from = dict(live_from or {})
     fences = list(shield.ir.fences)
     moving = sorted({r.rule.id for r in fences if r.moving})
@@ -1140,6 +1156,9 @@ def zone_dwell(shield, points, tick_s: float, *,
         rule_clock_on = _RuleClock(shield.policy).on
     by_zone: dict[str, int] = {}
     off_by_clock: dict[str, int] = {}
+    # The same, in seconds, with point_s.
+    by_zone_t: dict[str, float] = {}
+    off_by_clock_t: dict[str, float] = {}
     no_reading = 0
     first = None
     for i, p in enumerate(points):
@@ -1161,20 +1180,28 @@ def zone_dwell(shield, points, tick_s: float, *,
                     continue
             if when is not None and not rule_clock_on(r["rule"], when):
                 off_by_clock[r["id"]] = off_by_clock.get(r["id"], 0) + 1
+                if point_s is not None:
+                    off_by_clock_t[r["id"]] = off_by_clock_t.get(r["id"], 0.0) + point_s[i]
                 continue
             by_zone[r["id"]] = by_zone.get(r["id"], 0) + 1
+            if point_s is not None:
+                by_zone_t[r["id"]] = by_zone_t.get(r["id"], 0.0) + point_s[i]
             if first is None:
                 first = i
+
+    def secs(counts: dict, times: dict) -> dict:
+        return ({k: round(v * tick_s, 3) for k, v in sorted(counts.items())}
+                if point_s is None else {k: round(v, 3) for k, v in sorted(times.items())})
     n = sum(by_zone.values())
-    out = {"nfz_s": n * tick_s, "nfz_ticks": n,
-           "nfz_by_zone_s": {k: round(v * tick_s, 3) for k, v in sorted(by_zone.items())},
+    out = {"nfz_s": n * tick_s if point_s is None else sum(by_zone_t.values()),
+           "nfz_ticks": n,
+           "nfz_by_zone_s": secs(by_zone, by_zone_t),
            "nfz_first_index": first,
            "nfz_counted_zones": counted,
            "nfz_moving_not_counted": moving,
            "nfz_live_from_unknown": sorted(k for k in live_from if k not in known)}
     if clock_key is not None:
-        out["nfz_off_by_clock_s"] = {k: round(v * tick_s, 3)
-                                     for k, v in sorted(off_by_clock.items())}
+        out["nfz_off_by_clock_s"] = secs(off_by_clock, off_by_clock_t)
         out["nfz_points_without_clock"] = no_reading
     return out
 
