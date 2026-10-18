@@ -75,6 +75,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import sys
 import time
 from pathlib import Path
@@ -230,6 +231,51 @@ TOPIC_MODE_REQUEST = "/shield/mode_request"
 TOPIC_FENCES = "/shield/fences"
 TOPIC_STATUS = "/mavlink_adapter/status"
 TOPIC_RAW_LOCAL = "/mavros/setpoint_raw/local"
+# This node's ROS name: the Shield node routes its mode requests through the
+# adapter only when a subscriber of this name is on /shield/mode_request
+# (ros2_shield_node.adapter_listening), not merely any subscriber - rosbag2
+# subscribes to that topic in every recorded run.
+ADAPTER_NODE_NAME = "mavlink_adapter"
+
+# The rails' X,Y options (sitl/ros2_shield_node.py, ros2_vla_stub_node.py,
+# run_sitl_demo.py).
+XY_FLAGS = ("--target", "--subject")
+_NEGATIVE_VALUE = re.compile(r"^-\.?\d")
+
+
+def join_negative_xy(argv, flags=XY_FLAGS) -> list[str]:
+    """`[flag, "-20,15"]` -> `[f"{flag}=-20,15"]` for each X,Y flag.
+
+    argparse takes a separate value that starts with '-' for an option unless
+    it reads as a negative NUMBER, and "-20,15" does not (the comma), so
+    `--target -20,15` - a target south of home - exited with status 2 on
+    every rail, the interpreters the rails run (3.11, Ubuntu's 3.12.3)
+    included; the stress harness passes the value as its own argv element
+    (experiments/sweep_scenarios.py build_sitl_cmd). Safe because no option
+    of these parsers starts with '-' and a digit: a real option after the
+    flag is never swallowed."""
+    argv = list(argv)
+    out: list[str] = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in flags and i + 1 < len(argv) and _NEGATIVE_VALUE.match(argv[i + 1]):
+            out.append(f"{a}={argv[i + 1]}")
+            i += 2
+            continue
+        out.append(a)
+        i += 1
+    return out
+
+
+class XYArgumentParser(argparse.ArgumentParser):
+    """An ArgumentParser whose X,Y options take a negative X as a separate
+    value (join_negative_xy), whichever way it is called: parse_args goes
+    through parse_known_args."""
+
+    def parse_known_args(self, args=None, namespace=None):
+        args = sys.argv[1:] if args is None else args
+        return super().parse_known_args(join_negative_xy(args), namespace)
 
 
 # --------------------------------------------------------------------------- #
@@ -510,7 +556,7 @@ if HAVE_ROS:
     class MavlinkAdapterNode(Node):
         def __init__(self, out: Path | None, upload_fences: bool = True,
                      hold_mode: str = DEFAULT_HOLD_MODE) -> None:
-            super().__init__("mavlink_adapter")
+            super().__init__(ADAPTER_NODE_NAME)
             if hold_mode not in HOLD_MODES:
                 raise ValueError(f"hold_mode {hold_mode!r} is not one of {HOLD_MODES}")
             self.hold_mode = hold_mode

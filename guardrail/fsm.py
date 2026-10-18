@@ -1193,6 +1193,27 @@ class EscalationFSM:
     def run(self, inputs: Iterable[TickInput]) -> list[FSMOutput]:
         return [self.step(i) for i in inputs]
 
+    def unobserved(self) -> None:
+        """The caller is skipping a tick it cannot observe: restart both
+        clean streaks, so they count only ticks the FSM was shown.
+
+        G7 (Brake -> Normal) and G8 (Loiter -> Normal) read "cleared for >=
+        T_recover" as `t - _clean_*_since`, a span of the clock, not a count
+        of clean ticks. A caller that stops stepping for a while - the SITL
+        Shield node while its pose has stopped updating (stale-pose watchdog,
+        2026-10-19: the Shield's verdict on such a tick is about a position
+        that is no longer the aircraft's) - would otherwise hand back on the
+        first fresh tick a streak that ran through the gap, and G8 would
+        return the aircraft to GUIDED on one observed clean tick, the gap's
+        seconds counted as cleared. After this the next clean step starts
+        the streak, so recovery needs T_recover of observed clean ticks.
+
+        Nothing else is touched. The N-in-T window, X6's stuck clock and the
+        Loiter timeout (G5) keep reading the clock: they measure how long,
+        not how long clean, and X6 and G5 can only fire sooner for a gap."""
+        self._clean_any_since = None
+        self._clean_hard_since = None
+
     def step(self, inp: TickInput) -> FSMOutput:
         if not isinstance(inp, TickInput):
             raise ValueError(f"step() takes a TickInput, got {type(inp).__name__}")

@@ -455,6 +455,70 @@ def test_setup_sitl_keeps_lf_line_endings():
     assert b"\r" not in SETUP_SITL.read_bytes()
 
 
+RUN_GAZEBO = ROOT / "sitl" / "run_gazebo_demo.sh"
+
+
+def test_the_gazebo_rail_cannot_hide_a_failed_mission_behind_grep():
+    """bh_final sitl-ros2/gazebo-demo-masked-exit: the mission is piped
+    through `grep -v`, and under `set -e` without pipefail the script's status
+    was grep's; and the gz log was written into ~/sitl-run before the script
+    created it. Read here; run below with stand-ins."""
+    raw = RUN_GAZEBO.read_bytes()
+    assert b"\r" not in raw, "run_gazebo_demo.sh has CRLF line endings"
+    lines = _code_lines(raw.decode("utf-8")).splitlines()
+    assert any(re.search(r"^\s*set -[a-z]*o pipefail", ln) for ln in lines), (
+        "`mission | grep -v` returns grep's status: a failed mission would exit 0")
+    mk = next((i for i, ln in enumerate(lines) if 'mkdir -p "$HOME/sitl-run"' in ln), None)
+    redir = next((i for i, ln in enumerate(lines) if re.search(r">\s*~/sitl-run/", ln)), None)
+    assert mk is not None and redir is not None and mk < redir, (
+        f"the first redirect into ~/sitl-run (line {redir}) comes before its mkdir ({mk})")
+
+
+def test_the_gazebo_rail_exits_with_the_missions_status():
+    """The script run for real on a fresh HOME, every outside program a
+    stand-in (pkill above all: the cleanup must never reach a real SITL):
+    a mission that exits 2 makes the script exit 2, and gz is started even
+    though ~/sitl-run did not exist yet. On 1b95383 it exited 0 and gz.log
+    was never written."""
+    bash = _bash()
+    if bash is None:
+        _skip("no POSIX bash on this machine; run_gazebo_demo.sh not exercised")
+        return
+    home = _mkdtemp("gazebo_home_")
+    fake = home / "fakebin"
+    fake.mkdir()
+
+    def stub(name, body):
+        p = fake / name
+        p.write_bytes(("#!/usr/bin/env bash\n" + body + "\n").encode())
+        os.chmod(p, 0o755)
+    stub("pkill", "exit 0")
+    stub("sleep", "exit 0")
+    stub("tail", "exit 0")
+    stub("gz", 'echo "gz stub ran"')
+    py = home / "venv-ap" / "bin" / "python"
+    py.parent.mkdir(parents=True)
+    env = dict(os.environ, HOME=str(home),
+               PATH=str(fake) + os.pathsep + os.environ.get("PATH", ""))
+    for rc in (2, 0):
+        py.write_bytes(('#!/usr/bin/env bash\necho "[policy] stand-in mission"\n'
+                        f'echo "Traceback (most recent call last):"\nexit {rc}\n').encode())
+        os.chmod(py, 0o755)
+        shutil.rmtree(home / "sitl-run", ignore_errors=True)
+        r = subprocess.run([bash, RUN_GAZEBO.as_posix(), "off"], env=env,
+                           capture_output=True, text=True, timeout=120)
+        assert r.returncode == rc, (
+            f"mission exited {rc}, the script {r.returncode}\n{r.stdout}\n{r.stderr}")
+        assert ("=== done" in r.stdout) == (rc == 0), r.stdout
+        gz_log = home / "sitl-run" / "gz.log"
+        for _ in range(100):                      # gz runs in the background
+            if gz_log.is_file() and "gz stub ran" in gz_log.read_text(encoding="utf-8"):
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError(f"gz never started (no {gz_log}): {r.stderr}")
+
+
 def test_the_design_doc_records_the_same_pin():
     sha = _pinned_sha(_setup_text())
     assert sha, "no pin to compare"

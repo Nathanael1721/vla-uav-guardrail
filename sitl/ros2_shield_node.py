@@ -142,6 +142,27 @@ tick of the Shield's own answer to a stop; the FSM does not step while held,
 and the pilot's next action returns the aircraft to GUIDED. Every spell is in
 events.jsonl and metrics.json `action_watchdog`; rows carry `action_stale`.
 
+STALE POSE (2026-10-19). Until this date nothing watched
+/mavros/local_position/pose: a position that stopped while the setpoints
+still went through was re-checked every tick and repeated in the rows and
+the trajectory, so zone dwell could read 0 for a flight that crossed a zone.
+If no pose arrives for `--pose-timeout-s` (default 1.0 s), the node holds
+the aircraft as for a quiet action stream, asks for the streams again at
+once, and the next pose releases the hold (GUIDED only once no hold reason
+is left, and never after a takeover). The FSM does not step on a stale pose
+in any state - with the FSM in Loiter or a fail-safe there is no hold, and it
+went on stepping until the review of 2026-10-19 - and its clean streaks
+restart (EscalationFSM.unobserved), so a recovery (G7 / G8) needs T_recover
+of fresh clean ticks. Rows carry `pose_age_ms` and `pose_stale`;
+metrics.json `pose_watchdog`; a run with a stale spell is not KPI-grade, and
+report.md says how long the checks did not see the aircraft.
+
+TAKEOVER (2026-10-19). A takeover is any change to a mode this node did not
+ask for, out of GUIDED or out of a hold it asked for (BRAKE -> LAND), as on
+the perception rail. Once the autopilot or a pilot has the aircraft the node
+sends no mode request at all: no GUIDED when actions resume, and no
+mission-end LAND whatever the mode.
+
 TICK LATENCY (2026-10-12). Each row records `e2e_ms` (an action's receipt to
 the publication of the first setpoint flown from it), `action_age_ms` (the
 age of the action a published setpoint came from) and `tick_ms` (the tick
@@ -189,10 +210,11 @@ from guardrail.replay import (EpisodeRecord, audit_tick,                  # noqa
                               episode_row_fields, flown_fields,
                               kpi_evidence_grade, rail_shield, rule_clock,
                               verify_replay, write_replay, zone_dwell)
-from mavlink_adapter_node import (DEFAULT_HOLD_MODE, FENCE_MARGIN_M,      # noqa: E402
+from mavlink_adapter_node import (ADAPTER_NODE_NAME, DEFAULT_HOLD_MODE,   # noqa: E402
+                                  FENCE_MARGIN_M,
                                   HOLD_MODES, TOPIC_FENCES, TOPIC_MODE_REQUEST,
                                   TOPIC_SETPOINT, TOPIC_STATUS, ModeRequests,
-                                  fence_alt_plan,
+                                  XYArgumentParser, fence_alt_plan,
                                   heading_deg_from_enu_quaternion,
                                   policy_ceiling_m, policy_fences, read_parm,
                                   zones_near)
@@ -259,6 +281,13 @@ FAILSAFE_GRACE_S = 40.0
 # decision per second) needs a longer --action-timeout-s, which is recorded.
 ACTION_TIMEOUT_TICKS = 5
 ACTION_TIMEOUT_S = ACTION_TIMEOUT_TICKS * TICK
+# The stale-pose watchdog's default (--pose-timeout-s). Well under the
+# Shield's 5 s lookahead (LOOKAHEAD_S), so the hold comes while the forecast
+# made from the last pose still covers the path; above what harmless flights
+# produce: a 0.6-0.7 s whole-simulator stall on ros2if_on_dyn_yaw (6 rows on
+# one pose), and the 2-4 Hz stream rates Mission Planner sets on the shared
+# link until the node's next 5 s re-assert (sitl/README.md).
+POSE_TIMEOUT_S = 1.0
 # The grant's monitor tick budget, end to end (Safety Shield page,
 # "Performance targets": <= 100 ms (10 Hz) end-to-end).
 TICK_BUDGET_MS = 100.0
@@ -279,6 +308,17 @@ def parse_xy(text: str | None) -> tuple[float, float] | None:
     if len(parts) != 2 or not all(math.isfinite(v) for v in parts):
         raise ValueError(f"expected X,Y, got {text!r}")
     return parts[0], parts[1]
+
+
+def adapter_listening(node_names) -> bool:
+    """Is the MAVLink adapter among these subscribers of /shield/mode_request?
+
+    Until 2026-10-19 any subscriber counted (count_subscribers > 0), and
+    rosbag2 subscribes to that topic in every recorded run (run_ros2_demo.sh
+    BAG=1, the Docker mission role): with the adapter down, LOITER, RTL and
+    the mission-end LAND went to the bag alone while events.jsonl said
+    `via: adapter`, and the direct-MAVROS fallback could never run."""
+    return ADAPTER_NODE_NAME in node_names
 
 
 def default_tag(shield: str, dynamic: bool) -> str:
@@ -434,12 +474,14 @@ class ActionWatchdog:
     than `timeout_s`, counted from the last action, or from `start(t)` when
     none has arrived since), "resumed" on the first tick after an action
     arrives during a stale spell, and None otherwise. `t` is seconds on one
-    monotonic clock. Each spell is kept in `spells`."""
+    monotonic clock. Each spell is kept in `spells`. The node watches the
+    pose stream with one too (`what="pose"`, since 2026-10-19)."""
 
-    def __init__(self, timeout_s: float = ACTION_TIMEOUT_S) -> None:
+    def __init__(self, timeout_s: float = ACTION_TIMEOUT_S,
+                 what: str = "action") -> None:
         timeout_s = float(timeout_s)
         if not (timeout_s > 0.0 and math.isfinite(timeout_s)):
-            raise ValueError(f"the action timeout must be a positive number of "
+            raise ValueError(f"the {what} timeout must be a positive number of "
                              f"seconds, got {timeout_s!r}")
         self.timeout_s = timeout_s
         self.t0: float | None = None
@@ -645,7 +687,18 @@ if HAVE_ROS:
             # action (sequence number and monotonic ns) for the tick latency.
             self.watchdog = ActionWatchdog(getattr(args, "action_timeout_s",
                                                    ACTION_TIMEOUT_S))
-            self._stale_hold = False
+            # The pose stream's (/mavros/local_position/pose). Until
+            # 2026-10-19 nothing watched it: a pose that stopped while the
+            # setpoints still went through was re-checked every tick, the
+            # rows and the trajectory repeated it, and zone dwell over that
+            # trajectory read 0 for a flight that may have crossed a zone.
+            self.pose_watchdog = ActionWatchdog(
+                getattr(args, "pose_timeout_s", POSE_TIMEOUT_S), what="pose")
+            # Why this node holds the aircraft, if it does: "action" (the
+            # pilot went quiet) and/or "pose" (the position stopped). One
+            # hold; GUIDED again only once no reason is left, so an action
+            # stream that resumes cannot release a hold the pose still needs.
+            self._holds: set[str] = set()
             self._action_seq = 0
             self._action_rx_ns: int | None = None
             self._flown_seq = 0
@@ -739,6 +792,9 @@ if HAVE_ROS:
                                up=msg.pose.position.z,
                                yaw_deg=heading_deg_from_enu_quaternion(
                                    q.x, q.y, q.z, q.w))
+            # Receipt on the node's own monotonic clock, not header.stamp:
+            # MAVROS stamps through FCU timesync, which can be offset or jump.
+            self.pose_watchdog.received(time.monotonic())
             if self.mission_t0 is not None:
                 self.n_pose += 1
 
@@ -752,14 +808,22 @@ if HAVE_ROS:
                 if msg.mode == "GUIDED":
                     self._asks.entered_guided()
                 if (self.mission_t0 is not None and not self.done
-                        and self.mode == "GUIDED" and msg.mode != "GUIDED"
-                        and self.takeover is None
+                        and msg.mode != "GUIDED" and self.takeover is None
+                        and (self.mode == "GUIDED" or self._fsm_asked(self.mode))
                         and not self._fsm_asked(msg.mode)):
-                    # The autopilot left GUIDED without the Shield asking: a
-                    # GeoFence breach, a failsafe, or a pilot on the GCS.
-                    self.takeover = {"t": self._t(), "mode": msg.mode}
+                    # The autopilot left GUIDED - or a hold this node asked
+                    # for - for a mode the node did not ask for: a GeoFence
+                    # breach, a failsafe, or a pilot on the GCS. Until
+                    # 2026-10-19 only a change out of GUIDED counted (the
+                    # perception rail's rule until 2026-10-13), so a pilot
+                    # taking the aircraft out of the node's hold (BRAKE ->
+                    # LAND) went unseen, and when the actions resumed, or the
+                    # FSM's G8 cleared its Loiter, the node sent GUIDED and
+                    # pulled the aircraft out of the pilot's LAND.
+                    self.takeover = {"t": self._t(), "mode": msg.mode,
+                                     "previous": self.mode}
                     self.get_logger().warn(
-                        f"autopilot took the aircraft: GUIDED -> {msg.mode}")
+                        f"autopilot took the aircraft: {self.mode} -> {msg.mode}")
             self.mode = msg.mode
 
         def _fsm_asked(self, mode: str) -> bool:
@@ -788,15 +852,27 @@ if HAVE_ROS:
 
         def _on_identity(self, msg: String) -> None:
             try:
-                self.vla_identity = json.loads(msg.data)
+                ident = json.loads(msg.data)
             except ValueError:
+                ident = None
+            if not isinstance(ident, dict):
+                # Not a JSON object: recorded and ignored. Until 2026-10-19 a
+                # valid JSON non-object ('null', a list, a string) raised
+                # AttributeError on .get() inside this callback - which ended
+                # spin and the node, or, swallowed by a _call() wrapper, left
+                # the non-dict here for _report to crash on, losing every
+                # record of the flight. An identity accepted earlier is kept.
+                self.get_logger().warn("/vla/identity is not a JSON object - ignored")
+                self.rec.event("vla_identity_refused", t=self._t(),
+                               data=str(msg.data)[:500])
                 return
-            self.rec.event("vla_identity", identity=self.vla_identity)
-            host = self.vla_identity.get("host")
+            self.vla_identity = ident
+            self.rec.event("vla_identity", identity=ident)
+            host = ident.get("host")
             # None stays None: a VLA node that does not say where it runs
             # cannot be shown to be on the Orin (manifest._vla_host_missing).
             self.hil_evidence["vla_host"] = host if isinstance(host, dict) else None
-            vh = self.vla_identity.get("policy_hash")
+            vh = ident.get("policy_hash")
             with self._lock:            # not mid-way through a REST swap
                 same = (not vh) or self.policy.matches_hash(vh)
             if not same:
@@ -812,6 +888,10 @@ if HAVE_ROS:
             try:
                 rec = json.loads(msg.data)
             except ValueError:
+                return
+            if not isinstance(rec, dict):     # as _on_identity: never raise here
+                self.rec.event("adapter_status_refused", t=self._t(),
+                               data=str(msg.data)[:500])
                 return
             if rec.get("kind") == "fence_upload":
                 self.fence_status.append(rec)
@@ -902,14 +982,18 @@ if HAVE_ROS:
             """Through the adapter (WP3-09); straight to MAVROS only when no
             adapter is listening, and the record says which."""
             via = "adapter"
-            to_adapter = self.count_subscribers(TOPIC_MODE_REQUEST) > 0
+            # The adapter by name, not any subscriber (adapter_listening).
+            subs = [e.node_name for e in
+                    self.get_subscriptions_info_by_topic(TOPIC_MODE_REQUEST)]
+            to_adapter = adapter_listening(subs)
             ap = self._asks.ask(mode, via_adapter=to_adapter)
             if to_adapter:
                 # The FSM's vocabulary: the adapter maps LOITER to its hold mode.
                 self.pub_mode.publish(String(data=mode))
             elif self.cli_mode.service_is_ready():
                 self.cli_mode.call_async(SetMode.Request(custom_mode=ap))
-                via = f"mavros (no adapter subscribed) as {ap}"
+                via = (f"mavros (no adapter subscribed; others: {sorted(subs)}) "
+                       f"as {ap}")
             else:
                 via = "nobody: set_mode not ready"
             self.rec.event("mode_request", t=self._t(), mode=mode, autopilot_mode=ap,
@@ -1223,13 +1307,15 @@ if HAVE_ROS:
                                ms=round(warm.history[-1].elapsed_ms, 3))
             self.mission_t0 = time.monotonic()
             self.watchdog.start(self.mission_t0)
+            self.pose_watchdog.start(self.mission_t0)
             self.rec.event("mission_start", t=0.0,
                            target=[self.mission.target_x, self.mission.target_y],
                            speed_pref_mps=self.mission.speed_pref_mps,
                            shield=self.args.shield,
                            rule_clock_reading=self.clock().isoformat(
                                timespec="seconds"),
-                           action_timeout_s=self.watchdog.timeout_s)
+                           action_timeout_s=self.watchdog.timeout_s,
+                           pose_timeout_s=self.pose_watchdog.timeout_s)
             self.create_timer(TICK, self._tick)
 
         def serve_hot_apply(self) -> None:
@@ -1274,12 +1360,45 @@ if HAVE_ROS:
                     and (self.fsm is None
                          or MODE_FOR[self.fsm.state] == "GUIDED"))
 
+        def _hold(self, reason: str, why: str) -> bool:
+            """Hold the aircraft for one stale input (`reason` "action" or
+            "pose") the way the FSM holds it - LOITER through the adapter,
+            flown as BRAKE - while this node is the one flying it. True on
+            the tick the hold starts, which flies the Shield's answer to a
+            stop while SET_MODE goes through. A second reason joins a hold
+            already in place, with no second request."""
+            if reason in self._holds:
+                return False
+            if self._holds:
+                self._holds.add(reason)
+                return False
+            if not self._streaming():
+                return False
+            self._holds.add(reason)
+            self._request_mode("LOITER", why)
+            return True
+
+        def _release(self, reason: str, why: str) -> bool:
+            """One reason to hold is gone. GUIDED is asked for only once none
+            is left, and never after an autopilot takeover or an FSM fault:
+            until 2026-10-19 a resumed action stream sent GUIDED regardless,
+            taking the aircraft back from a pilot or failsafe that had it,
+            or out of a faulted rail's hold into GUIDED with nothing
+            streamed. True if GUIDED was asked for."""
+            if reason not in self._holds:
+                return False
+            self._holds.discard(reason)
+            if self._holds or self.takeover is not None or self.fsm_fault is not None:
+                return False
+            self._request_mode("GUIDED", why)
+            return True
+
         def _watch_actions(self, now: float) -> tuple[bool, bool]:
             """The stale-action watchdog, once per tick: `(stale, hold_onset)`.
             A stream quiet for longer than the timeout is held the way the
             FSM holds the aircraft (LOITER through the adapter, flown as
             BRAKE) while this node is the one flying it; the next action
-            returns it to GUIDED."""
+            returns it to GUIDED (_hold, _release)."""
             edge = self.watchdog.check(time.monotonic())
             age = self.watchdog.age(time.monotonic())
             if edge == "stale":
@@ -1291,17 +1410,47 @@ if HAVE_ROS:
                                actions_received=self.n_actions)
             elif edge == "resumed":
                 self.get_logger().info("/vla/action_4d resumed")
-                self.rec.event("action_resumed", t=now,
-                               held=self._stale_hold)
-                if self._stale_hold:
-                    self._stale_hold = False
-                    self._request_mode("GUIDED", "action stream resumed")
+                held = "action" in self._holds
+                guided = self._release("action", "action stream resumed")
+                self.rec.event("action_resumed", t=now, held=held,
+                               guided_requested=guided)
             onset = False
-            if self.watchdog.stale and not self._stale_hold and self._streaming():
-                self._stale_hold = onset = True
-                self._request_mode("LOITER", f"action stream stale: no "
+            if self.watchdog.stale:
+                onset = self._hold("action", f"action stream stale: no "
                                    f"/vla/action_4d for {age:.2f} s")
             return self.watchdog.stale, onset
+
+        def _watch_pose(self, now: float) -> tuple[bool, bool]:
+            """The stale-pose watchdog, once per tick: `(stale, hold_onset)`.
+            A position that has not been updated for longer than
+            --pose-timeout-s is not flown on: the aircraft is held as for a
+            quiet action stream, the streams are asked for again at once
+            (not at the next 5 s re-assert: a GCS on the shared link may
+            have set the rate to 0), and the next pose releases the hold."""
+            t = time.monotonic()
+            edge = self.pose_watchdog.check(t)
+            age = self.pose_watchdog.age(t)
+            if edge == "stale":
+                self.get_logger().warn(
+                    f"no /mavros/local_position/pose for {age:.2f} s (timeout "
+                    f"{self.pose_watchdog.timeout_s:g} s): holding")
+                self.rec.event("pose_stale", t=now, quiet_s=round(age, 3),
+                               timeout_s=self.pose_watchdog.timeout_s)
+                if self.cli_rate.service_is_ready():
+                    self.cli_rate.call_async(StreamRate.Request(
+                        stream_id=0, message_rate=10, on_off=True))
+                    self._last_rate_req = now
+            elif edge == "resumed":
+                self.get_logger().info("/mavros/local_position/pose resumed")
+                held = "pose" in self._holds
+                guided = self._release("pose", "pose stream resumed")
+                self.rec.event("pose_resumed", t=now, held=held,
+                               guided_requested=guided)
+            onset = False
+            if self.pose_watchdog.stale:
+                onset = self._hold("pose", f"pose stream stale: no /mavros/"
+                                   f"local_position/pose for {age:.2f} s")
+            return self.pose_watchdog.stale, onset
 
         def _tick_locked(self, tick_ns: int) -> None:
             if self.done or self.state is None:
@@ -1342,9 +1491,15 @@ if HAVE_ROS:
                 return
 
             # A quiet action stream is not flown: the Shield checks a stop
-            # instead, and the node holds (stale-action watchdog).
+            # instead, and the node holds (stale-action watchdog). Nor is an
+            # action flown on a position that stopped updating (stale-pose
+            # watchdog).
             stale, hold_onset = self._watch_actions(now)
-            body = Action4D() if stale else self.raw_body
+            pose_stale, pose_onset = self._watch_pose(now)
+            pose_age = self.pose_watchdog.age(time.monotonic())
+            hold_onset = hold_onset or pose_onset
+            zeroed = stale or pose_stale
+            body = Action4D() if zeroed else self.raw_body
             seq, rx_ns = self._action_seq, self._action_rx_ns
             # This tick's row number (1-based), bound once: the audit record
             # and the log row of one decision carry the same tick.
@@ -1361,9 +1516,23 @@ if HAVE_ROS:
             setpoint = "pass"
             # Once the autopilot has taken the aircraft (a GeoFence RTL), the
             # FSM no longer steps: its mode requests would fight the autopilot.
-            # Nor while this node holds it for a quiet action stream.
-            if self.fsm is not None and self.fsm_fault is None \
-                    and self.takeover is None and not self._stale_hold:
+            # Nor while this node holds it for a quiet action or pose stream.
+            # Nor on a stale pose at all: the node holds only while it is the
+            # one flying (_hold), so with the FSM in Loiter or a fail-safe a
+            # stale pose added no hold, and until the review of 2026-10-19 the
+            # FSM went on stepping on the frozen position - G8 (Loiter ->
+            # Normal) fired 1.1 s after the pose stopped, on a "cleared for
+            # 2 s" more than half measured there, sent GUIDED, and the pose
+            # hold sent LOITER on the next tick (LOITER, GUIDED, LOITER). The
+            # FSM is also told it missed the tick (EscalationFSM.unobserved),
+            # so its clean streaks do not run through the gap and G7 / G8
+            # need T_recover of fresh clean ticks after the pose comes back,
+            # not one.
+            fsm_live = (self.fsm is not None and self.fsm_fault is None
+                        and self.takeover is None)
+            if fsm_live and pose_stale:
+                self.fsm.unobserved()
+            if fsm_live and not self._holds and not pose_stale:
                 try:
                     stop_illegal = self.shield.state_is_unsafe(st)
                     # How far from legal: X6's progress and X7's losing-ground
@@ -1402,11 +1571,18 @@ if HAVE_ROS:
                     self.failsafe_t = now
             if self.fsm_fault is not None or self.takeover is not None:
                 setpoint = "none"
-            elif self._stale_hold:
+            elif self._holds:
                 # The hold's first tick flies the Shield's answer to a stop
                 # (a stop where it is legal) while SET_MODE goes through, as
                 # the FSM's own hand-over does; then the autopilot holds.
                 setpoint = "pass" if hold_onset else "none"
+            elif pose_stale:
+                # No hold: the FSM has the aircraft in an autopilot mode
+                # (LOITER flown as BRAKE, RTL, LAND) and did not step on the
+                # frozen pose. Stream nothing, as the FSM itself does in those
+                # states; the default "pass" would have published a setpoint
+                # the row records as flown.
+                setpoint = "none"
             # After the FSM stepped, with ITS verdict (not a Shield-internal
             # FSM's): the audit and the flight log describe one state machine.
             audit_tick(self.audit, tick_no, decision, fsm_out=fsm_out,
@@ -1426,9 +1602,10 @@ if HAVE_ROS:
             if flown is not None:
                 self._publish_body(flown)
                 pub_ns = time.monotonic_ns()
+            # A stop flown for a stale input did not come from the action.
             lat = latency_fields(tick_ns, pub_ns, rx_ns,
-                                 fresh=(not stale and seq != self._flown_seq))
-            if pub_ns is not None and not stale:
+                                 fresh=(not zeroed and seq != self._flown_seq))
+            if pub_ns is not None and not zeroed:
                 self._flown_seq = seq
 
             # The rule clock's reading rides with each point, so the zone
@@ -1444,8 +1621,14 @@ if HAVE_ROS:
                 subject=self.subject, fsm_out=fsm_out,
                 stop_illegal=stop_illegal, mode=self.mode, setpoint=setpoint,
                 shield=self.shield, unsafe_depth=unsafe_depth))
+            # pose_age_ms: how old the position this tick checked was (on the
+            # node's clock, from its receipt); pose_stale: past the timeout.
             self.rows[-1].update(lat, action_seq=seq, action_stale=stale,
-                                 stale_hold=self._stale_hold)
+                                 pose_age_ms=(None if pose_age is None
+                                              else round(pose_age * 1000.0, 1)),
+                                 pose_stale=pose_stale,
+                                 stale_hold=bool(self._holds),
+                                 hold_reasons=sorted(self._holds))
 
             # The episode ends when the autopilot has the aircraft and is done
             # with it: landed, or a bounded wait so a run stays short.
@@ -1480,12 +1663,24 @@ if HAVE_ROS:
             if self.hot is not None:
                 # Later events would land after this episode's records.
                 self.hot.close(f"the episode ended ({why})")
-            self.rec.end(why, t=self._t())
             # The mission-end LAND is not a fail-safe. If the FSM or the
-            # autopilot already has the aircraft in RTL / LAND, leave it be.
+            # autopilot already has the aircraft in RTL / LAND, leave it be;
+            # and after any takeover the autopilot - or the pilot - has it,
+            # whatever the mode. Until 2026-10-19 a takeover into LOITER,
+            # ALT_HOLD, BRAKE or SMART_RTL still got this LAND, 25 s later
+            # (TAKEOVER_GRACE_S), in the middle of the pilot's manoeuvre (the
+            # perception rail's autopilot_owns already counted the takeover).
             fsm_owns = self.fsm is not None and (
                 self.fsm.terminal or self.fsm.state in FAILSAFE_STATES)
-            if not fsm_owns and self.mode not in ("RTL", "LAND"):
+            land = (self.takeover is None and not fsm_owns
+                    and self.mode not in ("RTL", "LAND"))
+            skipped = (None if land else
+                       f"the autopilot took the aircraft ({self.takeover['mode']})"
+                       if self.takeover is not None else
+                       f"the FSM or the autopilot has it (mode {self.mode})")
+            self.rec.end(why, t=self._t(), mission_end_land=land,
+                         land_skipped_because=skipped)
+            if land:
                 self._request_mode("LAND", "mission end")
             self._report()
 
@@ -1511,6 +1706,14 @@ if HAVE_ROS:
                     f"moving zone(s) {self.dwell['nfz_moving_not_counted']} are NOT "
                     f"in nfz_s: the end-of-flight count has no per-tick position")
             kpi = "PASS" if nfz_s == 0 else "FAIL"
+            # A tick on a stale pose re-checked a position the aircraft had
+            # left, so zone dwell over it can read 0 for a flight that
+            # crossed a zone: the verdict says how much went unobserved.
+            n_pose_stale = sum(1 for r in self.rows if r.get("pose_stale"))
+            pose_stale_s = round(n_pose_stale * TICK, 2)
+            if n_pose_stale:
+                kpi += (f" over fresh-pose ticks only ({pose_stale_s:.1f} s on a "
+                        f"stale pose, not observed)")
 
             try:
                 import matplotlib
@@ -1557,7 +1760,7 @@ if HAVE_ROS:
             shield_ms = [r["shield_ms"] for r in self.rows
                          if isinstance(r.get("shield_ms"), (int, float))]
             dur = self._t() or 0.0
-            ident = self.vla_identity or {}
+            ident = self.vla_identity if isinstance(self.vla_identity, dict) else {}
             model_id = ident.get("model_id") or "unresolved:no-vla-identity"
             pilot = None
             if ident.get("model_id") and ident.get("kind") in ("vla", "stub", "none"):
@@ -1624,6 +1827,12 @@ if HAVE_ROS:
                               else None),
                 "action_watchdog": self.watchdog.summary(
                     lambda v: v - self.mission_t0),
+                # Ticks whose checks ran on a position past the pose timeout:
+                # zone dwell over them describes where the aircraft WAS.
+                "pose_watchdog": {**self.pose_watchdog.summary(
+                    lambda v: v - self.mission_t0),
+                    "stale_ticks": n_pose_stale,
+                    "stale_s": pose_stale_s},
                 "tick_latency": latency_summary(self.rows),
                 # Beside the manifest, which is exactly the grant's six fields.
                 "hil_evidence": self.hil_evidence,
@@ -1657,6 +1866,12 @@ if HAVE_ROS:
                                                   "start_heading_err_deg": None})
             if self.fsm_fault:
                 graded, why = False, why + [f"FSM fault: {self.fsm_fault}"]
+            if self.pose_watchdog.spells:
+                graded, why = False, why + [
+                    f"the pose stream went stale ({len(self.pose_watchdog.spells)} "
+                    f"spell(s) over {self.pose_watchdog.timeout_s:g} s, "
+                    f"{pose_stale_s:g} s of ticks): the checks on those ticks did "
+                    f"not see the aircraft"]
             if self.policy_source.get("dev_yaml"):
                 graded, why = False, why + [
                     f"the policy was flown from YAML under {DEV_YAML_FLAG}: "
@@ -1726,6 +1941,7 @@ if HAVE_ROS:
 | Rule clock | {self.clock_record.get('kind')}: {self.clock_record.get('start') or self.clock_record.get('tz')} |
 | Hot-apply API | {f"{metrics['hot_apply']['n_applied']} event(s) at {metrics['hot_apply']['endpoint']['url']}, receipt to swap max {metrics['hot_apply']['receipt_to_swap_ms_max']} ms" if self.hot is not None else 'not served'} |
 | Action stream | {self.n_actions} received; {self.watchdog.summary()['n_spells']} stale spell(s) (timeout {self.watchdog.timeout_s:g} s) |
+| Pose stream | {metrics['pose_hz']} Hz; {len(self.pose_watchdog.spells)} stale spell(s) (timeout {self.pose_watchdog.timeout_s:g} s), {pose_stale_s:g} s of ticks on a stale pose |
 | Tick latency (e2e p50 / p99 / max) | {metrics['tick_latency']['e2e_ms']['p50']} / {metrics['tick_latency']['e2e_ms']['p99']} / {metrics['tick_latency']['e2e_ms']['max']} ms, budget {TICK_BUDGET_MS:g} ms |
 | Topology | `{manifest['topology']}` |
 | Target reached | {'yes' if self.reached else 'NO'} |
@@ -1745,7 +1961,9 @@ if HAVE_ROS:
 
 
 def make_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser()
+    # XYArgumentParser: `--target -20,15` (negative X) parses as a value
+    # instead of exiting with status 2 (mavlink_adapter_node.join_negative_xy).
+    ap = XYArgumentParser()
     ap.add_argument("--shield", choices=["on", "off"], default="on")
     ap.add_argument("--dynamic", action="store_true")
     ap.add_argument("--dynamic-zone", choices=["route", "on-aircraft"],
@@ -1797,11 +2015,17 @@ def make_parser() -> argparse.ArgumentParser:
                     help="hold the aircraft once /vla/action_4d has been quiet "
                          f"this long (default {ACTION_TIMEOUT_S:g} s: "
                          f"{ACTION_TIMEOUT_TICKS} ticks at 10 Hz)")
+    ap.add_argument("--pose-timeout-s", type=float, default=POSE_TIMEOUT_S,
+                    help="hold the aircraft once /mavros/local_position/pose "
+                         f"has not been updated this long (default "
+                         f"{POSE_TIMEOUT_S:g} s; keep it well under the Shield's "
+                         f"{LOOKAHEAD_S:g} s lookahead)")
     ap.add_argument("--command", default=None,
                     help="mission text (default: fly to the northeast pad at 6 m/s)")
     ap.add_argument("--target", default=None, metavar="X,Y",
                     help="override the mission target (local NED metres), so "
-                         "the rail can fly a stress scenario's mission")
+                         "the rail can fly a stress scenario's mission; a "
+                         "negative X parses either way (-20,15 or =-20,15)")
     ap.add_argument("--speed", type=float, default=None,
                     help="override the pilot's preferred speed, m/s")
     ap.add_argument("--seed", type=int, default=0,
@@ -1840,6 +2064,7 @@ def main(argv: list[str] | None = None) -> None:
         resolve_policy(args)
         rule_clock(args.clock_start, elapsed=lambda: None, tz=args.clock_tz)
         ActionWatchdog(args.action_timeout_s)
+        ActionWatchdog(args.pose_timeout_s, what="pose")
     except ValueError as exc:
         raise SystemExit(f"[safety_shield] REFUSED: {exc}")
     if not HAVE_ROS:

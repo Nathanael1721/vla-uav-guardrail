@@ -657,9 +657,10 @@ def test_the_native_router_config_has_the_ports_every_topology_uses():
     assert "@MAVROS_HOST@" in ROUTER_CONF.read_text(encoding="utf-8")
 
 
-def _run_router(t: str) -> subprocess.CompletedProcess:
+def _run_router(t: str, **overrides: str) -> subprocess.CompletedProcess:
     """The entrypoint's router role, for real, with a stand-in mavlink-routerd
-    on PATH that prints the configuration it was handed."""
+    on PATH that prints the configuration it was handed. `overrides` replace
+    the topology file's values."""
     d = Path(tempfile.mkdtemp())
     fake = d / "bin"
     fake.mkdir()
@@ -667,7 +668,7 @@ def _run_router(t: str) -> subprocess.CompletedProcess:
         b'#!/usr/bin/env bash\necho "FAKE-ROUTERD $*"\n'
         b'while [ $# -gt 0 ]; do [ "$1" = "-c" ] && cat "$2"; shift; done\n')
     os.chmod(fake / "mavlink-routerd", 0o755)
-    env = _base_env({**read_env(t), "GCS_HOST": "10.0.0.9"}, dry=False)
+    env = _base_env({**read_env(t), "GCS_HOST": "10.0.0.9", **overrides}, dry=False)
     env["PATH"] = str(fake) + os.pathsep + env.get("PATH", "")
     env["HOME"] = str(d)
     return subprocess.run([find_bash(), ENTRYPOINT.as_posix(), "router"], env=env,
@@ -688,11 +689,33 @@ def test_the_router_role_runs_the_native_router_with_the_topologys_addresses():
         assert conf["UdpEndpoint mavros"]["Address"] == env["MAVROS_HOST"], (t, conf)
         assert int(conf["UdpEndpoint mavros"]["Port"]) == fcu_port(env["FCU_URL"]), t
         assert conf["UdpEndpoint mission_planner"]["Address"] == "10.0.0.9", t
+        assert int(conf["UdpEndpoint sitl"]["Port"]) == int(env["SITL_MAVLINK_PORT"]), t
+        assert int(conf["UdpEndpoint mission_planner"]["Port"]) == int(env["GCS_UDP_PORT"]), t
         for ep in ("sitl", "mavros", "mission_planner"):
             assert conf[f"UdpEndpoint {ep}"]["Mode"] == native[f"UdpEndpoint {ep}"]["Mode"]
     assert parse_router_conf(_run_router("hil").stdout.split("FAKE-ROUTERD", 1)[1]
                              .split("\n", 1)[1])["UdpEndpoint mavros"]["Address"] \
         == read_env("hil")["ORIN_IP"]
+
+
+def test_the_router_role_gives_mavlink_routerd_every_port_it_was_handed():
+    """bh_final sitl-ros2/router-ports-ignored-by-routerd: start_router.sh
+    printed SITL_ROUTER_PORT and GCS_UDP_PORT, and the MAVProxy fallback used
+    them, but the mavlink-routerd config kept main.conf's 14550 for both: SITL
+    sent to 14560 while the router listened on 14550, and MAVROS never saw a
+    heartbeat. Only the mavros port was substituted."""
+    if not find_bash():
+        return SKIP
+    r = _run_router("dev", SITL_MAVLINK_PORT="14560", GCS_UDP_PORT="14551",
+                    MAVROS_UDP_PORT="14556", FCU_URL="udp://:14556@")
+    assert r.returncode == 0, r.stderr
+    conf = parse_router_conf(r.stdout.split("FAKE-ROUTERD", 1)[1].split("\n", 1)[1])
+    got = {ep: int(conf[f"UdpEndpoint {ep}"]["Port"])
+           for ep in ("sitl", "mavros", "mission_planner")}
+    assert got == {"sitl": 14560, "mavros": 14556, "mission_planner": 14551}, got
+    bad = _run_router("dev", GCS_UDP_PORT="14551x")
+    assert bad.returncode != 0 and "not a number" in bad.stdout + bad.stderr, \
+        (bad.returncode, bad.stdout, bad.stderr)
 
 
 def test_the_router_role_refuses_a_name_it_cannot_resolve():
@@ -759,7 +782,11 @@ def test_the_companion_image_is_one_multiarch_ros2_definition():
     assert "install_geographiclib_datasets.sh" in text, "MAVROS exits without the geoids"
     assert "safe.directory" in text, "git would refuse the mounted checkout: 'unversioned'"
     assert "mavlink-routerd" in text
-    assert "-r /tmp/req/requirements.txt" in text, "not the guardrail's own requirement list"
+    # The guardrail's own requirement list, its numpy lines dropped for the
+    # constrained system numpy (test_every_pip_install_the_images_run_can_be_resolved).
+    assert "grep -v '^numpy==' /tmp/req/requirements.txt > /tmp/req/requirements-companion.txt" \
+        in text and "-r /tmp/req/requirements-companion.txt" in text, \
+        "not the guardrail's own requirement list"
     assert not re.search(r"^COPY\s+(guardrail|sitl|policies|tools)\b", text, flags=re.M), \
         "code baked into the image: code_revision would not name the commit that flew"
     # A build argument that changes what is installed would make "the same
@@ -1027,7 +1054,7 @@ def test_sitl_airsim_copter_starts_like_the_project_airsim_rail():
 def _floor_check_code() -> str:
     """The Python-floor one-liner the companion image runs at build time."""
     text = (DOCKER_DIR / "companion.Dockerfile").read_text(encoding="utf-8")
-    m = re.search(r"/opt/venv/bin/python -c '([^']+)'", text)
+    m = re.search(r"/opt/venv/bin/python -c '([^']*\brclpy\b[^']*)'", text)
     assert m, "the companion image runs no Python-floor check on the Shield's interpreter"
     return m.group(1)
 
@@ -1041,7 +1068,8 @@ def test_the_companion_image_refuses_rclpy_below_the_grants_python_floor():
     second."""
     text = (DOCKER_DIR / "companion.Dockerfile").read_text(encoding="utf-8")
     venv = text.index("python3 -m venv --system-site-packages /opt/venv")
-    floor = text.index("/opt/venv/bin/python -c '")
+    # The rclpy one-liner: the install step runs a numpy check of its own.
+    floor = text.index("/opt/venv/bin/python -c 'import sys, rclpy")
     assert venv < floor, "the floor is checked before the Shield's interpreter exists"
     assert 'source "/opt/ros/${ROS_DISTRO}/setup.bash"' in text[floor - 200:floor], \
         "rclpy is not on the path when the floor is checked"
@@ -1180,7 +1208,7 @@ def test_the_vla_install_keeps_the_base_torch_and_builds_bitsandbytes_for_sm87()
         plans.index(["check_pip_config"]) < plans.index(pips[0]), \
         ("nothing shows, before the first install, that pip reads no setting", plans)
     reqs = [pips[0][i + 1] for i, a in enumerate(pips[0]) if a == "-r"]
-    assert [Path(x).name for x in reqs] == ["requirements.txt", "requirements-vla-jetson.txt"], reqs
+    assert [Path(x).name for x in reqs] == ["requirements-core.txt", "requirements-vla-jetson.txt"], reqs
     jetson = _pins(d / "requirements-vla-jetson.txt")
     assert "bitsandbytes" not in jetson and \
         jetson == {k: v for k, v in _pins(DOCKER_DIR / "requirements-vla.txt").items()
@@ -1238,6 +1266,93 @@ def test_the_vla_install_keeps_the_base_torch_and_builds_bitsandbytes_for_sm87()
     os.chmod(fake, 0o755)
     r = _vla_install([_req_dir().as_posix()], {"VLA_ARCH": "aarch64", "VLA_PYTHON": fake.as_posix()})
     assert r.returncode == 64 and "no torch" in r.stderr, r.stderr
+
+
+def _unresolvable(files: list[Path], python_version: str) -> list[str]:
+    """What pip's resolver would refuse in ONE install of `files` (requirement
+    and constraint files alike) on `python_version`: a package whose
+    specifiers, after the markers, admit none of the versions they pin."""
+    try:
+        from packaging.requirements import Requirement
+    except ImportError:                     # pip carries its own copy
+        from pip._vendor.packaging.requirements import Requirement
+    specs: dict[str, list] = {}
+    for f in files:
+        for line in f.read_text(encoding="utf-8").splitlines():
+            s = line.split("#", 1)[0].strip()
+            if not s or s.startswith("-"):
+                continue
+            req = Requirement(s)
+            if req.marker is not None and not req.marker.evaluate(
+                    {"python_version": python_version}):
+                continue
+            specs.setdefault(req.name.lower(), []).append((f.name, req.specifier))
+    bad = []
+    for name, ss in sorted(specs.items()):
+        pinned = {sp.version for _, s in ss for sp in s if sp.operator == "=="}
+        if pinned and not any(all(s.contains(v, prereleases=True) for _, s in ss)
+                              for v in pinned):
+            bad.append(f"{name}: " + " and ".join(f"{s} ({fn})" for fn, s in ss))
+    return bad
+
+
+def test_every_pip_install_the_images_run_can_be_resolved():
+    """bh_final sitl-ros2/docker-numpy-pin-conflict: requirements.txt pins
+    numpy 2.4.6 for Python 3.11+ since 2026-10-13, and both images installed
+    it beside numpy 1.26.4 - the companion as a constraint (Python 3.12 on
+    ros:jazzy), the VLA image in requirements-vla.txt (3.11 on the desktop
+    base, 3.12 on the Orin's) - so pip stopped with ResolutionImpossible and
+    neither image could be built. Nothing caught it: the images were never
+    built, and each pin file was checked on its own. Each install here is
+    the one the image runs, read from its Dockerfile or its install plan."""
+    if not find_bash():
+        return SKIP
+    # The companion image: the Dockerfile's own filters, then its pip line.
+    df = (DOCKER_DIR / "companion.Dockerfile").read_text(encoding="utf-8")
+    flat = df.replace("\\\n", " ")
+    files = {"/tmp/req/requirements.txt": ROOT / "requirements.txt",
+             "/tmp/req/constraints-companion.txt": DOCKER_DIR / "constraints-companion.txt"}
+    tmp = Path(tempfile.mkdtemp())
+    for pat, src, dst in re.findall(r"grep -v '([^']+)' (/tmp/req/\S+) > (/tmp/req/\S+)", flat):
+        kept = [l for l in files[src].read_text(encoding="utf-8").splitlines(keepends=True)
+                if not re.search(pat, l)]
+        files[dst] = tmp / Path(dst).name
+        files[dst].write_text("".join(kept), encoding="utf-8")
+    m = re.search(r"/opt/venv/bin/pip install ([^&\n]+)", flat)
+    assert m, "no pip install in companion.Dockerfile"
+    args = shlex.split(m.group(1))
+    used = [files[args[i + 1]] for i, a in enumerate(args) if a in ("-r", "-c")]
+    assert {p.name for p in used} >= {"constraints-companion.txt"}, used
+    bad = _unresolvable(used, "3.12")
+    assert not bad, f"the companion image's pip install cannot resolve: {bad}"
+    # The VLA image, both architectures, on every base's Python (3.11 desktop,
+    # 3.12 Orin, 3.10 the Orin's 22.04 fallback).
+    py = _base_python()
+    for arch in ("x86_64", "aarch64"):
+        d = _req_dir()
+        r = _vla_install([d.as_posix()], {"VLA_ARCH": arch, "VLA_PYTHON": py})
+        assert r.returncode == 0, r.stderr
+        install = next(p for p in _plans(r) if "-r" in p)
+        used = [Path(install[i + 1]) for i, a in enumerate(install) if a in ("-r", "-c")]
+        for pv in ("3.10", "3.11", "3.12"):
+            bad = _unresolvable(used, pv)
+            assert not bad, f"the VLA image's pip install ({arch}, Python {pv}) cannot resolve: {bad}"
+        np = {sp.version for f in used if f.name.startswith("requirements")
+              for sp in _numpy_specs(f, "3.12")}
+        assert np == {"1.26.4"}, f"the VLA image ({arch}) would install numpy {np}"
+
+
+def _numpy_specs(f: Path, python_version: str):
+    try:
+        from packaging.requirements import Requirement
+    except ImportError:
+        from pip._vendor.packaging.requirements import Requirement
+    for line in f.read_text(encoding="utf-8").splitlines():
+        s = line.split("#", 1)[0].strip()
+        if s.lower().startswith("numpy"):
+            req = Requirement(s)
+            if req.marker is None or req.marker.evaluate({"python_version": python_version}):
+                yield from req.specifier
 
 
 def test_the_vla_install_stops_when_pip_replaced_the_base_torch():

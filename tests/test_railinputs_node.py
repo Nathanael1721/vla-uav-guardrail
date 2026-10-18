@@ -18,7 +18,13 @@ move, and nothing reaches an autopilot.
   * the rule clock reaching the Shield and the episode record;
   * the REST hot-apply listener on the flying Shield, over real HTTP (needs
     fastapi + uvicorn + httpx: the 3.11 env; SKIP elsewhere), and its mutual
-    TLS allow-list (also cryptography).
+    TLS allow-list (also cryptography);
+  * (2026-10-19) a pilot taking the aircraft out of the node's or the FSM's
+    hold is a takeover, after which the node sends neither GUIDED nor the
+    mission-end LAND; mode requests go to the adapter by its node name, not
+    to whatever subscribes (a bag); a /vla/identity that is not a JSON object
+    is refused, not fatal; a pose stream that stops is held like a quiet
+    action stream, and GUIDED comes back only once no hold reason is left.
 
 Shown failing first against a pristine HEAD 4418ae0 copy (git archive; the
 same stand-in, unknown flags dropped by parse_known_args): the stale stream
@@ -29,6 +35,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import socket
 import sys
 import tempfile
@@ -39,6 +46,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "sitl"))
 
+from guardrail.fsm import FSMState                                    # noqa: E402
 from guardrail.models import State                                    # noqa: E402
 
 POLICY = ROOT / "policies" / "sim_demo_policy.yaml"
@@ -115,8 +123,16 @@ class _Node:
     def create_timer(self, period, cb):
         self.timers.append((period, cb))
 
+    # Who is subscribed to every topic: the adapter, by its ROS name. A test
+    # sets the instance's `subscribers` to change it (a bag alone, ...).
+    subscribers = ("mavlink_adapter",)
+
     def count_subscribers(self, topic):
-        return 1                                   # an adapter is listening
+        return len(self.subscribers)
+
+    def get_subscriptions_info_by_topic(self, topic):
+        return [types.SimpleNamespace(node_name=n, topic_name=topic)
+                for n in self.subscribers]
 
     def destroy_node(self):
         pass
@@ -193,9 +209,22 @@ def _node_module():
     return N
 
 
+def _pose_msg(N, st: State):
+    """/mavros/local_position/pose for `st`: ENU (x = East, y = North), the
+    heading as an ENU yaw counter-clockwise from East."""
+    yaw = math.radians(90.0 - st.yaw_deg)
+    return N.PoseStamped(pose=_Msg(
+        position=_Msg(x=st.y, y=st.x, z=st.up),
+        orientation=_Msg(x=0.0, y=0.0, z=math.sin(yaw / 2), w=math.cos(yaw / 2))))
+
+
 def _build(argv: list[str]):
     """(module, node, virtual clock, out dir): the node built from its own
-    parser, on the pad at 15 m, mission started."""
+    parser, on the pad at 15 m, mission started.
+
+    The stand-in MAVROS publishes the pose before every tick (the node's
+    stale-pose watchdog, 2026-10-19, holds the aircraft once it stops);
+    `node.standin_pose_on = False` stops it."""
     N = _node_module()
     clk = _Clock()
     N.time = clk
@@ -204,6 +233,14 @@ def _build(argv: list[str]):
     out = Path(tempfile.mkdtemp(prefix="ros2node_"))
     node = N.ShieldNode(args, out)
     node.state = State(x=0.0, y=0.0, up=15.0, yaw_deg=0.0)
+    node.standin_pose_on = True
+    tick = node._tick
+
+    def tick_after_pose():
+        if node.standin_pose_on:
+            node._on_pose(_pose_msg(N, node.state))
+        tick()
+    node._tick = tick_after_pose
     return N, node, clk, out
 
 
@@ -392,6 +429,304 @@ def test_the_listener_refuses_plaintext_off_loopback_and_a_stranger_over_tls():
             continue
         raise AssertionError(f"client {name or '(none)'!r} was answered: {r.status_code}")
     th.server.should_exit = True
+
+
+# --------------------------------------------------------------------------- #
+# 2026-10-19 (bh_final sitl-ros2/*): takeovers out of a hold, no LAND over a
+# pilot, mode requests routed to the adapter by name, a VLA identity that is
+# not a JSON object, and a pose stream that stops. Each fails on 1b95383.
+# --------------------------------------------------------------------------- #
+
+def _modes(N, node) -> list[str]:
+    return [m.data for m in node.pubs[N.TOPIC_MODE_REQUEST].sent]
+
+
+def _mode(N, node, mode: str) -> None:
+    """/mavros/state reporting `mode` (connected, armed)."""
+    node._on_state(N.MavState(connected=True, armed=True, mode=mode))
+
+
+def _fly(N, node, clk, n: int, act: bool = True) -> None:
+    for _ in range(n):
+        if act:
+            _act(N, node)
+        clk.t += 0.1
+        node._tick()
+
+
+def test_a_pilot_taking_the_aircraft_out_of_the_nodes_hold_is_a_takeover():
+    """ros2-takeover-only-from-guided: only GUIDED -> X counted, so with the
+    node holding (a quiet action stream, LOITER flown as BRAKE) a pilot's or
+    failsafe's BRAKE -> LAND went unseen, and the resumed action stream sent
+    GUIDED, pulling the aircraft out of the pilot's LAND."""
+    N, node, clk, out = _build(["--action-timeout-s", "0.55"])
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 3)
+    for _ in range(20):                                 # the pilot goes quiet
+        if _modes(N, node):
+            break
+        _fly(N, node, clk, 1, act=False)
+    assert _modes(N, node) == ["LOITER"], _modes(N, node)
+    _mode(N, node, "BRAKE")                             # the adapter's hold
+    assert node.takeover is None, "the node's own hold read as a takeover"
+    _mode(N, node, "LAND")                              # the operator lands it
+    assert node.takeover is not None and node.takeover["mode"] == "LAND" \
+        and node.takeover["previous"] == "BRAKE", node.takeover
+    _fly(N, node, clk, 3)                               # the actions resume
+    assert _modes(N, node) == ["LOITER"], (
+        f"the node took the aircraft back from the pilot: {_modes(N, node)}")
+    assert [r["setpoint"] for r in node.rows[-3:]] == ["none"] * 3
+    resumed = [e for e in _events(out) if e["kind"] == "action_resumed"]
+    assert resumed and resumed[-1]["held"] is True \
+        and resumed[-1]["guided_requested"] is False, resumed
+
+
+def test_a_pilot_taking_the_aircraft_out_of_the_fsms_loiter_is_a_takeover():
+    """The FSM path of the same gap: FSM Loiter (BRAKE), the pilot switches
+    to LAND, the FSM kept stepping, and its G8 (Loiter -> Normal once clear
+    for 2 s) sent GUIDED over the pilot."""
+    N, node, clk, out = _build([])
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 1)
+    node.fsm._enter(FSMState.LOITER, node._t())
+    node._request_mode("LOITER", "test: the FSM's Loiter")
+    _mode(N, node, "BRAKE")
+    assert node.takeover is None
+    _mode(N, node, "LAND")
+    assert node.takeover is not None and node.takeover["mode"] == "LAND", node.takeover
+    _fly(N, node, clk, 30)                              # 3 s of clean actions
+    assert _modes(N, node) == ["LOITER"], _modes(N, node)
+    g8 = [e for e in _events(out) if e["kind"] == "fsm_transition"]
+    assert not g8, f"the FSM stepped after the takeover: {g8}"
+    assert all(r["setpoint"] == "none" for r in node.rows[1:]), \
+        [r["setpoint"] for r in node.rows]
+
+
+def test_takeover_controls_guided_to_rtl_is_one_and_a_requested_mode_is_not():
+    N, node, clk, out = _build([])
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _mode(N, node, "RTL")                               # nobody asked: GeoFence
+    assert node.takeover == {"t": node.takeover["t"], "mode": "RTL",
+                             "previous": "GUIDED"}, node.takeover
+    N, node, clk, out = _build([])
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    node._request_mode("LOITER", "test")
+    _mode(N, node, "BRAKE")
+    _mode(N, node, "GUIDED")                            # back from the node's hold
+    assert node.takeover is None, node.takeover
+    node._request_mode("LOITER", "test")
+    _mode(N, node, "BRAKE")
+    node._request_mode("RTL", "test: the FSM's RTL")
+    _mode(N, node, "RTL")                               # asked for by the FSM
+    assert node.takeover is None, node.takeover
+
+
+def test_no_mission_end_land_over_a_pilot_who_took_the_aircraft():
+    """ros2-land-after-takeover: after a takeover into LOITER (or ALT_HOLD,
+    BRAKE, SMART_RTL) _finish still sent LAND, in the middle of the pilot's
+    manoeuvre; only RTL and LAND were exempt."""
+    N, node, clk, out = _build([])
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 2)
+    _mode(N, node, "LOITER")                            # a pilot on Mission Planner
+    assert node.takeover is not None and node.takeover["mode"] == "LOITER"
+    _fly(N, node, clk, 1)
+    node._finish("autopilot took over (LOITER)")
+    assert "LAND" not in _modes(N, node), _modes(N, node)
+    end = [e for e in _events(out) if e["kind"] == "mission_end"][-1]
+    assert end["mission_end_land"] is False \
+        and "LOITER" in end["land_skipped_because"], end
+    # Control: no takeover, the node still flying in GUIDED -> LAND.
+    N, node, clk, out = _build([])
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 2)
+    node._finish("time cap")
+    assert _modes(N, node) == ["LAND"], _modes(N, node)
+    end = [e for e in _events(out) if e["kind"] == "mission_end"][-1]
+    assert end["mission_end_land"] is True and end["land_skipped_because"] is None
+
+
+class _ReadyClient:
+    """A MAVROS service client that is up and keeps every request."""
+
+    def __init__(self, clk=None):
+        self.clk, self.sent = clk, []
+
+    def service_is_ready(self):
+        return True
+
+    def call_async(self, req):
+        self.sent.append((None if self.clk is None else self.clk.t, req))
+
+
+def test_a_bag_on_the_mode_topic_is_not_taken_for_the_adapter():
+    """mode-request-fallback-dead-under-bag: any subscriber of
+    /shield/mode_request counted as the adapter, and rosbag2 subscribes to
+    it in every recorded run, so with the adapter down LOITER / RTL / LAND
+    went to the bag alone, recorded `via: adapter`."""
+    N, node, clk, out = _build([])
+    node.cli_mode = mavros = _ReadyClient()
+    node.subscribers = ("rosbag2_recorder",)            # the adapter is down
+    node.start_mission()
+    node._request_mode("LOITER", "test")
+    assert _modes(N, node) == [], "published to a topic only the bag reads"
+    ev = [e for e in _events(out) if e["kind"] == "mode_request"][-1]
+    assert [r.custom_mode for _, r in mavros.sent] == [ev["autopilot_mode"]]
+    assert ev["autopilot_mode"] in N.HOLD_MODES, ev
+    assert ev["via"].startswith("mavros") and "rosbag2_recorder" in ev["via"], ev
+    node.subscribers = ("rosbag2_recorder", "mavlink_adapter")
+    node._request_mode("RTL", "test")
+    assert _modes(N, node) == ["RTL"] and len(mavros.sent) == 1
+    assert [e for e in _events(out) if e["kind"] == "mode_request"][-1]["via"] == "adapter"
+    assert not N.adapter_listening([]) and not N.adapter_listening(["rosbag2_recorder"])
+    assert N.adapter_listening(["mavlink_adapter"])
+
+
+def test_a_vla_identity_that_is_not_a_json_object_is_refused_not_fatal():
+    """identity-non-object-crash: valid JSON that is not an object raised
+    AttributeError inside the callback (ending spin and the node), or, when
+    a _call() wrapper swallowed it, stayed in vla_identity for _report to
+    crash on, losing every record of the flight."""
+    N, node, clk, out = _build([])
+    for d in ("null", "[1]", '"openvla"', "3", "{bad"):
+        node._on_identity(N.String(data=d))
+        assert node.vla_identity is None, (d, node.vla_identity)
+    good = {"model_id": "guardrail.vla_stub.StubVLA", "kind": "stub", "host": None}
+    node._on_identity(N.String(data=json.dumps(good)))
+    assert node.vla_identity == good
+    node._on_identity(N.String(data="[1]"))
+    assert node.vla_identity == good, "a bad message replaced a good identity"
+    fences_before = list(node.fence_status)
+    node._on_adapter(N.String(data="[1]"))              # the sibling callback
+    refused = [e for e in _events(out) if e["kind"] == "vla_identity_refused"]
+    assert len(refused) == 6, refused
+    # The sibling's refusal is its own record, and nothing reached the fence
+    # status (review of 2026-10-19: the call was made and nothing about it
+    # was checked, so its record could go without a test failing).
+    adapter_refused = [e for e in _events(out) if e["kind"] == "adapter_status_refused"]
+    assert len(adapter_refused) == 1 and adapter_refused[0]["data"] == "[1]", \
+        adapter_refused
+    assert node.fence_status == fences_before, node.fence_status
+    node.start_mission()
+    _fly(N, node, clk, 2)
+    node._finish("test over")
+    assert (out / "metrics.json").is_file() and (out / "manifest.json").is_file()
+
+
+def test_a_pose_that_stops_is_held_and_the_next_pose_releases_it():
+    """frozen-pose-undetected: nothing watched /mavros/local_position/pose,
+    so a pose that stopped while the setpoints went through was re-checked
+    every tick, repeated in the rows and the trajectory, and zone dwell over
+    it could read 0 for a flight that crossed a zone."""
+    N, node, clk, out = _build([])                      # default timeout 1.0 s
+    assert node.pose_watchdog.timeout_s == N.POSE_TIMEOUT_S == 1.0
+    node.cli_rate = rate = _ReadyClient(clk)
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 5)
+    clk.t += 0.05                                       # ticks off the threshold
+    node.standin_pose_on = False                        # the pose stops; actions go on
+    _fly(N, node, clk, 14)
+    rows = node.rows
+    assert [r["pose_stale"] for r in rows] == [False] * 14 + [True] * 5, \
+        [r["pose_stale"] for r in rows]
+    assert [r["action_stale"] for r in rows] == [False] * 19
+    assert all(r["pose_age_ms"] > 1000.0 for r in rows[14:]), \
+        [r["pose_age_ms"] for r in rows]
+    # One tick of the Shield's answer to a stop, then the autopilot holds.
+    assert [r["setpoint"] for r in rows[13:]] == ["pass", "pass"] + ["none"] * 4
+    assert rows[14]["raw_body"]["vx"] == 0.0, "an action was flown on a stale pose"
+    assert _modes(N, node) == ["LOITER"], _modes(N, node)
+    onset_t = clk.t - 0.4
+    assert any(abs(t - onset_t) < 1e-6 for t, _ in rate.sent), \
+        f"the streams were not asked for again at the onset: {rate.sent}"
+    _mode(N, node, "BRAKE")
+    assert node.takeover is None
+    node.standin_pose_on = True                         # the pose comes back
+    _fly(N, node, clk, 1)
+    assert _modes(N, node) == ["LOITER", "GUIDED"], _modes(N, node)
+    assert rows[-1]["pose_stale"] is False and rows[-1]["setpoint"] == "pass"
+    kinds = [e["kind"] for e in _events(out)]
+    assert "pose_stale" in kinds and "pose_resumed" in kinds, kinds
+    node._finish("test over")
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    pw = metrics["pose_watchdog"]
+    assert pw["n_spells"] == 1 and pw["stale_ticks"] == 5 and pw["stale_s"] == 0.5, pw
+    kpi = json.loads((out / "kpi.json").read_text(encoding="utf-8"))
+    assert kpi["kpi_grade"] is False and any(
+        "pose stream went stale" in w for w in kpi["kpi_grade_reasons"]), kpi
+    assert "on a stale pose, not observed" in (out / "report.md").read_text(
+        encoding="utf-8")
+
+
+def test_an_action_that_resumes_does_not_release_a_hold_the_pose_still_needs():
+    """The node holds for two reasons now; GUIDED comes back only once
+    neither is left."""
+    N, node, clk, out = _build(["--action-timeout-s", "0.55",
+                                "--pose-timeout-s", "0.95"])
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    clk.t += 0.05
+    _fly(N, node, clk, 3)
+    node.standin_pose_on = False                        # both streams stop
+    _fly(N, node, clk, 12, act=False)
+    assert node.rows[-1]["hold_reasons"] == ["action", "pose"], node.rows[-1]
+    assert _modes(N, node) == ["LOITER"], "a second reason sent a second request"
+    _fly(N, node, clk, 2)                               # actions, still no pose
+    assert _modes(N, node) == ["LOITER"], (
+        f"the resumed actions released a hold the pose still needs: {_modes(N, node)}")
+    assert node.rows[-1]["hold_reasons"] == ["pose"] and node.rows[-1]["setpoint"] == "none"
+    node.standin_pose_on = True
+    _fly(N, node, clk, 1)
+    assert _modes(N, node) == ["LOITER", "GUIDED"], _modes(N, node)
+    assert node.rows[-1]["setpoint"] == "pass" and node.rows[-1]["hold_reasons"] == []
+
+
+def test_the_fsm_does_not_step_on_a_stale_pose_or_count_it_as_cleared():
+    """Review of 2026-10-19 (P1): the node holds for a stale pose only while
+    it is the one flying, so with the FSM in Loiter (BRAKE) a stale pose
+    added no hold and the FSM went on stepping on the frozen position. G8
+    (Loiter -> Normal, clear for T_recover = 2 s) sent GUIDED 1.1 s after
+    the pose stopped, and the pose hold sent LOITER on the next tick. With
+    the FSM merely paused, its clean streak would still run through the gap
+    and G8 would fire on the first fresh tick; it must wait T_recover of
+    fresh clean ticks."""
+    N, node, clk, out = _build([])                      # pose timeout 1.0 s
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 1)
+    node.fsm._enter(FSMState.LOITER, node._t())
+    node._request_mode("LOITER", "test: the FSM's Loiter")
+    _mode(N, node, "BRAKE")
+    clk.t += 0.05                                       # ticks off the threshold
+    node.standin_pose_on = False                        # the pose stops; actions go on
+    _fly(N, node, clk, 30)                              # 3 s of clean actions
+    assert _modes(N, node) == ["LOITER"], (
+        f"the FSM stepped on a frozen pose: {_modes(N, node)}")
+    moved = [e for e in _events(out) if e["kind"] == "fsm_transition"]
+    assert not moved, moved
+    assert node.fsm.state == FSMState.LOITER and not node._holds
+    stale = [r for r in node.rows if r["pose_stale"]]
+    assert len(stale) == 21, len(stale)                 # 1.15 s .. 3.15 s
+    # No FSM fields (the FSM did not step), nothing streamed.
+    assert all(r.get("fsm_state_after") is None and r["setpoint"] == "none"
+               and r["emitted_body"] is None for r in stale), \
+        [(r.get("fsm_state_after"), r["setpoint"]) for r in stale]
+    node.standin_pose_on = True                         # the pose comes back
+    _fly(N, node, clk, 19)                              # 1.8 s of fresh clean ticks
+    assert _modes(N, node) == ["LOITER"], (
+        f"G8 counted the stale spell as cleared: {_modes(N, node)}")
+    assert node.fsm.state == FSMState.LOITER
+    _fly(N, node, clk, 3)                               # past T_recover, fresh
+    assert _modes(N, node) == ["LOITER", "GUIDED"], _modes(N, node)
+    g8 = [e for e in _events(out) if e["kind"] == "fsm_transition"]
+    assert [e["edge"] for e in g8] == ["G8"], g8
 
 
 if __name__ == "__main__":

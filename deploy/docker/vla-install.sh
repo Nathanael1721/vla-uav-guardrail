@@ -148,16 +148,27 @@ PIP=("${PIP_NO_CONFIG[@]}" install --no-cache-dir --index-url "$INDEX"
 BNB="$(sed -n 's/^bitsandbytes==\([0-9][0-9.]*\)[[:space:]]*$/\1/p' "$REQ_DIR/requirements-vla.txt")"
 [ -n "$BNB" ] || die 64 "requirements-vla.txt pins no bitsandbytes==X.Y.Z"
 
+# The guardrail's own list without its numpy lines: requirements.txt pins
+# numpy 2.4.6 for Python 3.11+ (since 2026-10-13), requirements-vla.txt
+# 1.26.4 (the VLA stack needs numpy 1.x), and with both pip stopped with
+# ResolutionImpossible on both bases (Python 3.11 on the desktop, 3.12 on
+# the Orin), so the image could not be built. requirements-vla.txt's numpy
+# applies. The filter must remove a numpy line: a rewritten one would
+# otherwise slip through.
+grep -q '^numpy==' "$REQ_DIR/requirements.txt" \
+  || die 64 "requirements.txt has no numpy==X line for the VLA install to replace"
+grep -v '^numpy==' "$REQ_DIR/requirements.txt" > "$REQ_DIR/requirements-core.txt"
+
 # 2. No package index or other pip setting from the base image.
 step check_pip_config
 
 case "$ARCH" in
   x86_64|amd64)
-    step "${PIP[@]}" -r "$REQ_DIR/requirements.txt" -r "$REQ_DIR/requirements-vla.txt"
+    step "${PIP[@]}" -r "$REQ_DIR/requirements-core.txt" -r "$REQ_DIR/requirements-vla.txt"
     ;;
   aarch64|arm64)
     grep -v '^bitsandbytes==' "$REQ_DIR/requirements-vla.txt" > "$REQ_DIR/requirements-vla-jetson.txt"
-    step "${PIP[@]}" -r "$REQ_DIR/requirements.txt" -r "$REQ_DIR/requirements-vla-jetson.txt"
+    step "${PIP[@]}" -r "$REQ_DIR/requirements-core.txt" -r "$REQ_DIR/requirements-vla-jetson.txt"
     # 3. bitsandbytes for the Orin's GPU, at the desktop's version: configure
     # and compile the CUDA library with CMake (it lands in
     # $BNB_SRC/bitsandbytes/libbitsandbytes_cuda<ver>.so), then let pip

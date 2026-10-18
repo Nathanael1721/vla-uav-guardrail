@@ -97,6 +97,15 @@ Nano, with and without the Super flash; each verdict driven to its failing
 side too), and the GPU check, both its verdicts and its measuring code
 (against stand-in torch and bitsandbytes modules).
 
+numpy (2026-10-19): `requirements.txt` pins numpy 2.4.6 for Python 3.11+
+(vla-drone, pas, venv-ap), but both images keep numpy 1.26.4: the companion
+venv sees Ubuntu's, which ROS Jazzy's Python packages are built against (as
+in `~/venv-ros`), and the VLA stack needs 1.x (`requirements-vla.txt`). So
+both installs drop that file's numpy line (`requirements-companion.txt`,
+`requirements-core.txt`, written at build time); with both pins pip stopped
+with ResolutionImpossible and neither image could be built. The tests now
+resolve every install the images run, not each pin file alone.
+
 What has run: `tools/profile_shield_tick.py` and `tools/vla_backend_table.py`
 on the desktop, producing the dev baselines in `evidence/`.
 

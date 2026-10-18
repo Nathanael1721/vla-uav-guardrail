@@ -109,11 +109,22 @@ COPY --from=router-build /usr/local/bin/mavlink-routerd /usr/local/bin/mavlink-r
 
 # The guardrail's own dependency list (requirements.txt, kept equal to
 # pyproject.toml by tests/test_env_pins.py), pinned to the versions the KPI
-# rail ran (constraints-companion.txt).
+# rail ran (constraints-companion.txt) - all of it but its numpy lines.
+# requirements.txt pins numpy 2.4.6 for Python 3.11+ (vla-drone, pas,
+# venv-ap) since 2026-10-13, while this venv keeps Ubuntu's numpy 1.26.4: ROS
+# Jazzy's Python packages are built against it (numpy 2 refuses modules built
+# for 1.x), and ~/venv-ros, which flew the KPI runs, ran it. With both pins
+# pip stopped with ResolutionImpossible, so the image could not be built. The
+# filter must remove a numpy line (a rewritten one cannot slip through), and
+# the build fails unless the venv still sees the constrained numpy.
 COPY requirements.txt deploy/docker/constraints-companion.txt /tmp/req/
 RUN python3 -m venv --system-site-packages /opt/venv \
+ && test "$(grep -c '^numpy==' /tmp/req/requirements.txt)" -gt 0 \
+ && grep -v '^numpy==' /tmp/req/requirements.txt > /tmp/req/requirements-companion.txt \
  && /opt/venv/bin/pip install --no-cache-dir \
-      -r /tmp/req/requirements.txt -c /tmp/req/constraints-companion.txt
+      -r /tmp/req/requirements-companion.txt -c /tmp/req/constraints-companion.txt \
+ && np="$(sed -n 's/^numpy==\([0-9][0-9.]*\)[[:space:]]*$/\1/p' /tmp/req/constraints-companion.txt)" \
+ && /opt/venv/bin/python -c 'import sys, numpy; sys.exit(0 if numpy.__version__ == sys.argv[1] else "numpy %s in the companion venv, not the constrained %s" % (numpy.__version__, sys.argv[1]))' "$np"
 
 # The grant's floor for the Shield as an rclpy node (Safety Shield p.1:
 # "Python 3.11+ as a ROS 2 node (rclpy)"), checked on the interpreter that

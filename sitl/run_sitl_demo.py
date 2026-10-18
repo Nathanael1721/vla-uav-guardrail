@@ -74,7 +74,6 @@ each generation's CSP its cost map.
 """
 from __future__ import annotations
 
-import argparse
 import json
 import math
 import sys
@@ -110,10 +109,14 @@ from guardrail.replay import (EpisodeRecord, audit_tick,               # noqa: E
                               verify_replay, write_replay, zone_dwell)
 from guardrail.vla_stub import StubVLA                                 # noqa: E402
 from mavlink_adapter_node import (DEFAULT_HOLD_MODE, HOLD_MODES,       # noqa: E402
-                                  ModeRequests, autopilot_mode,
-                                  fence_alt_plan, policy_ceiling_m)
+                                  ModeRequests, XYArgumentParser,
+                                  autopilot_mode, fence_alt_plan,
+                                  policy_ceiling_m)
 
 TICK = 0.1
+# The shortest the control loop lets go of the rail's lock between two ticks,
+# even after an overrun, so a REST hot-apply waiting on it gets in (main()).
+LOCK_YIELD_S = 0.001
 MAX_S = 120
 REACH_M = 2.0
 # The grant's Safety Shield horizon: 5 s at 10 Hz, 50 future poses (3 s at
@@ -289,12 +292,46 @@ class MavlinkAdapter:
                     return
         raise RuntimeError(f"takeoff did not reach altitude (last {last_up:.1f} m)")
 
+    # time_boot_ms of the last pose state() returned (a class default, so an
+    # adapter built without __init__ - the tests do - starts with none).
+    _last_pose_ms: int | None = None
+
     def state(self, timeout: float = 1.0) -> State | None:
-        msg = self.m.recv_match(type="LOCAL_POSITION_NED", blocking=True,
-                                timeout=timeout)
-        if msg is None:
-            return None
-        return State(x=msg.x, y=msg.y, up=-msg.z)      # NED z-down -> up-positive
+        """The NEWEST LOCAL_POSITION_NED, or None if no new one arrives
+        within `timeout`.
+
+        Until 2026-10-19 this was one blocking recv_match per tick. pymavlink
+        returns the OLDEST unread message and reads only the bytes it needs,
+        so the backlog waited in the socket buffer: the loop ran at 8.9-9.4
+        Hz against the 10 Hz stream, and each tick consumed exactly one 0.1 s
+        message. The Shield, the FSM, the stub and the trajectory therefore
+        ran on a position that fell further behind as the flight went on -
+        a command-to-motion lag of about 3.2 s at 33-49 s rising to 6.6 s at
+        97-113 s on sitl_ped_on, where the stub's altitude loop then swung
+        (held 15.00 +/- 0.02 m until about 40 s, then 2.06 m at 101 s and
+        30 m at 118 s on a 15 m cruise). Every stored sitl_* run (and any
+        sitl/run_gazebo_demo.sh run) was measured on such a delayed pose. The
+        same pitfall is drained in demo/pas_ardupilot/
+        autopilot.py pump(). Now everything already received is drained
+        (pymavlink's post_message still runs on each, so the HEARTBEAT and
+        armed state stay current) and the newest pose kept; only when none
+        newer than the last one returned has arrived does it wait - for a
+        NEW pose, never re-returning an old one, which would hide a dead
+        link behind a pose that merely looks current."""
+        newest = None
+        while True:
+            msg = self.m.recv_match(type="LOCAL_POSITION_NED", blocking=False)
+            if msg is None:
+                break
+            newest = msg
+        if newest is None or (self._last_pose_ms is not None
+                              and newest.time_boot_ms <= self._last_pose_ms):
+            newest = self.m.recv_match(type="LOCAL_POSITION_NED", blocking=True,
+                                       timeout=timeout)
+            if newest is None:
+                return None
+        self._last_pose_ms = newest.time_boot_ms
+        return State(x=newest.x, y=newest.y, up=-newest.z)  # NED z-down -> up-positive
 
     def send_velocity(self, vx: float, vy: float, vz_up: float,
                       yaw_rate_rad_s: float) -> None:
@@ -328,7 +365,9 @@ class MavlinkAdapter:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
+    # `--subject -5.5,3` (a subject south of home) parses as a value instead
+    # of exiting with status 2 (mavlink_adapter_node.join_negative_xy).
+    ap = XYArgumentParser()
     ap.add_argument("--command", default="fly to the northeast pad at 6 m/s")
     ap.add_argument("--policy", default=None,
                     help="policy YAML; flown only with --dev-yaml, recorded as "
@@ -531,6 +570,17 @@ def main() -> int:
     # Released only while the loop sleeps: a REST hot-apply lands between two
     # ticks, never between a decision and its row (guardrail.api). (An
     # exception ends the process, and the daemon listener with it.)
+    #
+    # Paced to a deadline, one tick every TICK of wall time. Until 2026-10-19
+    # the loop slept a fixed TICK AFTER the work, so it ran at 8.9-9.4 Hz;
+    # that went unnoticed in the dwell figures only because state() then
+    # consumed one 0.1 s message per tick. zone_dwell, alt_seconds and
+    # standoff_seconds below count ticks x TICK, so with the newest pose read
+    # each tick the ticks must BE TICK apart, or every dwell comes out 5-10 %
+    # short. After an overrun the deadline resyncs to now (no burst of
+    # catch-up ticks). Only time.time() and time.sleep(): the tests swap
+    # `time` for a virtual clock that has nothing else.
+    t_next = t0
     lock.acquire()
     while time.time() - t0 < MAX_S:
         tick += 1
@@ -686,8 +736,20 @@ def main() -> int:
             end_why = "escalation FSM ended the mission"
             print(f"[fsm]      {fsm.state.value}: the autopilot has the aircraft")
             break
+        t_next += TICK
+        slack = t_next - time.time()
+        if slack < 0.0:
+            t_next, slack = time.time(), 0.0
+        # Released even when there is no time left to sleep, and for at
+        # least LOCK_YIELD_S. The lock is not fair: with a zero sleep this
+        # thread took it straight back, so under a sustained overrun a REST
+        # hot-apply waiting on it could wait indefinitely (review of
+        # 2026-10-19; before the deadline pacing every tick slept a full
+        # TICK). A real sleep lets the scheduler run the waiting thread,
+        # which the release has already woken. The deadline is untouched,
+        # so the millisecond is not carried into the next tick's pacing.
         lock.release()
-        time.sleep(TICK)
+        time.sleep(max(slack, LOCK_YIELD_S))
         lock.acquire()
     lock.release()
     if hot is not None:
