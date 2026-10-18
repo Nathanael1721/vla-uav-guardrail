@@ -79,7 +79,10 @@ a floor, not a ceiling.
 > so none could see it. `Shield._floor_the_escape` now runs the chain on a
 > legal action from a position a stop would leave illegal, restricted to the
 > operators of the rules that position breaks (plus the caps), and flies the
-> result only if it re-checks clean against every rule. The four crawls are
+> result only if it carries nothing but recovery floors and clamps (no
+> projection theta would have to judge on a tick the FSM reads as clean) and
+> re-checks clean against every rule; a `monitor_only` violation beside the
+> crawl no longer skips it (review of 2026-10-19). The four crawls are
 > floored with and without the yaw breach, to the same speed, and still
 > report no violation (`tests/test_shield.py::test_a_crawl_out_of_a_breach_is_floored_with_nothing_else_wrong`).
 

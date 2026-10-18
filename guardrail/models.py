@@ -692,9 +692,7 @@ class SubjectStandoff(ConstraintBase):
     once per tick through `Shield.set_subject()`. With no subject set the rule is
     INERT - it never fires and never raises - because a standoff rule with
     nothing to stand off from has no opinion, and inventing one would be worse
-    than silence. A non-finite subject (NaN or inf) is dropped the same way,
-    but not silently: each tick it is missing for carries a `subject-finite`
-    contract violation (see `Shield.set_subject`).
+    than silence.
 
     `subject_class` selects which rule applies to what: "pedestrian" binds only
     when the tracked subject is a pedestrian, "*" binds to anything. That is what

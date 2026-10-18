@@ -509,8 +509,24 @@ stack and the FSM cannot disagree.
   defaulted.
 - A violated id that is not in the policy becomes hard / P0 / `project_fix`
   with `resolved: false`. In practice this means the Shield's own
-  `action-finite` contract check. `guardrail/kpi.py` makes the same "unknown
-  means P0" choice.
+  `action-finite` and `subject-finite` contract checks. `guardrail/kpi.py`
+  makes the same "unknown means P0" choice.
+- **A subject the Shield cannot place** (`subject-finite`, since
+  2026-10-19). `Shield.set_subject` drops a NaN or inf position, and while a
+  binding stand-off is hard and enforced each tick carries `subject-finite`
+  (answered by `Sanitise`, so the tick is `repaired`, with nothing for θ to
+  judge). Read as above, the FSM enters Brake by G1 on the first one and
+  streams the Shield's action (a trusted repair is never stopped), and a
+  persistent NaN holds Brake until a finite subject (or `None`) has been
+  clean for T_recover (G7). A NaN that flickers is a new onset each time it
+  returns, so it climbs as that hard rule flickering in and out of breach
+  would: 0.5 s NaN / 0.5 s finite gives G2 (Loiter) at 2.0 s and G4 (RTL) at
+  5.0 s. With only soft or `monitor_only` stand-offs binding nothing is
+  raised (the drop is counted, and rule_status reads the rule unbound), so it
+  is never a stronger response than a real breach of the rule: the first
+  version raised it for those too, and a NaN beside a `monitor_only`
+  stand-off went Normal -> Brake where a breach of it stays in Normal.
+  `tests/test_shield.py::test_a_non_finite_subject_escalates_no_harder_than_the_rule`.
 
 ## Interpretations where the grant is silent
 

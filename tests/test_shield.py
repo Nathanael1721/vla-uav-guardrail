@@ -410,6 +410,147 @@ def test_a_non_finite_subject_is_dropped_and_said_so():
     assert not sh.filter(st, a).violations and sh.n_subject_nonfinite == 2
 
 
+def test_a_non_finite_subject_escalates_no_harder_than_the_rule():
+    """REGRESSION (review of 2026-10-19). `subject-finite` is no policy rule,
+    so the FSM reads it as hard P0 project_fix. It was raised whatever the
+    binding stand-off was, so a NaN subject beside a monitor_only stand-off
+    took the FSM Normal -> Brake, where a real breach of that rule leaves it
+    in Normal, and a flickering NaN climbed to LOITER and RTL by N-in-T with
+    the aircraft 30 m from anything. It is now raised only while a binding
+    stand-off is HARD and enforced, and what it does there is pinned
+    (docs/DESIGN-escalation-fsm.md): a persistent NaN holds Brake streaming
+    the Shield's action, recovering by G7 once the subject is back; a NaN
+    that flickers climbs as the hard rule flickering would (G2, G4). For a
+    soft or monitor_only stand-off the drop is counted and rule_status reads
+    the rule unbound, and the FSM stays in Normal."""
+    from guardrail.models import KinematicEnvelope, Policy, SubjectStandoff
+    st, a = State(x=-30.0, y=0.0, up=10.0), Action4D(vx=1.0)
+
+    def shield(**kw):
+        return Shield(Policy(policy_id="nan-subject", constraints=[
+            SubjectStandoff(id="so", type="subject_standoff", subject_class="*",
+                            min_range_m=10.0, **kw),
+            KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=5.0,
+                              climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)]))
+
+    def fly(sh, nan_at, n=80):
+        edges = []
+        for i in range(n):
+            t = i * 0.1
+            sh.set_subject(float("nan") if nan_at(t) else 0.0, 0.0, "car")
+            d = sh.filter(st, a, t=t)
+            if d.fsm_edge:
+                edges.append((round(t, 1), d.fsm_edge, d.fsm_state_after))
+            yield t, d, edges
+
+    sh = shield()                                     # hard, project_fix
+    for t, d, edges in fly(sh, lambda t: t < 6.0, n=100):
+        if t < 6.0:                                   # 6 s of NaN, then the subject is back
+            assert [v.rule_id for v in d.violations] == ["subject-finite"], (t, d.violations)
+            assert d.setpoint == "pass" and d.command == a, (t, d.setpoint, d.command)
+    assert edges == [(0.0, "G1", "Brake"), (8.0, "G7", "Normal")], edges
+    sh = shield()
+    *_, (t, d, edges) = fly(sh, lambda t: int(t / 0.5) % 2 == 0)
+    assert edges == [(0.0, "G1", "Brake"), (2.0, "G2", "Loiter"), (5.0, "G4", "RTL")], edges
+    for kw in ({"constraint_type": "soft"}, {"violation_action": "monitor_only"}):
+        for nan_at in (lambda t: True, lambda t: int(t / 0.5) % 2 == 0):
+            sh = shield(**kw)
+            for t, d, edges in fly(sh, nan_at, n=60):
+                assert not d.violations and not d.repairs, (kw, t, d.violations)
+                assert (d.fsm_state_after, d.setpoint, d.command) == ("Normal", "pass", a)
+            assert edges == [] and sh.n_subject_nonfinite >= 30, (kw, edges)
+        sh.set_subject(float("nan"), 0.0, "car")
+        row = next(r for r in sh.rule_status(st) if r["id"] == "so")
+        assert (row["bound"], row["breach"], row["value"]) == (False, False, None), (kw, row)
+
+
+def _car_standoff_shield():
+    """A 5 m stand-off from a car under the grant's forecast (5 s at 0.1 s),
+    as follow_car_citylife.yaml holds it, and its 5 m/s cap."""
+    from guardrail.models import KinematicEnvelope, Policy, SubjectStandoff
+    return Shield(Policy(policy_id="car-follow", constraints=[
+        SubjectStandoff(id="car-standoff", type="subject_standoff", subject_class="car",
+                        min_range_m=5.0),
+        KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=5.0,
+                          climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)]))
+
+
+def test_a_moving_subject_is_forecast_at_its_velocity():
+    """REGRESSION (2026-10-19). set_subject took no velocity, so the forecast
+    held the subject still: a drone following a car at 4.5 m/s, 14 m behind
+    it, was forecast 22.5 m on in 5 s - through the car - and StandoffHold
+    took its whole speed off (on the replayed city follow it fired on 44 % of
+    the ticks while the range was not closing). With the car's velocity the
+    range holds at 14 m and the follow passes untouched; a closing approach
+    is still stopped, and now only to the car's own pace; a car driving at a
+    hovering drone is forecast to arrive (held still, it never was); inside
+    the ring behind a receding car the recovery is the RELATIVE opening.
+    Without a velocity, nothing changes."""
+    st = State(x=0.0, y=0.0, up=12.0)
+    sh = _car_standoff_shield()
+    assert (sh.lookahead_s, sh.dt) == (5.0, 0.1)
+
+    def go(subject, a, velocity=None):
+        sh.set_subject(*subject, "car", velocity=velocity)
+        d = sh.filter(st, a)
+        assert not d.emitted_violations and not sh._check(st, d.emitted), d
+        return d
+
+    follow = Action4D(vx=4.5)
+    d = go((14.0, 0.0), follow)                       # held still: "reaches" the car
+    assert [v.rule_id for v in d.violations] == ["car-standoff"], d.violations
+    assert [r.operator for r in d.repairs] == ["StandoffHold"] and d.emitted.vx == 0.0
+    d = go((14.0, 0.0), follow, velocity=(4.5, 0.0))  # moving at the drone's speed
+    assert not d.violations and not d.repairs and d.emitted == follow, d.violations
+    assert sh.subject_velocity == (4.5, 0.0)
+    d = go((14.0, 0.0), follow, velocity=(2.0, 0.0))  # closing at 2.5 m/s: still stopped
+    assert [v.rule_id for v in d.violations] == ["car-standoff"], d.violations
+    assert [r.operator for r in d.repairs] == ["StandoffHold"], d.repairs
+    assert abs(d.emitted.vx - 2.0) < 1e-9, "the hold keeps the car's pace, not zero"
+    assert "relative to the subject moving at 2.00 m/s" in d.repairs[0].detail
+    d = go((14.0, 0.0), Action4D(), velocity=(-3.0, 0.0))   # the car drives at a hover
+    assert [v.rule_id for v in d.violations] == ["car-standoff"], d.violations
+    assert abs(d.emitted.vx + 3.0) < 1e-9, d.emitted
+    assert not go((14.0, 0.0), Action4D()).violations, "held still, a hover is fine"
+    d = go((4.0, 0.0), Action4D(vx=4.0), velocity=(4.0, 0.0))   # 4 m behind, inside
+    assert [r.operator for r in d.repairs] == ["StandoffRecover"], d.repairs
+    assert abs(d.emitted.vx - 3.5) < 1e-9, (
+        f"{d.emitted.vx}: 0.5 m/s of relative opening behind a car doing 4 m/s")
+    d = go((4.0, 0.0), Action4D(vx=4.0))               # held still: backs off it
+    assert abs(d.emitted.vx + 0.5) < 1e-9, d.emitted
+    d = go((0.0, 0.0), Action4D(vx=4.0), velocity=(4.0, 0.0))   # right over it, in step
+    assert [r.operator for r in d.repairs] == ["StandoffRecover"], d.repairs
+    assert abs(d.emitted.vx - 3.0) < 1e-9 and abs(d.emitted.vy) < 1e-9, d.emitted
+    assert not go((0.0, 0.0), Action4D(), velocity=(4.0, 0.0)).violations, (
+        "hovering while the car drives away from under it opens the range")
+
+    # A velocity that is not finite is refused; the position is kept and held
+    # still (the NaN would otherwise fail every comparison of the forecast).
+    # A call without one clears it, and zero is the stationary answer.
+    ref = go((14.0, 0.0), follow)
+    for bad in ((float("nan"), 0.0), (4.5, float("inf"))):
+        d = go((14.0, 0.0), follow, velocity=bad)
+        assert sh.subject == (14.0, 0.0) and sh.subject_velocity is None, bad
+        assert (d.emitted, d.violations, d.repairs) == (ref.emitted, ref.violations,
+                                                        ref.repairs), bad
+    assert sh.n_subject_velocity_nonfinite == 2 and sh.n_subject_nonfinite == 0
+    sh.set_subject(14.0, 0.0, "car", velocity=(4.5, 0.0))
+    sh.set_subject(14.0, 0.0, "car")
+    assert sh.subject_velocity is None
+    import random
+    rng = random.Random(3)
+    a_sh, b_sh = _car_standoff_shield(), _car_standoff_shield()
+    for _ in range(300):
+        subj = (rng.uniform(-12, 12), rng.uniform(-12, 12))
+        s = State(x=0.0, y=0.0, up=12.0, yaw_deg=rng.uniform(-180, 180))
+        a = Action4D(vx=rng.uniform(-6, 6), vy=rng.uniform(-6, 6))
+        a_sh.set_subject(*subj, "car")
+        b_sh.set_subject(*subj, "car", velocity=(0.0, 0.0))
+        da, db = a_sh.filter(s, a), b_sh.filter(s, a)
+        assert (da.emitted, da.violations, da.repairs) == (db.emitted, db.violations,
+                                                           db.repairs), (subj, a)
+
+
 # The five P0 escape ticks of the 8 Oct red-car follow (demo/out/
 # pas_ap_20261008_224440, flight_log.jsonl): the logged state and raw action,
 # and the subject where the perception node had put it - exactly under the
@@ -871,6 +1012,29 @@ def test_a_crawl_out_of_a_breach_is_floored_with_nothing_else_wrong():
                 f"breach, {got:.3f} without")
         d = sh.filter(st, Action4D(**{ax: fast}))
         assert d.emitted == d.raw and not d.repairs and not d.touched, (label, d.repairs)
+
+    # ...and beside a monitor_only breach (review of 2026-10-19). Such a tick
+    # took the monitor_only passthrough before the floor was asked: 1 m inside
+    # the zone leaving at 0.15 m/s left at 2.0 alone or beside an ENFORCED yaw
+    # breach, and at 0.15 beside a monitor_only one. The monitor_only rule is
+    # still on record, unrepaired, and in emitted_violations; the FSM reads
+    # the tick as clean, as it reads any monitor_only breach.
+    from guardrail.models import KinematicEnvelope
+    pol = load_policy(POLICY_PATH)
+    pol.constraints.append(KinematicEnvelope(
+        id="yaw-watch", type="kinematic_envelope", violation_action="monitor_only",
+        speed_max_mps=20.0, climb_rate_max_mps=10.0, yaw_rate_max_dps=10.0))
+    sh = Shield(pol, lookahead_s=3.0, dt=0.5)
+    st = State(x=22.0, y=15.0, up=4.0)
+    alone = sh.filter(st, Action4D(vx=0.15)).emitted.vx
+    d = sh.filter(st, Action4D(vx=0.15, yaw_rate=math.radians(20)))
+    assert [v.rule_id for v in d.violations] == ["yaw-watch"], d.violations
+    assert d.emitted.vx >= 2.0 - 1e-6 and abs(d.emitted.vx - alone) < 1e-9, (
+        f"{d.emitted.vx:.3f} beside a monitor_only yaw breach, {alone:.3f} alone")
+    assert [r.operator for r in d.repairs] == ["GeofenceEscape"], d.repairs
+    assert d.emitted.yaw_rate == math.radians(20), "a monitor_only rule is never repaired"
+    assert [v.rule_id for v in d.emitted_violations] == ["yaw-watch"]
+    assert (d.fsm_state_after, d.setpoint, d.command) == ("Normal", "pass", d.emitted)
 
 
 def test_the_floor_does_not_reshape_a_legal_action_for_another_rule():

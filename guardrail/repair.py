@@ -359,7 +359,10 @@ class PathRepair:
             return [], 0.0
         so = max(binding, key=lambda s: s.min_range_m)
         sx, sy = subj
-        dmin = min(math.hypot(p.x - sx, p.y - sy) for _, p in sh._predict(st, raw))
+        # The raw forecast's closest approach to the subject, moving at its
+        # velocity when set_subject was given one (the check's reading, so the
+        # depth reported is one the check could see); held still otherwise.
+        dmin = sh._subject_min_range(st, raw)
         depth = max(0.0, so.min_range_m - dmin)
         r_wp = so.min_range_m + max(self.CLEARANCE_M, float(so.soft_margin_m or 0.0))
         d = math.hypot(sx - st.x, sy - st.y)
