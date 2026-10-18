@@ -904,6 +904,25 @@ def test_no_flight_entry_point_writes_the_old_label():
         assert '"canonical-hil"' not in src and "TOPOLOGY_CANONICAL_HIL" not in src, rel
 
 
+def test_the_city_rail_files_no_vla_and_records_its_detector_as_the_pilots():
+    """follow_vlm passed model_id=DETECTOR_ID, so every city-rail manifest
+    filed OWL-ViT's HF revision under vla_model_hash (citylife_redcar_nfz_
+    20261013: "google/owlvit-base-patch32@cbc355fb..."), a field the grant
+    defines as the VLA's weights. No VLA flies there: a hand-written servo
+    does. The detector belongs under metrics["pilot"]["detector"]."""
+    sys.path.insert(0, str(ROOT / "demo"))
+    import follow_vlm as fv
+    from guardrail.manifest import NO_VLA
+    m = fv.flight_manifest("sha256:deadbeefdeadbeef", 42)
+    assert m["vla_model_hash"] == NO_VLA, m
+    assert fv.DETECTOR_ID not in json.dumps(m), m
+    assert len(m) == 6, "the manifest stays the grant's six fields"
+    p = fv.pilot_entry()
+    assert p["kind"] == "none" and p["model_id"] == NO_VLA, p
+    assert p["detector"]["model_id"] == fv.DETECTOR_ID, p
+    assert p["detector"]["hash"].startswith(fv.DETECTOR_ID), p
+
+
 def test_a_code_only_pilot_is_pinned_by_its_source_not_left_unresolved():
     """StubVLA has no weights and no HuggingFace revision, but it is fully
     determined by its source file. Reporting 'unresolved' would wrongly say the

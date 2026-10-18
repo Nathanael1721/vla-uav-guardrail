@@ -384,6 +384,32 @@ def test_score_estimate():
     assert track_truth.score_estimate([{"est_xy": None}]) is None
 
 
+def test_every_subject_word_follow_vlm_flies_has_identity_rules():
+    """follow_vlm's vocabulary (SUBJECT_CLASS_CANON) and identity.noun_of had
+    drifted: 'taxi', 'sedan', 'suv', 'pickup', 'delivery', 'lorry' flew as
+    vehicles and got NO physical rule under --identity. Every vehicle word
+    must name a vehicle noun, every pedestrian word 'person'.
+
+    A word that only ever MODIFIES ('delivery') is not a noun and must not
+    become one - mapped to van it put 'a delivery man' under the vehicle
+    rules (review, 2026-10-19) - so it is tested in front of a head noun:
+    with a vehicle's it is a vehicle, with a person's a person."""
+    import identity
+    from follow_vlm import SUBJECT_CLASS_CANON
+    modifiers = {"delivery"}
+    assert modifiers <= set(SUBJECT_CLASS_CANON), "the vocabulary moved"
+    for word, cls in SUBJECT_CLASS_CANON.items():
+        if word in modifiers:
+            assert identity.noun_of(f"a red {word} van") in identity.VEHICLE_NOUNS, word
+            assert identity.noun_of(f"a {word} man") == "person", word
+            continue
+        n = identity.noun_of(f"a red {word}")
+        if cls in ("car", "van", "truck", "bus"):
+            assert n in identity.VEHICLE_NOUNS, (word, cls, n)
+        elif cls == "pedestrian":
+            assert n == "person", (word, cls, n)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

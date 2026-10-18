@@ -301,6 +301,35 @@ def test_classify_split_keeps_each_reason_with_its_rule():
     assert ok == ("ok", [], [])
 
 
+def test_the_synonyms_follow_vlm_flies_get_the_vehicle_rules():
+    """noun_of knew car/truck/bus/van only, while follow_vlm flies 'a yellow
+    taxi' or 'a red SUV' as a car: no physical rule ran and a signal head
+    2.5 m up was OK for them."""
+    assert noun_of("a yellow taxi") == "car" and noun_of("a red SUV") == "car"
+    assert noun_of("the white sedan") == "car" and noun_of("two taxis") == "car"
+    assert noun_of("a red pickup") == "van" and noun_of("a delivery van") == "van"
+    assert noun_of("a lorry") == "truck" and noun_of("humans") == "person"
+    # head-first still wins
+    assert noun_of("the taxi past the pedestrian crossing") == "car"
+    box, r = box_of(POSE, 15.0, 5.0, 0.5, 2.5, 3.3)
+    f = features_for(box, r, POSE, W, H, HFOV, STREET)
+    for q in ("a yellow taxi", "a red SUV"):
+        tier, why = classify(f, q, TUNED)
+        assert tier == "hard" and any("bottom" in w for w in why), (q, tier, why)
+
+
+def test_a_modifier_is_not_a_head_noun_so_a_delivery_man_is_a_person():
+    """'delivery' only ever modifies. Mapped to van, the head-first scan put
+    'a delivery man' under the vehicle rules (person at 1b95383; review,
+    2026-10-19). A delivery VEHICLE still gets the vehicle rules through its
+    own head noun."""
+    assert noun_of("a delivery man") == "person"
+    assert noun_of("a delivery person") == "person"
+    assert noun_of("the delivery woman") == "person"
+    assert noun_of("a delivery van") == "van" and noun_of("a delivery truck") == "truck"
+    assert noun_of("a delivery") is None        # no head noun: follow_vlm warns
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
