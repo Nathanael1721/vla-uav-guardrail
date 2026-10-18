@@ -689,9 +689,10 @@ def estimator_measurement(det, g: dict, tick_pose, identity_on: bool,
     lay within 70 ms - the caller then falls back to the width prior, as the
     Grounder's colour check does, never to the newest depth).
 
-    `legacy_tick_pose` (--legacy-tick-pose) restores the old pairing to
-    reproduce recorded non-identity flights; so does an observation source
-    with no capture pose.
+    `legacy_tick_pose` (--legacy-tick-pose) restores the old pairing, one
+    part of reproducing a recorded non-identity flight (--legacy-motion's
+    help lists what no flag restores); an observation source with no capture
+    pose gets it too.
     """
     t_now, x, y, yaw = tick_pose
     b = box_bearing(det[0], det[5], hfov_deg)
@@ -2020,6 +2021,16 @@ class FenceGuard:
         # nfz-hold count took building holds too. Recorded here, where the
         # verdict is made, instead.
         self.last_cause: str | None = None
+        # ...and the two distances that verdict was made from, each kept
+        # apart: the building clearance where the building half braked (None
+        # when it did not), and the distance to the nearest zone (None
+        # without zones). gate() returns ONE distance, and which one depends
+        # on the branch: with a fence 13 m ahead it returns the fence's 13.00
+        # while the building half brakes at 4.70 m, inside the 5 m ring
+        # (review, 2026-10-19). guard_urgent() read that shared number against
+        # the building ring and let the hold be ramped. It reads these.
+        self.last_obstacle_d: float | None = None
+        self.last_fence_d: float | None = None
 
     @property
     def polys(self) -> list:
@@ -2174,12 +2185,16 @@ class FenceGuard:
         from shapely.geometry import Point
         o_scale, o_d, o_blocked = self._obstacle_gate(x, y, vx, vy)
         o_cause = "obstacle" if o_scale < 1.0 else None
+        # _obstacle_gate returns the clearance only when it brakes.
+        self.last_obstacle_d = o_d
         polys = self.polys
         if not polys:
+            self.last_fence_d = None
             self.last_cause = o_cause
             return o_scale, o_d, o_blocked
         p = Point(x, y)
         d = min(poly.distance(p) for poly in polys)
+        self.last_fence_d = float(d)
         speed = math.hypot(vx, vy)
         if speed < 1e-3:
             self.last_cause = "fence" if d <= self.stand_off_m else None
@@ -2388,15 +2403,20 @@ class FenceGuard:
 # (GuardSmoother; gate() and slide() stay pure), a time-based vector slew
 # limiter with gentle speed-up, legacy-or-firmer braking and a yaw-rate slew
 # (VecSlewLimiter), and a line-of-sight-rate feed-forward on yaw (los_rate).
-# --legacy-motion restores all four exactly, to reproduce recorded flights.
+# --legacy-motion restores all four exactly. That is the motion half of
+# reproducing a recorded flight, not all of it: the same day's review fixes
+# that change behaviour with no legacy switch are listed in its --help.
 #
 # Offline only so far (tests/test_follow_motion.py, a closed-loop kinematic
 # follow of a car that stops, pulls away and turns, with a chattering guard
 # and the 200 ms / 5 ms tick pattern): speed-up peak 3.11 -> 1.62 m/s^2, jerk
-# peak 8.35 -> 3.83 m/s^3, braking peak unchanged (2.33 -> 2.40, by design),
-# turn lag 5.0 -> 1.4 deg median, range max 24.1 -> 23.8 m (mean 18.4 ->
-# 19.8). Replayed open-loop on the 13 Oct commands, the limiter alone takes
-# the aircraft-model accel peak 3.35 -> 2.13 m/s^2. Not yet flown.
+# peak 8.35 -> 3.44 m/s^3 (3.83 while the braking floor still fired inside
+# turns), braking peak unchanged (2.33 -> 2.40, by design), turn lag 5.0 ->
+# 1.4 deg median, range max 24.1 -> 23.8 m (mean 18.4 -> 19.8). Replayed
+# open-loop on the 13 Oct commands, the limiter alone takes the
+# aircraft-model accel peak 3.35 -> 2.13 m/s^2 (jerk 8.42 -> 6.46; with no
+# hold flag the floor decides 207 of 2379 calls, 287 before it was confined
+# to braking). Not yet flown.
 # ---------------------------------------------------------------------------
 
 
@@ -2416,11 +2436,16 @@ class VecSlewLimiter:
         step is scaled by ONE factor, so its direction is kept - per-axis
         clipping bent it toward 45 deg and allowed sqrt(2) x the limit.
       * BRAKING IS NEVER LATER THAN IT WAS. When the command asks for less
-        speed, the resulting speed is held to no more than what the legacy
-        per-axis, per-call step of `brake_floor_dv` would have left, in every
-        tick pattern - the guard's holds stop at least as soon as before. The
-        direction of the gentle step is kept; only its speed is cut.
-        (`n_brake_floor` counts the calls this decided.)
+        speed AND it is braking - the step points back along the track
+        (|across| <= -along: a stop, a scaled-down command, a blocked hold
+        with its sidestep), or the caller passes `hold=True` (the flight loop
+        passes guard_urgent()) - the resulting speed is held to no more than
+        what the legacy per-axis, per-call step of `brake_floor_dv` would
+        have left, in every tick pattern: the guard's holds stop at least as
+        soon as before. A turn that merely asks a little less speed is not
+        braking and gets no floor (it made every jittered turn dip, see the
+        comment in __call__). The direction of the gentle step is kept; only
+        its speed is cut. (`n_brake_floor` counts the calls this decided.)
       * Climb rate: `vz` m/s^2, never slower than the legacy `vz_floor_dv`
         step when slowing toward zero. Yaw rate: `yaw` rad/s^2 (0 = off);
         nothing limited it before, and a coast-to-search hand-over stepped it
@@ -2441,7 +2466,7 @@ class VecSlewLimiter:
         self.n_limited = 0          # calls whose horizontal step was cut
         self.n_brake_floor = 0      # ...and whose speed the legacy floor set
 
-    def __call__(self, a: Action4D, now: float) -> Action4D:
+    def __call__(self, a: Action4D, now: float, hold: bool = False) -> Action4D:
         dt = (self.tick if self.t is None
               else min(max(now - self.t, 0.0), self.tick))
         self.t = now
@@ -2465,7 +2490,34 @@ class VecSlewLimiter:
         vx, vy = p.vx + s * dx, p.vy + s * dy
         if s < 1.0:
             self.n_limited += 1
-        if self.brake_floor_dv is not None and sp_ask < sp_prev - 1e-9:
+        # THE FLOOR IS FOR BRAKING, NOT FOR TURNING. It first applied to ANY
+        # call whose asked speed was lower than the last, and a turning
+        # command at a steady 4 m/s asks for a lower speed every other tick
+        # (the estimate's +-0.05 m/s jitter). Worse, the "legacy" step it
+        # compares with is taken from this limiter's own prev, which already
+        # lags the command in direction (the turn limit), so it named a speed
+        # lower than the real legacy limiter would reach. Review, 2026-10-19
+        # (40 jittered command turns at 4 m/s, 10 Hz): worst along-track
+        # deceleration -2.56 m/s^2 at 6 deg/tick against -0.96 for the legacy
+        # limiter and for this one without the floor; -3.20 / -2.55 / -1.06
+        # at 10 deg/tick; -3.49 / -3.28 / -1.52 at 20 - a speed dip and a
+        # re-acceleration at `accel` inside every turn, the nose-down/nose-up
+        # jerk this limiter exists to remove. A stop is a step pointing BACK
+        # along the track, so the floor now needs the along-track part to
+        # dominate: d_par < 0 and |d_perp| <= -d_par (within 45 deg of
+        # straight back). A stop is in that cone, as are a command scaled
+        # down along its own direction (within 5 deg for any scale <= 0.9), a
+        # reversal, and a blocked gate() (scale <= 0.35) plus a slide()
+        # sidestep no faster than the speed it removed. A steady-speed turn
+        # enters it only once the velocity lags the command by 90 deg.
+        # ...OR the loop says the guard's brake must bite (`hold`, its
+        # guard_urgent()): a blocked hold whose sidestep outruns the speed it
+        # removes, or whose direction swings, falls outside the cone and is
+        # still a hold. Replayed on the 13 Oct commands, the cone alone
+        # dropped the floor on 102 calls the speed rule had floored, 21 of
+        # them on ticks gate() had blocked (4 'hold', 17 'skirt').
+        if (self.brake_floor_dv is not None and sp_ask < sp_prev - 1e-9
+                and (hold or (d_par < 0.0 and abs(d_perp) <= -d_par))):
             f = self.brake_floor_dv
             lx = p.vx + float(np.clip(dx, -f, f))
             ly = p.vy + float(np.clip(dy, -f, f))
@@ -2493,20 +2545,35 @@ class VecSlewLimiter:
                 "brake_floor": self.n_brake_floor}
 
 
-def guard_urgent(fence: "FenceGuard", fdist, fblocked: bool) -> bool:
+def guard_urgent(fence: "FenceGuard", fblocked: bool) -> bool:
     """May the guard's brake bite AT ONCE this tick? Only when it must: gate()
     says blocked (an incursion within 0.35 of the brake distance, or at the
-    fence stand-off), or the aircraft is already inside a building's
-    clearance ring or the fence's stand-off. Anything less is ramped."""
+    fence stand-off), or the aircraft is already inside the clearance ring of
+    the building it is braking for, or inside a zone's stand-off. Anything
+    less is ramped. Call it after this tick's gate().
+
+    Each distance is measured against its own line, from the distances gate()
+    recorded (FenceGuard.last_obstacle_d / last_fence_d). It used to take
+    gate()'s returned distance and guess what it was from last_cause, but
+    with a zone in range and the building half braking, gate() returns the
+    ZONE's distance under cause "obstacle": beside a wall with a building
+    jutting out ahead (aircraft 4.70 m from it, 5 m ring) and a fence 13 m
+    ahead, the ring test read 13.00 > 5 and the hold was ramped at 3 m/s^2
+    (review, 2026-10-19). The Shield's ObstacleClearance stayed
+    downstream; the guard in front of it was degraded.
+
+    A building ring counts only while the building half brakes: city streets
+    keep 4-5 m clearance for whole flights, so a ring test on every tick would
+    make every fence brake bite at once. gate() already reports blocked inside
+    a zone's stand-off; the stand-off test is kept so this function says what
+    it promises whatever gate()'s blocked flag later becomes."""
     if fblocked:
         return True
-    if fdist is None:
-        return False
-    if fence.last_cause == "obstacle":
-        return fdist <= fence.min_clearance_m
-    if fence.last_cause == "fence":
-        return fdist <= fence.stand_off_m
-    return False
+    od = fence.last_obstacle_d
+    if od is not None and od <= fence.min_clearance_m:
+        return True
+    fd = fence.last_fence_d
+    return fd is not None and fd <= fence.stand_off_m
 
 
 class GuardSmoother:
@@ -2596,18 +2663,33 @@ def standoff_speed(rng: float, want: float, gain: float, ff: float,
 
 
 def los_rate(sx: float, sy: float, svx: float, svy: float,
-             x: float, y: float, vx: float, vy: float) -> float:
+             x: float, y: float, vx: float, vy: float,
+             r_min: float = 0.0) -> float:
     """Rate (rad/s, NED yaw sense, + clockwise) at which the line of sight from
     the aircraft (x, y, moving vx, vy) to the subject (sx, sy, moving svx, svy)
     turns. Fed forward into the yaw servo it removes the turn lag: a P servo on
     a line of sight turning at w settles w / gain behind it (13 Oct: truth
     bearing = 0.98 s x LOS rate, 13.9 deg median / 18.0 p90 in turns; 2.6 /
-    5.9 deg once w / 1.2 is taken out). 0 within a metre."""
+    5.9 deg once w / 1.2 is taken out). 0 within a metre.
+
+    `r_min` floors the range it divides by: the rate is v_across / max(r,
+    r_min). The rate is a velocity over a range, so the estimate's velocity
+    noise is amplified as 1/r: 0.5 m/s of noise is 0.025 rad/s at the 13 Oct
+    car's 20 m and 0.25 rad/s at a pedestrian's 2 m (0.175 after the 0.7
+    gain), a jittering nose on every person mission, which nobody has flown
+    or replayed (review, 2026-10-19). Floored at 10 m that noise stays at
+    0.05 rad/s, and the rate beyond r_min - a car follow, held at 15.8 m - is
+    unchanged.
+    0 is the bare rate."""
     dx, dy = sx - x, sy - y
     r2 = dx * dx + dy * dy
     if r2 < 1.0:
         return 0.0
-    return (dx * (svy - vy) - dy * (svx - vx)) / r2
+    cross = dx * (svy - vy) - dy * (svx - vx)
+    if r_min > 0.0:
+        r = math.sqrt(r2)
+        return cross / (r * max(r, float(r_min)))
+    return cross / r2
 
 
 def motion_params(args) -> dict:
@@ -2627,7 +2709,8 @@ def motion_params(args) -> dict:
                                "engage_mps2": args.guard_engage_accel,
                                "lat_mps2": args.guard_lat_accel},
             "catchup_mps": args.catchup_mps,
-            "yaw_los_ff": args.yaw_los_ff, "yaw_los_ff_cap": args.yaw_los_ff_cap}
+            "yaw_los_ff": args.yaw_los_ff, "yaw_los_ff_cap": args.yaw_los_ff_cap,
+            "yaw_los_ff_min_range_m": args.yaw_los_ff_min_range}
 
 
 def add_motion_args(ap) -> None:
@@ -2637,16 +2720,24 @@ def add_motion_args(ap) -> None:
                     help="fly the pre-2026-10-19 motion exactly: the per-axis, "
                          "per-call RateLimiter (--dv-h/--dv-z), no guard "
                          "smoothing, the linear stand-off law up to "
-                         "--speed-max and no yaw feed-forward. To reproduce "
-                         "recorded flights.")
+                         "--speed-max and no yaw feed-forward. That is the "
+                         "motion half of reproducing a recorded flight; no "
+                         "--legacy-* flag restores the search sweep's "
+                         "first-swing side, the level-crowd truth poll's "
+                         "gating (it changes the tick cadence on car "
+                         "missions), the identity rules for taxi/sedan/SUV/"
+                         "pickup/lorry phrases, the non-identity HUD label and "
+                         "box age, or det_hit_rate's mission-only count.")
     ap.add_argument("--accel-max", type=float, default=2.0,
                     help="m/s^2: how fast the commanded speed may RISE along "
                          "the track. Body tilt follows horizontal "
                          "acceleration (atan(a/g)): 2.0 is ~11.5 deg. The old "
                          "limiter allowed 4 per axis, 5.7 on a diagonal.")
     ap.add_argument("--brake-max", type=float, default=4.0,
-                    help="m/s^2: how fast it may FALL along the track. Never "
-                         "slower than the old per-axis step (--dv-h).")
+                    help="m/s^2: how fast it may FALL along the track. When "
+                         "braking (the step pointing back along the track, as "
+                         "every hold does), never slower than the old per-axis "
+                         "step (--dv-h); a turn gets no such floor.")
     ap.add_argument("--turn-accel-max", type=float, default=2.5,
                     help="m/s^2 across the track: how fast the velocity may "
                          "turn (a 4 m/s follow round a 0.5 rad/s corner needs 2)")
@@ -2659,8 +2750,9 @@ def add_motion_args(ap) -> None:
                          "brake (GuardSmoother)")
     ap.add_argument("--guard-engage-accel", type=float, default=3.0,
                     help="m/s^2: how fast a NON-urgent guard brake bites; an "
-                         "urgent one (blocked, inside a building's clearance "
-                         "ring or the fence stand-off) bites at once")
+                         "urgent one (blocked, inside the clearance ring of the "
+                         "building it brakes for, or a zone's stand-off) bites "
+                         "at once")
     ap.add_argument("--guard-lat-accel", type=float, default=2.0,
                     help="m/s^2: how fast slide()'s sidestep fades in and out")
     ap.add_argument("--catchup-mps", type=float, default=2.5,
@@ -2677,6 +2769,14 @@ def add_motion_args(ap) -> None:
                          "(median/p90) to 5.4/8.3.")
     ap.add_argument("--yaw-los-ff-cap", type=float, default=0.4,
                     help="rad/s cap on that feed-forward")
+    ap.add_argument("--yaw-los-ff-min-range", type=float, default=10.0,
+                    help="m: the feed-forward's line-of-sight rate divides by "
+                         "at least this range (los_rate r_min). The rate is a "
+                         "velocity over a range, so at a pedestrian's 2-10 m "
+                         "the estimate's velocity noise would jitter the nose "
+                         "(0.5 m/s noise: 0.25 rad/s at 2 m); validated only "
+                         "on a car at 15-25 m, which this leaves unchanged. "
+                         "0 = the bare rate.")
 
 
 def make_motion(args):
@@ -3371,23 +3471,26 @@ def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
 
 # THE CITY DEMO'S FORECAST (finding city-demo-flies-3s-forecast-and-yaml).
 #
-# This rail builds its Shield at 3 s / 0.5 s (7 poses), not the grant's
-# 5 s / 0.1 s (guardrail.shield LOOKAHEAD_S / LOOKAHEAD_DT_S), and nothing in a
-# run's files said so; metrics.json and kpi.json now carry `shield_lookahead`.
-# The grant forecast was measured for this rail before deciding whether to
-# make it the default (2026-10-19, scratch replay of every tick of
-# citylife_redcar_nfz_20261013 through both Shields, same commands, same
-# estimated subject): its cost is small (median 0.23 ms, p99 1.36 ms a tick,
-# against 0.18 / 0.40 ms), but it would end the follow. A SubjectStandoff is
+# This rail builds its Shield at 3 s / 0.5 s (6 forecast steps, the `poses`
+# count shield_lookahead_record writes; the grant's 5 s / 0.1 s is 50), not
+# the grant's forecast (guardrail.shield LOOKAHEAD_S / LOOKAHEAD_DT_S), and
+# nothing in a run's files said so; metrics.json and kpi.json now carry
+# `shield_lookahead`. The grant forecast was measured for this rail before
+# deciding whether to make it the default (2026-10-19, scratch replay of
+# every SECOND tick of citylife_redcar_nfz_20261013 - 1190 of its 2379 -
+# through both Shields, the logged commands, the logged estimated subject):
+# its cost is small (median 0.24 ms, p99 1.27 ms a tick, against 0.18 /
+# 0.32 ms at 3 s / 0.5 s), but it would end the follow. A SubjectStandoff is
 # forecast against a subject held STILL - set_subject() takes no velocity -
 # so 5 s of the aircraft's own 4-5 m/s, ~25 m, reaches the car's 5 m ring from
-# ordinary following distance: the Shield's StandoffHold fired on 1059 of 2379
-# ticks (against 1 at 3 s / 0.5 s) and cut the command by a median 3.7 m/s.
-# The follow would settle behind that ring plus 25 m, at the 30 m mark the
-# mission is scored on. `--grant-forecast` flies it anyway (with the Shield's
-# own escalation FSM off, as docs/DESIGN-shield-enforcement.md asks of any
-# demo that flies `emitted`); the default stays what every city flight flew
-# until a subject-velocity forecast exists.
+# ordinary following distance: the Shield's StandoffHold fired on 529 of the
+# 1190 replayed ticks (44 %; none at 3 s / 0.5 s) and cut the command by a
+# median 3.7 m/s (p90 4.9). The follow would settle behind that ring plus
+# 25 m, at the 30 m mark the mission is scored on. `--grant-forecast` flies it
+# anyway (with the Shield's own escalation FSM off, as
+# docs/DESIGN-shield-enforcement.md asks of any demo that flies `emitted`);
+# the default stays what every city flight flew until the Shield forecasts a
+# moving subject (the loop's set_subject call says where its velocity goes).
 def flight_shield(policy, obstacle_map, grant_forecast: bool = False):
     """The flight's Shield: 3 s / 0.5 s with the escalation FSM on (every
     recorded city flight), or the grant's 5 s / 0.1 s with it off."""
@@ -5094,7 +5197,11 @@ async def fly(args) -> int:
                 # ~14-18 deg lag of 13 Oct, see los_rate). Only on a fresh
                 # estimate (updated < 1 s ago): a coasted constant-velocity
                 # guess must not steer the nose. Scaled, capped, and then
-                # slew-limited with the rest of the command.
+                # slew-limited with the rest of the command. Its range is
+                # floored at --yaw-los-ff-min-range (10 m): only a car at
+                # 15-25 m has validated it, and the estimate's velocity noise
+                # grows as 1/r: at a pedestrian's 2 m, 5x what the floor lets
+                # through (see los_rate).
                 ff_yaw = 0.0
                 if (args.yaw_los_ff > 0.0 and not args.legacy_motion
                         and estimator.x is not None
@@ -5105,7 +5212,8 @@ async def fly(args) -> int:
                         args.yaw_los_ff * los_rate(
                             float(estimator.x[0]), float(estimator.x[1]),
                             float(estimator.x[2]), float(estimator.x[3]),
-                            state.x, state.y, _va[0], _va[1]),
+                            state.x, state.y, _va[0], _va[1],
+                            r_min=args.yaw_los_ff_min_range),
                         -args.yaw_los_ff_cap, args.yaw_los_ff_cap))
                     n_los_ff += int(ff_yaw != 0.0)
                 yaw_rate = yaw_command(args.yaw_gain, bearing, ff=ff_yaw)
@@ -5592,14 +5700,18 @@ async def fly(args) -> int:
             # smoother lets a brake bite at once only when it must
             # (guard_urgent) and ramps everything else. A pass-through while
             # the guard is clear. `guard_in` logs what the guard asked for.
+            # The same urgency tells the slew limiter this is a hold, so its
+            # legacy braking floor applies even where the hold's sidestep
+            # points the step sideways (VecSlewLimiter, `hold`).
             guard_in = None
+            g_urgent = guard_urgent(fence, fblocked)
             if guard_smooth is not None:
                 guard_in = (gvx, gvy)
                 gvx, gvy = guard_smooth(time.time(), cvx, cvy, fscale, lat_x, lat_y,
-                                        urgent=guard_urgent(fence, fdist, fblocked))
+                                        urgent=g_urgent)
             raw = Action4D(vx=gvx, vy=gvy, vz_up=vz_up, yaw_rate=yaw_rate)
-            smooth = (limiter(raw, time.time()) if isinstance(limiter, VecSlewLimiter)
-                      else limiter(raw))
+            smooth = (limiter(raw, time.time(), hold=g_urgent)
+                      if isinstance(limiter, VecSlewLimiter) else limiter(raw))
 
             # Tell the Shield where the subject is, so SubjectStandoff rules can
             # bind. The position comes from the ESTIMATOR's state vector, which
@@ -5610,6 +5722,17 @@ async def fly(args) -> int:
             # required rather than tidy: a stale position would have the Shield
             # enforcing a stand-off from where the subject used to be, which is
             # both wrong and invisible in the logs.
+            #
+            # Position only, because that is all Shield.set_subject takes here,
+            # so the Shield forecasts its stand-off against a subject standing
+            # still - which is why this rail cannot yet fly the grant's 5 s
+            # forecast (flight_shield: StandoffHold on 44 % of replayed ticks).
+            # The estimator's state is [x, y, vx, vy], so the subject's own
+            # velocity is float(estimator.x[2]), float(estimator.x[3]), from
+            # the same bearing-and-range estimate as the position (no ground
+            # truth). When set_subject accepts a velocity, it is passed in the
+            # call just below, and --grant-forecast can then become the default
+            # after a flight.
             if estimator is not None and estimator.x is not None and est_obs is not None:
                 shield.set_subject(float(estimator.x[0]), float(estimator.x[1]),
                                    subject_class)
@@ -6745,8 +6868,9 @@ def main() -> int:
     ap.add_argument("--dv-h", type=float, default=0.4,
                     help="the legacy limiter's step, m/s per axis per tick. "
                          "With the default motion shaping it is the FLOOR on "
-                         "braking: a slowing command never ends up faster than "
-                         "this step would have left it.")
+                         "braking: a braking command (slower, and pointing back "
+                         "along the track) never ends up faster than this step "
+                         "would have left it.")
     ap.add_argument("--dv-z", type=float, default=0.2,
                     help="climb-rate step per tick (dv_z/0.1 s is the climb "
                          "acceleration), and the same floor on slowing a climb")
@@ -6755,8 +6879,9 @@ def main() -> int:
                     help="without --identity, feed the estimator the box's "
                          "bearing at the CONSUMING tick's pose and clock with "
                          "the newest depth frame (before 2026-10-19), instead "
-                         "of the capture's own pose, time and depth. To "
-                         "reproduce recorded non-identity flights.")
+                         "of the capture's own pose, time and depth. Part of "
+                         "reproducing a recorded non-identity flight; "
+                         "--legacy-motion's help lists what no flag restores.")
     ap.add_argument("--legacy-servo-width", action="store_true",
                     help="the box servo (--no-target-estimator) holds the raw "
                          "--want-width fraction, as before 2026-10-19, instead "

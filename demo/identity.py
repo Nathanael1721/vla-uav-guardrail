@@ -330,10 +330,17 @@ _PLURALS = {"cars": "car", "trucks": "truck", "buses": "bus", "busses": "bus",
 # a clean pass. Every vehicle noun runs the same rule branch, so which vehicle
 # a synonym lands on does not matter. Bus synonyms ("coach") are left out on
 # purpose: width_max (8 m) already rejects a 12 m bus seen side-on.
+#
+# Only HEAD nouns belong here. "delivery" (in SUBJECT_CLASS_CANON as a van)
+# is never one, it only modifies: mapped to van, the head-first scan below
+# put "a delivery man", "a delivery person" and "the delivery woman" under
+# the vehicle rules, where at 1b95383 all three were "person" (review,
+# 2026-10-19). "a delivery van" / "a delivery truck" reach a vehicle through
+# their own head noun.
 _SYNONYMS = {"taxi": "car", "taxis": "car", "cab": "car", "cabs": "car",
              "sedan": "car", "sedans": "car", "suv": "car", "suvs": "car",
              "hatchback": "car", "hatchbacks": "car",
-             "pickup": "van", "pickups": "van", "delivery": "van",
+             "pickup": "van", "pickups": "van",
              "lorry": "truck", "lorries": "truck",
              "humans": "person"}
 
@@ -348,9 +355,10 @@ def noun_of(query: Optional[str]) -> Optional[str]:
     both of those wrong (it would put a car query under the person rules at
     every zebra crossing in CityLife).
 
-    Synonyms (_SYNONYMS: taxi, sedan, SUV -> car; pickup, delivery -> van;
-    lorry -> truck) count as their noun, in the same head-first scan, so
-    "a yellow taxi" is a car."""
+    Synonyms (_SYNONYMS: taxi, sedan, SUV -> car; pickup -> van; lorry ->
+    truck) count as their noun, in the same head-first scan, so "a yellow
+    taxi" is a car. A modifier-only word ("delivery") is not one: "a delivery
+    man" is a person, "a delivery van" a van."""
     if not query:
         return None
     words = [w.strip(".,!?;:'\"()").lower() for w in str(query).split()]
