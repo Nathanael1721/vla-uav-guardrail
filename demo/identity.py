@@ -321,6 +321,22 @@ _PLURALS = {"cars": "car", "trucks": "truck", "buses": "bus", "busses": "bus",
             "vans": "van", "persons": "person", "pedestrians": "person",
             "men": "person", "women": "person", "children": "person"}
 
+# Words follow_vlm's subject vocabulary (SUBJECT_CLASS_CANON) maps onto a
+# vehicle or a person, mapped here onto the noun whose rules apply. The two
+# lists had drifted: follow_vlm flew "a yellow taxi" (the project's own taxi
+# glTF) or "a red SUV" as a car, while noun_of returned None for them, so
+# classify_split ran NO physical rule and every candidate - a red signal 4 m
+# up, a box 60 m off the street - was "ok", with an empty by_rule that read as
+# a clean pass. Every vehicle noun runs the same rule branch, so which vehicle
+# a synonym lands on does not matter. Bus synonyms ("coach") are left out on
+# purpose: width_max (8 m) already rejects a 12 m bus seen side-on.
+_SYNONYMS = {"taxi": "car", "taxis": "car", "cab": "car", "cabs": "car",
+             "sedan": "car", "sedans": "car", "suv": "car", "suvs": "car",
+             "hatchback": "car", "hatchbacks": "car",
+             "pickup": "van", "pickups": "van", "delivery": "van",
+             "lorry": "truck", "lorries": "truck",
+             "humans": "person"}
+
 
 def noun_of(query: Optional[str]) -> Optional[str]:
     """The rule family a query names: a vehicle noun, "person", or None.
@@ -330,12 +346,17 @@ def noun_of(query: Optional[str]) -> Optional[str]:
     its modifiers, so "the red car past the pedestrian crossing" is a car and
     "the person next to the red car" is a person. Scanning from the end got
     both of those wrong (it would put a car query under the person rules at
-    every zebra crossing in CityLife)."""
+    every zebra crossing in CityLife).
+
+    Synonyms (_SYNONYMS: taxi, sedan, SUV -> car; pickup, delivery -> van;
+    lorry -> truck) count as their noun, in the same head-first scan, so
+    "a yellow taxi" is a car."""
     if not query:
         return None
     words = [w.strip(".,!?;:'\"()").lower() for w in str(query).split()]
     for w in words:
         w = _PLURALS.get(w, w)
+        w = _SYNONYMS.get(w, w)
         if w in VEHICLE_NOUNS:
             return w
         if w in PERSON_NOUNS or w == "person":
@@ -394,7 +415,9 @@ def classify_split(features: dict, noun: Optional[str],
             off_street_m > far_off_street.
     People
       HARD  bottom_h > person_bottom_max; off_street_m > person_off_street_hard.
-    Anything else: "ok", no rules.
+    Anything else: "ok", no rules. (noun_of knows the synonyms follow_vlm
+    flies - taxi, sedan, SUV, pickup, lorry - and follow_vlm warns at start-up
+    and records identity.nouns when a phrase still gets no rule.)
 
     A missing feature (None) never fires a HARD rule. The reasons list has
     every rule that fired, HARD ones first.

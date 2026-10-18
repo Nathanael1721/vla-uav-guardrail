@@ -384,6 +384,21 @@ def test_score_estimate():
     assert track_truth.score_estimate([{"est_xy": None}]) is None
 
 
+def test_every_subject_word_follow_vlm_flies_has_identity_rules():
+    """follow_vlm's vocabulary (SUBJECT_CLASS_CANON) and identity.noun_of had
+    drifted: 'taxi', 'sedan', 'suv', 'pickup', 'delivery', 'lorry' flew as
+    vehicles and got NO physical rule under --identity. Every vehicle word
+    must name a vehicle noun, every pedestrian word 'person'."""
+    import identity
+    from follow_vlm import SUBJECT_CLASS_CANON
+    for word, cls in SUBJECT_CLASS_CANON.items():
+        n = identity.noun_of(f"a red {word}")
+        if cls in ("car", "van", "truck", "bus"):
+            assert n in identity.VEHICLE_NOUNS, (word, cls, n)
+        elif cls == "pedestrian":
+            assert n == "person", (word, cls, n)
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

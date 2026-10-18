@@ -1340,6 +1340,190 @@ def test_stopped_is_measured_from_positions_not_the_filter():
     assert measured_speed([]) is None
 
 
+# --- 2026-10-19 review fixes (group F5) --------------------------------------
+
+def test_an_unmeasured_follow_is_not_scored_and_kpi_says_so():
+    """follow_vlm never set follow_scored, so a flight with no subject truth
+    ("a red van" behind a level car, the --no-car control, an abort before
+    the first tick) wrote kpi.json with mission_success True from a follow
+    nobody measured. Coverage, like perception_node's TRUTH_MIN_COVERAGE."""
+    import follow_vlm as fv
+    from guardrail import kpi as K
+    assert fv.follow_scored(0, 0) is False
+    assert fv.follow_scored(100, 0) is False
+    assert fv.follow_scored(100, 94) is False
+    assert fv.follow_scored(100, 95) is True
+    base = {"frac_within_30m": None, "nfz_s": 0, "alt_violation_s": 0}
+    k = K.compute([], {}, dict(base, follow_scored=fv.follow_scored(0, 0)))
+    assert k["mission_success"] is None, k
+    assert "follow_not_scored" in k["mission_fail_reasons"], k
+
+
+def test_a_level_car_is_truth_for_a_car_only():
+    """The start-up check accepted van/truck/bus for --level-car, but truth
+    exists only for 'car' (a van is NOT the car, pinned above), so 'a red
+    van' flew a follow with an empty truth on every tick."""
+    import follow_vlm as fv
+    assert fv.level_car_refusal(["a red car"]) is None
+    assert fv.level_car_refusal(["a red van"]) == ("a red van", "van")
+    assert fv.level_car_refusal(["a red car", "a white truck"]) == ("a white truck", "truck")
+    # a retarget may go to a pedestrian (fly() requires their truth itself)...
+    assert fv.level_car_refusal(["a red car", "a person"]) is None
+    # ...but the level car is not truth for a pedestrian SUBJECT from the start
+    assert fv.level_car_refusal(["a person"]) == ("a person", "pedestrian")
+    assert fv.level_car_refusal(["a yellow taxi"]) is None      # taxi is a car
+
+
+def test_det_hit_rate_counts_the_mission_inferences_only():
+    """det_hit_rate divided by every inference since the detector loaded, the
+    start gate's included; in identity mode each gate inference is a miss, so
+    citylife_redcar_nfz_20261013 reported 0.495 for 745 hits in 750 mission
+    inferences. The counters here are that flight's."""
+    import follow_vlm as fv
+    r = fv.det_rates({"n_seen": 745, "n_miss": 761}, {"n_seen": 0, "n_miss": 756}, 240.0)
+    assert r["det_hit_rate"] == 0.993, r
+    assert r["det_hit_rate_all_inferences_legacy"] == 0.495, r
+    assert r["det_mission_inferences"] == 750 and r["det_hz"] == 3.12, r
+    assert fv.det_rates({"n_seen": 0, "n_miss": 0}, {}, None)["det_hz"] is None
+
+
+def test_a_flight_that_flew_no_tick_reports_without_crashing_and_fails():
+    """`metrics['det_hz'] < 2.0` raised TypeError on None after kpi.json was
+    written and before os._exit; without the crash the same flight would
+    have exited 0 with a kpi.json saying success."""
+    import contextlib
+    import io
+    import follow_vlm as fv
+    m = {"det_hz": None, "det_hit_rate": 0.0, "frac_ticks_seen": 0.0,
+         "sep_min_m": None, "sep_mean_m": None, "sep_end_m": None,
+         "frac_within_30m": None, "follow_scored": False, "nfz_s": 0.0,
+         "alt_violation_s": 0.0, "interventions": 0, "frac_absent": 0.0,
+         "det_mission_inferences": 0}
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        assert fv.final_report(m, 0, "RuntimeError: scene load") == 1
+        assert fv.final_report(m, 0, None) == 1
+        flown = dict(m, det_hz=3.1, frac_within_30m=0.99, follow_scored=True)
+        assert fv.final_report(flown, 2379, None) == 0
+        assert fv.final_report(flown, 2379, "OSError: landing") == 1
+    out = buf.getvalue()
+    assert "no mission tick was flown" in out and "ABORTED" in out, out
+
+
+def test_the_search_sweep_starts_toward_the_side_the_target_was_lost_on():
+    """The sweep always started right (+0.685 rad/s), so a car lost turning
+    LEFT got a yaw step at the hand-over and a first swing away from it."""
+    assert search_sweep_rate(0.0, 25, 4, side=-1.0) < 0.0
+    assert abs(search_sweep_rate(0.0, 25, 4, side=-1.0)
+               + search_sweep_rate(0.0, 25, 4)) < 1e-12
+    T, dt = 4.0, 0.01
+    net = sum(search_sweep_rate(k * dt, 25, T, side=-1.0) * dt
+              for k in range(int(T / dt)))
+    assert abs(net) < 0.02, net                     # still zero net rotation
+
+
+def test_the_box_servo_holds_the_estimator_arms_stand_off():
+    """want_range_from_width is the linear-era 15.83 m for 0.16 on a 4 m car,
+    while the box servo held the raw 0.16 - 12.5 m on the pinhole camera - so
+    the two A/B arms flew set-points 27 % apart. The servo now holds the box
+    fraction that IS the estimator's range."""
+    import follow_vlm as fv
+    want = want_range_from_width(0.16, 4.0)
+    w = fv.servo_want_width(want, 4.0, hfov_deg=90.0)
+    assert abs(w - 0.126) < 0.001, w
+    r_pinhole = (4.0 / 2.0) / (w * math.tan(math.radians(45.0)))
+    assert abs(r_pinhole - want) < 0.1, (r_pinhole, want)
+
+
+def test_the_estimator_is_fed_the_capture_pose_without_identity():
+    """Without --identity the bearing from a frame ~0.5 s old was placed at
+    the CONSUMING tick's pose and clock, with the newest depth. A centred box
+    20 m out at a capture pose of yaw 0 must land 20 m along yaw 0 from the
+    capture position, whatever the tick's pose."""
+    import follow_vlm as fv
+    from target_state import TargetState
+    det = (W / 2.0, H / 2.0, 30.0, 15.0, 0.5, W, H, 0.3)
+    g = {"cap": {"pose": {"x": 0.0, "y": 0.0, "yaw": 0.0},
+                 "t_capture": 10.0, "rng": 20.0}}
+    tick = (10.5, 3.0, -2.0, 0.3)
+    t, x, y, yaw, b, r, src = fv.estimator_measurement(det, g, tick, False,
+                                                       newest_range=27.0)
+    assert (t, x, y, yaw, r, src) == (10.0, 0.0, 0.0, 0.0, 20.0, "capture")
+    est = TargetState()
+    assert est.update(t, x, y, yaw, b, r)
+    assert math.hypot(est.x[0] - 20.0, est.x[1]) < 0.5, est.x
+    # --legacy-tick-pose, or no capture pose to be had: the old pairing
+    old = fv.estimator_measurement(det, g, tick, False, newest_range=27.0,
+                                   legacy_tick_pose=True)
+    assert old[:4] == tick and old[5] == 27.0 and old[6] == "tick"
+    assert fv.estimator_measurement(det, {}, tick, False, 27.0)[6] == "tick"
+    # no depth frame paired with the capture: no range (the caller falls back
+    # to the width prior), never the newest frame
+    g2 = {"cap": dict(g["cap"], rng=None)}
+    assert fv.estimator_measurement(det, g2, tick, False, 27.0)[5] is None
+
+
+def test_a_stale_box_is_not_called_target_locked_without_identity():
+    """Without --identity the HUD drew the last box labelled TARGET LOCKED for
+    up to the estimator's 3 s coast (citylife_redcar_final1 frame 340: a box
+    on the bollards, 2.2 s old)."""
+    import follow_vlm as fv
+    assert fv.hud_target(False, True, True, 2.0) == (False, "TRACKING (PREDICTED)")
+    assert fv.hud_target(False, True, False, 0.1) == (False, "TRACKING (PREDICTED)")
+    assert fv.hud_target(False, True, True, 0.3) == (True, None)
+    # the box servo steers on its box up to det_max_age: it stays
+    assert fv.hud_target(False, False, True, 0.8) == (True, None)
+    # identity: as before
+    assert fv.hud_target(True, True, True, 0.9) == (False, "TRACKING (PREDICTED)")
+    assert fv.hud_target(True, True, True, 0.3, "soft") == (True, "TRACKING (PARTLY HIDDEN)")
+
+
+def test_a_level_crowd_is_polled_only_while_a_pedestrian_is_followed():
+    """On a car mission the 40-name level crowd poll (~100 ms) ran 429 times
+    for nothing, between the pose read and the Shield."""
+    import follow_vlm as fv
+
+    class LevelActors:                       # the class name is what counts
+        def __init__(self):
+            self.calls = 0
+
+        def update(self, t):
+            self.calls += 1
+
+    class Pedestrians(LevelActors):          # client figures walk only if updated
+        pass
+
+    crowd, walkers = LevelActors(), Pedestrians()
+    assert fv.update_level_truth(crowd, "car", 1.0) is False and crowd.calls == 0
+    assert fv.update_level_truth(crowd, "pedestrian", 1.1) is True and crowd.calls == 1
+    assert fv.update_level_truth(walkers, "car", 1.0) is True and walkers.calls == 1
+    assert fv.update_level_truth(None, "pedestrian", 1.0) is False
+
+
+def test_the_city_shield_records_the_forecast_it_flew():
+    """The city rail flew 3 s / 0.5 s and no artefact said so; the record is
+    read from the Shield itself. --grant-forecast builds the grant's 5 s /
+    0.1 s with the escalation FSM off."""
+    import follow_vlm as fv
+    from guardrail import load_policy
+    pol = load_policy(ROOT / "policies" / "follow_car_citylife_nfz.yaml")
+    rec = fv.shield_lookahead_record(fv.flight_shield(pol, None))
+    assert rec == {"horizon_s": 3.0, "dt_s": 0.5, "poses": 6, "grant": False,
+                   "escalation_fsm": True}, rec
+    rec = fv.shield_lookahead_record(fv.flight_shield(pol, None, grant_forecast=True))
+    assert rec["grant"] and rec["poses"] == 50 and not rec["escalation_fsm"], rec
+
+
+def test_the_loop_timing_shows_the_stall_the_median_hid():
+    import follow_vlm as fv
+    lt = fv.loop_timing({"truth": [0.0] * 9 + [100.0], "cmd": []},
+                        [0.0, 0.2, 0.205, 0.305, 0.705])
+    assert lt["stage_ms_max"]["truth"] == 100.0 and lt["stage_ms_max"]["cmd"] is None
+    ci = lt["cmd_interval"]
+    assert (ci["n"], ci["n_under_0_02s"], ci["n_over_0_15s"], ci["n_over_0_3s"]) == (4, 1, 2, 1), ci
+    assert ci["max_s"] == 0.4, ci
+
+
 if __name__ == "__main__":
     # A test that short-circuits on a missing fixture must NOT print PASS - on a
     # clean clone demo/out/ is gitignored and those tests assert nothing. See

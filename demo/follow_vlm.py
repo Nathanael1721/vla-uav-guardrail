@@ -15,9 +15,15 @@ never moved at all — 12 of 12 inferences returned the same token triple. See
 docs/FINDING-what-drives-aerialvla.md.
 
 So the language grounding is done by a model that actually does it. OWL-ViT is an
-open-vocabulary detector: text in, boxes out. Measured here at 34-56 ms per frame
-against AerialVLA's 11-12 s, which also removes the latency problem that made
-closed-loop tracking impossible.
+open-vocabulary detector: text in, boxes out. On an idle GPU its forward pass
+takes 34-56 ms and the whole inference 66 ms (experiments/profile_owlvit.py). In
+flight, sharing the GPU with the simulator, an inference measures about
+210-290 ms median, so the detector runs at about 3-3.7 Hz (`det_hz` and the
+per-inference `infer_ms` in each run's artefacts), and a box is about 0.45 s old
+by the time the loop uses it (identity.det_latency_ms_median, 449 ms on
+citylife_redcar_nfz_20261013). That is still about 40x faster than AerialVLA's
+11-12 s, which is what makes closed-loop tracking feasible - not a latency that
+can be ignored.
 
 This is still vision-language-action — the words choose the target, the camera
 finds it, the controller acts — with the model swapped for one whose language
@@ -58,8 +64,11 @@ sys.path.insert(0, str(ROOT / "demo"))
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
 from guardrail import kpi as kpi_mod                                # noqa: E402
 from guardrail.bundle import load_for_flight                        # noqa: E402
-from guardrail.manifest import build_manifest, is_kpi_grade         # noqa: E402
+from guardrail.manifest import (                                    # noqa: E402
+    NO_VLA, build_manifest, is_kpi_grade, model_hash, pilot_record,
+)
 from guardrail.replay import verify_replay, write_replay           # noqa: E402
+from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S           # noqa: E402
 from guardrail.models import (                                      # noqa: E402
     Action4D, AltitudeEnvelope, ObstacleClearance, SubjectStandoff,
 )
@@ -259,14 +268,19 @@ SUBJECT_WIDTH_DEFAULT = 4.0
 YAW_RATE_CAP = 1.1
 
 
-def yaw_command(gain: float, bearing: float) -> float:
-    """Proportional yaw, clipped to the pilot's own ceiling.
+def yaw_command(gain: float, bearing: float, ff: float = 0.0) -> float:
+    """Proportional yaw, plus an optional feed-forward rate, clipped to the
+    pilot's own ceiling.
 
     One function because there were two copies of the clip and only one of them
     was applied, which is the entire defect. A shared constant would not have
     been enough - the estimator branch had no clip at all to keep in step.
+
+    `ff` (rad/s) is the line-of-sight rate (see `los_rate`); the clip applies
+    to the sum, so the ceiling holds whatever the feed-forward says. With
+    ff = 0 this is exactly the proportional command it always was.
     """
-    return float(np.clip(gain * bearing, -YAW_RATE_CAP, YAW_RATE_CAP))
+    return float(np.clip(gain * bearing + ff, -YAW_RATE_CAP, YAW_RATE_CAP))
 
 
 SUBJECT_VMAX_MPS = {
@@ -525,6 +539,200 @@ def subject_truth_names(subject_class, car, people):
     return None
 
 
+def update_level_truth(people, subject_class, t: float) -> bool:
+    """Advance the pedestrian source for this tick; True when it was asked.
+
+    `people` is one of two very different things. Client-spawned figures
+    (demo/pedestrians.py) are SCENERY first: update() is what makes the
+    walkers walk, so it runs whatever is being followed. A level-owned crowd
+    (demo/level_actors.LevelActors) is truth ONLY - nothing in the scene moves
+    when it is polled - and one poll is a game-thread RPC that loops over every
+    name: about 100 ms for 40 pedestrians. On citylife_redcar_nfz_20261013,
+    a CAR mission, that poll ran 429 times for nothing: ms.truth p90 95.8 ms,
+    max 1005.7 ms, every 5th-6th tick at the 0.5 s period. It sits between the
+    pose read and the Shield, so on those ticks the controller and the Shield
+    worked on a pose 100-1000 ms old, and the deadline pacing then fired the
+    next tick at once: 411 tick gaps under 20 ms against 422 of 150-300 ms.
+    Commands arrived in pairs, and the per-tick slew limit was spent twice in
+    a few milliseconds - part of the pitch jerks the user saw.
+
+    Nothing reads pedestrian truth unless the subject IS a pedestrian
+    (subject_truth_pts, subject_truth_names, _live_sep), so a level crowd is
+    polled only then. A retarget to a person happens at the top of the tick,
+    before this, and LevelActors.update polls at once when its period has
+    passed, so the first pedestrian tick still carries fresh truth.
+    """
+    if people is None:
+        return False
+    if type(people).__name__ == "LevelActors" and subject_class != "pedestrian":
+        return False
+    people.update(t)
+    return True
+
+
+# Share of the mission's ticks that must carry the subject's ground truth for
+# the follow to count as SCORED - perception_node's TRUTH_MIN_COVERAGE, so the
+# two rails answer "was this follow measured?" the same way.
+FOLLOW_TRUTH_MIN_COVERAGE = 0.95
+
+
+def follow_scored(n_rows: int, n_truth: int) -> bool:
+    """Was the follow measured at all? (metrics["follow_scored"])
+
+    guardrail/kpi.py reads a None `frac_within_30m` as "no failure", and only
+    `follow_scored is False` turns mission_success into None
+    ("follow_not_scored"). This rail never set the key, so a flight with no
+    subject truth - "a red van" behind a --level-car, the --no-car control,
+    or a flight that aborted before its first tick - wrote kpi.json with
+    outcome success and mission_success true from a follow nobody measured.
+    Coverage, not "any truth at all", so a flight whose second phase had no
+    truth does not count as scored either.
+    """
+    return n_rows > 0 and n_truth >= FOLLOW_TRUTH_MIN_COVERAGE * n_rows
+
+
+# The classes a --level-car is ground truth for (subject_truth_pts).
+LEVEL_CAR_CLASSES = ("car",)
+
+
+def level_car_refusal(phrases):
+    """(phrase, class) of the first phrase a --level-car cannot score, or None.
+
+    The start-up check accepted car, van, truck and bus, but truth exists only
+    for "car" - a van is deliberately not the car (subject_truth_pts) - so
+    "a red van" behind a level car flew a follow with an empty truth on every
+    tick, frac_within_30m None, which kpi.json read as success. `phrases` is
+    the --object phrase first, then the retargets; a retarget may also go to a
+    pedestrian, whose own truth source fly() has already required.
+    """
+    for i, ph in enumerate(phrases):
+        cls = subject_width(ph)[1]
+        if cls in LEVEL_CAR_CLASSES or (i > 0 and cls == "pedestrian"):
+            continue
+        return ph, cls
+    return None
+
+
+def det_rates(g_end: dict, g_t0: dict, mission_s) -> dict:
+    """The detector's mission figures from the grounder's counters at the end
+    and at the mission clock's t0.
+
+    `det_hit_rate` used to divide by every inference since the detector
+    loaded, the start gate's included - the defect already fixed for det_hz.
+    In identity mode no box is published while acquiring, so every gate
+    inference counted as a miss: citylife_redcar_nfz_20261013 reported 0.495
+    for a mission whose inferences found the car on 745 of 750 (0.993). The
+    figure tracked how long the gate waited, not the detector. Without
+    identity the gate publishes every colour-passing box, so it was inflated
+    instead. The old figure is kept as `det_hit_rate_all_inferences_legacy`
+    so old and new metrics stay comparable.
+
+    Identity re-acquisition (begin_reacquire) still publishes nothing, so its
+    inferences remain misses here: during a re-acquisition the subject is, by
+    definition, not held.
+    """
+    seen, miss = int(g_end.get("n_seen", 0)), int(g_end.get("n_miss", 0))
+    seen0, miss0 = int(g_t0.get("n_seen", 0)), int(g_t0.get("n_miss", 0))
+    m_seen, m_n = seen - seen0, (seen + miss) - (seen0 + miss0)
+    return {
+        "det_hit_rate": round(m_seen / max(1, m_n), 3),
+        "det_hit_rate_all_inferences_legacy": round(seen / max(1, seen + miss), 3),
+        "det_mission_inferences": m_n,
+        "det_hz": (round(m_n / max(1e-6, mission_s), 2)
+                   if mission_s is not None else None),
+    }
+
+
+def hud_target(identity_on: bool, est_served: bool, det_present: bool,
+               age: float, tier=None):
+    """(show the box?, mode label or None) for the video HUD on a TRACK tick.
+
+    A box older than 0.6 s is not what the aircraft is flying on when the
+    estimator is serving: it is the last place the detector saw something.
+    Without --identity the HUD kept that box on screen labelled TARGET LOCKED
+    for up to the estimator's 3 s coast - citylife_redcar_final1 frame 340
+    shows a green "a red car" box on the bollards, 2.2 s old, with no car in
+    it - while identity runs already said TRACKING (PREDICTED). Now both modes
+    do. The box servo (no estimate) keeps its box and TARGET LOCKED up to its
+    own det_max_age, because there the box IS what it steers on.
+    """
+    if est_served:
+        if not det_present or age > 0.6:
+            return False, "TRACKING (PREDICTED)"
+        if identity_on and tier == "soft":
+            return True, "TRACKING (PARTLY HIDDEN)"
+        return True, None
+    return det_present, None
+
+
+def estimator_measurement(det, g: dict, tick_pose, identity_on: bool,
+                          newest_range=None, legacy_tick_pose: bool = False,
+                          hfov_deg: float = None):
+    """What the estimator is fed for one fresh box: (t, x, y, yaw, bearing,
+    range or None, source).
+
+    `tick_pose` is (t_now, x, y, yaw) of the tick consuming the box and
+    `g` the grounder snapshot, whose `cap` describes the frame the box came
+    from (its pose and capture time, filled in every mode) and whose `feat`
+    holds identity's measurements of it.
+
+    THE BOX'S OWN MOMENT, IN EVERY MODE. Without --identity (the CLI default,
+    and every CityLife person mission) the bearing measured in a frame
+    captured ~0.5 s earlier was combined with THIS tick's yaw, position and
+    clock, and with the NEWEST depth frame. Replayed over 1,390 on-car boxes
+    of the 12 non-identity red-car flights, that pairing put the bearing off by
+    a median 1.46 deg (p90 7.50) against 0.61 deg (p90 2.29) at the capture
+    pose; on turning ticks 7.6 against 1.1 deg, 2.9 m against 0.4 m sideways.
+    The estimate drives the yaw servo and is the subject the Shield is served.
+    Now the capture pose and time, and the range measured in the capture's own
+    depth frame (Grounder publishes it as cap["rng"]; None when no depth frame
+    lay within 70 ms - the caller then falls back to the width prior, as the
+    Grounder's colour check does, never to the newest depth).
+
+    `legacy_tick_pose` (--legacy-tick-pose) restores the old pairing to
+    reproduce recorded non-identity flights; so does an observation source
+    with no capture pose.
+    """
+    t_now, x, y, yaw = tick_pose
+    b = box_bearing(det[0], det[5], hfov_deg)
+    cap = (g or {}).get("cap") or {}
+    cp = cap.get("pose")
+    if identity_on:
+        feat = (g or {}).get("feat") or {}
+        t_m, x_m, y_m, yaw_m, r = t_now, x, y, yaw, None
+        if cp is not None:
+            t_m = cap.get("t_capture") or cap.get("t_cap") or t_now
+            x_m, y_m, yaw_m = cp["x"], cp["y"], cp["yaw"]
+        if feat.get("rng_h") is not None and cp is not None:
+            r = float(feat["rng_h"])
+            b = feat["bearing"] - yaw_m
+            b = math.atan2(math.sin(b), math.cos(b))
+        return t_m, x_m, y_m, yaw_m, b, r, ("capture" if cp is not None else "tick")
+    if cp is not None and not legacy_tick_pose:
+        t_m = cap.get("t_capture") or cap.get("t_cap") or t_now
+        return t_m, cp["x"], cp["y"], cp["yaw"], b, cap.get("rng"), "capture"
+    return t_now, x, y, yaw, b, newest_range, "tick"
+
+
+def servo_want_width(want_range_m: float, object_width_m: float,
+                     hfov_deg: float = None) -> float:
+    """The box fraction the box servo must hold to stand off `want_range_m`.
+
+    `want_range_from_width` turns --want-width into a range on the LINEAR
+    pixel-to-angle map, deliberately left alone so the estimator arm (the
+    default, behind every recent flight) keeps its 15.83 m for 0.16 on a 4 m
+    car. The box servo held the raw fraction instead, which on the real
+    pinhole camera is 12.5 m: the two A/B arms flew set-points 27 % apart,
+    and most of the published 3.5 m gap between them (FINDING-target-
+    estimator-and-control-aug17) was that, not the estimator. Converting the
+    metric stand-off back through the pinhole model puts both arms on one
+    set-point: 0.126 for a 4 m car at 15.83 m.
+    """
+    hfov = CAMERA_HFOV_DEG if hfov_deg is None else hfov_deg
+    return (object_width_m / 2.0) / (max(1e-3, want_range_m)
+                                     * math.tan(math.radians(hfov) / 2.0))
+
+
 # The depth stream is quantised to whole metres (see SemanticObs.get_depth),
 # so a margin below 1 m is below the resolution of the signal it tests. A
 # 0.9 m true height difference quantises to 1 m about 90% of the time, which
@@ -777,22 +985,33 @@ def plausible_noun(query: str):
 
 
 def search_sweep_rate(elapsed_s: float, sweep_deg: float, period_s: float,
-                      cap: float = 1.1) -> float:
+                      cap: float = 1.1, side: float = 1.0) -> float:
     """Yaw rate for the search sweep, rad/s.
 
-    A cosine, so the ANGLE is a sine about the bearing the target was last seen
-    on and the net rotation over a whole period is zero. That property is the
-    whole point and is asserted in the tests: the previous implementation used a
-    constant sign, so the nose rotated away from a bearing that was still
-    correct and never came back -- 292 degrees on one measured episode, which is
-    the "360 manoeuvre" seen on the demo video.
+    A cosine, so the ANGLE is a sine about the heading the nose had when the
+    search began, and the net rotation over a whole period is zero. That
+    property is the whole point and is asserted in the tests: the previous
+    implementation used a constant sign, so the nose rotated away from a
+    bearing that was still correct and never came back -- 292 degrees on one
+    measured episode, which is the "360 manoeuvre" seen on the demo video.
+
+    It is NOT centred on the last-seen bearing, whatever this docstring used to
+    say: nothing here sees a bearing, and after the open-loop coast the target
+    can sit 24-35 deg off the nose. `side` (+1 right, -1 left) picks which way
+    the first half-swing goes. It always went right (+0.685 rad/s at t = 0 for
+    25 deg / 4 s), so a car lost turning LEFT got a yaw step of up to
+    1.2 rad/s at the coast-to-search hand-over and a first swing away from where
+    it went; the caller now passes the side the target was lost on
+    (verify_sweep_sim, 2026-10: mirrored left and right losses behaved
+    differently, out of view on 46 against 35 of 50 search ticks).
 
     `sweep_deg` is a half-amplitude and should stay inside the camera's 45 deg
-    horizontal half-FOV, so the last known bearing never leaves the frame.
+    horizontal half-FOV.
     """
     w = 2.0 * math.pi / max(0.5, period_s)
-    return float(np.clip(math.radians(sweep_deg) * w * math.cos(w * elapsed_s),
-                         -cap, cap))
+    sgn = -1.0 if side < 0 else 1.0
+    return sgn * float(np.clip(math.radians(sweep_deg) * w * math.cos(w * elapsed_s),
+                               -cap, cap))
 
 
 # GROUND CONTACT.
@@ -1944,8 +2163,13 @@ class FenceGuard:
         """Scale a commanded velocity down as it closes on a fence.
 
         Returns (scale, distance_to_fence, blocked). `scale` is 1 when clear and
-        0 at the stand-off, so the approach is a smooth deceleration rather than
-        a wall.
+        0 at the stand-off, so along a steady approach it falls with distance.
+
+        It keeps no memory between calls, so it is NOT smooth in time: beside a
+        wall at 5.2 m a heading change of 2-4 deg flips it 1.00 -> 0.55 -> 0.27,
+        and on citylife_redcar_nfz_20261013 it jumped by more than 0.5 in one
+        tick 10 times. The single-call values are what the tests pin and are
+        right; the smoothing between calls is the flight loop's GuardSmoother.
         """
         from shapely.geometry import Point
         o_scale, o_d, o_blocked = self._obstacle_gate(x, y, vx, vy)
@@ -2133,6 +2357,339 @@ class FenceGuard:
                         best_cost, bx, by = off, lx * sgn, ly * sgn
                     break                     # shortest detour on this side
         return bx, by, best_cost
+
+
+# ---------------------------------------------------------------------------
+# MOTION SHAPING (2026-10-19): why the aircraft pitched and rolled in jerks.
+#
+# The user's complaint: when the red car turns or pulls away, the drone
+# "nose-dives / jerks". Measured on citylife_redcar_nfz_20261013 (flight_log,
+# poses timed at the kinematics read): body tilt follows horizontal
+# acceleration almost exactly (correlation 0.977 with atan(a/g)), pitch reached
+# -14.9 deg and roll -12.2 deg, and every peak came from one of four things:
+#
+#   1. The forward command surging to the 5 m/s cap after the range grew (the
+#      car pulling away from a stop, or the guard having held the aircraft):
+#      the stand-off law was linear up to speed_max, 241 ticks at the cap.
+#   2. FenceGuard's gate and slide switching on and off with no memory:
+#      47 mode switches, 10 scale jumps > 0.5 in one tick, raw steps of
+#      2.0-3.9 m/s; 8 of the 9 tilt peaks above 15 deg within 1 s of a switch.
+#   3. The slew limiter (aerialvla_demo.RateLimiter): 0.4 m/s PER AXIS PER
+#      CALL, world frame, no time base. A diagonal step got 0.566; a late tick
+#      followed by an immediate one spent two steps within milliseconds (275
+#      tick gaps under 10 ms against ~420 of 150-300 ms, see
+#      update_level_truth), so bursts doubled the acceleration.
+#   4. A ~14-18 deg bearing lag in every turn: a proportional yaw servo on a
+#      rotating line of sight settles at lag = rate / gain (measured: truth
+#      bearing = 0.98 s x LOS rate).
+#
+# The pieces below answer them in order: a saturating catch-up law
+# (standoff_speed), a stateful smoother between the guard and the command
+# (GuardSmoother; gate() and slide() stay pure), a time-based vector slew
+# limiter with gentle speed-up, legacy-or-firmer braking and a yaw-rate slew
+# (VecSlewLimiter), and a line-of-sight-rate feed-forward on yaw (los_rate).
+# --legacy-motion restores all four exactly, to reproduce recorded flights.
+#
+# Offline only so far (tests/test_follow_motion.py, a closed-loop kinematic
+# follow of a car that stops, pulls away and turns, with a chattering guard
+# and the 200 ms / 5 ms tick pattern): speed-up peak 3.11 -> 1.62 m/s^2, jerk
+# peak 8.35 -> 3.83 m/s^3, braking peak unchanged (2.33 -> 2.40, by design),
+# turn lag 5.0 -> 1.4 deg median, range max 24.1 -> 23.8 m (mean 18.4 ->
+# 19.8). Replayed open-loop on the 13 Oct commands, the limiter alone takes
+# the aircraft-model accel peak 3.35 -> 2.13 m/s^2. Not yet flown.
+# ---------------------------------------------------------------------------
+
+
+class VecSlewLimiter:
+    """Time-based slew limit on the commanded velocity, as a VECTOR.
+
+    Replaces, for this script only, aerialvla_demo.RateLimiter (which other
+    demos and the fine-tuning eval protocol still use unchanged). Per call:
+
+      * dt is the time since the previous call, CAPPED at one tick. A late
+        tick gets no extra allowance and a back-to-back one only its share, so
+        a stall can no longer be repaid as a burst. (A floored dt would make
+        the burst worse; review of finding rate-limiter-per-call-per-axis.)
+      * The horizontal step is split along and across the previous velocity.
+        Along-track speed-up is limited to `accel`, along-track slowing to
+        `brake`, across-track (turning) to `lat`, all in m/s^2, and the whole
+        step is scaled by ONE factor, so its direction is kept - per-axis
+        clipping bent it toward 45 deg and allowed sqrt(2) x the limit.
+      * BRAKING IS NEVER LATER THAN IT WAS. When the command asks for less
+        speed, the resulting speed is held to no more than what the legacy
+        per-axis, per-call step of `brake_floor_dv` would have left, in every
+        tick pattern - the guard's holds stop at least as soon as before. The
+        direction of the gentle step is kept; only its speed is cut.
+        (`n_brake_floor` counts the calls this decided.)
+      * Climb rate: `vz` m/s^2, never slower than the legacy `vz_floor_dv`
+        step when slowing toward zero. Yaw rate: `yaw` rad/s^2 (0 = off);
+        nothing limited it before, and a coast-to-search hand-over stepped it
+        by up to 1.2 rad/s in one tick.
+    """
+
+    def __init__(self, accel: float = 2.0, brake: float = 4.0, lat: float = 2.5,
+                 vz: float = 2.0, yaw: float = 2.0, tick: float = TICK,
+                 brake_floor_dv: float | None = 0.4,
+                 vz_floor_dv: float | None = 0.2):
+        self.accel, self.brake, self.lat = float(accel), float(brake), float(lat)
+        self.a_z, self.yaw_acc, self.tick = float(vz), float(yaw), float(tick)
+        self.brake_floor_dv = brake_floor_dv
+        self.vz_floor_dv = vz_floor_dv
+        self.prev = Action4D()
+        self.t = None
+        self.n_calls = 0
+        self.n_limited = 0          # calls whose horizontal step was cut
+        self.n_brake_floor = 0      # ...and whose speed the legacy floor set
+
+    def __call__(self, a: Action4D, now: float) -> Action4D:
+        dt = (self.tick if self.t is None
+              else min(max(now - self.t, 0.0), self.tick))
+        self.t = now
+        self.n_calls += 1
+        p = self.prev
+        dx, dy = a.vx - p.vx, a.vy - p.vy
+        sp_prev = math.hypot(p.vx, p.vy)
+        sp_ask = math.hypot(a.vx, a.vy)
+        n = math.hypot(dx, dy)
+        if sp_prev > 1e-6:
+            ux, uy = p.vx / sp_prev, p.vy / sp_prev
+        elif n > 1e-12:
+            ux, uy = dx / n, dy / n          # from rest every step is along
+        else:
+            ux, uy = 1.0, 0.0
+        d_par = dx * ux + dy * uy
+        d_perp = -dx * uy + dy * ux
+        a_par = self.brake if d_par < 0.0 else self.accel
+        need = math.hypot(d_par / max(1e-6, a_par), d_perp / max(1e-6, self.lat))
+        s = 1.0 if need <= dt else dt / need
+        vx, vy = p.vx + s * dx, p.vy + s * dy
+        if s < 1.0:
+            self.n_limited += 1
+        if self.brake_floor_dv is not None and sp_ask < sp_prev - 1e-9:
+            f = self.brake_floor_dv
+            lx = p.vx + float(np.clip(dx, -f, f))
+            ly = p.vy + float(np.clip(dy, -f, f))
+            sp_leg, sp_new = math.hypot(lx, ly), math.hypot(vx, vy)
+            if sp_leg < sp_new - 1e-9:
+                k = sp_leg / sp_new
+                vx, vy = vx * k, vy * k
+                self.n_brake_floor += 1
+        dz = a.vz_up - p.vz_up
+        lim_z = self.a_z * dt
+        if self.vz_floor_dv is not None and abs(a.vz_up) < abs(p.vz_up):
+            lim_z = max(lim_z, float(self.vz_floor_dv))
+        vz = p.vz_up + float(np.clip(dz, -lim_z, lim_z))
+        if self.yaw_acc > 0.0:
+            ly_ = self.yaw_acc * dt
+            yr = p.yaw_rate + float(np.clip(a.yaw_rate - p.yaw_rate, -ly_, ly_))
+        else:
+            yr = a.yaw_rate
+        out = Action4D(vx=vx, vy=vy, vz_up=vz, yaw_rate=yr)
+        self.prev = out
+        return out
+
+    def stats(self) -> dict:
+        return {"calls": self.n_calls, "limited": self.n_limited,
+                "brake_floor": self.n_brake_floor}
+
+
+def guard_urgent(fence: "FenceGuard", fdist, fblocked: bool) -> bool:
+    """May the guard's brake bite AT ONCE this tick? Only when it must: gate()
+    says blocked (an incursion within 0.35 of the brake distance, or at the
+    fence stand-off), or the aircraft is already inside a building's
+    clearance ring or the fence's stand-off. Anything less is ramped."""
+    if fblocked:
+        return True
+    if fdist is None:
+        return False
+    if fence.last_cause == "obstacle":
+        return fdist <= fence.min_clearance_m
+    if fence.last_cause == "fence":
+        return fdist <= fence.stand_off_m
+    return False
+
+
+class GuardSmoother:
+    """Ramps FenceGuard's output between ticks; gate() and slide() stay pure.
+
+    gate() answers each tick afresh, from a forecast over 11 samples, and a
+    heading change of 2-4 deg beside a wall at 5.2 m flips its scale between
+    1.00, 0.55 and 0.27 (synthetic check, verifier of finding
+    fenceguard-chatter-lunge); slide() adds a 0.8-2.5 m/s sidestep on or off.
+    The command then stepped 2-4 m/s in one tick. Their tests pin single-call
+    values, and those values are right; what was missing is memory between
+    calls, so it lives here, in the loop.
+
+      * The speed scale falls AT ONCE when guard_urgent() says so - a hold is
+        never softened - and otherwise by at most `engage` m/s^2 of speed;
+        it rises by at most `release` m/s^2. Expressed in speed, not in scale
+        fractions: at 5 m/s a 0.1-per-tick scale slew IS the old 4 m/s^2
+        limiter, and a replay of the t=214 s release with it gave the same
+        peak and the same 8 saturated ticks as before.
+      * The sidestep vector fades in and out at `lat` m/s^2.
+      * With the guard clear (scale 1, no sidestep) it is exactly a pass-
+        through, so it adds no lag to an ordinary follow.
+    """
+
+    V_FLOOR = 1.0       # m/s: the speed a scale slew is measured against near a stop
+
+    def __init__(self, release: float = 2.0, engage: float = 3.0,
+                 lat: float = 2.0, tick: float = TICK):
+        self.release, self.engage, self.lat_acc = float(release), float(engage), float(lat)
+        self.tick = float(tick)
+        self.scale = 1.0
+        self.lat = (0.0, 0.0)
+        self.t = None
+        self.n_ramped = 0           # ticks whose output differed from the guard's
+        self.n_urgent = 0           # ticks the brake was let bite at once
+
+    def __call__(self, now: float, cvx: float, cvy: float, fscale: float,
+                 lat_x: float = 0.0, lat_y: float = 0.0,
+                 urgent: bool = False) -> tuple[float, float]:
+        dt = (self.tick if self.t is None
+              else min(max(now - self.t, 0.0), self.tick))
+        self.t = now
+        sp = max(self.V_FLOOR, math.hypot(cvx, cvy))
+        if fscale < self.scale:
+            if urgent:
+                self.scale = float(fscale)
+                self.n_urgent += 1
+            else:
+                self.scale = max(float(fscale), self.scale - self.engage * dt / sp)
+        else:
+            self.scale = min(float(fscale), self.scale + self.release * dt / sp)
+        ddx, ddy = lat_x - self.lat[0], lat_y - self.lat[1]
+        n, lim = math.hypot(ddx, ddy), self.lat_acc * dt
+        if n > lim:
+            ddx, ddy = ddx * lim / n, ddy * lim / n
+        self.lat = (self.lat[0] + ddx, self.lat[1] + ddy)
+        gx = self.scale * cvx + self.lat[0]
+        gy = self.scale * cvy + self.lat[1]
+        if abs(gx - (fscale * cvx + lat_x)) > 1e-6 or abs(gy - (fscale * cvy + lat_y)) > 1e-6:
+            self.n_ramped += 1
+        return gx, gy
+
+    def stats(self) -> dict:
+        return {"ramped_ticks": self.n_ramped, "urgent_ticks": self.n_urgent}
+
+
+def standoff_speed(rng: float, want: float, gain: float, ff: float,
+                   speed_max: float, catchup_mps: float = 0.0) -> float:
+    """Forward speed for the stand-off loop: P on the range error plus the
+    subject's own opening rate fed forward, clipped to [-0.4, 1] x speed_max.
+
+    `catchup_mps` > 0 SATURATES the catch-up half of the P term:
+    catchup * tanh(e / catchup). Small errors are unchanged (slope `gain`);
+    a large lag asks for at most `catchup_mps` above the subject's own speed
+    instead of jumping to speed_max. Linear, a 13 m lag after the car pulled
+    away from a stop asked 3.3 m/s + ff and hit the 5 m/s cap at once (241
+    ticks at the cap on citylife_redcar_nfz_20261013), which is the pitch-down
+    surge. With the car at cruise ff carries it, so the closing speed - and
+    the follow - is what it was (13 Oct: within 30 m of the car 99.1 % of the
+    time). Backing off (a negative error) stays linear: too close is the side
+    a stand-off is for. 0 restores the linear law exactly.
+    """
+    e = (rng - want) * gain
+    if catchup_mps > 0.0 and e > 0.0:
+        e = catchup_mps * math.tanh(e / catchup_mps)
+    return float(np.clip(e + ff, -0.4 * speed_max, speed_max))
+
+
+def los_rate(sx: float, sy: float, svx: float, svy: float,
+             x: float, y: float, vx: float, vy: float) -> float:
+    """Rate (rad/s, NED yaw sense, + clockwise) at which the line of sight from
+    the aircraft (x, y, moving vx, vy) to the subject (sx, sy, moving svx, svy)
+    turns. Fed forward into the yaw servo it removes the turn lag: a P servo on
+    a line of sight turning at w settles w / gain behind it (13 Oct: truth
+    bearing = 0.98 s x LOS rate, 13.9 deg median / 18.0 p90 in turns; 2.6 /
+    5.9 deg once w / 1.2 is taken out). 0 within a metre."""
+    dx, dy = sx - x, sy - y
+    r2 = dx * dx + dy * dy
+    if r2 < 1.0:
+        return 0.0
+    return (dx * (svy - vy) - dy * (svx - vx)) / r2
+
+
+def motion_params(args) -> dict:
+    """The motion settings a flight ran with, for metrics.json params."""
+    if getattr(args, "legacy_motion", False):
+        return {"legacy": True, "limiter": "per-axis-per-call",
+                "dv_h": args.dv_h, "dv_z": args.dv_z,
+                "yaw_accel_rps2": None, "guard_smoother": None,
+                "catchup_mps": 0.0, "yaw_los_ff": 0.0}
+    return {"legacy": False, "limiter": "vector-dt",
+            "accel_mps2": args.accel_max, "brake_mps2": args.brake_max,
+            "turn_accel_mps2": args.turn_accel_max,
+            "vz_accel_mps2": round(args.dv_z / TICK, 3),
+            "brake_floor_dv_h": args.dv_h, "vz_floor_dv": args.dv_z,
+            "yaw_accel_rps2": args.yaw_accel_max,
+            "guard_smoother": {"release_mps2": args.guard_release_accel,
+                               "engage_mps2": args.guard_engage_accel,
+                               "lat_mps2": args.guard_lat_accel},
+            "catchup_mps": args.catchup_mps,
+            "yaw_los_ff": args.yaw_los_ff, "yaw_los_ff_cap": args.yaw_los_ff_cap}
+
+
+def add_motion_args(ap) -> None:
+    """The motion-shaping flags (2026-10-19), on `ap`. Their defaults are the
+    flown defaults; --legacy-motion ignores all of them."""
+    ap.add_argument("--legacy-motion", action="store_true",
+                    help="fly the pre-2026-10-19 motion exactly: the per-axis, "
+                         "per-call RateLimiter (--dv-h/--dv-z), no guard "
+                         "smoothing, the linear stand-off law up to "
+                         "--speed-max and no yaw feed-forward. To reproduce "
+                         "recorded flights.")
+    ap.add_argument("--accel-max", type=float, default=2.0,
+                    help="m/s^2: how fast the commanded speed may RISE along "
+                         "the track. Body tilt follows horizontal "
+                         "acceleration (atan(a/g)): 2.0 is ~11.5 deg. The old "
+                         "limiter allowed 4 per axis, 5.7 on a diagonal.")
+    ap.add_argument("--brake-max", type=float, default=4.0,
+                    help="m/s^2: how fast it may FALL along the track. Never "
+                         "slower than the old per-axis step (--dv-h).")
+    ap.add_argument("--turn-accel-max", type=float, default=2.5,
+                    help="m/s^2 across the track: how fast the velocity may "
+                         "turn (a 4 m/s follow round a 0.5 rad/s corner needs 2)")
+    ap.add_argument("--yaw-accel-max", type=float, default=2.0,
+                    help="rad/s^2 slew on the commanded yaw rate (0 = none). "
+                         "Nothing limited it before; a coast-to-search "
+                         "hand-over stepped it 1.2 rad/s in one tick.")
+    ap.add_argument("--guard-release-accel", type=float, default=2.0,
+                    help="m/s^2: how fast speed comes back after a FenceGuard "
+                         "brake (GuardSmoother)")
+    ap.add_argument("--guard-engage-accel", type=float, default=3.0,
+                    help="m/s^2: how fast a NON-urgent guard brake bites; an "
+                         "urgent one (blocked, inside a building's clearance "
+                         "ring or the fence stand-off) bites at once")
+    ap.add_argument("--guard-lat-accel", type=float, default=2.0,
+                    help="m/s^2: how fast slide()'s sidestep fades in and out")
+    ap.add_argument("--catchup-mps", type=float, default=2.5,
+                    help="the stand-off loop asks at most this much above the "
+                         "subject's own opening rate when it has fallen behind "
+                         "(saturating, standoff_speed). 0 = the old linear law, "
+                         "which chased a 13 m lag at --speed-max.")
+    ap.add_argument("--yaw-los-ff", type=float, default=0.7,
+                    help="fraction of the line-of-sight rate (from the "
+                         "estimate's velocity) fed forward into the yaw servo, "
+                         "0 = off. Replayed on citylife_redcar_nfz_20261013 "
+                         "the estimate's LOS rate tracks the truth's (r 0.98) "
+                         "and 0.7 takes the turn lag from 13.9/18.0 deg "
+                         "(median/p90) to 5.4/8.3.")
+    ap.add_argument("--yaw-los-ff-cap", type=float, default=0.4,
+                    help="rad/s cap on that feed-forward")
+
+
+def make_motion(args):
+    """(limiter, guard smoother or None) for the flight's motion settings."""
+    if getattr(args, "legacy_motion", False):
+        return RateLimiter(args.dv_h, args.dv_z), None
+    lim = VecSlewLimiter(accel=args.accel_max, brake=args.brake_max,
+                         lat=args.turn_accel_max, vz=args.dv_z / TICK,
+                         yaw=args.yaw_accel_max, brake_floor_dv=args.dv_h,
+                         vz_floor_dv=args.dv_z)
+    gs = GuardSmoother(release=args.guard_release_accel,
+                       engage=args.guard_engage_accel, lat=args.guard_lat_accel)
+    return lim, gs
 
 
 _OVERLAY = None          # policy_hud.OverlayCache, made on first use
@@ -2638,10 +3195,19 @@ class Grounder:
                     self._t_det = time.time()
                     self._det_tier = det_tier
                     self._det_feat = det_feat
+                    # The range in THIS capture's own depth frame, so the
+                    # control loop - which never sees `dep` - can feed the
+                    # estimator the box's own moment in every mode
+                    # (estimator_measurement). None without a paired frame:
+                    # the newest frame is the wrong moment, as above.
                     self._det_cap = {"t_cap": t_cap, "t_capture": t_capture,
                                      "pose": cap_pose,
                                      "depth_src": dep_src,
-                                     "depth_dt_ms": dep_dt}
+                                     "depth_dt_ms": dep_dt,
+                                     "rng": (range_from_depth(dep, det)
+                                             if dep is not None and dep_src
+                                             in ("capture", "capture-late")
+                                             else None)}
                     self._n_seen += 1
                     last = (det[0], time.time())
                 else:
@@ -2801,6 +3367,141 @@ def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
     # do not charge forward while the target is far off to one side
     fwd *= max(0.0, math.cos(bearing))
     return yaw_rate, fwd, bearing
+
+
+# THE CITY DEMO'S FORECAST (finding city-demo-flies-3s-forecast-and-yaml).
+#
+# This rail builds its Shield at 3 s / 0.5 s (7 poses), not the grant's
+# 5 s / 0.1 s (guardrail.shield LOOKAHEAD_S / LOOKAHEAD_DT_S), and nothing in a
+# run's files said so; metrics.json and kpi.json now carry `shield_lookahead`.
+# The grant forecast was measured for this rail before deciding whether to
+# make it the default (2026-10-19, scratch replay of every tick of
+# citylife_redcar_nfz_20261013 through both Shields, same commands, same
+# estimated subject): its cost is small (median 0.23 ms, p99 1.36 ms a tick,
+# against 0.18 / 0.40 ms), but it would end the follow. A SubjectStandoff is
+# forecast against a subject held STILL - set_subject() takes no velocity -
+# so 5 s of the aircraft's own 4-5 m/s, ~25 m, reaches the car's 5 m ring from
+# ordinary following distance: the Shield's StandoffHold fired on 1059 of 2379
+# ticks (against 1 at 3 s / 0.5 s) and cut the command by a median 3.7 m/s.
+# The follow would settle behind that ring plus 25 m, at the 30 m mark the
+# mission is scored on. `--grant-forecast` flies it anyway (with the Shield's
+# own escalation FSM off, as docs/DESIGN-shield-enforcement.md asks of any
+# demo that flies `emitted`); the default stays what every city flight flew
+# until a subject-velocity forecast exists.
+def flight_shield(policy, obstacle_map, grant_forecast: bool = False):
+    """The flight's Shield: 3 s / 0.5 s with the escalation FSM on (every
+    recorded city flight), or the grant's 5 s / 0.1 s with it off."""
+    if grant_forecast:
+        return Shield(policy, obstacle_map=obstacle_map, escalation=False)
+    return Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=obstacle_map)
+
+
+def shield_lookahead_record(shield) -> dict:
+    """The forecast this flight's Shield really used, read from the object."""
+    return {"horizon_s": shield.lookahead_s, "dt_s": shield.dt,
+            "poses": int(round(shield.lookahead_s / shield.dt)),
+            "grant": (shield.lookahead_s == LOOKAHEAD_S
+                      and shield.dt == LOOKAHEAD_DT_S),
+            "escalation_fsm": getattr(shield, "fsm", None) is not None}
+
+
+def flight_manifest(policy_hash: str, seed: int) -> dict:
+    """The WP4 six-field manifest for this rail.
+
+    No VLA flies here - the hand-written servo below does - so the model field
+    is NO_VLA. It used to be the DETECTOR's id, so every city-rail manifest
+    filed OWL-ViT's HuggingFace revision under `vla_model_hash`
+    ("google/owlvit-base-patch32@cbc355fb..." on citylife_redcar_nfz_20261013),
+    which the grant defines as the hash of the VLA's weights (audit card
+    X-16; guardrail/manifest.py NO_VLA). The detector is recorded under its
+    own key in `pilot_entry()`."""
+    return build_manifest(policy_hash=policy_hash, model_id=NO_VLA, seed=seed,
+                          scene_path=str(ROOT / "demo" / "pas_config" / SCENE))
+
+
+def pilot_entry() -> dict:
+    """metrics["pilot"]: what flew (no VLA: a hand-written controller) and the
+    detector that steered it, with its HF revision. A missing HF cache must
+    not cost a flight that already flew its artefacts, so the hash lookup
+    falls back to the bare id."""
+    try:
+        det_hash = model_hash(DETECTOR_ID)
+    except Exception as exc:                                    # noqa: BLE001
+        det_hash = f"{DETECTOR_ID}@unresolved ({type(exc).__name__})"
+    return pilot_record(NO_VLA, "none",
+                        detector={"model_id": DETECTOR_ID, "hash": det_hash})
+
+
+def loop_timing(stage_ms: dict, cmd_times: list) -> dict:
+    """The loop's tail, for metrics.json: per-stage p95 and max, and how the
+    commands were actually spaced.
+
+    stage_ms_median stays as it was (tools/build_eval_data.py copies it), but
+    a median says nothing about a stall: on citylife_redcar_nfz_20261013 the
+    truth stage read 0.0 ms median while every 5th-6th tick spent ~100 ms (max
+    1005.7) in it, and the 9.5 Hz loop gate - an average, len(rows)/span -
+    passed at 9.9 Hz because the absolute-deadline pacing repaid each late tick
+    with an immediate one: 411 command gaps under 20 ms, 422 of 150-300 ms,
+    6 over 300 ms. These are the numbers that show it.
+    """
+    def _pct(v, q):
+        return round(float(np.percentile(v, q)), 1) if v else None
+    gaps = [b - a for a, b in zip(cmd_times, cmd_times[1:])]
+    return {
+        "stage_ms_p95": {k: _pct(v, 95) for k, v in stage_ms.items()},
+        "stage_ms_max": {k: (round(float(max(v)), 1) if v else None)
+                         for k, v in stage_ms.items()},
+        "cmd_interval": {"n": len(gaps),
+                         "n_under_0_02s": sum(1 for x in gaps if x < 0.02),
+                         "n_over_0_15s": sum(1 for x in gaps if x > 0.15),
+                         "n_over_0_3s": sum(1 for x in gaps if x > 0.3),
+                         "p95_s": (round(float(np.percentile(gaps, 95)), 3)
+                                   if gaps else None),
+                         "max_s": round(max(gaps), 3) if gaps else None},
+    }
+
+
+def final_report(metrics: dict, n_ticks: int, aborted) -> int:
+    """The closing [report] lines, and the exit code.
+
+    A flight that aborted before its first tick has no det_hz (None), and the
+    detector check here compared it with 2.0 and raised TypeError - after
+    kpi.json was written, and before os._exit could run, so a client thread
+    could hold the process open. Without the crash that same flight would have
+    returned 0 with a kpi.json saying success: the runner's FLIGHT FAILED
+    branch reads the exit code. So: no mission tick, or an abort, is non-zero.
+    """
+    print(f"\n[report] ticks {n_ticks} | detector {metrics['det_hz']} Hz, "
+          f"hit rate {metrics['det_hit_rate']} | target visible on "
+          f"{metrics['frac_ticks_seen']*100:.0f}% of ticks")
+    print(f"[report] separation: min {metrics['sep_min_m']} m, "
+          f"mean {metrics['sep_mean_m']} m, end {metrics['sep_end_m']} m, "
+          f"within 30 m {metrics['frac_within_30m']}"
+          f"{'' if metrics.get('follow_scored') else '  (follow NOT scored: no subject truth on enough ticks)'}")
+    print(f"[report] guardrail: NFZ {metrics['nfz_s']}s, altitude escape "
+          f"{metrics['alt_violation_s']}s, interventions {metrics['interventions']}")
+    print(f"[report] presence: verdict ABSENT on {metrics['frac_absent']*100:.0f}% "
+          f"of ticks (with no target in the scene this should be HIGH)")
+    # det_hit_rate is seen/(seen+missed) over the inferences that RAN. If the
+    # detector stalls it can read 1.000 on a flight that spent most of its time
+    # scanning, which is exactly what one demo_traffic run did: 29 inferences at
+    # 0.52 Hz, hit rate 1.000, target actually tracked on 13.6% of ticks. Say so
+    # rather than let the headline number flatter a stalled run.
+    det_hz = metrics.get("det_hz")
+    if det_hz is None:
+        print("[report] *** no mission tick was flown (the flight aborted before "
+              f"its loop{': ' + aborted if aborted else ''}); every figure above, "
+              "and kpi.json's outcome, describe nothing ***")
+    elif det_hz < 2.0:
+        print(f"[report] *** the detector only managed {det_hz:.2f} Hz "
+              f"({metrics.get('det_mission_inferences')} mission inferences). "
+              f"hit rate {metrics['det_hit_rate']} is measured over those alone "
+              f"and is NOT a tracking result - the target was held on "
+              f"{metrics['frac_ticks_seen'] * 100:.0f}% of ticks. Treat this "
+              f"flight as unrepresentative ***")
+    if aborted:
+        print(f"[report] *** the flight ABORTED: {aborted} ***")
+    return 0 if (n_ticks > 0 and not aborted) else 1
 
 
 async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
@@ -3010,11 +3711,14 @@ async def fly(args) -> int:
                 "--level-car takes the subject from the level, so the client "
                 "must not drive one of its own: pass --no-car and leave "
                 "--traffic at 0.")
-        if subject_class not in ("car", "van", "truck", "bus"):
+        _bad = level_car_refusal([args.object] + [ph for _, ph in retargets])
+        if _bad is not None:
             raise SystemExit(
-                f"--level-car {args.level_car} is a vehicle, but {args.object!r} "
-                f"selects the class {subject_class!r}. The truth row would score "
-                f"a car against a box drawn on something else.")
+                f"--level-car {args.level_car} is the subject's ground truth, "
+                f"but {_bad[0]!r} selects the class {_bad[1]!r}, and that truth "
+                f"exists only for {', '.join(LEVEL_CAR_CLASSES)}. Every tick "
+                f"would log an empty truth and the follow would go unscored. "
+                f"Name it as a car (\"a red car\").")
 
     # NOTE on ordering: both refusals below run AFTER fly() has unlinked the
     # tag's previous flight_log.jsonl and detections.jsonl. That unlink predates
@@ -3079,7 +3783,12 @@ async def fly(args) -> int:
     if policy.by_type(ObstacleClearance) and cmap is not None:
         smap = {"occ": cmap["occ"], "res": cmap["res"],
                 "ox": cmap["ox"], "oy": cmap["oy"]}
-    shield = Shield(policy, lookahead_s=3.0, dt=0.5, obstacle_map=smap)
+    # 3 s / 0.5 s unless --grant-forecast; see flight_shield for why the grant's
+    # 5 s / 0.1 s is not yet this rail's default. Recorded either way
+    # (metrics/kpi "shield_lookahead").
+    shield = flight_shield(policy, smap, grant_forecast=args.grant_forecast)
+    print(f"[shield] forecast {shield.lookahead_s:g} s at {shield.dt:g} s "
+          f"({'the grant forecast, escalation FSM off' if args.grant_forecast else 'NOT the grant 5 s / 0.1 s: the city rail default, see --grant-forecast'})")
     clr = policy.by_type(ObstacleClearance)
 
     # Where the roads are, which is a different question from where the
@@ -3184,6 +3893,9 @@ async def fly(args) -> int:
     t_connect = time.time()
     t0 = None                   # the mission clock; set once the gate opens
     det_n_at_t0 = 0             # detector inferences before t0 (see det_hz)
+    det_g_at_t0 = {"n_seen": 0, "n_miss": 0}    # ...split, for det_hit_rate
+    aborted = None              # why the flight aborted, if it did
+    cmd_times = []              # when each mission command was sent
     t_mission_end = None        # ...and when its loop ended
     start_gate = {"enabled": False}
     stage_ms = {"kin": [], "truth": [], "shield": [], "cmd": [], "work": []}
@@ -3197,6 +3909,9 @@ async def fly(args) -> int:
     # NameError on `estimator` in the metrics and on `recorder` in `finally`).
     estimator = None
     lock = None
+    limiter = guard_smooth = None
+    n_los_ff = 0                # ticks the yaw servo carried a LOS-rate feed-forward
+    n_meas_src = {}             # estimator measurements by pose source (capture/tick)
     trail = None
     trail_stop_short = 0.0
     recorder = None
@@ -3563,10 +4278,23 @@ async def fly(args) -> int:
             if _sd is None:
                 print(f"[identity] *** no street mask at {_sp}: the off-street "
                       f"rules cannot fire")
+            # WHICH RULES WILL RUN. classify_split judges a phrase by its
+            # noun; a phrase whose noun it does not know gets NO physical rule
+            # and every candidate is OK - with an empty by_rule that reads as
+            # a clean pass. Said here, loudly, and recorded per phrase.
+            _nouns = {ph: identity_mod.noun_of(ph)
+                      for ph in [args.object] + [p_ for _, p_ in retargets]}
+            for _ph, _n in _nouns.items():
+                if _n is None:
+                    print(f"*** [identity] no physical rules for {_ph!r}: every "
+                          f"candidate will be OK. Name the subject with a noun "
+                          f"identity.noun_of knows (car, van, truck, bus, "
+                          f"person and their synonyms) ***")
             id_cfg = {"thresholds": _th, "street": _sd, "hfov": CAMERA_HFOV_DEG,
                       "hash": identity_mod.thresholds_hash(_th),
                       "path": str(args.identity_thresholds or
-                                  identity_mod.DEFAULT_THRESHOLDS)}
+                                  identity_mod.DEFAULT_THRESHOLDS),
+                      "nouns": _nouns}
             if lock is None:
                 lock = TargetLock(gate_frac=args.lock_gate)
             print(f"[identity] ON - thresholds {id_cfg['hash']}, strict lock, "
@@ -3596,7 +4324,11 @@ async def fly(args) -> int:
             await asyncio.sleep(0.5)
         print(f"[flight] cruise {args.cruise_alt:.0f} m — following {args.object!r}")
 
-        limiter = RateLimiter(args.dv_h, args.dv_z)
+        # The slew limiter, and the guard smoother (None with --legacy-motion,
+        # which flies aerialvla_demo.RateLimiter exactly as before). See the
+        # MOTION SHAPING note above VecSlewLimiter.
+        limiter, guard_smooth = make_motion(args)
+        print(f"[motion] {motion_params(args)}")
 
         # Start the car with the MISSION clock, not at scene setup. The
         # trajectory plays from the instant it is bound, so binding it earlier
@@ -3768,6 +4500,8 @@ async def fly(args) -> int:
         # detector ran at 3.5-3.9 Hz during the mission (found 2026-09-29).
         _g0 = grounder.latest()
         det_n_at_t0 = _g0["n_seen"] + _g0["n_miss"]
+        # ...and det_hit_rate must not count them either (det_rates).
+        det_g_at_t0 = {"n_seen": _g0["n_seen"], "n_miss": _g0["n_miss"]}
         tick_deadline = None        # the pacing's running deadline, see below
         # Where the subject was last MEASURED to be, and how fast it was then
         # measured to move (displacement of accepted positions over 2 s).
@@ -3775,6 +4509,8 @@ async def fly(args) -> int:
         last_acc = None
         last_meas_speed = None
         last_bearing, brg_rate, last_cmd, mode = 0.0, 0.0, (0.0, 0.0), "hold"
+        last_emit_v = (0.0, 0.0)    # the last horizontal velocity flown
+        v_air = None
         # The presence verdict is computed further down the tick, so the search
         # logic uses the PREVIOUS tick's. That is the honest signal anyway: it is
         # what the system last knew about whether the object is really out there.
@@ -3925,6 +4661,7 @@ async def fly(args) -> int:
             tick += 1
             _tk0 = time.time()
             mode_label = None       # HUD state text when not the default
+            hud_box = False         # draw the box on the video (hud_target)?
             det_tier = None         # identity tier of the steering box
             plan_dir = None         # the junction planner's flight direction
             plan_row = None
@@ -4020,6 +4757,12 @@ async def fly(args) -> int:
             p = kin["pose"]["position"]
             yaw = quat_yaw(kin["pose"]["orientation"])
             state = State(x=p["x"], y=p["y"], up=-p["z"])
+            # The aircraft's own horizontal velocity, for the yaw servo's
+            # line-of-sight feed-forward; the last flown command stands in
+            # when the kinematics carry no twist.
+            _tw = (kin.get("twist") or {}).get("linear") or {}
+            v_air = ((float(_tw["x"]), float(_tw["y"]))
+                     if _tw.get("x") is not None and _tw.get("y") is not None else None)
             obs.put_pose(p["x"], p["y"], yaw)
             # The full pose, into the ring get_front_capture reads: stamped
             # mid-RPC, and with the sim's own time_stamp when it has one.
@@ -4028,11 +4771,14 @@ async def fly(args) -> int:
                               quat_pitch(_qk), quat_roll(_qk),
                               stamp=kin.get("time_stamp"))
             _ta = time.time()
-            if people is not None:
-                # Only the pacing few cost anything here; the standing majority
-                # is skipped without an RPC. Scenery is never allowed to fail a
-                # flight, so update() swallows its own errors.
-                people.update(time.time() - t0)
+            # Client-spawned figures: only the pacing few cost anything, the
+            # standing majority is skipped without an RPC, and they walk only
+            # when updated, so they always are. A LEVEL crowd (--level-peds) is
+            # truth only and one poll is ~100 ms for 40 names, so it is polled
+            # only while the subject is a pedestrian (update_level_truth).
+            # Scenery is never allowed to fail a flight, so update() swallows
+            # its own errors.
+            update_level_truth(people, subject_class, time.time() - t0)
             if traffic is not None:
                 traffic.update(time.time() - t0, tick)
             elif car is not None and type(car).__name__ == "LevelCar":
@@ -4270,24 +5016,22 @@ async def fly(args) -> int:
                 # is the one the ESTIMATOR is fed - so a camera change that
                 # missed it would send the Shield a subject in the wrong
                 # direction with nothing raising.
-                b_meas = box_bearing(det[0], det[5])
-                t_meas, x_m, y_m, yaw_m = time.time(), state.x, state.y, yaw
+                # AT CAPTURE, IN EVERY MODE: the frame's own pose and time,
+                # and the range in its own depth frame (identity: the range
+                # and bearing it measured from them - pinhole, pitch and roll
+                # included, horizontal range). Without --identity this used
+                # the tick's pose and clock and the NEWEST depth, ~0.5 s off;
+                # see estimator_measurement. --legacy-tick-pose restores it.
+                t_meas, x_m, y_m, yaw_m, b_meas, r_meas, _src = estimator_measurement(
+                    det, g, (time.time(), state.x, state.y, yaw), id_cfg is not None,
+                    newest_range=(range_from_depth(obs.get_depth(), det)
+                                  if have_depth and (args.legacy_tick_pose
+                                                     or not (g.get("cap") or {}).get("pose"))
+                                  else None),
+                    legacy_tick_pose=args.legacy_tick_pose)
+                n_meas_src[_src] = n_meas_src.get(_src, 0) + 1
                 feed = True
-                r_meas = None
                 if id_cfg is not None:
-                    # AT CAPTURE: the frame's own pose and time, and the range
-                    # and bearing identity measured from them (pinhole, pitch
-                    # and roll included, horizontal range).
-                    cap = g.get("cap") or {}
-                    feat = g.get("feat") or {}
-                    cp = cap.get("pose")
-                    if cp is not None:
-                        t_meas = cap.get("t_capture") or cap.get("t_cap") or t_meas
-                        x_m, y_m, yaw_m = cp["x"], cp["y"], cp["yaw"]
-                    if feat.get("rng_h") is not None and cp is not None:
-                        r_meas = float(feat["rng_h"])
-                        b_meas = feat["bearing"] - yaw_m
-                        b_meas = math.atan2(math.sin(b_meas), math.cos(b_meas))
                     if g.get("tier") != "ok":
                         # SOFT: may CONTINUE a live track only.
                         est_age = (t_meas - estimator.t_last_update
@@ -4295,8 +5039,6 @@ async def fly(args) -> int:
                         feed = est_age < 1.5 and time.time() - t_ok_last < 3.0
                         n_soft_fed += int(feed)
                         n_soft_refused += int(not feed)
-                elif have_depth:
-                    r_meas = range_from_depth(obs.get_depth(), det)
                 if r_meas is None:
                     r_meas = implied_range_from_width(det, args.object_width_m)
                 if r_meas and feed:
@@ -4346,7 +5088,27 @@ async def fly(args) -> int:
                 # branch clips to 1.1 rad/s and this one did not, so the fast
                 # yaw only ever appeared when the estimator was driving, which
                 # is why it survived every flight the estimator sat out.
-                yaw_rate = yaw_command(args.yaw_gain, bearing)
+                # TURN ANTICIPATION: the line of sight's own rate, from the
+                # estimate's velocity and the aircraft's, fed forward - so the
+                # servo stops settling rate/gain behind a turning car (the
+                # ~14-18 deg lag of 13 Oct, see los_rate). Only on a fresh
+                # estimate (updated < 1 s ago): a coasted constant-velocity
+                # guess must not steer the nose. Scaled, capped, and then
+                # slew-limited with the rest of the command.
+                ff_yaw = 0.0
+                if (args.yaw_los_ff > 0.0 and not args.legacy_motion
+                        and estimator.x is not None
+                        and estimator.t_last_update is not None
+                        and time.time() - estimator.t_last_update < 1.0):
+                    _va = v_air if v_air is not None else last_emit_v
+                    ff_yaw = float(np.clip(
+                        args.yaw_los_ff * los_rate(
+                            float(estimator.x[0]), float(estimator.x[1]),
+                            float(estimator.x[2]), float(estimator.x[3]),
+                            state.x, state.y, _va[0], _va[1]),
+                        -args.yaw_los_ff_cap, args.yaw_los_ff_cap))
+                    n_los_ff += int(ff_yaw != 0.0)
+                yaw_rate = yaw_command(args.yaw_gain, bearing, ff=ff_yaw)
                 # Proportional term plus the target's own opening rate fed
                 # FORWARD. Without the feedforward the loop settles at a lag
                 # error - a 2 m/s car held 23.4 m against a 15.8 m stand-off,
@@ -4354,10 +5116,14 @@ async def fly(args) -> int:
                 # would also fix it and would wind up every time the Shield
                 # overrides the actuator; the estimator already knows the
                 # target's velocity, so no memory is needed.
+                # The catch-up half saturates at --catchup-mps above the
+                # subject's own rate (standoff_speed), so a car pulling away
+                # is not chased at speed_max; --legacy-motion: linear.
                 ff = (estimator.range_rate(state.x, state.y)
                       if args.range_feedforward else 0.0)
-                fwd = float(np.clip((rng_est - want_range) * args.range_gain + ff,
-                                    -0.4 * args.speed_max, args.speed_max))
+                fwd = standoff_speed(rng_est, want_range, args.range_gain, ff,
+                                     args.speed_max,
+                                     0.0 if args.legacy_motion else args.catchup_mps)
                 fwd *= max(0.0, math.cos(bearing))
                 # PREDICTION IS NOT EVIDENCE. For up to 3 s after the last
                 # accepted box the estimator serves a constant-velocity guess;
@@ -4383,16 +5149,25 @@ async def fly(args) -> int:
                 last_seen, last_bearing = time.time(), bearing
                 last_cmd = (yaw_rate, fwd)
                 mode, seen = "track", True
-                if id_cfg is not None:
-                    # TARGET LOCKED only on a fresh identity-OK box; otherwise
-                    # say that the aircraft is flying on the estimate.
-                    if det is None or age > 0.6:
-                        mode_label = "TRACKING (PREDICTED)"
-                    elif det_tier == "soft":
-                        mode_label = "TRACKING (PARTLY HIDDEN)"
+                # TARGET LOCKED only on a fresh box (and, with identity, an
+                # OK one); otherwise say that the aircraft is flying on the
+                # estimate - in BOTH modes now (hud_target).
+                hud_box, _lbl = hud_target(id_cfg is not None, True,
+                                           det is not None, age, det_tier)
+                if _lbl is not None:
+                    mode_label = _lbl
             elif det is not None and age < args.det_max_age and reacq is None:
+                # The box servo holds a box FRACTION. Converted from the same
+                # metric stand-off the estimator arm holds (servo_want_width),
+                # so the two A/B arms fly one set-point; --legacy-servo-width
+                # holds the raw --want-width, as before.
+                _ww = (args.want_width if args.legacy_servo_width
+                       else servo_want_width(want_range, args.object_width_m))
                 yaw_rate, fwd, bearing = servo(
-                    det, det[5], args.yaw_gain, args.want_width, args.speed_max)
+                    det, det[5], args.yaw_gain, _ww, args.speed_max)
+                # The box IS what this branch steers on (up to det_max_age),
+                # so it stays on screen; identity keeps its 0.6 s rule.
+                hud_box = id_cfg is None or age < 0.6
                 # remember what it was doing, so a gap can be coasted through
                 if last_seen:
                     dt = max(1e-3, time.time() - last_seen)
@@ -4510,9 +5285,15 @@ async def fly(args) -> int:
                             * math.sin(w * (lost - args.coast_s))
                         yaw_rate = yaw_command(args.yaw_gain, bearing)
                     else:
+                        # First swing toward the side the target was lost
+                        # on: the sign of the bearing the coast ended on, so
+                        # the yaw rate keeps its sign across the hand-over.
+                        _side = (1.0 if last_bearing + brg_rate * args.coast_s >= 0.0
+                                 else -1.0)
                         yaw_rate = search_sweep_rate(lost - args.coast_s,
                                                      args.search_sweep_deg,
-                                                     args.search_period_s)
+                                                     args.search_period_s,
+                                                     side=_side)
                         bearing = last_bearing
                     # Creep only while the system still believes the object is
                     # out there. On the --no-car control the verdict is ABSENT
@@ -4771,6 +5552,7 @@ async def fly(args) -> int:
             # enough room to still be following something at the far end.
             approaching = (fdist is not None and fdist < fence.brake_m
                            and fscale < 1.0)
+            lat_x = lat_y = 0.0     # the sidestep slide() adds, for the smoother
             if fblocked or approaching:
                 if fblocked:
                     guard_hold_ticks += 1
@@ -4797,15 +5579,27 @@ async def fly(args) -> int:
                     # third of slide_speed, which is what makes it anticipatory.
                     urgency = float(np.clip(1.0 - fscale, 0.33, 1.0))
                     lat = args.slide_speed * urgency
-                    gvx += sx * lat
-                    gvy += sy * lat
+                    lat_x, lat_y = sx * lat, sy * lat
+                    gvx += lat_x
+                    gvy += lat_y
                     fmode = "skirt"
                 else:
                     fmode = "hold" if fblocked else "near"
             else:
                 fmode = "clear" if fdist is None or fdist > 20 else "near"
+            # RAMP THE GUARD (GuardSmoother): gate() and slide() answer each
+            # tick afresh and stepped the command 2-4 m/s in one tick; the
+            # smoother lets a brake bite at once only when it must
+            # (guard_urgent) and ramps everything else. A pass-through while
+            # the guard is clear. `guard_in` logs what the guard asked for.
+            guard_in = None
+            if guard_smooth is not None:
+                guard_in = (gvx, gvy)
+                gvx, gvy = guard_smooth(time.time(), cvx, cvy, fscale, lat_x, lat_y,
+                                        urgent=guard_urgent(fence, fdist, fblocked))
             raw = Action4D(vx=gvx, vy=gvy, vz_up=vz_up, yaw_rate=yaw_rate)
-            smooth = limiter(raw)
+            smooth = (limiter(raw, time.time()) if isinstance(limiter, VecSlewLimiter)
+                      else limiter(raw))
 
             # Tell the Shield where the subject is, so SubjectStandoff rules can
             # bind. The position comes from the ESTIMATOR's state vector, which
@@ -4851,6 +5645,7 @@ async def fly(args) -> int:
             if d.touched:
                 n_touched += 1
             e = d.emitted
+            last_emit_v = (e.vx, e.vy)
             # Off the obstacle map the clearance rule sees nothing - not
             # "clear", unknown. Counted so a flight that left the map says so.
             off_map = (shield.off_map(state.x, state.y)
@@ -4912,6 +5707,10 @@ async def fly(args) -> int:
                 "roll_deg": round(math.degrees(quat_roll(kin["pose"]["orientation"])), 2),
                 "bearing_deg": round(math.degrees(bearing), 2),
                 "raw": raw.model_dump(), "smooth": smooth.model_dump(),
+                # What the guard asked for before GuardSmoother ramped it
+                # (None with --legacy-motion, where `raw` is that).
+                "guard_in": (None if guard_in is None else
+                             [round(guard_in[0], 3), round(guard_in[1], 3)]),
                 "emitted": e.model_dump(),
                 "touched": d.touched, "braked": d.braked,
                 "violations": [v.model_dump() for v in d.violations],
@@ -4941,6 +5740,7 @@ async def fly(args) -> int:
             stage_ms["shield"].append(_ms_shield)
 
             _ta = time.time()
+            cmd_times.append(_ta)
             await drone.move_by_velocity_async(
                 e.vx, e.vy, -e.vz_up, duration=0.3,
                 yaw_is_rate=True, yaw=e.yaw_rate)
@@ -4967,7 +5767,7 @@ async def fly(args) -> int:
                                    or ("fence" if fence.polys else "obstacle")),
                     "mode_label": mode_label, "tier": det_tier,
                     "policy": pol,
-                }, det if seen and (id_cfg is None or age < 0.6) else None)
+                }, det if seen and hud_box else None)
             if tick % 50 == 0:
                 sep = _live_sep(state, subject_class, car, people)
                 sep = float("nan") if sep is None else sep
@@ -5039,7 +5839,10 @@ async def fly(args) -> int:
         drone.disarm()
         drone.disable_api_control()
     except Exception as exc:
-        print(f"[warn] flight aborted: {type(exc).__name__}: {exc}")
+        # Recorded, not only printed: a flight that aborted must not leave a
+        # metrics.json and kpi.json that read like a clean run (final_report).
+        aborted = f"{type(exc).__name__}: {exc}"
+        print(f"[warn] flight aborted: {aborted}")
     finally:
         # WRITE THE FLIGHT LOG FIRST. It used to be written after teardown, and a
         # teardown that hung threw the whole flight away: 70 s flown, 1742 frames
@@ -5154,15 +5957,30 @@ async def fly(args) -> int:
 
     seps = [s for s in (_sep(r) for r in rows) if s is not None]
     g = grounder.latest() if grounder else {"n_seen": 0, "n_miss": 0}
+    # Over the MISSION's inferences only, like det_hz (det_rates).
+    _dr = det_rates(g, det_g_at_t0, rows[-1]["t"] if rows else None)
     metrics = {
         "tag": args.tag, "ticks": len(traj), "object": args.object,
         "detector": DETECTOR_ID,
+        # What flew: no VLA - a hand-written controller - and the detector
+        # that steered it (the manifest's vla_model_hash says NO_VLA).
+        "pilot": pilot_entry(),
         "det_seen": g["n_seen"], "det_missed": g["n_miss"],
         # LIVENESS, not accuracy. This counts the inferences that produced a
         # box - any box. A box on a parked lookalike, a building or road paint
         # scores exactly like a box on the target. It was read as a tracking
         # metric for a long time and it is not one; `frac_on_target` below is.
-        "det_hit_rate": round(g["n_seen"] / max(1, g["n_seen"] + g["n_miss"]), 3),
+        # Mission inferences only; the old all-inference figure is kept beside
+        # it as det_hit_rate_all_inferences_legacy.
+        "det_hit_rate": _dr["det_hit_rate"],
+        "det_hit_rate_all_inferences_legacy": _dr["det_hit_rate_all_inferences_legacy"],
+        "det_mission_inferences": _dr["det_mission_inferences"],
+        # Was the follow MEASURED? kpi.py reads a None frac_within_30m as no
+        # failure; only follow_scored False makes mission_success None.
+        "follow_scored": follow_scored(len(rows), len(seps)),
+        "follow_truth_ticks": len(seps),
+        # Why the flight ended early, if it did (None: it did not).
+        "aborted": aborted,
         # ACCURACY, scored against the target position already in every row.
         # Measured on the flights that existed before this was added, the two
         # disagree badly enough to invert the ranking: the run with the best
@@ -5221,10 +6039,28 @@ async def fly(args) -> int:
             "waived_detections": n_ground_skipped,
             "rescued_detections": n_ground_rescued},
         # When the mission clock started, and on what evidence.
-        "start_gate": start_gate,
+        "start_gate": dict(start_gate, det_inferences_before_t0=det_g_at_t0),
         # Where each tick's time went. `work` is the whole tick before pacing.
         "stage_ms_median": {k: (round(float(np.median(v)), 1) if v else None)
                             for k, v in stage_ms.items()},
+        # ...and its tail, with the spacing of the commands actually sent: a
+        # median of 0.0 ms hid a ~100 ms truth poll every 5th-6th tick, and
+        # the average-rate loop gate passed on commands paired 200 ms / 5 ms
+        # apart (loop_timing).
+        **loop_timing(stage_ms, cmd_times),
+        # The forecast the Shield really used (flight_shield).
+        "shield_lookahead": shield_lookahead_record(shield),
+        # Estimator measurements by the pose they were placed at: "capture"
+        # (the box's own frame) or "tick" (--legacy-tick-pose, or no capture
+        # pose to be had). See estimator_measurement.
+        "estimator_meas_src": dict(n_meas_src),
+        # What the motion shaping did (VecSlewLimiter, GuardSmoother, the
+        # yaw servo's line-of-sight feed-forward); settings in params.motion.
+        "motion_stats": {"limiter": (limiter.stats() if isinstance(limiter, VecSlewLimiter)
+                                     else None),
+                         "guard_smoother": (guard_smooth.stats() if guard_smooth is not None
+                                            else None),
+                         "los_ff_ticks": n_los_ff},
         "tick_pacing": "legacy-sleep" if args.legacy_tick_sleep else "absolute-deadline",
         # The OS timer the pacing sleeps on. 15.6 ms is the Windows default,
         # which rounds every 0.1 s deadline up and held the loop at 9.3 Hz.
@@ -5262,6 +6098,10 @@ async def fly(args) -> int:
         # which rules, and what the strict lock and the estimator did with it.
         "identity": ({"enabled": True, "thresholds_hash": id_cfg["hash"],
                       "thresholds_path": id_cfg["path"],
+                      # The rule family each phrase was judged by; None means
+                      # NO physical rule ran for it (an empty by_rule is then
+                      # not a clean pass).
+                      "nouns": id_cfg.get("nouns"),
                       "street_distance": id_cfg["street"] is not None,
                       "candidates": dict(grounder.id_counts) if grounder else None,
                       "by_rule": dict(sorted(grounder.id_rules.items()))
@@ -5292,8 +6132,7 @@ async def fly(args) -> int:
         "landing": landing_info,
         # Inferences DURING the mission over mission time. The old figure put
         # the start gate's inferences over mission time too (see t0 above).
-        "det_hz": (round((g["n_seen"] + g["n_miss"] - det_n_at_t0)
-                         / max(1e-6, rows[-1]["t"]), 2) if rows else None),
+        "det_hz": _dr["det_hz"],
         "det_hz_all_inferences_over_mission_s_legacy": round(
             (g["n_seen"] + g["n_miss"]) / max(1e-6, len(traj) * TICK), 2),
         "start_heading_err_deg": (None if start_heading_err_deg is None
@@ -5341,7 +6180,13 @@ async def fly(args) -> int:
                    "alt_gain": args.alt_gain, "det_thresh": args.det_thresh,
                    "trail_follow": bool(args.trail_follow),
                    "trail_lookahead_m": args.trail_lookahead_m,
-                   "citymap": str(args.citymap) if getattr(args, "citymap", None) else None},
+                   "citymap": str(args.citymap) if getattr(args, "citymap", None) else None,
+                   # The motion shaping this flight flew (motion_params);
+                   # {"legacy": true, ...} is the pre-2026-10-19 behaviour.
+                   "motion": motion_params(args),
+                   "legacy_tick_pose": bool(args.legacy_tick_pose),
+                   "legacy_servo_width": bool(args.legacy_servo_width),
+                   "grant_forecast": bool(args.grant_forecast)},
         # Where the policy came from - a signed bundle and whether it verified,
         # or a YAML file, which is unsigned. Beside the manifest, which is the
         # grant's six fields and stays so.
@@ -5353,9 +6198,8 @@ async def fly(args) -> int:
     # The grant requires a six-field determinism manifest per episode, and states
     # that contractual KPI numbers may only come from a run that has one. Ours had
     # none, so nothing measured here was reportable on the grant's own terms.
-    manifest = build_manifest(
-        policy_hash=policy.policy_hash, model_id=DETECTOR_ID,
-        seed=args.seed, scene_path=str(ROOT / "demo" / "pas_config" / SCENE))
+    # NO_VLA, not the detector: see flight_manifest.
+    manifest = flight_manifest(policy.policy_hash, args.seed)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
 
     kpis = kpi_mod.compute(rows, kpi_mod.rule_priorities(policy), metrics)
@@ -5364,6 +6208,10 @@ async def fly(args) -> int:
     kpis["kpi_grade_reasons"] = reasons
     kpis["manifest"] = manifest
     kpis["policy_source"] = policy_source
+    # The P0 escape rate above is the Shield re-checking its own output over
+    # THIS forecast, so the figure carries it; and an aborted flight says so.
+    kpis["shield_lookahead"] = metrics["shield_lookahead"]
+    kpis["aborted"] = aborted
     (out / "kpi.json").write_text(json.dumps(kpis, indent=1), encoding="utf-8")
     metrics["kpi_grade"] = graded
     metrics["p0_violation_escape_rate"] = kpis["p0_violation_escape_rate"]
@@ -5405,28 +6253,9 @@ async def fly(args) -> int:
         # A packaging failure must never lose a flight that already flew.
         print(f"[replay] not written: {type(exc).__name__}: {exc}")
 
-    print(f"\n[report] ticks {len(traj)} | detector {metrics['det_hz']} Hz, "
-          f"hit rate {metrics['det_hit_rate']} | target visible on "
-          f"{metrics['frac_ticks_seen']*100:.0f}% of ticks")
-    print(f"[report] separation: min {metrics['sep_min_m']} m, "
-          f"mean {metrics['sep_mean_m']} m, end {metrics['sep_end_m']} m, "
-          f"within 30 m {metrics['frac_within_30m']}")
-    print(f"[report] guardrail: NFZ {metrics['nfz_s']}s, altitude escape "
-          f"{metrics['alt_violation_s']}s, interventions {n_touched}")
-    print(f"[report] presence: verdict ABSENT on {metrics['frac_absent']*100:.0f}% "
-          f"of ticks (with no target in the scene this should be HIGH)")
-    # det_hit_rate is seen/(seen+missed) over the inferences that RAN. If the
-    # detector stalls it can read 1.000 on a flight that spent most of its time
-    # scanning, which is exactly what one demo_traffic run did: 29 inferences at
-    # 0.52 Hz, hit rate 1.000, target actually tracked on 13.6% of ticks. Say so
-    # rather than let the headline number flatter a stalled run.
-    if metrics["det_hz"] < 2.0:
-        print(f"[report] *** the detector only managed {metrics['det_hz']:.2f} Hz "
-              f"({metrics['det_seen'] + metrics['det_missed']} inferences). "
-              f"hit rate {metrics['det_hit_rate']} is measured over those alone "
-              f"and is NOT a tracking result - the target was held on "
-              f"{metrics['frac_ticks_seen'] * 100:.0f}% of ticks. Treat this "
-              f"flight as unrepresentative ***")
+    # The closing lines and the exit code: non-zero for a flight that flew no
+    # mission tick or aborted (final_report).
+    code = final_report(metrics, len(traj), aborted)
 
     cmk = metrics.get("colour_mask") or {}
     n_m, n_w = cmk.get("masked", 0), cmk.get("whole_box", 0)
@@ -5437,7 +6266,7 @@ async def fly(args) -> int:
         if n_m == 0:
             print("[report] *** the depth mask never engaged - the colour gate "
                   "is still measuring the background ***")
-    return 0
+    return code
 
 
 # THE OS TIMER THE TICK SLEEPS ON.
@@ -5446,7 +6275,10 @@ async def fly(args) -> int:
 # proactor wait under Python 3.10 - wakes on the system timer, 15.6 ms by
 # default. Every deadline rounds UP to the next timer tick, so no tick was ever
 # shorter than ~0.107 s: 9.31-9.37 Hz on every red-car flight, against a
-# 9.5 Hz gate, with the work itself taking a fraction of the budget.
+# 9.5 Hz gate, with the work itself taking a fraction of the budget on most
+# ticks. (Not on all: on CityLife car missions a level-crowd truth poll took
+# the whole budget every 5th-6th tick until 2026-10-19 - update_level_truth,
+# and metrics "cmd_interval" / "stage_ms_max", which now show such stalls.)
 # timeBeginPeriod(1) asks for 1 ms for the life of this process and is undone
 # on exit. The resolution actually obtained is MEASURED, not assumed, because
 # Windows 11 may decline it (for a process it considers invisible), and the
@@ -5620,7 +6452,13 @@ def main() -> int:
                          "the pose and depth of its own frame), make the instance lock "
                          "strict, and re-acquire a lost subject only through a gate "
                          "(4 OK sightings in a row, <= 45 m, within reach of where it "
-                         "was last measured). Off keeps the pre-2026-09-29 behaviour.")
+                         "was last measured). Off keeps the pre-2026-09-29 "
+                         "candidate handling; the estimator is fed at the "
+                         "capture's own pose either way (--legacy-tick-pose "
+                         "for the old pairing). The subject's noun picks the "
+                         "rules: car/taxi/sedan/suv, van/pickup, truck/lorry, "
+                         "bus, person/pedestrian/human; any other noun runs "
+                         "none, and the flight says so.")
     ap.add_argument("--identity-thresholds", default="",
                     help="rule values (default demo/identity_thresholds.json)")
     ap.add_argument("--lapse-s", type=float, default=3.0,
@@ -5757,12 +6595,13 @@ def main() -> int:
                     action="store_true", default=True,
                     help="servo on an ESTIMATE of the target's position rather "
                          "than on the latest detection box. On by default. The "
-                         "box width the forward channel used jitters p95 37.7% "
+                         "box width the forward channel used jitters p95 37.7%% "
                          "between detections in traffic, which pushed the raw "
                          "command 1.897 m/s in one 0.1 s tick; replayed on the "
                          "recorded flights the estimator drops that p95 6.4x "
-                         "and supplies a signal on 100% of ticks instead of "
-                         "38-55%.")
+                         "and supplies a signal on 100%% of ticks instead of "
+                         "38-55%%. (Percent signs doubled: argparse formats "
+                         "help with %%, and a bare one made --help crash.)")
     ap.add_argument("--no-target-estimator", dest="target_estimator",
                     action="store_false",
                     help="restore the box-width servo, as the A/B control arm.")
@@ -5842,12 +6681,13 @@ def main() -> int:
                          "A/B against the bounded sweep. Kept because the sweep "
                          "should have to prove itself against what it replaced.")
     ap.add_argument("--search-sweep-deg", type=float, default=25.0,
-                    help="half-amplitude of the search sweep about the last "
-                         "known bearing. The sweep oscillates rather than "
-                         "rotating, so the nose keeps re-crossing where the "
-                         "target actually was instead of walking away from it. "
-                         "25 deg sits well inside the 45 deg horizontal "
-                         "half-FOV, so the last bearing never leaves frame.")
+                    help="half-amplitude of the search sweep about the heading "
+                         "the nose had when the search began, first toward the "
+                         "side the target was lost on (with a trail lookout it "
+                         "is centred on the lookout bearing instead). The "
+                         "sweep oscillates rather than rotating, so the nose "
+                         "does not walk away. 25 deg sits inside the 45 deg "
+                         "horizontal half-FOV.")
     ap.add_argument("--search-period-s", type=float, default=4.0,
                     help="period of that sweep, seconds")
     ap.add_argument("--search-creep", type=float, default=0.5,
@@ -5902,8 +6742,36 @@ def main() -> int:
                     help="start slowing this far from a no-fly zone")
     ap.add_argument("--fence-standoff", type=float, default=3.0,
                     help="hold this far outside a no-fly zone")
-    ap.add_argument("--dv-h", type=float, default=0.4)
-    ap.add_argument("--dv-z", type=float, default=0.2)
+    ap.add_argument("--dv-h", type=float, default=0.4,
+                    help="the legacy limiter's step, m/s per axis per tick. "
+                         "With the default motion shaping it is the FLOOR on "
+                         "braking: a slowing command never ends up faster than "
+                         "this step would have left it.")
+    ap.add_argument("--dv-z", type=float, default=0.2,
+                    help="climb-rate step per tick (dv_z/0.1 s is the climb "
+                         "acceleration), and the same floor on slowing a climb")
+    add_motion_args(ap)
+    ap.add_argument("--legacy-tick-pose", action="store_true",
+                    help="without --identity, feed the estimator the box's "
+                         "bearing at the CONSUMING tick's pose and clock with "
+                         "the newest depth frame (before 2026-10-19), instead "
+                         "of the capture's own pose, time and depth. To "
+                         "reproduce recorded non-identity flights.")
+    ap.add_argument("--legacy-servo-width", action="store_true",
+                    help="the box servo (--no-target-estimator) holds the raw "
+                         "--want-width fraction, as before 2026-10-19, instead "
+                         "of the box fraction of the estimator arm's metric "
+                         "stand-off (0.126 for 0.16 on a 4 m car: 12.5 m "
+                         "against 15.83 m before).")
+    ap.add_argument("--grant-forecast", action="store_true",
+                    help="build the Shield with the grant's 5 s / 0.1 s "
+                         "forecast (escalation FSM off, as the demo flies "
+                         "`emitted`) instead of this rail's 3 s / 0.5 s. NOT "
+                         "the default: SubjectStandoff forecasts against a "
+                         "subject held still, so 5 s of the aircraft's own "
+                         "speed reaches the car's ring from following "
+                         "distance - replayed on citylife_redcar_nfz_20261013 "
+                         "it held 44%% of ticks, median 3.7 m/s cut.")
     args = ap.parse_args()
     if args.live_view and not args.save_view:
         # The window shows the frames the recorder writes. Without --save-view

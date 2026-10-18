@@ -323,8 +323,15 @@ def want_range_from_width(want_w_frac: float, object_width_m: float = 4.0,
 
     Keeps `--want-width` meaningful after the servo stops using apparent width,
     so existing command lines and every measured flight stay comparable. At
-    want_w_frac 0.16 and a 4 m car this is 15.8 m, which matches the 13-15 m
-    mean separation the width servo actually held.
+    want_w_frac 0.16 and a 4 m car this is 15.83 m.
+
+    It is the LINEAR-era calibration, kept deliberately (every estimator-arm
+    flight holds it): the camera is a pinhole, on which a 0.16 box on a 4 m car
+    is 12.5 m, not 15.83 m, and the width servo measured 13.8 m, not the
+    "13-15 m" this docstring used to quote. follow_vlm's box servo therefore
+    converts this metric stand-off back through the pinhole model
+    (servo_want_width) so the two A/B arms share one set-point; until
+    2026-10-19 they flew 15.83 m and 12.5 m.
     """
     half = math.radians(hfov_deg / 2.0) * max(1e-3, want_w_frac)
     return (object_width_m / 2.0) / math.tan(half)
