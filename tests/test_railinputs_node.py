@@ -18,7 +18,9 @@ move, and nothing reaches an autopilot.
   * the rule clock reaching the Shield and the episode record;
   * the REST hot-apply listener on the flying Shield, over real HTTP (needs
     fastapi + uvicorn + httpx: the 3.11 env; SKIP elsewhere), and its mutual
-    TLS allow-list (also cryptography);
+    TLS allow-list (also cryptography), including a stranger whose POST
+    arrives in the same write as its TLS Finished (2026-10-19: applied to
+    the Shield on 1b95383, generation 0 -> 5 in the test's five tries);
   * (2026-10-19) a pilot taking the aircraft out of the node's or the FSM's
     hold is a takeover, after which the node sends neither GUIDED nor the
     mission-end LAND; mode requests go to the adapter by its node name, not
@@ -727,6 +729,100 @@ def test_the_fsm_does_not_step_on_a_stale_pose_or_count_it_as_cleared():
     assert _modes(N, node) == ["LOITER", "GUIDED"], _modes(N, node)
     g8 = [e for e in _events(out) if e["kind"] == "fsm_transition"]
     assert [e["edge"] for e in g8] == ["G8"], g8
+
+
+def _coalesced_post(port: int, pki: Path, name: str, body: dict) -> bytes:
+    """POST /dynamic_nfz over mutual TLS as `name`, with the client's last
+    handshake flight (certificate, verify, Finished) and the whole request in
+    ONE TCP write, as a deliberate client sends it (or as one recv sees it on
+    a server whose loop is late). Returns the decrypted answer, b"" if none."""
+    import ssl
+    from guardrail import harness_service as H
+    ca, cert, key = H.pki_paths(pki, name)
+    ctx = ssl.create_default_context(cafile=str(ca))
+    ctx.load_cert_chain(str(cert), str(key))
+    inc, out = ssl.MemoryBIO(), ssl.MemoryBIO()
+    tls = ctx.wrap_bio(inc, out, server_hostname="localhost")
+    raw = json.dumps(body).encode()
+    req = (f"POST /dynamic_nfz HTTP/1.1\r\nHost: localhost\r\n"
+           f"Content-Type: application/json\r\nContent-Length: {len(raw)}\r\n"
+           f"Connection: close\r\n\r\n").encode() + raw
+    got = b""
+    with socket.create_connection(("127.0.0.1", port), timeout=5) as sock:
+        while True:
+            try:
+                tls.do_handshake()
+                break
+            except ssl.SSLWantReadError:
+                pending = out.read()
+                if pending:
+                    sock.sendall(pending)
+                data = sock.recv(65536)
+                if not data:
+                    return got
+                inc.write(data)
+        tls.write(req)                   # queued behind the client's Finished
+        sock.sendall(out.read())         # one write: Finished + the request
+        try:
+            while True:
+                data = sock.recv(65536)
+                if not data:
+                    break
+                inc.write(data)
+                while True:
+                    try:
+                        chunk = tls.read(65536)
+                    except ssl.SSLWantReadError:
+                        break
+                    if not chunk:        # the server's close_notify
+                        return got
+                    got += chunk
+        except (OSError, ssl.SSLError):
+            pass                         # refused: reset, or the TLS closed under it
+    return got
+
+
+def test_a_stranger_cannot_hot_apply_by_sending_its_request_with_its_finished():
+    """2026-10-19 bug hunt: the allow-list closed a stranger's connection but
+    uvicorn still parsed and RAN a request that came in the same read as the
+    client's Finished. Five such POSTs from 'other-client' (signed by the same
+    CA) were applied to the Shield (generation 0 -> 5) while the server logged
+    each connection as closed. The test above only sent a GET and only checked
+    that nothing answered. Here a stranger's coalesced POST must leave the
+    Shield untouched, and the allowed client's identical POST is the control."""
+    try:
+        import uvicorn  # noqa: F401
+        from guardrail import harness_service as H
+        H._crypto()
+    except Exception:                                   # noqa: BLE001
+        return SKIP
+    import time
+    from guardrail import api as A
+    from guardrail.replay import rail_shield
+    from guardrail import load_policy
+    sh = rail_shield(load_policy(POLICY), lookahead_s=5.0, dt=0.1)
+    pki = Path(tempfile.mkdtemp(prefix="pki_"))
+    H.generate_pki(pki)
+    H.issue_cert(pki, "other-client")                   # the CA's, not allowed
+    port = _free_port()
+    th = A.serve_in_background(sh, "127.0.0.1", port, pki_dir=pki)
+    square = [{"x": 40, "y": 40}, {"x": 50, "y": 40}, {"x": 50, "y": 50},
+              {"x": 40, "y": 50}]
+    try:
+        for i in range(5):
+            answer = _coalesced_post(port, pki, "other-client",
+                                     {"id": f"intruder-{i}", "vertices": square})
+            assert b"200 OK" not in answer, answer[:200]
+        answer = _coalesced_post(port, pki, "harness-client",
+                                 {"id": "friend", "vertices": square})
+        assert answer.startswith(b"HTTP/1.1 200"), answer[:200]
+        time.sleep(0.3)                  # anything still queued in the thread pool
+        intruders = [c.id for c in sh.policy.constraints if c.id.startswith("intruder")]
+        assert not intruders and sh.policy.generation == 1, \
+            (sh.policy.generation, intruders)
+        assert json.loads(answer.split(b"\r\n\r\n", 1)[1])["generation"] == 1
+    finally:
+        th.server.should_exit = True
 
 
 if __name__ == "__main__":

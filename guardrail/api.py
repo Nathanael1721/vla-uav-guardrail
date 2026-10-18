@@ -155,8 +155,17 @@ def _points(shield: Shield, pts: Any) -> list[dict]:
                 if proj is None:
                     raise ApiError(422, f"{shield.policy.policy_id} is written in metres "
                                         f"and has no frame for a lat/lon point; send x/y")
-            x, y = proj.to_local(float(p["lat"]), float(p["lon"]))
-            out.append({"x": x, "y": y, "lat": float(p["lat"]), "lon": float(p["lon"])})
+            # A lat/lon that is not a number ("abc", null, or an integer too
+            # big for a float) is the client's mistake: 422, as the module
+            # docstring promises. Until 2026-10-19 float() raised here
+            # unhandled and FastAPI answered 500 (the harness: INTERNAL, or a
+            # retryable UNAVAILABLE for a forwarded body).
+            try:
+                lat, lon = float(p["lat"]), float(p["lon"])
+                x, y = proj.to_local(lat, lon)
+            except (TypeError, ValueError, OverflowError):
+                raise ApiError(422, f"point {p!r}: lat/lon must be numbers") from None
+            out.append({"x": x, "y": y, "lat": lat, "lon": lon})
             continue
         raise ApiError(422, f"point {p!r} is neither {{x, y}} nor {{lat, lon}}")
     return out
@@ -231,7 +240,7 @@ def apply_nfz_edit(shield: Shield, zone_id: str, body: dict) -> dict:
         else:
             raise ApiError(422, f"op {op!r}: one of move, translate, rotate, scale "
                                 f"(DELETE expires a zone)")
-    except (KeyError, TypeError) as e:
+    except (KeyError, TypeError, OverflowError) as e:   # OverflowError: a 400-digit dx
         raise ApiError(422, f"{op}: missing or malformed field {e}") from None
     except ApiError:
         raise
@@ -411,21 +420,47 @@ def peer_common_name(cert: dict | None) -> str | None:
 
 
 def _common_name_gate(allowed: set[str]):
-    """uvicorn's own HTTP protocol, closing a TLS connection whose client
+    """uvicorn's own HTTP protocol, aborting a TLS connection whose client
     certificate's common name is not in `allowed` (the CA's chain was already
-    verified by the handshake: ssl.CERT_REQUIRED)."""
+    verified by the handshake: ssl.CERT_REQUIRED).
+
+    A refused connection must also never reach uvicorn's parser. Until
+    2026-10-19 the gate only called transport.close(), which in asyncio's SSL
+    layer starts a flush that still hands already-received application data
+    to data_received(): a client of the same CA that sent its TLS Finished and
+    a POST in one write had the POST APPLIED to the flying Shield (5 of 5
+    such requests from an 'other-client' certificate in the bug-hunt probe,
+    generation 0 -> 5) and only lost the response. So the refusal is decided
+    first, the transport is aborted (asyncio drops its buffers), and
+    data_received / eof_received drop everything for a refused connection,
+    which holds whatever the transport does underneath (uvloop on a Linux
+    rail has its own SSL layer). super().connection_made still runs, so
+    uvicorn's connection_lost finds the state it expects."""
     from uvicorn.config import HTTP_PROTOCOLS
     from uvicorn.importer import import_from_string
     base = import_from_string(HTTP_PROTOCOLS["auto"])
 
     class CommonNameGate(base):
+        _refused = False
+
         def connection_made(self, transport):
-            super().connection_made(transport)
             cn = peer_common_name(transport.get_extra_info("peercert"))
-            if cn not in allowed:
+            self._refused = cn not in allowed
+            super().connection_made(transport)
+            if self._refused:
                 log.warning("hot-apply: client certificate %r is not on the "
-                            "allow-list %s; connection closed", cn, sorted(allowed))
-                transport.close()
+                            "allow-list %s; connection aborted", cn, sorted(allowed))
+                transport.abort()
+
+        def data_received(self, data):
+            if self._refused:
+                return
+            super().data_received(data)
+
+        def eof_received(self):
+            if self._refused:
+                return None
+            return super().eof_received()
     return CommonNameGate
 
 
@@ -440,7 +475,8 @@ def serve_in_background(shield: Shield, host: str = "127.0.0.1",
     main thread. Returns the thread (daemon: dies with the mission) once the
     server listens (RuntimeError if it has not within `wait_s`); its
     `server` attribute is the uvicorn.Server (`server.should_exit = True`
-    stops it) and `url` the address it serves.
+    stops it), `url` the address it serves and `allowed_clients` the sorted
+    common names its gate admits (None for plaintext: no client identity).
 
     Plaintext on a loopback address only. `pki_dir` (a folder written by
     `python -m guardrail.harness_service gen-pki`) serves mutual TLS:
@@ -461,6 +497,7 @@ def serve_in_background(shield: Shield, host: str = "127.0.0.1",
     app = build_app(shield, lock=lock, on_applied=on_applied,
                     refuse_when=refuse_when)
     kw: dict[str, Any] = {}
+    allowed = None
     if pki_dir is not None:
         allowed = set(allowed_clients or (DEFAULT_CLIENT_CN,))
         ca, cert, key = pki_paths(pki_dir, server_name or SERVER_CN)
@@ -475,6 +512,7 @@ def serve_in_background(shield: Shield, host: str = "127.0.0.1",
     server = uvicorn.Server(config)
     t = threading.Thread(target=server.run, daemon=True, name="guardrail-api")
     t.server = server
+    t.allowed_clients = None if allowed is None else sorted(allowed)
     shown = f"[{host}]" if ":" in host else host
     t.url = f"{'https' if pki_dir is not None else 'http'}://{shown}:{port}"
     t.start()
@@ -513,7 +551,10 @@ class FlightHotApply:
     (`hot_applied`) and a `hot_apply_rest` event with its receipt-to-swap
     time. `after(result, t)` runs next, under the lock (the ROS node
     re-publishes its fences there, keeping a zone the aircraft is near held
-    back). `mission_t()` is the rail's mission time, or None before take-off.
+    back) - also when a record write raised: the event is then still counted,
+    marked `record_failed` (summary: n_record_failed), and the error re-raised
+    for call() to log. `mission_t()` is the rail's mission time, or None
+    before take-off.
     A dynamic_nfz spawned this way is named in `live_from` with its mission
     time on the trajectory's 0.01 s grid, for guardrail.replay.zone_dwell.
     """
@@ -545,14 +586,29 @@ class FlightHotApply:
                  "generation": result["generation"],
                  "policy_hash": result["policy_hash"],
                  "receipt_to_swap_ms": round((applied_ns - received_ns) / 1e6, 3)}
-        self.rec.hot_applied(result["applied"], t=t)
+        # The Shield has already swapped, so what follows the swap in memory
+        # comes first and `after` runs whatever the disk does. Until
+        # 2026-10-19 the generation record was written first, and a write
+        # that raised (a full or locked disk) skipped the bookkeeping AND
+        # `after`: the ROS node kept generation N's fences while the Shield
+        # flew N+1, and the summary counted no hot-apply. The writes keep
+        # their order (policy_generation, then hot_apply_rest, then the
+        # node's fences_published); a failed one is marked on the entry and
+        # re-raised, so build_app's call() still logs it.
         if entry["op"] == "spawn" and entry["type"] == "dynamic_nfz" \
                 and t is not None:
             self.live_from[entry["rule_id"]] = round(t, 2)
-        self.applied.append({"t": None if t is None else round(t, 3), **entry})
-        self.rec.event("hot_apply_rest", t=t, **entry)
-        if self.after is not None:
-            self.after(result, t)
+        row = {"t": None if t is None else round(t, 3), **entry}
+        self.applied.append(row)
+        try:
+            self.rec.hot_applied(result["applied"], t=t)
+            self.rec.event("hot_apply_rest", t=t, **entry)
+        except Exception as exc:
+            row["record_failed"] = entry["record_failed"] = f"{type(exc).__name__}: {exc}"
+            raise
+        finally:
+            if self.after is not None:   # the Shield flies N+1: the fences follow it
+                self.after(result, t)
         self.log(f"hot-apply over REST: {entry['op']} {entry['type']} "
                  f"{entry['rule_id']!r} -> generation {entry['generation']}, "
                  f"receipt to swap {entry['receipt_to_swap_ms']:.2f} ms")
@@ -565,11 +621,13 @@ class FlightHotApply:
             self.shield, host, port, lock=self.lock, on_applied=self.on_applied,
             refuse_when=self.refuse_when, pki_dir=pki_dir,
             server_name=server_name, allowed_clients=allowed_clients)
+        # The allow-list the listener's gate ENFORCES, as serve_in_background
+        # built it. Until 2026-10-19 this re-derived it and wrote null when
+        # the default (harness-client) applied, so an mTLS listener that
+        # admitted one identity was recorded as if it had no allow-list.
         self.endpoint = {"url": self.thread.url, "mutual_tls": pki_dir is not None,
                          "pki_dir": None if pki_dir is None else str(pki_dir),
-                         "allowed_clients": (sorted(allowed_clients)
-                                             if pki_dir is not None and allowed_clients
-                                             else None)}
+                         "allowed_clients": getattr(self.thread, "allowed_clients", None)}
         self.rec.event("hot_apply_listener", **self.endpoint)
         return self.thread
 
@@ -591,6 +649,7 @@ class FlightHotApply:
         spawns = [e["receipt_to_swap_ms"] for e in self.applied
                   if e["op"] == "spawn"]
         return {"endpoint": self.endpoint, "n_applied": len(self.applied),
+                "n_record_failed": sum(1 for e in self.applied if e.get("record_failed")),
                 "events": list(self.applied),
                 "receipt_to_swap_ms_p50": pct(50),
                 "receipt_to_swap_ms_max": lat[-1] if lat else None,
