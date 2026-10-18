@@ -122,7 +122,11 @@ def classify(ev: dict) -> dict:
                           given (None when there is no simulator)
       sim_same_desktop    sim_on_this_desktop(<simulator address>)
       link                "mavros" | "pymavlink"
-      autopilot           {"heartbeat": bool, "is_ardupilot": bool}
+      autopilot           {"heartbeat": bool, "is_ardupilot": bool, and
+                          optionally "heartbeat_seen": bool - connected at
+                          some point, where "heartbeat" is at the end - and
+                          "ardupilot_seen": bool - shown to be ArduPilot at
+                          some point, where "is_ardupilot" is at the end}
       topology_evidence   the dict check_topology_evidence() reads: the MAVROS
                           chain, ardupilot_version, autopilot_kind,
                           network_link and collect_host_evidence()'s host keys
@@ -160,8 +164,25 @@ def classify(ev: dict) -> dict:
                 "reasons": reasons}
 
     if not (apv.get("heartbeat") and apv.get("is_ardupilot")):
-        reasons.append("no ArduPilot heartbeat was received, so nothing shows "
-                       "ArduPilot was in the loop")
+        # A link that was up and dropped before the end (MAVROS's connected
+        # False at the end) is not "no heartbeat": a flight controller was in
+        # the loop, and the evidence stops short of the end (2026-10-19). It
+        # is called ArduPilot only if it was SHOWN to be ArduPilot while
+        # connected (ardupilot_seen): MAVROS's heartbeat_seen is any FCU, so a
+        # PX4 that connected and dropped is not described as ArduPilot
+        # (review 2026-10-19).
+        dropped = apv.get("heartbeat_seen") and not apv.get("heartbeat")
+        if dropped and apv.get("ardupilot_seen"):
+            reasons.append("ArduPilot's heartbeat was received, but the flight "
+                           "controller was not connected at the end of the run (the "
+                           "link dropped), so the evidence does not hold to the end")
+        elif dropped:
+            reasons.append("a flight controller connected, but nothing on record shows "
+                           "it was ArduPilot, and it was not connected at the end of "
+                           "the run (the link dropped)")
+        else:
+            reasons.append("no ArduPilot heartbeat was received, so nothing shows "
+                           "ArduPilot was in the loop")
         return out()
     if link == "pymavlink":
         reasons.append("the Shield commanded ArduPilot over pymavlink; the "

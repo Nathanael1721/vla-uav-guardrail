@@ -171,6 +171,13 @@ class MavrosLink:
         self.snap = Snapshot()
         self.events: list[dict] = []
         self.connected = None
+        # Whether /mavros/state EVER said connected: a run whose FCU dropped
+        # before the end had a flight controller in the loop, and its evidence
+        # says so. ever_ardupilot: whether it ever said so with an ArduCopter
+        # mode name - is_ardupilot needs `connected`, so after a drop only
+        # this tells an ArduPilot that dropped from a PX4 that did.
+        self.ever_connected = False
+        self.ever_ardupilot = False
         self.state_msgs = 0
         self.sim_speedup: float | None = None
         # The evidence check_topology_evidence() reads, in the keys
@@ -229,6 +236,9 @@ class MavrosLink:
         t = self.clock()
         self.state_msgs += 1
         self.connected = bool(msg.connected)
+        self.ever_connected = self.ever_connected or self.connected
+        self.ever_ardupilot = self.ever_ardupilot or bool(
+            self.connected and msg.mode in COPTER_MODES)
         # Receiving /mavros/state at all shows a MAVROS node on the graph;
         # msg.connected is MAVROS's own answer about the flight controller.
         self.hil_evidence["mavros_node"] = "/mavros"
@@ -576,10 +586,28 @@ class MavrosLink:
         x, y = anchor.to_scene(s.lat, s.lon)
         return State(x=x, y=y, up=s.rel_alt, yaw_deg=math.degrees(s.yaw or 0.0))
 
+    def link_age(self) -> dict:
+        """As PymavlinkLink.link_age: the age of the last /mavros/global_position
+        fix and of the last /mavros/state (MAVROS's heartbeat-driven state, 1 Hz),
+        and MAVROS's own `connected` - False once it has lost the FCU, while
+        state() still answers from the last fix. A MAVROS node that died
+        publishes nothing at all: the ages grow."""
+        now = self.clock()
+        s = self.snap
+        return {"pos_age_s": None if s.t_pos is None else now - s.t_pos,
+                "heartbeat_age_s": None if s.t_heartbeat is None else now - s.t_heartbeat,
+                "connected": self.connected}
+
     def evidence(self) -> dict:
         ardupilot_mode = self.snap.mode in COPTER_MODES if self.snap.mode else False
         return {"link": self.name,
                 "heartbeat": bool(self.connected),
+                # Connected at some point (heartbeat: still at the end), and
+                # connected with an ArduCopter mode name at some point
+                # (is_ardupilot: at the end).
+                "heartbeat_seen": bool(self.ever_connected),
+                "ardupilot_seen": bool(self.ever_ardupilot),
+                "fcu_connected_at_end": bool(self.connected),
                 # /mavros/state has no autopilot field; ArduCopter's mode names
                 # (GUIDED, LOITER, ...) are the evidence - PX4's are OFFBOARD,
                 # POSCTL, AUTO.LOITER.

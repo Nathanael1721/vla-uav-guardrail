@@ -767,6 +767,22 @@ class PymavlinkLink:
         return State(x=x, y=y, up=s.rel_alt,
                      yaw_deg=math.degrees(s.yaw or 0.0))
 
+    def link_age(self) -> dict:
+        """How old what state() answers from is, on this link's clock: the
+        last GLOBAL_POSITION_INT and the vehicle's last heartbeat (seconds;
+        None: never received). state() answers from the last position ever
+        received, so a SITL that died behind mavlink-router (the socket goes
+        quiet), or a TCP socket the peer closed (pymavlink 2.4.49 prints "EOF
+        on TCP socket" and, without autoreconnect, never reconnects), still
+        read as an aircraft hovering in place; the node judges these ages
+        every tick (perception_node.link_staleness). "connected" is None:
+        MAVLink has no such flag, the heartbeat's age is the evidence."""
+        now = self.clock()
+        s = self.snap
+        return {"pos_age_s": None if s.t_pos is None else now - s.t_pos,
+                "heartbeat_age_s": None if s.t_heartbeat is None else now - s.t_heartbeat,
+                "connected": None}
+
     def evidence(self) -> dict:
         """What the link saw, and the topology evidence in the shape
         guardrail.manifest.check_topology_evidence reads. There are no MAVROS
@@ -781,6 +797,8 @@ class PymavlinkLink:
                **collect_host_evidence()}
         return {"link": self.name, "url": self.url,
                 "heartbeat": self.target_system is not None,
+                "heartbeat_seen": self.target_system is not None,
+                "ardupilot_seen": self.target_system is not None,
                 "is_ardupilot": self.target_system is not None,
                 "fcu_connected_at_end": bool(connected),
                 "target_system": self.target_system,

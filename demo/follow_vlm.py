@@ -2598,6 +2598,12 @@ class Grounder:
                 x0 = det[0] - det[2] / 2, det[1] - det[3] / 2
                 app = appearance(img, (x0[0], x0[1],
                                        det[0] + det[2] / 2, det[1] + det[3] / 2))
+            # The box's range in THIS capture's depth frame (published as
+            # cap["range_m"] below), read before the lock: the control loop's
+            # latest() waits on that lock every tick, and a median over the
+            # box's window has no reason to hold it.
+            det_range = (None if det is None or dep is None
+                         else range_from_depth(dep, det))
             with self._lock:
                 # A retarget that landed inside this inference: nothing of it may
                 # be published - not the box, and not the candidate list either,
@@ -2638,10 +2644,15 @@ class Grounder:
                     self._t_det = time.time()
                     self._det_tier = det_tier
                     self._det_feat = det_feat
+                    # range_m: the box's range read from THIS capture's depth
+                    # frame (None without one), so a consumer that places the
+                    # box later - demo/pas_ardupilot/perception_node.py, up
+                    # to a second on - never indexes it into a newer frame.
                     self._det_cap = {"t_cap": t_cap, "t_capture": t_capture,
                                      "pose": cap_pose,
                                      "depth_src": dep_src,
-                                     "depth_dt_ms": dep_dt}
+                                     "depth_dt_ms": dep_dt,
+                                     "range_m": det_range}
                     self._n_seen += 1
                     last = (det[0], time.time())
                 else:
