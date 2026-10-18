@@ -113,9 +113,37 @@ SINCE 2026-10-12 (additive: no key changed meaning)
     PathRepair, and this Shield's extensions), with the sums rollup() pools
     (`repair_magnitude_by_priority`, `repair_magnitude_by_operator_class`).
   * rollup()'s `vacuous_zeros`: a 0 that counts an event which could not
-    happen (an escape rate with no P0 violation to escape, a false-trigger
-    count on logs with no escalation state) is named, so a report prints it
-    as vacuous rather than as a measured 0.
+    happen (an escape rate with no P0 violation to escape, the per-tick
+    false-trigger count, which is 0 by construction on every log) is named,
+    so a report prints it as vacuous rather than as a measured 0.
+
+SINCE 2026-10-19 (two keys changed meaning, one key added)
+
+  * `vacuous_zeros.false_trigger_rate` is listed on EVERY log whose
+    per-tick false-trigger rate is 0, with the reason for each case: a
+    stateless log cannot trigger on a clean tick, and an FSM-instrumented
+    one cannot either (guardrail/fsm.py leaves Normal only on an enforced
+    violation, and a row's violations are the FSM's input; compute(), "not
+    when not expected"). Until then it was listed only when no log carried
+    FSM state, so every stress family printed a measured 0. The grant's
+    false triggers are `failsafe_labelled_episodes.false_triggers`.
+  * `failsafe_instrumented` is decided by the VALUE of `fsm_state_after`,
+    not the key (`_instrumented`), so a Shield-off arm that logs
+    `fsm_state_after: null` (both SITL rails) now reads False. Stored
+    kpi.json files keep the value they were written with: tools/rescore_kpis
+    never overwrites a field that is present.
+  * `repair_floored_ticks` (added). Since 2026-10-19 the Shield FLOORS a
+    crawl out of a breach (Shield._floor_the_escape): from a position a
+    stop would leave illegal, a legal action that leaves too slowly is sped
+    up by the recovery floors, with nothing violated (`violations` [],
+    `emitted_violations` []) and the floors' repairs logged. Such a tick -
+    every repair a recovery floor or a kinematic clamp, none theta judges
+    (`_floored`) - is not a repair ATTEMPT: there was no violation to
+    repair, and read as one it re-checks clean and scores "converged", so
+    every crawl would raise the repair success rate. It is counted here
+    instead, and in the magnitude breakdown under its own `floored` level
+    rather than `unattributed`. `mean_repair_magnitude_mps` still includes
+    it (every tick that lists a repair, as replay bundles verify).
 """
 from __future__ import annotations
 
@@ -321,7 +349,8 @@ class _MagnitudeBreakdown:
     and per operator class, so rollup() can pool exactly.
 
     A tick is attributed to ONE priority, the highest among its violations (a
-    repaired tick with no violation at all is "unattributed"), and to EVERY
+    tick the Shield floored with nothing violated is "floored", `_floored`;
+    any other repaired tick with no violation is "unattributed"), and to EVERY
     operator class that acted on it: the tick's correction is the joint effect
     of its operators and cannot be split between them, so a class's mean is
     over the ticks it took part in, and `sole_*` over the ticks on which it
@@ -722,15 +751,60 @@ def _ops(row: dict) -> set[str]:
             if isinstance(r, dict)}
 
 
+def _floored(row: dict) -> bool:
+    """Did the Shield FLOOR a legal action on this tick, rather than repair a
+    violation?
+
+    Since 2026-10-19 the Shield runs its recovery floors on an action that
+    violates nothing when the POSITION is one a stop would leave illegal
+    (Shield._floor_the_escape: GeofenceEscape to min(2.0, cap),
+    StandoffRecover and the band operators to the rate that leaves in one
+    lookahead, with the speed and climb caps closing each pass). Before, a
+    crawl of 0.15 m/s out of a zone passed untouched unless an unrelated rule
+    happened to be broken. Such a tick logs the floors' repairs with
+    `violations` [] and `emitted_violations` [] (the floored action is flown
+    only if it re-checks clean against every rule).
+
+    Read as a repair attempt it is always "converged": it re-checks clean
+    and theta exempts recoveries. So every crawl would raise the repair
+    success rate - a grant KPI - with a success there was no violation to
+    earn, and its |emitted - raw| would sit in the magnitude breakdown as an
+    `unattributed` repair. A floored tick is therefore: the log says nothing
+    was violated and the re-check is clean (both lists present and empty -
+    a log that predates `emitted_violations` predates the floor too), and
+    every repair other than Brake is one theta does not judge (a recovery
+    floor, a kinematic clamp; `_theta_governs`). Judged with
+    stop_illegal=True, because the floor runs only where a stop is illegal.
+    A tick that also carries a projection theta judges is NOT floored: it
+    reshaped a legal action (the F1 review's corridor case,
+    CorridorAltitudeFix recovery=False, 4.55 m) and stays an attempt, where
+    theta can catch it."""
+    if not isinstance(row.get("violations"), list) or row["violations"]:
+        return False
+    if row.get("emitted_violations") != []:
+        return False
+    worked = [r for r in (row.get("repairs") or [])
+              if not (isinstance(r, dict) and r.get("operator") == "Brake")]
+    return bool(worked) and all(isinstance(r, dict) and not _theta_governs(r, True)
+                                for r in worked)
+
+
 def _repair_outcome(row: dict, priorities: dict[str, str], arm: str | None = None,
                     theta: tuple[float, float] | None = None,
                     caps: Any = None, horizon_s: float | None = None) -> str | None:
-    """Classify one tick's repair attempt; None if the Shield did not try, and
-    "not_applied" if it logged a repair that was never flown.
+    """Classify one tick's repair attempt; None if the Shield did not try,
+    "not_applied" if it logged a repair that was never flown, and "floored"
+    if it floored a legal action with nothing violated (`_floored`).
 
     An ATTEMPT is a tick whose log names a repair operator other than Brake,
     or that stopped or escalated on a tick with a violation. A tick with
-    violations and no repair is not an attempt.
+    violations and no repair is not an attempt, and neither is a floored
+    one (since 2026-10-19): there was nothing to repair, and it would score
+    "converged" on every crawl out of a breach. It is not an attempt
+    whatever the FSM did on it - a Brake hold through T_recover, or an
+    escalation on a clean tick, is not a repair that fell through, by the
+    same rule that keeps a stop on a clean tick out of the attempts. A
+    floored tick the Shield did not fly is "not_applied", as before.
 
     NOT APPLIED. The headless sweep's Shield-off arm logs the repairs the
     Shield WOULD have made and flies the raw action (sweep_scenarios.py:
@@ -793,6 +867,8 @@ def _repair_outcome(row: dict, priorities: dict[str, str], arm: str | None = Non
         return "not_applied"
     if a is None and worked and not held and not esc and _flew_raw(row):
         return "not_applied"
+    if _floored(row):
+        return "floored"
     if esc:
         return "failsafe"
     if held:
@@ -881,11 +957,14 @@ def _repair_success(rows: list[dict], priorities: dict[str, str],
     counts = {k: 0 for k in REPAIR_OUTCOMES}
     sources = {"fsm_record": 0, "magnitude_m": 0, "action_per_period": 0,
                "not_governed": 0, "no_magnitude": 0}
-    not_applied = standstill = while_unsafe = autopilot_not_applied = 0
+    not_applied = standstill = while_unsafe = autopilot_not_applied = floored = 0
     unsafe_known = any("unsafe" in r for r in rows)
     for r in rows:
         oc = _repair_outcome(r, priorities, arm, theta, caps, horizon_s)
         if oc is None:
+            continue
+        if oc == "floored":
+            floored += 1
             continue
         if oc == "not_applied":
             if _not_flown_by_shield(r):
@@ -932,6 +1011,10 @@ def _repair_success(rows: list[dict], priorities: dict[str, str],
         # as attempts: a repair the Shield logged but did not fly, or a
         # violation in an escalated state. Not attempts.
         "repair_not_applied_autopilot_ticks": autopilot_not_applied,
+        # Ticks the Shield FLOORED a legal action from an illegal position,
+        # with nothing violated (`_floored`, since 2026-10-19): not attempts,
+        # so a crawl out of a breach does not score as a converged repair.
+        "repair_floored_ticks": floored,
         "repairs_to_standstill": standstill,
         "repairs_converged_while_unsafe": while_unsafe if unsafe_known else None,
         "repair_success_basis": basis,
@@ -1349,7 +1432,13 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
             else:
                 trans_mags.append(mag[0])
                 yaw_mags.append(mag[1])
-                breakdown.add(mag[0], governing_priority(vios, priorities), reps)
+                # A floored tick (`_floored`, since 2026-10-19) has no
+                # violation to take a priority from; it is the Shield's floor
+                # on a legal action, not an unattributed repair, and is
+                # counted under its own level so the P-levels and
+                # `unattributed` keep meaning what they did.
+                breakdown.add(mag[0], ("floored" if _floored(r) else
+                                       governing_priority(vios, priorities)), reps)
 
         levels = set()
         for v in vios:
@@ -1894,6 +1983,7 @@ def rollup(episodes: list[dict]) -> dict[str, Any]:
     rs_basis = (None if not kinds else kinds.pop() if len(kinds) == 1
                 else "recheck_and_theta_partial")
     wu_eps = _carrying(rs_eps, "repairs_converged_while_unsafe")
+    fl_eps = _carrying(episodes, "repair_floored_ticks")
 
     # --- time to safe, pooled over unsafe episodes ---------------------------
     t_eps = [e for e in episodes if e.get("time_to_safe_not_measurable") is False]
@@ -1989,6 +2079,11 @@ def rollup(episodes: list[dict]) -> dict[str, Any]:
         "repair_success_basis": rs_basis,
         "repair_attempt_ticks": rs_att,
         "repair_success_ticks": rs_ok,
+        # Floored ticks (compute(), `_floored`), outside the attempts above.
+        # None when no episode carries the count: tables written before
+        # 2026-10-19, when the Shield did not floor a legal action.
+        "repair_floored_ticks": (sum(e["repair_floored_ticks"] for e in fl_eps)
+                                 if fl_eps else None),
         "repair_theta_unchecked_ticks": th_unchecked if th_eps else None,
         "repairs_converged_while_unsafe": (
             sum(e["repairs_converged_while_unsafe"] for e in wu_eps) if wu_eps else None),

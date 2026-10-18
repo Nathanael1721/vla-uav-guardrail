@@ -1375,6 +1375,87 @@ def test_a_rail_tick_that_flew_nothing_is_not_a_converged_repair():
     assert K._repair_outcome(hand, pri, "on") == "braked"
 
 
+def _floored_row(t, **kw):
+    """A tick Shield._floor_the_escape writes (since 2026-10-19): 1 m inside
+    a zone, leaving at 0.15 m/s, nothing violated; the recovery floor takes
+    it to 2.0 m/s and the speed cap closes the pass. The floored action
+    re-checks clean."""
+    r = _row(t, raw={"vx": -0.15}, em={"vx": -2.0})
+    r["repairs"] = [{"operator": "GeofenceEscape", "detail": "floor 2.0 m/s",
+                     "magnitude_m": 1.0, "axis": "lateral", "recovery": True},
+                    {"operator": "SpeedClamp", "detail": "cap 4.0 m/s"}]
+    r["unsafe"] = True
+    r.update(kw)
+    return r
+
+
+def test_a_floored_crawl_out_of_a_breach_is_not_a_repair_attempt():
+    """REGRESSION (F1 review, 2026-10-19). The Shield now FLOORS a crawl out
+    of a breach: from a position a stop would leave illegal, a legal action
+    that leaves too slowly is sped up by the recovery floors, with nothing
+    violated and the re-check clean. _repair_outcome counted any row with a
+    non-Brake repair as an attempt, so every floored tick scored as a
+    CONVERGED repair (theta exempts recoveries) and its |emitted - raw| sat
+    in the magnitude breakdown as `unattributed`. Here one real repair fails
+    (a P0 residual) beside three floored ticks: the pre-change kpi.py scores
+    repair success 3/4 = 0.75 for a Shield whose only repair failed; it is
+    0/1, and the three are counted in `repair_floored_ticks`."""
+    pri = {"r": "P0"}
+    fl = _floored_row(0.0)
+    assert K._floored(fl) and K._repair_outcome(fl, pri, "on") == "floored"
+    failed = _row(0.1, raw={"vx": 3.0}, em={"vx": 1.0}, vio=True, reps=1)
+    failed["emitted_violations"] = [{"rule_id": "r", "category": "fence"}]
+    rows = [failed] + [_floored_row(0.2 + 0.1 * i) for i in range(3)]
+    k = K.compute(rows, pri, {"shield": "on"})
+    assert k["repair_attempt_ticks"] == 1 and k["repair_floored_ticks"] == 3, k
+    assert k["repair_success_rate"] == 0.0, k["repair_success_rate"]
+    assert k["repair_outcomes"]["converged"] == 0, k["repair_outcomes"]
+    # The magnitude: still every tick that lists a repair (replay bundles
+    # verify the mean), but the floors are under their own level.
+    assert k["repaired_ticks"] == 4, k["repaired_ticks"]
+    lv = k["repair_magnitude_by_priority"]
+    assert lv["floored"]["ticks"] == 3 and abs(lv["floored"]["mean_mps"] - 1.85) < 1e-6, lv
+    assert lv["unattributed"]["ticks"] == 0 and lv["P0"]["ticks"] == 1, lv
+    # Floors alone: the Shield repaired nothing, which is not a 1.0.
+    only = K.compute([_floored_row(0.1 * i) for i in range(5)], pri, {"shield": "on"})
+    assert only["repair_success_status"] == "no_repairs_attempted", only["repair_success_status"]
+    assert only["repair_success_rate"] is None and only["repair_floored_ticks"] == 5, only
+    # Not an attempt whatever the FSM did on the clean tick: a Brake hold
+    # through T_recover, or an escalation, is not a repair that fell through.
+    for fsm in ({"setpoint": "brake", "fsm_state_after": "Brake"},
+                {"fsm_state_before": "Loiter", "fsm_state_after": "RTL",
+                 "setpoint": "brake"}):
+        assert K._repair_outcome(_floored_row(0.0, **fsm), pri, "on") == "floored", fsm
+    # A floor the Shield did not fly is "not applied", as before: the
+    # control arm, or the autopilot's tick.
+    assert K._repair_outcome(fl, pri, "off") == "not_applied"
+    assert K._repair_outcome(_floored_row(0.0, flown=False, setpoint="none"),
+                             pri, "on") == "not_applied"
+    # NOT floored, and still an attempt:
+    #  * a projection theta judges on the same tick (the F1 review's corridor
+    #    case: CorridorAltitudeFix, recovery False, 4.55 m vertical) - it
+    #    reshaped a legal action, and theta must be able to catch it;
+    proj = _floored_row(0.0)
+    proj["repairs"] = proj["repairs"] + [{"operator": "CorridorAltitudeFix",
+                                          "magnitude_m": 4.55, "axis": "vertical"}]
+    assert not K._floored(proj)
+    assert K._repair_outcome(proj, pri, "on") == "converged_over_theta"
+    #  * a row that does not say its re-check was clean (a log older than
+    #    `emitted_violations`, which is older than the floor);
+    legacy = {k: v for k, v in _floored_row(0.0).items() if k != "emitted_violations"}
+    assert not K._floored(legacy) and K._repair_outcome(legacy, pri, "on") == "not_measurable"
+    #  * a tick with a violation is a repair, recovery or not.
+    vio = _floored_row(0.0, violations=[{"rule_id": "r", "category": "fence"}])
+    assert not K._floored(vio) and K._repair_outcome(vio, pri, "on") == "converged"
+    # rollup() pools the count, and says None - not 0 - for tables written
+    # before the field existed.
+    r = K.rollup([k, only])
+    assert r["repair_floored_ticks"] == 8 and r["repair_attempt_ticks"] == 1, r
+    assert r["mean_repair_magnitude_by_priority"]["floored"]["ticks"] == 8, r
+    old = {f: v for f, v in k.items() if f != "repair_floored_ticks"}
+    assert K.rollup([old])["repair_floored_ticks"] is None
+
+
 def test_both_rails_divide_the_escape_rate_by_the_ticks_the_shield_flew():
     """The SITL control arm's shield-off GeoFence run: the VLA's action was
     flown on 33 ticks (all 33 P0 escapes) and the autopilot's RTL on 250

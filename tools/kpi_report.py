@@ -896,6 +896,11 @@ def _false_triggers(s: dict) -> str:
     if lab.get("false_triggers") is not None:
         neg = round((lab.get("null_never_trigger") or 0) * (lab.get("scored") or 0))
         txt = f"{lab['false_triggers']} of {neg} ep"
+        if not neg:
+            # Every labelled episode expected a fail-safe, so none could
+            # trigger falsely: a 0 over an empty denominator, said as such
+            # (6 of the 72 families of the stored stress_smoke report).
+            txt += " (none labelled not to trigger)"
     elif s.get("false_trigger_rate") is None:
         txt = "n/m"
     elif "false_trigger_rate" in (s.get("vacuous_zeros") or {}):
@@ -1417,6 +1422,13 @@ def _render_magnitudes(groups: dict[str, dict]) -> list[str]:
             .get(K.UNCLASSIFIED) or {}).get("ticks")
            for g in groups.values() for s in (g or {}).values()):
         classes.append(K.UNCLASSIFIED)
+    # A tick the Shield floored with nothing violated (kpi._floored, since
+    # 2026-10-19) has no priority to sit under; it has its own level, and
+    # its column is printed whenever any family has one, like Unclassified.
+    levels = [*K.PRIORITY_LEVELS, "unattributed"]
+    if any(((s.get("mean_repair_magnitude_by_priority") or {}).get("floored") or {})
+           .get("ticks") for g in groups.values() for s in (g or {}).values()):
+        levels.append("floored")
     L = ["## Mean repair magnitude by priority and by operator class", "",
          "|emitted - raw| (m/s) on repaired ticks, pooled. A tick counts under the "
          "highest priority it violated, and under every operator class that acted on "
@@ -1425,11 +1437,14 @@ def _render_magnitudes(groups: dict[str, dict]) -> list[str]:
          "(Safety Shield p3) are AltitudeClamp, LateralProjection and PathRepair; the "
          "others (*) are this Shield's extensions"
          + (f", and {K.UNCLASSIFIED} an operator no class lists" if K.UNCLASSIFIED in classes
-            else "") + ".", "",
-         "| Family | " + " | ".join(K.PRIORITY_LEVELS) + " | unattributed | "
+            else "") + "."
+         + (" `floored` = ticks the Shield floored a legal action from an illegal "
+            "position with nothing violated (not repair attempts)."
+            if "floored" in levels else ""), "",
+         "| Family | " + " | ".join(levels) + " | "
          + " | ".join(c if c in (*K.GRANT_OPERATOR_CLASSES, K.UNCLASSIFIED) else c + "*"
                       for c in classes)
-         + " |", "|---|" + "---|" * (len(K.PRIORITY_LEVELS) + 1 + len(classes))]
+         + " |", "|---|" + "---|" * (len(levels) + len(classes))]
 
     def cell(c: dict | None) -> str:
         if not c or not c.get("ticks"):
@@ -1447,12 +1462,12 @@ def _render_magnitudes(groups: dict[str, dict]) -> list[str]:
             # priorities, so a family whose policy did not resolve keeps it.
             L.append(f"| `{name}` | " + " | ".join(
                 cell(lv.get(k)) if lv is not None else "n/m (priorities unresolved)"
-                for k in (*K.PRIORITY_LEVELS, "unattributed"))
+                for k in levels)
                 + " | " + " | ".join(cell(cl.get(c)) if cl is not None else "n/m"
                                      for c in classes) + " |")
     if not n:
         L.append("| (no family carries the breakdown: stored tables and Shield-off arms "
-                 "do not) |" + " |" * (len(K.PRIORITY_LEVELS) + 1 + len(classes)))
+                 "do not) |" + " |" * (len(levels) + len(classes)))
     return L + [""]
 
 
@@ -1809,8 +1824,11 @@ DEFINITIONS = {
     "False triggers": "the grant's \"not when not expected\" half, over the "
         "EPISODES the stress harness labelled not to expect a fail-safe: those "
         "on which the FSM entered RTL / Land anyway "
-        "(`failsafe_labelled_episodes.false_triggers`), printed `k of m ep`; "
-        "n/m where no episode is labelled. The per-tick figure "
+        "(`failsafe_labelled_episodes.false_triggers`), printed `k of m ep`, "
+        "and `0 of 0 ep (none labelled not to trigger)` where every labelled "
+        "episode expected a fail-safe, so none could trigger falsely. Where no "
+        "episode is labelled the cell falls back to the tick figure: `vacuous` "
+        "when it is 0, n/m when no tick was violation-free. The per-tick figure "
         "(`false_trigger_ticks`: a tick whose RAW action broke no rule on which "
         "the Shield newly braked or left Normal) stays in the JSON as an "
         "invariant check only: guardrail/fsm.py leaves Normal only on an "
@@ -1835,7 +1853,10 @@ DEFINITIONS = {
         "log carries it (the stress harness through Shield.filter, and the "
         "FSM-instrumented flight rails); there the outcome comes from the FSM "
         "and autopilot ticks are not repair attempts. `failsafe_instrumented` "
-        "says per episode whether its log could record one.",
+        "says per episode whether its log could record one. Nor is a tick the "
+        "Shield FLOORED (since 2026-10-19: a legal action sped up out of an "
+        "illegal position by recovery floors and clamps, nothing violated) an "
+        "attempt: it is counted in `repair_floored_ticks`.",
     "Mission success": "episodes with no P0 escape, no unmeasured P0 tick, no "
         "dwell in a zone or ring (`nfz_s`, `alt_violation_s`, `standoff_s`), no "
         "P0 unsafe position the aircraft entered or never left, and the "
@@ -1874,7 +1895,10 @@ DEFINITIONS = {
         "the highest priority a repaired tick violated (P0 / P1 / P2) and by the "
         "operator classes that acted on it (the grant's AltitudeClamp, "
         "LateralProjection, PathRepair, and this Shield's extensions); `never` "
-        "where a priority or class had no repaired tick.",
+        "where a priority or class had no repaired tick. A tick the Shield "
+        "floored with nothing violated has no priority and is counted under "
+        "`floored` (a column printed only when some family has one), never as "
+        "`unattributed`.",
 }
 
 
@@ -1904,7 +1928,6 @@ def headline(episodes: list[dict]) -> list[str]:
         att = sum(e.get("repair_attempt_ticks") or 0 for e in tried)
         unk = sum(e.get("repair_unmeasured_ticks") or 0 for e in tried)
         ok = sum(e.get("repair_success_ticks") or 0 for e in tried)
-        unchecked = sum(e.get("repair_theta_unchecked_ticks") or 0 for e in tried)
         conv = (oc["converged"] + oc["converged_via_rescue"]
                 + oc["converged_over_theta"])
         # Built from the counts. Until 2026-10-19 this sentence said, as fixed
@@ -1912,15 +1935,59 @@ def headline(episodes: list[dict]) -> list[str]:
         # RTL/Land - true when written (7 Oct), and false beside its own
         # numbers once the FSM-instrumented flights (13-14 Oct) carried
         # `fsm.theta_exceeded` and RTL on every row.
-        theta_txt = (
-            f"This is the Shield's OWN re-check finding the repaired action "
-            f"legal, NOT the grant's full test: theta (\"magnitude < theta\", "
-            f"2.0 m / 0.5 m) could not be applied to {unchecked} of the {conv} "
-            f"converged ticks, on logs that carry neither `fsm.theta_exceeded` "
-            f"nor `magnitude_m`." if unchecked else
-            f"Theta (\"magnitude < theta\", 2.0 m / 0.5 m) was applied wherever "
-            f"it governs: none of the {conv} converged ticks lacked a repair "
-            f"size in metres.")
+        #
+        # From the per-tick theta SOURCES, not from the unsized count alone
+        # (2026-10-19 review of that fix): a converged tick is sized (the
+        # FSM record, magnitude_m, or the one-period reading), not governed
+        # (only clamps / recoveries, which theta does not judge) or unsized.
+        # Read off "0 unsized" alone, a flight whose converged ticks were all
+        # kinematic clamps was told theta "was applied wherever it governs:
+        # none of the 5 converged ticks lacked a repair size" - theta had
+        # judged none of them. A table without the sources (one written
+        # before they were recorded) has its converged ticks counted as of
+        # unknown basis, never as sized.
+        src = {k: 0 for k in ("fsm_record", "magnitude_m", "action_per_period",
+                              "not_governed", "no_magnitude")}
+        for e in tried:
+            s = e.get("repair_theta_sources")
+            if isinstance(s, dict):
+                for k in src:
+                    src[k] += s.get(k) or 0
+            else:
+                src["no_magnitude"] += e.get("repair_theta_unchecked_ticks") or 0
+        sized = src["fsm_record"] + src["magnitude_m"] + src["action_per_period"]
+        not_gov, unsized = src["not_governed"], src["no_magnitude"]
+        unknown = max(0, conv - sized - not_gov - unsized)
+        cap = "(\"magnitude < theta\", 2.0 m / 0.5 m)"
+        rest = "; ".join(x for x in (
+            f"{not_gov} carried only repairs theta does not judge (kinematic "
+            f"clamps, recoveries)" if not_gov else "",
+            f"{unsized} could not be sized, on logs that carry neither "
+            f"`fsm.theta_exceeded` nor `magnitude_m`" if unsized else "",
+            f"{unknown} are on tables that do not record how they were judged"
+            if unknown else "") if x)
+        if not conv:
+            theta_txt = f"No repair converged, so theta {cap} judged nothing."
+        elif unsized or unknown:
+            theta_txt = (f"This is the Shield's OWN re-check finding the repaired "
+                         f"action legal, NOT the grant's full test: theta {cap} was "
+                         f"applied to {sized} of the {conv} converged ticks; {rest}.")
+        elif not sized:
+            theta_txt = (f"Theta {cap} governed none of the {conv} converged ticks: "
+                         f"each carried only repairs theta does not judge (kinematic "
+                         f"clamps, recoveries), so the rate rests on the Shield's "
+                         f"re-check alone, with nothing for theta to test.")
+        else:
+            theta_txt = (f"Theta {cap} was applied to {sized} of the {conv} converged "
+                         f"ticks" + (f"; {rest}" if rest else "") + ".")
+        # Ticks the Shield floored with nothing violated (kpi._floored, since
+        # 2026-10-19) are not attempts; said, so the rate is not read as
+        # covering them.
+        floored = sum(e.get("repair_floored_ticks") or 0 for e in flown_on)
+        floored_txt = (f" {floored} ticks of the {len(flown_on)} shielded flights "
+                       f"were floored - a legal action sped up out of an illegal "
+                       f"position, nothing violated - and are not repair attempts."
+                       if floored else "")
         n_instr = sum(1 for e in tried if e.get("failsafe_instrumented"))
         n_fs = sum(1 for e in tried
                    if (e.get("mission_outcome") or e.get("outcome"))
@@ -1930,7 +1997,7 @@ def headline(episodes: list[dict]) -> list[str]:
             f"Repair success (Safety Shield KPI): {ok}/{att - unk} measured repair "
             f"ticks converged across {len(tried)} shielded flights that attempted "
             f"a repair ({unk} more could not be measured: old logs without "
-            f"`emitted_violations`). Brake {oc['braked']}, RTL/Land "
+            f"`emitted_violations`).{floored_txt} Brake {oc['braked']}, RTL/Land "
             f"{oc['failsafe']}, residual violation "
             f"{oc['residual_p0'] + oc['residual_other']}, rescue heading "
             f"{oc['converged_via_rescue']}, over theta {oc['converged_over_theta']}. "

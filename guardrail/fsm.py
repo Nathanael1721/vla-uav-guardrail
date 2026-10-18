@@ -182,6 +182,15 @@ Interpretations of terms the grant uses but does not define:
     as the reference's shield.py does ("Rules whose action is a direct
     fail-safe skip projection entirely"). An RTL rule fires G11 even on a
     tick whose repair would have converged.
+  * G3's "no operator converged" is read as a PROJECTION that did not
+    converge. A rule whose action is `brake` (a soft rule capped at brake
+    included) is answered by the stop itself: where a stop is legal,
+    shield.py skips projection (its stop-rule branch), so a hard
+    `project_fix` rule violated on the same tick was never projected, and
+    the tick does not take G3 - the FSM stays in Brake (since 2026-10-19;
+    before, a soft brake rule beside a hard NFZ took the aircraft to
+    LOITER). Where a stop is illegal the Shield does run the repair chain,
+    and an unconverged tick there takes G3 as before.
   * The operator-defined Loiter timeout has no grant default. 30 s is ours.
     `None` disables it.
 
@@ -354,7 +363,9 @@ EDGES: dict[str, tuple[str, str, str, str]] = {
     "G1": ("Normal", "Brake", "grant", "violation, repairable, magnitude <= theta"),
     "G2": ("Brake", "Loiter", "grant", "N-in-T threshold"),
     "G3": ("Brake", "Loiter", "grant",
-           "magnitude > theta or no operator converged (conservative cap)"),
+           "magnitude > theta or no operator converged (conservative cap); not on "
+           "a tick whose strongest action is brake where a stop is legal (the "
+           "Shield skipped projection)"),
     "G4": ("Loiter", "RTL", "grant", "N-in-T persists (N new onsets since entry)"),
     "G5": ("Loiter", "RTL", "grant", "operator-defined timeout"),
     "G6": ("RTL", "Land", "grant", "RTL fails (battery / blocked path)"),
@@ -1221,6 +1232,14 @@ class EscalationFSM:
         # Brake on a trusted slide). Where a stop is illegal the Shield does
         # run the repair chain, and a blocked tick there is a real failure.
         # loiter / RTL / land need no gate: their direct edges come first.
+        # A replay that does not know stop_illegal (tick_input_from_row on a
+        # log without `unsafe` / `unsafe_rules`, tick_input_from_decision
+        # without the argument) reads it off the decision
+        # (_blocked_stop_illegal): a brake that re-checked clean is a legal
+        # stop, which is exactly the stop-rule branch, so the gate holds; a
+        # brake that re-checked dirty, or a blocked tick that did not brake,
+        # reads illegal, the gate is off and G3 behaves as it did before -
+        # the conservative side.
         stop_rule = strongest == "brake" and not inp.stop_illegal
         hard_untrusted = (untrusted and any(h.hard for h in projected)
                           and not stop_rule)

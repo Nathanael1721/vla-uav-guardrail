@@ -821,6 +821,42 @@ def test_a_soft_brake_rule_beside_a_hard_nfz_never_loiters_with_the_real_shield(
             assert "projection skipped" in d.repairs[-1].detail, d.repairs
 
 
+def test_a_replay_without_unsafe_keeps_the_stop_rule_gate_only_on_a_clean_brake():
+    """What step()'s comment and the G3 descriptions say about a replay that
+    does not know stop_illegal (review P5, 2026-10-19): tick_input_from_row
+    on a log without `unsafe` reads it off the decision. A brake that
+    re-checked clean is a legal stop - the stop-rule branch - so the gate
+    holds and the FSM stays in Brake; a brake that re-checked dirty reads
+    illegal, the gate is off and G3 fires, the conservative side."""
+    from guardrail.fsm import tick_input_from_row
+    from guardrail.models import Policy
+    pol = Policy.model_validate({"policy_id": "p", "constraints": [
+        {"id": "nfz", "type": "polygon_fence", "margin_m": 1.0,
+         "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7},
+                      {"x": 23, "y": 23}, {"x": 7, "y": 23}]},
+        {"id": "envelope-default", "type": "altitude_envelope", "alt_min_m": 1,
+         "alt_max_m": 6, "constraint_type": "soft", "priority": "P1",
+         "violation_action": "brake"}]})
+    vios = [{"rule_id": "envelope-default", "category": "altitude"},
+            {"rule_id": "nfz", "category": "geofence"}]
+    brake = [{"operator": "Brake", "detail": "violation_action brake -> projection "
+                                             "skipped, stop"}]
+
+    def run(em_v):
+        f, out = EscalationFSM(), []
+        for k in range(3):
+            row = {"t": 0.1 * k, "violations": vios, "repairs": brake, "braked": True,
+                   "emitted_violations": em_v}
+            inp = tick_input_from_row(row, pol)
+            out.append((inp.stop_illegal, f.step(inp)))
+        return out
+    for stop, o in run([]):
+        assert stop is False and (o.state, o.set_mode) == (S.BRAKE, None), o.reason
+    illegal = run([{"rule_id": "nfz", "category": "geofence"}])
+    assert all(stop is True for stop, _ in illegal)
+    assert (illegal[1][1].state, illegal[1][1].edge) == (S.LOITER, "G3"), illegal[1][1].reason
+
+
 def test_a_direct_rtl_beats_g3_in_brake():
     """Both hold on one tick: an unconverged hard project_fix (G3 -> Loiter)
     and a hard RTL rule (X2 -> RTL). The stronger response wins."""

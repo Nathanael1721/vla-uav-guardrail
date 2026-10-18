@@ -378,6 +378,42 @@ def test_a_pathrepair_repair_counts_under_pathrepair_and_an_unknown_operator_is_
     assert K.UNCLASSIFIED not in "\n".join(KR._render_magnitudes({"other": {"f": plain}}))
 
 
+def test_a_floored_tick_has_its_own_magnitude_column_and_is_not_an_attempt():
+    """REGRESSION (F1 review, 2026-10-19). A tick the Shield floored with
+    nothing violated (kpi._floored) has no priority; before, it sat in the
+    `unattributed` column and its clean re-check scored as a converged
+    repair. It now has a `floored` column, printed only when some family has
+    such a tick, and the headline says the count is outside the attempts."""
+    p0 = {"rule_id": "nfz-square", "category": "geofence"}
+    slide = {"operator": "GeofenceSlide", "detail": "", "magnitude_m": 1.0,
+             "axis": "lateral", "recovery": False}
+    floor = [{"operator": "GeofenceEscape", "detail": "", "magnitude_m": 1.0,
+              "axis": "lateral", "recovery": True}]
+    rows = [_row(1, vios=[p0], reps=[slide], em=dict(A0, vx=1.0)),       # |dv| 3
+            _row(2, reps=floor, raw=dict(A0, vx=0.15), em=dict(A0, vx=2.0)),
+            _row(3, reps=floor, raw=dict(A0, vx=0.15), em=dict(A0, vx=2.0))]
+    k = K.compute(rows, {"nfz-square": "P0"}, {"shield": "on"})
+    assert k["repair_attempt_ticks"] == 1 and k["repair_floored_ticks"] == 2, k
+    r = K.rollup([k])
+    md = "\n".join(KR._render_magnitudes({"other": {"fam": r}}))
+    header = next(x for x in md.splitlines() if x.startswith("| Family"))
+    row = next(x for x in md.splitlines() if x.startswith("| `fam`"))
+    cols = [c.strip() for c in header.strip("|").split("|")]
+    cells = [c.strip() for c in row.strip("|").split("|")]
+    assert len(cols) == len(cells), (cols, cells)
+    assert cells[cols.index("floored")] == "1.850 (2)", (cols, cells)
+    assert cells[cols.index("unattributed")] == "never", (cols, cells)
+    assert cells[cols.index("P0")] == "3.000 (1)", (cols, cells)
+    assert "`floored` = ticks the Shield floored" in md
+    # the null: no floored tick, no floored column
+    plain = K.rollup([K.compute(rows[:1], {"nfz-square": "P0"}, {"shield": "on"})])
+    assert "floored" not in "\n".join(KR._render_magnitudes({"other": {"f": plain}}))
+    ep = dict(k, kind="flight", arm="on")
+    h = " ".join(KR.headline([ep]))
+    assert "2 ticks of the 1 shielded flights were floored" in h, h
+    assert "floored" not in " ".join(KR.headline([dict(ep, repair_floored_ticks=0)]))
+
+
 def test_an_unknown_rule_is_p0_and_the_sole_figures_pool_from_sums():
     rows, prios = _breakdown_rows()
     ghost = {"rule_id": "rule-nobody-wrote", "category": "standoff"}
@@ -557,6 +593,32 @@ def test_the_tick_false_trigger_count_is_vacuous_on_fsm_logs_and_the_column_show
     # FSM saw) is shown as the logging fault it is, never hidden.
     fault = dict(r, false_trigger_ticks=2, false_trigger_rate=0.001, vacuous_zeros={})
     assert "logging fault" in KR._false_triggers(fault), KR._false_triggers(fault)
+
+
+def test_a_family_whose_labelled_episodes_all_expected_a_failsafe_says_so():
+    """Review P4 (2026-10-19). Where every labelled episode expected a
+    fail-safe, none could trigger falsely, and the cell printed "0 of 0 ep":
+    a 0 over an empty denominator with no word on why (6 of the 72 families
+    of the stored stress_smoke report). And DEFINITIONS said "n/m where no
+    episode is labelled" while the cell prints `vacuous` there whenever the
+    tick figure is 0."""
+    rows = [_row(i) for i in range(1, 6)]
+
+    def ep(trig, match):
+        k = K.compute(rows, {}, {"shield": "on"})
+        k.update(failsafe_triggered=trig, failsafe_matches_label=match)
+        return k
+    all_expected = K.rollup([ep(True, 1.0), ep(True, 1.0), ep(False, 0.0)])
+    lab = all_expected["failsafe_labelled_episodes"]
+    assert lab["false_triggers"] == 0 and lab["null_never_trigger"] == 0.0, lab
+    assert KR._false_triggers(all_expected) == "0 of 0 ep (none labelled not to trigger)"
+    # one episode labelled not to trigger: an ordinary k of m
+    one_neg = K.rollup([ep(True, 1.0), ep(False, 1.0)])
+    assert KR._false_triggers(one_neg) == "0 of 1 ep", KR._false_triggers(one_neg)
+    d = KR.DEFINITIONS["False triggers"]
+    assert "n/m where no episode is labelled" not in d, d
+    assert "`vacuous` when it is 0, n/m when no tick was violation-free" in d, d
+    assert "none labelled not to trigger" in d, d
 
 
 # --------------------------------------------------------------------------- #
@@ -819,25 +881,58 @@ def test_the_repair_headline_is_built_from_the_counts_not_from_fixed_text():
     in metres, and no rail logs RTL/Land" - written on 7 Oct, and false
     beside its own counts for the FSM-instrumented flights of 13-14 Oct
     (pas_ap_close_on: 25 ticks sized from the FSM record, 0 unsized, RTL
-    logged). The warning must stay where it is true."""
+    logged). The warning must stay where it is true.
+
+    And the theta clause is built from the per-tick theta SOURCES, not from
+    the unsized count alone (review of that fix, P1): a flight whose
+    converged ticks were all kinematic clamps (`not_governed`) has 0
+    unsized ticks too, and was told theta "was applied wherever it governs:
+    none of the 5 converged ticks lacked a repair size" - theta had judged
+    none of them."""
     oc = {k: 0 for k in K.REPAIR_OUTCOMES}
+    src = {"fsm_record": 0, "magnitude_m": 0, "action_per_period": 0,
+           "not_governed": 0, "no_magnitude": 0}
     new = {"kind": "flight", "arm": "on", "repair_attempt_ticks": 25,
            "repair_success_ticks": 24, "repair_unmeasured_ticks": 0,
            "repair_outcomes": dict(oc, converged=24, failsafe=1),
            "repair_theta_unchecked_ticks": 0, "failsafe_instrumented": True,
+           "repair_theta_sources": dict(src, fsm_record=24),
            "outcome": "RTL_triggered"}
     h = " ".join(KR.headline([new]))
     for stale in ("no rail logs RTL/Land", "no log gives a repair size",
                   "NOT the grant's full test"):
         assert stale not in h, (stale, h)
-    assert "none of the 24 converged ticks lacked a repair size" in h, h
+    assert "was applied to 24 of the 24 converged ticks." in h, h
     assert "RTL/Land 1" in h and "1 of 1 logs could record" in h and "1 recorded one" in h, h
     old = dict(new, repair_outcomes=dict(oc, converged=24, braked=1),
                repair_theta_unchecked_ticks=5, failsafe_instrumented=False,
+               repair_theta_sources=dict(src, magnitude_m=19, no_magnitude=5),
                outcome="success")
     h2 = " ".join(KR.headline([old]))
-    assert "NOT the grant's full test" in h2 and "could not be applied to 5 of the 24" in h2, h2
+    assert "NOT the grant's full test" in h2, h2
+    assert "applied to 19 of the 24 converged ticks; 5 could not be sized" in h2, h2
     assert "0 of 1 logs could record" in h2 and "0 recorded one" in h2, h2
+    # Theta governed nothing: every converged tick a kinematic clamp. 0
+    # unsized, and theta applied to 0 of them - said so, never "applied".
+    clamps = dict(new, repair_attempt_ticks=5, repair_success_ticks=5,
+                  repair_outcomes=dict(oc, converged=5),
+                  repair_theta_sources=dict(src, not_governed=5))
+    h3 = " ".join(KR.headline([clamps]))
+    assert "governed none of the 5 converged ticks" in h3, h3
+    assert "was applied" not in h3 and "lacked a repair size" not in h3, h3
+    # Mixed: sized, not governed and unsized are each named.
+    mixed = dict(new, repair_outcomes=dict(oc, converged=10),
+                 repair_theta_sources=dict(src, fsm_record=6, not_governed=3,
+                                           no_magnitude=1))
+    h4 = " ".join(KR.headline([mixed]))
+    assert ("applied to 6 of the 10 converged ticks; 3 carried only repairs theta "
+            "does not judge") in h4 and "1 could not be sized" in h4, h4
+    assert "NOT the grant's full test" in h4, h4
+    # A table that does not record its sources is never read as sized.
+    bare = {k: v for k, v in new.items() if k != "repair_theta_sources"}
+    h5 = " ".join(KR.headline([bare]))
+    assert "applied to 0 of the 24 converged ticks" in h5, h5
+    assert "24 are on tables that do not record how they were judged" in h5, h5
 
 
 def test_a_follow_the_rail_could_not_score_is_not_a_success():
