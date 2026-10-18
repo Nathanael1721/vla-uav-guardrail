@@ -317,7 +317,8 @@ class ConstraintBase(BaseModel):
     # REST (found 2026-10-18). The Shield refuses an event that would relax a
     # hard rule unless the event's layer is the rule's layer AND every layer
     # named here (shield.Shield._cross_layer_hard). Writing it by hand can
-    # only add refusals, never remove one.
+    # only add refusals, never remove one - and Policy.lint refuses it on a
+    # policy no merge produced (no `layers_merged`), and as an empty list.
     locked_by: list[Layer] | None = None
 
     # Time windows are a FIELD on every rule, not a constraint type of their
@@ -1360,6 +1361,25 @@ class Policy(BaseModel):
                 if c.effective_layer not in self.layers_merged:
                     out.append(f"{c.id}: layer {c.effective_layer!r} is not in "
                                f"layers_merged {self.layers_merged}")
+        # `locked_by` is merge provenance: merge_layers writes it, on a merged
+        # policy (`layers_merged` set), and only as a non-empty list. Until the
+        # 2026-10-19 review a hand-written value on an unmerged policy was
+        # accepted: it moved policy_hash and made the rule unswitchable from
+        # every layer, its own included, while the Shield's refusal spoke of
+        # "overriding a hard regulation-layer copy" that no file holds; and
+        # `locked_by: []` moved the hash and did nothing at all.
+        for c in self.constraints:
+            if c.locked_by is None:
+                continue
+            if self.layers_merged is None:
+                out.append(f"{c.id}: locked_by {c.locked_by} on a policy no layer "
+                           f"merge produced (no layers_merged): it is the "
+                           f"provenance merge_layers records, and written by hand "
+                           f"it locks the rule against every layer's event and "
+                           f"names an overridden copy that does not exist")
+            elif not c.locked_by:
+                out.append(f"{c.id}: locked_by [] says nothing (absent means no "
+                           f"lower hard copy was overridden) but changes policy_hash")
         return out
 
     # ------------------------------------------------------------------ #
@@ -1501,7 +1521,8 @@ class Policy(BaseModel):
 
         Loading the result gives the same rules. Fields the grant has no place
         for are kept so that is true, and `grant_form_extensions()` lists them:
-        `origin`, a non-zero `margin_m`, and this project's two own rule types.
+        `origin`, a non-zero `margin_m`, a merged rule's `locked_by`, and this
+        project's two own rule types.
 
         A metre point needs a WGS84 anchor for the frame's (0, 0): the policy's
         own `origin`, else the `origin` argument; with neither this raises,
@@ -1546,6 +1567,11 @@ class Policy(BaseModel):
         for c in self.constraints:
             if getattr(c, "margin_m", 0.0) not in (0.0, None):
                 out.append(f"{c.id}.margin_m")
+            # Layer-merge provenance (ConstraintBase.locked_by): _grant_rule
+            # writes it, the grant's form has no such field. Missing from this
+            # list until the 2026-10-19 review.
+            if c.locked_by is not None:
+                out.append(f"{c.id}.locked_by")
             if c.type not in GRANT_TYPES:
                 out.append(f"{c.id}: type {c.type}")
         return out
@@ -1995,7 +2021,9 @@ def merge_layers(policies: list[Policy], *, policy_id: str | None = None,
         carried[rid] = {lv for _, _, c in cands for lv in (c.locked_by or ())}
         # The provenance survives the merge (ConstraintBase.locked_by), so the
         # Shield's runtime guard sees the overridden hard copies too. Any value
-        # an input wrote is kept: it can only add refusals.
+        # an input carried in is kept: it can only add refusals. (Only an
+        # earlier merge's result can carry one: the per-layer lint above
+        # refuses locked_by on a layer that names no layers_merged.)
         locks = carried[rid] | {c.effective_layer for _, _, c in cands[:-1]
                                 if c.constraint_type == "hard"}
         locks.discard(top.effective_layer)

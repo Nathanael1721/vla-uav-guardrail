@@ -749,6 +749,38 @@ def test_a_redeclared_lower_rule_stays_locked_to_its_lower_layer():
     _refused(lambda: merge_layers([m, _layer("mission", off)]), "turns off 'airport'")
 
 
+def test_a_hand_written_locked_by_is_refused_and_a_merged_one_is_a_listed_extension():
+    """`locked_by` is authorable (policy_dsl.schema.json lists it) but it is
+    merge provenance. On an unmerged policy a hand-written value moved
+    policy_hash and locked the rule against every layer's event, its own
+    included, while the Shield's refusal named "a hard regulation-layer copy"
+    no file holds; `locked_by: []` moved the hash and did nothing. And
+    to_grant_form writes a merged rule's locked_by while
+    grant_form_extensions(), which lists what that form keeps beyond the
+    grant's, left it out. Shown failing before the 2026-10-19 review fix:
+    both hand-written forms passed the DSL entry point, and the extension
+    list had no locked_by entry."""
+    hand = _raw(constraints=[{**REG_FENCE, "locked_by": ["regulation"]}])
+    _refused(lambda: policy_from_raw(hand), "does not pass the DSL lint",
+             "airport: locked_by ['regulation']", "no layers_merged")
+    bare = {**_raw(constraints=[{**REG_FENCE, "layer": "mission", "locked_by": []}]),
+            "layers_merged": ["regulation", "mission"]}
+    _refused(lambda: policy_from_raw(bare), "airport: locked_by [] says nothing")
+    # What merge_layers writes still passes every entry point, reloads from
+    # the grant form, and is listed as a grant-form extension.
+    m = merge_layers([_layer("regulation", REG_FENCE),
+                      _layer("mission", {**REG_FENCE, "margin_m": 3.0})])
+    assert m.lint() == [] and m.constraints[0].locked_by == ["regulation"]
+    assert "airport.locked_by" in m.grant_form_extensions(), m.grant_form_extensions()
+    g = m.to_grant_form(origin=(25.0, 121.5))
+    assert g["constraints"][0]["locked_by"] == ["regulation"], g["constraints"][0]
+    back = policy_from_raw(json.loads(json.dumps(g)), runtime=False)
+    assert back.constraints[0].locked_by == ["regulation"]
+    assert "airport.locked_by" in back.grant_form_extensions()
+    # The null: a policy nobody merged has no such field and no such entry.
+    assert not any("locked_by" in e for e in load_policy(DEMO).grant_form_extensions())
+
+
 def test_layers_must_share_one_frame():
     """Different stated origins put metres in two frames; refused. And layers
     that mix metre and lat/lon points with NO stated origin are refused too:

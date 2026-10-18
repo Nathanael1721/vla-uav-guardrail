@@ -1490,6 +1490,15 @@ def test_a_corridor_altitude_band_bounds_the_action_set():
         raise AssertionError("a 30-80 m corridor and a 5-20 m envelope compiled")
 
 
+# A day band and a night band: no height in common, never in force together.
+DAY_NIGHT = {"policy_id": "day-night", "version": "0.1.0", "constraints": [
+    {"id": "day-band", "type": "altitude_envelope", "alt_min_m": 10, "alt_max_m": 30,
+     "valid_time": {"recurrence": {"start_time": "08:00", "end_time": "17:59"}}},
+    {"id": "night-band", "type": "altitude_envelope", "alt_min_m": 40,
+     "alt_max_m": 60,
+     "valid_time": {"recurrence": {"start_time": "18:00", "end_time": "07:59"}}}]}
+
+
 def test_bands_that_are_never_in_force_together_do_not_crash_the_compiler():
     """A day band (10-30 m, 08:00-17:59) and a night band (40-60 m,
     18:00-07:59) never overlap in height and never bind at the same instant;
@@ -1502,12 +1511,7 @@ def test_bands_that_are_never_in_force_together_do_not_crash_the_compiler():
     17:59:58 compile and the report both raised."""
     _need()
     import yaml
-    day_night = {"policy_id": "day-night", "version": "0.1.0", "constraints": [
-        {"id": "day-band", "type": "altitude_envelope", "alt_min_m": 10, "alt_max_m": 30,
-         "valid_time": {"recurrence": {"start_time": "08:00", "end_time": "17:59"}}},
-        {"id": "night-band", "type": "altitude_envelope", "alt_min_m": 40,
-         "alt_max_m": 60,
-         "valid_time": {"recurrence": {"start_time": "18:00", "end_time": "07:59"}}}]}
+    day_night = DAY_NIGHT
     pol = Policy.model_validate(day_night)
     assert pol.lint() == [] and pol.flight_problems() == []
     cc = ConstraintCompiler(pol)
@@ -1560,6 +1564,76 @@ def test_bands_that_are_never_in_force_together_do_not_crash_the_compiler():
     assert [r["policy_id"] for r in rep["rows"]] == [load_policy(SURVEY).policy_id]
     for k in ("n_p0_in_scope", "n_p0_covered", "p0_coverage", "baseline_n_p0_covered"):
         assert t[k] == alone[k], (k, t[k], alone[k])
+
+
+def test_the_report_printout_names_the_file_an_altitude_conflict_left_out():
+    """coverage_report lists a CSPAltitudeConflict file under
+    `altitude_conflict`, but the CLI printout (`python -m guardrail.compiler
+    report`) printed the rows, the budget failures and the unflyable files
+    only: the summary read "over 1 of 2 policies" and nothing said which file
+    was missing or why. Shown failing before the 2026-10-19 review fix: no
+    line named day_night. The null is the same folder without the clashing
+    file, whose printout must not mention a conflict."""
+    _need()
+    import contextlib
+    import io
+    import yaml
+
+    def printout(d):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = K._main(["report", "--policies", str(d)])
+        assert rc == 0, buf.getvalue()[-2000:]
+        return buf.getvalue()
+
+    d = Path(tempfile.mkdtemp())
+    (d / "corridor_survey.yaml").write_text(SURVEY.read_text(encoding="utf-8"),
+                                            encoding="utf-8")
+    assert "CSPAltitudeConflict" not in printout(d)
+    (d / "day_night.yaml").write_text(yaml.safe_dump(DAY_NIGHT, sort_keys=False),
+                                      encoding="utf-8")
+    text = printout(d)
+    row = [ln for ln in text.splitlines() if ln.startswith("day_night ")]
+    assert len(row) == 1, text
+    assert "CSPAltitudeConflict" in row[0], row
+    assert "day-band 10-30 m" in row[0] and "night-band 40-60 m" in row[0], row
+    assert "over 1 of 2 policies" in text, text
+    assert "1 policy file(s) raised CSPAltitudeConflict" in text, text
+
+
+def test_a_window_that_starts_in_a_gap_between_bands_still_publishes_a_band():
+    """With a lookahead over a minute the window can open in a gap between
+    two schedules and then cross both: nothing at 07:58:30, a 10-30 m band
+    07:59-08:00, a 40-60 m band from 08:01 (180 s lookahead). The two bands
+    have no height in common, so _action_sets falls back to one instant's
+    band - and looked only at `now`, where no band holds, so it published
+    none: "unbounded" by AllowedActionSet's own definition (None only when no
+    rule bounds altitude) while both bands bound the window. Shown failing
+    before the 2026-10-19 review fix: altitude_band_m_agl was None. It is now
+    the band of the next instant one holds, never a hull. The null: a 5 s
+    window in the same gap puts neither band in scope, and None is then
+    right."""
+    _need()
+    gap = Policy.model_validate({"policy_id": "gap", "version": "0.1.0", "constraints": [
+        {"id": "early-band", "type": "altitude_envelope", "alt_min_m": 10,
+         "alt_max_m": 30,
+         "valid_time": {"recurrence": {"start_time": "07:59", "end_time": "08:00"}}},
+        {"id": "late-band", "type": "altitude_envelope", "alt_min_m": 40,
+         "alt_max_m": 60,
+         "valid_time": {"recurrence": {"start_time": "08:01", "end_time": "08:30"}}}]})
+    assert gap.lint() == [] and gap.flight_problems() == []
+    cc = ConstraintCompiler(gap)
+    in_gap = MONDAY_0800.replace(hour=7, minute=58, second=30)
+    a = cc.compile_csp(_mission(), lookahead_s=180.0, now=in_gap).allowed_action_set
+    assert a.altitude_band_m_agl == (10.0, 30.0), a
+    assert set(a.source_rules) == {"early-band", "late-band"}, a.source_rules
+    # once the early band holds at `now` it is the one published, as before
+    a = cc.compile_csp(_mission(), lookahead_s=180.0,
+                       now=MONDAY_0800.replace(second=30)).allowed_action_set
+    assert a.altitude_band_m_agl == (10.0, 30.0), a
+    # the null: nothing in scope, nothing bounds altitude in this window
+    a = cc.compile_csp(_mission(), lookahead_s=5.0, now=in_gap).allowed_action_set
+    assert a.altitude_band_m_agl is None and a.source_rules == [], a
 
 
 def test_several_envelopes_intersect_to_the_tightest_bounds():

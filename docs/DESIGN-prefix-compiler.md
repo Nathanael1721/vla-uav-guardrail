@@ -387,7 +387,11 @@ window (`now` and every minute boundary, padded where a switch or swap acts).
 It publishes the intersection of every in-scope band when that is not empty.
 When it is empty only because the window crosses a schedule edge (a day band
 until 17:59, a night band from 18:00), it publishes the band in force at
-`now`. It never publishes a hull, which would admit heights no rule allows.
+`now`. If no band is in force at `now` (a gap between two schedules, which a
+lookahead longer than a minute can straddle), it publishes the band in force
+at the next sampled instant that has one, so a window that bands bind never
+reads as unbounded. It never publishes a hull, which would admit heights no
+rule allows.
 Bands that cannot all hold at one instant raise `CSPAltitudeConflict` (a
 `ValueError`) naming the rules involved. With no clock every rule is read as
 in force, so two scheduled bands that never meet in time still clash there,

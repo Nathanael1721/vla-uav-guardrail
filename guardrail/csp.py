@@ -140,7 +140,12 @@ class AllowedActionSet(_Strict):
     `altitude_band_m_agl` is the intersection of every hard altitude envelope
     AND every hard corridor's floor-ceiling band, as the Shield enforces both
     and the spec's example intersects them (a 5-120 m envelope and a 30-80 m
-    corridor give [30, 80]). None only when no rule bounds altitude.
+    corridor give [30, 80]). With a clock, bands that are in force at
+    different instants of the lookahead window and have no height in common
+    (a schedule edge inside the window) are not intersected with each other:
+    the band is then the one in force at the compile instant, or, if none is,
+    at the next instant one is - never a hull. None only when no rule bounds
+    altitude.
 
     `source_rules` (an addition) names the rules each bound came from.
     """

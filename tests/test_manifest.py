@@ -30,6 +30,11 @@ from guardrail.manifest import (MAX_HEADING_ERR_DEG, MIN_DET_HZ,      # noqa: E4
 
 SCENE = ROOT / "demo" / "pas_config" / "scene_semantic.jsonc"
 GOOD_METRICS = {"det_hz": 4.5, "start_heading_err_deg": 1.5}
+# A test that cannot run here returns SKIP, and the runner below counts it as
+# skipped, not passed (as tests/test_vla_backends.py does). Until the
+# 2026-10-19 review the two temp-git-repo tests printed "SKIP" and returned
+# None, so on a host without git they were counted as PASS.
+SKIP = "SKIP"
 
 
 def _man(**kw):
@@ -1017,7 +1022,7 @@ def test_a_status_timeout_keeps_the_known_head_as_unknown():
     from guardrail import manifest as M
     if _sh.which("git") is None:
         print("      SKIP: git is not installed")
-        return
+        return SKIP
     repo = Path(tempfile.mkdtemp(prefix="rev_"))
     (repo / "guardrail").mkdir()
     (repo / "guardrail" / "shield.py").write_text("# sentinel\n", encoding="utf-8")
@@ -1058,7 +1063,7 @@ def test_an_untracked_file_makes_the_tree_dirty_and_the_reason_says_so():
     from guardrail import manifest as M
     if _sh.which("git") is None:
         print("      SKIP: git is not installed")
-        return
+        return SKIP
     repo = Path(tempfile.mkdtemp(prefix="rev_"))
     (repo / "guardrail").mkdir()
     (repo / "guardrail" / "shield.py").write_text("# sentinel\n", encoding="utf-8")
@@ -1142,10 +1147,13 @@ def test_a_plain_hash_string_still_works_for_callers_that_pass_one():
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == SKIP:
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -1153,5 +1161,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

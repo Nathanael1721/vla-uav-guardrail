@@ -914,9 +914,12 @@ def _action_sets(rules: list, in_force: list | None = None
     empty (a height legal for the whole window); when it is empty only
     because the window crosses a schedule edge (a day band 10-30 m until
     17:59, a night band 40-60 m from 18:00, `now` 17:59:58), it is the band in
-    force at `now`, and the upcoming rule stays in `source_rules` and in its
-    P0 entry's `in_force` text. Never a hull: that would admit heights no rule
-    allows. CSPAltitudeConflict is raised only when the rules in force at ONE
+    force at `now` - or, when no band is in force at `now` (a gap between the
+    schedules inside a lookahead over a minute), the band in force at the
+    next sampled instant that has one - and the other rules stay in
+    `source_rules` and in their P0 entries' `in_force` text. Never a hull:
+    that would admit heights no rule allows, and never None while a band is
+    in scope. CSPAltitudeConflict is raised only when the rules in force at ONE
     instant have no height in common - with no clock (`in_force` None) every
     rule is read as in force, so that is the intersection of them all, as
     compile_csp documents. Until 2026-10-19 every in-scope band was
@@ -950,18 +953,32 @@ def _action_sets(rules: list, in_force: list | None = None
         if lo > hi:
             if in_force is None:
                 raise CSPAltitudeConflict(bands)
-            at_now = None
-            for i, (x, ids) in enumerate(in_force):
+            now_x = in_force[0][0]
+            held = []                 # (instant, band) wherever some band holds
+            for x, ids in in_force:
                 group = [b for b in bands if b[0] in ids]
                 if not group:
                     continue
                 g_lo, g_hi = meet(group)
                 if g_lo > g_hi:
                     raise CSPAltitudeConflict(group, x)
-                if i == 0:
-                    at_now = (g_lo, g_hi)
-            if at_now is not None:
-                kw["altitude_band_m_agl"] = at_now
+                held.append((x, (g_lo, g_hi)))
+            if not held:
+                # Every in-scope rule is in force at one of these instants
+                # (_in_force_sets samples exactly what the scope test did), so
+                # this cannot happen; if it ever does, read the bands as the
+                # no-clock case does rather than publish "unbounded".
+                raise CSPAltitudeConflict(bands)
+            # The band at `now`; when no band holds at `now` (a gap between two
+            # schedules, which a lookahead over a minute can straddle: nothing
+            # 07:58, 10-30 m 07:59-08:00, 40-60 m from 08:01), the band of the
+            # NEXT instant one holds; failing that (a rule in scope only through
+            # a switch's 1 s pad before `now`) the nearest earlier one. Until
+            # the 2026-10-19 review only `now` was looked at, so that gap
+            # published no band at all - "unbounded" by this class's own
+            # definition - while both bands bound the window.
+            kw["altitude_band_m_agl"] = min(
+                held, key=lambda h: (h[0] < now_x, abs(h[0] - now_x)))[1]
         else:
             kw["altitude_band_m_agl"] = (lo, hi)
         src += [b[0] for b in bands]
@@ -2504,6 +2521,14 @@ def _report(args) -> int:
     for r in rep.get("not_flyable", []):
         print(f"{Path(r['file']).stem:34s} {r['n_rules']:5d}   not flyable as written: "
               + "; ".join(r["problems"]))
+    # A file whose hard altitude bands clash has no CSP either. Until the
+    # 2026-10-19 review coverage_report listed it but this printout did not,
+    # so the summary read "over N of M policies" with nothing saying which
+    # file was missing or why - a report that is silent about what it left
+    # out reads as a pass.
+    for r in rep.get("altitude_conflict", []):
+        print(f"{Path(r['file']).stem:34s} {r['n_rules']:5d}   CSPAltitudeConflict: "
+              f"{r['problem']}")
     t = rep["totals"]
     print(f"\nP0 coverage {t['n_p0_covered']}/{t['n_p0_in_scope']} "
           f"({_pct(t['p0_coverage'])}) over {t['n_compiled']} of {t['n_policies']} "
@@ -2533,6 +2558,11 @@ def _report(args) -> int:
     if rep.get("not_flyable"):
         print(f"{len(rep['not_flyable'])} policy file(s) are not flyable as written "
               f"(Policy.flight_problems), have no CSP, and are not in the coverage shares")
+    if rep.get("altitude_conflict"):
+        print(f"{len(rep['altitude_conflict'])} policy file(s) raised CSPAltitudeConflict "
+              f"(hard altitude bands with no height in common; no clock, so every "
+              f"rule is read as in force), have no CSP, and are not in the coverage "
+              f"shares")
     print(f"code {rep['code_revision']}; reproduce: {rep['command']}")
     if args.json:
         out = Path(args.json)

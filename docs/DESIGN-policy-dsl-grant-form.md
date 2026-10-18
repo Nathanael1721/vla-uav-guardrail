@@ -292,6 +292,21 @@ metre rules would otherwise sit in a frame derived from whichever fence the
 merge puts first. The result records `layers_merged` and is hashed
 post-merge, as the grant says.
 
+A switch-off or a corridor swap is checked against every hard copy of its
+target, in whichever layer it was written, not only against the copy that
+won. Since 2026-10-19 a higher layer that re-declares a lower layer's hard
+rule (identically, or tighter) therefore cannot then switch it off or swap
+it wide. The winning rule records the lower layers it overrode in
+`locked_by`, which survives the merge, a bundle round trip and a re-merge,
+and the Shield's hot-apply guard (`Shield._cross_layer_hard`) reads it: no
+single layer's event may switch off, edit, expire or loosen such a rule. A
+hot-apply swap on a locked corridor is checked against the tightened winner,
+not against the lower copy, so at runtime it is stricter than at ingest (a
+swap between the winner's band and the lower copy's merges, but is refused
+mid-flight). `locked_by` is provenance, not an authoring field: the lint
+refuses it on a policy no merge produced, and `grant_form_extensions()`
+lists it.
+
 The grant states the precedence twice and the two read differently: the
 layered-authoring section says "mission > site > regulation", the ingest
 diagram "Layer merge regulation > site > mission precedence". Both are met,

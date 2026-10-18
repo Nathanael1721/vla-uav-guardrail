@@ -25,7 +25,9 @@ WHAT EACH TEST GUARDS
     only the flight whose raw actions are the log's; a log no flight
     matches joins nothing, and says why.
   * A replay bundle is verified before anything is exported, and a member
-    changed after packing is refused.
+    changed after packing is refused. A flight log with no rows is neither
+    packaged nor verified as a perfect run (the synthetic-episode test of
+    tests/test_replay.py, run here because that file is not on CI).
   * JSONL is strict (a NaN is a string), Parquet is written or SKIPPED,
     never faked, and `--format parquet` alone without pyarrow writes nothing
     and exits 3; the nearest bag message is read through `mcap` when it is
@@ -338,6 +340,18 @@ def test_a_replay_bundle_is_verified_first_and_a_changed_member_refused():
         raise AssertionError("a bundle whose log was changed was exported")
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
         assert X.main([str(bad), "--out", str(root / "x"), "--format", "jsonl"]) == 2
+
+
+def test_a_flight_log_with_no_rows_is_neither_packaged_nor_verified_as_perfect():
+    """A rail that aborts before its first tick still writes an empty
+    flight_log.jsonl beside kpi.json; write_replay packaged it and
+    verify_replay re-derived compute([])'s 0.0 escape rate as a perfect run
+    (fixed 2026-10-19). The test that shows it lives in tests/test_replay.py,
+    which is off CI because most of its tests need demo/out/ fixtures; this
+    one needs none (its episode is synthetic), so it is run here, where CI
+    sees it, from its one copy rather than a second that could drift."""
+    import test_replay as RP
+    assert RP.test_an_episode_whose_log_holds_no_rows_is_refused_not_a_perfect_run() is None
 
 
 def test_jsonl_is_strict_and_parquet_is_written_or_skipped_never_faked():
