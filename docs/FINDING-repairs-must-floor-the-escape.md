@@ -65,6 +65,27 @@ config default with `recovery = True` and a written rationale, and
 `docs/prof-repo-study.md` records this repo adopting it deliberately. It became
 a floor, not a ceiling.
 
+> **Addendum 2026-10-19: the passthrough was the decline.** The floors above
+> live in the repair chain, and the chain ran only when the action violated
+> something. With nothing else wrong, `filter()` took its untouched
+> passthrough, so the "decline" row of this table is exactly what happened
+> whenever the crawl was the only thing wrong: 1 m inside the NFZ leaving at
+> 0.15 m/s passed (6.7 s to leave) while the same action with a yaw breach
+> left at 2.0 m/s; a stand-off ring opened at 0.11 m/s passed while 0.10 was
+> raised to 0.5; a 0.02 m/s creep out of a clearance ring passed; and a climb
+> of 1e-6 m/s from under an altitude floor passed every tick, indefinitely,
+> with zero violations (the altitude and corridor-band monitors forgive ANY
+> climb, not 0.1 m/s). Every crawl test here added a yaw breach on purpose,
+> so none could see it. `Shield._floor_the_escape` now runs the chain on a
+> legal action from a position a stop would leave illegal, restricted to the
+> operators of the rules that position breaks (plus the caps), and flies the
+> result only if it carries nothing but recovery floors and clamps (no
+> projection theta would have to judge on a tick the FSM reads as clean) and
+> re-checks clean against every rule; a `monitor_only` violation beside the
+> crawl no longer skips it (review of 2026-10-19). The four crawls are
+> floored with and without the yaw breach, to the same speed, and still
+> report no violation (`tests/test_shield.py::test_a_crawl_out_of_a_breach_is_floored_with_nothing_else_wrong`).
+
 ## What else came with it
 
 - **The cap now eats the tangential first.** Scaling the whole horizontal vector

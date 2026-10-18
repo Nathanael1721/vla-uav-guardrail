@@ -10,7 +10,8 @@ Run:  python tests/test_shieldcore_repair.py
     and `repair_order` puts a registered name to work;
   * repair_mode="first_feasible" applies the grant's selection: the
     earliest violation is the target, an operator whose repair is over
-    theta (2.0 m lateral, 0.5 m vertical) does not win, a recovery is
+    theta (2.0 m lateral, 0.5 m vertical; summed per axis with the tick's
+    other repairs, as the FSM sums them) does not win, a recovery is
     exempt, and an "ok" that leaves the target violated is a fail;
   * path_repair=True frees the standoff-wedge scenario (experiments/
     templates/subject_standoff.yaml, the "known failure" since 2026-08-31)
@@ -348,6 +349,51 @@ def test_first_feasible_holds_a_vertical_repair_to_the_vertical_theta():
            if x["operator"] == "AltitudeClamp"]
     assert alt[0]["result"] == "fail" and "over theta (vertical)" in alt[0]["reason"], alt
     assert ff.braked and [r.operator for r in ff.repairs] == ["Brake"]
+
+
+_SQ2 = {"id": "sq2", "type": "polygon_fence", "margin_m": 1.0,
+        "vertices": [{"x": -10, "y": 10}, {"x": 10, "y": 10}, {"x": 10, "y": 30},
+                     {"x": -10, "y": 30}]}
+
+
+def test_first_feasible_reads_theta_as_the_fsm_sums_it():
+    """REGRESSION (2026-10-19). The FSM sums magnitude_m per axis over the
+    tick's repairs (fsm.magnitude_from_repairs); the selection compared each
+    Repair alone, so it accepted what the FSM then called over theta. Heading
+    into the corner between two squares, one LateralProjection logs two
+    slides, 0.6 m and 1.5 m: 2.1 m in all, so it is no longer applied (on
+    4418ae0..1b95383 it was, unbraked). Two slides of 1.0 m (2.0 m, theta is
+    inclusive) still are. Across iterations: a 1.2 m slide off the square,
+    then a 1.8 m StandoffHold, 3.0 m in all - each was "ok" alone, and with
+    the FSM flying the tick was X1, "repair over theta", on an action the
+    selection had accepted."""
+    from guardrail import fsm as F
+    sh = Shield(_square_policy(extra=[_SQ2]), escalation=False, repair_mode="first_feasible")
+    a = Action4D(vx=2.6, vy=2.0)
+    d = sh.filter(State(x=-3.0, y=0.5, up=10.0), a)
+    lat = F.magnitude_from_repairs([r for r in d.repairs if r.operator != "Brake"]).lateral_m
+    assert d.braked and lat <= 2.0 + 1e-9, (d.repairs, lat)
+    att = [x for p in d.trace["passes"] for x in p["attempts"]
+           if x["operator"] == "LateralProjection"][0]
+    assert att["result"] == "fail" and "over theta (lateral)" in att["reason"], att
+    d = sh.filter(State(x=-3.0, y=0.0, up=10.0), a)                 # the boundary
+    assert not d.braked and [r.operator for r in d.repairs] == ["GeofenceSlide"] * 2
+    assert F.magnitude_from_repairs(d.repairs).lateral_m <= 2.0 + 1e-9
+    ring = {"id": "ring", "type": "subject_standoff", "subject_class": "*", "min_range_m": 5.0}
+    st, a = State(x=4.9, y=3.3, up=10.0), Action4D(vx=1.9, vy=2.3)
+    for esc in (False, True):
+        sh = Shield(_square_policy(extra=[ring]), escalation=esc, repair_mode="first_feasible")
+        sh.set_subject(1.7, 11.5, "vehicle")
+        d = sh.filter(st, a)
+        wins = [(p["pass"], x["operator"]) for p in d.trace["passes"]
+                for x in p["attempts"] if x["result"] == "ok"]
+        assert wins == [(1, "LateralProjection")], wins
+        hold = [x for p in d.trace["passes"] if p["pass"] == 2 for x in p["attempts"]
+                if x["operator"] == "StandoffProjection"]
+        assert hold and hold[0]["result"] == "fail" and "summed" in hold[0]["reason"], hold
+        assert d.braked and not d.emitted_violations, d.repairs
+        if esc:
+            assert "repair over theta" not in d.fsm_record["reason"], d.fsm_record["reason"]
 
 
 def test_first_feasible_exempts_a_recovery_from_theta():

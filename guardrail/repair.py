@@ -75,9 +75,11 @@ THE MODES (guardrail/shield.py, Shield(...) keyword arguments)
                                 the earliest open violation is the target;
                                 operators are tried in FIRST_FEASIBLE order,
                                 the first whose action clears the target with
-                                every non-recovery repair's magnitude_m within
-                                theta wins. No winner ends the loop, and the
-                                Shield's rescue / brake fallback decides.
+                                the tick's repairs within theta as the FSM
+                                reads it (magnitude_m summed per axis over
+                                every iteration's, recoveries exempt) wins.
+                                No winner ends the loop, and the Shield's
+                                rescue / brake fallback decides.
   path_repair=True              PathRepair joins either mode (after
                                 LateralProjection).
   repair_order=(name, ...)      the caller's stack for either mode, in
@@ -357,7 +359,10 @@ class PathRepair:
             return [], 0.0
         so = max(binding, key=lambda s: s.min_range_m)
         sx, sy = subj
-        dmin = min(math.hypot(p.x - sx, p.y - sy) for _, p in sh._predict(st, raw))
+        # The raw forecast's closest approach to the subject, moving at its
+        # velocity when set_subject was given one (the check's reading, so the
+        # depth reported is one the check could see); held still otherwise.
+        dmin = sh._subject_min_range(st, raw)
         depth = max(0.0, so.min_range_m - dmin)
         r_wp = so.min_range_m + max(self.CLEARANCE_M, float(so.soft_margin_m or 0.0))
         d = math.hypot(sx - st.x, sy - st.y)

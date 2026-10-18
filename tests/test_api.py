@@ -229,6 +229,24 @@ def test_routes_refuse_a_relaxation_across_layers():
     assert c.get("/health").json()["generation"] == 0
 
 
+def test_routes_refuse_a_zone_the_shield_would_not_enforce_or_build():
+    """REGRESSION (2026-10-19). An altitude_ref MSL zone was accepted (200,
+    generation 1) and then enforced as metres above ground; a margin_m of
+    1e308 passed validation, failed to compile inside the Shield after the
+    policy had already been changed, and answered 500 with /health already
+    on generation 1. Both are 422 now, and nothing is applied."""
+    sh = _flying()
+    c = _client(sh)
+    if c is None:
+        return SKIP
+    r = c.post("/dynamic_nfz", json={**ZONE, "altitude_ref": "MSL"})
+    assert r.status_code == 422 and "MSL" in r.json()["detail"], r.text
+    r = c.post("/dynamic_nfz", json={**ZONE, "margin_m": 1e308})
+    assert r.status_code == 422 and "could not compile" in r.json()["detail"], r.text
+    assert c.get("/health").json()["generation"] == 0
+    assert c.post("/dynamic_nfz", json=ZONE).status_code == 200
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

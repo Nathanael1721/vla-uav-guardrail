@@ -140,6 +140,34 @@ aircraft in the violation (the module docstring's deadlock). There the repair
 stack still recovers and the FSM still makes the mode change, with the stop
 withheld (`fsm_record["stop_withheld"]`).
 
+From such a position an action can be legal and still too slow: the monitors
+forgive a recovery on its trend (a zone or ring left at more than 0.1 m/s, any
+climb back toward a band, any forecast gain inside a clearance ring), while
+the repairs floor its speed (GeofenceEscape min(2.0, cap), StandoffRecover
+and ClearanceFix 0.5 m/s at least, AltitudeFix and CorridorReturn the gap in
+one lookahead; docs/FINDING-repairs-must-floor-the-escape.md). Until
+2026-10-19 the floors ran only when some rule was violated, so the same crawl
+passed untouched alone and left at the floor beside an unrelated breach. In
+`repair_mode="chain"` an action that breaks nothing enforced (nothing, or
+only `monitor_only` rules), from a position a stop would leave illegal, now
+runs the operators of the rules that position breaks (and the caps) - not the
+whole stack (`Shield._floor_the_escape`). The result is flown only if every
+repair in it is one theta does not govern - the recovery floors and the speed
+and climb clamps, never a projection - and it re-checks clean against every
+rule but the `monitor_only` ones the raw action already broke; else the raw
+action flies, the tick's trace says why (`floor_refused`) and
+`Shield.n_floor_refused` counts it. So a legal action is only ever made to
+leave faster: a review of 2026-10-19 found the kept rule's own projection
+branches still reshaping legal actions (CorridorAltitudeFix cutting a legal
+1.79 m/s climb to 0.28 outside a corridor, a 4.55 m vertical projection; 72
+of 607 floored ticks in a random corridor scan), on ticks the FSM read as
+clean, so theta never judged them. A floored decision carries the floors'
+repairs and no enforced violation (the FSM reads the tick as clean), and
+`ShieldDecision.touched` is true for it. A crawl whose floor is refused
+still flies as commanded (the altitude, corridor-band and clearance monitors
+accept any gain); raising those trend tests to the reference's 0.1 m/s is a
+monitor change pinned by tests/test_check_contract.py, left open.
+
 What the PI reference does here is narrower. Its `safety_shield/shield.py`
 skips projection only when the WORST violation's action is `RTL` or `land`,
 and then emits the raw action while its FSM changes mode; for `brake` and
@@ -158,7 +186,11 @@ severity order "hard >> soft, P0 > P1 > P2" (Prefix Compiler page).
 
 A policy with a rule the Shield does not enforce (`distance_envelope`, any
 `altitude_ref: MSL`) is refused at construction (`Shield.unenforceable`), so a
-`Policy` built directly cannot fly with a rule silently ignored.
+`Policy` built directly cannot fly with a rule silently ignored. Since
+2026-10-19 a hot-applied event that would add one (a `dynamic_nfz`,
+`corridor_swap` or pre-start fence with `altitude_ref: MSL`) is refused the
+same way (`HotApplyRefused`, 422 over REST); before, it was accepted and its
+heights were judged as metres above ground.
 
 ### 3. The grant's lookahead, read at each pose's own time
 
@@ -484,6 +516,19 @@ eight Brake -> Loiter edges. What changed in the Shield because of it:
   stand-off or clearance ring, a corridor's half-width). The FSM's X6 reads
   its trend to leave a working recovery alone, and its X7 to send home a
   recovery that is losing ground (docs/DESIGN-escalation-fsm.md).
+- **A moving subject** (2026-10-19). `set_subject` took no velocity, so the
+  stand-off forecast held the subject still: with the grant's 5 s at 0.1 s a
+  drone following a car at 4-5 m/s was forecast 20-25 m on into the car's
+  ring, and StandoffHold fired on 44 % of the replayed city ticks with the
+  range not closing (and a car driving at a hovering drone was never
+  forecast to arrive). `set_subject(x, y, cls, velocity=(vx, vy))` now
+  forecasts the subject at constant velocity in the check, StandoffHold,
+  StandoffRecover (whose rates are then relative to the subject), the
+  best-effort ranking (`_deepens`) and PathRepair's reported depth. Without
+  it every decision is byte-identical (18,000 seeded stand-off decisions
+  compared); a non-finite velocity is refused and the subject held still
+  (`n_subject_velocity_nonfinite`). The rails pass it once their estimators
+  do.
 
 ### 9. Headroom, the audit record as a model, the repair library (2026-10-12)
 
@@ -575,10 +620,14 @@ old `_repair_chain` on every policy in policies/ (`test_the_default_chain_decide
 
 - `repair_mode="first_feasible"`: the grant's selection. Per iteration (up
   to 3) the earliest open violation is the target; operators are tried in
-  priority order; the first whose action clears the target with every
-  non-recovery repair's `magnitude_m` within theta (2.0 m lateral, 0.5 m
-  vertical) wins; an attempt that says ok but leaves its target violated is
-  a fail, and a recovery is exempt from theta. Head-on 6 m outside a zone at
+  priority order; the first whose action clears the target with the tick's
+  repairs within theta (2.0 m lateral, 0.5 m vertical) wins; an attempt that
+  says ok but leaves its target violated is a fail, and a recovery is exempt
+  from theta. Since 2026-10-19 theta is read as the FSM reads it: each
+  axis's `magnitude_m` SUMMED over this attempt's repairs and every earlier
+  iteration's (deduplicated, the FSM's exemptions). Compared one Repair at a
+  time, two 1.5 m slides passed the selection and then tripped the FSM's
+  X1 at 3.0 m. Head-on 6 m outside a zone at
   4 m/s the chain slides (a 13 m GeofenceSlide, left for the FSM to judge);
   first-feasible refuses it and the fallback stops. Sinking to 1.9 m under a
   floor, the chain's AltitudeFix is applied and first-feasible's is refused

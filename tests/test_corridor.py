@@ -127,11 +127,74 @@ def test_already_outside_but_returning_passes():
 
     Raising a violation on the action that is fixing the problem is what freezes
     an aircraft in the state the policy forbids.
+
+    No violation - but since 2026-10-19 not untouched either. 15 m outside the
+    band, returning at 2 m/s is slower than CorridorReturn's floor (close the
+    gap within one lookahead, capped at speed_max), which until then applied
+    only when some unrelated rule had opened the repair loop. The return is
+    FLOORED now, as it always was with a yaw breach beside it
+    (docs/FINDING-repairs-must-floor-the-escape.md), the along-corridor motion
+    kept; a return already at the cap still passes untouched.
     """
     sh = _shield(_corridor(), KIN)
     d = sh.filter(State(x=50, y=25, up=15), Action4D(vy=-2))
     assert not d.violations, d
-    assert d.emitted.vy == -2.0, "a clean recovery must pass through untouched"
+    assert d.emitted.vy < -2.0, "a slow return is floored, never slowed"
+    assert [(r.operator, r.recovery) for r in d.repairs] == [("CorridorReturn", True)]
+    yawed = sh.filter(State(x=50, y=25, up=15), Action4D(vy=-2, yaw_rate=1.5))
+    assert yawed.violations and yawed.emitted.vy == d.emitted.vy, yawed
+    d = sh.filter(State(x=50, y=16, up=15), Action4D(vx=1.0, vy=-0.5))   # 6 m out
+    assert not d.violations and d.emitted.vx == 1.0 and d.emitted.vy <= -2.0 + 1e-9, d
+    d = sh.filter(State(x=50, y=25, up=15), Action4D(vy=-KIN.speed_max_mps))
+    assert not d.violations and not d.repairs and d.emitted == d.raw, d
+
+
+def test_the_floor_never_flies_a_projection_theta_did_not_judge():
+    """REGRESSION (review of 2026-10-19). The escape floor ran every operator
+    of the rules the position breaks, and the corridor's operators have
+    projection branches as well as floors. Outside the corridor laterally,
+    the band forecast is not checked (the return is what matters), yet
+    CorridorAltitudeFix still cut a legal 1.79 m/s climb to 0.28 - a 4.55 m
+    vertical projection, over theta's 0.5 m - on a tick with no violation,
+    which the FSM read as clean: theta never judged it, while the same
+    action beside a yaw breach went Normal -> Brake [X1] on it. A second
+    tick carried a non-recovery CorridorReturn of 3.33 m that zeroed a legal
+    vy. A floored decision now carries only repairs theta does not govern
+    (recovery floors, clamps); otherwise the raw action flies, the trace
+    says why and `n_floor_refused` counts it. Beside the yaw breach the
+    projection is still made - and judged."""
+    from guardrail import fsm
+    for st, a, op in ((State(x=-13.44, y=34.18, up=24.17),
+                       Action4D(vx=0.46, vy=-0.08, vz_up=1.79), "CorridorAltitudeFix"),
+                      (State(x=12.85, y=-4.66, up=30.73),
+                       Action4D(vx=-1.19, vy=-2.89, vz_up=-0.87), "CorridorReturn")):
+        sh = _shield(_corridor(), KIN)
+        assert sh.state_is_unsafe(st) and not sh._check(st, a), st
+        d = sh.filter(st, a)
+        assert not d.violations and not d.repairs and d.emitted == a, d.repairs
+        assert (d.fsm_state_after, d.setpoint) == ("Normal", "pass")
+        assert op in d.trace["floor_refused"] and sh.n_floor_refused == 1, d.trace
+        sh.reset_episode()
+        yawed = sh.filter(st, a.model_copy(update={"yaw_rate": 1.5}))
+        assert op in [r.operator for r in yawed.repairs], yawed.repairs
+        assert yawed.fsm_edge == "X1" and "repair over theta" in yawed.fsm_record["reason"]
+
+    # Over a seeded scan, no tick that violates nothing carries a repair theta
+    # governs, and the floors (recoveries only) still fly.
+    import random
+    rng = random.Random(5)
+    sh = _shield(_corridor(), KIN)
+    floored = 0
+    for _ in range(600):
+        st = State(x=rng.uniform(-40, 60), y=rng.uniform(-40, 40), up=rng.uniform(0, 35))
+        a = Action4D(vx=rng.uniform(-3, 3), vy=rng.uniform(-3, 3), vz_up=rng.uniform(-1.5, 1.5))
+        d = sh.filter(st, a)
+        if not d.violations and d.repairs:
+            floored += 1
+            assert not [r.operator for r in d.repairs
+                        if fsm.theta_governs(r, stop_illegal=True)], (st, a, d.repairs)
+            assert not d.emitted_violations and not sh._check(st, d.emitted)
+    assert floored > 100, floored
 
 
 def test_already_outside_and_going_further_is_a_violation():
