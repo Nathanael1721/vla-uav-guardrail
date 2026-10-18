@@ -299,7 +299,8 @@ as `docs/DESIGN-escalation-fsm.md` ("Integration") specifies; its mode
 requests go to the adapter on `/shield/mode_request`, which forwards only the
 modes the FSM can ask for (GUIDED, LOITER, RTL, LAND) and refuses any other.
 The mission-end LAND is never marked a fail-safe and is not sent when the FSM
-or the autopilot already has the aircraft in RTL / Land. Theta is applied to
+or the autopilot already has the aircraft in RTL / Land (nor, since
+2026-10-19, after any takeover: see below). Theta is applied to
 `Repair.magnitude_m` when `guardrail/shield.py` reports it, and to the
 velocity proxy (h = 0.1 s, which cannot fire on these flights) when it does
 not; the node picks the source by itself and writes it into `metrics.json`
@@ -308,7 +309,7 @@ not; the node picks the source by itself and writes it into `metrics.json`
 in the Shield during 2026-10-07, so the flights below say which source each
 one used. If the autopilot leaves GUIDED without being asked (a GeoFence
 breach), the node records the takeover, stops streaming and stops stepping the
-FSM. The adapter forwards setpoints only while the Shield node is the single
+FSM (since 2026-10-19 also out of a hold the node asked for: see below). The adapter forwards setpoints only while the Shield node is the single
 publisher on `/shield/setpoint`.
 
 **Changed on 2026-10-19.** A takeover is now any change, out of GUIDED or out
@@ -321,7 +322,21 @@ mission-end LAND whatever the mode (it used to skip LAND only for RTL /
 Land). Mode requests go to the adapter only when a subscriber named
 `mavlink_adapter` is on `/shield/mode_request`, not any subscriber: rosbag2
 subscribes to it in every recorded run, so the direct-MAVROS fallback could
-never run.
+never run. A stale-pose watchdog (`--pose-timeout-s`, default 1.0 s, timed on
+the node's monotonic clock from each pose's receipt, not from MAVROS's
+stamps) treats a `/mavros/local_position/pose` that stopped updating like a
+quiet action stream: one tick of the Shield's answer to a stop, then LOITER
+through the adapter (flown as BRAKE), the streams asked for again at once,
+and the next pose releases the hold (GUIDED only once no hold reason is
+left, and never after a takeover). Before, nothing watched the pose, so a
+frozen position was re-checked every tick and zone dwell over it could read
+0. The FSM does not step on a stale pose in any state, holding or not, and
+its clean streaks restart (`EscalationFSM.unobserved`), so G7 / G8 need
+T_recover of fresh clean ticks once the pose is back. Rows carry
+`pose_age_ms`, `pose_stale` and `hold_reasons`, `metrics.json` has
+`pose_watchdog` (spells, stale ticks and seconds), a run with a stale spell
+is refused KPI grade, and `report.md` gives the P0 verdict over fresh-pose
+ticks only, with the seconds not observed.
 
 **One FSM per rail.** Since 2026-10-07 the Shield can also run the escalation
 FSM inside `filter()` (`Shield(escalation=...)`, on by default), and

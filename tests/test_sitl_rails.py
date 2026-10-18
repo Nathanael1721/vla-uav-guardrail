@@ -1226,6 +1226,34 @@ def test_the_pymavlink_rail_ticks_at_10_hz_however_long_the_work_takes():
         f"not {R.TICK * 1000:.0f}")
 
 
+def test_the_pymavlink_rail_still_lets_go_of_its_lock_after_an_overrun():
+    """Review of 2026-10-19 (P3): with the deadline pacing, a tick that
+    overran slept 0.0 between lock.release() and lock.acquire(). The lock is
+    not fair, so the loop could take it straight back, and under a sustained
+    overrun a REST hot-apply waiting on it could wait indefinitely (before,
+    every tick slept a full TICK). Here every tick's work takes 150 ms: each
+    sleep between ticks must still be a real one (LOCK_YIELD_S, 1 ms), and
+    only that - the deadline resyncs, so there is no catch-up and no slack
+    left over from a missed deadline."""
+    slept = []
+
+    def patch(R):
+        sleep = R.time.sleep
+
+        def overrunning(dt):
+            slept.append(dt)
+            sleep(dt + 0.15)
+        R.time = types.SimpleNamespace(time=R.time.time, sleep=overrunning)
+    _, _, rows, _, _, R = _fly_pymavlink_rail(["--shield", "off"], patch)
+    assert len(rows) > 20 and len(slept) > 20, (len(rows), len(slept))
+    assert min(slept) >= 0.001, (
+        f"the loop let go of its lock for {min(slept) * 1000:.1f} ms after an "
+        f"overrun ({sum(1 for s in slept if s <= 0.0)} of {len(slept)} sleeps were 0)")
+    floor = [s for s in slept if s < 0.01]
+    assert len(floor) >= len(slept) - 1 and max(floor) <= R.LOCK_YIELD_S + 1e-9, (
+        f"overrun ticks slept {sorted(set(round(s, 4) for s in slept))} s, not the floor")
+
+
 def _parse(parser, argv):
     """parse_known_args, with argparse's exit (status 2) as a test failure
     instead of the end of the run."""

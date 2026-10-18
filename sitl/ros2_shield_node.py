@@ -149,9 +149,13 @@ the trajectory, so zone dwell could read 0 for a flight that crossed a zone.
 If no pose arrives for `--pose-timeout-s` (default 1.0 s), the node holds
 the aircraft as for a quiet action stream, asks for the streams again at
 once, and the next pose releases the hold (GUIDED only once no hold reason
-is left, and never after a takeover). Rows carry `pose_age_ms` and
-`pose_stale`; metrics.json `pose_watchdog`; a run with a stale spell is not
-KPI-grade, and report.md says how long the checks did not see the aircraft.
+is left, and never after a takeover). The FSM does not step on a stale pose
+in any state - with the FSM in Loiter or a fail-safe there is no hold, and it
+went on stepping until the review of 2026-10-19 - and its clean streaks
+restart (EscalationFSM.unobserved), so a recovery (G7 / G8) needs T_recover
+of fresh clean ticks. Rows carry `pose_age_ms` and `pose_stale`;
+metrics.json `pose_watchdog`; a run with a stale spell is not KPI-grade, and
+report.md says how long the checks did not see the aircraft.
 
 TAKEOVER (2026-10-19). A takeover is any change to a mode this node did not
 ask for, out of GUIDED or out of a hold it asked for (BRAKE -> LAND), as on
@@ -1513,8 +1517,22 @@ if HAVE_ROS:
             # Once the autopilot has taken the aircraft (a GeoFence RTL), the
             # FSM no longer steps: its mode requests would fight the autopilot.
             # Nor while this node holds it for a quiet action or pose stream.
-            if self.fsm is not None and self.fsm_fault is None \
-                    and self.takeover is None and not self._holds:
+            # Nor on a stale pose at all: the node holds only while it is the
+            # one flying (_hold), so with the FSM in Loiter or a fail-safe a
+            # stale pose added no hold, and until the review of 2026-10-19 the
+            # FSM went on stepping on the frozen position - G8 (Loiter ->
+            # Normal) fired 1.1 s after the pose stopped, on a "cleared for
+            # 2 s" more than half measured there, sent GUIDED, and the pose
+            # hold sent LOITER on the next tick (LOITER, GUIDED, LOITER). The
+            # FSM is also told it missed the tick (EscalationFSM.unobserved),
+            # so its clean streaks do not run through the gap and G7 / G8
+            # need T_recover of fresh clean ticks after the pose comes back,
+            # not one.
+            fsm_live = (self.fsm is not None and self.fsm_fault is None
+                        and self.takeover is None)
+            if fsm_live and pose_stale:
+                self.fsm.unobserved()
+            if fsm_live and not self._holds and not pose_stale:
                 try:
                     stop_illegal = self.shield.state_is_unsafe(st)
                     # How far from legal: X6's progress and X7's losing-ground
@@ -1558,6 +1576,13 @@ if HAVE_ROS:
                 # (a stop where it is legal) while SET_MODE goes through, as
                 # the FSM's own hand-over does; then the autopilot holds.
                 setpoint = "pass" if hold_onset else "none"
+            elif pose_stale:
+                # No hold: the FSM has the aircraft in an autopilot mode
+                # (LOITER flown as BRAKE, RTL, LAND) and did not step on the
+                # frozen pose. Stream nothing, as the FSM itself does in those
+                # states; the default "pass" would have published a setpoint
+                # the row records as flown.
+                setpoint = "none"
             # After the FSM stepped, with ITS verdict (not a Shield-internal
             # FSM's): the audit and the flight log describe one state machine.
             audit_tick(self.audit, tick_no, decision, fsm_out=fsm_out,

@@ -602,9 +602,17 @@ def test_a_vla_identity_that_is_not_a_json_object_is_refused_not_fatal():
     assert node.vla_identity == good
     node._on_identity(N.String(data="[1]"))
     assert node.vla_identity == good, "a bad message replaced a good identity"
+    fences_before = list(node.fence_status)
     node._on_adapter(N.String(data="[1]"))              # the sibling callback
     refused = [e for e in _events(out) if e["kind"] == "vla_identity_refused"]
     assert len(refused) == 6, refused
+    # The sibling's refusal is its own record, and nothing reached the fence
+    # status (review of 2026-10-19: the call was made and nothing about it
+    # was checked, so its record could go without a test failing).
+    adapter_refused = [e for e in _events(out) if e["kind"] == "adapter_status_refused"]
+    assert len(adapter_refused) == 1 and adapter_refused[0]["data"] == "[1]", \
+        adapter_refused
+    assert node.fence_status == fences_before, node.fence_status
     node.start_mission()
     _fly(N, node, clk, 2)
     node._finish("test over")
@@ -678,6 +686,47 @@ def test_an_action_that_resumes_does_not_release_a_hold_the_pose_still_needs():
     _fly(N, node, clk, 1)
     assert _modes(N, node) == ["LOITER", "GUIDED"], _modes(N, node)
     assert node.rows[-1]["setpoint"] == "pass" and node.rows[-1]["hold_reasons"] == []
+
+
+def test_the_fsm_does_not_step_on_a_stale_pose_or_count_it_as_cleared():
+    """Review of 2026-10-19 (P1): the node holds for a stale pose only while
+    it is the one flying, so with the FSM in Loiter (BRAKE) a stale pose
+    added no hold and the FSM went on stepping on the frozen position. G8
+    (Loiter -> Normal, clear for T_recover = 2 s) sent GUIDED 1.1 s after
+    the pose stopped, and the pose hold sent LOITER on the next tick. With
+    the FSM merely paused, its clean streak would still run through the gap
+    and G8 would fire on the first fresh tick; it must wait T_recover of
+    fresh clean ticks."""
+    N, node, clk, out = _build([])                      # pose timeout 1.0 s
+    node.start_mission()
+    _mode(N, node, "GUIDED")
+    _fly(N, node, clk, 1)
+    node.fsm._enter(FSMState.LOITER, node._t())
+    node._request_mode("LOITER", "test: the FSM's Loiter")
+    _mode(N, node, "BRAKE")
+    clk.t += 0.05                                       # ticks off the threshold
+    node.standin_pose_on = False                        # the pose stops; actions go on
+    _fly(N, node, clk, 30)                              # 3 s of clean actions
+    assert _modes(N, node) == ["LOITER"], (
+        f"the FSM stepped on a frozen pose: {_modes(N, node)}")
+    moved = [e for e in _events(out) if e["kind"] == "fsm_transition"]
+    assert not moved, moved
+    assert node.fsm.state == FSMState.LOITER and not node._holds
+    stale = [r for r in node.rows if r["pose_stale"]]
+    assert len(stale) == 21, len(stale)                 # 1.15 s .. 3.15 s
+    # No FSM fields (the FSM did not step), nothing streamed.
+    assert all(r.get("fsm_state_after") is None and r["setpoint"] == "none"
+               and r["emitted_body"] is None for r in stale), \
+        [(r.get("fsm_state_after"), r["setpoint"]) for r in stale]
+    node.standin_pose_on = True                         # the pose comes back
+    _fly(N, node, clk, 19)                              # 1.8 s of fresh clean ticks
+    assert _modes(N, node) == ["LOITER"], (
+        f"G8 counted the stale spell as cleared: {_modes(N, node)}")
+    assert node.fsm.state == FSMState.LOITER
+    _fly(N, node, clk, 3)                               # past T_recover, fresh
+    assert _modes(N, node) == ["LOITER", "GUIDED"], _modes(N, node)
+    g8 = [e for e in _events(out) if e["kind"] == "fsm_transition"]
+    assert [e["edge"] for e in g8] == ["G8"], g8
 
 
 if __name__ == "__main__":

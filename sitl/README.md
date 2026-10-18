@@ -73,7 +73,12 @@ and choose **UDP**, port **14550**: the router sends every MAVLink message the
 autopilot emits to the Windows host on that port, beside MAVROS. Mission
 Planner sets stream rates for the link it shares with MAVROS; the Shield node
 re-asserts 10 Hz every 5 s and records the pose rate it actually got
-(`metrics.json` -> `pose_hz`).
+(`metrics.json` -> `pose_hz`). `pose_hz` is a whole-flight average and can
+hide a stall. Since 2026-10-19 each row carries `pose_age_ms` and
+`pose_stale`, and `metrics.json` -> `pose_watchdog` counts the stale spells.
+A pose older than `--pose-timeout-s` (default 1.0 s) holds the aircraft (or,
+with the FSM already holding it, stops the FSM stepping) and re-requests the
+streams at once. A run with such a spell is not KPI-grade.
 
 To check that the Windows port carries a whole flight (not only a packet
 count), run the stand-in listener on Windows during a flight, then check it

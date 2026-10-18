@@ -114,6 +114,9 @@ from mavlink_adapter_node import (DEFAULT_HOLD_MODE, HOLD_MODES,       # noqa: E
                                   policy_ceiling_m)
 
 TICK = 0.1
+# The shortest the control loop lets go of the rail's lock between two ticks,
+# even after an overrun, so a REST hot-apply waiting on it gets in (main()).
+LOCK_YIELD_S = 0.001
 MAX_S = 120
 REACH_M = 2.0
 # The grant's Safety Shield horizon: 5 s at 10 Hz, 50 future poses (3 s at
@@ -737,10 +740,16 @@ def main() -> int:
         slack = t_next - time.time()
         if slack < 0.0:
             t_next, slack = time.time(), 0.0
-        # Released even when there is no time left to sleep, so a REST
-        # hot-apply waiting on the lock still gets in between two ticks.
+        # Released even when there is no time left to sleep, and for at
+        # least LOCK_YIELD_S. The lock is not fair: with a zero sleep this
+        # thread took it straight back, so under a sustained overrun a REST
+        # hot-apply waiting on it could wait indefinitely (review of
+        # 2026-10-19; before the deadline pacing every tick slept a full
+        # TICK). A real sleep lets the scheduler run the waiting thread,
+        # which the release has already woken. The deadline is untouched,
+        # so the millisecond is not carried into the next tick's pacing.
         lock.release()
-        time.sleep(slack)
+        time.sleep(max(slack, LOCK_YIELD_S))
         lock.acquire()
     lock.release()
     if hot is not None:
