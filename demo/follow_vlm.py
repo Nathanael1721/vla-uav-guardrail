@@ -2185,8 +2185,12 @@ class FenceGuard:
         from shapely.geometry import Point
         o_scale, o_d, o_blocked = self._obstacle_gate(x, y, vx, vy)
         o_cause = "obstacle" if o_scale < 1.0 else None
-        # _obstacle_gate returns the clearance only when it brakes.
-        self.last_obstacle_d = o_d
+        # _obstacle_gate returns the clearance whenever its forecast hits a
+        # building, including a hit beyond brake_m (above 4 m/s at the default
+        # 12 m), where k > 1 and nothing brakes. guard_urgent() reads this as
+        # "the building the guard is braking for", so record it only then
+        # (review of f7611f9, 2026-10-19).
+        self.last_obstacle_d = o_d if o_scale < 1.0 else None
         polys = self.polys
         if not polys:
             self.last_fence_d = None

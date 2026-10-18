@@ -342,6 +342,32 @@ def test_inside_a_zones_stand_off_the_brake_bites_at_once():
     assert not F.guard_urgent(g, False)
 
 
+def test_a_building_hit_that_does_not_brake_is_not_urgent():
+    """_obstacle_gate returns the building clearance whenever its forecast
+    hits, also when the hit lies beyond brake_m and nothing brakes (k > 1,
+    scale 1.0). gate() stored it anyway, so guard_urgent() read 4.70 m
+    against the 5 m ring and flagged an urgent hold on a tick with no brake
+    at all - the limiter then applied the legacy braking floor for nothing
+    (review of f7611f9, 2026-10-19). Fails with last_obstacle_d = o_d."""
+    res, ox, oy = 0.5, -60.0, -29.8
+    occ = np.zeros((400, 120), dtype=bool)
+    xs, ys = ox + np.arange(400) * res, oy + np.arange(120) * res
+    occ[:, ys >= 5.2 - 1e-9] = True                  # the wall 4.70 m abeam
+    X, Y = np.meshgrid(xs, ys, indexing="ij")
+    occ[(X >= 18.0) & (X <= 21.0) & (Y >= 2.0)] = True   # a building 18 m ahead
+    g = _ZonesGuard(load_policy(ROOT / "policies" / "follow_car.yaml"),
+                    brake_m=12.0, stand_off_m=3.0, min_clearance_m=5.0,
+                    obstacle_map={"occ": occ, "res": res, "ox": ox, "oy": oy})
+    g.zones = []
+    for v in (5.0, 6.0, 7.0):
+        o_scale, o_d, _ = g._obstacle_gate(0.0, 0.5, v, 0.0)
+        assert o_scale == 1.0 and o_d < 5.0, (v, o_scale, o_d)  # the probe's premise
+        s, _fd, fb = g.gate(0.0, 0.5, v, 0.0)
+        assert s == 1.0 and not fb, (v, s, fb)
+        assert g.last_obstacle_d is None, (v, g.last_obstacle_d)
+        assert not F.guard_urgent(g, fb), v
+
+
 def test_an_ordinary_guard_brake_is_not_urgent_and_stays_ramped():
     """Outside every ring and stand-off, and not blocked, the brake is
     ramped: beside the 5.2 m wall (clearance 5.2 > 5) heading a few degrees
