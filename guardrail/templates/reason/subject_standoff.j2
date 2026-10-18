@@ -1,3 +1,5 @@
 {#- The subject's position is perception's job, so the mission fact available
-    at compile time is whether the task asks to follow anything at all. -#}
-{% if follow %}the mission text asks to follow a subject, so this binds to {{ who }}{% else %}the mission text does not ask to follow anything; this binds to {{ who }} only if one is tracked{% endif %}; the subject's position comes from perception at run time{% if time_fact %}; {{ time_fact }}{% endif %}
+    at compile time is whether the task asks to follow anything at all. A
+    class-specific rule binds to that one subject while it carries the class
+    (models.SubjectStandoff.binds), never to bystanders of the class. -#}
+{% if follow %}the mission text asks to follow a subject, so this binds to {{ who }}{% else %}the mission text does not ask to follow anything; this binds to {{ who }} only if one is tracked{% endif %}{% if cls %}, and only while it is classified {{ cls }}: any other {{ cls }} near the aircraft is outside this rule{% endif %}; the subject's position comes from perception at run time{% if time_fact %}; {{ time_fact }}{% endif %}

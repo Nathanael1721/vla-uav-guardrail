@@ -67,8 +67,16 @@ class VLABackend(Protocol):
 class AeroVLABackend:
     """Skeleton for a real camera+language VLA in the slot.
 
-    Fill the three TODOs. Everything downstream (Shield, MAVLink, KPIs) is
-    unchanged — that is the whole point of the swappable slot.
+    Fill the three TODOs: the model load in __init__, and inference plus the
+    raw -> Action4D mapping in `_infer`. Implement `_infer` (or override it in
+    a subclass); do not edit `act`, which owns the action-chunking cadence.
+    Everything downstream (Shield, MAVLink, KPIs) is unchanged — that is the
+    whole point of the swappable slot.
+
+    Until `_infer` is filled it RAISES on the first tick that would run the
+    model. Before 2026-10-19 it returned Action4D() (hover) on every tick
+    without a word, so a run wired to it looked like a real VLA run while the
+    aircraft hovered on zero commands.
     """
 
     def __init__(self, instruction: str, get_frame, model_dir: str,
@@ -97,16 +105,23 @@ class AeroVLABackend:
 
     def act(self, state: State) -> Action4D:
         self._tick += 1
-        # action chunking: only run the heavy model every N ticks, hold otherwise
-        if self._tick % self._every != 1 and self._last is not None:
+        # Action chunking: run the heavy model on ticks 1, 1+N, 1+2N, ... and
+        # hold its last action in between. Until 2026-10-19 the test was
+        # `tick % N != 1`, which for N == 1 (vla_hz above ~6.7, the 10 Hz
+        # contract rate included) is always true: the model never ran.
+        if (self._tick - 1) % self._every != 0:
             return self._last
-
         frame = self.get_frame()                     # HxWx3 RGB uint8
+        act = self._infer(frame, state)
+        self._last = act
+        return act
 
+    def _infer(self, frame, state: State) -> Action4D:
+        """One model call: camera frame + instruction -> WORLD-frame Action4D.
+        Raises until TODO 2 and 3 below are filled."""
         # TODO 2 — run the model. Example shape:
         #   inputs = self.proc(self.instruction, frame).to("cuda", torch.bfloat16)
         #   raw = self.model.predict_action(**inputs)   # model's own action vector
-        raw = None
 
         # TODO 3 — map the model's raw action onto OUR 4-D WORLD-frame contract.
         # Every VLA emits a slightly different action; adapt units + axes here,
@@ -122,12 +137,12 @@ class AeroVLABackend:
         # (CognitiveDrone / AeroVLA emit ~4-D body velocity — near 1:1 after
         # the rotation.)
         #   from .frames import from_body
-        #   act = from_body(float(raw[0]), float(raw[1]), float(raw[2]),
-        #                   float(raw[3]), yaw_deg=state.yaw_deg)
-        act = self._last if raw is None else raw     # placeholder until filled
-
-        self._last = act
-        return act
+        #   return from_body(float(raw[0]), float(raw[1]), float(raw[2]),
+        #                    float(raw[3]), yaw_deg=state.yaw_deg)
+        raise NotImplementedError(
+            "AeroVLABackend is a skeleton: fill TODO 1-3 (model load, inference, "
+            "raw -> Action4D via frames.from_body) before flying it; until then "
+            "it would hover on zero commands while the run looked like a VLA run")
 
     def refresh_fences(self, policy) -> None:
         # a camera VLA doesn't read the policy geometry directly — the Shield
@@ -137,6 +152,8 @@ class AeroVLABackend:
 
 # --------------------------------------------------------------------------- #
 # Factory: choose the slot occupant by name. Wire this into run_demo (--vla).
+# 'aerovla' raises NotImplementedError on its first model tick until the
+# AeroVLABackend skeleton above is filled.
 # --------------------------------------------------------------------------- #
 def make_backend(name: str, mission, policy, **kw) -> VLABackend:
     if name == "stub":
@@ -149,5 +166,6 @@ def make_backend(name: str, mission, policy, **kw) -> VLABackend:
         # requires get_frame + model_dir passed in kw (only in a sim/flight loop)
         return AeroVLABackend(instruction=mission.task_text,
                               get_frame=kw["get_frame"],
-                              model_dir=kw["model_dir"])
+                              model_dir=kw["model_dir"],
+                              vla_hz=kw.get("vla_hz", 3.0))
     raise ValueError(f"unknown VLA backend: {name!r}")

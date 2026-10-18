@@ -130,15 +130,22 @@ def test_a_lat_lon_zone_lands_in_the_policys_own_frame():
         {"lat": 25.001, "lon": 121.501}]}).status == 422
 
 
-def _layered_shield() -> Shield:
-    """A hard regulation-layer zone merged with a mission layer, flying."""
+def _layered_shield(tighten: bool = False) -> Shield:
+    """A hard regulation-layer zone merged with a mission layer, flying. With
+    `tighten` the mission layer also re-declares the zone, bigger (the
+    tightening the grant allows), so the merged rule is the mission's copy."""
     from guardrail.models import Policy, merge_layers
     reg = Policy.model_validate({"policy_id": "reg", "version": "0.1.0", "constraints": [
         {"id": "nfz-airport", "type": "polygon_fence", "layer": "regulation",
          "vertices": [{"x": 7, "y": 7}, {"x": 23, "y": 7}, {"x": 23, "y": 23},
                       {"x": 7, "y": 23}]}]})
-    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0", "constraints": [
-        {"id": "alt", "type": "altitude_envelope", "alt_min_m": 2, "alt_max_m": 6}]})
+    mis_rules = [{"id": "alt", "type": "altitude_envelope", "alt_min_m": 2, "alt_max_m": 6}]
+    if tighten:
+        mis_rules.append({"id": "nfz-airport", "type": "polygon_fence",
+                          "vertices": [{"x": 6, "y": 6}, {"x": 24, "y": 6},
+                                       {"x": 24, "y": 24}, {"x": 6, "y": 24}]})
+    mis = Policy.model_validate({"policy_id": "mis", "version": "0.1.0",
+                                 "constraints": mis_rules})
     sh = Shield(merge_layers([reg, mis]))
     sh.filter(State(x=0, y=15, up=4), Action4D(vx=4.0))
     return sh
@@ -162,6 +169,21 @@ def test_a_rest_event_cannot_relax_another_layers_hard_rule_or_claim_a_layer():
     assert e.status == 422 and "layer 'regulation' refused" in e.detail
     e = _err(A.apply_dynamic_nfz, sh, {**ZONE, "layer": "site"})
     assert e.status == 422 and "layer 'site' refused" in e.detail
+    assert sh.policy.generation == 0 and sh.events == []
+    d = sh.filter(State(x=0, y=15, up=4), Action4D(vx=4.0))
+    assert [v.rule_id for v in d.violations] == ["nfz-airport"] and d.repairs
+
+
+def test_a_rest_switch_off_of_a_tightened_regulation_zone_is_refused():
+    """Found 2026-10-18: once the mission layer had tightened the regulation
+    zone (a legitimate merge), the merged rule was labelled "mission" and a
+    plain REST switch-off was ACCEPTED (generation 1, switch_off); the 4 m/s
+    command then flew in unrepaired. The merged rule now remembers the
+    regulation copy it overrode (locked_by), so REST refuses with 422.
+    Shown failing on 1b95383."""
+    sh = _layered_shield(tighten=True)
+    e = _err(A.apply_time_window_switch, sh, {"target_id": "nfz-airport", "active": False})
+    assert e.status == 422 and "regulation-layer" in e.detail, (e.status, e.detail)
     assert sh.policy.generation == 0 and sh.events == []
     d = sh.filter(State(x=0, y=15, up=4), Action4D(vx=4.0))
     assert [v.rule_id for v in d.violations] == ["nfz-airport"] and d.repairs

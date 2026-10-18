@@ -489,6 +489,32 @@ def test_the_strict_checks_each_refuse_their_defect():
         _refused(lambda raw=raw: policy_from_raw(raw), word)
 
 
+def test_a_schedule_must_name_a_day_and_write_its_clock_as_hh_mm():
+    """`days: []` loaded, hashed and flew a P0 fence that was never in force
+    (Shield rule_status in_force False, CSP "(in force no day)"), and the
+    clock was range-checked on the total only, so "10:75" meant 11:15 and was
+    printed verbatim into the CSP. Shown failing before 2026-10-19: every
+    case below loaded."""
+    def with_window(rec):
+        return _raw(constraints=[{**OUR_FENCE, "valid_time": {"recurrence": rec}}])
+    _refused(lambda: policy_from_raw(with_window({"days": []})), "names no day")
+    for t in ("10:75", "23:60", "24:00"):
+        _refused(lambda t=t: policy_from_raw(with_window(
+            {"days": ["Mon"], "start_time": t, "end_time": "23:00"})), "out of range")
+    _refused(lambda: policy_from_raw(with_window(
+        {"days": ["Mon"], "start_time": "10:00", "end_time": "22:99"})), "out of range")
+    for t in ("7:30", " 7:30", "+7:30", "10:-5", "1_0:30", "07:3", "0730",
+              "١٠:30"):            # Arabic-Indic digits pass int()
+        _refused(lambda t=t: policy_from_raw(with_window(
+            {"days": ["Mon"], "start_time": t, "end_time": "23:00"})), "is not HH:MM")
+    # The forms the DSL has always meant still load: "24:00" ends the day,
+    # a window may wrap past midnight, and no `days` key means every day.
+    for rec in ({"days": ["Mon"], "start_time": "22:00", "end_time": "24:00"},
+                {"days": ["Sun"], "start_time": "22:00", "end_time": "06:00"},
+                {"start_time": "00:00", "end_time": "23:59"}):
+        policy_from_raw(with_window(rec))
+
+
 def test_the_conflict_lint_is_not_over_eager():
     """Disjoint bands are fine when the rules can never be in force together,
     or when one of them is soft. A lint that refused these would push authors
@@ -678,6 +704,81 @@ def test_a_mission_layer_may_not_relax_a_hard_regulation_rule():
                 "width_m": 10, "centerline": TUBE_LINE}]
     for rule in tighter:
         merge_layers([reg, _layer("mission", rule)])
+
+
+def test_a_redeclared_lower_rule_stays_locked_to_its_lower_layer():
+    """Found 2026-10-18: the switch and swap checks compared an event's layer
+    with the WINNING copy's only. A mission layer that re-declared a hard
+    regulation rule - identically, or tighter, both of which _not_looser
+    passes - made it a mission rule, and a mission switch-off of it, or a
+    500 m wide swap of a 20 m regulation corridor, then merged without a
+    word. Shown failing on 1b95383: all three merged. The winner now records
+    the overridden layer (`locked_by`), which survives the merge and a bundle
+    round trip, so the Shield's runtime guard sees it too
+    (tests/test_shield_events.py)."""
+    reg = _layer("regulation", REG_FENCE, REG_TUBE)
+    off = {"id": "lift", "type": "time_window_switch", "target_id": "airport",
+           "active": False}
+    for again in (REG_FENCE, {**REG_FENCE, "margin_m": 3.0}):     # identical, tighter
+        _refused(lambda again=again: merge_layers([reg, _layer("mission", again, off)]),
+                 "layer merge refused", "turns off 'airport'", "regulation layer")
+    wide = {"id": "wide", "type": "corridor_swap", "target_id": "tube", "width_m": 500,
+            "centerline": TUBE_LINE, "altitude_floor_m": 0, "altitude_ceiling_m": 300}
+    _refused(lambda: merge_layers([reg, _layer("mission", REG_TUBE, wide)]),
+             "layer merge refused", "widens the corridor", "regulation-layer corridor")
+    # The provenance is written where a hard copy was overridden, and only there.
+    m = merge_layers([reg, _layer("mission", {**REG_FENCE, "margin_m": 3.0},
+                                  _square("crane", 100, 100, 10))])
+    by = {c.id: c for c in m.constraints}
+    assert (by["airport"].layer, by["airport"].locked_by) == ("mission", ["regulation"])
+    assert by["tube"].locked_by is None and by["crane"].locked_by is None
+    back = B.check_bundle(B.write_bundle(m, _tmp("locked.tar.gz"), signer=None)).policy
+    assert {c.id: c.locked_by for c in back.constraints} == \
+        {c.id: c.locked_by for c in m.constraints}
+    assert back.policy_hash == m.policy_hash
+    # An unmerged policy is untouched: no field appears, no hash moves.
+    assert all(c.locked_by is None for c in load_policy(DEMO).constraints)
+    # What stays allowed: a layer may still relax its OWN tightening. A
+    # mission swap wider than the mission's 10 m copy but inside regulation's
+    # 20 m tube merges; regulation's tube is what it is held to.
+    mid = {"id": "mid", "type": "corridor_swap", "target_id": "tube", "width_m": 15,
+           "centerline": TUBE_LINE}
+    merge_layers([reg, _layer("mission", {**REG_TUBE, "width_m": 10}, mid)])
+    # A lock carried in from an earlier merge (its lower copy gone) still
+    # binds a later one: re-merging the result with a mission switch-off.
+    _refused(lambda: merge_layers([m, _layer("mission", off)]), "turns off 'airport'")
+
+
+def test_a_hand_written_locked_by_is_refused_and_a_merged_one_is_a_listed_extension():
+    """`locked_by` is authorable (policy_dsl.schema.json lists it) but it is
+    merge provenance. On an unmerged policy a hand-written value moved
+    policy_hash and locked the rule against every layer's event, its own
+    included, while the Shield's refusal named "a hard regulation-layer copy"
+    no file holds; `locked_by: []` moved the hash and did nothing. And
+    to_grant_form writes a merged rule's locked_by while
+    grant_form_extensions(), which lists what that form keeps beyond the
+    grant's, left it out. Shown failing before the 2026-10-19 review fix:
+    both hand-written forms passed the DSL entry point, and the extension
+    list had no locked_by entry."""
+    hand = _raw(constraints=[{**REG_FENCE, "locked_by": ["regulation"]}])
+    _refused(lambda: policy_from_raw(hand), "does not pass the DSL lint",
+             "airport: locked_by ['regulation']", "no layers_merged")
+    bare = {**_raw(constraints=[{**REG_FENCE, "layer": "mission", "locked_by": []}]),
+            "layers_merged": ["regulation", "mission"]}
+    _refused(lambda: policy_from_raw(bare), "airport: locked_by [] says nothing")
+    # What merge_layers writes still passes every entry point, reloads from
+    # the grant form, and is listed as a grant-form extension.
+    m = merge_layers([_layer("regulation", REG_FENCE),
+                      _layer("mission", {**REG_FENCE, "margin_m": 3.0})])
+    assert m.lint() == [] and m.constraints[0].locked_by == ["regulation"]
+    assert "airport.locked_by" in m.grant_form_extensions(), m.grant_form_extensions()
+    g = m.to_grant_form(origin=(25.0, 121.5))
+    assert g["constraints"][0]["locked_by"] == ["regulation"], g["constraints"][0]
+    back = policy_from_raw(json.loads(json.dumps(g)), runtime=False)
+    assert back.constraints[0].locked_by == ["regulation"]
+    assert "airport.locked_by" in back.grant_form_extensions()
+    # The null: a policy nobody merged has no such field and no such entry.
+    assert not any("locked_by" in e for e in load_policy(DEMO).grant_form_extensions())
 
 
 def test_layers_must_share_one_frame():
@@ -1106,10 +1207,19 @@ def test_every_manifest_names_both_hashes_and_both_are_verified():
     `policy_hash` of a bundle in this project's form is what it was.
 
     Shown failing on 10451bc: no manifest had `hashes`, and an edited
-    reference hash could not be noticed because none was recorded."""
-    ref_pol = load_policy(REF_DEMO, runtime=False)        # representable
+    reference hash could not be noticed because none was recorded.
+
+    The representable half needs the reference repository's demo document,
+    which is gitignored: on a clean clone (CI) that half is left out, the
+    metre and reference-form-bundle halves still run, and the test ends in
+    SKIP rather than PASS, so a partial run never reads as a full one. Until
+    2026-10-19 the unguarded load raised FileNotFoundError there instead."""
     metre = load_policy(DEMO)                              # not representable
-    for pol, want_ref in ((ref_pol, ref_pol.reference_hash()), (metre, None)):
+    cases = [(metre, None)]
+    if REF_DEMO.is_file():
+        ref_pol = load_policy(REF_DEMO, runtime=False)    # representable
+        cases.insert(0, (ref_pol, ref_pol.reference_hash()))
+    for pol, want_ref in cases:
         b = B.write_bundle(pol, _tmp("h.tar.gz"), signer=None)
         chk = B.check_bundle(b)
         assert chk.manifest["policy_hash"] == pol.policy_hash, "our hash did not move"
@@ -1161,6 +1271,9 @@ def test_every_manifest_names_both_hashes_and_both_are_verified():
     _refused(lambda: B.load_for_flight(forged, allow_unverified=True), f"hashes[{HASH_SCHEME}]")
     # The lock still pins every shipped policy under the hash it always had.
     assert B.check_lock() == [], B.check_lock()
+    if not REF_DEMO.is_file():
+        print(f"      (the representable half needs {REF_DEMO.relative_to(ROOT)})")
+        return SKIP
 
 
 def test_a_reference_form_bundle_is_verified_by_both_loaders():

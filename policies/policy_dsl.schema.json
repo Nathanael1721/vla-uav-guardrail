@@ -147,6 +147,26 @@
           "default": null,
           "title": "Layer"
         },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
+        },
         "priority": {
           "default": "P0",
           "enum": [
@@ -639,6 +659,26 @@
           "default": null,
           "title": "Layer"
         },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
+        },
         "margin_m": {
           "default": 1.0,
           "title": "Margin M",
@@ -948,6 +988,26 @@
           ],
           "default": null,
           "title": "Layer"
+        },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
         },
         "priority": {
           "default": "P0",
@@ -1276,6 +1336,26 @@
           "default": null,
           "title": "Layer"
         },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
+        },
         "priority": {
           "default": "P0",
           "enum": [
@@ -1403,6 +1483,26 @@
           ],
           "default": null,
           "title": "Layer"
+        },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
         },
         "min_distance_m": {
           "exclusiveMinimum": 0,
@@ -1669,6 +1769,26 @@
           "default": null,
           "title": "Layer"
         },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
+        },
         "margin_m": {
           "default": 1.0,
           "title": "Margin M",
@@ -1818,6 +1938,26 @@
           "default": null,
           "title": "Layer"
         },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
+        },
         "priority": {
           "default": "P0",
           "enum": [
@@ -1949,6 +2089,26 @@
           ],
           "default": null,
           "title": "Layer"
+        },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
         },
         "margin_m": {
           "default": 1.0,
@@ -2097,6 +2257,26 @@
           "default": null,
           "title": "Layer"
         },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
+        },
         "priority": {
           "default": "P0",
           "enum": [
@@ -2239,6 +2419,26 @@
           "default": null,
           "title": "Layer"
         },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
+        },
         "priority": {
           "default": "P0",
           "enum": [
@@ -2352,6 +2552,26 @@
           ],
           "default": null,
           "title": "Layer"
+        },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
         },
         "min_distance_m": {
           "exclusiveMinimum": 0,
@@ -2496,6 +2716,26 @@
           "default": null,
           "title": "Layer"
         },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
+        },
         "margin_m": {
           "default": 1.0,
           "title": "Margin M",
@@ -2626,6 +2866,26 @@
           ],
           "default": null,
           "title": "Layer"
+        },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
         },
         "priority": {
           "default": "P0",
@@ -2763,6 +3023,26 @@
           ],
           "default": null,
           "title": "Layer"
+        },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
         },
         "min_clearance_m": {
           "exclusiveMinimum": 0,
@@ -2927,6 +3207,26 @@
           "default": null,
           "title": "Layer"
         },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
+        },
         "margin_m": {
           "default": 1.0,
           "title": "Margin M",
@@ -3076,6 +3376,26 @@
           "default": null,
           "title": "Layer"
         },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
+        },
         "min_range_m": {
           "exclusiveMinimum": 0,
           "title": "Min Range M",
@@ -3197,6 +3517,26 @@
           ],
           "default": null,
           "title": "Layer"
+        },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
         },
         "priority": {
           "default": "P0",
@@ -3461,6 +3801,26 @@
           "default": null,
           "title": "Layer"
         },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
+        },
         "priority": {
           "default": "P0",
           "enum": [
@@ -3611,6 +3971,26 @@
           ],
           "default": null,
           "title": "Layer"
+        },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
         },
         "min_clearance_m": {
           "exclusiveMinimum": 0,
@@ -3898,6 +4278,26 @@
           "default": null,
           "title": "Layer"
         },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
+        },
         "margin_m": {
           "default": 1.0,
           "title": "Margin M",
@@ -4053,6 +4453,26 @@
           "default": null,
           "title": "Layer"
         },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
+        },
         "min_range_m": {
           "exclusiveMinimum": 0,
           "title": "Min Range M",
@@ -4202,6 +4622,26 @@
           ],
           "default": null,
           "title": "Layer"
+        },
+        "locked_by": {
+          "anyOf": [
+            {
+              "items": {
+                "enum": [
+                  "regulation",
+                  "site",
+                  "mission"
+                ],
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Locked By"
         },
         "priority": {
           "default": "P0",

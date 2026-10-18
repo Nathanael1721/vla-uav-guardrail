@@ -196,7 +196,7 @@ def as_dynamic_nfz(fence: PolygonFence, motion: dict | None = None) -> DynamicNF
             "altitude_ceiling_m": fence.altitude_ceiling_m,
             "margin_m": fence.margin_m, "constraint_type": fence.constraint_type,
             "priority": fence.priority, "violation_action": fence.violation_action}
-    for k in ("valid_time", "scope", "layer", "altitude_ref"):
+    for k in ("valid_time", "scope", "layer", "locked_by", "altitude_ref"):
         v = getattr(fence, k, None)
         if v is not None:
             data[k] = v.model_dump() if hasattr(v, "model_dump") else v
@@ -3042,19 +3042,44 @@ class Shield:
     # 2026-10-07 (review) the only validator was the DSL lint, which has no
     # relaxation check, so a mission-layer switch turned a hard regulation
     # zone off and the aircraft flew into it unrepaired.
+    #
+    # A merged rule also answers to the lower layers whose hard copy it
+    # overrode (models.ConstraintBase.locked_by, written by merge_layers).
+    # Until 2026-10-19 only the winning copy's layer counted: a mission layer
+    # that legitimately tightened a regulation zone made it a "mission" rule,
+    # and a plain REST switch-off (mission layer) then turned the regulation
+    # zone off. Such a rule can be relaxed by no single layer's event.
 
     @staticmethod
     def _cross_layer_hard(tgt, layer: str) -> bool:
-        return tgt.constraint_type == "hard" and tgt.effective_layer != layer
+        return tgt.constraint_type == "hard" and (
+            tgt.effective_layer != layer
+            or any(lv != layer for lv in (getattr(tgt, "locked_by", None) or ())))
+
+    @staticmethod
+    def _held_by(tgt) -> str:
+        """'a hard regulation-layer rule', or for a merged rule
+        'a hard mission-layer rule overriding a hard regulation-layer copy'."""
+        s = f"a hard {tgt.effective_layer}-layer rule"
+        locks = getattr(tgt, "locked_by", None) or ()
+        if locks:
+            s += f" overriding a hard {'/'.join(locks)}-layer copy"
+        return s
 
     def _guard_zone_edit(self, z, op: str, layer: str) -> None:
         if self._cross_layer_hard(z, layer):
+            if getattr(z, "locked_by", None):
+                how = ("no single layer's event may relax it; re-merge the layers, "
+                       "or spawn a new zone")
+            else:
+                how = (f"send the event from the {z.effective_layer} layer "
+                       f"(layer={z.effective_layer!r}, Python API only), or spawn a "
+                       f"new zone")
             raise LayerRelaxation(
-                f"{op} {z.id!r} refused: it is a hard {z.effective_layer}-layer zone "
+                f"{op} {z.id!r} refused: it is {self._held_by(z)} "
                 f"and this event is {layer}-layer; moving, reshaping or expiring it "
                 f"can relax it, and a rule may not be relaxed from another layer. "
-                f"Send the event from the {z.effective_layer} layer "
-                f"(layer={z.effective_layer!r}, Python API only), or spawn a new zone")
+                f"To change it, {how}")
 
     def hot_apply(self, rule, t: float | None = None) -> dict:
         """Apply one mid-flight event and return its record (op, rule, new
@@ -3249,10 +3274,10 @@ class Shield:
         layer = sw.effective_layer
         cons = list(self.policy.constraints)
         if not sw.active and tgt.constraint_type == "hard":
-            if tgt.effective_layer != layer:
+            if self._cross_layer_hard(tgt, layer):
                 raise LayerRelaxation(
-                    f"{sw.id}: a {layer}-layer switch may not turn off {tgt.id!r}, a hard "
-                    f"{tgt.effective_layer}-layer rule (Policy DSL page, layered "
+                    f"{sw.id}: a {layer}-layer switch may not turn off {tgt.id!r}, "
+                    f"{self._held_by(tgt)} (Policy DSL page, layered "
                     f"authoring: a rule may not be relaxed from another layer; "
                     f"models.merge_layers refuses the same switch at ingest)")
             # ...nor override another layer's switch that holds it on (the
@@ -3306,7 +3331,10 @@ class Shield:
         if self._cross_layer_hard(tgt, layer):
             # The corridor the swap puts in force must be provably no looser
             # than the hard one it replaces: the test models.merge_layers runs
-            # on a swap at ingest, on the same corridor it builds.
+            # on a swap at ingest, on the same corridor it builds. For a merged
+            # corridor (`locked_by`) the winner stands in for the overridden
+            # lower copies: it is no looser than each of them, and each check
+            # _not_looser makes is transitive.
             as_corr = Corridor(id=tgt.id, type="corridor",
                                constraint_type=sp.constraint_type,
                                priority=sp.priority, violation_action=sp.violation_action,
@@ -3316,9 +3344,11 @@ class Shield:
                                altitude_ceiling_m=sp.altitude_ceiling_m)
             why = _not_looser(as_corr, tgt)
             if why:
+                locks = getattr(tgt, "locked_by", None) or ()
+                over = f", overriding a hard {'/'.join(locks)}-layer copy," if locks else ""
                 raise LayerRelaxation(
                     f"{sp.id}: the swap {why}, relaxing hard {tgt.effective_layer}-layer "
-                    f"corridor {tgt.id!r} from the {layer} layer (Policy DSL page, "
+                    f"corridor {tgt.id!r}{over} from the {layer} layer (Policy DSL page, "
                     f"layered authoring; models.merge_layers refuses the same swap)")
         cons = list(self.policy.constraints)
         if sp.valid_time is None:

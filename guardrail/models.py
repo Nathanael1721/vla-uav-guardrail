@@ -169,13 +169,30 @@ class Recurrence(BaseModel):
 
     @model_validator(mode="after")
     def _parseable(self) -> "Recurrence":
-        for f in (self.start_time, self.end_time):
-            try:
-                mins = self._mins(f)
-            except ValueError:
+        # Until 2026-10-19 only the TOTAL was range-checked: "10:75" loaded as
+        # 11:15, "10:-5" as 09:55, " 7:30" and "+7:30" as 07:30 - each in
+        # force at a time the author never wrote, and printed verbatim into
+        # the CSP the pilot reads ("Mon 10:75-11:99"). And `days: []` loaded,
+        # hashed and flew a rule that is never in force: the Shield reported
+        # in_force False and the CSP "(in force no day)", the same "enforcing
+        # nothing" Policy.lint refuses for an empty `constraints` list. Here,
+        # not in lint, so scenario windows (guardrail/scenario_spec.py) and
+        # directly built models are held to it too. A validator, not a Field
+        # constraint, so the published JSON schema does not change.
+        if not self.days:
+            raise ValueError("the schedule names no day, so the rule would never be "
+                             "in force (omit valid_time for a rule that always is)")
+        for f, end in ((self.start_time, False), (self.end_time, True)):
+            # ASCII digits, two each (`\d` would also take other scripts' digits).
+            h, sep, m = f.partition(":")
+            if not (sep and len(h) == 2 and len(m) == 2
+                    and (h + m).isascii() and (h + m).isdigit()):
                 raise ValueError(f"time {f!r} is not HH:MM")
-            if not 0 <= mins <= 24 * 60:
-                raise ValueError(f"time {f!r} out of range")
+            # "24:00" is the end of the day (shield._hhmm_s reads it so), so it
+            # may end a window but not start one.
+            if not ((int(h) <= 23 and int(m) <= 59) or (end and f == "24:00")):
+                raise ValueError(f"time {f!r} out of range (00:00-23:59; 24:00 only "
+                                 f"as an end_time)")
         return self
 
     def active_at(self, when) -> bool:
@@ -290,6 +307,19 @@ class ConstraintBase(BaseModel):
     violation_action: ViolationAction = "repair"
     scope: Scope | None = None
     layer: Layer | None = None
+    # Provenance a layer merge leaves behind: the LOWER layers that wrote a
+    # hard copy of this rule which this (higher-layer, no looser) copy
+    # overrides. merge_layers computes it; absent on every rule nobody
+    # overrode, so no stored hash moves. Without it the merged rule carried
+    # only its winner's layer, and a mission copy of a regulation rule - an
+    # identical one, or the tightening the grant allows - could then be
+    # switched off or swapped wide by any mission event, at ingest or over
+    # REST (found 2026-10-18). The Shield refuses an event that would relax a
+    # hard rule unless the event's layer is the rule's layer AND every layer
+    # named here (shield.Shield._cross_layer_hard). Writing it by hand can
+    # only add refusals, never remove one - and Policy.lint refuses it on a
+    # policy no merge produced (no `layers_merged`), and as an empty list.
+    locked_by: list[Layer] | None = None
 
     # Time windows are a FIELD on every rule, not a constraint type of their
     # own. That is the reference DSL's shape (`policy-dsl.md`): a recurring
@@ -665,18 +695,27 @@ class ObstacleClearance(ConstraintBase):
     soft_margin_m: float = Field(default=0.0, ge=0)
 
 
-# NOTE (2026-09-08): `soft_margin_m` below is declared, hashed into
-# policy_hash, set to 2.0 in every flown follow policy - and read by the Shield
-# at no site (demo/policy_hud.py reads it, for the on-screen NEAR status only).
-# The Shield reads a soft_margin_m at exactly one site, guardrail/shield.py's
-# ObstacleClearance repair, and that is ObstacleClearance's own field. So this
-# one is a knob that changes the reproducibility hash and the HUD, not the
-# Shield's behaviour.
+# NOTE (2026-09-08, corrected 2026-10-19): `soft_margin_m` below is declared,
+# hashed into policy_hash and set to 2.0 in every flown follow policy. It has
+# three readers:
+#   * guardrail/repair.py PathRepair._standoff_waypoints - the stand-off detour
+#     waypoint sits on a circle of radius min_range_m + max(1.0, soft_margin_m),
+#     so it DOES change the Shield's commands, but only on a Shield built with
+#     path_repair=True (default False; no flying rail sets it today - the
+#     50-rule bench and tests/test_shieldcore_repair.py do);
+#   * demo/policy_hud.py - the on-screen NEAR status;
+#   * _not_looser below - lowering it counts as loosening when layers merge.
+# StandoffHold / StandoffRecover do not read it (the speed taper in
+# guardrail/shield.py's ObstacleClearance repair uses ObstacleClearance's own
+# soft_margin_m). On the flown rails (path_repair off) it therefore changes the
+# reproducibility hash and the HUD, not the Shield's commands. The 2026-09-08
+# version of this note said "read by the Shield at no site"; PathRepair
+# (2026-10-13) made that false.
 #
 # Left in place rather than deleted: removing it would change policy_hash on
 # every stored run and orphan the two replay bundles, for a field that costs
-# nothing. Recorded here so the next reader does not spend an afternoon looking
-# for where it takes effect, and so nobody tunes it expecting an outcome.
+# nothing. Recorded here so the next reader knows exactly where it takes
+# effect, and does not tune it on a path_repair=False rail expecting an outcome.
 class SubjectStandoff(ConstraintBase):
     """Keep at least `min_range_m` from the SUBJECT being followed.
 
@@ -1161,6 +1200,9 @@ class Policy(BaseModel):
             if c.valid_time is not None:
                 why.append(f"{c.id}: valid_time (the reference model has no such "
                            f"field and would drop it without a word)")
+            if c.locked_by is not None:
+                why.append(f"{c.id}: locked_by (layer-merge provenance; not a field "
+                           f"of the reference)")
         return why
 
     def reference_ir(self) -> dict | None:
@@ -1319,6 +1361,25 @@ class Policy(BaseModel):
                 if c.effective_layer not in self.layers_merged:
                     out.append(f"{c.id}: layer {c.effective_layer!r} is not in "
                                f"layers_merged {self.layers_merged}")
+        # `locked_by` is merge provenance: merge_layers writes it, on a merged
+        # policy (`layers_merged` set), and only as a non-empty list. Until the
+        # 2026-10-19 review a hand-written value on an unmerged policy was
+        # accepted: it moved policy_hash and made the rule unswitchable from
+        # every layer, its own included, while the Shield's refusal spoke of
+        # "overriding a hard regulation-layer copy" that no file holds; and
+        # `locked_by: []` moved the hash and did nothing at all.
+        for c in self.constraints:
+            if c.locked_by is None:
+                continue
+            if self.layers_merged is None:
+                out.append(f"{c.id}: locked_by {c.locked_by} on a policy no layer "
+                           f"merge produced (no layers_merged): it is the "
+                           f"provenance merge_layers records, and written by hand "
+                           f"it locks the rule against every layer's event and "
+                           f"names an overridden copy that does not exist")
+            elif not c.locked_by:
+                out.append(f"{c.id}: locked_by [] says nothing (absent means no "
+                           f"lower hard copy was overridden) but changes policy_hash")
         return out
 
     # ------------------------------------------------------------------ #
@@ -1460,7 +1521,8 @@ class Policy(BaseModel):
 
         Loading the result gives the same rules. Fields the grant has no place
         for are kept so that is true, and `grant_form_extensions()` lists them:
-        `origin`, a non-zero `margin_m`, and this project's two own rule types.
+        `origin`, a non-zero `margin_m`, a merged rule's `locked_by`, and this
+        project's two own rule types.
 
         A metre point needs a WGS84 anchor for the frame's (0, 0): the policy's
         own `origin`, else the `origin` argument; with neither this raises,
@@ -1505,6 +1567,11 @@ class Policy(BaseModel):
         for c in self.constraints:
             if getattr(c, "margin_m", 0.0) not in (0.0, None):
                 out.append(f"{c.id}.margin_m")
+            # Layer-merge provenance (ConstraintBase.locked_by): _grant_rule
+            # writes it, the grant's form has no such field. Missing from this
+            # list until the 2026-10-19 review.
+            if c.locked_by is not None:
+                out.append(f"{c.id}.locked_by")
             if c.type not in GRANT_TYPES:
                 out.append(f"{c.id}: type {c.type}")
         return out
@@ -1563,6 +1630,8 @@ def _grant_rule(c, ll) -> dict:
                          "scope": c.effective_scope, "priority": c.priority,
                          "layer": c.effective_layer,
                          "violation_action": canonical_action(c.violation_action)}
+    if c.locked_by is not None:            # merge provenance (ConstraintBase)
+        r["locked_by"] = list(c.locked_by)
     if c.valid_time is not None:
         r["valid_time"] = c.valid_time.model_dump(mode="json", exclude_none=True)
     ref = getattr(c, "altitude_ref", None) or "AGL"
@@ -1594,7 +1663,7 @@ def _grant_rule(c, ll) -> dict:
     else:                       # obstacle_clearance, subject_standoff: our own
         own = c.model_dump(mode="json", exclude_none=True)
         for k in ("id", "type", "constraint_type", "scope", "priority", "layer",
-                  "violation_action", "valid_time"):
+                  "locked_by", "violation_action", "valid_time"):
             own.pop(k, None)
         r.update(own)
     m = getattr(c, "margin_m", 0.0)
@@ -1845,9 +1914,9 @@ def _not_looser(hi, lo) -> str | None:
             return "widens the corridor (the new tube is not inside the old)"
         return None
     # dynamic_nfz, time_window_switch, corridor_swap: only an identical rule
-    # (bar its layer) is provably not looser.
-    a = hi.model_dump(exclude={"layer"})
-    b = lo.model_dump(exclude={"layer"})
+    # (bar its layer and merge provenance) is provably not looser.
+    a = hi.model_dump(exclude={"layer", "locked_by"})
+    b = lo.model_dump(exclude={"layer", "locked_by"})
     return None if a == b else f"changes a {hi.type} rule (only an identical one is allowed)"
 
 
@@ -1860,12 +1929,17 @@ def merge_layers(policies: list[Policy], *, policy_id: str | None = None,
     taken from the highest. A higher layer may tighten a lower layer's HARD
     rule but never relax it - wider band, smaller zone, soft instead of hard,
     lower priority, weaker breach action, a new schedule - and a
-    time_window_switch may not turn off another layer's hard rule. Anything
+    time_window_switch may not turn off another layer's hard rule, nor a
+    corridor_swap loosen one. "Another layer's" means ANY layer that wrote a
+    hard copy of the target, not only the winning copy's layer. Anything
     that cannot be shown to be at least as strict is refused (ValueError,
     naming every case). A lower layer's soft rule may be relaxed.
 
     The result is a single policy, hashed post-merge as the grant says, with
-    `layers_merged` listing the layers present. Its id and version default to
+    `layers_merged` listing the layers present. A winning rule that overrode
+    a lower layer's hard copy records that layer in `locked_by`, so the
+    provenance survives the merge and the Shield's hot-apply guard refuses
+    the same relaxations at runtime. Its id and version default to
     the LAST policy's (pass them in regulation, site, mission order). Policies
     must agree on `origin`; geographic points are re-projected in the merged
     policy's own frame. Layers that mix metre and lat/lon points must state
@@ -1919,6 +1993,15 @@ def merge_layers(policies: list[Policy], *, policy_id: str | None = None,
         by_id.setdefault(c.id, []).append((rank[c.effective_layer], pos, c))
     problems: list[str] = []
     winners = []
+    # Per rule id: every HARD copy written in any layer, and the lock layers
+    # an input carried in from an earlier merge (its lower copies are gone).
+    # The switch and swap checks below test an event against ALL of them.
+    # Until 2026-10-19 they tested the winning copy only, so a mission layer
+    # that re-declared a regulation rule (an identical copy passes
+    # _not_looser) made it a "mission" rule, and a mission switch then turned
+    # it off, or a mission swap widened it 10 m -> 500 m, unrefused.
+    hard_copies: dict[str, list[Any]] = {}
+    carried: dict[str, set[str]] = {}
     for rid, cands in by_id.items():
         layers = [lv for lv, _, _ in cands]
         dup = [LAYER_ORDER[lv] for lv in set(layers) if layers.count(lv) > 1]
@@ -1934,31 +2017,57 @@ def merge_layers(policies: list[Policy], *, policy_id: str | None = None,
             if why:
                 problems.append(f"{rid}: the {top.effective_layer} layer {why}, "
                                 f"relaxing a hard {lower.effective_layer}-layer rule")
+        hard_copies[rid] = [c for _, _, c in cands if c.constraint_type == "hard"]
+        carried[rid] = {lv for _, _, c in cands for lv in (c.locked_by or ())}
+        # The provenance survives the merge (ConstraintBase.locked_by), so the
+        # Shield's runtime guard sees the overridden hard copies too. Any value
+        # an input carried in is kept: it can only add refusals. (Only an
+        # earlier merge's result can carry one: the per-layer lint above
+        # refuses locked_by on a layer that names no layers_merged.)
+        locks = carried[rid] | {c.effective_layer for _, _, c in cands[:-1]
+                                if c.constraint_type == "hard"}
+        locks.discard(top.effective_layer)
+        if locks:
+            top = top.model_copy(update={"locked_by": sorted(locks, key=rank.get)})
         winners.append((cands[-1][0], cands[-1][1], top))
     win_by_id = {c.id: c for _, _, c in winners}
     for _, _, c in winners:
+        layer = c.effective_layer
         if isinstance(c, TimeWindowSwitch) and not c.active:
-            tgt = win_by_id.get(c.target_id)
-            if tgt is not None and tgt.constraint_type == "hard" and \
-                    tgt.effective_layer != c.effective_layer:
-                problems.append(f"{c.id}: a {c.effective_layer}-layer switch turns off "
-                                f"{tgt.id!r}, a hard {tgt.effective_layer}-layer rule")
+            held = sorted({v.effective_layer for v in hard_copies.get(c.target_id, ())}
+                          | carried.get(c.target_id, set()), key=rank.get)
+            other = [lv for lv in held if lv != layer]
+            if other:
+                problems.append(f"{c.id}: a {layer}-layer switch turns off "
+                                f"{c.target_id!r}, a hard rule of the "
+                                f"{'/'.join(other)} layer")
         if isinstance(c, CorridorSwap):
             tgt = win_by_id.get(c.target_id)
-            if tgt is not None and isinstance(tgt, Corridor) and \
-                    tgt.constraint_type == "hard" and \
-                    tgt.effective_layer != c.effective_layer:
-                as_corr = Corridor(id=tgt.id, type="corridor",
-                                   constraint_type=c.constraint_type,
-                                   priority=c.priority, violation_action=c.violation_action,
-                                   valid_time=c.valid_time, altitude_ref=c.altitude_ref,
-                                   centerline=c.centerline, width_m=c.width_m,
-                                   altitude_floor_m=c.altitude_floor_m,
-                                   altitude_ceiling_m=c.altitude_ceiling_m)
-                why = _not_looser(as_corr, tgt)
+            if tgt is None or not isinstance(tgt, Corridor):
+                continue
+            # Each hard copy of another layer than the swap's (the swap may
+            # relax its own layer's tightening, not what lies beneath it)...
+            against = [v for v in hard_copies.get(c.target_id, ())
+                       if isinstance(v, Corridor) and v.effective_layer != layer]
+            # ...and, for a lock carried in from an earlier merge whose copy is
+            # no longer here, the winner in its place (no looser than that
+            # copy, so this may refuse more than needed, never less). A winner
+            # of another layer is in the list already.
+            if tgt.constraint_type == "hard" and tgt.effective_layer == layer and \
+                    any(lv != layer for lv in carried.get(c.target_id, ())):
+                against.append(tgt)
+            as_corr = Corridor(id=tgt.id, type="corridor",
+                               constraint_type=c.constraint_type,
+                               priority=c.priority, violation_action=c.violation_action,
+                               valid_time=c.valid_time, altitude_ref=c.altitude_ref,
+                               centerline=c.centerline, width_m=c.width_m,
+                               altitude_floor_m=c.altitude_floor_m,
+                               altitude_ceiling_m=c.altitude_ceiling_m)
+            for v in against:
+                why = _not_looser(as_corr, v)
                 if why:
                     problems.append(f"{c.id}: the swap {why}, relaxing hard "
-                                    f"{tgt.effective_layer}-layer corridor {tgt.id!r}")
+                                    f"{v.effective_layer}-layer corridor {v.id!r}")
     if problems:
         raise ValueError("layer merge refused:\n  - " + "\n  - ".join(problems))
     winners.sort(key=lambda t: (t[0], t[1]))

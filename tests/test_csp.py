@@ -1115,6 +1115,33 @@ def test_corridor_clearance_and_standoff_explanations_change_with_the_mission():
     assert "does not ask to follow" in fly.relevance_explanations["standoff-any"]
 
 
+def test_a_class_specific_standoff_says_it_binds_to_the_followed_subject_only():
+    """models.SubjectStandoff.binds: "pedestrian" binds only while the ONE
+    tracked subject is classified pedestrian; bystanders are never protected
+    (the Shield holds one subject). The CSP's reason said "so this binds to
+    any pedestrian": in the 14 Oct red-car flight (subject_class car,
+    standoff-pedestrian 0 bound ticks) it justified a 10 m bubble around
+    every person that nothing enforced. Shown failing before 2026-10-19.
+    The "*" rule's reason is unchanged, byte for byte."""
+    _need()
+    cc = ConstraintCompiler(load_policy(ROOT / "policies" / "follow_car_citylife.yaml"))
+    for text in ("follow the red car to (30, 30)", "fly to (30, 30)"):
+        why = cc.compile_csp(_mission(text=text), now=None).relevance_explanations
+        ped = why["standoff-pedestrian"]
+        assert "any pedestrian" not in ped, ped
+        assert "the subject being followed" in ped, ped
+        assert "only while it is classified pedestrian" in ped, ped
+        assert "any other pedestrian near the aircraft is outside this rule" in ped, ped
+        follow = text.startswith("follow")
+        assert why["standoff-any"] == (
+            "the mission text asks to follow a subject, so this binds to any "
+            "followed subject; the subject's position comes from perception at "
+            "run time" if follow else
+            "the mission text does not ask to follow anything; this binds to any "
+            "followed subject only if one is tracked; the subject's position "
+            "comes from perception at run time"), why["standoff-any"]
+
+
 # --------------------------------------------------------------------------- #
 # WP2-08: Jinja2 templates, and backward compatibility
 # --------------------------------------------------------------------------- #
@@ -1461,6 +1488,152 @@ def test_a_corridor_altitude_band_bounds_the_action_set():
         assert "corridor-river-east" in str(e) and "low" in str(e), e
     else:
         raise AssertionError("a 30-80 m corridor and a 5-20 m envelope compiled")
+
+
+# A day band and a night band: no height in common, never in force together.
+DAY_NIGHT = {"policy_id": "day-night", "version": "0.1.0", "constraints": [
+    {"id": "day-band", "type": "altitude_envelope", "alt_min_m": 10, "alt_max_m": 30,
+     "valid_time": {"recurrence": {"start_time": "08:00", "end_time": "17:59"}}},
+    {"id": "night-band", "type": "altitude_envelope", "alt_min_m": 40,
+     "alt_max_m": 60,
+     "valid_time": {"recurrence": {"start_time": "18:00", "end_time": "07:59"}}}]}
+
+
+def test_bands_that_are_never_in_force_together_do_not_crash_the_compiler():
+    """A day band (10-30 m, 08:00-17:59) and a night band (40-60 m,
+    18:00-07:59) never overlap in height and never bind at the same instant;
+    the lint accepts the pair (models._envelope_conflicts checks
+    _times_overlap). _action_sets intersected every in-scope band whatever
+    its schedule, so compile_csp raised a bare ValueError with no clock - and
+    coverage_report, which catches only CSPBudgetExceeded, died on the one
+    file - and with a clock in the seconds before 18:00, while the Shield
+    enforced each band at its own time. Shown failing before 2026-10-19: the
+    17:59:58 compile and the report both raised."""
+    _need()
+    import yaml
+    day_night = DAY_NIGHT
+    pol = Policy.model_validate(day_night)
+    assert pol.lint() == [] and pol.flight_problems() == []
+    cc = ConstraintCompiler(pol)
+    noon = cc.compile_csp(_mission(), now=MONDAY_0800.replace(hour=12))
+    assert noon.allowed_action_set.altitude_band_m_agl == (10.0, 30.0), noon
+    # The 5 s window crosses 18:00: the band in force NOW is published (never a
+    # hull - 30-40 m is allowed by no rule), the upcoming one stays named.
+    edge = cc.compile_csp(_mission(), now=MONDAY_0800.replace(hour=17, minute=59,
+                                                              second=58))
+    a = edge.allowed_action_set
+    assert a.altitude_band_m_agl == (10.0, 30.0), a
+    assert set(a.source_rules) == {"day-band", "night-band"}, a.source_rules
+    night = cc.compile_csp(_mission(), now=MONDAY_0800.replace(hour=22))
+    assert night.allowed_action_set.altitude_band_m_agl == (40.0, 60.0)
+    # No clock: every rule is read as in force (compile_csp's documented
+    # reading), so the clash is real - and said by its own ValueError class.
+    try:
+        cc.compile_csp(_mission(), now=None)
+    except K.CSPAltitudeConflict as e:
+        assert isinstance(e, ValueError) and e.when is None, e
+        assert e.rule_ids == ["day-band", "night-band"], e.rule_ids
+    else:
+        raise AssertionError("two clashing bands compiled with no clock")
+    # Two bands in force at the SAME instant still clash, clock or not.
+    both = Policy.model_validate({**day_night, "constraints": [
+        day_night["constraints"][0],
+        {**day_night["constraints"][1], "valid_time": None}]})
+    try:
+        ConstraintCompiler(both).compile_csp(_mission(),
+                                             now=MONDAY_0800.replace(hour=12))
+    except K.CSPAltitudeConflict as e:
+        assert e.when == MONDAY_0800.replace(hour=12), e.when
+        assert "day-band" in str(e) and "night-band" in str(e), e
+    else:
+        raise AssertionError("two bands in force together compiled")
+    # The folder-wide report lists the file and scores the others as before.
+    d = Path(tempfile.mkdtemp())
+    survey_src = SURVEY.read_text(encoding="utf-8")
+    (d / "corridor_survey.yaml").write_text(survey_src, encoding="utf-8")
+    alone = K.coverage_report(d)["totals"]
+    (d / "day_night.yaml").write_text(yaml.safe_dump(day_night, sort_keys=False),
+                                      encoding="utf-8")
+    rep = K.coverage_report(d)
+    t = rep["totals"]
+    assert t["n_policies"] == 2 and t["n_compiled"] == 1, t
+    assert t["n_altitude_conflict"] == 1, t
+    bad = rep["altitude_conflict"][0]
+    assert bad["policy_id"] == "day-night", bad
+    assert bad["rule_ids"] == ["day-band", "night-band"], bad
+    assert [r["policy_id"] for r in rep["rows"]] == [load_policy(SURVEY).policy_id]
+    for k in ("n_p0_in_scope", "n_p0_covered", "p0_coverage", "baseline_n_p0_covered"):
+        assert t[k] == alone[k], (k, t[k], alone[k])
+
+
+def test_the_report_printout_names_the_file_an_altitude_conflict_left_out():
+    """coverage_report lists a CSPAltitudeConflict file under
+    `altitude_conflict`, but the CLI printout (`python -m guardrail.compiler
+    report`) printed the rows, the budget failures and the unflyable files
+    only: the summary read "over 1 of 2 policies" and nothing said which file
+    was missing or why. Shown failing before the 2026-10-19 review fix: no
+    line named day_night. The null is the same folder without the clashing
+    file, whose printout must not mention a conflict."""
+    _need()
+    import contextlib
+    import io
+    import yaml
+
+    def printout(d):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = K._main(["report", "--policies", str(d)])
+        assert rc == 0, buf.getvalue()[-2000:]
+        return buf.getvalue()
+
+    d = Path(tempfile.mkdtemp())
+    (d / "corridor_survey.yaml").write_text(SURVEY.read_text(encoding="utf-8"),
+                                            encoding="utf-8")
+    assert "CSPAltitudeConflict" not in printout(d)
+    (d / "day_night.yaml").write_text(yaml.safe_dump(DAY_NIGHT, sort_keys=False),
+                                      encoding="utf-8")
+    text = printout(d)
+    row = [ln for ln in text.splitlines() if ln.startswith("day_night ")]
+    assert len(row) == 1, text
+    assert "CSPAltitudeConflict" in row[0], row
+    assert "day-band 10-30 m" in row[0] and "night-band 40-60 m" in row[0], row
+    assert "over 1 of 2 policies" in text, text
+    assert "1 policy file(s) raised CSPAltitudeConflict" in text, text
+
+
+def test_a_window_that_starts_in_a_gap_between_bands_still_publishes_a_band():
+    """With a lookahead over a minute the window can open in a gap between
+    two schedules and then cross both: nothing at 07:58:30, a 10-30 m band
+    07:59-08:00, a 40-60 m band from 08:01 (180 s lookahead). The two bands
+    have no height in common, so _action_sets falls back to one instant's
+    band - and looked only at `now`, where no band holds, so it published
+    none: "unbounded" by AllowedActionSet's own definition (None only when no
+    rule bounds altitude) while both bands bound the window. Shown failing
+    before the 2026-10-19 review fix: altitude_band_m_agl was None. It is now
+    the band of the next instant one holds, never a hull. The null: a 5 s
+    window in the same gap puts neither band in scope, and None is then
+    right."""
+    _need()
+    gap = Policy.model_validate({"policy_id": "gap", "version": "0.1.0", "constraints": [
+        {"id": "early-band", "type": "altitude_envelope", "alt_min_m": 10,
+         "alt_max_m": 30,
+         "valid_time": {"recurrence": {"start_time": "07:59", "end_time": "08:00"}}},
+        {"id": "late-band", "type": "altitude_envelope", "alt_min_m": 40,
+         "alt_max_m": 60,
+         "valid_time": {"recurrence": {"start_time": "08:01", "end_time": "08:30"}}}]})
+    assert gap.lint() == [] and gap.flight_problems() == []
+    cc = ConstraintCompiler(gap)
+    in_gap = MONDAY_0800.replace(hour=7, minute=58, second=30)
+    a = cc.compile_csp(_mission(), lookahead_s=180.0, now=in_gap).allowed_action_set
+    assert a.altitude_band_m_agl == (10.0, 30.0), a
+    assert set(a.source_rules) == {"early-band", "late-band"}, a.source_rules
+    # once the early band holds at `now` it is the one published, as before
+    a = cc.compile_csp(_mission(), lookahead_s=180.0,
+                       now=MONDAY_0800.replace(second=30)).allowed_action_set
+    assert a.altitude_band_m_agl == (10.0, 30.0), a
+    # the null: nothing in scope, nothing bounds altitude in this window
+    a = cc.compile_csp(_mission(), lookahead_s=5.0, now=in_gap).allowed_action_set
+    assert a.altitude_band_m_agl is None and a.source_rules == [], a
 
 
 def test_several_envelopes_intersect_to_the_tightest_bounds():

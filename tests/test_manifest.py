@@ -30,6 +30,11 @@ from guardrail.manifest import (MAX_HEADING_ERR_DEG, MIN_DET_HZ,      # noqa: E4
 
 SCENE = ROOT / "demo" / "pas_config" / "scene_semantic.jsonc"
 GOOD_METRICS = {"det_hz": 4.5, "start_heading_err_deg": 1.5}
+# A test that cannot run here returns SKIP, and the runner below counts it as
+# skipped, not passed (as tests/test_vla_backends.py does). Until the
+# 2026-10-19 review the two temp-git-repo tests printed "SKIP" and returned
+# None, so on a host without git they were counted as PASS.
+SKIP = "SKIP"
 
 
 def _man(**kw):
@@ -65,17 +70,47 @@ def test_sim_speedup_is_derived_from_the_scene_not_asserted():
     assert sim_speedup_from_scene(SCENE) == 1.0
 
 
-def test_a_fast_clock_is_detected_and_disqualifies_the_run(tmp=Path("_t_fastclock.jsonc")):
-    """`sim_speedup=1.0` is mandatory for a KPI-bearing run, so a scene running
-    faster than real time has to be caught from the config."""
+def test_a_non_real_time_clock_is_detected_and_disqualifies_the_run(
+        tmp=Path("_t_fastclock.jsonc")):
+    """`sim_speedup=1.0` is mandatory for a KPI-bearing run, so a scene clock
+    that runs slower or faster than real time has to be caught from the
+    config - and recorded the right way up. Each wall interval of
+    real-time-update-rate advances the sim by step-ns, so the speed-up is
+    step / rate (sim seconds per wall second, as ArduPilot's SIM_SPEEDUP).
+
+    Shown failing before 2026-10-19: the ratio was rate / step, and this test
+    pinned 3 ms steps every 12 ms - a 0.25x slow-motion clock - as 4.0, "a
+    fast clock"."""
     try:
-        tmp.write_text(json.dumps({
-            "id": "fast", "clock": {"type": "steppable", "step-ns": 3000000,
-                                    "real-time-update-rate": 12000000}}),
-            encoding="utf-8")
-        assert sim_speedup_from_scene(tmp) == 4.0
-        ok, why = is_kpi_grade(_man(scene_path=str(tmp)), GOOD_METRICS)
-        assert not ok and any("sim_speedup" in r for r in why), why
+        for step, rate, want in ((3000000, 12000000, 0.25), (12000000, 3000000, 4.0),
+                                 (1500000, 3000000, 0.5)):
+            tmp.write_text(json.dumps({
+                "id": "clock", "clock": {"type": "steppable", "step-ns": step,
+                                         "real-time-update-rate": rate}}),
+                encoding="utf-8")
+            assert sim_speedup_from_scene(tmp) == want, (step, rate)
+            ok, why = is_kpi_grade(_man(scene_path=str(tmp)), GOOD_METRICS)
+            assert not ok and any("sim_speedup" in r for r in why), why
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def test_a_scene_with_trailing_and_block_comments_still_resolves(
+        tmp=Path("_t_commentclock.jsonc")):
+    """Project AirSim's own example scenes put a // comment after a value.
+    Only whole-line // comments were stripped before 2026-10-19, so such a
+    scene read as "unresolved" (fail-closed, but wrong); the manifest now
+    strips comments the way scene_controllers does (_strip_jsonc), and a
+    "//" inside a string survives."""
+    try:
+        tmp.write_text('{\n  "id": "c", /* block */ "name": "http://x//y",\n'
+                       '  "clock": {"type": "steppable",\n'
+                       '            "step-ns": 3000000, // 3 ms\n'
+                       '            "real-time-update-rate": 3000000 /* same */}\n}\n',
+                       encoding="utf-8")
+        assert sim_speedup_from_scene(tmp) == 1.0
+        tmp.write_text('["not", "a", "scene"]', encoding="utf-8")
+        assert sim_speedup_from_scene(tmp) is None        # not an AttributeError
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -885,6 +920,177 @@ def test_an_unknown_model_id_still_says_unresolved():
     assert "unresolved" in model_hash("no.such.module.Thing")
 
 
+def test_an_ambiguous_hf_snapshot_is_unresolved_and_not_kpi_grade():
+    """Two snapshots of one model in the HuggingFace cache (what a re-download
+    after an upstream update leaves) do not say which weights ran.
+    hf_snapshot_revision says "ambiguous:...", but model_hash cut that to
+    "org/m@ambiguous:aaaaaa" and is_kpi_grade, which refuses "unresolved",
+    passed it. Shown failing before 2026-10-19: the gate returned (True, [])."""
+    import os
+    import shutil as _sh
+    import tempfile
+    from guardrail.manifest import model_hash
+    home = Path(tempfile.mkdtemp(prefix="hfhome_"))
+    snaps = home / "hub" / "models--org--m" / "snapshots"
+    (snaps / "aaaaaaaa1111").mkdir(parents=True)
+    old = os.environ.get("HF_HOME")
+    os.environ["HF_HOME"] = str(home)
+
+    def gate(h):
+        return is_kpi_grade({**_dev_run(), "code_revision": "abc123abc123",
+                             "vla_model_hash": h}, GOOD_METRICS, dev_waiver="x")
+    try:
+        one = model_hash("org/m")                  # the control: one snapshot
+        assert one == "org/m@aaaaaaaa1111", one
+        assert gate(one) == (True, [])
+        (snaps / "bbbbbbbb2222").mkdir()
+        two = model_hash("org/m")
+        assert "unresolved" in two and "aaaaaaaa" in two and "bbbbbbbb" in two, two
+        ok, why = gate(two)
+        assert not ok and any(r.startswith("vla_model_hash did not resolve")
+                              for r in why), why
+        # Named weights pin the bytes; the cache's ambiguity is not mixed in,
+        # so adding a third, unrelated snapshot does not move the hash.
+        w = home / "w"
+        w.mkdir()
+        (w / "model.safetensors").write_bytes(b"\x05" * 64)
+        os.environ["GUARDRAIL_DIGEST_CACHE"] = str(home / "cache.json")
+        h2 = model_hash("org/m", [w])
+        (snaps / "cccccccc3333").mkdir()
+        assert model_hash("org/m", [w]) == h2 and "@sha256:" in h2, h2
+    finally:
+        os.environ.pop("GUARDRAIL_DIGEST_CACHE", None)
+        if old is None:
+            os.environ.pop("HF_HOME", None)
+        else:
+            os.environ["HF_HOME"] = old
+        _sh.rmtree(home, ignore_errors=True)
+
+
+def test_weights_that_cannot_all_be_read_are_unresolved_not_a_partial_hash():
+    """weights_digest skipped an unreadable shard, a dangling link and a
+    named path that does not exist, and returned the digest of what was left
+    as a resolved "sha256:" hash: two checkpoints that differed only in the
+    unreadable shard shared it, and an importable id with missing weights got
+    an "@src:" hash. Shown failing before 2026-10-19: no case below said
+    "unresolved"."""
+    import os
+    import shutil as _sh
+    from guardrail import manifest as M
+    d, a, b = _two_weight_dirs()
+    (a / "shard2.safetensors").write_bytes(b"\x07" * 128)
+    (b / "shard2.safetensors").write_bytes(b"\x08" * 128)
+    (b / "model.safetensors").write_bytes(b"\x01" * 4096)   # = a's shard 1
+    os.environ["GUARDRAIL_DIGEST_CACHE"] = str(d / "cache.json")
+    real = M.file_sha256
+
+    def locked(path, cache=None):
+        if Path(path).name == "shard2.safetensors":
+            raise PermissionError("locked by another process")
+        return real(path, cache)
+    try:
+        assert M.model_hash("lab/adapter", [a]) != M.model_hash("lab/adapter", [b])
+        M.file_sha256 = locked
+        ha, hb = M.model_hash("lab/adapter", [a]), M.model_hash("lab/adapter", [b])
+        assert ha == hb == f"lab/adapter@{M.UNRESOLVED}", (ha, hb)
+        M.file_sha256 = real
+        assert "unresolved" in M.model_hash("lab/adapter", [a, d / "no_such_dir"])
+        assert M.weights_digest([d / "no_such_dir"]) is None
+        h = M.model_hash("guardrail.vla_stub.StubVLA", [d / "no_such_dir"])
+        assert "unresolved" in h and "@src:" not in h, h
+        ok, why = is_kpi_grade({**_dev_run(), "code_revision": "abc123abc123",
+                                "vla_model_hash": ha}, GOOD_METRICS, dev_waiver="x")
+        assert not ok and any("vla_model_hash" in r for r in why), why
+        # A readable directory still hashes; logs beside it are still skipped.
+        (a / "train.log").write_text("x", encoding="utf-8")
+        assert "@sha256:" in M.model_hash("lab/adapter", [a])
+    finally:
+        M.file_sha256 = real
+        os.environ.pop("GUARDRAIL_DIGEST_CACHE", None)
+        _sh.rmtree(d, ignore_errors=True)
+
+
+def test_a_status_timeout_keeps_the_known_head_as_unknown():
+    """`git status` on a cold OneDrive tree can exceed its 20 s timeout. It
+    shared one try with rev-parse, so the timeout dropped a repository whose
+    HEAD had resolved, and the manifest said "unversioned" (not a git
+    checkout) where it should say "<HEAD>-unknown", as a failing status
+    already did. Shown failing before 2026-10-19."""
+    import shutil as _sh
+    import subprocess
+    import tempfile
+    from guardrail import manifest as M
+    if _sh.which("git") is None:
+        print("      SKIP: git is not installed")
+        return SKIP
+    repo = Path(tempfile.mkdtemp(prefix="rev_"))
+    (repo / "guardrail").mkdir()
+    (repo / "guardrail" / "shield.py").write_text("# sentinel\n", encoding="utf-8")
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+           "-c", "commit.gpgsign=false"]
+    subprocess.run(git[:3] + ["init", "-q"], check=True)
+    subprocess.run(git + ["add", "guardrail/shield.py"], check=True)
+    subprocess.run(git + ["commit", "-q", "-m", "t"], check=True)
+    head = subprocess.run(git[:3] + ["rev-parse", "HEAD"], capture_output=True,
+                          text=True, check=True).stdout.strip()
+    real = M.subprocess.run
+
+    def slow_status(cmd, *a, **k):
+        if "status" in cmd:
+            raise subprocess.TimeoutExpired(cmd, k.get("timeout", 20))
+        return real(cmd, *a, **k)
+    try:
+        assert M.code_revision(repo) == head[:12], "a clean temp repo is not clean"
+        M.subprocess.run = slow_status
+        assert M.code_revision(repo) == head[:12] + "-unknown", M.code_revision(repo)
+    finally:
+        M.subprocess.run = real
+        _sh.rmtree(repo, ignore_errors=True)
+
+
+def test_an_untracked_file_makes_the_tree_dirty_and_the_reason_says_so():
+    """`git status --porcelain` also lists untracked files git does not
+    ignore. That is right for an untracked .py under guardrail/ (it changes
+    what runs), and a tool's private folder is kept out with a LOCAL ignore
+    (.git/info/exclude), not by weakening the check. On 2026-10-18 such a
+    folder, unignored, was the only porcelain entry on the desktop tree, and
+    is_kpi_grade's reason - "uncommitted changes" - sent the reader looking
+    for code. Shown failing before 2026-10-19: the reason did not mention
+    untracked files."""
+    import shutil as _sh
+    import subprocess
+    import tempfile
+    from guardrail import manifest as M
+    if _sh.which("git") is None:
+        print("      SKIP: git is not installed")
+        return SKIP
+    repo = Path(tempfile.mkdtemp(prefix="rev_"))
+    (repo / "guardrail").mkdir()
+    (repo / "guardrail" / "shield.py").write_text("# sentinel\n", encoding="utf-8")
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+           "-c", "commit.gpgsign=false"]
+    try:
+        subprocess.run(git[:3] + ["init", "-q"], check=True)
+        subprocess.run(git + ["add", "guardrail/shield.py"], check=True)
+        subprocess.run(git + ["commit", "-q", "-m", "t"], check=True)
+        head = M.code_revision(repo)
+        assert len(head) == 12 and "-" not in head, head
+        (repo / "tool_state").mkdir()
+        (repo / "tool_state" / "r.json").write_text("{}", encoding="utf-8")
+        assert M.code_revision(repo) == head + "-dirty"
+        with open(repo / ".git" / "info" / "exclude", "a", encoding="utf-8") as fh:
+            fh.write("\ntool_state/\n")
+        assert M.code_revision(repo) == head, "a locally excluded folder counted"
+        (repo / "guardrail" / "extra.py").write_text("X = 1\n", encoding="utf-8")
+        rev = M.code_revision(repo)
+        assert rev == head + "-dirty", rev
+        ok, why = is_kpi_grade({**_dev_run(), "code_revision": rev},
+                               GOOD_METRICS, dev_waiver="x")
+        dirty = [r for r in why if r.startswith("code_revision")]
+        assert not ok and dirty and "untracked" in dirty[0], why
+    finally:
+        _sh.rmtree(repo, ignore_errors=True)
+
 
 
 
@@ -941,10 +1147,13 @@ def test_a_plain_hash_string_still_works_for_callers_that_pass_one():
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == SKIP:
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -952,5 +1161,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

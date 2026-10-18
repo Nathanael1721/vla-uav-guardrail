@@ -290,6 +290,10 @@ def test_the_scene_clock_is_real_time_by_the_manifest_s_own_derivation():
     cfg = rail.write_sim_configs(out, rail.plan_network("mirrored"))
     assert cfg["clock_ratio"] == 1.0
     assert sim_speedup_from_scene(out / cfg["scene"]) == 1.0
+    # ...and a non-real-time clock the right way up: step-ns of sim time per
+    # real-time-update-rate of wall time (the reciprocal before 2026-10-19).
+    slow = {"clock": {"step-ns": 1500000, "real-time-update-rate": 3000000}}
+    assert rail.scene_clock_ratio(slow) == 0.5
 
 
 def test_sitl_args_are_the_airsim_copter_launch_with_our_params_last():

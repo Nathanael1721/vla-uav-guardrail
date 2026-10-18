@@ -112,7 +112,8 @@ AP_PARAM_DIR = "~/ardupilot/Tools/autotest/default_params"
 def strip_jsonc(text: str) -> str:
     """Remove // and /* */ comments that sit OUTSIDE string literals.
 
-    A line-anchored regex (what manifest.sim_speedup_from_scene uses) is enough
+    A line-anchored regex (what manifest.sim_speedup_from_scene used until
+    2026-10-19; it now uses manifest._strip_jsonc, a copy of this) is enough
     for full-line comments only; the robot template also has comments inside
     objects, and a mesh path such as "/Drone/Quadrotor1" must survive intact.
     """
@@ -194,13 +195,15 @@ def sitl_home(scene: dict) -> str:
 
 
 def scene_clock_ratio(scene: dict) -> float | None:
-    """real-time-update-rate / step-ns: 1.0 means the clock is meant to run in
-    real time (the same derivation as manifest.sim_speedup_from_scene)."""
+    """step-ns / real-time-update-rate: sim seconds per wall second, so 1.0
+    means the clock is meant to run in real time and 0.5 at half speed (the
+    same derivation as manifest.sim_speedup_from_scene, which explains the
+    direction; it was the reciprocal until 2026-10-19)."""
     clock = scene.get("clock") or {}
     step, rate = clock.get("step-ns"), clock.get("real-time-update-rate")
     if not step or not rate:
         return None
-    return round(float(rate) / float(step), 4)
+    return round(float(step) / float(rate), 4)
 
 
 # --------------------------------------------------------------------------- #
