@@ -270,8 +270,11 @@ DEFAULT_THETA_HORIZON_S: float | None = None
 # X6's progress test: a position that is illegal for T but whose illegal depth
 # falls at least this fast (shown at two standard errors of a least-squares
 # fit over T) is a recovery that is working, and X6 leaves it alone. The same
-# 0.1 m/s the Shield's trend tests and the PI's reference (checker.py
-# `_ESCAPE_SPEED_MPS`) use to tell escaping from drift. X7 uses it the other
+# 0.1 m/s the PI's reference (checker.py `_ESCAPE_SPEED_MPS`) and the Shield's
+# zone, stand-off and corridor-width trend tests use to tell escaping from
+# drift (its altitude and corridor-band tests accept any climb toward the
+# band, its clearance test any forecast gain; the repairs floor all of them,
+# 2026-10-19: docs/FINDING-repairs-must-floor-the-escape.md). X7 uses it the other
 # way round: a depth growing faster than this, at two standard errors.
 X6_MIN_ESCAPE_MPS = 0.1
 # X7's floor: the fitted rise of the illegal depth over T_recover must be at
@@ -749,7 +752,9 @@ def magnitude_from_repairs(repairs: Iterable[Any], stop_illegal: bool = False) -
     bounds the total correction from above, and an untrusted repair is never
     reported as smaller than it was. (The reference checks each attempt on
     its own. The grant's cap is on the total change, ||repaired - original||,
-    p4, which the sum bounds.)
+    p4, which the sum bounds. The Shield's first-feasible selection reads
+    theta through this same sum since 2026-10-19, so an attempt it accepts
+    is one this cap accepts; that departs from the reference.)
 
     Recovery operators are left out of the sum and named in
     `recovery_exempt`. A magnitude they carry is still validated.

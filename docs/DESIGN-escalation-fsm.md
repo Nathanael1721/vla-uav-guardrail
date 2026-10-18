@@ -158,7 +158,9 @@ least-squares line through it.
 
 - **X6** fires only if the fitted fall rate over the last T, less two
   standard errors, does not reach `x6_min_escape_mps` (0.1 m/s, the trend
-  threshold the Shield's checks and the reference's `_ESCAPE_SPEED_MPS` use).
+  threshold the reference's `_ESCAPE_SPEED_MPS` and the Shield's zone,
+  stand-off and corridor-width checks use; its altitude, corridor-band and
+  clearance checks accept any gain, and the repairs floor the speed).
   A window with a tick of no depth counts as no progress, so a caller that
   reports none keeps X6 as it was.
 - **X7** (Brake / Loiter -> RTL) fires when the position has been illegal

@@ -127,11 +127,26 @@ def test_already_outside_but_returning_passes():
 
     Raising a violation on the action that is fixing the problem is what freezes
     an aircraft in the state the policy forbids.
+
+    No violation - but since 2026-10-19 not untouched either. 15 m outside the
+    band, returning at 2 m/s is slower than CorridorReturn's floor (close the
+    gap within one lookahead, capped at speed_max), which until then applied
+    only when some unrelated rule had opened the repair loop. The return is
+    FLOORED now, as it always was with a yaw breach beside it
+    (docs/FINDING-repairs-must-floor-the-escape.md), the along-corridor motion
+    kept; a return already at the cap still passes untouched.
     """
     sh = _shield(_corridor(), KIN)
     d = sh.filter(State(x=50, y=25, up=15), Action4D(vy=-2))
     assert not d.violations, d
-    assert d.emitted.vy == -2.0, "a clean recovery must pass through untouched"
+    assert d.emitted.vy < -2.0, "a slow return is floored, never slowed"
+    assert [(r.operator, r.recovery) for r in d.repairs] == [("CorridorReturn", True)]
+    yawed = sh.filter(State(x=50, y=25, up=15), Action4D(vy=-2, yaw_rate=1.5))
+    assert yawed.violations and yawed.emitted.vy == d.emitted.vy, yawed
+    d = sh.filter(State(x=50, y=16, up=15), Action4D(vx=1.0, vy=-0.5))   # 6 m out
+    assert not d.violations and d.emitted.vx == 1.0 and d.emitted.vy <= -2.0 + 1e-9, d
+    d = sh.filter(State(x=50, y=25, up=15), Action4D(vy=-KIN.speed_max_mps))
+    assert not d.violations and not d.repairs and d.emitted == d.raw, d
 
 
 def test_already_outside_and_going_further_is_a_violation():

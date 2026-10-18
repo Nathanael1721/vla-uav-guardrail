@@ -100,6 +100,14 @@ forecast and **read by no rule** (verified by grep across `guardrail/`). Changin
 it would alter no decision, so it is recorded here rather than "fixed" in a way
 nothing could test.
 
+> **Corrected 2026-10-19.** That reason no longer held: `Shield.forecast()` is
+> public, returns the forecast poses with their headings, and is documented as
+> the way to rebuild a `TickRecord`'s predicted trajectory, so a reader of it
+> got a heading 57.3x too small (a 30 dps turn read 2.6 deg at t + 5 s instead
+> of 150). `Shield._predict` (no longer at line 423) now converts rad/s to deg/s
+> before adding, and `tests/test_shield.py::test_forecast_turns_the_heading_in_degrees`
+> pins it. Still no rule reads a pose's heading, so no decision changed.
+
 ## The fix
 
 - `guardrail/models.py` — the comment now says rad/s and says why, naming this

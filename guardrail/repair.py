@@ -75,9 +75,11 @@ THE MODES (guardrail/shield.py, Shield(...) keyword arguments)
                                 the earliest open violation is the target;
                                 operators are tried in FIRST_FEASIBLE order,
                                 the first whose action clears the target with
-                                every non-recovery repair's magnitude_m within
-                                theta wins. No winner ends the loop, and the
-                                Shield's rescue / brake fallback decides.
+                                the tick's repairs within theta as the FSM
+                                reads it (magnitude_m summed per axis over
+                                every iteration's, recoveries exempt) wins.
+                                No winner ends the loop, and the Shield's
+                                rescue / brake fallback decides.
   path_repair=True              PathRepair joins either mode (after
                                 LateralProjection).
   repair_order=(name, ...)      the caller's stack for either mode, in

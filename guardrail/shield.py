@@ -510,7 +510,11 @@ class ShieldDecision(BaseModel):
 
     @property
     def touched(self) -> bool:
-        return bool(self.violations)
+        # The repairs too: since 2026-10-19 a legal action from an illegal
+        # position can be floored (Shield._floor_the_escape) with nothing
+        # violated, and an audit log or HUD keyed on violations alone would
+        # not show the Shield changing the command.
+        return bool(self.violations) or bool(self.repairs)
 
     @property
     def escaped(self) -> bool:
@@ -991,6 +995,10 @@ class Shield:
         # SubjectStandoff rule is inert until it is set.
         self._subject: tuple[float, float] | None = None
         self._subject_class: str | None = None
+        # The last subject set_subject() refused as non-finite (x, y, class),
+        # until a finite one or None replaces it; and how many it has refused.
+        self._subject_rejected: tuple | None = None
+        self.n_subject_nonfinite = 0
 
         if escalation is True:
             cfg = _fsm.FSMConfig()
@@ -1420,6 +1428,14 @@ class Shield:
         endpoint checked."""
         horizon = self.lookahead_s if horizon_s is None else horizon_s
         t = 0.0
+        # UNITS. State.yaw_deg is degrees; Action4D.yaw_rate is RADIANS per
+        # second (models.py, docs/FINDING-the-contract-disagreed-with-itself-
+        # about-yaw.md). Until 2026-10-19 the two were added raw, so every
+        # forecast heading turned 57.3x too slowly: forecast() of a 30 dps
+        # turn read 2.6 deg at t + 5 s instead of 150. No rule reads a pose's
+        # heading, so no decision moved; forecast() is public, though, and is
+        # how a TickRecord's predicted trajectory is rebuilt.
+        yaw_dps = math.degrees(action.yaw_rate)
         # A _Pose, not a State: the four values are already floats (sums and
         # products of a validated State's and Action4D's), and validating
         # each of 51 poses again was a fifth of a 50-rule filter() (2026-10-12
@@ -1429,7 +1445,7 @@ class Shield:
                 x=state.x + action.vx * t,
                 y=state.y + action.vy * t,
                 up=state.up + action.vz_up * t,
-                yaw_deg=state.yaw_deg + action.yaw_rate * t,
+                yaw_deg=state.yaw_deg + yaw_dps * t,
             )
             if t >= horizon - 1e-9:
                 return
@@ -2142,7 +2158,9 @@ class Shield:
                 # counts as escaping. Declining outright here would leave that
                 # crawl in place. Raise the outward component to the recovery
                 # speed and leave the tangential alone; never reshape an action
-                # the monitor is happy with.
+                # the monitor is happy with. (Until 2026-10-19 the passthrough
+                # declined it for this branch whenever no other rule was broken:
+                # the chain never ran. Shield._floor_the_escape runs it now.)
                 oxc, oyc = self._away_dir(state.x, state.y, hard_r)
                 if oxc == 0.0 and oyc == 0.0:
                     continue
@@ -2292,6 +2310,10 @@ class Shield:
                     # it forgives anything above 0.1 m/s, which would leave a
                     # crawl. Raise the outward component to the floor and leave
                     # the tangential alone rather than reshaping a legal action.
+                    # Since 2026-10-19 this branch also runs when nothing at all
+                    # is violated (Shield._floor_the_escape); before, a 0.15 m/s
+                    # exit passed untouched unless another rule happened to be
+                    # broken, and left at 2.0 m/s if one was.
                     if out_now < spd:
                         vx += ox * (spd - out_now)
                         vy += oy * (spd - out_now)
@@ -2382,12 +2404,32 @@ class Shield:
 
         `subject_class` is what selects between per-class rules, so a policy can
         hold 10 m from a pedestrian and 5 m from a vehicle.
+
+        A NON-FINITE position (NaN or inf in either coordinate) is dropped:
+        the Shield then has no subject, exactly as after `set_subject(None)`,
+        and every filter() tick until a finite one (or None) arrives carries a
+        `subject-finite` contract violation naming the stand-off rules that
+        cannot be judged (`n_subject_nonfinite` counts the refusals). Until
+        2026-10-19 it was stored: NaN fails every comparison, so each distance
+        test against it came out "outside the ring" and the stand-off stopped
+        enforcing, while rule_status reported it bound and not breached. A
+        diverged estimator is the source (perception's TargetState stays NaN
+        once it is NaN). Not an exception: this is called from the 10 Hz loop.
         """
         if x is None or y is None:
             self._subject = None
             self._subject_class = None
+            self._subject_rejected = None
             return
-        self._subject = (float(x), float(y))
+        x, y = float(x), float(y)
+        if not (math.isfinite(x) and math.isfinite(y)):
+            self._subject = None
+            self._subject_class = None
+            self._subject_rejected = (x, y, subject_class)
+            self.n_subject_nonfinite += 1
+            return
+        self._subject_rejected = None
+        self._subject = (x, y)
         self._subject_class = subject_class
 
     # Read-only views for the on-screen policy indicator (demo/policy_hud.py),
@@ -2495,7 +2537,11 @@ class Shield:
             # It is a floor and not a decline for the opposite reason: the
             # monitor forgives any opening above 0.1 m/s, so a repair that
             # simply stood aside would leave a 0.11 m/s crawl out of a ring the
-            # policy forbids near a person.
+            # policy forbids near a person. (Until 2026-10-19 this ran only when
+            # some other rule had opened the repair loop, so that crawl passed
+            # through untouched whenever it was the only thing wrong. A legal
+            # action from an illegal position is now floored here too:
+            # Shield._floor_the_escape.)
             out = min(cap, max(want, -closing))
             vx = a.vx - (closing + out) * ux
             vy = a.vy - (closing + out) * uy
@@ -2791,17 +2837,50 @@ class Shield:
         # snapshot could not be loaded again. Findings the policy already had
         # are not this event's; nor is "no rules" (a Shield may start empty
         # and an expire may empty it again).
-        cand = self.policy.model_copy(update={"constraints": constraints})
+        cand = self.policy.model_copy(update={"constraints": constraints,
+                                              "generation": self.policy.generation + 1})
         new = sorted(set(cand.lint()) - set(self.policy.lint()))
         new = [f for f in new if not f.startswith("the policy has no rules")]
         if new:
             raise HotApplyRefused(f"{op} {rule_id!r} refused: the policy it would leave "
                                   f"fails the DSL lint: " + "; ".join(new))
+        # ...and the constructor's gate. A Shield is never BUILT over a rule
+        # it would not enforce (`unenforceable`: altitude_ref MSL, a class it
+        # does not check), and the lint above has no such test. Until
+        # 2026-10-19 this path did not ask either, so a dynamic_nfz,
+        # corridor_swap or pre-start polygon_fence with altitude_ref MSL was
+        # accepted and then judged as metres above ground: a 120-300 m MSL
+        # zone over 100 m ground let an aircraft at 50 m AGL fly through it
+        # with no violation, and Shield(shield.policy) then refused the very
+        # policy the Shield was flying. Only what the event ADDS is refused,
+        # like the lint (the constructor keeps the policy clean, so in
+        # practice that is everything).
+        bad = sorted(set(Shield.unenforceable(cand)) - set(Shield.unenforceable(self.policy)))
+        if bad:
+            raise HotApplyRefused(f"{op} {rule_id!r} refused: the Shield would not "
+                                  f"enforce it: " + "; ".join(bad))
+        # Build first, commit after. Until 2026-10-19 the live Policy took the
+        # new list and generation + 1 BEFORE the runtime was built, with no
+        # rollback: a build that raised (a dynamic_nfz with margin_m 1e308
+        # passes pydantic, the lint and the margin check, then GEOS fails to
+        # buffer it) left /health and /policy reporting a rule the runtime
+        # did not enforce, every later event failing on the same rule, and a
+        # retry refused with RuleIdConflict as though it had been applied.
+        # Now a failed build changes nothing and is refused (HotApplyRefused
+        # is a ValueError: a 422 over REST, not a 500). `anchors` may be {}
+        # (expire of the last moving zone), so it is tested against None.
+        anchors = self._anchors if anchors is None else anchors
+        try:
+            rt = _build_runtime(cand, self._rt, anchors)
+        except Exception as e:                       # noqa: BLE001 - any build fault
+            raise HotApplyRefused(f"{op} {rule_id!r} refused: the runtime could not "
+                                  f"compile the policy it would leave: "
+                                  f"{type(e).__name__}: {e}") from e
+        # In place: callers (the REST app, the audit logger) hold this Policy.
         self.policy.constraints = constraints
-        self.policy.generation += 1
-        if anchors is not None:
-            self._anchors = anchors
-        self._rt = _build_runtime(self.policy, self._rt, self._anchors)
+        self.policy.generation = cand.generation
+        self._anchors = anchors
+        self._rt = rt
         ev = {"op": op, "type": rule_type, "rule_id": rule_id,
               "generation": self.policy.generation,
               "policy_hash": self._rt.ir.policy_hash,
@@ -3201,8 +3280,13 @@ class Shield:
             elif c.type == "subject_standoff":
                 if subject is not None and c.binds(subject_class):
                     sep = math.hypot(state.x - subject[0], state.y - subject[1])
-                    row.update(bound=in_force, value=sep, distance_m=sep - c.min_range_m,
-                               breach=in_force and self._standoff_inside(c, sep))
+                    # A non-finite separation (a NaN subject handed in by an
+                    # offline re-render) cannot be judged: not bound, rather
+                    # than "bound, not breached" on a comparison NaN fails.
+                    if math.isfinite(sep):
+                        row.update(bound=in_force, value=sep,
+                                   distance_m=sep - c.min_range_m,
+                                   breach=in_force and self._standoff_inside(c, sep))
             elif c.type == "obstacle_clearance":
                 d = clearance_m if clearance_m is not None else (
                     self._distance_at(state.x, state.y) if self._dist is not None else None)
@@ -3449,9 +3533,11 @@ class Shield:
         Each iteration targets the earliest open violation. Operators are
         tried in `repair.FIRST_FEASIBLE` order; one whose class does not cover
         the target is skipped. An attempt is FEASIBLE when the monitor no
-        longer reports the target on its action and every non-recovery repair
-        it logged is within theta (the FSM's, 2.0 m lateral / 0.5 m vertical
-        by default; recoveries are exempt, as in the reference). The first
+        longer reports the target on its action and the repairs the tick
+        would then carry are within theta as the FSM reads it: summed per
+        axis over this attempt's and every earlier iteration's (2.0 m lateral
+        / 0.5 m vertical by default; recoveries and clamps are exempt, as in
+        the FSM; the reference checks each attempt alone). The first
         feasible attempt is applied and the next iteration re-checks; when no
         operator is feasible the loop ends and `_decide`'s fallback (rescue,
         then brake where a stop is legal) decides. An attempt that is not
@@ -3485,15 +3571,29 @@ class Shield:
                     atts.append(replace(att, result="fail",
                                         reason=f"{target.rule_id} still violated: {att.reason}"))
                     continue
-                over = [r for r in att.repairs
-                        if not r.recovery and r.magnitude_m is not None
-                        and r.magnitude_m > (cfg.theta_vertical_m if r.axis == "vertical"
-                                             else cfg.theta_lateral_m) + 1e-9]
+                # Theta as the FSM reads it (fsm.magnitude_from_repairs): the
+                # per-axis SUM over every repair the tick would carry, the
+                # ones already applied in earlier iterations included,
+                # deduplicated as the decision's repairs are, with the FSM's
+                # own exemptions (theta_governs). Until 2026-10-19 each
+                # Repair of this attempt was compared alone, so two 1.5 m
+                # slides (two zones, or a slide and a stand-off hold in two
+                # iterations) were "within theta" here and 3.0 m over it in
+                # the FSM, which then abandoned the projection (X1) the
+                # selection had just accepted. (The PI reference checks each
+                # attempt alone; it has no FSM to agree with.)
+                gov = [r for r in _dedupe(list(ctx.repairs) + list(att.repairs))
+                       if r.magnitude_m is not None and _fsm.theta_governs(r)]
+                tot = {ax: sum(r.magnitude_m for r in gov
+                               if (r.axis == "vertical") == (ax == "vertical"))
+                       for ax in ("lateral", "vertical")}
+                cap = {"lateral": cfg.theta_lateral_m, "vertical": cfg.theta_vertical_m}
+                over = [ax for ax in ("lateral", "vertical") if tot[ax] > cap[ax] + _fsm.EPS]
                 if over:
-                    w = max(over, key=lambda r: r.magnitude_m)
+                    ax = over[0]
                     atts.append(replace(att, result="fail", reason=(
-                        f"{w.operator} {w.magnitude_m:.2f} m over theta ({w.axis}): "
-                        f"{att.reason}")))
+                        f"{tot[ax]:.2f} m over theta ({ax}) summed over the tick's "
+                        f"repairs, as the FSM reads it: {att.reason}")))
                     continue
                 ctx.repairs[:] = trial
                 fixed, open_ = att.action, after
@@ -3600,6 +3700,69 @@ class Shield:
                    "window_edge": edge}
         return d
 
+    def _floor_the_escape(self, tick: _Tick, state: State, raw: Action4D,
+                          mode: str, flags: dict) -> "ShieldDecision | None":
+        """The repair floors for an action that violates nothing, from a
+        position a stop would leave illegal (a hard, enforced rule:
+        `_stop_illegal`). Returns the decision to fly, or None to pass `raw`
+        through as before.
+
+        The monitors forgive a recovery on its trend: a zone left at more
+        than 0.1 m/s, a ring opened at more than 0.1 m/s, ANY climb from
+        under a floor, any forecast improvement inside the clearance ring.
+        How fast is the repairs' business, and they FLOOR it
+        (docs/FINDING-repairs-must-floor-the-escape.md): GeofenceEscape to
+        min(2.0, cap), StandoffRecover and ClearanceFix to the rate that
+        clears the ring in one lookahead (0.5 m/s at least), AltitudeFix and
+        the corridor operators to the band in one lookahead. But the floors
+        live in the repair chain, and until 2026-10-19 the chain ran only
+        when SOME rule was violated. So the escape speed from a P0 breach
+        depended on whether an unrelated rule happened to be broken: 1 m
+        inside a zone leaving at 0.15 m/s passed untouched (6.7 s to leave)
+        and the same action with a 60 dps yaw breach left at 2.0 m/s
+        (0.5 s); a climb of 1e-6 m/s from 5 m under a floor passed every
+        tick, forever, with zero violations; and the escape speed was not
+        monotonic in the command (0.10 m/s out of a zone emitted 2.0,
+        0.11 emitted 0.11). That gating is exactly the "decline" the
+        finding measured as unsafe.
+
+        So the chain runs here too - for the rules the POSITION breaks (the
+        hard, enforced ones a stop would leave violated) and the speed and
+        climb caps that close each pass, and for nothing else. Not the whole
+        stack: a projection operator judges by its own model, not the
+        monitor's, and on a legal action it can still find something to do
+        (on the 8 Oct follow, ticks 777-780, climbing out from under the
+        floor at 1.8 m/s, StandoffHold's radial reading took 2.4 m/s of
+        closing off an action whose forecast never entered the ring). The
+        floors are what was missing; reshaping a legal action is not.
+        Nothing was violated, so nothing is reported violated (the FSM reads
+        the tick as clean); the decision carries the floors' repairs, which
+        makes it `touched`. It is flown only if it re-checks clean against
+        EVERY rule; otherwise `raw`, which was clean, flies (a faster escape
+        looks further ahead on the clearance forecast and can reach an
+        obstacle `raw` did not, or a zone escape can aim at another zone) -
+        never a brake or a relaxation, which would be the Shield making a
+        legal action worse. A run that changes nothing, or is not flown, is
+        taken off the ledger: the tick is the passthrough it always was.
+        First-feasible mode has no such floors to apply (its operators run
+        only for a target violation, so an unrelated one floors nothing
+        there either), so it is not asked."""
+        rt = tick.rt
+        keep = {v.rule_id for v in tick.unsafe
+                if rt.hard.get(v.rule_id, True) and self._act(rt, v.rule_id) != "monitor_only"}
+        keep |= {k.id for k in rt.kins if self._act(rt, k.id) != "monitor_only"}
+        skip = frozenset(c.id for c in rt.constraints if c.id not in keep)
+        n_led, n_runs = len(tick.ledger), tick.chain_runs
+        fixed, repairs, blocking, passes = self._repair_chain(tick, state, raw, skip, [])
+        repairs = _dedupe(repairs)
+        if (not repairs or fixed == raw or blocking
+                or (skip and self._check(state, fixed))):
+            del tick.ledger[n_led:]
+            tick.chain_runs = n_runs
+            return None
+        return self._traced(ShieldDecision(raw=raw, emitted=fixed, repairs=repairs),
+                            state, tick, passes, [], [], mode, flags)
+
     def _decide(self, state: State, raw: Action4D) -> ShieldDecision:
         tick = self._tick_ctx()
         if tick is None:                        # called outside filter()
@@ -3618,10 +3781,34 @@ class Shield:
                 rule_id="action-finite", category="contract",
                 detail=f"non-finite channel(s) {','.join(nonfinite)} zeroed",
                 predicted_at_s=0.0)]
+        subject_dropped = None
+        if self._subject_rejected is not None:
+            # set_subject() dropped a non-finite subject, so the stand-off
+            # rules that would bind it judge nothing this tick. Said here, so
+            # the tick is not a silent pass (see set_subject). Like
+            # action-finite it is no policy rule (fsm.rules_from_policy reads
+            # it as a hard P0 repair) and it is answered by Sanitise, the
+            # finiteness contract's operator: the FSM refuses a violation
+            # with no repair beside it, and a new operator name would be one
+            # theta has no magnitude for.
+            sx, sy, cls = self._subject_rejected
+            ids = [so.id for so in self._standoffs if so.binds(cls)]
+            if ids:
+                subject_dropped = f"subject ({sx}, {sy}) -> dropped"
+                violations = violations + [Violation(
+                    rule_id="subject-finite", category="contract",
+                    detail=(f"non-finite subject ({sx}, {sy}) dropped; stand-off "
+                            f"{', '.join(ids)} cannot be judged"),
+                    predicted_at_s=0.0)]
 
         if not violations:
             # Nothing was wrong with it, so the re-check is empty by
-            # construction and does not need running again.
+            # construction and does not need running again - unless the
+            # POSITION is illegal, where a legal action can still be a crawl.
+            if self.repair_mode == "chain" and self._stop_illegal(tick, state):
+                d = self._floor_the_escape(tick, state, raw, mode, flags)
+                if d is not None:
+                    return d
             return self._traced(ShieldDecision(raw=raw, emitted=raw),   # passthrough
                                 state, tick, [], [], [], mode, flags)
         edge = self._window_edge(tick, violations)
@@ -3647,6 +3834,9 @@ class Shield:
         if nonfinite:
             head.append(Repair(operator="Sanitise",
                                detail=f"{','.join(nonfinite)} -> 0.0"))
+            first.append({**last_resort("Sanitise", "ok", head[-1].detail), "iterations": 0})
+        if subject_dropped is not None:
+            head.append(Repair(operator="Sanitise", detail=subject_dropped))
             first.append({**last_resort("Sanitise", "ok", head[-1].detail), "iterations": 0})
 
         # A rule whose action is brake / loiter / RTL / land skips projection

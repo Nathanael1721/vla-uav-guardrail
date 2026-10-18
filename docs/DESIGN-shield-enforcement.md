@@ -140,6 +140,22 @@ aircraft in the violation (the module docstring's deadlock). There the repair
 stack still recovers and the FSM still makes the mode change, with the stop
 withheld (`fsm_record["stop_withheld"]`).
 
+From such a position an action can be legal and still too slow: the monitors
+forgive a recovery on its trend (a zone or ring left at more than 0.1 m/s, any
+climb back toward a band, any forecast gain inside a clearance ring), while
+the repairs floor its speed (GeofenceEscape min(2.0, cap), StandoffRecover
+and ClearanceFix 0.5 m/s at least, AltitudeFix and CorridorReturn the gap in
+one lookahead; docs/FINDING-repairs-must-floor-the-escape.md). Until
+2026-10-19 the floors ran only when some rule was violated, so the same crawl
+passed untouched alone and left at the floor beside an unrelated breach. In
+`repair_mode="chain"` a legal action from a position a stop would leave
+illegal now runs the operators of the rules that position breaks (and the
+caps) - not the whole stack, so no other rule's operator reshapes a legal
+action (`Shield._floor_the_escape`). The result is flown only if it re-checks
+clean against every rule, else the raw action flies; it carries the floors'
+repairs and no violation (the FSM reads the tick as clean), and
+`ShieldDecision.touched` is true for it.
+
 What the PI reference does here is narrower. Its `safety_shield/shield.py`
 skips projection only when the WORST violation's action is `RTL` or `land`,
 and then emits the raw action while its FSM changes mode; for `brake` and
@@ -158,7 +174,11 @@ severity order "hard >> soft, P0 > P1 > P2" (Prefix Compiler page).
 
 A policy with a rule the Shield does not enforce (`distance_envelope`, any
 `altitude_ref: MSL`) is refused at construction (`Shield.unenforceable`), so a
-`Policy` built directly cannot fly with a rule silently ignored.
+`Policy` built directly cannot fly with a rule silently ignored. Since
+2026-10-19 a hot-applied event that would add one (a `dynamic_nfz`,
+`corridor_swap` or pre-start fence with `altitude_ref: MSL`) is refused the
+same way (`HotApplyRefused`, 422 over REST); before, it was accepted and its
+heights were judged as metres above ground.
 
 ### 3. The grant's lookahead, read at each pose's own time
 
@@ -575,10 +595,14 @@ old `_repair_chain` on every policy in policies/ (`test_the_default_chain_decide
 
 - `repair_mode="first_feasible"`: the grant's selection. Per iteration (up
   to 3) the earliest open violation is the target; operators are tried in
-  priority order; the first whose action clears the target with every
-  non-recovery repair's `magnitude_m` within theta (2.0 m lateral, 0.5 m
-  vertical) wins; an attempt that says ok but leaves its target violated is
-  a fail, and a recovery is exempt from theta. Head-on 6 m outside a zone at
+  priority order; the first whose action clears the target with the tick's
+  repairs within theta (2.0 m lateral, 0.5 m vertical) wins; an attempt that
+  says ok but leaves its target violated is a fail, and a recovery is exempt
+  from theta. Since 2026-10-19 theta is read as the FSM reads it: each
+  axis's `magnitude_m` SUMMED over this attempt's repairs and every earlier
+  iteration's (deduplicated, the FSM's exemptions). Compared one Repair at a
+  time, two 1.5 m slides passed the selection and then tripped the FSM's
+  X1 at 3.0 m. Head-on 6 m outside a zone at
   4 m/s the chain slides (a 13 m GeofenceSlide, left for the FSM to judge);
   first-feasible refuses it and the fallback stops. Sinking to 1.9 m under a
   floor, the chain's AltitudeFix is applied and first-feasible's is refused

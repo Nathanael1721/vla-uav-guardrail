@@ -370,6 +370,46 @@ def test_a_lost_subject_must_clear_the_stale_position():
     assert not sh.filter(State(x=24.0, y=0.0, up=9.0), Action4D(vx=4.0)).touched
 
 
+def test_a_non_finite_subject_is_dropped_and_said_so():
+    """REGRESSION (2026-10-19). set_subject stored a NaN (or inf) position, and
+    every distance test against it failed: a 4 m/s command straight at the
+    last good subject flew on untouched, while rule_status reported the
+    stand-off bound, not breached, at range nan. A non-finite subject is now
+    dropped (no subject, as after set_subject(None)), and each tick says so
+    with a `subject-finite` contract violation answered by Sanitise, the
+    finiteness contract's operator (a violation with no repair is refused by
+    the FSM, which would fault and request LOITER); a finite subject (or
+    None) ends it."""
+    st, a = State(x=24.0, y=0.0, up=9.0), Action4D(vx=4.0)
+    for bad in ((float("nan"), 0.0), (float("inf"), 0.0), (30.0, float("nan"))):
+        sh = _standoff_shield(min_range_m=10.0)
+        sh.set_subject(30.0, 0.0, "pedestrian")
+        assert [v.rule_id for v in sh.filter(st, a).violations] == ["ped-standoff"]
+        sh.set_subject(*bad, "pedestrian")
+        assert sh.subject is None and sh.n_subject_nonfinite == 1, bad
+        d = sh.filter(st, a)
+        assert [(v.rule_id, v.category) for v in d.violations] == [
+            ("subject-finite", "contract")], (bad, d.violations)
+        assert "ped-standoff" in d.violations[0].detail
+        assert [r.operator for r in d.repairs] == ["Sanitise"], d.repairs
+        assert d.emitted == a and not d.emitted_violations
+        assert d.fsm_fault is None and d.setpoint == "pass", d.fsm_fault
+        row = next(r for r in sh.rule_status(st) if r["id"] == "ped-standoff")
+        assert (row["bound"], row["breach"], row["value"]) == (False, False, None), row
+        row = next(r for r in sh.rule_status(st, subject=bad, subject_class="pedestrian",
+                                             use_live_subject=False)
+                   if r["id"] == "ped-standoff")
+        assert row["bound"] is False and row["value"] is None, row
+        sh.set_subject(30.0, 0.0, "pedestrian")
+        assert [v.rule_id for v in sh.filter(st, a).violations] == ["ped-standoff"]
+    sh = _standoff_shield(min_range_m=10.0)
+    sh.set_subject(float("nan"), 0.0, "car")        # binds no rule: nothing to say
+    assert not sh.filter(st, a).violations
+    sh.set_subject(float("nan"), 0.0, "pedestrian")
+    sh.set_subject(None)
+    assert not sh.filter(st, a).violations and sh.n_subject_nonfinite == 2
+
+
 # The five P0 escape ticks of the 8 Oct red-car follow (demo/out/
 # pas_ap_20261008_224440, flight_log.jsonl): the logged state and raw action,
 # and the subject where the perception node had put it - exactly under the
@@ -668,6 +708,13 @@ def test_deepens_counts_hard_enforced_rules_and_a_moving_zone_relative_to_it():
 # The fix is a FLOOR and not a decline, which matters in the other direction:
 # the monitor forgives any opening above 0.1 m/s, so a repair that simply stood
 # aside would leave the aircraft crawling out of a zone it must not be in.
+#
+# 2026-10-19: the passthrough branch WAS that decline. With nothing else wrong
+# the floors never ran, so the crawl these tests raise passed untouched, and the
+# escape speed hung on whether an unrelated rule was broken. The floors now run
+# on a legal action from an illegal position too (Shield._floor_the_escape);
+# test_a_crawl_out_of_a_breach_is_floored_with_nothing_else_wrong drops the yaw
+# breach and pins that the answer is the same with it and without.
 # ---------------------------------------------------------------------------
 
 YAW_BREACH = math.radians(60)        # P1, horizontal-motion-neutral
@@ -744,19 +791,116 @@ def test_the_escape_survives_the_speed_cap_and_the_mission_pays():
 
 def test_escape_speed_is_monotonic_in_the_commanded_speed():
     """Faster in must never mean slower out. This is the property the whole
-    defect violated, and it holds only while the repair loop is engaged."""
+    defect violated. Until 2026-10-19 it held only while the repair loop was
+    engaged (hence YAW_BREACH); it now holds with nothing else wrong too:
+    test_a_crawl_out_of_a_breach_is_floored_with_nothing_else_wrong."""
     for label, sh, st, axis in (
             ("standoff", _standoff_ring_shield(), State(x=9.0, y=0.0, up=9.0), "vx"),
             ("geofence", make_shield(), State(x=22.0, y=15.0, up=4.0), "vx")):
-        prev = -9.9
-        for i in range(0, 61):
-            cmd = i * 0.1
-            got = getattr(sh.filter(st, Action4D(vx=cmd, yaw_rate=YAW_BREACH)).emitted,
-                          axis)
-            assert got >= prev - 1e-9, (
-                f"{label}: commanding {cmd:.1f} m/s emitted {got:.3f}, "
-                f"less than the {prev:.3f} emitted by a slower command")
-            prev = got
+        for yaw in (YAW_BREACH, 0.0):
+            prev = -9.9
+            for i in range(0, 61):
+                cmd = i * 0.1
+                got = getattr(sh.filter(st, Action4D(vx=cmd, yaw_rate=yaw)).emitted, axis)
+                assert got >= prev - 1e-9, (
+                    f"{label} (yaw {yaw:.2f}): commanding {cmd:.1f} m/s emitted "
+                    f"{got:.3f}, less than the {prev:.3f} emitted by a slower command")
+                prev = got
+
+
+def _wall_shield():
+    """A 6 m clearance ring on a synthetic wall (face at x = 10, 2 m cells),
+    as tests/test_clearance.py builds it; the aircraft at x = 6 is inside."""
+    import numpy as np
+    from guardrail.models import KinematicEnvelope, ObstacleClearance, Policy
+    occ = np.zeros((80, 80), np.uint8)
+    occ[int(round((10.0 + 80.0) / 2.0)):, :] = 1
+    pol = Policy(policy_id="clr-crawl", constraints=[
+        ObstacleClearance(id="clr", type="obstacle_clearance",
+                          min_clearance_m=6.0, soft_margin_m=2.0),
+        KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=4.0,
+                          climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)])
+    return Shield(pol, lookahead_s=3.0, dt=0.5,
+                  obstacle_map={"occ": occ, "res": 2.0, "ox": -80.0, "oy": -80.0})
+
+
+def test_a_crawl_out_of_a_breach_is_floored_with_nothing_else_wrong():
+    """REGRESSION (2026-10-19). The monitors forgive a recovery on its trend
+    (a zone or ring left at more than 0.1 m/s, ANY climb from under a floor,
+    any forecast gain inside the clearance ring); the repairs FLOOR its speed
+    (docs/FINDING-repairs-must-floor-the-escape.md). But the floors lived in
+    the repair chain, which ran only when something was violated, so with
+    nothing else wrong a crawl out of a P0 breach passed untouched - and
+    with an unrelated yaw breach the same action left at the floor:
+
+      altitude, 1.5 m under the floor, climbing 1e-6 m/s  passed, forever
+      zone, 1 m inside, leaving at 0.15 m/s               0.15 (6.7 s) vs 2.0
+      stand-off ring, opening at 0.11 m/s                 0.11 vs 0.5
+      clearance ring, creeping out at 0.02 m/s            0.02 vs 0.77
+
+    Each is floored now, still with no violation reported (nothing was
+    violated: the FSM reads the tick as clean), and the emitted action is
+    the same with and without the yaw breach. An escape already faster than
+    the floor still passes untouched."""
+    cases = (
+        ("altitude", make_shield, State(x=-30.0, y=-30.0, up=0.5), "vz_up",
+         (1e-6, 0.05, 0.2), 0.5, "AltitudeFix", 1.0),
+        ("zone", make_shield, State(x=22.0, y=15.0, up=4.0), "vx",
+         (0.11, 0.15), 2.0, "GeofenceEscape", 3.0),
+        ("stand-off", _standoff_ring_shield, State(x=9.0, y=0.0, up=9.0), "vx",
+         (0.11, 0.15), 0.5, "StandoffRecover", 3.0),
+        ("clearance", _wall_shield, State(x=6.0, y=0.0, up=40.0), "vx",
+         (-0.02, -0.2), -0.5, "ClearanceFix", -3.0))
+    for label, mk, st, ax, crawls, floor, op, fast in cases:
+        sh = mk()
+        assert sh.state_is_unsafe(st), label
+        sign = 1.0 if floor > 0 else -1.0
+        for cmd in crawls:
+            a = Action4D(**{ax: cmd})
+            d = sh.filter(st, a)
+            assert not d.violations and not d.braked, (label, cmd, d.violations)
+            got = getattr(d.emitted, ax)
+            assert sign * got >= abs(floor) - 1e-6, (
+                f"{label}: a {cmd} m/s crawl out of the breach emitted {got:.3f}")
+            assert [r.operator for r in d.repairs] == [op], (label, d.repairs)
+            assert d.touched and not d.emitted_violations and not sh._check(st, d.emitted)
+            assert d.trace["chain_runs"] == 1 and d.trace["iterations"] >= 1
+            yawed = sh.filter(st, a.model_copy(update={"yaw_rate": YAW_BREACH}))
+            assert abs(getattr(yawed.emitted, ax) - got) < 1e-9, (
+                f"{label}: {getattr(yawed.emitted, ax):.3f} with an unrelated yaw "
+                f"breach, {got:.3f} without")
+        d = sh.filter(st, Action4D(**{ax: fast}))
+        assert d.emitted == d.raw and not d.repairs and not d.touched, (label, d.repairs)
+
+
+def test_the_floor_does_not_reshape_a_legal_action_for_another_rule():
+    """The escape floor runs the operators of the rules the POSITION breaks
+    (and the caps), not the whole stack: on the 8 Oct follow (ticks 777-780)
+    the aircraft climbed out from under the floor at 1.8 m/s, already faster
+    than AltitudeFix's floor, and a full chain had StandoffHold's radial
+    reading take the closing speed off an action whose forecast never entered
+    the ring. Here: under the floor, climbing fast enough, flying past a
+    pedestrian 10.5 m abeam - the forecast's closest approach - while the
+    radial reading (16 m, closing 2.3 m/s, 5 s) says 4.7 m."""
+    from guardrail.models import (AltitudeEnvelope, KinematicEnvelope, Policy,
+                                  SubjectStandoff)
+    pol = Policy(policy_id="floor-scope", constraints=[
+        AltitudeEnvelope(id="alt", type="altitude_envelope", alt_min_m=6.0, alt_max_m=40.0),
+        SubjectStandoff(id="ped", type="subject_standoff", subject_class="pedestrian",
+                        min_range_m=10.0),
+        KinematicEnvelope(id="kin", type="kinematic_envelope", speed_max_mps=5.0,
+                          climb_rate_max_mps=2.0, yaw_rate_max_dps=45.0)])
+    sh = Shield(pol)
+    sh.set_subject(0.0, 0.0, "pedestrian")
+    st, a = State(x=-12.0, y=10.5, up=3.0), Action4D(vx=3.0, vz_up=1.8)
+    assert [v.rule_id for v in sh.state_is_unsafe(st)] == ["alt"]
+    assert not sh._check(st, a)
+    d = sh.filter(st, a)
+    assert d.emitted == a and not d.repairs and not d.touched, d.repairs
+    slow = a.model_copy(update={"vz_up": 0.05})       # the climb is a crawl: floored
+    d = sh.filter(st, slow)
+    assert [r.operator for r in d.repairs] == ["AltitudeFix"], d.repairs
+    assert (d.emitted.vx, d.emitted.vy) == (slow.vx, slow.vy) and d.emitted.vz_up >= 0.5
 
 
 # ------------------------------- 50-rule speed and the sliding window (WP3-23)
@@ -974,6 +1118,22 @@ def test_forecast_is_the_trajectory_the_rules_judge():
     poses = s.forecast(State(x=0, y=0, up=4), Action4D(vx=2.0))
     assert [t for t, _ in poses] == [0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0]
     assert poses[-1][1].x == 6.0
+
+
+def test_forecast_turns_the_heading_in_degrees():
+    """REGRESSION (2026-10-19). State.yaw_deg is degrees, Action4D.yaw_rate
+    rad/s; the forecast added them raw, so a 30 dps turn read 2.6 deg at
+    t + 5 s instead of 150 (docs/FINDING-the-contract-disagreed-with-itself-
+    about-yaw.md). The grid's last t is 4.999999999999998, not 5.0, so the
+    heading is compared with 30 x t."""
+    poses = Shield(load_policy(POLICY_PATH)).forecast(
+        State(x=0, y=0, up=10, yaw_deg=0), Action4D(yaw_rate=math.radians(30)))
+    t, p = poses[-1]
+    assert abs(t - 5.0) < 1e-9, t
+    assert abs(p.yaw_deg - 30.0 * t) < 1e-9, p.yaw_deg
+    _, p = make_shield().forecast(State(x=0, y=0, up=4, yaw_deg=-170.0),
+                                  Action4D(yaw_rate=math.radians(-10)))[2]
+    assert abs(p.yaw_deg - (-180.0)) < 1e-9, p.yaw_deg          # 1.0 s at -10 dps
 
 
 def test_every_tick_in_the_window_carries_its_own_time():

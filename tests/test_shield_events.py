@@ -451,6 +451,90 @@ def test_every_generation_an_event_sequence_produces_lints_clean():
         assert sh.policy.generation == k and _relint(sh) == [], (k, _relint(sh))
 
 
+def _snapshot(sh):
+    return (sh.policy.generation, [c.id for c in sh.policy.constraints],
+            sh.policy.policy_hash, len(sh.events), sh.ir.generation)
+
+
+def test_an_event_the_shield_would_not_enforce_is_refused():
+    """REGRESSION (2026-10-19). The constructor refuses a policy with a rule
+    it would not enforce (Shield.unenforceable: altitude_ref MSL), but the
+    hot-apply path ran only the lint, which has no MSL test. A 120-300 m MSL
+    zone was spawned at generation 1 and then judged as metres above ground,
+    so an aircraft at 50 m AGL inside its footprint flew on with no violation
+    (over 100 m ground the zone really starts 20 m up). The same held for a
+    corridor_swap and a pre-start polygon_fence. Each is refused now, with
+    nothing applied; the same zone above ground is accepted."""
+    from guardrail.models import PolygonFence
+    sh = Shield(load_policy(DEMO))
+    st = State(x=-20, y=-20, up=50)
+    sh.filter(st, Action4D())
+    before = _snapshot(sh)
+    msl = _zone(zid="msl", altitude_ref="MSL", altitude_floor_m=120.0,
+                altitude_ceiling_m=300.0)
+    e = _raises(HotApplyRefused, sh.spawn_nfz, msl)
+    assert "would not enforce" in str(e) and "MSL" in str(e), e
+    _raises(HotApplyRefused, sh.hot_apply, msl)
+    assert _snapshot(sh) == before and Shield.unenforceable(sh.policy) == []
+    Shield(sh.policy)                               # still a policy it can be built on
+    assert sh.spawn_nfz(_zone(zid="agl", altitude_floor_m=20.0,
+                              altitude_ceiling_m=200.0))["generation"] == 1
+    lanes = Shield(_lanes())
+    lanes.filter(State(x=0, y=0, up=10), Action4D())
+    swap = CorridorSwap.model_validate({**_swap("lane-b", 40.0).model_dump(),
+                                        "altitude_ref": "MSL"})
+    _raises(HotApplyRefused, lanes.hot_apply, swap)
+    assert lanes.policy.generation == 0 and lanes.events == []
+    pre = Shield(load_policy(DEMO))                 # before the first tick
+    fence = PolygonFence.model_validate({"id": "pf", "type": "polygon_fence",
+                                         "altitude_ref": "MSL", "vertices": _sq(-40, -40, 3)})
+    _raises(HotApplyRefused, pre.hot_apply, fence)
+    assert pre.policy.generation == 0 and all(c.id != "pf" for c in pre.policy.constraints)
+
+
+def test_a_runtime_that_fails_to_build_changes_nothing():
+    """REGRESSION (2026-10-19). _commit wrote the new rule list and
+    generation + 1 into the live Policy BEFORE building the runtime, with no
+    rollback. A build that raised left /health reporting generation 1 and a
+    zone the runtime (still generation 0) did not enforce, and a retry of the
+    same zone refused with RuleIdConflict as though it had been applied. Now
+    the build comes first: a failure is a HotApplyRefused (422 over REST) and
+    nothing moves. Shown with an injected fault and with a margin that
+    passes validation and overflows GEOS (margin_m 1e308)."""
+    import guardrail.shield as S
+    sh = Shield(load_policy(DEMO))
+    st, a = State(x=-20, y=-20, up=4), Action4D(vx=3.0)
+    sh.filter(st, Action4D())
+    before = _snapshot(sh)
+    real, calls = S._build_runtime, []
+
+    def flaky(*args, **kw):
+        if not calls:
+            calls.append(1)
+            raise RuntimeError("injected build fault")
+        return real(*args, **kw)
+    S._build_runtime = flaky
+    try:
+        e = _raises(HotApplyRefused, sh.spawn_nfz, _zone())
+        assert "injected build fault" in str(e), e
+        assert _snapshot(sh) == before and sh.ir.is_current_for(sh.policy)
+        assert sh.spawn_nfz(_zone())["generation"] == 1         # the retry is not a conflict
+    finally:
+        S._build_runtime = real
+    assert [v.rule_id for v in sh.filter(st, a).violations] == ["dyn"]
+    huge = Shield(load_policy(DEMO))
+    huge.filter(st, Action4D())
+    before = _snapshot(huge)
+    _raises(HotApplyRefused, huge.spawn_nfz, _zone(zid="huge", margin=1e308))
+    assert _snapshot(huge) == before and huge.ir.is_current_for(huge.policy)
+    assert huge.spawn_nfz(_zone())["generation"] == 1           # not blocked by "huge"
+    d = huge.filter(st, a)
+    assert [v.rule_id for v in d.violations] == ["dyn"] and d.generation == 1
+    # expire passes {} as the anchors once its zone is gone: that is kept, not
+    # replaced by the anchors it had before
+    assert huge.expire_nfz("dyn")["generation"] == 2 and "dyn" not in huge._anchors
+
+
 # --------------------------------------------------------------------- atomicity
 
 def test_an_event_never_changes_a_tick_already_running():
