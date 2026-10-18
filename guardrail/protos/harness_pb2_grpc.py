@@ -114,7 +114,10 @@ class StressHarnessServicer:
     def StopSession(self, request, context):
         """Close the session: ARMED episodes in it fail ("session stopped"), a live
         episode stops flying (FAILED, nothing bundled), a scheduled one already
-        flying finishes; both streams end after their last item.
+        flying finishes; both streams end after their last item. BLOCKS until
+        that scheduled flight has appended its rows and episode_ended - its wait
+        for the server's one run lock behind other episodes' flights, its run and
+        its bundling - so give it a deadline of a few EndEpisodes, not one.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')

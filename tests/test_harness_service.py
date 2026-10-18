@@ -39,11 +39,13 @@ What must hold, and how each test tries to break it:
   * Lifecycle: an idle ARMED episode expires and frees its slot; a second
     EndEpisode waits for the flight in progress; StopSession waits for a
     scheduled episode already flying, so its rows and end reach the streams
-    before `session_stopped`; the lab PKI defaults to a folder outside the
-    checkout and refuses a cloud-synced one.
+    before `session_stopped`, and one that raises still stops the session;
+    the lab PKI defaults to a folder outside the checkout and refuses a
+    cloud-synced one.
   * A session's REST forward speaks mutual TLS to an https endpoint (the
     lab CA, a client certificate), and an https endpoint the server has no
-    identity for is refused at StartSession, not retried as UNAVAILABLE.
+    identity for is refused at StartSession, not retried as UNAVAILABLE;
+    one that resets us says which allow-list to check.
   * A client's bad input is the client's error: a lat/lon that is not a
     number, a NaN in a Struct, a bad body file for the client tool.
 
@@ -908,20 +910,32 @@ class _TlsEndpoint:
     TLS, as api.serve_in_background serves every off-loopback rail (the lab
     CA's server certificate, a client certificate required) - served by the
     standard library, so this runs wherever cryptography does (no uvicorn).
-    Records the common name of each client that got through."""
+    Records the common name of each client that got through. With `allowed`
+    it also plays api.py's common-name gate: a lab-CA client whose name is
+    not on it is dropped with no answer (recorded in `reset`)."""
 
-    def __init__(self, pki: Path, policy: str = "policies/sim_demo_policy.yaml"):
+    def __init__(self, pki: Path, policy: str = "policies/sim_demo_policy.yaml",
+                 allowed=None):
         import ssl
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         from guardrail import api, load_policy
         from guardrail.shield import Shield
         self.shield = Shield(load_policy(ROOT / policy), escalation=False)
         self.peers: list = []
+        self.allowed = None if allowed is None else set(allowed)
+        self.reset: list = []
         ep = self
 
         class Handler(BaseHTTPRequestHandler):
             def log_message(self, *a):
                 pass
+
+            def handle(self):
+                cn = api.peer_common_name(self.connection.getpeercert())
+                if ep.allowed is not None and cn not in ep.allowed:
+                    ep.reset.append(cn)      # closed unanswered, as the gate's abort()
+                    return
+                super().handle()
 
             def _send(self, status, doc):
                 data = json.dumps(doc).encode("utf-8")
@@ -1009,6 +1023,39 @@ def test_a_session_forwards_to_an_https_endpoint_over_mutual_tls():
             raise AssertionError("a REST identity with no certificate was accepted")
         # Plain http on loopback needs no identity, as before.
         assert h.start_session(rest_endpoint="http://127.0.0.1:9")["rest_endpoint"]
+    finally:
+        ep.close()
+
+
+def test_an_https_endpoint_that_resets_us_names_the_allow_list_to_check():
+    """Review of the 2026-10-19 fix: a forwarder certificate the lab CA signed
+    but that the rail's --hotapply-client allow-list does not name is reset
+    by api.py's common-name gate with no answer, so the forward said only
+    UNAVAILABLE 'Remote end closed connection without response' - a
+    permanent configuration error a client retries for ever, with no hint at
+    the cause. The code stays UNAVAILABLE (a reset can be the network), but
+    the message now names the allow-list and this server's certificate.
+    Shown failing on d785d2d (no hint; here the reset arrived as WinError
+    10053, against uvicorn as RemoteDisconnected: both are hinted). The
+    positive control is the same server once its name is on the list."""
+    try:
+        H._crypto()
+    except H.HarnessUnavailable:
+        return SKIP
+    pki = _pki()
+    ep = _TlsEndpoint(pki, allowed=("harness-forwarder",))
+    try:
+        h = _own_harness("rest_reset_", rest_pki_dir=pki)
+        s = h.start_session(rest_endpoint=ep.url)["session_id"]
+        code, why = _h_refused(h.hot_apply, "", 0.0, ZONE, session_id=s)
+        assert code == "UNAVAILABLE", (code, why)
+        assert "--hotapply-client" in why and repr(H.DEFAULT_CLIENT_CN) in why, why
+        assert ep.reset == [H.DEFAULT_CLIENT_CN] and ep.peers == [], (ep.reset, ep.peers)
+        assert ep.shield.policy.generation == 0
+        ep.allowed.add(H.DEFAULT_CLIENT_CN)
+        ack = h.hot_apply("", 0.0, ZONE, session_id=s)
+        assert ack["generation"] == 1 and ep.shield.policy.generation == 1, ack
+        assert ep.peers == [H.DEFAULT_CLIENT_CN], ep.peers
     finally:
         ep.close()
 
@@ -1298,6 +1345,54 @@ def test_stop_session_waits_for_a_flying_scheduled_episode_and_ends_the_streams_
     assert time.monotonic() - t0 < 1.0
     items, _, done = h.wait_stream(s2, "events", 0, 0.1)
     assert done and items[-1]["kind"] == "session_stopped", items
+
+
+def test_a_stop_session_that_raises_still_stops_the_session():
+    """Review of the 2026-10-19 fix: the stopping call set STOPPING and
+    reached STOPPED only at the end of its own path, while a second
+    StopSession and both streams wait for STOPPED with no timeout. An error
+    anywhere in between (here the episodes' expiry check) left the session
+    STOPPING for good: the second StopSession hung, the streams never
+    ended, and it counted against MAX_OPEN_SESSIONS. Shown failing on
+    d785d2d (the session was left STOPPING after the error). Now the error
+    still reaches the caller, but the session is STOPPED, with the reason
+    in `session_stopped`."""
+    h = _own_harness("stop_raises_")
+    s = h.start_session()["session_id"]
+    h.start_episode(scenario_yaml=OPEN, session_id=s)
+
+    def boom(*a, **k):
+        raise RuntimeError("expiry check failed")
+
+    h._expire_if_idle = boom
+    try:
+        h.stop_session(s)
+    except RuntimeError as e:
+        assert "expiry check failed" in str(e), e
+    else:
+        raise AssertionError("the stopping call's error was swallowed")
+    finally:
+        del h._expire_if_idle
+    assert h._session(s).state == "STOPPED", h._session(s).state
+    again: list = []
+    t = threading.Thread(target=lambda: again.append(h.stop_session(s)), daemon=True)
+    t.start()
+    t.join(10)
+    assert not t.is_alive(), "a second StopSession hung on a session left STOPPING"
+    items, _, done = h.wait_stream(s, "events", 0, 0.1)
+    assert done, "the event stream never ends"
+    kinds = [x["kind"] for x in items]
+    assert kinds[-1] == "session_stopped" and kinds.count("session_stopped") == 1, kinds
+    assert "RuntimeError: expiry check failed" in json.loads(items[-1]["detail_json"])[
+        "stop_error"], items[-1]
+    assert again[0]["events"] == len(kinds), again
+    # It no longer counts as open (start_session counts every session not
+    # STOPPED); the next session's stop is the normal one.
+    assert all(x.state == "STOPPED" for x in h._sessions.values())
+    s2 = h.start_session()["session_id"]
+    h.stop_session(s2)
+    items, _, done = h.wait_stream(s2, "events", 0, 0.1)
+    assert done and json.loads(items[-1]["detail_json"]) == {"episodes_closed_unfinished": 0}
 
 
 def test_an_idle_armed_episode_expires_and_frees_its_slot():

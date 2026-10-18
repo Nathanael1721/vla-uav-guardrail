@@ -118,9 +118,14 @@ session HotApply, a stream poll) for `session_idle_ttl_s` (default one hour)
 and no episode of it ARMED or RUNNING, it is stopped as StopSession would
 stop it, its event stream says `session_expired` first, and it stops
 counting against MAX_OPEN_SESSIONS. StopSession lets a scheduled episode that
-is already flying finish and WAITS for it (at most one run_episode): that
-episode's telemetry rows, run events and `episode_ended` reach both streams
-before `session_stopped`, the last item of each, and StopResponse counts them.
+is already flying finish and WAITS for it: that episode's telemetry rows, run
+events and `episode_ended` reach both streams before `session_stopped`, the
+last item of each, and StopResponse counts them. The wait is the whole of that
+flight as EndEpisode sees it - its turn at the one run lock every session's
+scheduled flights share (behind any queued ahead of it), its run_episode and
+its bundling - so under contention it is several run_episodes, not one (a
+scheduled EndEpisode's median is 1.709 s in docs/DESIGN-harness-grpc.md): a
+client should give StopSession a deadline to match.
 
 WHAT IT IS NOT
 
@@ -176,6 +181,8 @@ STATUS CODES (what a client can rely on)
                          certificate, one from another CA, or a plaintext
                          client on the mTLS port; (from the service) a bound
                          REST endpoint that did not answer, or answered 5xx
+                         (an https endpoint that reset us says to check
+                         that its allow-list names our certificate)
 
 MUTUAL TLS AND THE SHARED ROOT CA
 
@@ -1545,64 +1552,102 @@ class Harness:
         """Fail the session's ARMED and live episodes, let a scheduled one
         already flying finish, then end both streams with `session_stopped`
         - after that flight's rows, run events and episode_ended, so it
-        blocks for the rest of the flight (at most one run_episode). Until
+        blocks for the rest of the flight: its wait for the run lock behind
+        other episodes' scheduled flights (any session's), its run_episode
+        and its bundling - several run_episodes under contention. Until
         2026-10-19 the streams ended at once and that episode's items landed
         after `session_stopped`, where no open stream delivered them. A call
         that finds the session already stopping waits for it to stop. The
         call that stops it emits `first` (kind, detail) before anything else
-        (the expiry's session_expired)."""
+        (the expiry's session_expired). If that call raises on its way, the
+        session is still STOPPED (see _stopped_anyway) before the error
+        leaves."""
         s = self._session(session_id)
-        closed = 0
-        with s.cond:
-            # Check and set under one lock: of two StopSessions, or a stop and
-            # an expiry sweep, one stops the session, once.
-            mine = s.state == "OPEN"
+        closed, mine = 0, False
+        try:
+            with s.cond:
+                # Check and set under one lock: of two StopSessions, or a stop and
+                # an expiry sweep, one stops the session, once.
+                mine = s.state == "OPEN"
+                if mine:
+                    s.state = "STOPPING"
+                    if first is not None:
+                        self._emit(s, first[0], "", first[1])
+            if not mine:
+                with s.cond:
+                    s.cond.wait_for(lambda: s.state == "STOPPED")
+            else:
+                with self._lock:
+                    eps = [self._episodes.get(i) for i in list(s.episodes)]
+                for e in eps:
+                    if e is None:
+                        continue
+                    with e.lock:
+                        self._expire_if_idle(e)
+                        if e.state == "ARMED" or (e.live and e.state == "RUNNING"):
+                            e.state = "FAILED"
+                            e.error = (f"session {session_id} was stopped before the episode "
+                                       f"ended; nothing was bundled")
+                            e.finished_at = time.monotonic()
+                            e.done.set()
+                            e.wake.set()
+                            closed += 1
+                with s.cond:
+                    # Every flight of it has appended all it will (the failed
+                    # live ones return at their next tick; the wait releases the
+                    # lock they append under).
+                    s.cond.wait_for(lambda: s.flying <= 0)
+                    # The last event and the state change under one lock, so a
+                    # stream cannot see STOPPED before it has seen the stop.
+                    self._mark_stopped(s, {"episodes_closed_unfinished": closed})
+                with self._lock:
+                    stopped = sorted((x for x in self._sessions.values()
+                                      if x.state == "STOPPED"), key=lambda x: x.stopped_at)
+                    for x in stopped[:max(0, len(stopped) - MAX_KEPT_SESSIONS)]:
+                        self._sessions.pop(x.session_id, None)
+        except BaseException as exc:
             if mine:
-                s.state = "STOPPING"
-                if first is not None:
-                    self._emit(s, first[0], "", first[1])
-        if not mine:
-            with s.cond:
-                s.cond.wait_for(lambda: s.state == "STOPPED")
-        else:
-            with self._lock:
-                eps = [self._episodes.get(i) for i in list(s.episodes)]
-            for e in eps:
-                if e is None:
-                    continue
-                with e.lock:
-                    self._expire_if_idle(e)
-                    if e.state == "ARMED" or (e.live and e.state == "RUNNING"):
-                        e.state = "FAILED"
-                        e.error = (f"session {session_id} was stopped before the episode "
-                                   f"ended; nothing was bundled")
-                        e.finished_at = time.monotonic()
-                        e.done.set()
-                        e.wake.set()
-                        closed += 1
-            with s.cond:
-                # Every flight of it has appended all it will (the failed
-                # live ones return at their next tick; the wait releases the
-                # lock they append under).
-                s.cond.wait_for(lambda: s.flying <= 0)
-                # The last event and the state change under one lock, so a
-                # stream cannot see STOPPED before it has seen the stop.
-                s.events.append({"session_id": s.session_id, "episode_id": "",
-                                 "seq": len(s.events), "wall_time": time.time(),
-                                 "kind": "session_stopped",
-                                 "detail_json": json.dumps({"episodes_closed_unfinished":
-                                                            closed})})
-                s.state = "STOPPED"
-                s.stopped_at = time.monotonic()
-                s.cond.notify_all()
-            with self._lock:
-                stopped = sorted((x for x in self._sessions.values() if x.state == "STOPPED"),
-                                 key=lambda x: x.stopped_at)
-                for x in stopped[:max(0, len(stopped) - MAX_KEPT_SESSIONS)]:
-                    self._sessions.pop(x.session_id, None)
+                self._stopped_anyway(s, closed, exc)
+            raise
         return {"session_id": s.session_id, "episodes": len(s.episodes),
                 "episodes_closed_unfinished": closed, "telemetry_frames": len(s.telemetry),
                 "telemetry_dropped": s.telemetry_dropped, "events": len(s.events)}
+
+    @staticmethod
+    def _mark_stopped(s: _Session, detail: dict) -> None:
+        """Append `session_stopped` and make the session STOPPED, under one
+        hold of s.cond (an RLock, so a caller may already hold it): a stream
+        never sees STOPPED before the stop event, and every waiter - a second
+        StopSession, a stream poll - is woken."""
+        with s.cond:
+            s.events.append({"session_id": s.session_id, "episode_id": "",
+                             "seq": len(s.events), "wall_time": time.time(),
+                             "kind": "session_stopped",
+                             "detail_json": json.dumps(detail, sort_keys=True,
+                                                       default=str)})
+            s.state = "STOPPED"
+            s.stopped_at = time.monotonic()
+            s.cond.notify_all()
+
+    def _stopped_anyway(self, s: _Session, closed: int, exc: BaseException) -> None:
+        """The stopping call raised between STOPPING and STOPPED. STOPPED is
+        reached only at the end of that call, and every other waiter waits
+        for it with no timeout: a second StopSession (and an expiry sweep)
+        in wait_for(STOPPED), both streams in wait_stream, which ends only
+        on STOPPED. Before this (review of the 2026-10-19 fix), an error
+        anywhere in between - an episode's expiry check, the `first` event,
+        an interrupted wait - left the session STOPPING for good: later
+        StopSessions hung, the streams never ended, and it counted against
+        MAX_OPEN_SESSIONS until a restart. So the error still stops it, with
+        the reason in `session_stopped`, and is re-raised by the caller. It
+        does not wait for a flight still going (the wait may be what
+        failed): such a flight's items can land after the stop, the
+        pre-2026-10-19 behaviour, on this error path only."""
+        with s.cond:
+            if s.state == "STOPPED":          # the error came after the stop
+                return
+            self._mark_stopped(s, {"episodes_closed_unfinished": closed,
+                                   "stop_error": f"{type(exc).__name__}: {exc}"})
 
     def inject_policy(self, session_id: str, *, bundle_path: str = "",
                       bundle_bytes: bytes = b"", expected_hash: str = "") -> dict:
@@ -1720,7 +1765,9 @@ class Harness:
         or that does not name the host, a TLS alert refusing ours) is
         FAILED_PRECONDITION, not UNAVAILABLE: retrying cannot fix it. A common
         name off the endpoint's allow-list is a connection reset (api.py's
-        gate aborts it), which the network can also cause: UNAVAILABLE."""
+        gate aborts it), which the network can also cause: UNAVAILABLE, with
+        a hint naming the allow-list and this server's certificate, since a
+        client retrying it will never get through."""
         import ssl
         url = s.rest_endpoint + path
         data = None if body is None else json.dumps(body).encode("utf-8")
@@ -1753,8 +1800,24 @@ class Harness:
                                    f"the REST endpoint {url} failed the TLS handshake: {why} "
                                    f"(its certificate must be the lab CA's and name the "
                                    f"host; this server's must be on its allow-list)") from None
+            # A reset over https is also what api.py's common-name gate does to
+            # a lab-CA certificate that is not on the rail's --hotapply-client
+            # allow-list (transport.abort(), no answer): verified end to end
+            # in the review of the 2026-10-19 fix, where 'other-client' got
+            # UNAVAILABLE 'Remote end closed connection without response' and
+            # nothing else. The code stays UNAVAILABLE - a reset can be the
+            # network - but the message names the likely configuration
+            # error, or a client retries it for ever without a clue.
+            hint = ""
+            if (url.lower().startswith("https:") and self.rest_client_name
+                    and isinstance(why, (ConnectionResetError, ConnectionAbortedError,
+                                         BrokenPipeError, ssl.SSLEOFError))):
+                hint = (f"; if this repeats, check that the endpoint's allow-list "
+                        f"(--hotapply-client on the rail) names this server's client "
+                        f"certificate {self.rest_client_name!r}: a common name off it "
+                        f"is reset, not refused")
             raise HarnessError("UNAVAILABLE", f"the REST endpoint {url} did not answer: "
-                                              f"{err}") from None
+                                              f"{err}{hint}") from None
         try:
             doc = json.loads(raw or b"{}")
         except ValueError:

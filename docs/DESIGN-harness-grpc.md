@@ -38,8 +38,8 @@ dashboards, scenario authoring).
 | `tools/harness_client.py` | `HarnessClient` (all eleven RPCs) and a CLI: `run` (with a session when given a policy, a prompt or `--live`), `forward`, `status` |
 | `tools/sros2_setup.sh` | The SROS 2 keystore and enclaves of the dev graph, seeded with the harness CA (not run here) |
 | `tools/rerun_episode.py` | Re-flies a bundle and compares the flight logs (used here on a live episode's bundle) |
-| `tests/test_harness_service.py` | 49 tests, standalone runner; the logic tests drive `Harness` without gRPC |
-| `tests/test_wp4outputs_harness.py` | 12 tests: live mode, sessions, InjectPolicy, IssueTask, REST forwarding, the streams, the lifecycle over mTLS |
+| `tests/test_harness_service.py` | 56 tests, standalone runner; the logic tests drive `Harness` without gRPC |
+| `tests/test_wp4outputs_harness.py` | 16 tests: live mode, sessions, InjectPolicy, IssueTask, REST forwarding, the streams, the lifecycle over mTLS |
 
 Regenerating the stubs, from the repository root:
 
@@ -60,7 +60,7 @@ messages is unchanged, so a client built against those stubs still works.
 | Page's RPC | Here (headless backend) |
 |---|---|
 | StartSession | opens a session: backend (HEADLESS; SITL is reserved and answers UNIMPLEMENTED), the page's scene and airframe (recorded, not used: no simulator to load), a default seed, an optional REST endpoint the session is bound to |
-| StopSession | closes it: ARMED episodes fail, a live one stops (FAILED, no bundle), a scheduled one already flying finishes; the streams end |
+| StopSession | closes it: ARMED episodes fail, a live one stops (FAILED, no bundle), a scheduled one already flying finishes and the call blocks until it has (see The streams); the streams end |
 | InjectPolicy | the policy the session's later episodes fly: a bundle or policy YAML under `policies/` or `bundles/`, or the archive's bytes, pinned to `expected_hash` (required); in a REST-bound session the endpoint must be flying it |
 | HotApply | to an episode: the Policy DSL's REST hot-apply body, validated by `guardrail.api.apply_event`, flown at `at_sim_t` (or `now`, live); to a REST-bound session: POSTed to `<endpoint>/hot_apply` |
 | StartEpisode | arms one ScenarioSpec cell with a seed, an arm, optionally a profile and a session; `live` starts it flying at `pace` |
@@ -299,10 +299,15 @@ its first item, then wait for more (checking every 0.5 s that the client is
 still there), and end once the session is stopped and everything has been
 sent; the stop event and the state change are made under one lock, so a
 stream cannot end before it has sent `session_stopped`. StopSession waits for
-a scheduled episode already flying (at most one run_episode), so that
-episode's rows, run events and `episode_ended` come before `session_stopped`
-and StopResponse counts them (until 2026-10-19 the streams ended at once and
-those items landed after the stop, where no open stream delivered them). Each open stream
+a scheduled episode already flying, so that episode's rows, run events and
+`episode_ended` come before `session_stopped` and StopResponse counts them
+(until 2026-10-19 the streams ended at once and those items landed after the
+stop, where no open stream delivered them). The wait is that whole flight:
+its turn at the one run lock every session's scheduled flights share (behind
+any queued ahead of it), its run_episode and its bundling. Under contention
+that is several run_episodes, not one, so a client should give StopSession a
+deadline of a few scheduled EndEpisodes (1.709 s median each, below); with
+nothing flying it returns at once (0.001 s). Each open stream
 holds a server worker thread (`serve(max_workers=16)` by default).
 
 The episode bundle's `manifest_extras.json` also carries the self-contained
@@ -356,6 +361,12 @@ certificate the lab CA did not sign, or that does not name the host) is
 FAILED_PRECONDITION, not a retryable UNAVAILABLE. Until 2026-10-19 the
 forward had no identity and every call to such an endpoint failed as
 UNAVAILABLE. A test serves the same standard-library endpoint over mutual TLS.
+One configuration error still looks like the network: a client certificate
+the lab CA signed but that is not on the rail's `--hotapply-client`
+allow-list is reset by api.py's common-name gate, with no answer, so the
+forward stays UNAVAILABLE (a reset can be the network); its message then
+names the allow-list and the certificate (`--rest-client`) to check, and
+the test resets a common name off its own allow-list to show it.
 
 ## Status codes
 
