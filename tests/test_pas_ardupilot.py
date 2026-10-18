@@ -942,15 +942,53 @@ def test_mavros_says_how_old_its_state_is_and_when_the_fcu_dropped():
     ev = link.evidence()
     assert (ev["heartbeat"], ev["heartbeat_seen"], ev["fcu_connected_at_end"]) == \
         (False, True, False), ev
-    c = topo.classify(_ev(autopilot={k: ev[k] for k in ("heartbeat", "is_ardupilot",
-                                                         "heartbeat_seen")}))
+    assert ev["ardupilot_seen"] is True and ev["is_ardupilot"] is False, ev
+    keys = ("heartbeat", "is_ardupilot", "heartbeat_seen", "ardupilot_seen")
+    c = topo.classify(_ev(autopilot={k: ev[k] for k in keys}))
     assert c["grant"] is None
-    assert any("link dropped" in r for r in c["reasons"]), c["reasons"]
+    assert any("ArduPilot's heartbeat was received" in r and "link dropped" in r
+               for r in c["reasons"]), c["reasons"]
     assert not any("no ArduPilot heartbeat was received" in r for r in c["reasons"])
     # Never connected at all is still "no heartbeat".
     c = topo.classify(_ev(autopilot={"heartbeat": False, "is_ardupilot": False,
                                      "heartbeat_seen": False}))
     assert any("no ArduPilot heartbeat was received" in r for r in c["reasons"])
+
+
+def test_a_px4_that_connected_and_dropped_is_not_called_ardupilot():
+    """REVIEW (2026-10-19). MAVROS's heartbeat_seen is ANY flight controller
+    that connected, and is_ardupilot needs `connected`, so after a drop the
+    reason said "ArduPilot's heartbeat was received ... the link dropped"
+    for a PX4 too. Only an FCU seen connected with an ArduCopter mode name
+    (ardupilot_seen) is called ArduPilot. Failed before: the PX4 drop read
+    "ArduPilot's heartbeat was received"."""
+    link, node = _mavros()
+    node.subs["/mavros/state"](SimpleNamespace(connected=True, armed=True, mode="OFFBOARD"))
+    node.subs["/mavros/state"](SimpleNamespace(connected=False, armed=True, mode="OFFBOARD"))
+    ev = link.evidence()
+    assert (ev["heartbeat"], ev["heartbeat_seen"], ev["ardupilot_seen"]) == \
+        (False, True, False), ev
+    keys = ("heartbeat", "is_ardupilot", "heartbeat_seen", "ardupilot_seen")
+    c = topo.classify(_ev(autopilot={k: ev[k] for k in keys}))
+    assert c["grant"] is None
+    assert not any("ArduPilot's heartbeat was received" in r for r in c["reasons"]), \
+        c["reasons"]
+    assert any("nothing on record shows it was ArduPilot" in r and "link dropped" in r
+               for r in c["reasons"]), c["reasons"]
+    # Evidence without ardupilot_seen (an older record) is not called ArduPilot either.
+    c = topo.classify(_ev(autopilot={"heartbeat": False, "is_ardupilot": False,
+                                     "heartbeat_seen": True}))
+    assert not any("ArduPilot's heartbeat was received" in r for r in c["reasons"])
+    # A disconnected FCU's mode name does not count: connected False with GUIDED.
+    link, node = _mavros()
+    node.subs["/mavros/state"](SimpleNamespace(connected=False, armed=False, mode="GUIDED"))
+    assert link.evidence()["ardupilot_seen"] is False
+    # pymavlink: an ArduPilot heartbeat is what sets the target at all.
+    fm = FakeMavutil([AP_HB])
+    plink = _link(fm)
+    plink.connect(timeout=5)
+    pev = plink.evidence()
+    assert pev["ardupilot_seen"] is True and pev["heartbeat_seen"] is True
 
 
 def test_mavros_mode_requests_do_not_wait_and_say_when_nobody_listens():
@@ -1120,6 +1158,55 @@ def test_the_pilot_tracks_a_fresh_box_and_searches_when_it_is_stale():
     p = pn.FollowPilot(FakeDetections(clk, fresh=False), 90.0)
     body, info = p.step(clk.t, 8.0)
     assert info["mode"] == "search" and body[0] == 0.0
+
+
+class LosableDetections(FakeDetections):
+    """A box at column `cx` that goes stale when `lost` is set."""
+
+    def __init__(self, clock, cx):
+        super().__init__(clock, cx=cx)
+        self.lost = False
+
+    def latest(self):
+        out = super().latest()
+        if self.lost:
+            out["t_det"] = self.clock.t - 5.0
+        return out
+
+
+def test_the_search_sweep_starts_toward_the_side_the_box_was_lost_on():
+    """REGRESSION (2026-10-19). follow_vlm.search_sweep_rate always starts
+    turning RIGHT, so a box lost off the LEFT of the frame - the servo
+    turning left after it - got a yaw step of over 1 rad/s at the hand-over
+    and a first half-swing away from where it went. The first swing now goes
+    toward the side the box was last tracked on, held for the whole search,
+    and the sweep still nets zero rotation. Failed before: the left loss
+    swung right (+0.685 rad/s)."""
+    for cx, side in ((192.0, -1.0), (576.0, 1.0)):
+        clk = Clock()
+        dets = LosableDetections(clk, cx)
+        p = pn.FollowPilot(dets, 90.0)
+        body, info = p.step(clk.t, 8.0)
+        assert info["mode"] == "track" and math.copysign(1.0, body[3]) == side, body
+        dets.lost = True
+        rates = []
+        for _ in range(40):                       # one 4 s sweep period at 10 Hz
+            clk.t += 0.1
+            body, info = p.step(clk.t, 8.0)
+            assert info["mode"] == "search" and info["sweep_side"] == side, info
+            rates.append(body[3])
+        assert math.copysign(1.0, rates[0]) == side and abs(rates[0]) > 0.6, (cx, rates[:3])
+        assert abs(sum(r * 0.1 for r in rates)) < 1e-6, "the sweep walked the nose off"
+        # Found again on the other side, then lost: the next search follows it.
+        dets.lost, dets.cx = False, 768.0 - cx
+        p.step(clk.t + 0.1, 8.0)
+        dets.lost = True
+        body, info = p.step(clk.t + 0.2, 8.0)
+        assert info["sweep_side"] == -side and math.copysign(1.0, body[3]) == -side
+    # Never seen at all: right, as before.
+    p = pn.FollowPilot(FakeDetections(Clock(), fresh=False), 90.0)
+    body, info = p.step(1000.0, 8.0)
+    assert body[3] > 0.6 and info["sweep_side"] == 1.0
 
 
 def test_the_subject_is_placed_along_the_heading_without_ground_truth():
@@ -1929,11 +2016,22 @@ def test_an_unclassified_subject_still_binds_the_catch_all_standoff():
     events = [json.loads(l) for l in (run / "events.jsonl").read_text().splitlines()]
     assert any(e["kind"] == "subject_unclassified" and e["object"] == "a child"
                for e in events)
+    # Where the grade is decided, too (review 2026-10-19): a width-ranged tick
+    # assumed a car's 4.0 m, ~8x too far for a child. Failed before: no reason.
+    kpi = _json(run, "kpi.json")
+    assert kpi["kpi_grade"] is False
+    assert any("'a child' names no class" in w and "standoff-any" in w and "4 m" in w
+               for w in kpi["kpi_grade_reasons"]), kpi["kpi_grade_reasons"]
     # A rule for a class still binds only that class.
     rc, run, _ = _fly("on", policy=STANDOFF_POLICY, extra=("--object", "a child"))
     m = _json(run, "metrics.json")
     assert m["subject_standoff_rules"] == [] and m["interventions"] == 0
     assert not any(v["rule_id"] == "standoff-car" for r in _rows(run) for v in r["violations"])
+    assert any("names no class: no stand-off rule binds it" in w
+               for w in _json(run, "kpi.json")["kpi_grade_reasons"])
+    # A phrase that names a class carries no such reason.
+    rc, run, _ = _fly("on", policy=STANDOFF_POLICY, extra=("--object", "a red car"))
+    assert not any("names no class" in w for w in _json(run, "kpi.json")["kpi_grade_reasons"])
 
 
 class CaptureDetections(FakeDetections):
@@ -1949,8 +2047,9 @@ class CaptureDetections(FakeDetections):
         out = super().latest()
         now = self.clock.t
         out["cap"] = {"t_cap": now - 0.25, "t_capture": now - 0.3,
-                      "pose": dict(self.cap_pose, src="ring"), "depth_src": "capture",
-                      "depth_dt_ms": 5.0, "range_m": self.range_m}
+                      "pose": (None if self.cap_pose is None
+                               else dict(self.cap_pose, src="ring")),
+                      "depth_src": "capture", "depth_dt_ms": 5.0, "range_m": self.range_m}
         return out
 
 
@@ -1984,13 +2083,15 @@ def test_the_subject_is_placed_from_its_own_capture_not_from_this_tick():
     m = _json(run, "metrics.json")
     assert m["subject_pairing"]["pose"] == {"capture:ring": len(rows)}, m["subject_pairing"]
     assert m["subject_pairing"]["box_age_s"]["median"] == 0.3
-    # A capture with no depth of its own: the width range, never the newest frame.
+    # A capture with no depth of its own: the width range, never the newest
+    # frame - and labelled so, not "width" as a phrase that never had depth
+    # (review 2026-10-19; failed before: {'width': 30}).
     rc, run, _ = _fly("on", link_kw={"yaw": math.radians(30.0)}, depth_m=60.0,
                       grounder_cls=CaptureDetections,
                       grounder_kw={**box, "cap_pose": pose, "range_m": None})
     m = _json(run, "metrics.json")
-    assert set(m["subject_source"]) == {"width"} and m["subject_known_ticks"] > 0, \
-        m["subject_source"]
+    assert set(m["subject_source"]) == {"width:no-capture-depth"} \
+        and m["subject_known_ticks"] > 0, m["subject_source"]
     assert all(r["subject_depth"] is None for r in _rows(run))
     # A box with no capture (a stand-in without "cap"): the old pairing, said so.
     rc, run, _ = _fly("on", link_kw={"yaw": math.radians(30.0)}, depth_m=60.0,
@@ -1998,6 +2099,36 @@ def test_the_subject_is_placed_from_its_own_capture_not_from_this_tick():
     m = _json(run, "metrics.json")
     assert set(m["subject_pairing"]["pose"]) == {"tick"}, m["subject_pairing"]
     assert set(m["subject_pairing"]["depth"]) == {"latest"}, m["subject_pairing"]
+
+
+def test_a_box_with_no_capture_pose_still_takes_its_capture_s_range():
+    """REVIEW (2026-10-19). A box whose capture had no pose (the Grounder
+    started before the loop filled the pose ring) but did have its own depth
+    range (cap["range_m"], 20 m here) dropped that range for the NEWEST depth
+    frame (60 m here), which the old box indexes on road or background. The
+    capture's range is used from this tick's pose, and the record says so:
+    pose "tick", depth from the capture. Failed before: every subject 60 m
+    out, pairing depth "latest"."""
+    box = {"cx": 384.0, "cy": 224.0, "w": 40.0, "h": 24.0}
+    rc, run, _ = _fly("on", link_kw={"yaw": math.radians(30.0)}, depth_m=60.0,
+                      grounder_cls=CaptureDetections,
+                      grounder_kw={**box, "cap_pose": None, "range_m": 20.0})
+    assert rc == 0
+    rows = [r for r in _rows(run) if r["subject"] is not None]
+    assert len(rows) >= 25, len(rows)
+    for r in rows:
+        x, y, src = r["subject"]
+        horiz = math.sqrt(20.0 ** 2 - (r["up"] - pn.SUBJECT_UP_M) ** 2)
+        assert src == "depth" and abs(math.hypot(x - r["x"], y - r["y"]) - horiz) < 0.02, \
+            (r["t"], r["subject"], r["x"], r["y"])
+        # Along this tick's heading (yaw 30 deg, the box at the centre).
+        assert abs(math.degrees(math.atan2(y - r["y"], x - r["x"])) - 30.0) < 0.1
+        assert r["subject_depth"] == {"r_m": 20.0, "refused": None}, r["subject_depth"]
+        assert r["subject_pairing"] == {"pose": "tick", "depth": "capture",
+                                        "box_age_s": 0.3}, r["subject_pairing"]
+    m = _json(run, "metrics.json")
+    assert m["subject_pairing"]["depth"] == {"capture": len(rows)}, m["subject_pairing"]
+    assert set(m["subject_source"]) == {"depth"}, m["subject_source"]
 
 
 class LateClock(Clock):
@@ -2139,10 +2270,14 @@ def test_a_link_that_goes_quiet_stops_the_commands_and_ends_as_link_lost():
     assert not late, f"setpoints sent on a frozen position at {late[:3]} s"
     assert m["end_reason"].startswith("link lost: no position fix for"), m["end_reason"]
     assert m["mission_s"] < 1.0 + pn.POS_STALE_S + pn.LINK_LOST_S + 0.5, m["mission_s"]
-    assert m["ticks_state_stale"] >= 25 and len(rows) == len(link.sent), \
+    # One setpoint per flown row, and the one zero-velocity hold the stale
+    # span opened with (STALE_HOLD); nothing else.
+    assert m["ticks_state_stale"] >= 25 and len(link.sent) == len(rows) + 1, \
         (m["ticks_state_stale"], len(rows), len(link.sent))
+    assert link.sent[-1] == Action4D() and link.sent_t[-1] > link.sent_t[-2], link.sent[-2:]
     spans = m["link_freshness"]["spans"]
     assert len(spans) == 1 and spans[0]["recovered"] is False and m["link_freshness"]["measured"]
+    assert spans[0]["hold_sent"] is True, spans
     assert link.requested[-1:] == ["LAND"] and m["mission_end_land_accepted"] is True
     assert kpi["kpi_grade"] is False
     assert any("link was lost" in w for w in kpi["kpi_grade_reasons"]), kpi["kpi_grade_reasons"]
@@ -2174,6 +2309,134 @@ def test_a_link_that_cannot_say_how_old_its_state_is_is_never_kpi_evidence():
     m, kpi = _json(run, "metrics.json"), _json(run, "kpi.json")
     assert m["link_freshness"]["measured"] is False and "no link_age" in m["link_freshness"]["why"]
     assert any("cannot say how old" in w for w in kpi["kpi_grade_reasons"])
+
+
+class InboundDeadLink(FakeLink):
+    """An INBOUND-only failure `die_at` s into the run (a starved MAVROS
+    subscriber, a one-way NAT drop): nothing new reaches the snapshot, but
+    the aircraft still flies whatever it is sent. `track` is where it truly
+    was at each pump."""
+
+    def __init__(self, *a, die_at=1.0, **k):
+        super().__init__(*a, **k)
+        self.die_at, self.track = die_at, []
+
+    def pump(self):
+        t = self.clock.t
+        if t - self.t_start < self.die_at:
+            return super().pump()
+        if self.snap.mode == "GUIDED":
+            dt = t - self.t_last
+            self.x += self.v.vx * dt
+            self.y += self.v.vy * dt
+        self.t_last = t
+        self.track.append((t, self.x, self.y))
+
+
+def test_a_stale_span_opens_with_one_zero_velocity_hold():
+    """REVIEW (2026-10-19). On a stale tick nothing was sent, so the aircraft
+    flew the last velocity setpoint - computed on a position already up to
+    POS_STALE_S frozen - until ArduCopter's GUID_TIMEOUT (3 s): with only
+    the inbound path dead, ~4 s blind at up to speed_max. The span now opens
+    with ONE zero-velocity setpoint and then sends nothing. Failed before:
+    no send after the freeze, and the aircraft kept flying (here, the whole
+    3 s span at the 2 m/s cap)."""
+    rc, run, link = _fly("on", link_cls=InboundDeadLink, link_kw={"die_at": 1.0},
+                         max_s="10")
+    assert rc == 0
+    m, rows = _json(run, "metrics.json"), _rows(run)
+    assert m["end_reason"].startswith("link lost"), m["end_reason"]
+    last = link.sent[len(rows) - 1]
+    assert math.hypot(last.vx, last.vy) > 1.0, "the aircraft was not moving: proves nothing"
+    # Every send after the last flown row's: the hold alone, after the freeze.
+    after = list(zip(link.sent_t, link.sent))[len(rows):]
+    assert len(after) == 1 and after[0][1] == Action4D(), after
+    t_hold = after[0][0]
+    assert t_hold > link.t_start + 1.0 + pn.POS_STALE_S - pn.TICK - 1e-6, t_hold - link.t_start
+    moved = [math.hypot(x - link.x, y - link.y) for t, x, y in link.track if t > t_hold]
+    assert moved and max(moved) < 1e-9, f"flew on {max(moved):.2f} m after the hold"
+    spans = m["link_freshness"]["spans"]
+    assert len(spans) == 1 and spans[0]["hold_sent"] is True, spans
+    events = [json.loads(l) for l in (run / "events.jsonl").read_text().splitlines()]
+    stale = [e for e in events if e["kind"] == "link_stale"]
+    assert len(stale) == 1 and stale[0]["hold_sent"] is True, stale
+    # Nothing was streaming (the autopilot owned the aircraft): no hold is
+    # sent over it.
+    rc, run, link = _fly("on", link_cls=FreezingLink,
+                         link_kw={"die_at": 1.0, "takeover_at": (0.5, "RTL")}, max_s="10")
+    m = _json(run, "metrics.json")
+    spans = m["link_freshness"]["spans"]
+    assert len(spans) == 1 and spans[0]["hold_sent"] is None, spans
+    assert not any(t > link.t_start + 0.6 for t in link.sent_t), link.sent_t[-3:]
+
+
+class SlowLandLink(FreezingLink):
+    """PymavlinkLink.land() over a dead link: set_mode tries for 5 s and
+    returns False."""
+
+    def land(self):
+        self.requested.append("LAND")
+        self.clock.t += 5.0
+        return False
+
+
+def test_the_loop_gate_reads_the_tick_pacing_not_the_mission_clock():
+    """REVIEW (2026-10-19). loop_hz_below_gate used rows / mission_s, and
+    mission_s runs past the loop to the mission-end LAND (5 s over a dead
+    pymavlink link) while stale ticks are in its time but not its rows: a
+    well-paced link-lost run was flagged as a slow loop. The gate reads the
+    loop's own tick starts. Failed before: below the gate, no loop_hz_paced."""
+    rc, run, link = _fly("on", link_cls=SlowLandLink, link_kw={"die_at": 1.0}, max_s="10")
+    assert rc == 0
+    m, rows = _json(run, "metrics.json"), _rows(run)
+    assert m["mission_end_land_accepted"] is False
+    assert m["loop_hz"] < pn.LOOP_HZ_GATE, m["loop_hz"]      # what the gate used to read
+    assert m["loop_hz_below_gate"] is False, (m["loop_hz"], m.get("loop_hz_paced"))
+    assert m["loop_hz_paced"] >= 9.9, m["loop_hz_paced"]
+    assert m["loop_ticks"] == len(rows) + m["ticks_state_stale"] + m["ticks_without_state"]
+    assert m["loop_hz_gate_basis"].startswith("loop_hz_paced")
+
+
+def test_a_gap_with_no_live_state_is_not_charged_to_the_point_before_it():
+    """REVIEW (2026-10-19). point_durations gave each point the whole time to
+    the next row, so a stale-link span (or any run of ticks without state)
+    was charged to the last flown point: nfz_s and alt_violation_s held
+    seconds in which the position was not known. Here the Shield-off arm
+    sits below the floor and in a zone on every tick and the link goes quiet
+    from 1.0 s to 2.6 s: the point before the gap holds only until the first
+    stale tick, and the rest is dwell_gap_s. Failed before: the gap was in
+    both dwells, no dwell_gap_s."""
+    rc, run, link = _fly("off", link_cls=FreezingLink, policy=DWELL_POLICY,
+                         link_kw={"die_at": 1.0, "back_at": 2.6}, max_s="4")
+    assert rc == 0
+    m = _json(run, "metrics.json")
+    traj = _json(run, "trajectory.json")
+    ts = [p["t"] for p in traj]
+    dts = [b - a for a, b in zip(ts, ts[1:])]
+    k = max(range(len(dts)), key=lambda i: dts[i])
+    assert dts[k] > 0.4 and m["ticks_state_stale"] > 0, (dts[k], m["ticks_state_stale"])
+    gap = dts[k] - pn.TICK                       # the first stale tick began a tick later
+    whole = sum(pn.point_durations(ts, pn.TICK))
+    assert abs(m["alt_violation_s"] - (whole - gap)) < 0.011, (m["alt_violation_s"], whole, gap)
+    assert abs(m["nfz_s"] - (whole - gap)) < 0.011, (m["nfz_s"], whole, gap)
+    assert m["dwell_gap_points"] == 1 and abs(m["dwell_gap_s"] - gap) < 0.011, \
+        (m["dwell_gap_s"], gap)
+    assert m["alt_violation_ticks"] == m["nfz_ticks"] == len(traj)
+    assert "dwell_gap_s" in m["dwell_basis"]
+    # point_durations' ends: a point holds until the gap began; the last
+    # point too, instead of the loop's period.
+    assert [round(v, 9) for v in pn.point_durations([0.0, 0.1, 0.8, 0.9], 0.1,
+                                                    ends=[None, 0.2, None, None])] == \
+        [0.1, 0.1, 0.1, 0.1]
+    assert [round(v, 9) for v in pn.point_durations([0.0, 0.1], 0.1,
+                                                    ends=[None, 0.25])] == [0.1, 0.15]
+    # truth_summary takes those weights for the stand-off dwell.
+    truth = SimpleNamespace(actor="Car_10", source="s", summary=lambda: None)
+    rows = [{"t": t, "subject_truth": [0.0, 0.0], "subject_range_m": 3.0}
+            for t in (0.0, 0.1, 0.8, 0.9)]
+    s = pn.truth_summary(rows, truth, 5.0, 0.1, point_s=[0.1, 0.1, 0.1, 0.1])
+    assert s["standoff_s"] == 0.4, s["standoff_s"]
+    assert pn.truth_summary(rows, truth, 5.0, 0.1)["standoff_s"] == 1.0
 
 
 def test_a_mavros_run_offers_dev_only_when_g1_passed_and_the_clock_was_real_time():

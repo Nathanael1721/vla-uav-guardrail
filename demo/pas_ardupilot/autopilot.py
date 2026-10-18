@@ -798,6 +798,7 @@ class PymavlinkLink:
         return {"link": self.name, "url": self.url,
                 "heartbeat": self.target_system is not None,
                 "heartbeat_seen": self.target_system is not None,
+                "ardupilot_seen": self.target_system is not None,
                 "is_ardupilot": self.target_system is not None,
                 "fcu_connected_at_end": bool(connected),
                 "target_system": self.target_system,

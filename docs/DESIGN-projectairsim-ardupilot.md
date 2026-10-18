@@ -208,7 +208,7 @@ A fifth change is tooling: `start_ardupilot.sh` and `sitl/start_router.sh` find 
 
 | Measure | Value | Reference or null |
 |---|---|---|
-| Ticks, mission time, loop rate | 1101 in 120.14 s, 9.16 Hz | 10 Hz |
+| Ticks, mission time, loop rate | 1101 in 120.14 s, 9.16 Hz | 10 Hz, and the project's 9.5 Hz loop gate. The shortfall was the pacing, not the work: the loop slept 0.1 s minus each tick's work from that tick's own start, so every round-up to the OS timer (about 10 ms a tick on the flight env's Python 3.10 on Windows; per-tick period median 0.110 s) was lost for good. Since 2026-10-19 the node paces to an absolute deadline (`perception_node.next_tick_deadline`) and flags a run under the gate |
 | Detector rate | 3.75 Hz | the grant's 10 Hz; null 0 |
 | Ticks flown by the node / handed to ArduPilot by the FSM (nothing sent) | 937 / 164 | |
 | Ticks tracking the car / searching | 269 / 832 | |
@@ -221,7 +221,7 @@ A fifth change is tooling: `start_ardupilot.sh` and `sitl/start_router.sh` find 
 | P0 escape rate | 0.0053 (5 of 937 flown ticks) | target 0. No Shield-off control has been flown on this rail, so there is no null yet |
 | Repair success (re-check and theta) | 0.776 (52 of 67) | |
 | Time to safe, mean / max | 2.81 / 6.42 s over 12 episodes | |
-| Time below the policy's 6 m floor | 27.9 s (279 ticks) | |
+| Time below the policy's 6 m floor | 27.9 s (279 ticks) | as recorded: 279 ticks x 0.1 s. The trajectory's own timestamps give 30.4 s, because the loop ran at 9.16 Hz; the node time-weights dwell from the timestamps since 2026-10-19 |
 | Mission success | false: P0 escape, altitude dwell, unsafe position entered | |
 | Simulator contacts | 1 | take-off and landing included; the record has no time for it |
 
@@ -239,7 +239,7 @@ What the log adds: on all 5 ticks the logged subject position equals the aircraf
 
 **(b) Brake to Loiter on stand-off repairs.** The FSM went Brake to Loiter 8 times. 7 were on `standoff-any`: on 5 of them the `StandoffHold` repair was larger than theta (3.63, 5.29, 8.08, 9.23 and 9.81 m lateral against 2.0 m; ticks 480, 750, 202, 1001, 282), and on 2 no operator converged (ticks 857 and 928, both escape ticks). The 8th, at tick 1100, was building clearance. The Normal to Brake edges before them carried hold repairs of 2.54-9.78 m. The subject estimate jumped just before several of them (59.6 m to 8.3 m at tick 201, 108.8 m to 15.4 m at tick 735, 48.5 m to 5.6 m at tick 841), and a 5 s forecast against a jumping subject asks for a large hold. This node tracks with the servo law on the raw detector box; `follow_vlm.fly()`'s target estimator is not reused here yet (see "The perception node").
 
-**(c) LOITER sinks out of the altitude band.** ArduCopter LOITER with no RC input descends; the SITL rails showed it on 2026-10-07 ("LOITER descended from 14.2 m to the ground", `docs/DESIGN-ros2-interface.md`). Here the 7 Loiters before the last tick lasted 2.1-3.3 s each and lost altitude at 1.35-1.77 m/s from 7.6-8.0 m (down to 1.80-4.99 m when ArduPilot handed back), and every one was followed by a stretch below the policy's 6 m floor: 7 stretches, 279 ticks (27.9 s), lowest points 0.36-3.43 m. (The 8th Loiter began on the final tick.) The lowest, 0.36 m at tick 322, came in GUIDED after the second Loiter, with the node already commanding the 1.8 m/s climb limit. These are 279 of the run's 310 unsafe P0 ticks (the rest: 25 building clearance, 6 stand-off) and the `dwell:alt_violation_s` mission failure. The escalation meant to hold the aircraft safe takes it out of the band instead.
+**(c) LOITER sinks out of the altitude band.** ArduCopter LOITER with no RC input descends; the SITL rails showed it on 2026-10-07 ("LOITER descended from 14.2 m to the ground", `docs/DESIGN-ros2-interface.md`). Here the 7 Loiters before the last tick lasted 2.1-3.3 s each and lost altitude at 1.35-1.77 m/s from 7.6-8.0 m (down to 1.80-4.99 m when ArduPilot handed back), and every one was followed by a stretch below the policy's 6 m floor: 7 stretches, 279 ticks (27.9 s as 279 x 0.1 s; 30.4 s by the trajectory's timestamps), lowest points 0.36-3.43 m. (The 8th Loiter began on the final tick.) The lowest, 0.36 m at tick 322, came in GUIDED after the second Loiter, with the node already commanding the 1.8 m/s climb limit. These are 279 of the run's 310 unsafe P0 ticks (the rest: 25 building clearance, 6 stand-off) and the `dwell:alt_violation_s` mission failure. The escalation meant to hold the aircraft safe takes it out of the band instead.
 
 **(d) Fail-safe trigger correctness in the headless harness** was 0.747 (library), 0.726 (nightly) and 0.875 (smoke) against the grant's 0.99, and below the never-trigger null (CHANGELOG 2026-10-07, Retracted). Every stored sweep and nightly manifest names the topology `headless-kinematic`; the harness's ArduPilot path (`--backend sitl`) refuses every scenario with events (`sitl_refusal` in `experiments/sweep_scenarios.py`). It was not measured on this rail or on ArduPilot SITL.
 
@@ -249,7 +249,7 @@ The same follow (red car, 120 s, same policy and seed) flown with the 9-12 Oct f
 
 | | 8 Oct | 12 Oct |
 |---|---|---|
-| ticks, loop rate | 1101, 9.16 Hz | 1098, 9.14 Hz |
+| ticks, loop rate (both under the 9.5 Hz loop gate; the cause is in the 8 Oct table) | 1101, 9.16 Hz | 1098, 9.14 Hz |
 | detector rate | 3.75 Hz | 4.26 Hz |
 | ticks with the car tracked | 269 | 129 |
 | nearest the detector's estimate came (logged) | 0.0 m (the range-0 placements) | 16.5 m |
@@ -257,7 +257,7 @@ The same follow (red car, 120 s, same policy and seed) flown with the 9-12 Oct f
 | P0 escape ticks | 5 | 0 |
 | FSM | 27 edges, 8 Brake to Loiter | 6 edges, Normal to Brake 3 times and back; never Loiter |
 | mode requests | 8 LOITER, 7 GUIDED, LAND | LAND |
-| altitude | 0.36-8.15 m, 27.9 s below the 6 m floor | 7.99-8.15 m, 0 s below it |
+| altitude | 0.36-8.15 m, 27.9 s (279 ticks x 0.1 s; 30.4 s by timestamps) below the 6 m floor | 7.99-8.15 m, 0 s below it |
 | ArduPilot real-time factor, GeoFence breaches | 0.951, 0 | 0.962, 0 |
 
 Against the defects above: (a) is not tested by this run, because the car never came near the 5 m ring; (b) and (c) did not recur, but no stand-off repair arose and the FSM never asked for a hold, so the BRAKE hold was not flown either; (d) is unchanged in kind (republished at 0.823, still headless). Only a run that brings the aircraft close to the car tests the range-0 fix and the hold on this rail.

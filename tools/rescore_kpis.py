@@ -375,11 +375,16 @@ def dwell_crosscheck(info: dict, metrics: dict) -> dict:
     """Reconstructed seconds unsafe vs the rail's independently measured dwell.
 
     A gross-disagreement guard, not a precision claim. The rails count
-    trajectory samples x 0.1 s against their own geometry; the reconstruction
-    counts logged ticks against the Shield's. They are known to differ by a few
-    ticks - ros2_shield_off: 41 unsafe ticks vs nfz_s 3.7 s - so agreement is
-    within max(0.5 s, 25 %). What it catches is the failure that motivated it:
-    0.0 reconstructed against 2.3 s measured.
+    trajectory samples x 0.1 s against their own geometry - except the
+    Project AirSim + ArduPilot rail (demo/pas_ardupilot/perception_node.py),
+    which since 2026-10-19 weights each sample by its own duration from the
+    timestamps and charges no sample with a stretch that had no live state
+    (metrics dwell_basis, dwell_gap_s); the reconstruction counts logged
+    ticks x their median interval against the Shield's. They are known to
+    differ by a few ticks - ros2_shield_off: 41 unsafe ticks vs nfz_s 3.7 s -
+    and on that rail by a stall the median does not see, so agreement is
+    within max(0.5 s, 25 %). What it catches is the failure that motivated
+    it: 0.0 reconstructed against 2.3 s measured.
     """
     out, ok = {}, True
     for field, cat in DWELL_FIELDS.items():
