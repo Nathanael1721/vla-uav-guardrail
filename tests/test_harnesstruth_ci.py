@@ -211,6 +211,146 @@ def test_the_rest_listener_tests_cannot_skip_on_the_job_that_installs_their_impo
         assert "import uvicorn" in src, f"{f} no longer imports uvicorn: re-check `need`"
 
 
+# --------------------------------------------------------------------------- #
+# Complete by construction (review of the 2026-10-19 merges: docs-ci P1, P4,
+# P8; harness-tools P1)
+#
+# Shown failing first: at 2b3ad56 the header said "Every other test file stays
+# off CI for the reasons under WHAT DOES NOT RUN HERE" (demo/out, simulators,
+# WSL, ROS 2, SITL, GPU), while test_paraphraser (84/84, the WP2 Paraphraser's
+# own file), test_geo_to_policy, test_vla_bridge and seven more ran clean on a
+# clean copy, and the harness-tools review's regression tests (the claims
+# scan's, the tracker server's CSRF guard, the deliverable encoder's, the
+# update log's) were neither run nor excluded. Its NOT LISTED reasons had gone stale too:
+# test_replay ran 40 of its 60 tests on a clean copy, not "2 of its 20".
+# no_skip named the two railinputs files only, so test_harness_service's gRPC
+# tests and test_api's routes could turn into SKIPs on the jobs that install
+# their imports while the job stayed green.
+# --------------------------------------------------------------------------- #
+
+# Every tests/test_*.py the loop does not run: the pip package whose absence
+# makes it fail on every job ("" when the cause is not a package), and why.
+# The header's NOT LISTED block names exactly these files, with the same
+# reasons. Measured 2026-10-19 on a clean `git archive` copy under WSL Ubuntu,
+# in one bare venv per job (requirements.txt plus that job's extras).
+EXCLUDED: dict[str, tuple[str, str]] = {
+    "test_capture_pairing.py": (
+        "opencv", "5 of its 8 tests ERROR: demo/semantic_demo.py's capture path imports cv2"),
+    "test_city_traffic.py": (
+        "projectairsim", "its update-stagger test FAILs: the fake world's pose calls come only "
+                         "after demo/moving_car.py imports projectairsim"),
+    "test_deck_scorer_parity.py": (
+        "", "7 of its 13 tests need flight logs under demo/out/, and its JavaScript "
+            "comparisons return early, counted as passes, where node is absent (WSL has none)"),
+    "test_policy_hud.py": ("pillow", "6 of its 45 tests ERROR without Pillow (the overlay drawing)"),
+    "test_range_and_lock.py": ("opencv", "16 of its 112 tests ERROR without OpenCV"),
+    "test_two_view.py": ("opencv", "6 of its 9 tests ERROR without OpenCV and Pillow"),
+}
+
+
+def _matrix_jobs() -> list[dict]:
+    return _yaml(WF / "tests.yml")["jobs"]["guardrail"]["strategy"]["matrix"]["include"]
+
+
+def _package(spec: str) -> str:
+    """`'protobuf>=7.35.1'` -> `protobuf`; `numpy==1.26.4; python_version < "3.11"`
+    -> `numpy`."""
+    return re.split(r"[<>=!~;\[\s]", spec.strip().strip("'\""), maxsplit=1)[0].lower()
+
+
+def _installed(job: dict) -> set[str]:
+    """What a job's install step names: requirements.txt plus its extras."""
+    req = [ln for ln in (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+           if ln.strip() and not ln.lstrip().startswith("#")]
+    return {_package(s) for s in req + str(job.get("extras", "")).split()} - {""}
+
+
+def test_every_test_file_is_in_the_loop_or_excluded_with_its_reason():
+    """The header cannot drift again: a new tests/test_*.py must go into the
+    loop or into NOT LISTED (and EXCLUDED) with a reason, and an exclusion
+    whose package a job starts installing must be re-run there."""
+    files = {p.name for p in (ROOT / "tests").glob("test_*.py")}
+    ran = _loop()
+    said = _names(_block(_flat_header(), "NOT LISTED, on purpose:", "END OF THE EXCLUSIONS"))
+    assert said == set(EXCLUDED), (f"the header's NOT LISTED block and EXCLUDED differ: header "
+                                   f"only {sorted(said - set(EXCLUDED))}, EXCLUDED only "
+                                   f"{sorted(set(EXCLUDED) - said)}")
+    assert set(EXCLUDED) <= files, f"excluded files that do not exist: {sorted(set(EXCLUDED) - files)}"
+    both = ran & set(EXCLUDED)
+    assert not both, f"excluded and in the loop: {sorted(both)}"
+    left = files - ran - set(EXCLUDED)
+    assert not left, (f"neither run in CI nor excluded with a reason: {sorted(left)}; run each "
+                      f"on a clean copy in the three job configurations, then list or exclude it")
+    jobs = _matrix_jobs()
+    for name, (pkg, why) in EXCLUDED.items():
+        assert len(why.split()) >= 6, f"{name}: say what fails and why, not {why!r}"
+        if pkg:
+            for j in jobs:
+                assert not any(p.startswith(pkg) for p in _installed(j)), \
+                    (f"the {j['python']} job installs {pkg} now: run {name} there and list it, "
+                     f"or say why it still cannot run")
+
+
+def test_the_harness_and_api_tests_cannot_skip_where_their_imports_are_installed():
+    """docs-ci P4: the header said test_harness_service runs in full on the
+    3.10 job and the 3.11 extras job, and that test_api's routes run on the
+    extras job, and nothing enforced either; an import regression would SKIP
+    them under a green job (the K4 failure mode). Measured with the loop's own
+    step in WSL: test_harness_service 56/56 on both jobs, test_api 14/14."""
+    jobs = _matrix_jobs()
+    grpc = [j for j in jobs if {"grpcio", "protobuf", "grpcio-tools", "cryptography"} <= _installed(j)]
+    api = [j for j in jobs if {"fastapi", "httpx", "uvicorn"} <= _installed(j)]
+    assert sorted(j["python"] for j in grpc) == ["3.10", "3.11"], [j.get("extras") for j in jobs]
+    assert api, "no job installs fastapi, httpx and uvicorn together"
+    for j in grpc:
+        assert "tests/test_harness_service.py" in str(j.get("no_skip", "")).split(), j
+    for j in api:
+        assert "tests/test_api.py" in str(j.get("no_skip", "")).split(), j
+    for j in jobs:
+        for f in str(j.get("no_skip", "")).split():
+            assert Path(f).name in _loop(), f"no_skip names {f}, which the loop does not run"
+    assert "grpc_tools" in (ROOT / "tests/test_harness_service.py").read_text(encoding="utf-8")
+    assert "fastapi" in (ROOT / "tests/test_api.py").read_text(encoding="utf-8")
+
+
+def test_the_job_name_does_not_carry_the_matrix_lists():
+    """docs-ci P8: without a `name`, GitHub names each job after every matrix
+    value, so adding a file to `no_skip` renamed the job and would break any
+    required check keyed on its name. The name must say only the interpreter
+    and whether extras are installed, and tell the three jobs apart."""
+    job = _yaml(WF / "tests.yml")["jobs"]["guardrail"]
+    name = str(job.get("name", ""))
+    assert name.startswith("guardrail (") and "matrix.python" in name, name
+    assert "no_skip" not in name and "matrix.extras }}" not in name, name
+    shown = {(j["python"], j.get("extras", "") == "") for j in _matrix_jobs()}
+    assert len(shown) == len(_matrix_jobs()), "two jobs would share a name"
+
+
+def test_the_claims_scan_runs_as_its_own_step():
+    """harness-tools P1: check_claims passes on a clean clone since
+    2026-10-19 (272/272 files clean, 4 SKIP-LOCAL, exit 0 in all three WSL
+    venvs), so CI runs the tool itself, whose exit code covers the missing
+    corrected values the test file does not check over the whole scope."""
+    runs = [str(s.get("run", "")).strip() for s in _steps(_yaml(WF / "tests.yml"))]
+    assert "python tools/check_claims.py" in runs, runs
+
+
+def test_the_files_the_second_october_review_found_off_ci_run_in_ci():
+    """Named by the two reviews of the 2026-10-19 merges: the harness-tools
+    regression tests, and the files the docs-ci review ran clean on a clean
+    copy (plus test_replay and test_kpi_report, whose stated exclusions were
+    stale)."""
+    want = {"test_check_claims.py", "test_tracker_serve.py", "test_encode_deliverable.py",
+            "test_add_update.py", "test_make_demo_video.py", "test_track_truth.py",
+            "test_paraphraser.py", "test_geo_to_policy.py", "test_drive_signals_dsl.py",
+            "test_vla_bridge.py", "test_ros2_package.py", "test_search.py",
+            "test_target_state.py", "test_trail.py", "test_camera_model.py",
+            "test_occ_bands.py", "test_real_vla_prompt.py", "test_replay.py",
+            "test_kpi_report.py"}
+    missing = want - _loop()
+    assert not missing, f"not run in CI: {sorted(missing)}"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

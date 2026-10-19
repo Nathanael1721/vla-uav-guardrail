@@ -18,23 +18,37 @@
 #
 #      THE LOOP RUNS
 #        WP1, policies and bundles: test_ir, test_bundle, test_manifest,
-#          test_policy_hash, test_policy_dsl_grant_form, test_replay_identity.
-#        WP2, the Prefix Compiler: test_csp, test_prefix_eval.
+#          test_policy_hash, test_policy_dsl_grant_form, test_replay_identity,
+#          test_replay, test_geo_to_policy, test_wp1_roundtrip_kpi.
+#        WP2, the Prefix Compiler and the Paraphraser: test_csp,
+#          test_prefix_eval, test_paraphraser, test_real_vla_prompt.
 #        WP3, the Shield and the escalation FSM: test_shield,
 #          test_shield_events, test_corridor, test_clearance,
 #          test_check_contract, test_guardrail_coverage, test_frame_contract,
-#          test_fsm, test_shieldcore_*, test_api.
+#          test_fsm, test_shieldcore_*, test_api, test_profile_shield_tick,
+#          test_occ_bands, test_ros2_package.
 #        WP4, the stress harness and its outputs: test_scenario_spec,
-#          test_sweep, test_kpi_magnitudes, test_harness_service,
-#          test_harnesstruth_*, test_wp4outputs_*.
+#          test_sweep, test_kpi_magnitudes, test_kpi_report,
+#          test_harness_service, test_harnesstruth_*, test_wp4outputs_*.
 #        The flying rails: test_railinputs_*, test_flight_pas_ap_20261008 (on
 #          its tests/fixtures/ copy of the 8 Oct flight), test_pas_ardupilot,
 #          test_sitl_rails, test_mavlink_adapter, test_fenceguard,
 #          test_follow_motion, test_identity, test_identity_lock,
-#          test_vla_backends, test_railvideo_*.
+#          test_railvideo_*, test_recorder, test_track_truth.
+#        The city demo's perception and follow controller: test_camera_model,
+#          test_target_state, test_trail, test_search, test_landing,
+#          test_level_actors, test_voxel_map, test_replay_pipeline.
+#        The VLA side: test_vla_* (backends, the backend table, the bridge).
+#        The CityLife level, checked offline (the level itself is
+#          gitignored): test_citylife_*, test_drive_signals_dsl,
+#          test_ped_walk_plan, test_parked_cars.
 #        Deployment and environments: test_deploy_configs, test_env_pins.
-#        Documents: test_public_docs, test_ft_report, test_explainer_figures,
-#          test_explainer_deck.
+#        Documents and the tools that build them: test_public_docs,
+#          test_ft_report, test_explainer_figures, test_explainer_deck,
+#          test_check_claims, test_build_* (the public site, the
+#          mid-evaluation report, the deck and evaluation numbers, the
+#          October deck), test_tracker_*, test_add_update,
+#          test_encode_deliverable, test_make_demo_video.
 #      END OF THE LIST
 #
 #      Added 2026-10-13: the wave-A files (shieldcore, railinputs, wp4outputs,
@@ -53,6 +67,21 @@
 #      (vla-drone). Apart from that one check, the whole loop passed in all
 #      three WSL venvs.
 #
+#      COMPLETE SINCE 2026-10-19 (later). The review of that merge found ten
+#      files the header called off CI that ran clean on a clean copy, the
+#      WP2 Paraphraser's own file among them, and the harness-tools review
+#      found its new regression tests (the claims scan, the tracker server's
+#      CSRF guard, the deliverable encoder, the update log) enforced on the
+#      lab machine only. So every tests/test_*.py was run in the same three
+#      WSL venvs, on a clean `git archive` copy of the commit that lists it
+#      (and test_build_public_site, whose builder refuses to run without git,
+#      in a one-commit git checkout of the same files, like
+#      actions/checkout's): every file that exits 0 there on all three and
+#      runs what it is for, apart from the SKIPs named below, is in the loop,
+#      and the others are under NOT LISTED with what stops them.
+#      tests/test_harnesstruth_ci.py fails when a test file is in neither, so
+#      a new one cannot be left out silently.
+#
 #      WHAT SKIPS, WHERE, AND WHY. Every SKIP prints its line.
 #        - The 3.11 job with the extras installs fastapi, uvicorn, httpx and
 #          cryptography, so the real-HTTP hot-apply and mTLS listener tests of
@@ -62,14 +91,18 @@
 #          from either fails the job. Until 2026-10-19 no job installed
 #          uvicorn, so they SKIPped on every run while the job stayed green.
 #          On the other two jobs they SKIP (no fastapi, no uvicorn).
-#        - test_api's route tests need FastAPI and httpx (3.11 extras only).
+#        - test_api's route tests need FastAPI and httpx (3.11 extras only),
+#          so test_api is in that job's `no_skip` too (14/14 in its WSL venv).
 #        - test_harness_service (the stress harness's gRPC control plane,
 #          about 20 s) runs in full on the 3.10 job and the 3.11 extras job,
 #          which install pyproject's `harness` extra pinned to the versions
 #          the committed stubs were generated with, plus grpcio-tools so its
-#          stale-stub check runs. On the requirements-only job its logic
-#          tests, which drive Harness directly, run and the gRPC / mTLS tests
-#          SKIP.
+#          stale-stub check runs, and it is in both jobs' `no_skip` (56/56
+#          in both WSL venvs), so an import regression there fails the job
+#          instead of turning its gRPC tests into SKIPs. On the
+#          requirements-only job its logic tests, which drive Harness
+#          directly, run and the gRPC / mTLS tests SKIP, as do
+#          test_wp4outputs_harness's 3 live-session tests.
 #        - jsonschema (3.11 extras only) runs the schema checks of test_csp,
 #          test_policy_hash and test_policy_dsl_grant_form; elsewhere they SKIP.
 #        - Files outside this repository: test_policy_dsl_grant_form's 10
@@ -82,10 +115,27 @@
 #          trajectory bound, test_follow_motion's 13 Oct replay,
 #          test_policy_hash's stored manifests, test_flight_pas_ap_20261008's
 #          fixture-against-folder check, test_railvideo_truth_frame's stored
-#          flights and test_railvideo_recording's CityLife map.
+#          flights and test_railvideo_recording's CityLife map; test_replay's
+#          20 checks on stored bundles (40 of its 60 run), test_kpi_report's
+#          3 delivered-run checks, test_landing's 8 checks on the CityLife
+#          map and recorded flight ends, test_track_truth's 4 and
+#          test_target_state's 2 recorded-flight checks,
+#          test_wp1_roundtrip_kpi's 2 stored-run checks,
+#          test_build_deck_data's real-flight rate gate, test_build_eval_data's
+#          five ros2_* runs, test_build_progress_oct_data's 5 checks on the
+#          built deck and its local sources, test_replay_pipeline's 2
+#          vla-real / recorded-flight checks, and test_profile_shield_tick's
+#          check that the committed tick pack's flights still hash as packed.
+#        - Gitignored tracker data (tracker/data/, the internal grant
+#          tracker): test_tracker_content's 15 content checks (the 4 that
+#          show its checks can fail still run), test_tracker_serve's
+#          real-content check and test_add_update's real-log check.
 #        - A git checkout: test_bundle's lab-key check and test_deploy_configs'
-#          two .gitignore checks SKIP in a `git archive` copy (since
-#          2026-10-19; they used to FAIL there). actions/checkout gives one.
+#          .gitignore check (both evidence paths) SKIP in a `git archive` copy
+#          (since 2026-10-19; they used to FAIL there), and
+#          test_build_public_site ERRORs there: the builder refuses to run
+#          without git (its author-name and committed-image checks), and in a
+#          one-commit checkout it passes 47/47. actions/checkout gives one.
 #        - test_deploy_configs' `docker compose config` check runs where the
 #          Docker CLI's `docker compose version` works (GitHub's runners, the
 #          lab desktop: 61/61 on 2026-10-19) and SKIPs elsewhere. It has not
@@ -102,33 +152,53 @@
 #          `npm install` would float), and the Windows fonts its and
 #          test_explainer_figures' fit checks read; pyarrow, so
 #          test_wp4outputs_exporters checks only the "SKIP parquet" path (the
-#          Parquet write has run nowhere yet).
+#          Parquet write has run nowhere yet); OpenCV again, for 3 of
+#          test_make_demo_video's 4 tests; airsim and tokenizers, for 2 of
+#          test_real_vla_prompt's; and torch with a file outside git, for
+#          test_vla_backend_table's CPU-only row.
+#
+#      Each file under NOT LISTED FAILs or ERRORs on a clean copy (or passes
+#      without running what it is for), measured 2026-10-19 in all three WSL
+#      venvs; the same names and reasons are the EXCLUDED dict of
+#      tests/test_harnesstruth_ci.py.
 #
 #      NOT LISTED, on purpose:
-#        test_replay.py: its fixtures live under demo/out/ (gitignored), so on
-#          a clean clone it runs 2 of its 20 tests and SKIPs 18, and a green
-#          tick there would be mostly silence (measured on a simulated clean
-#          clone, 2026-10-06).
-#        test_kpi_report.py: the same (its delivered-run checks need
-#          demo/out/).
-#        test_range_and_lock.py: 16 of its tests need OpenCV, which no job
-#          installs.
-#        test_check_claims.py: at f93283d it fails on a clean clone, because
-#          files it guards are gitignored (docs/CORRECTION-*.md among them).
-#          Its patterns run on the public entry points through the Documents
-#          files above.
+#        test_capture_pairing.py: 5 of its 8 tests ERROR, because
+#          demo/semantic_demo.py's capture path imports OpenCV (cv2), which
+#          no job installs.
+#        test_city_traffic.py: 1 of its 34 tests FAILs (the update stagger):
+#          the fake world's pose calls are reached only after
+#          demo/moving_car.py imports projectairsim, the simulator's client,
+#          which no job installs.
+#        test_deck_scorer_parity.py: 7 of its 13 tests need flight logs
+#          under demo/out/ (SKIP), and its JavaScript-against-Python
+#          comparisons return early, counted as passes, where node is
+#          absent: WSL has no node, so they have never run on Linux.
+#        test_policy_hud.py: 6 of its 45 tests ERROR without Pillow (the
+#          overlay drawing), which no job installs.
+#        test_range_and_lock.py: 16 of its 112 tests ERROR without OpenCV.
+#        test_two_view.py: 6 of its 9 tests ERROR without OpenCV and Pillow.
 #      END OF THE EXCLUSIONS
 #
-#      Every other test file stays off CI for the reasons under WHAT DOES NOT
-#      RUN HERE. test_env_pins' setup_sitl.sh tests build throwaway git
-#      repositories with a bash they probe for; their first GitHub run failed
-#      on a lost executable bit and was fixed (CHANGELOG, 2026-10-13 later).
-#   2. The smoke profile of the stress harness (experiments/profiles/smoke.yaml,
+#      test_env_pins' setup_sitl.sh tests build throwaway git repositories
+#      with a bash they probe for; their first GitHub run failed on a lost
+#      executable bit and was fixed (CHANGELOG, 2026-10-13 later).
+#   2. tools/check_claims.py, the withdrawn-claim scan, over its default
+#      scope (README, docs, the site sources, the root guides, tools and the
+#      code packages), as its own step since 2026-10-19: a live withdrawn
+#      claim or a missing corrected value fails it. Exit 0 on a clean copy,
+#      with one visible SKIP-LOCAL line for each of its 4 gitignored lab-only
+#      documents (272/272 files clean in all three WSL venvs).
+#      tests/test_check_claims.py, in the loop, checks the scan itself.
+#   3. The smoke profile of the stress harness (experiments/profiles/smoke.yaml,
 #      ~50 scenarios x 1 seed, with the escalation FSM flying, since
 #      2026-10-07). Known failures and tracked episodes are reported and do
 #      not fail the job; a new failure, a pinned defect that starts passing, a
-#      refused run (exit 2) or a run that scored nothing (exit 3) does. The
-#      run writes its KPI report (one row per template and parameter cell) to
+#      refused run (exit 2), a run that scored nothing (exit 3) or a run whose
+#      KPI rollup or top-10 failure list could not be computed (exit 4, since
+#      2026-10-19: a failed rollup writes no partial KPI report, and a failed
+#      top-10 list heads the report as INCOMPLETE) does. The run writes its
+#      KPI report (one row per template and parameter cell) to
 #      ci-smoke/episodes/kpi_report.md, kept with the bundles.
 #
 # ON GITHUB SINCE 2026-10-08; GREEN SINCE 4418ae0 (2026-10-12). Every push
@@ -153,8 +223,12 @@
 # 2:36-3:54 at 4418ae0, roughly 5-8 minutes is to be expected (scaled, not
 # measured). The files added on 2026-10-19 took 40-50 s together per job in
 # the WSL venvs, test_deploy_configs 11-14 s of it there (70-125 s alone on
-# the desktop, where its `docker compose config` and git checks run).
-# Both steps fit the 30-minute timeout. The requirements are pinned
+# the desktop, where its `docker compose config` and git checks run). The 40
+# files that made the list complete add about 60-75 s per job there (the
+# three venvs running side by side; test_paraphraser and
+# test_profile_shield_tick about 10 s each, test_build_public_site 7 s in a
+# git checkout), and the claims scan 2-3 s.
+# The steps together fit the 30-minute timeout. The requirements are pinned
 # (shapely, numpy by interpreter) since the same day. The nightly profile is
 # defined in .github/workflows/nightly.yml, not here, and has not run: GitHub
 # schedules only the default branch's workflows, which is `main` on GitHub,
@@ -164,10 +238,11 @@
 # WHAT DOES NOT RUN HERE, AND WHY
 #
 #   Tests that need flight artefacts under demo/out/ (gitignored, ~3 GB), the
-#   simulators, WSL, ROS 2, ArduPilot SITL or a GPU. Most of those report SKIP
-#   on a clean clone rather than PASS; they are run on the lab machine. The
-#   smoke profile here is the headless backend: functional evidence, never
-#   KPI-grade (its manifests say `headless-kinematic`).
+#   simulators, WSL, ROS 2, ArduPilot SITL or a GPU. Inside the listed files
+#   they report SKIP on a clean clone rather than PASS (WHAT SKIPS above); the
+#   files that FAIL without them are under NOT LISTED. They are run on the lab
+#   machine. The smoke profile here is the headless backend: functional
+#   evidence, never KPI-grade (its manifests say `headless-kinematic`).
 #
 # The three jobs are the interpreters the project actually uses: 3.10 (the
 # OpenVLA flight environment imports guardrail from source), 3.11 (the grant's
@@ -186,6 +261,10 @@ on:
 
 jobs:
   guardrail:
+    # A short name that does not change with the matrix's lists: without it
+    # GitHub names each job after every matrix value, so adding a file to
+    # `no_skip` renamed the job (and broke any check keyed on its name).
+    name: guardrail (${{ matrix.python }}${{ matrix.extras == '' && ', requirements only' || ', extras' }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
@@ -201,10 +280,10 @@ jobs:
           # which are not a stable interface.
           - python: "3.10"
             extras: "cryptography grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0"
-            no_skip: ""
+            no_skip: "tests/test_harness_service.py"
           - python: "3.11"
             extras: "cryptography fastapi httpx uvicorn==0.50.2 jsonschema==4.26.0 grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0"
-            no_skip: "tests/test_railinputs_node.py tests/test_railinputs_hotapply.py"
+            no_skip: "tests/test_railinputs_node.py tests/test_railinputs_hotapply.py tests/test_api.py tests/test_harness_service.py"
           - python: "3.11"
             extras: ""
             no_skip: ""
@@ -295,7 +374,47 @@ jobs:
               tests/test_mavlink_adapter.py \
               tests/test_deploy_configs.py \
               tests/test_public_docs.py \
-              tests/test_ft_report.py; do
+              tests/test_ft_report.py \
+              tests/test_replay.py \
+              tests/test_geo_to_policy.py \
+              tests/test_wp1_roundtrip_kpi.py \
+              tests/test_paraphraser.py \
+              tests/test_real_vla_prompt.py \
+              tests/test_profile_shield_tick.py \
+              tests/test_occ_bands.py \
+              tests/test_ros2_package.py \
+              tests/test_kpi_report.py \
+              tests/test_recorder.py \
+              tests/test_track_truth.py \
+              tests/test_camera_model.py \
+              tests/test_target_state.py \
+              tests/test_trail.py \
+              tests/test_search.py \
+              tests/test_landing.py \
+              tests/test_level_actors.py \
+              tests/test_voxel_map.py \
+              tests/test_replay_pipeline.py \
+              tests/test_vla_bridge.py \
+              tests/test_vla_backend_table.py \
+              tests/test_citylife_peds.py \
+              tests/test_citylife_routes.py \
+              tests/test_citylife_signal_lamps.py \
+              tests/test_citylife_signals.py \
+              tests/test_citylife_traffic_model.py \
+              tests/test_drive_signals_dsl.py \
+              tests/test_ped_walk_plan.py \
+              tests/test_parked_cars.py \
+              tests/test_check_claims.py \
+              tests/test_build_public_site.py \
+              tests/test_build_mideval_report.py \
+              tests/test_build_deck_data.py \
+              tests/test_build_eval_data.py \
+              tests/test_build_progress_oct_data.py \
+              tests/test_tracker_content.py \
+              tests/test_tracker_serve.py \
+              tests/test_add_update.py \
+              tests/test_encode_deliverable.py \
+              tests/test_make_demo_video.py; do
             echo "::group::$t"
             python "$t" 2>&1 | tee "$out"
             rc=${PIPESTATUS[0]}
@@ -313,6 +432,14 @@ jobs:
             echo "::endgroup::"
           done
           exit $fail
+
+      # tests/test_check_claims.py above checks the scan; this runs the tool as
+      # a reader would, so its exit code (a live withdrawn claim, or a missing
+      # corrected value, anywhere in its default scope) gates the job. Absent
+      # lab-only documents print SKIP-LOCAL and do not fail it
+      # (tools/check_claims.py LOCAL_ONLY).
+      - name: Withdrawn-claim scan
+        run: python tools/check_claims.py
 
       - name: Smoke profile (stress harness, headless)
         run: >
