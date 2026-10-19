@@ -1,5 +1,24 @@
 # RUNBOOK — how to run every simulation yourself
 
+> **Scope (updated 2026-10-19).** This runbook covers the classic AirSim 1.8
+> demo (Rail 1, superseded: `docs/REPO-INVENTORY.md`) and the ArduPilot SITL
+> rails in WSL. It does not cover the current demonstrations:
+>
+> - **The city demo** (Project AirSim, CityLife; `demo/follow_vlm.py`):
+>   [`TUTORIAL.md`](TUTORIAL.md) and `scripts\run_follow_vlm.ps1` /
+>   `scripts\run_citylife_follow.ps1`.
+> - **The Project AirSim + ArduPilot perception rail**
+>   (`demo/pas_ardupilot/perception_node.py`, `scripts\run_pas_ardupilot.ps1`):
+>   [`docs/projectairsim-setup.md`](docs/projectairsim-setup.md) and "How to
+>   run it" in
+>   [`docs/DESIGN-projectairsim-ardupilot.md`](docs/DESIGN-projectairsim-ardupilot.md).
+>
+> No VLA flies any rail here: Rails 1, 2 and 4 fly the stub pilot
+> (`guardrail.vla_stub.StubVLA`, a straight-at-the-target controller that
+> ignores every rule on purpose) by default, and Rail 3's "VLA node" is the
+> same stub (`sitl/ros2_vla_stub_node.py`). The city demo and the perception
+> rail fly a hand-written follow controller steering by OWL-ViT's boxes.
+
 ## ⚡ Fastest way: `scripts\fly.ps1` (launches sim + flies, one command)
 
 ```powershell
@@ -14,7 +33,9 @@ Or just double-click **`scripts\fly.bat`**. It starts/restarts the right AirSim 
 waits for it, runs the mission, and pops the trajectory plot when done.
 No conda activate needed (uses the env's python directly).
 
-Cheat-sheet. Four rails, all show the same thing: reckless VLA + Guardrail.
+Cheat-sheet. Four rails below (Rail 4, Gazebo: scripts only, no run output
+kept). Each flies the stub pilot (`guardrail.vla_stub.StubVLA`, deliberately
+rule-ignorant) through the Guardrail by default.
 `--shield off` = watch it violate · `--shield on` = watch it get caught ·
 `--dynamic` = no-fly zone appears mid-flight.
 
@@ -73,7 +94,12 @@ cd "/mnt/d/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone"
 ```
 Restart terminal-1's SITL (Ctrl+C, rerun) between missions.
 
-## Rail 3 — ROS 2 + MAVROS (WSL, the grant's final architecture)
+## Rail 3 — ROS 2 + MAVROS 2 (WSL, one desktop: the grant's *dev* topology)
+
+The grant's ROS 2 / MAVROS 2 software stack, on one desktop. That is the
+grant's `dev` topology, which does not carry KPI figures: the grant takes them
+from the `hil` topology, with the VLA and the Shield on a Jetson Orin
+([`docs/RUNBOOK-orin-hil.md`](docs/RUNBOOK-orin-hil.md)).
 
 Fully automated, one command per run:
 
@@ -82,11 +108,19 @@ wsl bash "/mnt/d/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/sitl/run_ros2_demo
 wsl bash "/mnt/d/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/sitl/run_ros2_demo.sh" on
 wsl bash "/mnt/d/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/sitl/run_ros2_demo.sh" on --dynamic
 ```
-It starts SITL + mavros + VLA node + Shield node, flies, reports, cleans up.
+It starts SITL + mavlink-router + MAVROS 2 + the VLA stub node + the Shield
+node + the MAVLink adapter, records a rosbag, flies, reports, cleans up. With
+no `--policy` / `--bundle` it needs the signed bundle of
+`policies/sim_demo_policy.yaml` in `bundles/` (`python
+tools/build_flight_bundles.py`, where the lab key is); otherwise give
+`--bundle B`, or pass `--dev-yaml` to fly the YAML unsigned (a development
+run, recorded so), or the run is refused before SITL starts.
 
-## Rail 4 — Gazebo Harmonic (WSL, real physics engine)
+## Rail 4 — Gazebo Harmonic (WSL; scripts exist, no run output kept)
 
-Also one command per run:
+Not evidenced: no Gazebo run's output is kept in `demo/out/`. The mission
+runs over pymavlink (`sitl/run_sitl_demo.py`), not MAVROS 2. Also one command
+per run:
 
 ```powershell
 wsl bash "/mnt/d/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/sitl/run_gazebo_demo.sh" off
@@ -94,7 +128,7 @@ wsl bash "/mnt/d/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/sitl/run_gazebo_de
 wsl bash "/mnt/d/OneDrive/College/S2-TaipeiTech/Lab/VLA Drone/sitl/run_gazebo_demo.sh" on --dynamic
 ```
 
-## Unit tests (no simulator at all — 16 scenarios, 2 seconds)
+## Unit tests (no simulator at all; the full CI set is the loop in `.github/workflows/tests.yml`)
 
 ```powershell
 conda activate vla-drone
@@ -121,5 +155,5 @@ python tests\test_shield.py
 ## Which rail to demo when
 
 - **Show Prof. Lai team live:** Rail 1 (AirSim) — visible 3D drone.
-- **Prove "real autopilot":** Rail 3 (ROS 2) — grant's exact topology, one command.
+- **Prove "real autopilot":** Rail 3 (ROS 2) — the grant's ROS 2 / MAVROS 2 stack on one desktop (the *dev* topology), one command.
 - **Quick smoke test after code change:** unit tests, then Rail 2.

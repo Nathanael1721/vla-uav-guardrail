@@ -78,7 +78,8 @@ JETPACK 6.2 (the Orin is being set up with L4T r36.4.x, Ubuntu 22.04):
 The script tests need a POSIX bash. On Windows that is Git Bash; the WSL
 launcher (System32\\bash.exe) is never used. Without one they print SKIP. The
 compose tests that call `docker compose config` (no daemon, no pull) print
-SKIP without the Docker CLI.
+SKIP without a Docker CLI whose `docker compose version` runs, and the
+.gitignore checks print SKIP outside a git checkout (a `git archive` copy).
 """
 from __future__ import annotations
 
@@ -452,15 +453,48 @@ def test_what_the_orin_measures_goes_where_git_ignores_it():
     assert doc["services"]["vla-bench"]["environment"]["VLAGUARD_EVIDENCE_OUT"] == want
     for svc in companion_services(doc).values():
         assert svc["environment"]["VLAGUARD_EVIDENCE_OUT"] == want
+    return _check_the_evidence_is_ignored(ROOT)
+
+
+def _in_git_checkout(root: Path) -> bool:
+    """True only inside a git work tree. A `git archive` copy (the clean
+    checkout the CI header says every new CI file is first run in) has no
+    .git, so `git check-ignore` exits 128 there, which this test read as
+    "not git-ignored" and FAILED until 2026-10-19 (review of 2026-10-19,
+    measured on a clean copy under WSL)."""
     if not shutil.which("git"):
+        return False
+    try:
+        r = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+                           capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0 and r.stdout.strip() == "true"
+
+
+def _check_the_evidence_is_ignored(root: Path):
+    if not _in_git_checkout(root):
         return SKIP
     for rel in ("deploy/evidence/incoming/hil/shield_tick_profile.json",
                 "deploy/evidence/incoming/flight/vla_rate_stub.json"):
-        r = subprocess.run(["git", "-C", str(ROOT), "check-ignore", "-q", rel])
+        r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q", rel])
         assert r.returncode == 0, f"{rel} is not git-ignored"
-    r = subprocess.run(["git", "-C", str(ROOT), "check-ignore", "-q",
+    r = subprocess.run(["git", "-C", str(root), "check-ignore", "-q",
                         "deploy/evidence/incoming/.gitignore"])
     assert r.returncode == 1, "the ignore file itself must stay tracked"
+
+
+def test_outside_a_git_checkout_the_ignore_check_skips_and_does_not_fail():
+    """In a folder with no .git (as a `git archive` copy has) the ignore rules
+    cannot be asked: SKIP, never FAIL and never PASS. Shown failing first:
+    before 2026-10-19 this raised "... is not git-ignored" on such a copy."""
+    copy = Path(tempfile.mkdtemp())
+    if not shutil.which("git"):
+        return SKIP
+    probe = subprocess.run(["git", "-C", str(copy), "rev-parse"], capture_output=True)
+    if probe.returncode == 0:
+        return SKIP                       # the temp folder sits inside a repository
+    assert _check_the_evidence_is_ignored(copy) == SKIP
 
 
 # --------------------------------------------------------------------------- #
@@ -557,9 +591,29 @@ def test_the_repository_is_mounted_read_only_and_outputs_are_writable():
         "SITL needs the fence and airframe parameter files from the checkout"
 
 
+_COMPOSE_WORKS: dict[str, bool] = {}
+
+
+def _compose_works(docker: str) -> bool:
+    """Whether `docker compose` runs at all on this host. A `docker` on PATH is
+    not enough: under WSL without Docker Desktop's integration, the `docker`
+    found is Docker Desktop's Windows shim, which prints "The command 'docker'
+    could not be found in this WSL 2 distro" and exits 1, and the compose test
+    read that as a compose file refused (FAIL with an empty message; measured
+    on a clean copy under WSL, 2026-10-19). Asked once per run."""
+    if docker not in _COMPOSE_WORKS:
+        try:
+            r = subprocess.run([docker, "compose", "version"], capture_output=True,
+                               text=True, timeout=60)
+            _COMPOSE_WORKS[docker] = r.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            _COMPOSE_WORKS[docker] = False
+    return _COMPOSE_WORKS[docker]
+
+
 def _compose_config(files: list[str], env_file: str, extra_env: dict | None = None):
     docker = shutil.which("docker")
-    if not docker:
+    if not docker or not _compose_works(docker):
         return None
     cmd = [docker, "compose", "--env-file", str(TOPO_DIR / env_file)]
     for f in files:

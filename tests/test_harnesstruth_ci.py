@@ -105,6 +105,112 @@ def test_every_harnesstruth_test_file_runs_in_ci_and_exists():
     assert "--profile smoke" in text, "the smoke step is still there"
 
 
+# --------------------------------------------------------------------------- #
+# The header's list against the loop (review of 2026-10-19)
+#
+# Shown failing first: at f93283d the header had no list (it named families
+# and a few files), said "tests/test_env_pins.py is not listed" four lines
+# after saying the loop ran it, and the loop held none of the files below.
+# --------------------------------------------------------------------------- #
+def _tests_yml() -> str:
+    return (WF / "tests.yml").read_text(encoding="utf-8")
+
+
+def _flat_header() -> str:
+    head = _tests_yml().split("\nname:", 1)[0]
+    return " ".join(head.replace("#", " ").split())
+
+
+def _loop() -> set[str]:
+    loop = _tests_yml().split("for t in", 1)[1].split("; do", 1)[0]
+    return set(re.findall(r"tests/(test_[a-z0-9_]+\.py)", loop))
+
+
+def _block(flat: str, start: str, end: str) -> str:
+    assert start in flat and end in flat, f"the header has no {start!r} ... {end!r} block"
+    return flat.split(start, 1)[1].split(end, 1)[0]
+
+
+def _names(block: str) -> set[str]:
+    """Test file names in a header block, bare or with .py; `test_x_*` stands
+    for every tests/test_x_*.py, and must stand for at least one."""
+    out: set[str] = set()
+    for tok in re.findall(r"\b(test_[a-z0-9_]+\*?)(?:\.py)?", block):
+        if tok.endswith("*"):
+            fam = {p.name for p in (ROOT / "tests").glob(tok + ".py")}
+            assert fam, f"the header names {tok} and no tests/{tok}.py exists"
+            out |= fam
+        else:
+            out.add(tok + ".py")
+    return out
+
+
+def test_the_header_lists_exactly_the_files_the_loop_runs():
+    """A reader deciding what CI covers reads the header, not the bash loop.
+    `test_x_*` in the header must mean every such file, so a family member
+    left off the loop shows up here too."""
+    said = _names(_block(_flat_header(), "THE LOOP RUNS", "END OF THE LIST"))
+    ran = _loop()
+    assert said == ran, (f"the header names but the loop does not run: "
+                         f"{sorted(said - ran)}; the loop runs but the header "
+                         f"does not name: {sorted(ran - said)}")
+
+
+def test_a_file_the_header_calls_unlisted_is_not_in_the_loop():
+    """The flattened header (the env_pins sentence broke its line between
+    "is not" and "listed"), matched case-blind ("is NOT listed"), compared by
+    exact name (a substring test would call test_kpi_report.py listed because
+    of test_wp4outputs_kpi_report.py)."""
+    flat = _flat_header()
+    excluded = _names(_block(flat, "NOT LISTED, on purpose:", "END OF THE EXCLUSIONS"))
+    excluded |= {m + ".py" if not m.endswith(".py") else m for m in re.findall(
+        r"(test_[a-z0-9_]+(?:\.py)?) is not listed", flat, flags=re.I)}
+    assert excluded, "the header names no excluded file: did the wording move?"
+    both = excluded & _loop()
+    assert not both, f"the header says these are not listed, but the loop runs them: {sorted(both)}"
+
+
+def test_the_files_the_october_review_asked_for_run_in_ci():
+    """Each was run first in a clean `git archive` copy on Linux (WSL, one
+    venv per job) and on Windows; see the header. test_fsm drives every FSM
+    edge (guardrail/fsm.py says so), test_pas_ardupilot is the ArduPilot
+    perception rail's own file (type_mask, frames, takeover), test_sitl_rails
+    and test_mavlink_adapter hold the pymavlink rail's pacing and the mode
+    routing, test_public_docs runs the README's code sample."""
+    want = {"test_fsm.py", "test_policy_hash.py", "test_csp.py",
+            "test_policy_dsl_grant_form.py", "test_replay_identity.py",
+            "test_vla_backends.py", "test_prefix_eval.py", "test_fenceguard.py",
+            "test_follow_motion.py", "test_identity.py", "test_identity_lock.py",
+            "test_pas_ardupilot.py", "test_sitl_rails.py", "test_mavlink_adapter.py",
+            "test_deploy_configs.py", "test_public_docs.py", "test_ft_report.py"}
+    missing = want - _loop()
+    assert not missing, f"not run in CI: {sorted(missing)}"
+
+
+def test_the_rest_listener_tests_cannot_skip_on_the_job_that_installs_their_imports():
+    """K4: the hot-apply-over-REST and mTLS allow-list tests import fastapi,
+    uvicorn and httpx (and cryptography for the PKI). Until 2026-10-19 no job
+    installed uvicorn, so all three SKIPped on every job and the loop, which
+    reads only exit codes, stayed green. Now one job installs all four and
+    lists both files in `no_skip`, and the loop fails on their SKIP lines."""
+    doc = _yaml(WF / "tests.yml")
+    jobs = doc["jobs"]["guardrail"]["strategy"]["matrix"]["include"]
+    need = ("fastapi", "uvicorn", "httpx", "cryptography")
+    full = [j for j in jobs
+            if all(re.search(rf"(^|\s){n}(==|\s|$)", j.get("extras", "")) for n in need)]
+    assert full, f"no job installs {need} together: {[j.get('extras') for j in jobs]}"
+    files = {"tests/test_railinputs_node.py", "tests/test_railinputs_hotapply.py"}
+    for j in full:
+        assert files <= set(str(j.get("no_skip", "")).split()), j
+    run = next(s["run"] for s in _steps(doc) if s.get("name") == "Standalone test files")
+    assert "matrix.no_skip" in run and "grep -q '^SKIP'" in run, \
+        "the loop does not read the SKIP lines of the no_skip files"
+    assert "PIPESTATUS[0]" in run, "the loop must fail on python's exit code, not tee's"
+    for f in files:
+        src = (ROOT / f).read_text(encoding="utf-8")
+        assert "import uvicorn" in src, f"{f} no longer imports uvicorn: re-check `need`"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

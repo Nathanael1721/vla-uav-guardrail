@@ -8,7 +8,7 @@ the caveat that this is pre-1.0 research software and the public surface is
 still moving.
 
 A note peculiar to this project: several entries below are **retractions**. The
-hard KPI here is *P0 violation escape rate = 0*, and a safety number that is
+grant names five acceptance KPIs, *P0 violation escape rate* (target 0) among them, and a safety number that is
 wrong is worse than one that is missing, so a corrected claim is treated as a
 shipped change and recorded as one.
 
@@ -51,7 +51,7 @@ shipped change and recorded as one.
   Shield-on video shows the detector's box on a red traffic signal; across
   the close flights 0 estimates came within 6 m of the car, and Car_10 was
   in the camera's view on 10 of the 149 estimate ticks. The rail starts with
-  the car 119-152 m away and has no start gate (follow_vlm waits until it
+  the car about 151-152 m away (`subject_range_m` on the first tick of each close flight: 150.8-151.9 m; the 119-152 m first written here took in the Shield-off flights' nearest approach, 117-119 m, and was corrected on 2026-10-19) and has no start gate (follow_vlm waits until it
   sees the car); until one is ported, this rail's follow scores stay at 0
   and its flights test the Shield, not tracking.
 

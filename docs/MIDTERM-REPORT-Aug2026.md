@@ -1,5 +1,25 @@
 # Midterm Report
 
+> **Note added 2026-10-19: this is the report as delivered in August 2026,
+> not corrected in place.** Claims below that were withdrawn since are
+> retracted in `CHANGELOG.md` at the repository root (2026-10-06 and
+> 2026-10-07 Retracted). Among them: the QLoRA fine-tunes' "100 % reached,
+> mean efficiency 0.996, goal assist off" (section 6.4): those three
+> adapters flew with a 55 % mission-direction assist (goal_blend 0.55), and
+> without it the fine-tuned adapters reached 0 and 1 of 5; "the grant's
+> canonical topology" and "the first KPI-grade runs" (section 6.5): the
+> one-desktop ArduPilot SITL + MAVROS 2 rail is the grant's *dev* topology,
+> and no run is KPI-grade; "the acceptance criterion is met on every
+> flight" (section 6.2: the grant lists five acceptance KPIs, and P0 escape
+> is one of them); the summary pack on the VLA path (built, never flown in a
+> VLA's prompt);
+> and the detector rates, re-measured on 29 Sept. The eight-flight
+> simultaneity study (section 6.4) ran with a direction hint computed from
+> the true coordinates in the prompt and one decision every 7-9 s, so it
+> does not test language grounding
+> ([result](RESULT-vla-guardrail-simultaneity.md)). Current figures:
+> [README](../README.md) and the [progress site](progress/).
+
 ## Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs
 
 **Institution** National Taipei University of Technology (NTUT), AIoT Laboratory

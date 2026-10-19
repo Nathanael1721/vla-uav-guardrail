@@ -4,8 +4,22 @@
 [![P0 escape on the 41 mid-evaluation flights](https://img.shields.io/badge/P0%20escape%2C%2041%20mid--evaluation%20flights-0.0%20%28dev%20evidence%2C%20not%20a%20contract%20KPI%20figure%29-lightgrey)](#p0-escape-on-the-mid-evaluation-flights-and-what-it-does-not-say)
 [![tests](https://img.shields.io/badge/tests-1400%2B%20fast%20%2B%2017%20coverage-brightgreen)](tests/)
 
-A vision-language model is told to *follow the yellow car*. It produces a
-velocity command. **Nothing in that pipeline knows what a no-fly zone is.**
+In the grant's design, a vision-language-action model (VLA) is told to *follow
+the yellow car* and answers with a velocity command. **Nothing in that
+pipeline knows what a no-fly zone is.**
+
+No VLA flies the demonstrations recorded here. In the city demo
+(`demo/follow_vlm.py`) and on the Project AirSim + ArduPilot perception rail,
+OWL-ViT finds the car from the words and a hand-written follow controller
+turns its box into the velocity command; the ArduPilot SITL rails fly
+`guardrail.vla_stub.StubVLA`, a deliberately rule-ignorant stand-in. Real VLAs
+have flown through the Shield only in simulation, and none decided at 10 Hz
+(the 10 Hz loop held each decision): OpenVLA-7B (about 0.9 s an inference,
+`demo/real_vla_demo.py`) and AerialVLA adapters on classic AirSim (AirSimNH)
+in July 2026, and AerialVLA on 4 Aug 2026, the last VLA-commanded flights, at
+one decision every 7-9 s and with a direction hint computed from the true
+coordinates in its prompt
+([result](docs/RESULT-vla-guardrail-simultaneity.md)).
 
 Guardrail sits between the model and the aircraft. It takes a declarative
 safety policy — fences, altitude envelopes, kinematic caps, obstacle
@@ -21,16 +35,23 @@ VLA for ArduPilot UAVs* (PI: Prof. Kuan-Ting Lai, NTUT).
 
 The Shield's only input is an **Action4D**: `(vx north, vy east, vz up,
 yaw_rate)` at 10 Hz, `yaw_rate` in **rad/s**. It does not know whether that came
-from OWL-ViT, from OpenVLA-7B, or from a joystick, and that is the point — the
-safety argument must not depend on which model is driving.
+from a hand-written controller steering by OWL-ViT's boxes, from OpenVLA-7B, or
+from a joystick, and that is the point — the safety argument must not depend on
+which model is driving.
 
 ```python
-from guardrail import Shield, State, load_policy
+from guardrail import Action4D, Shield, State, load_policy
 
 shield = Shield(load_policy("policies/follow_pedestrian.yaml"))
-shield.set_subject(x, y)                     # perception supplies this
-decision = shield.step(state, raw_action)    # -> repaired action + audit record
+shield.set_subject(x, y, subject_class="pedestrian")  # perception supplies position AND class
+decision = shield.filter(state, raw_action)            # -> decision.emitted (the repaired Action4D) + audit fields
 ```
+
+The subject's class matters: `follow_pedestrian.yaml`'s 10 m pedestrian
+stand-off binds only to a subject reported as `pedestrian`, and without a class
+only its 5 m catch-all rule applies
+([the rule that never armed](docs/FINDING-the-standoff-rule-that-never-armed.md)).
+`tests/test_public_docs.py` runs this block.
 
 ## What is here
 
@@ -57,15 +78,29 @@ deliberately unshielded control flights read 0.63 — they exist to fail, and
 they do.
 
 On 8 Oct 2026 a 120 s follow on the Project AirSim + ArduPilot rail let 5 P0
-stand-off violations through (0.0053, 5 of 937 Shield-flown ticks; no
-Shield-off control has been flown there yet); see
+stand-off violations through (0.0053, 5 of 937 Shield-flown ticks); see
 [Project AirSim flown by ArduPilot](docs/DESIGN-projectairsim-ardupilot.md).
 On every escape tick the perception node had placed the followed car at the
 aircraft's own position, a range of 0, where the stand-off check saw no
 action that opened the range
 ([finding](docs/FINDING-the-escape-that-stayed-inside-the-ring.md)). With the
 fix, a replay of that flight's 1101 logged ticks through the Shield gives 0
-escapes. That is a replay, not a flight: no flight has used the fix yet.
+escapes.
+
+The rail's Shield-off controls were flown on 13 and 14 Oct, as a close
+approach (`--want-width 0.5`, a more aggressive pilot than the 8 Oct follow)
+from the signed bundle, over pymavlink, not KPI-grade. On 13 Oct: Shield on, 0
+P0 escapes in 532 ticks; Shield off, 727 of 1100 (0.661). On 14 Oct: Shield
+on, 0 in 388 Shield-flown ticks; Shield off, 736 of 1099 (0.670). With the
+Shield on, the aircraft still entered a P0 building margin on 20 Shield-flown
+ticks on 14 Oct (71 unsafe-position ticks in all), because the Shield's
+forecast starts from the command, not from the aircraft's own velocity. The
+detector boxed a red traffic signal, not the car, so these flights test the
+Shield, not tracking. The range-0 fix has flown since 12 Oct, and its depth
+refusal fired in flight (78 and 89 refused depth returns on the two Shield-on
+flights), but on no tick of those flights did the subject estimate come
+inside the 5 m ring (nearest 16.5 m and 15.3 m), so the Shield side of that
+fix still rests on the replay.
 
 **These are not contract KPI figures.** The grant takes every reported KPI from
 a Stress Testing run in the *hil* topology, where a Jetson Orin runs the VLA and
@@ -112,8 +147,22 @@ Requires Project AirSim with an Unreal city level and an NVIDIA GPU. The
 guardrail package needs Python 3.11+ (`pyproject.toml`); the Project AirSim and
 OpenVLA flight environment (`vla-real`) is Python 3.10.20, a recorded deviation
 ([`docs/DESIGN-python-versions.md`](docs/DESIGN-python-versions.md)).
-[`RUNBOOK.md`](RUNBOOK.md) has the full setup; [`TUTORIAL.md`](TUTORIAL.md) is
-the gentle path.
+[`TUTORIAL.md`](TUTORIAL.md) is the gentle path to the city demo;
+[`docs/projectairsim-setup.md`](docs/projectairsim-setup.md) sets up Project
+AirSim with ArduPilot and Mission Planner, and
+[the perception rail's design note](docs/DESIGN-projectairsim-ardupilot.md)
+says how to run it. [`RUNBOOK.md`](RUNBOOK.md) covers the classic AirSim 1.8
+demo and the ArduPilot SITL rails in WSL.
+
+The city demo's Shield forecasts 3 s at 0.5 s steps by default (6 forecast
+steps), not the grant's 5 s at 0.1 s (50): `--grant-forecast` flies the grant's
+forecast with the escalation FSM off, and is not the default because the
+stand-off rule forecasts a still subject, and in a replay of the 13 Oct city
+flight its hold fired on 44 % of ticks (`flight_shield` in
+`demo/follow_vlm.py`). Every recorded city flight flew 3 s at 0.5 s; the
+13 Oct one also flew the unsigned YAML policy
+`policies/follow_car_citylife_nfz.yaml`, not a signed bundle. The Project
+AirSim + ArduPilot node and both ArduPilot SITL rails fly the grant's forecast.
 
 ```bash
 python demo/follow_vlm.py \
@@ -127,14 +176,21 @@ Results land in `demo/out/<tag>/`: `kpi.json`, `metrics.json`, the per-tick
 re-derives its own KPIs.
 
 ```bash
-python -m pytest tests/ -q          # or: python tests/test_shield.py
+python tests/test_shield.py   # each test file is its own runner: prints "N/M passed", exits non-zero on a failure
+# The full CI set is the "Standalone test files" loop in .github/workflows/tests.yml.
+# No pytest needed: it is not a dependency, and no environment here installs it.
 ```
 
 ## Reproducibility
 
-Every flight writes a manifest: code revision, detector weights hash, policy
-hash, random seed, sim speed-up and topology. A run whose working tree was dirty
-says so, and says that checking out that commit will not reproduce it.
+Every flight writes a manifest: code revision, VLA weights hash, policy hash,
+random seed, sim speed-up and topology. A run with no VLA records
+`none:hand-written-controller` there. The city demo's code does so since
+19 Oct (`flight_manifest` in `demo/follow_vlm.py`; no city flight has been
+recorded since), and its recorded runs filed OWL-ViT's weights under that
+field instead; the detector now goes to `metrics.json` (`pilot.detector`). A
+run whose working tree was dirty says so, and says that checking out that
+commit will not reproduce it.
 
 Until 6 Oct only runs on the desktop ArduPilot SITL + MAVROS 2 rail could be
 `kpi_grade: true`, and the manifest labelled that rail `canonical-hil`. Five

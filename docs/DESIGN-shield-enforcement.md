@@ -680,9 +680,11 @@ in a scratch copy with no `demo/out`, the fixture replay fails with escapes on
 exactly the five logged ticks; the HEAD test file there reports 0/2, 2 skipped.
 `tests/test_shieldcore_identity.py` pins the 81 decisions 4418ae0 made on the
 replay (the other 1020 ticks pass the raw action untouched). These files
-make a CI run possible; they are not yet in the test list of
-`.github/workflows/tests.yml` (the lead's file), and until they are listed
-the regression still does not run on GitHub.
+make a CI run possible. They have been in the test list of
+`.github/workflows/tests.yml` since 2026-10-13 (30bead3), and GitHub's run on
+1b95383 (13 Oct, run 38471368810) passed them on all three jobs, the replay
+reading the fixture; only the fixture-against-folder check SKIPs there,
+because it needs `demo/out`.
 
 ## Measurements
 
@@ -1032,15 +1034,24 @@ known to carry the claim. *Fix:* WATCH (section 6);
   Done 2026-10-08 (`docs/DESIGN-prefix-compiler.md` section 9).
 - `docs/DESIGN-escalation-fsm.md`: lines saying shield.py has no
   `magnitude_m` and was not changed are now historical.
-- The flight rails (`sitl/ros2_shield_node.py`, `sitl/run_sitl_demo.py`) build
-  the Shield without `now=`, so no time window is evaluated in flight (card
-  WP3-02), and call `filter()` without `t=`, so a moving zone's age is counted
-  in 0.1 s ticks rather than read from the rail's clock. Both are one keyword.
+- The flight rails (`sitl/ros2_shield_node.py`, `sitl/run_sitl_demo.py`)
+  ~~build the Shield without `now=`, so no time window is evaluated in flight
+  (card WP3-02)~~: done 2026-10-13 (93dcb10), both SITL rails and the
+  perception node pass the rule clock through `rail_shield(clock=...)`
+  (`guardrail/replay.py` turns it into `now=`). Still open: they call
+  `filter()` without `t=` (`sitl/ros2_shield_node.py` `shield.filter(state,
+  raw_world)`, `sitl/run_sitl_demo.py` `shield.filter(state, raw)`), so a
+  moving zone's age is counted in 0.1 s ticks rather than read from the
+  rail's clock. That one is one keyword.
 - `demo/follow_vlm.py` (its Shield construction), `demo/run_demo.py` and
   `demo/real_vla_demo.py` build the Shield with the FSM on but fly `emitted`
   and pass 3 s / 0.5 s. Their audit files now carry an FSM verdict the demo
   never acted on; pass `escalation=False` (as the rails do through
   `rail_shield`) or fly `command`, and move to the grant's 5 s / 0.1 s.
+  (2026-10-19: `demo/follow_vlm.py` now records the forecast it flew,
+  `shield_lookahead`, and `--grant-forecast` builds 5 s / 0.1 s with
+  `escalation=False`; the default is still 3 s / 0.5 s with the FSM on, see
+  `flight_shield` there for why.)
 - `demo/run_demo.py --dynamic` calls `shield.hot_apply(DYNAMIC_FENCE)`, a
   PolygonFence, after ticks have run (~line 202): it now raises
   `LockedRuleClass`. Use `shield.hot_apply(as_dynamic_nfz(DYNAMIC_FENCE))`.
@@ -1087,14 +1098,17 @@ known to carry the claim. *Fix:* WATCH (section 6);
   grant's 2.0 / 0.5 m without one); whether the grant's selection should
   replace the chain is a decision for the PI, not taken here.
 - The 2026-10-12 and 2026-10-13 timings are this desktop's; nothing was
-  measured on the Orin or on GitHub's runner. `tests/test_shield.py` keeps
-  15 ms on CI until a run prints the new medians, and
-  `test_every_new_mode_keeps_the_50_rule_budget` has never run on a shared
-  runner (its heaviest configuration read 65 ms once here under load,
-  against 100 ms).
-- `tests/test_flight_pas_ap_20261008.py` and the three
-  `tests/test_shieldcore_*.py` files are not in `.github/workflows/tests.yml`
-  (the lead's file), so CI does not yet run the 8 Oct regression.
+  measured on the Orin, and no median was read off GitHub's runner.
+  `tests/test_shield.py` keeps 15 ms on CI until a run prints the new
+  medians. `test_every_new_mode_keeps_the_50_rule_budget` (its heaviest
+  configuration read 65 ms once here under load, against 100 ms) has passed
+  on GitHub's runners since 13 Oct (run 38471368810 on 1b95383, all three
+  jobs).
+- ~~`tests/test_flight_pas_ap_20261008.py` and the three
+  `tests/test_shieldcore_*.py` files are not in `.github/workflows/tests.yml`~~
+  Done 2026-10-13 (30bead3): the four files are in the CI loop, and on GitHub
+  the 8 Oct replay runs from `tests/fixtures/`; the fixture-against-folder
+  check SKIPs there because it needs `demo/out`.
 - `repair_passes` skip reasons come from the violations open at the start of
   the pass, not a re-check per operator. `time-window` is written only for a
   window that opens inside the lookahead; a closing edge cannot cause a

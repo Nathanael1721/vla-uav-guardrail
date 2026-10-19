@@ -7,33 +7,122 @@
 #
 # WHAT RUNS
 #
-#   1. Standalone test files that run in full on a clean checkout. Each is its
-#      own runner (`python tests/test_x.py` prints "N/M passed" and exits
-#      non-zero on a failure); there is no pytest dependency. A test that
+#   1. Standalone test files, the loop of the "Standalone test files" step.
+#      Each is its own runner (`python tests/test_x.py` prints "N/M passed" and
+#      exits non-zero on a failure); there is no pytest dependency. A test that
 #      cannot run on the host prints SKIP and is counted apart, never as a
-#      pass (tests/test_api.py's route tests need FastAPI, installed on the
-#      3.11 job with signing only; they SKIP on the other two).
-#      tests/test_replay.py is NOT listed: its fixtures live under demo/out/
-#      (gitignored), so on a clean clone it runs 2 of its 20 tests and SKIPs
-#      18, and a green tick there would be mostly silence (measured on a
-#      simulated clean clone, 2026-10-06). tests/test_kpi_report.py is not
-#      listed for the same reason (its delivered-run checks need demo/out/).
-#      tests/test_harness_service.py (the stress harness's gRPC control plane,
-#      about 20 s) runs in full on the 3.10 job and the 3.11 job with
-#      cryptography, which install pyproject's `harness` extra pinned to the
-#      versions the committed stubs were generated with, plus grpcio-tools
-#      so its stale-stub check runs (without grpcio-tools that one test
-#      SKIPs). On the requirements-only job its logic tests, which drive
-#      Harness directly, run and the gRPC / mTLS tests SKIP visibly.
-#      Since 2026-10-13 the loop also runs the wave-A files (test_shieldcore_*,
-#      test_railinputs_*, test_wp4outputs_*, test_flight_pas_ap_20261008 on its
-#      tests/fixtures/ copy of the 8 Oct flight, test_env_pins), each checked
-#      first in a clean `git archive` copy with and without the optional extras.
-#      tests/test_harnesstruth_*.py (2026-10-12) hold the harness to the
-#      grant's forecast, the closed-loop wind model, the RTL hand-over, the
-#      self-contained bundles and this file. tests/test_env_pins.py is not
-#      listed: its setup_sitl.sh tests build throwaway git repositories with
-#      a bash it probes for, and it has not been run on a Linux runner yet.
+#      pass. The list below is the loop, name for name: since 2026-10-19
+#      tests/test_harnesstruth_ci.py fails when the two differ in either
+#      direction, or when a file named under NOT LISTED is in the loop (the
+#      header used to say test_env_pins was not listed while the loop ran it).
+#
+#      THE LOOP RUNS
+#        WP1, policies and bundles: test_ir, test_bundle, test_manifest,
+#          test_policy_hash, test_policy_dsl_grant_form, test_replay_identity.
+#        WP2, the Prefix Compiler: test_csp, test_prefix_eval.
+#        WP3, the Shield and the escalation FSM: test_shield,
+#          test_shield_events, test_corridor, test_clearance,
+#          test_check_contract, test_guardrail_coverage, test_frame_contract,
+#          test_fsm, test_shieldcore_*, test_api.
+#        WP4, the stress harness and its outputs: test_scenario_spec,
+#          test_sweep, test_kpi_magnitudes, test_harness_service,
+#          test_harnesstruth_*, test_wp4outputs_*.
+#        The flying rails: test_railinputs_*, test_flight_pas_ap_20261008 (on
+#          its tests/fixtures/ copy of the 8 Oct flight), test_pas_ardupilot,
+#          test_sitl_rails, test_mavlink_adapter, test_fenceguard,
+#          test_follow_motion, test_identity, test_identity_lock,
+#          test_vla_backends, test_railvideo_*.
+#        Deployment and environments: test_deploy_configs, test_env_pins.
+#        Documents: test_public_docs, test_ft_report, test_explainer_figures,
+#          test_explainer_deck.
+#      END OF THE LIST
+#
+#      Added 2026-10-13: the wave-A files (shieldcore, railinputs, wp4outputs,
+#      the 8 Oct flight, env_pins) and on 2026-10-14 the railvideo and
+#      explainer files. Added 2026-10-19, after the October review: test_fsm,
+#      test_policy_hash, test_csp, test_policy_dsl_grant_form,
+#      test_replay_identity, test_vla_backends, test_prefix_eval,
+#      test_fenceguard, test_follow_motion, test_identity, test_identity_lock,
+#      test_pas_ardupilot, test_sitl_rails, test_mavlink_adapter,
+#      test_deploy_configs, and the new test_public_docs and test_ft_report.
+#      Each of the 2026-10-19 files was run first in a clean `git archive`
+#      copy, under WSL Ubuntu in one bare venv per job below (Python 3.12, the
+#      only interpreter there; the 3.10 job's numpy 1.26.4 forced in its
+#      venv, where test_env_pins' interpreter-pin check then fails, as it
+#      should on 3.12), and on Windows under 3.10 (vla-real) and 3.11
+#      (vla-drone). Apart from that one check, the whole loop passed in all
+#      three WSL venvs.
+#
+#      WHAT SKIPS, WHERE, AND WHY. Every SKIP prints its line.
+#        - The 3.11 job with the extras installs fastapi, uvicorn, httpx and
+#          cryptography, so the real-HTTP hot-apply and mTLS listener tests of
+#          test_railinputs_node and test_railinputs_hotapply (the REST
+#          listener's common-name allow-list is tested nowhere else) must run
+#          there: those two files are that job's `no_skip`, and a SKIP line
+#          from either fails the job. Until 2026-10-19 no job installed
+#          uvicorn, so they SKIPped on every run while the job stayed green.
+#          On the other two jobs they SKIP (no fastapi, no uvicorn).
+#        - test_api's route tests need FastAPI and httpx (3.11 extras only).
+#        - test_harness_service (the stress harness's gRPC control plane,
+#          about 20 s) runs in full on the 3.10 job and the 3.11 extras job,
+#          which install pyproject's `harness` extra pinned to the versions
+#          the committed stubs were generated with, plus grpcio-tools so its
+#          stale-stub check runs. On the requirements-only job its logic
+#          tests, which drive Harness directly, run and the gRPC / mTLS tests
+#          SKIP.
+#        - jsonschema (3.11 extras only) runs the schema checks of test_csp,
+#          test_policy_hash and test_policy_dsl_grant_form; elsewhere they SKIP.
+#        - Files outside this repository: test_policy_dsl_grant_form's 10
+#          checks against the reference repository (kuanting-vla-uav-guardrail
+#          is a separate checkout, not part of this one), test_pas_ardupilot's
+#          3 checks against IAMAI's D:/ProjectAirSim airframe and Project
+#          AirSim's own loader, test_csp's 2 checks against OpenVLA's
+#          tokenizer.json.
+#        - Gitignored flight output (demo/out/): test_pas_ardupilot's CityLife
+#          trajectory bound, test_follow_motion's 13 Oct replay,
+#          test_policy_hash's stored manifests, test_flight_pas_ap_20261008's
+#          fixture-against-folder check, test_railvideo_truth_frame's stored
+#          flights and test_railvideo_recording's CityLife map.
+#        - A git checkout: test_bundle's lab-key check and test_deploy_configs'
+#          two .gitignore checks SKIP in a `git archive` copy (since
+#          2026-10-19; they used to FAIL there). actions/checkout gives one.
+#        - test_deploy_configs' `docker compose config` check runs where the
+#          Docker CLI's `docker compose version` works (GitHub's runners, the
+#          lab desktop: 61/61 on 2026-10-19) and SKIPs elsewhere. It has not
+#          been run on Linux: this job is its first Linux run. Its rclpy-floor
+#          check needs interpreters on both sides of 3.11 and SKIPs with one.
+#        - Not installed on any job, so these run on the lab machine only:
+#          Pillow, for test_railvideo_recording's HUD and recorder tests and its
+#          two wall-clock tests (loop rate within 95 %, a detector thread at
+#          85 % of its rate), which have never been measured on a shared
+#          runner and would be kept lab-only rather than loosened; OpenCV and
+#          ffmpeg, for 3 tests of test_railvideo_compare; the deck's
+#          node_modules, for 19 of test_explainer_deck's 24 tests (the deck's
+#          package-lock.json is gitignored, so `npm ci` cannot run and a bare
+#          `npm install` would float), and the Windows fonts its and
+#          test_explainer_figures' fit checks read; pyarrow, so
+#          test_wp4outputs_exporters checks only the "SKIP parquet" path (the
+#          Parquet write has run nowhere yet).
+#
+#      NOT LISTED, on purpose:
+#        test_replay.py: its fixtures live under demo/out/ (gitignored), so on
+#          a clean clone it runs 2 of its 20 tests and SKIPs 18, and a green
+#          tick there would be mostly silence (measured on a simulated clean
+#          clone, 2026-10-06).
+#        test_kpi_report.py: the same (its delivered-run checks need
+#          demo/out/).
+#        test_range_and_lock.py: 16 of its tests need OpenCV, which no job
+#          installs.
+#        test_check_claims.py: at f93283d it fails on a clean clone, because
+#          files it guards are gitignored (docs/CORRECTION-*.md among them).
+#          Its patterns run on the public entry points through the Documents
+#          files above.
+#      END OF THE EXCLUSIONS
+#
+#      Every other test file stays off CI for the reasons under WHAT DOES NOT
+#      RUN HERE. test_env_pins' setup_sitl.sh tests build throwaway git
+#      repositories with a bash they probe for; their first GitHub run failed
+#      on a lost executable bit and was fixed (CHANGELOG, 2026-10-13 later).
 #   2. The smoke profile of the stress harness (experiments/profiles/smoke.yaml,
 #      ~50 scenarios x 1 seed, with the escalation FSM flying, since
 #      2026-10-07). Known failures and tracked episodes are reported and do
@@ -62,7 +151,10 @@
 # episodes fly the 5 s forecast), and the five test_harnesstruth_* files add
 # 65 s, about 3.5 minutes per job in all; on GitHub, where that step took
 # 2:36-3:54 at 4418ae0, roughly 5-8 minutes is to be expected (scaled, not
-# measured). Both fit the 30-minute timeout. The requirements are pinned
+# measured). The files added on 2026-10-19 took 40-50 s together per job in
+# the WSL venvs, test_deploy_configs 11-14 s of it there (70-125 s alone on
+# the desktop, where its `docker compose config` and git checks run).
+# Both steps fit the 30-minute timeout. The requirements are pinned
 # (shapely, numpy by interpreter) since the same day. The nightly profile is
 # defined in .github/workflows/nightly.yml, not here, and has not run: GitHub
 # schedules only the default branch's workflows, which is `main` on GitHub,
@@ -79,8 +171,11 @@
 #
 # The three jobs are the interpreters the project actually uses: 3.10 (the
 # OpenVLA flight environment imports guardrail from source), 3.11 (the grant's
-# floor, pyproject's requires-python), and 3.11 WITHOUT `cryptography`, which
-# is the vla-drone environment - optional imports must keep holding there.
+# floor, pyproject's requires-python) with the optional extras, and 3.11 with
+# requirements.txt alone, no optional extra (not even `cryptography`), where
+# every optional import must keep holding. (That job was described as the
+# vla-drone environment; vla-drone has cryptography, FastAPI and uvicorn
+# since, so it is closer to the extras job.)
 
 name: tests
 
@@ -99,12 +194,20 @@ jobs:
         include:
           # The quotes around protobuf>=7.35.1 matter: `extras` is pasted into
           # a bash line, where a bare `>` would redirect pip's output.
+          # `no_skip` names the files that must not print a single SKIP on
+          # that job, because the job installs everything they import.
+          # uvicorn and jsonschema are pinned to vla-drone's versions:
+          # guardrail/api.py reaches into uvicorn.config / uvicorn.importer,
+          # which are not a stable interface.
           - python: "3.10"
             extras: "cryptography grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0"
+            no_skip: ""
           - python: "3.11"
-            extras: "cryptography fastapi httpx grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0"
+            extras: "cryptography fastapi httpx uvicorn==0.50.2 jsonschema==4.26.0 grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0"
+            no_skip: "tests/test_railinputs_node.py tests/test_railinputs_hotapply.py"
           - python: "3.11"
             extras: ""
+            no_skip: ""
     steps:
       - uses: actions/checkout@v4
 
@@ -114,16 +217,27 @@ jobs:
 
       # requirements.txt carries jinja2 since 2026-10-06 (guardrail/compiler.py
       # build_prompt() and summary_pack() render through it), so it is no
-      # longer named here by hand. FastAPI and httpx (TestClient) go only to the
-      # job that runs tests/test_api.py's route tests: pyproject's `api` extra.
-      # grpcio and protobuf (pyproject's `harness` extra) and grpcio-tools go
-      # to the two jobs with cryptography, for tests/test_harness_service.py.
+      # longer named here by hand. pyproject's `api` extra (fastapi, uvicorn)
+      # plus httpx goes only to the 3.11 extras job: tests/test_api.py's route
+      # tests need httpx for TestClient, and the railinputs hot-apply and
+      # listener tests serve over real HTTP and mTLS through uvicorn, which
+      # fastapi does not pull in (until 2026-10-19 no job had it). grpcio and
+      # protobuf (pyproject's `harness` extra) and grpcio-tools go to the two
+      # jobs with cryptography, for tests/test_harness_service.py.
       - name: Install the guardrail's dependencies
         run: python -m pip install -r requirements.txt ${{ matrix.extras }}
 
       - name: Standalone test files
+        env:
+          PYTHONUNBUFFERED: "1"
         run: |
+          # python's own exit code is read from PIPESTATUS (no pipefail, so a
+          # failing file does not end the loop), and on the job whose
+          # matrix.no_skip names a file, a SKIP line from that file fails
+          # the job: a skip there means an installed dependency went unused.
+          set +o pipefail
           fail=0
+          out="$RUNNER_TEMP/test-output.txt"
           for t in \
               tests/test_scenario_spec.py \
               tests/test_sweep.py \
@@ -164,12 +278,38 @@ jobs:
               tests/test_railvideo_recording.py \
               tests/test_railvideo_compare.py \
               tests/test_explainer_figures.py \
-              tests/test_explainer_deck.py; do
+              tests/test_explainer_deck.py \
+              tests/test_fsm.py \
+              tests/test_policy_hash.py \
+              tests/test_csp.py \
+              tests/test_policy_dsl_grant_form.py \
+              tests/test_replay_identity.py \
+              tests/test_vla_backends.py \
+              tests/test_prefix_eval.py \
+              tests/test_fenceguard.py \
+              tests/test_follow_motion.py \
+              tests/test_identity.py \
+              tests/test_identity_lock.py \
+              tests/test_pas_ardupilot.py \
+              tests/test_sitl_rails.py \
+              tests/test_mavlink_adapter.py \
+              tests/test_deploy_configs.py \
+              tests/test_public_docs.py \
+              tests/test_ft_report.py; do
             echo "::group::$t"
-            if ! python "$t"; then
+            python "$t" 2>&1 | tee "$out"
+            rc=${PIPESTATUS[0]}
+            if [ "$rc" -ne 0 ]; then
               echo "::error file=$t::$t failed"
               fail=1
             fi
+            case " ${{ matrix.no_skip }} " in
+              *" $t "*)
+                if grep -q '^SKIP' "$out"; then
+                  echo "::error file=$t::$t skipped a test this job installs the dependencies for"
+                  fail=1
+                fi;;
+            esac
             echo "::endgroup::"
           done
           exit $fail
