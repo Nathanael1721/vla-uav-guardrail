@@ -25,16 +25,26 @@ Theta stays on each repair's own `magnitude_m`; the one-period reading is
 selectable and is a question for the PI. On the labelled library,
 fail-safe trigger correctness went from 0.747 to 0.823 on the default basis
 (0.903 on the one-period reading), still below the never-trigger null of
-0.968. Every `fsm_config_hash` changed with the three new config fields:
-the default thresholds now hash to `sha256:5ae67785...`, while
-`docs/data/scenario_sweep.json` (published before them) carries
-`sha256:0136098f...`.
+0.968. (13 Oct: republished with the grant's forecast, 5 s at 0.1 s, on a
+library of 176 episodes, 167 of them labelled where the 12 Oct one scored
+186: 0.838, 140 of 167, with 26 false and 1 missed trigger, against a
+never-trigger null of 0.940; still below the null and the grant's 0.99. The
+null fell because the library changed, not because the FSM improved;
+CHANGELOG 2026-10-13.) Every `fsm_config_hash` changed with the three new
+config fields: the default thresholds now hash to `sha256:5ae67785...`. The
+sweep published on 7 Oct carried `sha256:0136098f...`; the 12 Oct and 13 Oct
+republications of `docs/data/scenario_sweep.json` carry `sha256:5ae67785...`
+on every Shield-on episode (corrected 2026-10-19: this paragraph used to say
+the published sweep still carried the old hash). The 8 Oct flight's log, and
+its trimmed copy `tests/fixtures/pas_ap_20261008_audit.short.jsonl`, carry
+`sha256:0136098f...`, the configuration that flew.
 
 ## 2026-10-08: what the first follow flight on ArduPilot changed
 
 `demo/out/pas_ap_20261008_224440` is a 120 s red-car follow on Project
 AirSim with ArduPilot SITL as the flight controller, the Shield and this FSM
-in the loop (dev topology, not KPI-grade). Its FSM went Brake -> Loiter eight
+in the loop (Project AirSim + ArduPilot SITL over pymavlink, none of the
+grant's topologies; not KPI-grade). Its FSM went Brake -> Loiter eight
 times (G3): five on stand-off repairs "over theta" of 3.6-9.8 m, three on
 "no operator converged". Every LOITER spell sank 1.4-1.8 m/s. The deepest
 went from 7.6 m to 1.8 m in 3.3 s, and the aircraft bottomed out at 0.36 m
@@ -717,7 +727,16 @@ on every tick. A repair that has not lifted the aircraft back over the floor
 in 5 s is the case X6 exists for. The other six runs have no illegal
 position. (Why the aircraft kept sinking under a +2 m/s climb command is a
 question about the pymavlink SITL rail, not about this module. The run's
-own `metrics.json` already reports `alt_violation_s: 21.6`.) The
+own `metrics.json` already reports `alt_violation_s: 21.6`. Answered on
+2026-10-19: until then the pymavlink rail read pymavlink's oldest queued
+LOCAL_POSITION_NED each tick instead of the newest, so on `sitl_ped_on` its
+pose fell about 3.2 s behind at 33-49 s and 6.6 s behind at 97-113 s, where
+the stub's altitude loop swung on the stale position; see
+`MavlinkAdapter.state` in `sitl/run_sitl_demo.py` and
+`tests/test_sitl_rails.py`. Every stored `sitl_*` run named in this note was
+measured on such a delayed pose, so the X6 escalation above, and these runs'
+dwell and θ counts, describe that rail as it was, not the aircraft's true
+position.) The
 reconstruction is a measurement, not a replay option. To repeat it: load the
 rows and `metrics.json`, call `tools/rescore_kpis.py`
 `reconstruct_unsafe(rows, policy, metrics)`, then

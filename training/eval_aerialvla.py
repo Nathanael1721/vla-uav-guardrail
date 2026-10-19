@@ -1,6 +1,9 @@
 """
-Closed-loop evaluation of an AerialVLA adapter — N randomized episodes,
-PURE VLA (goal_blend 0) so the score measures the MODEL, not the guidance.
+Closed-loop evaluation of an AerialVLA adapter — N randomized episodes.
+Pure VLA by default (--goal-blend 0), so the score measures the MODEL, not the
+guidance; with --goal-blend above 0 the run is ASSISTED (the July campaign's
+*_deploy evals flew 0.55), and every episode records its goal_blend and
+yaw_gain in results[*].params, which training/ft_report.py reads per row.
 
 Each episode: restart-free (fresh subprocess per flight, sim restarted every
 `--sim-every` episodes), random target bearing/distance, fixed policy. Metrics

@@ -25,9 +25,12 @@ citylife_redcar_nfz_20261013). That is still about 40x faster than AerialVLA's
 11-12 s, which is what makes closed-loop tracking feasible - not a latency that
 can be ignored.
 
-This is still vision-language-action — the words choose the target, the camera
-finds it, the controller acts — with the model swapped for one whose language
-input reaches the output.
+No VLA flies this demo. The words choose the target and OWL-ViT finds it in
+the camera image, but every action comes from the hand-written controller
+below, so the manifest's model field reads none:hand-written-controller
+(`flight_manifest`; until 2026-10-19 this paragraph called the demo "still
+vision-language-action", which the front page repeated, review of
+2026-10-19; tracker card ARCH-21).
 
 What the controller does
 ------------------------

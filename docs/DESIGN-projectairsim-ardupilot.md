@@ -104,7 +104,7 @@ Running the grant's wording instead is possible: MAVROS in WSL with mirrored net
 
 ## The perception node
 
-`demo/pas_ardupilot/perception_node.py` is one process. On each 10 Hz tick it does the following:
+`demo/pas_ardupilot/perception_node.py` is one process. On each tick (nominal 10 Hz, `TICK = 0.1` s; every recorded run measured 8.97-9.16 Hz, see the tables below) it does the following:
 
 1. It reads ArduPilot's EKF state, and the mode and arm state ArduPilot reports.
 2. It feeds the camera frame to `follow_vlm.Grounder`.
@@ -146,7 +146,7 @@ Otherwise the node stamps the rail's own label and records why. The scene only d
 
 **Moving to the drone needs no code change.** Only `--camera ros2 --image-topic ...`, the MAVROS `fcu_url`, and the policy (WGS84-anchored, `origin:`) change. The node reads position from the EKF, which the drone has too.
 
-**What `manifest.py` needs (outside this unit).** `build_manifest()` refuses `dev`, `hil` and `flight` together with any Project AirSim scene file. That guard was written when every scene meant simple_flight, and its message still says "A run with a Project AirSim scene is 'projectairsim-single-host'." On this rail that is no longer true. So the node offers the grant label (when qualified), and stamps its own label when the manifest refuses, keeping the refusal in `metrics.json`. Once `build_manifest()` accepts a scene whose robot config uses controller `ardupilot-api` (read from the file the simulator was given), and still refuses a simple_flight scene, the same node stamps `dev` or `hil` with no change here.
+**What `manifest.py` needed (done 2026-10-13, 93dcb10).** Until then `build_manifest()` refused `dev`, `hil` and `flight` beside any Project AirSim scene file, a guard written when every scene meant simple_flight. It now accepts `dev` and `hil` beside a scene whose scene file and robot config it reads as controller `ardupilot-api` (`scene_controllers`; its docstring dates the change 2026-10-12), but only on the same evidence as without a scene: the live MAVROS chain for `dev`, the Orin's evidence for `hil`, and for both MAVROS's own link (an `fcu_url`, and no pymavlink link). It still refuses a simple_flight scene, a pymavlink link, and `flight` beside any scene (`tests/test_railinputs_manifest.py`). The node needed no change (`topology.py`): it offers the grant label when the rail is qualified, stamps its own label when the label is withheld or refused, and keeps any refusal in `metrics.json` (`manifest_refusal`). No live MAVROS run has exercised the acceptance yet.
 
 ## Gate G1, measured: the four conditions
 
@@ -208,7 +208,7 @@ A fifth change is tooling: `start_ardupilot.sh` and `sitl/start_router.sh` find 
 
 | Measure | Value | Reference or null |
 |---|---|---|
-| Ticks, mission time, loop rate | 1101 in 120.14 s, 9.16 Hz | 10 Hz, and the project's 9.5 Hz loop gate. The shortfall was the pacing, not the work: the loop slept 0.1 s minus each tick's work from that tick's own start, so every round-up to the OS timer (about 10 ms a tick on the flight env's Python 3.10 on Windows; per-tick period median 0.110 s) was lost for good. Since 2026-10-19 the node paces to an absolute deadline (`perception_node.next_tick_deadline`) and flags a run under the gate |
+| Ticks, mission time, loop rate | 1101 in 120.14 s, 9.16 Hz | 10 Hz, and the project's 9.5 Hz loop gate. The shortfall was the pacing, not the work: the loop slept 0.1 s minus each tick's work from that tick's own start, so every round-up to the OS timer (about 10 ms a tick on the flight env's Python 3.10 on Windows; per-tick period median 0.110 s) was lost for good. Every recorded run of this rail (8 to 14 Oct) was paced that way and ran at 8.97-9.16 Hz. Since 2026-10-19 the node paces to an absolute deadline (`perception_node.next_tick_deadline`, with a measured 1 ms OS timer) and judges the gate on the loop's own tick starts (`metrics.json` `loop_hz_paced`, `loop_hz_below_gate`; `loop_hz` keeps the mission-clock rate). No flight has run on the deadline pacing yet |
 | Detector rate | 3.75 Hz | the grant's 10 Hz; null 0 |
 | Ticks flown by the node / handed to ArduPilot by the FSM (nothing sent) | 937 / 164 | |
 | Ticks tracking the car / searching | 269 / 832 | |
@@ -218,7 +218,7 @@ A fifth change is tooling: `start_ardupilot.sh` and `sitl/start_router.sh` find 
 | Shield time per tick, median / p99 / max | 0.32 / 2.43 / 104.2 ms | the grant's budgets are 5 ms per query and 100 ms per tick; 6 ticks took over 5 ms in all, 1 over 100 ms |
 | GeoFence breaches (FENCE_STATUS received) | 0 | fence read back: ENABLE 1, TYPE 3, ACTION 1 (RTL), ALT_MAX 20 m, RADIUS 400 m, MARGIN 2 m |
 | Mission Planner's UDP 14550 | GLOBAL_POSITION_INT and ATTITUDE at 19.0 Hz, largest gap 0.1 s | `sitl/gcs_listen.py check` over the mission window. The capture is not archived with the run (see below) |
-| P0 escape rate | 0.0053 (5 of 937 flown ticks) | target 0. No Shield-off control has been flown on this rail, so there is no null yet |
+| P0 escape rate | 0.0053 (5 of 937 flown ticks) | target 0. As of 8 Oct no Shield-off control had been flown on this rail, so there was no null; the controls were flown on 13 and 14 Oct (see "Flown 2026-10-13") |
 | Repair success (re-check and theta) | 0.776 (52 of 67) | |
 | Time to safe, mean / max | 2.81 / 6.42 s over 12 episodes | |
 | Time below the policy's 6 m floor | 27.9 s (279 ticks) | as recorded: 279 ticks x 0.1 s. The trajectory's own timestamps give 30.4 s, because the loop ran at 9.16 Hz; the node time-weights dwell from the timestamps since 2026-10-19 |
@@ -241,7 +241,7 @@ What the log adds: on all 5 ticks the logged subject position equals the aircraf
 
 **(c) LOITER sinks out of the altitude band.** ArduCopter LOITER with no RC input descends; the SITL rails showed it on 2026-10-07 ("LOITER descended from 14.2 m to the ground", `docs/DESIGN-ros2-interface.md`). Here the 7 Loiters before the last tick lasted 2.1-3.3 s each and lost altitude at 1.35-1.77 m/s from 7.6-8.0 m (down to 1.80-4.99 m when ArduPilot handed back), and every one was followed by a stretch below the policy's 6 m floor: 7 stretches, 279 ticks (27.9 s as 279 x 0.1 s; 30.4 s by the trajectory's timestamps), lowest points 0.36-3.43 m. (The 8th Loiter began on the final tick.) The lowest, 0.36 m at tick 322, came in GUIDED after the second Loiter, with the node already commanding the 1.8 m/s climb limit. These are 279 of the run's 310 unsafe P0 ticks (the rest: 25 building clearance, 6 stand-off) and the `dwell:alt_violation_s` mission failure. The escalation meant to hold the aircraft safe takes it out of the band instead.
 
-**(d) Fail-safe trigger correctness in the headless harness** was 0.747 (library), 0.726 (nightly) and 0.875 (smoke) against the grant's 0.99, and below the never-trigger null (CHANGELOG 2026-10-07, Retracted). Every stored sweep and nightly manifest names the topology `headless-kinematic`; the harness's ArduPilot path (`--backend sitl`) refuses every scenario with events (`sitl_refusal` in `experiments/sweep_scenarios.py`). It was not measured on this rail or on ArduPilot SITL.
+**(d) Fail-safe trigger correctness in the headless harness** was 0.747 (library), 0.726 (nightly) and 0.875 (smoke) against the grant's 0.99, and below the never-trigger null (CHANGELOG 2026-10-07, Retracted; the current figure is under "Re-flown 2026-10-12"). Every stored sweep and nightly manifest names the topology `headless-kinematic`; the harness's ArduPilot path (`--backend sitl`) refuses every scenario with events (`sitl_refusal` in `experiments/sweep_scenarios.py`). It was not measured on this rail or on ArduPilot SITL.
 
 ## Re-flown 2026-10-12, with the fixes
 
@@ -260,7 +260,7 @@ The same follow (red car, 120 s, same policy and seed) flown with the 9-12 Oct f
 | altitude | 0.36-8.15 m, 27.9 s (279 ticks x 0.1 s; 30.4 s by timestamps) below the 6 m floor | 7.99-8.15 m, 0 s below it |
 | ArduPilot real-time factor, GeoFence breaches | 0.951, 0 | 0.962, 0 |
 
-Against the defects above: (a) is not tested by this run, because the car never came near the 5 m ring; (b) and (c) did not recur, but no stand-off repair arose and the FSM never asked for a hold, so the BRAKE hold was not flown either; (d) is unchanged in kind (republished at 0.823, still headless). Only a run that brings the aircraft close to the car tests the range-0 fix and the hold on this rail.
+Against the defects above: (a) is not tested by this run, because the car never came near the 5 m ring; (b) and (c) did not recur, but no stand-off repair arose and the FSM never asked for a hold, so the BRAKE hold was not flown either; (d) is unchanged in kind (republished at 0.823, still headless; that figure was itself retracted on 2026-10-13, because it was measured on a 3 s / 0.5 s forecast: on the grant's 5 s / 0.1 s, over the 176-episode library, it is 0.838, 140 of 167 labelled episodes, against a never-trigger null of 0.940, `docs/data/scenario_sweep.json` and CHANGELOG 2026-10-13). Only a run that brings the aircraft close to the car tests the range-0 fix and the hold on this rail.
 
 Found on this run: 43 depth returns were refused and the car ranged by box width at 56-156 m, up to 122 m off the nearest depth-ranged tick (`docs/FINDING-the-escape-that-stayed-inside-the-ring.md`, "The re-fly of 2026-10-12"). Rows now carry `subject_depth` (the depth range and the rule that refused it).
 
@@ -420,6 +420,6 @@ Settled by the runs of 2026-10-08 and moved to "Measured 2026-10-08": whether th
 - The MAVROS link (including `request_mode`, `time_reference`, `statustext` and `extended_state`) and the ROS 2 camera source were exercised only against stand-ins, never against a live MAVROS.
 - The `dev` path: no WSL environment holds ROS 2 + MAVROS together with `torch`, `transformers` and the `projectairsim` client yet, so the MAVROS node has not been started in WSL either.
 - The Orin path (`hil`): attach mode against a live simulator, the projectairsim client on aarch64, MAVROS's reply path through the router under WSL NAT, and DDS.
-- The KPI-evidence step (`guardrail.replay.kpi_evidence_grade`, which demotes a graded run whose replay bundle lacks a trusted signature) is wired as on the SITL rails but has never been reached. G1 has passed, but every live run so far (2026-10-08 to 2026-10-14) used pymavlink, which is offered no grant label, and `build_manifest()` still refuses `dev`/`hil` beside a Project AirSim scene.
+- The KPI-evidence step (`guardrail.replay.kpi_evidence_grade`, which demotes a graded run whose replay bundle lacks a trusted signature) is wired as on the SITL rails but has never been reached. G1 has passed, but every live run so far (2026-10-08 to 2026-10-14) used pymavlink, which is offered no grant label. Since 93dcb10 (2026-10-13) `build_manifest()` accepts `dev`/`hil` beside a scene whose robot config it reads as `ardupilot-api`, but only on live MAVROS evidence (an `fcu_url`, no pymavlink link; `hil` also needs the Orin's evidence), and no MAVROS run exists on this rail yet.
 - Land on this rail. On the live follow of 2026-10-08 the escalation FSM reached Loiter 8 times and never RTL or Land (what Loiter did to the altitude is defect (c) above). RTL has flown since: X7 sent the aircraft home on 2026-10-13 and 2026-10-14. Land is still tested with stand-ins only.
 - Tracking on this rail. The Shield-off control, which the follow's P0 escape rate needed as its null, was flown on 2026-10-13 and 2026-10-14. What no run has shown yet is the detector on the car: it boxed a red traffic signal, and the rail has no start gate (see "Flown 2026-10-13").

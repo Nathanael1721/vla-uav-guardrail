@@ -6,8 +6,21 @@ title: Guardrail
 
 **A safety layer for language-commanded UAVs.**
 
-A vision-language model is told to *follow the yellow car*. It produces a
-velocity command. Nothing in that pipeline knows what a no-fly zone is.
+In the grant's design, a vision-language-action model (VLA) is told to *follow
+the yellow car* and answers with a velocity command. Nothing in that pipeline
+knows what a no-fly zone is.
+
+No VLA flies the demonstrations recorded here. In the city demo and on the
+Project AirSim + ArduPilot perception rail, OWL-ViT finds the car from the
+words and a hand-written follow controller turns its box into the velocity
+command; the ArduPilot SITL rails fly `guardrail.vla_stub.StubVLA`, a
+deliberately rule-ignorant stand-in. Real VLAs have flown through the Shield
+only in simulation, and none decided at 10 Hz (the 10 Hz loop held each
+decision): OpenVLA-7B (about 0.9 s an inference) and AerialVLA adapters on
+classic AirSim (AirSimNH) in July 2026, and AerialVLA on 4 Aug 2026, the last
+VLA-commanded flights, at one decision every 7-9 s and with a direction hint
+computed from the true coordinates in its prompt
+([result](RESULT-vla-guardrail-simultaneity.md)).
 
 Guardrail sits between the model and the aircraft: a declarative safety policy —
 fences, altitude envelopes, kinematic caps, obstacle clearances, stand-off
@@ -33,8 +46,18 @@ deliberately unshielded control flights read 0.63 — they exist to fail, and
 they do.
 
 On 8 Oct 2026 a 120 s follow on the Project AirSim + ArduPilot rail let 5 P0
-stand-off violations through (0.0053; no Shield-off control has been flown
-there yet); see [Project AirSim flown by ArduPilot](DESIGN-projectairsim-ardupilot.md).
+stand-off violations through (0.0053); see [Project AirSim flown by ArduPilot](DESIGN-projectairsim-ardupilot.md).
+The rail's Shield-off controls were flown on 13 and 14 Oct as a close
+approach from the signed bundle, over pymavlink, not KPI-grade: Shield on, 0
+P0 escapes on both days; Shield off, 727 of 1100 ticks (0.661) and 736 of 1099
+(0.670). With the Shield on, the aircraft still entered a P0 building margin
+on 20 Shield-flown ticks on 14 Oct, and the detector boxed a red traffic
+signal, not the car, so these flights test the Shield, not tracking.
+
+The city demo's Shield forecasts 3 s at 0.5 s steps by default, not the
+grant's 5 s at 0.1 s (`--grant-forecast` flies that, with the escalation FSM
+off), and its 13 Oct flight flew an unsigned YAML policy. The Project AirSim +
+ArduPilot node and both ArduPilot SITL rails fly the grant's forecast.
 
 **These are not contract KPI figures.** The grant takes every reported KPI from
 a Stress Testing run in the *hil* topology, where a Jetson Orin runs the VLA and
@@ -104,6 +127,7 @@ has one shape:
 ### Reports and status
 
 - [Midterm report, August 2026](MIDTERM-REPORT-Aug2026.md) (as delivered; figures corrected since are listed in the changelog)
+- [Mid-evaluation report, September 2026](MID-EVALUATION-REPORT-Sep2026.md) (as delivered on 14 Sept; several of its claims were withdrawn on 6 Oct, listed in the changelog)
 - [Remaining work, to 9 September 2026](CHECKLIST-remaining-work.md) (superseded)
 - [Project AirSim setup, with ArduPilot and Mission Planner](projectairsim-setup.md)
 
@@ -113,23 +137,31 @@ has one shape:
 
 The Shield's only input is an **Action4D**: `(vx north, vy east, vz up,
 yaw_rate)` at 10 Hz, `yaw_rate` in **rad/s**. It does not know whether that came
-from OWL-ViT, from OpenVLA-7B, or from a joystick — and that is the point. The
-safety argument must not depend on which model is driving.
+from a hand-written controller steering by OWL-ViT's boxes, from OpenVLA-7B, or
+from a joystick — and that is the point. The safety argument must not depend on
+which model is driving.
 
 ```python
-from guardrail import Shield, State, load_policy
+from guardrail import Action4D, Shield, State, load_policy
 
 shield = Shield(load_policy("policies/follow_pedestrian.yaml"))
-shield.set_subject(x, y)                     # perception supplies this
-decision = shield.step(state, raw_action)    # -> repaired action + audit record
+shield.set_subject(x, y, subject_class="pedestrian")  # perception supplies position AND class
+decision = shield.filter(state, raw_action)            # -> decision.emitted (the repaired Action4D) + audit fields
 ```
+
+The subject's class matters: the policy's 10 m pedestrian stand-off binds only
+to a subject reported as `pedestrian`; without a class only its 5 m catch-all
+rule applies ([the rule that never armed](FINDING-the-standoff-rule-that-never-armed.md)).
 
 ---
 
 ## Reproducibility
 
-Every flight writes a manifest: code revision, detector weights hash, policy
-hash, random seed, sim speed-up and topology. A run whose working tree was dirty
+Every flight writes a manifest: code revision, VLA weights hash, policy hash,
+random seed, sim speed-up and topology. A run with no VLA records
+`none:hand-written-controller` there; the city demo's code does so since
+19 Oct (no city flight has been recorded since), and its recorded runs filed
+OWL-ViT's weights under that field instead. A run whose working tree was dirty
 says so, and says that checking out that commit will not reproduce it.
 
 Until 6 Oct only runs on the desktop ArduPilot SITL + MAVROS 2 rail could be

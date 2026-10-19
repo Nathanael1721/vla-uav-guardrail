@@ -1,5 +1,21 @@
 # Guardrail — Mid-Evaluation Progress Report
 
+> **Note added 2026-10-19: this is the report as delivered on 14 Sept 2026,
+> not corrected in place.** Several of its claims were withdrawn on 5-6 Oct
+> 2026 (retracted in `CHANGELOG.md` at the repository root: 2026-10-06
+> Retracted, 2026-10-05 Found). Among them: that "the contractual gate is
+> cleared" by KPI-grade runs on "the grant's canonical topology" (the
+> one-desktop ArduPilot SITL + MAVROS 2 rail is the grant's *dev* topology;
+> the grant takes KPIs from *hil* runs on a Jetson Orin, so no run is
+> KPI-grade); that "all five acceptance KPIs are measured" (withdrawn: the
+> fail-safe figure restated the escape KPI, and mean time to safe had no
+> Shield-on value); P0 escape 0.0 on
+> the 41 shielded flights read as a contract KPI figure (it is development
+> evidence); and the constraint summary pack "rendered into the model prompt"
+> (it is built, and no VLA has flown with it). The detector rates were
+> re-measured on 29 Sept. Current figures: [README](../README.md) and the
+> [progress site](progress/).
+
 **Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs** · ITRI · National Taipei University of Technology · September 2026 · software version 0.5.1
 
 Advisor: · Author: · Numbers generated 2026-09-14 by `tools/build_eval_data.py`

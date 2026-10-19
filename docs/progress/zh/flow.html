@@ -23,7 +23,7 @@
 <section class="panel">
 <h2>從規則檔到佐證資料</h2>
 <p>一張圖看完整條流程：起飛前要做的事、每秒執行十次的迴圈、飛行中可能送達的規則變更，以及每次執行留下的紀錄與由此產生的報告。標籤標示負責每個步驟的工作項目。</p>
-<figure class="fig"><a class="shot" href="../assets/img/flow_end_to_end.png"><img src="../assets/img/flow_end_to_end.png" alt="端到端流程。" loading="lazy"></a><figcaption><strong>端到端流程。</strong> 起飛前，規則檔經過撰寫、驗證、合併與簽章（WP1），其規則摘要也編譯好放進 VLA 的提示詞（WP2）。接著每 0.1 s，攝影機畫面與任務送給 VLA，Shield 檢查並修正 VLA 的動作，再由升級狀態機與 MAVLink 轉接器交給 ArduPilot（WP3），直到任務結束。飛行中隨時可能送達規則變更，並開啟新的規則世代。每次執行都留下執行資料夾與簽章的重播套件；KPI 報告與 episode 記錄再由它們產生（WP4）。目前無人機仍是模擬的：ArduPilot SITL 或 Project AirSim。</figcaption></figure>
+<figure class="fig"><a class="shot" href="../assets/img/flow_end_to_end.png"><img src="../assets/img/flow_end_to_end.png" alt="端到端流程。" loading="lazy"></a><figcaption><strong>端到端流程。</strong> 這是計畫書的設計。起飛前，規則檔經過撰寫、驗證、合併與簽章（WP1），其規則摘要也編譯好放進 VLA 的提示詞（WP2）。接著每 0.1 s，攝影機畫面與任務送給 VLA，Shield 檢查並修正 VLA 的動作，再由升級狀態機與 MAVLink 轉接器交給 ArduPilot（WP3），直到任務結束。飛行中隨時可能送達規則變更，並開啟新的規則世代。每次執行都留下執行資料夾與簽章的重播套件；KPI 報告與 episode 記錄再由它們產生（WP4）。目前無人機仍是模擬的（ArduPilot SITL 或 Project AirSim），而且目前的示範都不是由 VLA 飛行：取代 VLA 的是依 OWL-ViT 偵測框操控的手寫跟隨控制器，或 SITL 飛行軌道上的替代駕駛（stub pilot）。</figcaption></figure>
 </section>
 <section class="panel">
 <h2>系統架構</h2>

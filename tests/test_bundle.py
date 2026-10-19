@@ -723,19 +723,39 @@ def test_the_bundles_already_on_disk_still_open():
                                  B.SIG_UNVERIFIABLE), (p.name, chk.signature)
 
 
-def test_the_lab_key_is_public_in_git_and_private_out_of_it():
-    """The trust anchor must ship with a clone; the private key never may."""
-    store = json.loads((ROOT / "policies" / "keys" / "trusted_signers.json")
+def _in_git_checkout(root: Path) -> bool | None:
+    """True inside a git work tree, False outside one, None when git cannot run.
+
+    A `git archive HEAD | tar -x` copy, the clean checkout the CI header says
+    every new CI file is first run in, has no .git: there `git check-ignore`
+    exits 128 ("not a git repository") and `git ls-files` prints nothing, so
+    the ignore rules cannot be asked at all. Until 2026-10-19 the lab-key
+    test read that 128 as "the private key path is not gitignored" and FAILED
+    on every such copy (review of 2026-10-19), so the clean-copy check could
+    not tell a leaked key from a missing .git."""
+    try:
+        r = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"],
+                           capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.returncode == 0 and r.stdout.strip() == "true"
+
+
+def _check_the_lab_key(root: Path):
+    store = json.loads((root / "policies" / "keys" / "trusted_signers.json")
                        .read_text(encoding="utf-8"))
     labs = {k: v for k, v in store["signers"].items() if k.startswith("lab-dev:ed25519:")}
     assert labs, store
     for v in labs.values():
         assert len(bytes.fromhex(v["public_key_hex"])) == 32
+    if not _in_git_checkout(root):
+        print("      (not a git checkout, or no git: the ignore rules cannot be asked)")
+        return SKIP
     try:
-        ign = subprocess.run(["git", "-C", str(ROOT), "check-ignore", "-q",
+        ign = subprocess.run(["git", "-C", str(root), "check-ignore", "-q",
                               "policies/keys/lab-dev-ed25519.pem"],
                              capture_output=True, timeout=20)
-        tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files",
+        tracked = subprocess.run(["git", "-C", str(root), "ls-files",
                                   "policies/keys"], capture_output=True,
                                  text=True, timeout=20)
     except (OSError, subprocess.SubprocessError):
@@ -743,6 +763,26 @@ def test_the_lab_key_is_public_in_git_and_private_out_of_it():
     assert ign.returncode == 0, "the private key path is not gitignored"
     assert not any(x.endswith((".pem", ".key")) for x in tracked.stdout.split()), (
         f"a private key is tracked: {tracked.stdout}")
+
+
+def test_the_lab_key_is_public_in_git_and_private_out_of_it():
+    """The trust anchor must ship with a clone; the private key never may."""
+    return _check_the_lab_key(ROOT)
+
+
+def test_outside_a_git_checkout_the_lab_key_check_skips_and_does_not_fail():
+    """The same check on a copy of the key store with no .git around it (as a
+    `git archive` copy has) must say SKIP, never FAIL and never PASS: no
+    ignore rule was read. Shown failing first: before 2026-10-19 it raised
+    "the private key path is not gitignored" here."""
+    copy = Path(tempfile.mkdtemp())
+    if _in_git_checkout(copy) is not False:
+        return SKIP                      # no git, or the temp folder sits in a repo
+    keys = copy / "policies" / "keys"
+    keys.mkdir(parents=True)
+    (keys / "trusted_signers.json").write_bytes(
+        (ROOT / "policies" / "keys" / "trusted_signers.json").read_bytes())
+    assert _check_the_lab_key(copy) == SKIP
 
 
 def test_the_schema_command_writes_the_published_schema():
@@ -1018,7 +1058,7 @@ if __name__ == "__main__":
         try:
             if fn() == SKIP:
                 skipped += 1
-                print(f"SKIP  {fn.__name__} (needs cryptography or git)")
+                print(f"SKIP  {fn.__name__} (needs cryptography, git or a git checkout)")
                 continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:

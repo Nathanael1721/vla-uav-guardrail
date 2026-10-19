@@ -191,8 +191,9 @@ fact("voff_view_est", "132", [src(`${VOFF}/metrics.json`, (o) => vw(o).estimate_
 fact("voff_view_in", "0", [src(`${VOFF}/metrics.json`, (o) => vw(o).estimate_ticks_truth_in_view, 0)], { needsFlightData: true });
 // Where the car was when each close flight began: the true horizontal range
 // (subject_range_m) on the first tick of the four flight logs, 150.8-151.9 m.
-// (The CHANGELOG's "119-152 m" takes in the Shield-off flights' nearest
-// approach, 117-119 m, which is no start distance.)
+// (The CHANGELOG first wrote "119-152 m", which took in the Shield-off
+// flights' nearest approach, 117-119 m, no start distance; corrected there
+// on 2026-10-19.)
 const startRange = (dir) => {
   const t = readSource(`${dir}/flight_log.jsonl`);
   return t == null ? null : JSON.parse(t.slice(0, t.indexOf("\n"))).subject_range_m;

@@ -188,6 +188,34 @@ CLAIMS: list[tuple[str, str, str]] = [
     ("FT-assist", r"100 ?% reached,? (mean )?efficiency 0\.996|"
                   r"efficiency 0\.996,? goal assist off",
      "2026-10-07: fine-tune 5/5 (efficiency 0.996) stated without its goal assist"),
+    # The fine-tune report's own header and note (docs/aerialvla-ft-report.md,
+    # written by training/ft_report.py) called every row pure VLA while three
+    # of its five rows flew goal_blend 0.55 (review of 2026-10-19). Not the
+    # help text "0 = pure VLA" of demo/aerialvla_demo.py.
+    ("FT-assist", r"goal assist OFF|Eval flights are PURE VLA|pure VLA, no guidance assist",
+     "2026-10-07: fine-tune rows called pure VLA (report header and generator, 2026-10-19)"),
+    # Review of the public entry points (2026-10-19). README and the Pages
+    # index said a vision-language model produces the velocity command and
+    # that the Shield's input might have "come from OWL-ViT", and
+    # demo/follow_vlm.py's docstring called the city demo "still
+    # vision-language-action": no VLA flies a current demo (tracker card
+    # ARCH-21; a hand-written controller steers by OWL-ViT's boxes, the SITL
+    # rails fly StubVLA). \s+, because the scan joins a paragraph's lines with
+    # newlines and both front-page sentences wrapped a line.
+    ("ARCH-21", r"came\s+from\s+OWL-ViT|[Mm]odel\s+is\s+told\s+to\s[\s\S]{0,40}?produces\s+a\s+"
+                r"velocity\s+command|This is still vision-language-action",
+     "2026-10-19: a VLA flies the current demos"),
+    # README and the Pages index kept these after the Project AirSim +
+    # ArduPilot rail's Shield-off controls of 13 and 14 Oct, and after flights
+    # on code that contained the range-0 fix.
+    ("10-13", r"[Nn]o\s+Shield-off\s+control\s+has\s+been\s+flown|[Nn]o\s+flight\s+has\s+used\s+the\s+fix",
+     "2026-10-13/14: no Shield-off control flown on the perception rail"),
+    # RUNBOOK.md (scanned since 2026-10-19): the one-desktop SITL + MAVROS 2
+    # rail is the grant's dev topology (sitl/run_ros2_demo.sh says so), and
+    # KPI runs need hil on the Jetson Orin.
+    ("C-01", r"grant's (exact|final) (topology|architecture)",
+     "2026-10-06: canonical HIL (the RUNBOOK's wording, 2026-10-19)"),
+    ("C-11", r"[Ff]our rails, all show", "2026-10-06: four rails run (the RUNBOOK's wording, 2026-10-19)"),
 ]
 
 # One sentence per pattern that states the withdrawn claim plainly. The test
@@ -248,6 +276,14 @@ CLAIM_EXAMPLES: list[str] = [
     "Detections arrive at roughly 4 Hz while the control loop runs at 10 Hz.",
     "The P0 escape rate is 0.0 on all ${E.kpi.flights_escape_zero} shielded flights.",
     "A cost invariant to surrounding load is fixed per-inference cost, not contention.",
+    "## Closed-loop evaluation (pure VLA — goal assist OFF)",
+    "A vision-language model is told to follow the yellow car. It produces a velocity command.",
+    "It does not know whether that came from OWL-ViT or from a joystick.",
+    "This is still vision-language-action, with the model swapped.",
+    "No Shield-off control has been flown there yet.",
+    "That is a replay, not a flight: no flight has used the fix yet.",
+    "Rail 3 is the grant's exact topology.",
+    "Four rails, all show the same thing.",
 ]
 
 # --------------------------------------------------------------------------- #
@@ -400,8 +436,16 @@ REQUIRED: dict[str, list[str]] = {
 # --------------------------------------------------------------------------- #
 
 FROZEN_GLOBS = {
-    "docs/MID-EVALUATION-REPORT-Sep2026.md": "delivered 14 Sept; corrected by docs/CORRECTION-2026-10-06-*",
-    "docs/MIDTERM-REPORT-Aug2026.md": "delivered 25 Aug; corrected by docs/CORRECTION-2026-10-06-* section C",
+    # The correction sources named here must be in a clone: docs/CORRECTION-*.md
+    # is gitignored on purpose (corrections owed to the funder go to them
+    # first, .gitignore), so until 2026-10-19 these reasons named a file no
+    # clone has. Each report now carries a dated note at its top.
+    "docs/MID-EVALUATION-REPORT-Sep2026.md": "delivered 14 Sept; withdrawn claims listed in "
+                                             "CHANGELOG.md (2026-10-06 Retracted, 2026-10-05 "
+                                             "Found) and in the report's dated note",
+    "docs/MIDTERM-REPORT-Aug2026.md": "delivered 25 Aug; withdrawn claims listed in CHANGELOG.md "
+                                      "(2026-10-06 and 2026-10-07 Retracted) and in the report's "
+                                      "dated note",
     "docs/CORRECTIONS-2026-09-02.md": "memo already given to the PI",
     "docs/AUDIT-KONTRAK-2026-10-05.md": "the audit quotes every claim it checked",
     "docs/WORKLOG.md": "chronological log",
@@ -428,6 +472,8 @@ GUARDED = {
     "docs/FINDING-the-paraphrase-sets-keyed-to-the-wrong-rendering.md",
     "docs/FINDING-the-control-arm-that-scored-a-repair-success.md",
     "docs/FINDING-the-mission-that-succeeded-inside-the-ring.md",
+    # corrected in place on 2026-10-19, with a dated note
+    "docs/aerialvla-ft-report.md",
 }
 
 TEXT_EXT = {".md", ".py", ".js", ".json"}
@@ -438,6 +484,10 @@ def default_targets(root: Path) -> list[Path]:
     out += sorted((root / "docs").rglob("*.md"))
     for site in ("docs/share", "docs/progress"):
         out += sorted((root / site).rglob("_src/*.json"))
+    # The root-level guides the README links were not scanned until
+    # 2026-10-19, so RUNBOOK.md's "grant's exact topology" sat beside a
+    # "164/164 files clean" that never looked at it (review of 2026-10-19).
+    out += [root / "RUNBOOK.md", root / "TUTORIAL.md", root / "CONTRIBUTING.md"]
     out += sorted((root / "tools").rglob("*.py"))
     out += sorted((root / "tools" / "deck").glob("*.js"))
     me = Path(__file__).resolve()
