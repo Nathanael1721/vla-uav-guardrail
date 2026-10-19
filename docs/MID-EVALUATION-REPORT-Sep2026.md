@@ -13,7 +13,8 @@
 > the 41 shielded flights read as a contract KPI figure (it is development
 > evidence); and the constraint summary pack "rendered into the model prompt"
 > (it is built, and no VLA has flown with it). The detector rates were
-> re-measured on 29 Sept. Current figures: [README](../README.md) and the
+> recomputed over the mission (29 Sept; the five quoted flights on 6 Oct).
+> Current figures: [README](../README.md) and the
 > [progress site](progress/).
 
 **Semantic-Spatial Translation and Safety-Constrained VLA for ArduPilot UAVs** · ITRI · National Taipei University of Technology · September 2026 · software version 0.5.1

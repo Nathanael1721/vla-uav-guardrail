@@ -15,9 +15,14 @@ Project AirSim + ArduPilot perception rail, OWL-ViT finds the car from the
 words and a hand-written follow controller turns its box into the velocity
 command; the ArduPilot SITL rails fly `guardrail.vla_stub.StubVLA`, a
 deliberately rule-ignorant stand-in. Real VLAs have flown through the Shield
-only in simulation, and none decided at 10 Hz (the 10 Hz loop held each
-decision): OpenVLA-7B (about 0.9 s an inference) and AerialVLA adapters on
-classic AirSim (AirSimNH) in July 2026, and AerialVLA on 4 Aug 2026, the last
+only in simulation, and none decided at 10 Hz (the 10 Hz loop reused each
+decision between inferences; on 4 Aug its yaw command faded from 1.5 s and was
+zero after 3 s): OpenVLA-7B (about 0.9 s an inference) and AerialVLA adapters
+on classic AirSim (AirSimNH) in July 2026; AerialVLA on Project AirSim from 16
+Jul 2026 (`demo/aerialvla_pas_demo.py`, mostly behind a route planner's
+pure-pursuit follower or the 0.55 goal assist) and on 3 Aug
+(`demo/semantic_demo.py`, with no planner); and 8 AerialVLA flights on Project
+AirSim on 4 Aug 2026 (6 with the Shield on; `demo/semantic_seek.py`), the last
 VLA-commanded flights, at one decision every 7-9 s and with a direction hint
 computed from the true coordinates in its prompt
 ([result](RESULT-vla-guardrail-simultaneity.md)).
@@ -50,9 +55,10 @@ stand-off violations through (0.0053); see [Project AirSim flown by ArduPilot](D
 The rail's Shield-off controls were flown on 13 and 14 Oct as a close
 approach from the signed bundle, over pymavlink, not KPI-grade: Shield on, 0
 P0 escapes on both days; Shield off, 727 of 1100 ticks (0.661) and 736 of 1099
-(0.670). With the Shield on, the aircraft still entered a P0 building margin
-on 20 Shield-flown ticks on 14 Oct, and the detector boxed a red traffic
-signal, not the car, so these flights test the Shield, not tracking.
+(0.670). With the Shield on, the aircraft was still inside a P0 building
+margin on 20 Shield-flown ticks on 14 Oct and on 78 ArduPilot-flown ticks on
+13 Oct (the escalation FSM's BRAKE hold and RTL), and the detector boxed a red
+traffic signal, not the car, so these flights test the Shield, not tracking.
 
 The city demo's Shield forecasts 3 s at 0.5 s steps by default, not the
 grant's 5 s at 0.1 s (`--grant-forecast` flies that, with the escalation FSM
@@ -127,7 +133,7 @@ has one shape:
 ### Reports and status
 
 - [Midterm report, August 2026](MIDTERM-REPORT-Aug2026.md) (as delivered; figures corrected since are listed in the changelog)
-- [Mid-evaluation report, September 2026](MID-EVALUATION-REPORT-Sep2026.md) (as delivered on 14 Sept; several of its claims were withdrawn on 6 Oct, listed in the changelog)
+- [Mid-evaluation report, September 2026](MID-EVALUATION-REPORT-Sep2026.md) (as delivered on 14 Sept; several of its claims were withdrawn on 5-6 Oct, listed in the changelog)
 - [Remaining work, to 9 September 2026](CHECKLIST-remaining-work.md) (superseded)
 - [Project AirSim setup, with ArduPilot and Mission Planner](projectairsim-setup.md)
 

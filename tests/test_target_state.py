@@ -298,8 +298,8 @@ def test_a_pedestrian_is_never_credited_with_a_cars_speed():
     ring were against that phantom.
     """
     if not FLIGHT.exists():
-        print("SKIP  no recorded flight at demo/out/retarget_fixed")
-        return
+        print("      SKIP: no recorded flight at demo/out/retarget_fixed")
+        return "SKIP"
     _, _, _, fast = _replay_pedestrian_phase(None)
     assert fast > 10.0, (
         f"the flight this guards no longer diverges ({fast:.2f} m/s) - if that "
@@ -320,8 +320,8 @@ def test_the_clamp_keeps_the_estimate_usable_instead_of_coasting():
     yaw chaos came from.
     """
     if not FLIGHT.exists():
-        print("SKIP  no recorded flight at demo/out/retarget_fixed")
-        return
+        print("      SKIP: no recorded flight at demo/out/retarget_fixed")
+        return "SKIP"
     _, loose, n, _ = _replay_pedestrian_phase(None)
     _, tight, _, _ = _replay_pedestrian_phase(2.0)
     assert loose / n < 0.25, f"baseline served {loose}/{n}, expected the failure"
@@ -383,10 +383,13 @@ def test_no_ceiling_is_the_old_behaviour_exactly():
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == "SKIP":
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -394,5 +397,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

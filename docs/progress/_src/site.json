@@ -457,7 +457,7 @@
     {
      "title": {"en": "Fence checks with the compiled index", "zh": "使用編譯後索引的禁航區檢查"},
      "text": {"en": "With 50 rules (48 of them no-fly zones) and a 3 s forecast at 0.5 s steps, near a fence one check takes 0.13-0.26 ms and a full Shield step 0.55-1.0 ms (medians), against 14-33 ms and 172 ms before the index. With the grant's 5 s forecast at 0.1 s steps (50 poses), a check near a fence takes 0.39 ms and a full Shield step 2.5 ms. The grant's budgets are 5 ms per check and 100 ms per tick. Measured on the development desktop.", "zh": "以 50 條規則（其中 48 條為禁航區）、3 s 預測、每 0.5 s 一步，靠近禁航區時一次檢查需 0.13-0.26 ms，完整的 Shield 一步需 0.55-1.0 ms（皆為中位數）；加入索引前分別為 14-33 ms 與 172 ms。改用計畫書規定的 5 s 預測、每 0.1 s 一步（50 個位置）時，靠近禁航區的一次檢查需 0.39 ms，完整的 Shield 一步需 2.5 ms。計畫書的預算是每次檢查 5 ms、每個 tick 100 ms。於開發用桌機量測。"},
-     "command": "python experiments/bench_shield_50rules.py",
+     "command": "python experiments/bench_shield_50rules.py --horizon 3 --dt 0.5; python experiments/bench_shield_50rules.py --horizon 5 --dt 0.1 --legacy-cap 40",
      "src": ["CHANGELOG.md#2026-10-06", "CHANGELOG.md#2026-10-07", "experiments/bench_shield_50rules.py"]
     },
     {

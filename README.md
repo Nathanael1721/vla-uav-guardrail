@@ -14,12 +14,16 @@ OWL-ViT finds the car from the words and a hand-written follow controller
 turns its box into the velocity command; the ArduPilot SITL rails fly
 `guardrail.vla_stub.StubVLA`, a deliberately rule-ignorant stand-in. Real VLAs
 have flown through the Shield only in simulation, and none decided at 10 Hz
-(the 10 Hz loop held each decision): OpenVLA-7B (about 0.9 s an inference,
-`demo/real_vla_demo.py`) and AerialVLA adapters on classic AirSim (AirSimNH)
-in July 2026, and AerialVLA on 4 Aug 2026, the last VLA-commanded flights, at
+(the 10 Hz loop reused each decision between inferences; on 4 Aug its yaw
+command faded from 1.5 s and was zero after 3 s): OpenVLA-7B (about 0.9 s an
+inference, `demo/real_vla_demo.py`) and AerialVLA adapters on classic AirSim
+(AirSimNH) in July 2026; AerialVLA on Project AirSim from 16 Jul 2026
+(`demo/aerialvla_pas_demo.py`, mostly behind a route planner's pure-pursuit
+follower or the 0.55 goal assist) and on 3 Aug (`demo/semantic_demo.py`, with
+no planner); and 8 AerialVLA flights on Project AirSim on 4 Aug 2026 (6 with
+the Shield on; `demo/semantic_seek.py`), the last VLA-commanded flights, at
 one decision every 7-9 s and with a direction hint computed from the true
-coordinates in its prompt
-([result](docs/RESULT-vla-guardrail-simultaneity.md)).
+coordinates in its prompt ([result](docs/RESULT-vla-guardrail-simultaneity.md)).
 
 Guardrail sits between the model and the aircraft. It takes a declarative
 safety policy — fences, altitude envelopes, kinematic caps, obstacle
@@ -90,11 +94,13 @@ escapes.
 The rail's Shield-off controls were flown on 13 and 14 Oct, as a close
 approach (`--want-width 0.5`, a more aggressive pilot than the 8 Oct follow)
 from the signed bundle, over pymavlink, not KPI-grade. On 13 Oct: Shield on, 0
-P0 escapes in 532 ticks; Shield off, 727 of 1100 (0.661). On 14 Oct: Shield
-on, 0 in 388 Shield-flown ticks; Shield off, 736 of 1099 (0.670). With the
-Shield on, the aircraft still entered a P0 building margin on 20 Shield-flown
-ticks on 14 Oct (71 unsafe-position ticks in all), because the Shield's
-forecast starts from the command, not from the aircraft's own velocity. The
+P0 escapes in 367 Shield-flown ticks (532 in all); Shield off, 727 of 1100
+(0.661). On 14 Oct: Shield on, 0 in 388 Shield-flown ticks; Shield off, 736 of
+1099 (0.670). With the Shield on, the aircraft was still inside a P0 building
+margin: on 13 Oct on 78 ticks, all while ArduPilot flew the escalation FSM's
+BRAKE hold (20) and RTL (58); on 14 Oct on 20 Shield-flown ticks (71
+unsafe-position ticks in all), because the Shield's forecast starts from the
+command, not from the aircraft's own velocity. The
 detector boxed a red traffic signal, not the car, so these flights test the
 Shield, not tracking. The range-0 fix has flown since 12 Oct, and its depth
 refusal fired in flight (78 and 89 refused depth returns on the two Shield-on

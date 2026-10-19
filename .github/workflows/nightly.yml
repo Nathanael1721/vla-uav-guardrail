@@ -28,7 +28,10 @@
 #
 # EXIT CODE. As the sweep's: known failures and tracked episodes are
 # reported, not failed; a new failure, a pinned defect that starts passing
-# (exit 1), a refused run (2) or a run that scored nothing (3) turns it red.
+# (exit 1), a refused run (2), a run that scored nothing (3) or a run whose
+# KPI rollup or top-10 failure list could not be computed (4, since
+# 2026-10-19: a failed rollup writes no partial kpi_report.md, and a failed
+# top-10 list heads the report as INCOMPLETE) turns it red.
 #
 # COST. Since 2026-10-12 every Shield flies the grant's 5 s forecast at 0.1 s
 # (50 poses per tick, 6 before). The nightly profile took 477 s on the desktop
