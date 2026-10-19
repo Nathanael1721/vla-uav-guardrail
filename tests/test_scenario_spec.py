@@ -402,13 +402,56 @@ def test_a_wgs84_pose_needs_a_policy_origin():
 
 def test_a_known_failure_pin_that_can_never_match_is_refused():
     raw = _minimal(parameter_sweep={"s": [2, 4]},
-                   known_failures=[{"params": {"speed": 2}, "description": "x"}])
+                   known_failures=[{"params": {"speed": 2}, "description": "x",
+                                    "fails": ["P0_escape_rate"]}])
     raw["mission"]["pilot"] = {"type": "goto", "speed": "$s"}
     _refused(lambda: Family(raw), "could never match")
-    raw["known_failures"] = [{"params": {"s": 2}, "description": "pinned"}]
+    raw["known_failures"] = [{"params": {"s": 2}, "description": "pinned",
+                              "fails": ["P0_escape_rate"]}]
     cells = Family(raw).cells()
     pinned = [c.episode_id for c in cells if c.spec.known_failure_for(c.params)]
     assert pinned == ["t-min@s=2"], pinned
+
+
+def test_a_known_failure_pin_names_the_gates_it_fails_and_only_real_ones():
+    """REVIEW 2026-10-19 (harness-tools/known-failure-pin-absorbs-new-
+    regressions). A pin that says which cell is broken but not how absorbed
+    every failure in the cell. `fails` is required; it must name gates the
+    scenario has (an expected_kpis name, as written or resolved, or the label
+    keys `outcome` / `failsafe` when the label exists and the family is not
+    tracked); the whole-scenario marker needs `known_failure_fails`."""
+    raw = _minimal(parameter_sweep={"s": [2, 4]},
+                   known_failures=[{"params": {"s": 2}, "description": "x"}])
+    raw["mission"]["pilot"] = {"type": "goto", "speed": "$s"}
+    _refused(lambda: Family(raw), "fails")
+    for bad in (["breaches"], ["outcome"], ["failsafe"], ["P0_escape_rate",
+                                                          "p0_violation_escape_rate"]):
+        raw["known_failures"][0]["fails"] = bad
+        _refused(lambda: Family(raw))
+    raw["expected_outcome"], raw["expected_failsafe"] = "success", False
+    raw["known_failures"][0]["fails"] = ["outcome", "failsafe", "P0_escape_rate"]
+    spec = Family(raw).cells()[0].spec
+    why, keys = spec.known_failure_pins({"s": 2}, 1001)
+    assert why == "x" and keys == {"outcome", "failsafe", "p0_violation_escape_rate"}, keys
+    assert spec.known_failure_pins({"s": 4}, 1001) == (None, frozenset())
+    # a tracked family's labels never fail it, so no pin may expect them to
+    _refused(lambda: Family(dict(raw, expect="tracked")), "does not gate on")
+    # the whole-scenario marker
+    whole = _minimal(expect="known_failure")
+    _refused(lambda: ScenarioSpec.model_validate(whole), "known_failure_fails")
+    _refused(lambda: ScenarioSpec.model_validate(
+        _minimal(known_failure_fails=["P0_escape_rate"])), "pins nothing")
+    whole["known_failure_fails"] = ["P0_escape_rate"]
+    s = ScenarioSpec.model_validate(whole)
+    assert s.known_failure_pins({}) == (
+        "the whole scenario is marked expect: known_failure",
+        frozenset({"p0_violation_escape_rate"}))
+    # the library's own pins all load, every one with its measured gates
+    from guardrail.scenario_spec import Library
+    lib = Library(ROOT / "experiments" / "scenarios.yaml")
+    pinned = [f for f in lib.families if f.raw.get("known_failures")
+              or f.raw.get("expect") == "known_failure"]
+    assert len(pinned) >= 8, [f.scenario_id for f in pinned]
 
 
 # --------------------------------------------------------------------------- #
@@ -685,7 +728,8 @@ def test_a_seed_pin_matches_only_its_seed():
     seed; a pin on the cell alone would turn red on the seeds where it passes."""
     raw = _minimal(parameter_sweep={"s": [2, 4]},
                    known_failures=[{"params": {"s": 2, "random_seed": 1002},
-                                    "description": "noise-provoked"}])
+                                    "description": "noise-provoked",
+                                    "fails": ["P0_escape_rate"]}])
     raw["mission"]["pilot"] = {"type": "goto", "speed": "$s"}
     spec = Family(raw).cells()[0].spec
     assert spec.known_failure_for({"s": 2}, 1002) == "noise-provoked"

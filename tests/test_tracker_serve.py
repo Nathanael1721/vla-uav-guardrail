@@ -20,7 +20,10 @@ Pinned:
   only media files are served from there: the flight logs, audit records and
   replay bundles beside them are not;
 - /api/content merges every content file and turns a broken one into a
-  load_error entry instead of a 500.
+  load_error entry instead of a 500;
+- (2026-10-19) a request another web page can make the browser send - a
+  text/plain POST, a foreign Origin, a DNS-rebound Host - is a JSON 403 and
+  leaves the board unchanged; the board's own same-origin JSON POST works.
 """
 import http.client
 import json
@@ -155,6 +158,72 @@ def test_bad_posts_are_refused_and_leave_the_state_unchanged():
         s, b = raw_post(port, "/api/state", "abc")          # not a number: must not drop the connection
         assert s == 400 and "error" in json.loads(b), (s, b)
         assert (tmp / "data" / "state.json").read_bytes() == before
+
+
+def _with_host(port, method, path, host, body=None, headers=None):
+    """A request with a hand-written Host (http.client writes its own)."""
+    c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    c.putrequest(method, path, skip_host=True)
+    c.putheader("Host", host)
+    for k, v in (headers or {}).items():
+        c.putheader(k, v)
+    if body is not None:
+        c.putheader("Content-Length", str(len(body)))
+    c.endheaders()
+    if body is not None:
+        c.send(body)
+    r = c.getresponse()
+    data = r.read()
+    c.close()
+    return r.status, data
+
+
+def test_another_web_page_cannot_overwrite_or_read_the_board():
+    """REVIEW 2026-10-19 (harness-tools/tracker-state-csrf). Binding 127.0.0.1
+    does not stop the user's browser: a no-cors fetch or a form posting
+    text/plain from any page replaced the board with {"cards": {}} (200),
+    and a DNS-rebound name read it back. Each is now a JSON 403, checked
+    before the body is read, and the state file is byte-identical."""
+    with server() as (port, tmp):
+        good = json.dumps({"cards": {"A-01": {"state": "done", "note": "keep"}}}).encode()
+        assert req(port, "POST", "/api/state", good, {"Content-Type": "application/json"})[0] == 200
+        state = tmp / "data" / "state.json"
+        before = state.read_bytes()
+        wipe = b'{"cards": {}}'
+        attacks = [
+            # fetch(..., {mode: "no-cors", body}) and <form enctype=text/plain>
+            ({"Content-Type": "text/plain;charset=UTF-8",
+              "Origin": "https://attacker.example"}, f"127.0.0.1:{port}"),
+            ({"Content-Type": "text/plain"}, f"127.0.0.1:{port}"),
+            # a JSON body from a foreign origin (needs a preflight a browser
+            # would not get answered; refused here anyway)
+            ({"Content-Type": "application/json",
+              "Origin": "https://attacker.example"}, f"127.0.0.1:{port}"),
+            ({"Content-Type": "application/json", "Origin": "null"}, f"127.0.0.1:{port}"),
+            # DNS rebinding: same-origin to the browser, a foreign Host here
+            ({"Content-Type": "application/json",
+              "Origin": f"http://attacker.example:{port}"}, f"attacker.example:{port}"),
+            ({"Content-Type": "application/json"}, f"attacker.example:{port}"),
+        ]
+        for headers, host in attacks:
+            s, b = _with_host(port, "POST", "/api/state", host, wipe, headers)
+            assert s == 403 and "refused" in json.loads(b)["error"], (headers, host, s, b)
+            assert state.read_bytes() == before, (headers, host)
+        for path in ("/api/state", "/api/content", "/", "/media/video/clip.mp4"):
+            s, b = _with_host(port, "GET", path, f"attacker.example:{port}")
+            assert s == 403 and b"A-01" not in b, (path, s)
+        # the board's own requests still work: same origin, with or without a
+        # charset, through either loopback name, and without an Origin (curl)
+        for host, ctype in ((f"127.0.0.1:{port}", "application/json"),
+                            (f"localhost:{port}", "application/json; charset=utf-8"),
+                            (f"LOCALHOST:{port}", "application/json")):
+            s, b = _with_host(port, "POST", "/api/state", host, good,
+                              {"Content-Type": ctype, "Origin": f"http://{host}"})
+            assert s == 200 and json.loads(b) == {"ok": True}, (host, s, b)
+            s, b = _with_host(port, "GET", "/api/state", host, None,
+                              {"Origin": f"http://{host}"})
+            assert s == 200 and json.loads(b)["cards"]["A-01"]["note"] == "keep", (host, s)
+        assert req(port, "POST", "/api/state", good, {"Content-Type": "application/json"})[0] == 200
 
 
 def test_a_failed_write_cleans_up_and_answers_json():

@@ -103,6 +103,10 @@ scenarios:
   - scenario_id: standoff-wedge
     template: subject_standoff
     expect: known_failure
+    # What the wedge fails, measured 2026-10-19 on the smoke run and all three
+    # nightly seeds (f93283d): the goal and the outcome label. The P0 gate and
+    # the 10 m ring are not pinned - an escape or a closer pass is new.
+    known_failure_fails: [reached_goal, outcome]
     description: >
       THE OPEN DEFECT, pinned here so it stops living only in a document.
       The subject sits exactly on the route, so every direction that makes
@@ -168,8 +172,11 @@ scenarios:
       reached_goal: { equals: true }
     expected_outcome: success
     expected_failsafe: false
+    # `fails` measured 2026-10-19 over the nightly profile's 9 pinned
+    # episodes (f93283d): goal, outcome and fail-safe label.
     known_failures:
       - params: { offset_m: 7, subject_class: pedestrian }
+        fails: [reached_goal, outcome, failsafe]
         description: >
           False fail-safe through N-in-T and the Loiter timeout (measured
           2026-10-07, all three nightly variants): taking the aircraft round a

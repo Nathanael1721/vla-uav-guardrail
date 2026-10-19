@@ -490,7 +490,7 @@ class ShieldDecision(BaseModel):
     # its twin in guardrail/audit.py, called it the action actually flown.)
     #
     # `violations` is the check on `raw`, so on its own it cannot answer the
-    # grant's hard KPI - "a P0 that was seen and then flown anyway". The escape
+    # P0 escape KPI (limit 0) - "a P0 that was seen and then flown anyway". The escape
     # rate was inferred instead, from whether the Shield had done *something*
     # (see guardrail/kpi.py), and since every branch that produces a violation
     # also appends a Repair, that inference could not return a non-zero number
@@ -3185,6 +3185,22 @@ class Shield:
                 # Re-based where it is now: nothing left to carry for it.
                 self._carry[1].pop(zone_id, None)
             return ev
+
+    def zone_ring_at(self, zone_id: str, t: float | None) -> list[tuple[float, float]]:
+        """Where dynamic_nfz `zone_id` is at time `t` as THIS Shield places
+        it - the ring an edit at `t` re-anchors (_edit_zone): its declared
+        motion over its age since its last edit, or since the episode's first
+        tick for a zone the policy declared. A caller that only swaps a zone's
+        motion passes this ring back to move_nfz, so the zone stays where it
+        is. (The stress harness computed it itself until 2026-10-19 and took
+        a policy-declared zone's age as 0, which put a moving zone back at its
+        authored vertices: review, harness-tools/ring-now-wrong-anchor-for-
+        policy-zones.)"""
+        with self._lock:
+            _, z = self._zone_now(zone_id)
+            te = self._event_time(t)
+            return (z.ring_at(self._zone_age(z, te)) if z.motion is not None
+                    else [(v.x, v.y) for v in z.vertices])
 
     def _zone_age(self, z, te: float | None) -> float:
         if self._carry is not None and z.id in self._carry[1] and (

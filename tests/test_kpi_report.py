@@ -418,6 +418,15 @@ def test_the_dwell_crosscheck_catches_zero_against_two_point_three():
 # the report
 # --------------------------------------------------------------------------- #
 
+def _one_clean_tick_table():
+    """A flown episode's KPI table to shape stored tables from: one clean
+    tick. (compute([]) served until 2026-10-19, when an empty log stopped
+    scoring as a perfect run - escape rate None, mission_success None,
+    reason no_rows - so it no longer stands for a flown episode.)"""
+    return K.compute([{"t": 0.0, "violations": [], "repairs": [],
+                       "emitted_violations": [], "unsafe": False}], {}, {})
+
+
 def _report_module():
     import kpi_report as KR
     KR.code_revision = lambda *a, **k: "test-rev"        # git status is slow
@@ -512,7 +521,7 @@ def test_the_sweep_loader_applies_the_goal_and_drops_counterfactual_repairs():
     KR = _report_module()
     # Shaped like the delivered docs/data/scenario_sweep.json: written before
     # compute() had the repair-success fields, so they are absent.
-    old = {k: v for k, v in K.compute([], {}, {}).items()
+    old = {k: v for k, v in _one_clean_tick_table().items()
            if not k.startswith(("repair_success", "repair_attempt", "repair_outcomes",
                                 "failsafe_", "repairs_to", "mission_goal"))}
     sweep = {"results": [
@@ -620,7 +629,7 @@ def KR_cell(sid, params):
 def _old_control_table():
     """A control arm's table as the pre-change kpi.py stored it: 52
     counterfactual repairs scored as a measured 0.0."""
-    t = K.compute([], {}, {})
+    t = _one_clean_tick_table()
     t.update({"ticks": 300, "p0_escapes": 52, "p0_violation_ticks": 52,
               "repair_count": 52, "repair_success_rate": 0.0,
               "repair_success_status": "measured", "repair_attempt_ticks": 52,
@@ -726,7 +735,7 @@ def test_two_cells_of_one_template_are_two_family_rows():
     sweep by template alone and pooled three different subject_standoff
     scenarios into one row; the pre-change tool gives one family here."""
     KR = _report_module()
-    old = {k: v for k, v in K.compute([], {}, {}).items()
+    old = {k: v for k, v in _one_clean_tick_table().items()
            if not k.startswith(("repair_success", "repair_attempt", "repair_outcomes"))}
     sweep = {"results": [
         {"id": "standoff-a", "template": "subject_standoff", "status": "pass",
@@ -863,6 +872,25 @@ def test_the_sweep_report_has_one_row_per_template_and_cell_with_its_nulls():
     assert "(3.00, 0.00, 0.00, 0.00)" in md, "the raw action column is missing"
     empty = KR.render_sweep_markdown({"_counts": {}, "_scope": {}})
     assert "(no scored episode)" in empty and "(no failing episode)" in empty
+
+
+def test_an_autopilot_entry_is_never_reported_as_a_zone_appearing_under_it():
+    """REVIEW 2026-10-19 (harness-tools/imposed-only-counts-autopilot-entries).
+    A sweep that splits the autopilot's entries out says so; one written
+    before the split (the published sweep: 12 "imposed", 4 of them the
+    LOITER drifting into a static zone) must not call its number "a zone
+    appeared under them"."""
+    KR = _report_module()
+    ts = {"episodes_entering_polygon": 1, "episodes_inside_polygon_imposed_only": 8,
+          "autopilot_p0_flown_ticks": 0, "autopilot_ticks": 0}
+    new = KR.render_sweep_markdown({"_counts": {}, "_scope": {}, "_true_state": dict(
+        ts, episodes_inside_polygon_autopilot_entered=4)})
+    assert "4 more were carried in by the autopilot alone" in new, new
+    assert "8 more were inside only because a zone appeared" in new, new
+    old = KR.render_sweep_markdown({"_counts": {}, "_scope": {}, "_true_state": dict(
+        ts, episodes_inside_polygon_imposed_only=12)})
+    assert "12 more were inside without the Shield flying in" in old, old
+    assert "zone appeared under them" not in old, old
 
 
 def test_a_bundle_with_its_log_is_rescored_under_its_template_and_cell():
@@ -1024,6 +1052,48 @@ def test_rescore_reports_the_p0_acted_share_under_its_own_name():
     assert not rc["drift"], rc["drift"]
     assert rc["added"].get("p0_acted_tick_share") == 0.75, rc["added"]
     assert "failsafe_trigger_correctness" not in rc["added"]
+
+
+def test_the_wp2_section_names_the_files_an_altitude_conflict_left_out():
+    """REVIEW 2026-10-19. A CSPAltitudeConflict file is left out of every
+    share; the WP2 line said "P0 coverage ... over 1 compiled of 2 policies;
+    0 raised CSPBudgetExceeded" and the scan table had no column for it, so
+    the rollup hid the file. Shown failing before the fix (the count and the
+    file name were nowhere in the section). A csp_kpis.json written before
+    the fix has no count: rendered as not counted, never as 0."""
+    import shutil
+    import yaml
+    KR = _report_module()
+    day_night = {"policy_id": "day-night", "version": "0.1.0", "constraints": [
+        {"id": "day-band", "type": "altitude_envelope", "alt_min_m": 10,
+         "alt_max_m": 30,
+         "valid_time": {"recurrence": {"start_time": "08:00", "end_time": "17:59"}}},
+        {"id": "night-band", "type": "altitude_envelope", "alt_min_m": 40,
+         "alt_max_m": 60,
+         "valid_time": {"recurrence": {"start_time": "18:00", "end_time": "07:59"}}}]}
+    with tempfile.TemporaryDirectory() as td:
+        shutil.copy(ROOT / "policies" / "sim_demo_policy.yaml", td)
+        (Path(td) / "day_night.yaml").write_text(yaml.safe_dump(day_night, sort_keys=False),
+                                                 encoding="utf-8")
+        # One budget, no scan below it: the default line and its table row.
+        w = KR.wp2_section(td, 256, step=8, floor=256)
+    md = "\n".join(KR._render_wp2(w))
+    assert w["default"]["n_altitude_conflict"] == 1, w["default"]
+    assert w["scan"][0]["n_altitude_conflict"] == 1, w["scan"]
+    assert "1 compiled of 2 policies" in md, md
+    assert "1 raised CSPAltitudeConflict" in md and "day_night.yaml" in md, md
+    assert "| Altitude conflict |" in md, md
+    assert "| 256 | 1 | 0 | 1 |" in md, md
+    # A section read from a file written before the count existed.
+    old = {"default": {k: v for k, v in w["default"].items()
+                       if k not in ("n_altitude_conflict", "altitude_conflict_files")},
+           "scan": [{k: v for k, v in r.items() if k != "n_altitude_conflict"}
+                    for r in w["scan"]],
+           "scan_step_tokens": 8, "scan_floor_tokens": 256, "discriminating": None}
+    md_old = "\n".join(KR._render_wp2(old))
+    assert "CSPAltitudeConflict not counted" in md_old, md_old
+    assert "0 raised CSPAltitudeConflict" not in md_old, md_old
+    assert "| 256 | 1 | 0 | n/m |" in md_old, md_old
 
 
 if __name__ == "__main__":

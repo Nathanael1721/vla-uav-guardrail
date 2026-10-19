@@ -54,8 +54,13 @@ scenarios:
     # (3 m, every speed), (6 m, 4 and 8 m/s) to every cell whose forecast at
     # the spawn reaches more than theta into the ring - 6 m at 2 m/s and
     # 12 m at 4 and 8 m/s were added (X1 or G1, then G3, then G5 at 35 s).
+    # `fails` (2026-10-19): what the pinned cells fail, measured over all 72
+    # pinned episodes of the nightly profile at f93283d - the fail-safe label
+    # only. A P0 escape, a breach or an unsafe episode in these cells is a
+    # new failure, not this defect.
     known_failures:
       - params: { ahead_m: 3 }
+        fails: [failsafe]
         description: &theta_timeout >
           False fail-safe through theta and the Loiter timeout (measured
           2026-10-07 at the 3 s forecast, re-measured 2026-10-12 at the
@@ -73,10 +78,13 @@ scenarios:
           the PI's open question (docs/DESIGN-escalation-fsm.md); the longer
           forecast makes the reading matter in more cells.
       - params: { ahead_m: 6 }
+        fails: [failsafe]
         description: *theta_timeout
       - params: { ahead_m: 12, vehicle_speed_mps: 4 }
+        fails: [failsafe]
         description: *theta_timeout
       - params: { ahead_m: 12, vehicle_speed_mps: 8 }
+        fails: [failsafe]
         description: *theta_timeout
 
   - scenario_id: dyn-nfz-spawn-on-top
@@ -241,8 +249,11 @@ scenarios:
       breaches: { max: 0 }
       polygon_entries: { max: 0 }
     expected_failsafe: false
+    # `fails` measured 2026-10-19 over the nightly profile's 3 pinned
+    # episodes (f93283d): the fail-safe label only.
     known_failures:
       - params: { deg_per_s: 9 }
+        fails: [failsafe]
         description: >
           False fail-safe through N-in-T, then X6 (measured 2026-10-12 at the
           grant's 5 s forecast): the bar sweeping past the waiting aircraft

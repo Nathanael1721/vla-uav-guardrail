@@ -2768,6 +2768,43 @@ def test_a_switch_target_names_its_switches_in_p0_in_force():
         "Mon-Fri 07:30-17:30", "a rule nothing switches reads as before"
 
 
+def test_a_negative_x_subject_parses_on_the_costmap_cli():
+    """REVIEW 2026-10-19 (deferred from wave 1). `python -m guardrail.compiler
+    costmap POLICY -o STEM --subject -20,15` - a subject west of the origin -
+    exited with status 2: argparse reads "-20,15" as an option, not as a
+    negative number (the comma). The rails were fixed the same way
+    (sitl/mavlink_adapter_node.join_negative_xy). Shown failing before the
+    fix (SystemExit 2). The `=` spelling, which always parsed, is the null:
+    both draw the same map."""
+    _need()
+    import contextlib
+    import io
+    import json as _json
+
+    def costmap(*subject_args):
+        d = Path(tempfile.mkdtemp())
+        try:
+            with contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                rc = K._main(["costmap", str(PED), "-o", str(d / "cm"),
+                              *subject_args, "--points", "50"])
+        except SystemExit as e:
+            raise AssertionError(f"costmap {' '.join(subject_args)} exited "
+                                 f"{e.code}") from None
+        assert rc == 0, rc
+        hdr = _json.loads((d / "cm.json").read_text(encoding="utf-8"))
+        return hdr["cost_map"]["layers"], hdr["not_drawn"]
+
+    assert costmap("--subject", "-20,15,pedestrian") == \
+        costmap("--subject=-20,15,pedestrian")
+    # Only a value that starts with '-' and a digit is joined: an option
+    # after the flag is never swallowed, and other flags are left alone.
+    assert K._join_negative_xy(["--subject", "-.5,2", "--now", "-1"]) == \
+        ["--subject=-.5,2", "--now", "-1"]
+    assert K._join_negative_xy(["--subject", "--points", "5"]) == \
+        ["--subject", "--points", "5"]
+
+
 if __name__ == "__main__":
     if "--snapshot" in sys.argv[1:]:
         sys.exit(_print_snapshot())

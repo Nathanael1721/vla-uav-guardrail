@@ -190,6 +190,31 @@ def test_the_wrong_base_version_is_refused():
     expect(lambda d: d["entries"][1].update(version="0.1.0+2026-09-20"), "base version 0.1.0 should be 0.2.0")
 
 
+def test_a_same_day_version_must_carry_its_suffix_and_never_repeat():
+    """REVIEW 2026-10-19 (add-update-version-suffix-not-enforced). The docstring
+    says check enforces ".2", ".3" for the second and third entry on a date;
+    the suffix was never read, so each of these passed."""
+    # the second 2026-09-20 entry repeating the first's version
+    expect(lambda d: d["entries"][2].update(version="0.2.0+2026-09-20"), "suffix")
+    expect(lambda d: d["entries"][2].update(version="0.2.0+2026-09-20"), "earlier entry")
+    # skipping .2, and .1
+    expect(lambda d: d["entries"][2].update(version="0.2.0+2026-09-20.3"), "suffix")
+    expect(lambda d: d["entries"][2].update(version="0.2.0+2026-09-20.1"), "suffix")
+
+    def swapped(d):
+        d["entries"][1]["version"] = "0.2.0+2026-09-20.2"
+        d["entries"][2]["version"] = "0.2.0+2026-09-20"
+    expect(swapped, "suffix")
+    # a --partial slice may start mid-day: the k-th rule is off there, the
+    # duplicate rule is not
+    with Fixture() as f:
+        d = valid_doc()
+        d["entries"] = d["entries"][2:]
+        assert A.check(d, f.ctx, partial=True) == []
+        d["entries"].append(dict(d["entries"][0], seq=4, id="u4"))
+        assert any("earlier entry" in m for m in A.check(d, f.ctx, partial=True))
+
+
 def test_a_missing_language_is_refused():
     def m(d):
         del d["entries"][0]["i18n"]["zh"]

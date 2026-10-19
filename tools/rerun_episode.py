@@ -233,10 +233,13 @@ def compare(bundle: Path, seed: int | None = None) -> dict:
     else:
         spec = got["spec"]
         if spec is None:
-            from guardrail.scenario_spec import ScenarioSpec
+            from guardrail.scenario_spec import (ScenarioSpec,
+                                                 legacy_pins_read_as_before)
             try:
-                spec = ScenarioSpec.model_validate(_json(bundle / "manifest_extras.json")
-                                                   .get("scenario_spec") or {})
+                # Pins written before 2026-10-19 name no gates; read as
+                # written (they decide only a verdict, not this score).
+                spec = ScenarioSpec.model_validate(legacy_pins_read_as_before(
+                    _json(bundle / "manifest_extras.json").get("scenario_spec") or {}))
             except ValueError as e:
                 raise RerunError(f"manifest_extras scenario_spec: {e}") from None
         res = S.score(spec, run.rows, run.extra, run.policy, run.priorities)

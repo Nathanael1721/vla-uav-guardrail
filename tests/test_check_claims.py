@@ -26,12 +26,23 @@ So each test below breaks something on purpose and requires the scan to say no:
   * the reviewer's re-introductions (appended to copies of the living
     documents) are all caught;
   * frozen records are counted and listed, and fail under --strict;
-  * the living documents and generators in the repository are clean today.
+  * the living documents and generators in the repository are clean today;
+  * (2026-10-19) on a clean clone, without the gitignored internal documents
+    (check_claims.LOCAL_ONLY), the scan passes and names each one it
+    skipped, while a deleted TRACKED required file still fails; the
+    LOCAL_ONLY set is exactly the gitignored REQUIRED files; the default
+    scope covers the code packages, and the whole default scan is clean.
+
+A test that could not check what it is for on this checkout (a local-only
+document absent) says so: it returns SKIP, counted apart, or prints which
+files it skipped - never a silent PASS.
 """
 import contextlib
+import fnmatch
 import io
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -41,7 +52,10 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 import check_claims as C                                           # noqa: E402
 
+SKIP = "SKIP"
+
 # Living documents the 6 Oct corrections went into (the v2 scan's file list).
+# The four gitignored ones (C.LOCAL_ONLY) exist only on the lab machine.
 LIVING = [
     "README.md", "docs/index.md", "docs/scope-clarification.md",
     "docs/prof-repo-study.md", "docs/CHECKLIST-remaining-work.md",
@@ -260,7 +274,11 @@ def test_main_survives_a_cp1252_console():
 
 def test_deleting_any_required_value_is_reported():
     present = [rel for rel in C.REQUIRED if (ROOT / rel).is_file()]
-    assert present, "no REQUIRED file exists"
+    gone = sorted(set(C.REQUIRED) - set(present) - C.LOCAL_ONLY)
+    assert not gone, f"tracked REQUIRED files missing: {gone}"
+    skipped = sorted(set(C.REQUIRED) - set(present))
+    if skipped:
+        print(f"      (local-only, not in this checkout, not checked: {skipped})")
     for rel in present:
         text = (ROOT / rel).read_text(encoding="utf-8").replace("\r\n", "\n")
         assert C.check_required(text, rel) == [], f"{rel} is already missing a value"
@@ -285,14 +303,25 @@ def test_the_reviewers_reintroductions_are_caught():
         "tools/build_mideval_report.py": '    md += "Detector rate in flight: 3.76-5.22 Hz"\n',
         "tools/deck/build_mideval_deck.js": '      ["WP2", "Prefix compiler", "Built", "rules into prompt"],\n',
     }
+    synthetic = []
     for rel, extra in mutants.items():
         root = _copy([rel])
         p = root / rel
+        if not p.is_file() and rel in C.LOCAL_ONLY:
+            # A gitignored document absent from this checkout (2026-10-19):
+            # the mutant is still scanned under the file's own path, alone,
+            # so the rule that catches it there is still exercised.
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text("", encoding="utf-8")
+            synthetic.append(rel)
         assert p.is_file(), f"{rel} is gone from the repository"
         s = p.read_text(encoding="utf-8")
         p.write_text(s.rstrip("\n") + "\n\n" + extra + "\n", encoding="utf-8", newline="\n")
         res = C.run([p], root)
         assert res["live"], f"re-introduction in {rel} was not caught: {extra!r}"
+    if synthetic:
+        print(f"      (local-only, absent: mutants scanned in an empty file at "
+              f"their path: {synthetic})")
 
 
 def test_frozen_records_are_counted_and_fail_under_strict():
@@ -324,19 +353,161 @@ def test_main_exit_code_and_summary_line():
 def test_the_living_documents_and_generators_are_clean():
     rels = [r for r in LIVING + GENERATORS + CORRECTED_DOCS if (ROOT / r).is_file()]
     gone = sorted(set(LIVING + GENERATORS + CORRECTED_DOCS) - set(rels))
-    assert not gone, f"guarded files missing: {gone}"
+    # A gitignored document is absent from every clean clone (2026-10-19);
+    # it is named, not silently passed, and a tracked one still fails.
+    assert not (set(gone) - C.LOCAL_ONLY), f"guarded files missing: {gone}"
+    if gone:
+        print(f"      (local-only, not in this checkout, not scanned: {gone})")
     res = C.run([ROOT / r for r in rels], ROOT)
     msgs = [f"{h['file']}:{h['line']} [{h['claim']}] {h['text']}" for h in res["live"]]
     msgs += [f"{m['file']}: missing /{m['pattern']}/" for m in res["missing_required"]]
     assert not msgs, "\n      ".join(["withdrawn claims or missing values:"] + msgs)
 
 
+# --------------------------------------------------------------------------- #
+# a clean clone, the local-only documents, the default scope (2026-10-19)
+# --------------------------------------------------------------------------- #
+
+def _tracked_required_root() -> Path:
+    """A temporary checkout holding the tracked REQUIRED files only - what a
+    clone or a `git archive` copy has of them."""
+    return _copy([rel for rel in C.REQUIRED if rel not in C.LOCAL_ONLY])
+
+
+def test_a_clean_clone_skips_the_local_only_documents_visibly_and_passes():
+    """REVIEW 2026-10-19 (check-claims-required-files-gitignored). On any
+    checkout without the four gitignored internal documents the full scan
+    reported 4 MISSING-REQUIRED and exited 1. Now it skips them by name and
+    passes; a deleted TRACKED required file still fails."""
+    root = _tracked_required_root()
+    res = C.run(C.default_targets(root), root)
+    assert res["missing_required"] == [], res["missing_required"]
+    assert {s["file"] for s in res["skipped_local"]} == set(C.LOCAL_ONLY), res
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        code = C.main(["--root", str(root)])
+    text = out.getvalue()
+    assert code == 0, text
+    assert text.count("SKIP-LOCAL") == 4 and "4 local-only skipped" in text, text
+    # --require-local: the lab machine's guard against a deleted document
+    with contextlib.redirect_stdout(io.StringIO()):
+        assert C.main(["--root", str(root), "--require-local"]) == 1
+    # a tracked REQUIRED file deleted: still MISSING-REQUIRED, exit 1
+    (root / "docs" / "index.md").unlink()
+    res = C.run(C.default_targets(root), root)
+    assert {m["file"] for m in res["missing_required"]} == {"docs/index.md"}, res
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        assert C.main(["--root", str(root)]) == 1
+    assert "MISSING-REQUIRED docs/index.md" in out.getvalue()
+
+
+def test_a_local_only_document_deleted_where_the_others_exist_is_missing():
+    """The skip is for a checkout with NONE of the internal documents. Where
+    one is present (the lab machine), an absent one was deleted and fails as
+    before - the deletion guard the REQUIRED rule exists for."""
+    root = _tracked_required_root()
+    keep = "docs/GAMBARAN-SISTEM.md"
+    (root / keep).parent.mkdir(parents=True, exist_ok=True)
+    (root / keep).write_text("≥ 99 %\ntidak ada hasil run yang disimpan\n",
+                             encoding="utf-8")
+    res = C.run(C.default_targets(root), root)
+    assert res["skipped_local"] == [], res["skipped_local"]
+    assert {m["file"] for m in res["missing_required"]} == C.LOCAL_ONLY - {keep}, res
+    # ...and an explicit target that is a local-only file, absent on a clean
+    # clone, is skipped the same way
+    root = _tracked_required_root()
+    res = C.run([root / keep], root)
+    assert res["missing_required"] == [] and res["skipped_local"][0]["file"] == keep, res
+
+
+def _gitignored(rels) -> set[str] | None:
+    """The paths among `rels` that .gitignore ignores: `git check-ignore` when
+    this is a git checkout, else the plain patterns of .gitignore (a `git
+    archive` copy has no .git). None if neither can answer."""
+    rels = sorted(rels)
+    if (ROOT / ".git").exists():
+        try:
+            r = subprocess.run(["git", "-C", str(ROOT), "check-ignore", *rels],
+                               capture_output=True, text=True, timeout=30)
+            if r.returncode in (0, 1):
+                return {ln.strip() for ln in r.stdout.splitlines() if ln.strip()}
+        except (OSError, subprocess.SubprocessError):
+            pass
+    gi = ROOT / ".gitignore"
+    if not gi.is_file():
+        return None
+    pats = [ln.strip() for ln in gi.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.startswith(("#", "!"))]
+    out = set()
+    for rel in rels:
+        for pat in pats:
+            pat = pat.lstrip("/")
+            # "dir/" ignores everything under it; fnmatch's * crosses "/".
+            if fnmatch.fnmatch(rel, pat + "*" if pat.endswith("/") else pat):
+                out.add(rel)
+    return out
+
+
+def test_local_only_is_exactly_the_gitignored_required_files():
+    """LOCAL_ONLY must not become a place to hide a tracked file (whose
+    deletion would then be skipped on CI), nor miss a gitignored one (which
+    would turn every clean clone red again)."""
+    ignored = _gitignored(C.REQUIRED)
+    if ignored is None:
+        print("      (no .git and no .gitignore here: cannot tell what is ignored)")
+        return SKIP
+    assert set(C.LOCAL_ONLY) == ignored, (sorted(C.LOCAL_ONLY), sorted(ignored))
+
+
+def test_the_default_scope_covers_the_code_and_the_whole_scan_is_clean():
+    """REVIEW 2026-10-19 (claim-scan-scope-misses-live-retracted-wording). The
+    default run read README, docs and tools only, and printed "180/180 files
+    clean" while guardrail/kpi.py's docstring called P0 escape the grant's
+    hard KPI and demo/parked_cars.py said det_hz just clears its gate."""
+    targets = {C._rel(p, ROOT) for p in C.default_targets(ROOT)}
+    for rel in ("guardrail/kpi.py", "guardrail/shield.py", "demo/parked_cars.py",
+                "demo/follow_vlm.py", "experiments/bench_detectors.py",
+                "sitl/ros2_shield_node.py", "README.md", "tools/build_deck_data.py"):
+        assert rel in targets, f"{rel} is outside the default scope"
+    assert not any(t.startswith("tests/") for t in targets), "tests/ holds the examples"
+    assert "tools/check_claims.py" not in targets
+    assert not any("/out/" in t for t in targets), "an output tree is scanned"
+    res = C.run(C.default_targets(ROOT), ROOT)
+    msgs = [f"{h['file']}:{h['line']} [{h['claim']}] {h['text']}" for h in res["live"]]
+    assert not msgs, "\n      ".join(["live withdrawn claims:"] + msgs)
+    # The newly scanned code can fail: a claim planted in a guardrail docstring.
+    root = _copy(["guardrail/kpi.py"])
+    p = root / "guardrail" / "kpi.py"
+    p.write_text(p.read_text(encoding="utf-8").replace(
+        '"""', '"""P0 violation escape rate = 0 is the grant\'s hard KPI.\n', 1),
+        encoding="utf-8")
+    assert [h["claim"] for h in C.run([p], root)["live"]] == ["C-02"]
+
+
+def test_only_the_changelog_preamble_is_scanned():
+    """The CHANGELOG's preamble states the project's position, so a claim
+    there is live; its body's Retracted bullets quote every withdrawn claim
+    and are not scanned (they would be ~20 false hits)."""
+    text = ("# Changelog\n\nThe contractual gate is cleared.\n\n## [0.1.0]\n\n"
+            "### Retracted\n- \"Swapping the detector is inside the contract.\"\n")
+    cut = C.scanned_text(text, "CHANGELOG.md")
+    assert "Swapping" not in cut and cut == text[:text.index("## [")]
+    root = _root_with({"CHANGELOG.md": text})
+    res = C.run([root / "CHANGELOG.md"], root)
+    assert [(h["claim"], h["line"]) for h in res["live"]] == [("C-01", 3)], res["live"]
+    assert C.scanned_text(text, "docs/x.md") == text
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == SKIP:
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -344,5 +515,5 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed, {skipped} skipped")
     sys.exit(1 if failed else 0)

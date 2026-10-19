@@ -39,7 +39,9 @@ import ast
 import copy
 import json
 import os
+import shutil
 import statistics
+import subprocess
 import sys
 import tempfile
 import time
@@ -320,6 +322,112 @@ def test_a_stale_rail_log_is_refused_not_scored():
         launched = time.time()
         log.write_text('{"t": 0}\n{"t": 0.1}\n', encoding="utf-8")
         assert len(S.read_fresh_log(log, launched)) == 2
+
+
+def _as_rail_rows(rows):
+    """Headless rows in the rail log's shape for what rail_measurements reads:
+    `flown` is a bool there (sent or not), `setpoint` is "none" while the
+    autopilot holds the aircraft."""
+    out = []
+    for r in rows:
+        rr = dict(r)
+        rr["flown"] = r.get("owner") != "autopilot"
+        out.append(rr)
+    return out
+
+
+def test_the_rail_mission_scored_from_the_rail_log_gets_the_headless_verdict():
+    """REVIEW 2026-10-19 (harness-tools/sitl-backend-cannot-pass). run_sitl
+    returned the rail's rows with {"seed_applied": True} only, so breaches,
+    polygon_entries and the FSM record were never measured and
+    rail-mission-stub-vla - the one scenario the rail may fly - FAILED as
+    "not measured" however the flight went. The rail log and metrics.json
+    hold what is needed; scored from them, the headless flight's own rows get
+    the headless verdict, and a step into the zone fails it."""
+    spec = BY_ID["rail-mission-stub-vla"]
+    run = S.run_episode(spec, DEFAULTS, 0)
+    res = S.score(spec, run.rows, run.extra, run.policy, run.priorities)
+    headless = S.episode_verdict(spec, res, {}, 0)
+    assert headless[0] == "pass", headless
+    rows = _as_rail_rows(run.rows)
+    # what main() scored before: nothing measured, a FAIL for a clean flight
+    old = S.score(spec, rows, {"seed_applied": True}, run.policy)
+    assert S.episode_verdict(spec, old, {}, 0)[0] == "fail"
+    metrics = {"reached": run.extra["reached_goal"], "fsm": run.extra["fsm"]}
+    extra = S.sitl_extra(spec, rows, metrics, run.policy)
+    for k in ("breaches", "polygon_entries", "ticks_inside_fence_polygon",
+              "autopilot_breaches", "autopilot_polygon_entries"):
+        assert extra[k] == run.extra[k], (k, extra[k], run.extra[k])
+    assert abs(extra["min_true_dist_to_fence_m"] - run.extra["min_true_dist_to_fence_m"]) < 1e-3
+    rail = S.score(spec, rows, extra, run.policy)
+    assert S.episode_verdict(spec, rail, {}, 0) == headless, (rail.get("breaches"),)
+    # one row steps into the demo zone after a tick the rail flew: a breach
+    # and an entry, never zero. (This flight hands over to LOITER at 0.1 s,
+    # so the tick before is made one the rail flew.)
+    zone = S.Shield(run.policy).zones_now(15.0)[0].polygon
+    c = zone.centroid
+    k = len(rows) // 2
+    bad = (rows[:k - 1] + [dict(rows[k - 1], flown=True, setpoint="pass")]
+           + [dict(rows[k], x=c.x, y=c.y, unsafe=True)] + rows[k + 1:])
+    extra = S.sitl_extra(spec, bad, metrics, run.policy)
+    assert extra["breaches"] == 1 and extra["polygon_entries"] == 1, extra
+    status, gates, _, _ = S.episode_verdict(spec, S.score(spec, bad, extra, run.policy), {}, 0)
+    assert status == "fail" and any(g.startswith("breaches=1") for g in gates), gates
+    assert any(g.startswith("polygon_entries=1") for g in gates), gates
+    # ...and on a step the autopilot made, it is the autopilot's
+    bad[k - 1] = dict(bad[k - 1], flown=False, setpoint="none")
+    extra = S.sitl_extra(spec, bad, metrics, run.policy)
+    assert (extra["breaches"], extra["autopilot_breaches"]) == (0, 1), extra
+    assert (extra["polygon_entries"], extra["autopilot_polygon_entries"]) == (0, 1), extra
+    # an older rail log without `unsafe`: breaches not measured, never 0
+    extra = S.sitl_extra(spec, [{k2: v for k2, v in r.items() if k2 != "unsafe"}
+                                for r in rows], metrics, run.policy)
+    assert "breaches" not in extra
+    # a Shield-on flight with no FSM record: the label is "not measured"
+    assert "fsm" not in S.sitl_extra(spec, rows, {"reached": True}, run.policy)
+
+
+def test_run_sitl_reads_this_launchs_log_and_metrics_and_scores_them():
+    """run_sitl end to end, with the rail's launch replaced by one that writes
+    a flight log and metrics.json (the headless flight's): the scored
+    verdict is the headless one; a stale metrics.json is refused."""
+    spec = BY_ID["rail-mission-stub-vla"]
+    run = S.run_episode(spec, DEFAULTS, 0)
+    rows = _as_rail_rows(run.rows)
+    metrics = {"reached": run.extra["reached_goal"], "fsm": run.extra["fsm"]}
+    saved = (S.ROOT, S.sitl_available, S.build_sitl_cmd, S.subprocess.run)
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        shutil.copytree(ROOT / "policies", root / "policies")
+        stale = {"on": False}
+
+        def fake_run(cmd, **kw):
+            out = root / "demo" / "out" / cmd[1]
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "flight_log.jsonl").write_text(
+                "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+            m = out / "metrics.json"
+            m.write_text(json.dumps(metrics), encoding="utf-8")
+            if stale["on"]:
+                old = time.time() - 3600
+                os.utime(m, (old, old))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        try:
+            S.ROOT, S.sitl_available = root, (lambda: True)
+            S.build_sitl_cmd = lambda spec_, tag, *a, **k: ["fake", tag]
+            S.subprocess.run = fake_run
+            got_rows, extra = S.run_sitl(spec, "sweep_test", 0, DEFAULTS)
+            res = S.score(spec, got_rows, extra, run.policy)
+            assert S.episode_verdict(spec, res, {}, 0)[0] == "pass", res.get("breaches")
+            stale["on"] = True
+            try:
+                S.run_sitl(spec, "sweep_test", 0, DEFAULTS)
+            except RuntimeError as e:
+                assert "predates this launch" in str(e), e
+            else:
+                raise AssertionError("an earlier run's metrics.json was scored")
+        finally:
+            S.ROOT, S.sitl_available, S.build_sitl_cmd, S.subprocess.run = saved
 
 
 # --------------------------------------------------------------------------- #
@@ -1062,7 +1170,8 @@ def test_a_sweep_writes_one_bundle_per_episode_and_survives_an_out_outside_the_r
 def test_a_pinned_cell_that_starts_passing_is_reported_fixed_not_quietly_passed():
     """The per-cell `known_failures` marker behaves like the scenario-wide one."""
     fam = copy.deepcopy(LIBRARY.raw("altitude-recovery-depth"))
-    fam["known_failures"] = [{"params": {"start_up": 9.5}, "description": "pinned on purpose"}]
+    fam["known_failures"] = [{"params": {"start_up": 9.5}, "description": "pinned on purpose",
+                              "fails": sorted(fam["expected_kpis"])[:1]}]
     fam["parameter_sweep"] = {"start_up": [9.5, 20.5]}
     with tempfile.TemporaryDirectory() as td:
         lib = Path(td) / "lib.yaml"
@@ -1120,9 +1229,88 @@ def test_a_whole_scenario_known_failure_is_reported_known_and_does_not_fail_the_
     assert doc["results"][0]["status"] == "known_failure", doc["results"][0]["status"]
     assert doc["_counts"]["known_failure"] == 1 and rc == 0, (doc["_counts"], rc)
     unmarked = _raw("standoff-wedge")
-    del unmarked["expect"]
+    del unmarked["expect"], unmarked["known_failure_fails"]
     rc, doc = _sweep_lib([unmarked])
     assert doc["results"][0]["status"] == "fail" and rc == 1, "the marker did nothing"
+
+
+def _scored_cell(sid, seed=1001, **params):
+    """(spec, res, params) of a flown and scored cell of a library family."""
+    for c in FAMILIES[sid].cells(samples=3):
+        if all(c.params.get(k) == v for k, v in params.items()):
+            run = S.run_episode(c.spec, DEFAULTS, seed)
+            return c.spec, S.score(c.spec, run.rows, run.extra, run.policy,
+                                   run.priorities), c.params
+    raise KeyError(f"{sid}: no cell with {params}")
+
+
+def test_a_new_failure_in_a_pinned_cell_is_a_failure_not_the_old_defect():
+    """REVIEW 2026-10-19 (harness-tools/known-failure-pin-absorbs-new-
+    regressions). A pinned cell was KNOWN whatever failed in it: the
+    three-simultaneous-violations family, pinned for a false fail-safe (its
+    two labels), stayed KNOWN with p0_violation_escape_rate 0.25, 3 breaches
+    and an unsafe end injected into its real KPI table, and so did the
+    dyn-nfz-spawn-ahead and standoff-wedge pins. Each pin now names what it
+    fails (`fails`, measured over the nightly profile); anything else that
+    fails in the cell is NEW, and the episode fails."""
+    cases = (("three-simultaneous-violations", {"start_up": 3.0, "ask_mps": 11,
+                                                "variant": 0}),
+             ("three-simultaneous-violations", {"start_up": 3.0, "ask_mps": 8,
+                                                "variant": 2}),
+             ("dyn-nfz-spawn-ahead", {"ahead_m": 3, "vehicle_speed_mps": 4,
+                                      "variant": 0}),
+             ("standoff-wedge", {}))
+    for sid, params in cases:
+        spec, res, cell = _scored_cell(sid, **params)
+        status, bad, _, why = S.episode_verdict(spec, res, cell, 1001)
+        assert status == "known_failure" and why, (sid, status, bad)
+        assert not any(b.startswith(S.NEW_IN_PINNED_CELL) for b in bad), (sid, bad)
+        hit = dict(res, p0_violation_escape_rate=0.25)
+        status, bad, _, _ = S.episode_verdict(spec, hit, cell, 1001)
+        assert status == "fail", (sid, status, bad)
+        assert any(b.startswith(S.NEW_IN_PINNED_CELL + "p0_violation_escape_rate")
+                   for b in bad), (sid, bad)
+        if "breaches" in spec.gates:
+            status, bad, _, _ = S.episode_verdict(spec, dict(res, breaches=3), cell, 1001)
+            assert status == "fail" and any("breaches=3" in b for b in bad), (sid, bad)
+    # A pin that does fail a safety gate keeps it - and only it.
+    spec, res, cell = _scored_cell("time-window-opens-on-vehicle",
+                                   clock="2026-09-07T07:29:58")
+    assert res["p0_violation_escape_rate"] > 0, "the pinned P0 failure is gone?"
+    status, bad, _, _ = S.episode_verdict(spec, res, cell, 1001)
+    assert status == "known_failure", (status, bad)
+    status, bad, _, _ = S.episode_verdict(spec, dict(res, breaches=3), cell, 1001)
+    assert status == "fail" and bad[0].startswith(S.NEW_IN_PINNED_CELL + "breaches"), bad
+    # A pinned cell whose pinned gates all pass is still reported FIXED.
+    spec, res, cell = _scored_cell("standoff-wedge")
+    fixed = dict(res, reached_goal=True, outcome_matches_label=True,
+                 mission_outcome="success")
+    assert S.episode_verdict(spec, fixed, cell, 1001)[0] == "unexpected_pass"
+
+
+def test_a_new_failure_in_a_pinned_cell_turns_the_sweep_red():
+    """End to end through main(): the pinned standoff-wedge exits 0 as flown;
+    with a P0 escape injected into its score the run exits 1, the episode is
+    FAIL and nothing is counted known."""
+    fam = _raw("standoff-wedge")
+    rc, doc = _sweep_lib([fam])
+    assert rc == 0 and doc["results"][0]["status"] == "known_failure", (rc, doc["_counts"])
+    real = S.score
+
+    def escaping(spec, *a, **k):
+        res = real(spec, *a, **k)
+        if spec.scenario_id == "standoff-wedge":
+            res["p0_violation_escape_rate"] = 0.25
+        return res
+    S.score = escaping
+    try:
+        rc, doc = _sweep_lib([fam])
+    finally:
+        S.score = real
+    r = doc["results"][0]
+    assert rc == 1 and r["status"] == "fail", (rc, r["status"], r["gates_failed"])
+    assert doc["_counts"]["fail"] == 1 and doc["_counts"]["known_failure"] == 0, doc["_counts"]
+    assert r["gates_failed"][0].startswith(S.NEW_IN_PINNED_CELL), r["gates_failed"]
 
 
 def test_a_tracked_episode_is_never_counted_as_a_pass():
@@ -1597,6 +1785,58 @@ def test_the_run_writes_the_grants_kpi_report_one_row_per_template_and_cell():
     assert "Top-10 failure cases" in md
 
 
+def _sweep_with_broken(attr, fail_on_call):
+    """main() on the KPI-report library above with guardrail.kpi.<attr>
+    raising on its Nth call; (rc, doc, kpi_report.md text or None)."""
+    fams = [_raw("altitude-recovery-depth", parameter_sweep={"start_up": [6.0, 20.5]}),
+            _raw("nfz-head-on-control")]
+    real = getattr(S.K, attr)
+    calls = {"n": 0}
+
+    def flaky(*a, **k):
+        calls["n"] += 1
+        if calls["n"] == fail_on_call:
+            raise KeyError("a_new_kpi_field")
+        return real(*a, **k)
+    setattr(S.K, attr, flaky)
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            lib = Path(td) / "lib.yaml"
+            lib.write_text(yaml.safe_dump({"defaults": RAW["defaults"], "scenarios": fams}),
+                           encoding="utf-8")
+            out, runs = Path(td) / "s.json", Path(td) / "runs"
+            rc = _sweep(["--library", str(lib), "--out", str(out), "--runs", str(runs)])
+            md = ((runs / "kpi_report.md").read_text(encoding="utf-8")
+                  if (runs / "kpi_report.md").is_file() else None)
+            doc = json.loads(out.read_text(encoding="utf-8"))
+    finally:
+        setattr(S.K, attr, real)
+    return rc, doc, md
+
+
+def test_a_rollup_that_fails_part_way_writes_no_partial_report_and_exits_4():
+    """REVIEW 2026-10-19 (harness-tools/rollup-failure-swallowed). Any
+    exception in the rollup loop went into `_rollup_note`, which nothing
+    printed or read, and the run exited 0: with the LAST cell's rollup
+    raising, kpi_report.md was written with 2 of 3 rows and no word of it;
+    with the first cell's, no report and a normal-looking summary. Now
+    nothing partial is kept or written, and the run exits 4."""
+    for nth in (6, 4, 2):     # 1 family, all-on, controls-off, then 3 cells
+        rc, doc, md = _sweep_with_broken("rollup", nth)
+        assert rc == 4, (nth, rc)
+        assert md is None, f"call {nth}: a partial KPI report was written"
+        assert doc["_cell_rollup"] is None and doc["_rollup"] is None, (nth, doc["_rollup"])
+        assert "a_new_kpi_field" in doc["_rollup_note"], doc["_rollup_note"]
+
+
+def test_a_top_failures_crash_is_flagged_never_shown_as_no_failure():
+    rc, doc, md = _sweep_with_broken("top_failures", 1)
+    assert rc == 4, rc
+    assert md is not None and "INCOMPLETE" in md, md
+    assert "(no failing episode)" not in md and "top failures not computed" in md
+    assert doc["_cell_rollup"], "the cell rollup itself succeeded and is kept"
+
+
 # --------------------------------------------------------------------------- #
 # 2026-10-07, review of stress-harness-2: the mutants that survived
 # --------------------------------------------------------------------------- #
@@ -1684,6 +1924,80 @@ def test_what_the_autopilot_flew_through_is_counted_apart_and_reported():
     assert ts["autopilot_p0_flown_ticks"] == ex["autopilot_p0_flown_ticks"], ts
     assert ts["episodes_autopilot_p0_flown_by_status"] == {"pass": 1}, ts
     assert ts["autopilot_ticks"] == ex["autopilot_ticks"] > 0, ts
+    # REVIEW 2026-10-19 (imposed-only-counts-autopilot-entries): the RTL
+    # carried it into the zone, so it is not "inside only because a zone
+    # appeared under it" (imposed_only was len(inside) - len(entered) = 1).
+    assert ts["episodes_inside_polygon_autopilot_entered"] == 1, ts
+    assert ts["episodes_inside_polygon_imposed_only"] == 0, ts
+
+
+def test_a_motion_swap_on_a_policy_zone_keeps_it_where_it_is():
+    """REVIEW 2026-10-19 (harness-tools/ring-now-wrong-anchor-for-policy-
+    zones). A dynamic_nfz the POLICY declares (not one a harness event
+    spawned) had no harness anchor, so an `mps` / `deg_per_s` event took its
+    age as 0 and handed move_nfz its authored vertices: a zone drifting 1 m/s
+    and re-tasked at t = 5 s jumped 5 m back. Latent - load_for_flight
+    refuses a policy file with a dynamic_nfz - so the Shield is built on an
+    in-memory policy and apply_event is called directly."""
+    from guardrail.models import policy_from_raw
+    from guardrail.scenario_spec import ScenarioEvent
+
+    def drift_policy():
+        # A fresh Policy per Shield: a Shield edits the Policy it was built
+        # on IN PLACE (Shield._commit - the REST app and the audit logger hold
+        # it), so a second Shield built on the same object would start from
+        # the first one's edit.
+        return policy_from_raw({"policy_id": "drift", "constraints": [
+            {"id": "z", "type": "dynamic_nfz", "priority": "P0",
+             "vertices": [{"x": 100, "y": 0}, {"x": 110, "y": 0},
+                          {"x": 110, "y": 10}, {"x": 100, "y": 10}],
+             "motion": {"vx_mps": 1.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}}]},
+            runtime=False)
+    sh = Shield(drift_policy())
+    st = State(x=0.0, y=0.0, up=15.0, yaw_deg=0.0)
+    for i in range(51):                                  # t = 0 .. 5 s
+        sh.filter(st, Action4D(), t=i * 0.1)
+    es = S._EventState(shields=[sh])
+    for ev, want in ((ScenarioEvent(at_sim_t=5.0, type="translate_polygon_fence",
+                                    payload={"id": "z", "mps": 2.0, "bearing_deg": 0}),
+                      105.0),
+                     (ScenarioEvent(at_sim_t=5.0, type="rotate_polygon_fence",
+                                    payload={"id": "z", "deg_per_s": 3.0}), 105.0)):
+        sh2 = Shield(drift_policy())
+        for i in range(51):
+            sh2.filter(st, Action4D(), t=i * 0.1)
+        rec = S.apply_event(ev, S._EventState(shields=[sh2]), st, (1.0, 0.0), 5.0)
+        assert abs(rec["vertices"][0][0] - want) < 1e-6, (ev.type, rec["vertices"])
+    rec = S.apply_event(ScenarioEvent(at_sim_t=5.0, type="translate_polygon_fence",
+                                      payload={"id": "z", "mps": 2.0, "bearing_deg": 0}),
+                        es, st, (1.0, 0.0), 5.0)
+    assert rec["vertices"][0] == [105.0, 0.0], rec["vertices"]
+    assert sh.zone_ring_at("z", 5.0)[0] == (105.0, 0.0)
+    # and from there it moves at the new 2 m/s
+    assert abs(sh.zone_ring_at("z", 6.0)[0][0] - 107.0) < 1e-6, sh.zone_ring_at("z", 6.0)
+
+
+def test_imposed_only_counts_neither_the_shields_nor_the_autopilots_entries():
+    """REVIEW 2026-10-19 (harness-tools/imposed-only-counts-autopilot-entries).
+    Three episodes inside a polygon: a zone imposed on one, the Shield flew
+    into one, the modelled LOITER carried one in (polygon_entries 0,
+    autopilot_polygon_entries 1, as the wind-beyond-authority lane does with
+    no harness event). Only the first is "imposed only"; the old arithmetic
+    len(inside) - len(entered) said 2. An episode both entered is counted
+    once, as the Shield's."""
+    def item(**kpi):
+        return {"status": "pass", "arm": "on",
+                "kpi": dict({"ticks_inside_fence_polygon": 5}, **kpi)}
+    items = [item(polygon_entries=0, autopilot_polygon_entries=0),
+             item(polygon_entries=1, autopilot_polygon_entries=0),
+             item(polygon_entries=0, autopilot_polygon_entries=1),
+             item(polygon_entries=1, autopilot_polygon_entries=1),
+             {"status": "pass", "arm": "on", "kpi": {"ticks_inside_fence_polygon": 0}}]
+    ts = S.true_state_summary(items)
+    assert ts["episodes_inside_polygon"] == 4, ts
+    assert ts["episodes_entering_polygon"] == 2, ts
+    assert ts["episodes_inside_polygon_autopilot_entered"] == 1, ts
+    assert ts["episodes_inside_polygon_imposed_only"] == 1, ts
 
 
 def test_a_brake_tick_is_checked_as_the_zero_action_it_flew():

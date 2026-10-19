@@ -1,8 +1,10 @@
 """Fail when a withdrawn claim is stated again, or a corrected value goes missing.
 
-    python tools/check_claims.py                 # default scope: README, docs, tools
+    python tools/check_claims.py                 # default scope: README, docs, tools,
+                                                 # guardrail, demo, experiments, sitl
     python tools/check_claims.py docs/X.md ...   # just these files
     python tools/check_claims.py --json          # machine-readable result
+    python tools/check_claims.py --require-local # absent gitignored documents fail too
 
 WHY THIS EXISTS
 
@@ -12,7 +14,10 @@ rebuilt from an old template, a deck slide copied from September, or a summary
 paraphrased from a document that still carried it. On 6 Oct the docs-claims
 work found the same withdrawn sentences in four generators, three living
 documents and two docstrings, after they had been "corrected". This scan turns
-that search into a check that runs with the tests.
+that search into a check that runs with the tests (tests/test_check_claims.py).
+Since 2026-10-19 it also passes on a clean clone, where the gitignored
+internal documents are absent (LOCAL_ONLY below), so it can run on CI; until
+then it exited 1 on every checkout but the lab machine's.
 
 THE RULES
 
@@ -57,7 +62,8 @@ fails if a CHANGELOG Retracted bullet has no pattern entry). It is a guard
 against regression, not a substitute for reading the text.
 
 Exit 1 on any live claim or missing required value. Prints
-"N/M files clean, L live claims, R missing required, F frozen hits".
+"N/M files clean, L live claims, R missing required, F frozen hits,
+S local-only skipped".
 """
 from __future__ import annotations
 
@@ -395,6 +401,31 @@ REQUIRED: dict[str, list[str]] = {
     "tools/build_deck_data.py": [r"det_hz_mission", r"def bundle_issue_time"],
 }
 
+# REQUIRED files that are gitignored: internal documents that exist only on the
+# lab machine (.gitignore: docs/GAMBARAN-SISTEM.md, docs/PRESENTATION-
+# CHEATSHEET-*.md, docs/share/, docs/CORRECTION-*.md). Until 2026-10-19 they
+# were required like every other file, so on any clean clone - CI, a `git
+# archive` copy, a reviewer's checkout - the scan printed "164/164 files
+# clean, 0 live claims, 4 missing required" and exited 1, which is also why
+# it could not be put on CI (review, harness-tools/check-claims-required-
+# files-gitignored and docs-claims/claims-guard-not-on-ci-and-fails-clean).
+#
+# Rule: a LOCAL_ONLY file that is present gets every check a tracked file
+# gets. An absent one is SKIPPED, visibly (SKIP-LOCAL, and counted in the
+# summary line), and only when the checkout holds NONE of them - a clone
+# without the internal documents. When some are present and one is gone,
+# that one was deleted on a machine that has them, and it is reported
+# missing as before; `--require-local` makes every absent one a failure.
+# A fixed set, not `git check-ignore`: an archive copy has no .git.
+# tests/test_check_claims.py holds this set equal to the REQUIRED files that
+# .gitignore ignores, so it cannot become a place to hide a tracked file.
+LOCAL_ONLY = frozenset({
+    "docs/GAMBARAN-SISTEM.md",
+    "docs/PRESENTATION-CHEATSHEET-30Sep2026.md",
+    "docs/share/2026-09-30-ITRI/README.md",
+    "docs/CORRECTION-2026-10-06-mid-evaluation-and-deck.md",
+})
+
 # --------------------------------------------------------------------------- #
 # Frozen records: hits counted, not failing (see rule 3)
 # --------------------------------------------------------------------------- #
@@ -433,16 +464,60 @@ GUARDED = {
 TEXT_EXT = {".md", ".py", ".js", ".json"}
 
 
+# Directories never scanned, wherever they sit: generated output and caches.
+# demo/out alone holds flight-frame trees (a junction to C: on the lab
+# machine) that a recursive walk does not finish in minutes.
+_SKIP_PARTS = {"node_modules", "__pycache__", "out", "build", "install", "log"}
+
+# Files of which only the part above the first "## [" heading is scanned: the
+# CHANGELOG's preamble is prose that states the project's position, while its
+# body's Retracted bullets quote every withdrawn claim (about 20 would be
+# flagged, being quotations without a marker within three lines).
+PREAMBLE_ONLY = {"CHANGELOG.md"}
+
+
 def default_targets(root: Path) -> list[Path]:
+    """README, docs, the site sources, tools - and, since 2026-10-19, the code
+    packages whose docstrings and printed strings carry the project's claims
+    (guardrail, demo, experiments, sitl, tracker). Until then the default run
+    read none of them and printed "180/180 files clean" while the KPI
+    module's own docstring still called P0 escape the grant's only KPI and
+    demo/parked_cars.py still said det_hz clears its gate (review,
+    harness-tools/claim-scan-scope-misses-live-retracted-wording). tests/ is
+    out on purpose: it holds the claim examples the scan must catch.
+    demo/ and experiments/ are globbed one level deep (their output trees are
+    huge), with the one tracked subpackage named.
+
+    CHANGELOG.md is not here yet, though run() reads only its preamble
+    (PREAMBLE_ONLY): its line 10-11 still says the retracted thing, and this
+    review may not edit the CHANGELOG (the lead writes it). Add it once that
+    sentence is reworded."""
     out = [root / "README.md"]
     out += sorted((root / "docs").rglob("*.md"))
     for site in ("docs/share", "docs/progress"):
         out += sorted((root / site).rglob("_src/*.json"))
     out += sorted((root / "tools").rglob("*.py"))
     out += sorted((root / "tools" / "deck").glob("*.js"))
+    out += sorted((root / "guardrail").rglob("*.py"))
+    for flat in ("demo", "demo/pas_ardupilot", "experiments", "sitl", "tracker"):
+        out += sorted((root / flat).glob("*.py"))
+    out += sorted((root / "sitl" / "ros2_ws" / "src").rglob("*.py"))
+    # This file's pattern table is the claims; skip it under --root too.
     me = Path(__file__).resolve()
     return [p for p in out if p.is_file() and p.resolve() != me
-            and "node_modules" not in p.parts]
+            and _rel(p, root) != "tools/check_claims.py"
+            and not (_SKIP_PARTS & set(p.relative_to(root).parts[:-1]))]
+
+
+def scanned_text(text: str, rel: str) -> str:
+    """The part of a file the scan reads: all of it, or a PREAMBLE_ONLY
+    file's text above its first "## [" heading (a prefix, so the line
+    numbers of any hit are the file's own)."""
+    if rel in PREAMBLE_ONLY:
+        cut = text.find("\n## [")
+        if cut >= 0:
+            return text[:cut + 1]
+    return text
 
 
 def _rel(p: Path, root: Path) -> str:
@@ -654,18 +729,32 @@ def check_required(text: str, rel: str) -> list[str]:
     return [rx for rx in REQUIRED.get(rel, []) if not re.search(rx, text)]
 
 
-def run(targets: list[Path], root: Path, strict: bool = False) -> dict:
+def run(targets: list[Path], root: Path, strict: bool = False,
+        require_local: bool = False) -> dict:
     live, frozen, missing, clean = [], [], [], 0
+    skipped_local: list[dict] = []
     seen = set()
+    # LOCAL_ONLY: skipped when absent only on a checkout that has none of them.
+    local_present = {rel for rel in LOCAL_ONLY if (root / rel).is_file()}
+    skip_absent_local = not require_local and not local_present
+
+    def absent(rel: str) -> None:
+        if rel in LOCAL_ONLY and skip_absent_local:
+            skipped_local.append({"file": rel, "reason": "gitignored; no local-only "
+                                  "document is in this checkout"})
+        else:
+            missing.append({"file": rel, "pattern": "<file missing>"})
+
     for p in targets:
         rel = _rel(p, root)
         seen.add(rel)
         if not p.is_file():
-            missing.append({"file": rel, "pattern": "<file missing>"})
+            absent(rel)
             continue
         if p.suffix not in TEXT_EXT:
             continue
         text = p.read_text(encoding="utf-8", errors="replace").replace("\r\n", "\n")
+        text = scanned_text(text, rel)
         hits = scan_text(text, rel)
         miss = check_required(text, rel)
         why = frozen_reason(rel)
@@ -681,9 +770,10 @@ def run(targets: list[Path], root: Path, strict: bool = False) -> dict:
     if seen >= full:
         for rel in REQUIRED:
             if rel not in seen:
-                missing.append({"file": rel, "pattern": "<file missing>"})
+                absent(rel)
     return {"files": len(targets), "clean": clean, "live": live,
-            "missing_required": missing, "frozen_hits": frozen}
+            "missing_required": missing, "frozen_hits": frozen,
+            "skipped_local": skipped_local}
 
 
 def main(argv=None) -> int:
@@ -693,11 +783,14 @@ def main(argv=None) -> int:
     ap.add_argument("--strict", action="store_true", help="frozen records fail too")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--show-frozen", action="store_true")
+    ap.add_argument("--require-local", action="store_true",
+                    help="an absent gitignored REQUIRED document (LOCAL_ONLY) fails "
+                         "even on a checkout that has none of them")
     args = ap.parse_args(argv)
     root = Path(args.root)
     targets = [Path(p) if Path(p).is_absolute() else root / p for p in args.paths] \
         or default_targets(root)
-    res = run(targets, root, strict=args.strict)
+    res = run(targets, root, strict=args.strict, require_local=args.require_local)
     # A Windows console is cp1252: a LIVE line quoting "≥ 0.99" or "★" used to
     # raise UnicodeEncodeError half-way through the list, so the hits after it
     # were lost (the exit code was still 1). Replace what the console cannot
@@ -715,12 +808,15 @@ def main(argv=None) -> int:
             print(f"  LIVE {h['claim']:9s} {h['file']}:{h['line']}: {h['text']}")
         for m in res["missing_required"]:
             print(f"  MISSING-REQUIRED {m['file']}: /{m['pattern']}/")
+        for s in res["skipped_local"]:
+            print(f"  SKIP-LOCAL {s['file']} ({s['reason']})")
         if args.show_frozen:
             for h in res["frozen_hits"]:
                 print(f"  frozen {h['claim']:9s} {h['file']}:{h['line']} ({h['frozen']})")
         print(f"{res['clean']}/{res['files']} files clean, {len(res['live'])} live claims, "
               f"{len(res['missing_required'])} missing required, "
-              f"{len(res['frozen_hits'])} frozen hits")
+              f"{len(res['frozen_hits'])} frozen hits, "
+              f"{len(res['skipped_local'])} local-only skipped")
     return 1 if (res["live"] or res["missing_required"]) else 0
 
 

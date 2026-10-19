@@ -269,6 +269,14 @@ def check(doc: dict, ctx: Ctx, partial: bool = False) -> list[str]:
     rels = releases(ctx.sections)
     rel_dates = dict(rels)
     ids, prev_date = set(), ""
+    # The ".N" suffix rule (module docstring, VERSIONS), counted the way
+    # next_version counts: every non-release entry on a date, "site" entries
+    # included, a malformed one still taking its slot. Until 2026-10-19 the
+    # suffix was never read here, so a second entry on a date could repeat
+    # the first one's version, or skip or swap suffixes, and pass (review,
+    # harness-tools/add-update-version-suffix-not-enforced).
+    versions: set[str] = set()
+    same_day: dict[str, int] = {}
     for i, e in enumerate(entries):
         tag = f"#{e.get('seq', '?')}"
         if not partial and e.get("seq") != i + 1:
@@ -293,6 +301,7 @@ def check(doc: dict, ctx: Ctx, partial: bool = False) -> list[str]:
                 errs.append(f"{tag}: release {ver} is dated {rel_dates[ver]} in CHANGELOG, not {date}")
         else:
             base = base_version(date, rels)
+            k = same_day[date] = same_day.get(date, 0) + 1
             m = re.fullmatch(r"(\d+\.\d+\.\d+)\+(\d{4}-\d{2}-\d{2})(?:\.(\d+))?", ver)
             if not m:
                 errs.append(f"{tag}: version {ver} must be <release>+<date>[.N] for unreleased work")
@@ -301,8 +310,18 @@ def check(doc: dict, ctx: Ctx, partial: bool = False) -> list[str]:
                     errs.append(f"{tag}: base version {m.group(1)} should be {base} (last release on or before {date})")
                 if m.group(2) != date:
                     errs.append(f"{tag}: version date {m.group(2)} differs from entry date {date}")
+                # A --partial slice may start in the middle of a day.
+                want = "" if k == 1 else str(k)
+                if not partial and (m.group(3) or "") != want:
+                    errs.append(f"{tag}: version suffix "
+                                f"{'.' + m.group(3) if m.group(3) else '(none)'} should be "
+                                f"{'.' + want if want else '(none)'}: this is entry {k} "
+                                f"on {date} (\".2\", \".3\" for the second, third)")
             if e.get("base_version") not in (None, base):
                 errs.append(f"{tag}: base_version {e.get('base_version')} should be {base}")
+        if ver and ver in versions:
+            errs.append(f"{tag}: version {ver} is used by an earlier entry")
+        versions.add(ver)
         if kind == "release" and ctx.version_file and _vt(ver) > _vt(ctx.version_file):
             errs.append(f"{tag}: release {ver} is newer than VERSION ({ctx.version_file})")
 

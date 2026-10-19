@@ -110,11 +110,26 @@ def _frames(d: Path) -> dict:
 
 def start_index(frame_t: list, start_t: float) -> int:
     """The first frame whose stamped mission time is at or after `start_t`;
-    0 when no frame carries a time (an old recording)."""
+    0 when no frame carries a time (an old recording) and the start is 0.
+
+    Refused (ValueError, which main() turns into exit 2): stamped frames none
+    of which reaches `start_t`, and a non-zero start on a recording without
+    stamps. Until 2026-10-19 both fell through to frame 0, so `--start-b 400`
+    on a 300 s run aligned that half from take-off while the console said
+    "starts at frame 0 (mission t >= 400 s)" (review, harness-tools/
+    compare-video-start-beyond-end)."""
+    stamped = [float(t) for t in (frame_t or []) if t is not None]
     for i, t in enumerate(frame_t or []):
         if t is not None and float(t) >= start_t - 1e-9:
             return i
-    return 0
+    if not stamped:
+        if abs(start_t) > 1e-9:
+            raise ValueError(f"no frame carries a mission time (an old recording), "
+                             f"so a start at t = {start_t:g} s cannot be found; "
+                             f"start it at 0")
+        return 0
+    raise ValueError(f"no frame reaches mission time {start_t:g} s (the last "
+                     f"stamped frame is at t = {max(stamped):g} s)")
 
 
 def load_run(spec: str, *, fps: float | None = None, start_t: float = 0.0) -> Run:
@@ -144,7 +159,10 @@ def load_run(spec: str, *, fps: float | None = None, start_t: float = 0.0) -> Ru
               frame_t=list(rec.get("frame_t") or []), start_t=float(start_t))
     if run.n == 0:
         raise ValueError(f"{name}: no frames under {view}")
-    run.start = start_index(run.frame_t, start_t)
+    try:
+        run.start = start_index(run.frame_t, start_t)
+    except ValueError as e:
+        raise ValueError(f"{name}: {e}") from None
     return run
 
 

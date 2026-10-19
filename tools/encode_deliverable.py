@@ -4,8 +4,11 @@ Re-encode a demo master into an H.264 copy small enough to send.
 Why this is a separate step
 ---------------------------
 `tools/make_demo_video.py` writes the master with OpenCV's `mp4v` writer
-(FMP4, MPEG-4 Part 2). That path is verified — it derives fps from
-`flight_log.jsonl` so the clip's duration matches the flight by construction —
+(FMP4, MPEG-4 Part 2). That path is verified — it takes fps from the
+recorder's measured rate (`demo/out/<tag>/view/recorder.json`, achieved_hz),
+so the clip's duration matches the flight; `flight_log.jsonl` is only its
+fallback, which overstates the rate (make_demo_video.py says why; until
+2026-10-19 this said the flight log was the source) —
 and it is not worth destabilising to save disk. The cost is size: a 70 s
 2560x720 master lands at 130-161 MB, which cannot be attached to an email or
 embedded in a deck. A 486 MB .pptx was produced exactly that way.
@@ -20,6 +23,23 @@ is wrong: it would misreport how long the aircraft flew. So after encoding this
 script reads both files back and refuses the result unless the duration agrees
 within `--tol` seconds. A bad encode fails loudly instead of shipping.
 
+The previous deliverable survives a failure
+-------------------------------------------
+docs/video/ is gitignored, so the shipped copy has no backup, and the masters
+have been regenerated since some copies shipped: a lost deliverable cannot be
+re-made as it was. Until 2026-10-19 ffmpeg wrote straight over it (`-y`): a
+typo such as `--preset slwo` failed after ffmpeg had already truncated it to
+0 bytes, Ctrl-C left a partial file, and a REJECTED encode deleted the path
+after the old copy was already overwritten - in each case the tracker then
+served a broken or missing video. Now the encode goes to
+`<tag>.partial.mp4` beside it (the .mp4 suffix last: ffmpeg picks the muxer
+from it), is probed and checked there, and only a verified encode replaces
+the deliverable (os.replace). On any failure, KeyboardInterrupt included,
+only the partial file is removed. The duration check also refuses a probe
+that read no fps or no frames (0, NaN): both sides read 0 s and the check
+passed vacuously (review, harness-tools/encode-deliverable-destroys-previous-
+copy).
+
 Usage:
     python tools/encode_deliverable.py --tag demo_follow
     python tools/encode_deliverable.py --all
@@ -27,13 +47,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-
-import cv2
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_DIR = ROOT / "docs" / "video"
@@ -68,8 +87,23 @@ def find_ffmpeg() -> str:
     )
 
 
+def check_probe(info: dict, path: Path) -> dict:
+    """Refuse a probe that read no rate or no frames: with fps 0 (or NaN) and
+    seconds 0 on both sides, the duration check passes whatever was encoded
+    (module docstring)."""
+    fps, frames = info.get("fps"), info.get("frames")
+    if not (isinstance(fps, (int, float)) and math.isfinite(fps) and fps > 0
+            and isinstance(frames, int) and frames > 0):
+        raise SystemExit(f"cannot read the duration of {path}: fps {fps!r}, "
+                         f"frames {frames!r} - the duration check would be vacuous")
+    return info
+
+
 def probe(path: Path) -> dict:
-    """Frame count, fps, size and duration of a video, read back from the file."""
+    """Frame count, fps, size and duration of a video, read back from the file.
+    (OpenCV is imported here, not at module level, so the replace-on-success
+    logic is testable where OpenCV is not installed, as on CI.)"""
+    import cv2
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         raise SystemExit(f"cannot open {path}")
@@ -79,7 +113,7 @@ def probe(path: Path) -> dict:
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
     cap.release()
-    return {
+    return check_probe({
         "fps": fps,
         "frames": frames,
         "w": w,
@@ -87,7 +121,7 @@ def probe(path: Path) -> dict:
         "seconds": (frames / fps) if fps else 0.0,
         "codec": "".join(chr((fourcc >> 8 * i) & 0xFF) for i in range(4)),
         "mb": path.stat().st_size / 1048576.0,
-    }
+    }, path)
 
 
 def encode(tag: str, crf: int, preset: str, tol: float) -> dict:
@@ -97,6 +131,9 @@ def encode(tag: str, crf: int, preset: str, tol: float) -> dict:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     dest = OUT_DIR / f"{tag}.mp4"
+    # Encoded and checked beside the deliverable, never over it (module
+    # docstring, "The previous deliverable survives a failure").
+    tmp = dest.with_name(dest.stem + ".partial.mp4")
 
     src = probe(master)
     print(f"[{tag}] master  {src['w']}x{src['h']} {src['fps']:.2f} fps "
@@ -112,24 +149,38 @@ def encode(tag: str, crf: int, preset: str, tol: float) -> dict:
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         "-an",                      # the masters carry no audio
-        str(dest),
+        str(tmp),
     ]
-    subprocess.run(cmd, check=True)
-
-    dst = probe(dest)
-    print(f"[{tag}] encoded {dst['w']}x{dst['h']} {dst['fps']:.2f} fps "
-          f"{dst['frames']} frames = {dst['seconds']:.1f} s "
-          f"{dst['codec']} {dst['mb']:.1f} MB  "
-          f"({src['mb'] / max(dst['mb'], 1e-9):.1f}x smaller)")
-
-    drift = abs(dst["seconds"] - src["seconds"])
-    if drift > tol:
-        dest.unlink(missing_ok=True)
-        raise SystemExit(
-            f"[{tag}] REJECTED: duration moved {drift:.2f} s "
-            f"({src['seconds']:.2f} -> {dst['seconds']:.2f}), tolerance {tol} s. "
-            f"A clip that plays but misreports the flight length is worse than none.")
-
+    kept = (" The previous deliverable was left in place."
+            if dest.exists() else "")
+    try:
+        subprocess.run(cmd, check=True)
+        dst = probe(tmp)
+        print(f"[{tag}] encoded {dst['w']}x{dst['h']} {dst['fps']:.2f} fps "
+              f"{dst['frames']} frames = {dst['seconds']:.1f} s "
+              f"{dst['codec']} {dst['mb']:.1f} MB  "
+              f"({src['mb'] / max(dst['mb'], 1e-9):.1f}x smaller)")
+        drift = abs(dst["seconds"] - src["seconds"])
+        if drift > tol:
+            raise SystemExit(
+                f"[{tag}] REJECTED: duration moved {drift:.2f} s "
+                f"({src['seconds']:.2f} -> {dst['seconds']:.2f}), tolerance {tol} s. "
+                f"A clip that plays but misreports the flight length is worse "
+                f"than none.{kept}")
+    except BaseException:
+        # A failed or interrupted encode, a probe that cannot read it, or a
+        # rejection: only the partial file goes.
+        tmp.unlink(missing_ok=True)
+        raise
+    try:
+        os.replace(tmp, dest)
+    except PermissionError as e:
+        # Windows: the deliverable is open (the tracker streaming it, a player,
+        # PowerPoint) and cannot be replaced.
+        tmp.unlink(missing_ok=True)
+        raise SystemExit(f"[{tag}] could not replace {dest} ({e}); it is in use. "
+                         f"The previous deliverable is intact; close what holds "
+                         f"it and run again.")
     return {"tag": tag, "master_mb": src["mb"], "out_mb": dst["mb"],
             "seconds": dst["seconds"], "path": dest}
 

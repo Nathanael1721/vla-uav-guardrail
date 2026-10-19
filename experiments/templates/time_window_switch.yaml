@@ -115,8 +115,12 @@ scenarios:
       breaches: { max: 0 }
       ended_safe: { equals: true }
     expected_failsafe: false
+    # `fails` measured 2026-10-19 over the nightly profile's 9 pinned
+    # episodes and the smoke run (f93283d): the Shield's P0 counter only. A
+    # breach, a censored or unsafe end, or a fail-safe in these cells is new.
     known_failures:
       - params: { clock: "2026-09-07T07:29:58" }
+        fails: [P0_escape_rate]
         description: &opensonit >
           A window opening on the aircraft sooner than it can leave
           (measured 2026-10-12, grant's 5 s forecast; the 3 s arm flies the
@@ -140,8 +144,10 @@ scenarios:
           FSM chooses a hold that is itself about to be illegal
           (guardrail/fsm.py, wave B).
       - params: { clock: "2026-09-07T07:29:58.5" }
+        fails: [P0_escape_rate]
         description: *opensonit
       - params: { clock: "2026-09-07T07:29:59" }
+        fails: [P0_escape_rate]
         description: *opensonit
 
   - scenario_id: time-window-opens-ahead
