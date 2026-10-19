@@ -134,7 +134,10 @@ def test_it_reproduces_the_recorded_flights():
         assert s["n_det_with_target_out_of_fov"] == oof, (tag, s)
         checked += 1
     if checked == 0:
-        return                      # nothing on disk to check against
+        # demo/out/ is gitignored: on a clean clone none of the four flights
+        # is there, and this returned None, counted as a PASS (review of the
+        # F9b merge). A checkout with some of them checks those.
+        return SKIP
     assert checked >= 1
 
 
@@ -490,7 +493,7 @@ def test_the_retarget_flight_on_disk_splits_the_way_the_finding_says():
     stopped being credited on 2026-09-08)."""
     log = ROOT / "demo" / "out" / "retarget_demo2" / "flight_log.jsonl"
     if not log.is_file():
-        return                                   # artefact not in this checkout
+        return SKIP                              # artefact not in this checkout
     rows = [json.loads(l) for l in log.open(encoding="utf-8")]
     pre = score_rows([r for r in rows if r["tick"] < 248])
     post = score_rows([r for r in rows if r["tick"] >= 248])

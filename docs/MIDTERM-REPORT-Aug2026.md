@@ -13,8 +13,9 @@
 > flight" (section 6.2: the grant lists five acceptance KPIs, and P0 escape
 > is one of them); the summary pack on the VLA path (built, never flown in a
 > VLA's prompt);
-> and the detector rates, recomputed over the mission (29 Sept; the
-> mid-evaluation's five quoted flights on 6 Oct). The eight-flight
+> and the detector rates, recomputed over the mission (the inflation found
+> on 29 Sept; this report's flights read 3.02-3.11 Hz, CHANGELOG 2026-10-07
+> Retracted). The eight-flight
 > simultaneity study (section 6.4) ran with a direction hint computed from
 > the true coordinates in the prompt and one decision every 7-9 s, so it
 > does not test language grounding

@@ -97,10 +97,10 @@ from the signed bundle, over pymavlink, not KPI-grade. On 13 Oct: Shield on, 0
 P0 escapes in 367 Shield-flown ticks (532 in all); Shield off, 727 of 1100
 (0.661). On 14 Oct: Shield on, 0 in 388 Shield-flown ticks; Shield off, 736 of
 1099 (0.670). With the Shield on, the aircraft was still inside a P0 building
-margin: on 13 Oct on 78 ticks, all while ArduPilot flew the escalation FSM's
-BRAKE hold (20) and RTL (58); on 14 Oct on 20 Shield-flown ticks (71
-unsafe-position ticks in all), because the Shield's forecast starts from the
-command, not from the aircraft's own velocity. The
+margin: on 13 Oct on 78 ticks, all flown by ArduPilot: 20 in its BRAKE mode
+(the escalation FSM's Loiter hold) and 58 in RTL. On 14 Oct on 20 Shield-flown
+ticks (71 unsafe-position ticks in all), because the Shield's forecast starts
+from the command, not from the aircraft's own velocity. The
 detector boxed a red traffic signal, not the car, so these flights test the
 Shield, not tracking. The range-0 fix has flown since 12 Oct, and its depth
 refusal fired in flight (78 and 89 refused depth returns on the two Shield-on

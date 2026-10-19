@@ -298,7 +298,11 @@ def test_code_revision_names_a_repository_that_holds_the_shield():
     from guardrail.manifest import CODE_SENTINEL, _tracks_our_code, code_revision
     rev = code_revision()
     if rev == "unversioned":
-        return                      # no git available; nothing to assert about
+        # No git here (a `git archive` copy): nothing to assert about. It
+        # returned None, printed as PASS, until 2026-10-19 (found after the
+        # review of the F9b merge); actions/checkout has git, so CI runs it.
+        print("      SKIP: no git checkout, code_revision() is 'unversioned'")
+        return SKIP
     assert _tracks_our_code(ROOT), \
         f"{ROOT} reports a revision but does not track {CODE_SENTINEL}"
 
@@ -309,7 +313,12 @@ def test_a_repository_without_our_code_is_never_accepted():
     from guardrail.manifest import _tracks_our_code, code_revision
     fork = ROOT / "kuanting-vla-uav-guardrail"
     if not (fork / ".git").exists():
-        return
+        # The reference repository is a separate checkout, never part of
+        # this one: on CI this returned None and printed PASS until
+        # 2026-10-19 (found after the review of the F9b merge).
+        print("      SKIP: the reference repository kuanting-vla-uav-guardrail/ "
+              "is not checked out here")
+        return SKIP
     assert not _tracks_our_code(fork), \
         "the fork is expected not to contain guardrail/shield.py"
     asked = code_revision(fork)

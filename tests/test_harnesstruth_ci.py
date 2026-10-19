@@ -19,6 +19,7 @@ into its tests/): nightly.yml does not exist there, tests.yml's header says
 """
 from __future__ import annotations
 
+import ast
 import re
 import sys
 from pathlib import Path
@@ -230,15 +231,19 @@ def test_the_rest_listener_tests_cannot_skip_on_the_job_that_installs_their_impo
 
 # Every tests/test_*.py the loop does not run: the pip package whose absence
 # makes it fail on every job ("" when the cause is not a package), and why.
-# The header's NOT LISTED block names exactly these files, with the same
-# reasons. Measured 2026-10-19 on a clean `git archive` copy under WSL Ubuntu,
-# in one bare venv per job (requirements.txt plus that job's extras).
+# The header's NOT LISTED block names exactly these files, and each file's
+# entry there carries its reason's "N of its M" count and names its package
+# (test_the_exclusion_reasons_are_the_headers below). Measured 2026-10-19 on
+# a clean `git archive` copy under WSL Ubuntu, in one venv per job
+# (requirements.txt plus that job's extras) on Python 3.12, and all six
+# re-measured the same day on real 3.10.22 and 3.11.17 venvs with each job's
+# exact packages.
 EXCLUDED: dict[str, tuple[str, str]] = {
     "test_capture_pairing.py": (
         "opencv", "5 of its 8 tests ERROR: demo/semantic_demo.py's capture path imports cv2"),
     "test_city_traffic.py": (
-        "projectairsim", "its update-stagger test FAILs: the fake world's pose calls come only "
-                         "after demo/moving_car.py imports projectairsim"),
+        "projectairsim", "1 of its 34 tests FAILs (the update stagger): the fake world's pose "
+                         "calls come only after demo/moving_car.py imports projectairsim"),
     "test_deck_scorer_parity.py": (
         "", "7 of its 13 tests need flight logs under demo/out/, and its JavaScript "
             "comparisons return early, counted as passes, where node is absent (WSL has none)"),
@@ -291,6 +296,174 @@ def test_every_test_file_is_in_the_loop_or_excluded_with_its_reason():
                      f"or say why it still cannot run")
 
 
+def _excluded_entries(flat: str) -> dict[str, str]:
+    """The NOT LISTED block split per file: name -> the text of its entry."""
+    block = _block(flat, "NOT LISTED, on purpose:", "END OF THE EXCLUSIONS")
+    parts = re.split(r"\b(test_[a-z0-9_]+\.py):", block)
+    return {parts[i]: parts[i + 1] for i in range(1, len(parts) - 1, 2)}
+
+
+def test_the_exclusion_reasons_are_the_headers():
+    """Review of the F9b merge (P6): the EXCLUDED comment said the header
+    names these files "with the same reasons", and only the names were
+    compared, so a reason could drift on one side unnoticed. Each EXCLUDED
+    reason carries its measured "N of its M" count; the header's entry for
+    that file must carry the same count and name the package. Shown failing
+    first: at a8ae8d5 EXCLUDED said test_city_traffic's "update-stagger test
+    FAILs" with no count, where the header said "1 of its 34 tests FAILs"."""
+    entries = _excluded_entries(_flat_header())
+    assert set(entries) == set(EXCLUDED), (sorted(entries), sorted(EXCLUDED))
+    for name, (pkg, why) in EXCLUDED.items():
+        m = re.search(r"\b\d+ of its \d+\b", why)
+        assert m, f"{name}: the EXCLUDED reason gives no 'N of its M' count: {why!r}"
+        assert m.group(0) in entries[name], \
+            f"{name}: the header's entry does not say {m.group(0)!r}: {entries[name]!r}"
+        if pkg:
+            assert pkg in entries[name].lower(), \
+                f"{name}: the header's entry does not name {pkg!r}: {entries[name]!r}"
+
+
+# --------------------------------------------------------------------------- #
+# A listed test cannot pass by returning early (review of the F9b merge, P2)
+#
+# Shown failing first: at a8ae8d5 the header said "Every SKIP prints its line",
+# and in listed files a test that found no flight log, map or git history
+# returned None, which the runner printed as PASS. On a clean copy (measured
+# 2026-10-19 on real 3.10.22 / 3.11.17): test_track_truth's two
+# recorded-flight checks, test_recorder's sidecar check, test_citylife_peds'
+# street-mask check (its runner counted no SKIP at all) and test_build_eval_
+# data's git check, as the review found, and, found by this check the same
+# day, test_identity's CityLife street-mask check and test_manifest's
+# code-revision (no git) and reference-repository checks; and
+# test_guardrail_coverage's runner printed PASS for the SKIP its
+# recorded-flight check returned. Nine more guarded the tracked city map
+# (demo/out/citymap/, there on every clean copy) the same way, so they ran
+# on CI but would have read PASS without it: test_fenceguard's five,
+# test_guardrail_coverage's two and test_check_contract's two.
+# --------------------------------------------------------------------------- #
+
+# A bare `return` under an `if` after the test has already asserted its own
+# half: the half that needs a missing import is dropped, and the header says
+# so. Each entry is (file, test) -> why it is a partial check, not a no-op.
+PARTIAL_RETURNS: dict[tuple[str, str], str] = {
+    ("test_harness_service.py",
+     "test_a_lat_lon_that_is_not_a_number_is_invalid_argument_not_internal"): (
+        "the in-process Harness half asserts first; the gRPC half needs grpcio, which only "
+        "the requirements-only job lacks (the file is no_skip on the other two)"),
+    ("test_wp4outputs_harness.py", "test_ticks_flown_is_unset_until_it_is_known"): (
+        "the in-process Harness half asserts first; the gRPC status half needs grpcio, "
+        "which only the requirements-only job lacks"),
+}
+
+
+def _is_none(node) -> bool:
+    return node is None or (isinstance(node, ast.Constant) and node.value is None)
+
+
+def _recording_helpers(tree: ast.Module) -> set[str]:
+    """The module's `_skip` / `_need_*` functions that record a skip where the
+    runner counts it: they raise (tests/test_real_vla_prompt.py's `_skip`
+    raises Skipped), append to SKIPPED (tests/test_env_pins.py's `_skip`), or
+    call one that does (its `_need_bash`). A helper that only prints is not
+    one: a bare return after it is still a PASS."""
+    defs = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)
+            and re.fullmatch(r"_skip|_need_\w+", n.name)}
+    rec: set[str] = set()
+    grew = True
+    while grew:
+        grew = False
+        for name, fn in defs.items():
+            if name in rec:
+                continue
+            for n in ast.walk(fn):
+                call = n.func if isinstance(n, ast.Call) else None
+                if isinstance(n, ast.Raise) or \
+                        (isinstance(call, ast.Attribute) and call.attr == "append"
+                         and isinstance(call.value, ast.Name) and call.value.id == "SKIPPED") or \
+                        (isinstance(call, ast.Name) and call.id in rec):
+                    rec.add(name)
+                    grew = True
+                    break
+    return rec
+
+
+def _calls_one_of(node, names: set[str]) -> bool:
+    return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id in names
+               for n in ast.walk(node))
+
+
+def _early_returns(fn: ast.FunctionDef, recording: set[str]) -> list[int]:
+    """Lines of the bare / None returns under an `if` in a test function (not
+    in a nested def, not in an except handler), unless that `if` records a
+    skip through one of the `recording` helpers."""
+    out: list[int] = []
+
+    def visit(node, guarded):
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
+                                  ast.Lambda, ast.ExceptHandler)):
+                continue
+            if isinstance(child, ast.If):
+                visit(child, not _calls_one_of(child, recording))
+            elif isinstance(child, ast.Return):
+                if guarded and _is_none(child.value):
+                    out.append(child.lineno)
+            else:
+                visit(child, guarded)
+    visit(fn, False)
+    return out
+
+
+def _returns_a_value(fn: ast.FunctionDef) -> bool:
+    stack = list(fn.body)
+    while stack:
+        n = stack.pop()
+        if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            continue
+        if isinstance(n, ast.Return) and not _is_none(n.value):
+            return True
+        stack.extend(ast.iter_child_nodes(n))
+    return False
+
+
+def test_no_listed_test_can_pass_by_returning_early():
+    """Every test function in a file the loop runs: no bare `return` under an
+    `if` (the test returns the SKIP sentinel instead, or asserts), and a file
+    whose tests return a value has a runner that counts it as a skip. The
+    exceptions are PARTIAL_RETURNS, each with its reason, and an `if` that
+    records its skip through a helper (_recording_helpers), whose file's
+    runner must count that kind."""
+    early, uncounted, used = [], [], set()
+    for name in sorted(_loop()):
+        src = (ROOT / "tests" / name).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        recording = _recording_helpers(tree)
+        valued = helper = False
+        for fn in tree.body:
+            if not (isinstance(fn, ast.FunctionDef) and fn.name.startswith("test_")):
+                continue
+            valued |= _returns_a_value(fn)
+            helper |= _calls_one_of(fn, recording)
+            for line in _early_returns(fn, recording):
+                if (name, fn.name) in PARTIAL_RETURNS:
+                    used.add((name, fn.name))
+                else:
+                    early.append(f"{name}:{line} {fn.name}")
+        runner = src.split('if __name__ == "__main__":', 1)[-1]
+        counts_returned = re.search(r"==\s*(SKIP\b|\"SKIP\"|'SKIP')", runner)
+        counts_own = re.search(r"\bSKIPPED\b|except\s+Skipped\b", runner)
+        if (valued and not counts_returned) or (helper and not (counts_returned or counts_own)):
+            uncounted.append(name)
+    assert not early, ("these tests return None early, which the runner prints as PASS "
+                       "with nothing checked; return the SKIP sentinel (and print why): "
+                       + "; ".join(early))
+    assert not uncounted, f"tests here return SKIP but the runner does not count it: {uncounted}"
+    stale = set(PARTIAL_RETURNS) - used
+    assert not stale, f"PARTIAL_RETURNS names returns that no longer exist: {sorted(stale)}"
+    for key, why in PARTIAL_RETURNS.items():
+        assert len(why.split()) >= 8, f"{key}: say what still runs and what is dropped"
+
+
 def test_the_harness_and_api_tests_cannot_skip_where_their_imports_are_installed():
     """docs-ci P4: the header said test_harness_service runs in full on the
     3.10 job and the 3.11 extras job, and that test_api's routes run on the
@@ -339,14 +512,18 @@ def test_the_files_the_second_october_review_found_off_ci_run_in_ci():
     """Named by the two reviews of the 2026-10-19 merges: the harness-tools
     regression tests, and the files the docs-ci review ran clean on a clean
     copy (plus test_replay and test_kpi_report, whose stated exclusions were
-    stale)."""
+    stale). And test_demo_negative_xy (review of the F8b merge, P3): neither
+    in the loop nor excluded at a8ae8d5, so this file's completeness check
+    failed there; 2/2 on a clean copy in all three jobs' packages on real
+    Python 3.10.22 and 3.11.17 (demo/follow_vlm.py and demo/semantic_seek.py
+    import numpy, shapely and guardrail, not the simulator)."""
     want = {"test_check_claims.py", "test_tracker_serve.py", "test_encode_deliverable.py",
             "test_add_update.py", "test_make_demo_video.py", "test_track_truth.py",
             "test_paraphraser.py", "test_geo_to_policy.py", "test_drive_signals_dsl.py",
             "test_vla_bridge.py", "test_ros2_package.py", "test_search.py",
             "test_target_state.py", "test_trail.py", "test_camera_model.py",
             "test_occ_bands.py", "test_real_vla_prompt.py", "test_replay.py",
-            "test_kpi_report.py"}
+            "test_kpi_report.py", "test_demo_negative_xy.py"}
     missing = want - _loop()
     assert not missing, f"not run in CI: {sorted(missing)}"
 

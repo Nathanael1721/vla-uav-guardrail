@@ -57,8 +57,9 @@ approach from the signed bundle, over pymavlink, not KPI-grade: Shield on, 0
 P0 escapes on both days; Shield off, 727 of 1100 ticks (0.661) and 736 of 1099
 (0.670). With the Shield on, the aircraft was still inside a P0 building
 margin on 20 Shield-flown ticks on 14 Oct and on 78 ArduPilot-flown ticks on
-13 Oct (the escalation FSM's BRAKE hold and RTL), and the detector boxed a red
-traffic signal, not the car, so these flights test the Shield, not tracking.
+13 Oct (ArduPilot's BRAKE mode under the FSM's Loiter, and RTL), and the
+detector boxed a red traffic signal, not the car, so these flights test the
+Shield, not tracking.
 
 The city demo's Shield forecasts 3 s at 0.5 s steps by default, not the
 grant's 5 s at 0.1 s (`--grant-forecast` flies that, with the escalation FSM

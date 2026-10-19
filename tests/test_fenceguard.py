@@ -34,6 +34,19 @@ FULL = ROOT / "policies" / "follow_car_nfz.yaml"     # fence x 26..54, no gap
 
 
 CITYMAP = ROOT / "demo" / "out" / "citymap" / "occ_day.npz"
+# The city maps these tests read are tracked (.gitignore re-includes
+# demo/out/citymap/), so they run on a clean clone and on CI (27/27 on real
+# 3.10.22 / 3.11.17, 2026-10-19). Where a map is missing the test returns
+# SKIP, counted apart by the runner below; until 2026-10-19 (found after the
+# review of the F9b merge) the five such tests returned None there and
+# printed PASS.
+SKIP = "SKIP"
+
+
+def _missing(what):
+    """Say which artefact is absent; the caller returns this (SKIP)."""
+    print(f"      SKIP: {what} is not built here")
+    return SKIP
 
 
 def _guard(path, brake_m=12.0, stand_off_m=3.0, with_map=False):
@@ -199,10 +212,10 @@ def test_a_detour_must_stay_on_the_road_not_merely_outside_the_fence():
     mask instead of inferred from the absence of obstacles.
     """
     if not CITYMAP.exists():
-        return
+        return _missing(CITYMAP.relative_to(ROOT))
     mask = _street_mask()
     if mask is None:
-        return
+        return _missing("demo/out/citymap/street.npz")
     from build_street_mask import is_street
     g = _guard(FULL, with_map=True)
     off_road = []
@@ -247,7 +260,7 @@ def test_the_gap_policy_gap_is_out_of_search_range_once_the_map_is_honest():
     failure to notice.
     """
     if not CITYMAP.exists():
-        return
+        return _missing(CITYMAP.relative_to(ROOT))
     g = _guard(GAP, with_map=True)
     sx, sy, cost = g.slide(38.0, -6.0, *NORTH)
     assert (sx, sy) == (0.0, 0.0) and not math.isfinite(cost), (
@@ -472,7 +485,7 @@ def test_a_point_belongs_to_the_cell_it_is_nearest_to():
     """1.4 m past a cell centre is inside the NEXT cell, not the one behind."""
     mask = _street_mask()
     if mask is None:
-        return
+        return _missing("demo/out/citymap/street.npz")
     from build_street_mask import is_street
     res, ox, oy = mask["res"], mask["ox"], mask["oy"]
     st = mask["street"]
@@ -507,11 +520,11 @@ def test_the_guard_and_is_street_agree_about_every_probe_point():
     have rejected."""
     mask = _street_mask()
     if mask is None:
-        return
+        return _missing("demo/out/citymap/street.npz")
     from build_street_mask import is_street
     g = _demo_guard()
     if g.street is None:
-        return
+        return _missing("the demo guard's street lookup (its map)")
     res, ox, oy = mask["res"], mask["ox"], mask["oy"]
     st = mask["street"]
 
@@ -539,13 +552,13 @@ def test_pedestrians_are_placed_on_the_street_they_were_chosen_for():
     flight were not standing on street at all."""
     mask = _street_mask()
     if mask is None:
-        return
+        return _missing("demo/out/citymap/street.npz")
     import random
     import numpy as np
     from build_street_mask import is_street
     bld_p = ROOT / "demo" / "out" / "citymap" / "occ_day_highband_15to55.npz"
     if not bld_p.is_file():
-        return
+        return _missing(bld_p.relative_to(ROOT))
     import pedestrians as P
     import moving_car
     bld = np.load(bld_p)["occ"]
@@ -558,10 +571,13 @@ def test_pedestrians_are_placed_on_the_street_they_were_chosen_for():
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == SKIP:
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -569,5 +585,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

@@ -418,6 +418,30 @@ def test_a_rail_log_under_a_clock_switched_policy_measures_no_breach():
               "min_true_dist_to_fence_m"):
         assert f not in extra, (f, extra.get(f))
     assert S.check_gates({"breaches": {"max": 0}}, extra) == ["breaches: not measured"]
+    # REVIEW of the F8b merge (P1): the count left out must not read as 0 in
+    # the outcome label either. score() built mission_outcome from
+    # extra.get("breaches", 0), so with `unsafe` on for 5 rows mid-flight and
+    # the goal reached the label went from `fail` (before e911e52) to
+    # `success`, while compute() itself said unsafe_position_entered. Shown
+    # failing first: 'success' at a8ae8d5. Now compute()'s reading decides,
+    # for a brief stretch and for one still open at the end. (This headless
+    # flight hands over to LOITER and misses its goal, which would fail the
+    # label on its own, so the node is made to report it reached.)
+    reached = dict(metrics, reached=True)
+    brief = (rows[:k - 1] + [dict(rows[k - 1], flown=True, setpoint="pass")]
+             + [dict(r, unsafe=True) for r in rows[k:k + 5]] + rows[k + 5:])
+    for flight, why in ((brief, "unsafe_position_entered"),
+                        (switched, "unsafe_never_recovered")):
+        ex = S.sitl_extra(spec, flight, reached, timed)
+        assert "breaches" not in ex and ex["reached_goal"] is True, ex
+        assert not (ex.get("fsm") or {}).get("outcome_label"), ex["fsm"]
+        res = S.score(spec, flight, ex, timed)
+        assert why in res["mission_fail_reasons"], res["mission_fail_reasons"]
+        assert res["mission_outcome"] == "fail", (why, res["mission_outcome"])
+    # the null: the same flight with no unsafe row is a success under it
+    assert not any(r.get("unsafe") for r in rows)
+    ex = S.sitl_extra(spec, rows, reached, timed)
+    assert S.score(spec, rows, ex, timed)["mission_outcome"] == "success"
 
 
 def test_run_sitl_reads_this_launchs_log_and_metrics_and_scores_them():
@@ -1353,7 +1377,9 @@ TW_ON_VEHICLE_CLOCKS = ("2026-09-07T07:29:58", "2026-09-07T07:29:58.5",
 def test_a_bounded_pin_absorbs_its_measured_magnitude_and_no_more():
     """REVIEW of F8-harness-tools (P3). A pin naming a safety gate absorbed
     it at ANY magnitude: time-window-opens-on-vehicle is pinned for its P0
-    escape rate (2 escapes over 262-272 Shield ticks, 0.0074-0.0076), and
+    escape rate (2 escapes over 262-272 Shield ticks, 0.0074-0.0076, on the
+    grant arm these tests fly; the review of the F8b merge flew the 3 s arm
+    at 264-274, 0.0073-0.0076, the YAML's range over both arms), and
     0.5 injected into those cells still printed KNOWN and exited 0 - every
     other pinned P0, breach and ended_safe gate of the nightly profile
     turned its episode red under the same injection. The pins now carry

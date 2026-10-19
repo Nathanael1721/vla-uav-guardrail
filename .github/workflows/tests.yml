@@ -37,7 +37,9 @@
 #          test_railvideo_*, test_recorder, test_track_truth.
 #        The city demo's perception and follow controller: test_camera_model,
 #          test_target_state, test_trail, test_search, test_landing,
-#          test_level_actors, test_voxel_map, test_replay_pipeline.
+#          test_level_actors, test_voxel_map, test_replay_pipeline; and its
+#          flight CLIs' option parsing (a negative X,Y value):
+#          test_demo_negative_xy.
 #        The VLA side: test_vla_* (backends, the backend table, the bridge).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
@@ -80,9 +82,28 @@
 #      runs what it is for, apart from the SKIPs named below, is in the loop,
 #      and the others are under NOT LISTED with what stops them.
 #      tests/test_harnesstruth_ci.py fails when a test file is in neither, so
-#      a new one cannot be left out silently.
+#      a new one cannot be left out silently. Those three venvs ran Python
+#      3.12.3, as for the earlier batch. The review of that merge re-ran the
+#      loop on real 3.10.22 and 3.11.17 venvs with each job's exact packages
+#      and found test_build_eval_data FAILing in a `git clone --depth 1`,
+#      which is what actions/checkout makes: its history check needs a local
+#      master that reaches 14 Sept, and in the archive copy it had returned
+#      None, counted as a PASS. After that fix (2026-10-19) every listed file
+#      was run in those real 3.10.22 / 3.11.17 venvs, both on a clean
+#      `git archive` copy and in a depth-1 clone of the commit on a feature
+#      branch with no local master, and test_harnesstruth_ci fails on a
+#      listed test that can return None early (a PASS with nothing checked)
+#      and on a runner that does not count the SKIP its tests return.
 #
-#      WHAT SKIPS, WHERE, AND WHY. Every SKIP prints its line.
+#      WHAT SKIPS, WHERE, AND WHY. Every SKIP prints its line and is counted
+#      apart from the passes. Until 2026-10-19 (after the review of the F9b
+#      merge) 8 listed tests returned None on a clean copy, where their
+#      flight log, CityLife map, git checkout or reference repository is
+#      missing, and their runners printed PASS with nothing checked; one
+#      runner printed PASS for the SKIP a test returned; and 9 more tests did
+#      the same if the tracked city map (demo/out/citymap/, there on CI) was
+#      absent. tests/test_harnesstruth_ci.py names them and now fails on
+#      either pattern.
 #        - The 3.11 job with the extras installs fastapi, uvicorn, httpx and
 #          cryptography, so the real-HTTP hot-apply and mTLS listener tests of
 #          test_railinputs_node and test_railinputs_hotapply (the REST
@@ -102,40 +123,61 @@
 #          instead of turning its gRPC tests into SKIPs. On the
 #          requirements-only job its logic tests, which drive Harness
 #          directly, run and the gRPC / mTLS tests SKIP, as do
-#          test_wp4outputs_harness's 3 live-session tests.
+#          test_wp4outputs_harness's 3 live-session tests; two tests there
+#          run their in-process half and drop the gRPC half
+#          (PARTIAL_RETURNS in tests/test_harnesstruth_ci.py).
 #        - jsonschema (3.11 extras only) runs the schema checks of test_csp,
 #          test_policy_hash and test_policy_dsl_grant_form; elsewhere they SKIP.
 #        - Files outside this repository: test_policy_dsl_grant_form's 10
-#          checks against the reference repository (kuanting-vla-uav-guardrail
-#          is a separate checkout, not part of this one), test_pas_ardupilot's
-#          3 checks against IAMAI's D:/ProjectAirSim airframe and Project
-#          AirSim's own loader, test_csp's 2 checks against OpenVLA's
-#          tokenizer.json.
-#        - Gitignored flight output (demo/out/): test_pas_ardupilot's CityLife
-#          trajectory bound, test_follow_motion's 13 Oct replay,
-#          test_policy_hash's stored manifests, test_flight_pas_ap_20261008's
-#          fixture-against-folder check, test_railvideo_truth_frame's stored
-#          flights and test_railvideo_recording's CityLife map; test_replay's
-#          20 checks on stored bundles (40 of its 60 run), test_kpi_report's
-#          3 delivered-run checks, test_landing's 8 checks on the CityLife
-#          map and recorded flight ends, test_track_truth's 4 and
-#          test_target_state's 2 recorded-flight checks,
+#          checks and test_manifest's fork check against the reference
+#          repository (kuanting-vla-uav-guardrail is a separate checkout, not
+#          part of this one), test_pas_ardupilot's 3 checks against IAMAI's
+#          D:/ProjectAirSim airframe and Project AirSim's own loader,
+#          test_csp's 2 checks against OpenVLA's tokenizer.json.
+#        - Gitignored flight output and CityLife maps (demo/out/; only the
+#          city demo's occupancy grids, demo/out/citymap/, are tracked):
+#          test_pas_ardupilot's CityLife trajectory bound, test_follow_motion's
+#          13 Oct replay, test_policy_hash's stored manifests,
+#          test_flight_pas_ap_20261008's fixture-against-folder check,
+#          test_railvideo_truth_frame's stored flights and
+#          test_railvideo_recording's CityLife map; test_replay's 20 checks
+#          on stored bundles (40 of its 60 run), test_kpi_report's 3
+#          delivered-run checks, test_landing's 8 checks on the CityLife map
+#          and recorded flight ends, test_track_truth's 6 and
+#          test_target_state's 2 recorded-flight checks, test_recorder's
+#          check of the recorder sidecars on disk, the CityLife street-mask
+#          checks of test_citylife_peds and test_identity,
+#          test_guardrail_coverage's recorded-flight check,
 #          test_wp1_roundtrip_kpi's 2 stored-run checks,
 #          test_build_deck_data's real-flight rate gate, test_build_eval_data's
-#          five ros2_* runs, test_build_progress_oct_data's 5 checks on the
-#          built deck and its local sources, test_replay_pipeline's 2
-#          vla-real / recorded-flight checks, and test_profile_shield_tick's
-#          check that the committed tick pack's flights still hash as packed.
+#          five ros2_* runs, test_build_progress_oct_data's 4 checks on the
+#          built deck and its local sources, test_replay_pipeline's
+#          recorded-flight check (which also needs the vla-real
+#          environment), and test_profile_shield_tick's check that the
+#          committed tick pack's flights still hash as packed. Dropped
+#          inside a test that passes, not counted as skips: test_search's
+#          sweep over the real CityLife street mask, test_real_vla_prompt's
+#          pin of the checkpoint's config.json (D:/models) and
+#          test_profile_shield_tick's cross-check of its budgets against the
+#          reference repository's text.
 #        - Gitignored tracker data (tracker/data/, the internal grant
 #          tracker): test_tracker_content's 15 content checks (the 4 that
 #          show its checks can fail still run), test_tracker_serve's
 #          real-content check and test_add_update's real-log check.
 #        - A git checkout: test_bundle's lab-key check and test_deploy_configs'
 #          .gitignore check (both evidence paths) SKIP in a `git archive` copy
-#          (since 2026-10-19; they used to FAIL there), and
-#          test_build_public_site ERRORs there: the builder refuses to run
-#          without git (its author-name and committed-image checks), and in a
-#          one-commit checkout it passes 47/47. actions/checkout gives one.
+#          (since 2026-10-19; they used to FAIL there), as does
+#          test_manifest's code-revision check, and test_build_public_site
+#          ERRORs there: the builder refuses to run without git (its
+#          author-name and committed-image checks), and in a one-commit
+#          checkout it passes 47/47. actions/checkout gives one.
+#        - Git history, which actions/checkout's depth-1 clone does not have
+#          (they run in a full clone, the lab checkout): test_build_eval_data's
+#          check of the 14 Sept record (`master` as of 2026-09-14; it FAILed
+#          in a depth-1 clone until 2026-10-19), test_replay_pipeline's
+#          byte-for-byte check of the old arm (`git show 1d09786:`) and
+#          test_build_progress_oct_data's check of the 30 Sept deck source
+#          (401305a).
 #        - test_deploy_configs' `docker compose config` check runs where the
 #          Docker CLI's `docker compose version` works (GitHub's runners, the
 #          lab desktop: 61/61 on 2026-10-19) and SKIPs elsewhere. It has not
@@ -159,7 +201,8 @@
 #
 #      Each file under NOT LISTED FAILs or ERRORs on a clean copy (or passes
 #      without running what it is for), measured 2026-10-19 in all three WSL
-#      venvs; the same names and reasons are the EXCLUDED dict of
+#      venvs and again on real 3.10.22 / 3.11.17; the same names, and each
+#      reason's count and package, are the EXCLUDED dict of
 #      tests/test_harnesstruth_ci.py.
 #
 #      NOT LISTED, on purpose:
@@ -394,6 +437,7 @@ jobs:
               tests/test_level_actors.py \
               tests/test_voxel_map.py \
               tests/test_replay_pipeline.py \
+              tests/test_demo_negative_xy.py \
               tests/test_vla_bridge.py \
               tests/test_vla_backend_table.py \
               tests/test_citylife_peds.py \

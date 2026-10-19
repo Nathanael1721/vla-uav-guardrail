@@ -122,7 +122,10 @@ def test_the_real_runs_on_disk_would_now_report_their_true_rate():
     import json
     outs = sorted((ROOT / "demo" / "out").glob("*/view/recorder.json"))
     if not outs:
-        return
+        # demo/out/ is gitignored. This returned None, which the runner
+        # printed as PASS on every clean clone (review of the F9b merge).
+        print("      SKIP: no recorder sidecars under demo/out/*/view/")
+        return "SKIP"
     checked = 0
     for p in outs:
         d = json.loads(p.read_text(encoding="utf-8"))
@@ -141,11 +144,16 @@ def test_the_real_runs_on_disk_would_now_report_their_true_rate():
 
 
 if __name__ == "__main__":
+    # A test whose inputs are not on this machine returns "SKIP", counted
+    # apart and never as a pass.
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == "SKIP":
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -153,5 +161,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

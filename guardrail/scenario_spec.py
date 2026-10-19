@@ -708,13 +708,25 @@ def pin_entry(entry: Any) -> tuple[str, dict[str, Any] | None]:
     the expected_kpis forms (normalise_expectation: {max: 0.01}, "<=0.01");
     outside it the failure is NEW (review of F8-harness-tools, P3: the bare
     `fails: [P0_escape_rate]` of time-window-opens-on-vehicle, measured at
-    0.0073-0.0076, still printed KNOWN with 0.5 injected)."""
+    0.0073-0.0076, still printed KNOWN with 0.5 injected).
+
+    The bound must say its direction: {max|min|equals: v} or '<=v' / '>=v'
+    / '==v'. A bare value is refused (review of the F8b merge, P4):
+    expected_kpis reads `0.01` as {equals: 0.01}, so `{P0_escape_rate: 0.01}`,
+    which reads as "within 0.01", absorbed only exactly 0.01. Errors name
+    the entry as `known_failures.fails.<gate>`, not as an expected_kpis key."""
     if isinstance(entry, str):
         return entry, None
     if isinstance(entry, dict) and len(entry) == 1:
         (name, bound), = entry.items()
         if isinstance(name, str) and name.strip():
-            return name, normalise_expectation(f"fails.{name}", bound)
+            where = f"known_failures.fails.{name}"
+            if not (isinstance(bound, dict) or (isinstance(bound, str) and
+                    re.match(r"\s*(>=|<=|==|>|<)", bound))):
+                raise ValueError(f"{where}: a pin's bound is {{max|min|equals: v}} or "
+                                 f"'<=v' / '>=v' / '==v', got {bound!r} (a bare value "
+                                 f"would pin exactly that value)")
+            return name, normalise_expectation(name, bound, section="known_failures.fails")
     raise ValueError(f"every entry is a gate name or {{gate name: bound}}, "
                      f"got {entry!r}")
 
@@ -767,7 +779,8 @@ def _check_pin_keys_shape(keys: list[PinEntry], where: str) -> None:
         raise ValueError(f"{where}: {names} names a gate twice")
 
 
-def normalise_expectation(key: str, value: Any) -> dict[str, Any]:
+def normalise_expectation(key: str, value: Any,
+                          section: str = "expected_kpis") -> dict[str, Any]:
     """One expected-KPI entry -> the gate form {max|min|equals: v}.
 
     Accepted, as the grant's example writes them and as the old library did:
@@ -776,29 +789,30 @@ def normalise_expectation(key: str, value: Any) -> dict[str, Any]:
         {max: 0.0} {min: 1} {equals: true}
     Strict inequalities are refused: the gate language is inclusive, and
     silently reading ">0.99" as ">=0.99" would accept the boundary the author
-    meant to exclude.
+    meant to exclude. `section` names where the entry was written in an error
+    (pin_entry passes "known_failures.fails").
     """
     if isinstance(value, dict):
         bad = set(value) - {"max", "min", "equals"}
         if not value or bad:
-            raise ValueError(f"expected_kpis.{key}: use max/min/equals, got {sorted(value)}")
+            raise ValueError(f"{section}.{key}: use max/min/equals, got {sorted(value)}")
         return dict(value)
     if isinstance(value, str):
         m = re.fullmatch(r"\s*(>=|<=|==|>|<)\s*(.+?)\s*", value)
         if m:
             op, rhs = m.groups()
             if op in (">", "<"):
-                raise ValueError(f"expected_kpis.{key}: strict {op!r} is not "
+                raise ValueError(f"{section}.{key}: strict {op!r} is not "
                                  f"expressible; write >= or <=")
             try:
                 num = float(rhs)
             except ValueError:
-                raise ValueError(f"expected_kpis.{key}: {value!r} has no number")
+                raise ValueError(f"{section}.{key}: {value!r} has no number")
             return {">=": {"min": num}, "<=": {"max": num}, "==": {"equals": num}}[op]
         return {"equals": value}
     if isinstance(value, (bool, int, float)):
         return {"equals": value}
-    raise ValueError(f"expected_kpis.{key}: cannot read {value!r} as an expectation")
+    raise ValueError(f"{section}.{key}: cannot read {value!r} as an expectation")
 
 
 class KnownFailureCell(_Strict):
