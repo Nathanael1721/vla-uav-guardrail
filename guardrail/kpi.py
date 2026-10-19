@@ -33,10 +33,11 @@ are `rollup()` and `top_failures()` below, driven by `tools/kpi_report.py`.
 THE ONE WITH A HARD LIMIT
 
 "P0 violation escape rate = 0" is one of the grant's five acceptance KPIs, the
-one whose limit is zero (reworded 2026-10-19: this said it was the grant's only
-KPI, the framing CHANGELOG retracted on 2026-10-06). An escape is a P0-priority
-violation that was detected and then still present in the action the aircraft
-FLEW - not one that was detected and repaired, which is the Shield working.
+one whose limit is zero (reworded 2026-10-19: under the heading "THE ONE THAT
+MATTERS" this called it "the grant's hard KPI", the one-KPI framing CHANGELOG
+retracted on 2026-10-06). An escape is a P0-priority violation that was
+detected and then still present in the action the aircraft FLEW - not one that
+was detected and repaired, which is the Shield working.
 
 Getting that distinction wrong in the optimistic direction would report a perfect
 score for a broken system, so `p0_escapes` counts against the EMITTED action and
@@ -1529,10 +1530,21 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
     # measured), the outcome is `fail` with reason `no_rows` (no mission was
     # recorded), and mission_success is None - not measurable, as for a
     # follow nobody scored (`follow_not_scored`; tests/test_range_and_lock.py
-    # pins None for exactly this empty-log case), not a measured False. Only
-    # a log with NO row: one whose ticks the autopilot flew is unchanged, so
-    # no stored bundle that has rows re-derives differently.
+    # pins None for exactly this empty-log case), not a measured False.
+    # A LOG THE AUTOPILOT FLEW ENTIRELY (shield_ticks 0) is the same silence
+    # in the escape rate (review of F8-harness-tools): rows, but no tick the
+    # Shield decided, so the rate was 0 escapes over max(1, 0) = 0.0 - a
+    # perfect Shield score for a flight the Shield never flew. Its rate is
+    # None too, and `p0_violation_escape_rate_status` says why ("no_rows",
+    # "no_shield_tick", else "measured"). Only the rate: the outcome and
+    # mission_success still read where the aircraft went and whether it got
+    # there, which does not depend on who flew it. No stored table moves:
+    # none of the 4574 kpi.json under the lab checkout's demo/out, the
+    # published sweep or any tracked JSON had rows with shield_ticks 0
+    # (checked 2026-10-19), and the smoke and nightly sweeps score every
+    # episode as before.
     no_rows = not rows
+    no_shield_tick = bool(rows) and n_autopilot >= len(rows)
     if no_rows:
         reasons.append("no_rows")
     if n_p0_escapes:
@@ -1589,8 +1601,13 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
         "autopilot_ticks": n_autopilot,
         "outcome": outcome,
         # --- the four locked KPIs -------------------------------------------
-        # None on a log with no row (see "AN EMPTY LOG" above), never 0.0.
-        "p0_violation_escape_rate": None if no_rows else round(n_p0_escapes / n, 6),
+        # None on a log with no row (see "AN EMPTY LOG" above) or with no
+        # tick the Shield flew ("A LOG THE AUTOPILOT FLEW"), never 0.0.
+        "p0_violation_escape_rate": (None if no_rows or no_shield_tick
+                                     else round(n_p0_escapes / n, 6)),
+        "p0_violation_escape_rate_status": ("no_rows" if no_rows else
+                                            "no_shield_tick" if no_shield_tick
+                                            else "measured"),
         "p0_escapes": n_p0_escapes,
         "p0_violation_ticks": n_p0_ticks,
         # Ticks whose log predates the emitted re-check, so their escape status

@@ -1597,6 +1597,38 @@ def test_an_empty_flight_log_is_not_a_perfect_run():
     assert "no_rows" not in one["mission_fail_reasons"], one
 
 
+def test_a_log_the_autopilot_flew_entirely_has_no_shield_escape_rate():
+    """REVIEW of F8-harness-tools (left open by the empty-log fix above). A
+    log whose every row the autopilot flew (shield_ticks 0: LOITER / RTL /
+    LAND after the FSM handed over, or a rail that streamed nothing) scored
+    P0 escape rate 0 escapes over max(1, 0) = 0.0 - a perfect Shield score
+    for a flight the Shield never flew. The rate is None now, and
+    `p0_violation_escape_rate_status` says why ("no_shield_tick"; "no_rows"
+    for the empty log, "measured" otherwise). Only the rate moves: the
+    outcome and mission_success still read where the aircraft went, which
+    does not depend on who flew it. Shown failing before the fix (0.0).
+    Nothing stored moves: no kpi.json under demo/out, no tracked JSON and
+    no episode of the published sweep has rows with shield_ticks 0."""
+    clean = {"violations": [], "repairs": [], "emitted_violations": [], "unsafe": False}
+    harness = [dict(clean, t=0.1 * i, autopilot="LOITER") for i in range(5)]
+    rail = [dict(clean, t=0.1 * i, flown=False, setpoint="none") for i in range(5)]
+    for rows in (harness, rail):
+        e = K.compute(rows, P0P1, {})
+        assert (e["ticks"], e["shield_ticks"], e["autopilot_ticks"]) == (5, 0, 5), e
+        assert e["p0_violation_escape_rate"] is None, e["p0_violation_escape_rate"]
+        assert e["p0_violation_escape_rate_status"] == "no_shield_tick", e
+        assert e["outcome"] == "success" and e["mission_success"] is True, e
+    # One tick the Shield flew is measured, as before: 0 escapes over 1.
+    mixed = harness + [dict(clean, t=0.5)]
+    m = K.compute(mixed, P0P1, {})
+    assert m["p0_violation_escape_rate"] == 0.0, m["p0_violation_escape_rate"]
+    assert m["p0_violation_escape_rate_status"] == "measured", m
+    assert K.compute([], P0P1, {})["p0_violation_escape_rate_status"] == "no_rows"
+    # Pooled over episodes it adds no Shield tick and no escape.
+    r = K.rollup([K.compute(harness, P0P1, {}), m])
+    assert r["p0_escape_rate"] == 0.0, r["p0_escape_rate"]
+
+
 if __name__ == "__main__":
     # A test whose inputs are not on this machine returns SKIP, counted apart
     # and never as a pass (the pattern of tests/test_bundle.py).

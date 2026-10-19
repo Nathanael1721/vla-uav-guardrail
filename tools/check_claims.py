@@ -527,7 +527,8 @@ def default_targets(root: Path) -> list[Path]:
     packages whose docstrings and printed strings carry the project's claims
     (guardrail, demo, experiments, sitl, tracker). Until then the default run
     read none of them and printed "180/180 files clean" while the KPI
-    module's own docstring still called P0 escape the grant's only KPI and
+    module's own docstring still called P0 escape "the grant's hard KPI"
+    (under the heading "THE ONE THAT MATTERS") and
     demo/parked_cars.py still said det_hz clears its gate (review,
     harness-tools/claim-scan-scope-misses-live-retracted-wording). tests/ is
     out on purpose: it holds the claim examples the scan must catch.

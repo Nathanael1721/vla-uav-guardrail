@@ -63,7 +63,8 @@ WHAT IS OURS (each one says why it is not in the grant's model)
     names the gates it is EXPECTED to fail (`known_failure_fails` beside
     `expect: known_failure`, `fails` in a `known_failures` entry; see
     KnownFailureCell): a failure of any other gate in a pinned cell is a new
-    failure, not part of the old defect.
+    failure, not part of the old defect, and so is a failure of a gate pinned
+    with a bound (`{P0_escape_rate: {max: 0.01}}`) whose value left it.
   * `expect: tracked`: a family that MEASURES how far past its design point
     the Shield degrades (GPS noise beyond the margin, GPS denial, drawn
     gusts). Its gates hold only what must hold whatever the sensor does, so a
@@ -695,6 +696,29 @@ def pin_key(name: str) -> str:
     return GRANT_KPI_ALIASES.get(name, name)
 
 
+# One entry of a pin's `fails` list: a gate name, or {gate name: bound}.
+PinEntry = Union[str, dict[str, Any]]
+
+
+def pin_entry(entry: Any) -> tuple[str, dict[str, Any] | None]:
+    """A `fails` entry -> (the gate name as written, its bound or None).
+
+    A bare name pins its gate's failure at any magnitude. `{name: bound}`
+    pins it only while the measured value stays inside `bound`, written in
+    the expected_kpis forms (normalise_expectation: {max: 0.01}, "<=0.01");
+    outside it the failure is NEW (review of F8-harness-tools, P3: the bare
+    `fails: [P0_escape_rate]` of time-window-opens-on-vehicle, measured at
+    0.0073-0.0076, still printed KNOWN with 0.5 injected)."""
+    if isinstance(entry, str):
+        return entry, None
+    if isinstance(entry, dict) and len(entry) == 1:
+        (name, bound), = entry.items()
+        if isinstance(name, str) and name.strip():
+            return name, normalise_expectation(f"fails.{name}", bound)
+    raise ValueError(f"every entry is a gate name or {{gate name: bound}}, "
+                     f"got {entry!r}")
+
+
 def legacy_pins_read_as_before(body: dict[str, Any]) -> dict[str, Any]:
     """A STORED scenario_spec body (an episode bundle's manifest_extras) with
     any known-failure pin that names no gates read the way it was written:
@@ -724,13 +748,23 @@ def legacy_pins_read_as_before(body: dict[str, Any]) -> dict[str, Any]:
     return b
 
 
-def _check_pin_keys_shape(keys: list[str], where: str) -> None:
+def _check_pin_keys_shape(keys: list[PinEntry], where: str) -> None:
+    names = []
     for k in keys:
-        if not isinstance(k, str) or not k.strip():
+        try:
+            name, bound = pin_entry(k)
+        except ValueError as e:
+            raise ValueError(f"{where}: {e}") from None
+        if not name.strip():
             raise ValueError(f"{where}: every entry is a gate name, got {k!r}")
-    resolved = [pin_key(k) for k in keys]
+        if bound is not None and name in PIN_LABEL_KEYS:
+            # A label check is matched or not; there is no magnitude to bound.
+            raise ValueError(f"{where}: {name!r} is a label key and takes no "
+                             f"bound")
+        names.append(name)
+    resolved = [pin_key(k) for k in names]
     if len(set(resolved)) != len(resolved):
-        raise ValueError(f"{where}: {keys} names a gate twice")
+        raise ValueError(f"{where}: {names} names a gate twice")
 
 
 def normalise_expectation(key: str, value: Any) -> dict[str, Any]:
@@ -801,10 +835,17 @@ class KnownFailureCell(_Strict):
     loosely, everything. Every list in the library was MEASURED, not written
     from the description: the union of the failing gates over every episode
     the pin matches in the nightly profile (2026-10-19, at f93283d).
+
+    A gate entry may carry a bound, `{P0_escape_rate: {max: 0.01}}`
+    (pin_entry): the failure is the pinned one only while the measured value
+    stays inside it, and NEW outside it. A bare name absorbs its gate at any
+    magnitude, which for a safety gate means a pin measured at 2 escapes in
+    270 ticks would also absorb 135 (review of F8-harness-tools, P3). Label
+    keys take no bound.
     """
     params: dict[str, Any] = Field(min_length=1)
     description: str = Field(min_length=1)
-    fails: list[str] = Field(min_length=1)
+    fails: list[PinEntry] = Field(min_length=1)
 
     @model_validator(mode="after")
     def _fails_named_once(self) -> "KnownFailureCell":
@@ -894,7 +935,7 @@ class ScenarioSpec(_Strict):
     expect: Literal["pass", "known_failure", "tracked"] = "pass"
     # The gates `expect: known_failure` is expected to fail (KnownFailureCell,
     # `fails`, says why the list exists); required with it, refused without.
-    known_failure_fails: list[str] = Field(default_factory=list)
+    known_failure_fails: list[PinEntry] = Field(default_factory=list)
     known_failures: list[KnownFailureCell] = Field(default_factory=list)
     shield: bool = True
     stress: Stress = Field(default_factory=Stress)
@@ -961,7 +1002,8 @@ class ScenarioSpec(_Strict):
         pins = [("known_failure_fails", self.known_failure_fails)] + [
             (f"known_failures {pin.params}", pin.fails) for pin in self.known_failures]
         for where, keys in pins:
-            stray = sorted(k for k in keys if pin_key(k) not in allowed)
+            stray = sorted(n for n in (pin_entry(k)[0] for k in keys)
+                           if pin_key(n) not in allowed)
             if stray:
                 raise ValueError(
                     f"{self.scenario_id}: {where} names {stray}, which this "
@@ -1000,14 +1042,42 @@ class ScenarioSpec(_Strict):
         The gate set is the union over the whole-scenario pin and every cell
         pin that matches, keyed as the sweep keys its failures (pin_key): a
         failure outside it is new (KnownFailureCell, `fails`)."""
-        keys: set[str] = set()
+        keys = {k for k, _ in self._matching_pin_entries(cell_params, seed)}
+        return (self.known_failure_for(cell_params, seed), frozenset(keys))
+
+    def known_failure_bounds(self, cell_params: dict[str, Any],
+                             seed: int | None = None
+                             ) -> dict[str, list[dict[str, Any]]]:
+        """pin_key -> the bounds within which the matching pins absorb that
+        gate's failure (pin_entry), for the gates EVERY matching pin naming
+        them bounds. A gate any matching pin names bare is absent: it is
+        absorbed at any magnitude, as before bounds existed. A value inside
+        any one of a gate's bounds is the pinned failure."""
+        bounds: dict[str, list[dict[str, Any]]] = {}
+        bare: set[str] = set()
+        for k, bound in self._matching_pin_entries(cell_params, seed):
+            if bound is None:
+                bare.add(k)
+            else:
+                bounds.setdefault(k, []).append(bound)
+        return {k: v for k, v in bounds.items() if k not in bare}
+
+    def _matching_pin_entries(self, cell_params: dict[str, Any],
+                              seed: int | None
+                              ) -> list[tuple[str, dict[str, Any] | None]]:
+        """(pin_key, bound or None) for every `fails` entry of the
+        whole-scenario pin and of every cell pin that matches."""
+        entries: list[PinEntry] = []
         if self.expect == "known_failure":
-            keys.update(self.known_failure_fails)
+            entries.extend(self.known_failure_fails)
         for pin in self.known_failures:
             if pin.matches(cell_params, seed):
-                keys.update(pin.fails)
-        return (self.known_failure_for(cell_params, seed),
-                frozenset(pin_key(k) for k in keys))
+                entries.extend(pin.fails)
+        out = []
+        for e in entries:
+            name, bound = pin_entry(e)
+            out.append((pin_key(name), bound))
+        return out
 
 
 # --------------------------------------------------------------------------- #

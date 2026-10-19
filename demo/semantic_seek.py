@@ -54,6 +54,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
+from guardrail.compiler import join_negative_xy                     # noqa: E402
 from guardrail.models import (                                      # noqa: E402
     Action4D, AltitudeEnvelope, ObstacleClearance,
 )
@@ -637,8 +638,23 @@ async def fly(args) -> int:
     return 0
 
 
-def main() -> int:
-    args = build_arg_parser().parse_args()
+# The comma-separated options whose first value may be negative: argparse
+# reads a separate "-1,1,1" as an option, so `--target-scale -1,1,1` (and
+# `--target-xy -38,26`, a target south of the origin) exited with status 2
+# (review of F8-harness-tools); parse_cli joins it to its flag
+# (guardrail.compiler.join_negative_xy, as the costmap CLI and the rails do).
+XY_FLAGS = ("--target-xy", "--target-scale")
+
+
+def parse_cli(argv: list[str] | None = None):
+    """build_arg_parser().parse_args, with a negative first value of an
+    XY_FLAGS option taken as that option's value."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    return build_arg_parser().parse_args(join_negative_xy(argv, XY_FLAGS))
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_cli(argv)
     return asyncio.run(fly(args))
 
 

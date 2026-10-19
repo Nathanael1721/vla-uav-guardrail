@@ -12,6 +12,13 @@ Writes:
 
 Run:  python training/ft_report.py --evals baseline ft_e0 ft_e1 [--date 2026-07-17]
 
+The committed report is reproduced, byte for byte, by
+    python training/ft_report.py --evals baseline ft2_yg04 base_deploy \
+        ft2_deploy ft3_deploy --date 2026-07-17
+(tests/test_ft_report.py checks it): a rebuild keeps the existing report's
+dated '>' note under the title when the date line is unchanged, and keeps
+the file's line endings (write_report). `--no-note` drops the note.
+
 EACH ROW SAYS HOW IT FLEW (2026-10-19). Until then the report's header and
 note said every row was "pure VLA", goal assist off (`--goal-blend 0`), and
 the chart's title said "no guidance assist". The July campaign
@@ -23,6 +30,14 @@ assist was never missing from the data - every episode records its
 `params.goal_blend` and `params.yaw_gain` - only from the text, which was
 hard-coded. render_markdown() now reads it per row and never defaults to
 "pure": an eval whose episodes carry no params reads "unknown".
+
+REVIEW OF F8-HARNESS-TOOLS (2026-10-19). Two gaps the first fix left:
+render_markdown() did not write the report's dated correction note, so the
+regeneration the note itself describes dropped it; and the chart hatched
+every row that was not pure VLA - a "mixed" or "unknown" row too - under a
+title that says hatching means "goal assist on". Now only an assisted row is
+hatched (//); mixed (xx) and unknown (..) rows have marks of their own, and
+the title names each mark that is on the chart (bar_hatch).
 """
 from __future__ import annotations
 
@@ -65,18 +80,55 @@ def _fmt(v) -> str:
     return v if isinstance(v, str) else f"{v:g}"
 
 
+# Each way a row can have flown -> its bars' hatch, and what the chart title
+# says the mark means. Only an assisted row is hatched "//": a row whose
+# episodes differ, or that never recorded goal_blend, is not known to have
+# flown with the assist and must not wear its mark.
+HATCH = {"pure VLA": "", "assisted": "//", "mixed": "xx", UNKNOWN: ".."}
+HATCH_MEANING = {"assisted": "hatched bars: goal assist on, goal_blend > 0",
+                 "mixed": "cross-hatched bars: goal_blend differs between episodes",
+                 UNKNOWN: "dotted bars: goal_blend not recorded"}
+
+
+def bar_hatch(e: dict) -> str:
+    """The hatch of an eval's bars (HATCH)."""
+    return HATCH[flown_as(e)]
+
+
 def comparison_title(evals: list[dict]) -> str:
     kinds = {flown_as(e) for e in evals}
     if kinds == {"pure VLA"}:
         how = "every row pure VLA (goal_blend 0)"
     else:
-        how = "hatched bars: goal assist on, goal_blend > 0"
+        how = "; ".join(HATCH_MEANING[k] for k in ("assisted", "mixed", UNKNOWN)
+                        if k in kinds) or "no rows"
     return f"AerialVLA fine-tuning — closed-loop eval ({how})"
 
 
-def render_markdown(evals: list[dict], report_date: str, has_loss: bool) -> str:
-    """The report's text, from the evals alone (no files written)."""
-    md = [f"# AerialVLA Fine-Tuning Report — {report_date}", ""]
+def title_line(report_date: str) -> str:
+    return f"# AerialVLA Fine-Tuning Report — {report_date}"
+
+
+def leading_note(text: str) -> str | None:
+    """The '>' block right under a report's title line and its blank line
+    (the dated correction note), unquoted; None when there is none."""
+    lines = text.replace("\r\n", "\n").split("\n")
+    note = []
+    for ln in lines[2:]:
+        if not ln.startswith(">"):
+            break
+        note.append(ln[2:] if ln.startswith("> ") else ln[1:])
+    return "\n".join(note) if note else None
+
+
+def render_markdown(evals: list[dict], report_date: str, has_loss: bool,
+                    note: str | None = None) -> str:
+    """The report's text, from the evals alone (no files written). `note`,
+    when given, is quoted ('> ') under the title: the dated correction note
+    (leading_note reads it back)."""
+    md = [title_line(report_date), ""]
+    if note:
+        md += [f"> {ln}" if ln else ">" for ln in note.split("\n")] + [""]
     md += ["Base: openvla-7b (4-bit NF4) + AerialVLA LoRA (r=64), fine-tuned with "
            "QLoRA on self-collected AirSimNH expert flights "
            "(front+down mosaic, semantic-direction prompt, 99-bin action text).", ""]
@@ -114,10 +166,11 @@ def render_markdown(evals: list[dict], report_date: str, has_loss: bool) -> str:
 
 
 def plot_comparison(plt, evals: list[dict], path: Path) -> None:
-    """Three bar panels; an assisted row's bar is hatched, and the title says
-    what the hatching means (never "no guidance assist" over assisted bars)."""
+    """Three bar panels; an assisted row's bar is hatched, a mixed or unknown
+    row's carries its own mark (bar_hatch), and the title says what each mark
+    means (never "no guidance assist" over assisted bars)."""
     names = [e["name"] for e in evals]
-    hatch = ["//" if flown_as(e) != "pure VLA" else "" for e in evals]
+    hatch = [bar_hatch(e) for e in evals]
     fig, axes = plt.subplots(1, 3, figsize=(13, 4.2))
     for ax, vals, title, fmt in [
         (axes[0], [e["reached_rate"] * 100 for e in evals], "Target reached (%)", "{:.0f}%"),
@@ -139,6 +192,31 @@ def plot_comparison(plt, evals: list[dict], path: Path) -> None:
     fig.savefig(path, dpi=130)
 
 
+def write_report(out: Path, evals: list[dict], report_date: str, has_loss: bool,
+                 keep_note: bool = True) -> tuple[str | None, str | None]:
+    """Write the report to `out`; (the note carried over, a note left out).
+
+    The existing report's dated '>' note (leading_note) is carried over when
+    its title line is the one being written: the note is about THAT report,
+    and render_markdown() alone does not know it, so until the review of
+    F8-harness-tools a rebuild with the July evals dropped the correction
+    the note records. A note under another date is left out and returned as
+    such. The file's line endings are kept (the committed report is CRLF;
+    Path.write_text would write the platform's)."""
+    old_text, newline = None, None
+    if out.exists():
+        raw = out.read_bytes()
+        newline = "\r\n" if b"\r\n" in raw else "\n"
+        old_text = raw.decode("utf-8").replace("\r\n", "\n")
+    old_note = leading_note(old_text) if old_text is not None else None
+    same_report = (old_text is not None
+                   and old_text.split("\n", 1)[0] == title_line(report_date))
+    note = old_note if keep_note and same_report else None
+    with open(out, "w", encoding="utf-8", newline=newline) as fh:
+        fh.write(render_markdown(evals, report_date, has_loss, note=note))
+    return note, (old_note if old_note and note is None else None)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--evals", nargs="+", required=True,
@@ -146,6 +224,9 @@ def main() -> int:
     ap.add_argument("--date", default=str(date.today()),
                     help="the report's date line (default today); pass the "
                          "campaign's date when rebuilding an older report")
+    ap.add_argument("--no-note", action="store_true",
+                    help="drop the existing report's dated '>' note (kept by "
+                         "default when the date line is unchanged)")
     args = ap.parse_args()
 
     import matplotlib
@@ -184,8 +265,15 @@ def main() -> int:
 
     # ---- markdown ----
     out = ROOT / "docs" / "aerialvla-ft-report.md"
-    out.write_text(render_markdown(evals, args.date, bool(steps)), encoding="utf-8")
+    kept, dropped = write_report(out, evals, args.date, bool(steps),
+                                 keep_note=not args.no_note)
     print(f"[report] {out}")
+    if kept:
+        print("[report] kept the existing report's dated note under the title")
+    if dropped:
+        print("[report] WARNING left out the existing report's dated note "
+              + ("(--no-note)" if args.no_note else
+                 f"(it is about that report's date, not {args.date})"))
     return 0
 
 

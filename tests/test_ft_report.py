@@ -104,6 +104,118 @@ def test_the_committed_report_is_the_generator_s_output_under_its_dated_note():
         assert bad not in body, bad
 
 
+def test_regenerating_the_committed_report_reproduces_it_with_its_note():
+    """REVIEW of F8-harness-tools. render_markdown() did not write the dated
+    correction note, so the rebuild the note describes ("rebuilt from the
+    same eval files by the corrected training/ft_report.py") dropped it:
+    main() overwrote the report with the note gone. Now the note is
+    render_markdown's to write, and write_report() - what main() calls -
+    carries the existing report's note over and keeps its CRLF, so the
+    committed bytes come back exactly. Shown failing before the fix
+    (render_markdown took no note; main wrote without it)."""
+    import shutil
+    import tempfile
+    path = ROOT / "docs" / "aerialvla-ft-report.md"
+    committed = path.read_bytes()
+    text = committed.decode("utf-8").replace("\r\n", "\n")
+    note = F.leading_note(text)
+    assert note and note.startswith("**Corrected 2026-10-19.**"), note
+    assert F.render_markdown(_committed(), "2026-07-17", True, note=note) == text
+    with tempfile.TemporaryDirectory() as td:
+        out = Path(td) / "aerialvla-ft-report.md"
+        shutil.copyfile(path, out)
+        kept, dropped = F.write_report(out, _committed(), "2026-07-17", True)
+        assert kept == note and dropped is None, (kept, dropped)
+        assert out.read_bytes() == committed, "the rebuild is not the committed report"
+        # a rebuild for another date does not carry this report's note
+        kept, dropped = F.write_report(out, _committed(), "2026-11-01", True)
+        assert kept is None and dropped == note, (kept, dropped)
+        assert F.leading_note(out.read_text(encoding="utf-8")) is None
+        assert out.read_bytes().count(b"\r\n") == out.read_bytes().count(b"\n"), \
+            "the report's CRLF line endings were not kept"
+        # ...and neither does --no-note
+        shutil.copyfile(path, out)
+        kept, dropped = F.write_report(out, _committed(), "2026-07-17", True,
+                                       keep_note=False)
+        assert kept is None and dropped == note, (kept, dropped)
+
+
+class _Bar:
+    def __init__(self):
+        self.hatch = None
+
+    def set_hatch(self, h):
+        self.hatch = h
+
+    def get_x(self):
+        return 0.0
+
+    def get_width(self):
+        return 1.0
+
+    def get_height(self):
+        return 1.0
+
+
+class _Axes:
+    def __init__(self):
+        self.bars = []
+
+    def bar(self, names, vals, color=None):
+        self.bars = [_Bar() for _ in names]
+        return self.bars
+
+    def __getattr__(self, name):          # text, set_title, grid
+        return lambda *a, **k: None
+
+
+class _Fig:
+    def __init__(self):
+        self.title = None
+
+    def suptitle(self, t):
+        self.title = t
+
+    def __getattr__(self, name):          # tight_layout, savefig
+        return lambda *a, **k: None
+
+
+class _Plt:
+    """Enough of matplotlib.pyplot for plot_comparison, recording hatches."""
+    def __init__(self):
+        self.fig, self.axes = _Fig(), [_Axes(), _Axes(), _Axes()]
+
+    def subplots(self, *a, **k):
+        return self.fig, self.axes
+
+
+def test_only_an_assisted_bar_is_hatched_and_mixed_or_unknown_are_marked_apart():
+    """REVIEW of F8-harness-tools. plot_comparison hatched every row that was
+    not pure VLA - "mixed" and "unknown" too - under a title saying hatched
+    means "goal assist on": a row nobody knows the assist of was drawn as
+    assisted. Now // is an assisted row only; a mixed row is cross-hatched,
+    an unknown one dotted, and the title names each mark on the chart.
+    Shown failing before the fix (mixed and unknown bars were '//')."""
+    mixed = _eval("mix", 0.0)
+    mixed["results"][0]["params"]["goal_blend"] = 0.55
+    evals = [_eval("pure", 0.0), _eval("helped", 0.55), mixed, _eval("old", None)]
+    plt = _Plt()
+    F.plot_comparison(plt, evals, Path("unused.png"))
+    for ax in plt.axes:
+        assert [b.hatch for b in ax.bars] == ["", "//", "xx", ".."], \
+            [b.hatch for b in ax.bars]
+    title = plt.fig.title
+    for meaning in F.HATCH_MEANING.values():
+        assert meaning in title, (meaning, title)
+    # a mark that is not on the chart is not explained in its title
+    t = F.comparison_title([_eval("pure", 0.0), _eval("old", None)])
+    assert F.HATCH_MEANING[F.UNKNOWN] in t and F.HATCH_MEANING["assisted"] not in t, t
+    # the committed chart (pure and assisted rows) keeps its title
+    assert F.comparison_title(_committed()) == (
+        "AerialVLA fine-tuning — closed-loop eval "
+        "(hatched bars: goal assist on, goal_blend > 0)")
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0
