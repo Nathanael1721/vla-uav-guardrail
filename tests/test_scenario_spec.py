@@ -486,6 +486,24 @@ def test_a_pinned_gate_can_carry_the_bound_it_is_pinned_within():
                         ({"no_such_gate": {"max": 1}}, "does not gate on")):
         raw["known_failures"][0]["fails"] = [bad]
         _refused(lambda: Family(raw), needle)
+    # REVIEW of the F8b merge (P4): a bare bound read as {equals: v}, so
+    # `{P0_escape_rate: 0.01}` absorbed exactly 0.01 and nothing below it, and
+    # a bad bound's error named an expected_kpis key. A bound now says its
+    # direction, and errors name the pin. Shown failing first at a8ae8d5
+    # (the scalar loaded as {equals: 0.01}; the prefix was expected_kpis.).
+    for bare in (0.01, "0.01", True, 0):
+        raw["known_failures"][0]["fails"] = [{"P0_escape_rate": bare}]
+        _refused(lambda: Family(raw), "known_failures.fails.P0_escape_rate",
+                 "a pin's bound is", repr(bare))
+    for bad in ({"lt": 0.01}, ">0.01", "<=x"):
+        raw["known_failures"][0]["fails"] = [{"P0_escape_rate": bad}]
+        msg = _refused(lambda: Family(raw), "known_failures.fails.P0_escape_rate")
+        assert "expected_kpis." not in msg, msg
+    for ok, want in (({"equals": 0.0}, {"equals": 0.0}), (">=0.001", {"min": 0.001}),
+                     ("==0", {"equals": 0.0})):
+        raw["known_failures"][0]["fails"] = [{"P0_escape_rate": ok}]
+        assert Family(raw).cells()[0].spec.known_failure_bounds({"s": 2}) == \
+            {"p0_violation_escape_rate": [want]}, ok
     raw["expected_outcome"] = "success"
     raw["known_failures"][0]["fails"] = [{"outcome": {"equals": "fail"}}]
     _refused(lambda: Family(raw), "label key and takes no bound")

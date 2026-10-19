@@ -98,10 +98,19 @@ def _digests(spec) -> dict:
             for name in sorted(spec["digests"])}
 
 
+SKIP = "SKIP"
+
+
 def test_the_monitor_answers_exactly_as_it_did_before_the_refactor():
     spec = json.loads(FIXTURE.read_text(encoding="utf-8"))
     if _obstacle_map() is None:
-        return                       # clearance rules inert; digests would differ
+        # Clearance rules inert; digests would differ. The map is tracked
+        # (.gitignore re-includes demo/out/citymap/), so this runs on a clean
+        # clone and on CI (2/2 on real 3.10.22 / 3.11.17, 2026-10-19); where
+        # it is missing both tests returned None and printed PASS having
+        # checked nothing (found after the review of the F9b merge).
+        print(f"      SKIP: no CityLife occupancy map at {CITYMAP.relative_to(ROOT)}")
+        return SKIP
     got = _digests(spec)
     want = spec["digests"]
     moved = sorted(k for k in want if got.get(k) != want[k])
@@ -117,7 +126,8 @@ def test_the_fixture_actually_covers_every_rule_type():
     spec = json.loads(FIXTURE.read_text(encoding="utf-8"))
     smap = _obstacle_map()
     if smap is None:
-        return
+        print(f"      SKIP: no CityLife occupancy map at {CITYMAP.relative_to(ROOT)}")
+        return SKIP
     seen = set()
     for name in sorted(spec["digests"]):
         for line in _lines_for(name, smap, 200, spec["seed"]):
@@ -136,10 +146,13 @@ if __name__ == "__main__":
         sys.exit(0)
 
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == SKIP:
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -147,5 +160,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

@@ -268,7 +268,11 @@ def test_street_distance_on_a_tiny_grid():
 def test_street_distance_loads_the_citylife_mask():
     p = ROOT / "demo" / "out" / "citymap_citylife" / "street.npz"
     if not p.is_file():
-        return                                         # map not built here
+        # Map not built here (demo/out/ is gitignored). Counted as a skip
+        # since 2026-10-19; it returned None and printed PASS on every clean
+        # clone (found after the review of the F9b merge).
+        print(f"      SKIP: {p.relative_to(ROOT)} is not built here")
+        return "SKIP"
     sd = StreetDistance.load(p)
     d = np.load(p)
     i, j = np.argwhere(d["street"] > 0)[0]
@@ -331,11 +335,16 @@ def test_a_modifier_is_not_a_head_noun_so_a_delivery_man_is_a_person():
 
 
 if __name__ == "__main__":
+    # A test whose inputs are not on this machine returns "SKIP", counted
+    # apart and never as a pass.
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == "SKIP":
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -343,5 +352,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

@@ -167,13 +167,26 @@ def test_as_of_the_mid_evaluation_reads_the_september_record_from_git():
     """On the real repository: as of 2026-09-14 the repository facts are the
     ones committed that day - the 460/460 test count measured on 14 Sept
     (not 553/553 from 29 Sept), version 0.5.1, and the 16 commits since the
-    2 September meeting - and the CityLife record is the one typed then."""
+    2 September meeting - and the CityLife record is the one typed then.
+
+    Needs the history: tools/build_eval_data.py reads the cut-off commit with
+    `git rev-list -1 --before '2026-09-14 23:59:59' master`. actions/checkout
+    is a depth-1 clone of the pushed ref, with no local master reaching 14
+    Sept, so there the cut-off is None. Both that and a copy with no .git at
+    all SKIP, counted as skips (until the review of the F9b merge the first
+    printed a note and returned None, which the runner counted as a PASS, and
+    the second FAILed `assert rev` on every CI job: measured in a
+    `git clone --depth 1` of a8ae8d5 under Python 3.10.22 and 3.11.17)."""
     if not (ROOT / ".git").exists():
-        print("      (skipped: no git checkout)")
-        return
+        print("      SKIP: no git checkout")
+        return "SKIP"
     with _with_as_of(dt.date(2026, 9, 14)):
         rev = B.cutoff_revision()
-        assert rev and rev.startswith("2457987"), rev
+        if rev is None:
+            print("      SKIP: no local master reaching 2026-09-14 "
+                  "(actions/checkout is a depth-1 clone)")
+            return "SKIP"
+        assert rev.startswith("2457987"), rev
         g = B.repo(run_tests=False, previous=ROOT / "docs/data/eval_sep2026.json")
         old = B.eval_at_cutoff()
     tf = g["tests_fast"]
@@ -184,6 +197,29 @@ def test_as_of_the_mid_evaluation_reads_the_september_record_from_git():
     assert all(c["date"] <= "2026-09-14" for c in g["commits_since_meeting"])
     cl = old["unflown"]["citylife_level"]
     assert (cl["pedestrians"], cl["cars"]) == (16, 8), cl
+
+
+def test_without_the_september_history_the_git_check_skips_rather_than_fails():
+    """The CI case of the test above, made on any checkout: with no master
+    reaching the cut-off (B.cutoff_revision() None, as in actions/checkout's
+    depth-1 clone) it returns the SKIP sentinel. Shown failing first: on
+    a8ae8d5 it raised AssertionError (`assert rev and ...` with rev None).
+    A revision that is not 14 Sept's still fails."""
+    saved = B.cutoff_revision
+    try:
+        B.cutoff_revision = lambda: None
+        got = test_as_of_the_mid_evaluation_reads_the_september_record_from_git()
+        assert got == "SKIP", f"returned {got!r}, not the SKIP sentinel"
+        B.cutoff_revision = lambda: "0123456789abcdef"
+        try:
+            test_as_of_the_mid_evaluation_reads_the_september_record_from_git()
+        except AssertionError:
+            pass
+        else:
+            if (ROOT / ".git").exists():
+                raise AssertionError("a cut-off commit that is not 2457987 was accepted")
+    finally:
+        B.cutoff_revision = saved
 
 
 def test_the_committed_file_is_the_september_view():

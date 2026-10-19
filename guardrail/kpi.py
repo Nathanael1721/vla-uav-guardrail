@@ -1538,11 +1538,16 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
     # None too, and `p0_violation_escape_rate_status` says why ("no_rows",
     # "no_shield_tick", else "measured"). Only the rate: the outcome and
     # mission_success still read where the aircraft went and whether it got
-    # there, which does not depend on who flew it. No stored table moves:
-    # none of the 4574 kpi.json under the lab checkout's demo/out, the
-    # published sweep or any tracked JSON had rows with shield_ticks 0
-    # (checked 2026-10-19), and the smoke and nightly sweeps score every
-    # episode as before.
+    # there, which does not depend on who flew it. No stored table moves,
+    # by the logs, not by the tables (2026-10-19, after the review of the
+    # F8b merge): only 7 of the 4574 kpi.json under the lab checkout's
+    # demo/out, and 176 tracked KPI tables, carry shield_ticks at all (none
+    # 0), so the tables cannot answer; re-derived with _not_flown_by_shield,
+    # none of the 1835 flight logs or 55 replay bundles under demo/out, nor
+    # the 4 tracked bundles/*.replay.tar.gz, has every row flown by the
+    # autopilot. The smoke (62 episodes) and nightly (732) sweeps score
+    # every episode as at 2b3ad56: every KPI field and verdict equal, this
+    # status field added.
     no_rows = not rows
     no_shield_tick = bool(rows) and n_autopilot >= len(rows)
     if no_rows:

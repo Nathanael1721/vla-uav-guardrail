@@ -12,8 +12,8 @@ crossing, and a figure never starts across on don't-walk or with a car under
 4 s away, never stands still on the zebra, and does cross once it is clear.
 
 The street mask (demo/out/citymap_citylife/street.npz) is gitignored. Every
-test here holds with or without it; the mask-only check does nothing when the
-file is absent.
+test here holds with or without it; the mask-only check SKIPs (counted, not
+passed) when the file is absent.
 
 Frames: UE centimetres, X = north, Y = east (tools/citylife_routes.py).
 """
@@ -152,8 +152,10 @@ def test_every_node_is_in_the_area_and_on_a_pavement():
 def test_every_node_is_on_a_street_cell_of_the_mask():
     mask = P.load_mask()
     if mask is None:
-        print("      (street mask not built here: nothing to check)")
-        return
+        # Counted as a skip since the review of the F9b merge; it returned
+        # None, and the runner, which had no SKIP count, printed PASS.
+        print("      SKIP: street mask not built here (demo/out/citymap_citylife/street.npz)")
+        return "SKIP"
     g = _graph()
     assert g.report["mask"] is True
     off = [p for p in g.pos if not P.on_street(mask, p[0], p[1])]
@@ -505,11 +507,16 @@ def test_a_short_simulated_run_is_clean_and_the_blind_one_is_not():
 
 
 if __name__ == "__main__":
+    # A test whose inputs are not on this machine returns "SKIP", counted
+    # apart and never as a pass.
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == "SKIP":
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -517,5 +524,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

@@ -243,7 +243,13 @@ def _fuzz_legal_starts(shield, n=3000, seed=20260811, span=60.0):
 def test_p0_escape_is_zero_from_legal_states_with_clearance_live():
     """The KPI, with obstacle_clearance active: start legal, never escape."""
     if not CITYMAP.exists():
-        return                      # map is a build artefact, not committed
+        # The map is a build artefact, tracked since 7f83fb7 (.gitignore
+        # re-includes demo/out/citymap/), so this runs on a clean clone and
+        # on CI. Where it is missing this returned None and the runner, which
+        # did not count SKIP, printed PASS (found 2026-10-19, after the
+        # review of the F9b merge).
+        print(f"      SKIP: no CityLife occupancy map at {CITYMAP.relative_to(ROOT)}")
+        return SKIP
     s = _shield(ROOT / "policies" / "urban_clearance.yaml", with_map=True)
     escapes, kept = _fuzz_legal_starts(s)
     assert kept >= 1000, f"only {kept} legal states sampled -- too few to claim anything"
@@ -355,7 +361,8 @@ def test_every_constraint_type_in_the_demo_policy_can_actually_fire():
 def test_obstacle_clearance_fires_once_it_has_a_map():
     """The one rule inert by design without a map — prove it wakes up with one."""
     if not CITYMAP.exists():
-        return
+        print(f"      SKIP: no CityLife occupancy map at {CITYMAP.relative_to(ROOT)}")
+        return SKIP
     import city_planner
     cm = city_planner.load_occ(str(CITYMAP))
     s = _shield(ROOT / "policies" / "urban_clearance.yaml", with_map=True)
@@ -514,11 +521,17 @@ def test_follow_policies_hold_the_altitude_band_they_advertise():
 # --------------------------------------------------------------------- runner
 
 if __name__ == "__main__":
+    # SKIP is counted apart, never as a pass: test_F1_the_recorded_flights_
+    # say_the_cap_fires returned it and this runner printed PASS for it until
+    # 2026-10-19 (found after the review of the F9b merge).
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
-    failed = 0
+    failed = skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == SKIP:
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -526,5 +539,6 @@ if __name__ == "__main__":
         except Exception as e:                      # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

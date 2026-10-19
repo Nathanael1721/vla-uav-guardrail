@@ -2235,7 +2235,25 @@ def score(spec: ScenarioSpec, rows: list[dict], extra: dict, policy,
     if label:
         res["mission_outcome"] = label
     else:
-        fail = ((res.get("p0_escapes") or 0) > 0 or extra.get("breaches", 0) > 0
+        breaches = extra.get("breaches")
+        if breaches is None:
+            # Not measured: rail_measurements leaves it out for a policy
+            # whose rules switch with the clock (_timed) or a log without
+            # `unsafe`. It was read as 0, so since e911e52 a rail flight
+            # under a _timed policy with `unsafe` on for 5 rows mid-flight
+            # scored `success`, where it had scored `fail` before (review of
+            # the F8b merge, P1). A missing count is not 0: compute()'s own
+            # reading of the logged `unsafe` flags decides - a stretch
+            # entered after the first row, or one still open at the end -
+            # which may count a window that opened under the aircraft, the
+            # conservative side. (A log with no `unsafe` at all, an older
+            # rail's, gives compute() nothing to read either; its breaches
+            # gate reads "not measured" and fails the verdict.)
+            entered = any(r in ("unsafe_position_entered", "unsafe_never_recovered")
+                          for r in res.get("mission_fail_reasons") or [])
+        else:
+            entered = breaches > 0
+        fail = ((res.get("p0_escapes") or 0) > 0 or entered
                 or extra.get("reached_goal") is False)
         res["mission_outcome"] = "fail" if fail else "success"
     res["outcome_matches_label"] = (None if spec.expected_outcome is None

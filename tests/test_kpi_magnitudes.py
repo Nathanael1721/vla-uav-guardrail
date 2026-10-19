@@ -1607,8 +1607,12 @@ def test_a_log_the_autopilot_flew_entirely_has_no_shield_escape_rate():
     for the empty log, "measured" otherwise). Only the rate moves: the
     outcome and mission_success still read where the aircraft went, which
     does not depend on who flew it. Shown failing before the fix (0.0).
-    Nothing stored moves: no kpi.json under demo/out, no tracked JSON and
-    no episode of the published sweep has rows with shield_ticks 0."""
+    Nothing stored moves, by the logs (the tables mostly predate the field:
+    7 of the 4574 kpi.json under the lab's demo/out and 176 tracked KPI
+    tables carry shield_ticks, none 0): none of the 1835 flight logs or 55
+    replay bundles under demo/out, nor the 4 tracked bundles, has every row
+    flown by the autopilot (2026-10-19), and the smoke and nightly sweeps
+    score every episode as at 2b3ad56."""
     clean = {"violations": [], "repairs": [], "emitted_violations": [], "unsafe": False}
     harness = [dict(clean, t=0.1 * i, autopilot="LOITER") for i in range(5)]
     rail = [dict(clean, t=0.1 * i, flown=False, setpoint="none") for i in range(5)]
