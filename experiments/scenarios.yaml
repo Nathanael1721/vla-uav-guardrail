@@ -91,7 +91,10 @@
 # breaks the requirement it is pinned under `known_failures` with the
 # mechanism, measured, and the gates it fails (`fails`, measured over every
 # episode the pin matches in the nightly profile); any other cell that fails,
-# and any other gate that fails in a pinned cell, is a new failure.
+# and any other gate that fails in a pinned cell, is a new failure. A gate may
+# be pinned with a bound, `fails: [{P0_escape_rate: {max: 0.01}}]`: its failure
+# is the old defect only while the value stays inside the bound, and new past
+# it (a bare name absorbs the gate at any magnitude).
 
 # THE FORECAST (2026-10-12)
 #

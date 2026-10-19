@@ -2047,9 +2047,14 @@ def rail_measurements(rows: list[dict], policy) -> dict:
     rail-mission-stub-vla, the one scenario the rail may fly, FAILED however
     the flight went (review, harness-tools/sitl-backend-cannot-pass).
 
-    Same definitions as run_episode, on the rail's guarantee: sitl_refusal
-    refuses events, clocks, relabels and stressors, so no rule changes under
-    the aircraft and no transition after the first row is imposed.
+    Same definitions as run_episode, on what sitl_refusal guarantees: it
+    refuses events, a scenario clock, relabels and stressors, so no event
+    adds, moves or swaps a rule under the aircraft. It does not refuse a
+    policy whose own rules switch with the wall clock (a weekly window, a
+    time_window_switch, a corridor_swap: _timed), so for such a policy
+    nothing below is measured - a window that switched on under the aircraft
+    would read as a breach or entry the flight made. For any other policy no
+    transition after the first row is imposed.
       breaches        `unsafe` false -> true on a row after the first;
       polygon fields  the row's position against the policy's zones in force
                       at its altitude (Shield.zones_now), entries counted on
@@ -2061,9 +2066,15 @@ def rail_measurements(rows: list[dict], policy) -> dict:
     A field the log cannot answer is left out, so its gate reads "not
     measured": `unsafe` absent (an older rail), or a policy whose rules
     switch with the clock (_timed) - which zone was in force at a row's wall
-    time is not in the log, and a fresh Shield would judge it at today's."""
+    time is not in the log, and a fresh Shield would judge it at today's.
+    Until the review of F8-harness-tools (P4) only the polygon fields were
+    held back for a _timed policy; breaches were still counted from the
+    rail's `unsafe`, which the rail's Shield judged at wall time, so a
+    recurrence window opening under the aircraft was scored as the flight's
+    own breach."""
     out: dict[str, Any] = {}
-    if rows and all("unsafe" in r for r in rows):
+    timed = _timed(policy)
+    if rows and not timed and all("unsafe" in r for r in rows):
         b = ab = 0
         prev_unsafe, prev_owner = False, "shield"
         for i, r in enumerate(rows):
@@ -2077,7 +2088,7 @@ def rail_measurements(rows: list[dict], policy) -> dict:
                     b += 1
             prev_unsafe, prev_owner = unsafe, owner
         out.update(breaches=b, autopilot_breaches=ab)
-    if rows and not _timed(policy):
+    if rows and not timed:
         zones_of = Shield(policy).zones_now
         fence_seen = False
         min_d = math.inf
@@ -2259,6 +2270,12 @@ def label_failures_keyed(spec: ScenarioSpec, res: dict) -> list[tuple[str, str]]
 NEW_IN_PINNED_CELL = "NEW (not pinned): "
 
 
+def _bound_text(bound: dict) -> str:
+    """{max: 0.01} -> "max 0.01", as check_gates words a bound."""
+    return ", ".join(f"{op} {bound[op]}" for op in ("min", "max", "equals")
+                     if op in bound)
+
+
 VERDICTS = ("pass", "tracked", "fail", "known_failure", "unexpected_pass")
 FIXED_MESSAGE = ("marked known_failure but every gate passed - "
                  "the defect is fixed; remove the marker")
@@ -2282,7 +2299,9 @@ def episode_verdict(spec: ScenarioSpec, res: dict, params: dict, seed: int
 
     A pinned cell (expect: known_failure, or a matching known_failures entry)
     is a known failure only while every failing gate is one its pins name
-    (KnownFailureCell, `fails`). A failure of any other gate makes it `fail`,
+    (KnownFailureCell, `fails`), and, where a pin bounds that gate
+    (`{P0_escape_rate: {max: 0.01}}`), only while the value stays inside the
+    bound. A failure of any other gate, or one past its bound, makes it `fail`,
     and that message is prefixed NEW_IN_PINNED_CELL: until 2026-10-19 any
     failure in a pinned cell was absorbed, so a P0 escape, a breach or an
     unsafe end in a cell pinned for its labels exited 0 (review,
@@ -2302,8 +2321,21 @@ def episode_verdict(spec: ScenarioSpec, res: dict, params: dict, seed: int
         keyed = keyed + labels_bad
     known_why, pinned = spec.known_failure_pins(params, seed)
     if known_why is not None:
-        new = [NEW_IN_PINNED_CELL + msg for k, msg in keyed if k not in pinned]
-        bad = new + [msg for k, msg in keyed if k in pinned]
+        # A gate pinned with a bound (scenario_spec.pin_entry) is the pinned
+        # failure only while its value is inside one of the bounds; until the
+        # review of F8-harness-tools (P3) a pinned P0_escape_rate measured at
+        # 0.0076 stayed KNOWN at 0.5.
+        bounds = spec.known_failure_bounds(params, seed)
+        new, old = [], []
+        for k, msg in keyed:
+            if k not in pinned:
+                new.append(NEW_IN_PINNED_CELL + msg)
+            elif k in bounds and all(check_gates({k: b}, res) for b in bounds[k]):
+                new.append(NEW_IN_PINNED_CELL + msg + " (pinned only within "
+                           + " or ".join(_bound_text(b) for b in bounds[k]) + ")")
+            else:
+                old.append(msg)
+        bad = new + old
     else:
         new = []
         bad = [msg for _, msg in keyed]
@@ -3399,8 +3431,12 @@ def main(argv: list[str] | None = None) -> int:
         print("Known failures are open defects, not passes. See the scenario's "
               "`description` for what is broken.")
     if rollup_note:
+        # Worded from the write itself (report_md is set only where
+        # kpi_report.md was written): keyed on `cells` alone, a --no-bundles
+        # run whose top_failures crashed named a report it never wrote
+        # (review of F8-harness-tools, P6).
         print(f"\nKPI ROLLUP FAILED: {rollup_note}. "
-              + ("No KPI report was written" if not cells else
+              + ("No KPI report was written" if report_md is None else
                  "The KPI report carries the failure at its top")
               + (", and the published sweep was NOT replaced" if args.publish else "")
               + " (exit 4).", file=sys.stderr)

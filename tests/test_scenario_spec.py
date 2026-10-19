@@ -454,6 +454,54 @@ def test_a_known_failure_pin_names_the_gates_it_fails_and_only_real_ones():
     assert len(pinned) >= 8, [f.scenario_id for f in pinned]
 
 
+def test_a_pinned_gate_can_carry_the_bound_it_is_pinned_within():
+    """REVIEW of F8-harness-tools (P3). A bare `fails: [P0_escape_rate]`
+    absorbs that gate's failure at any magnitude. An entry may now be
+    `{gate: bound}` in the expected_kpis forms; known_failure_bounds() hands
+    the sweep the bounds, and a gate any matching pin names bare stays
+    unbounded. A label takes no bound, and a malformed entry is refused at
+    load. The library's time-window-opens-on-vehicle pins use it."""
+    raw = _minimal(parameter_sweep={"s": [2, 4]},
+                   known_failures=[{"params": {"s": 2}, "description": "x",
+                                    "fails": [{"P0_escape_rate": {"max": 0.01}}]}])
+    raw["mission"]["pilot"] = {"type": "goto", "speed": "$s"}
+    spec = Family(raw).cells()[0].spec
+    assert spec.known_failure_pins({"s": 2}, 1001) == ("x", frozenset({"p0_violation_escape_rate"}))
+    assert spec.known_failure_bounds({"s": 2}, 1001) == {"p0_violation_escape_rate": [{"max": 0.01}]}
+    assert spec.known_failure_bounds({"s": 4}, 1001) == {}
+    # the shorthand forms of expected_kpis read the same
+    raw["known_failures"][0]["fails"] = [{"P0_escape_rate": "<=0.01"}]
+    assert Family(raw).cells()[0].spec.known_failure_bounds({"s": 2}) == \
+        {"p0_violation_escape_rate": [{"max": 0.01}]}
+    # a second matching pin that names the gate bare leaves it unbounded
+    raw["known_failures"].append({"params": {"s": 2}, "description": "y",
+                                  "fails": ["P0_escape_rate"]})
+    spec = Family(raw).cells()[0].spec
+    assert spec.known_failure_bounds({"s": 2}) == {}, "a bare pin was bounded"
+    del raw["known_failures"][1]
+    for bad, needle in (({"P0_escape_rate": {"lt": 0.01}}, "max/min/equals"),
+                        ({"P0_escape_rate": {"max": 0.01}, "breaches": 0}, "gate name"),
+                        ({"P0_escape_rate": ">0.01"}, "strict"),
+                        (3, "fails"),
+                        ({"no_such_gate": {"max": 1}}, "does not gate on")):
+        raw["known_failures"][0]["fails"] = [bad]
+        _refused(lambda: Family(raw), needle)
+    raw["expected_outcome"] = "success"
+    raw["known_failures"][0]["fails"] = [{"outcome": {"equals": "fail"}}]
+    _refused(lambda: Family(raw), "label key and takes no bound")
+    # the whole-scenario marker takes the same entries
+    whole = _minimal(expect="known_failure",
+                     known_failure_fails=[{"P0_escape_rate": {"max": 0.02}}])
+    s = ScenarioSpec.model_validate(whole)
+    assert s.known_failure_bounds({}) == {"p0_violation_escape_rate": [{"max": 0.02}]}
+    # the library: the three clock cells of time-window-opens-on-vehicle
+    from guardrail.scenario_spec import Library
+    fam = Library(ROOT / "experiments" / "scenarios.yaml").by_id()["time-window-opens-on-vehicle"]
+    for c in fam.cells():
+        assert c.spec.known_failure_bounds(c.params, 1001) == \
+            {"p0_violation_escape_rate": [{"max": 0.01}]}, c.params
+
+
 # --------------------------------------------------------------------------- #
 # expansion, seeds, profiles
 # --------------------------------------------------------------------------- #

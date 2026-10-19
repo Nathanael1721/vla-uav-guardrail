@@ -36,7 +36,9 @@ report, one row per template and cell. A test that cannot run on this host
 returns SKIP and is counted apart, never as a pass.
 """
 import ast
+import contextlib
 import copy
+import io
 import json
 import os
 import shutil
@@ -385,6 +387,37 @@ def test_the_rail_mission_scored_from_the_rail_log_gets_the_headless_verdict():
     assert "breaches" not in extra
     # a Shield-on flight with no FSM record: the label is "not measured"
     assert "fsm" not in S.sitl_extra(spec, rows, {"reached": True}, run.policy)
+
+
+def test_a_rail_log_under_a_clock_switched_policy_measures_no_breach():
+    """REVIEW of F8-harness-tools (P4). rail_measurements left the polygon
+    fields out for a policy whose rules switch with the clock (_timed: which
+    zone was in force at a row's wall time is not in the log) but still
+    counted breaches from the rail's `unsafe`, which the rail's own Shield
+    judged at wall time - so a weekly window opening under the aircraft was
+    scored as a breach the flight made. sitl_refusal refuses a scenario
+    clock, not a timed policy, so nothing kept such a flight out. Breaches
+    are now left out for it too ("not measured", never 0). Shown failing
+    before the fix (breaches 1 under the timed policy)."""
+    spec = BY_ID["rail-mission-stub-vla"]
+    run = S.run_episode(spec, DEFAULTS, 0)
+    rows = _as_rail_rows(run.rows)
+    timed = load_policy(ROOT / "policies" / "corridor_survey.yaml")
+    assert S._timed(timed) and not S._timed(run.policy)
+    # `unsafe` turns on mid-flight after a tick the rail flew, and stays on:
+    # what a curfew window coming into force under the aircraft looks like.
+    k = len(rows) // 2
+    switched = (rows[:k - 1] + [dict(rows[k - 1], flown=True, setpoint="pass")]
+                + [dict(r, unsafe=True) for r in rows[k:]])
+    # the null: under a policy that cannot switch it is the flight's breach
+    assert S.rail_measurements(switched, run.policy)["breaches"] == 1
+    metrics = {"reached": run.extra["reached_goal"], "fsm": run.extra["fsm"]}
+    extra = S.sitl_extra(spec, switched, metrics, timed)
+    for f in ("breaches", "autopilot_breaches", "polygon_entries",
+              "autopilot_polygon_entries", "ticks_inside_fence_polygon",
+              "min_true_dist_to_fence_m"):
+        assert f not in extra, (f, extra.get(f))
+    assert S.check_gates({"breaches": {"max": 0}}, extra) == ["breaches: not measured"]
 
 
 def test_run_sitl_reads_this_launchs_log_and_metrics_and_scores_them():
@@ -1313,6 +1346,61 @@ def test_a_new_failure_in_a_pinned_cell_turns_the_sweep_red():
     assert r["gates_failed"][0].startswith(S.NEW_IN_PINNED_CELL), r["gates_failed"]
 
 
+TW_ON_VEHICLE_CLOCKS = ("2026-09-07T07:29:58", "2026-09-07T07:29:58.5",
+                        "2026-09-07T07:29:59")
+
+
+def test_a_bounded_pin_absorbs_its_measured_magnitude_and_no_more():
+    """REVIEW of F8-harness-tools (P3). A pin naming a safety gate absorbed
+    it at ANY magnitude: time-window-opens-on-vehicle is pinned for its P0
+    escape rate (2 escapes over 262-272 Shield ticks, 0.0074-0.0076), and
+    0.5 injected into those cells still printed KNOWN and exited 0 - every
+    other pinned P0, breach and ended_safe gate of the nightly profile
+    turned its episode red under the same injection. The pins now carry
+    their bound, `fails: [{P0_escape_rate: {max: 0.01}}]`: the measured rate
+    is KNOWN, 0.5 is a NEW failure, and so is a third escape or a rate that
+    was not measured. Shown failing before the fix (0.5 was known_failure).
+    The measured magnitude is pinned here too, as standoff-wedge's
+    min_range is: the bound was set from it."""
+    for clock in TW_ON_VEHICLE_CLOCKS:
+        spec, res, cell = _scored_cell("time-window-opens-on-vehicle", clock=clock)
+        rate = res["p0_violation_escape_rate"]
+        assert res["p0_escapes"] == 2 and 0.007 <= rate <= 0.008, (clock, rate, res["p0_escapes"])
+        assert S.episode_verdict(spec, res, cell, 1001)[0] == "known_failure", clock
+        status, bad, _, why = S.episode_verdict(
+            spec, dict(res, p0_violation_escape_rate=0.5), cell, 1001)
+        assert status == "fail" and why, (clock, status, bad)
+        assert bad == [S.NEW_IN_PINNED_CELL + "p0_violation_escape_rate=0.5 != 0 "
+                       "(pinned only within max 0.01)"], bad
+        third = round(3 / res["shield_ticks"], 6)
+        for worse in (third, None):
+            got = S.episode_verdict(spec, dict(res, p0_violation_escape_rate=worse), cell, 1001)
+            assert got[0] == "fail" and got[1][0].startswith(S.NEW_IN_PINNED_CELL), (worse, got)
+        # inside the bound but past the gate is still the pinned defect
+        assert S.episode_verdict(spec, dict(res, p0_violation_escape_rate=0.01),
+                                 cell, 1001)[0] == "known_failure"
+    # End to end: the smoke profile's cell exits 0 as flown, 1 with 0.5 in it.
+    fam = _raw("time-window-opens-on-vehicle",
+               parameter_sweep={"clock": [TW_ON_VEHICLE_CLOCKS[0]]})
+    rc, doc = _sweep_lib([fam], "--seed", "1001")
+    assert rc == 0 and doc["_counts"]["known_failure"] == 1, (rc, doc["_counts"])
+    real = S.score
+
+    def escaping(spec, *a, **k):
+        res = real(spec, *a, **k)
+        if spec.scenario_id == "time-window-opens-on-vehicle":
+            res["p0_violation_escape_rate"] = 0.5
+        return res
+    S.score = escaping
+    try:
+        rc, doc = _sweep_lib([fam], "--seed", "1001")
+    finally:
+        S.score = real
+    r = doc["results"][0]
+    assert rc == 1 and r["status"] == "fail", (rc, r["status"], r["gates_failed"])
+    assert doc["_counts"]["known_failure"] == 0, doc["_counts"]
+
+
 def test_a_tracked_episode_is_never_counted_as_a_pass():
     """gps-dropout on the head-on lane passes its gates (the Shield's own log
     is clean) while the aircraft flies 7 m into the zone. It must be reported
@@ -1785,9 +1873,11 @@ def test_the_run_writes_the_grants_kpi_report_one_row_per_template_and_cell():
     assert "Top-10 failure cases" in md
 
 
-def _sweep_with_broken(attr, fail_on_call):
+def _sweep_with_broken(attr, fail_on_call, extra=(), err=None):
     """main() on the KPI-report library above with guardrail.kpi.<attr>
-    raising on its Nth call; (rc, doc, kpi_report.md text or None)."""
+    raising on its Nth call; (rc, doc, kpi_report.md text or None). `extra`
+    is added to the command line; a list given as `err` receives what the
+    run printed to stderr."""
     fams = [_raw("altitude-recovery-depth", parameter_sweep={"start_up": [6.0, 20.5]}),
             _raw("nfz-head-on-control")]
     real = getattr(S.K, attr)
@@ -1805,7 +1895,14 @@ def _sweep_with_broken(attr, fail_on_call):
             lib.write_text(yaml.safe_dump({"defaults": RAW["defaults"], "scenarios": fams}),
                            encoding="utf-8")
             out, runs = Path(td) / "s.json", Path(td) / "runs"
-            rc = _sweep(["--library", str(lib), "--out", str(out), "--runs", str(runs)])
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = _sweep(["--library", str(lib), "--out", str(out), "--runs",
+                             str(runs), *extra])
+            if err is not None:
+                err.append(stderr.getvalue())
+            else:
+                sys.stderr.write(stderr.getvalue())
             md = ((runs / "kpi_report.md").read_text(encoding="utf-8")
                   if (runs / "kpi_report.md").is_file() else None)
             doc = json.loads(out.read_text(encoding="utf-8"))
@@ -1835,6 +1932,25 @@ def test_a_top_failures_crash_is_flagged_never_shown_as_no_failure():
     assert md is not None and "INCOMPLETE" in md, md
     assert "(no failing episode)" not in md and "top failures not computed" in md
     assert doc["_cell_rollup"], "the cell rollup itself succeeded and is kept"
+
+
+def test_the_rollup_failure_message_names_a_report_only_when_one_was_written():
+    """REVIEW of F8-harness-tools (P6). The KPI ROLLUP FAILED line chose its
+    wording on `cells` alone and said "The KPI report carries the failure at
+    its top" - but kpi_report.md is written only with cells AND bundles, so
+    a --no-bundles run whose top_failures crashed named a report that was
+    never written. Shown failing before the fix."""
+    err = []
+    rc, _, md = _sweep_with_broken("top_failures", 1, extra=["--no-bundles"], err=err)
+    assert rc == 4 and md is None, (rc, md)
+    line = next(ln for ln in err[0].splitlines() if "KPI ROLLUP FAILED" in ln)
+    assert "No KPI report was written" in line and "carries the failure" not in line, line
+    # the null: with bundles the report is written and the line names it
+    err = []
+    rc, _, md = _sweep_with_broken("top_failures", 1, err=err)
+    assert rc == 4 and md is not None
+    line = next(ln for ln in err[0].splitlines() if "KPI ROLLUP FAILED" in ln)
+    assert "The KPI report carries the failure at its top" in line, line
 
 
 # --------------------------------------------------------------------------- #

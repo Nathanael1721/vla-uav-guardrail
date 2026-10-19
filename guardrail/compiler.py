@@ -2752,14 +2752,18 @@ _XY_FLAGS = ("--subject",)
 _NEGATIVE_XY = re.compile(r"^-\.?\d")
 
 
-def _join_negative_xy(argv: list[str], flags=_XY_FLAGS) -> list[str]:
+def join_negative_xy(argv: list[str], flags=_XY_FLAGS) -> list[str]:
     """`["--subject", "-20,15"]` -> `["--subject=-20,15"]` (review of
     2026-10-19). argparse takes a separate value that starts with '-' only
     when it reads as a negative NUMBER, and "-20,15" does not (the comma), so
     `costmap --subject -20,15` - a subject west of the origin - exited with
     status 2 ("expected one argument"). The same fix as the rails'
     (sitl/mavlink_adapter_node.join_negative_xy, which this package does not
-    import); safe because no option here starts with '-' and a digit."""
+    import); safe because no option here starts with '-' and a digit.
+    Public since the review of F8-harness-tools: demo/follow_vlm.py
+    (`--park-at`) and demo/semantic_seek.py (`--target-xy`, `--target-scale`)
+    pass their argv through it with their own `flags`, which must likewise
+    hold no option that starts with '-' and a digit."""
     out: list[str] = []
     i = 0
     while i < len(argv):
@@ -2771,6 +2775,9 @@ def _join_negative_xy(argv: list[str], flags=_XY_FLAGS) -> list[str]:
         out.append(a)
         i += 1
     return out
+
+
+_join_negative_xy = join_negative_xy      # the name tests/test_csp.py calls
 
 
 def _main(argv: list[str] | None = None) -> int:

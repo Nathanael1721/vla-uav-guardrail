@@ -67,6 +67,7 @@ sys.path.insert(0, str(ROOT / "demo"))
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
 from guardrail import kpi as kpi_mod                                # noqa: E402
 from guardrail.bundle import load_for_flight                        # noqa: E402
+from guardrail.compiler import join_negative_xy                     # noqa: E402
 from guardrail.manifest import (                                    # noqa: E402
     NO_VLA, build_manifest, is_kpi_grade, model_hash, pilot_record,
 )
@@ -6470,7 +6471,21 @@ def _fine_timer_end(winmm) -> None:
             pass
 
 
-def main() -> int:
+# The X,Y options whose first value may be negative: argparse reads a
+# separate "-20,15" as an option, so `--park-at -20,15` exited with status 2
+# (review of F8-harness-tools); parse_cli joins it to its flag
+# (guardrail.compiler.join_negative_xy, as the costmap CLI and the rails do).
+XY_FLAGS = ("--park-at",)
+
+
+def parse_cli(ap: argparse.ArgumentParser, argv: list[str] | None = None):
+    """ap.parse_args, with a negative first value of an XY_FLAGS option taken
+    as that option's value."""
+    argv = list(sys.argv[1:] if argv is None else argv)
+    return ap.parse_args(join_negative_xy(argv, XY_FLAGS))
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser()
     ap.add_argument("--object", default="a white car",
                     help="what to follow, in words. This is the only thing that "
@@ -6912,7 +6927,12 @@ def main() -> int:
                          "speed reaches the car's ring from following "
                          "distance - replayed on citylife_redcar_nfz_20261013 "
                          "it held 44%% of ticks, median 3.7 m/s cut.")
-    args = ap.parse_args()
+    return ap
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = build_arg_parser()
+    args = parse_cli(ap, argv)
     if args.live_view and not args.save_view:
         # The window shows the frames the recorder writes. Without --save-view
         # the recorder is never started, so there is nothing to show. Refusing

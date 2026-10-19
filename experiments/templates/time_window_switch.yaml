@@ -118,9 +118,15 @@ scenarios:
     # `fails` measured 2026-10-19 over the nightly profile's 9 pinned
     # episodes and the smoke run (f93283d): the Shield's P0 counter only. A
     # breach, a censored or unsafe end, or a fail-safe in these cells is new.
+    # The P0 pin is BOUNDED (review of F8-harness-tools, P3): a bare
+    # `fails: [P0_escape_rate]` absorbed the gate at any magnitude, so 0.5
+    # injected here still printed KNOWN and exited 0. Measured the same day
+    # on seeds 1001-1003, both forecast arms: 2 escapes over 262-274 Shield
+    # ticks, 0.0073-0.0076. max 0.01 holds those two escapes and makes a
+    # third (3 / 274 = 0.011) NEW.
     known_failures:
       - params: { clock: "2026-09-07T07:29:58" }
-        fails: [P0_escape_rate]
+        fails: [{ P0_escape_rate: { max: 0.01 } }]
         description: &opensonit >
           A window opening on the aircraft sooner than it can leave
           (measured 2026-10-12, grant's 5 s forecast; the 3 s arm flies the
@@ -144,10 +150,10 @@ scenarios:
           FSM chooses a hold that is itself about to be illegal
           (guardrail/fsm.py, wave B).
       - params: { clock: "2026-09-07T07:29:58.5" }
-        fails: [P0_escape_rate]
+        fails: [{ P0_escape_rate: { max: 0.01 } }]
         description: *opensonit
       - params: { clock: "2026-09-07T07:29:59" }
-        fails: [P0_escape_rate]
+        fails: [{ P0_escape_rate: { max: 0.01 } }]
         description: *opensonit
 
   - scenario_id: time-window-opens-ahead
