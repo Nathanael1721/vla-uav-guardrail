@@ -16,6 +16,201 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-19 — an October bug hunt: 100 verified defects fixed, a smoother city follow (not yet flown), and a complete CI list
+
+A nine-area review on 18-19 Oct found 107 candidate defects; independent
+verifiers confirmed 100 (6 refuted, 1 uncertain), fixed in nine groups, each
+reviewed adversarially and again for the reviewers' notes (1b95383..2e81f21,
+33 commits). Nothing here has flown: the city follow's new motion is tested
+offline only, and no VLA flies the current demos. No pinned digest, decisions
+fixture or published `docs/data` file was regenerated; the stress harness's
+smoke profile scores 52 pass / 6 tracked / 0 fail / 4 known failures before
+and after, and the smoke and nightly sweeps score as before apart from the
+added `p0_violation_escape_rate_status` field.
+
+#### Fixed
+Safety Shield (`guardrail/shield.py`):
+- **A crawl out of a P0 breach is floored even with nothing else wrong.** A
+  legal but too-slow escape (from a zone, a stand-off or clearance ring, or
+  under an altitude floor) gets the repair floors when nothing else, or only a
+  monitor_only rule, is violated; before, 1 m inside an NFZ leaving at
+  0.15 m/s took 6.7 s alone (0.5 s beside a yaw breach), and a 1e-6 m/s climb
+  from under a floor passed every tick. The floored action flies only if it
+  re-checks clean and carries only theta-exempt repairs (else the raw action
+  flies, traced `floor_refused`). `filter()` can now return repairs with no
+  violation, which the FSM reads as clean; `ShieldDecision.touched` counts
+  them, so rails that log it show these ticks as interventions.
+- **Hot-apply refuses what it would not enforce or cannot build, atomically.**
+  An `altitude_ref: MSL` event (enforced as metres above ground before) is
+  refused (`HotApplyRefused`, REST 422), and one whose runtime fails to
+  compile changes nothing and returns 422; before, it returned 500 with the
+  live policy a generation on and the rule listed but not enforced.
+- A NaN or inf subject is dropped instead of silently disabling the stand-off;
+  a `subject-finite` violation is raised only while a hard, enforced stand-off
+  binds it. `Shield.forecast()` turned headings 57.3x too slowly (rad/s added
+  to degrees); first-feasible mode judges theta on the per-axis repair sum.
+
+Policy DSL, compiler, manifest and replay:
+- A higher layer that re-declares a lower layer's hard rule can no longer
+  switch it off or swap it wider, at ingest or by hot-apply; the winner
+  records the overridden layers in a new optional `locked_by` (11 additive
+  lock pins, no stored hash moved).
+- Schedules refuse `days: []` and clocks like '10:75'. CSP altitude bands are
+  intersected per instant, so day/night bands no longer crash `compile_csp`;
+  a real clash raises `CSPAltitudeConflict`, now listed and counted in the
+  coverage and KPI reports. A class-specific stand-off's reason binds it to
+  the followed subject, not "any pedestrian" (the sentence: see Not fixed).
+- An empty flight log is refused by `write_replay` / `verify_replay` (it
+  verified as a perfect run) and scores outcome fail (`no_rows`); a log the
+  autopilot flew entirely reads escape rate None, not 0.0 (none of 1835
+  stored flight logs or 55 replay bundles is one).
+- Manifest: an ambiguous HuggingFace snapshot or unreadable weights record
+  'unresolved'; `sim_speedup` was inverted. `AeroVLABackend`'s skeleton
+  raises on its first tick instead of hovering.
+
+Escalation FSM and KPI report:
+- A `brake` rule where a stop is legal is answered by the Shield's stop: a
+  soft P1 brake beside a hard NFZ no longer takes G3 into LOITER.
+- `failsafe_instrumented` reads the value, not the key (Shield-off arms log
+  nulls); the per-tick false-trigger count, 0 by construction, is always a
+  vacuous zero, and the report shows labelled episodes (`k of m ep`).
+- A floored tick is not a repair attempt (`repair_floored_ticks`; a scan of
+  644,234 stored rows found none). Bundles with no forecast label file under
+  `/forecast-unlabelled`, so a comparison arm is no longer dropped.
+
+REST / gRPC API and harness:
+- **REST mTLS allow-list bypass closed.** A lab-CA certificate not on the
+  hot-apply listener's common-name allow-list could get a POST applied to the
+  flying Shield by sending it in the same write as its TLS Finished (only the
+  response was dropped); the gate now aborts before uvicorn parses anything.
+- The harness's session forward speaks mTLS (`serve --rest-pki`). StopSession
+  waits for a flying episode, stops a session once, and still stops it if it
+  raises. Bad lat/lon: 422 / INVALID_ARGUMENT, not 500; NaN or Infinity in a
+  gRPC payload: INVALID_ARGUMENT.
+
+The city follow (`demo/follow_vlm.py`):
+- **Smoother motion against the pitch/roll jerks** when the car turns or pulls
+  away: a dt-aware vector slew limiter (speed-up 2 m/s^2, braking never softer
+  than the old 0.4 m/s step, turns 2.5 m/s^2, yaw-rate slew 2 rad/s^2), a
+  guard smoother (urgent brakes immediate), catch-up capped at 2.5 m/s and a
+  line-of-sight yaw feed-forward (0.7, capped 0.4 rad/s). Offline closed loop:
+  speed-up peak 3.11 -> 1.62 m/s^2, jerk peak 8.35 -> 3.44 m/s^3, turn lag
+  5.0 -> 1.4 deg, range max 24.1 -> 23.8 m. `--legacy-motion` restores the
+  old motion; `params.motion` records it. Not yet flown.
+- City manifests file `vla_model_hash` = `none:hand-written-controller`, with
+  OWL-ViT under `pilot.detector`. Without `--identity` the estimator also gets
+  each box at its capture's pose and depth; `det_hit_rate` counts mission
+  inferences (13 Oct: 0.993; over all inferences, 0.495); a follow without
+  subject truth reads mission_success null; an abort before the first tick
+  exits non-zero.
+- FenceGuard's brake bites at once inside a building's clearance ring with a
+  no-fly zone in range (the ring was measured against the zone, 13 m instead
+  of 4.7 m); car missions with `--level-peds` stop polling the 40-name crowd
+  (429 polls a flight).
+
+Project AirSim + ArduPilot rail (`demo/pas_ardupilot/`):
+- **A frozen autopilot link fails safe.** SITL dead behind mavlink-router, a
+  closed socket or MAVROS losing its FCU no longer counts as live: one
+  zero-velocity setpoint, then nothing; 3 s stale ends the episode as "link
+  lost" and withholds the KPI grade.
+- An unclassified subject ("a child") binds the catch-all "*" stand-off
+  instead of turning every stand-off off; the subject is placed from its own
+  capture's pose and depth; the loop paces to a 10 Hz deadline (8.97-9.16 Hz
+  before) and dwell is time-weighted from timestamps.
+
+SITL and ROS 2 rails, deploy:
+- **The pymavlink rail flew on a pose 3-6.6 s old** (pymavlink's oldest queued
+  LOCAL_POSITION_NED); it now takes the newest, on a 10 Hz deadline. Every
+  stored `sitl_*` and `run_gazebo_demo.sh` run was measured on the delayed
+  pose (`sitl_ped_on`'s 21.6 s `alt_violation_s` and its X6 escalation too).
+- **ROS 2 node: a stale pose fails safe.** A watchdog (`--pose-timeout-s`,
+  1.0 s) holds the aircraft; the FSM is not stepped on a stale pose (from
+  Loiter, G8 could return to GUIDED on a frozen position), and
+  `EscalationFSM.unobserved()` makes G7 / G8 wait T_recover after the gap.
+- ROS 2 node: a pilot or failsafe leaving the node's hold is a takeover (no
+  GUIDED, no LAND after it); mode requests go to the adapter only when it
+  subscribes. All rails accept `--target -20,15`. Both Docker images keep
+  numpy 1.26.4: neither could be built (ResolutionImpossible), nor has been.
+
+Stress harness, tools and tracker server:
+- **Known-failure pins name their gates.** Any other gate failing in a pinned
+  cell is NEW and exits 1; before, a P0 escape, a breach or an unsafe end
+  there read KNOWN with exit 0. A pin can bound its gate: the three
+  time-window-opens-on-vehicle cells are bounded at the measured 2 escapes
+  (0.0073-0.0076).
+- `--backend sitl` scores a rail flight from its own files (every gate read
+  'not measured'); a failed KPI rollup exits 4 and writes no partial report.
+- `tools/check_claims.py` passes on a clean clone and scans the code packages
+  and root guides (288 files clean); `tracker/serve.py` refuses a foreign
+  Host, Origin or non-JSON save, so a web page can no longer wipe the board.
+
+#### Changed
+- Every city flight's default motion changed; a recorded flight needs
+  `--legacy-motion` (plus `--legacy-tick-pose`, `--legacy-servo-width`) for
+  its old motion, and its tracking, guard-hold and intervention counts are not
+  comparable with new flights'.
+- Perception-rail flights should run at about 10 Hz, not 9.15 Hz, with
+  time-weighted dwell (about 8-9 % above tick count x 0.1 s on a 9.16 Hz run).
+- The KPI-report families of the 2396 stored legacy stress bundles are
+  renamed on regeneration (a `--baseline` diff shows each as new and as gone);
+  `expect: known_failure` without `known_failure_fails` is refused at load.
+- `Shield.set_subject` takes an optional `velocity=(vx, vy)` and then
+  forecasts the subject at constant velocity; without it every decision is
+  byte-identical (18,000 seeded stand-off decisions compared). No rail passes
+  it yet.
+- README and `docs/index.md` say no VLA flies the recorded demos (a
+  hand-written controller steers by OWL-ViT's boxes, the SITL rails fly
+  StubVLA, and the last VLA-commanded flights were on 4 Aug 2026), carry the
+  13/14 Oct Shield-off controls (727/1100, 736/1099), and test their sample.
+
+#### Corrected
+- The site said the Shield forecasts 5 s at 0.1 s steps; the city
+  demonstration flies 3 s at 0.5 s by default, the 14 Oct recording
+  (`citylife_redcar_nfz_20261013`) included, which also flew the unsigned
+  YAML policy. Its P0 escape 0.0 is on that forecast; separation and time in
+  the zone do not depend on it.
+- The 14 Oct start range is about 151-152 m, not 119-152 m; the preamble no
+  longer calls P0 escape "the hard KPI"; `docs/aerialvla-ft-report.md` headed
+  all rows "pure VLA", but its three 100 % rows flew goal_blend 0.55.
+- The August and September reports open with a dated note on the
+  retractions; the 13 Oct BRAKE ticks were ArduPilot's BRAKE mode under the
+  FSM's Loiter; the perception rail's 27.9 s is 279 ticks x 0.1 s (30.4 s by
+  timestamp); RUNBOOK's Rail 3 is the grant's dev topology flown by the stub.
+
+#### Not fixed
+- The altitude and corridor-band trend monitors accept any climb and the
+  clearance monitor any forecast gain, so where a floor is refused a crawl
+  flies with no violation; raising them to the reference's 0.1 m/s changes
+  pinned `_check` answers and needs a deliberate regeneration and re-score.
+- The CSP stand-off sentence still says "any pedestrian": rewording it needs
+  the LLM-written paraphrase sets and the OpenVLA tokenizer table regenerated.
+- No rail passes the subject velocity (`follow_vlm`, `perception_node`,
+  `ros2_shield_node`). The city rail stays on 3 s / 0.5 s until it does and
+  the moving-subject stand-off repairs are measured against theta with the FSM
+  on: held still, the grant's forecast fired StandoffHold on 529 of 1190
+  replayed city ticks (44 %).
+- FenceGuard's hysteresis, continuous k and clear_aim margin are unchanged
+  (pinned single-call values); `follow_vlm` still matches "a delivery man" to
+  the van class.
+- Off CI: 6 test files that need OpenCV, Pillow, projectairsim or node
+  (`test_range_and_lock` holds most city-follow regressions);
+  `test_deck_scorer_parity` counts its JavaScript checks as passes without it.
+- The ROS 2 node does not check at mission start that the adapter is alive;
+  during a stale-action hold the FSM's clean streaks keep running.
+- Documents citing `sitl_*` runs are not yet marked as delayed-pose; stored
+  KPI reports and `docs/data/csp_kpis.json` show old cells until rebuilt; the
+  sweep's SITL command passes the subject unrotated.
+
+#### Tests
+- The CI loop runs 98 test files (40 before). The 6 left out are listed with
+  measured reasons, and `tests/test_harnesstruth_ci.py` fails on a file in
+  neither list, a listed test that can return None early, or a runner that
+  does not count SKIP; verified on Linux 3.10.22 / 3.11.17 venvs, a clean
+  `git archive` copy and a depth-1 clone. The 3.11 extras job installs
+  uvicorn and jsonschema and fails on a SKIP from the REST-listener tests.
+- 7 new test files, and regression tests in the existing ones (53 test files
+  changed in all).
+
 ### 2026-10-14 — recorded videos of both rails, the ground-truth question answered, an English explainer pack
 
 #### Flown

@@ -1,10 +1,10 @@
 {
  "generator": "tools/build_public_site.py",
- "as_of": "2026-10-14",
- "tracker_text_from": "snapshot",
+ "as_of": "2026-10-19",
+ "tracker_text_from": "tracker",
  "sources": {
-  "CHANGELOG.md": "7228944f53e3",
-  "docs/progress/_src/site.json": "28e9df7a8695",
+  "CHANGELOG.md": "ebd52272a965",
+  "docs/progress/_src/site.json": "d5e27a9495dc",
   "docs/progress/_src/tracker_extract.json": "15ff9b2e7e0a"
  },
  "pages": [
@@ -31,7 +31,7 @@
   "zh/wp4.html"
  ],
  "page_count": 21,
- "numbers_checked": 361,
+ "numbers_checked": 387,
  "images_reviewed": 17,
  "video_placeholders": [
   "pas_ap_video_compare_20261014.mp4",
@@ -59,11 +59,13 @@
   "2026-10-12",
   "2026-10-13",
   "2026-10-13 (later)",
-  "2026-10-14"
+  "2026-10-14",
+  "2026-10-19"
  ],
  "changelog_sections_after_as_of": [],
  "changelog_watch": {
   "Unreleased": "0a8abc12843c",
+  "2026-10-19": "a5bfabac5142",
   "2026-10-14": "fb9d0305f954",
   "2026-10-13 (later)": "000fbbda38ff",
   "2026-10-13": "c042bcb552ed",

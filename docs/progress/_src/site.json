@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "about": "Curated public wording for docs/progress/. Edit this file, then run: python tools/build_public_site.py. See docs/DESIGN-public-site.md for the content policy. Every number is written as digits and must appear in a source listed in the nearest 'src' (a change entry cites its CHANGELOG section automatically); a JSON source names the value, as file.json#path.to.value. Every image is listed in reviewed_images with the digest of the file that was looked at.",
- "as_of": "2026-10-14",
+ "as_of": "2026-10-19",
  "final_gate": "2026-11-30",
  "grant": {
   "programme": {"en": "ITRI ICL subcontract (collaborative research)", "zh": "工研院資通所（ICL）委託合作研究"},
@@ -763,6 +763,18 @@
  ],
  "changes": [
   {
+   "changelog": "2026-10-19",
+   "date": "2026-10-19",
+   "title": {"en": "An October bug hunt: 100 verified defects fixed, a smoother city follow (not yet flown), and a complete CI list", "zh": "十月的錯誤清查：修正 100 個經驗證的缺陷、更平順的城市跟隨（尚未實際飛行），以及完整的 CI 清單"},
+   "points": [
+    {"en": "A review found 107 candidate defects, and independent verifiers confirmed 100 of them (6 refuted, 1 uncertain). All 100 were fixed, and each fix was reviewed by someone trying to break it. Nothing in this entry has flown, and no VLA flies the current demonstrations.", "zh": "一次審查找出 107 個候選缺陷，獨立驗證者確認其中 100 個（6 個被推翻，1 個不確定）。這 100 個全部已修正，每項修正都由試圖推翻它的人審查過。這一則的內容都還沒有實際飛行，目前的示範也沒有任何 VLA 在飛。"},
+    {"en": "The Shield now speeds up a legal but too-slow escape from a P0 breach even when nothing else is wrong; before, 1 m inside a no-fly zone leaving at 0.15 m/s took 6.7 s to get out. A rule change during a flight that the Shield would not enforce, or cannot build, is now refused whole (the REST endpoint answers 422), and the REST listener no longer lets a lab certificate that is not on its allow-list slip a rule change in with the TLS handshake.", "zh": "Shield 現在即使沒有其他違規，也會加快從 P0 違規中合法但太慢的脫離；以前在禁航區內 1 m、以 0.15 m/s 離開，要 6.7 s 才出得去。飛行中 Shield 不會執行或無法建立的規則變更，現在會整筆被拒絕（REST 端點回覆 422）；REST 監聽器也不再讓不在允許清單上的實驗室憑證，趁 TLS 交握時把規則變更一起送進來。"},
+    {"en": "The flying rails now fail safe: the ROS 2 node holds the aircraft when its pose stream stops for 1.0 s, the Project AirSim + ArduPilot node ends a flight as link lost after 3 s of a frozen autopilot link, and the pymavlink SITL rail, which had flown on a pose 3-6.6 s old, now uses the newest pose at 10 Hz.", "zh": "飛行軌道現在在故障時會安全處置：位置串流停止 1.0 s 時，ROS 2 節點會讓機體定點；飛控連線凍結 3 s 後，Project AirSim + ArduPilot 節點會以連線中斷結束飛行；pymavlink SITL 軌道過去用的是 3-6.6 s 前的位置，現在以 10 Hz 使用最新的位置。"},
+    {"en": "The city follow got smoother motion against the pitch and roll jerks when the car turns or pulls away: in an offline closed-loop test the speed-up peak fell from 3.11 to 1.62 m/s² and the turn lag from 5.0 to 1.4 degrees. It has not been flown yet, and its Shield still forecasts 3 s at 0.5 s steps by default.", "zh": "城市跟隨的運動更平順，減少車輛轉彎或起步時的俯仰與滾轉急動：在離線閉迴路測試中，加速峰值從 3.11 降到 1.62 m/s²，轉彎延遲從 5.0 降到 1.4 度。這項功能尚未實際飛行，它的 Shield 預設仍以每 0.5 s 一步預測 3 s。"},
+    {"en": "The stress harness's known-failure entries now name the checks they are expected to fail, so any other failure in such a scenario fails the run. CI runs 98 test files instead of 40: every test file that passes on a clean copy, with the 6 others listed and a test that fails when a file is in neither list. The smoke profile scores 52 pass, 6 tracked, 0 fail and 4 known failures, as before.", "zh": "壓力測試框架中的已知失敗項目現在會指明預期失敗的檢查，因此這類情境中的任何其他失敗都會讓執行失敗。CI 執行的測試檔從 40 個增加到 98 個：凡是在乾淨副本上能通過的測試檔都會執行，其餘 6 個列出原因；若有檔案不在任何一份清單中，就會有測試失敗。smoke 設定的結果為 52 通過、6 追蹤中、0 失敗、4 已知失敗，與之前相同。"}
+   ]
+  },
+  {
    "changelog": "2026-10-14",
    "date": "2026-10-14",
    "title": {"en": "The ArduPilot rail and the city demonstration recorded on video, the detector found off the car, and figures of the whole system", "zh": "ArduPilot 軌道與城市示範都錄成影片、查明偵測器沒有對準車，以及整個系統的圖解"},
@@ -982,7 +994,8 @@
    {"date": "2026-10-12", "wp": ["WP1", "WP2", "WP4"], "en": "Templates for the rule changes, a cost map, both hashes in every bundle, a gRPC control plane for the stress harness, and the Orin images defined for JetPack 6.2.", "zh": "規則變更的範本、成本地圖、每個套件都帶有本專案與參考實作的雜湊值、壓力測試框架的 gRPC 控制介面，以及針對 JetPack 6.2 定義的 Orin 映像檔。", "src": ["CHANGELOG.md#2026-10-12"]},
    {"date": "2026-10-13", "wp": ["WP1", "WP3", "WP4"], "en": "The grant's 5 s forecast in the stress harness, rule clocks and mid-flight rule changes on the flying rails, signed policies by default, a faster check on moving zones, and the grant's 10 gRPC calls.", "zh": "壓力測試框架採用計畫書的 5 s 預測、飛行軌道上的規則時鐘與飛行中規則變更、預設使用已簽章的規則檔、更快的移動禁航區檢查，以及計畫書的10 個 gRPC 呼叫。", "src": ["CHANGELOG.md#2026-10-13"]},
    {"date": "2026-10-13", "wp": ["WP3"], "en": "Gate G1 passed again after the fence change, the escalation's hold, flown as ArduCopter's BRAKE mode, held its altitude in flight, and the city demonstration was re-flown and recorded on the current code.", "zh": "圍欄設定變更後再次通過 Gate G1；升級機制的定點步驟以 ArduCopter 的 BRAKE 模式飛行，在飛行中維持住高度；城市示範也以目前的程式重新飛行並錄影。"},
-   {"date": "2026-10-14", "wp": ["WP3"], "en": "The ArduPilot rail recorded with the Shield on and off.", "zh": "ArduPilot 軌道在 Shield 開啟與關閉下錄影。"}
+   {"date": "2026-10-14", "wp": ["WP3"], "en": "The ArduPilot rail recorded with the Shield on and off.", "zh": "ArduPilot 軌道在 Shield 開啟與關閉下錄影。"},
+   {"date": "2026-10-19", "wp": ["WP1", "WP3", "WP4"], "en": "100 verified defects from an October review fixed, and CI runs every test file that passes on a clean copy.", "zh": "十月審查中經驗證的 100 個缺陷已修正，CI 也會執行每一個在乾淨副本上能通過的測試檔。", "src": ["CHANGELOG.md#2026-10-19"]}
   ],
   "next": [
    {
