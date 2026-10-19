@@ -78,9 +78,11 @@ tokens = ["tokenizers"]
 # experiments/sweep_scenarios.py from the source tree, so it runs from a
 # checkout, not from a wheel alone.
 harness = ["grpcio>=1.84.0", "protobuf>=7.35.1", "cryptography"]
-# Columnar export of episode bundles and KPI tables (Parquet) for the WP4
-# outputs tooling. Imported lazily by whatever writes Parquet, so nothing in
-# the Shield's import path needs it.
+# Columnar export of episode records (Parquet) by tools/export_episodes.py,
+# the grant's "rosbag2 -> JSONL / Parquet" exporter. Imported lazily there,
+# so nothing in the Shield's import path needs it; without it the JSONL is
+# written and the tool says SKIP. Tested with pyarrow 26.0.0 (2026-10-19,
+# docs/DESIGN-episode-parquet.md).
 export = ["pyarrow"]
 
 [tool.setuptools]

@@ -35,6 +35,14 @@
 #                      0 = plain background processes
 #   GUARDRAIL_FENCE=1  load the ArduPilot GeoFence backstop (start_sitl.sh)
 #   GCS_HOST           Mission Planner's address (default: the Windows host)
+#   SROS2=0            1 = SROS 2 enforced on every ROS 2 process of the rail
+#                      (sitl/sros2_env.sh): the keystore SROS2_KEYSTORE (default
+#                      ~/sros2_keystore, built by tools/sros2_setup.sh from the
+#                      harness's lab CA) must hold every enclave of
+#                      sitl/sros2_enclaves.txt or the run is refused before
+#                      SITL starts; MAVROS, the bag recorder and each Guardrail
+#                      node then run in their own enclave under
+#                      ROS_SECURITY_STRATEGY=Enforce. 0 changes nothing.
 set -e
 SHIELD="${1:-on}"
 DYN="${2:-}"
@@ -105,6 +113,18 @@ if [ "$HAS_POLICY" = "0" ] && [ "$HAS_DEV_YAML" = "0" ]; then
   fi
 fi
 
+# SROS 2 (SROS2=1): refused here, before anything starts, when the keystore
+# lacks an enclave; the arrays stay empty with SROS2=0, so every command
+# below is then exactly what it was.
+source "$DIR/sros2_env.sh"
+sros2_prepare || exit 2
+sros2_prefix ENC_MAVROS mavros
+sros2_prefix ENC_BAG bag_recorder
+sros2_prefix ENC_VLA vla_stub
+sros2_prefix ENC_ADAPTER mavlink_adapter
+sros2_prefix ENC_SHIELD safety_shield
+sros2_launch_args LAUNCH_SROS2
+
 echo "=== clean slate ==="
 cleanup
 sleep 2
@@ -139,7 +159,7 @@ export MAVLINK_ROUTER
 export MAVROS_FCU_URL="$FCU_URL"
 
 echo "=== mavros ($FCU_URL) ==="
-nohup ros2 run mavros mavros_node --ros-args -p fcu_url:="$FCU_URL" \
+nohup "${ENC_MAVROS[@]}" ros2 run mavros mavros_node --ros-args -p fcu_url:="$FCU_URL" \
   > ~/sitl-run/mavros.log 2>&1 &
 sleep 10
 
@@ -149,7 +169,7 @@ if [ "${BAG:-1}" = "1" ]; then
     mkdir -p "$OUT/_previous"
     mv "$OUT/bag" "$OUT/_previous/bag-$(date -u +%Y%m%dT%H%M%SZ)"
   fi
-  nohup ros2 bag record -s mcap -o "$OUT/bag" \
+  nohup "${ENC_BAG[@]}" ros2 bag record -s mcap -o "$OUT/bag" \
     /vla/action_4d /vla/identity /shield/setpoint /shield/intercept \
     /shield/mode_request /shield/fences /mavlink_adapter/status \
     /mavros/setpoint_raw/local /mavros/setpoint_raw/target_local \
@@ -170,12 +190,12 @@ if [ "${USE_LAUNCH:-1}" = "1" ]; then
   ros2 launch "$DIR/ros2_ws/src/safety_shield/launch/guardrail_rail.launch.py" \
     python:="$PY" repo_root:="$ROOT" out:="$OUT" \
     shield_args:="$(printf '%q ' "${SHIELD_ARGS[@]}")" \
-    vla_args:="$VLA_ARGS"
+    vla_args:="$VLA_ARGS" "${LAUNCH_SROS2[@]}"
 else
-  nohup "$PY" "$DIR/ros2_vla_stub_node.py" "${EXTRA[@]}" > ~/sitl-run/vla.log 2>&1 &
-  nohup "$PY" "$DIR/mavlink_adapter_node.py" --out "$OUT" > ~/sitl-run/adapter.log 2>&1 &
+  nohup "${ENC_VLA[@]}" "$PY" "$DIR/ros2_vla_stub_node.py" "${EXTRA[@]}" > ~/sitl-run/vla.log 2>&1 &
+  nohup "${ENC_ADAPTER[@]}" "$PY" "$DIR/mavlink_adapter_node.py" --out "$OUT" > ~/sitl-run/adapter.log 2>&1 &
   sleep 2
-  "$PY" "$DIR/ros2_shield_node.py" "${SHIELD_ARGS[@]}"
+  "${ENC_SHIELD[@]}" "$PY" "$DIR/ros2_shield_node.py" "${SHIELD_ARGS[@]}"
 fi
 
 echo "=== close the bag, re-pack the replay bundle with it ==="

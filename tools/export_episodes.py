@@ -121,10 +121,16 @@ OUTPUT
 `<out>/steps.jsonl` (one row per tick) and `<out>/episodes.jsonl` (one row
 per episode, the full trajectory as columns), strict JSON (a non-finite
 number becomes the string "NaN" / "Infinity", never a bare token). With
-`pyarrow` importable, also `steps.parquet` and `episodes.parquet` (nested
-fields as JSON strings); without it the tool prints SKIP and writes JSONL
-only (`--format parquet` alone then writes nothing and exits 3). Exit 0
-when every input exported, 2 when one could not be read.
+`pyarrow` importable (optional: `pip install .[export]`), also
+`steps.parquet` and `episodes.parquet`: one typed column per field, nested
+fields and mixed columns as JSON text named in the file's metadata, each
+file read back and compared with the JSONL records before it is kept
+(`read_parquet` returns those records; see "Parquet" below). Without
+pyarrow the tool prints SKIP, says how to install it, removes a Parquet
+file an earlier export left in the folder, and writes JSONL only
+(`--format parquet` alone then writes nothing and exits 3). Exit 0 when
+every input exported, 2 when one could not be read or a Parquet file did not
+read back as its JSONL.
 """
 from __future__ import annotations
 
@@ -827,17 +833,165 @@ def write_jsonl(path: Path, records: list[dict]) -> None:
             fh.write(json.dumps(json_safe(r), allow_nan=False) + "\n")
 
 
-def write_parquet(path: Path, records: list[dict]) -> bool:
-    """Parquet beside the JSONL, nested fields as JSON strings (one flat
-    schema for every writer). False when pyarrow is not installed."""
+# --------------------------------------------------------------------------- #
+# Parquet (2026-10-19)
+# --------------------------------------------------------------------------- #
+#
+# The grant's Outputs table: "Episode exporters - Python CLI (rosbag2 -> JSONL
+# / Parquet)". `pyarrow` is OPTIONAL (pyproject extra `export`): nothing in
+# the Shield's import path needs it, the JSONL is written without it, and its
+# absence is said (SKIP with `--format both`, exit 3 with `--format parquet`).
+#
+# THE FIRST WRITER, AND WHY IT WAS REPLACED. Until 2026-10-19 this was
+# `pa.Table.from_pylist(flat)` with every dict / list cell turned into JSON
+# text. It had never run on this project's machines (pyarrow was in neither
+# env), and on a probe with pyarrow 26.0.0 it:
+#   * took its columns from the FIRST record only - a key missing there was
+#     dropped from every row, silently ([{a:1},{a:2,b:3}] -> no column b);
+#   * crashed (ArrowInvalid, after the JSONL was written) on a column whose
+#     values JSON-safety had made mixed - a float column holding a NaN became
+#     a float and the string "NaN" - and on a bool / int mix;
+#   * gave a reader no way to tell a JSON-encoded column from a plain string
+#     one, and a column that was a dict in one row and a string in another
+#     came out half encoded.
+# On the four real episodes tried (a headless bundle, two rail runs, a replay
+# bundle) none of that happened, which is why the tests below build the cases.
+#
+# THE SCHEMA NOW. Every column is decided once, over all records, in the
+# order keys first appear:
+#   bool              all values bool                    -> bool
+#   int               all int, within int64              -> int64
+#   float             int / float mixed, or float        -> float64 (NaN and
+#                     (non-finite values stored as such;     +-inf kept native)
+#                     every int exact in a double)
+#   string            all str                            -> string
+#   json              anything else: a dict or list in any row, mixed kinds,
+#                     an int beyond int64 -> string, each value JSON text (the
+#                     JSONL's own encoding, so non-finite floats are "NaN" /
+#                     "Infinity"), named in the schema metadata
+# A column with no value is a null column. The file's metadata carries the
+# export schema (SCHEMA) and `vlaguard.json_columns`; `read_parquet` decodes
+# exactly those and gives non-finite floats the JSONL's strings, so a record
+# read back EQUALS the record written to the JSONL (json.loads of its line),
+# value for value (an int in a float column compares equal as a float, as JSON
+# numbers do). A key a record does not have reads back as null. The writer
+# reads its file back and compares before it reports success: a Parquet file
+# that does not say what the JSONL says is deleted and the export fails (exit
+# 2), never published.
+
+PARQUET_INSTALL_HINT = ("pip install pyarrow (or `pip install .[export]`); it is an "
+                        "optional dependency, the JSONL never needs it")
+_PQ_JSON_COLUMNS = b"vlaguard.json_columns"
+_PQ_SCHEMA = b"vlaguard.schema"
+_INT64 = (-(2 ** 63), 2 ** 63 - 1)
+
+
+def have_pyarrow() -> bool:
     try:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
+        import pyarrow                                           # noqa: F401
+        import pyarrow.parquet                                   # noqa: F401
     except ImportError:
         return False
-    flat = [{k: (json.dumps(json_safe(v), allow_nan=False) if isinstance(v, (dict, list))
-                 else json_safe(v)) for k, v in r.items()} for r in records]
-    pq.write_table(pa.Table.from_pylist(flat), path)
+    return True
+
+
+def _column_kind(values: list) -> str:
+    present = [v for v in values if v is not None]
+    if not present:
+        return "null"
+    if all(isinstance(v, bool) for v in present):
+        return "bool"
+    if any(isinstance(v, bool) for v in present):
+        return "json"
+    if all(isinstance(v, int) for v in present):
+        return "int" if all(_INT64[0] <= v <= _INT64[1] for v in present) else "json"
+    if all(isinstance(v, (int, float)) for v in present):
+        return ("float" if all(isinstance(v, float) or abs(v) <= 2 ** 53 for v in present)
+                else "json")
+    if all(isinstance(v, str) for v in present):
+        return "string"
+    return "json"
+
+
+def parquet_table(records: list[dict]):
+    """The pyarrow Table for `records` (schema above)."""
+    import pyarrow as pa
+    names: list[str] = []
+    seen: set = set()
+    for r in records:
+        for k in r:
+            if k not in seen:
+                seen.add(k)
+                names.append(k)
+    arrays, json_cols = [], []
+    for k in names:
+        vals = [r.get(k) for r in records]
+        kind = _column_kind(vals)
+        if kind == "null":
+            arrays.append(pa.nulls(len(vals)))
+        elif kind == "bool":
+            arrays.append(pa.array(vals, pa.bool_()))
+        elif kind == "int":
+            arrays.append(pa.array(vals, pa.int64()))
+        elif kind == "float":
+            arrays.append(pa.array([None if v is None else float(v) for v in vals],
+                                   pa.float64()))
+        elif kind == "string":
+            arrays.append(pa.array(vals, pa.string()))
+        else:
+            json_cols.append(k)
+            arrays.append(pa.array([None if v is None else
+                                    json.dumps(json_safe(v), allow_nan=False)
+                                    for v in vals], pa.string()))
+    table = pa.Table.from_arrays(arrays, names=names)
+    return table.replace_schema_metadata({
+        _PQ_SCHEMA: SCHEMA.encode(), _PQ_JSON_COLUMNS: json.dumps(json_cols).encode()})
+
+
+def read_parquet(path: Path) -> list[dict]:
+    """Records from a file write_parquet wrote, equal to the JSONL's."""
+    import pyarrow.parquet as pq
+    table = pq.read_table(path)
+    meta = table.schema.metadata or {}
+    if _PQ_JSON_COLUMNS not in meta:
+        raise ExportError(f"{path}: no {_PQ_JSON_COLUMNS.decode()} in its metadata; "
+                          f"not written by this exporter (or by its first version, "
+                          f"which could not say which columns were JSON)")
+    json_cols = set(json.loads(meta[_PQ_JSON_COLUMNS]))
+    out = []
+    for row in table.to_pylist():
+        out.append({k: (json.loads(v) if k in json_cols and v is not None else json_safe(v))
+                    for k, v in row.items()})
+    return out
+
+
+def _same_value(a, b) -> bool:
+    """JSON value equality: numbers by value, containers element-wise."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_same_value(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(_same_value(x, y) for x, y in zip(a, b))
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    return a == b
+
+
+def write_parquet(path: Path, records: list[dict]) -> bool:
+    """Parquet beside the JSONL (schema above). False when pyarrow is not
+    installed; ExportError (and no file) when the file it wrote does not read
+    back as the JSONL's records."""
+    if not have_pyarrow():
+        return False
+    import pyarrow.parquet as pq
+    pq.write_table(parquet_table(records), path)
+    back = read_parquet(path)
+    want = [json_safe({k: r.get(k) for k in back[0]}) if back else {} for r in records]
+    bad = next((i for i, (w, b) in enumerate(zip(want, back)) if not _same_value(w, b)), None)
+    if len(back) != len(records) or bad is not None:
+        path.unlink()
+        raise ExportError(f"{path.name} did not read back as the JSONL's records "
+                          f"(first difference at row {bad}, {len(back)}/{len(records)} "
+                          f"rows); deleted, not published")
     return True
 
 
@@ -881,18 +1035,37 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {out / 'steps.jsonl'} ({len(steps_all)} rows) and "
               f"{out / 'episodes.jsonl'} ({len(eps_all)} rows)")
     if args.format in ("both", "parquet"):
-        if write_parquet(out / "steps.parquet", steps_all) and \
-                write_parquet(out / "episodes.parquet", eps_all):
-            print(f"wrote {out / 'steps.parquet'} and {out / 'episodes.parquet'}")
-        elif args.format == "both":
-            print("SKIP parquet: pyarrow is not installed (JSONL written)")
+        if not have_pyarrow():
+            if args.format == "both":
+                # A Parquet file left from an earlier export would sit beside
+                # this JSONL and disagree with it without a word.
+                stale = [p for p in (out / "steps.parquet", out / "episodes.parquet")
+                         if p.exists()]
+                for p in stale:
+                    p.unlink()
+                print(f"SKIP parquet: pyarrow is not installed (JSONL written; "
+                      f"{PARQUET_INSTALL_HINT})"
+                      + (f"; removed the earlier export's "
+                         f"{', '.join(p.name for p in stale)}" if stale else ""))
+            else:
+                # Parquet alone was asked for and cannot be written: nothing
+                # was written, and the exit code says so (3), not success.
+                print(f"cannot write parquet: pyarrow is not installed, and --format "
+                      f"parquet writes nothing else (use --format both or jsonl; "
+                      f"{PARQUET_INSTALL_HINT})", file=sys.stderr)
+                return 3
         else:
-            # Parquet alone was asked for and cannot be written: nothing was
-            # written, and the exit code says so (3), not success.
-            print("cannot write parquet: pyarrow is not installed, and --format "
-                  "parquet writes nothing else (use --format both or jsonl)",
-                  file=sys.stderr)
-            return 3
+            try:
+                write_parquet(out / "steps.parquet", steps_all)
+                write_parquet(out / "episodes.parquet", eps_all)
+            except ExportError as e:
+                # Neither file, so no half export reads as a whole one.
+                for p in (out / "steps.parquet", out / "episodes.parquet"):
+                    p.unlink(missing_ok=True)
+                print(f"parquet NOT written: {e}", file=sys.stderr)
+                return 2
+            print(f"wrote {out / 'steps.parquet'} ({len(steps_all)} rows) and "
+                  f"{out / 'episodes.parquet'} ({len(eps_all)} rows)")
     return 2 if failed else 0
 
 

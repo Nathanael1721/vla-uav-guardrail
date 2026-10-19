@@ -19,6 +19,17 @@ repository this file sits in - which is also where a `colcon build
         shield_args:="--shield on --dynamic" out:=demo/out/ros2_shield_on_dynamic
     # after colcon build + source install/setup.bash:
     ros2 launch safety_shield guardrail_rail.launch.py repo_root:=/path/to/repo
+
+SROS 2 (2026-10-19). `enclave_root:=/guardrail` gives each node its own
+enclave, <root>/<process name> (/guardrail/safety_shield,
+/guardrail/mavlink_adapter, /guardrail/vla_stub - sitl/sros2_enclaves.txt),
+through ROS_SECURITY_ENCLAVE_OVERRIDE in that process's environment: the
+three share this launch's environment otherwise, and one enclave for three
+processes would make their identities indistinguishable. Security itself is
+switched on by ROS_SECURITY_KEYSTORE / ROS_SECURITY_ENABLE /
+ROS_SECURITY_STRATEGY in the environment `ros2 launch` runs in, which
+sitl/run_ros2_demo.sh sets under SROS2=1 (sitl/sros2_env.sh). The default,
+empty, sets no override: the processes start exactly as before.
 """
 import os
 import shlex
@@ -55,20 +66,31 @@ def _nodes(context):
     sitl = root / "sitl"
     out = LaunchConfiguration("out").perform(context)
     env = {"GUARDRAIL_ROOT": str(root)}
+    enclave_root = LaunchConfiguration("enclave_root").perform(context).strip().rstrip("/")
+    if enclave_root and not enclave_root.startswith("/"):
+        raise RuntimeError(f"enclave_root {enclave_root!r} must be an absolute enclave "
+                           f"path such as /guardrail")
 
     def args(name):
         return shlex.split(LaunchConfiguration(name).perform(context))
 
+    def env_for(name):
+        """The process's environment: its own SROS 2 enclave when
+        enclave_root is given, nothing added otherwise."""
+        if not enclave_root:
+            return env
+        return {**env, "ROS_SECURITY_ENCLAVE_OVERRIDE": f"{enclave_root}/{name}"}
+
     vla = ExecuteProcess(
         cmd=[py, str(sitl / "ros2_vla_stub_node.py"), *args("vla_args")],
-        name="vla_stub", output="screen", additional_env=env)
+        name="vla_stub", output="screen", additional_env=env_for("vla_stub"))
     adapter = ExecuteProcess(
         cmd=[py, str(sitl / "mavlink_adapter_node.py"),
              *(["--out", out] if out else []), *args("adapter_args")],
-        name="mavlink_adapter", output="screen", additional_env=env)
+        name="mavlink_adapter", output="screen", additional_env=env_for("mavlink_adapter"))
     shield = ExecuteProcess(
         cmd=[py, str(sitl / "ros2_shield_node.py"), *args("shield_args")],
-        name="safety_shield", output="screen", additional_env=env)
+        name="safety_shield", output="screen", additional_env=env_for("safety_shield"))
     end = RegisterEventHandler(OnProcessExit(
         target_action=shield,
         on_exit=[LogInfo(msg="safety_shield finished - shutting the rail down"),
@@ -92,5 +114,9 @@ def generate_launch_description():
                               description="arguments for sitl/ros2_vla_stub_node.py"),
         DeclareLaunchArgument("adapter_args", default_value="",
                               description="arguments for sitl/mavlink_adapter_node.py"),
+        DeclareLaunchArgument("enclave_root", default_value="",
+                              description="SROS 2: run each node in the enclave "
+                                          "<enclave_root>/<node> (e.g. /guardrail); "
+                                          "empty = no enclave override"),
         OpaqueFunction(function=_nodes),
     ])
