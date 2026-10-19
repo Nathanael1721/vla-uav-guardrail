@@ -3497,7 +3497,10 @@ def servo(det, img_w: int, yaw_gain: float, want_w_frac: float,
 # through both Shields, the logged commands, the logged estimated subject):
 # its cost is small (median 0.24 ms, p99 1.27 ms a tick, against 0.18 /
 # 0.32 ms at 3 s / 0.5 s), but it would end the follow. A SubjectStandoff is
-# forecast against a subject held STILL - set_subject() takes no velocity -
+# forecast against a subject held STILL - this loop calls set_subject()
+# without a velocity (the optional velocity= the Shield gained on 2026-10-19
+# is not wired here yet: its theta reading of a hold against an approaching
+# subject is open, CHANGELOG 2026-10-19 Not fixed) -
 # so 5 s of the aircraft's own 4-5 m/s, ~25 m, reaches the car's 5 m ring from
 # ordinary following distance: the Shield's StandoffHold fired on 529 of the
 # 1190 replayed ticks (44 %; none at 3 s / 0.5 s) and cut the command by a
