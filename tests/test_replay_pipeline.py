@@ -319,7 +319,7 @@ if __name__ == "__main__":
         try:
             if fn() == SKIP:
                 skipped += 1
-                print(f"SKIP  {fn.__name__} (needs vla-real / demo/out)")
+                print(f"SKIP  {fn.__name__} (needs vla-real, demo/out or git history)")
                 continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:

@@ -295,7 +295,7 @@ The same close approach (`--want-width 0.5`, the signed bundle) flown again with
 | ArduPilot real-time factor, fence breaches | 0.935 (under the 0.95 band), 0 | 0.954, 0 |
 | frames recorded | 1105 at 19.19 Hz | 2372 at 19.75 Hz |
 
-- **Inside the margin while the Shield flew.** Unlike 2026-10-13, where every unsafe-position tick fell under ArduPilot's BRAKE hold and RTL, 20 of these came while the Shield was still flying its corrected commands in Brake, up to 1.0 m deep. kpi.json still counts 0 P0 escapes, because every emitted command was legal by the forecast.
+- **Inside the margin while the Shield flew.** Unlike 2026-10-13, where every unsafe-position tick was flown by ArduPilot (its BRAKE mode under the escalation FSM's Loiter, and RTL), 20 of these came while the Shield was still flying its corrected commands in Brake, up to 1.0 m deep. kpi.json still counts 0 P0 escapes, because every emitted command was legal by the forecast.
 - **How.** At 40.7 s the Shield held the stand-off from the detector's target (StandoffHold, edge G1 to Brake); from the next tick ClearanceFix pushed each command away from the building at 0.50-0.86 m/s (horizontal speed of the emitted command). The aircraft was flying at 3.2 m/s and carried 3.3 m on while it slowed.
 - **Why the forecast did not see it.** The forecast is constant-velocity from the commanded action (`guardrail/shield.py` `_predict`; `State` has no velocity), so each push-away read as recovering (2.70 m to 4.64 m on the first) while the aircraft was still stopping. The position stayed illegal and its depth grew, so X7 sent the aircraft home from Brake.
 - **Not fixed:** a forecast that starts from the aircraft's own velocity, beside the hold that stops clear of the margin.

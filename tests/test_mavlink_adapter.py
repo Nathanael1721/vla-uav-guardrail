@@ -240,12 +240,12 @@ def test_a_real_circle_fence_reaches_the_autopilot_as_a_circle():
     the DSL has it: exported as ArduPilot's exclusion circle with the exact
     radius (the Shield's 32-gon circumscribes it, so the backstop is not
     stricter), and held back while the aircraft is inside."""
-    try:
-        from guardrail.models import CircleFence
-        c = CircleFence(id="nfz-disc", type="circle_fence", center=XY(x=40, y=40),
-                        radius_m=8.0)
-    except Exception:                                # noqa: BLE001
-        return                                       # DSL without circles
+    # A plain import: CircleFence is in the DSL since 2026-10-07, and the old
+    # `except Exception: return` guard turned any construction error into a
+    # silent PASS (review of 613aa50, 2026-10-19).
+    from guardrail.models import CircleFence
+    c = CircleFence(id="nfz-disc", type="circle_fence", center=XY(x=40, y=40),
+                    radius_m=8.0)
     pol = load_policy(POLICY)
     pol.constraints.append(c)
     fences, _ = A.policy_fences(pol, column_m=30.0)

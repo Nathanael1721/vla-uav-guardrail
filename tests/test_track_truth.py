@@ -138,7 +138,6 @@ def test_it_reproduces_the_recorded_flights():
         # is there, and this returned None, counted as a PASS (review of the
         # F9b merge). A checkout with some of them checks those.
         return SKIP
-    assert checked >= 1
 
 
 def test_the_tolerance_is_wide_enough_for_a_correct_box():

@@ -123,8 +123,8 @@
 #          instead of turning its gRPC tests into SKIPs. On the
 #          requirements-only job its logic tests, which drive Harness
 #          directly, run and the gRPC / mTLS tests SKIP, as do
-#          test_wp4outputs_harness's 3 live-session tests; two tests there
-#          run their in-process half and drop the gRPC half
+#          test_wp4outputs_harness's 3 live-session tests; one test in each
+#          of the two files runs its in-process half and drops the gRPC half
 #          (PARTIAL_RETURNS in tests/test_harnesstruth_ci.py).
 #        - jsonschema (3.11 extras only) runs the schema checks of test_csp,
 #          test_policy_hash and test_policy_dsl_grant_form; elsewhere they SKIP.
@@ -133,7 +133,14 @@
 #          repository (kuanting-vla-uav-guardrail is a separate checkout, not
 #          part of this one), test_pas_ardupilot's 3 checks against IAMAI's
 #          D:/ProjectAirSim airframe and Project AirSim's own loader,
-#          test_csp's 2 checks against OpenVLA's tokenizer.json.
+#          test_csp's 2 checks against OpenVLA's tokenizer.json,
+#          test_frame_contract's 2 checks against the reference repository's
+#          docstring and implementation.
+#        - The lab signing key / signed bundles: test_harnesstruth_bundles'
+#          check of bundles/fase3-sim-demo-v0.1.1.tar.gz,
+#          test_railinputs_perception's launcher check
+#          (test_the_launcher_flies_the_signed_bundle_or_says_dev_yaml) and
+#          test_bundle's test_the_bundles_already_on_disk_still_open.
 #        - Gitignored flight output and CityLife maps (demo/out/; only the
 #          city demo's occupancy grids, demo/out/citymap/, are tracked):
 #          test_pas_ardupilot's CityLife trajectory bound, test_follow_motion's
@@ -154,12 +161,17 @@
 #          built deck and its local sources, test_replay_pipeline's
 #          recorded-flight check (which also needs the vla-real
 #          environment), and test_profile_shield_tick's check that the
-#          committed tick pack's flights still hash as packed. Dropped
+#          committed tick pack's flights still hash as packed, and
+#          test_kpi_magnitudes' 2 checks on the demo/out/ros2_* artefacts.
+#          Dropped
 #          inside a test that passes, not counted as skips: test_search's
 #          sweep over the real CityLife street mask, test_real_vla_prompt's
 #          pin of the checkpoint's config.json (D:/models) and
 #          test_profile_shield_tick's cross-check of its budgets against the
-#          reference repository's text.
+#          reference repository's text, and (without jsonschema: the 3.10 job
+#          and the 3.11 requirements-only job) test_shieldcore_audit's
+#          jsonschema validation of the audit records against the exported
+#          schema.
 #        - Gitignored tracker data (tracker/data/, the internal grant
 #          tracker): test_tracker_content's 15 content checks (the 4 that
 #          show its checks can fail still run), test_tracker_serve's

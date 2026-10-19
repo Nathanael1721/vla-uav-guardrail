@@ -1106,7 +1106,7 @@ if __name__ == "__main__":
         try:
             if fn() == SKIP:
                 skipped += 1
-                print(f"SKIP  {fn.__name__} (needs local artefacts)")
+                print(f"SKIP  {fn.__name__} (needs local artefacts or git history)")
                 continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
