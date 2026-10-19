@@ -59,7 +59,11 @@ WHAT IS OURS (each one says why it is not in the grant's model)
     is expected; until now no scenario made one (audit card WP3-15).
   * `expect: known_failure`, `shield`, `ticks`, `dt`, `lookahead_s`: carried
     over from the old library so its behaviour is unchanged. `known_failures`
-    is the same marker for single parameter cells of a family.
+    is the same marker for single parameter cells of a family. Every pin
+    names the gates it is EXPECTED to fail (`known_failure_fails` beside
+    `expect: known_failure`, `fails` in a `known_failures` entry; see
+    KnownFailureCell): a failure of any other gate in a pinned cell is a new
+    failure, not part of the old defect.
   * `expect: tracked`: a family that MEASURES how far past its design point
     the Shield degrades (GPS noise beyond the margin, GPS denial, drawn
     gusts). Its gates hold only what must hold whatever the sensor does, so a
@@ -278,7 +282,8 @@ GRANT_KPI_ALIASES = {
 # are not counted as different scenarios.
 BEHAVIOUR_EXCLUDED = ("scenario_id", "template", "description", "expected_kpis",
                       "expected_outcome", "expected_failsafe", "expect",
-                      "known_failures", "parameter_sweep", "parameter_sample",
+                      "known_failures", "known_failure_fails",
+                      "parameter_sweep", "parameter_sample",
                       # Arms: what the pilot is SHOWN. No headless pilot reads
                       # text, so two cells that differ only here fly one
                       # episode (and arms are expanded per episode anyway).
@@ -598,14 +603,27 @@ class Stress(_Strict):
                      as such. (A separate vertical sigma was dropped on
                      2026-10-06: no scenario used it and no test held it.)
     latency_ticks    the Shield sees the state from this many ticks ago.
-    wind_speed_mps   constant wind added to the vehicle's velocity, never shown
-                     to the Shield (it predicts with the commanded action only).
+    wind_speed_mps   steady wind, never shown to the Shield (it predicts with
+                     the commanded action only). How it moves the vehicle is
+                     the harness's wind model, chosen by the harness
+                     (`--wind-model`), not by the spec (experiments/
+                     sweep_scenarios.py, "THE WIND MODEL"): under the default
+                     `guided` model ArduCopter's position controller rejects a
+                     wind up to AP_HOLD_AUTHORITY_MPS (a zero setpoint holds
+                     position) and only the excess of a stronger wind drifts
+                     the vehicle downwind; `open_loop`, the model until
+                     2026-10-12 and kept for comparison, adds the whole wind
+                     to the commanded velocity. (This line described only
+                     open_loop until 2026-10-19: a family that expects drift
+                     from a wind within authority sees none by default.)
     wind_dir_deg     direction the wind blows TOWARD, degrees clockwise from
                      North (x), in the MISSION's frame: it turns with
                      mission.rotate_deg, so a family flown from four sides
                      keeps "a tailwind into the zone" a tailwind into the
                      zone. None = drawn from the seed (absolute).
-    gust_mps         sigma of a per-tick Gaussian gust on each horizontal axis.
+    gust_mps         sigma of a per-tick Gaussian gust on each horizontal axis;
+                     under `guided` the offset it causes is pulled back at
+                     PSC_POSXY_P.
     start_jitter_m   uniform +/- jitter on the start x and y, drawn from the
                      seed (wind-gusts uses it, so its three nightly seeds
                      start from three places).
@@ -666,6 +684,55 @@ class Stress(_Strict):
 Bound = Union[float, int, bool, str, None]
 
 
+# The label keys a known-failure pin may name besides a gate (KnownFailureCell,
+# `fails`): the sweep's label checks, expected_outcome and expected_failsafe.
+PIN_LABEL_KEYS = ("outcome", "failsafe")
+
+
+def pin_key(name: str) -> str:
+    """A pin's gate name as the sweep keys its failures: grant names resolved
+    the way ScenarioSpec.gates resolves them, label keys unchanged."""
+    return GRANT_KPI_ALIASES.get(name, name)
+
+
+def legacy_pins_read_as_before(body: dict[str, Any]) -> dict[str, Any]:
+    """A STORED scenario_spec body (an episode bundle's manifest_extras) with
+    any known-failure pin that names no gates read the way it was written:
+    absorbing every gate the scenario has. ScenarioSpec refuses such a pin
+    since 2026-10-19 (KnownFailureCell, `fails`), so without this every
+    episode bundle of a pinned cell written before then - each
+    three-simultaneous-violations episode among them - could no longer be
+    re-flown or re-scored (experiments/sweep_scenarios.py rerun_from_extras,
+    tools/rerun_episode.py). Pins decide only the verdict
+    (BEHAVIOUR_EXCLUDED), never the flight or its KPI table. A body whose
+    pins all name gates, or that has none, is returned unchanged (a copy);
+    authored YAML is never passed through here."""
+    b = copy.deepcopy(body)
+    kpis = b.get("expected_kpis") if isinstance(b.get("expected_kpis"), dict) else {}
+    every = sorted({pin_key(k) for k in kpis})
+    if b.get("expect") != "tracked":
+        every += [lbl for lbl, fld in (("outcome", "expected_outcome"),
+                                       ("failsafe", "expected_failsafe"))
+                  if b.get(fld) is not None]
+    if b.get("expect") == "known_failure" and not b.get("known_failure_fails"):
+        b["known_failure_fails"] = list(every)
+    pins = b.get("known_failures")
+    if isinstance(pins, list):
+        b["known_failures"] = [dict(p, fails=list(every))
+                               if isinstance(p, dict) and not p.get("fails") else p
+                               for p in pins]
+    return b
+
+
+def _check_pin_keys_shape(keys: list[str], where: str) -> None:
+    for k in keys:
+        if not isinstance(k, str) or not k.strip():
+            raise ValueError(f"{where}: every entry is a gate name, got {k!r}")
+    resolved = [pin_key(k) for k in keys]
+    if len(set(resolved)) != len(resolved):
+        raise ValueError(f"{where}: {keys} names a gate twice")
+
+
 def normalise_expectation(key: str, value: Any) -> dict[str, Any]:
     """One expected-KPI entry -> the gate form {max|min|equals: v}.
 
@@ -714,9 +781,35 @@ class KnownFailureCell(_Strict):
     when the defect shows on some seeds only (a family that draws noise from
     the seed): a pin that named the cell alone would turn red on the seeds
     where it passes.
+
+    `fails` names the gates the pinned defect fails, and only those (review of
+    2026-10-19, harness-tools/known-failure-pin-absorbs-new-regressions). Until
+    then a pin said WHICH cell was broken but not HOW, and the sweep reported
+    the cell KNOWN whatever failed in it: the three-simultaneous-violations
+    family is pinned for a false fail-safe (its labels), and a Shield change
+    that made it escape P0, breach the zone and end unsafe was still printed
+    KNOWN with exit 0 (reproduced with p0_violation_escape_rate 0.25, breaches
+    3 and ended_safe False injected into the smoke run's real KPI tables). Now
+    a failure of a gate the pin does not name is a NEW failure (status `fail`,
+    message prefixed "NEW (not pinned)") even inside a pinned cell. A key is
+    an `expected_kpis` name, written as the scenario writes it or as the field
+    it resolves to (GRANT_KPI_ALIASES: `P0_escape_rate` is
+    `p0_violation_escape_rate`), or one of the label keys PIN_LABEL_KEYS:
+    `outcome` (expected_outcome) and `failsafe` (expected_failsafe). A key the
+    scenario does not gate on is refused at load: it could never match a
+    failure, and a pin that names nothing real absorbs nothing - or, read
+    loosely, everything. Every list in the library was MEASURED, not written
+    from the description: the union of the failing gates over every episode
+    the pin matches in the nightly profile (2026-10-19, at f93283d).
     """
     params: dict[str, Any] = Field(min_length=1)
     description: str = Field(min_length=1)
+    fails: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _fails_named_once(self) -> "KnownFailureCell":
+        _check_pin_keys_shape(self.fails, "known_failures[].fails")
+        return self
 
     def matches(self, cell_params: dict[str, Any], seed: int | None = None) -> bool:
         for k, v in self.params.items():
@@ -799,6 +892,9 @@ class ScenarioSpec(_Strict):
     expected_outcome: Literal[OUTCOMES] | None = None
     expected_failsafe: bool | None = None
     expect: Literal["pass", "known_failure", "tracked"] = "pass"
+    # The gates `expect: known_failure` is expected to fail (KnownFailureCell,
+    # `fails`, says why the list exists); required with it, refused without.
+    known_failure_fails: list[str] = Field(default_factory=list)
     known_failures: list[KnownFailureCell] = Field(default_factory=list)
     shield: bool = True
     stress: Stress = Field(default_factory=Stress)
@@ -843,6 +939,35 @@ class ScenarioSpec(_Strict):
         both = set(self.parameter_sweep) & set(self.parameter_sample)
         if both:
             raise ValueError(f"{self.scenario_id}: {sorted(both)} both swept and sampled")
+        # Known-failure pins name the gates they expect to fail (KnownFailureCell).
+        if self.expect == "known_failure" and not self.known_failure_fails:
+            raise ValueError(f"{self.scenario_id}: expect: known_failure needs "
+                             f"known_failure_fails, the gates the defect is "
+                             f"expected to fail - without it any failure in the "
+                             f"scenario, a new one included, would be absorbed")
+        if self.known_failure_fails and self.expect != "known_failure":
+            raise ValueError(f"{self.scenario_id}: known_failure_fails without "
+                             f"expect: known_failure pins nothing")
+        _check_pin_keys_shape(self.known_failure_fails, f"{self.scenario_id}: "
+                              f"known_failure_fails")
+        allowed = set(self.gates)
+        # A tracked family's label mismatches are reported, never failed
+        # (sweep_scenarios.episode_verdict), so a pin cannot expect them to fail.
+        if self.expect != "tracked":
+            if self.expected_outcome is not None:
+                allowed.add("outcome")
+            if self.expected_failsafe is not None:
+                allowed.add("failsafe")
+        pins = [("known_failure_fails", self.known_failure_fails)] + [
+            (f"known_failures {pin.params}", pin.fails) for pin in self.known_failures]
+        for where, keys in pins:
+            stray = sorted(k for k in keys if pin_key(k) not in allowed)
+            if stray:
+                raise ValueError(
+                    f"{self.scenario_id}: {where} names {stray}, which this "
+                    f"scenario does not gate on (it gates "
+                    f"{sorted(allowed) or 'nothing'}) - the pin could never "
+                    f"match a failure")
         return self
 
     @property
@@ -866,6 +991,23 @@ class ScenarioSpec(_Strict):
             if pin.matches(cell_params, seed):
                 return pin.description.strip()
         return None
+
+    def known_failure_pins(self, cell_params: dict[str, Any],
+                           seed: int | None = None
+                           ) -> tuple[str | None, frozenset[str]]:
+        """(known_failure_for's reason, the gates the pins expect to fail).
+
+        The gate set is the union over the whole-scenario pin and every cell
+        pin that matches, keyed as the sweep keys its failures (pin_key): a
+        failure outside it is new (KnownFailureCell, `fails`)."""
+        keys: set[str] = set()
+        if self.expect == "known_failure":
+            keys.update(self.known_failure_fails)
+        for pin in self.known_failures:
+            if pin.matches(cell_params, seed):
+                keys.update(pin.fails)
+        return (self.known_failure_for(cell_params, seed),
+                frozenset(pin_key(k) for k in keys))
 
 
 # --------------------------------------------------------------------------- #

@@ -61,7 +61,10 @@
 # `expect: known_failure` marks a scenario whose gates are EXPECTED to fail. It
 # is reported as a known failure, never as a pass and never silently. That is
 # how an open defect stays visible in the sweep instead of living only in a
-# document nobody re-reads.
+# document nobody re-reads. Beside it, `known_failure_fails` names WHICH gates
+# the defect fails (an expected_kpis name, or `outcome` / `failsafe` for the
+# labels); a failure of any other gate is a new failure, not the old defect
+# (2026-10-19 - until then a pin absorbed every failure in its cell).
 #
 # `expect: tracked` marks a family that measures how far PAST its design point
 # the Shield degrades (sensor error beyond the margin, GPS denial, drawn
@@ -86,7 +89,9 @@
 #
 # Gates hold the REQUIREMENT, not what the Shield happened to do. Where a cell
 # breaks the requirement it is pinned under `known_failures` with the
-# mechanism, measured; any other cell that fails is a new failure.
+# mechanism, measured, and the gates it fails (`fails`, measured over every
+# episode the pin matches in the nightly profile); any other cell that fails,
+# and any other gate that fails in a pinned cell, is a new failure.
 
 # THE FORECAST (2026-10-12)
 #

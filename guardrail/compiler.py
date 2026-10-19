@@ -2747,7 +2747,34 @@ def _costmap_report(args) -> int:
     return 0 if t["map"]["missed"] == 0 else 1
 
 
+# The X,Y options of this CLI, and what a negative X looks like.
+_XY_FLAGS = ("--subject",)
+_NEGATIVE_XY = re.compile(r"^-\.?\d")
+
+
+def _join_negative_xy(argv: list[str], flags=_XY_FLAGS) -> list[str]:
+    """`["--subject", "-20,15"]` -> `["--subject=-20,15"]` (review of
+    2026-10-19). argparse takes a separate value that starts with '-' only
+    when it reads as a negative NUMBER, and "-20,15" does not (the comma), so
+    `costmap --subject -20,15` - a subject west of the origin - exited with
+    status 2 ("expected one argument"). The same fix as the rails'
+    (sitl/mavlink_adapter_node.join_negative_xy, which this package does not
+    import); safe because no option here starts with '-' and a digit."""
+    out: list[str] = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in flags and i + 1 < len(argv) and _NEGATIVE_XY.match(argv[i + 1]):
+            out.append(f"{a}={argv[i + 1]}")
+            i += 2
+            continue
+        out.append(a)
+        i += 1
+    return out
+
+
 def _main(argv: list[str] | None = None) -> int:
+    argv = _join_negative_xy(list(sys.argv[1:] if argv is None else argv))
     ap = argparse.ArgumentParser(prog="python -m guardrail.compiler")
     sub = ap.add_subparsers(dest="cmd", required=True)
     cm = sub.add_parser("costmap", help="rasterise one policy (.npz + JSON header)")

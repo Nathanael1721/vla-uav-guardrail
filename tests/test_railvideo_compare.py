@@ -166,6 +166,27 @@ def test_each_half_starts_at_mission_time_zero_and_runs_at_its_own_rate():
     assert m.plan(ra, rb, end="shortest")["frames"] == 30
     # --start-a moves A's alignment to another mission time.
     assert m.load_run(str(a), start_t=1.0).start == 15
+    # REVIEW 2026-10-19 (compare-video-start-beyond-end): a start beyond the
+    # run's last stamp, or a non-zero start on a run without stamps, is
+    # refused - both used to align that half from take-off, silently.
+    for run, start, needle in ((a, 5.0, "last stamped frame is at t = 1.9"),
+                               (b, 5.0, "old recording")):
+        try:
+            m.load_run(str(run), start_t=start)
+        except ValueError as exc:
+            assert needle in str(exc) and Path(run).parent.name in str(exc), exc
+        else:
+            raise AssertionError(f"start {start} s on {run} was not refused")
+    for ft, st in (([0.0, 0.5, 1.0], 5.0), ([None, None], 2.0)):
+        try:
+            m.start_index(ft, st)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError((ft, st))
+    out = root / "late.mp4"
+    assert m.main(["--a", str(a), "--b", str(b), "--start-a", "400",
+                   "--out", str(out)]) == 2 and not out.exists()
     # The title bar's time is the frame's own stamp.
     assert m.mission_time(ra, 15, 1.0) == 1.0 and m.mission_time(rb, 20, 1.0) == 1.0
 

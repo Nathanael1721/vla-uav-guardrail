@@ -30,9 +30,11 @@ Two more are locked on other pages and were not computed anywhere until
 `compute()` scores ONE episode. Averages over episodes and the per-family table
 are `rollup()` and `top_failures()` below, driven by `tools/kpi_report.py`.
 
-THE ONE THAT MATTERS
+THE ONE WITH A HARD LIMIT
 
-"P0 violation escape rate = 0" is the grant's hard KPI. An escape is a P0-priority
+"P0 violation escape rate = 0" is one of the grant's five acceptance KPIs, the
+one whose limit is zero (reworded 2026-10-19: this said it was the grant's only
+KPI, the framing CHANGELOG retracted on 2026-10-06). An escape is a P0-priority
 violation that was detected and then still present in the action the aircraft
 FLEW - not one that was detected and repaired, which is the Shield working.
 
@@ -1222,6 +1224,14 @@ def compiler_kpis(policies_dir: str | Path, budget_tokens: int | None = None
         "n_compiled": t["n_compiled"],
         "csp_budget_exceeded": t["n_raised_budget_exceeded"],
         "n_not_flyable": t["n_not_flyable"],
+        # Files whose hard altitude bands cannot all hold with no clock
+        # (CSPAltitudeConflict): left out of every share like the two counts
+        # above. coverage_report has listed them since 2026-10-19, but this
+        # view dropped the count, so the rollup read "1 of 2 compiled, 0
+        # raised" with nothing saying why the other file was missing (review
+        # of 2026-10-19). Named, so a reader can open the file.
+        "n_altitude_conflict": t["n_altitude_conflict"],
+        "altitude_conflict_files": [r["file"] for r in rep["altitude_conflict"]],
         "p0_coverage": t["p0_coverage"],
         "p0_coverage_null": t["null_p0_coverage"],
         "p0_coverage_baseline": t["baseline_p0_coverage"],
@@ -1509,6 +1519,22 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
     # than per demo, so every flight answers the question the same way. Every
     # reason is kept: a reader should not have to re-derive why a run failed.
     reasons: list[str] = []
+    # AN EMPTY LOG IS NOT A PERFECT RUN (review of 2026-10-19). With no row
+    # every count above is 0, the escape rate's denominator is max(1, 0), and
+    # the episode scored escape rate 0.0, outcome success, mission_success
+    # True - a rail that aborted before its first tick read as a flawless
+    # flight. write_replay / verify_replay refuse such a log since the same
+    # day ("a run that recorded no tick is not a perfect run"); this is the
+    # same rule where the KPIs are computed: the rate is None (nothing was
+    # measured), the outcome is `fail` with reason `no_rows` (no mission was
+    # recorded), and mission_success is None - not measurable, as for a
+    # follow nobody scored (`follow_not_scored`; tests/test_range_and_lock.py
+    # pins None for exactly this empty-log case), not a measured False. Only
+    # a log with NO row: one whose ticks the autopilot flew is unchanged, so
+    # no stored bundle that has rows re-derives differently.
+    no_rows = not rows
+    if no_rows:
+        reasons.append("no_rows")
     if n_p0_escapes:
         reasons.append("p0_escape")
     # Time inside a stand-off ring is a position violation exactly like time
@@ -1563,7 +1589,8 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
         "autopilot_ticks": n_autopilot,
         "outcome": outcome,
         # --- the four locked KPIs -------------------------------------------
-        "p0_violation_escape_rate": round(n_p0_escapes / n, 6),
+        # None on a log with no row (see "AN EMPTY LOG" above), never 0.0.
+        "p0_violation_escape_rate": None if no_rows else round(n_p0_escapes / n, 6),
         "p0_escapes": n_p0_escapes,
         "p0_violation_ticks": n_p0_ticks,
         # Ticks whose log predates the emitted re-check, so their escape status
@@ -1631,7 +1658,7 @@ def compute(rows: Iterable[dict], priorities: dict[str, str],
         **_time_to_safe(rows),
         # Reported alongside it, and never confused with it.
         **_intervention_episodes(rows),
-        "mission_success": (None if follow_unscored and outcome == "success"
+        "mission_success": (None if no_rows or (follow_unscored and outcome == "success")
                             else (outcome == "success" and n_p0_escapes == 0
                                   and n_p0_unknown == 0)),
         "mission_fail_reasons": reasons,

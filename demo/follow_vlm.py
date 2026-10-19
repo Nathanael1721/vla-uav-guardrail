@@ -5852,7 +5852,7 @@ async def fly(args) -> int:
                 "repairs": [r.model_dump() for r in d.repairs],
                 # The check on what was FLOWN, not on what was asked for.
                 # `violations` above is the check on `raw`, so without this the
-                # grant's hard KPI - a P0 seen and then flown anyway - could
+                # P0 escape KPI (limit 0) - a P0 seen and then flown anyway - could
                 # only be inferred, and guardrail/kpi.py inferred it wrongly.
                 # Empty is the good case and the normal one.
                 "emitted_violations": [v.model_dump() for v in d.emitted_violations],

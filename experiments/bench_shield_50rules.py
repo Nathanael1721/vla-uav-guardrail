@@ -1,7 +1,16 @@
 """Time the Shield at the grant's design load: 50 rules, 48 of them polygons.
 
+The DEFAULT run is 50 rules on a 3 s / 0.5 s forecast (7 poses), the
+2026-10-06 figures. The grant's other half - "50 future-pose checks per tick",
+the 5 s / 0.1 s forecast every flown Shield has used since 2026-10-07
+(guardrail/shield.py LOOKAHEAD_S, LOOKAHEAD_DT_S) - needs `--horizon 5 --dt
+0.1`, with `--legacy-cap 40` unless minutes of legacy timing are wanted (the
+command docs/data/progress_oct.json records for the 5 s figures). The first
+line of the output names the forecast it timed. (Said 2026-10-19: a site card
+quoting both figures gave only the bare command below as "Reproduce".)
+
     python experiments/bench_shield_50rules.py                     # 3 s / 0.5 s
-    python experiments/bench_shield_50rules.py --horizon 5 --dt 0.1
+    python experiments/bench_shield_50rules.py --horizon 5 --dt 0.1 --legacy-cap 40
     python experiments/bench_shield_50rules.py --impl current --json out.json
     python experiments/bench_shield_50rules.py --horizon 5 --dt 0.1 --variant moving
     python experiments/bench_shield_50rules.py --horizon 5 --dt 0.1 --flags segment_check=1

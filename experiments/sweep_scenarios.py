@@ -23,7 +23,12 @@ pinned defect started passing. 2: refused before running - an `--only` name
 that matched nothing, a run of zero episodes, two cells that fly the same
 episode, or a profile whose count is outside its declared range. 3: the run
 finished but scored nothing (every episode skipped). Each of 2 and 3 is a run
-that would otherwise have printed a clean result while testing nothing.
+that would otherwise have printed a clean result while testing nothing. 4
+(2026-10-19): no gate failed, but the KPI rollup or the top-K failures could
+not be computed, so the run's KPI report is missing or flagged - until then
+that was recorded in the JSON only and the run exited 0. (1 takes precedence
+over 4, and 4 over 3.) A failure of a gate a known-failure pin does not name
+is a failure (1) even inside the pinned cell.
 
 WHY THIS EXISTS
 
@@ -194,7 +199,11 @@ clock or relabels - and every other one is reported SKIPPED with the reason
 (`sitl_refusal`). Flying a scenario there and scoring it against its gates
 under its id while the rail flew something else would describe a different
 flight. A harness that quietly scores 11/11 while running 4 is worse than no
-harness.
+harness. A rail flight is scored from the rail's own flight_log.jsonl and
+metrics.json (`sitl_extra`): the goal and the FSM record from metrics.json,
+breaches and polygon entries from the logged positions (`rail_measurements`).
+Until 2026-10-19 only the rows were read, so every such gate was "not
+measured" and the one scenario the rail may fly could never pass.
 
 TRACKED FAMILIES
 
@@ -257,7 +266,8 @@ from guardrail.models import (Action4D, CorridorSwap, DynamicNFZ,  # noqa: E402
 from guardrail.scenario_spec import (FORECAST_ARMS,                # noqa: E402
                                      GRANT_EVENT_TYPES, Defaults, Library,
                                      ScenarioEvent, ScenarioSpec,
-                                     check_forecast_arms, expand, load_profile)
+                                     check_forecast_arms, expand,
+                                     legacy_pins_read_as_before, load_profile)
 from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S, Shield,  # noqa: E402
                               recurrence_active)
 
@@ -572,7 +582,6 @@ class _EventState:
     shields: list                          # every Shield kept in step
     n_spawn: int = 0
     last_zone: str | None = None
-    anchors: dict = field(default_factory=dict)   # zone id -> event time it was based at
     refused: list = field(default_factory=list)   # (type, reason, expected)
 
 
@@ -584,13 +593,6 @@ def _zone(shield: Shield, zid: str):
                                  f"rotates or scales mid-flight")
             return c
     raise ValueError(f"no zone {zid!r} to edit (spawn one first)")
-
-
-def _ring_now(zone: DynamicNFZ, based_at: float, t: float) -> list[tuple[float, float]]:
-    """Where a zone is at time t: its declared motion since the event it was
-    last based at (the Shield anchors each edit at the event time)."""
-    return zone.ring_at(max(0.0, t - based_at)) if zone.motion is not None else \
-        [(v.x, v.y) for v in zone.vertices]
 
 
 def apply_event(ev, es: _EventState, st: State, heading: tuple[float, float],
@@ -639,7 +641,6 @@ def apply_event(ev, es: _EventState, st: State, heading: tuple[float, float],
         out = run_all(lambda s: s.hot_apply(zone, t))
         if not out.get("refused"):
             es.last_zone = zone.id
-            es.anchors[zone.id] = t
             out["vertices"] = [[round(v.x, 3), round(v.y, 3)] for v in zone.vertices]
             out["violation_action"] = zone.violation_action
             if zone.motion is not None:
@@ -651,18 +652,26 @@ def apply_event(ev, es: _EventState, st: State, heading: tuple[float, float],
         if zid is None:
             raise ValueError(f"{ev.type}: no zone named and none spawned yet")
         zone = _zone(flying, zid)
-        based = es.anchors.get(zid, t)
         motion = zone.motion.model_dump() if zone.motion is not None else \
             {"vx_mps": 0.0, "vy_mps": 0.0, "yaw_rate_dps": 0.0}
+        # A motion swap keeps the zone where the FLYING Shield has it now
+        # (Shield.zone_ring_at), and that one ring goes to every Shield so
+        # they stay in step. Until 2026-10-19 the harness kept its own anchor
+        # per zone and defaulted it to the event time for a zone the policy
+        # declared, so ring_at(0) put a moving policy zone back at its
+        # authored vertices - 10 m back for a 1 m/s zone edited at t = 10 s
+        # (latent: the flight loader refuses a policy file with a
+        # dynamic_nfz today; review, harness-tools/ring-now-wrong-anchor-
+        # for-policy-zones).
         if ev.type == "translate_polygon_fence" and "mps" in p:
             ux, uy = _direction(p, heading)
             motion.update(vx_mps=float(p["mps"]) * ux, vy_mps=float(p["mps"]) * uy)
-            ring = _ring_now(zone, based, t)
+            ring = flying.zone_ring_at(zid, t)
             out = run_all(lambda s: s.move_nfz(zid, ring, t, motion=dict(motion)))
             out["motion"] = motion
         elif ev.type == "rotate_polygon_fence" and "deg_per_s" in p:
             motion["yaw_rate_dps"] = float(p["deg_per_s"])
-            ring = _ring_now(zone, based, t)
+            ring = flying.zone_ring_at(zid, t)
             out = run_all(lambda s: s.move_nfz(zid, ring, t, motion=dict(motion)))
             out["motion"] = motion
         elif ev.type == "translate_polygon_fence":
@@ -675,7 +684,6 @@ def apply_event(ev, es: _EventState, st: State, heading: tuple[float, float],
             f = float(p["factor"])
             out = run_all(lambda s: s.scale_nfz(zid, f, t))
         if not out.get("refused"):
-            es.anchors[zid] = t
             z = _zone(flying, zid)
             out["vertices"] = [[round(v.x, 3), round(v.y, 3)] for v in z.vertices]
         out["zone"] = zid
@@ -1767,7 +1775,10 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
     if extras.get("extras_schema") != EXTRAS_SCHEMA:
         raise ValueError(f"manifest_extras schema {extras.get('extras_schema')!r}, "
                          f"this harness reads {EXTRAS_SCHEMA!r}")
-    body = copy.deepcopy(extras["scenario_spec"])
+    # A bundle written before 2026-10-19 may carry pins that name no gates,
+    # which the spec now refuses; read as they were written (they decide
+    # only the verdict, never the flight).
+    body = legacy_pins_read_as_before(extras["scenario_spec"])
     pol = extras["policy"]
     tmp = None
     try:
@@ -2013,6 +2024,109 @@ def read_fresh_log(log: Path, launched_at: float) -> list[dict]:
             if x.strip()]
 
 
+def read_fresh_metrics(path: Path, launched_at: float) -> dict:
+    """The rail's metrics.json, under read_fresh_log's rule: the tag is
+    deterministic, so an earlier flight's file (and its FSM record) would
+    otherwise be scored as this one's."""
+    if not path.is_file():
+        raise RuntimeError(f"the rail wrote no {path.name}")
+    if path.stat().st_mtime < launched_at - 1.0:
+        raise RuntimeError(f"{path} predates this launch: it is an earlier run's "
+                           f"metrics, not this one's")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def rail_measurements(rows: list[dict], policy) -> dict:
+    """The harness's own position measurements, from a rail's flight log.
+
+    run_episode measures breaches, polygon entries, ticks inside a polygon
+    and the distance to the fence as it flies; the SITL rail's log carries
+    what they need (x, y, up, `unsafe` - Shield.state_is_unsafe on the pose
+    the rail flew on - `flown` and `setpoint`), but until 2026-10-19 nothing
+    read it, so on `--backend sitl` every such gate was "not measured" and
+    rail-mission-stub-vla, the one scenario the rail may fly, FAILED however
+    the flight went (review, harness-tools/sitl-backend-cannot-pass).
+
+    Same definitions as run_episode, on the rail's guarantee: sitl_refusal
+    refuses events, clocks, relabels and stressors, so no rule changes under
+    the aircraft and no transition after the first row is imposed.
+      breaches        `unsafe` false -> true on a row after the first;
+      polygon fields  the row's position against the policy's zones in force
+                      at its altitude (Shield.zones_now), entries counted on
+                      an outside -> inside step after the first row;
+      autopilot_*     a step that ended a row the rail did not fly (`flown`
+                      false or setpoint "none": the autopilot or a fault
+                      held the aircraft) is the autopilot's move, as
+                      run_episode splits by who flew it.
+    A field the log cannot answer is left out, so its gate reads "not
+    measured": `unsafe` absent (an older rail), or a policy whose rules
+    switch with the clock (_timed) - which zone was in force at a row's wall
+    time is not in the log, and a fresh Shield would judge it at today's."""
+    out: dict[str, Any] = {}
+    if rows and all("unsafe" in r for r in rows):
+        b = ab = 0
+        prev_unsafe, prev_owner = False, "shield"
+        for i, r in enumerate(rows):
+            owner = ("autopilot" if r.get("flown") is False
+                     or r.get("setpoint") == "none" else "shield")
+            unsafe = bool(r.get("unsafe"))
+            if i > 0 and unsafe and not prev_unsafe:
+                if prev_owner == "autopilot":
+                    ab += 1
+                else:
+                    b += 1
+            prev_unsafe, prev_owner = unsafe, owner
+        out.update(breaches=b, autopilot_breaches=ab)
+    if rows and not _timed(policy):
+        zones_of = Shield(policy).zones_now
+        fence_seen = False
+        min_d = math.inf
+        inside_ticks = entries = ap_entries = 0
+        prev_inside, prev_owner = False, "shield"
+        for i, r in enumerate(rows):
+            owner = ("autopilot" if r.get("flown") is False
+                     or r.get("setpoint") == "none" else "shield")
+            inside = False
+            for zr in zones_of(float(r["up"])):
+                fence_seen = True
+                sd = _signed_dist(zr.polygon, float(r["x"]), float(r["y"]))
+                min_d = min(min_d, sd)
+                inside = inside or sd < 0
+            if inside:
+                inside_ticks += 1
+                if i > 0 and not prev_inside:
+                    if prev_owner == "autopilot":
+                        ap_entries += 1
+                    else:
+                        entries += 1
+            prev_inside, prev_owner = inside, owner
+        if fence_seen:
+            out.update(polygon_entries=entries, autopilot_polygon_entries=ap_entries,
+                       ticks_inside_fence_polygon=inside_ticks,
+                       min_true_dist_to_fence_m=round(min_d, 3))
+        else:
+            # No zone at all: None, as run_episode reports it.
+            out.update(polygon_entries=None, autopilot_polygon_entries=None,
+                       ticks_inside_fence_polygon=None, min_true_dist_to_fence_m=None)
+    return out
+
+
+def sitl_extra(spec: ScenarioSpec, rows: list[dict], metrics: dict, policy) -> dict:
+    """What score() needs from a rail flight beside its rows: the goal (the
+    node's `reached`), the escalation FSM's record (its fsm.summary(), with
+    theta_basis and fault, as compute() reads it) and rail_measurements.
+    A Shield-on flight whose metrics hold no FSM record leaves `fsm` out, and
+    score() reports the fail-safe label "not measured" - never a guess."""
+    extra: dict[str, Any] = {"seed_applied": True}
+    if isinstance(metrics.get("reached"), bool):
+        extra["reached_goal"] = metrics["reached"]
+    fsm = metrics.get("fsm")
+    if spec.shield and isinstance(fsm, dict) and "failsafe_triggered" in fsm:
+        extra["fsm"] = fsm
+    extra.update(rail_measurements(rows, policy))
+    return extra
+
+
 def run_sitl(sc, tag: str, seed: int = 0, defaults=None) -> tuple[list[dict], dict] | None:
     spec = _as_spec(sc)
     if not sitl_available():
@@ -2028,7 +2142,8 @@ def run_sitl(sc, tag: str, seed: int = 0, defaults=None) -> tuple[list[dict], di
         raise RuntimeError(f"SITL run failed ({r.returncode}): "
                            f"{(r.stderr or r.stdout)[-400:]}")
     rows = read_fresh_log(out_dir / "flight_log.jsonl", launched_at)
-    return rows, {"seed_applied": True}
+    metrics = read_fresh_metrics(out_dir / "metrics.json", launched_at)
+    return rows, sitl_extra(spec, rows, metrics, spec.policy.load(ROOT))
 
 
 # --------------------------------------------------------------------------- #
@@ -2044,7 +2159,14 @@ _VACUOUS = {"mean_time_to_safe_s", "max_time_to_safe_s"}
 def check_gates(gates: dict, result: dict) -> list[str]:
     """Returns the failures. An absent or None field is a FAILURE, not a pass:
     a gate on something that was never measured has not been satisfied."""
-    bad = []
+    return [msg for _, msg in check_gates_keyed(gates, result)]
+
+
+def check_gates_keyed(gates: dict, result: dict) -> list[tuple[str, str]]:
+    """check_gates with each failure's gate field: [(field, message)]. The
+    field is what a known-failure pin names (scenario_spec.pin_key), so a
+    pinned cell can tell the failure it is pinned for from a new one."""
+    bad: list[tuple[str, str]] = []
     for fld, rule in (gates or {}).items():
         got = result.get(fld)
         if got is None:
@@ -2054,16 +2176,16 @@ def check_gates(gates: dict, result: dict) -> list[str]:
                     and result.get("time_to_safe_censored") == 0):
                 continue
             if fld in _VACUOUS and (result.get("time_to_safe_censored") or 0) > 0:
-                bad.append(f"{fld}: never recovered (censored episode)")
+                bad.append((fld, f"{fld}: never recovered (censored episode)"))
                 continue
-            bad.append(f"{fld}: not measured")
+            bad.append((fld, f"{fld}: not measured"))
             continue
         if "max" in rule and got > rule["max"]:
-            bad.append(f"{fld}={got} > max {rule['max']}")
+            bad.append((fld, f"{fld}={got} > max {rule['max']}"))
         if "min" in rule and got < rule["min"]:
-            bad.append(f"{fld}={got} < min {rule['min']}")
+            bad.append((fld, f"{fld}={got} < min {rule['min']}"))
         if "equals" in rule and got != rule["equals"]:
-            bad.append(f"{fld}={got} != {rule['equals']}")
+            bad.append((fld, f"{fld}={got} != {rule['equals']}"))
     return bad
 
 
@@ -2111,19 +2233,30 @@ def score(spec: ScenarioSpec, rows: list[dict], extra: dict, policy,
 
 
 def label_failures(spec: ScenarioSpec, res: dict) -> list[str]:
-    bad = []
+    return [msg for _, msg in label_failures_keyed(spec, res)]
+
+
+def label_failures_keyed(spec: ScenarioSpec, res: dict) -> list[tuple[str, str]]:
+    """label_failures with each failure's pin key (scenario_spec
+    PIN_LABEL_KEYS): `outcome` or `failsafe`."""
+    bad: list[tuple[str, str]] = []
     if spec.expected_outcome is not None and not res.get("outcome_matches_label"):
-        bad.append(f"outcome: labelled {spec.expected_outcome}, flew "
-                   f"{res.get('mission_outcome')}")
+        bad.append(("outcome", f"outcome: labelled {spec.expected_outcome}, flew "
+                               f"{res.get('mission_outcome')}"))
     if spec.expected_failsafe is not None:
         if res.get("failsafe_triggered") is None:
-            bad.append("fail-safe: labelled, but this episode ran no escalation FSM "
-                       "(not measured)")
+            bad.append(("failsafe", "fail-safe: labelled, but this episode ran no "
+                                    "escalation FSM (not measured)"))
         elif res.get("failsafe_matches_label") != 1.0:
-            bad.append(f"fail-safe: labelled "
-                       f"{'expected' if spec.expected_failsafe else 'not expected'}, "
-                       f"{'triggered' if res.get('failsafe_triggered') else 'not triggered'}")
+            bad.append(("failsafe", f"fail-safe: labelled "
+                        f"{'expected' if spec.expected_failsafe else 'not expected'}, "
+                        f"{'triggered' if res.get('failsafe_triggered') else 'not triggered'}"))
     return bad
+
+
+# The prefix a failure in a pinned cell carries when the pin does not name its
+# gate: a new failure, not the pinned defect (episode_verdict).
+NEW_IN_PINNED_CELL = "NEW (not pinned): "
 
 
 VERDICTS = ("pass", "tracked", "fail", "known_failure", "unexpected_pass")
@@ -2146,9 +2279,17 @@ def episode_verdict(spec: ScenarioSpec, res: dict, params: dict, seed: int
     `gates_failed` holds the gate failures and, unless the family is tracked,
     the label failures. `labels_failed` is non-empty only for a tracked family,
     whose label mismatches are reported but do not fail it.
+
+    A pinned cell (expect: known_failure, or a matching known_failures entry)
+    is a known failure only while every failing gate is one its pins name
+    (KnownFailureCell, `fails`). A failure of any other gate makes it `fail`,
+    and that message is prefixed NEW_IN_PINNED_CELL: until 2026-10-19 any
+    failure in a pinned cell was absorbed, so a P0 escape, a breach or an
+    unsafe end in a cell pinned for its labels exited 0 (review,
+    harness-tools/known-failure-pin-absorbs-new-regressions).
     """
-    labels_bad = label_failures(spec, res)
-    bad = check_gates(spec.gates, res)
+    labels_bad = label_failures_keyed(spec, res)
+    keyed = check_gates_keyed(spec.gates, res)
     labels_failed: list[str] = []
     if spec.expect == "tracked":
         # A tracked family measures how far past its design point the
@@ -2156,11 +2297,19 @@ def episode_verdict(spec: ScenarioSpec, res: dict, params: dict, seed: int
         # part of that measurement. Its label mismatches are reported
         # (`labels_failed`, and in the fail-safe KPI, which counts every
         # labelled episode) but do not fail it - its gates still do.
-        labels_failed = labels_bad
+        labels_failed = [msg for _, msg in labels_bad]
     else:
-        bad = bad + labels_bad
-    known_why = spec.known_failure_for(params, seed)
-    if bad and known_why is not None:
+        keyed = keyed + labels_bad
+    known_why, pinned = spec.known_failure_pins(params, seed)
+    if known_why is not None:
+        new = [NEW_IN_PINNED_CELL + msg for k, msg in keyed if k not in pinned]
+        bad = new + [msg for k, msg in keyed if k in pinned]
+    else:
+        new = []
+        bad = [msg for _, msg in keyed]
+    if new:
+        status = "fail"
+    elif bad and known_why is not None:
         status = "known_failure"
     elif bad:
         status = "fail"
@@ -2307,6 +2456,24 @@ def true_state_summary(scored: list[dict]) -> dict:
     for r in ap_p0:
         ap_by_status[r["status"]] = ap_by_status.get(r["status"], 0) + 1
     inside = [r for r in on if (r["kpi"].get("ticks_inside_fence_polygon") or 0) > 0]
+    # Why each episode inside a polygon was there, as three disjoint groups
+    # (review of 2026-10-19, harness-tools/imposed-only-counts-autopilot-
+    # entries): the Shield flew itself in (`entered`); the modelled LOITER /
+    # RTL / LAND carried it in and the Shield never did; or neither crossed an
+    # edge - a zone appeared, moved, grew or switched on under it. Until then
+    # "imposed only" was len(inside) - len(entered), so an autopilot entry
+    # (polygon_entries 0, autopilot_polygon_entries 1: run_episode splits a
+    # crossing by who flew it) was printed as "inside only because a zone
+    # appeared under them" - 4 of the published sweep's 12 were the
+    # wind-beyond-authority LOITER drifting into a static zone with no harness
+    # event at all. Filtered per episode, not subtracted: an episode both
+    # entered would be subtracted twice.
+    inside_ap_only = [r for r in inside
+                      if not (r["kpi"].get("polygon_entries") or 0)
+                      and (r["kpi"].get("autopilot_polygon_entries") or 0) > 0]
+    imposed = [r for r in inside
+               if not (r["kpi"].get("polygon_entries") or 0)
+               and not (r["kpi"].get("autopilot_polygon_entries") or 0)]
     dmins = [r["kpi"]["min_true_dist_to_fence_m"] for r in entered
              if r["kpi"].get("min_true_dist_to_fence_m") is not None]
     by_status: dict[str, int] = {}
@@ -2329,8 +2496,11 @@ def true_state_summary(scored: list[dict]) -> dict:
         "min_true_dist_to_fence_m_of_entries": min(dmins) if dmins else None,
         # Inside at some tick for any reason, including a zone spawned on it or
         # a window that opened on it (imposed; time_to_safe measures those).
+        # Split three ways, disjoint: the Shield entered (episodes_entering_
+        # polygon), only the autopilot entered, neither entered (imposed).
         "episodes_inside_polygon": len(inside),
-        "episodes_inside_polygon_imposed_only": len(inside) - len(entered),
+        "episodes_inside_polygon_autopilot_entered": len(inside_ap_only),
+        "episodes_inside_polygon_imposed_only": len(imposed),
         "true_p0_flown_ticks": sum(r["kpi"].get("true_p0_flown_ticks") or 0 for r in on),
         "episodes_with_breach": sum(1 for r in on if (r["kpi"].get("breaches") or 0) > 0),
         # ---- what the AUTOPILOT flew (never merged into the counts above) ----
@@ -2728,7 +2898,9 @@ def results_path(out: str | None, publish: bool, tag: str | None) -> Path:
 
 def _rollup(eps: list[dict]) -> dict | None:
     """guardrail.kpi.rollup when this checkout has it (it landed on 2026-10-06);
-    None otherwise, and the caller records that it is missing."""
+    None for no episodes, or when it is missing - and then the per-cell
+    rollup in main() fails, which is recorded in `_rollup_note`, printed, and
+    exits 4 (main(), "ALL OR NOTHING")."""
     fn = getattr(K, "rollup", None)
     return fn(eps) if (fn and eps) else None
 
@@ -2925,7 +3097,10 @@ def main(argv: list[str] | None = None) -> int:
             n_pass += 1
 
         if verbose or (status not in ("pass", "tracked") and not is_cmp):
-            print(f"  {mark} {label:<34} escape={res['p0_violation_escape_rate']:<9} "
+            # str(): the rate is None on a flight log with no row (a rail
+            # launch that recorded nothing; guardrail/kpi.py "AN EMPTY LOG"),
+            # and None has no :<9 format - the print would raise.
+            print(f"  {mark} {label:<34} escape={str(res['p0_violation_escape_rate']):<9} "
                   f"repairs={res['repair_count']:<5} breaches={res.get('breaches')} "
                   f"t2safe_eps={res['time_to_safe_episodes']} "
                   f"outcome={res.get('mission_outcome')}"
@@ -2996,21 +3171,32 @@ def main(argv: list[str] | None = None) -> int:
     families = family_summary(scored)
     all_sigs = {kpi_signature(r) for r in scored}
     true_state = true_state_summary(scored)
+    # ALL OR NOTHING (review of 2026-10-19, harness-tools/rollup-failure-
+    # swallowed). Until then an exception part-way through filled `cells` up
+    # to the failing group, recorded `_rollup_note` in the JSON only, and the
+    # run exited 0: kpi_report.md was written with the cells built so far and
+    # no word of the failure, or not written at all with the summary looking
+    # normal (reproduced by making K.rollup raise on its Nth call). Now the
+    # rollups are built into locals and kept only when every group rolled
+    # up; a failure is printed and exits 4 (below), and no partial report is
+    # written.
     rollups, rollup_note = {}, None
     cells: dict[str, dict] = {}
     try:
+        new_rollups: dict[str, Any] = {}
+        new_cells: dict[str, dict] = {}
         for fam in sorted({t["family"] for t in tables_on}):
-            rollups[fam] = _rollup([t for t in tables_on if t["family"] == fam])
-        rollups["_all_shield_on"] = _rollup(tables_on)
-        rollups["_controls_shield_off"] = _rollup(tables_off)
-        if rollups["_all_shield_on"] is not None:
+            new_rollups[fam] = _rollup([t for t in tables_on if t["family"] == fam])
+        new_rollups["_all_shield_on"] = _rollup(tables_on)
+        new_rollups["_controls_shield_off"] = _rollup(tables_off)
+        if new_rollups["_all_shield_on"] is not None:
             # Beside the grant's p0_escape_rate (the Shield's own count), where
             # the aircraft really was: the two answer different questions.
-            rollups["_all_shield_on"]["true_state"] = true_state
+            new_rollups["_all_shield_on"]["true_state"] = true_state
         if cmp_tables_on:
             r3 = _rollup(cmp_tables_on)
             if r3 is not None:
-                rollups["_comparison_forecast_3s_shield_on"] = dict(
+                new_rollups["_comparison_forecast_3s_shield_on"] = dict(
                     r3, grant_config=False,
                     note="the 3 s / 0.5 s comparison arm, NOT the grant's Shield "
                          "configuration; never part of a headline number")
@@ -3019,8 +3205,9 @@ def main(argv: list[str] | None = None) -> int:
             groups.setdefault(cell_key(t), []).append(t)
         for key in sorted(groups):
             members = groups[key]
-            cells[key] = dict(_rollup(members), members=[t["id"] for t in members],
-                              **cell_extras(members))
+            new_cells[key] = dict(_rollup(members), members=[t["id"] for t in members],
+                                  **cell_extras(members))
+        rollups, cells = new_rollups, new_cells
     except Exception as e:                                       # noqa: BLE001
         rollup_note = f"guardrail.kpi.rollup failed: {type(e).__name__}: {e}"
     comparison = (forecast_comparison(scored, [r for r in cmp_rows if "kpi" in r],
@@ -3030,7 +3217,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         top = K.top_failures(tables_on + tables_off, k=10)
     except Exception as e:                                       # noqa: BLE001
-        rollup_note = (rollup_note or "") + f"; top_failures failed: {e}"
+        rollup_note = ((rollup_note + "; ") if rollup_note else "") + (
+            f"guardrail.kpi.top_failures failed: {type(e).__name__}: {e}")
 
     runtime = round(time.perf_counter() - t_run, 2)
     # `grant_profile_kpi_bearing` is the profile's row in the grant's schedule
@@ -3105,8 +3293,11 @@ def main(argv: list[str] | None = None) -> int:
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(json.dumps(_json_safe(doc), indent=2, allow_nan=False) + "\n",
                         encoding="utf-8")
-        out.write_text(json.dumps(_json_safe(published_view(doc)), indent=2,
-                                  allow_nan=False) + "\n", encoding="utf-8")
+        # A run whose rollups failed is not published: the evaluation data and
+        # the decks read `_rollup` / `_cell_rollup` from the published copy.
+        if not rollup_note:
+            out.write_text(json.dumps(_json_safe(published_view(doc)), indent=2,
+                                      allow_nan=False) + "\n", encoding="utf-8")
     else:
         out.write_text(json.dumps(_json_safe(doc), indent=2, allow_nan=False) + "\n",
                        encoding="utf-8")
@@ -3155,9 +3346,11 @@ def main(argv: list[str] | None = None) -> int:
               + (f" (deepest {dmin:.2f} m)" if dmin is not None else "")
               + (f" {ts['episodes_entering_polygon_by_status']}"
                  if ts['episodes_entering_polygon'] else "")
-              + f"; {ts['episodes_inside_polygon_imposed_only']} more were inside "
-              f"only because a zone appeared under them; "
-              f"{ts['true_p0_flown_ticks']} P0 ticks flown at the true state")
+              + f"; {ts['episodes_inside_polygon_autopilot_entered']} more were "
+              f"carried in by the autopilot alone (below); "
+              f"{ts['episodes_inside_polygon_imposed_only']} more were inside "
+              f"only because a zone appeared, moved, grew or switched on under "
+              f"them; {ts['true_p0_flown_ticks']} P0 ticks flown at the true state")
         print(f"  autopilot (modelled LOITER / RTL / LAND, not the Shield): "
               f"{ts['autopilot_p0_flown_ticks']} of {ts['autopilot_ticks']} ticks "
               f"flew a P0-violating action in {ts['episodes_autopilot_p0_flown']} "
@@ -3205,7 +3398,13 @@ def main(argv: list[str] | None = None) -> int:
     if n_known:
         print("Known failures are open defects, not passes. See the scenario's "
               "`description` for what is broken.")
-    if args.publish:
+    if rollup_note:
+        print(f"\nKPI ROLLUP FAILED: {rollup_note}. "
+              + ("No KPI report was written" if not cells else
+                 "The KPI report carries the failure at its top")
+              + (", and the published sweep was NOT replaced" if args.publish else "")
+              + " (exit 4).", file=sys.stderr)
+    if args.publish and not rollup_note:
         print(f"\nPUBLISHED: {_show(out)} replaced. It is read by "
               "tools/build_eval_data.py, build_deck_data.py, "
               "build_architecture_svg.py and tests/test_kpi_magnitudes.py; add a "
@@ -3214,6 +3413,9 @@ def main(argv: list[str] | None = None) -> int:
               f"{_show(results_path(None, False, tag))}")
     if n_fail:
         return 1
+    if rollup_note:
+        # Not 1: no scenario failed; the harness could not summarise the run.
+        return 4
     if not scored:
         print("\nNothing was scored: every episode was skipped (exit 3).")
         return 3

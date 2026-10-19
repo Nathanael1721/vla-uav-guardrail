@@ -257,7 +257,7 @@ assert EMPTY_PHRASE not in DIRECTION_VOCABULARY, "the empty phrase is not a hint
 
 
 def _wrap_deg(deg: float) -> float:
-    """Wrap to [-180, 180), byte-for-byte the arithmetic semantic_direction uses.
+    """Wrap to [-180, 180), with exactly the arithmetic semantic_direction uses.
 
     It matters at the seam: 180.0 wraps to -180.0, so a target directly behind
     is reported as left rear rather than right rear. Reproducing the wrap rather

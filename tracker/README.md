@@ -6,7 +6,7 @@ A local site that explains the project, shows how it works, and tracks every gra
 - Double-click `tracker\start_tracker.bat`, or
 - run `python tracker/serve.py` and open http://127.0.0.1:8765/
 
-The server uses the Python standard library only and listens on 127.0.0.1, so it is reachable from this PC only. Add `?lang=en`, `?lang=id` or `?lang=zh` to the address to open the site in that language.
+The server uses the Python standard library only and listens on 127.0.0.1, so it is reachable from this PC only. That does not stop a web page open in your browser from sending your browser to it, so every request must also name the server itself as its Host (`127.0.0.1:<port>` or `localhost:<port>`), any Origin must be the server's own, and saving the board must send `application/json`; anything else gets a 403 (the module docstring of `tracker/serve.py` says why). Open the site at `127.0.0.1` or `localhost`: another name for this PC is refused. Add `?lang=en`, `?lang=id` or `?lang=zh` to the address to open the site in that language.
 
 ## Pages
 | Page | Content |

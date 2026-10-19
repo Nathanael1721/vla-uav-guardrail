@@ -76,7 +76,11 @@ scenarios:
       # 1002 and latency 1 / 23.6 / 0.3 on 1002. Which seeds flicker depends
       # on where the forecast's poses meet the ring under the noise, so it
       # moves with the forecast.
+      # `fails` measured 2026-10-19 on both pinned episodes of the nightly
+      # profile (f93283d): goal, outcome and fail-safe label. P0, finite
+      # actions and the true distance to the fence stay gated.
       - params: { latency: 0, pass_y: 23.2, sigma: 0.3, random_seed: 1001 }
+        fails: [reached_goal, outcome, failsafe]
         description: &noiseflicker >
           False fail-safe through N-in-T under sensor noise (measured
           2026-10-07): sliding along the margin ring with 0.2-0.3 m of position
@@ -88,6 +92,7 @@ scenarios:
           as violations. Where it shows on some seeds only, the pin names the
           seed (0 is the library run's, 1001-1003 the nightly profile's).
       - params: { latency: 0, pass_y: 23.2, sigma: 0.3, random_seed: 1003 }
+        fails: [reached_goal, outcome, failsafe]
         description: *noiseflicker
 
   - scenario_id: gps-noise-beyond-margin

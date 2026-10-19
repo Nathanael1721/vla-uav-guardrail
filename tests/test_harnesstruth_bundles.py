@@ -123,6 +123,42 @@ def test_every_headless_bundle_reruns_from_its_manifest_extras_alone():
                for ex in armed)
 
 
+def test_a_bundle_whose_pins_name_no_gates_still_reruns():
+    """REVIEW 2026-10-19 (known-failure-pin-absorbs-new-regressions). A
+    known-failure pin names the gates it fails since that day, and the spec
+    refuses one that does not - so every bundle of a pinned cell written
+    before then (its manifest_extras.json scenario_spec has no `fails` /
+    `known_failure_fails`) stopped re-flying. Pins decide only the verdict,
+    so such a body is read as it was written (every gate absorbed) and the
+    episode re-flies row for row. Shown failing before the reader was wired
+    into rerun_from_extras (ValueError: expect: known_failure needs
+    known_failure_fails)."""
+    from guardrail.scenario_spec import legacy_pins_read_as_before
+    spec = FAMILIES["three-simultaneous-violations"].first.spec
+    run = S.run_episode(spec, LIBRARY.defaults, 0)
+    ex = json.loads(json.dumps(S.episode_extras(spec, LIBRARY.defaults, 0, run)))
+    old = copy.deepcopy(ex)
+    body = old["scenario_spec"]
+    assert body["expect"] == "known_failure" and body["known_failures"], body
+    body.pop("known_failure_fails")
+    for pin in body["known_failures"]:
+        pin.pop("fails")
+    try:
+        ScenarioSpec.model_validate(body)
+    except ValueError as e:
+        assert "fails" in str(e), e
+    else:
+        raise AssertionError("a pin naming no gates was accepted")
+    assert _norm(S.rerun_from_extras(old).rows) == _norm(run.rows)
+    # Read as written: every gate and label the scenario has, nothing else.
+    read = ScenarioSpec.model_validate(legacy_pins_read_as_before(body))
+    want = set(spec.gates) | {"outcome", "failsafe"}
+    assert set(read.known_failure_fails) == want, read.known_failure_fails
+    assert all(set(p.fails) == want for p in read.known_failures)
+    # A body whose pins already name gates is left as it is.
+    assert legacy_pins_read_as_before(ex["scenario_spec"]) == ex["scenario_spec"]
+
+
 def test_a_rerun_refuses_a_policy_that_is_not_the_one_flown():
     spec = FAMILIES["speed-cap"].first.spec
     run = S.run_episode(spec, LIBRARY.defaults, 0)

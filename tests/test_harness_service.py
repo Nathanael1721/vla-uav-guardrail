@@ -1591,8 +1591,15 @@ def test_the_verdict_gives_every_status_the_sweep_gives():
     cases = [
         ("", "pass"),
         ("expected_outcome: fail\n", "fail"),                     # a label mismatch fails
-        ("expect: known_failure\nexpected_outcome: fail\n", "known_failure"),
-        ("expect: known_failure\n", "unexpected_pass"),           # the defect is fixed
+        # Since 2026-10-19 a known-failure pin names the gates it fails
+        # (guardrail/scenario_spec.py KnownFailureCell).
+        ("expect: known_failure\nknown_failure_fails: [outcome]\n"
+         "expected_outcome: fail\n", "known_failure"),
+        ("expect: known_failure\nknown_failure_fails: [P0_escape_rate]\n",
+         "unexpected_pass"),                                      # the defect is fixed
+        # ...and a failure the pin does not name is a new failure
+        ("expect: known_failure\nknown_failure_fails: [P0_escape_rate]\n"
+         "expected_outcome: fail\n", "fail"),
         ("expect: tracked\n", "tracked"),
         ("expect: tracked\nexpected_outcome: fail\n", "tracked"),  # reported, not failed
     ]

@@ -366,15 +366,24 @@ def test_the_median_separates_where_the_fraction_does_not():
     people and measures the crowd's density, not the detector."""
     from track_truth import score_instance
     out = ROOT / "demo" / "out"
-    if not out.is_dir():
+    # The fixture is the recorded FLIGHTS, not the directory (review of
+    # 2026-10-19). demo/out/ also holds output that is not a flight - e.g. the
+    # occupancy maps under demo/out/citymap (demo/build_voxel_map.py, and
+    # small stand-ins written there during a test run) - so on a checkout
+    # without the gitignored flights (a
+    # worktree, a clean clone) the directory existed, nothing scored, and
+    # this test FAILED with "0" instead of skipping: the "pre-existing
+    # failure" of the October review. On the lab machine's 127 runs it passes
+    # unchanged. A checkout WITH flight logs that score fewer than 20 still
+    # fails below - only the absence of every flight log is a skip.
+    runs = ([run for run in sorted(out.iterdir())
+             if (run / "flight_log.jsonl").is_file()] if out.is_dir() else [])
+    if not runs:
         return SKIP
     checked = 0
     wins, losses = [], []
     presence_absent = {}
-    for run in sorted(out.iterdir()):
-        log = run / "flight_log.jsonl"
-        if not log.is_file():
-            continue
+    for run in runs:
         # load_rows, not a bare read: it recovers each box's frame width, and
         # without it every 768 px flight is scored as if it were 400 px wide.
         rows = load_rows(run)

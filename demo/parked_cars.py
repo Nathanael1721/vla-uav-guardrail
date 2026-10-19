@@ -6,8 +6,10 @@ A real street carries far more parked cars than moving ones, and here that
 happens to also be the cheap direction. A moving vehicle costs one
 `set_object_pose` every tick - about 9 RPC/s each at the ~8.7 Hz control loop,
 and `--traffic-every` defaults to 1 so every background vehicle pays it. Six of
-them is ~52 RPC/s inside the same loop that runs OWL-ViT, whose `det_hz` only
-just clears its 4.0 Hz gate.
+them is ~52 RPC/s inside the same loop that runs OWL-ViT, whose mission
+`det_hz` is already below its 4.0 Hz gate on most flights (2.96-3.18 Hz on the
+CityLife follows, 3.46-3.99 on the red car; CHANGELOG, "Every `det_hz`
+published before today is inflated" - this docstring said it cleared the gate).
 
 A parked car is spawned once and never touched again. It costs nothing per tick,
 so the street can be filled without spending any of that budget. Same reasoning

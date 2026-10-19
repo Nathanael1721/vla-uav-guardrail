@@ -1536,6 +1536,67 @@ def test_compiler_kpis_come_from_the_coverage_report_with_null_and_baseline():
     assert e["p0_coverage"] is None and e["budget_respected"] is None, e
 
 
+# Two altitude bands the lint accepts (they never bind at the same instant)
+# that clash with no clock: coverage_report lists the file under
+# `altitude_conflict` (tests/test_csp.py, DAY_NIGHT, holds the same pair).
+_DAY_NIGHT = {"policy_id": "day-night", "version": "0.1.0", "constraints": [
+    {"id": "day-band", "type": "altitude_envelope", "alt_min_m": 10, "alt_max_m": 30,
+     "valid_time": {"recurrence": {"start_time": "08:00", "end_time": "17:59"}}},
+    {"id": "night-band", "type": "altitude_envelope", "alt_min_m": 40,
+     "alt_max_m": 60,
+     "valid_time": {"recurrence": {"start_time": "18:00", "end_time": "07:59"}}}]}
+
+
+def test_compiler_kpis_count_the_files_an_altitude_conflict_left_out():
+    """REVIEW 2026-10-19. coverage_report counts a CSPAltitudeConflict file
+    (`n_altitude_conflict`) and leaves it out of every share, but
+    compiler_kpis dropped the count: two policies, one compiled, 0 raised
+    CSPBudgetExceeded, 0 not flyable - and nothing said what happened to the
+    other file. Shown failing before the fix (KeyError on
+    n_altitude_conflict). The null is the same folder without the clash."""
+    import shutil
+    import tempfile
+    import yaml
+    with tempfile.TemporaryDirectory() as td:
+        shutil.copy(ROOT / "policies" / "sim_demo_policy.yaml", td)
+        k0 = K.compiler_kpis(td, 256)
+        (Path(td) / "day_night.yaml").write_text(
+            yaml.safe_dump(_DAY_NIGHT, sort_keys=False), encoding="utf-8")
+        k = K.compiler_kpis(td, 256)
+    assert k0["n_altitude_conflict"] == 0 and k0["altitude_conflict_files"] == [], k0
+    assert k["n_policies"] == 2 and k["n_compiled"] == 1, k
+    assert k["csp_budget_exceeded"] == 0 and k["n_not_flyable"] == 0, k
+    assert k["n_altitude_conflict"] == 1, k
+    assert [Path(f).name for f in k["altitude_conflict_files"]] == ["day_night.yaml"], k
+    # Every file is accounted for.
+    assert (k["n_compiled"] + k["csp_budget_exceeded"] + k["n_not_flyable"]
+            + k["n_altitude_conflict"]) == k["n_policies"], k
+
+
+def test_an_empty_flight_log_is_not_a_perfect_run():
+    """REVIEW 2026-10-19 (deferred from the wave-1 replay fix). compute() on a
+    log with NO row returned escape rate 0.0 (its denominator is max(1, 0)),
+    outcome success and mission_success True: a rail that aborted before its
+    first tick scored as a flawless flight. write_replay and verify_replay
+    refuse such a log; compute() now says the same - the rate is None, the
+    outcome fail with reason no_rows, mission_success None (not measurable).
+    Shown failing before the fix. A log with one ordinary tick is the null:
+    it still scores 0.0 and success."""
+    e = K.compute([], P0P1, {})
+    assert e["p0_violation_escape_rate"] is None, e["p0_violation_escape_rate"]
+    assert e["outcome"] == "fail", e["outcome"]
+    assert e["mission_success"] is not True and e["mission_success"] is None, e
+    assert "no_rows" in e["mission_fail_reasons"], e["mission_fail_reasons"]
+    # In a rollup it adds no tick and no escape, and no mission verdict.
+    r = K.rollup([e])
+    assert r["mission_success_rate"] is None, r["mission_success_rate"]
+    one = K.compute([{"t": 0.0, "violations": [], "repairs": [],
+                      "emitted_violations": [], "unsafe": False}], P0P1, {})
+    assert one["p0_violation_escape_rate"] == 0.0, one
+    assert one["outcome"] == "success" and one["mission_success"] is True, one
+    assert "no_rows" not in one["mission_fail_reasons"], one
+
+
 if __name__ == "__main__":
     # A test whose inputs are not on this machine returns SKIP, counted apart
     # and never as a pass (the pattern of tests/test_bundle.py).

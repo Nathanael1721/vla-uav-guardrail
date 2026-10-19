@@ -15,6 +15,12 @@ scenarios:
   - scenario_id: three-simultaneous-violations
     template: three_simultaneous_violations
     expect: known_failure
+    # What the false fail-safe fails, measured 2026-10-19 over all 54
+    # episodes of the nightly profile and the smoke run (f93283d): the two
+    # labels, nothing else. P0, finite actions, the single climb-out, the
+    # breach count and the safe end stay gated - the Shield matrix's "three
+    # simultaneous violations" item has a working P0 and zone gate again.
+    known_failure_fails: [outcome, failsafe]
     description: >
       tests/test_guardrail_coverage.py's unit case, flown: below the 10 m floor,
       asking 8-11 m/s against a 4 m/s cap, descending at 3 m/s, and pointed at
@@ -55,8 +61,12 @@ scenarios:
     # The 2026-10-06 cell pin, kept for its record: the whole family is a known
     # failure now (expect: known_failure), so this pin no longer decides a
     # status. It describes what the Shield's own action does from variant 2.
+    # Its `fails` is what its 18 nightly episodes fail today (2026-10-19,
+    # f93283d), the family's two labels: the tunnelling it records is gone
+    # at the grant's forecast, so it pins nothing the family pin does not.
     known_failures:
       - params: { variant: 2 }
+        fails: [outcome, failsafe]
         description: >
           Forecast tunnelling (measured 2026-10-06). From approach variant 2 the
           aircraft climbs out and slides round the zone's (23, 23) corner. At

@@ -3,9 +3,13 @@
 Offline, on frames already on disk, so it is cheap and repeatable and needs no
 simulator. Four numbers per backend, because all four can disqualify a model:
 
-  LATENCY   `det_hz` must clear 4.0 Hz and OWL-ViT only just does (66 ms idle,
-            287 ms in flight). A more accurate model that misses the gate is not
-            an improvement, it is a different failure.
+  LATENCY   `det_hz` must clear 4.0 Hz, and OWL-ViT in flight mostly does not
+            (66 ms idle, 287 ms in flight - about 3.5 Hz; the mission rates
+            recomputed from the flight logs are 2.96-4.06 Hz, only city_kpi's
+            4.06 above the gate, CHANGELOG "Every `det_hz` published before
+            today is inflated"; this said "only just does" until 2026-10-19).
+            A model slower still widens the gap, so a more accurate model that
+            is slower is not an improvement.
   TAXI      the case that works today - 0.15-0.44. A regression here would cost
             the demo the thing it currently does well.
   PERSON    the case that fails today - 0.03-0.07, four times weaker, which is

@@ -18,8 +18,24 @@ Standard library only. Serves:
   GET  /api/state    the board's saved state (tracker/data/state.json)
   POST /api/state    replace that state (JSON body); written atomically
 
-Binds 127.0.0.1 only: the state file is written by whoever can reach the
-port, so it is not exposed to the network.
+Binds 127.0.0.1 only, so it is not exposed to the network. That alone does
+not protect the board (review of 2026-10-19, harness-tools/tracker-state-
+csrf): any web page open in the user's browser can make the BROWSER send a
+request to 127.0.0.1:8765. A no-cors fetch or a plain auto-submitting form
+with a text/plain body (no CORS preflight) replaced state.json with
+`{"cards": {}}` - reproduced with Origin https://attacker.example - and a
+DNS-rebinding page (Host attacker.example) could also read /api/state and
+/api/content. tracker/data/ is gitignored, so that board had no backup. So,
+before anything is read or written:
+  * every request must carry Host 127.0.0.1:<port> or localhost:<port>
+    (defeats DNS rebinding: a rebound name arrives with its own Host);
+  * an Origin header, when present, must be this server's own origin
+    (a browser always sends it on a cross-origin POST; "null" is refused);
+  * POST /api/state must be Content-Type application/json, which a page
+    cannot send cross-origin without a CORS preflight this server never
+    answers (the board's own app.js already sends it).
+A refused request gets a JSON 403. Requests with no Origin (curl, scripts,
+the tests) are not a browser and are still accepted.
 """
 from __future__ import annotations
 
@@ -124,7 +140,41 @@ class Handler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _refusal(self, require_json: bool = False) -> str | None:
+        """Why this request is not from the board's own page (module
+        docstring), or None. Host and Origin are compared case-insensitively;
+        the media type is the part of Content-Type before any ';', so
+        `application/json; charset=utf-8` is accepted."""
+        port = self.server.server_address[1]
+        host = (self.headers.get("Host") or "").strip().lower()
+        allowed = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        if port == 80:
+            allowed |= {"127.0.0.1", "localhost"}
+        if host not in allowed:
+            return (f"Host {host or '(none)'!r} is not this server "
+                    f"(127.0.0.1:{port} or localhost:{port})")
+        origin = self.headers.get("Origin")
+        if origin is not None and origin.strip().lower() != f"http://{host}":
+            return f"Origin {origin!r} is not this server"
+        if require_json:
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype != "application/json":
+                return f"Content-Type {ctype or '(none)'!r} is not application/json"
+        return None
+
+    def _forbidden(self, why: str):
+        return self._json({"error": f"refused: {why}"}, HTTPStatus.FORBIDDEN)
+
+    def do_HEAD(self):
+        why = self._refusal()
+        if why:
+            return self._forbidden(why)
+        return super().do_HEAD()
+
     def do_GET(self):
+        why = self._refusal()
+        if why:
+            return self._forbidden(why)
         path = unquote(urlsplit(self.path).path)
         if path == "/api/content":
             return self._json(load_content())
@@ -147,6 +197,10 @@ class Handler(SimpleHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path != "/api/state":
             return self.send_error(HTTPStatus.NOT_FOUND)
+        # Checked before the body is read (module docstring).
+        why = self._refusal(require_json=True)
+        if why:
+            return self._forbidden(why)
         try:
             n = int(self.headers.get("Content-Length") or 0)
         except ValueError:
