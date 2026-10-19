@@ -503,8 +503,8 @@ def test_the_feed_forward_does_not_amplify_noise_at_pedestrian_range():
 
 def test_the_motion_settings_are_recorded_and_legacy_restores_the_old_limiter():
     p = F.motion_params(_args())
-    assert p["legacy"] is False and p["accel_mps2"] == 2.0 and p["catchup_mps"] == 2.5
-    assert p["guard_smoother"]["release_mps2"] == 2.0 and p["yaw_los_ff"] == 0.7
+    assert p["legacy"] is False and p["accel_mps2"] == 2.5 and p["catchup_mps"] == 3.0
+    assert p["guard_smoother"]["release_mps2"] == 2.5 and p["yaw_los_ff"] == 0.7
     lim, gs = F.make_motion(_args())
     assert isinstance(lim, F.VecSlewLimiter) and isinstance(gs, F.GuardSmoother)
     lim, gs = F.make_motion(_args(["--legacy-motion"]))
@@ -704,8 +704,10 @@ def _fly(argv, pattern=(0.2, 0.005, 0.1, 0.1, 0.1), want=15.83, vmax=5.0):
 def test_closed_loop_acceleration_and_jerk_peaks_drop_and_the_follow_holds():
     old = _fly(["--legacy-motion"])
     new = _fly([])
-    # speed-up (the pitch-down surge) and jerk drop a lot...
-    assert new["speed_up"] < 0.6 * old["speed_up"], (old, new)
+    # speed-up (the pitch-down surge) and jerk drop a lot... (the bound is
+    # 0.7 of the legacy peak since the 2026-10-19 default of 2.5 m/s^2: at
+    # 2.0 the follow flown that day fell beyond 30 m on 6 % of its ticks)
+    assert new["speed_up"] < 0.7 * old["speed_up"], (old, new)
     assert new["jerk"] < 0.5 * old["jerk"], (old, new)
     assert new["accel"] < old["accel"], (old, new)
     # ...braking is NOT made softer (it is the hold side)...

@@ -2736,11 +2736,17 @@ def add_motion_args(ap) -> None:
                          "missions), the identity rules for taxi/sedan/SUV/"
                          "pickup/lorry phrases, the non-identity HUD label and "
                          "box age, or det_hit_rate's mission-only count.")
-    ap.add_argument("--accel-max", type=float, default=2.0,
+    ap.add_argument("--accel-max", type=float, default=2.5,
                     help="m/s^2: how fast the commanded speed may RISE along "
                          "the track. Body tilt follows horizontal "
-                         "acceleration (atan(a/g)): 2.0 is ~11.5 deg. The old "
-                         "limiter allowed 4 per axis, 5.7 on a diagonal.")
+                         "acceleration (atan(a/g)): 2.5 is ~14.3 deg. The old "
+                         "limiter allowed 4 per axis, 5.7 on a diagonal. 2.0 "
+                         "(~11.5 deg) was flown on 2026-10-19 "
+                         "(citylife_redcar_nfz_motion_20261019): tilt never "
+                         "over 15 deg, but the car got beyond 30 m on 6 %% of "
+                         "the ticks (0.94 within 30 m, against 0.991 on 13 "
+                         "Oct) - every time while catching up after the start "
+                         "or a FenceGuard sidestep.")
     ap.add_argument("--brake-max", type=float, default=4.0,
                     help="m/s^2: how fast it may FALL along the track. When "
                          "braking (the step pointing back along the track, as "
@@ -2753,7 +2759,7 @@ def add_motion_args(ap) -> None:
                     help="rad/s^2 slew on the commanded yaw rate (0 = none). "
                          "Nothing limited it before; a coast-to-search "
                          "hand-over stepped it 1.2 rad/s in one tick.")
-    ap.add_argument("--guard-release-accel", type=float, default=2.0,
+    ap.add_argument("--guard-release-accel", type=float, default=2.5,
                     help="m/s^2: how fast speed comes back after a FenceGuard "
                          "brake (GuardSmoother)")
     ap.add_argument("--guard-engage-accel", type=float, default=3.0,
@@ -2763,7 +2769,7 @@ def add_motion_args(ap) -> None:
                          "at once")
     ap.add_argument("--guard-lat-accel", type=float, default=2.0,
                     help="m/s^2: how fast slide()'s sidestep fades in and out")
-    ap.add_argument("--catchup-mps", type=float, default=2.5,
+    ap.add_argument("--catchup-mps", type=float, default=3.0,
                     help="the stand-off loop asks at most this much above the "
                          "subject's own opening rate when it has fallen behind "
                          "(saturating, standoff_speed). 0 = the old linear law, "
