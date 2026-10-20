@@ -16,6 +16,232 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-21 — the Shield forecasts from the aircraft's own velocity, legal hold points, a realistic harness vehicle, and a smoother city follow, flown
+
+The to-do list's T1 wave, four branches each reviewed adversarially and again
+for the reviewers' notes (merged 0931822, e20544a, 1a9791b, 08cd0be, and the
+integration review's fixes in d1e93a9; 9bf5a64..d1e93a9, 25 commits), and
+four flights. None of the flights is KPI-grade, and no VLA flies them (a
+hand-written controller steers by OWL-ViT's boxes); every harness number
+below is headless.
+
+#### Flown
+- **The city follow with its new motion, twice** (simple_flight rail, the
+  CityLife red car with the no-fly zone, the unsigned YAML policy and the
+  3 s / 0.5 s forecast, as on 13 Oct; 240 s each, videos 268-269 s):
+  `demo/out/citylife_redcar_nfz_motion_20261019` at `--accel-max 2.0`
+  (ece38c1), then `citylife_redcar_nfz_motion2_20261019` after the defaults
+  were raised (c77c77d, below). Against `citylife_redcar_nfz_20261013`:
+
+  | | 13 Oct (old motion) | 19 Oct, 2.0 m/s^2 | 19 Oct, 2.5 m/s^2 |
+  |---|---|---|---|
+  | tilt over 15 deg | 9 episodes | **0** | **0** |
+  | max tilt | 19.1 deg | 11.8 deg | 12.8 deg |
+  | max pitch rate | 181 deg/s | 90 deg/s | **20.2 deg/s** |
+  | max roll rate | 47 deg/s | 97.8 deg/s (2 ticks over 47; p95 8.3) | **15.3 deg/s** |
+  | commanded acceleration, max | 11.31 m/s^2 | 8.00 m/s^2 | **5.56 m/s^2** |
+  | within 30 m of the car | 0.991 | 0.94 | 0.963 |
+  | minimum separation | 12.0 m | 11.0 m | 10.8 m |
+  | in the zone / P0 escape / interventions | 0.0 s / 0.0 / 1 | 0.0 s / 0.0 / 0 | 0.0 s / 0.0 / 0 |
+
+  The first flight's shortfall was catching up: 142 of 2377 ticks beyond
+  30 m (at most 33.7 m) in four spells, one after the start and three after
+  FenceGuard sidesteps. With the raised defaults: 89 of 2400 (at most
+  32.0 m), four spells, each after a sidestep, none at the start.
+- **The ArduPilot close approach with the own-velocity forecast on and off**,
+  build 08cd0be, the 14 Oct arguments (want width 0.5, seed 20261006, the
+  signed `follow-car-citylife` bundle, pymavlink; Project AirSim + ArduPilot
+  SITL, none of the grant's topologies, not KPI-grade):
+
+  | | on (`pas_ap_ovf_on_20261021`) | off (`pas_ap_ovf_off_20261021`) | 14 Oct (`pas_ap_video_on_20261014`) |
+  |---|---|---|---|
+  | ticks inside a P0 margin (building clearance) | **0** | 79 (BRAKE 21, RTL 58) | 71 (20 while the Shield flew) |
+  | deepest | **0** | 3.18 m | 1.02 m |
+  | end | the 120 s limit | RTL (X7) | RTL (X7) |
+  | P0 escape ticks (commanded basis) | 0 (0) | 0 (0) | 0 |
+  | loop | 9.91 Hz | 9.98 Hz | 8.97 Hz |
+
+  On: 1190 ticks, 1168 flown by the Shield, the measured velocity on every
+  tick (LOCAL_POSITION_NED) and never set aside; FSM edges G1 G7 G1 G7 G1 G2
+  G8 G1 G7 G1 G7, no X7. Its one Loiter (G2 at 47.3 s, 1.01 m/s) was flown
+  as a GUIDED stop for 9 ticks - BRAKE's stop was predicted legal, but the
+  aircraft was over 0.5 m/s - and handed to BRAKE at 0.45 m/s; G8 at 50.4 s;
+  no forced hand-over, 0 stop-advised ticks; the HUD read "Loiter(GUIDED)"
+  on those 9 ticks. Off: G3 at 40.9 s with the aircraft at 2.5 m/s, BRAKE
+  carried it into the margin (1.68 m deep), X7 sent it home at 43.0 s and
+  the RTL climb reached 3.18 m - the 13 Oct pattern; none of its 79 ticks
+  was flown by the Shield. Real-time factor 0.965 / 0.962 (0.935 on 14 Oct);
+  `demo/out/pas_ap_ovf_compare_20261021.mp4` stacks the two (120 s).
+  **Read with care:** the detector again did not box the car (0 of 186
+  subject estimates within 6 m on the on run, 0 of 190 off; the nearest
+  180 m away), so these runs test the Shield, not tracking; and the
+  trajectories differ run to run (first building-clearance flag at 44.4 s
+  on, 40.3 s off, 40.8 s on 14 Oct): one flight each is not an A/B proof.
+
+#### Added
+- **The Shield forecasts from the aircraft's own velocity** (T1a;
+  `State.velocity`, optional; `guardrail/response.py`;
+  `docs/DESIGN-own-velocity-forecast.md`). With a measured velocity each
+  forecast pose first flies the setpoints already sent for the reaction time
+  (`Shield.note_flown`, the pipe), then turns towards the candidate at the
+  acceleration limit. Fitted on the six recorded ArduPilot flights
+  (`tools/fit_velocity_response.py`): identified 0.35 s / 2.0 m/s^2; the
+  Shield uses 0.45 s / 1.75 m/s^2, the most accurate point whose MEDIAN
+  braking error at 1.5 s, in the form the Shield flies, is not short
+  (+0.03 m; not a bound: p25 -0.33 m there, the median -0.16 m at 2.0 s).
+  The velocity only ADDS caution: every rule is judged on the own-velocity
+  forecast and on the old commanded one, and a rule either breaks is broken
+  (a seeded property test: nothing the old Shield refused is emitted clean);
+  from an illegal position the velocity is set aside and the decision is
+  the old Shield's. Without a velocity every decision is byte-identical
+  (18,000 seeded decisions against c77c77d). Replayed, the 14 and 13 Oct
+  approaches flag the building 1.09 and 0.98 s earlier; in closed loop on
+  the identified aircraft both stay outside the 3 m margin (3.28 / 3.48 m)
+  where the commanded forecast is inside on 73 ticks of each and ends in X7.
+  At 50 rules `_check` takes median 0.87 / p99 1.23 / max 1.51 ms with the
+  velocity, against the 5 ms budget.
+- **On by default on the Project AirSim + ArduPilot rail** (pymavlink and
+  MAVROS, Shield-on arm; `--own-velocity-forecast off` restores the
+  commanded forecast and BRAKE hold). The SITL rails log the velocity but
+  default off (the response was measured on the Project AirSim quad); the
+  harness and `demo/follow_vlm.py` pass none.
+- **A hold that stops clear** on that rail: the FSM's Loiter is flown as a
+  GUIDED stop through the Shield (`Shield.advise` of a zero action) while
+  BRAKE's predicted stop would break a hard rule or the aircraft is over
+  0.5 m/s, then handed to BRAKE; capped at 3 s (ArduCopter's GUID_TIMEOUT),
+  and a stale link or a 0.3 s gap in the stream hands it over at once
+  (`metrics.hold.stop_clear`, `forced_handovers`). The FSM's states, edges
+  and inputs are unchanged. A stop-advised tick has its own audit record
+  (`decision_kind: "stop_advised"`), rows carry `stop_advice` and
+  `p0_escape_commanded_basis`, and the HUD names a deferred Loiter.
+- **A vehicle-response comparison arm in the stress harness** (T1b;
+  `--response-arms ideal ardupilot`; `docs/DESIGN-harness-vehicle-response.md`):
+  each episode flown again on ArduPilot's measured response (delay 0.08 s,
+  2.4 m/s^2, jerk 5.7 m/s^3, lag 0.03 s; `tools/measure_vehicle_response.py`
+  over the recorded flights), labelled `/response-ardupilot`, ranked in its
+  own top-K, written to `demo/out/cmp_*`, never in the headline counts, pins
+  or exit code. Nightly, ideal -> ArduPilot: unsafe-position entries 6 -> 12,
+  autopilot polygon entries 12 -> 84, P0 escapes 18 -> 18, true-state P0
+  ticks 8894 -> 12189 judged on the command and 8894 -> 16382 on what the
+  airframe flew, fail-safe labels 532/705 -> 490/705. Flying the arm changes
+  nothing of the headline run, field for field.
+- **Legal hold and landing points** (T1c; `guardrail/holdpoint.py`,
+  `EscalationFSM.needs_hold` / `hold_at`; `docs/DESIGN-hold-points.md`).
+  Entering Loiter or Land the FSM asks for a point and the Shield's own rule
+  code answers: in place where a stop there is legal through the lookahead
+  (every legal hold of the library is unchanged), else the nearest legal
+  point within 60 m, reached by a straight transit judged at every instant,
+  not at sampled poses - it never enters a rule in force that the aircraft
+  is outside of, and leaves one it is in only by getting shallower, by the
+  Shield's own depth (160 random transits in 40 seeded worlds: none called
+  legal enters or dips). The search spends at most 600 units of about
+  0.1 ms (a count, not a clock); a fruitless one costs 29-41 ms on the
+  desktop. No FSM edge, guard or setpoint moved; Loiter / Land records gain
+  `hold_point`, `hold_legal`, `hold_needed`, and the audit record (version
+  3) `fsm_hold_point`. The harness's modelled autopilot flies a moved point
+  as a GUIDED transit; `--autopilot-hold in_place` flies what the rails fly,
+  c77c77d's rows exactly. **No flight rail flies a moved hold yet.**
+- **The DSL's first lint WARNING class** (`python -m guardrail.compiler
+  lint`, `ConstraintCompiler.lint_warnings`; never refuses): a hard zone
+  whose window can open on an aircraft that cannot leave its margin ring
+  within the lookahead, or, for a mission start, before it opens. No shipped
+  policy warns at the policy level (29 files); the three
+  time-window-opens-on-vehicle cells carry one each.
+- **The WP1 cold start, timed and published** (T1d; `docs/data/
+  wp1_roundtrip.json`, `docs/DESIGN-wp1-cold-start.md`): a signed 50-rule
+  bundle to a ready Shield in fresh interpreters, p95 376 ms against the
+  grant's 1000 ms (worst bundle, imports included; whole process p95
+  504 ms), every run verified, and a tampered, an untrusted and a
+  bad-signature bundle refused. Desktop only, not the Orin.
+- **Parquet export** (`tools/export_episodes.py`, pyarrow optional): one
+  typed column per field, read back against the JSONL before a file is kept
+  (a missing column fails it); 6 stored episodes, 4616 step rows, equal. The
+  3.11 extras CI job installs pyarrow 26.0.0.
+- **SROS 2 behind `SROS2=1`** (`sitl/run_ros2_demo.sh`,
+  `tools/sros2_setup.sh`, `tools/sros2_check.sh`): one enclave per ROS 2
+  process under Enforce, on the lab CA; the live check 6/6 in WSL Jazzy. Not
+  flown; the default `SROS2=0` changes no command line.
+
+#### Changed
+- **Stress-harness results with hold points** (grant arm; the modelled
+  autopilot flies moved holds, which no rail does): library pass / tracked /
+  fail / known 132 / 22 / 0 / 22 -> 133 / 22 / 0 / 21, fail-safe labels
+  140/167 -> 141/167, autopilot-flown P0 ticks 1738 -> 1153; nightly
+  508 / 66 / 0 / 158 -> 511 / 66 / 0 / 155 and 532/705 -> 535/705; smoke
+  unchanged (52 / 6 / 0 / 4). These differences are by design, and only one
+  fail-safe fix is robust: `dyn-nfz-rotate-spin` at 9 deg/s (pin removed;
+  its 3 nightly seeds too). The six `three-simultaneous-violations` cells
+  first read as passes only because the 300-tick run ended 0.2 s before the
+  Loiter timeout; flown 400 ticks, G5 sends every one home, so they stay
+  pinned on both labels (what is real: X6 no longer fires, and the climb
+  into the band flies 1-2 autopilot P0 ticks where 72-78 were flown). The 6
+  Shield P0 escape ticks of the time-window-opens-on-vehicle cells are
+  unchanged (flown before G3); their hold moved to (60, 31.9), autopilot P0
+  38 / 33 / 28 -> 18 / 13 / 8.
+- With the velocity, the rail's P0 escape re-check is made with it, as the
+  decision is: never laxer than the commanded basis (property test), and it
+  can be stricter; rows and `metrics.shield_forecast` carry both.
+- Bundle extras are `sweep-episode-extras/3` (both `arm.response` and
+  `arm.autopilot_hold`); `rerun_from_extras` reads /1, /2 and /3, and a
+  bundle from before the hold points is re-flown in place.
+- The city follow's defaults after the first flight (c77c77d):
+  `--accel-max` and `--guard-release-accel` 2.0 -> 2.5 m/s^2, `--catchup-mps`
+  2.5 -> 3.0.
+
+#### Fixed
+- `tools/build_eval_data.py` counted the commits since the 2 Sept meeting
+  with a bare `--since 2026-09-02`, which git reads as that date at the
+  current time of day: run after 22:58, the meeting day's 22:58 commit
+  (96746a9) dropped out (15 instead of 16). It now passes midnight, and a
+  test checks the argument git receives (c57e007).
+- Found by the wave's reviews, each shown failing first: the episode
+  exporter split a run's audit at every stop-advised tick (40 of 60 rows
+  joined on a test run; now 60 of 60, one flight); the Parquet read-back
+  kept a file missing a whole column; the cold start read a loader that
+  never verified the signature as within budget; the hold search could fly
+  through a zone closing on the aircraft and judged a transit only at poses
+  1 m apart (a fuzz: 27 of 195 moved holds entered a zone they started
+  outside of); a candidate inside k nested zones was charged k zone reads
+  (with 8-10 nested squares the hold stayed inside where 51.5 m out was
+  legal; now moved, 14 ms); a speed cap's reason called the default an
+  enforced cap; a zone with `valid_time: {}` was no wall to the lint; and a
+  lint call with no legal exit stepped a week at 0.05 s (12.6 s; now
+  0.03 s).
+- At the merge: the hold plan read the tick's momentum-aware stop check and
+  moved 24 of 337 seeded Loiter holds the FSM had just called legal (it now
+  reads the FSM's own position check); the response arm flew a moved hold
+  as the ideal vehicle's command, passing a point 10 m away by 4.4 m (now
+  ArduPilot's position controller, under a metre).
+
+#### Not fixed
+- No flight rail flies a moved hold point, so the harness's autopilot
+  numbers with them are modelled (`autopilot_hold_model`); the 2 Shield
+  escape ticks per opens-on-vehicle cell remain (flown before G3; the lint
+  names the cause).
+- The response model is one form fitted to six flights of one simulated
+  airframe: on an aircraft slower than the Shield's numbers (0.55 s,
+  1.5 m/s^2) the closed loop's approaches entered the margin 0.8-1.0 m deep
+  on 26-33 ticks. BRAKE is an envelope of two recorded entries, neither
+  clean (a SITL BRAKE step test is open), and the velocity set-aside drops
+  the momentum for every rule when any hard rule is broken.
+- Not wired: the own-velocity forecast in `demo/follow_vlm.py` and in the
+  harness's Shield, `land_site_ok` in `demo/follow_vlm.py`; the SITL rails
+  default off. The cold start and the hold search are measured on the
+  desktop only, not the Orin; SROS 2 has not flown, and no per-topic
+  permissions are written. The ArduPilot rail still has no start gate.
+- For the PI: the velocity in the P0 escape re-check; a GUIDED transit
+  inside the grant's "Loiter"; whether `three-simultaneous-violations`'
+  label or our 30 s Loiter timeout is wrong; a lint warning class.
+
+#### Tests
+- The CI loop runs 103 test files (98 before): new
+  `tests/test_own_velocity_forecast.py` (27/27),
+  `tests/test_harnesstruth_response.py` (19/19),
+  `tests/test_hold_points.py` (33/33), `tests/test_hold_transit.py` (14/15,
+  the opt-in wall-clock test skipped) and `tests/test_window_lead_lint.py`
+  (11/11); `tests/test_build_eval_data.py` (10/10) checks the `--since`
+  argument.
+
 ### 2026-10-19 — an October bug hunt: 100 verified defects fixed, a smoother city follow (not yet flown), and a complete CI list
 
 A nine-area review on 18-19 Oct found 107 candidate defects; independent

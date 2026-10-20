@@ -1,7 +1,7 @@
 {
  "schema": 1,
  "about": "Curated public wording for docs/progress/. Edit this file, then run: python tools/build_public_site.py. See docs/DESIGN-public-site.md for the content policy. Every number is written as digits and must appear in a source listed in the nearest 'src' (a change entry cites its CHANGELOG section automatically); a JSON source names the value, as file.json#path.to.value. Every image is listed in reviewed_images with the digest of the file that was looked at.",
- "as_of": "2026-10-19",
+ "as_of": "2026-10-21",
  "final_gate": "2026-11-30",
  "grant": {
   "programme": {"en": "ITRI ICL subcontract (collaborative research)", "zh": "工研院資通所（ICL）委託合作研究"},
@@ -763,6 +763,18 @@
  ],
  "changes": [
   {
+   "changelog": "2026-10-21",
+   "date": "2026-10-21",
+   "title": {"en": "The Shield forecasts from the aircraft's own velocity, legal hold points, a realistic harness vehicle, and a smoother city follow, flown", "zh": "Shield 以機體本身的速度預測、合法的定點、更擬真的測試機體，以及更平順的城市跟隨，並有飛行結果"},
+   "points": [
+    {"en": "On the Project AirSim + ArduPilot rail the Shield now forecasts from the aircraft's measured velocity, not only from the command it is about to send, and flies the escalation's hold as a stop through the Shield until ArduPilot's own brake would stop clear of every rule. The 14 Oct close approach was re-flown with the same arguments, the new forecast on and off (development runs on none of the grant's topologies): with it on, the aircraft never stood inside the building's safety margin (0 ticks) and flew the whole 120 s; with it off, it stood inside on 79 ticks, up to 3.18 m deep, while ArduPilot's brake and return to launch flew it, and on 14 Oct on 71. P0 escape ticks were 0 on each run.", "zh": "在 Project AirSim + ArduPilot 軌道上，Shield 現在會從機體實際量測到的速度出發預測，而不只是從即將送出的指令出發；升級機制的定點也改為經由 Shield 停下，直到 ArduPilot 自己的煞停能停在所有規則之外。以相同參數重新飛行 10 月 14 日的近距離接近，分別開啟與關閉新的預測（開發用的飛行，不屬於計畫書的任何拓撲）：開啟時機體從未位於建築物的安全邊界之內（0 個 tick），並飛滿 120 s；關閉時有 79 個 tick 位於邊界內，最深 3.18 m，當時由 ArduPilot 的煞停與返航飛行；10 月 14 日則為 71 個。每次飛行的 P0 逃逸 tick 都是 0。"},
+    {"en": "Read these with care: the detector again did not box the car (0 of 186 estimates within 6 m on the run with the new forecast), so these flights test the Shield, not tracking; and each flight takes its own path, so one flight each way does not prove that the new forecast made the difference.", "zh": "解讀時請注意：偵測器這次仍沒有框到車輛（採用新預測的那次，186 個估計中有 0 個在車輛 6 m 以內），因此這些飛行檢驗的是 Shield，不是追蹤；而且每次飛行的路徑都不同，各飛一次並不能證明差異來自新的預測。"},
+    {"en": "The escalation now chooses where to hold or land: where the aircraft is, if a stop there stays legal through the Shield's forecast, otherwise the nearest legal point within 60 m, reached by a straight line checked at every instant. In the stress harness this robustly removed 1 false fail-safe; other scenarios only looked fixed because their runs ended 0.2 s before a timeout, and they are still counted as known failures. No flight rail flies a moved hold yet. The stress harness can now also fly every scenario on ArduPilot's measured response, as a labelled comparison.", "zh": "升級機制現在會選擇在哪裡定點或降落：若在原地停下，在 Shield 的預測範圍內都合法，就在原地；否則前往 60 m 內最近的合法點，以直線過去，且每個瞬間都經過檢查。在壓力測試框架中，這確實消除了 1 次誤觸發的故障保護；其他情境只是因為執行在逾時前 0.2 s 就結束才看似修正，仍被計為已知失敗。目前還沒有飛行軌道會飛往移動後的定點。壓力測試框架現在也能以量測到的 ArduPilot 反應飛行每個情境，作為加上標籤的對照。"},
+    {"en": "The grant's policy-loading budget is now measured: a signed 50-rule bundle is checked and turned into a ready Shield in a fresh process in 376 ms (p95) against the grant's 1000 ms, on the desktop, not yet on the onboard computer; bundles that were tampered with or badly signed are refused. Episodes also export to Parquet, checked against the JSONL before they are kept, and the ROS 2 graph can run with SROS 2 enforced (not yet flown).", "zh": "計畫書的規則檔載入時間上限現在已量測：已簽章的 50 條規則套件，在全新的程序中完成檢查並建立可用的 Shield，p95 為 376 ms，上限為 1000 ms；這是桌機上的結果，尚未在機上電腦量測；遭竄改或簽章錯誤的套件會被拒絕。episode 也能匯出為 Parquet，保留前會與 JSONL 比對；ROS 2 圖也能在強制啟用 SROS 2 的情況下執行（尚未實際飛行）。"},
+    {"en": "The city follow's smoother motion has now flown, on 2 flights of 240 s each on the red-car demonstration with the no-fly zone: the body never tilted more than 15 degrees (it did 9 times on 13 Oct; the largest tilt fell from 19.1 to 12.8 degrees on the second flight), with 0.0 s in the zone and a P0 escape rate of 0.0. The first flight let the car get beyond 30 m more often (within 30 m 0.94 of the time, against 0.991), each time while catching up, so the speed-up and catch-up defaults were raised; on the second flight the car was within 30 m 0.963 of the time.", "zh": "城市跟隨更平順的運動已實際飛行，在附禁航區的紅車示範上共 2 次飛行、各 240 s：機體傾斜從未超過 15 度（10 月 13 日有 9 次；第二次飛行的最大傾斜從 19.1 度降到 12.8 度），在禁航區內 0.0 s，P0 逃逸率 0.0。第一次飛行讓車輛更常超出 30 m（30 m 以內的時間比例為 0.94，原為 0.991），每次都發生在追趕時，因此提高了加速與追趕的預設值；第二次飛行時，車輛在 30 m 以內的時間比例為 0.963。"}
+   ]
+  },
+  {
    "changelog": "2026-10-19",
    "date": "2026-10-19",
    "title": {"en": "An October bug hunt: 100 verified defects fixed, a smoother city follow (not yet flown), and a complete CI list", "zh": "十月的錯誤清查：修正 100 個經驗證的缺陷、更平順的城市跟隨（尚未實際飛行），以及完整的 CI 清單"},
@@ -995,7 +1007,8 @@
    {"date": "2026-10-13", "wp": ["WP1", "WP3", "WP4"], "en": "The grant's 5 s forecast in the stress harness, rule clocks and mid-flight rule changes on the flying rails, signed policies by default, a faster check on moving zones, and the grant's 10 gRPC calls.", "zh": "壓力測試框架採用計畫書的 5 s 預測、飛行軌道上的規則時鐘與飛行中規則變更、預設使用已簽章的規則檔、更快的移動禁航區檢查，以及計畫書的10 個 gRPC 呼叫。", "src": ["CHANGELOG.md#2026-10-13"]},
    {"date": "2026-10-13", "wp": ["WP3"], "en": "Gate G1 passed again after the fence change, the escalation's hold, flown as ArduCopter's BRAKE mode, held its altitude in flight, and the city demonstration was re-flown and recorded on the current code.", "zh": "圍欄設定變更後再次通過 Gate G1；升級機制的定點步驟以 ArduCopter 的 BRAKE 模式飛行，在飛行中維持住高度；城市示範也以目前的程式重新飛行並錄影。"},
    {"date": "2026-10-14", "wp": ["WP3"], "en": "The ArduPilot rail recorded with the Shield on and off.", "zh": "ArduPilot 軌道在 Shield 開啟與關閉下錄影。"},
-   {"date": "2026-10-19", "wp": ["WP1", "WP3", "WP4"], "en": "100 verified defects from an October review fixed, and CI runs every test file that passes on a clean copy.", "zh": "十月審查中經驗證的 100 個缺陷已修正，CI 也會執行每一個在乾淨副本上能通過的測試檔。", "src": ["CHANGELOG.md#2026-10-19"]}
+   {"date": "2026-10-19", "wp": ["WP1", "WP3", "WP4"], "en": "100 verified defects from an October review fixed, and CI runs every test file that passes on a clean copy.", "zh": "十月審查中經驗證的 100 個缺陷已修正，CI 也會執行每一個在乾淨副本上能通過的測試檔。", "src": ["CHANGELOG.md#2026-10-19"]},
+   {"date": "2026-10-21", "wp": ["WP1", "WP3", "WP4"], "en": "On the ArduPilot rail the Shield forecasts from the aircraft's own velocity and the hold stops clear of the margin, flown with the new forecast on and off; the escalation chooses legal hold and landing points (stress harness only); the WP1 cold start is measured; and the city follow's smoother motion has flown.", "zh": "在 ArduPilot 軌道上，Shield 從機體本身的速度出發預測，定點也會停在安全邊界之外，並已在新預測開啟與關閉下飛行；升級機制會選擇合法的定點與降落點（僅在壓力測試框架中）；WP1 冷啟動已量測；城市跟隨更平順的運動也已實際飛行。", "src": ["CHANGELOG.md#2026-10-21"]}
   ],
   "next": [
    {
@@ -1003,8 +1016,7 @@
     "items": [
      {"wp": ["WP3", "WP4"], "en": "Set up the Jetson Orin and run the VLA and the Shield on it, with the simulators on the desktop (the grant's hil topology), and time the Shield there at the load the grant states its budget for (50 rules, 50 future poses per tick) against the 5 ms query budget.", "zh": "建置 Jetson Orin，在上面執行 VLA 與 Shield，模擬器留在桌機（計畫書的 hil 拓撲），並在計畫書訂定預算時所依據的負載下（50 條規則、每個 tick 檢查 50 個未來位置）量測 Shield 的耗時，對照 5 ms 的查詢預算。", "src": ["CHANGELOG.md#2026-10-06", "experiments/bench_shield_50rules.py"]},
      {"wp": ["WP3"], "en": "Fly the perception node through MAVROS 2: in WSL on the desktop (the grant's dev topology), then on the Jetson Orin (hil).", "zh": "讓感知節點經由 MAVROS 2 飛行：先在桌機的 WSL 中（計畫書的 dev 拓撲），再到 Jetson Orin 上（hil）。"},
-     {"wp": ["WP3"], "en": "A start gate on the ArduPilot perception rail, so that the drone waits until it sees the car, as the city demonstration does, and the rail's follow flights can be scored.", "zh": "在 ArduPilot 感知軌道上加入起始閘門，讓無人機像城市示範一樣，等到看見車輛才開始，這條軌道的跟隨飛行才能評分。"}, {"wp": ["WP3"], "en": "A Shield forecast that starts from the aircraft's own velocity, and a hold that stops clear of the margin: on the recorded close approach the aircraft still stood inside a P0 margin while the Shield flew its corrected commands.", "zh": "讓 Shield 的預測從機體本身的速度出發，並讓定點在安全邊界之外停住：在錄下的近距離接近中，Shield 飛行修正後的指令時，機體仍位於 P0 安全邊界之內。"},
-     {"wp": ["WP3"], "en": "Bring fail-safe trigger correctness to the grant's target of at least 99 %.", "zh": "把 fail-safe 觸發正確率提高到計畫書至少 99 % 的目標。", "src": ["docs/DESIGN-escalation-fsm.md"]},
+     {"wp": ["WP3"], "en": "A start gate on the ArduPilot perception rail, so that the drone waits until it sees the car, as the city demonstration does, and the rail's follow flights can be scored.", "zh": "在 ArduPilot 感知軌道上加入起始閘門，讓無人機像城市示範一樣，等到看見車輛才開始，這條軌道的跟隨飛行才能評分。"},     {"wp": ["WP3"], "en": "Bring fail-safe trigger correctness to the grant's target of at least 99 %.", "zh": "把 fail-safe 觸發正確率提高到計畫書至少 99 % 的目標。", "src": ["docs/DESIGN-escalation-fsm.md"]},
      {"wp": ["WP1", "WP2"], "en": "A policy file that declares a moving no-fly zone loads for flight; a moving zone applied during a flight already works.", "zh": "宣告移動禁航區的規則檔可以載入飛行；在飛行中套用移動禁航區目前已經可以運作。"}
     ]
    },
