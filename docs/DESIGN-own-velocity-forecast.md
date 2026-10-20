@@ -6,7 +6,7 @@ model), `guardrail/shield.py` (the forecast, `note_flown`, `advise`,
 `stop_breaks`), `guardrail/models.py` (`State.velocity`), the three ArduPilot
 rails, `tools/fit_velocity_response.py` (the fit) and
 `tools/own_velocity_closed_loop.py` (the closed loop);
-`tests/test_own_velocity_forecast.py` at 24/24. **Not flown yet**: the
+`tests/test_own_velocity_forecast.py` at 27/27. **Not flown yet**: the
 re-flight command is at the end.
 **Revised 2026-10-20:** the measured velocity now only ADDS to the commanded
 forecast (section 2, "The measured velocity only adds"). The first build
@@ -27,6 +27,13 @@ ticks have their own audit record; a deferred hold is handed to BRAKE when
 the stream cannot be trusted (section 7); the pipe is aged on the rail's
 real clock; and the velocity mode's query cost is measured at 50 rules and
 brought under the 5 ms budget. Every number below is the revised build's.
+**Re-review 2026-10-20:** the episode exporter split a run's audit at every
+stop-advised tick (its second record has the same tick) and joined a
+fragment - fixed, section 7 "Read back"; the braking-bias rule is worded
+as what it is, a median at one horizon (section 3: p25 0.33 m short at
+1.5 s, the median 0.16 m short at 2.0 s); the set-aside's reach across
+rules is stated (section 2) and a per-rule version left open (section 9);
+the cost figures are one measurement each (section 2, "The cost").
 **Grant terms kept:** the 5 s / 0.1 s forecast grid, the FSM's states and
 edges G1-G8 (and X1-X7) as written, the P0 escape KPI's definition (the
 Shield's re-check of what was flown). What changes is where the forecast
@@ -77,7 +84,10 @@ for the reaction time (0.45 s), the setpoints the rail already sent
 (`Shield.note_flown(action)`, called once per tick after the send; the
 "pipe", `response.pipe_segments`), and then turns towards the candidate at
 the acceleration limit (1.75 m/s^2), exactly integrated. Both numbers are
-measured and chosen never to be short of a braking aircraft (section 3). A
+measured, and chosen so that, in this form, the MEDIAN braking error at
+1.5 s is not short (+0.03 m): a median at one horizon, not a bound - a
+quarter of the braking windows are 0.33 m short or more at 1.5 s, and at
+2.0 s the median is 0.16 m short (p25 0.51 m; section 3). A
 caller that never calls `note_flown` gets the measured velocity kept for
 the reaction time instead. Horizontal only: the climb rate stays the
 commanded one (section 3). Same grid, same 50 poses.
@@ -127,6 +137,11 @@ design_load design_load_velocity --horizons grant` (the packed real flights
 with 50 rules, 1301 ticks) measured `_check` at median 4.8 ms, p99 18.4 ms,
 max 31 ms with the velocity - every rule asked `_committed` afresh outside a
 tick, and a pose test built a shapely Point for poses nowhere near the zone.
+(Re-measured at the re-review on the same desktop, `--cpus
+0,2,4,6,8,10,12,14`, the first build's Shield (6987366) under the same
+tool: median 4.19 ms, p99 11.8 ms, max 17.7 ms, 359 of the 1301 ticks over
+5 ms - lower on a quieter host, the same verdict. The `_check` docstring's
+"p99 13.9 ms" matched neither run and now cites these two.)
 Now `_check` with a velocity opens a tick view of its own (one `_committed`,
 one pipe and one set of poses per action, cached), the altitude rule walks
 one of the two paths (they share every altitude), and the fence tests skip a
@@ -136,7 +151,9 @@ answers, pose for pose (a seeded digest of 3,600 velocity decisions and
 unchanged by it; the 18,000-decision identity proof and the 28,800 answers of
 `test_check_contract` pass). At 50 rules `_check` is now median 0.87 ms,
 p99 1.23 ms, max 1.51 ms with the velocity (0.22 / 0.41 / 0.54 ms without;
-`filter()` p99 9.0 ms, max 40 ms on one tick, against 100 ms), and on the
+`filter()` p99 9.0 ms, max 40 ms on one tick, against 100 ms; re-measured
+pinned at the re-review: 0.87 / 1.21 / 1.48 ms, `filter()` p99 9.2 ms,
+max 39 ms), and on the
 synthetic bench of `experiments/bench_shield_50rules.py` (400 seeded states
 per scenario) at most 1.92 ms (p99 1.18 ms) where the first build reached
 4.93 ms (6.1 ms in the review's run).
@@ -160,6 +177,26 @@ returns the tick the position is legal; counted (`n_velocity_set_aside`,
 `metrics.shield_forecast.velocity_set_aside_ticks`). It makes true of every
 rule what section 9 said of the broken one: while the position is already
 inside a rule, recovery is exactly the old one.
+
+The set-aside is all or nothing ACROSS RULES (re-review): any broken hard,
+enforced rule drops the momentum for every rule, so an unrelated breach -
+the follow dipping under `alt-band`'s 6 m floor - also drops it for the
+building. Replayed open loop on the six recorded flights (causal velocity,
+the logged pipe), the velocity is set aside on 310 of the 1101 ticks of
+`pas_ap_20261008_224440`, 279 of them for `alt-band` alone (seven spans
+below 6 m between ticks 218 and 1045, mid-follow, not take-off or landing;
+at most
+0.66 m/s horizontally there), 25 for the building, 6 for the stand-off; on
+the other five flights every set-aside tick is the building rule itself
+(12, 720, 78, 739, 71 ticks). During such an alt-band span a fast approach
+to a building would be judged on the commanded forecast only. No harm
+measured (the alt-band spans are slow; the re-review found the closed-loop
+results unchanged with the set-aside disabled, and the open-loop P0 escapes
+the same ticks on all six flights). Setting aside only the broken rule
+would not have prevented the 7 escapes above - the rule that left no escape
+there was the stand-off ring, unbroken but committed - so a per-rule
+version has to choose the rules whose committed judgement conflicts with
+the escape, which needs evidence of its own: an open item (section 9).
 
 **Rules the momentum already decides** (`Shield._committed`). If a GUIDED
 stop commanded now (the pipe, then zero at the limit) would still break a
@@ -259,8 +296,9 @@ forecasts with.
 
 **What happened to the safety rule, and the numbers the Shield uses.** The
 tool was written to pick, among the 1 % ridge, a point whose median braking
-error is not negative (never short of where a braking aircraft went - the
-unsafe direction for a keep-out rule), "else among the ridge". On these
+error is not negative (not short, in the median, of where a braking
+aircraft went - short is the unsafe direction for a keep-out rule), "else
+among the ridge". On these
 flights no ridge point met it: the ridge holds one point, whose braking
 error is -0.11 m in the physical form, and the fallback took it without
 saying so - the first version of this note called the rule "moot". Worse,
@@ -279,6 +317,24 @@ fall back loudly. A slower model is only optimistic about an aircraft
 speeding UP towards a hazard, which the commanded forecast judged beside it
 already covers (section 2).
 
+**What the rule does not say** (re-review). It is a MEDIAN at ONE horizon,
+1.5 s - not "never short", which the commit introducing it claimed in its
+title ("Never be optimistic about a stop"). With the chosen numbers, in the
+Shield's form, the braking error by horizon is (p25 / median, m; the fit's
+`decel_along_by_h_m`, pinned by the fixture test):
+
+| horizon | 0.5 s | 1.0 s | 1.5 s | 2.0 s | 2.5 s |
+|---|---|---|---|---|---|
+| Shield form, the Shield's numbers | -0.03 / +0.06 | -0.16 / +0.13 | **-0.33 / +0.03** | **-0.51 / -0.16** | -0.71 / -0.31 |
+| physical form, the Shield's numbers | -0.03 / +0.06 | -0.16 / +0.13 | -0.23 / +0.09 | -0.29 / +0.06 | -0.33 / +0.04 |
+
+A quarter of the braking windows are 0.33 m short or more at 1.5 s, and at
+2.0 s the median itself is short. The physical form with the same numbers
+stays >= 0 in the median at every horizon, so the later shortfall is mostly
+the pilot changing its command, which no Shield form can know. And on an
+aircraft slower than these numbers (0.55 s, 1.5 m/s^2) the closed loop's
+approach still entered the 3 m margin, to 2.01 m on 33 ticks (section 6).
+
 RMS on the 550 step windows, and the along-track error on the 197
 decelerating windows at 1.5 s (forecast minus actual; negative = short):
 
@@ -294,7 +350,8 @@ decelerating windows at 1.5 s (forecast minus actual; negative = short):
 
 In the form the Shield flies, its numbers are as accurate as the identified
 ones (within 0.02 m at every horizon up to 1.5 s) and no longer short on
-braking: the choice costs nothing where the forecast is read. The Shield's
+braking in the median at 1.5 s (p25 still -0.33 m; the median is -0.16 m at
+2.0 s, above): the choice costs nothing where the forecast is read. The Shield's
 forms cannot know the next command, so their error past 1.5 s is mostly the
 pilot changing its mind; inside the 1-1.5 s that decides a wall approach the
 pipe form is 3.9x (1 s) and 2.5x (1.5 s) better than the old forecast. A
@@ -549,6 +606,26 @@ violations, repairs, emitted_violations, braked, touched), and its
 flown action re-checked from the position on the commanded forecast,
 `Shield.recheck_commanded`), and `metrics.shield_forecast` counts it, so a
 flight with the velocity is comparable like for like with every stored run.
+`tests/test_own_velocity_forecast.py` re-derives that field row by row with
+a Shield that never saw a velocity, on a tick that escapes on both bases
+(True) and on one that escapes on the rail's basis only, through momentum
+(False).
+
+**Read back** (re-review). A tick with two records was new to every reader.
+`tools/export_episodes.py` split an audit into flights wherever the tick
+did not advance, so each stop-advised tick started a new "flight" and the
+WP4 export joined the best single fragment: on the hold rail run of the
+test file 22 "flights" and 40 of 60 rows joined, on its FSM-brake run 61
+and 2 of 60, the per-step policy state and the priority / category labels
+lost with no trace but a lower `joined`. Now a record with a
+`decision_kind` right after its tick's untagged record is that tick's
+second decision: the tick's filter() record is joined (the stop's raw
+action, a zero, is never compared with the row), and the stop's decision
+rides on the step as `stop_advice`; both runs join 60 of 60 in one flight.
+`demo/track_truth.score_standoff_firings`, scored from an audit, skips such
+a record (its violations are the stop's, not those the row holds). The
+replay bundle's checks (episode id, policy hashes) read every record and
+need no change; the KPI rescoring reads the flight log, not the audit.
 
 **On screen.** The HUD (an ITRI deliverable) said "FSM Loiter(BRAKE) -
 AUTOPILOT HOLDING POSITION" while the aircraft was still in GUIDED and the
@@ -629,6 +706,16 @@ control arm's escapes stay judged on the commanded forecast.
   carrying the aircraft deeper. The 14 Oct creep was in that regime; the
   change is that the Shield should no longer get there on the identified
   aircraft, nor on one as slow as its model.
+* **The set-aside is all or nothing across rules** (section 2): any broken
+  hard rule - `alt-band`, seven mid-follow dips below 6 m on the 8 Oct
+  flight, 279 of its 310 set-aside ticks - drops the momentum for every
+  other rule. **Open item:** set aside only the rules whose committed
+  judgement conflicts with the escape. Not done: setting aside only the
+  broken rule would have flown the 7 escapes of section 2 again (the
+  conflicting rule there was the unbroken stand-off ring), and choosing the
+  conflicting rules needs its own replay and closed-loop evidence.
+* **The braking-bias rule is a median at 1.5 s** (section 3), not a bound:
+  p25 -0.33 m there, median -0.16 m at 2.0 s.
 * **For the PI:** whether `stop_illegal` should ever mean "where a stop
   would end" for the FSM (X6/X7 and the "stop withheld" rule read it); it
   does not here, by design. And whether the earlier interventions' extra
@@ -664,5 +751,9 @@ own_velocity, `velocity_ticks` close to `ticks`, `velocity_sources` mostly
 `velocity_set_aside_ticks` small); and `metrics.hold.stop_clear` (each plan,
 `guided_hold_ticks`, `stop_advised_ticks`, `forced_handovers` - expected
 empty); every `stop_advised` row has its `decision_kind: "stop_advised"`
-record in `audit.jsonl`. The approach depends on where the car leads the
-follow, so a run that never comes near the building says nothing either way.
+record in `audit.jsonl`; and `python tools/export_episodes.py
+demo/out/pas_ap_ovf_on_<date> --out <dir>` reports `audit_join` with
+`flights_in_audit` 1 and `stop_advice_records` equal to the stop-advised
+rows (the exporter before the re-review split such a run). The approach
+depends on where the car leads the follow, so a run that never comes near
+the building says nothing either way.

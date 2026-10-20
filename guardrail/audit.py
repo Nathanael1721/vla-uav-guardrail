@@ -76,7 +76,14 @@ so a Brake -> Normal recovery on a clean tick is on record too. Since
 2026-10-20 a tick can have a second record, `decision_kind` "stop_advised":
 the Shield's answer to a stop that the ArduPilot rail flew instead of the
 tick's filter() decision (the hold that stops clear), always written; the
-field is absent from every other record.
+field is absent from every other record. A READER that groups records by
+tick must take such a record as its tick's second decision, written right
+after that tick's filter() record at the same tick - never as a tick that
+failed to advance, i.e. a new flight (tools/export_episodes.audit_blocks
+did, and split the hold rail run's audit into 22 "flights", joining 40 of
+its 60 rows: 2026-10-20 re-review), and never as the tick's own record
+(demo/track_truth.score_standoff_firings skips it: its violations are the
+stop's, not those the flight log's row holds).
 
 ONE FILE PER EPISODE ("Python module; rotated per mission", Outputs table).
 `AuditLogger.for_episode(directory, policy, episode_id)` opens

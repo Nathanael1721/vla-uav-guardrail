@@ -2520,8 +2520,15 @@ class Shield:
         so does a state with a measured velocity: its rules share one answer
         to `_committed` (two checks of a stop), one pipe and one set of poses
         per action, which the tick caches. Without the tick each rule asked
-        `_committed` afresh - the 50-rule monitor query took a median 4.8 ms
-        and a p99 of 13.9 ms on the packed flights (2026-10-20 review)."""
+        `_committed` afresh: at 50 rules on the packed flights (tools/
+        profile_shield_tick.py, arm design_load_velocity, horizon grant,
+        1301 ticks) the monitor query with a velocity took median 4.8 /
+        p99 18.4 / max 31 ms in the first measurement and 4.19 / 11.8 /
+        17.7 ms re-measured pinned to the performance cores (359 ticks over
+        the 5 ms budget); with the tick view 0.87 / 1.21 / 1.48 ms
+        (docs/DESIGN-own-velocity-forecast.md, "The cost"). An earlier
+        version of this docstring said p99 13.9 ms, a figure no recorded
+        run gives."""
         if self._tick_ctx() is None and (self._needs_tick()
                                          or self._velocity_of(state) is not None):
             with self._scope(self._new_tick(None)):
@@ -4236,7 +4243,8 @@ class Shield:
         hard, enforced rule (a stop here is illegal: the FSM's stop_illegal).
 
         Why (2026-10-20 review, the open-loop replay of every recorded flight
-        with the Shield's numbers chosen never to be short on braking): on
+        with the Shield's revised numbers, chosen so that their MEDIAN
+        braking error at 1.5 s is not short - guardrail/response.py): on
         the Shield-off close run (pas_ap_close_off ticks 733-739) the logged
         aircraft was 0.8-1.0 m inside the building footprint, still flying
         deeper at 1.2-1.8 m/s, 3.8-4.9 m from the car. The building rule,
@@ -4257,7 +4265,28 @@ class Shield:
         note already said of the broken rule itself ("while the position is
         already inside a rule, recovery is exactly the old one"), now true of
         every rule. The velocity returns the tick the position is legal.
-        Counted (`n_velocity_set_aside`)."""
+        Counted (`n_velocity_set_aside`).
+
+        ALL OR NOTHING ACROSS RULES (2026-10-20 re-review). Any broken hard,
+        enforced rule sets the velocity aside for EVERY rule, so an unrelated
+        breach also drops the momentum the building rule would have seen.
+        Replayed open loop on the six recorded pas_ap flights (causal
+        velocity, the logged pipe; tools/own_velocity_closed_loop.py's
+        replay): on pas_ap_20261008_224440 it is set aside on 310 of 1101
+        ticks, 279 of them for `alt-band` alone (seven spans of the follow
+        below its 6 m floor, ticks 218-1045 - not take-off or landing; at
+        most 0.66 m/s horizontally), 25 for the building, 6 for the
+        stand-off; on the other five flights every set-aside tick is the
+        building rule itself (12, 720, 78, 739 and 71 ticks). During such an
+        alt-band span a fast approach to a building would be judged on the
+        commanded forecast alone. Setting aside only the BROKEN rule is not
+        the cure: in the 7-escape case above the rule whose committed
+        handling left no escape was the stand-off ring, which was not broken.
+        A per-rule version would have to set aside the rules whose committed
+        judgement conflicts with the escape, which needs evidence of its own
+        (the re-review found the closed-loop results unchanged with the
+        set-aside disabled, on both windows and all three aircraft) - an open
+        item in the design note (section 9), not done here."""
         if self._velocity_of(state) is None:
             return state
         here = self._positional(state)

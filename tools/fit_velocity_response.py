@@ -34,12 +34,24 @@ plant (tools/own_velocity_closed_loop.py).
 THE SHIELD'S NUMBERS ARE CHOSEN BY A WRITTEN RULE, not by eye, and in the
 form the Shield actually flies (SHIELD_FORM: the pipe of setpoints already
 sent, then the candidate held - Shield.note_flown, as every rail that gives
-the Shield a velocity calls it): among the grid points whose median
+the Shield a velocity calls it): among the grid points whose MEDIAN
 along-track error on the decelerating windows at 1.5 s, in that form, is
->= 0 (never short of where a braking aircraft went - the unsafe direction
-for a keep-out rule), the one with the smallest physical objective (the
-most accurate description of the aircraft among those), ties to the longer
-stop from 5 m/s (the speed cap of every shipped follow policy).
+>= 0 (not short, in the median at that one horizon, of where a braking
+aircraft went - short is the unsafe direction for a keep-out rule), the
+one with the smallest physical objective (the most accurate description of
+the aircraft among those), ties to the longer stop from 5 m/s (the speed
+cap of every shipped follow policy).
+
+WHAT THE RULE DOES NOT SAY (2026-10-20 re-review). It is a median at one
+horizon, not a bound: with the chosen numbers, in the Shield's form, a
+quarter of the decelerating windows are still 0.33 m short or more at
+1.5 s (p25 -0.33 m), and at 2.0 s the median itself is short (-0.16 m,
+p25 -0.51 m). The physical form with the same numbers stays >= 0 in the
+median at every horizon (+0.06 m at 2.0 s), so the later shortfall is
+mostly the pilot changing its command, which no Shield form can know; the
+table prints these quartiles per horizon (`decel_along_by_h_m`). An
+aircraft slower than the chosen numbers still enters a margin in the
+closed loop (tools/own_velocity_closed_loop.py --robust).
 
 Why not the identified point itself (2026-10-20 review): in the Shield's
 form it is short on braking, median -0.25 m at 1.5 s (p25 -0.51 m), and an
@@ -50,11 +62,13 @@ physical-form bias is -0.11 m, and the rule fell back to it in silence
 (`ok = [...] or ridge`). The rule now reads the Shield's form, and when no
 grid point meets it the report says so (`fallback`, printed as a WARNING)
 instead of choosing quietly. On these flights it chooses 0.45 s, 1.75 m/s^2:
-median braking bias +0.03 m in the Shield's form, at no cost in the
+median braking bias +0.03 m in the Shield's form at 1.5 s (p25 -0.33 m;
+at 2.0 s median -0.16 m, p25 -0.51 m), at no cost in the
 Shield's own accuracy (step RMS 0.13 / 0.36 / 0.71 m at 0.5 / 1.0 / 1.5 s,
 against 0.12 / 0.34 / 0.70 m with the identified numbers); its physical
 objective is 13.6 % above the minimum - it describes a slightly slower
-aircraft than the one identified, which is the safe side for a stop.
+aircraft than the one identified, the safer side for a stop (not a safe
+one: see WHAT THE RULE DOES NOT SAY).
 
 The table then scores, with those numbers, what the Shield can actually
 forecast - it cannot know the next command, so it holds the candidate:
@@ -388,7 +402,13 @@ def fit(runs: dict[str, list[dict]]) -> dict:
                     ("physical form, identified numbers", (ident, "physical"))):
         table[name] = {"all": errors(ws, m), "steps": errors(steps, m),
                        "decel": errors(dec, m), "decel_bias_m": along_bias(dec, m),
-                       "decel_along_m": along_quartiles(dec, m)}
+                       "decel_along_m": along_quartiles(dec, m),
+                       # The same quartiles at every horizon: the bias rule
+                       # reads one median at 1.5 s, and its claim must be
+                       # read with the spread and the later horizons beside
+                       # it (WHAT THE RULE DOES NOT SAY).
+                       "decel_along_by_h_m": {h: along_quartiles(dec, m, h)
+                                              for h in HORIZONS}}
     out = {"windows": len(ws), "step_windows": len(steps), "decel_windows": len(dec),
            "runs": list(RUNS), "best_objective": best,
            "ridge": sorted(ridge, key=lambda g: g["objective"]),
@@ -520,6 +540,10 @@ def main(argv=None) -> int:
             f"{h:g}s {t['steps'][h]['rms']:.2f}" for h in HORIZONS)
               + f" | decel along-track p25/median/p75 {q['p25']:+.2f} {q['median']:+.2f} "
                 f"{q['p75']:+.2f} m")
+    by_h = rep["table"]["Shield form, with the pipe (note_flown)"]["decel_along_by_h_m"]
+    print("braking error of the Shield's numbers in the Shield's form, p25 / median by "
+          "horizon (the rule reads the 1.5 s median only): " + "; ".join(
+              f"{h:g}s {q['p25']:+.2f} / {q['median']:+.2f} m" for h, q in by_h.items()))
     print(f"vertical: {rep['vertical']}")
     print(f"BRAKE (behind the Shield's GUIDED pipe): {rep['brake']}")
     print(f"BRAKE (behind the identified GUIDED pipe, the closed loop's plant): "

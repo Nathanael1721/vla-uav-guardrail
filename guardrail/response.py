@@ -28,9 +28,11 @@ closed form per segment), so a forecast pose costs a few float operations.
 The clearance check's "fly this for one control period, then stop" and a
 hold's stop path (`stop_path`) are the same rule over a longer command list.
 
-THE NUMBERS ARE MEASURED, and chosen by a written rule that is never
-optimistic about a stop. tools/fit_velocity_response.py fits the physical
-form - every setpoint actually sent, each from reaction_s on - to every
+THE NUMBERS ARE MEASURED, and chosen by a written rule: their MEDIAN
+braking error at 1.5 s, in the form the Shield flies, is not short (a
+median at one horizon, not a bound - see below).
+tools/fit_velocity_response.py fits the physical form - every setpoint
+actually sent, each from reaction_s on - to every
 recorded ArduPilot SITL flight on the Project AirSim CityLife quad (six
 pas_ap_* runs, 4417 windows, 550 with the command more than 1 m/s from the
 measured velocity), against where the aircraft really went 1.0, 1.5 and
@@ -45,13 +47,22 @@ point whose median braking error in the Shield's own form is not short
 (2026-10-20 review): 0.45 s and 1.75 m/s^2, median +0.03 m, with the same
 accuracy in the Shield's form as the identified numbers (step RMS 0.13 /
 0.36 / 0.71 m at 0.5 / 1.0 / 1.5 s, against 0.12 / 0.34 / 0.70 m) - they
-describe a slightly slower aircraft than the one identified, the safe side
-for a stop. A slower model is only optimistic about an aircraft speeding UP
+describe a slightly slower aircraft than the one identified, the safer side
+for a stop. Not a safe side (2026-10-20 re-review): a quarter of those
+windows are still 0.33 m short or more at 1.5 s (p25 -0.33 m), and at
+2.0 s the median itself is short, -0.16 m (p25 -0.51 m); the physical form
+with the same numbers stays >= 0 in the median at every horizon (+0.06 m at
+2.0 s), so the later shortfall is mostly the pilot changing its command,
+which the Shield cannot know. In the closed loop an aircraft slower than
+these numbers (0.55 s, 1.5 m/s^2) still entered the 3 m building margin, to
+2.01 m (tools/own_velocity_closed_loop.py --robust; the design note's
+table). A slower model is only optimistic about an aircraft speeding UP
 towards a hazard, and that is the commanded forecast's case, which the
 Shield judges beside this one (shield.py `_predict`, "THE MEASURED VELOCITY
 ONLY ADDS"). tests/test_own_velocity_forecast.py re-runs the fit on the
 committed slim copy of those flights, checks that it lands on these
-constants, and pins the sign of the braking bias.
+constants, and pins the sign of the braking bias and the p25 / 2.0 s
+figures quoted here.
 
 VERTICAL. The vertical channel is NOT modelled: on the 73 windows whose
 commanded climb rate differed from the measured one by more than 0.3 m/s the
@@ -243,8 +254,10 @@ def _approach(vx: float, vy: float, cx: float, cy: float, a: float,
 
 # The Shield's numbers: the most accurate grid point whose braking forecast,
 # in the form the Shield flies (the pipe, then the candidate), is not short
-# of a braking aircraft (median along-track error at 1.5 s >= 0 on the 197
-# decelerating windows: +0.03 m). The identified aircraft (the physical
+# of a braking aircraft IN THE MEDIAN AT 1.5 s (along-track error >= 0 on
+# the 197 decelerating windows: +0.03 m; p25 -0.33 m; at 2.0 s median
+# -0.16 m, p25 -0.51 m - a median at one horizon, not a bound, module
+# docstring). The identified aircraft (the physical
 # form's minimum, 0.35 s / 2.0 m/s^2) is 0.25 m short in that form and is
 # NOT what the Shield forecasts with; it is the closed loop's plant
 # (tools/own_velocity_closed_loop.py PLANT_GUIDED).
@@ -254,8 +267,8 @@ ARDUCOPTER_GUIDED = VelocityResponse(
             "CityLife quad (citylife-quad.param): each setpoint flown from "
             "0.45 s after it is sent, at most 1.75 m/s^2; 6 recorded pas_ap_* "
             "flights, 550 step windows, chosen as the most accurate grid point "
-            "whose braking forecast in the Shield's form is not short "
-            "(tools/fit_velocity_response.py; identified aircraft 0.35 s, "
+            "whose median braking error at 1.5 s in the Shield's form is not "
+            "short (tools/fit_velocity_response.py; identified aircraft 0.35 s, "
             "2.0 m/s^2)"))
 
 # BRAKE: after the GUIDED setpoints already in the pipe, a stop at no more

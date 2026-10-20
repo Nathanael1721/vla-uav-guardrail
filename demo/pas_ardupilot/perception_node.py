@@ -407,7 +407,9 @@ HOLD_MODE = DEFAULT_HOLD_MODE
 # escape is the old Shield's (Shield._decision_state). ON because the
 # evidence the task asked for holds, on both P0 escape bases (re-checked with
 # the velocity, or on the commanded forecast as every stored run was), with
-# the response numbers chosen never to be short on braking (2026-10-20):
+# the response numbers chosen so that their median braking error at 1.5 s is
+# not short (2026-10-20; a median, not a bound: p25 -0.33 m, and -0.16 m in
+# the median at 2.0 s - guardrail/response.py):
 # replayed on all six recorded pas_ap flights, the Shield's P0 escapes are
 # the same ticks with and without it (0, 0, 1 [the same tick], 0, 0, 0);
 # flown in closed loop over every whole flight on three aircraft (the
