@@ -82,6 +82,7 @@ import argparse
 import glob
 import json
 import math
+import re
 import shlex
 import subprocess
 import sys
@@ -571,15 +572,46 @@ def wind_suffix(*docs) -> str:
     return ""
 
 
+def response_suffix(*docs) -> str:
+    """"/response-<arm>" for an episode flown on a vehicle response other
+    than the harness's ideal one (experiments/sweep_scenarios.py
+    `--response-arms ideal ardupilot`, the measured ArduPilot response,
+    docs/DESIGN-harness-vehicle-response.md), read from the KPI table's or
+    the episode_start event's `vehicle_response.arm`, a top-level or KPI
+    `response_arm`, or a run id carrying "response-"; "" for the ideal
+    vehicle or no label. Unlike the forecast, an unlabelled bundle IS the
+    headline configuration here: every bundle written before the arm existed
+    (2026-10-19) was flown on the ideal vehicle, the only one there was.
+    Without the suffix a report over a response-arm run would pool the
+    ArduPilot copies with the ideal rows of the same cell."""
+    for d in docs:
+        if not isinstance(d, dict):
+            continue
+        kpi = d.get("kpi") if isinstance(d.get("kpi"), dict) else {}
+        vr = (d.get("vehicle_response") if isinstance(d.get("vehicle_response"), dict)
+              else kpi.get("vehicle_response")
+              if isinstance(kpi.get("vehicle_response"), dict) else {})
+        arm = d.get("response_arm") or kpi.get("response_arm") or vr.get("arm")
+        if arm and arm != "ideal":
+            return f"/response-{arm}"
+        # Only the arm tag's own spelling (after "#" or ","), so a scenario
+        # whose id merely contains the word is not read as an arm.
+        hit = re.search(r"[#,]response-([A-Za-z0-9_]+)", str(d.get("id") or ""))
+        if hit and hit.group(1) != "ideal":
+            return f"/response-{hit.group(1)}"
+    return ""
+
+
 def _run_labels(*docs) -> str:
     """The configuration a stress episode was flown in that its scenario,
-    cell and seed do not name: forecast arm and wind model. Part of the
-    family name AND of the duplicate key - two episodes of one cell and seed
-    at one revision on different forecasts or winds are two experiments,
-    and the duplicate key once dropped the comparison arm as a copy of the
-    grant one (build_arm records no arm for a forecast-only arm, so the
-    `arm_tag` in the key was "" for both)."""
-    return forecast_suffix(*docs) + wind_suffix(*docs)
+    cell and seed do not name: forecast arm, wind model and (since
+    2026-10-19) vehicle response. Part of the family name AND of the
+    duplicate key - two episodes of one cell and seed at one revision on
+    different forecasts, winds or vehicles are two experiments, and the
+    duplicate key once dropped the comparison arm as a copy of the grant one
+    (build_arm records no arm for a forecast-only arm, so the `arm_tag` in
+    the key was "" for both)."""
+    return forecast_suffix(*docs) + wind_suffix(*docs) + response_suffix(*docs)
 
 
 def _bundle_family(doc: dict, sid, params: dict, arm: str, start: dict | None = None) -> str:
@@ -1678,6 +1710,63 @@ def render_markdown(rep: dict) -> str:
     return "\n".join(L) + "\n"
 
 
+def _render_response_comparison(rc: dict | None) -> list[str]:
+    """The vehicle-response comparison of a sweep run (experiments/
+    sweep_scenarios.py response_comparison), or nothing when the arm did not
+    fly - so a headline-only run's page is exactly what it was. Per family
+    (shield-on), the ideal vehicle beside the measured ArduPilot response over
+    the same (cell, seed) pairs: unsafe-position entries, true-state polygon
+    entries (Shield-flown and autopilot-flown), the Shield's P0 escapes, the
+    P0 ticks flown at the true state, and the labelled fail-safe score."""
+    if not rc:
+        return []
+    ti = (rc.get("totals") or {}).get("ideal") or {}
+    ta = (rc.get("totals") or {}).get("ardupilot") or {}
+    fi, fa = ti.get("failsafe_labels") or {}, ta.get("failsafe_labels") or {}
+    c = rc.get("counts") or {}
+    params = (rc.get("response") or {}).get("params") or {}
+    L = ["## Vehicle-response comparison (not a headline number)", "",
+         f"- The same episodes flown on the measured ArduPilot vehicle response "
+         f"({', '.join(f'{k} {v}' for k, v in params.items())}; "
+         f"docs/DESIGN-harness-vehicle-response.md) instead of the ideal vehicle. "
+         f"Reported, never gated: {rc.get('paired_episodes')} paired episodes; "
+         f"{c.get('pass', 0)} pass, {c.get('tracked', 0)} tracked, "
+         f"{c.get('fail', 0) + c.get('error', 0)} fail, "
+         f"{c.get('known_failure', 0)} known, {c.get('unexpected_pass', 0)} "
+         f"pinned-but-passing; {rc.get('episodes_moved')} episode(s) moved; "
+         f"largest velocity lag {_f(rc.get('max_velocity_lag_mps'), 2)} m/s.",
+         f"- Shield-on totals, ideal -> ArduPilot: unsafe-position entries "
+         f"{ti.get('unsafe_position_entries')} -> {ta.get('unsafe_position_entries')}; "
+         f"polygon entries {ti.get('polygon_entries')} -> {ta.get('polygon_entries')}; "
+         f"autopilot polygon entries {ti.get('autopilot_polygon_entries')} -> "
+         f"{ta.get('autopilot_polygon_entries')}; P0 escapes {ti.get('p0_escapes')} -> "
+         f"{ta.get('p0_escapes')}; true-state P0 ticks {ti.get('true_p0_flown_ticks')} "
+         f"-> {ta.get('true_p0_flown_ticks')}; fail-safe labels "
+         f"{fi.get('correct')}/{fi.get('labelled')} -> {fa.get('correct')}/"
+         f"{fa.get('labelled')} ({fi.get('false_triggers')} -> "
+         f"{fa.get('false_triggers')} false, {fi.get('missed_triggers')} -> "
+         f"{fa.get('missed_triggers')} missed).", "",
+         "| Family | Episodes | Unsafe-position entries | Polygon entries | "
+         "Autopilot polygon entries | P0 escapes | True-state P0 ticks | "
+         "Fail-safe correct | Deepest true distance (m) |",
+         "|---|---|---|---|---|---|---|---|---|"]
+    for fam, row in (rc.get("families") or {}).items():
+        a, b = row.get("ideal") or {}, row.get("ardupilot") or {}
+        if not a:
+            continue
+
+        def pair(k):
+            return f"{a.get(k)} -> {b.get(k)}"
+        L.append(f"| `{fam}` | {a.get('episodes')} | {pair('unsafe_position_entries')} | "
+                 f"{pair('polygon_entries')} | {pair('autopilot_polygon_entries')} | "
+                 f"{pair('p0_escapes')} | {pair('true_p0_flown_ticks')} | "
+                 f"{a.get('failsafe_correct')}/{a.get('failsafe_labelled')} -> "
+                 f"{b.get('failsafe_correct')}/{b.get('failsafe_labelled')} | "
+                 f"{_f(a.get('min_true_dist_to_fence_m'), 2)} -> "
+                 f"{_f(b.get('min_true_dist_to_fence_m'), 2)} |")
+    return L + [""]
+
+
 def render_sweep_markdown(doc: dict, top_k: int = 10) -> str:
     """The grant's KPI report for ONE stress-harness run (Stress Testing p6):
     "1. Per-scenario-family stats table. One row per (scenario template,
@@ -1799,6 +1888,7 @@ def render_sweep_markdown(doc: dict, top_k: int = 10) -> str:
         L += ["## Outcomes", "",
               "| " + " | ".join(oc) + " |", "|" + "---|" * len(oc),
               "| " + " | ".join(str(v) for v in oc.values()) + " |", ""]
+    L += _render_response_comparison(doc.get("_response_comparison"))
     ad = doc.get("_arms")
     if ad:
         pp = ad.get("per_paraphrase") or {}
@@ -1847,7 +1937,8 @@ DEFINITIONS = {
         "hot-applied in flight and where a declared subject stood. AirSim "
         "follow flights of one policy share a row: they declare no cell. A "
         "stress row flown on a comparison configuration says so "
-        "(`/forecast-3s`, `/wind-open_loop`); `/forecast-unlabelled` marks "
+        "(`/forecast-3s`, `/wind-open_loop`, `/response-ardupilot`); "
+        "`/forecast-unlabelled` marks "
         "bundles that predate the labels (before 2026-10-13: the 3 s / 0.5 s "
         "forecast and open-loop wind), not the grant's configuration. A row "
         "pooling several code revisions is marked with their count "

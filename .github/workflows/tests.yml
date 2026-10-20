@@ -393,6 +393,7 @@ jobs:
               tests/test_harnesstruth_wind.py \
               tests/test_harnesstruth_bundles.py \
               tests/test_harnesstruth_ci.py \
+              tests/test_harnesstruth_response.py \
               tests/test_env_pins.py \
               tests/test_flight_pas_ap_20261008.py \
               tests/test_shieldcore_repair.py \
