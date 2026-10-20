@@ -515,8 +515,12 @@ def main() -> int:
     vla = StubVLA(mission)
     # No escalation FSM inside the Shield: this rail runs THE FSM below, fed
     # with the autopilot's state (guardrail.replay.rail_shield).
+    # pipe_clock: the setpoints sent (note_flown) are aged on the rail's own
+    # loop clock (time.time, read late so a simulated clock is followed), not
+    # on filter()'s counted 0.1 s ticks (read only with the own-velocity
+    # forecast on; docs/DESIGN-own-velocity-forecast.md).
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
-                         clock=clock)
+                         clock=clock, pipe_clock=lambda: time.time())
     # The own-velocity forecast, Shield-on arm only (OWN_VELOCITY_DEFAULT).
     own_v = getattr(args, "own_velocity_forecast", OWN_VELOCITY_DEFAULT) == "on" and shield_on
     n_vel_used = 0

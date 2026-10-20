@@ -28,17 +28,30 @@ closed form per segment), so a forecast pose costs a few float operations.
 The clearance check's "fly this for one control period, then stop" and a
 hold's stop path (`stop_path`) are the same rule over a longer command list.
 
-THE NUMBERS ARE MEASURED, not chosen. tools/fit_velocity_response.py fits the
-physical form - every setpoint actually sent, each from reaction_s on -
-to every recorded ArduPilot SITL flight on the Project AirSim CityLife quad
-(six pas_ap_* runs, 4417 windows, 550 with the command more than 1 m/s from
-the measured velocity), against where the aircraft really went 1.0, 1.5 and
-2.0 s later: 0.35 s and 2.0 m/s^2, RMS 0.31 / 0.49 / 0.64 m on the step
-windows where the old forecast's is 1.41 / 1.81 / 2.34 m. The Shield's own
-form (it cannot know the next command, so it holds the candidate) scores
-0.34 / 0.70 / 1.29 m with these numbers. tests/test_own_velocity_forecast.py
-re-runs the fit on the committed slim copy of those flights and checks that
-it lands on these constants.
+THE NUMBERS ARE MEASURED, and chosen by a written rule that is never
+optimistic about a stop. tools/fit_velocity_response.py fits the physical
+form - every setpoint actually sent, each from reaction_s on - to every
+recorded ArduPilot SITL flight on the Project AirSim CityLife quad (six
+pas_ap_* runs, 4417 windows, 550 with the command more than 1 m/s from the
+measured velocity), against where the aircraft really went 1.0, 1.5 and
+2.0 s later. Its minimum, the identified aircraft, is 0.35 s and 2.0 m/s^2
+(RMS 0.31 / 0.49 / 0.64 m on the step windows, where the old forecast's is
+1.41 / 1.81 / 2.34 m). But in the form the Shield flies (it cannot know the
+next command, so it flies the pipe and then holds the candidate) those
+numbers are SHORT on braking: on the 197 decelerating windows the forecast
+falls a median 0.25 m short of where the aircraft went at 1.5 s (p25
+0.51 m short). The Shield's numbers are therefore the most accurate grid
+point whose median braking error in the Shield's own form is not short
+(2026-10-20 review): 0.45 s and 1.75 m/s^2, median +0.03 m, with the same
+accuracy in the Shield's form as the identified numbers (step RMS 0.13 /
+0.36 / 0.71 m at 0.5 / 1.0 / 1.5 s, against 0.12 / 0.34 / 0.70 m) - they
+describe a slightly slower aircraft than the one identified, the safe side
+for a stop. A slower model is only optimistic about an aircraft speeding UP
+towards a hazard, and that is the commanded forecast's case, which the
+Shield judges beside this one (shield.py `_predict`, "THE MEASURED VELOCITY
+ONLY ADDS"). tests/test_own_velocity_forecast.py re-runs the fit on the
+committed slim copy of those flights, checks that it lands on these
+constants, and pins the sign of the braking bias.
 
 VERTICAL. The vertical channel is NOT modelled: on the 73 windows whose
 commanded climb rate differed from the measured one by more than 0.3 m/s the
@@ -50,9 +63,13 @@ BRAKE. ArduCopter's BRAKE mode (the rail's flight mode for the escalation
 FSM's Loiter) brakes far more gently on this airframe than a GUIDED zero
 setpoint: on both recorded BRAKE entries the aircraft travelled 2.5-2.9 m
 and was still moving 2.3 s later. ARDUCOPTER_BRAKE is the envelope of those
-two entries after the GUIDED pipe (it never forecasts less travel than
-either showed by the end): 0.05 s, then at most 0.75 m/s^2. With two
-samples it is an envelope, not a fit, and the design note says so.
+two entries after the GUIDED pipe flown with ARDUCOPTER_GUIDED (it never
+forecasts less travel than either showed by the end): no further coast,
+then at most 0.95 m/s^2. With two samples it is an envelope, not a fit,
+and one of the two is not a clean deceleration (pas_ap_close_on tick 387:
+the speed rises again from 0.57 to 1.06 m/s inside BRAKE, ticks 400-407,
+while the aircraft was 2.2-3.2 m into the 3 m margin - at the building's
+face, most likely in contact with it); the design note says so.
 """
 from __future__ import annotations
 
@@ -224,21 +241,32 @@ def _approach(vx: float, vy: float, cx: float, cy: float, a: float,
 # tests/fixtures/pas_ap_response_id.jsonl.gz.
 # --------------------------------------------------------------------------- #
 
+# The Shield's numbers: the most accurate grid point whose braking forecast,
+# in the form the Shield flies (the pipe, then the candidate), is not short
+# of a braking aircraft (median along-track error at 1.5 s >= 0 on the 197
+# decelerating windows: +0.03 m). The identified aircraft (the physical
+# form's minimum, 0.35 s / 2.0 m/s^2) is 0.25 m short in that form and is
+# NOT what the Shield forecasts with; it is the closed loop's plant
+# (tools/own_velocity_closed_loop.py PLANT_GUIDED).
 ARDUCOPTER_GUIDED = VelocityResponse(
-    reaction_s=0.35, accel_mps2=2.0,
+    reaction_s=0.45, accel_mps2=1.75,
     source=("ArduCopter V4.5.7 SITL, GUIDED velocity setpoints, Project AirSim "
             "CityLife quad (citylife-quad.param): each setpoint flown from "
-            "0.35 s after it is sent, at most 2.0 m/s^2; fit to 6 recorded "
-            "pas_ap_* flights, 550 step windows (tools/fit_velocity_response.py)"))
+            "0.45 s after it is sent, at most 1.75 m/s^2; 6 recorded pas_ap_* "
+            "flights, 550 step windows, chosen as the most accurate grid point "
+            "whose braking forecast in the Shield's form is not short "
+            "(tools/fit_velocity_response.py; identified aircraft 0.35 s, "
+            "2.0 m/s^2)"))
 
-# BRAKE: after the GUIDED setpoints already in the pipe, 0.05 s, then a stop
-# at no more than 0.75 m/s^2 - under half of what a GUIDED zero setpoint
-# brakes at on the same airframe.
+# BRAKE: after the GUIDED setpoints already in the pipe, a stop at no more
+# than 0.95 m/s^2 - about half of what a GUIDED zero setpoint brakes at on
+# the same airframe.
 ARDUCOPTER_BRAKE = VelocityResponse(
-    reaction_s=0.05, accel_mps2=0.75,
+    reaction_s=0.0, accel_mps2=0.95,
     source=("ArduCopter V4.5.7 SITL BRAKE mode, Project AirSim CityLife quad: "
             "envelope of the 2 recorded BRAKE entries (pas_ap_close_on ticks "
-            "280 and 387) after the GUIDED pipe (tools/fit_velocity_response.py)"))
+            "280 and 387) after the GUIDED pipe of ARDUCOPTER_GUIDED "
+            "(tools/fit_velocity_response.py)"))
 
 
 def stop_path(guided: VelocityResponse, brake: VelocityResponse | None, x: float, y: float,
@@ -303,10 +331,18 @@ def hold_plan(shield, state, *, brake: VelocityResponse | None = None,
 
     BRAKE is also not handed the aircraft while it is still faster than
     `handover_mps` (HOLD_HANDOVER_MPS): the BRAKE envelope rests on two
-    entries, and in the closed loop a stop path predicted clear at 1.4 m/s
-    ended 1.6 cm inside the margin, where BRAKE then held it; a GUIDED stop
-    (2.0 m/s^2, against BRAKE's 0.75) brings the aircraft under that speed
-    within a second, and the prediction's error shrinks with the speed.
+    entries (one of them not a clean deceleration), and in the first build's
+    closed loop a stop path predicted clear at 1.4 m/s ended 1.6 cm inside
+    the margin, where BRAKE then held it. With the current numbers the gate
+    changes nothing on the two recorded approaches (the same ticks and
+    clearances with it set to 99 m/s); it is kept as a margin on an envelope
+    of two samples: a GUIDED stop (1.75 m/s^2, against BRAKE's 0.95) brings
+    the aircraft under that speed within about a second, and the
+    prediction's error shrinks with the speed.
+
+    A deferred hold is flown by the rail's stream, so the rail hands it to
+    BRAKE whatever the plan says on a stale link, a gap in the stream or the
+    deferral cap (hold_forced_handover, below).
 
     `state` must carry a measured velocity; without one there is nothing to
     predict from and the plan is "brake" (the old hold), said so in `why`."""
@@ -348,3 +384,47 @@ def hold_plan(shield, state, *, brake: VelocityResponse | None = None,
 
 # The speed under which the hold is handed to ArduCopter BRAKE (hold_plan).
 HOLD_HANDOVER_MPS = 0.5
+
+# A DEFERRED HOLD IS FLOWN BY THE RAIL'S STREAM (2026-10-20 review). While the
+# Loiter is held in GUIDED, ArduCopter has not been asked for BRAKE: if the
+# companion then stops streaming - a stale link, a stalled loop - the
+# autopilot keeps flying the last GUIDED setpoint until its own GUID_TIMEOUT
+# (3 s), where under the old flow BRAKE held the aircraft with no companion
+# involvement. So the hold is handed to BRAKE whatever the plan says when
+#   * the stream has a gap longer than HOLD_STREAM_GAP_S (three nominal
+#     periods; the rail's ticks are 0.109 s median, and the 14 Oct log has a
+#     0.73 s gap), or the link goes stale (the rail's stale branch);
+#   * the deferral has lasted HOLD_DEFER_MAX_S: GUID_TIMEOUT itself, and
+#     longer than any deferral the closed loop needed (1.84 s at most, every
+#     recorded pas_ap flight whole, on the identified aircraft, on the
+#     Shield's own model and on a slower one; tools/own_velocity_closed_loop.py).
+HOLD_STREAM_GAP_S = 0.3
+HOLD_DEFER_MAX_S = 3.0
+
+
+def hold_forced_handover(*, deferred_s: float, stream_gap_s: float | None,
+                         defer_max_s: float = HOLD_DEFER_MAX_S,
+                         gap_max_s: float = HOLD_STREAM_GAP_S) -> tuple[str | None, str | None]:
+    """(reason key, why) when a deferred hold must go to BRAKE whatever the
+    plan says (HOLD_STREAM_GAP_S, HOLD_DEFER_MAX_S), else (None, None).
+    `deferred_s`: how long the hold has been deferred; `stream_gap_s`: the
+    time since the rail last sent a setpoint (None: unknown)."""
+    if stream_gap_s is not None and stream_gap_s > gap_max_s:
+        return "stream_gap", (f"no setpoint for {stream_gap_s:.2f} s (over {gap_max_s:g} s): "
+                              f"the stream that flies the deferred hold faltered")
+    if deferred_s >= defer_max_s:
+        return "deferral_cap", (f"held in GUIDED for {deferred_s:.1f} s (cap "
+                                f"{defer_max_s:g} s, ArduCopter's GUID_TIMEOUT)")
+    return None, None
+
+
+def hold_banner_reason(plan: dict) -> str:
+    """The on-screen reason a hold is deferred, short enough for the video
+    banner: the rule BRAKE's predicted stop would end in, or the speed BRAKE
+    is waiting for."""
+    if plan.get("breaks"):
+        return "BRAKE WOULD END IN " + ", ".join(plan["breaks"])
+    speed = plan.get("measured_speed_mps")
+    if speed is not None:
+        return f"BRAKE AT UNDER {HOLD_HANDOVER_MPS:g} M/S, NOW {speed:.1f}"
+    return "BRAKE DEFERRED"

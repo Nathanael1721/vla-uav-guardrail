@@ -72,7 +72,11 @@ plus `emitted_violations`, `braked`, `relaxed`, `fsm_fault`, `repair_mode`,
 `flown_run` and `record_version` (2 since AuditRecord; absent, read as 1,
 before). A record is written when the decision saw a violation, and also on
 a tick where the FSM changed state, requested a mode or refused its input,
-so a Brake -> Normal recovery on a clean tick is on record too.
+so a Brake -> Normal recovery on a clean tick is on record too. Since
+2026-10-20 a tick can have a second record, `decision_kind` "stop_advised":
+the Shield's answer to a stop that the ArduPilot rail flew instead of the
+tick's filter() decision (the hold that stops clear), always written; the
+field is absent from every other record.
 
 ONE FILE PER EPISODE ("Python module; rotated per mission", Outputs table).
 `AuditLogger.for_episode(directory, policy, episode_id)` opens
@@ -227,6 +231,20 @@ class AuditRecord(_Strict):
     chain_runs: int | None = None
     flown_run: int | None = None
     repair_passes: list[RepairPass] | None = None
+    # Since 2026-10-20: which decision this record is when one tick has two.
+    # Absent (None) is the tick's filter() decision, every record before the
+    # field existed; "stop_advised" is the Shield's answer to a stop
+    # (Shield.advise of a zero action) that a rail flew INSTEAD of it - the
+    # ArduPilot rail's hold that stops clear (docs/DESIGN-own-velocity-
+    # forecast.md). Such a record follows its tick's filter() record (when
+    # that one is written) and is always written, touched or not, so the
+    # decision behind every action sent is on record. Omitted from the line
+    # when None, so every other record is written exactly as before.
+    decision_kind: Literal["stop_advised"] | None = None
+
+
+# The record kinds a caller may ask `AuditLogger.log` for (`decision_kind`).
+DECISION_KINDS = ("stop_advised",)
 
 
 def audit_record_schema() -> dict:
@@ -391,13 +409,18 @@ class AuditLogger:
         return {c.id: getattr(c, "priority", None) for c in cons}
 
     def record(self, tick: int, decision: ShieldDecision,
-               fsm_record: dict | None = None) -> AuditRecord | None:
+               fsm_record: dict | None = None, *,
+               kind: str | None = None) -> AuditRecord | None:
         """The validated record `log` would write, or None when nothing
-        happened on this tick (no violation, no FSM event)."""
+        happened on this tick (no violation, no FSM event). `kind`
+        ("stop_advised", AuditRecord.decision_kind) marks a decision a rail
+        flew instead of the tick's filter() decision; it is always recorded."""
+        if kind is not None and kind not in DECISION_KINDS:
+            raise ValueError(f"kind must be one of {DECISION_KINDS} or None, got {kind!r}")
         fsm = fsm_record if fsm_record is not None else (decision.fsm_record or {})
         fsm_event = bool(fsm.get("transition") or fsm.get("set_mode")
                          or decision.set_mode or decision.fsm_fault)
-        if not decision.touched and not fsm_event:
+        if not decision.touched and not fsm_event and kind is None:
             return None
         trace = decision.trace or {}
         edge = set(trace.get("window_edge") or ())
@@ -470,20 +493,29 @@ class AuditLogger:
             "flown_run": trace.get("flown_run"),
             "repair_passes": trace.get("passes") if trace else None,
         })
+        if kind is not None:
+            rec["decision_kind"] = kind
         return AuditRecord.model_validate(rec)
 
     def log(self, tick: int, decision: ShieldDecision,
-            fsm_record: dict | None = None) -> None:
+            fsm_record: dict | None = None, *, kind: str | None = None) -> None:
         """Write a record when something happened: a violation seen, or an
         FSM transition / mode request / refused input on this tick.
         `fsm_record` is an FSMOutput.record from a rail that runs its own FSM;
         by default the decision's own (`ShieldDecision.fsm_record`) is used.
+        `kind` tags a decision the rail flew instead of the tick's filter()
+        decision (AuditRecord.decision_kind), always written.
         The record is validated (AuditRecord) before it is written."""
-        rec = self.record(tick, decision, fsm_record)
+        rec = self.record(tick, decision, fsm_record, kind=kind)
         if rec is None:
             return
+        line = rec.model_dump(by_alias=True)
+        if line.get("decision_kind") is None:
+            # Absent means the tick's filter() decision: every record without
+            # a kind is written exactly as before the field existed.
+            line.pop("decision_kind", None)
         with self.path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec.model_dump(by_alias=True)) + "\n")
+            f.write(json.dumps(line) + "\n")
         self._n += 1
 
     @property

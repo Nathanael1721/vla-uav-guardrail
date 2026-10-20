@@ -59,6 +59,9 @@ IDENTITY_POLICIES = ("follow_car_citylife.yaml", "follow_car_citylife_nfz.yaml",
 IDENTITY_SEED = 20261019
 N_CI = 500            # per policy, per Shield configuration: 6000 decisions
 N_FULL = 1500         # 18,000 decisions
+# The commit before State had a velocity: the identity digests are ITS
+# decisions (`--regenerate` computes them on a git archive of it).
+IDENTITY_BASE = "c77c77d"
 
 
 def _city_map():
@@ -121,6 +124,12 @@ def _identity_digests(n: int, velocity: str = "none") -> dict:
 
 def _check_identity(n_key: str, velocity: str):
     spec = json.loads(IDENTITY.read_text(encoding="utf-8"))
+    # The baseline must be the base commit's own decisions, stamped by
+    # `--regenerate` (which runs on a git archive of it), never a later
+    # commit's output under the base's name.
+    assert str(spec.get("computed_on", "")).startswith(IDENTITY_BASE), (
+        f"the identity fixture says computed_on={spec.get('computed_on')!r}, not "
+        f"{IDENTITY_BASE}: regenerate it with --regenerate")
     want = spec[n_key]
     got = _identity_digests(spec[n_key + "_n"], velocity=velocity)
     moved = sorted(k for k in want if got.get(k) != want[k])
@@ -240,7 +249,8 @@ def test_the_closed_form_is_the_integral_of_the_rate_limited_response():
     m = R.ARDUCOPTER_GUIDED
     dx, dy = m.displacement(3.2, 0.0, 0.0, 0.0, m.stop_time(3.2))
     assert abs(dx - m.stop_distance(3.2)) < 1e-9 and abs(dy) < 1e-12
-    assert abs(m.stop_distance(3.2) - (3.2 * 0.35 + 3.2 ** 2 / 4.0)) < 1e-9
+    assert abs(m.stop_distance(3.2)
+               - (3.2 * m.reaction_s + 3.2 ** 2 / (2.0 * m.accel_mps2))) < 1e-9
 
 
 def test_the_pipe_is_what_was_sent_in_the_last_reaction_time():
@@ -283,8 +293,9 @@ def test_the_shield_forecast_flies_the_pipe_then_the_command():
     fc = list(sh.forecast(st, a))
     poses = at(fc)
     ts = [fc[3][0], fc[10][0], fc[50][0]]
-    segs = R.pipe_segments([(1.0, 4.0, 0.0), (1.1, 4.0, 0.0)], 1.2, 0.35)
-    want = R.integrate(0.0, 0.0, segs + [(math.inf, 2.0, 0.0)], ts, 2.0)
+    m = R.ARDUCOPTER_GUIDED
+    segs = R.pipe_segments([(1.0, 4.0, 0.0), (1.1, 4.0, 0.0)], 1.2, m.reaction_s)
+    want = R.integrate(0.0, 0.0, segs + [(math.inf, 2.0, 0.0)], ts, m.accel_mps2)
     for t, (dx, _, _, _) in zip(ts, want):
         assert abs(poses[round(t, 3)].x - dx) < 1e-9, (t, poses[round(t, 3)].x, dx)
     assert poses[0.3].x > 0.0, "the 4 m/s already sent accelerates it in the reaction time"
@@ -375,6 +386,178 @@ def test_a_position_question_ignores_the_velocity_and_a_nan_one_is_ignored():
     assert sh.n_velocity_nonfinite == 1 and sh.n_velocity_ticks == 0
 
 
+def test_the_shield_s_own_fsm_reads_stop_illegal_from_the_position():
+    """The Shield's own escalation FSM (Shield(escalation=True)) is given
+    stop_illegal and unsafe_depth about where the aircraft IS, as every rail
+    gives its FSM, never about where a stop would end: 3.2 m off the 14 Oct
+    wall and legal, closing at 3.5 m/s, a stop would end in the building
+    margin (the rule is committed: the decision judges it from the stop
+    point), yet the FSM's input says stop_illegal False and depth 0, and no
+    X6/X7 fires (2026-10-20 review: reading the stop point there instead
+    went unnoticed)."""
+    pol = load_policy(ROOT / "policies" / "follow_car_citylife.yaml")
+    sh = Shield(pol, lookahead_s=5.0, dt=0.1, obstacle_map=_city_map(), escalation=True)
+    here = State(x=36.0, y=-52.5, up=8.0)
+    fast = here.model_copy(update={"velocity": (0.0, -3.5, 0.0)})
+    assert not sh.state_is_unsafe(here)
+    com = sh._committed(fast)
+    assert com is not None and "bld-clearance" in com[1], "the stop must end in the margin"
+    edges = []
+    for k in range(8):
+        d = sh.filter(fast, Action4D(vx=0.0, vy=-3.5), t=0.1 * (k + 1))
+        rec = d.fsm_record
+        assert rec["flags"]["stop_illegal"] is False, rec["flags"]
+        assert rec["unsafe_depth_m"] in (None, 0.0), rec["unsafe_depth_m"]
+        edges.append(rec["edge"])
+    assert not {"X6", "X7"} & set(edges), edges
+
+
+def test_from_an_illegal_position_the_decision_is_the_commanded_forecast_s():
+    """pas_ap_close_off tick 733 (the Shield-off close run, replayed open
+    loop): the aircraft 0.96 m inside the building footprint, still flying
+    deeper at 1.2 m/s, the car 4.6 m away. With the measured velocity the
+    car's stand-off was "committed" (a stop would end inside its ring) and
+    judged from the stop point, where only an action opening the range
+    passes; no action both left the building and opened the range from
+    there, the chain fell to the ClearanceEscape rescue, and the rescue broke
+    the stand-off: a P0 escape (7 such ticks, 733-739) where the Shield
+    without the velocity pushed slowly out and broke nothing (2026-10-20
+    review). While the position breaks a hard rule the velocity is set aside
+    (Shield._decision_state): the decision is the commanded forecast's, byte
+    for byte, and it is counted."""
+    pol = load_policy(ROOT / "policies" / "follow_car_citylife.yaml")
+    smap = _city_map()
+    sent = [(79.556, -2.808, -0.942), (79.666, -2.794, -0.981), (79.775, -2.282, -0.844),
+            (79.885, -2.264, -0.890)]
+    raw = Action4D(vx=-2.241, vy=-0.946, vz_up=0.001, yaw_rate=0.524)
+    pos = State(x=34.565, y=-61.038, up=8.0, yaw_deg=-157.1)
+    out = {}
+    for name, vel in (("commanded", None), ("own", (-1.19, -0.31, 0.0))):
+        sh = Shield(pol, lookahead_s=5.0, dt=0.1, obstacle_map=smap, escalation=False)
+        sh.filter(pos, Action4D(), t=79.4)
+        for t, vx, vy in sent:
+            sh.note_flown(Action4D(vx=vx, vy=vy), t)
+        sh.set_subject(30.99, -64.99, "vehicle")
+        st = pos if vel is None else pos.model_copy(update={"velocity": vel})
+        assert [v.rule_id for v in sh.state_is_unsafe(st)] == ["bld-clearance"]
+        out[name] = (sh.filter(st, raw, t=79.995), sh)
+    d_old, _ = out["commanded"]
+    d_new, sh = out["own"]
+    p0 = {c.id for c in pol.constraints if c.priority == "P0"}
+    assert not [v for v in d_old.emitted_violations if v.rule_id in p0], d_old.emitted_violations
+    assert not [v for v in d_new.emitted_violations if v.rule_id in p0], d_new.emitted_violations
+    assert d_new.model_dump() == d_old.model_dump()
+    assert sh.n_velocity_set_aside == 1 and sh.n_velocity_ticks == 0, (
+        sh.n_velocity_set_aside, sh.n_velocity_ticks)
+    assert sh.history[-1].state.velocity is None and sh.history[-1].pipe is None
+
+
+def _seg_policy(verts):
+    from guardrail.models import Policy
+    return Policy.model_validate({"policy_id": "seg", "constraints": [
+        {"id": "zone", "type": "polygon_fence", "margin_m": 0.0,
+         "vertices": [{"x": x, "y": y} for x, y in verts]}]})
+
+
+def test_the_segment_check_walks_each_forecast_path_never_the_connectors():
+    """Shield(segment_check=True) with a measured velocity: the forecast is two
+    paths, and the grant's "trajectory segment crosses polygon" test walks each
+    on its own. Aircraft at the origin moving North at 4 m/s, commanded East
+    at 4 m/s. (A) A 0.1 m square between the two paths, on the straight line
+    joining the own-velocity pose and the commanded pose at t + 0.3 s, which
+    neither path enters: the first build walked the interleaved stream and
+    REFUSED the command ("predicted segment (0.0,1.2)->(1.2,0.0) crosses
+    NFZ"). (B) A 0.02 x 0.2 m strip across the own-velocity path between its
+    t + 1.5 s and t + 1.6 s poses (after the reaction time, off the stop
+    path): the first build walked only connectors and MISSED it."""
+    st = State(x=0.0, y=0.0, up=10.0, velocity=(0.0, 4.0, 0.0))
+    a = Action4D(vx=4.0, vy=0.0)
+    sq = [(0.55, 0.55), (0.65, 0.55), (0.65, 0.65), (0.55, 0.65)]
+    assert not Shield(_seg_policy(sq), escalation=False)._check(st, a), "no pose inside"
+    sh = Shield(_seg_policy(sq), escalation=False, segment_check=True)
+    assert sh._check(st, a) == [], "a zone neither forecast path enters is not broken"
+    assert sh.filter(st, a).emitted == a
+    # (B) the strip, placed on the Shield's own forecast.
+    probe = Shield(_seg_policy([(50, 50), (51, 50), (51, 51)]), escalation=False)
+    poses = {round(t, 3): p for t, p in probe.forecast(st, a)}
+    p0, p1 = poses[1.5], poses[1.6]
+    mx, my = (p0.x + p1.x) / 2.0, (p0.y + p1.y) / 2.0
+    L = math.hypot(p1.x - p0.x, p1.y - p0.y)
+    ux, uy = (p1.x - p0.x) / L, (p1.y - p0.y) / L
+    strip = [(mx + sn * 0.1 * uy + sd * 0.01 * ux, my - sn * 0.1 * ux + sd * 0.01 * uy)
+             for sn, sd in ((-1, -1), (1, -1), (1, 1), (-1, 1))]
+    assert not Shield(_seg_policy(strip), escalation=False)._check(st, a), "no pose inside"
+    sh = Shield(_seg_policy(strip), escalation=False, segment_check=True)
+    com = sh._committed(st)
+    assert com is not None and not com[1] and not com[3], "the stop path must not cross it"
+    vs = sh._check(st, a)
+    assert [v.rule_id for v in vs] == ["zone"], vs
+    assert 1.5 < vs[0].predicted_at_s < 1.6 and "segment" in vs[0].detail, vs[0]
+    assert sh.filter(st, a).repairs, "the repair acts on the crossing too"
+
+
+def test_the_pipe_is_aged_on_the_rail_s_real_clock():
+    """Shield(pipe_clock=...) (2026-10-20 review): the rail lets filter()
+    count its monitor ticks at the nominal 0.1 s while its real ticks are
+    longer (0.109 s median in every recorded pas_ap log, 0.73 s once on
+    14 Oct), so a setpoint was aged on the wrong clock. With a pipe clock the
+    record of what was sent is kept, and read, on that clock: a setpoint sent
+    0.4 s of REAL time ago has already taken effect (past the 0.45 s reaction
+    time, give or take a tick), however many monitor ticks that was. Without
+    a velocity nothing reads it: the decisions are those of a Shield with no
+    pipe clock."""
+    from guardrail import response as R
+    pol = load_policy(ROOT / "policies" / "follow_car_citylife.yaml")
+    real = [100.0]
+    sh = Shield(pol, lookahead_s=5.0, dt=0.1, escalation=False, pipe_clock=lambda: real[0])
+    plain = Shield(pol, lookahead_s=5.0, dt=0.1, escalation=False)
+    st = State(x=0.0, y=0.0, up=8.0)
+    for k in range(3):                         # three monitor ticks, 0.25 s of real time each
+        for s in (sh, plain):
+            s.filter(st, Action4D(vx=1.0))
+            s.note_flown(Action4D(vx=3.0 if k == 0 else 0.0))
+        real[0] += 0.25
+    sh.filter(st, Action4D())
+    plain.filter(st, Action4D())
+    lag = R.ARDUCOPTER_GUIDED.reaction_s
+    want = R.pipe_segments([(100.0, 3.0, 0.0), (100.25, 0.0, 0.0), (100.5, 0.0, 0.0)],
+                           100.75, lag)
+    assert sh.pipe() == want, (sh.pipe(), want)
+    assert sh._flown[0][0] == 100.0 and plain._flown[0][0] == 0.0, (sh._flown, plain._flown)
+    assert plain.pipe() != sh.pipe(), "the monitor clock ages the same sends differently"
+    # Without a velocity the pipe clock changes no decision.
+    for x in (0.0, 30.0, 36.0):
+        for a in (Action4D(vx=2.0), Action4D(vy=-3.5)):
+            s0 = State(x=x, y=-52.0, up=8.0)
+            assert sh._check(s0, a) == plain._check(s0, a)
+    src = (ROOT / "demo" / "pas_ardupilot" / "perception_node.py").read_text(encoding="utf-8")
+    assert "pipe_clock=clock" in src, "the ArduPilot rail must age its pipe on its own clock"
+
+
+def test_a_velocity_tick_s_forecast_is_rebuilt_exactly_from_its_record():
+    """TickRecord's contract (2026-10-20 review): the predicted trajectory is
+    recomputable from the record. With a measured velocity the forecast also
+    depends on the pipe and the tick's time, which the State does not hold;
+    the record now carries the tick's pipe, and forecast(..., pipe=rec.pipe)
+    rebuilds the forecast the tick judged, whatever was sent since. A record
+    without a velocity carries none, as before."""
+    pol = load_policy(ROOT / "policies" / "follow_car_citylife.yaml")
+    sh = Shield(pol, lookahead_s=5.0, dt=0.1, escalation=False)
+    sh.filter(State(x=0.0, y=0.0, up=8.0), Action4D(), t=1.0)
+    sh.note_flown(Action4D(vx=3.0), 1.0)
+    st = State(x=0.0, y=0.0, up=8.0, velocity=(1.0, 0.0, 0.0))
+    d = sh.filter(st, Action4D(vx=0.5), t=1.1)
+    then = sh.forecast(st, d.emitted)
+    rec = sh.history[-1]
+    assert rec.pipe and rec.pipe == tuple(sh.pipe(1.1)), rec.pipe
+    for k in range(4):                         # the world moves on
+        sh.note_flown(Action4D(vx=-2.0), 1.1 + 0.1 * k)
+        sh.filter(State(x=0.0, y=0.0, up=8.0), Action4D(), t=1.2 + 0.1 * k)
+    assert sh.forecast(rec.state, rec.decision.emitted) != then, "the live pipe moved on"
+    assert sh.forecast(rec.state, rec.decision.emitted, pipe=rec.pipe) == then
+    assert sh.history[-1].pipe is None, "no velocity, no pipe on the record"
+
+
 # --------------------------------------------------------------------------- #
 # The fit (tools/fit_velocity_response.py on the committed recorded flights)
 # --------------------------------------------------------------------------- #
@@ -384,29 +567,71 @@ def test_the_response_constants_are_the_fit_of_the_recorded_flights():
     six recorded pas_ap flights, trimmed to time, position, setpoint and mode)
     lands on guardrail/response.py's constants, and the table that justifies
     them holds: the old forecast puts a decelerating aircraft 1.5 m short of
-    where it went (median, 1.5 s), the Shield's new forecast does not; and
-    the BRAKE envelope is the one the hold plan predicts with."""
+    where it went (median, 1.5 s); the Shield's forecast, in the form it flies
+    (the pipe, then the candidate), is NOT short (2026-10-20 review: the
+    identified numbers were a median 0.25 m short in that form and the bias
+    rule had fallen back to them in silence); the identified aircraft is the
+    closed loop's plant; and the BRAKE envelopes are the ones the hold plan
+    and the closed loop predict with."""
     sys.path.insert(0, str(ROOT / "tools"))
     import fit_velocity_response as FV
+    import own_velocity_closed_loop as CL
     from guardrail import response as R
     rep = FV.fit(FV.load_fixture(FV.FIXTURE))
     assert rep["windows"] == 4417 and rep["step_windows"] == 550, rep["windows"]
     c = rep["chosen"]
     assert (c["reaction_s"], c["accel_mps2"]) == (R.ARDUCOPTER_GUIDED.reaction_s,
                                                   R.ARDUCOPTER_GUIDED.accel_mps2), c
+    # NEVER OPTIMISTIC ABOUT A STOP, in the form the Shield flies.
+    assert rep["fallback"] is None, rep["fallback"]
+    assert rep["shield_form"] == "pipe" and c["shield_decel_bias_m"] >= 0.0, c
+    i = rep["identified"]
+    assert (i["reaction_s"], i["accel_mps2"]) == CL.PLANT_GUIDED, i
+    assert i["shield_decel_bias_m"] < -0.2, "the identified numbers are short in the Shield's form"
     b = rep["brake"]["chosen"]
     assert (b["reaction_s"], b["accel_mps2"]) == (R.ARDUCOPTER_BRAKE.reaction_s,
                                                   R.ARDUCOPTER_BRAKE.accel_mps2), b
+    bi = rep["brake_identified"]["chosen"]
+    assert (bi["reaction_s"], bi["accel_mps2"]) == (CL.PLANT_BRAKE_LAG_S,
+                                                    CL.PLANT_BRAKE_ACCEL), bi
     t = rep["table"]
     old = t["commanded (old forecast)"]
     new = t["Shield form, with the pipe (note_flown)"]
     assert old["decel_bias_m"] < -1.4, old["decel_bias_m"]
-    assert abs(new["decel_bias_m"]) < 0.3, new["decel_bias_m"]
+    assert 0.0 <= new["decel_bias_m"] < 0.3, new["decel_bias_m"]
+    assert t["Shield form, with the pipe, identified numbers"]["decel_bias_m"] < -0.2
     for h in (0.5, 1.0, 1.5, 2.0):
         assert new["steps"][h]["rms"] < 0.6 * old["steps"][h]["rms"], (h, new["steps"][h],
                                                                        old["steps"][h])
+        # ... and no less accurate in the Shield's form than the identified
+        # numbers (within 0.03 m), which is why the choice costs nothing.
+        idn = t["Shield form, with the pipe, identified numbers"]["steps"][h]["rms"]
+        assert new["steps"][h]["rms"] < idn + 0.03, (h, new["steps"][h]["rms"], idn)
     v = rep["vertical"]["rms_m"]["1.0"]
     assert v["commanded"] < v["response"], "the vertical channel is kept commanded"
+
+
+def test_the_fit_says_so_when_the_bias_rule_falls_back():
+    """The first fit fell back to the ridge in silence (`ok = [...] or
+    ridge`). On a grid with nothing long enough on braking - here a single
+    instant, very stiff aircraft - the report carries `fallback` and the
+    tool prints a WARNING."""
+    import contextlib
+    import io
+    sys.path.insert(0, str(ROOT / "tools"))
+    import fit_velocity_response as FV
+    keep = FV.GRID_L, FV.GRID_A
+    try:
+        FV.GRID_L, FV.GRID_A = [0.0], [6.0]
+        rep = FV.fit(FV.load_fixture(FV.FIXTURE))
+        assert rep["fallback"] and "least short" in rep["fallback"], rep["fallback"]
+        assert rep["chosen"]["shield_decel_bias_m"] < 0.0
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            FV.main(["--fixture", str(FV.FIXTURE)])
+        assert "WARNING: the bias rule FELL BACK" in buf.getvalue(), buf.getvalue()[-400:]
+    finally:
+        FV.GRID_L, FV.GRID_A = keep
 
 
 # --------------------------------------------------------------------------- #
@@ -450,22 +675,27 @@ def _first_clearance_flag(CL, rows, pol, smap, velocity: str):
     return None, None, sh
 
 
-def test_the_new_forecast_flags_the_14_oct_wall_0_9_s_earlier():
+def test_the_new_forecast_flags_the_14_oct_wall_a_second_earlier():
     """14 Oct (pas_ap_video_on_20261014): replayed with the commanded forecast
     the Shield first flags the building margin at tick 364, as it did in
-    flight (4.61 m from the wall, 1.61 m outside the 3 m margin, at 3.2 m/s);
+    flight (4.61 m from the wall, 1.61 m outside the 3 m margin, at 3.4 m/s);
     with the measured velocity - a causal three-tick slope of the logged
-    positions, the stand-in for the EKF velocity no run logged - at tick 356,
-    eight ticks (0.87 s) and 2.56 m earlier. The 13 Oct close run
-    (pas_ap_close_on): 382 against 375. THE STOP POINT: a GUIDED stop
-    commanded at the old tick, through the measured response and the pipe,
-    ends 0.66 m from the wall (2.3 m inside the margin; the flight, which
-    flew the Shield's 0.5-0.8 m/s push instead of a stop, reached 1.99 m);
-    commanded at the new tick it ends 3.27 m away, outside the margin."""
+    positions, the stand-in for the EKF velocity no run logged - at tick 354,
+    ten ticks (1.09 s) earlier, 7.83 m from the wall. The 13 Oct close run
+    (pas_ap_close_on): 382 against 373 (0.98 s). THE STOP POINT, on the
+    IDENTIFIED aircraft (the physical fit, 0.35 s / 2.0 m/s^2 - the best
+    estimate of where it would have gone): a GUIDED stop commanded at the old
+    tick, through the response and the pipe of what was sent, ends 0.66 m
+    from the wall (2.3 m inside the margin; the flight, which flew the
+    Shield's 0.5-0.8 m/s push instead of a stop, reached 1.99 m); commanded
+    at the new tick it ends 3.71 m away, outside the margin. The Shield's own
+    numbers (0.45 s / 1.75 m/s^2, chosen never to be short on braking)
+    forecast every one of those stops at least as long."""
     from guardrail import response as R
     CL, rows_by, pols = _approaches()
     smap = CL.city_map()
-    want = {"pas_ap_video_on_20261014": (364, 356), "pas_ap_close_on": (382, 375)}
+    ident = R.VelocityResponse(*CL.PLANT_GUIDED, source="identified")
+    want = {"pas_ap_video_on_20261014": (364, 354), "pas_ap_close_on": (382, 373)}
     for run, (t_old, t_new) in want.items():
         rows, pol = rows_by[run], pols[run]
         r_old, i_old, sh_old = _first_clearance_flag(CL, rows, pol, smap, "none")
@@ -478,10 +708,17 @@ def test_the_new_forecast_flags_the_14_oct_wall_0_9_s_earlier():
         assert r_c["tick"] == t_new, (run, r_c["tick"])
         for r, i, sh, outside in ((r_old, i_old, sh_old, False), (r_new, i_new, sh_new, True)):
             vx, vy = CL._ls_velocity(rows, i)
-            path = R.stop_path(R.ARDUCOPTER_GUIDED, None, r["x"], r["y"], vx, vy,
-                               pipe=sh.pipe(r["t"]))
+            sent = [(q["t"], *((q["flown_action"]["vx"], q["flown_action"]["vy"])
+                               if q.get("flown_action") else (None, None)))
+                    for q in rows[:i]]
+            path = R.stop_path(ident, None, r["x"], r["y"], vx, vy,
+                               pipe=R.pipe_segments(sent, r["t"], ident.reaction_s))
             low = min(sh.clearance_at(x, y) for _, x, y in path)
             assert (low >= 3.0) is outside, (run, r["tick"], low)
+            own = R.stop_path(R.ARDUCOPTER_GUIDED, None, r["x"], r["y"], vx, vy,
+                              pipe=sh.pipe(r["t"]))
+            assert min(sh.clearance_at(x, y) for _, x, y in own) <= low, \
+                "the Shield's numbers forecast a stop shorter than the identified aircraft's"
     # The flight's own minimum on 14 Oct, the margin it entered.
     rows = rows_by["pas_ap_video_on_20261014"]
     assert max(r["unsafe_depth_m"] or 0.0 for r in rows) > 1.0
@@ -524,20 +761,28 @@ def test_brake_s_predicted_stop_at_the_13_oct_loiter_entry_breaks_the_margin():
 # --------------------------------------------------------------------------- #
 
 def test_the_closed_loop_keeps_both_approaches_outside_the_margin():
-    """The measured response as the aircraft (its physical form: the
-    setpoints in the pipe keep acting), the rail's FSM and its hold, the
-    recorded pilot's raw actions: with the commanded forecast the simulated
-    aircraft enters the building margin on both recorded approaches, 73 ticks
-    each (the flights: 71 and 78), and goes home by X7; with the measured
-    velocity it stays outside the margin - min clearance >= 3.0 m, no tick
-    with the position illegal, no fail-safe - and flies no P0 escape. On a
-    slower aircraft than the fit (0.45 s, 1.75 m/s^2) it enters, less deep
-    and on fewer ticks than the commanded forecast does on the fitted one."""
+    """The IDENTIFIED aircraft (the physical fit, 0.35 s / 2.0 m/s^2, with
+    its own BRAKE envelope: not the Shield's numbers, so the result is not
+    circular - 2026-10-20 review), the rail's FSM and its hold, the recorded
+    pilot's raw actions: with the commanded forecast the simulated aircraft
+    enters the building margin on both recorded approaches, 73 ticks each
+    (the flights: 71 and 78), and goes home by X7; with the measured velocity
+    it stays outside the margin - min clearance >= 3.0 m, no tick with the
+    position illegal, no fail-safe - and flies no P0 escape on either basis.
+    So does an aircraft exactly as slow as the Shield's model (0.45 s,
+    1.75 m/s^2: the model matched; on the first build, whose model was the
+    identified one, this aircraft entered the margin on 19-26 ticks). On an
+    aircraft slower than the model (0.55 s, 1.5 m/s^2) it enters - compared
+    like for like with the commanded forecast on that SAME aircraft (the
+    first version of this test compared it with the fitted one): on fewer
+    ticks, over 2 m less deep, still no P0 escape."""
     CL, rows_by, pols = _approaches()
     smap = CL.city_map()
+    (lag_m, acc_m), (lag_s, acc_s) = CL.ROBUST_PLANES[1], CL.ROBUST_PLANES[2]
     for run in CL.WINDOWS:
         old = CL.fly(run, rows_by[run], pols[run], smap, own_velocity=False)
         new = CL.fly(run, rows_by[run], pols[run], smap, own_velocity=True)
+        assert (old["lag"], old["accel"]) == CL.PLANT_GUIDED == (new["lag"], new["accel"])
         assert old["unsafe_ticks"] >= 70 and old["failsafe"] == "RTL", (run, old["unsafe_ticks"])
         assert new["unsafe_ticks"] == 0 and new["min_clearance_m"] >= 3.0, \
             (run, new["unsafe_ticks"], new["min_clearance_m"])
@@ -548,11 +793,20 @@ def test_the_closed_loop_keeps_both_approaches_outside_the_margin():
         assert new["p0_escapes_commanded_basis"] == 0 == old["p0_escapes_commanded_basis"], \
             (run, new["p0_escapes_commanded_basis"])
         assert new["first_clearance_flag"] < old["first_clearance_flag"]
+        matched = CL.fly(run, rows_by[run], pols[run], smap, own_velocity=True,
+                         lag=lag_m, accel=acc_m)
+        assert matched["unsafe_ticks"] == 0 and matched["min_clearance_m"] >= 3.0, \
+            (run, matched["unsafe_ticks"], matched["min_clearance_m"])
+        assert matched["failsafe"] is None and matched["p0_escapes_commanded_basis"] == 0
         slow = CL.fly(run, rows_by[run], pols[run], smap, own_velocity=True,
-                      lag=0.45, accel=1.75)
-        assert slow["unsafe_ticks"] < old["unsafe_ticks"] and slow["p0_escapes"] == 0
+                      lag=lag_s, accel=acc_s)
+        slow_old = CL.fly(run, rows_by[run], pols[run], smap, own_velocity=False,
+                          lag=lag_s, accel=acc_s)
+        assert slow_old["unsafe_ticks"] >= 70, (run, slow_old["unsafe_ticks"])
+        assert slow["unsafe_ticks"] < slow_old["unsafe_ticks"] and slow["p0_escapes"] == 0
         assert slow["p0_escapes_commanded_basis"] == 0, (run, slow["p0_escapes_commanded_basis"])
-        assert slow["min_clearance_m"] > old["min_clearance_m"] + 2.0, slow["min_clearance_m"]
+        assert slow["min_clearance_m"] > slow_old["min_clearance_m"] + 2.0, \
+            (run, slow["min_clearance_m"], slow_old["min_clearance_m"])
 
 
 # --------------------------------------------------------------------------- #
@@ -634,6 +888,7 @@ def test_the_ardupilot_rail_gives_the_shield_the_velocity_and_logs_it_either_way
     ticks; `--own-velocity-forecast off` logs the same velocity and gives the
     Shield none (mode commanded); with the Shield off it is never given, so
     the control arm's escapes stay judged on the commanded forecast."""
+    from guardrail import response as R
     T = _pas()
     VelLink = _vel_link(T)
     for extra, shield, mode in (((), "on", "own_velocity"),
@@ -649,7 +904,21 @@ def test_the_ardupilot_rail_gives_the_shield_the_velocity_and_logs_it_either_way
         given = mode == "own_velocity"
         assert all(r["shield_velocity"] is given for r in rows), (extra, shield)
         assert m["shield_forecast"]["velocity_ticks"] == (len(rows) if given else 0)
-        assert m["shield_forecast"]["response"]["reaction_s"] == 0.35
+        assert m["shield_forecast"]["response"]["reaction_s"] == R.ARDUCOPTER_GUIDED.reaction_s
+        # THE PIPE (2026-10-20 review: dropping the node's note_flown call
+        # left every forecast coasting the measured velocity through the
+        # reaction time, and nothing failed): every setpoint the node sent
+        # was noted, so the forecast flew what was sent.
+        sent = sum(1 for r in rows if r["flown_action"] is not None)
+        assert sent and m["shield_forecast"]["noted_setpoints"] == sent, \
+            (m["shield_forecast"]["noted_setpoints"], sent)
+        # The P0 escapes on the stored runs' basis are logged beside the
+        # rail's own, never above it.
+        assert all(isinstance(r["p0_escape_commanded_basis"], bool) for r in rows)
+        assert m["shield_forecast"]["p0_escape_ticks_commanded_basis"] == sum(
+            r["p0_escape_commanded_basis"] for r in rows)
+        assert m["shield_forecast"]["p0_escape_ticks_commanded_basis"] <= T._json(
+            run, "kpi.json")["p0_escapes"]
     # A link with no velocity (every stored test link): nothing given, said so.
     rc, run, _ = T._fly("on")
     rows = T._rows(run)
@@ -667,18 +936,42 @@ constraints:
     priority: P0
     violation_action: loiter
     alt_min_m: 1
-    alt_max_m: 7
+    alt_max_m: 7.5
 """
+
+
+def _audit(run):
+    return [json.loads(l) for l in (run / "audit.jsonl").read_text().splitlines() if l.strip()]
+
+
+def _assert_stop_advice_on_record(rows, run):
+    """Every stop-advised row has its own audit record (decision_kind
+    "stop_advised", the same tick, the action that flew), and the row's
+    stop_advice is that decision (2026-10-20 review: audit.jsonl held only
+    the decision on the pilot's action, which was not flown)."""
+    adv = {a["tick"]: a for a in _audit(run) if a.get("decision_kind") == "stop_advised"}
+    advised = [r for r in rows if r["stop_advised"]]
+    assert advised, "no stop-advised tick: proves nothing"
+    assert sorted(adv) == [r["tick"] for r in advised], (sorted(adv)[:5],
+                                                         [r["tick"] for r in advised][:5])
+    for r in advised:
+        a = adv[r["tick"]]
+        assert a["emitted_action"] == r["flown_action"] == r["stop_advice"]["emitted"], r["tick"]
+        assert a["repair_passes"] is not None, "the advised decision's trace is on record"
+        assert [v["rule_id"] for v in a["emitted_violations"]] == \
+            [v["rule_id"] for v in r["emitted_violations"]], r["tick"]
+    assert all(r["stop_advice"] is None for r in rows if not r["stop_advised"])
 
 
 def test_the_ardupilot_rail_holds_in_guided_until_brake_would_stop_legal():
     """The FSM's Loiter (X4: a loiter rule; the aircraft starts at 8 m under a
-    7 m ceiling, so its POSITION breaks the rule): with the forecast off the
+    7.5 m ceiling, so its POSITION breaks the rule): with the forecast off the
     rail asks for BRAKE at once and BRAKE holds the aircraft above the
     ceiling; on, the hold plan finds BRAKE's stop path illegal, the rail
     stays in GUIDED streaming the Shield's answer to a stop - a descent -
     and hands the hold to BRAKE once BRAKE's stop would end legal. The FSM's
-    edges are the same edges; only how its Loiter is flown differs."""
+    edges are the same edges; only how its Loiter is flown differs. Every
+    tick it flew the Shield's stop has that decision on record."""
     T = _pas()
     VelLink = _vel_link(T)
     rc, run, link = T._fly("on", link_cls=VelLink, policy=HOLD_POLICY, max_s="6",
@@ -699,10 +992,104 @@ def test_the_ardupilot_rail_holds_in_guided_until_brake_would_stop_legal():
                         and r["fsm_setpoint"] in ("none", "brake", "pass") for r in held)
     assert all(r["flown_action"]["vz_up"] < 0 for r in held), "the Shield's stop descends"
     hand = next(p for p in plans if p["at"] == "handover")
-    assert hand["choice"] == "brake", hand
+    assert hand["choice"] == "brake" and not hand.get("forced"), hand
+    assert m["hold"]["stop_clear"]["forced_handovers"] == {}
     k = next(i for i, r in enumerate(rows) if r.get("autopilot_set_mode") == "BRAKE")
-    assert rows[k]["up"] <= 7.0 + 1e-6 and not rows[k]["unsafe"], rows[k]["up"]
+    assert rows[k]["up"] <= 7.5 + 1e-6 and not rows[k]["unsafe"], rows[k]["up"]
     assert link.requested[0] == "BRAKE" and m["hold"]["stop_clear"]["guided_hold_ticks"] == len(held)
+    _assert_stop_advice_on_record(rows, run)
+
+
+def test_a_deferred_hold_goes_to_brake_when_the_stream_cannot_be_trusted():
+    """A DEFERRED HOLD IS FLOWN BY THE NODE'S STREAM (2026-10-20 review):
+    while the Loiter is held in GUIDED nothing but the node's setpoints stops
+    the aircraft, and ArduCopter flies the last one for up to GUID_TIMEOUT if
+    the node stalls. The hold goes to BRAKE whatever the plan says on (a) the
+    deferral cap - here a 7 m ceiling, too far to descend within
+    HOLD_DEFER_MAX_S; (b) a gap in the stream (the node stalled 0.5 s); (c) a
+    stale link. Each is recorded (metrics.hold.stop_clear.forced_handovers,
+    the plan's `forced`). Before: the hold stayed deferred through all three."""
+    from guardrail import response as R
+    T = _pas()
+    VelLink = _vel_link(T)
+    far = HOLD_POLICY.replace("alt_max_m: 7.5", "alt_max_m: 7")
+    # (a) the cap
+    rc, run, link = T._fly("on", link_cls=VelLink, policy=far, max_s="6")
+    rows, m = T._rows(run), T._json(run, "metrics.json")
+    sc = m["hold"]["stop_clear"]
+    assert sc["forced_handovers"] == {"deferral_cap": 1}, sc["forced_handovers"]
+    hand = next(p for p in sc["plans"] if p["at"] == "handover")
+    assert hand["forced"] == "deferral_cap" and hand["choice"] == "brake", hand
+    assert abs(hand["t"] - sc["plans"][0]["t"] - R.HOLD_DEFER_MAX_S) < 0.11, hand
+    assert link.requested[0] == "BRAKE"
+    assert not any(r["hold_deferred"] for r in rows if r["t"] > hand["t"] + 1e-6)
+
+    # (b) a stall: the clock jumps 0.5 s inside one tick, 1 s into the hold.
+    class StallLink(VelLink):
+        stalled = False
+
+        def pump(self):
+            if not self.stalled and self.clock.t - self.t_start > 1.0:
+                self.stalled = True
+                self.clock.t += 0.5
+            return super().pump()
+    rc, run, link = T._fly("on", link_cls=StallLink, policy=HOLD_POLICY, max_s="6")
+    sc = T._json(run, "metrics.json")["hold"]["stop_clear"]
+    assert sc["forced_handovers"] == {"stream_gap": 1}, sc["forced_handovers"]
+    hand = next(p for p in sc["plans"] if p["at"] == "handover")
+    assert hand["forced"] == "stream_gap" and "no setpoint for" in hand["why"], hand
+
+    # (c) the link goes stale while the hold is deferred.
+    class DeadVelLink(T.InboundDeadLink):
+        def velocity(self):
+            v = self.v if self.snap.mode == "GUIDED" else Action4D()
+            return (v.vx, v.vy, v.vz_up), "local_velocity"
+    rc, run, link = T._fly("on", link_cls=DeadVelLink, link_kw={"die_at": 1.0},
+                           policy=HOLD_POLICY, max_s="10")
+    sc = T._json(run, "metrics.json")["hold"]["stop_clear"]
+    assert sc["forced_handovers"] == {"link_stale": 1}, sc["forced_handovers"]
+    assert link.requested[0] == "BRAKE", link.requested
+    events = [json.loads(l) for l in (run / "events.jsonl").read_text().splitlines()]
+    assert any(e["kind"] == "mode_request" and "link stale" in e.get("why", "")
+               for e in events)
+
+
+BRAKE_RULE_POLICY = """policy_id: pas-ap-brake-rule
+version: 0.1.0
+constraints:
+  - id: kin-brake
+    type: kinematic_envelope
+    constraint_type: hard
+    priority: P1
+    violation_action: brake
+    speed_max_mps: 2.0
+    climb_rate_max_mps: 2.0
+    yaw_rate_max_dps: 45.0
+"""
+
+
+def test_the_fsm_s_brake_setpoint_flies_the_shield_s_stop_and_it_is_on_record():
+    """The FSM's "brake" setpoint (a brake-action rule broken in GUIDED) is
+    flown, with the velocity on, as the Shield's answer to a stop: rows say
+    stop_advised, setpoint "pass" and fsm_setpoint "brake" (2026-10-20 review:
+    keeping a raw zero there instead went unnoticed), and every such tick has
+    the advised decision on record in audit.jsonl. Off, the zero is flown as
+    before and nothing is advised."""
+    T = _pas()
+    VelLink = _vel_link(T)
+    rc, run, link = T._fly("on", link_cls=VelLink, policy=BRAKE_RULE_POLICY)
+    rows = T._rows(run)
+    adv = [r for r in rows if r["fsm_setpoint"] == "brake"]
+    assert adv, "the FSM never asked for a stop: proves nothing"
+    assert all(r["stop_advised"] and r["setpoint"] == "pass" for r in adv), adv[0]
+    assert T._json(run, "metrics.json")["hold"]["stop_clear"]["stop_advised_ticks"] == len(adv)
+    _assert_stop_advice_on_record(rows, run)
+    rc, run, link = T._fly("on", link_cls=VelLink, policy=BRAKE_RULE_POLICY,
+                           extra=("--own-velocity-forecast", "off"))
+    rows = T._rows(run)
+    assert any(r["setpoint"] == "brake" for r in rows)
+    assert not any(r["stop_advised"] for r in rows)
+    assert not any(a.get("decision_kind") for a in _audit(run))
 
 
 def test_the_sitl_rails_give_the_velocity_only_when_asked():
@@ -717,6 +1104,9 @@ def test_the_sitl_rails_give_the_velocity_only_when_asked():
     src = (ROOT / "sitl" / "run_sitl_demo.py").read_text(encoding="utf-8")
     assert rn.OWN_VELOCITY_DEFAULT == "off" and 'OWN_VELOCITY_DEFAULT = "off"' in src
     assert "default=OWN_VELOCITY_DEFAULT" in src and "shield.note_flown(flown)" in src
+    # Both age the pipe on their real clock (Shield(pipe_clock=...)).
+    rsrc = (ROOT / "sitl" / "ros2_shield_node.py").read_text(encoding="utf-8")
+    assert "pipe_clock=lambda: time.time()" in src and "pipe_clock=time.monotonic" in rsrc
     assert rn.velocity_from_enu(SimpleNamespace(x=-3.0, y=1.0, z=0.5)) == (1.0, -3.0, 0.5)
     st = State(x=1.0, y=2.0, up=8.0)
     assert rn.shield_state(st, (1.0, 2.0, 0.0), 0.1, False) is st
@@ -726,13 +1116,45 @@ def test_the_sitl_rails_give_the_velocity_only_when_asked():
     assert rn.make_parser().parse_args([]).own_velocity_forecast == "off"
 
 
+def _git(*args, text=True):
+    import subprocess
+    return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True,
+                          check=True, text=text).stdout
+
+
 def regenerate_identity() -> None:
+    """Rewrite the identity fixture FROM THE BASE COMMIT, never from the code
+    checked out (2026-10-20 review: the first version hashed whatever was
+    checked out and stamped it "computed on c77c77d", so a run on a later
+    commit would have replaced the baseline with that commit's own output and
+    voided the proof). The base's guardrail/, policies/ and the city map are
+    extracted from `git archive IDENTITY_BASE` into a scratch directory, a
+    copy of this file is run there (`--emit-digests`, which imports that
+    tree's guardrail), and the fixture records the base's full hash in
+    `computed_on`, which the identity tests check."""
+    import io
+    import shutil
+    import subprocess
+    import tarfile
+    import tempfile
+    base = _git("rev-parse", "--verify", IDENTITY_BASE + "^{commit}").strip()
+    with tempfile.TemporaryDirectory() as tmp:
+        tar = _git("archive", "--format=tar", base, "guardrail", "policies",
+                   "tests/fixtures/citylife_occ_flightband_6to14.npz", text=False)
+        with tarfile.open(fileobj=io.BytesIO(tar)) as tf:
+            tf.extractall(tmp)
+        here = Path(tmp) / "tests" / Path(__file__).name
+        shutil.copyfile(__file__, here)
+        got = subprocess.run([sys.executable, str(here), "--emit-digests"], cwd=tmp,
+                             capture_output=True, text=True, check=True).stdout
+    dig = json.loads(got.strip().splitlines()[-1])
     spec = {"note": ("sha256 of the JSON dumps of seeded Shield.filter() decisions, "
-                     "computed on c77c77d (before State had a velocity); see "
+                     "computed by `--regenerate` on a git archive of the commit before "
+                     "State had a velocity (computed_on); see "
                      "tests/test_own_velocity_forecast.py"),
+            "computed_on": base,
             "seed": IDENTITY_SEED, "policies": list(IDENTITY_POLICIES),
-            "ci_n": N_CI, "full_n": N_FULL,
-            "ci": _identity_digests(N_CI), "full": _identity_digests(N_FULL)}
+            "ci_n": N_CI, "full_n": N_FULL, "ci": dig["ci"], "full": dig["full"]}
     with open(IDENTITY, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(json.dumps(spec, indent=2) + "\n")
 
@@ -758,9 +1180,15 @@ def _run(fns) -> int:
 
 
 if __name__ == "__main__":
+    if "--emit-digests" in sys.argv:
+        # Run by regenerate_identity inside a git archive of IDENTITY_BASE:
+        # this file's ROOT is then that tree, and so is the guardrail imported.
+        print(json.dumps({"ci": _identity_digests(N_CI), "full": _identity_digests(N_FULL)}))
+        sys.exit(0)
     if "--regenerate" in sys.argv:
         regenerate_identity()
-        print(f"wrote {IDENTITY.relative_to(ROOT)}")
+        print(f"wrote {IDENTITY.relative_to(ROOT)} (computed on a git archive of "
+              f"{IDENTITY_BASE})")
         sys.exit(0)
     if "--regenerate-approaches" in sys.argv:
         # The run folders are gitignored; point at the checkout that holds

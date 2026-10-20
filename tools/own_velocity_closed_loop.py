@@ -14,18 +14,23 @@ when the Shield was given one - and on the OLD basis, the flown action
 re-checked on the commanded forecast from the position, which is what every
 stored run's count means) and the FSM edges.
 
-THE AIRCRAFT IS THE PHYSICAL FORM. The simulated aircraft's velocity follows
-the setpoint sent `reaction_s` ago, at most `accel_mps2` (a vector rate
-limit), integrated at 5 ms - the form the response was identified in
-(tools/fit_velocity_response.py), with the setpoints the loop actually sends.
-The Shield forecasts with what it can know: the setpoints already sent
-(note_flown) and then the candidate, held. `--robust` also flies a slower
-aircraft than the fit (reaction 0.45 s, 1.75 m/s^2), so the Shield's model is
-optimistic about it. The measured velocity the Shield is given is the
-aircraft's plus 0.05 m/s of seeded noise.
+THE AIRCRAFT IS THE PHYSICAL FORM, AS IDENTIFIED. The simulated aircraft's
+velocity follows the setpoint sent `reaction_s` ago, at most `accel_mps2` (a
+vector rate limit), integrated at 5 ms - the form the response was
+identified in (tools/fit_velocity_response.py), with the setpoints the loop
+actually sends - with the IDENTIFIED numbers (PLANT_GUIDED: 0.35 s,
+2.0 m/s^2), not the Shield's (ARDUCOPTER_GUIDED: 0.45 s, 1.75 m/s^2, chosen
+not to be short on braking). The Shield forecasts with what it can know: the
+setpoints already sent (note_flown) and then the candidate, held.
+`--robust` also flies the Shield's own numbers as the aircraft (the model
+matched) and a slower aircraft than them (0.55 s, 1.5 m/s^2), on which the
+Shield's model is optimistic. The measured velocity the Shield is given is
+the aircraft's plus 0.05 m/s of seeded noise.
 
-ArduCopter BRAKE (the rail's Loiter) is flown as a zero setpoint at the
-ARDUCOPTER_BRAKE envelope's 0.75 m/s^2 behind the same pipe. RTL is a GUIDED
+ArduCopter BRAKE (the rail's Loiter) is flown behind the same pipe as a
+0.05 s coast and then a zero setpoint at 0.75 m/s^2: the BRAKE envelope
+fitted behind the identified pipe (PLANT_BRAKE_*), not the hold plan's
+(ARDUCOPTER_BRAKE, behind the Shield's pipe). RTL is a GUIDED
 stop held RTL_HOLD_S (both recorded RTLs from inside the margin stayed inside
 it 5.65 and 6.44 s while they climbed), after which the run ends. Altitude is
 held (the recorded approaches are level). Validation: flown with the
@@ -70,7 +75,24 @@ APPROACH = FIXTURES / "pas_ap_close_approaches.slim.jsonl.gz"
 # close run (Shield on, Loiter flown as BRAKE). Windows: from ~3 s before the
 # Shield first acted to ~6 s after it.
 WINDOWS = {"pas_ap_video_on_20261014": (330, 440), "pas_ap_close_on": (350, 460)}
-BRAKE_PLANT_ACCEL = R.ARDUCOPTER_BRAKE.accel_mps2
+# THE PLANT IS NOT THE SHIELD'S MODEL (2026-10-20 review: the first build
+# flew the Shield's own response numbers as the aircraft and its own BRAKE
+# envelope as BRAKE, so the main result was partly circular). The aircraft
+# is the IDENTIFIED one - the physical form's minimum on the recorded flights
+# (tools/fit_velocity_response.py `identified`: 0.35 s, 2.0 m/s^2) - and its
+# BRAKE is the envelope fitted behind THAT pipe (`brake_identified`: 0.05 s
+# of coast, then 0.75 m/s^2). The Shield forecasts with ARDUCOPTER_GUIDED
+# (0.45 s, 1.75 m/s^2: chosen not to be short on braking in its own form) and
+# predicts BRAKE with ARDUCOPTER_BRAKE (behind its own pipe). The fixture test
+# pins both pairs to the fit.
+PLANT_GUIDED = (0.35, 2.0)
+PLANT_BRAKE_LAG_S = 0.05
+PLANT_BRAKE_ACCEL = 0.75
+# --robust: the identified aircraft, an aircraft exactly as slow as the
+# Shield's model (the model matched: the circular case, for reference), and
+# one slower than the Shield's model (reaction 0.55 s, 1.5 m/s^2), on which
+# the Shield's forecast is optimistic.
+ROBUST_PLANES = (PLANT_GUIDED, (0.45, 1.75), (0.55, 1.5))
 RTL_HOLD_S = 6.0
 VEL_NOISE_MPS = 0.05
 
@@ -86,8 +108,12 @@ class Aircraft:
         self.cmds = deque([(-math.inf, (vx, vy), accel)])
         self.trace = []
 
-    def command(self, t: float, vx: float, vy: float, accel: float | None = None) -> None:
-        self.cmds.append((t, (vx, vy), self.accel if accel is None else accel))
+    def command(self, t: float, vx: float | None, vy: float | None,
+                accel: float | None = None) -> None:
+        """A setpoint sent at `t`, flown from t + lag; vx None: coast (the
+        velocity held - BRAKE's own short delay after the pipe)."""
+        self.cmds.append((t, None if vx is None else (vx, vy),
+                          self.accel if accel is None else accel))
 
     def advance(self, t_end: float, on_step=None) -> None:
         while self.t < t_end - 1e-12:
@@ -95,8 +121,11 @@ class Aircraft:
             tq = self.t - self.lag
             while len(self.cmds) > 1 and self.cmds[1][0] <= tq:
                 self.cmds.popleft()
-            (cx, cy), acc = self.cmds[0][1], self.cmds[0][2]
-            ddx, ddy = cx - self.vx, cy - self.vy
+            c, acc = self.cmds[0][1], self.cmds[0][2]
+            if c is None:
+                ddx = ddy = 0.0
+            else:
+                ddx, ddy = c[0] - self.vx, c[1] - self.vy
             m = math.hypot(ddx, ddy)
             lim = acc * h
             if m > lim:
@@ -143,13 +172,14 @@ def _ls_velocity(rows, i, half=2):
 
 
 def fly(run: str, rows: list, policy: Policy, smap: dict, *, own_velocity: bool,
-        lag: float = R.ARDUCOPTER_GUIDED.reaction_s,
-        accel: float = R.ARDUCOPTER_GUIDED.accel_mps2, seed: int = 20261019,
-        window: tuple | None = None) -> dict:
+        lag: float = PLANT_GUIDED[0], accel: float = PLANT_GUIDED[1],
+        seed: int = 20261019, window: tuple | None = None) -> dict:
     """One closed-loop run over the run's window (WINDOWS, or `window`).
     `own_velocity` False is the rail as flown (commanded forecast, Loiter as
     BRAKE); True gives the Shield the measured velocity and flies the hold
-    that stops clear."""
+    that stops clear. `lag` / `accel` are the AIRCRAFT's (the plant's; the
+    identified one by default), never the Shield's, which always forecasts
+    with ARDUCOPTER_GUIDED."""
     lo, hi = WINDOWS[run] if window is None else window
     win = [r for r in rows if lo <= r["tick"] <= hi]
     i0 = next(k for k, r in enumerate(rows) if r["tick"] == lo)
@@ -163,6 +193,10 @@ def fly(run: str, rows: list, policy: Policy, smap: dict, *, own_velocity: bool,
     p0 = {c.id for c in policy.constraints if c.priority == "P0"}
     hard = {c.id for c in policy.constraints if c.constraint_type == "hard"}
     ap_mode, deferred = "GUIDED", False
+    # The rail's forced hand-overs of a deferred hold (guardrail.response.
+    # hold_forced_handover): a gap in the stream - the logged ticks carry the
+    # real gaps, 0.73 s once on 14 Oct - or the deferral cap.
+    deferred_since, t_last_sent, forced = None, None, Counter()
     unsafe_ticks, escapes, edges = 0, 0, Counter()
     escapes_cmd = 0
     failsafe, unsafe_before_failsafe, rtl_until = None, None, math.inf
@@ -202,6 +236,7 @@ def fly(run: str, rows: list, policy: Policy, smap: dict, *, own_velocity: bool,
             plan = R.hold_plan(sh, st) if own_velocity else {"choice": "brake", "why": "flag off"}
             holds.append({"tick": r["tick"], **{k: plan.get(k) for k in ("choice", "why")}})
             deferred = plan["choice"] == "guided"
+            deferred_since = t if deferred else None
             request = None if deferred else "BRAKE"
         elif o.set_mode in ("RTL", "LAND"):
             request, deferred = o.set_mode, False
@@ -209,10 +244,16 @@ def fly(run: str, rows: list, policy: Policy, smap: dict, *, own_velocity: bool,
             request, deferred = "GUIDED", False
         elif deferred and fsm.state == F.FSMState.LOITER:
             plan = R.hold_plan(sh, st)
-            if plan["choice"] == "brake":
+            why_forced, why = R.hold_forced_handover(
+                deferred_s=t - deferred_since,
+                stream_gap_s=None if t_last_sent is None else t - t_last_sent)
+            if plan["choice"] == "brake" or why_forced:
                 deferred, request = False, "BRAKE"
+                if why_forced:
+                    forced[why_forced] += 1
                 holds.append({"tick": r["tick"], "choice": "brake (handed over)",
-                              "why": plan["why"]})
+                              "why": why if why_forced else plan["why"],
+                              "forced": why_forced})
         if deferred and fsm.state == F.FSMState.LOITER:
             flown_dec, setpoint = sh.advise(st, Action4D()), "pass"
         elif own_velocity and setpoint == "brake":
@@ -235,14 +276,17 @@ def fly(run: str, rows: list, policy: Policy, smap: dict, *, own_velocity: bool,
             # not move because of the basis. Identical to `escapes` with the
             # flag off (no velocity on the state either way).
             if setpoint == "pass" and own_velocity:
-                pos = State(x=st.x, y=st.y, up=st.up, yaw_deg=st.yaw_deg)
-                escapes_cmd += any(v.rule_id in p0 for v in sh._check(pos, flown))
+                escapes_cmd += any(v.rule_id in p0 for v in sh.recheck_commanded(st, flown))
             else:
                 escapes_cmd += bool(esc)
+            t_last_sent = t
         sh.note_flown(flown, t)
         if request == "BRAKE":
+            # BRAKE behind the pipe, as identified (PLANT_BRAKE_*): the
+            # setpoints already sent, a short coast, then the stop.
             ap_mode = "BRAKE"
-            ac.command(t, 0.0, 0.0, BRAKE_PLANT_ACCEL)
+            ac.command(t, None, None)
+            ac.command(t + PLANT_BRAKE_LAG_S, 0.0, 0.0, PLANT_BRAKE_ACCEL)
         elif request in ("RTL", "LAND"):
             ap_mode = request
             ac.command(t, 0.0, 0.0)
@@ -277,7 +321,7 @@ def fly(run: str, rows: list, policy: Policy, smap: dict, *, own_velocity: bool,
             "min_clearance_m": round(min_clear[0], 3),
             "deepest_in_margin_m": (None if clear_rule is None
                                     else round(max(0.0, clear_rule - min_clear[0]), 3)),
-            "edges": dict(edges), "holds": holds,
+            "edges": dict(edges), "holds": holds, "forced_handovers": dict(forced),
             "first_clearance_flag": next((x["tick"] for x in out_rows
                                           if any("clearance" in v for v in x["violations"])), None),
             "rows": out_rows}
@@ -287,9 +331,7 @@ def report(robust: bool = False) -> list[dict]:
     rows, pols = load_approaches()
     smap = city_map()
     out = []
-    planes = [(R.ARDUCOPTER_GUIDED.reaction_s, R.ARDUCOPTER_GUIDED.accel_mps2)]
-    if robust:
-        planes.append((0.45, 1.75))
+    planes = list(ROBUST_PLANES) if robust else [PLANT_GUIDED]
     for run in WINDOWS:
         for lag, acc in planes:
             for own in (False, True):
@@ -354,8 +396,7 @@ def replay_escapes(rows: list, policy: Policy, smap: dict, *, own_velocity: bool
         if vel is not None:
             # The old basis (fly(), escapes_cmd): the emitted action re-checked
             # from the position without the velocity, commanded forecast.
-            pos = State(x=r["x"], y=r["y"], up=r["up"], yaw_deg=r["yaw_deg"])
-            if any(v.rule_id in p0 for v in sh._check(pos, d.emitted)):
+            if any(v.rule_id in p0 for v in sh.recheck_commanded(st, d.emitted)):
                 esc_cmd.append(r["tick"])
         elif esc and esc[-1] == r["tick"]:
             esc_cmd.append(r["tick"])
@@ -373,9 +414,7 @@ def sweep(out_root: Path, robust: bool = False) -> list[dict]:
     run in closed loop, commanded forecast against own-velocity."""
     smap = city_map()
     out = []
-    planes = [(R.ARDUCOPTER_GUIDED.reaction_s, R.ARDUCOPTER_GUIDED.accel_mps2)]
-    if robust:
-        planes.append((0.45, 1.75))
+    planes = list(ROBUST_PLANES) if robust else [PLANT_GUIDED]
     for run in ALL_RUNS:
         rows, pol = load_run(out_root, run)
         rec = {"run": run, "ticks": len(rows),
@@ -394,7 +433,8 @@ def sweep(out_root: Path, robust: bool = False) -> list[dict]:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--robust", action="store_true",
-                    help="also fly a slower aircraft (0.45 s, 1.75 m/s^2)")
+                    help="also fly the Shield's own model as the aircraft (0.45 s, 1.75 m/s^2) "
+                         "and a slower aircraft than it (0.55 s, 1.5 m/s^2)")
     ap.add_argument("--all-runs", default=None, metavar="DEMO_OUT",
                     help="sweep every recorded pas_ap run in this demo/out (read only)")
     ap.add_argument("--out", default=None)
@@ -414,7 +454,8 @@ def main(argv=None) -> int:
                       f"{r['ticks']}  failsafe {r['failsafe']}  unsafe {r['unsafe_ticks']}  "
                       f"P0 escapes {r['p0_escapes']} (old basis "
                       f"{r['p0_escapes_commanded_basis']})  "
-                      f"min clearance {r['min_clearance_m']:.2f}  edges {r['edges']}")
+                      f"min clearance {r['min_clearance_m']:.2f}  edges {r['edges']}  forced hand-overs "
+                      f"{r['forced_handovers']}")
         if args.out:
             Path(args.out).write_text(json.dumps(res, indent=1), encoding="utf-8")
         return 0

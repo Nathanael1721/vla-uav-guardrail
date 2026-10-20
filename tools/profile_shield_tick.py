@@ -73,6 +73,16 @@ about) and `Shield.filter` (the whole Shield step: check, repair, re-check,
 rescue). The headline is design_load at the grant horizon, because that is the
 condition the grant states its budgets at.
 
+VELOCITY ARMS (2026-10-20 review; `--arms ... design_load_velocity`, not in the
+default set): the same policies with the aircraft's measured velocity on every
+State and the setpoints fed back (Shield.note_flown), the mode the ArduPilot
+rail flies with the own-velocity forecast on (docs/DESIGN-own-velocity-
+forecast.md). The forecast then judges two paths and a stop path
+(`Shield._committed`), so the query costs more; the packs carry no velocity,
+so the velocity is the slope of consecutive packed positions where the rows
+are one tick apart and the previous tick's commanded action elsewhere - a
+realistic speed for timing, not a measurement of the flight.
+
 THE NULLS (a fast number alone says nothing)
 
   * floor: the same ticks with no fences. A design_load time close to the
@@ -191,6 +201,8 @@ EVIDENCE_OUT_ENV = "VLAGUARD_EVIDENCE_OUT"
 # "5 s of predicted trajectory at 10 Hz = 50 future poses".
 HORIZONS = {"flown": (3.0, 0.5), "grant": (5.0, 0.1)}
 ARMS = ("as_flown", "design_load", "floor")
+# Optional: an arm above with the measured velocity on (VELOCITY ARMS).
+VELOCITY_ARMS = ("as_flown_velocity", "design_load_velocity")
 HEADLINE = ("design_load", "grant")
 
 TOPOLOGIES = ("dev", "hil", "flight")
@@ -911,15 +923,33 @@ def load_pack(path: Path) -> dict:
 # --------------------------------------------------------------------------- #
 # Replay
 # --------------------------------------------------------------------------- #
+def _replay_velocity(rows: list, i: int, stride: int) -> tuple[float, float, float]:
+    """A measured velocity for packed row i (VELOCITY ARMS): the slope from
+    the previous packed row when the rows are one tick apart, else the
+    previous row's commanded action (the first row: its own)."""
+    r = rows[i]
+    if i > 0:
+        q = rows[i - 1]
+        if stride == 1 and r[0] is not None and q[0] is not None and 0.0 < r[0] - q[0] < 0.5:
+            dt = r[0] - q[0]
+            return ((r[1] - q[1]) / dt, (r[2] - q[2]) / dt, (r[3] - q[3]) / dt)
+        return (q[5], q[6], q[7])
+    return (r[5], r[6], r[7])
+
+
 def replay(flight: dict, policy, horizon: tuple[float, float], obstacle_map=None,
-           clock=time.perf_counter, compare_logged: bool = False) -> dict:
+           clock=time.perf_counter, compare_logged: bool = False,
+           velocity: bool = False) -> dict:
     """Run every packed tick through a fresh Shield, timing _check and filter.
 
     With `compare_logged`, the replayed violated-rule set is compared with the
     one the rail logged, and the agreement is split: ticks whose log names a
     violation (where agreement shows the replay reproduces the rule), and
     ticks whose log is empty (where a replay that never flags anything agrees
-    too - the null)."""
+    too - the null).
+
+    `velocity`: every State carries a measured velocity (_replay_velocity)
+    and each emitted action is fed back as sent (note_flown), untimed."""
     from guardrail import shield as shield_mod
     from guardrail.models import Action4D, State
 
@@ -930,9 +960,12 @@ def replay(flight: dict, policy, horizon: tuple[float, float], obstacle_map=None
     check_ms, filter_ms = [], []
     geofence_ticks = braked = escaped = 0
     agree = compared = nonempty = agree_nonempty = flagged_on_empty = 0
-    for row in flight["rows"]:
+    stride = flight.get("stride", 1) or 1
+    for i, row in enumerate(flight["rows"]):
         (_t, x, y, up, yaw, vx, vy, vz, yr, sx, sy, sc, logged, _sh) = row
-        state = State(x=x, y=y, up=up, yaw_deg=yaw)
+        state = State(x=x, y=y, up=up, yaw_deg=yaw,
+                      velocity=(_replay_velocity(flight["rows"], i, stride) if velocity
+                                else None))
         act = Action4D(vx=vx, vy=vy, vz_up=vz, yaw_rate=yr)
         if sx is None or sy is None:
             shield.set_subject(None)
@@ -945,6 +978,8 @@ def replay(flight: dict, policy, horizon: tuple[float, float], obstacle_map=None
         t2 = clock()
         check_ms.append((t1 - t0) * 1e3)
         filter_ms.append((t2 - t1) * 1e3)
+        if velocity:
+            shield.note_flown(dec.emitted)
         if any(v.category == "geofence" for v in dec.violations):
             geofence_ticks += 1
         braked += bool(dec.braked)
@@ -1013,10 +1048,13 @@ def profile(pack: dict, topology: str, horizons=("flown", "grant"), arms=ARMS,
         omap = decode_map(f.get("obstacle_map"))
         xy = [(r[1], r[2]) for r in f["rows"]]
         built = {"as_flown": (pol, 0)}
-        if "design_load" in arms:
+        if "design_load" in arms or "design_load_velocity" in arms:
             built["design_load"] = design_load_policy(pol, xy)
         if "floor" in arms:
             built["floor"] = (floor_policy(pol), 0)
+        for va in VELOCITY_ARMS:
+            if va in arms:
+                built[va] = built[va[:-len("_velocity")]]
         entry = {"tag": f["tag"], "rail": f.get("rail"),
                  "rail_recorded": f.get("rail_recorded"), "ticks": len(f["rows"]),
                  "stride": f.get("stride"), "source_sha256": f.get("source_sha256"),
@@ -1029,13 +1067,16 @@ def profile(pack: dict, topology: str, horizons=("flown", "grant"), arms=ARMS,
             arm_pol = built[arm][0]
             entry["arms"][arm] = {}
             for hz in horizons:
+                vel = arm in VELOCITY_ARMS
                 if warmup:
-                    replay({"rows": f["rows"][:warmup]}, arm_pol, HORIZONS[hz], omap)
+                    replay({"rows": f["rows"][:warmup], "stride": f.get("stride")},
+                           arm_pol, HORIZONS[hz], omap, velocity=vel)
                 if not keep_gc:
                     gc.disable()
                 try:
                     res = replay(f, arm_pol, HORIZONS[hz], omap, clock=clock,
-                                 compare_logged=(arm == "as_flown" and hz == "flown"))
+                                 compare_logged=(arm == "as_flown" and hz == "flown"),
+                                 velocity=vel)
                 finally:
                     if not keep_gc:
                         gc.enable()
@@ -1057,9 +1098,9 @@ def profile(pack: dict, topology: str, horizons=("flown", "grant"), arms=ARMS,
                 pool["filter"] += res["filter_ms"]
                 if not res["check_ms"]:
                     failures.append(f"{f['tag']}/{arm}/{hz}: no tick was timed")
-                if arm == "design_load" and res["geofence_ticks"] == 0:
+                if arm in ("design_load", "design_load_velocity") and res["geofence_ticks"] == 0:
                     failures.append(
-                        f"{f['tag']}/design_load/{hz}: no tick raised a geofence "
+                        f"{f['tag']}/{arm}/{hz}: no tick raised a geofence "
                         f"violation, so its time says nothing about fence cost")
                 if arm == "floor" and res["geofence_ticks"] != 0:
                     failures.append(f"{f['tag']}/floor/{hz}: {res['geofence_ticks']} "
@@ -1249,6 +1290,10 @@ def main(argv=None) -> int:
     p_prof.add_argument("--topology", default=os.environ.get("VLAGUARD_TOPOLOGY"),
                         help="dev | hil | flight (default: $VLAGUARD_TOPOLOGY)")
     p_prof.add_argument("--horizons", nargs="+", default=list(HORIZONS), choices=list(HORIZONS))
+    p_prof.add_argument("--arms", nargs="+", default=list(ARMS),
+                        choices=list(ARMS) + list(VELOCITY_ARMS),
+                        help="policy arms to time (default: the three above; the "
+                             "velocity arms add the own-velocity forecast's cost)")
     p_prof.add_argument("--no-gc", action="store_true",
                         help="disable the garbage collector while timing (default: on, "
                              "as in a running node)")
@@ -1316,6 +1361,7 @@ def main(argv=None) -> int:
             print(f"REFUSED  --cpus {args.cpus}: {exc}")
             return 2
     prof = profile(pack, args.topology, horizons=tuple(args.horizons),
+                   arms=tuple(args.arms),
                    keep_gc=not args.no_gc, facts=facts, command=cmd_line.strip())
     prof["cpu_affinity"] = pinned
     prof["note"] = args.note

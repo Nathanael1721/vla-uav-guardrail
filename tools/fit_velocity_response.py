@@ -27,22 +27,45 @@ after it went out, and the velocity moves towards the one in force at most
 accel_mps2 (guardrail.response.integrate). Grid over reaction_s 0-0.8 s
 (0.05) and accel_mps2 1-6 m/s^2 (0.25); objective: the mean over horizons
 1.0, 1.5, 2.0 s of the RMS horizontal position error on the step windows.
-The rule that picks the point is written here, not applied by eye: among
-the grid points within 1 % of the best objective whose median along-track
-error on the decelerating windows at 1.5 s is >= 0 (not short of where a
-braking aircraft went - the unsafe direction for a keep-out rule), the one
-with the longest stop from 5 m/s (the speed cap of every shipped follow
-policy); when none qualifies, the longest stop among the 1 % ridge. On
-these flights the ridge holds one point, the minimum (0.35 s, 2.0 m/s^2).
+Its minimum is the IDENTIFIED aircraft (`identified`: 0.35 s, 2.0 m/s^2 on
+these flights, the only grid point within 1 % of it), the closed loop's
+plant (tools/own_velocity_closed_loop.py).
+
+THE SHIELD'S NUMBERS ARE CHOSEN BY A WRITTEN RULE, not by eye, and in the
+form the Shield actually flies (SHIELD_FORM: the pipe of setpoints already
+sent, then the candidate held - Shield.note_flown, as every rail that gives
+the Shield a velocity calls it): among the grid points whose median
+along-track error on the decelerating windows at 1.5 s, in that form, is
+>= 0 (never short of where a braking aircraft went - the unsafe direction
+for a keep-out rule), the one with the smallest physical objective (the
+most accurate description of the aircraft among those), ties to the longer
+stop from 5 m/s (the speed cap of every shipped follow policy).
+
+Why not the identified point itself (2026-10-20 review): in the Shield's
+form it is short on braking, median -0.25 m at 1.5 s (p25 -0.51 m), and an
+aircraft a little slower than the fit then still enters the margin. The
+first version of this tool applied the bias rule in the PHYSICAL form, among
+the 1 % ridge only; on these flights the ridge holds one point, whose
+physical-form bias is -0.11 m, and the rule fell back to it in silence
+(`ok = [...] or ridge`). The rule now reads the Shield's form, and when no
+grid point meets it the report says so (`fallback`, printed as a WARNING)
+instead of choosing quietly. On these flights it chooses 0.45 s, 1.75 m/s^2:
+median braking bias +0.03 m in the Shield's form, at no cost in the
+Shield's own accuracy (step RMS 0.13 / 0.36 / 0.71 m at 0.5 / 1.0 / 1.5 s,
+against 0.12 / 0.34 / 0.70 m with the identified numbers); its physical
+objective is 13.6 % above the minimum - it describes a slightly slower
+aircraft than the one identified, which is the safe side for a stop.
+
 The table then scores, with those numbers, what the Shield can actually
 forecast - it cannot know the next command, so it holds the candidate:
 with the setpoint history ("pipe", Shield.note_flown) and without it ("hold",
 the measured velocity kept for the reaction time) - against the old
-commanded forecast.
+commanded forecast, and the identified numbers beside them.
 
 BRAKE. The FSM's Loiter is flown as ArduCopter BRAKE on this rail. The two
 recorded BRAKE entries (pas_ap_close_on) are fitted as an ENVELOPE after the
-GUIDED setpoints already in the pipe: the (coast, decel) pair with the
+GUIDED setpoints already in the pipe, flown with the Shield's GUIDED numbers
+(the hold plan predicts with those): the (coast, decel) pair with the
 smallest RMS among those whose travel at each entry's last recorded sample,
 and whose full stop, are never short of the recorded travel (0.05 m slack),
 so the hold plan's predicted stop point is never short of a recorded one.
@@ -82,6 +105,10 @@ GRID_L = [round(0.05 * k, 2) for k in range(0, 17)]             # 0 .. 0.80
 GRID_A = [round(1.0 + 0.25 * k, 2) for k in range(0, 21)]       # 1 .. 6.00
 RIDGE_TOL = 0.01
 CAP_MPS = 5.0
+# The form the bias rule is applied in: the one the Shield flies on every rail
+# that gives it a velocity (the pipe from Shield.note_flown, then the
+# candidate held). See FIT above.
+SHIELD_FORM = "pipe"
 BRAKE_GRID_L = [round(0.05 * k, 2) for k in range(0, 31)]       # 0 .. 1.50
 BRAKE_GRID_A = [round(0.25 + 0.05 * k, 2) for k in range(0, 116)]  # 0.25 .. 6.00
 BRAKE_SLACK_M = 0.05
@@ -269,9 +296,9 @@ def objective(errs: dict) -> float:
     return sum(errs[h]["rms"] for h in OBJ_HORIZONS) / len(OBJ_HORIZONS)
 
 
-def along_bias(ws: list[dict], model, h: float = 1.5) -> float:
-    """Median along-track error (forecast minus actual, along the measured
-    direction of travel) at `h`: negative = the forecast is short."""
+def along_errors(ws: list[dict], model, h: float = 1.5) -> list[float]:
+    """Along-track errors (forecast minus actual, along the measured
+    direction of travel) at `h`, sorted: negative = the forecast is short."""
     vals = []
     for w in ws:
         vx, vy, _ = w["v0"]
@@ -281,7 +308,20 @@ def along_bias(ws: list[dict], model, h: float = 1.5) -> float:
         ax, ay, _ = w["actual"][h]
         vals.append((px - ax) * ux + (py - ay) * uy)
     vals.sort()
+    return vals
+
+
+def along_bias(ws: list[dict], model, h: float = 1.5) -> float:
+    """Median along-track error at `h` (along_errors): negative = short."""
+    vals = along_errors(ws, model, h)
     return vals[len(vals) // 2]
+
+
+def along_quartiles(ws: list[dict], model, h: float = 1.5) -> dict:
+    """p25 / median / p75 of the along-track error at `h`, m."""
+    vals = along_errors(ws, model, h)
+    n = len(vals)
+    return {"p25": vals[n // 4], "median": vals[n // 2], "p75": vals[(3 * n) // 4]}
 
 
 def vertical(ws: list[dict], reaction_s: float, accel_mps2: float) -> dict:
@@ -318,26 +358,48 @@ def fit(runs: dict[str, list[dict]]) -> dict:
             grid.append({"reaction_s": L, "accel_mps2": a,
                          "objective": objective(errors(steps, (m, "physical"))),
                          "decel_bias_m": along_bias(dec, (m, "physical")),
+                         # the bias in the form the Shield flies (FIT, SHIELD_FORM)
+                         "shield_decel_bias_m": along_bias(dec, (m, SHIELD_FORM)),
                          "stop_from_cap_m": m.stop_distance(CAP_MPS)})
     best = min(g["objective"] for g in grid)
     ridge = [g for g in grid if g["objective"] <= best * (1 + RIDGE_TOL)]
-    ok = [g for g in ridge if g["decel_bias_m"] >= 0.0] or ridge
-    chosen = max(ok, key=lambda g: (g["stop_from_cap_m"], -g["objective"]))
+    identified = min(grid, key=lambda g: (g["objective"], -g["stop_from_cap_m"]))
+    ok = [g for g in grid if g["shield_decel_bias_m"] >= 0.0]
+    fallback = None
+    if ok:
+        chosen = min(ok, key=lambda g: (g["objective"], -g["stop_from_cap_m"]))
+    else:
+        # Nothing on the grid is long enough on braking in the Shield's form:
+        # take the least short point and SAY so (the first version fell back
+        # to the ridge in silence).
+        chosen = max(grid, key=lambda g: (g["shield_decel_bias_m"], -g["objective"]))
+        fallback = (f"no grid point has a median braking bias >= 0 in the Shield's "
+                    f"form ({SHIELD_FORM}); chose the least short, "
+                    f"{chosen['shield_decel_bias_m']:+.3f} m")
     model = VelocityResponse(chosen["reaction_s"], chosen["accel_mps2"], "fit")
+    ident = VelocityResponse(identified["reaction_s"], identified["accel_mps2"], "identified")
     table = {}
     for name, m in (("commanded (old forecast)", "commanded"),
                     ("measured, constant", "measured"),
                     ("Shield form, measured velocity kept (no pipe)", (model, "hold")),
                     ("Shield form, with the pipe (note_flown)", (model, "pipe")),
-                    ("physical form (identification)", (model, "physical"))):
+                    ("physical form, the Shield's numbers", (model, "physical")),
+                    ("Shield form, with the pipe, identified numbers", (ident, "pipe")),
+                    ("physical form, identified numbers", (ident, "physical"))):
         table[name] = {"all": errors(ws, m), "steps": errors(steps, m),
-                       "decel": errors(dec, m), "decel_bias_m": along_bias(dec, m)}
+                       "decel": errors(dec, m), "decel_bias_m": along_bias(dec, m),
+                       "decel_along_m": along_quartiles(dec, m)}
     out = {"windows": len(ws), "step_windows": len(steps), "decel_windows": len(dec),
            "runs": list(RUNS), "best_objective": best,
            "ridge": sorted(ridge, key=lambda g: g["objective"]),
-           "chosen": chosen, "table": table}
+           "identified": identified, "shield_form": SHIELD_FORM,
+           "chosen": chosen, "fallback": fallback, "table": table}
     out["vertical"] = vertical(ws, chosen["reaction_s"], chosen["accel_mps2"])
     out["brake"] = fit_brake(runs, model)
+    # The same envelope behind the IDENTIFIED GUIDED pipe: the closed loop's
+    # BRAKE plant (tools/own_velocity_closed_loop.py), whose GUIDED plant is
+    # the identified aircraft. Each envelope is consistent with its own pipe.
+    out["brake_identified"] = fit_brake(runs, ident)
     return out
 
 
@@ -439,19 +501,29 @@ def main(argv=None) -> int:
         write_fixture(runs, FIXTURE)
         print(f"wrote {FIXTURE} ({FIXTURE.stat().st_size} bytes)")
     rep = fit(runs)
-    c = rep["chosen"]
+    c, i = rep["chosen"], rep["identified"]
     print(f"windows {rep['windows']}, step {rep['step_windows']}, decelerating "
           f"{rep['decel_windows']}")
-    print(f"chosen: reaction {c['reaction_s']} s, accel {c['accel_mps2']} m/s^2 "
-          f"(objective {c['objective']:.3f}, best {rep['best_objective']:.3f}, "
-          f"decel bias {c['decel_bias_m']:+.3f} m, stop from {CAP_MPS:g} m/s "
-          f"{c['stop_from_cap_m']:.2f} m)")
+    print(f"identified (physical minimum): reaction {i['reaction_s']} s, accel "
+          f"{i['accel_mps2']} m/s^2 (objective {i['objective']:.3f}, braking bias in the "
+          f"Shield's form {i['shield_decel_bias_m']:+.3f} m)")
+    print(f"chosen for the Shield: reaction {c['reaction_s']} s, accel {c['accel_mps2']} m/s^2 "
+          f"(objective {c['objective']:.3f}, +{100 * (c['objective'] / rep['best_objective'] - 1):.1f} % "
+          f"over the minimum; braking bias in the Shield's form "
+          f"{c['shield_decel_bias_m']:+.3f} m, physical {c['decel_bias_m']:+.3f} m; stop from "
+          f"{CAP_MPS:g} m/s {c['stop_from_cap_m']:.2f} m)")
+    if rep["fallback"]:
+        print(f"WARNING: the bias rule FELL BACK: {rep['fallback']}")
     for name, t in rep["table"].items():
-        print(f"  {name:28s} step RMS " + " ".join(
+        q = t["decel_along_m"]
+        print(f"  {name:46s} step RMS " + " ".join(
             f"{h:g}s {t['steps'][h]['rms']:.2f}" for h in HORIZONS)
-              + f" | decel bias {t['decel_bias_m']:+.2f} m")
+              + f" | decel along-track p25/median/p75 {q['p25']:+.2f} {q['median']:+.2f} "
+                f"{q['p75']:+.2f} m")
     print(f"vertical: {rep['vertical']}")
-    print(f"BRAKE: {rep['brake']}")
+    print(f"BRAKE (behind the Shield's GUIDED pipe): {rep['brake']}")
+    print(f"BRAKE (behind the identified GUIDED pipe, the closed loop's plant): "
+          f"{rep['brake_identified']['chosen']}")
     if args.out:
         Path(args.out).write_text(json.dumps(rep, indent=2, default=str), encoding="utf-8")
     return 0

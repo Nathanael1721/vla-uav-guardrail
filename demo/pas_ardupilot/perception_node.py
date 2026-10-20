@@ -402,17 +402,22 @@ HOLD_MODE = DEFAULT_HOLD_MODE
 # Shield until BRAKE's predicted stop ends legal (guardrail.response.
 # hold_plan), and the FSM's "brake" setpoint as the Shield's answer to a stop
 # (Shield.advise). The measured velocity only ADDS to the commanded forecast
-# (Shield._predict): nothing the old Shield refused is emitted clean. ON
-# because the evidence the task asked for holds, on both P0 escape bases
-# (re-checked with the velocity, or on the commanded forecast as every stored
-# run was): replayed on all six recorded pas_ap flights, the Shield's P0
-# escapes are the same ticks with and without it (0, 0, 1 [the same tick], 0,
-# 0, 0); flown in closed loop on the measured response, the position was
-# illegal on fewer ticks in every one of the 12 runs (both aircraft models),
-# with no P0 escape and no fail-safe in any, and the 14 Oct and 13 Oct close
-# approaches stay outside the building margin (min clearance 3.21 and 3.29 m
-# against 3.0). `--own-velocity-forecast off` flies the commanded forecast and
-# BRAKE exactly as before; state_v is logged either way.
+# (Shield._predict): nothing the old Shield refused is emitted clean; and
+# while the position already breaks a hard rule it is set aside, so the
+# escape is the old Shield's (Shield._decision_state). ON because the
+# evidence the task asked for holds, on both P0 escape bases (re-checked with
+# the velocity, or on the commanded forecast as every stored run was), with
+# the response numbers chosen never to be short on braking (2026-10-20):
+# replayed on all six recorded pas_ap flights, the Shield's P0 escapes are
+# the same ticks with and without it (0, 0, 1 [the same tick], 0, 0, 0);
+# flown in closed loop over every whole flight on three aircraft (the
+# identified one, one as slow as the Shield's model, one slower), the
+# position was illegal on fewer ticks in 17 of the 18 runs and on none in
+# the other (0 against 0), with no P0 escape and no fail-safe in any, and on
+# the identified aircraft the 14 Oct and 13 Oct close approaches stay outside
+# the building margin (min clearance 3.28 and 3.48 m against 3.0).
+# `--own-velocity-forecast off` flies the commanded forecast and BRAKE
+# exactly as before; state_v is logged either way.
 OWN_VELOCITY_DEFAULT = "on"
 
 
@@ -1970,6 +1975,12 @@ FSM_BANNERS = {
     FSMState.LAND.value: ("brake", "FSM {label} - AUTOPILOT LANDING"),
 }
 FSM_STOP_BANNER = ("brake", "FSM {label} - FULL STOP, ZERO SETPOINT SENT")
+# The hold that stops clear (guardrail.response.hold_plan; review 2026-10-20):
+# a Loiter held in GUIDED is not ArduCopter holding anything - the node is
+# streaming the Shield's stop - and a Brake whose zero the Shield answered
+# with a recovery flew that recovery, not a zero.
+FSM_DEFERRED_BANNER = ("hold", "FSM Loiter(GUIDED) - STOP THROUGH SHIELD ({why})")
+FSM_ADVISED_BANNER = ("brake", "FSM {label} - STOP THROUGH SHIELD (A ZERO WOULD END IN {rules})")
 # policy_hud's words for a rule the Shield did not correct, rewritten for the
 # Shield-off arm, where nothing was ever going to correct it.
 SHIELD_OFF_WORDS = (("P0 RULE STILL BROKEN AFTER SHIELD", "P0 RULE BROKEN, FLOWN UNCORRECTED"),
@@ -1988,7 +1999,9 @@ def fsm_label(state, hold_ap_mode: str = DEFAULT_HOLD_MODE) -> str:
 
 def rail_banner(banner: dict, *, shield_on: bool, fsm_state=None,
                 hold_ap_mode: str = DEFAULT_HOLD_MODE, takeover_mode: str | None = None,
-                fsm_fault: str | None = None, setpoint: str = "pass") -> tuple[dict, str]:
+                fsm_fault: str | None = None, setpoint: str = "pass",
+                hold_deferred: str | None = None,
+                stop_advised: str | None = None) -> tuple[dict, str]:
     """`(banner, kind)`: what the recording's banner says this tick.
 
     policy_hud's banner (the Shield's rule events, latched) unless something
@@ -1999,12 +2012,23 @@ def rail_banner(banner: dict, *, shield_on: bool, fsm_state=None,
       shield_off  the control arm: every banner says SHIELD OFF, and a rule
                   event reads "flown uncorrected", never "monitored";
       fsm         the escalation FSM in Loiter(<hold mode>), RTL or Land, or
-                  in Brake on a tick it streams a zero setpoint;
+                  in Brake on a tick it streams a zero setpoint; a Loiter
+                  still held in GUIDED (FSM_DEFERRED_BANNER), and a Brake
+                  whose stop the Shield answered with a recovery
+                  (FSM_ADVISED_BANNER);
       fsm_brake   the FSM in Brake streaming the Shield's action: policy_hud's
                   banner prefixed "FSM Brake | ";
       policy      policy_hud's banner unchanged (FSM Normal, or none run).
     `banner` is policy_hud's {"level", "text"}; levels are its COLOURS keys;
-    `setpoint` the FSM's choice this tick (pass / brake / none)."""
+    `setpoint` the FSM's choice this tick (pass / brake / none).
+
+    The hold that stops clear (review 2026-10-20: the banner said "AUTOPILOT
+    HOLDING POSITION" while ArduCopter was still in GUIDED and the node was
+    streaming the Shield's stop): `hold_deferred` is the reason the Loiter
+    is held in GUIDED on this tick (guardrail.response.hold_banner_reason),
+    None when it is not; `stop_advised` the rules a zero would end in on a
+    tick whose stop the Shield advised ("" when the stop flown was the zero
+    itself), None on every other tick."""
     if takeover_mode is not None:
         return ({"level": "brake",
                  "text": f"AUTOPILOT TOOK THE AIRCRAFT ({takeover_mode}) - NODE NOT COMMANDING"},
@@ -2021,11 +2045,19 @@ def rail_banner(banner: dict, *, shield_on: bool, fsm_state=None,
         return {"level": banner["level"], "text": f"SHIELD OFF - {text}"}, "shield_off"
     v = getattr(fsm_state, "value", fsm_state)
     label = fsm_label(v, hold_ap_mode)
+    if v == FSMState.LOITER.value and hold_deferred is not None:
+        level, fmt = FSM_DEFERRED_BANNER
+        return {"level": level, "text": fmt.format(why=hold_deferred)}, "fsm"
     if v in FSM_BANNERS:
         level, fmt = FSM_BANNERS[v]
         return {"level": level, "text": fmt.format(label=label)}, "fsm"
     if v == FSMState.BRAKE.value:
-        if setpoint == "brake":
+        if stop_advised:
+            level, fmt = FSM_ADVISED_BANNER
+            return {"level": level, "text": fmt.format(label=label, rules=stop_advised)}, "fsm"
+        if setpoint == "brake" or stop_advised is not None:
+            # A zero setpoint sent: the FSM's own, or the Shield's answer to
+            # a stop that was the zero itself (the stop ends legal).
             level, fmt = FSM_STOP_BANNER
             return {"level": level, "text": fmt.format(label=label)}, "fsm"
         return ({"level": banner.get("level", "ok"),
@@ -2033,15 +2065,30 @@ def rail_banner(banner: dict, *, shield_on: bool, fsm_state=None,
     return dict(banner), "policy"
 
 
-def hud_decision(d, raw, *, shield_on: bool, setpoint: str = "pass"):
-    """The decision the policy indicator reads. Shield on: the Shield's own.
-    Shield off: the same checks with NO repair and no brake, the raw action
-    as the one emitted, and its violations as flown (none on a tick nothing
-    was sent) - so the panel shows WATCH and the P0 escape count, never an
-    ACTING row or a "Shield corrections" count for a Shield that was not in
-    the loop (guardrail.replay.flown_fields is the same rule)."""
+def advised_banner_rules(dec) -> str:
+    """For rail_banner's `stop_advised`: "" when the Shield's answer to a
+    stop (Shield.advise of a zero) was the zero itself, else the rules the
+    zero would end in - the advised decision's violations ("A RULE" for a
+    recovery the Shield made with none raised, e.g. a floored escape)."""
+    e = dec.emitted
+    if max(abs(e.vx), abs(e.vy), abs(e.vz_up), abs(e.yaw_rate)) < 1e-9:
+        return ""
+    ids = sorted({v.rule_id for v in dec.violations})
+    return ", ".join(ids) if ids else "A RULE"
+
+
+def hud_decision(d, raw, *, shield_on: bool, setpoint: str = "pass", advised=None):
+    """The decision the policy indicator reads. Shield on: the Shield's own -
+    on a stop-advised tick the one that FLEW (`advised`: Shield.advise of a
+    zero, the hold that stops clear), not the decision on the pilot's action
+    the rail did not send (review 2026-10-20). Shield off: the same checks
+    with NO repair and no brake, the raw action as the one emitted, and its
+    violations as flown (none on a tick nothing was sent) - so the panel
+    shows WATCH and the P0 escape count, never an ACTING row or a "Shield
+    corrections" count for a Shield that was not in the loop
+    (guardrail.replay.flown_fields is the same rule)."""
     if shield_on:
-        return d
+        return advised if advised is not None else d
     return SimpleNamespace(violations=list(d.violations), repairs=[], braked=False,
                            touched=False, emitted=raw,
                            emitted_violations=[] if setpoint == "none" else list(d.violations))
@@ -2087,20 +2134,27 @@ class RailHud:
              subject_xy=None, subject_class=None, fsm_state=None,
              takeover_mode: str | None = None, fsm_fault: str | None = None,
              setpoint: str = "pass", flown=None, sep_m: float | None = None,
-             touched: bool = False) -> dict:
+             touched: bool = False, hold_deferred: str | None = None,
+             stop_advised: str | None = None) -> dict:
         """`flown` is the action SENT this tick (scene frame; None: nothing
         sent): the HUD's forward speed is its component along the heading,
         so the Shield's cap shows on screen as what was flown, not what the
         pilot asked for. `sep_m` the subject's TRUE range when it was read
-        (as follow_vlm's HUD), else None ("separation n/a")."""
+        (as follow_vlm's HUD), else None ("separation n/a").
+        `hold_deferred` / `stop_advised`: the hold that stops clear, as
+        rail_banner reads them; a deferred Loiter is labelled
+        Loiter(GUIDED) - ArduCopter is not holding it yet."""
+        deferred = (hold_deferred is not None
+                    and getattr(fsm_state, "value", fsm_state) == FSMState.LOITER.value)
+        label = "Loiter(GUIDED)" if deferred else fsm_label(fsm_state, self.hold_ap_mode)
         pol = self._indicator(now, decision, state, subject_xy, subject_class, yaw_rad)
         if pol is not None:
             ban, kind = rail_banner(pol["banner"], shield_on=self.shield_on,
                                     fsm_state=fsm_state, hold_ap_mode=self.hold_ap_mode,
                                     takeover_mode=takeover_mode, fsm_fault=fsm_fault,
-                                    setpoint=setpoint)
-            key = (f"{kind}:{fsm_label(fsm_state, self.hold_ap_mode)}"
-                   if kind in ("fsm", "fsm_brake") else kind)
+                                    setpoint=setpoint, hold_deferred=hold_deferred,
+                                    stop_advised=stop_advised)
+            key = f"{kind}:{label}" if kind in ("fsm", "fsm_brake") else kind
             if kind in ("takeover", "fault", "fsm"):
                 self._latch = (ban, key, now + self.hold_s)
             elif (kind in ("policy", "fsm_brake") and self._latch is not None
@@ -2114,7 +2168,7 @@ class RailHud:
         elif not self.shield_on:
             arm = "SHIELD OFF"
         elif fsm_state is not None:
-            arm = f"FSM {fsm_label(fsm_state, self.hold_ap_mode)}"
+            arm = f"FSM {label}"
         else:
             arm = "FSM not run"
         bearing = info.get("bearing")
@@ -2558,9 +2612,14 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     # mode, home, landed, a takeover). With the Shield's own FSM on as well,
     # audit.jsonl would record one state machine and flight_log.jsonl another
     # (guardrail.replay, "ONE ESCALATION FSM PER RAIL").
+    # pipe_clock: the setpoints this node sent (note_flown) are aged on the
+    # loop's REAL clock, not on the Shield's monitor clock, which filter()
+    # counts at the nominal 0.1 s here; the recorded pas_ap ticks are 0.109 s
+    # median and up to 0.73 s (14 Oct). Read only with a measured velocity.
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
                          obstacle_map=smap, clock=rule_now,
-                         velocity_response=vresp.ARDUCOPTER_GUIDED)
+                         velocity_response=vresp.ARDUCOPTER_GUIDED,
+                         pipe_clock=clock)
     shield_on = args.shield == "on"
     # The own-velocity forecast and the hold that stops clear (OWN_VELOCITY_
     # DEFAULT). Off: the Shield's State carries no velocity, so its decisions
@@ -2574,6 +2633,19 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     n_vel_used = n_hold_guided = n_stop_advised = 0
     hold_plans: list[dict] = []
     hold_deferred = False
+    # When the current deferral began (rail time), the banner's reason for
+    # it, and the hand-overs to BRAKE the plan did not choose (HOLD_DEFER_*:
+    # a stale link, a gap in the stream, the deferral cap), by reason.
+    hold_deferred_since = None
+    hold_why = None
+    forced_handovers: dict = {}
+    # When this node last sent a setpoint (rail clock): a deferred hold is
+    # flown by the stream, so a gap in it hands the hold to BRAKE.
+    t_last_sent = None
+    # The P0 escapes on the stored runs' basis (Shield.recheck_commanded):
+    # the flown action re-checked from the position on the commanded
+    # forecast, beside the rail's own re-check (made with the velocity).
+    n_p0_cmd_basis = 0
     fsm = (EscalationFSM(FSMConfig.from_yaml(args.fsm_config) if args.fsm_config
                          else FSMConfig())
            if shield_on and not args.no_fsm else None)
@@ -2884,6 +2956,28 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                 hold_sent = False
                                 print(f"[link]   hold setpoint failed: {exc}")
                             streaming = False
+                        # A DEFERRED HOLD IS FLOWN BY THE STREAM (review
+                        # 2026-10-20): while the FSM's Loiter is held in
+                        # GUIDED, nothing but this node's setpoints stops
+                        # the aircraft, and the stream has just stopped.
+                        # Hand the hold to BRAKE now - the autopilot then
+                        # holds it with no companion involvement, as the
+                        # Loiter did before the hold that stops clear.
+                        if hold_deferred and takeover is None and fsm_fault is None:
+                            hold_deferred, hold_why = False, None
+                            why = f"link stale ({stale}): the stream that flew the hold stopped"
+                            ap_mode = asks.ask("LOITER")
+                            sent = link.request_mode(ap_mode)
+                            forced_handovers["link_stale"] = forced_handovers.get(
+                                "link_stale", 0) + 1
+                            hold_plans.append({"t": round(t_tick - t0, 3), "tick": len(rows) + 1,
+                                               "at": "handover", "choice": "brake",
+                                               "forced": "link_stale", "why": why})
+                            rec.event("mode_request", t=t_tick - t0, mode="LOITER",
+                                      autopilot_mode=ap_mode,
+                                      why="the deferred hold handed to BRAKE: " + why,
+                                      sent=bool(sent))
+                            print(f"[hold]   LOITER handed to {ap_mode}: {why}")
                         stale_spans.append({"t": round(t_tick - t0, 3), "why": stale,
                                             "ticks": 0, "s": None, "recovered": False,
                                             "hold_sent": hold_sent})
@@ -3034,13 +3128,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                                "at": "loiter entry", **plan})
                         if plan is not None and plan["choice"] == "guided":
                             hold_deferred = True
+                            hold_deferred_since = now
+                            hold_why = vresp.hold_banner_reason(plan)
                             hold_note = ("deferred", None)
                             rec.event("hold_deferred", t=now, why=plan["why"],
                                       stop_xy=plan["stop_xy"], breaks=plan["breaks"])
                             print(f"[hold]   LOITER held in GUIDED through the Shield: "
                                   f"{plan['why']}")
                         elif fsm_out.set_mode:
-                            hold_deferred = False
+                            hold_deferred, hold_why = False, None
                             # The FSM's vocabulary on record, ArduCopter's mode
                             # sent: its LOITER is flown as BRAKE (HOLD_MODE).
                             ap_mode = asks.ask(fsm_out.set_mode)
@@ -3052,8 +3148,27 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                   f"{fsm_out.reason}")
                         elif hold_deferred and fsm.state == FSMState.LOITER:
                             plan = vresp.hold_plan(shield, st_sh)
-                            if plan["choice"] == "brake":
-                                hold_deferred = False
+                            # A hand-over the plan did not choose (review
+                            # 2026-10-20): while deferred, the hold is flown
+                            # by this node's stream, which ArduCopter keeps
+                            # flying for up to GUID_TIMEOUT if the node
+                            # stalls. A gap in the stream longer than
+                            # HOLD_STREAM_GAP_S (the 14 Oct log has a 0.73 s
+                            # one), or a deferral longer than HOLD_DEFER_MAX_S,
+                            # hands the hold to BRAKE whatever the plan says.
+                            # The gap up to NOW, not to the tick's start: a
+                            # stall anywhere since the last send counts.
+                            forced, why = vresp.hold_forced_handover(
+                                deferred_s=now - (hold_deferred_since if hold_deferred_since
+                                                  is not None else now),
+                                stream_gap_s=(None if t_last_sent is None
+                                              else clock() - t_last_sent))
+                            if plan["choice"] == "brake" or forced:
+                                hold_deferred, hold_why = False, None
+                                if forced:
+                                    forced_handovers[forced] = forced_handovers.get(forced, 0) + 1
+                                    plan = dict(plan, choice="brake", forced=forced,
+                                                why=f"{why} (the plan: {plan['why']})")
                                 hold_plans.append({"t": round(now, 3), "tick": len(rows) + 1,
                                                    "at": "handover", **plan})
                                 ap_mode = asks.ask("LOITER")
@@ -3064,15 +3179,17 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                           why="the deferred hold handed to BRAKE: "
                                               + plan["why"], sent=bool(sent))
                                 print(f"[hold]   LOITER handed to {ap_mode}: {plan['why']}")
+                            else:
+                                hold_why = vresp.hold_banner_reason(plan)
                         if hold_deferred and fsm.state != FSMState.LOITER:
-                            hold_deferred = False
+                            hold_deferred, hold_why = False, None
                         if fsm_out.state in FAILSAFE_STATES and failsafe_t is None:
                             failsafe_t = now
                     except ValueError as exc:
                         # A Shield/FSM contract break mid-flight: hold, say why,
                         # stop streaming. The run is not KPI-grade.
                         fsm_fault = str(exc)
-                        hold_deferred = False
+                        hold_deferred, hold_why = False, None
                         rec.event("fsm_fault", t=now, error=fsm_fault)
                         hold = asks.ask("LOITER")
                         link.request_mode(hold)
@@ -3080,6 +3197,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         print(f"[fsm]    input refused, {hold}: {exc}")
                 if fsm_fault is not None or takeover is not None:
                     setpoint = "none"
+                    # Nothing this node streams flies now: no hold is deferred.
+                    hold_deferred, hold_why = False, None
                 # A STOP THAT STOPS CLEAR (own-velocity forecast on): a Loiter
                 # held in GUIDED streams the Shield's answer to a stop
                 # (Shield.advise of a zero action), and so does the FSM's
@@ -3114,14 +3233,26 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 # After the FSM stepped, with ITS verdict: one state machine on
                 # record, in audit.jsonl and flight_log.jsonl alike.
                 audit_tick(audit, tick, d, fsm_out=fsm_out, fsm_fault=fsm_fault)
+                if stop_advised:
+                    # THE DECISION THAT FLEW (review 2026-10-20): on a stop-
+                    # advised tick the action sent is the Shield's answer to a
+                    # stop (flown_d), not this tick's decision on the pilot's
+                    # action (d, the record above). It gets its own record,
+                    # always - its repairs, trace and repair passes - tagged
+                    # decision_kind "stop_advised", so audit.jsonl holds the
+                    # decision behind every action ArduCopter was sent.
+                    audit_tick(audit, tick, flown_d, fsm_fault=fsm_fault,
+                               kind="stop_advised")
                 flown = {"pass": flown_d.emitted if stop_advised else emitted,
                          "brake": Action4D(), "none": None}[setpoint]
                 if flown is not None:
                     link.send(flown, raw_body=body)
+                    t_last_sent = clock()
                 streaming = flown is not None
                 # What was sent, for the own-velocity forecast's pipe (a
-                # setpoint is flown from 0.35 s after it goes out). Read only
-                # for a State with a velocity, so harmless with the flag off.
+                # setpoint is flown from the response's reaction time after it
+                # goes out), aged on the loop's real clock (pipe_clock). Read
+                # only for a State with a velocity, so harmless with the flag off.
                 shield.note_flown(flown)
                 # A zone held back from the autopilot's fence goes up once the
                 # aircraft is clear of it (FenceBackstop).
@@ -3167,6 +3298,19 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 # aircraft) - no action flew, so none can have escaped.
                 ff = flown_fields(shield, st, flown_d, shield_on=shield_on, setpoint=setpoint)
                 n_escaped += bool(ff["emitted_violations"])
+                # The same P0 escape on the stored runs' basis (review
+                # 2026-10-20): where the Shield flew with a measured velocity,
+                # the flown action re-checked from the position on the
+                # commanded forecast (Shield.recheck_commanded); elsewhere the
+                # two bases are one re-check. Never set where the rail's own
+                # (velocity) re-check is clear on an action it emitted clean.
+                p0_ids = {c.id for c in policy.constraints if c.priority == "P0"}
+                if ff["flown"] and setpoint == "pass" and shield_on and st_sh is not st:
+                    p0_cmd = any(v.rule_id in p0_ids
+                                 for v in shield.recheck_commanded(st, flown))
+                else:
+                    p0_cmd = any(v["rule_id"] in p0_ids for v in ff["emitted_violations"])
+                n_p0_cmd_basis += p0_cmd
                 # The rule clock's reading rides with each point, so the zone
                 # dwell applies the windows the Shield flew under.
                 traj.append({"t": round(now, 2), "x": st.x, "y": st.y, "up": st.up,
@@ -3225,7 +3369,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     # "flown" (a bool) and "emitted_violations" come from
                     # flown_fields, the shape guardrail/kpi.py reads.
                     "flown_action": None if flown is None else flown.model_dump(),
+                    # `emitted_violations` re-checks `flown_action` - the
+                    # action that FLEW - which on a stop-advised tick is
+                    # `stop_advice.emitted`, not `emitted` (the decision on the
+                    # pilot's action, whose violations, repairs, braked and
+                    # touched are the fields below).
                     **ff,
+                    "p0_escape_commanded_basis": p0_cmd,
                     "setpoint": setpoint,
                     # The hold that stops clear: the FSM's own setpoint when
                     # the rail flew the Shield's answer to a stop instead
@@ -3233,6 +3383,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     "fsm_setpoint": fsm_setpoint,
                     "stop_advised": stop_advised,
                     "hold_deferred": hold_deferred,
+                    # The decision that flew on a stop-advised tick (Shield.
+                    # advise of a zero action; audit.jsonl has its full record,
+                    # decision_kind "stop_advised"); None on every other tick.
+                    "stop_advice": (None if not stop_advised else {
+                        "emitted": flown_d.emitted.model_dump(),
+                        "violations": [v.model_dump() for v in flown_d.violations],
+                        "repairs": [r.model_dump() for r in flown_d.repairs],
+                        "emitted_violations": [v.model_dump()
+                                               for v in flown_d.emitted_violations],
+                        "braked": bool(flown_d.braked), "touched": bool(flown_d.touched)}),
                     "violations": [v.model_dump() for v in d.violations],
                     "repairs": [r.model_dump() for r in d.repairs] if shield_on else [],
                     "braked": bool(shield_on and d.braked), "touched": touched,
@@ -3287,7 +3447,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     try:
                         hud = rhud.tick(
                             now, decision=hud_decision(d, raw, shield_on=shield_on,
-                                                       setpoint=setpoint),
+                                                       setpoint=setpoint,
+                                                       advised=flown_d if stop_advised
+                                                       else None),
+                            # The hold that stops clear on screen (review
+                            # 2026-10-20): a Loiter held in GUIDED, and a
+                            # Brake whose stop the Shield advised.
+                            hold_deferred=(hold_why or "BRAKE DEFERRED") if hold_deferred
+                            else None,
+                            stop_advised=advised_banner_rules(flown_d) if stop_advised
+                            else None,
                             state=st, yaw_rad=yaw, info=info,
                             subject_xy=None if subj is None else (subj[0], subj[1]),
                             subject_class=subject_class,
@@ -3594,12 +3763,17 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                      # each plan made at a Loiter entry or while the hold was
                      # deferred, the ticks the Loiter was flown as a GUIDED stop
                      # through the Shield, and the FSM "brake" ticks flown as the
-                     # Shield's answer to a stop.
+                     # Shield's answer to a stop. forced_handovers: hand-overs
+                     # to BRAKE the plan did not choose, by reason (link_stale,
+                     # stream_gap, deferral_cap; review 2026-10-20).
                      "stop_clear": {"enabled": own_v and hold_ap_mode == "BRAKE",
                                     "plans": hold_plans,
                                     "guided_hold_ticks": n_hold_guided,
                                     "stop_advised_ticks": n_stop_advised,
+                                    "forced_handovers": forced_handovers,
                                     "handover_mps": vresp.HOLD_HANDOVER_MPS,
+                                    "defer_max_s": vresp.HOLD_DEFER_MAX_S,
+                                    "stream_gap_s": vresp.HOLD_STREAM_GAP_S,
                                     "brake_envelope": vresp.ARDUCOPTER_BRAKE.to_dict()}},
             # Which forecast the Shield flew (docs/DESIGN-own-velocity-
             # forecast.md): "own_velocity" (the measured velocity converging
@@ -3612,7 +3786,20 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 "velocity_ticks": n_vel_used,
                 "velocity_sources": vel_sources,
                 "shield_velocity_ticks": shield.n_velocity_ticks,
-                "velocity_nonfinite": shield.n_velocity_nonfinite},
+                # Ticks the velocity was given but SET ASIDE because the
+                # position already broke a hard rule (Shield._decision_state:
+                # the decision is then the commanded forecast's).
+                "velocity_set_aside_ticks": shield.n_velocity_set_aside,
+                "velocity_nonfinite": shield.n_velocity_nonfinite,
+                # Setpoints the Shield was told were sent (note_flown), so a
+                # run whose pipe never filled - the forecast then coasting
+                # the measured velocity through the reaction time - shows.
+                "noted_setpoints": shield.n_noted_setpoints,
+                # P0 escape ticks on the stored runs' basis (rows'
+                # p0_escape_commanded_basis; Shield.recheck_commanded), to
+                # compare with kpi.json p0_escapes (the rail's re-check,
+                # with the velocity when the Shield had one).
+                "p0_escape_ticks_commanded_basis": n_p0_cmd_basis},
             # The FSM's words (LOITER, RTL, LAND; LAND also at mission end) and
             # what ArduCopter was asked for (the FSM's LOITER as BRAKE).
             "mode_requests": list(asks.fsm),

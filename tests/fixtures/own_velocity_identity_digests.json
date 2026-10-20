@@ -1,5 +1,6 @@
 {
-  "note": "sha256 of the JSON dumps of seeded Shield.filter() decisions, computed on c77c77d (before State had a velocity); see tests/test_own_velocity_forecast.py",
+  "note": "sha256 of the JSON dumps of seeded Shield.filter() decisions, computed by `--regenerate` on a git archive of the commit before State had a velocity (computed_on); see tests/test_own_velocity_forecast.py",
+  "computed_on": "c77c77d0ad04d5aba5561c82a9df0a607ea2962a",
   "seed": 20261019,
   "policies": [
     "follow_car_citylife.yaml",

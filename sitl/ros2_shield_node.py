@@ -678,8 +678,13 @@ if HAVE_ROS:
                                              encoding="utf-8")
             # No escalation FSM inside the Shield: this node runs THE FSM,
             # because only it sees the autopilot (guardrail.replay.rail_shield).
+            # pipe_clock: the setpoints sent (note_flown) are aged on the
+            # node's real clock, not on filter()'s counted 0.1 s ticks (read
+            # only with the own-velocity forecast on; docs/DESIGN-own-
+            # velocity-forecast.md, "The pipe's clock").
             self.shield = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S,
-                                      dt=LOOKAHEAD_DT_S, clock=self.clock)
+                                      dt=LOOKAHEAD_DT_S, clock=self.clock,
+                                      pipe_clock=time.monotonic)
             # The own-velocity forecast (OWN_VELOCITY_DEFAULT: off here), the
             # Shield-on arm only; the latest velocity_local and its receipt.
             self.own_v = (getattr(args, "own_velocity_forecast", OWN_VELOCITY_DEFAULT)
