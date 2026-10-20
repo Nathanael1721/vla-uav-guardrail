@@ -15,10 +15,9 @@ This file holds:
     that does not pass one) every filter() decision is byte-identical to the
     code before the change. The digests in tests/fixtures/
     own_velocity_identity_digests.json were computed on c77c77d, before a line
-    of the change existed, and since the merge with the hold points
-    (2026-10-21) on 6c7cdb0, that branch's tip: the hold points changed the
-    escalation FSM's decisions (where it holds and lands), not the forecast,
-    and 6c7cdb0 has no velocity either (IDENTITY_BASE);
+    of the change existed (with the escalation FSM's hold-point fields left
+    out of each dump, HOLD_POINT_FIELDS: they came with the hold points, a
+    separate change merged on 2026-10-21);
   * the response model's own tests (guardrail/response.py);
   * the 14 Oct replay: the tick at which the new forecast first flags the
     building margin, against the old one, and the stop-point counterfactual;
@@ -65,16 +64,21 @@ IDENTITY_SEED = 20261019
 N_CI = 500            # per policy, per Shield configuration: 6000 decisions
 N_FULL = 1500         # 18,000 decisions
 # The commit before State had a velocity: the identity digests are ITS
-# decisions (`--regenerate` computes them on a git archive of it). c77c77d
-# until the merge with the hold points (2026-10-21); since then 6c7cdb0, the
-# hold-point branch's tip and the merge's first parent, which has no velocity
-# either. The hold points move escalation=True decisions only (the FSM's hold
-# point, chosen from the Shield's rules, is in each decision's fsm_record):
-# regenerated on 6c7cdb0, the six escalation=False digests, ci and full, are
-# the strings c77c77d gave, and the six escalation=True ones changed - which
-# is why they failed against c77c77d's after the merge, with no velocity
-# anywhere.
-IDENTITY_BASE = "6c7cdb0"
+# decisions (`--regenerate` computes them on a git archive of it).
+IDENTITY_BASE = "c77c77d"
+# The escalation FSM's hold point (guardrail/holdpoint.py, merged on
+# 2026-10-21) adds these keys to the fsm_record of a Loiter / Land decision
+# and changes nothing else a decision dumps ("No edge, guard or setpoint
+# moved", docs/DESIGN-hold-points.md). They are left out of every dump the
+# identity digests hash, so the proof stays about the velocity and stays on
+# c77c77d. Evidence: with them left out, the six escalation=True streams of
+# the merged tree hash exactly to c77c77d's digests (ci, 2026-10-21); with
+# them in, all six moved - first by the hold points themselves, then again
+# by the search's later refinements (its reach and reason text), which is
+# why a proof rebased on the hold-point branch's tip (6c7cdb0, done at the
+# merge) could not survive the next change to the search. At c77c77d the
+# keys do not exist, so `--regenerate` gives the digests it always gave.
+HOLD_POINT_FIELDS = ("hold_point", "hold_legal", "hold_needed", "hold_chosen")
 
 
 def _city_map():
@@ -88,7 +92,7 @@ def _identity_lines(name: str, n: int, *, escalation: bool, velocity: str = "non
 
     The sampling IS the fixture: change it and every digest changes.
     `velocity`: "none" builds every State without a velocity (the only form
-    that existed at IDENTITY_BASE), "explicit_none" passes velocity=None, and
+    that existed at c77c77d), "explicit_none" passes velocity=None, and
     "ignored" passes a measured velocity to a Shield built with
     velocity_response=None, which must ignore it."""
     pol = load_policy(ROOT / "policies" / name)
@@ -120,8 +124,11 @@ def _identity_lines(name: str, n: int, *, escalation: bool, velocity: str = "non
         a = Action4D(vx=rng.uniform(-6, 6), vy=rng.uniform(-6, 6),
                      vz_up=rng.uniform(-2.5, 2.5), yaw_rate=rng.uniform(-1.0, 1.0))
         d = sh.filter(st, a, t=t)
-        out.append(json.dumps(d.model_dump(mode="json"), sort_keys=True,
-                              separators=(",", ":")))
+        dump = d.model_dump(mode="json")
+        if isinstance(dump.get("fsm_record"), dict):
+            for k in HOLD_POINT_FIELDS:
+                dump["fsm_record"].pop(k, None)
+        out.append(json.dumps(dump, sort_keys=True, separators=(",", ":")))
     return out
 
 
@@ -154,10 +161,8 @@ def _check_identity(n_key: str, velocity: str):
 def test_decisions_without_a_velocity_are_byte_identical_to_c77c77d():
     """6000 seeded filter() decisions (12 streams of 500: six policies, with
     and without the Shield's own escalation FSM) hash exactly as they did on
-    the commit before State had a velocity (IDENTITY_BASE: c77c77d, and since
-    the merge with the hold points 6c7cdb0, whose escalation=False streams
-    are c77c77d's). `--full` runs the 18,000-decision version of the same
-    proof (1500 per stream)."""
+    c77c77d, the commit before State had a velocity. `--full` runs the
+    18,000-decision version of the same proof (1500 per stream)."""
     n = _check_identity("ci", "none")
     assert n == 6000, n
 
@@ -165,7 +170,7 @@ def test_decisions_without_a_velocity_are_byte_identical_to_c77c77d():
 def test_an_explicit_none_and_an_ignored_velocity_change_nothing():
     """velocity=None written out is the default; a measured velocity given to
     a Shield built with velocity_response=None is ignored. Both reproduce the
-    IDENTITY_BASE digests."""
+    c77c77d digests."""
     _check_identity("ci", "explicit_none")
     _check_identity("ci", "ignored")
 

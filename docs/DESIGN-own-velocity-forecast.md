@@ -403,12 +403,15 @@ before a line of this change existed. `--regenerate` recomputes them on a
 records the base's full hash (`computed_on`), which the identity tests check
 (review: the first version hashed whatever was checked out under the base's
 name); regenerated so, the digests came out unchanged. Since the merge with
-the escalation FSM's hold points (2026-10-21) the base is 6c7cdb0, that
-branch's tip and the merge's first parent, which has no velocity either: the
-hold points change where the FSM holds and lands, so the six escalation=True
-digests moved (they failed against c77c77d's after the merge, with no
-velocity anywhere), while the six escalation=False digests regenerated on
-6c7cdb0 are c77c77d's strings, ci and full. They are byte-identical with no
+the escalation FSM's hold points (2026-10-21) each dump leaves out the four
+hold-point keys a Loiter / Land decision's `fsm_record` gained
+(`HOLD_POINT_FIELDS`): with them in, the six escalation=True streams failed
+against c77c77d's with no velocity anywhere (the hold points change where the
+FSM holds and lands, by design); with them out, the merged tree hashes to
+c77c77d's digests on all 12 streams, ci and full. (The merge first rebased
+the proof on the hold-point branch's tip, 6c7cdb0; the search's next change -
+its reach and reason text - moved those digests again, so the proof now
+leaves the hold point out instead and stays on c77c77d.) They are byte-identical with no
 velocity, with `velocity=None` written out, and with a velocity given to a
 Shield built with `velocity_response=None` (6000 per run in CI, the 18,000
 with `--full`). The sample repairs on more than 30 % of its ticks and raises

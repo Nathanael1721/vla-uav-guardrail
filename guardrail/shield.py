@@ -2321,12 +2321,26 @@ class Shield:
         # pose: a point on or outside the envelope is not in the interior.
         bx0, by0, bx1, by1 = (buffered.bounds if buffered is not None
                               else (-math.inf, -math.inf, math.inf, math.inf))
+        # The last point found OUTSIDE the zone: a pose at exactly the same
+        # point (x, y and altitude, in the zone's frame) is outside too, so it
+        # is not tested again - point_in_fence is a pure function of them. A
+        # stop's forecast is 51 poses at one point; inside a zone's envelope
+        # but outside its ring (a diamond's corner), testing each cost about
+        # 0.45 ms per zone (desktop, 2026-10-21; 8 ms a stop query with 20 such
+        # zones), and the hold-point search makes a stop query per candidate
+        # (guardrail/holdpoint.py "THE SEARCH'S BUDGET"). Same answers: the
+        # time mask is still read per pose, above.
+        miss = None
         for t, p in (poses if poses is not None else self._predict(state, action)):
             if alive is not True and not alive(t):
                 continue
             px, py = _to_zone_frame(p, t, mv) if mv else (p.x, p.y)
             if not (bx0 < px < bx1 and by0 < py < by1):
                 continue
+            here = (px, py, p.up)
+            if here == miss:
+                continue
+            miss = here
             if point_in_fence(px, py, p.up, f, poly, buffered):
                 return [Violation(
                     rule_id=f.id, category="geofence", predicted_at_s=t,

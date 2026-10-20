@@ -83,19 +83,25 @@ THE SEARCH (deterministic: a sweep is reproducible on any machine)
      one legal with its HOLD_MARGIN_M neighbours and reached by a legal
      transit is the plan, its heading then refined every REFINE_STEP_M back
      toward the last empty ring.
-  3. Nothing legal within the budget (MAX_QUERIES stop-query units, each
-     Shield call charged by what it costs, _charges) or 60 m: an in-place
-     plan marked ILLEGAL that names what it breaks and, when the budget
-     stopped it, says so (the FSM then searches again once a second,
-     fsm.HOLD_REPLAN_S). A count, not a clock, so the answer does not
-     depend on the machine's load; sized so the fruitless search stays
-     inside the 100 ms tick (constants, "THE SEARCH'S BUDGET").
+  3. Nothing legal within the budget (MAX_QUERIES units of about 0.1 ms,
+     each Shield call charged by what it costs in the world it is made in,
+     _Ledger) or 60 m: an in-place plan marked ILLEGAL that names what it
+     breaks and, when the budget stopped it, says so (the FSM then searches
+     again once a second, fsm.HOLD_REPLAN_S). A count, not a clock, so the
+     answer does not depend on the machine's load; sized so the fruitless
+     search stays inside the 100 ms tick. A candidate inside a rule that
+     stands still is dropped by a cheap read before its stop query, so a
+     static world is searched to the last ring; moving zones make each
+     candidate dearer and the reach shorter (constants, "THE SEARCH'S
+     BUDGET", "THE CHEAP TEST" and "What the budget reaches").
 
 SPEED ASSUMPTION
 
-  The transit is planned at the tightest enforced speed cap in force
-  (`Shield.kinematic_caps`; 4 m/s in every library policy) and its climb cap,
-  else DEFAULT_SPEED_MPS / DEFAULT_CLIMB_MPS (4 and 2 m/s: the Shield's own
+  The transit is planned at the tightest enforced speed cap in force at any
+  time a transit the search plans can still be flying (`Shield.kinematic_caps`
+  read one lookahead at a time, _speeds; 4 m/s in every library policy) and
+  its climb cap, so a cap whose window opens on the way is kept from the
+  start, else DEFAULT_SPEED_MPS / DEFAULT_CLIMB_MPS (4 and 2 m/s: the Shield's own
   default speed for a rescue heading, shield.py `_decide`, and the grant's
   2 m/s climb envelope). A landing descends at LAND_DESCENT_MPS (ArduCopter's
   LAND_SPEED default, 50 cm/s; experiments/sweep_scenarios.py AP_LAND_MPS).
@@ -183,40 +189,92 @@ MAX_INTERVAL_S = 30.0
 # by rule_depths (re-review of the T1c fix; tests/test_hold_transit.py).
 # THE SEARCH'S BUDGET bounds its time on the tick it runs (the grant's
 # 100 ms monitor tick). It is a count, never a clock - a sweep is
-# reproducible on any machine - in units of a STOP QUERY in a world with no
-# moving zone near, each Shield call charged in proportion to what it costs.
-# Measured on the desktop, 2026-10-20, best of 5 (the ratios are re-measured
-# by tests/test_hold_transit.py test_the_budget_bounds_the_search_inside_
-# the_tick):
+# reproducible on any machine - in UNITS of about 0.1 ms of the desktop's
+# time (UNIT_MS), each Shield call charged by what it costs in the world it
+# is made in (_Ledger). Measured on the desktop, 2026-10-21, best of 5, at the
+# grant's 5 s / 0.1 s forecast:
 #
-#   stop query (state_is_unsafe at the grant's 5 s / 0.1 s)   0.12-0.20 ms
-#     + per moving zone the search can meet                  +0.16-0.20 ms
-#   transit evaluation (rule_clearances of the pose and of
-#     the start, every rule)                                  0.04-0.05 ms
-#     + per moving zone                                       +0.07-0.08 ms
+#   stop query (state_is_unsafe of one point: its 51-pose
+#     forecast, whatever the rules)                         0.074-0.078 ms
+#     + per static zone whose margin ring's box holds it   +0.027-0.033 ms
+#       (in its band, inside or outside the ring; +0.010-0.012 ms out of it)
+#     + per moving zone the search can meet                +0.14-0.20 ms
+#     + per altitude envelope                              +0.04 ms
+#     + per corridor, per centreline segment               +0.046 ms
+#     + a stand-off ring, a clearance map                  +0.005-0.009 ms
+#   read of one position (rule_clearances)                 0.002-0.004 ms
+#     + per zone it reads                                  +0.016-0.018 ms
+#     + per other rule (a corridor the dearest)            +0.0003-0.0035 ms
+#     + per moving zone (built at the view's time; a stop
+#       query in the same view reuses it)                  +0.04-0.05 ms
 #
-# so a stop query costs 1 + MOVING_ZONE_STOP_COST per moving zone, a transit
-# evaluation TRANSIT_EVAL_COST + MOVING_ZONE_EVAL_COST per moving zone
-# (_charges counts the zones), and a unit is at most about 0.2 ms where the
-# zones are few and broad, up to 0.27 ms with several thin bars near the
-# aircraft (static ones too: a stop query tests a zone at every one of its
-# 51 forecast poses whenever the point is in the zone's bounding box). At
-# MAX_QUERIES = 300 the fruitless search took 29-49 ms in the review's
-# worlds (bars closing at 3-6 m/s, the thin wall, a zone opening over the
-# aircraft and reaching past 60 m), 20-24 ms at the city demo's 3 s / 0.5 s,
-# 16 ms in a courtyard walled by a clearance map, and at most 81 ms in the
-# seeded fuzz of tests/test_hold_transit.py (desktop, best of 3, two
-# measurements on 2026-10-20). The library's dearest plan spends 176 units
-# (time-window-opens-on-vehicle, 42-44 ms).
+# charged (_Ledger.stop_cost) STOP_QUERY_COST, + STATIC_ZONE_STOP_COST per
+# static zone whose box holds the point (any band, binding or not: the stop
+# query tests them all), + MOVING_ZONE_STOP_COST per moving zone the search
+# can meet, + the policy's other rules (_STOP_RULE_COST); a read
+# (_Ledger.read_cost) READ_COST + ZONE_READ_COST per zone + RULE_READ_COST
+# per other rule + MOVING_ZONE_READ_COST per moving zone. A transit
+# evaluation is the reads it makes (the pose; the start again for a moving
+# rule being left); the start's own reads are made once a search. tests/test_hold_transit.py test_the_budget_charges_what_the_search_
+# makes holds the charges to the calls, and test_each_charge_bounds_what_its_
+# call_costs (wall clock, GUARDRAIL_TIMING_TESTS=1) re-measures them on the
+# machine it runs on.
+#
+# THE CHEAP TEST. Before a candidate's stop query, the rules that stand
+# still (no motion: a static zone whose box holds the point, an altitude
+# envelope, a corridor, clearance, a stand-off from a still subject) are
+# read at the point (_Ledger.breached), in the arrival view: one of them
+# breached there, hard and enforced, is a stop the Shield calls illegal at
+# t = 0 of its own forecast (each of those checks flags a pose inside it
+# that a stop does not leave - a static zone's "not escaping", a corridor's
+# "not returning", an altitude's "not climbing", a stand-off's "not
+# opening", clearance's "not receding"), so the candidate is dropped without
+# one. A moving rule is never read here: a stop inside a zone or ring that
+# moves away from it can be legal (the zone's own motion is the escape).
+# tests/test_hold_transit.py test_the_cheap_test_drops_only_what_the_stop_
+# query_refuses checks it against the stop query in random worlds.
+#
+# What the budget reaches (2026-10-21, desktop, best of 3; the final
+# review's reach world, tests/test_hold_transit.py test_a_static_world_is_
+# searched_to_its_edge): a square always-on zone
+# centred on the aircraft is left to its nearest legal point at a half-width
+# of 30, 50 and 57.5 m (the last ring is 60 m), each search inside the
+# budget. Until then every candidate cost a whole stop query whatever it
+# held, 300 of them were the budget, and 16 headings over the rings out to
+# 28 m spent it: nothing past about 28 m was ever tried (final review of
+# T1c, P1), so a hold that needed 30 m was held inside the zone.
+# With moving zones the reach is what MAX_QUERIES buys at their price (the
+# 40 m bar closing at 3 m/s is still fruitless inside the budget).
+#
+# What it costs: MAX_QUERIES units is about 60 ms of the desktop's time, and
+# the fruitless searches measured stay near that whatever the world - the
+# review's worlds (bars closing at 3-6 m/s, a zone opening over the aircraft
+# and reaching past 60 m, 5 and 20 overlapping zones, 20 stacked out-of-band
+# zones over the aircraft) and 20 diamond-shaped zones whose boxes hold
+# every candidate (docs/DESIGN-hold-points.md, "The budget", has the table).
+# Until 2026-10-21 static zones were charged nothing: with 20 overlapping
+# zones the fruitless search took 226 ms, and with 20 diamonds 907 ms (each
+# stop query tested a diamond at all 51 forecast poses of the stop, about
+# 0.45 ms a zone, which shield.py _check_fence now tests once).
 #
 # History (review of T1c): until 2026-10-20 only stop queries were counted;
 # then a transit pose counted as a whole stop query, out of 800 - and the
 # fruitless search against a bar closing at 3 m/s took 127-135 ms, over the
-# tick (re-review P3), and 0.5 s in a fuzz world with three bars near.
-MAX_QUERIES = 300
-MOVING_ZONE_STOP_COST = 1.0
-TRANSIT_EVAL_COST = 0.4
-MOVING_ZONE_EVAL_COST = 0.5
+# tick (re-review P3), and 0.5 s in a fuzz world with three bars near; then
+# (until 2026-10-21) 300 units of a stop query each, moving zones charged,
+# static ones not.
+UNIT_MS = 0.1
+MAX_QUERIES = 600
+STOP_QUERY_COST = 0.8
+STATIC_ZONE_STOP_COST = 0.35
+MOVING_ZONE_STOP_COST = 2.0
+# Per rule of the policy, by type (a corridor's per centreline segment).
+_STOP_RULE_COST = {"altitude_envelope": 0.4, "corridor": 0.5, "corridor_swap": 0.5,
+                   "subject_standoff": 0.1, "obstacle_clearance": 0.1}
+READ_COST = 0.05
+ZONE_READ_COST = 0.2
+RULE_READ_COST = 0.05
+MOVING_ZONE_READ_COST = 0.5
 # A moved point must stay legal this far off it in each horizontal direction
 # (four more stop queries, made only for a point that already passed): the
 # Shield's zone test is strict, so a point exactly ON a margin ring is legal
@@ -245,40 +303,150 @@ def _ids(vios: Iterable[Any]) -> tuple[str, ...]:
     return tuple(sorted({v.rule_id for v in vios}))
 
 
-def _speeds(shield) -> tuple[float, float, str]:
+def _speeds(shield, climb_m: float = 0.0) -> tuple[float, float, str]:
+    """(speed, climb rate, the reason's words) a transit is planned at: the
+    tightest enforced caps in force at any time a transit the search plans
+    can still be flying - the longest is RADII_M[-1] at the speed, or
+    `climb_m` at the climb rate - else DEFAULT_SPEED_MPS / DEFAULT_CLIMB_MPS.
+
+    Shield.kinematic_caps answers for one lookahead; a transit can be three
+    times as long (60 m at 4 m/s, 15 s). Until 2026-10-21 the caps of the
+    first lookahead were the plan's, so a tighter hard cap whose window
+    opened after it but before arrival was broken by the transit while the
+    reason said it entered no rule (final review of T1c, P3: a 1 m/s P0 cap
+    opening 5.6 s ahead, the hold 23.5 m off at 4 m/s, 5 of 100 transit
+    instants over the cap). Now each lookahead up to the longest transit is
+    read in its own look-ahead view (a window opens and closes only on whole
+    minutes, shield.py _Schedule, so the views miss none), and a cap that
+    tightens the speed lengthens the horizon, read again until nothing
+    tighter comes into force."""
+    look = max(float(shield.lookahead_s), 1e-3)
     caps = shield.kinematic_caps()
-    if caps is None:
-        return (DEFAULT_SPEED_MPS, DEFAULT_CLIMB_MPS,
+    speed, climb = ((caps.speed_max_mps, caps.climb_rate_max_mps) if caps is not None
+                    else (DEFAULT_SPEED_MPS, DEFAULT_CLIMB_MPS))
+    found = caps is not None
+    later = False
+    j = 1
+    while j * look < max(RADII_M[-1] / speed, abs(climb_m) / climb):
+        with shield.looking_ahead(j * look):
+            cj = shield.kinematic_caps()
+        if cj is not None:
+            if cj.speed_max_mps < speed - 1e-12 or cj.climb_rate_max_mps < climb - 1e-12:
+                later = found = True
+            speed = min(speed, cj.speed_max_mps)
+            climb = min(climb, cj.climb_rate_max_mps)
+        j += 1
+    if not found:
+        return (speed, climb,
                 f"no enforced speed cap in force: {DEFAULT_SPEED_MPS:g} m/s and "
                 f"{DEFAULT_CLIMB_MPS:g} m/s climb assumed")
-    return (caps.speed_max_mps, caps.climb_rate_max_mps,
-            f"planned at the policy's {caps.speed_max_mps:g} m/s speed cap and "
-            f"{caps.climb_rate_max_mps:g} m/s climb cap")
+    when = (f"in force before the longest transit the search plans ends "
+            f"({max(RADII_M[-1] / speed, abs(climb_m) / climb):.1f} s)" if later
+            else "in force")
+    return (speed, climb,
+            f"planned at the tightest enforced {speed:g} m/s speed cap and "
+            f"{climb:g} m/s climb cap {when}")
 
 
-def _charges(shield, state: State, horizon_s: float) -> tuple[float, float, int]:
-    """(a stop query's charge, a transit evaluation's, the moving zones
-    counted) for one search from `state` whose queries look up to
-    `horizon_s` ahead (MAX_QUERIES, "THE SEARCH'S BUDGET"). A moving zone
-    counts when the search can meet it: it turns (a turning zone reaches as
-    far as it is long, which the Shield's motion model does not report), or
-    its margin ring is no farther than the search's reach plus how far it
-    moves within the horizon. Soft and monitor-only zones count too: the
-    stop query checks every zone. A moving subject's ring is one distance
-    per pose and is not counted."""
-    motion = shield.rule_motion()
-    if not motion:
-        return 1.0, TRANSIT_EVAL_COST, 0
-    horizon = float(horizon_s)
-    room = shield.rule_clearances(state, motion)
-    m = 0
-    for rid, (ux, uy, w, _, _) in motion.items():
-        c = room.get(rid)
-        if c is None or not c.keep_out:
-            continue
-        if w or c.h <= RADII_M[-1] + math.hypot(ux, uy) * horizon:
-            m += 1
-    return (1.0 + MOVING_ZONE_STOP_COST * m, TRANSIT_EVAL_COST + MOVING_ZONE_EVAL_COST * m, m)
+_ZONE_TYPES = ("polygon_fence", "circle_fence", "dynamic_nfz")
+# The rule types the cheap test reads, by what a stop there is judged on
+# (THE CHEAP TEST); a landing reads only those a SITE can satisfy.
+_STILL_TYPES = _ZONE_TYPES + ("altitude_envelope", "subject_standoff",
+                              "obstacle_clearance") + _TUBE_TYPES
+_SITE_TYPES = _ZONE_TYPES + ("subject_standoff", "obstacle_clearance")
+
+
+class _Ledger:
+    """One search's budget (THE SEARCH'S BUDGET): what is left (`left`, in
+    units; `spent`), and what each Shield call costs in this world, read
+    once from the start. `horizon_s` is how far ahead the search's queries
+    look; `site_only` restricts the cheap test to the rules a landing site
+    can satisfy (LAND_SITE_CATEGORIES)."""
+
+    def __init__(self, shield, state: State, horizon_s: float, site_only: bool = False):
+        self.left = float(MAX_QUERIES)
+        self.motion = shield.rule_motion()
+        self.rows = rows = shield.rule_status(state)
+        horizon = float(horizon_s)
+        # Moving zones the search can meet: it turns (a turning zone reaches
+        # as far as it is long, which the Shield's motion model does not
+        # report), or its margin ring is no farther than the search's reach
+        # plus how far it moves within the horizon. Soft and monitor-only
+        # zones count: the stop query checks every zone.
+        zone_ids = {r["id"] for r in rows if r["type"] in _ZONE_TYPES}
+        moving = [rid for rid in self.motion if rid in zone_ids]
+        room = shield.rule_clearances(state, moving) if moving else {}
+        self.moving_zones = frozenset(moving)
+        self.zones = frozenset(zone_ids)
+        # What every stop query costs whatever the point (its forecast, and
+        # the rules other than zones; a corridor by its segments).
+        self.stop_base = STOP_QUERY_COST
+        for r in rows:
+            k = _STOP_RULE_COST.get(r["type"], 0.0)
+            if r["type"] in _TUBE_TYPES:
+                k *= max(1, len(r["rule"].points()) - 1)
+            self.stop_base += k
+        # The reads just made, charged like any other (the search's transits
+        # reuse the start's rows: transit_breaks, `start_reads`).
+        self.left -= self.read_cost(r["id"] for r in rows)
+        if moving:
+            self.left -= self.read_cost(moving)
+        self.m = 0
+        for rid in moving:
+            ux, uy, w, _, _ = self.motion[rid]
+            c = room.get(rid)
+            if c is not None and (w or c.h <= RADII_M[-1] + math.hypot(ux, uy) * horizon):
+                self.m += 1
+        recs = {r.rule.id: r for r in shield.ir.fences}
+        # Every static zone's ring box (the stop query's index tests them all).
+        self.boxes = [recs[rid].bounds for rid in zone_ids
+                      if rid in recs and rid not in self.motion]
+        kinds = _SITE_TYPES if site_only else _STILL_TYPES
+        still = [r for r in rows if _binding_row(r) and r["type"] in kinds
+                 and r["id"] not in self.motion]
+        self.pre_zones = [(r["id"], recs[r["id"]].bounds) for r in still
+                          if r["type"] in _ZONE_TYPES and r["id"] in recs]
+        self.pre_rules = [r["id"] for r in still if r["type"] not in _ZONE_TYPES]
+        self.start_reads = None
+
+    @property
+    def spent(self) -> float:
+        return MAX_QUERIES - self.left
+
+    def read_cost(self, ids) -> float:
+        """What one rule_clearances read of these rules is charged."""
+        ids = list(ids)
+        z = sum(1 for r in ids if r in self.zones)
+        return (READ_COST + ZONE_READ_COST * z + RULE_READ_COST * (len(ids) - z)
+                + MOVING_ZONE_READ_COST * sum(1 for r in ids if r in self.moving_zones))
+
+    def stop_cost(self, p: State) -> float:
+        """What a stop query at p is charged."""
+        n = sum(1 for x0, y0, x1, y1 in self.boxes
+                if x0 <= p.x <= x1 and y0 <= p.y <= y1)
+        return self.stop_base + STATIC_ZONE_STOP_COST * n + MOVING_ZONE_STOP_COST * self.m
+
+    def breached(self, shield, p: State) -> bool:
+        """THE CHEAP TEST, in the caller's view: is a still, hard, enforced
+        rule breached at p? Charged as the read it makes."""
+        ids = self.pre_rules + [rid for rid, (x0, y0, x1, y1) in self.pre_zones
+                                if x0 <= p.x <= x1 and y0 <= p.y <= y1]
+        if not ids:
+            return False
+        self.left -= self.read_cost(ids)
+        return any(c.breach for c in shield.rule_clearances(p, ids).values())
+
+    def stop_ok(self, shield, p: State, categories=None) -> bool:
+        """The cheap test, then the stop query: no hard enforced violation
+        of a stop at p from the view's time through the lookahead (of the
+        given categories only, when given)."""
+        if self.breached(shield, p):
+            return False
+        self.left -= self.stop_cost(p)
+        vios = shield.hard_violations(shield.state_is_unsafe(p))
+        if categories is not None:
+            vios = [v for v in vios if v.category in categories]
+        return not vios
 
 
 def _band(shield, state: State) -> tuple[float, float] | None:
@@ -345,7 +513,7 @@ def _neighbours(p: State) -> list[State]:
 
 
 def _search(shield, state: State, speed: float, climb: float, up_t: float,
-            heading, quick_ok, accept, budget: list, vertical: bool = True):
+            heading, quick_ok, accept, ledger: "_Ledger", vertical: bool = True):
     """The ring search holds and landings share (module docstring, "THE
     SEARCH"). Candidates in travel-time order, one look-ahead view per
     arrival time; `quick_ok(p, t_a)` is the cheap test made inside that view,
@@ -355,8 +523,8 @@ def _search(shield, state: State, speed: float, climb: float, up_t: float,
     was made twice, once here and once in accept, at the same time). On the
     first accepted candidate of a ring, its heading is searched again between
     the previous ring and this one every REFINE_STEP_M, and the nearest
-    accepted point wins. `budget` ([stop-query equivalents left]) bounds the
-    whole search."""
+    accepted point wins. `ledger` (_Ledger: the units left) bounds the whole
+    search."""
     cands = _candidates(state, speed, climb, up_t, heading, vertical)
     tz = abs(up_t - state.up) / climb if abs(up_t - state.up) > 1e-9 else 0.0
     # Candidates are judged one at a time, in order: the quick test in a view
@@ -378,14 +546,14 @@ def _search(shield, state: State, speed: float, climb: float, up_t: float,
             while i < n and round(cands[i][0], 9) == t_a:
                 c = cands[i]
                 i += 1
-                if budget[0] <= 0:
+                if ledger.left <= 0:
                     return None
                 if quick_ok(State(x=c[3], y=c[4], up=c[5], yaw_deg=state.yaw_deg), t_a):
                     hit = c
                     break
         if hit is not None:
             tt, _, k, x, y, _ = hit
-            if budget[0] <= 0:
+            if ledger.left <= 0:
                 return None
             plan = accept(math.hypot(x - state.x, y - state.y), k, tt, x, y, True)
             if plan is None:
@@ -396,7 +564,7 @@ def _search(shield, state: State, speed: float, climb: float, up_t: float,
                 r0 = lower[-1] if lower else 0.0
                 ang = 2.0 * math.pi * k / DIRECTIONS
                 j = 1
-                while r0 + j * REFINE_STEP_M < r - 1e-9 and budget[0] > 0:
+                while r0 + j * REFINE_STEP_M < r - 1e-9 and ledger.left > 0:
                     rr = r0 + j * REFINE_STEP_M
                     better = accept(rr, k, max(rr / speed, tz),
                                     state.x + rr * math.cos(ang),
@@ -421,6 +589,9 @@ def _pose_at(start: State, end: State, tau: float, speed: float, climb: float) -
 
 
 BUDGET_SPENT = "(query budget spent)"
+# How a plan's reason names the budget when it stopped the search.
+BUDGET_NOTE = (f"the search's budget of {MAX_QUERIES:g} units (about "
+               f"{MAX_QUERIES * UNIT_MS:g} ms of the desktop's time)")
 
 
 class _Spent(Exception):
@@ -441,8 +612,7 @@ def _depth(c) -> float:
 
 def transit_breaks(shield, start: State, end: State, travel_s: float, speed: float,
                    climb: float, escaping: Iterable[str] = (),
-                   budget: list | None = None,
-                   eval_cost: float | None = None) -> list[str]:
+                   ledger: "_Ledger | None" = None) -> list[str]:
     """The hard enforced rules the straight transit from `start` to `end`
     breaks on the way, judged at EVERY instant of it - not at sampled poses
     (module constants, "THE TRANSIT TEST'S GUARANTEE"). [] = a legal transit.
@@ -511,28 +681,35 @@ def transit_breaks(shield, start: State, end: State, travel_s: float, speed: flo
     longer read; and a stop at the start is read again only for a moving
     rule being left (a still one's room at the start does not change).
 
-    `budget` ([stop-query equivalents left], the search's): reading the
-    start and each evaluated pose costs `eval_cost` (TRANSIT_EVAL_COST when
-    not given; the search passes its world's, _charges); a transit the budget
-    runs out on is not a legal one ([BUDGET_SPENT])."""
+    `ledger` (the search's _Ledger, "THE SEARCH'S BUDGET"): each read is
+    charged as what it reads (_Ledger.read_cost); the start's own reads -
+    every rule's status and the binding rules' rooms, the same for every
+    transit of a search from it - are made and charged once a search and
+    kept on the ledger. A transit the budget runs out on is not a legal one
+    ([BUDGET_SPENT])."""
     T = float(travel_s)
     dx, dy, dz = end.x - start.x, end.y - start.y, end.up - start.up
     d = math.hypot(dx, dy)
     if T <= 1e-12 or (d <= 1e-9 and abs(dz) <= 1e-9):
         return []
     esc = set(escaping)
-    cost = TRANSIT_EVAL_COST if eval_cost is None else float(eval_cost)
 
-    def charge() -> None:
-        if budget is not None:
-            if budget[0] <= 0:
+    def charge(ids) -> None:
+        if ledger is not None:
+            if ledger.left <= 0:
                 raise _Spent
-            budget[0] -= cost
+            ledger.left -= ledger.read_cost(ids)
 
     try:
-        charge()
-        types = {r["id"]: r["type"] for r in shield.rule_status(start) if _binding_row(r)}
-        c0 = shield.rule_clearances(start, types)
+        if ledger is not None and ledger.start_reads is not None:
+            types, c0 = ledger.start_reads
+        else:
+            rows = ledger.rows if ledger is not None else shield.rule_status(start)
+            types = {r["id"]: r["type"] for r in rows if _binding_row(r)}
+            charge(types)
+            c0 = shield.rule_clearances(start, types)
+            if ledger is not None:
+                ledger.start_reads = (types, c0)
     except _Spent:
         return [BUDGET_SPENT]
     if not c0:
@@ -574,10 +751,12 @@ def transit_breaks(shield, start: State, end: State, travel_s: float, speed: flo
     def sample(tau: float):
         """(tau, pose, its rule readings, the start's for rules being left)
         - the live rules only, in a view tau seconds on."""
-        charge()
         p = _pose_at(start, end, tau, speed, climb)
         ids = sorted(live)
         moving_left = [rid for rid in ids if rid in leave and rid not in leave_still]
+        charge(ids)
+        if moving_left:
+            charge(moving_left)
         with shield.looking_ahead(tau):
             cp = shield.rule_clearances(p, ids)
             cs = shield.rule_clearances(start, moving_left) if moving_left else {}
@@ -742,18 +921,16 @@ def choose_hold_point(shield, state: State, *, unsafe: list | None = None,
                          reason=(f"{what}; the hold-point search is off "
                                  f"(Shield(hold_points=False)): held here, as before "
                                  f"2026-10-19"))
-    speed, climb, why_speed = _speeds(shield)
     up_t = hold_altitude(shield, state)
-    budget = [MAX_QUERIES]
+    speed, climb, why_speed = _speeds(shield, up_t - state.up)
     tz = abs(up_t - state.up) / climb
-    stop_cost, eval_cost, _ = _charges(shield, state,
-                                       max(RADII_M[-1] / speed, tz) + look)
+    ledger = _Ledger(shield, state, max(RADII_M[-1] / speed, tz) + look)
 
     def stop_ok(p: State) -> bool:
         # Inside a looking_ahead view: a stop at p, from the view's time,
-        # breaks no hard enforced rule through the lookahead.
-        budget[0] -= stop_cost
-        return not shield.hard_violations(shield.state_is_unsafe(p))
+        # breaks no hard enforced rule through the lookahead (the cheap
+        # test first, THE CHEAP TEST).
+        return ledger.stop_ok(shield, p)
 
     def accept(r: float, k: int, t_a: float, x: float, y: float,
                checked: bool = False) -> HoldPoint | None:
@@ -771,7 +948,7 @@ def choose_hold_point(shield, state: State, *, unsafe: list | None = None,
             with shield.looking_ahead(t_a):
                 if not stop_ok(p):
                     return None
-        if transit_breaks(shield, state, p, t_a, speed, climb, breaks, budget, eval_cost):
+        if transit_breaks(shield, state, p, t_a, speed, climb, breaks, ledger):
             return None
         with shield.looking_ahead(t_a):
             if not all(stop_ok(q) for q in _neighbours(p)):
@@ -788,12 +965,10 @@ def choose_hold_point(shield, state: State, *, unsafe: list | None = None,
                     f"here would be then ({why_speed})"))
 
     plan = _search(shield, state, speed, climb, up_t, heading,
-                   lambda p, t_a: stop_ok(p), accept, budget)
+                   lambda p, t_a: stop_ok(p), accept, ledger)
     if plan is not None:
         return plan
-    capped = budget[0] <= 0
-    limit = (f"the search's budget of {MAX_QUERIES:g} stop queries" if capped
-             else f"{RADII_M[-1]:g} m")
+    limit = BUDGET_NOTE if ledger.left <= 0 else f"{RADII_M[-1]:g} m"
     return HoldPoint("LOITER", "in_place", state.x, state.y, state.up, legal=False,
                      breaks=breaks, checked_s=look,
                      reason=(f"{what}; no point within {limit} is legal from arrival "
@@ -912,16 +1087,13 @@ def choose_landing_site(shield, state: State, *, unsafe: list | None = None,
                                  f"2026-10-19{floor_note}"))
     speed, climb, why_speed = _speeds(shield)
     escaping = _ids(unsafe)
-    budget = [MAX_QUERIES]
-    stop_cost, eval_cost, _ = _charges(shield, state, RADII_M[-1] / speed + checked_s)
+    ledger = _Ledger(shield, state, RADII_M[-1] / speed + checked_s, site_only=True)
 
     def probe(x: float, y: float, alt: float) -> bool:
         # Inside a looking_ahead view: no site-choosable rule broken by a
-        # stop at (x, y, alt) from the view's time through the lookahead.
-        budget[0] -= stop_cost
-        return not [v for v in shield.hard_violations(
-                        shield.state_is_unsafe(State(x=x, y=y, up=alt)))
-                    if v.category in LAND_SITE_CATEGORIES]
+        # stop at (x, y, alt) from the view's time through the lookahead
+        # (the cheap test first, on the rules a site can satisfy).
+        return ledger.stop_ok(shield, State(x=x, y=y, up=alt), LAND_SITE_CATEGORIES)
 
     def quick(x: float, y: float, t_a: float) -> bool:
         """The top of the descent on arrival and the ground at touchdown;
@@ -947,14 +1119,17 @@ def choose_landing_site(shield, state: State, *, unsafe: list | None = None,
                 if not quick(x, y, t_a):
                     return None
         p = State(x=x, y=y, up=state.up, yaw_deg=state.yaw_deg)
-        if transit_breaks(shield, state, p, t_a, speed, climb, escaping, budget,
-                          eval_cost):
+        if transit_breaks(shield, state, p, t_a, speed, climb, escaping, ledger):
             return None
         with shield.looking_ahead(t_a):
             for q in _neighbours(State(x=x, y=y, up=state.up)):
                 if not quick(q.x, q.y, t_a):
                     return None
-        budget[0] -= 2 * (math.ceil(descent_s / look) + 1) * stop_cost
+        # The descent's chunks: at most two altitudes and the zone edges
+        # between them per lookahead-long chunk (counted as two), and the
+        # corridor footprint's rule_status.
+        ledger.left -= (2 * (math.ceil(descent_s / look) + 1) * ledger.stop_cost(p)
+                        + ledger.read_cost(r["id"] for r in ledger.rows))
         if landing_breaks(shield, x, y, state.up, t_a, descent_mps, edges):
             return None
         return HoldPoint(
@@ -974,12 +1149,10 @@ def choose_landing_site(shield, state: State, *, unsafe: list | None = None,
         return quick(p.x, p.y, t_a)
 
     plan = _search(shield, state, speed, climb, state.up, heading, quick_ok, accept,
-                   budget, vertical=False)
+                   ledger, vertical=False)
     if plan is not None:
         return plan
-    capped = budget[0] <= 0
-    limit = (f"the search's budget of {MAX_QUERIES:g} stop queries" if capped
-             else f"{RADII_M[-1]:g} m")
+    limit = BUDGET_NOTE if ledger.left <= 0 else f"{RADII_M[-1]:g} m"
     return HoldPoint("LAND", "in_place", state.x, state.y, state.up, legal=False,
                      breaks=tuple(bad_here), checked_s=checked_s,
                      reason=(f"{why_here}; no site within {limit} is legal by a "

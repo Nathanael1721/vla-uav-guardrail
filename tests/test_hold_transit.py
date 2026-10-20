@@ -45,6 +45,7 @@ search's plans - in worlds with stand-off rings, clearance maps, corridors
 and windows opening or closing on the way checks the test itself.
 """
 import math
+import os
 import random
 import sys
 import time
@@ -64,6 +65,7 @@ from guardrail.shield import Shield  # noqa: E402
 
 DEMO = ROOT / "policies" / "sim_demo_policy.yaml"
 DENSE = 1000
+SKIP = "SKIP"
 KIN = {"id": "kin", "type": "kinematic_envelope", "constraint_type": "hard",
        "priority": "P1", "violation_action": "repair", "speed_max_mps": 4.0,
        "climb_rate_max_mps": 2.0, "yaw_rate_max_dps": 45.0}
@@ -565,70 +567,311 @@ def test_no_random_transit_called_legal_enters_or_dips():
     assert not problems, problems[:4]
 
 
-def _counted_search(sh: Shield, st: State, fn=None):
-    """Run a search, counting the Shield calls it makes: (plan, charged
-    units, stop queries, transit evaluations). Not the search's: the start's
-    own stop query (unsafe=None) and the hold altitude's rule_status. A
-    transit check reads the start once (rule_status and rule_clearances, one
-    evaluation) and each evaluated pose once (with the start again, for a
-    moving rule being left); _charges reads the start's rooms once."""
-    calls = {"stop": 0, "status": 0, "pose": 0}
-    orig_stop, orig_status, orig_clear = sh.state_is_unsafe, sh.rule_status, sh.rule_clearances
+def _square_world(half: float, margin: float = 1.0, *extra: dict, now=None) -> Shield:
+    """The final review's reach world (scratch rv_t1d_scripts/reach.py): a
+    square always-on zone `half` m either side of the aircraft at (0, 0, 15),
+    margin 1 m, the 4 m/s cap, nothing moving - the nearest legal hold is
+    half + margin + HOLD_MARGIN_M away."""
+    pol = Policy.model_validate({"policy_id": "sq", "constraints": [KIN, {
+        "id": "zone", "type": "polygon_fence", "constraint_type": "hard", "priority": "P0",
+        "violation_action": "repair", "margin_m": margin,
+        "vertices": [{"x": -half, "y": -half}, {"x": half, "y": -half},
+                     {"x": half, "y": half}, {"x": -half, "y": half}],
+        "altitude_floor_m": 0, "altitude_ceiling_m": 100}, *extra]})
+    sh = Shield(pol, escalation=False, now=(lambda: now) if now else None)
+    sh.filter(State(x=0.0, y=0.0, up=15.0), Action4D(), t=0.0)
+    return sh
 
-    def stop(*a, **k):
-        calls["stop"] += 1
-        return orig_stop(*a, **k)
 
-    def status(*a, **k):
-        calls["status"] += 1
-        return orig_status(*a, **k)
+def _overlapping(k: int) -> Shield:
+    """k always-on zones over the whole search area (the final review's cost
+    probe): nothing within 60 m is legal, and every candidate is in k boxes."""
+    zones = [{"id": f"o{j}", "type": "polygon_fence", "constraint_type": "hard",
+              "priority": "P0", "violation_action": "repair", "margin_m": 1.0,
+              "vertices": [{"x": 0.5 * j - 100 - j, "y": -0.5 * j - 100 - j},
+                           {"x": 0.5 * j + 100 + j, "y": -0.5 * j - 100 - j},
+                           {"x": 0.5 * j + 100 + j, "y": -0.5 * j + 100 + j},
+                           {"x": 0.5 * j - 100 - j, "y": -0.5 * j + 100 + j}],
+              "altitude_floor_m": 0, "altitude_ceiling_m": 100} for j in range(k)]
+    sh = Shield(Policy.model_validate({"policy_id": "over", "constraints": [KIN, *zones]}),
+                escalation=False)
+    sh.filter(State(x=0.0, y=0.0, up=15.0), Action4D(), t=0.0)
+    return sh
 
-    def clear(state, *a, **k):
-        calls["pose"] += state is not st
-        return orig_clear(state, *a, **k)
-    sh.state_is_unsafe, sh.rule_status, sh.rule_clearances = stop, status, clear
+
+def _charged_search(sh: Shield, st: State, fn=None):
+    """Run a search with its Shield calls recorded: (plan, the units its
+    ledger spent, the units its calls cost by the ledger's own prices, the
+    calls by kind). Not the search's: the start's own stop query (the caller
+    passes `unsafe`), the hold altitude's rule_status (made before the
+    ledger) and the cap and motion reads (not charged)."""
+    made, calls, depth = [], [], [0]
+    orig = {n: getattr(sh, n) for n in ("state_is_unsafe", "rule_status", "rule_clearances")}
+
+    def wrap(name):
+        def call(state, *a, **k):
+            # Outermost calls only: outside a tick, rule_clearances opens one
+            # and calls itself again inside it - one read.
+            if made and not depth[0]:      # the ledger is being built, or exists
+                ids = a[0] if a else k.get("rule_ids")
+                calls.append((name, state, None if ids is None else list(ids)))
+            depth[0] += 1
+            try:
+                return orig[name](state, *a, **k)
+            finally:
+                depth[0] -= 1
+        return call
+
+    class Recorded(HP._Ledger):
+        def __init__(self, *a, **k):
+            made.append(self)
+            super().__init__(*a, **k)
+
+    real = HP._Ledger
+    HP._Ledger = Recorded
+    for n in orig:
+        setattr(sh, n, wrap(n))
     try:
-        p = (fn or HP.choose_hold_point)(sh, st)
+        unsafe = sh.hard_violations(orig["state_is_unsafe"](st))
+        p = (fn or HP.choose_hold_point)(sh, st, unsafe=unsafe)
     finally:
-        del sh.state_is_unsafe, sh.rule_status, sh.rule_clearances
-    stop_cost, eval_cost, _ = HP._charges(sh, st, 20.0)
-    stops, evals = calls["stop"] - 1, (calls["status"] - 1) + calls["pose"]
-    return p, stops * stop_cost + evals * eval_cost, stops, evals
+        HP._Ledger = real
+        for n in orig:
+            delattr(sh, n)
+    led = made[0]
+    cost, kinds = 0.0, {}
+    for name, state, ids in calls:
+        kinds[name] = kinds.get(name, 0) + 1
+        if name == "state_is_unsafe":
+            cost += led.stop_cost(state)
+        elif name == "rule_status":
+            cost += led.read_cost(r["id"] for r in led.rows)
+        else:
+            cost += led.read_cost(ids if ids is not None else [r["id"] for r in led.rows])
+    return p, led.spent, cost, kinds
 
 
 def test_the_budget_charges_what_the_search_makes():
-    """MAX_QUERIES is in stop-query units: a stop query costs 1 plus
-    MOVING_ZONE_STOP_COST per moving zone the search can meet, a transit
-    evaluation TRANSIT_EVAL_COST plus MOVING_ZONE_EVAL_COST per zone
-    (_charges). On a search that spends it all - a 40 m bar closing at
-    3 m/s, nothing clean within reach - what it charged is what it made,
-    and the plan says the budget stopped it."""
-    sh = _bar(3.0, 2.0, 40.0, 3.0)
+    """MAX_QUERIES is in units of about 0.1 ms (THE SEARCH'S BUDGET): a stop
+    query costs STOP_QUERY_COST, plus STATIC_ZONE_STOP_COST per static zone
+    whose box holds the point and MOVING_ZONE_STOP_COST per moving zone the
+    search can meet; a read READ_COST plus RULE_READ_COST per rule and
+    MOVING_ZONE_READ_COST per moving zone. On a hold search, what the ledger
+    charged is what the calls it made cost at those prices; on one that
+    spends it all (a 40 m bar closing at 3 m/s; 20 overlapping zones) the
+    spend is the budget to within one candidate, and the plan says the
+    budget stopped it. Deterministic: a count, not a clock (the wall-clock
+    half is test_each_charge_bounds_what_its_call_costs)."""
     st = State(x=0.0, y=0.0, up=15.0)
-    assert HP._charges(sh, st, 20.0) == (1.0 + HP.MOVING_ZONE_STOP_COST,
-                                          HP.TRANSIT_EVAL_COST + HP.MOVING_ZONE_EVAL_COST, 1)
-    p, spent, stops, evals = _counted_search(sh, st)
-    assert p.kind == "in_place" and not p.legal and p.breaks == ("bar",), p
-    assert stops > 0 and evals > 0, (stops, evals)
-    worst = 1.0 + HP.MOVING_ZONE_STOP_COST
-    assert HP.MAX_QUERIES - worst - 1e-9 <= spent <= HP.MAX_QUERIES + worst + 1e-9, (
-        spent, stops, evals)
-    assert f"budget of {HP.MAX_QUERIES:g} stop queries" in p.reason, p.reason
-    # A world with no moving zone: a stop query is one unit.
-    sh, st = _thin_wall()
-    assert HP._charges(sh, st, 20.0) == (1.0, HP.TRANSIT_EVAL_COST, 0)
+    led = HP._Ledger(_bar(3.0, 2.0, 40.0, 3.0), st, 20.0)
+    # The bar can meet the search; the demo policy's nfz-square (box 6-24 m
+    # both ways) holds (10, 10), not the aircraft.
+    assert led.m == 1 and led.boxes == [(6.0, 6.0, 24.0, 24.0)], (led.m, led.boxes)
+    # The demo policy's altitude band makes every stop query dearer.
+    base = HP.STOP_QUERY_COST + HP._STOP_RULE_COST["altitude_envelope"]
+    assert abs(led.stop_base - base) < 1e-12, led.stop_base
+    assert abs(led.stop_cost(st) - (base + HP.MOVING_ZONE_STOP_COST)) < 1e-12
+    assert abs(led.stop_cost(State(x=10.0, y=10.0, up=15.0))
+               - (base + HP.MOVING_ZONE_STOP_COST + HP.STATIC_ZONE_STOP_COST)) < 1e-12
+    assert abs(led.read_cost(["bar", "alt-band"]) - (
+        HP.READ_COST + HP.ZONE_READ_COST + HP.RULE_READ_COST + HP.MOVING_ZONE_READ_COST)) < 1e-12
+    over = _overlapping(20)
+    led = HP._Ledger(over, st, 20.0)
+    assert led.m == 0 and len(led.boxes) == 20
+    assert abs(led.stop_cost(st) - (HP.STOP_QUERY_COST + 20 * HP.STATIC_ZONE_STOP_COST)) < 1e-12
+    assert abs(led.read_cost(["o1", "o2"]) - (HP.READ_COST + 2 * HP.ZONE_READ_COST)) < 1e-12
+    # (world, fruitless, stop queries made): in the 20 overlapping zones
+    # every candidate is inside a still zone, so the cheap test drops each
+    # one and no stop query is made at all.
+    wall, low = _thin_wall()
+    for sh, at, fruitless, stops in ((_bar(3.0, 2.0, 40.0, 3.0), st, True, True),
+                                     (over, st, True, False),
+                                     (_square_world(20.0), st, False, True),
+                                     (wall, low, True, True)):
+        p, spent, cost, kinds = _charged_search(sh, at)
+        assert abs(spent - cost) < 1e-6, (spent, cost, kinds)
+        assert kinds.get("rule_clearances", 0) > 0, kinds
+        assert (kinds.get("state_is_unsafe", 0) > 0) == stops, kinds
+        if fruitless:
+            worst = HP._Ledger(sh, at, 20.0).stop_cost(at) + HP.READ_COST + 30 * (
+                HP.ZONE_READ_COST + HP.MOVING_ZONE_READ_COST)
+            assert HP.MAX_QUERIES <= spent <= HP.MAX_QUERIES + worst, (spent, kinds)
+            assert p.kind == "in_place" and not p.legal and HP.BUDGET_NOTE in p.reason, p
+        else:
+            assert spent < HP.MAX_QUERIES and HP.BUDGET_NOTE not in p.reason, (spent, p)
 
 
-def test_the_budget_bounds_the_search_inside_the_tick():
-    """The budget is deterministic (a count, never a clock), so it bounds the
-    search's time only if each call really costs what it is charged. Here,
-    on this machine, best of 3: a full transit evaluation (the pose and the
-    start, every rule) against a stop query, in a world with no moving zone
-    and one with one; and the fruitless search's whole time against what
-    its charges predict from the stop query's own time. Ratios, not
-    milliseconds, so a slower machine does not fail it; the milliseconds of
-    the desktop are in docs/DESIGN-hold-points.md ("Cost")."""
-    def best(fn, n):
+def test_a_static_world_is_searched_to_its_edge():
+    """Final review of T1c, P1: every candidate cost at least one stop query,
+    the budget was 300, and 16 headings over the rings out to 28 m spent it,
+    so the search's advertised 60 m reach was about 28 m in every world: a
+    square always-on zone around the aircraft was left at a half-width of
+    26 m, and from 28 m on the hold stayed inside it, marked illegal, with
+    the budget's reason (the review's reach.py). Now a candidate inside a
+    rule that stands still is dropped by a cheap read before any stop query
+    (THE CHEAP TEST): the 30 m and 50 m cases, and the last ring (57.5 m:
+    exit at 59 m), are left to the nearest legal point, hold and landing,
+    well inside the budget."""
+    st = State(x=0.0, y=0.0, up=15.0)
+    for half in (30.0, 50.0, 57.5):
+        sh = _square_world(half)
+        for fn in (HP.choose_hold_point, HP.choose_landing_site):
+            p, spent, _, _ = _charged_search(sh, st, fn)
+            assert p.kind == "moved" and p.legal, (half, fn.__name__, p)
+            assert abs(math.hypot(p.x, p.y) - (half + 1.0 + HP.HOLD_MARGIN_M)) <= \
+                HP.REFINE_STEP_M + 1e-9, (half, fn.__name__, p)
+            assert spent < 0.5 * HP.MAX_QUERIES, (half, fn.__name__, spent)
+    # Past the last ring the plan says so, not the budget.
+    p = HP.choose_hold_point(_square_world(80.0), st)
+    assert p.kind == "in_place" and not p.legal and HP.BUDGET_NOTE not in p.reason, p
+    assert f"within {HP.RADII_M[-1]:g} m" in p.reason, p.reason
+
+
+def test_the_cheap_test_drops_only_what_the_stop_query_refuses():
+    """THE CHEAP TEST drops a candidate on a still, hard, enforced rule
+    breached at the point - never one the stop query would take. In 40
+    seeded worlds (_random_world: stand-off rings with walking and standing
+    pedestrians, clearance maps, corridors, windows opening and closing,
+    moving and turning bars), 25 random points each at a random arrival
+    time: every point the cheap test drops is a stop the Shield refuses, by
+    one of the rules the test read."""
+    rng = random.Random(21)
+    kinds = ("zones", "map", "corridor", "window")
+    dropped = kept = 0
+    wrong = []
+    for i in range(40):
+        sh = _random_world(rng, kinds[i % 4])
+        st = State(x=rng.uniform(-8, 8), y=rng.uniform(-8, 8), up=15.0)
+        sh.filter(st, Action4D(), t=0.0)
+        for site_only in (False, True):
+            led = HP._Ledger(sh, st, 20.0, site_only=site_only)
+            for _ in range(25):
+                p = State(x=rng.uniform(-25, 25), y=rng.uniform(-25, 25),
+                          up=rng.choice([15.0, 9.0, 21.0, 0.0, 12.5]))
+                with sh.looking_ahead(rng.choice([0.0, 0.5, 2.0, 4.0, 7.0])):
+                    if not led.breached(sh, p):
+                        kept += 1
+                        continue
+                    dropped += 1
+                    vios = sh.hard_violations(sh.state_is_unsafe(p))
+                    read = set(led.pre_rules) | {rid for rid, _ in led.pre_zones}
+                    if not {v.rule_id for v in vios} & read:
+                        wrong.append((i, site_only, (p.x, p.y, p.up), [v.rule_id for v in vios]))
+    assert dropped >= 200 and kept >= 200, (dropped, kept)
+    assert not wrong, wrong[:4]
+
+
+def test_a_speed_cap_that_opens_on_the_way_slows_the_whole_transit():
+    """Final review of T1c, P3: the transit was planned at the caps in force
+    within the lookahead (Shield.kinematic_caps), so a tighter hard cap whose
+    window opened after it but before arrival was broken on the way: a
+    4 m/s cap, a P0 1 m/s cap opening 5.6 s ahead, the aircraft inside a
+    44 m always-on square - the plan moved to (23.5, 0) in 5.875 s at
+    4 m/s, and 5 of 100 transit instants flew 4 m/s with the 1 m/s cap in
+    force (the review's windowed_cap2.py). Now the caps in force through the
+    longest transit the search plans are read one lookahead at a time
+    (holdpoint._speeds), and the transit flies at the tighter cap from the
+    start: no instant over a cap in force, and the reason says why."""
+    slow = {"id": "slow", "type": "kinematic_envelope", "constraint_type": "hard",
+            "priority": "P0", "violation_action": "repair", "speed_max_mps": 1.0,
+            "climb_rate_max_mps": 1.0, "yaw_rate_max_dps": 45.0,
+            "valid_time": {"recurrence": {"days": ["Mon"], "start_time": "10:00",
+                                          "end_time": "11:00"}}}
+    st = State(x=0.0, y=0.0, up=15.0)
+    for ahead in (5.6, 12.0):
+        now = datetime(2026, 10, 19, 10, 0, 0) - timedelta(seconds=ahead)
+        sh = _square_world(22.0, 1.0, slow, now=now)
+        p = HP.choose_hold_point(sh, st)
+        assert p.kind == "moved" and p.legal, (ahead, p)
+        assert p.speed_mps == 1.0 and p.climb_mps == 1.0, (ahead, p)
+        assert "1 m/s speed cap" in p.reason and "before the longest transit" in p.reason, \
+            p.reason
+        end = State(x=p.x, y=p.y, up=p.up)
+        d = math.hypot(p.x, p.y)
+        v = Action4D(vx=p.speed_mps * p.x / d, vy=p.speed_mps * p.y / d)
+        for i in range(1, 101):
+            tau = p.travel_s * i / 100
+            if tau >= p.travel_s - 1e-9:
+                break
+            q = HP._pose_at(st, end, tau, p.speed_mps, p.climb_mps)
+            with sh.looking_ahead(tau):
+                over = [r["id"] for r in sh.rule_status(q, v)
+                        if r["type"] == "kinematic_envelope" and r["breach"]]
+            assert not over, (ahead, tau, over)
+    # A cap that comes into force only after the longest transit could end
+    # changes nothing: the plan is the one at 4 m/s.
+    now = datetime(2026, 10, 19, 10, 0, 0) - timedelta(seconds=40.0)
+    p = HP.choose_hold_point(_square_world(22.0, 1.0, slow, now=now), st)
+    assert p.kind == "moved" and p.speed_mps == 4.0, p
+
+
+def test_the_start_of_a_turning_zone_being_left_is_bounded_between_poses():
+    """Final review of T1c, P5 (a coverage gap): no test pinned the rate at
+    which a stop at the start can get shallower in a MOVING rule being left
+    (transit_breaks.rates' `ls`): set to 0, both hold test files and 426
+    adversarial fuzz transits still passed. For a zone that only translates
+    the start's depth is concave in time (the least of linear distances to
+    its edges), so the ends' average never overstates it where it matters
+    and the term is idle - which is why the fuzz could not see it. For an
+    L-shaped zone that turns (-53 deg/s, 4.7 m/s; found by a seeded search,
+    2026-10-21) it is not: with LEAVE_TOL_M at 0, this transit out of the
+    zone goes up to 1.1 cm deeper than a stop at the start between two
+    evaluated poses (the dense oracle, 1500 poses), transit_breaks refuses
+    it, and the same code with ls = 0 accepted it (checked by mutation when
+    the test was written). At the shipped 1 cm tolerance the claim holds
+    either way; the test pins the bound, not a flight."""
+    zone = DynamicNFZ(id="z", type="dynamic_nfz", vertices=[
+        {"x": 2.396358572284961, "y": -5.098755250654967},
+        {"x": 4.718608957224717, "y": -1.3929372773947586},
+        {"x": 0.8331504836065773, "y": 1.0418848053771956},
+        {"x": -0.3279747088633007, "y": -0.8110241812529084},
+        {"x": -4.21343318248144, "y": 1.6237979015190458},
+        {"x": -5.374558374951318, "y": -0.22911108511105827}],
+        altitude_floor_m=0, altitude_ceiling_m=100, margin_m=0.5,
+        motion={"vx_mps": 2.2642283198335083, "vy_mps": 4.082530812152869,
+                "yaw_rate_dps": -53.01150607113388})
+    sh = Shield(load_policy(DEMO), escalation=False)
+    sh.spawn_nfz(zone, t=0.0)
+    st = State(x=0.0, y=0.0, up=15.0)
+    sh.filter(st, Action4D(), t=0.0)
+    assert "z" in {v.rule_id for v in sh.hard_violations(sh.state_is_unsafe(st))}
+    end = State(x=1.9664562273650419, y=2.5305850936578915, up=15.0)
+    travel = 0.8012026511121528
+    keep = HP.LEAVE_TOL_M
+    HP.LEAVE_TOL_M = 0.0
+    try:
+        dense = _transit_problems(sh, st, end, travel, 4.0, 2.0, ("z",), n=1500)
+        got = HP.transit_breaks(sh, st, end, travel, 4.0, 2.0, ("z",))
+    finally:
+        HP.LEAVE_TOL_M = keep
+    deeper = [k[3] for k in dense if k[0] == "DEEPER"]
+    assert deeper and max(deeper) > 0.005, dense[:3]
+    assert got == ["z"], got
+
+
+def test_each_charge_bounds_what_its_call_costs():
+    """The budget is a count, so it bounds the search's time only if no call
+    costs more than it is charged. Here, on this machine, best of 3: the
+    unit (a stop query that meets no zone, over STOP_QUERY_COST), then each
+    priced call - a stop query in 20 zones' boxes, one against a moving
+    zone, a read of 20 zones, a read of a moving zone in a fresh view - and
+    three fruitless searches whole (a bar closing at 3 m/s, 20 overlapping
+    zones, 20 diamonds whose boxes hold every candidate), each within twice
+    what its charge predicts from the unit. Ratios, not milliseconds, so a
+    slower machine does not fail it.
+
+    WALL CLOCK, SO OPT-IN: it runs with GUARDRAIL_TIMING_TESTS=1 and returns
+    SKIP otherwise. Its predecessor (test_the_budget_bounds_the_search_
+    inside_the_tick, best of 3 for two of its three timings, 25 % headroom)
+    failed 1 of 40 runs with eight copies in parallel on the desktop (final
+    review of T1c, P4), and the CI runners are shared; the deterministic half
+    - every charge is what the call made - is test_the_budget_charges_what_
+    the_search_makes, which runs everywhere."""
+    if os.environ.get("GUARDRAIL_TIMING_TESTS") != "1":
+        print("      (wall clock: set GUARDRAIL_TIMING_TESTS=1 to run it)")
+        return SKIP
+
+    def best(fn, n=100):
         out = math.inf
         for _ in range(3):
             t = time.perf_counter()
@@ -637,38 +880,79 @@ def test_the_budget_bounds_the_search_inside_the_tick():
             out = min(out, (time.perf_counter() - t) / n)
         return out
 
-    st = State(x=0.0, y=0.0, up=15.0)
-    for sh in (_bar(3.0, 2.0, 40.0, 3.0), Shield(load_policy(DEMO), escalation=False)):
-        sh.filter(st, Action4D(), t=0.0)
-        stop_cost, eval_cost, m = HP._charges(sh, st, 20.0)
-
-        def stop_q(i, sh=sh):
+    def stop_at(sh, x, y):
+        def f(i):
             with sh.looking_ahead(1.0 + 0.001 * i):
-                sh.state_is_unsafe(State(x=-1.0 + 0.002 * i, y=1.0, up=15.0))
-        ids = tuple(sorted(sh.rule_clearances(st)))
+                sh.state_is_unsafe(State(x=x + 0.001 * i, y=y, up=15.0))
+        return f
 
-        def ev(i, sh=sh, ids=ids):
-            with sh.looking_ahead(0.5 + 0.001 * i):
-                sh.rule_clearances(State(x=-1.0 - 0.01 * i, y=3.0, up=15.0), ids)
-                sh.rule_clearances(st, ids)
-        stop_s, eval_s = best(stop_q, 200), best(ev, 200)
-        assert eval_s / stop_s <= 1.5 * eval_cost / stop_cost, (
-            m, eval_s * 1e3, stop_s * 1e3, eval_cost, stop_cost)
-        if m:
+    def view(sh):
+        def f(i):
+            with sh.looking_ahead(1.0 + 0.001 * i):
+                pass
+        return f
+
+    st = State(x=0.0, y=0.0, up=15.0)
+    far = _square_world(10.0)
+    unit = (best(stop_at(far, 40.0, 40.0)) - best(view(far))) / HP.STOP_QUERY_COST
+    checks = []
+    over = _overlapping(20)
+    led = HP._Ledger(over, st, 20.0)
+    checks.append(("stop, 20 zone boxes", best(stop_at(over, 0.0, 0.0)) - best(view(over)),
+                   led.stop_cost(st)))
+    ids = [f"o{j}" for j in range(20)]
+
+    def read(i):
+        with over.looking_ahead(1.0 + 0.001 * i):
+            over.rule_clearances(State(x=0.001 * i, y=0.0, up=15.0), ids)
+    checks.append(("read of 20 zones", best(read) - best(view(over)), led.read_cost(ids)))
+    bar = _bar(3.0, 2.0, 40.0, 3.0)
+    led = HP._Ledger(bar, st, 20.0)
+    checks.append(("stop, a moving zone", best(stop_at(bar, -1.0, 1.0)) - best(view(bar)),
+                   led.stop_cost(State(x=-1.0, y=1.0, up=15.0))))
+
+    def read_bar(i):
+        with bar.looking_ahead(1.0 + 0.001 * i):
+            bar.rule_clearances(State(x=-1.0, y=1.0, up=15.0), ["bar"])
+    checks.append(("read of a moving zone", best(read_bar) - best(view(bar)),
+                   led.read_cost(["bar"])))
+    for name, took, charged in checks:
+        assert took <= 2.0 * charged * unit, (name, took * 1e3, charged, unit * 1e3)
+    diamonds = Policy.model_validate({"policy_id": "d", "constraints": [KIN, {
+        "id": "core", "type": "polygon_fence", "constraint_type": "hard", "priority": "P0",
+        "violation_action": "repair", "margin_m": 1.0,
+        "vertices": [{"x": -80, "y": -80}, {"x": 80, "y": -80}, {"x": 80, "y": 80},
+                     {"x": -80, "y": 80}], "altitude_floor_m": 0, "altitude_ceiling_m": 100}] + [
+        {"id": f"d{q}{j}", "type": "polygon_fence", "constraint_type": "hard",
+         "priority": "P0", "violation_action": "repair", "margin_m": 1.0,
+         "vertices": [{"x": sx * 40 + r, "y": sy * 40}, {"x": sx * 40, "y": sy * 40 + r},
+                      {"x": sx * 40 - r, "y": sy * 40}, {"x": sx * 40, "y": sy * 40 - r}],
+         "altitude_floor_m": 0, "altitude_ceiling_m": 100}
+        for q, (sx, sy) in enumerate(((1, 1), (-1, 1), (-1, -1), (1, -1)))
+        for j, r in enumerate(40.0 + 0.2 * k for k in range(5))]})
+    dsh = Shield(diamonds, escalation=False)
+    dsh.filter(st, Action4D(), t=0.0)
+    for name, sh in (("bar closing at 3 m/s", _bar(3.0, 2.0, 40.0, 3.0)),
+                     ("20 overlapping zones", _overlapping(20)), ("20 diamonds", dsh)):
+        took = math.inf
+        for _ in range(3):
             t = time.perf_counter()
             p = HP.choose_hold_point(sh, st)
-            took = time.perf_counter() - t
-            assert p.kind == "in_place", p
-            assert took <= 1.6 * HP.MAX_QUERIES / stop_cost * stop_s, (
-                took * 1e3, stop_s * 1e3, stop_cost)
+            took = min(took, time.perf_counter() - t)
+        assert p.kind == "in_place" and HP.BUDGET_NOTE in p.reason, (name, p)
+        assert took <= 2.0 * HP.MAX_QUERIES * unit, (name, took * 1e3, unit * 1e3)
 
 
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
+    skipped = 0
     for fn in fns:
         try:
-            fn()
+            if fn() == SKIP:
+                skipped += 1
+                print(f"SKIP  {fn.__name__}")
+                continue
             print(f"PASS  {fn.__name__}")
         except AssertionError as e:
             failed += 1
@@ -676,5 +960,6 @@ if __name__ == "__main__":
         except Exception as e:                       # noqa: BLE001
             failed += 1
             print(f"ERROR {fn.__name__}\n      {type(e).__name__}: {e}")
-    print(f"\n{len(fns) - failed}/{len(fns)} passed")
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"\n{len(fns) - failed - skipped}/{len(fns)} passed{tail}")
     sys.exit(1 if failed else 0)

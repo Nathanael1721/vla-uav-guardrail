@@ -221,6 +221,14 @@
 #          test_make_demo_video's 4 tests; airsim and tokenizers, for 2 of
 #          test_real_vla_prompt's; and torch with a file outside git, for
 #          test_vla_backend_table's CPU-only row.
+#        - Opt-in wall clock: test_hold_transit's
+#          test_each_charge_bounds_what_its_call_costs (the hold-point
+#          search's charges against what each call costs on the machine)
+#          SKIPs unless GUARDRAIL_TIMING_TESTS=1, on every job: the timing
+#          test it replaced failed 1 of 40 runs with eight copies in
+#          parallel on the desktop (final review of T1c, 2026-10-21), and
+#          the runners are shared. Its deterministic half,
+#          test_the_budget_charges_what_the_search_makes, runs everywhere.
 #
 #      Each file under NOT LISTED FAILs or ERRORs on a clean copy (or passes
 #      without running what it is for), measured 2026-10-19 in all three WSL

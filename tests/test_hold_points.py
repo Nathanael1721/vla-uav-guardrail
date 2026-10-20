@@ -448,10 +448,9 @@ def test_a_transit_never_crosses_a_zone_closing_on_the_aircraft():
     7.5 s, (-52, 0) ahead of the 60 m one in 13 s - and the search stopped
     only because its budget ran out. Whether the budget reaches an escape
     that far is a question of cost, not of legality: every stop query
-    against a moving zone costs about 0.3 ms, and holdpoint.MAX_QUERIES is
-    sized so the fruitless search stays inside the 100 ms tick (the 20 m bar
-    at 2 m/s, outrun west to (-16, 0), needs about 800 of its units, 83 ms
-    on the desktop, against the 300 it has).
+    against a moving zone costs about 0.2-0.3 ms, and holdpoint.MAX_QUERIES
+    is sized so the fruitless search stays inside the 100 ms tick (about
+    60 ms of the desktop's time; "THE SEARCH'S BUDGET").
     So for those three the test asks for a clean escape or an in-place plan
     whose reason says the budget stopped it."""
     st = State(x=0.0, y=0.0, up=15.0)
@@ -468,7 +467,7 @@ def test_a_transit_never_crosses_a_zone_closing_on_the_aircraft():
             assert not (p.x > 0.0 and abs(p.y) < half_len), f"crossed the bar: {p}"
         else:
             assert not p.legal and p.breaks == ("bar",), p
-            assert f"budget of {HP.MAX_QUERIES:g} stop queries" in p.reason, p.reason
+            assert HP.BUDGET_NOTE in p.reason, p.reason
 
 
 def test_a_transit_never_closes_on_the_person_it_must_keep_clear_of():

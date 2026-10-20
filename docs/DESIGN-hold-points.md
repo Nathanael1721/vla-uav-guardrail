@@ -84,9 +84,10 @@ outside Loiter / Land are byte for byte what they were; Loiter / Land records
 gain `hold_point`, `hold_legal`, `hold_needed`; `summary()` gains `holds`,
 `holds_moved`, `holds_illegal`. `ShieldDecision.hold_point` is excluded from
 `model_dump()`; a dumped decision on a Loiter / Land tick still changes, by
-its `fsm_record` - the six escalation=True streams of the own-velocity
-identity proof (tests/test_own_velocity_forecast.py) moved at the merge with
-that branch, and the proof was rebased on 6c7cdb0 (next section).
+the four hold-point keys of its `fsm_record` and nothing else: the
+own-velocity identity proof (tests/test_own_velocity_forecast.py) leaves
+those four out and hashes the merged tree's escalation=True decisions to
+c77c77d's digests, 18,000 decisions (next section).
 
 #### The point, not the aircraft
 
@@ -116,10 +117,12 @@ radii 1-10 m every metre, 2 m to 30, 5 m to 60, at the hold altitude (the
 current one, or 0.5 m inside the hard band when the aircraft is outside it,
 straight above or below first), in travel-time order with ties to the least
 turn; the winning heading refined every 0.5 m between the last empty ring and
-the hit. Bounded by a budget of 300 stop-query units, each Shield call
-charged by what it costs (a count, not a clock, so a sweep is reproducible;
-"The budget", below). Nothing legal: in place, marked illegal, and the
-reason says when the budget stopped the search.
+the hit. A candidate inside a rule that stands still is dropped by a cheap
+read before its stop query. Bounded by a budget of 600 units of about 0.1 ms,
+each Shield call charged by what it costs in the world it is made in (a
+count, not a clock, so a sweep is reproducible; "The budget", below).
+Nothing legal: in place, marked illegal, and the reason says when the budget
+stopped the search.
 
 #### The transit, corrected 2026-10-20
 
@@ -269,44 +272,72 @@ library summary is the same to the digit (133 passed, 22 tracked, 0 failed,
 #### The budget
 
 The search's budget bounds its time on the tick it runs, as a count, never a
-clock (a sweep is reproducible on any machine): 300 units of a stop query
-with no moving zone near, each Shield call charged by what it costs
-(`holdpoint._charges`; desktop, best of 5):
+clock (a sweep is reproducible on any machine): 600 units of about 0.1 ms of
+the desktop's time (`holdpoint.UNIT_MS`), each Shield call charged by what it
+costs in the world it is made in (`holdpoint._Ledger`; desktop, best of 5,
+2026-10-21, at the grant's 5 s / 0.1 s forecast):
 
-| call | measured | charged |
+| call | measured | charged (units) |
 |---|---|---|
-| stop query (state_is_unsafe at 5 s / 0.1 s) | 0.12-0.20 ms, +0.16-0.20 ms per moving zone the search can meet | 1, +1 per moving zone |
-| transit evaluation (the pose and the start, every rule) | 0.04-0.05 ms, +0.07-0.08 ms per moving zone | 0.4, +0.5 per moving zone |
+| stop query (state_is_unsafe of one point: its 51-pose forecast) | 0.074-0.078 ms | 0.8 |
+| + per static zone whose ring's box holds the point | +0.027-0.033 ms in its band (inside or outside the ring), +0.010-0.012 ms out of it | +0.35 |
+| + per moving zone the search can meet | +0.14-0.20 ms | +2 |
+| + per altitude envelope / corridor segment / stand-off or clearance rule | +0.04 / +0.046 / +0.005-0.009 ms | +0.4 / +0.5 / +0.1 |
+| read of one position (rule_clearances) | 0.002-0.004 ms | 0.05 |
+| + per zone read / other rule read | +0.016-0.018 / +0.0003-0.0035 ms | +0.2 / +0.05 |
+| + per moving zone read (built at the view's time) | +0.04-0.05 ms | +0.5 |
 
-Until now only stop queries were counted, then a transit pose counted as a
-whole stop query, out of 800: the fruitless search against a bar closing at
-3 m/s took 127-135 ms (re-review P3), over the 100 ms tick, and 0.5 s in a
-fuzz world with three bars near. The search also wasted budget: every hit's
-stop query was made twice, every travel-time group was stop-queried whole
-before its first hit was taken (a hold under the floor shares its arrival
-time with every point within climb time: three-simultaneous-violations
-queried 193 candidates before taking the first, straight up), and the four
-neighbour queries came before a transit that usually fails in a pose or two.
-Each is gone; none changes which point wins.
+A transit evaluation is the reads it makes; the start's own reads are made
+once a search (until then every transit re-read the start's status).
 
-Now the fruitless search takes 29-49 ms in the review's worlds (bars closing
-at 3-6 m/s, the thin wall, a zone opening over the aircraft and reaching past
-60 m) and at most 81 ms in the fuzz (several thin bars near the aircraft,
-static ones too: a stop query tests a zone at each of its 51 forecast poses
-whenever the point is in the zone's bounding box, which the charges do not
-count); 20-24 ms at the city demo's 3 s / 0.5 s; 16 ms in a courtyard of a
-clearance map whose every exit crosses a building (the same with the
-clearance field's measured slope as with the sqrt(2) it replaced). Two
-measurements, 2026-10-20, desktop, best of 3. The library's dearest plan
-spends 176 units (time-window-opens-on-vehicle, 42-44 ms). What the budget
-gives up: an escape that needs more stop queries than the tick allows - the
-20 m bar closing at 2 m/s, outrun west to (-16, 0), needs about 800 units
-(83 ms); round the 20 m bar at 3 m/s, (-21.2, 21.2), more - is not found,
-and the plan says the budget stopped it. `test_a_transit_never_crosses_a_
-zone_closing_on_the_aircraft` asks those cells for a clean escape or that
-reason, not for "in place" (re-review P3); `test_the_budget_bounds_the_
-search_inside_the_tick` re-measures the charges' ratios on the machine it
-runs on.
+**The cheap test** (final review of T1c, P1). Every candidate used to cost a
+whole stop query whatever it held, the budget was 300 of them, and 16
+headings over the rings out to 28 m spent it: nothing past about 28 m was
+ever tried, in any world, so the module's "60 m" was 28 m and a hold that
+needed 30 m was held inside the zone (the review's reach world: a square
+always-on zone around the aircraft, left at a half-width of 26 m, not from
+28 m; `test_a_static_world_is_searched_to_its_edge`). Now, before a candidate's stop query, the rules that stand still -
+static zones whose box holds the point, altitude envelopes, corridors,
+clearance, a stand-off from a still subject - are read at the point in the
+arrival view, and one of them breached there, hard and enforced, drops the
+candidate: each of those checks flags a stop inside it at t = 0 of its own
+forecast ("not escaping", "not returning", "not climbing", "not opening",
+"not receding"). A moving rule is never read for it: a stop inside a zone
+that moves away from it can be legal. `test_the_cheap_test_drops_only_what_
+the_stop_query_refuses` holds it to the stop query in 40 random worlds.
+
+**What it reaches and what it costs** (desktop, best of 3, 2026-10-21; the
+final review's worlds and three more, the "before" column measured on the
+merged tree just before the change):
+
+| world | before (300 stop queries) | now (600 units) |
+|---|---|---|
+| square zone around the aircraft, half-width 30 / 50 / 57.5 m | held inside, budget spent, 35-36 ms | moved to (31.5, 0) / (51.5, 0) / (59, 0), 10-12 ms (landing 14-16 ms) |
+| square zone, half-width 80 m (nothing within 60 m) | budget spent, 36 ms | "nothing within 60 m", 11 ms |
+| a 150 m zone opening over the aircraft in 2 s | budget spent, 35 ms | nothing within 60 m, 23 ms |
+| 5 / 20 overlapping always-on zones | 77 / 226 ms | 39 / 53 ms (budget spent) |
+| 20 stacked out-of-band zones over the aircraft + a big zone | 114 ms | 31 ms (budget spent) |
+| a core zone and 20 diamonds whose boxes hold every candidate | 907 ms | 52 ms (budget spent) |
+| the same with a 12 m core (legal at 13.5 m) | 651 ms | 36 ms (landing 55 ms) |
+| 40 m bar closing at 3 m/s; 20 m bar at 2 m/s | 32 ms, budget spent | 41 ms, budget spent |
+| 3 m bar at 3 m/s | 17 ms | 14 ms |
+
+Static zones used to be charged nothing, so the budget did not bound the
+search's time with many of them (the review measured 224 ms with 20
+overlapping zones); the diamonds were worse, because a stop query tested a
+zone at all 51 forecast poses of the stop whenever the point was in the
+zone's box but outside its ring, about 0.45 ms a zone. shield.py
+`_check_fence` now tests a run of poses at one point once (a pure function;
+every decision is the same, which the own-velocity identity proof's 18,000
+decisions and `test_shieldcore_identity` hold), and the box is charged. With
+moving zones the reach is what the budget buys at their price: the bars
+closing at 2-3 m/s are still fruitless inside it. `test_the_budget_charges_
+what_the_search_makes` holds every charge to the call it paid for, and
+`test_each_charge_bounds_what_its_call_costs` re-measures the prices on the
+machine it runs on - wall clock, so only with `GUARDRAIL_TIMING_TESTS=1`
+(its predecessor failed 1 of 40 runs with eight copies in parallel, final
+review P4; on the desktop each call and each fruitless search came to
+0.65-0.98 of its charge, against a limit of 2).
 
 `Shield.looking_ahead(s)` is what makes the Shield answer "as of s seconds
 from now": its clock read that much later, moving zones aged by it, a moving
@@ -314,7 +345,13 @@ subject advanced. `test_a_look_ahead_view_answers_as_a_shield_whose_clock_is_
 later` holds it to a second Shield whose clock really is later.
 
 Speed assumption: the transit at the tightest enforced speed cap in force
-(4 m/s in every library policy) and its climb cap, else 4 m/s / 2 m/s; a
+at any time a transit the search plans can still be flying - each lookahead
+up to the longest transit read in its own look-ahead view - (4 m/s in every
+library policy) and its climb cap, else 4 m/s / 2 m/s. Until 2026-10-21 the
+first lookahead's caps were the plan's, so a tighter hard cap whose window
+opened after it but before arrival was broken by the transit (final review
+P3: a 1 m/s P0 cap opening 5.6 s ahead, 5 of 100 transit instants at 4 m/s;
+`test_a_speed_cap_that_opens_on_the_way_slows_the_whole_transit`); a
 landing descends at 0.5 m/s (ArduCopter's LAND_SPEED default). Wind is not
 modelled.
 
@@ -371,8 +408,9 @@ Three interactions, each pinned in tests/test_hold_points.py:
   velocity chooses (`test_with_a_measured_velocity_the_hold_agrees_with_
   the_fsms_own_stop_check`; `test_the_search_is_about_positions_whatever_
   velocity_the_state_carries`). Without a velocity nothing changed: the
-  own-velocity identity proof, rebased on 6c7cdb0 (the merge's first
-  parent, which has no velocity), holds on all 12 streams.
+  own-velocity identity proof holds on all 12 streams against c77c77d,
+  with the four hold-point keys left out of each dump (they are the hold
+  points' own, pinned here).
 * The arm flies a moved hold as the position target it is. Its RTL closes
   each leg with the sqrt controller of the remaining distance (ArduPilot's
   position controller), and at the merge its moved hold still flew the ideal
@@ -528,20 +566,18 @@ the 9 deg/s cell fails again, since its pin is gone.
 * Model wind. A point the aircraft cannot reach against the wind is no
   better than one it cannot hold; X6 / X7 still judge the illegal depth.
 * Cost nothing. A relocation is one search, on the tick it happens: the
-  library's moved holds took 1-44 ms on the desktop (up to 176 of the 300
-  budget units: time-window-opens-on-vehicle, whose candidates nearer than
-  10 m are all inside the zone about to open); an in-place plan 0-3 ms; the
-  per-Loiter-tick point check 0.2-1.3 ms. The worst case is a search that
-  finds nothing and spends the whole budget: 29-49 ms in the review's worlds
-  at the grant's 5 s / 0.1 s forecast (bars closing at 3-6 m/s, the thin
-  wall, a zone opening over the aircraft and reaching past 60 m), 20-24 ms at
-  the city demo's 3 s / 0.5 s, and at most 81 ms in the seeded fuzz of
-  `tests/test_hold_transit.py` (2026-10-20, best of 3, desktop otherwise
-  idle; "The budget", above). Until the re-review the 800-query budget's
+  library's moved holds took 1-44 ms on the desktop (time-window-opens-on-
+  vehicle the dearest, whose candidates nearer than 10 m are all inside the
+  zone about to open); an in-place plan 0-3 ms; the per-Loiter-tick point
+  check 0.2-1.3 ms (2026-10-20). The worst case is a search that finds
+  nothing and spends the whole budget, about 60 ms of the desktop's time:
+  31-55 ms in the worlds of "The budget", above (2026-10-21, best of 3,
+  desktop otherwise idle). Until the re-review the 800-query budget's
   fruitless search took 124-135 ms against the 40 m bar closing at 3 m/s,
-  over the 100 ms tick. A search that finds nothing is repeated at most once
-  a second (`HOLD_REPLAN_S`), and no Loiter searches more than twice a second
-  (`HOLD_MIN_REPLAN_S`). The Orin is not measured: the budget is a count, so
+  over the 100 ms tick, and until the final review 226 ms with 20
+  overlapping zones and 907 ms with 20 diamonds. A search that finds nothing
+  is repeated at most once a second (`HOLD_REPLAN_S`), and no Loiter searches
+  more than twice a second (`HOLD_MIN_REPLAN_S`). The Orin is not measured: the budget is a count, so
   a slower computer takes proportionally longer.
 * Change what the city demo flies. `demo/follow_vlm.py`'s default Shield
   (3 s / 0.5 s, its own escalation FSM on) now plans a hold point on each

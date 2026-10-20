@@ -565,8 +565,7 @@ def test_the_hold_point_and_window_lead_files_run_in_ci():
 
 def test_the_own_velocity_forecast_test_runs_in_ci():
     """Wave T1 (2026-10-20): the own-velocity forecast's file - the 18,000-
-    decision identity proof against the commit before the velocity (c77c77d,
-    6c7cdb0 since the merge with the hold points), the response fit on the
+    decision identity proof against c77c77d, the response fit on the
     committed recorded flights, the closed loop - on its tests/fixtures/
     copies, so it needs no demo/out."""
     assert "test_own_velocity_forecast.py" in _loop(), "not run in CI"
