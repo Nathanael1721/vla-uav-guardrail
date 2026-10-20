@@ -1368,19 +1368,30 @@ def rail_shield(policy: Policy, *, lookahead_s: float, dt: float,
 
 
 def audit_tick(audit, tick: int, decision, *, fsm_out=None,
-               fsm_fault: str | None = None) -> None:
+               fsm_fault: str | None = None, kind: str | None = None) -> None:
     """Write this tick's audit record with the RAIL's escalation verdict.
 
     fsm_out    the rail's FSM output for this tick (guardrail.fsm.FSMOutput),
                or None when its FSM did not step (the control arm, after an
                autopilot takeover or a fault);
     fsm_fault  the rail's FSM refusal, once it has happened (the Shield's own
-               FSM carries its fault on every later decision the same way).
+               FSM carries its fault on every later decision the same way);
+    kind       None for the tick's filter() decision; "stop_advised" for the
+               Shield's answer to a stop the rail flew instead of it
+               (guardrail.audit AuditRecord.decision_kind), always written.
+               A logger that cannot tag a record is refused rather than
+               given an untagged second record for the tick.
     Call it after the FSM stepped, so a transition is on record on its tick."""
     if fsm_fault is not None and "fsm_fault" in getattr(type(decision),
                                                          "model_fields", {}):
         decision = decision.model_copy(update={"fsm_fault": fsm_fault})
-    if "fsm_record" in inspect.signature(audit.log).parameters:
+    params = inspect.signature(audit.log).parameters
+    if kind is not None:
+        if "kind" not in params:
+            raise TypeError(f"{type(audit).__name__}.log cannot tag a {kind!r} record")
+        audit.log(tick, decision,
+                  fsm_record=fsm_out.record if fsm_out is not None else None, kind=kind)
+    elif "fsm_record" in params:
         audit.log(tick, decision,
                   fsm_record=fsm_out.record if fsm_out is not None else None)
     else:

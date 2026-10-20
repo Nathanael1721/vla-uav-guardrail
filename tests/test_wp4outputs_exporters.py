@@ -24,6 +24,11 @@ WHAT EACH TEST GUARDS
   * An audit.jsonl that a reused run folder appended across flights joins
     only the flight whose raw actions are the log's; a log no flight
     matches joins nothing, and says why.
+  * A tick's second record (decision_kind "stop_advised", the ArduPilot
+    rail since 2026-10-20) stays in its tick's flight: the filter() record
+    is joined, the stop's rides on the step as stop_advice (before, every
+    such tick split the audit into another flight and most rows lost
+    their record).
   * A replay bundle is verified before anything is exported, and a member
     changed after packing is refused. A flight log with no rows is neither
     packaged nor verified as a perfect run (the synthetic-episode test of
@@ -573,6 +578,107 @@ def test_an_appended_audit_joins_only_the_flight_that_flew():
     (new_run / "flight_log.jsonl").write_text(
         "".join(json.dumps(dict(r, episode_id="ep-a")) + "\n" for r in rows), encoding="utf-8")
     assert _export(new_run)[1]["audit_join"]["joined"] == 4     # the same id: joined
+
+
+def _advised_run(root: Path, name: str, vx_list, advised) -> tuple[Path, list]:
+    """A run folder as the ArduPilot rail writes one with the own-velocity
+    forecast on (demo/pas_ardupilot/perception_node.py, 2026-10-20): the
+    audit's tick is the log's (offset 0); on each tick in `advised` the rail
+    flew the Shield's answer to a stop (Shield.advise of a zero action)
+    instead of the pilot's action, so audit.jsonl holds the tick's filter()
+    record and then, AT THE SAME TICK, the stop's (decision_kind
+    "stop_advised"), and the row's flown_action / stop_advice are the stop's."""
+    from datetime import datetime
+    from guardrail.audit import AuditLogger
+    from guardrail.models import Action4D, State
+    from guardrail.shield import Shield
+    pol = _tw_policy()
+    sh = Shield(pol, now=lambda: datetime(2026, 10, 12, 7, 29, 58), escalation=False)
+    run = root / name
+    run.mkdir(parents=True)
+    al = AuditLogger(run / "audit.jsonl", pol)
+    rows = []
+    for i, vx in enumerate(vx_list, start=1):
+        st = State(x=0.0, y=0.0, up=10.0)
+        d = sh.filter(st, Action4D(vx=vx))
+        al.log(i, d)
+        row = {"t": round(0.1 * i, 3), "tick": i, "x": 0.0, "y": 0.0, "up": 10.0,
+               "raw": d.raw.model_dump(), "emitted": d.emitted.model_dump(),
+               "violations": [{"rule_id": v.rule_id, "category": v.category}
+                              for v in d.violations],
+               "repairs": [{"operator": r.operator} for r in d.repairs],
+               "setpoint": "pass", "flown": True, "stop_advised": i in advised,
+               "flown_action": d.emitted.model_dump(), "stop_advice": None}
+        if i in advised:
+            adv = sh.advise(st, Action4D())
+            al.log(i, adv, kind="stop_advised")
+            row["flown_action"] = adv.emitted.model_dump()
+            row["stop_advice"] = {"emitted": adv.emitted.model_dump()}
+        rows.append(row)
+    (run / "flight_log.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows),
+                                          encoding="utf-8")
+    (run / "manifest.json").write_text(json.dumps({"policy_hash": pol.policy_hash}),
+                                       encoding="utf-8")
+    return run, rows
+
+
+def test_a_stop_advised_record_is_its_tick_s_second_decision_not_a_new_flight():
+    """THE SECOND RECORD OF A TICK (2026-10-20 re-review). Since the hold that
+    stops clear, the ArduPilot rail writes a stop-advised tick's record
+    (guardrail/audit.py AuditRecord.decision_kind "stop_advised") right after
+    that tick's filter() record, with the SAME tick. audit_blocks started a
+    new flight wherever the tick did not advance, so every such tick split
+    the audit into another "flight" and join_audit kept the best single
+    fragment: on the hold rail run of tests/test_own_velocity_forecast.py
+    (81 records, 21 stop-advised) 22 "flights" and 40 of 60 rows joined, on
+    the FSM-brake run 2 of 60 - the policy state, priorities and categories
+    the steps take from the audit lost without a word but a lower `joined`.
+    Now the stop's record stays in its tick's flight; the filter() record is
+    the one joined (the stop's raw action is a zero, not the row's, so it is
+    never compared against the row either); the stop's record rides on the
+    step as `stop_advice`. An appended file still splits at the flight
+    boundary, its stop records counted with their own flight."""
+    root = _tmp("wp4_advised_")
+    advised = {2, 3}
+    run, rows = _advised_run(root, "rail", [3.0, 3.1, 3.2, 3.3], advised)
+    recs = [json.loads(x) for x in (run / "audit.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [(r["monitor_tick"], r.get("decision_kind")) for r in recs] == [
+        (1, None), (2, None), (2, "stop_advised"), (3, None), (3, "stop_advised"),
+        (4, None)], [(r["monitor_tick"], r.get("decision_kind")) for r in recs]
+    assert len(X.audit_blocks(recs)) == 1, [len(b) for b in X.audit_blocks(recs)]
+    steps, ep = _export(run)
+    j = ep["audit_join"]
+    assert (j["flights_in_audit"], j["flight"], j["tick_offset"], j["joined"]) == (1, 1, 0, 4), j
+    assert j["raw_matched"] == j["raw_comparable"] == 4, j
+    assert j["stop_advice_records"] == 2 and j["records_of_other_flights"] == 0, j
+    by_tick = {r["monitor_tick"]: r for r in recs if r.get("decision_kind")}
+    for s, r in zip(steps, rows):
+        assert s["audit_record"] and s["policy_state"]["source"] == "audit record", s
+        # the filter() record's labels, not the stop's
+        assert s["violation_type"] == ["schedule"] and s["risk_level"] == "P1", s
+        assert s["action"]["executed"] == r["flown_action"], s["action"]
+        if r["tick"] in advised:
+            a = s["stop_advice"]
+            assert a is not None and a["source"].startswith("audit record"), a
+            assert a["emitted"] == by_tick[r["tick"]]["emitted_action"] == r["flown_action"], a
+            assert "stop" in s["action"]["post_repair_source"], s["action"]
+        else:
+            assert s["stop_advice"] is None, s["stop_advice"]
+    # Appended (a reused run folder): two such flights split at the boundary
+    # only, and each flight's stop records count with it.
+    other, _ = _advised_run(root, "other", [6.0, 6.1, 6.2, 6.3], advised)
+    old_lines = (other / "audit.jsonl").read_text(encoding="utf-8")
+    new_lines = (run / "audit.jsonl").read_text(encoding="utf-8")
+    (run / "audit.jsonl").write_text(old_lines + new_lines, encoding="utf-8")
+    steps, ep = _export(run)
+    j = ep["audit_join"]
+    assert (j["flights_in_audit"], j["flight"], j["joined"]) == (2, 2, 4), j
+    assert j["records_of_other_flights"] == len(old_lines.splitlines()) == 6, j
+    assert [s["stop_advice"] is not None for s in steps] == [False, True, True, False]
+    # A second stop record at a tick that already has one is not the same
+    # tick's second decision: it starts another flight, as before.
+    dup = [recs[1], recs[2], dict(recs[2])]
+    assert [len(b) for b in X.audit_blocks(dup)] == [2, 1]
 
 
 def test_parquet_alone_without_pyarrow_writes_nothing_and_exits_3():

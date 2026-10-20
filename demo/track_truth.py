@@ -381,6 +381,13 @@ def score_standoff_firings(rows: Iterable[dict], standoffs: Iterable,
     # stays available for scoring a bundle whose audit is the only thing kept.
     fired = {}
     for a in (rows if audit_rows is None else audit_rows):
+        if a.get("decision_kind") is not None:
+            # A tick's SECOND audit record (guardrail/audit.py, since
+            # 2026-10-20 "stop_advised": the stop the ArduPilot rail flew
+            # instead of the pilot's action). Its violations are the stop's,
+            # not the tick's decision the flight log's `violations` hold, so
+            # the two sources would score different firings.
+            continue
         for v in (a.get("violations") or []):
             rid = v.get("rule_id")
             if rid:

@@ -26,7 +26,8 @@
 #          test_shield_events, test_corridor, test_clearance,
 #          test_check_contract, test_guardrail_coverage, test_frame_contract,
 #          test_fsm, test_shieldcore_*, test_api, test_profile_shield_tick,
-#          test_occ_bands, test_ros2_package.
+#          test_occ_bands, test_ros2_package, test_own_velocity_forecast (on
+#          its tests/fixtures/ copies of the recorded ArduPilot flights).
 #        WP4, the stress harness and its outputs: test_scenario_spec,
 #          test_sweep, test_kpi_magnitudes, test_kpi_report,
 #          test_harness_service, test_harnesstruth_*, test_wp4outputs_*.
@@ -410,6 +411,7 @@ jobs:
               tests/test_harnesstruth_response.py \
               tests/test_env_pins.py \
               tests/test_flight_pas_ap_20261008.py \
+              tests/test_own_velocity_forecast.py \
               tests/test_shieldcore_repair.py \
               tests/test_shieldcore_audit.py \
               tests/test_shieldcore_identity.py \

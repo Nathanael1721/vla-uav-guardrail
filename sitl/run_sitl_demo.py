@@ -114,6 +114,12 @@ from mavlink_adapter_node import (DEFAULT_HOLD_MODE, HOLD_MODES,       # noqa: E
                                   policy_ceiling_m)
 
 TICK = 0.1
+# The own-velocity forecast (docs/DESIGN-own-velocity-forecast.md): OFF by
+# default on this rail, as on sitl/ros2_shield_node.py - the response model
+# (guardrail.response.ARDUCOPTER_GUIDED) was measured on the Project AirSim
+# quad, not on ArduPilot's own SITL physics, whose recorded flights reach
+# 0.69-0.96 of the commanded speed in steady flight against 0.96 there.
+OWN_VELOCITY_DEFAULT = "off"
 # The shortest the control loop lets go of the rail's lock between two ticks,
 # even after an overrun, so a REST hot-apply waiting on it gets in (main()).
 LOCK_YIELD_S = 0.001
@@ -295,6 +301,8 @@ class MavlinkAdapter:
     # time_boot_ms of the last pose state() returned (a class default, so an
     # adapter built without __init__ - the tests do - starts with none).
     _last_pose_ms: int | None = None
+    # LOCAL_POSITION_NED's velocity with that pose (North, East, up), or None.
+    last_velocity: tuple | None = None
 
     def state(self, timeout: float = 1.0) -> State | None:
         """The NEWEST LOCAL_POSITION_NED, or None if no new one arrives
@@ -331,6 +339,14 @@ class MavlinkAdapter:
             if newest is None:
                 return None
         self._last_pose_ms = newest.time_boot_ms
+        # The same message's velocity (NED -> North, East, up), for the
+        # own-velocity forecast and the record (state_v). Kept beside the
+        # State, not in it: the loop gives it to the Shield only with
+        # --own-velocity-forecast on.
+        try:
+            self.last_velocity = (float(newest.vx), float(newest.vy), -float(newest.vz))
+        except (AttributeError, TypeError, ValueError):
+            self.last_velocity = None           # a message without the fields
         return State(x=newest.x, y=newest.y, up=-newest.z)  # NED z-down -> up-positive
 
     def send_velocity(self, vx: float, vy: float, vz_up: float,
@@ -415,6 +431,13 @@ def main() -> int:
                          "is flown as: BRAKE (default; ArduCopter's LOITER sinks with "
                          "no pilot on the throttle, see sitl/mavlink_adapter_node.py) "
                          "or LOITER for a flight with a pilot holding the throttle")
+    ap.add_argument("--own-velocity-forecast", choices=["on", "off"],
+                    default=OWN_VELOCITY_DEFAULT,
+                    help="give the Shield LOCAL_POSITION_NED's velocity, so its "
+                         "forecast starts from it through ArduCopter's measured "
+                         "response (default off on this rail: that response was "
+                         "measured on the Project AirSim quad, not on ArduPilot's "
+                         "own SITL physics; the velocity is logged either way)")
     ap.add_argument("--cost-map", action="store_true",
                     help="give every generation's CSP its cost map (costmap_csp_g<N>"
                          ".npz/.json, named in cost_map_ref; guardrail.replay."
@@ -492,8 +515,15 @@ def main() -> int:
     vla = StubVLA(mission)
     # No escalation FSM inside the Shield: this rail runs THE FSM below, fed
     # with the autopilot's state (guardrail.replay.rail_shield).
+    # pipe_clock: the setpoints sent (note_flown) are aged on the rail's own
+    # loop clock (time.time, read late so a simulated clock is followed), not
+    # on filter()'s counted 0.1 s ticks (read only with the own-velocity
+    # forecast on; docs/DESIGN-own-velocity-forecast.md).
     shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S,
-                         clock=clock)
+                         clock=clock, pipe_clock=lambda: time.time())
+    # The own-velocity forecast, Shield-on arm only (OWN_VELOCITY_DEFAULT).
+    own_v = getattr(args, "own_velocity_forecast", OWN_VELOCITY_DEFAULT) == "on" and shield_on
+    n_vel_used = 0
     # The POLICY, not a snapshot of its hash. This rail hot-applies a fence
     # mid-flight, and AuditLogger reads the hash live so records written after
     # that carry the generation that was actually in force.
@@ -617,7 +647,14 @@ def main() -> int:
         # counts a P0 escape from the violations seen on a tick, so a
         # guardrail-free flight with no violations logged scores as perfectly
         # clean - the opposite of what the A/B is for.
-        decision = shield.filter(state, raw)
+        # The own-velocity forecast (OWN_VELOCITY_DEFAULT: off on this rail):
+        # the Shield gets the pose's own velocity only when it is on.
+        vel = getattr(link, "last_velocity", None)      # a stand-in link may have none
+        st_sh = state
+        if (own_v and vel is not None and all(math.isfinite(c) for c in vel)):
+            st_sh = state.model_copy(update={"velocity": vel})
+            n_vel_used += 1
+        decision = shield.filter(st_sh, raw)
         emitted = decision.emitted if shield_on else raw
         extra = episode_row_fields(shield, state, policy, rec.episode_id)
 
@@ -693,6 +730,10 @@ def main() -> int:
         rows.append({
             "t": round(now, 3), "tick": tick,
             "x": round(state.x, 3), "y": round(state.y, 3), "up": round(state.up, 3),
+            # LOCAL_POSITION_NED's velocity (North, East, up) and whether the
+            # Shield flew on it (--own-velocity-forecast).
+            "state_v": None if vel is None else [round(c, 3) for c in vel],
+            "shield_velocity": st_sh is not state,
             "raw": raw.model_dump(),
             "emitted": emitted.model_dump(),
             "violations": [v.model_dump() for v in decision.violations],
@@ -731,6 +772,8 @@ def main() -> int:
         flown = {"pass": emitted, "brake": Action4D(), "none": None}[setpoint]
         if flown is not None:
             link.send_velocity(flown.vx, flown.vy, flown.vz_up, flown.yaw_rate)
+        # What was sent (world frame), for the own-velocity forecast's pipe.
+        shield.note_flown(flown)
         if fsm is not None and (fsm.terminal or (
                 failsafe_t is not None and now - failsafe_t > FAILSAFE_GRACE_S)):
             end_why = "escalation FSM ended the mission"
@@ -833,6 +876,16 @@ def main() -> int:
         "ticks_not_flown": sum(1 for r in rows if r.get("flown") is False),
         "shield_lookahead": {"horizon_s": LOOKAHEAD_S, "dt_s": LOOKAHEAD_DT_S,
                              "poses": int(round(LOOKAHEAD_S / LOOKAHEAD_DT_S))},
+        # Which forecast the Shield flew (docs/DESIGN-own-velocity-forecast.md).
+        "shield_forecast": {
+            "mode": "own_velocity" if own_v else "commanded",
+            "flag": "--own-velocity-forecast " + ("on" if own_v else "off"),
+            "response": (shield.velocity_response.to_dict()
+                         if shield.velocity_response else None),
+            "velocity_source": "LOCAL_POSITION_NED vx/vy/vz (pymavlink)",
+            "velocity_ticks": n_vel_used,
+            "shield_velocity_ticks": shield.n_velocity_ticks,
+            "velocity_nonfinite": shield.n_velocity_nonfinite},
         "autopilot_fence": ap_fence,
         "shield": args.shield,
         "reached": reached,

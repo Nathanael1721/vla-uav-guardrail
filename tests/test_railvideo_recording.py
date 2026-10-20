@@ -199,12 +199,39 @@ def test_the_banner_names_the_fsm_state_and_the_hold_mode_it_flies():
     assert b["text"].startswith("FSM RTL") and b["level"] == "brake", b
     b, _ = pn.rail_banner(OK, shield_on=True, fsm_state=F.LAND)
     assert b["text"].startswith("FSM Land"), b
+    # THE HOLD THAT STOPS CLEAR (review 2026-10-20: the banner said
+    # "AUTOPILOT HOLDING POSITION" while ArduCopter was still in GUIDED and
+    # the node streamed the Shield's stop). A Loiter held in GUIDED says so,
+    # and why; a Brake whose stop the Shield answered with a recovery says
+    # what a zero would have ended in; one whose answer was the zero itself
+    # keeps the zero-setpoint banner.
+    b, k = pn.rail_banner(OK, shield_on=True, fsm_state=F.LOITER, hold_ap_mode="BRAKE",
+                          hold_deferred="BRAKE WOULD END IN bld-clearance")
+    assert k == "fsm" and b["level"] == "hold", b
+    assert b["text"].startswith("FSM Loiter(GUIDED) - STOP THROUGH SHIELD"), b
+    assert "BRAKE WOULD END IN bld-clearance" in b["text"] and "AUTOPILOT" not in b["text"], b
+    b, k = pn.rail_banner(ACT, shield_on=True, fsm_state=F.BRAKE, setpoint="pass",
+                          stop_advised="bld-clearance")
+    assert k == "fsm" and b["level"] == "brake", b
+    assert "STOP THROUGH SHIELD" in b["text"] and "bld-clearance" in b["text"], b
+    b, k = pn.rail_banner(ACT, shield_on=True, fsm_state=F.BRAKE, setpoint="pass",
+                          stop_advised="")
+    assert k == "fsm" and "ZERO SETPOINT" in b["text"], b
+    from guardrail.models import Action4D
+    zero = SimpleNamespace(emitted=Action4D(), violations=[])
+    push = SimpleNamespace(emitted=Action4D(vy=0.5),
+                           violations=[SimpleNamespace(rule_id="bld-clearance")])
+    assert pn.advised_banner_rules(zero) == ""
+    assert pn.advised_banner_rules(push) == "bld-clearance"
     # Every level is one policy_hud can colour.
     from policy_hud import COLOURS
     for st in F:
         for sp in ("pass", "brake", "none"):
             assert pn.rail_banner(ACT, shield_on=True, fsm_state=st,
                                   setpoint=sp)[0]["level"] in COLOURS
+            for kw in ({"hold_deferred": "x"}, {"stop_advised": "r"}, {"stop_advised": ""}):
+                assert pn.rail_banner(ACT, shield_on=True, fsm_state=st, setpoint=sp,
+                                      **kw)[0]["level"] in COLOURS
 
 
 def test_the_control_arm_always_says_shield_off_and_never_monitored():
@@ -232,6 +259,10 @@ def test_the_shield_off_panel_sees_no_repair_and_the_raw_action_flown():
                         emitted=Action4D(vx=1.0), emitted_violations=[])
     raw = Action4D(vx=3.0)
     assert pn.hud_decision(d, raw, shield_on=True) is d
+    # A stop-advised tick: the panel reads the decision that FLEW.
+    adv = SimpleNamespace(violations=[], repairs=[], braked=False, touched=False,
+                          emitted=Action4D(), emitted_violations=[])
+    assert pn.hud_decision(d, raw, shield_on=True, advised=adv) is adv
     v = pn.hud_decision(d, raw, shield_on=False)
     assert v.repairs == [] and v.braked is False and v.emitted == raw
     assert v.emitted_violations == ["v1"], "the raw action's violations are what flew"
@@ -304,6 +335,52 @@ def test_the_hud_shows_the_fsm_state_brake_loiter_and_rtl():
     assert rtl and all(h["policy"]["banner"]["text"].startswith("FSM RTL")
                        and h["policy"]["banner"]["level"] == "brake" for h in rtl)
     assert m["recording"]["policy_hud"]["banners_shown"].get("fsm:RTL") == len(rtl)
+
+
+HOLD_CEILING_POLICY = """policy_id: pas-ap-hold
+version: 0.1.0
+constraints:
+  - id: alt-ceiling
+    type: altitude_envelope
+    constraint_type: hard
+    priority: P0
+    violation_action: loiter
+    alt_min_m: 1
+    alt_max_m: 7.5
+"""
+
+
+class VelocityLink(T.FakeLink):
+    """FakeLink with a measured velocity (its last setpoint, in GUIDED): the
+    own-velocity forecast and the hold that stops clear are on."""
+    def velocity(self):
+        from guardrail.models import Action4D
+        v = self.v if self.snap.mode == "GUIDED" else Action4D()
+        return (v.vx, v.vy, v.vz_up), "local_velocity"
+
+
+def test_the_hud_says_a_deferred_loiter_is_a_shield_stop_not_the_autopilot():
+    """While the FSM's Loiter is held in GUIDED (the hold that stops clear:
+    BRAKE's predicted stop would end above the ceiling), the screen says
+    Loiter(GUIDED) and STOP THROUGH SHIELD with the reason - never
+    "AUTOPILOT HOLDING POSITION", which it showed before (review
+    2026-10-20) - and Loiter(BRAKE) once the hold is handed to BRAKE."""
+    if not _have_pil():
+        return SKIP
+    spy, run, m, link, _ = _huds(policy=HOLD_CEILING_POLICY, link_cls=VelocityLink, max_s="5")
+    rows = T._rows(run)
+    held = [(h, r) for h, r in zip(spy.huds, rows) if r["hold_deferred"]]
+    assert held, "no deferred hold: proves nothing"
+    for h, r in held:
+        assert h["mode_label"].endswith("| FSM Loiter(GUIDED)"), h["mode_label"]
+        ban = h["policy"]["banner"]
+        assert ban["text"].startswith("FSM Loiter(GUIDED) - STOP THROUGH SHIELD"), ban
+        assert "alt-ceiling" in ban["text"] and "AUTOPILOT" not in ban["text"], ban
+    after = [h for h, r in zip(spy.huds, rows)
+             if r["fsm_state_after"] == "Loiter" and not r["hold_deferred"]]
+    assert after and all(h["mode_label"].endswith("| FSM Loiter(BRAKE)") for h in after)
+    shown = m["recording"]["policy_hud"]["banners_shown"]
+    assert shown.get("fsm:Loiter(GUIDED)") == len(held), shown
 
 
 def test_the_hud_of_the_control_arm_says_shield_off_and_counts_no_correction():

@@ -90,6 +90,14 @@ WHAT EACH FIELD IS, WRITER BY WRITER (the part a reader must not assume)
                      manifest's hash resolves to); an unresolved rule counts
                      as P0, as everywhere in guardrail/kpi.py, and the step
                      says `risk_level_defaulted`.
+  stop_advice        (an extension, 2026-10-20) on a tick whose stop the
+                     ArduPilot rail flew instead of the pilot's action: the
+                     stop's decision (emitted action, rule ids, repairs) from
+                     its `decision_kind: "stop_advised"` audit record, else
+                     from the row's `stop_advice`; None elsewhere. On such a
+                     tick `executed` is that stop and `post_repair` the
+                     repair of the planner output, which did not fly (its
+                     source says so).
 
 THE AUDIT LOG, AND WHICH OF ITS RECORDS BELONG TO WHICH TICK
 
@@ -115,6 +123,22 @@ audits a pre-scaling command on some ticks, about 70 % match there). When no
 flight matches, nothing is joined and the episode record says why
 (`audit_join`): a wrong join would label a clean flight with another
 flight's rules.
+
+A TICK CAN HAVE TWO RECORDS (since 2026-10-20). On a tick whose stop the
+ArduPilot rail flew instead of the pilot's action (the hold that stops
+clear, docs/DESIGN-own-velocity-forecast.md), it writes the tick's filter()
+record and then, at the SAME tick, the stop's record, tagged
+`decision_kind: "stop_advised"` (guardrail/audit.py AuditRecord; every
+other record has no `decision_kind`). Such a record is its tick's second
+decision, never the start of another flight: `audit_blocks` keeps it in the
+flight of the record before it when that one is the same tick's untagged
+record. It is never joined as the tick's record or compared with the row
+(its raw action is the zero stop, not the pilot's), and it rides on the
+step as `stop_advice` instead. Before this, every stop-advised tick
+started a new "flight" and the join kept the best single fragment: the hold
+rail run of tests/test_own_velocity_forecast.py split into 22 "flights"
+with 40 of 60 rows joined, its FSM-brake run into 61 with 2 of 60 (the
+2026-10-20 re-review) - the only trace a lower `joined`.
 
 OUTPUT
 
@@ -538,7 +562,8 @@ def _generation_at(gens: list[dict], t: Any) -> dict | None:
     return best
 
 
-def _actions(row: dict, audit: dict | None, shield: str | None) -> dict:
+def _actions(row: dict, audit: dict | None, shield: str | None,
+             advised: bool = False) -> dict:
     raw = action(row.get("raw")) or action((audit or {}).get("raw_action"))
     if "owner" in row:
         # experiments/sweep_scenarios.py: `emitted` is what FLEW.
@@ -572,8 +597,17 @@ def _actions(row: dict, audit: dict | None, shield: str | None) -> dict:
         exe, src = post, "setpoint:pass (the emitted action streamed)"
     else:
         exe, src = post, "inferred: the log records no flown action; the emitted one"
+    # A stop-advised tick (the ArduPilot rail, 2026-10-20): `emitted` is the
+    # Shield's repair of the planner output, which was NOT sent; the rail sent
+    # the Shield's answer to a stop (`executed`, flown_action), whose decision
+    # is the step's `stop_advice`. post_repair stays the planner output's
+    # repair, so planner_output -> post_repair is one decision; the source
+    # says the action that flew was another.
+    post_src = ("emitted (the repair of the planner output; not flown: this tick "
+                "flew the Shield's answer to a stop, see stop_advice)"
+                if advised else "emitted")
     return {"planner_output": raw, "post_repair": post, "executed": exe,
-            "post_repair_source": "emitted", "executed_source": src}
+            "post_repair_source": post_src, "executed_source": src}
 
 
 def _observation(ep: Episode, i: int, row: dict, start_ns: int | None) -> dict:
@@ -620,18 +654,38 @@ def _audit_tick(a: dict) -> int | None:
     return tk if isinstance(tk, int) and not isinstance(tk, bool) else None
 
 
+def _second_decision(a: dict) -> bool:
+    """A record that is its tick's SECOND decision: one with a
+    `decision_kind` (guardrail/audit.py AuditRecord, since 2026-10-20 only
+    "stop_advised", the stop the ArduPilot rail flew instead of the pilot's
+    action). It is written right after its tick's filter() record, at the
+    same tick; it is never that tick's record and never compared with the
+    row (module docstring, "A TICK CAN HAVE TWO RECORDS")."""
+    return a.get("decision_kind") is not None
+
+
 def audit_blocks(audit: list[dict]) -> list[list[dict]]:
     """The audit records split into flights, in file order: a new flight
     starts where the tick does not advance, the `episode_id` changes (record
-    version 2), or the clock jumps further than the ticks account for."""
+    version 2), or the clock jumps further than the ticks account for.
+
+    The one exception to "advance": a tick's second decision (a record with a
+    `decision_kind`) right after the same tick's untagged filter() record is
+    the same tick of the same flight. Until 2026-10-20 it started a new
+    flight, so every stop-advised tick of the ArduPilot rail split its audit
+    (22 "flights" on the hold rail run of tests/test_own_velocity_forecast.py,
+    61 on its FSM-brake run). A second tagged record at that tick still starts
+    a new flight: a flight writes one of each per tick."""
     blocks: list[list[dict]] = []
     cur: list[dict] = []
     prev: tuple | None = None
     for a in audit:
         tk, ts, eid = _audit_tick(a), _audit_ts(a.get("ts")), a.get("episode_id")
+        second = _second_decision(a)
         if cur and prev is not None:
-            ptk, pts, peid = prev
-            new = tk is not None and ptk is not None and tk <= ptk
+            ptk, pts, peid, psecond = prev
+            same_tick = second and not psecond and tk is not None and tk == ptk
+            new = (tk is not None and ptk is not None and tk <= ptk and not same_tick)
             new = new or (eid is not None and peid is not None and str(eid) != str(peid))
             if not new and ts is not None and pts is not None:
                 try:
@@ -644,7 +698,7 @@ def audit_blocks(audit: list[dict]) -> list[list[dict]]:
                 blocks.append(cur)
                 cur = []
         cur.append(a)
-        prev = (tk, ts, eid)
+        prev = (tk, ts, eid, second)
     if cur:
         blocks.append(cur)
     return blocks
@@ -652,14 +706,26 @@ def audit_blocks(audit: list[dict]) -> list[list[dict]]:
 
 def join_audit(rows: list[dict], audit: list[dict]) -> tuple[dict, dict]:
     """(row tick -> the audit record of that tick, what was joined and why).
+    `join_audit_records` without the ticks' second decisions."""
+    by_tick, _second, info = join_audit_records(rows, audit)
+    return by_tick, info
+
+
+def join_audit_records(rows: list[dict], audit: list[dict]) -> tuple[dict, dict, dict]:
+    """(row tick -> the audit record of that tick, row tick -> that tick's
+    second decision (a record with a `decision_kind`), what was joined and
+    why).
 
     The flight of the audit and the tick offset whose records carry the raw
     actions of the rows they land on; a flight whose records name another
     episode_id than the rows' is never a candidate. Ties go to offset 0,
     then to the later flight (the newest in an appended file). Nothing is
-    joined when no flight reaches AUDIT_MATCH_SHARE."""
+    joined when no flight reaches AUDIT_MATCH_SHARE. A tick's second
+    decision is neither compared with its row (its raw action is the stop
+    the rail flew, not the pilot's: on the hold rail run each one counted
+    as a mismatch) nor joined as the tick's record; it is returned beside."""
     if not audit:
-        return {}, {"records": 0, "joined": 0}
+        return {}, {}, {"records": 0, "joined": 0}
     blocks = audit_blocks(audit)
     row_by_tick = {r.get("tick", i): r for i, r in enumerate(rows)}
     row_eids = {str(r["episode_id"]) for r in rows if r.get("episode_id") is not None}
@@ -671,6 +737,8 @@ def join_audit(rows: list[dict], audit: list[dict]) -> tuple[dict, dict]:
         for off in AUDIT_TICK_OFFSETS:
             comparable = matched = 0
             for a in block:
+                if _second_decision(a):
+                    continue
                 tk = _audit_tick(a)
                 r = row_by_tick.get(tk + off) if tk is not None else None
                 raw = action(r.get("raw")) if r is not None else None
@@ -688,21 +756,58 @@ def join_audit(rows: list[dict], audit: list[dict]) -> tuple[dict, dict]:
             f"(best {best[3]} of {best[4]} comparable records)" if best else
             "every flight in the audit log names another episode_id")
             + ": nothing joined, so no step takes a record from another flight")
-        return {}, info
+        return {}, {}, info
     _, bi, off, matched, comparable = best
-    by_tick = {}
+    by_tick: dict = {}
+    second: dict = {}
     for a in blocks[bi]:
         tk = _audit_tick(a)
         if tk is not None and (tk + off) in row_by_tick:
-            by_tick[tk + off] = a             # ticks only rise within one flight
+            # ticks only rise within one flight; a tick's second decision
+            # goes beside its record, never over it
+            (second if _second_decision(a) else by_tick)[tk + off] = a
+    kinds: dict[str, int] = {}
+    for a in second.values():
+        kinds[str(a.get("decision_kind"))] = kinds.get(str(a.get("decision_kind")), 0) + 1
     info.update(joined=len(by_tick), flight=bi + 1, tick_offset=off,
                 raw_matched=matched, raw_comparable=comparable,
-                records_of_other_flights=len(audit) - len(blocks[bi]))
-    return by_tick, info
+                records_of_other_flights=len(audit) - len(blocks[bi]),
+                stop_advice_records=kinds.pop("stop_advised", 0))
+    if kinds:
+        # A decision_kind this reader does not know (none exists today): kept
+        # off the steps, and said.
+        info["unread_decision_kinds"] = kinds
+    return by_tick, second, info
+
+
+def _stop_advice(row: dict, rec: dict | None) -> dict | None:
+    """The decision that flew on a stop-advised tick (the ArduPilot rail's
+    hold that stops clear, 2026-10-20): from the tick's "stop_advised" audit
+    record when joined, else from the row's own `stop_advice`; None on every
+    other tick."""
+    def ids(vs):
+        return [str(v.get("rule_id")) for v in vs or [] if isinstance(v, dict)]
+    if rec is not None and rec.get("decision_kind") == "stop_advised":
+        return {"emitted": action(rec.get("emitted_action")),
+                "violations": ids(rec.get("violations")),
+                "emitted_violations": ids(rec.get("emitted_violations")),
+                "repairs": [str(r.get("operator")) for r in
+                            _first(rec, "repair_attempts", "repairs", default=[]) or []
+                            if isinstance(r, dict)],
+                "source": "audit record (decision_kind stop_advised)"}
+    adv = row.get("stop_advice")
+    if isinstance(adv, dict):
+        return {"emitted": action(adv.get("emitted")),
+                "violations": ids(adv.get("violations")),
+                "emitted_violations": ids(adv.get("emitted_violations")),
+                "repairs": [str(r.get("operator")) for r in adv.get("repairs") or []
+                            if isinstance(r, dict)],
+                "source": "flight_log row (stop_advice)"}
+    return None
 
 
 def build_steps(ep: Episode, outcome: str | None) -> list[dict]:
-    by_tick, ep.audit_join = join_audit(ep.rows, ep.audit)
+    by_tick, second, ep.audit_join = join_audit_records(ep.rows, ep.audit)
     start_ns = _episode_start_ns(ep.events)
     start_gen = next((g for g in ep.generations if g.get("t") in (0, 0.0)), None) \
         or (ep.generations[0] if ep.generations else None)
@@ -748,11 +853,13 @@ def build_steps(ep: Episode, outcome: str | None) -> list[dict]:
         reps = row.get("repairs")
         if reps is None and audit is not None:
             reps = _first(audit, "repair_attempts", "repairs", default=[])
+        advice = _stop_advice(row, second.get(tick))
         step = {
             "schema": SCHEMA, "episode": ep.key, "step": i, "tick": tick, "t": row.get("t"),
             "observation": _observation(ep, i, row, start_ns),
             "policy_state": ps,
-            "action": _actions(row, audit, ep.shield),
+            "action": _actions(row, audit, ep.shield,
+                               advised=bool(row.get("stop_advised")) or advice is not None),
             "outcome": outcome,
             "violation_type": sorted({x["violation_type"] for x in labelled}),
             "risk_level": risk,
@@ -762,6 +869,9 @@ def build_steps(ep: Episode, outcome: str | None) -> list[dict]:
             "repairs": [str(r.get("operator")) for r in (reps or []) if isinstance(r, dict)],
             "fsm_state_after": K._fsm_field(row, "fsm_state_after"),
             "audit_record": audit is not None,
+            # The decision that flew on a stop-advised tick (_stop_advice);
+            # None on every other tick and on every rail that writes none.
+            "stop_advice": advice,
         }
         steps.append(step)
     return steps

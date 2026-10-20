@@ -552,6 +552,14 @@ def test_the_files_the_second_october_review_found_off_ci_run_in_ci():
     assert not missing, f"not run in CI: {sorted(missing)}"
 
 
+def test_the_own_velocity_forecast_test_runs_in_ci():
+    """Wave T1 (2026-10-20): the own-velocity forecast's file - the 18,000-
+    decision identity proof against c77c77d, the response fit on the
+    committed recorded flights, the closed loop - on its tests/fixtures/
+    copies, so it needs no demo/out."""
+    assert "test_own_velocity_forecast.py" in _loop(), "not run in CI"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

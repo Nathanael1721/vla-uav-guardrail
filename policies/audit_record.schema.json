@@ -687,6 +687,19 @@
       ],
       "default": null,
       "title": "Repair Passes"
+    },
+    "decision_kind": {
+      "anyOf": [
+        {
+          "const": "stop_advised",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Decision Kind"
     }
   },
   "required": [
