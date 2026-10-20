@@ -514,7 +514,8 @@ def test_an_arm_bundle_is_a_schema_a_reader_without_the_arm_refuses():
         again = S.rerun_from_extras(ex[arm])
         assert [r["x"] for r in again.rows] == [r["x"] for r in run.rows], arm
         assert ex[arm]["extras_schema"] == S.EXTRAS_SCHEMA, arm
-        assert (ex[arm]["arm"]["response"], ex[arm]["arm"]["autopilot_hold"]) ==             (arm, S.DEFAULT_AUTOPILOT_HOLD), ex[arm]["arm"]
+        assert (ex[arm]["arm"]["response"], ex[arm]["arm"]["autopilot_hold"]) == \
+            (arm, S.DEFAULT_AUTOPILOT_HOLD), ex[arm]["arm"]
     # The arm branch's own bundles, as it wrote them (no hold key): "/2" on
     # the vehicle it names, "/1" on the ideal one; both held in place.
     for arm, schema in (("ardupilot", "sweep-episode-extras/2"),

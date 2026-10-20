@@ -215,9 +215,10 @@ MAX_INTERVAL_S = 30.0
 # (_Ledger.read_cost) READ_COST + ZONE_READ_COST per zone + RULE_READ_COST
 # per other rule + MOVING_ZONE_READ_COST per moving zone. A transit
 # evaluation is the reads it makes (the pose; the start again for a moving
-# rule being left); the start's own reads are made once a search. tests/test_hold_transit.py test_the_budget_charges_what_the_search_
-# makes holds the charges to the calls, and test_each_charge_bounds_what_its_
-# call_costs (wall clock, GUARDRAIL_TIMING_TESTS=1) re-measures them on the
+# rule being left); the start's own reads are made once a search.
+# tests/test_hold_transit.py test_the_budget_charges_what_the_search_makes
+# holds the charges to the calls, and test_each_charge_bounds_what_its_call_
+# costs (wall clock, GUARDRAIL_TIMING_TESTS=1) re-measures them on the
 # machine it runs on.
 #
 # THE CHEAP TEST. Before a candidate's stop query, the rules that stand
@@ -234,28 +235,46 @@ MAX_INTERVAL_S = 30.0
 # tests/test_hold_transit.py test_the_cheap_test_drops_only_what_the_stop_
 # query_refuses checks it against the stop query in random worlds.
 #
+# One rule first. The rule that dropped the last candidate is read alone
+# first (READ_COST + ZONE_READ_COST for a zone), and the others only if it
+# is not breached at the point. Until 2026-10-21 (integration review of
+# T1c) every still rule whose box held the candidate was read and charged,
+# so a candidate inside k nested zones cost READ_COST + k * ZONE_READ_COST:
+# with 8 or 10 squares about the aircraft (half-widths 50 down to 46.5 m)
+# the budget was spent on the candidates nearer than the 55 m ring, and the
+# hold stayed in place, illegal, where 51.5 m out was legal (54 ms, desktop,
+# best of 3); now it moves there in 14 ms (landing 18-19 ms). The answer is
+# the same either way (breached or not); only the price falls.
+# tests/test_hold_transit.py test_nested_static_zones_cost_one_zone_read_a_
+# candidate.
+#
 # What the budget reaches (2026-10-21, desktop, best of 3; the final
 # review's reach world, tests/test_hold_transit.py test_a_static_world_is_
-# searched_to_its_edge): a square always-on zone
-# centred on the aircraft is left to its nearest legal point at a half-width
-# of 30, 50 and 57.5 m (the last ring is 60 m), each search inside the
-# budget. Until then every candidate cost a whole stop query whatever it
-# held, 300 of them were the budget, and 16 headings over the rings out to
-# 28 m spent it: nothing past about 28 m was ever tried (final review of
-# T1c, P1), so a hold that needed 30 m was held inside the zone.
-# With moving zones the reach is what MAX_QUERIES buys at their price (the
-# 40 m bar closing at 3 m/s is still fruitless inside the budget).
+# searched_to_its_edge): a square always-on zone centred on the aircraft is
+# left to its nearest legal point at a half-width of 30, 50 and 57.5 m (the
+# last ring is 60 m), each search inside the budget. Until then every
+# candidate cost a whole stop query whatever it held, 300 of them were the
+# budget, and 16 headings over the rings out to 28 m spent it: nothing past
+# about 28 m was ever tried (final review of T1c, P1), so a hold that
+# needed 30 m was held inside the zone. With moving zones the reach is what
+# MAX_QUERIES buys at their price (the 40 m bar closing at 3 m/s is still
+# fruitless inside the budget).
 #
 # What it costs: MAX_QUERIES units is about 60 ms of the desktop's time, and
-# the fruitless searches measured stay near that whatever the world - the
-# review's worlds (bars closing at 3-6 m/s, a zone opening over the aircraft
-# and reaching past 60 m, 5 and 20 overlapping zones, 20 stacked out-of-band
-# zones over the aircraft) and 20 diamond-shaped zones whose boxes hold
-# every candidate (docs/DESIGN-hold-points.md, "The budget", has the table).
-# Until 2026-10-21 static zones were charged nothing: with 20 overlapping
-# zones the fruitless search took 226 ms, and with 20 diamonds 907 ms (each
-# stop query tested a diamond at all 51 forecast poses of the stop, about
-# 0.45 ms a zone, which shield.py _check_fence now tests once).
+# the fruitless searches measured stay at or under that whatever the world -
+# the review's worlds (bars closing at 3-6 m/s, a zone opening over the
+# aircraft and reaching past 60 m, 5 and 20 overlapping zones, 20 stacked
+# out-of-band zones over the aircraft) and 20 diamond-shaped zones whose
+# boxes hold every candidate (docs/DESIGN-hold-points.md, "The budget", has
+# the table). Since One rule first, the overlapping zones and the diamonds'
+# core drop every candidate for one zone read and end at the last ring in
+# 12-15 ms, where they took 40-54 ms (the 20 zones and the diamonds spending
+# the budget); the bars (38-39 ms) and the stacked zones (29 ms) spend
+# it, on stop queries. Until 2026-10-21 static zones were charged nothing:
+# with 20 overlapping zones the fruitless search took 226 ms, and with 20
+# diamonds 907 ms (each stop query tested a diamond at all 51 forecast poses
+# of the stop, about 0.45 ms a zone, which shield.py _check_fence now tests
+# once).
 #
 # History (review of T1c): until 2026-10-20 only stop queries were counted;
 # then a transit pose counted as a whole stop query, out of 800 - and the
@@ -319,33 +338,57 @@ def _speeds(shield, climb_m: float = 0.0) -> tuple[float, float, str]:
     read in its own look-ahead view (a window opens and closes only on whole
     minutes, shield.py _Schedule, so the views miss none), and a cap that
     tightens the speed lengthens the horizon, read again until nothing
-    tighter comes into force."""
+    tighter comes into force.
+
+    The reason words the speed and the climb rate each by where it comes
+    from: a cap in force in the first lookahead, one that comes into force
+    later, or the default assumed. A later cap no looser than an assumed
+    default becomes that axis' source, since it then bounds the transit.
+    Until 2026-10-21 (integration review of T1c) one found/later flag worded
+    both, so with no cap now and a 5 m/s / 1 m/s cap opening on the way the
+    reason called the DEFAULT 4 m/s "the tightest enforced 4 m/s speed cap",
+    and with a 4 m/s / 2 m/s cap opening on the way it said "no enforced
+    speed cap in force" (tests/test_hold_transit.py test_a_speed_cap_that_
+    opens_on_the_way_slows_the_whole_transit asserts each reason whole)."""
     look = max(float(shield.lookahead_s), 1e-3)
     caps = shield.kinematic_caps()
-    speed, climb = ((caps.speed_max_mps, caps.climb_rate_max_mps) if caps is not None
-                    else (DEFAULT_SPEED_MPS, DEFAULT_CLIMB_MPS))
-    found = caps is not None
-    later = False
+    if caps is not None:
+        val = {"speed": caps.speed_max_mps, "climb": caps.climb_rate_max_mps}
+        src = {"speed": "now", "climb": "now"}
+    else:
+        val = {"speed": DEFAULT_SPEED_MPS, "climb": DEFAULT_CLIMB_MPS}
+        src = {"speed": "default", "climb": "default"}
+    seen = caps is not None             # any enforced cap read, now or later
+
+    def horizon() -> float:
+        return max(RADII_M[-1] / val["speed"], abs(climb_m) / val["climb"])
+
     j = 1
-    while j * look < max(RADII_M[-1] / speed, abs(climb_m) / climb):
+    while j * look < horizon():
         with shield.looking_ahead(j * look):
             cj = shield.kinematic_caps()
         if cj is not None:
-            if cj.speed_max_mps < speed - 1e-12 or cj.climb_rate_max_mps < climb - 1e-12:
-                later = found = True
-            speed = min(speed, cj.speed_max_mps)
-            climb = min(climb, cj.climb_rate_max_mps)
+            seen = True
+            for axis, cap in (("speed", cj.speed_max_mps),
+                              ("climb", cj.climb_rate_max_mps)):
+                if cap < val[axis] - 1e-12 or (src[axis] == "default"
+                                               and cap <= val[axis] + 1e-12):
+                    val[axis], src[axis] = min(val[axis], cap), "later"
         j += 1
-    if not found:
-        return (speed, climb,
-                f"no enforced speed cap in force: {DEFAULT_SPEED_MPS:g} m/s and "
-                f"{DEFAULT_CLIMB_MPS:g} m/s climb assumed")
-    when = (f"in force before the longest transit the search plans ends "
-            f"({max(RADII_M[-1] / speed, abs(climb_m) / climb):.1f} s)" if later
-            else "in force")
-    return (speed, climb,
-            f"planned at the tightest enforced {speed:g} m/s speed cap and "
-            f"{climb:g} m/s climb cap {when}")
+    by = f"before the longest transit the search plans ends ({horizon():.1f} s)"
+
+    def words(axis: str) -> str:
+        v = val[axis]
+        if src[axis] == "now":
+            return f"{axis} {v:g} m/s: the tightest enforced {axis} cap in force"
+        if src[axis] == "later":
+            return (f"{axis} {v:g} m/s: the tightest enforced {axis} cap, which comes "
+                    f"into force {by}")
+        if not seen:
+            return f"{axis} {v:g} m/s: assumed, no enforced {axis} cap in force {by}"
+        return (f"{axis} {v:g} m/s: assumed, no enforced {axis} cap in force now and "
+                f"none at or under {v:g} m/s {by}")
+    return val["speed"], val["climb"], f"{words('speed')}; {words('climb')}"
 
 
 _ZONE_TYPES = ("polygon_fence", "circle_fence", "dynamic_nfz")
@@ -407,6 +450,9 @@ class _Ledger:
         self.pre_zones = [(r["id"], recs[r["id"]].bounds) for r in still
                           if r["type"] in _ZONE_TYPES and r["id"] in recs]
         self.pre_rules = [r["id"] for r in still if r["type"] not in _ZONE_TYPES]
+        # The rule that dropped the last candidate (breached): read first,
+        # alone, at the next one (THE CHEAP TEST, "One rule first").
+        self.last_drop: str | None = None
         self.start_reads = None
 
     @property
@@ -428,13 +474,32 @@ class _Ledger:
 
     def breached(self, shield, p: State) -> bool:
         """THE CHEAP TEST, in the caller's view: is a still, hard, enforced
-        rule breached at p? Charged as the read it makes."""
+        rule breached at p? The rule that dropped the last candidate is read
+        first, alone, when it applies at p (its box holds p, or it is not a
+        zone), and the others only if it is not breached there; each read is
+        charged as what it reads. Of several rules breached, the one p is
+        deepest in (_depth; ties to the first read) is kept for the next
+        candidate: it is the likeliest to hold that one too."""
         ids = self.pre_rules + [rid for rid, (x0, y0, x1, y1) in self.pre_zones
                                 if x0 <= p.x <= x1 and y0 <= p.y <= y1]
         if not ids:
             return False
+        last = self.last_drop
+        if last is not None and last in ids:
+            self.left -= self.read_cost([last])
+            c = shield.rule_clearances(p, [last]).get(last)
+            if c is not None and c.breach:
+                return True
+            ids = [rid for rid in ids if rid != last]
+            if not ids:
+                return False
         self.left -= self.read_cost(ids)
-        return any(c.breach for c in shield.rule_clearances(p, ids).values())
+        got = shield.rule_clearances(p, ids)
+        hit = [rid for rid in ids if rid in got and got[rid].breach]
+        if not hit:
+            return False
+        self.last_drop = max(hit, key=lambda rid: _depth(got[rid]))
+        return True
 
     def stop_ok(self, shield, p: State, categories=None) -> bool:
         """The cheap test, then the stop query: no hard enforced violation

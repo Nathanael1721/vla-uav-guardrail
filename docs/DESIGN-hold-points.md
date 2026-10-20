@@ -118,7 +118,8 @@ current one, or 0.5 m inside the hard band when the aircraft is outside it,
 straight above or below first), in travel-time order with ties to the least
 turn; the winning heading refined every 0.5 m between the last empty ring and
 the hit. A candidate inside a rule that stands still is dropped by a cheap
-read before its stop query. Bounded by a budget of 600 units of about 0.1 ms,
+read before its stop query (the rule that dropped the last candidate read
+first, alone). Bounded by a budget of 600 units of about 0.1 ms,
 each Shield call charged by what it costs in the world it is made in (a
 count, not a clock, so a sweep is reproducible; "The budget", below).
 Nothing legal: in place, marked illegal, and the reason says when the budget
@@ -296,30 +297,45 @@ headings over the rings out to 28 m spent it: nothing past about 28 m was
 ever tried, in any world, so the module's "60 m" was 28 m and a hold that
 needed 30 m was held inside the zone (the review's reach world: a square
 always-on zone around the aircraft, left at a half-width of 26 m, not from
-28 m; `test_a_static_world_is_searched_to_its_edge`). Now, before a candidate's stop query, the rules that stand still -
-static zones whose box holds the point, altitude envelopes, corridors,
-clearance, a stand-off from a still subject - are read at the point in the
-arrival view, and one of them breached there, hard and enforced, drops the
-candidate: each of those checks flags a stop inside it at t = 0 of its own
-forecast ("not escaping", "not returning", "not climbing", "not opening",
-"not receding"). A moving rule is never read for it: a stop inside a zone
-that moves away from it can be legal. `test_the_cheap_test_drops_only_what_
-the_stop_query_refuses` holds it to the stop query in 40 random worlds.
+28 m; `test_a_static_world_is_searched_to_its_edge`). Now, before a
+candidate's stop query, the rules that stand still - static zones whose box
+holds the point, altitude envelopes, corridors, clearance, a stand-off from
+a still subject - are read at the point in the arrival view, and one of
+them breached there, hard and enforced, drops the candidate: each of those
+checks flags a stop inside it at t = 0 of its own forecast ("not escaping",
+"not returning", "not climbing", "not opening", "not receding"). A moving
+rule is never read for it: a stop inside a zone that moves away from it can
+be legal. `test_the_cheap_test_drops_only_what_the_stop_query_refuses` holds
+it to the stop query in 40 random worlds.
+
+**One rule first** (integration review of T1c). The rule that dropped the
+last candidate is read alone first (0.25 units for a zone), and the others
+only if it is not breached at the point; of several breached, the one the
+point is deepest in is kept. Until then every still rule whose box held the
+candidate was read and charged, so a candidate inside k nested zones cost
+0.05 + 0.2 k units: with 8 or 10 squares about the aircraft (half-widths 50
+down to 46.5 m) the budget was spent on the candidates nearer than the 55 m
+ring and the hold stayed in place, illegal, where 51.5 m out was legal.
+The answer is the same either way; only the price falls.
+`test_nested_static_zones_cost_one_zone_read_a_candidate`.
 
 **What it reaches and what it costs** (desktop, best of 3, 2026-10-21; the
 final review's worlds and three more, the "before" column measured on the
-merged tree just before the change):
+merged tree just before the change; the rows that "One rule first" changed
+measured again after it, on 08cd0be and on the change, same desktop, best of
+3, the 08cd0be figure in brackets):
 
 | world | before (300 stop queries) | now (600 units) |
 |---|---|---|
 | square zone around the aircraft, half-width 30 / 50 / 57.5 m | held inside, budget spent, 35-36 ms | moved to (31.5, 0) / (51.5, 0) / (59, 0), 10-12 ms (landing 14-16 ms) |
 | square zone, half-width 80 m (nothing within 60 m) | budget spent, 36 ms | "nothing within 60 m", 11 ms |
 | a 150 m zone opening over the aircraft in 2 s | budget spent, 35 ms | nothing within 60 m, 23 ms |
-| 5 / 20 overlapping always-on zones | 77 / 226 ms | 39 / 53 ms (budget spent) |
-| 20 stacked out-of-band zones over the aircraft + a big zone | 114 ms | 31 ms (budget spent) |
-| a core zone and 20 diamonds whose boxes hold every candidate | 907 ms | 52 ms (budget spent) |
-| the same with a 12 m core (legal at 13.5 m) | 651 ms | 36 ms (landing 55 ms) |
-| 40 m bar closing at 3 m/s; 20 m bar at 2 m/s | 32 ms, budget spent | 41 ms, budget spent |
+| 5 / 20 overlapping always-on zones | 77 / 226 ms | nothing within 60 m, 12 / 15 ms [40 / 54 ms, the 20 spending the budget] |
+| 20 stacked out-of-band zones over the aircraft + a big zone | 114 ms | 29 ms (budget spent) [30 ms]: its candidates nearer than 8 m arrive before the big zone opens, so each is a stop query in 21 boxes (0.8 + 21 x 0.35 = 8.15 units) |
+| a core zone and 20 diamonds whose boxes hold every candidate | 907 ms | nothing within 60 m, 15 ms [52 ms, budget spent] |
+| the same with a 12 m core (legal at 13.5 m) | 651 ms | 15 ms (landing 33 ms) [37 ms, landing 54 ms] |
+| 8 / 10 squares nested about the aircraft, half-widths 50 down to 46.5 m (legal at 51.5 m) | not measured | moved to (51.5, 0), 14 ms (landing 18-19 ms) [held inside, budget spent, 54 ms] |
+| 40 m bar closing at 3 m/s; 20 m bar at 2 m/s | 32 ms, budget spent | 41 ms, budget spent [unchanged: 38-39 ms on both] |
 | 3 m bar at 3 m/s | 17 ms | 14 ms |
 
 Static zones used to be charged nothing, so the budget did not bound the
@@ -337,7 +353,15 @@ what_the_search_makes` holds every charge to the call it paid for, and
 machine it runs on - wall clock, so only with `GUARDRAIL_TIMING_TESTS=1`
 (its predecessor failed 1 of 40 runs with eight copies in parallel, final
 review P4; on the desktop each call and each fruitless search came to
-0.65-0.98 of its charge, against a limit of 2).
+0.65-0.98 of its charge, against a limit of 2). Since One rule first the
+whole searches are held to what their ledger spent, not to the budget: the
+bar's came to 0.67 of it, and the overlapping zones' and the diamonds' to
+1.37 (desktop, best of 3) - they end at the last ring after 416 reads of
+one zone (0.25 units each), and the search's own work per candidate (its
+view, the box test), which is not charged, is then about a quarter of the
+time. That work grows with the candidates tried, at most 416 and the
+refinement, not with the budget: about 4 ms in these two worlds, which try
+every candidate.
 
 `Shield.looking_ahead(s)` is what makes the Shield answer "as of s seconds
 from now": its clock read that much later, moving zones aged by it, a moving
@@ -353,7 +377,13 @@ opened after it but before arrival was broken by the transit (final review
 P3: a 1 m/s P0 cap opening 5.6 s ahead, 5 of 100 transit instants at 4 m/s;
 `test_a_speed_cap_that_opens_on_the_way_slows_the_whole_transit`); a
 landing descends at 0.5 m/s (ArduCopter's LAND_SPEED default). Wind is not
-modelled.
+modelled. The reason words the speed and the climb rate each by its source
+- a cap in force, one that comes into force on the way, or the default
+assumed (a later cap no looser than the default becomes the source). Until
+the integration review of T1c one flag worded both, so with no cap now and
+a 5 m/s / 1 m/s cap opening on the way the reason called the default 4 m/s
+an enforced cap, and with a 4 m/s / 2 m/s one opening on the way it said no
+cap was in force; the same test asserts each reason whole.
 
 ### The modelled autopilot (harness)
 
@@ -587,13 +617,16 @@ the 9 deg/s cell fails again, since its pin is gone.
   check 0.2-1.3 ms (2026-10-20). The worst case is a search that finds
   nothing and spends the whole budget, about 60 ms of the desktop's time:
   31-55 ms in the worlds of "The budget", above (2026-10-21, best of 3,
-  desktop otherwise idle). Until the re-review the 800-query budget's
-  fruitless search took 124-135 ms against the 40 m bar closing at 3 m/s,
-  over the 100 ms tick, and until the final review 226 ms with 20
-  overlapping zones and 907 ms with 20 diamonds. A search that finds nothing
-  is repeated at most once a second (`HOLD_REPLAN_S`), and no Loiter searches
-  more than twice a second (`HOLD_MIN_REPLAN_S`). The Orin is not measured: the budget is a count, so
-  a slower computer takes proportionally longer.
+  desktop otherwise idle), and 29-41 ms in those that still spend it since
+  One rule first (the bars and the stacked zones; the overlapping zones and
+  the diamonds now end at the last ring in 12-15 ms). Until the re-review
+  the 800-query budget's fruitless search took 124-135 ms against the 40 m
+  bar closing at 3 m/s, over the 100 ms tick, and until the final review
+  226 ms with 20 overlapping zones and 907 ms with 20 diamonds. A search
+  that finds nothing is repeated at most once a second (`HOLD_REPLAN_S`),
+  and no Loiter searches more than twice a second (`HOLD_MIN_REPLAN_S`).
+  The Orin is not measured: the budget is a count, so a slower computer
+  takes proportionally longer.
 * Change what the city demo flies. `demo/follow_vlm.py`'s default Shield
   (3 s / 0.5 s, its own escalation FSM on) now plans a hold point on each
   Loiter / Land entry, so its records show where a hold would be; the loop
