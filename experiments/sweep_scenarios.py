@@ -593,17 +593,40 @@ def _autopilot(mode: str | None, st: State, home: tuple[float, float],
     GUIDED position target before the hold mode is set on arrival: straight
     at the plan's speed horizontally (the policy's cap, guardrail/
     holdpoint.py) and its climb rate vertically, each axis braking onto the
-    point in its last step; a Land transits level, then descends."""
+    point in its last step; a Land transits level, then descends. Under the
+    vehicle-response arm (`shaped`) each axis is the sqrt controller of its
+    remaining distance instead, capped at the same speeds, as the arm's RTL
+    is above and for the same reason: the target is a POSITION, and
+    "min(speed, distance / dt)" through a vehicle that carries its speed
+    overshoots it by the braking distance (from 4 m/s, a hold 10 m east was
+    passed by 4.4 m and not reached in 12 s; tests/test_hold_points.py
+    test_on_the_response_arm_a_moved_hold_is_flown_as_a_position_target).
+    Until the merge of the two branches (2026-10-21) the arm flew the
+    ideal vehicle's command here. The plan's transit test (guardrail/
+    holdpoint.py transit_breaks) judges the straight line at the plan's
+    speed; the arm's airframe follows it with its own lag, and what that
+    costs is counted as for every command the arm flies
+    (`true_p0_vehicle_ticks`)."""
     if (mode in ("LOITER", "LAND") and hold is not None
             and hold.get("kind") == "moved" and not hold_reached(st, hold)):
         dx, dy = hold["x"] - st.x, hold["y"] - st.y
         d = math.hypot(dx, dy)
-        v = min(float(hold["speed_mps"]), d / dt) if d > 1e-9 else 0.0
+        speed = float(hold["speed_mps"])
+        if d <= 1e-9:
+            v = 0.0
+        elif shaped is not None:
+            v = min(speed, _sqrt_controller(d, AP_POSXY_P, shaped.accel_mps2, dt))
+        else:
+            v = min(speed, d / dt)
         vx, vy = ((v * dx / d, v * dy / d) if d > 1e-9 else (0.0, 0.0))
         vz = 0.0
         if mode == "LOITER":
             cz = float(hold.get("climb_mps") or AP_CLIMB_MPS)
-            vz = max(-cz, min(cz, (hold["up"] - st.up) / dt))
+            dz = hold["up"] - st.up
+            vz = (math.copysign(_sqrt_controller(abs(dz), AP_POSXY_P, shaped.accel_z_mps2,
+                                                 dt), dz)
+                  if shaped is not None else dz / dt)
+            vz = max(-cz, min(cz, vz))
         return Action4D(vx=vx, vy=vy, vz_up=vz)
     if mode == "RTL" and shaped is not None:
         target = AP_RTL_ALT_M if rtl_alt is None else rtl_alt
@@ -3829,14 +3852,21 @@ def published_view(doc: dict) -> dict:
 
 
 def comparison_tag(forecast_arms, response_arms,
-                   wind_model: str = DEFAULT_WIND_MODEL) -> str | None:
+                   wind_model: str = DEFAULT_WIND_MODEL,
+                   autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD) -> str | None:
     """The comparison configuration(s) a run flies, as the labels its KPI rows
     carry ("forecast-3s", "response-ardupilot", "wind-open_loop", joined by
     "_"), or None for a run of the headline configuration alone. It names the
-    run's default folder (run_folder)."""
+    run's default folder (run_folder). "hold-in_place" (since the merge with
+    the hold points, 2026-10-21) is a run whose modelled autopilot holds
+    where the aircraft is (`--autopilot-hold in_place`): its rows carry it
+    as the run's `autopilot_hold_model`, not in their key, and until then
+    such a run wrote into stress_<profile> beside the headline bundles."""
     tags = ([f"forecast-{a}" for a in forecast_arms if a != "grant"]
             + ([f"wind-{wind_model}"] if wind_model != DEFAULT_WIND_MODEL else [])
-            + [f"response-{a}" for a in response_arms if a != DEFAULT_RESPONSE_ARM])
+            + [f"response-{a}" for a in response_arms if a != DEFAULT_RESPONSE_ARM]
+            + ([f"hold-{autopilot_hold}"] if autopilot_hold != DEFAULT_AUTOPILOT_HOLD
+               else []))
     return "_".join(tags) or None
 
 
@@ -4015,7 +4045,7 @@ def main(argv: list[str] | None = None) -> int:
     # published run, and that folder is outside the glob already).
     cmp_tag = None if args.publish else comparison_tag(
         fc_arms if fc_arms is not None else (profile.forecast_arms if profile else ["grant"]),
-        eff_rsp, args.wind_model)
+        eff_rsp, args.wind_model, args.autopilot_hold)
     out = results_path(args.out, args.publish, tag, cmp_tag)
     runs = Path(args.runs) if args.runs else run_folder(tag, cmp_tag)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")

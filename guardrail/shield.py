@@ -5378,8 +5378,10 @@ class Shield:
                 # this Shield's own rules (guardrail/holdpoint.py). The FSM
                 # refuses a plan that contradicts its own input (hold_at), and
                 # a refusal is a contract break like any other (the fault
-                # below).
-                plan = self.fsm.hold_at(self._plan_hold(tick, state, d))
+                # below). Planned against `unsafe`, the stop check the FSM
+                # was just given (about the POSITION), never tick.unsafe,
+                # which with a measured velocity is where a stop would END.
+                plan = self.fsm.hold_at(self._plan_hold(tick, state, d, unsafe))
                 rec = {**rec, "hold_point": plan.to_dict(), "hold_needed": False,
                        "hold_chosen": True}
         except ValueError as e:
@@ -5412,11 +5414,26 @@ class Shield:
         p = State(x=h.x, y=h.y, up=h.up)
         return not self.hard_violations(self.state_is_unsafe(p, ahead_s=ahead))
 
-    def _plan_hold(self, tick: _Tick, state: State, d: ShieldDecision) -> "_fsm.HoldPoint":
+    def _plan_hold(self, tick: _Tick, state: State, d: ShieldDecision,
+                   stop_illegal: list | None = None) -> "_fsm.HoldPoint":
         """The FSM's hold point for this tick (it asked: `needs_hold`).
 
-        `unsafe` is the stop check this tick already ran (tick.unsafe, the
-        FSM's stop_illegal), filtered to hard enforced rules; `heading` breaks
+        `unsafe` is the stop check the FSM was given on this tick, its
+        stop_illegal (`stop_illegal`; None reads tick.unsafe, the same check
+        on a tick with no measured velocity), filtered to hard enforced
+        rules. It is about the POSITION: with a measured velocity, _escalate
+        asks it again without the velocity, because tick.unsafe then says
+        where a stop would END (_committed). Until the merge with the
+        own-velocity forecast (2026-10-21) the plan read tick.unsafe, and with
+        a velocity it relocated holds the FSM had just called legal - 24 of
+        337 seeded Loiter entries on seven policies, the reason saying that
+        "standing still" at the position broke a rule it does not break
+        (tests/test_hold_points.py test_with_a_measured_velocity_the_hold_
+        agrees_with_the_fsms_own_stop_check). The search gets the state
+        without its velocity: it judges points (a stop at each, a straight
+        transit between them), and the stop's own overshoot from the
+        aircraft's momentum is the rail's hold that stops clear
+        (guardrail/response.py hold_plan), not the point's. `heading` breaks
         ties between equally near points in favour of the way the aircraft is
         already going (this tick's Shield action, else the pilot's). A search
         that raises - a geometry error, a rule the search cannot read - must
@@ -5424,7 +5441,9 @@ class Shield:
         whose reason names the exception, so the record shows it."""
         from . import holdpoint as _hp      # local: holdpoint imports this module
         mode = "LAND" if self.fsm.state is _fsm.FSMState.LAND else "LOITER"
-        unsafe = self.hard_violations(tick.unsafe or [])
+        unsafe = self.hard_violations((tick.unsafe if stop_illegal is None
+                                       else stop_illegal) or [])
+        state = self._positional(state)
         heading = None
         for a in (d.emitted, d.raw):
             if math.hypot(a.vx, a.vy) > 0.1:

@@ -83,7 +83,10 @@ setpoint` drives the same inputs with and without hold points). Records
 outside Loiter / Land are byte for byte what they were; Loiter / Land records
 gain `hold_point`, `hold_legal`, `hold_needed`; `summary()` gains `holds`,
 `holds_moved`, `holds_illegal`. `ShieldDecision.hold_point` is excluded from
-`model_dump()`, so no dumped decision or digest changes.
+`model_dump()`; a dumped decision on a Loiter / Land tick still changes, by
+its `fsm_record` - the six escalation=True streams of the own-velocity
+identity proof (tests/test_own_velocity_forecast.py) moved at the merge with
+that branch, and the proof was rebased on 6c7cdb0 (next section).
 
 #### The point, not the aircraft
 
@@ -344,6 +347,54 @@ violation and no transition is written for it - and on every Loiter / Land
 tick after. Until 2026-10-20 the trail copied only the FSM's state fields and
 `ShieldDecision.hold_point` is excluded from `model_dump()`, so where the
 autopilot was told to hold, and whether that was legal, never reached it.
+
+### With the own-velocity forecast and the vehicle-response arm (merge, 2026-10-21)
+
+Master brought `State.velocity` (the Shield forecasts from the aircraft's
+measured velocity, docs/DESIGN-own-velocity-forecast.md) and the harness's
+vehicle-response comparison arm (docs/DESIGN-harness-vehicle-response.md).
+Three interactions, each pinned in tests/test_hold_points.py:
+
+* The hold is planned against the FSM's own stop check. The FSM's
+  `stop_illegal` is about the POSITION; with a measured velocity the Shield
+  asks it again without the velocity, because its tick's stop check then
+  says where a stop would END (the momentum the aircraft carries). At the
+  merge `_plan_hold` still read that tick check: on seeded Loiter entries
+  with a velocity (seven policies, 337 entries) it relocated 24 holds the FSM
+  had just called legal, the reason saying "standing still" at the position
+  broke a rule it does not. Now the plan reads the FSM's input, and the
+  search gets the state without its velocity - it judges points, and a
+  stop's overshoot from the aircraft's momentum is the rail's hold that
+  stops clear (guardrail/response.py `hold_plan`), not the point's. Where
+  the position is illegal the Shield sets the velocity aside altogether
+  (`Shield._decision_state`), and the plan is the one the Shield without a
+  velocity chooses (`test_with_a_measured_velocity_the_hold_agrees_with_
+  the_fsms_own_stop_check`; `test_the_search_is_about_positions_whatever_
+  velocity_the_state_carries`). Without a velocity nothing changed: the
+  own-velocity identity proof, rebased on 6c7cdb0 (the merge's first
+  parent, which has no velocity), holds on all 12 streams.
+* The arm flies a moved hold as the position target it is. Its RTL closes
+  each leg with the sqrt controller of the remaining distance (ArduPilot's
+  position controller), and at the merge its moved hold still flew the ideal
+  vehicle's `min(speed, distance / dt)` through a vehicle that carries its
+  speed: from 4 m/s a hold 10 m away was passed by 4.4 m and not reached in
+  12 s. Now the transit is the same sqrt controller at the plan's speed and
+  climb: reached, passed by under a metre (the arm's RTL passes home by
+  0.78-0.88 m in the same loop). The ideal vehicle's command is unchanged,
+  and no profile flies the arm by default. The plan's transit test judges
+  the straight line at the plan's speed; the arm's airframe follows it with
+  its own lag, counted like every command the arm flies
+  (`true_p0_vehicle_ticks`).
+* An in-place hold run has its own folder. `--autopilot-hold in_place` is a
+  configuration other than the headline one, so, like the 3 s forecast, the
+  open-loop wind and the ArduPilot response, its run defaults to
+  `demo/out/cmp_<profile>_hold-in_place` (`comparison_tag`), outside the
+  `demo/out/stress_*` bundles tools/kpi_report.py reads by default.
+
+The bundle extras schema is `sweep-episode-extras/3` since the merge: both
+branches had taken `/2` for different keys (`arm.autopilot_hold` here, a
+non-ideal `arm.response` there), so every bundle now names both and each
+branch's reader refuses it (experiments/sweep_scenarios.py `EXTRAS_SCHEMA`).
 
 ### The lint warning (`guardrail/compiler.py`)
 

@@ -590,6 +590,98 @@ def test_the_shield_wires_the_plan_into_the_decision():
 
 
 # --------------------------------------------------------------------------- #
+# A State with a measured velocity (the own-velocity forecast, merged in on
+# 2026-10-21: State.velocity, guardrail/response.py)
+# --------------------------------------------------------------------------- #
+
+def test_the_search_is_about_positions_whatever_velocity_the_state_carries():
+    """The hold-point search judges POINTS (a stop at each, a transit between
+    them); the measured velocity of the aircraft is not one of its inputs.
+    choose_hold_point, choose_landing_site and transit_breaks answer the
+    same for the state with and without a velocity."""
+    sh = _survey_shield(datetime(2026, 9, 7, 7, 29, 58))
+    pos = State(x=60.0, y=21.4, up=15.0)
+    fast = pos.model_copy(update={"velocity": (0.0, 5.0, 0.0)})
+    for fn in (HP.choose_hold_point, HP.choose_landing_site):
+        a, b = fn(sh, pos, heading=(0.0, 4.0)), fn(sh, fast, heading=(0.0, 4.0))
+        assert a == b and a.kind == "moved", (fn.__name__, a, b)
+    end = State(x=60.0, y=32.0, up=15.0)
+    assert HP.transit_breaks(sh, fast, end, 10.6 / 4.0, 4.0, 2.0, ("nfz-school",)) == \
+        HP.transit_breaks(sh, pos, end, 10.6 / 4.0, 4.0, 2.0, ("nfz-school",)) == []
+
+
+def test_with_a_measured_velocity_the_hold_agrees_with_the_fsms_own_stop_check():
+    """The escalation FSM's stop_illegal is about the POSITION (fsm.py), and
+    with a measured velocity the Shield asks it again without the velocity
+    (_escalate), because tick.unsafe is then where a stop would END (the
+    momentum the aircraft carries, Shield._committed). The hold point must be
+    planned against the same answer the FSM was given: at the merge of the
+    two branches (2026-10-21) _plan_hold still read tick.unsafe, and with a
+    velocity the plan relocated holds the FSM called legal - 24 of 337
+    seeded Loiter entries on seven policies, the hold moved while the reason
+    said "standing still at (x, y, z) breaks" a rule that standing still
+    there does not break.
+
+    Seeded Loiter entries (two blocked ticks from one state) on the 14 Oct
+    policy and its NFZ variant, each flown by a Shield given the velocity
+    and one not: no FSM fault; an in-place hold is legal exactly when the
+    FSM's stop_illegal is false, and an illegal one names what a stop at the
+    position breaks; a Loiter is moved only when that stop is illegal; and
+    where the position is illegal (the velocity is set aside, Shield.
+    _decision_state) the plan is the one the Shield without a velocity
+    chose."""
+    import random
+
+    import numpy as np
+    with np.load(ROOT / "tests" / "fixtures" / "citylife_occ_flightband_6to14.npz") as z:
+        smap = {"occ": z["occ"], "res": float(z["res"]), "ox": float(z["ox"]),
+                "oy": float(z["oy"])}
+    seen = {"chosen": 0, "in_place": 0, "moved": 0, "set_aside": 0}
+    bad = []
+    for name in ("follow_car_citylife.yaml", "follow_car_citylife_nfz.yaml"):
+        pol = load_policy(ROOT / "policies" / name)
+        with_v, without = Shield(pol, obstacle_map=smap), Shield(pol, obstacle_map=smap)
+        rng = random.Random(f"hold-velocity:{name}")
+        t = 0.0
+        for i in range(150):
+            pos = State(x=rng.uniform(-60.0, 120.0), y=rng.uniform(-55.0, 120.0),
+                        up=rng.uniform(3.0, 22.0))
+            vel = (rng.uniform(-6, 6), rng.uniform(-6, 6), rng.uniform(-1.5, 1.5))
+            a = Action4D(vx=rng.uniform(-6, 6), vy=rng.uniform(-6, 6),
+                         vz_up=rng.uniform(-2.5, 2.5))
+            out = []
+            for sh, st in ((with_v, pos.model_copy(update={"velocity": vel})),
+                           (without, pos)):
+                sh.reset_episode()
+                sh.filter(st, a, t=t)
+                out.append(sh.filter(st, a, t=t + 0.1))
+            t += 0.2
+            d, d0 = out
+            assert not d.fsm_fault, (name, i, d.fsm_fault)
+            rec = d.fsm_record or {}
+            if not rec.get("hold_chosen"):
+                continue
+            seen["chosen"] += 1
+            hp, illegal = rec["hold_point"], rec["flags"]["stop_illegal"]
+            here = sorted({v.rule_id for v in with_v.hard_violations(
+                with_v.state_is_unsafe(pos))})
+            assert bool(here) == bool(illegal), (name, i, here, illegal)
+            seen[hp["kind"]] += 1
+            if hp["mode"] == "LOITER":
+                if hp["kind"] == "in_place" and (hp["legal"] == bool(illegal) or (
+                        not hp["legal"] and list(hp["breaks"]) != here)):
+                    bad.append((name, i, "in_place", hp["legal"], hp["breaks"], here))
+                if hp["kind"] == "moved" and not illegal:
+                    bad.append((name, i, "moved while the position is legal"))
+            if here:
+                seen["set_aside"] += 1
+                assert (d0.fsm_record or {}).get("hold_point") == hp, (name, i)
+    assert not bad, (len(bad), bad[:4])
+    assert seen["chosen"] >= 40 and seen["in_place"] >= 10 and seen["moved"] >= 10, seen
+    assert seen["set_aside"] >= 10, seen
+
+
+# --------------------------------------------------------------------------- #
 # The harness
 # --------------------------------------------------------------------------- #
 
@@ -756,6 +848,101 @@ def test_the_autopilot_hold_model_is_recorded_and_reflown():
         pass
     else:
         raise AssertionError("an unknown hold model was flown")
+
+
+def _fly_hold(SW, hold: dict, shaped, v0=(4.0, 0.0, 0.0), ticks: int = 120):
+    """A moved Loiter hold flown by the harness's modelled autopilot through
+    the measured ArduPilot vehicle response (the arm's VehicleResponse), as
+    _episode flies it: the transit until hold_reached, then the hold. Returns
+    (final x, largest x, ticks to reach)."""
+    veh = SW.VehicleResponse(SW.AP_RESPONSE, v0=v0)
+    x = y = 0.0
+    up = 15.0
+    done_at, xmax = None, 0.0
+    for k in range(ticks):
+        st = State(x=x, y=y, up=up)
+        if done_at is None and SW.hold_reached(st, hold):
+            done_at = k
+        cmd = SW._autopilot("LOITER", st, (0.0, 0.0), 0.1, shaped,
+                            hold=None if done_at is not None else hold)
+        vx, vy, vz = veh.step((cmd.vx, cmd.vy, cmd.vz_up), 0.1)
+        x, y, up = x + vx * 0.1, y + vy * 0.1, up + vz * 0.1
+        xmax = max(xmax, x)
+    return x, xmax, done_at
+
+
+def test_on_the_response_arm_a_moved_hold_is_flown_as_a_position_target():
+    """ArduCopter flies a moved hold as a GUIDED position target, closed by
+    its position controller, so the transit ends stopped on the point
+    (holdpoint.py "SPEED ASSUMPTION"; on the ideal vehicle the harness
+    commands min(speed, distance / dt), which stops on it exactly). The
+    vehicle-response arm (merged 2026-10-21) flies the RTL that way
+    (_autopilot `shaped`) but at the merge still flew the moved hold's
+    min(speed, distance / dt) through a vehicle that carries its speed: from
+    4 m/s, a hold 10 m east and 1 m up was passed by 4.4 m and still not
+    reached after 12 s (the braking distance at 4 m/s and 2.4 m/s^2 is
+    3.3 m). Under the arm the hold is now the sqrt controller of the
+    remaining distance, at the plan's speed and climb, as the RTL is: it is
+    reached, passed by under a metre (the arm's RTL passes home by
+    0.78-0.88 m from 0-4 m/s in the same loop) - the airframe's own lag and
+    jerk limit, and the coast after the hold is latched (the modelled
+    LOITER commands zero; "the response itself carries the vehicle into the
+    hold", _autopilot). The ideal vehicle's command is unchanged."""
+    import sweep_scenarios as SW
+    hold = {"kind": "moved", "mode": "LOITER", "x": 10.0, "y": 0.0, "up": 16.0,
+            "speed_mps": 4.0, "climb_mps": 2.0}
+    st = State(x=0.0, y=0.0, up=15.0)
+    assert SW._autopilot("LOITER", st, (0.0, 0.0), 0.1, hold=hold) == \
+        Action4D(vx=4.0, vz_up=2.0)
+    assert SW._autopilot("LOITER", st, (0.0, 0.0), 0.1, None, None, hold) == \
+        SW._autopilot("LOITER", st, (0.0, 0.0), 0.1, hold=hold)
+    near = SW._autopilot("LOITER", State(x=9.0, y=0.0, up=16.0), (0.0, 0.0), 0.1,
+                         SW.AP_RESPONSE, hold=hold)
+    assert 0.0 < near.vx < 4.0 and near.vz_up == 0.0, near
+    for v0 in ((4.0, 0.0, 0.0), (0.0, 0.0, 0.0), (0.0, 4.0, 0.0)):
+        x, xmax, done_at = _fly_hold(SW, hold, SW.AP_RESPONSE, v0=v0)
+        assert done_at is not None, (v0, "the arm's transit never reached the hold")
+        assert xmax - 10.0 < 1.0 and abs(x - 10.0) < 1.0, (v0, x, xmax)
+    # What the arm flew at the merge: the ideal vehicle's command through it.
+    x, xmax, done_at = _fly_hold(SW, hold, None)
+    assert done_at is None and xmax - 10.0 > 3.0, (x, xmax, done_at)
+
+
+def test_a_run_whose_autopilot_holds_in_place_writes_outside_the_report_folders():
+    """`--autopilot-hold in_place` flies a configuration other than the
+    headline one (the moved hold points), so, like the 3 s forecast, the
+    open-loop wind and the ArduPilot response, its run defaults to its own
+    demo/out/cmp_<profile>_<label> folder (sweep_scenarios.run_folder),
+    outside the demo/out/stress_* bundles tools/kpi_report.py reads by
+    default. At the merge of the two branches (2026-10-21) comparison_tag
+    knew the other three and not the hold model, so an in-place run wrote
+    into stress_<profile> beside the headline bundles."""
+    import tempfile
+
+    import sweep_scenarios as SW
+    assert SW.comparison_tag(["grant"], ["ideal"], SW.DEFAULT_WIND_MODEL,
+                             SW.DEFAULT_AUTOPILOT_HOLD) is None
+    assert SW.comparison_tag(["grant"], ["ideal"], SW.DEFAULT_WIND_MODEL,
+                             "in_place") == "hold-in_place"
+    assert SW.comparison_tag(["grant"], ["ideal", "ardupilot"], SW.DEFAULT_WIND_MODEL,
+                             "in_place") == "response-ardupilot_hold-in_place"
+    seen = []
+    real_rf, real_rp = SW.run_folder, SW.results_path
+    with tempfile.TemporaryDirectory() as td:
+        def rf(tag, comparison=None):
+            seen.append(("runs", tag, comparison))
+            return Path(td) / "runs"
+
+        def rp(out, publish, tag, comparison=None):
+            seen.append(("out", tag, comparison))
+            return Path(td) / "s.json"
+        SW.run_folder, SW.results_path = rf, rp
+        try:
+            assert SW.main(["--only", "nfz-head-on-control", "--seed", "1001",
+                            "--no-bundles", "--autopilot-hold", "in_place"]) == 0
+        finally:
+            SW.run_folder, SW.results_path = real_rf, real_rp
+    assert seen == [("out", None, "hold-in_place"), ("runs", None, "hold-in_place")], seen
 
 
 def test_a_bundle_from_before_the_hold_points_is_reflown_in_place():
