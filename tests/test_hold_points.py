@@ -765,8 +765,10 @@ def test_a_bundle_from_before_the_hold_points_is_reflown_in_place():
     (moved_points): the opens-on-vehicle cell re-flew with 18 autopilot P0
     ticks against the 38 flown, and tools/rerun_episode.py called a sound
     bundle "differs". Now such a bundle flies in place, row for row; a /1
-    bundle that names its hold flies that one; the schema written is /2,
-    and a /2 bundle without the key is refused rather than guessed."""
+    bundle that names its hold flies that one; the schema written is /3
+    since the merge with the vehicle-response arm (2026-10-21; /2 on this
+    branch before it), and a /2 or /3 bundle that does not say which hold
+    it flew is refused rather than guessed."""
     import copy
     import json
     import sweep_scenarios as SW
@@ -774,7 +776,7 @@ def test_a_bundle_from_before_the_hold_points_is_reflown_in_place():
     here = SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place")
     ex = json.loads(json.dumps(SW.episode_extras(cell.spec, lib.defaults, 0, here,
                                                  autopilot_hold="in_place")))
-    assert ex["extras_schema"] == SW.EXTRAS_SCHEMA == "sweep-episode-extras/2"
+    assert ex["extras_schema"] == SW.EXTRAS_SCHEMA == "sweep-episode-extras/3"
     old = copy.deepcopy(ex)
     old["extras_schema"] = "sweep-episode-extras/1"
     del old["arm"]["autopilot_hold"]
@@ -785,14 +787,22 @@ def test_a_bundle_from_before_the_hold_points_is_reflown_in_place():
     named = copy.deepcopy(old)
     named["arm"]["autopilot_hold"] = "moved_points"
     assert SW.rerun_from_extras(named).extra["autopilot_hold_model"] == "moved_points"
-    unnamed = copy.deepcopy(ex)
-    del unnamed["arm"]["autopilot_hold"]
-    try:
-        SW.rerun_from_extras(unnamed)
-    except ValueError as e:
-        assert "autopilot_hold" in str(e), e
-    else:
-        raise AssertionError("a /2 bundle without its hold model was re-flown on a guess")
+    # This branch's own /2 bundles named their hold and no vehicle: read so.
+    ours = copy.deepcopy(ex)
+    ours["extras_schema"] = "sweep-episode-extras/2"
+    del ours["arm"]["response"]
+    assert _row_digest(SW.rerun_from_extras(ours).rows) == _row_digest(here.rows)
+    for schema in ("sweep-episode-extras/2", "sweep-episode-extras/3"):
+        unnamed = copy.deepcopy(ex)
+        unnamed["extras_schema"] = schema
+        del unnamed["arm"]["autopilot_hold"]
+        try:
+            SW.rerun_from_extras(unnamed)
+        except ValueError as e:
+            assert "autopilot_hold" in str(e), e
+        else:
+            raise AssertionError(f"a {schema} bundle without its hold model was "
+                                 f"re-flown on a guess")
 
 
 def test_three_simultaneous_climbs_out_and_is_sent_home_by_the_loiter_timeout():

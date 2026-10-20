@@ -2,11 +2,14 @@
 
 Audit cards **WP4-05** (no gRPC control service for the harness) and **X-15**
 (SROS 2 security on the ROS 2 graph, with the harness mTLS reusing its root
-CA). **SROS 2 is not enabled: the ROS 2 graph is still unsecured.** What this
-note covers for X-15 is preparation only: the gRPC side's mutual TLS, a lab
-root CA built to be shared, and a script that seeds a SROS 2 keystore with it
-(`tools/sros2_setup.sh`), checked with `bash -n` and `--dry-run` but not run
-on a ROS 2 host. Built 2026-10-08, revised 2026-10-09 after review; on
+CA). **SROS 2 on the ROS 2 graph is opt-in behind `SROS2=1`** (Enforce, one
+enclave per process, the keystore's identity and permissions CA the harness's
+lab root CA); `tools/sros2_check.sh` passed 6/6 in WSL Ubuntu 24.04 with ROS 2
+Jazzy on 2026-10-19 (docs/DESIGN-sros2.md). Not yet flown: no SITL flight has
+run with `SROS2=1`, the default (`SROS2=0`) still runs the graph unsecured, and
+per-topic permissions are not written. This note covers the gRPC side's
+mutual TLS and the lab root CA built to be shared; the ROS 2 half is
+docs/DESIGN-sros2.md. Built 2026-10-08, revised 2026-10-09 after review; on
 2026-10-12 the service gained the page's other six RPCs (StartSession,
 StopSession, InjectPolicy, IssueTask, the two streams), a live mode that
 injects events while an episode flies, forwarding of a session's HotApply to
@@ -36,7 +39,7 @@ dashboards, scenario authoring).
 | `guardrail/protos/harness_pb2.py`, `harness_pb2_grpc.py` | Generated, committed (command below) |
 | `guardrail/harness_service.py` | `Harness` (no transport), the servicer, `serve()`, the PKI, a CLI |
 | `tools/harness_client.py` | `HarnessClient` (all eleven RPCs) and a CLI: `run` (with a session when given a policy, a prompt or `--live`), `forward`, `status` |
-| `tools/sros2_setup.sh` | The SROS 2 keystore and enclaves of the dev graph, seeded with the harness CA (not run here) |
+| `tools/sros2_setup.sh` | The SROS 2 keystore and enclaves of the dev graph, seeded with the harness CA (first run 2026-10-19 in WSL Jazzy; `tools/sros2_check.sh` 6/6, docs/DESIGN-sros2.md) |
 | `tools/rerun_episode.py` | Re-flies a bundle and compares the flight logs (used here on a live episode's bundle) |
 | `tests/test_harness_service.py` | 56 tests, standalone runner; the logic tests drive `Harness` without gRPC |
 | `tests/test_wp4outputs_harness.py` | 16 tests: live mode, sessions, InjectPolicy, IssueTask, REST forwarding, the streams, the lifecycle over mTLS |
@@ -454,7 +457,20 @@ from the allow-list or rotating the CA; there is no CRL.
 
 Plaintext (`--insecure`) is refused on any address that is not loopback.
 
-## The same root CA for SROS 2 (a script; not run here)
+## The same root CA for SROS 2 (run 2026-10-19; see docs/DESIGN-sros2.md)
+
+**Superseded in part (2026-10-19).** This section is the procedure as written
+on 2026-10-12, before any ROS 2 host ran it. Its first run (WSL Ubuntu 24.04,
+ROS 2 Jazzy, sros2 0.13.6) showed step 2's reading wrong: `create_keystore`
+reuses a CA only when `identity_ca.*` and `permissions_ca.*` (cert and key)
+are all present, and otherwise wrote its own CA - which step 3's fingerprint
+check caught. The script now links those four files to the copied lab CA
+first, verifies the governance file against it (step 3b), takes its enclaves
+from `sitl/sros2_enclaves.txt`, and `sitl/run_ros2_demo.sh` starts every ROS 2
+process in its enclave under `SROS2=1`. docs/DESIGN-sros2.md has the current
+procedure, the live check (`tools/sros2_check.sh`, 6/6) and the flight
+command; the text below is kept for the CA-handling rules it states (the
+keystore location, the CA key staying on the desktop).
 
 The file names are sros2's own: a keystore keeps its CA as
 `public/ca.cert.pem` and `private/ca.key.pem`, and the curve is the one
@@ -472,8 +488,10 @@ with ROS 2 sourced and openssl on the PATH:
    the folder may be synced (`--allow-mnt` on purpose).
 2. `ros2 security create_keystore keystore`. It relies on sros2 reusing a CA
    pair it finds in `public/` and `private/` ("found CA key/cert pair") and
-   pointing `identity_ca` and `permissions_ca` at it. That is our reading of
-   the sros2 source, not something run here (no ROS 2 on this host), so:
+   pointing `identity_ca` and `permissions_ca` at it. That was our reading of
+   the sros2 source on 2026-10-12, not yet run (no ROS 2 on this host); the
+   first run on 2026-10-19 showed it wrong (the note at the top of this
+   section), and step 3 is what caught it:
 3. it compares the SHA-256 fingerprints of `identity_ca.cert.pem` and
    `permissions_ca.cert.pem` with the lab CA's, and stops if either differs
    (sros2 made its own CA; the keystore has to be rebuilt). The fingerprint
@@ -493,20 +511,25 @@ with ROS 2 sourced and openssl on the PATH:
    nodes (the launch file gives them one shared environment, so each needs
    its own), `--ros-args --enclave ...` for MAVROS and `ros2 bag record`.
 
-Checked here: `bash -n tools/sros2_setup.sh` (Git Bash) and a `--dry-run`
-that prints the commands above with the given paths and refuses a `/mnt/`
-keystore. Not checked: any of it on a ROS 2 host. The CA key should leave
-the lab desktop only to seed the keystore: the Orin and the drone carry
-enclave keys, never the CA key.
+Checked on 2026-10-12: `bash -n tools/sros2_setup.sh` (Git Bash) and a
+`--dry-run` that printed the commands above and refused a `/mnt/` keystore.
+Run on a ROS 2 host on 2026-10-19 (WSL Jazzy, throwaway lab PKI): the fixed
+script built the keystore with the lab CA in both roles, and
+`tools/sros2_check.sh` passed 6/6 - a process with no enclave refused under
+Enforce, an unsecured one and one under another CA hearing nothing, the
+launch file's three nodes each in its own enclave (docs/DESIGN-sros2.md). The
+CA key should leave the lab desktop only to seed the keystore: the Orin and
+the drone carry enclave keys, never the CA key.
 
 The script does not change who may publish what: `create_enclave` writes
 sros2's default permissions, which allow every topic. Topic-level policies
 (the Shield alone publishes `/shield/setpoint`, the VLA only
 `/vla/action_4d`, ...) are a permissions XML per enclave, still to be
-written. Until the script runs on the ROS 2 host and the launch file starts
-each node with its enclave, X-15 is open: there is no keystore and no
-enclave, and the Shield node, the MAVLink adapter and the VLA stub still run
-unsecured on the ROS 2 graph.
+written. X-15 status: SROS 2 is opt-in behind `SROS2=1` (Enforce, one
+enclave per process, `tools/sros2_check.sh` 6/6 in WSL Jazzy on 2026-10-19);
+not yet flown; per-topic permissions not written. With the default
+`SROS2=0` the Shield node, the MAVLink adapter and the VLA stub run unsecured
+on the ROS 2 graph, as before.
 
 ## What is not done
 
@@ -525,9 +548,11 @@ unsecured on the ROS 2 graph.
 - **The grant's full episode bundle.** `policy_bundle.tar.gz`,
   `episode.bag2/` and `shield_audit.jsonl` are not written on the headless
   path (above).
-- **SROS 2 on the ROS 2 graph (card X-15).** Not enabled: the script exists,
-  has not been run on a ROS 2 host, and the launch file does not yet start
-  each node with its enclave. Topic-level permissions are not written.
+- **SROS 2 on the ROS 2 graph (card X-15).** Opt-in behind `SROS2=1`
+  (Enforce, one enclave per process, `tools/sros2_check.sh` 6/6 in WSL Jazzy
+  on 2026-10-19, docs/DESIGN-sros2.md); not yet flown (no SITL flight with
+  `SROS2=1`, so MAVROS under Enforce is untested); per-topic permissions not
+  written; the default `SROS2=0` leaves the graph unsecured.
 - **No CancelEpisode**: an episode a client gives up on expires after the
   idle TTL (ARMED), finishes on its own (live), or is closed by StopSession;
   a session a client gives up on expires after the session TTL once nothing

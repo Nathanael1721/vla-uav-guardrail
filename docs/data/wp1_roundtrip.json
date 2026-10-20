@@ -1,8 +1,17 @@
 {
- "generated": "2026-10-08T19:42:47Z",
+ "generated": "2026-10-20T11:06:52Z",
  "command": "python tools/wp1_roundtrip_kpi.py",
- "code_revision": "10451bc60a15-dirty",
- "python": "3.10.20",
+ "command_args": [
+  "--runs-root",
+  "<main checkout>",
+  "--reference-repo",
+  "<main checkout>/kuanting-vla-uav-guardrail"
+ ],
+ "command_env": {
+  "VLAGUARD_SIGNING_KEY": "<main checkout>/policies/keys/lab-dev-ed25519.pem"
+ },
+ "code_revision": "abf4cccdf86e",
+ "python": "3.11.15",
  "cryptography_available": true,
  "signature_verifier": "cryptography",
  "hash_scheme": "sha256-canonical-v3",
@@ -19,7 +28,9 @@
   "both_hashes_recorded_and_verified": "29/29",
   "reference_hash_representable": "0/29",
   "forged_reference_hash_refused": "29/29",
-  "reference_form_source_verified": "3/3"
+  "reference_form_source_verified": "3/3",
+  "cold_start_50_rules": "p95 376 ms <= 1000 ms (fresh process, imports + verify + parse + IR + Shield (worst bundle)); whole process incl. interpreter start p95 504 ms",
+  "cold_start_within_budget": true
  },
  "null_record_ignored": {
   "forged_reference_hash_refused": "0/29",
@@ -39,7 +50,8 @@
   "reference_hash_agrees": "0/3",
   "reference_loader_reads_ours": "0/3",
   "schema_grant_documents": "0/3",
-  "schema_authored": "28/29"
+  "schema_authored": "28/29",
+  "cold_start_50_rules": "not measured (Shield construction alone: 2.7 ms)"
  },
  "round_trip": {
   "n": 29,
@@ -508,7 +520,7 @@
     "file": "bad_time_window.yaml",
     "defect": "valid_time start_time 25:99",
     "verdict": "refused",
-    "reason": "ValidationError: 1 validation error for Policy | constraints.0.altitude_envelope.valid_time.recurrence | Value error, time '25:99' out of range [type=value_error, input_value={'days': ['Mon'], 'start_...9', 'end_time': '06:00'}, input_type=dict]",
+    "reason": "ValidationError: 1 validation error for Policy | constraints.0.altitude_envelope.valid_time.recurrence | Value error, time '25:99' out of range (00:00-23:59; 24:00 only as an end_time) [type=value_error, input_value={'days': ['Mon'], 'start_...9', 'end_time': '06:00'}, input_type=dict]",
     "declared": "refused",
     "declared_matches": true,
     "finding": null
@@ -1646,6 +1658,287 @@
    "why": "issued_at refused; geometry block, project_fix, altitude_min_m unknown; no origin refused"
   }
  },
+ "cold_start": {
+  "grant": "Policy DSL page, Acceptance KPIs (locked): cold-start ingest of a typical 50-rule bundle <= 1 s",
+  "path": "guardrail.bundle.load_for_flight (tar read, IR parse + validation, policy_hash, both hash forms, lint, Ed25519 verify against a trust store file, flight gate, runtime notes) + guardrail.replay.rail_shield (the runtime IR: margin rings, STRtree, schedules)",
+  "machine": {
+   "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+   "system": "Windows 10",
+   "python": "3.11.15",
+   "child_python": "this interpreter"
+  },
+  "warm_runs": 100,
+  "fresh_runs": 20,
+  "bundles": {
+   "typical": {
+    "rules": 50,
+    "by_type": {
+     "altitude_envelope": 1,
+     "circle_fence": 10,
+     "corridor": 2,
+     "kinematic_envelope": 1,
+     "obstacle_clearance": 1,
+     "polygon_fence": 32,
+     "subject_standoff": 1,
+     "time_window_switch": 2
+    },
+    "scheduled_rules": 20,
+    "zones": 42,
+    "geographic": true,
+    "policy_hash": "sha256:1a4d01fc368d6c93191e8e6d680d5b37f247b53fa8dbbfd7f327b75434f95782",
+    "bundle_bytes": 3670
+   },
+   "grid": {
+    "rules": 50,
+    "by_type": {
+     "altitude_envelope": 1,
+     "kinematic_envelope": 1,
+     "polygon_fence": 48
+    },
+    "scheduled_rules": 0,
+    "zones": 48,
+    "geographic": false,
+    "policy_hash": "sha256:14b6f5fac3c172c8f9f4c33f26adb22b38d6769d97460c515cc65ee26686fc6a",
+    "bundle_bytes": 1908
+   }
+  },
+  "in_process": {
+   "typical": {
+    "load_for_flight": {
+     "n": 100,
+     "median_ms": 6.974,
+     "p95_ms": 8.273,
+     "min_ms": 6.442,
+     "max_ms": 14.113
+    },
+    "shield": {
+     "n": 100,
+     "median_ms": 5.059,
+     "p95_ms": 5.563,
+     "min_ms": 4.706,
+     "max_ms": 11.559
+    },
+    "total": {
+     "n": 100,
+     "median_ms": 12.084,
+     "p95_ms": 13.735,
+     "min_ms": 11.366,
+     "max_ms": 19.509
+    },
+    "first_call_ms": 13.735,
+    "stages_ms_median": {
+     "tar_read": 0.343,
+     "ir_parse_and_validate": 3.016,
+     "signature_verify": 0.253
+    }
+   },
+   "grid": {
+    "load_for_flight": {
+     "n": 100,
+     "median_ms": 3.144,
+     "p95_ms": 3.593,
+     "min_ms": 2.866,
+     "max_ms": 11.317
+    },
+    "shield": {
+     "n": 100,
+     "median_ms": 3.837,
+     "p95_ms": 4.395,
+     "min_ms": 3.523,
+     "max_ms": 4.957
+    },
+    "total": {
+     "n": 100,
+     "median_ms": 7.006,
+     "p95_ms": 7.938,
+     "min_ms": 6.485,
+     "max_ms": 15.238
+    },
+    "first_call_ms": 7.939,
+    "stages_ms_median": {
+     "tar_read": 0.274,
+     "ir_parse_and_validate": 0.998,
+     "signature_verify": 0.219
+    }
+   }
+  },
+  "pure_python_verifier": {
+   "typical": {
+    "total": {
+     "n": 20,
+     "median_ms": 14.919,
+     "p95_ms": 16.273,
+     "min_ms": 14.243,
+     "max_ms": 21.892
+    },
+    "verifier": "Ed25519 signature by 'wp1-cold-start-bench:ed25519:88cc41d5fedf977b' verified (pure-python)"
+   },
+   "grid": {
+    "total": {
+     "n": 20,
+     "median_ms": 9.383,
+     "p95_ms": 9.769,
+     "min_ms": 9.104,
+     "max_ms": 9.855
+    },
+    "verifier": "Ed25519 signature by 'wp1-cold-start-bench:ed25519:88cc41d5fedf977b' verified (pure-python)"
+   }
+  },
+  "author_side": {
+   "typical": {
+    "yaml_to_signed_bundle": {
+     "n": 20,
+     "median_ms": 51.069,
+     "p95_ms": 60.889,
+     "min_ms": 49.421,
+     "max_ms": 63.354
+    },
+    "same_policy_hash": true
+   }
+  },
+  "fresh_process": {
+   "typical": {
+    "runs": 20,
+    "verifier": "cryptography",
+    "import": {
+     "n": 20,
+     "median_ms": 343.784,
+     "p95_ms": 358.623,
+     "min_ms": 335.994,
+     "max_ms": 360.031
+    },
+    "load_for_flight": {
+     "n": 20,
+     "median_ms": 11.757,
+     "p95_ms": 12.251,
+     "min_ms": 11.282,
+     "max_ms": 13.022
+    },
+    "shield": {
+     "n": 20,
+     "median_ms": 5.49,
+     "p95_ms": 7.835,
+     "min_ms": 5.226,
+     "max_ms": 9.876
+    },
+    "path_first_call": {
+     "n": 20,
+     "median_ms": 17.253,
+     "p95_ms": 19.615,
+     "min_ms": 16.581,
+     "max_ms": 22.898
+    },
+    "ingest_with_imports": {
+     "n": 20,
+     "median_ms": 361.699,
+     "p95_ms": 375.792,
+     "min_ms": 354.576,
+     "max_ms": 377.965
+    },
+    "whole_process_wall": {
+     "n": 20,
+     "median_ms": 447.057,
+     "p95_ms": 471.229,
+     "min_ms": 437.558,
+     "max_ms": 545.074
+    },
+    "second_call_same_process": {
+     "n": 20,
+     "median_ms": 18.088,
+     "p95_ms": 19.513,
+     "min_ms": 17.631,
+     "max_ms": 27.554
+    }
+   },
+   "grid": {
+    "runs": 20,
+    "verifier": "cryptography",
+    "import": {
+     "n": 20,
+     "median_ms": 343.459,
+     "p95_ms": 358.468,
+     "min_ms": 336.005,
+     "max_ms": 364.447
+    },
+    "load_for_flight": {
+     "n": 20,
+     "median_ms": 7.369,
+     "p95_ms": 7.98,
+     "min_ms": 6.971,
+     "max_ms": 7.99
+    },
+    "shield": {
+     "n": 20,
+     "median_ms": 4.143,
+     "p95_ms": 5.449,
+     "min_ms": 3.89,
+     "max_ms": 5.928
+    },
+    "path_first_call": {
+     "n": 20,
+     "median_ms": 11.621,
+     "p95_ms": 13.155,
+     "min_ms": 10.947,
+     "max_ms": 13.172
+    },
+    "ingest_with_imports": {
+     "n": 20,
+     "median_ms": 355.067,
+     "p95_ms": 370.363,
+     "min_ms": 347.008,
+     "max_ms": 376.645
+    },
+    "whole_process_wall": {
+     "n": 20,
+     "median_ms": 433.857,
+     "p95_ms": 504.191,
+     "min_ms": 419.521,
+     "max_ms": 521.219
+    },
+    "second_call_same_process": {
+     "n": 20,
+     "median_ms": 7.399,
+     "p95_ms": 8.786,
+     "min_ms": 6.86,
+     "max_ms": 8.96
+    }
+   }
+  },
+  "checks": {
+   "typical": {
+    "runs_failing_a_check": 0,
+    "fences_compiled": 42,
+    "geofence_raised_inside_first_fence": true,
+    "verifier": "Ed25519 signature by 'wp1-cold-start-bench:ed25519:88cc41d5fedf977b' verified (cryptography)",
+    "fresh_runs_failing_a_check": 0
+   },
+   "grid": {
+    "runs_failing_a_check": 0,
+    "fences_compiled": 48,
+    "geofence_raised_inside_first_fence": true,
+    "verifier": "Ed25519 signature by 'wp1-cold-start-bench:ed25519:88cc41d5fedf977b' verified (cryptography)",
+    "fresh_runs_failing_a_check": 0
+   }
+  },
+  "refusals": {
+   "tampered_ir": "refused",
+   "untrusted_signer": "refused",
+   "bad_signature": "refused"
+  },
+  "verdict": {
+   "reading": "fresh process, imports + verify + parse + IR + Shield (worst bundle)",
+   "p95_ms": 375.792,
+   "whole_process_wall_p95_ms": 504.191,
+   "budget_ms": 1000.0,
+   "checks_hold": true,
+   "within_budget": true
+  },
+  "null_before_2026_10_19": "only Shield construction was timed (median 4.7 ms at 50 rules, docs/DESIGN-shield-enforcement.md): no bundle read, no IR parse or validation, no hash, no signature check, no imports, no fresh process",
+  "not_measured": [
+   "a reboot-cold disk: one discarded fresh run warms the OS file cache and the .pyc files first",
+   "the onboard computer the budget is for (Jetson Orin)"
+  ]
+ },
  "version_lock_problems": [],
  "schema": {
   "path": "policies/policy_dsl.schema.json",
@@ -1667,13 +1960,13 @@
   "failures": []
  },
  "stored_runs": {
-  "n": 89,
+  "n": 97,
   "matched_before": 34,
-  "matched_after": 89,
+  "matched_after": 97,
   "after_by_form": {
    "legacy16-exclude-none": 42,
    "legacy16-include-defaults": 34,
-   "sha256-canonical-v3": 13
+   "sha256-canonical-v3": 21
   },
   "unmatched_after": [],
   "set_aside": [

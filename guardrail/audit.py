@@ -81,7 +81,20 @@ since AuditRecord, 2026-10-12; absent, read as 1, before). A record is
 written when the decision saw a violation, and also on a tick where the FSM
 changed state, requested a mode, refused its input or chose a new hold
 point, so a Brake -> Normal recovery on a clean tick is on record too, and
-so is every place the FSM told the autopilot to hold or land.
+so is every place the FSM told the autopilot to hold or land. Since
+2026-10-20 a tick can have a second record, `decision_kind` "stop_advised":
+the Shield's answer to a stop that the ArduPilot rail flew instead of the
+tick's filter() decision (the hold that stops clear), always written; the
+field is absent from every other record (it did not change the record
+version: a reader of version 3 that knows no `decision_kind` reads every
+record it wrote before the field as before). A READER that groups records by
+tick must take such a record as its tick's second decision, written right
+after that tick's filter() record at the same tick - never as a tick that
+failed to advance, i.e. a new flight (tools/export_episodes.audit_blocks
+did, and split the hold rail run's audit into 22 "flights", joining 40 of
+its 60 rows: 2026-10-20 re-review), and never as the tick's own record
+(demo/track_truth.score_standoff_firings skips it: its violations are the
+stop's, not those the flight log's row holds).
 
 ONE FILE PER EPISODE ("Python module; rotated per mission", Outputs table).
 `AuditLogger.for_episode(directory, policy, episode_id)` opens
@@ -266,6 +279,20 @@ class AuditRecord(_Strict):
     repair_passes: list[RepairPass] | None = None
     # Since record version 3 (2026-10-20).
     fsm_hold_point: HoldPointRecord | None = None
+    # Since 2026-10-20: which decision this record is when one tick has two.
+    # Absent (None) is the tick's filter() decision, every record before the
+    # field existed; "stop_advised" is the Shield's answer to a stop
+    # (Shield.advise of a zero action) that a rail flew INSTEAD of it - the
+    # ArduPilot rail's hold that stops clear (docs/DESIGN-own-velocity-
+    # forecast.md). Such a record follows its tick's filter() record (when
+    # that one is written) and is always written, touched or not, so the
+    # decision behind every action sent is on record. Omitted from the line
+    # when None, so every other record is written exactly as before.
+    decision_kind: Literal["stop_advised"] | None = None
+
+
+# The record kinds a caller may ask `AuditLogger.log` for (`decision_kind`).
+DECISION_KINDS = ("stop_advised",)
 
 
 def audit_record_schema() -> dict:
@@ -430,9 +457,14 @@ class AuditLogger:
         return {c.id: getattr(c, "priority", None) for c in cons}
 
     def record(self, tick: int, decision: ShieldDecision,
-               fsm_record: dict | None = None) -> AuditRecord | None:
+               fsm_record: dict | None = None, *,
+               kind: str | None = None) -> AuditRecord | None:
         """The validated record `log` would write, or None when nothing
-        happened on this tick (no violation, no FSM event)."""
+        happened on this tick (no violation, no FSM event). `kind`
+        ("stop_advised", AuditRecord.decision_kind) marks a decision a rail
+        flew instead of the tick's filter() decision; it is always recorded."""
+        if kind is not None and kind not in DECISION_KINDS:
+            raise ValueError(f"kind must be one of {DECISION_KINDS} or None, got {kind!r}")
         fsm = fsm_record if fsm_record is not None else (decision.fsm_record or {})
         # A new hold point (the Shield's _escalate marks it `hold_chosen`) is
         # an FSM event too: a Loiter that re-plans on a tick with no
@@ -440,7 +472,7 @@ class AuditLogger:
         fsm_event = bool(fsm.get("transition") or fsm.get("set_mode")
                          or decision.set_mode or decision.fsm_fault
                          or fsm.get("hold_chosen"))
-        if not decision.touched and not fsm_event:
+        if not decision.touched and not fsm_event and kind is None:
             return None
         trace = decision.trace or {}
         edge = set(trace.get("window_edge") or ())
@@ -517,20 +549,29 @@ class AuditLogger:
             # decision's own; None in every other state.
             "fsm_hold_point": fsm.get("hold_point", decision.hold_point),
         })
+        if kind is not None:
+            rec["decision_kind"] = kind
         return AuditRecord.model_validate(rec)
 
     def log(self, tick: int, decision: ShieldDecision,
-            fsm_record: dict | None = None) -> None:
+            fsm_record: dict | None = None, *, kind: str | None = None) -> None:
         """Write a record when something happened: a violation seen, or an
         FSM transition / mode request / refused input on this tick.
         `fsm_record` is an FSMOutput.record from a rail that runs its own FSM;
         by default the decision's own (`ShieldDecision.fsm_record`) is used.
+        `kind` tags a decision the rail flew instead of the tick's filter()
+        decision (AuditRecord.decision_kind), always written.
         The record is validated (AuditRecord) before it is written."""
-        rec = self.record(tick, decision, fsm_record)
+        rec = self.record(tick, decision, fsm_record, kind=kind)
         if rec is None:
             return
+        line = rec.model_dump(by_alias=True)
+        if line.get("decision_kind") is None:
+            # Absent means the tick's filter() decision: every record without
+            # a kind is written exactly as before the field existed.
+            line.pop("decision_kind", None)
         with self.path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(rec.model_dump(by_alias=True)) + "\n")
+            f.write(json.dumps(line) + "\n")
         self._n += 1
 
     @property

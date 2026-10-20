@@ -750,11 +750,14 @@ def test_arms_multiply_episodes_never_cells():
         assert len({e.run_id for e in armed}) == 6
         assert len({e.dir_name("s") for e in eps}) == len(eps)
         # forecast_arms / forecast_comparison_episodes since 2026-10-12: the
-        # 3 s comparison arm is counted apart (here not flown).
+        # 3 s comparison arm is counted apart (here not flown); likewise
+        # response_arms / response_comparison_episodes since 2026-10-19.
         assert info["arms"] == {"cell_seed_slots": 2, "extra_arm_episodes": 5,
                                 "paraphrase_arm_episodes": 6,
                                 "prefix_off_episodes": 3, "forecast_arms": ["grant"],
-                                "forecast_comparison_episodes": 0}, info["arms"]
+                                "forecast_comparison_episodes": 0,
+                                "response_arms": ["ideal"],
+                                "response_comparison_episodes": 0}, info["arms"]
         base = dict(profile="p", cadence="c", grant_scope="g", grant_sim_speedup="s",
                     seeds=[1], expected_cells=[1, 5])
         off, _ = expand(lib, Profile(**base, paraphrase_k=0, prefix_ab=False))

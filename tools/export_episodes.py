@@ -90,6 +90,14 @@ WHAT EACH FIELD IS, WRITER BY WRITER (the part a reader must not assume)
                      manifest's hash resolves to); an unresolved rule counts
                      as P0, as everywhere in guardrail/kpi.py, and the step
                      says `risk_level_defaulted`.
+  stop_advice        (an extension, 2026-10-20) on a tick whose stop the
+                     ArduPilot rail flew instead of the pilot's action: the
+                     stop's decision (emitted action, rule ids, repairs) from
+                     its `decision_kind: "stop_advised"` audit record, else
+                     from the row's `stop_advice`; None elsewhere. On such a
+                     tick `executed` is that stop and `post_repair` the
+                     repair of the planner output, which did not fly (its
+                     source says so).
 
 THE AUDIT LOG, AND WHICH OF ITS RECORDS BELONG TO WHICH TICK
 
@@ -116,15 +124,38 @@ flight matches, nothing is joined and the episode record says why
 (`audit_join`): a wrong join would label a clean flight with another
 flight's rules.
 
+A TICK CAN HAVE TWO RECORDS (since 2026-10-20). On a tick whose stop the
+ArduPilot rail flew instead of the pilot's action (the hold that stops
+clear, docs/DESIGN-own-velocity-forecast.md), it writes the tick's filter()
+record and then, at the SAME tick, the stop's record, tagged
+`decision_kind: "stop_advised"` (guardrail/audit.py AuditRecord; every
+other record has no `decision_kind`). Such a record is its tick's second
+decision, never the start of another flight: `audit_blocks` keeps it in the
+flight of the record before it when that one is the same tick's untagged
+record. It is never joined as the tick's record or compared with the row
+(its raw action is the zero stop, not the pilot's), and it rides on the
+step as `stop_advice` instead. Before this, every stop-advised tick
+started a new "flight" and the join kept the best single fragment: the hold
+rail run of tests/test_own_velocity_forecast.py split into 22 "flights"
+with 40 of 60 rows joined, its FSM-brake run into 61 with 2 of 60 (the
+2026-10-20 re-review) - the only trace a lower `joined`.
+
 OUTPUT
 
 `<out>/steps.jsonl` (one row per tick) and `<out>/episodes.jsonl` (one row
 per episode, the full trajectory as columns), strict JSON (a non-finite
 number becomes the string "NaN" / "Infinity", never a bare token). With
-`pyarrow` importable, also `steps.parquet` and `episodes.parquet` (nested
-fields as JSON strings); without it the tool prints SKIP and writes JSONL
-only (`--format parquet` alone then writes nothing and exits 3). Exit 0
-when every input exported, 2 when one could not be read.
+`pyarrow` importable (optional: `pip install .[export]`), also
+`steps.parquet` and `episodes.parquet`: one typed column per field, nested
+fields and mixed columns as JSON text named in the file's metadata, each
+file read back and compared with the JSONL records (every row, every key
+of every record as a column, every value) before it is kept
+(`read_parquet` returns those records; see "Parquet" below). Without
+pyarrow the tool prints SKIP, says how to install it, removes a Parquet
+file an earlier export left in the folder, and writes JSONL only
+(`--format parquet` alone then writes nothing and exits 3). Exit 0 when
+every input exported, 2 when one could not be read or a Parquet file did not
+read back as its JSONL.
 """
 from __future__ import annotations
 
@@ -531,7 +562,8 @@ def _generation_at(gens: list[dict], t: Any) -> dict | None:
     return best
 
 
-def _actions(row: dict, audit: dict | None, shield: str | None) -> dict:
+def _actions(row: dict, audit: dict | None, shield: str | None,
+             advised: bool = False) -> dict:
     raw = action(row.get("raw")) or action((audit or {}).get("raw_action"))
     if "owner" in row:
         # experiments/sweep_scenarios.py: `emitted` is what FLEW.
@@ -565,8 +597,17 @@ def _actions(row: dict, audit: dict | None, shield: str | None) -> dict:
         exe, src = post, "setpoint:pass (the emitted action streamed)"
     else:
         exe, src = post, "inferred: the log records no flown action; the emitted one"
+    # A stop-advised tick (the ArduPilot rail, 2026-10-20): `emitted` is the
+    # Shield's repair of the planner output, which was NOT sent; the rail sent
+    # the Shield's answer to a stop (`executed`, flown_action), whose decision
+    # is the step's `stop_advice`. post_repair stays the planner output's
+    # repair, so planner_output -> post_repair is one decision; the source
+    # says the action that flew was another.
+    post_src = ("emitted (the repair of the planner output; not flown: this tick "
+                "flew the Shield's answer to a stop, see stop_advice)"
+                if advised else "emitted")
     return {"planner_output": raw, "post_repair": post, "executed": exe,
-            "post_repair_source": "emitted", "executed_source": src}
+            "post_repair_source": post_src, "executed_source": src}
 
 
 def _observation(ep: Episode, i: int, row: dict, start_ns: int | None) -> dict:
@@ -613,18 +654,38 @@ def _audit_tick(a: dict) -> int | None:
     return tk if isinstance(tk, int) and not isinstance(tk, bool) else None
 
 
+def _second_decision(a: dict) -> bool:
+    """A record that is its tick's SECOND decision: one with a
+    `decision_kind` (guardrail/audit.py AuditRecord, since 2026-10-20 only
+    "stop_advised", the stop the ArduPilot rail flew instead of the pilot's
+    action). It is written right after its tick's filter() record, at the
+    same tick; it is never that tick's record and never compared with the
+    row (module docstring, "A TICK CAN HAVE TWO RECORDS")."""
+    return a.get("decision_kind") is not None
+
+
 def audit_blocks(audit: list[dict]) -> list[list[dict]]:
     """The audit records split into flights, in file order: a new flight
     starts where the tick does not advance, the `episode_id` changes (record
-    version 2), or the clock jumps further than the ticks account for."""
+    version 2), or the clock jumps further than the ticks account for.
+
+    The one exception to "advance": a tick's second decision (a record with a
+    `decision_kind`) right after the same tick's untagged filter() record is
+    the same tick of the same flight. Until 2026-10-20 it started a new
+    flight, so every stop-advised tick of the ArduPilot rail split its audit
+    (22 "flights" on the hold rail run of tests/test_own_velocity_forecast.py,
+    61 on its FSM-brake run). A second tagged record at that tick still starts
+    a new flight: a flight writes one of each per tick."""
     blocks: list[list[dict]] = []
     cur: list[dict] = []
     prev: tuple | None = None
     for a in audit:
         tk, ts, eid = _audit_tick(a), _audit_ts(a.get("ts")), a.get("episode_id")
+        second = _second_decision(a)
         if cur and prev is not None:
-            ptk, pts, peid = prev
-            new = tk is not None and ptk is not None and tk <= ptk
+            ptk, pts, peid, psecond = prev
+            same_tick = second and not psecond and tk is not None and tk == ptk
+            new = (tk is not None and ptk is not None and tk <= ptk and not same_tick)
             new = new or (eid is not None and peid is not None and str(eid) != str(peid))
             if not new and ts is not None and pts is not None:
                 try:
@@ -637,7 +698,7 @@ def audit_blocks(audit: list[dict]) -> list[list[dict]]:
                 blocks.append(cur)
                 cur = []
         cur.append(a)
-        prev = (tk, ts, eid)
+        prev = (tk, ts, eid, second)
     if cur:
         blocks.append(cur)
     return blocks
@@ -645,14 +706,26 @@ def audit_blocks(audit: list[dict]) -> list[list[dict]]:
 
 def join_audit(rows: list[dict], audit: list[dict]) -> tuple[dict, dict]:
     """(row tick -> the audit record of that tick, what was joined and why).
+    `join_audit_records` without the ticks' second decisions."""
+    by_tick, _second, info = join_audit_records(rows, audit)
+    return by_tick, info
+
+
+def join_audit_records(rows: list[dict], audit: list[dict]) -> tuple[dict, dict, dict]:
+    """(row tick -> the audit record of that tick, row tick -> that tick's
+    second decision (a record with a `decision_kind`), what was joined and
+    why).
 
     The flight of the audit and the tick offset whose records carry the raw
     actions of the rows they land on; a flight whose records name another
     episode_id than the rows' is never a candidate. Ties go to offset 0,
     then to the later flight (the newest in an appended file). Nothing is
-    joined when no flight reaches AUDIT_MATCH_SHARE."""
+    joined when no flight reaches AUDIT_MATCH_SHARE. A tick's second
+    decision is neither compared with its row (its raw action is the stop
+    the rail flew, not the pilot's: on the hold rail run each one counted
+    as a mismatch) nor joined as the tick's record; it is returned beside."""
     if not audit:
-        return {}, {"records": 0, "joined": 0}
+        return {}, {}, {"records": 0, "joined": 0}
     blocks = audit_blocks(audit)
     row_by_tick = {r.get("tick", i): r for i, r in enumerate(rows)}
     row_eids = {str(r["episode_id"]) for r in rows if r.get("episode_id") is not None}
@@ -664,6 +737,8 @@ def join_audit(rows: list[dict], audit: list[dict]) -> tuple[dict, dict]:
         for off in AUDIT_TICK_OFFSETS:
             comparable = matched = 0
             for a in block:
+                if _second_decision(a):
+                    continue
                 tk = _audit_tick(a)
                 r = row_by_tick.get(tk + off) if tk is not None else None
                 raw = action(r.get("raw")) if r is not None else None
@@ -681,21 +756,58 @@ def join_audit(rows: list[dict], audit: list[dict]) -> tuple[dict, dict]:
             f"(best {best[3]} of {best[4]} comparable records)" if best else
             "every flight in the audit log names another episode_id")
             + ": nothing joined, so no step takes a record from another flight")
-        return {}, info
+        return {}, {}, info
     _, bi, off, matched, comparable = best
-    by_tick = {}
+    by_tick: dict = {}
+    second: dict = {}
     for a in blocks[bi]:
         tk = _audit_tick(a)
         if tk is not None and (tk + off) in row_by_tick:
-            by_tick[tk + off] = a             # ticks only rise within one flight
+            # ticks only rise within one flight; a tick's second decision
+            # goes beside its record, never over it
+            (second if _second_decision(a) else by_tick)[tk + off] = a
+    kinds: dict[str, int] = {}
+    for a in second.values():
+        kinds[str(a.get("decision_kind"))] = kinds.get(str(a.get("decision_kind")), 0) + 1
     info.update(joined=len(by_tick), flight=bi + 1, tick_offset=off,
                 raw_matched=matched, raw_comparable=comparable,
-                records_of_other_flights=len(audit) - len(blocks[bi]))
-    return by_tick, info
+                records_of_other_flights=len(audit) - len(blocks[bi]),
+                stop_advice_records=kinds.pop("stop_advised", 0))
+    if kinds:
+        # A decision_kind this reader does not know (none exists today): kept
+        # off the steps, and said.
+        info["unread_decision_kinds"] = kinds
+    return by_tick, second, info
+
+
+def _stop_advice(row: dict, rec: dict | None) -> dict | None:
+    """The decision that flew on a stop-advised tick (the ArduPilot rail's
+    hold that stops clear, 2026-10-20): from the tick's "stop_advised" audit
+    record when joined, else from the row's own `stop_advice`; None on every
+    other tick."""
+    def ids(vs):
+        return [str(v.get("rule_id")) for v in vs or [] if isinstance(v, dict)]
+    if rec is not None and rec.get("decision_kind") == "stop_advised":
+        return {"emitted": action(rec.get("emitted_action")),
+                "violations": ids(rec.get("violations")),
+                "emitted_violations": ids(rec.get("emitted_violations")),
+                "repairs": [str(r.get("operator")) for r in
+                            _first(rec, "repair_attempts", "repairs", default=[]) or []
+                            if isinstance(r, dict)],
+                "source": "audit record (decision_kind stop_advised)"}
+    adv = row.get("stop_advice")
+    if isinstance(adv, dict):
+        return {"emitted": action(adv.get("emitted")),
+                "violations": ids(adv.get("violations")),
+                "emitted_violations": ids(adv.get("emitted_violations")),
+                "repairs": [str(r.get("operator")) for r in adv.get("repairs") or []
+                            if isinstance(r, dict)],
+                "source": "flight_log row (stop_advice)"}
+    return None
 
 
 def build_steps(ep: Episode, outcome: str | None) -> list[dict]:
-    by_tick, ep.audit_join = join_audit(ep.rows, ep.audit)
+    by_tick, second, ep.audit_join = join_audit_records(ep.rows, ep.audit)
     start_ns = _episode_start_ns(ep.events)
     start_gen = next((g for g in ep.generations if g.get("t") in (0, 0.0)), None) \
         or (ep.generations[0] if ep.generations else None)
@@ -741,11 +853,13 @@ def build_steps(ep: Episode, outcome: str | None) -> list[dict]:
         reps = row.get("repairs")
         if reps is None and audit is not None:
             reps = _first(audit, "repair_attempts", "repairs", default=[])
+        advice = _stop_advice(row, second.get(tick))
         step = {
             "schema": SCHEMA, "episode": ep.key, "step": i, "tick": tick, "t": row.get("t"),
             "observation": _observation(ep, i, row, start_ns),
             "policy_state": ps,
-            "action": _actions(row, audit, ep.shield),
+            "action": _actions(row, audit, ep.shield,
+                               advised=bool(row.get("stop_advised")) or advice is not None),
             "outcome": outcome,
             "violation_type": sorted({x["violation_type"] for x in labelled}),
             "risk_level": risk,
@@ -755,6 +869,9 @@ def build_steps(ep: Episode, outcome: str | None) -> list[dict]:
             "repairs": [str(r.get("operator")) for r in (reps or []) if isinstance(r, dict)],
             "fsm_state_after": K._fsm_field(row, "fsm_state_after"),
             "audit_record": audit is not None,
+            # The decision that flew on a stop-advised tick (_stop_advice);
+            # None on every other tick and on every rail that writes none.
+            "stop_advice": advice,
         }
         steps.append(step)
     return steps
@@ -827,17 +944,216 @@ def write_jsonl(path: Path, records: list[dict]) -> None:
             fh.write(json.dumps(json_safe(r), allow_nan=False) + "\n")
 
 
-def write_parquet(path: Path, records: list[dict]) -> bool:
-    """Parquet beside the JSONL, nested fields as JSON strings (one flat
-    schema for every writer). False when pyarrow is not installed."""
+# --------------------------------------------------------------------------- #
+# Parquet (2026-10-19)
+# --------------------------------------------------------------------------- #
+#
+# The grant's Outputs table: "Episode exporters - Python CLI (rosbag2 -> JSONL
+# / Parquet)". `pyarrow` is OPTIONAL (pyproject extra `export`): nothing in
+# the Shield's import path needs it, the JSONL is written without it, and its
+# absence is said (SKIP with `--format both`, exit 3 with `--format parquet`).
+#
+# THE FIRST WRITER, AND WHY IT WAS REPLACED. Until 2026-10-19 this was
+# `pa.Table.from_pylist(flat)` with every dict / list cell turned into JSON
+# text. It had never run on this project's machines (pyarrow was in neither
+# env), and on a probe with pyarrow 26.0.0 it:
+#   * took its columns from the FIRST record only - a key missing there was
+#     dropped from every row, silently ([{a:1},{a:2,b:3}] -> no column b);
+#   * crashed (ArrowInvalid, after the JSONL was written) on a column whose
+#     values JSON-safety had made mixed - a float column holding a NaN became
+#     a float and the string "NaN" - and on a bool / int mix;
+#   * gave a reader no way to tell a JSON-encoded column from a plain string
+#     one, and a column that was a dict in one row and a string in another
+#     came out half encoded.
+# On the four real episodes tried (a headless bundle, two rail runs, a replay
+# bundle) none of that happened, which is why the tests below build the cases.
+#
+# THE SCHEMA NOW. Every column is decided once, over all records, in the
+# order keys first appear:
+#   bool              all values bool                    -> bool
+#   int               all int, within int64              -> int64
+#   float             int / float mixed, or float        -> float64 (NaN and
+#                     (non-finite values stored as such;     +-inf kept native)
+#                     every int exact in a double)
+#   string            all str, each one valid UTF-8      -> string
+#   json              anything else: a dict or list in any row, mixed kinds,
+#                     an int beyond int64, a str with a lone surrogate (which
+#                     a UTF-8 string column cannot hold: pyarrow raised
+#                     UnicodeEncodeError, the T1d review) -> string, each
+#                     value JSON text (the JSONL's own encoding, so non-finite
+#                     floats are "NaN" / "Infinity", a surrogate is \ud800, a
+#                     dict's int key is "1"), named in the schema metadata
+# A column with no value is a null column. The file's metadata carries the
+# export schema (SCHEMA) and `vlaguard.json_columns`; `read_parquet` decodes
+# exactly those and gives non-finite floats the JSONL's strings, so a record
+# read back EQUALS the record written to the JSONL (json.loads of its line),
+# value for value (an int in a float column compares equal as a float, as JSON
+# numbers do). A key a record does not have reads back as null. The writer
+# reads its file back and compares before it reports success: a Parquet file
+# that does not say what the JSONL says is deleted and the export fails (exit
+# 2), never published.
+#
+# WHAT THE READ-BACK COMPARES (review of the T1d branch, 2026-10-20). Its
+# first version took the column list from the file it had just read
+# (`back[0]`) and the values from json_safe(record). So a file that had lost
+# a whole column - exactly the first writer's failure, a key dropped from
+# every row - compared equal on the columns it still had and was kept
+# (shown: parquet_table dropping `b` gave [{a: 1}, {a: 2}] for
+# [{a: 1, b: 10}, {a: 2, b: 20}], and write_parquet returned True); and a
+# dict with int keys was refused although the JSONL encodes it fine. Now the
+# reference is the JSONL itself: every record as json.loads reads its line
+# back (`_as_jsonl`), every key of every record a column, and a missing or
+# an extra column is a failure named in the error.
+
+PARQUET_INSTALL_HINT = ("pip install pyarrow (or `pip install .[export]`); it is an "
+                        "optional dependency, the JSONL never needs it")
+_PQ_JSON_COLUMNS = b"vlaguard.json_columns"
+_PQ_SCHEMA = b"vlaguard.schema"
+_INT64 = (-(2 ** 63), 2 ** 63 - 1)
+
+
+def have_pyarrow() -> bool:
     try:
-        import pyarrow as pa
-        import pyarrow.parquet as pq
+        import pyarrow                                           # noqa: F401
+        import pyarrow.parquet                                   # noqa: F401
     except ImportError:
         return False
-    flat = [{k: (json.dumps(json_safe(v), allow_nan=False) if isinstance(v, (dict, list))
-                 else json_safe(v)) for k, v in r.items()} for r in records]
-    pq.write_table(pa.Table.from_pylist(flat), path)
+    return True
+
+
+def _column_kind(values: list) -> str:
+    present = [v for v in values if v is not None]
+    if not present:
+        return "null"
+    if all(isinstance(v, bool) for v in present):
+        return "bool"
+    if any(isinstance(v, bool) for v in present):
+        return "json"
+    if all(isinstance(v, int) for v in present):
+        return "int" if all(_INT64[0] <= v <= _INT64[1] for v in present) else "json"
+    if all(isinstance(v, (int, float)) for v in present):
+        return ("float" if all(isinstance(v, float) or abs(v) <= 2 ** 53 for v in present)
+                else "json")
+    if all(isinstance(v, str) for v in present):
+        return "string" if all(_utf8(v) for v in present) else "json"
+    return "json"
+
+
+def _utf8(s: str) -> bool:
+    """Can a Parquet (UTF-8) string column hold `s`? Not a lone surrogate,
+    which json.loads gives for a "\\ud800" escape in a flight log."""
+    try:
+        s.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def parquet_table(records: list[dict]):
+    """The pyarrow Table for `records` (schema above)."""
+    import pyarrow as pa
+    names: list[str] = []
+    seen: set = set()
+    for r in records:
+        for k in r:
+            if k not in seen:
+                seen.add(k)
+                names.append(k)
+    arrays, json_cols = [], []
+    for k in names:
+        vals = [r.get(k) for r in records]
+        kind = _column_kind(vals)
+        if kind == "null":
+            arrays.append(pa.nulls(len(vals)))
+        elif kind == "bool":
+            arrays.append(pa.array(vals, pa.bool_()))
+        elif kind == "int":
+            arrays.append(pa.array(vals, pa.int64()))
+        elif kind == "float":
+            arrays.append(pa.array([None if v is None else float(v) for v in vals],
+                                   pa.float64()))
+        elif kind == "string":
+            arrays.append(pa.array(vals, pa.string()))
+        else:
+            json_cols.append(k)
+            arrays.append(pa.array([None if v is None else
+                                    json.dumps(json_safe(v), allow_nan=False)
+                                    for v in vals], pa.string()))
+    table = pa.Table.from_arrays(arrays, names=names)
+    return table.replace_schema_metadata({
+        _PQ_SCHEMA: SCHEMA.encode(), _PQ_JSON_COLUMNS: json.dumps(json_cols).encode()})
+
+
+def read_parquet(path: Path) -> list[dict]:
+    """Records from a file write_parquet wrote, equal to the JSONL's."""
+    import pyarrow.parquet as pq
+    table = pq.read_table(path)
+    meta = table.schema.metadata or {}
+    if _PQ_JSON_COLUMNS not in meta:
+        raise ExportError(f"{path}: no {_PQ_JSON_COLUMNS.decode()} in its metadata; "
+                          f"not written by this exporter (or by its first version, "
+                          f"which could not say which columns were JSON)")
+    json_cols = set(json.loads(meta[_PQ_JSON_COLUMNS]))
+    out = []
+    for row in table.to_pylist():
+        out.append({k: (json.loads(v) if k in json_cols and v is not None else json_safe(v))
+                    for k, v in row.items()})
+    return out
+
+
+def _same_value(a, b) -> bool:
+    """JSON value equality: numbers by value, containers element-wise."""
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(_same_value(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(_same_value(x, y) for x, y in zip(a, b))
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    return a == b
+
+
+def _as_jsonl(records: list[dict]) -> list[dict]:
+    """The records as the JSONL holds them: json.loads of the line
+    write_jsonl writes for each (non-finite floats as strings, tuples as
+    lists, a dict's int keys as strings)."""
+    return [json.loads(json.dumps(json_safe(r), allow_nan=False)) for r in records]
+
+
+def write_parquet(path: Path, records: list[dict]) -> bool:
+    """Parquet beside the JSONL (schema above). False when pyarrow is not
+    installed; ExportError (and no file) when the file it wrote does not read
+    back as the JSONL's records - every row, every key of every record as a
+    column, every value (WHAT THE READ-BACK COMPARES, above). Any other error
+    while writing or reading back also leaves no file behind."""
+    if not have_pyarrow():
+        return False
+    import pyarrow.parquet as pq
+    try:
+        pq.write_table(parquet_table(records), path)
+        back = read_parquet(path)
+        lines = _as_jsonl(records)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    keys = list(dict.fromkeys(k for r in lines for k in r))
+    got = list(back[0]) if back else []
+    missing = [k for k in keys if k not in got]
+    extra = [k for k in got if k not in keys]
+    want = [{k: r.get(k) for k in keys} for r in lines]
+    bad = next((i for i, (w, b) in enumerate(zip(want, back)) if not _same_value(w, b)), None)
+    why = []
+    if len(back) != len(records):
+        why.append(f"{len(back)}/{len(records)} rows")
+    if back and missing:
+        why.append(f"missing column(s) {missing}")
+    if extra:
+        why.append(f"extra column(s) {extra}")
+    if bad is not None:
+        why.append(f"first difference at row {bad}")
+    if why:
+        path.unlink(missing_ok=True)
+        raise ExportError(f"{path.name} did not read back as the JSONL's records "
+                          f"({'; '.join(why)}); deleted, not published")
     return True
 
 
@@ -881,18 +1197,41 @@ def main(argv: list[str] | None = None) -> int:
         print(f"wrote {out / 'steps.jsonl'} ({len(steps_all)} rows) and "
               f"{out / 'episodes.jsonl'} ({len(eps_all)} rows)")
     if args.format in ("both", "parquet"):
-        if write_parquet(out / "steps.parquet", steps_all) and \
-                write_parquet(out / "episodes.parquet", eps_all):
-            print(f"wrote {out / 'steps.parquet'} and {out / 'episodes.parquet'}")
-        elif args.format == "both":
-            print("SKIP parquet: pyarrow is not installed (JSONL written)")
+        if not have_pyarrow():
+            if args.format == "both":
+                # A Parquet file left from an earlier export would sit beside
+                # this JSONL and disagree with it without a word.
+                stale = [p for p in (out / "steps.parquet", out / "episodes.parquet")
+                         if p.exists()]
+                for p in stale:
+                    p.unlink()
+                print(f"SKIP parquet: pyarrow is not installed (JSONL written; "
+                      f"{PARQUET_INSTALL_HINT})"
+                      + (f"; removed the earlier export's "
+                         f"{', '.join(p.name for p in stale)}" if stale else ""))
+            else:
+                # Parquet alone was asked for and cannot be written: nothing
+                # was written, and the exit code says so (3), not success.
+                print(f"cannot write parquet: pyarrow is not installed, and --format "
+                      f"parquet writes nothing else (use --format both or jsonl; "
+                      f"{PARQUET_INSTALL_HINT})", file=sys.stderr)
+                return 3
         else:
-            # Parquet alone was asked for and cannot be written: nothing was
-            # written, and the exit code says so (3), not success.
-            print("cannot write parquet: pyarrow is not installed, and --format "
-                  "parquet writes nothing else (use --format both or jsonl)",
-                  file=sys.stderr)
-            return 3
+            try:
+                write_parquet(out / "steps.parquet", steps_all)
+                write_parquet(out / "episodes.parquet", eps_all)
+            except Exception as e:                               # noqa: BLE001
+                # Neither file, so no half export reads as a whole one. Any
+                # exception, not only ExportError (review of the T1d branch,
+                # P2): a pyarrow or encoding error on episodes.parquet used
+                # to escape as a traceback, leaving the steps.parquet just
+                # written beside a stale episodes.parquet of an earlier run.
+                for p in (out / "steps.parquet", out / "episodes.parquet"):
+                    p.unlink(missing_ok=True)
+                print(f"parquet NOT written: {type(e).__name__}: {e}", file=sys.stderr)
+                return 2
+            print(f"wrote {out / 'steps.parquet'} ({len(steps_all)} rows) and "
+                  f"{out / 'episodes.parquet'} ({len(eps_all)} rows)")
     return 2 if failed else 0
 
 

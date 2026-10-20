@@ -27,7 +27,8 @@
 #          test_check_contract, test_guardrail_coverage, test_frame_contract,
 #          test_fsm, test_hold_points, test_hold_transit, test_shieldcore_*,
 #          test_api, test_profile_shield_tick, test_occ_bands,
-#          test_ros2_package.
+#          test_ros2_package, test_own_velocity_forecast (on its
+#          tests/fixtures/ copies of the recorded ArduPilot flights).
 #          The DSL's lint warnings: test_window_lead_lint.
 #        WP4, the stress harness and its outputs: test_scenario_spec,
 #          test_sweep, test_kpi_magnitudes, test_kpi_report,
@@ -130,6 +131,16 @@
 #          (PARTIAL_RETURNS in tests/test_harnesstruth_ci.py).
 #        - jsonschema (3.11 extras only) runs the schema checks of test_csp,
 #          test_policy_hash and test_policy_dsl_grant_form; elsewhere they SKIP.
+#        - pyarrow (pyproject's `export` extra, pinned to vla-drone's 26.0.0;
+#          3.11 extras only: 26.0.0 needs Python >= 3.11 and ships no cp310
+#          wheel) runs test_wp4outputs_exporters' Parquet tests: the typed
+#          writer, its read-back check (a dropped column, any pyarrow error)
+#          and the round trip. That file is the job's `no_skip` too. Until
+#          2026-10-20 no job installed pyarrow, so those tests SKIPped on
+#          every job and had run only on the lab desktop (31/31 there on
+#          2026-10-20); the 3.10 and requirements-only jobs still run only
+#          the absent-pyarrow paths (the SKIP line, the stale-file removal,
+#          exit 3), which is what proves the JSONL needs no optional package.
 #        - Files outside this repository: test_policy_dsl_grant_form's 10
 #          checks and test_manifest's fork check against the reference
 #          repository (kuanting-vla-uav-guardrail is a separate checkout, not
@@ -206,9 +217,7 @@
 #          node_modules, for 19 of test_explainer_deck's 24 tests (the deck's
 #          package-lock.json is gitignored, so `npm ci` cannot run and a bare
 #          `npm install` would float), and the Windows fonts its and
-#          test_explainer_figures' fit checks read; pyarrow, so
-#          test_wp4outputs_exporters checks only the "SKIP parquet" path (the
-#          Parquet write has run nowhere yet); OpenCV again, for 3 of
+#          test_explainer_figures' fit checks read; OpenCV again, for 3 of
 #          test_make_demo_video's 4 tests; airsim and tokenizers, for 2 of
 #          test_real_vla_prompt's; and torch with a file outside git, for
 #          test_vla_backend_table's CPU-only row.
@@ -275,10 +284,12 @@
 # at 4418ae0 the step took 20-29 s, so about 55-80 s is to be expected there
 # (scaled, not measured). The standalone-test step grows too: on the desktop
 # tests/test_sweep.py took 85 s at 4418ae0 and 228 s on 2026-10-13 (its
-# episodes fly the 5 s forecast), and the five test_harnesstruth_* files add
-# 65 s, about 3.5 minutes per job in all; on GitHub, where that step took
-# 2:36-3:54 at 4418ae0, roughly 5-8 minutes is to be expected (scaled, not
-# measured). The files added on 2026-10-19 took 40-50 s together per job in
+# episodes fly the 5 s forecast), and the test_harnesstruth_* files add 65 s
+# (five files then; the sixth, test_harnesstruth_response of 2026-10-20,
+# about 20 s more on the desktop), about 3.5-4 minutes per job in all; on
+# GitHub, where that step took 2:36-3:54 at 4418ae0, roughly 5-8 minutes is
+# to be expected (scaled, not measured). The files added on 2026-10-19 took
+# 40-50 s together per job in
 # the WSL venvs, test_deploy_configs 11-14 s of it there (70-125 s alone on
 # the desktop, where its `docker compose config` and git checks run). The 40
 # files that made the list complete add about 60-75 s per job there (the
@@ -334,13 +345,15 @@ jobs:
           # that job, because the job installs everything they import.
           # uvicorn and jsonschema are pinned to vla-drone's versions:
           # guardrail/api.py reaches into uvicorn.config / uvicorn.importer,
-          # which are not a stable interface.
+          # which are not a stable interface. pyarrow too (the version the
+          # Parquet writer was built and read back with); 26.0.0 has no
+          # Python 3.10 wheel, so the 3.10 job does without it.
           - python: "3.10"
             extras: "cryptography grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0"
             no_skip: "tests/test_harness_service.py"
           - python: "3.11"
-            extras: "cryptography fastapi httpx uvicorn==0.50.2 jsonschema==4.26.0 grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0"
-            no_skip: "tests/test_railinputs_node.py tests/test_railinputs_hotapply.py tests/test_api.py tests/test_harness_service.py"
+            extras: "cryptography fastapi httpx uvicorn==0.50.2 jsonschema==4.26.0 grpcio==1.84.0 'protobuf>=7.35.1' grpcio-tools==1.84.0 pyarrow==26.0.0"
+            no_skip: "tests/test_railinputs_node.py tests/test_railinputs_hotapply.py tests/test_api.py tests/test_harness_service.py tests/test_wp4outputs_exporters.py"
           - python: "3.11"
             extras: ""
             no_skip: ""
@@ -359,7 +372,9 @@ jobs:
       # listener tests serve over real HTTP and mTLS through uvicorn, which
       # fastapi does not pull in (until 2026-10-19 no job had it). grpcio and
       # protobuf (pyproject's `harness` extra) and grpcio-tools go to the two
-      # jobs with cryptography, for tests/test_harness_service.py.
+      # jobs with cryptography, for tests/test_harness_service.py. pyarrow
+      # (pyproject's `export` extra) goes to the 3.11 extras job only, for
+      # tests/test_wp4outputs_exporters.py's Parquet tests.
       - name: Install the guardrail's dependencies
         run: python -m pip install -r requirements.txt ${{ matrix.extras }}
 
@@ -395,8 +410,10 @@ jobs:
               tests/test_harnesstruth_wind.py \
               tests/test_harnesstruth_bundles.py \
               tests/test_harnesstruth_ci.py \
+              tests/test_harnesstruth_response.py \
               tests/test_env_pins.py \
               tests/test_flight_pas_ap_20261008.py \
+              tests/test_own_velocity_forecast.py \
               tests/test_shieldcore_repair.py \
               tests/test_shieldcore_audit.py \
               tests/test_shieldcore_identity.py \

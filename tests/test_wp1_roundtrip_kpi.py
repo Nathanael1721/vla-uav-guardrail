@@ -11,7 +11,10 @@ tampered bundle refused, a broken policy refused, an empty corpus refused
 rather than reported as 0/0 - and about one deliberately crippled loader that
 must score the stated null instead of a perfect run.
 """
+import atexit
+import contextlib
 import json
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -25,6 +28,20 @@ from guardrail.models import load_policy                           # noqa: E402
 
 SKIP = "SKIP"
 N_POLICIES = len(list((ROOT / "policies").glob("*.yaml")))
+# What the cold start's refusal checks must all say (bad_signature since the
+# T1d review, 2026-10-20).
+REFUSED = {"tampered_ir": "refused", "untrusted_signer": "refused", "bad_signature": "refused"}
+
+# Every temporary folder a test makes, removed when the interpreter exits
+# (either runner): the T1d review found these tests leaving them behind.
+_TMP: list[Path] = []
+atexit.register(lambda: [shutil.rmtree(d, ignore_errors=True) for d in _TMP])
+
+
+def _tmp(prefix: str) -> Path:
+    d = Path(tempfile.mkdtemp(prefix=prefix))
+    _TMP.append(d)
+    return d
 
 
 def test_every_policy_round_trips_and_every_tamper_is_refused():
@@ -133,7 +150,7 @@ def test_a_loader_that_checks_nothing_scores_the_null_not_a_pass():
 
 
 def test_nothing_to_measure_is_refused_not_reported_as_zero_of_zero():
-    empty = Path(tempfile.mkdtemp(prefix="wp1empty_"))
+    empty = _tmp("wp1empty_")
     for fn in (lambda: W.round_trip(empty), lambda: W.negative_corpus(empty)):
         try:
             fn()
@@ -143,14 +160,18 @@ def test_nothing_to_measure_is_refused_not_reported_as_zero_of_zero():
 
 
 def test_the_report_carries_its_null_and_its_provenance():
-    out = Path(tempfile.mkdtemp(prefix="wp1out_")) / "wp1.json"
-    assert W.main(["--out", str(out), "--no-runs", "--no-reference"]) == 0
+    out = _tmp("wp1out_") / "wp1.json"
+    assert W.main(["--out", str(out), "--no-runs", "--no-reference",
+                   "--cold-start-runs", "3", "--cold-start-fresh", "1"]) == 0
     res = json.loads(out.read_text(encoding="utf-8"))
     for k in ("generated", "command", "code_revision", "python",
               "cryptography_available", "signature_verifier", "kpi",
               "null_accept_everything", "grant_form", "reference",
-              "version_lock_problems", "schema", "schema_validation"):
+              "version_lock_problems", "schema", "schema_validation", "cold_start"):
         assert k in res, k
+    # 2026-10-19: the cold start is in the KPI table, with its reading named.
+    assert "fresh process" in res["kpi"]["cold_start_50_rules"], res["kpi"]
+    assert res["cold_start"]["verdict"]["checks_hold"] is True, res["cold_start"]["checks"]
     n = res["round_trip"]["n"]
     assert res["kpi"]["round_trip"] == f"{n}/{n}"
     assert res["kpi"]["grant_form_round_trip"] == f"{n}/{n}"
@@ -159,6 +180,62 @@ def test_the_report_carries_its_null_and_its_provenance():
     assert res["schema"]["current"] is True
     assert res["kpi"]["reference_hash_agrees"] == "not run", (
         "--no-reference must say the reference was not run, never a score")
+    # Review of the T1d branch (P7): `command` alone hid the flags the
+    # published file was made with. Shown failing at 044f0fc: no
+    # command_args / command_env keys. The scratch --out is not a path a
+    # reader has, so it is reduced to its name.
+    assert res["command"] == "python tools/wp1_roundtrip_kpi.py", res["command"]
+    assert res["command_args"] == ["--out", "<elsewhere>/wp1.json", "--no-runs",
+                                   "--no-reference", "--cold-start-runs", "3",
+                                   "--cold-start-fresh", "1"], res["command_args"]
+    assert set(res["command_env"]) == {"VLAGUARD_SIGNING_KEY"}, res["command_env"]
+
+
+def test_paths_in_the_provenance_name_the_checkout_not_the_machine():
+    """_provenance_path: inside this checkout, relative; inside another
+    checkout of this repository, under "<main checkout>" (it holds a .git
+    folder) or "<another worktree>" (a .git file); elsewhere, the name only."""
+    assert W._provenance_path(W.ROOT / "policies") == "policies"
+    assert W._provenance_path(W.ROOT) == "."
+    for git_is_dir, label in ((True, "<main checkout>"), (False, "<another worktree>")):
+        other = _tmp("wp1prov_") / "VLA Drone"
+        (other / "tools").mkdir(parents=True)
+        (other / "tools" / "wp1_roundtrip_kpi.py").write_text("", encoding="utf-8")
+        (other / "guardrail").mkdir()
+        if git_is_dir:
+            (other / ".git").mkdir()
+        else:
+            (other / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+        ref = other / "kuanting-vla-uav-guardrail"
+        ref.mkdir()
+        assert W._provenance_path(other) == label
+        assert W._provenance_path(ref) == f"{label}/kuanting-vla-uav-guardrail"
+    assert W._provenance_path(_tmp("wp1prov_") / "x.json") == "<elsewhere>/x.json"
+
+
+def test_the_tool_leaves_no_temporary_folder_behind():
+    """Review of the T1d branch (P7): cold_start never removed its wp1cold_*
+    folder, and round_trip / both_hashes / reference_cross_load left theirs
+    until the interpreter's end. cold_start now removes its own when it
+    returns (and when it raises); the others are registered for exit."""
+    import glob
+    import os
+    pattern = os.path.join(tempfile.gettempdir(), "wp1cold_*")
+    before = set(glob.glob(pattern))
+    W.cold_start(warm_runs=1, fresh_runs=0)
+    assert set(glob.glob(pattern)) <= before, sorted(set(glob.glob(pattern)) - before)
+    real = W._cold_start_policies
+
+    def broken():
+        raise RuntimeError("fixture build failed")
+    W._cold_start_policies = broken
+    try:
+        W.cold_start(warm_runs=1, fresh_runs=0)
+    except RuntimeError:
+        pass
+    finally:
+        W._cold_start_policies = real
+    assert set(glob.glob(pattern)) <= before, "a failed cold start left its folder"
 
 
 def test_the_grant_form_round_trip_can_fail():
@@ -214,9 +291,12 @@ def test_every_manifest_names_both_hashes_and_a_forged_one_is_refused():
 
 
 def test_the_report_carries_the_both_hash_columns_and_their_null():
-    out = Path(tempfile.mkdtemp(prefix="wp1bh_")) / "wp1.json"
-    assert W.main(["--out", str(out), "--no-runs", "--no-reference"]) == 0
+    out = _tmp("wp1bh_") / "wp1.json"
+    assert W.main(["--out", str(out), "--no-runs", "--no-reference", "--no-cold-start"]) == 0
     res = json.loads(out.read_text(encoding="utf-8"))
+    # Skipped is said, never scored.
+    assert res["kpi"]["cold_start_50_rules"] == "not run", res["kpi"]
+    assert res["kpi"]["cold_start_within_budget"] == "not run", res["kpi"]
     n = res["round_trip"]["n"]
     assert res["kpi"]["both_hashes_recorded_and_verified"] == f"{n}/{n}"
     assert res["kpi"]["forged_reference_hash_refused"] == f"{n}/{n}"
@@ -227,13 +307,190 @@ def test_the_report_carries_the_both_hash_columns_and_their_null():
         assert res["kpi"]["reference_form_source_verified"] == f"{len(docs)}/{len(docs)}"
 
 
+# --------------------------------------------------------------------------- #
+# cold start (2026-10-19): the grant's "cold-start ingest of a typical 50-rule
+# bundle <= 1 s" (Policy DSL page, Acceptance KPIs). On 2026-10-20 the desktop
+# measured, in fresh interpreters (medians, the published docs/data/wp1_roundtrip.json),
+# imports ~344 ms + bundle -> verified policy ~7-12 ms + Shield ~4-5.5 ms, the
+# KPI reading p95 376 ms (379 ms on 2026-10-19), whole process ~440 ms
+# (docs/DESIGN-wp1-cold-start.md).
+# --------------------------------------------------------------------------- #
+
+def test_the_cold_start_fits_the_grants_budget_and_proves_it_did_the_work():
+    """A signed 50-rule bundle -> load_for_flight -> rail_shield, for the
+    typical mixed WGS84 bundle and the bench grid, in this process and in
+    fresh interpreters. The budget is pinned on the path itself (first call in
+    a fresh process, no imports) everywhere, and imports included on the
+    desktop; a shared CI runner (GITHUB_ACTIONS) gets 2 s for the
+    import-inclusive reading, as the 50-rule monitor test gets 15 ms there,
+    and the numbers are printed so one green run says what the runner does."""
+    import os
+    cs = W.cold_start(warm_runs=10, fresh_runs=3)
+    assert set(cs["bundles"]) == {"typical", "grid"}, cs["bundles"]
+    for name, b in cs["bundles"].items():
+        assert b["rules"] == 50, (name, b)
+    typ = cs["bundles"]["typical"]
+    assert typ["geographic"] and typ["scheduled_rules"] >= 15, typ
+    assert len(typ["by_type"]) >= 7, "the typical bundle must mix rule classes"
+    # Proof of work: verified, the issued hash, every zone compiled, a fence
+    # that answers, and the path can say no.
+    for name, c in cs["checks"].items():
+        assert c["runs_failing_a_check"] == 0, (name, c)
+        assert c["fresh_runs_failing_a_check"] == 0, (name, c)
+        assert c["fences_compiled"] == cs["bundles"][name]["zones"] > 0, (name, c)
+        assert c["geofence_raised_inside_first_fence"], (name, c)
+        assert "verified" in c["verifier"], (name, c)
+    assert "pure-python" in cs["pure_python_verifier"]["typical"]["verifier"]
+    assert cs["refusals"] == REFUSED, cs["refusals"]
+    assert cs["author_side"]["typical"]["same_policy_hash"] is True
+    on_ci = os.environ.get("GITHUB_ACTIONS") == "true"
+    bound = 2000.0 if on_ci else W.COLD_START_BUDGET_MS
+    for name, fr in cs["fresh_process"].items():
+        assert fr["path_first_call"]["p95_ms"] <= W.COLD_START_BUDGET_MS, (name, fr)
+        assert fr["ingest_with_imports"]["p95_ms"] <= bound, (name, fr)
+        assert cs["in_process"][name]["total"]["p95_ms"] <= W.COLD_START_BUDGET_MS
+    v = cs["verdict"]
+    assert v["checks_hold"] is True and v["budget_ms"] == 1000.0, v
+    if not on_ci:
+        assert v["within_budget"] is True, v
+    print("      cold start p95: " + ", ".join(
+        f"{n} imports {fr['import']['p95_ms']:.0f} + path "
+        f"{fr['path_first_call']['p95_ms']:.0f} ms (wall {fr['whole_process_wall']['p95_ms']:.0f})"
+        for n, fr in cs["fresh_process"].items()) + f" (bound {bound:g} ms)")
+
+
+def test_a_cold_start_that_skips_the_work_is_not_within_budget():
+    """The null: a loader that verifies nothing, and a Shield that compiles no
+    zone, are both FASTER than the real path. Each must read as a failure
+    (checks_hold False, within_budget False, and the loader accepting the
+    tampered bundle named), never as a better time."""
+    import guardrail.bundle as gb
+    import guardrail.replay as gr
+    from guardrail.models import Policy
+
+    def no_checks(bundle, trust_store=None, **kw):
+        import tarfile
+        with tarfile.open(bundle, "r:gz") as tar:
+            ir = tar.extractfile("ir.json").read()
+        pol = Policy.model_validate(json.loads(ir))
+        return pol, {"signature": "unsigned", "loaded_policy_hash": pol.policy_hash}
+
+    saved = gb.load_for_flight
+    gb.load_for_flight = no_checks
+    try:
+        cs = W.cold_start(warm_runs=3, fresh_runs=0)
+    finally:
+        gb.load_for_flight = saved
+    assert cs["verdict"]["checks_hold"] is False, cs["verdict"]
+    assert cs["verdict"]["within_budget"] is False, cs["verdict"]
+    assert cs["refusals"]["tampered_ir"] == "ACCEPTED", cs["refusals"]
+    assert all(c["runs_failing_a_check"] > 0 for c in cs["checks"].values())
+
+    real_shield = gr.rail_shield
+
+    def zoneless(policy, **kw):
+        keep = [c for c in policy.constraints
+                if c.type not in ("polygon_fence", "circle_fence", "dynamic_nfz")]
+        return real_shield(policy.model_copy(update={"constraints": keep}), **kw)
+    gr.rail_shield = zoneless
+    try:
+        cs = W.cold_start(warm_runs=3, fresh_runs=0)
+    finally:
+        gr.rail_shield = real_shield
+    assert cs["verdict"]["within_budget"] is False, cs["verdict"]
+    for name, c in cs["checks"].items():
+        assert c["fences_compiled"] == 0 and not c["geofence_raised_inside_first_fence"], c
+    assert cs["refusals"] == REFUSED, cs["refusals"]
+
+    # Review of the T1d branch (P3): a loader that checks the hash and the
+    # signer's identity but never verifies the Ed25519 signature. The real
+    # load_for_flight runs (hash, both hash forms, lint, flight gate); only
+    # the verification is gone, so the tampered IR is still refused (hash)
+    # and the untrusted signer too (trust-store lookup). Shown failing at
+    # 044f0fc: this cold start reported checks_hold True and within_budget
+    # True, because nothing it refused needed the signature checked.
+    real_verify = gb.verify_signature
+
+    def identity_only(signed_by, sig_hex, data, trust_store=None):
+        trust = (trust_store if isinstance(trust_store, dict)
+                 else gb.load_trust_store(trust_store))
+        if signed_by not in trust:
+            return gb.SIG_UNTRUSTED, f"{signed_by!r} is not in the trust store"
+        return gb.SIG_VERIFIED, f"Ed25519 signature by {signed_by!r} verified (never checked)"
+    gb.verify_signature = identity_only
+    try:
+        cs = W.cold_start(warm_runs=3, fresh_runs=0)
+    finally:
+        gb.verify_signature = real_verify
+    assert cs["refusals"]["tampered_ir"] == "refused", cs["refusals"]
+    assert cs["refusals"]["untrusted_signer"] == "refused", cs["refusals"]
+    assert cs["refusals"]["bad_signature"] == "ACCEPTED", cs["refusals"]
+    assert all(c["runs_failing_a_check"] == 0 for c in cs["checks"].values()), cs["checks"]
+    assert cs["verdict"]["checks_hold"] is False, cs["verdict"]
+    assert cs["verdict"]["within_budget"] is False, cs["verdict"]
+
+
+def test_the_bad_signature_refusal_is_the_signature_check_and_nothing_else():
+    """The bad_signature fixture differs from the issued bundle in one hex
+    digit of its Ed25519 line: the hash, the manifest and the signer are as
+    issued, and the real loader refuses it with the verification's own words
+    (a refusal for any other reason would not show the signature is checked,
+    and is not counted as one)."""
+    import tarfile
+    import guardrail.bundle as gb
+    tmp = _tmp("wp1badsig_")
+    signer = W._cold_start_signer()
+    store = W._trust_store_file(tmp / "trusted_signers.json", signer)
+    pol = W._cold_start_policies()["typical"][0]
+    good = gb.write_bundle(pol, tmp / "good.tar.gz", changelog="t",
+                           issued_at="2026-01-01T00:00:00Z", signer=signer)
+    bad = tmp / "bad.tar.gz"
+    W._flip_signature(good, bad)
+
+    def members(p):
+        with tarfile.open(p, "r:gz") as tar:
+            return {m.name: tar.extractfile(m).read() for m in tar.getmembers()}
+    g, b = members(good), members(bad)
+    assert g.keys() == b.keys() and g[gb.IR_NAME] == b[gb.IR_NAME]
+    assert g[gb.MANIFEST_NAME] == b[gb.MANIFEST_NAME]
+    sg, sb = g[gb.SIGNATURE_NAME].decode(), b[gb.SIGNATURE_NAME].decode()
+    assert sum(x != y for x, y in zip(sg, sb)) == 1 and len(sg) == len(sb), (sg, sb)
+    gb.load_for_flight(good, trust_store=store)
+    for engine in ("cryptography", "pure-python"):
+        with (W._PurePythonVerifier() if engine == "pure-python" else contextlib.nullcontext()):
+            try:
+                gb.load_for_flight(bad, trust_store=store)
+            except gb.BundleSignatureError as e:
+                raise AssertionError(f"refused as unverified, not as a bad signature: {e}")
+            except ValueError as e:
+                assert "verification failed" in str(e), (engine, e)
+            else:
+                raise AssertionError(f"{engine}: a flipped signature digit was accepted")
+
+
+def test_a_reference_repository_elsewhere_is_named_as_in_the_checkout():
+    """--reference-repo (a git worktree has no gitignored reference repo):
+    a missing virtualenv there is reported, not a ValueError from
+    Path.relative_to(ROOT) - which is what the note computed before."""
+    saved = W.REFERENCE_REPO, W.REFERENCE_PY
+    elsewhere = _tmp("wp1ref_elsewhere_")
+    W.REFERENCE_REPO, W.REFERENCE_PY = elsewhere, elsewhere / ".venv" / "Scripts" / "python.exe"
+    try:
+        r = W.run_reference("print(1)")
+    finally:
+        W.REFERENCE_REPO, W.REFERENCE_PY = saved
+    assert r["run"] is False, r
+    assert r["note"] == ("no reference virtualenv at kuanting-vla-uav-guardrail/"
+                         ".venv/Scripts/python.exe"), r
+
+
 def test_a_run_set_aside_is_listed_not_dropped():
     """Shown failing on the census code of 2026-10-07 06:30 (no `set_aside`):
     two runs another unit moved into demo/out/_hot_apply_not_in_lock/ fell
     out of the census glob, and the census rose from 83/84 to 85/85 with
     nothing said. A set-aside run is not counted, and it is listed with
     whether it resolves."""
-    root = Path(tempfile.mkdtemp(prefix="wp1census_"))
+    root = _tmp("wp1census_")
     good = load_policy(ROOT / "policies" / "sim_demo_policy.yaml").policy_hash
     for rel, h in (("demo/out/flown", good), ("demo/out/_parked/odd", "sha256:" + "0" * 64)):
         (root / rel).mkdir(parents=True)

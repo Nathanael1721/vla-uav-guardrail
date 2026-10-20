@@ -169,6 +169,21 @@ results out of every headline number and marks its rollups non-grant.
 hand-over (guardrail/rtl_path.py): from that time the battery reports
 critical, so an RTL in progress fails (the grant's "RTL fails (battery /
 blocked path)", FSM edge G6).
+
+SINCE 2026-10-19: A VEHICLE-RESPONSE COMPARISON ARM
+
+The headless harness flies exactly the commanded ground velocity on every
+tick - the constant-velocity model the Shield forecasts with - so no episode
+of the library could show the distance a real aircraft carries while it
+brakes. `response` is a second labelled comparison ARM, built exactly like
+the forecast arm: "ideal" (the harness as it always was, the only arm in a
+headline number) or "ardupilot" (RESPONSE_ARMS: acceleration and jerk limits
+plus the position controller's lag, measured from the recorded ArduPilot
+flights; docs/DESIGN-harness-vehicle-response.md). It multiplies episodes,
+never cells, tags the copy `response-ardupilot`, and the sweep keeps its
+results out of `_counts`, the headline summaries and the exit code. A run
+may fly one comparison dimension at a time (check_comparison_arms): a
+3 s-forecast episode on the ArduPilot response would shadow neither twin.
 """
 from __future__ import annotations
 
@@ -256,6 +271,12 @@ TRANSLATE_DIRECTIONS = ("perpendicular_left", "perpendicular_right", "along", "a
 # as a labelled comparison; experiments/sweep_scenarios.py forecast_for()
 # holds the numbers.
 FORECAST_ARMS = ("grant", "3s")
+# The vehicle an episode's commands are flown on (module docstring, "SINCE
+# 2026-10-19"). "ideal": the commanded ground velocity, every tick, as the
+# harness always flew it. "ardupilot": the commanded velocity through the
+# measured ArduPilot response (experiments/sweep_scenarios.py
+# VehicleResponse, AP_RESPONSE), flown only as a labelled comparison.
+RESPONSE_ARMS = ("ideal", "ardupilot")
 
 # Grant KPI names -> the field that measures each one in a sweep result.
 #
@@ -1434,6 +1455,12 @@ class Profile(_Strict):
     # headline number by the sweep.
     forecast_arms: list[Literal[FORECAST_ARMS]] = Field(
         default_factory=lambda: ["grant"])
+    # Response arms (RESPONSE_ARMS): "ideal" always, "ardupilot" adds the
+    # labelled comparison episodes flown on the measured ArduPilot response,
+    # kept out of every headline number by the sweep. Not with a comparison
+    # forecast in the same profile (check_comparison_arms).
+    response_arms: list[Literal[RESPONSE_ARMS]] = Field(
+        default_factory=lambda: ["ideal"])
     # The grant's last column: smoke and nightly "feed the final KPI report";
     # the broad sweep's results "are tracked but not part of the final KPI
     # numbers". Recorded in every run of the profile.
@@ -1447,7 +1474,44 @@ class Profile(_Strict):
         if len(set(self.seeds)) != len(self.seeds):
             raise ValueError("seeds must be distinct")
         check_forecast_arms(self.forecast_arms)
+        check_response_arms(self.response_arms)
+        check_comparison_arms(self.forecast_arms, self.response_arms)
         return self
+
+
+def check_response_arms(arms) -> list[str]:
+    """`arms` as a list, refused on the same grounds as check_forecast_arms:
+    empty, repeated, unknown, or leaving out "ideal" - a run made of the
+    ArduPilot-response arm alone would put a non-default vehicle in every
+    headline number and every known-failure pin."""
+    arms = list(arms)
+    bad = [a for a in arms if a not in RESPONSE_ARMS]
+    if bad:
+        raise ValueError(f"response arm(s) {bad}: each is one of {list(RESPONSE_ARMS)}")
+    if len(set(arms)) != len(arms):
+        raise ValueError(f"response arms {arms} repeat an arm")
+    if "ideal" not in arms:
+        raise ValueError(f"response arms {arms} leave out \"ideal\": the ArduPilot "
+                         f"response is a comparison beside the ideal vehicle, never "
+                         f"instead of it")
+    return arms
+
+
+def check_comparison_arms(forecast_arms, response_arms) -> None:
+    """Refuse a run that flies a comparison forecast AND a comparison vehicle.
+
+    Each comparison episode is reported against the headline episode it
+    shadows (the same cell and seed with its one comparison label removed:
+    sweep_scenarios._twin_id). A 3 s-forecast episode on the ArduPilot
+    response differs from the headline in two ways at once, so whatever moved
+    could not be attributed to either; the cross product is refused rather
+    than reported against a twin it does not have. Fly the two comparisons
+    in two runs."""
+    if any(a != "grant" for a in forecast_arms) and any(a != "ideal" for a in response_arms):
+        raise ValueError(f"forecast arms {list(forecast_arms)} with response arms "
+                         f"{list(response_arms)}: one comparison dimension per run "
+                         f"(a 3 s episode on the ArduPilot response would shadow "
+                         f"neither twin)")
 
 
 def check_forecast_arms(arms) -> list[str]:
@@ -1487,6 +1551,16 @@ class Episode(BaseModel):
     # paraphrase and prefix arms this one CHANGES the flight: "3s" is the
     # labelled comparison, kept out of every headline number.
     forecast: Literal[FORECAST_ARMS] = "grant"
+    # The vehicle its commands are flown on (RESPONSE_ARMS). Like the forecast
+    # arm it CHANGES the flight: "ardupilot" is the labelled comparison, kept
+    # out of every headline number.
+    response: Literal[RESPONSE_ARMS] = "ideal"
+
+    @property
+    def comparison(self) -> bool:
+        """True for a comparison copy (a non-grant forecast or a non-ideal
+        vehicle): scored and reported, never in a headline number."""
+        return self.forecast != "grant" or self.response != "ideal"
 
     @property
     def episode_id(self) -> str:
@@ -1495,8 +1569,8 @@ class Episode(BaseModel):
 
     @property
     def arm_tag(self) -> str:
-        """"" for an episode without arms; else e.g. "pp2,prefix-off" or
-        "forecast-3s"."""
+        """"" for an episode without arms; else e.g. "pp2,prefix-off",
+        "forecast-3s" or "response-ardupilot"."""
         parts = []
         if self.paraphrase_arm is not None:
             parts.append("canonical" if self.paraphrase_arm < 0
@@ -1505,6 +1579,8 @@ class Episode(BaseModel):
             parts.append(f"prefix-{self.prefix}")
         if self.forecast != "grant":
             parts.append(f"forecast-{self.forecast}")
+        if self.response != "ideal":
+            parts.append(f"response-{self.response}")
         return ",".join(parts)
 
     @property
@@ -1542,7 +1618,8 @@ def episode_arms(spec: ScenarioSpec, profile: Profile | None = None
 
 
 def expand(lib: Library, profile: Profile | None = None, seed: int | None = None,
-           only: list[str] | None = None, forecast_arms: list[str] | None = None
+           only: list[str] | None = None, forecast_arms: list[str] | None = None,
+           response_arms: list[str] | None = None
            ) -> tuple[list[Episode], dict[str, Any]]:
     """Every episode a run will execute, plus a record of how the count arose.
 
@@ -1569,10 +1646,22 @@ def expand(lib: Library, profile: Profile | None = None, seed: int | None = None
     episode above once per arm, the "3s" copy tagged `forecast-3s`. They are
     counted apart (`info["arms"]["forecast_comparison_episodes"]`) because
     they are a different Shield configuration, not more scenarios.
+
+    Response arms (`response_arms`, else the profile's, else ["ideal"]), since
+    2026-10-19: the same, for the vehicle the commands are flown on; the
+    "ardupilot" copy is tagged `response-ardupilot` and counted apart
+    (`info["arms"]["response_comparison_episodes"]`). With only "ideal" the
+    episodes, their order and every count are exactly what they were. A
+    comparison forecast and a comparison vehicle in one run are refused
+    (check_comparison_arms).
     """
     arms_fc = check_forecast_arms(forecast_arms if forecast_arms is not None
                                   else (profile.forecast_arms if profile is not None
                                         else ["grant"]))
+    arms_rsp = check_response_arms(response_arms if response_arms is not None
+                                   else (profile.response_arms if profile is not None
+                                         else ["ideal"]))
+    check_comparison_arms(arms_fc, arms_rsp)
     fams = lib.families
     if profile is not None and profile.families != "all":
         known = lib.by_id()
@@ -1621,30 +1710,42 @@ def expand(lib: Library, profile: Profile | None = None, seed: int | None = None
             for s in seeds:
                 n_seed_slots += 1
                 for fc in arms_fc:
-                    for pfx in prefixes:
-                        for pa in pp_arms:
-                            episodes.append(Episode(cell=c, seed=s, paraphrase_arm=pa,
-                                                    prefix=pfx, ab=len(prefixes) > 1,
-                                                    forecast=fc))
+                    # One of arms_fc / arms_rsp is a single arm
+                    # (check_comparison_arms), so this is never a product.
+                    for rsp in arms_rsp:
+                        for pfx in prefixes:
+                            for pa in pp_arms:
+                                episodes.append(Episode(cell=c, seed=s,
+                                                        paraphrase_arm=pa, prefix=pfx,
+                                                        ab=len(prefixes) > 1,
+                                                        forecast=fc, response=rsp))
 
-    n_grant = sum(1 for e in episodes if e.forecast == "grant")
-    # `episodes` counts the grant forecast's; the 3 s comparison copies are
-    # in `episodes_with_comparison` and arms.forecast_comparison_episodes.
+    # The headline episodes: the grant forecast on the ideal vehicle. Until
+    # 2026-10-19 this counted `forecast == "grant"`, which is the same set
+    # whenever no response arm flies.
+    n_grant = sum(1 for e in episodes if not e.comparison)
+    # `episodes` counts the headline's; the comparison copies are in
+    # `episodes_with_comparison` and arms.forecast_comparison_episodes /
+    # arms.response_comparison_episodes.
     info: dict[str, Any] = {"cells": n_cells, "episodes": n_grant,
                             "episodes_with_comparison": len(episodes),
                             "arms": {
                                 "cell_seed_slots": n_seed_slots,
-                                # Paraphrase and prefix arms of the grant
-                                # forecast (the comparison copies are below).
+                                # Paraphrase and prefix arms of the headline
+                                # (the comparison copies are below).
                                 "extra_arm_episodes": n_grant - n_seed_slots,
                                 "paraphrase_arm_episodes": sum(
                                     1 for e in episodes if e.paraphrase_arm is not None
-                                    and e.forecast == "grant"),
+                                    and not e.comparison),
                                 "prefix_off_episodes": sum(
                                     1 for e in episodes if e.prefix == "off"
-                                    and e.forecast == "grant"),
+                                    and not e.comparison),
                                 "forecast_arms": arms_fc,
-                                "forecast_comparison_episodes": len(episodes) - n_grant},
+                                "forecast_comparison_episodes": sum(
+                                    1 for e in episodes if e.forecast != "grant"),
+                                "response_arms": arms_rsp,
+                                "response_comparison_episodes": sum(
+                                    1 for e in episodes if e.response != "ideal")},
                             "cells_per_family": per_family,
                             "only_unmatched": sorted(only_set - matched),
                             "duplicate_cells": [list(p) for p in

@@ -12,7 +12,11 @@ the contractual KPIs.
 
 Results go to demo/out/sweep/ (or demo/out/stress_<profile>/): the results
 JSON, one episode bundle per episode, and `kpi_report.md`, the grant's KPI
-report for the run (one row per (template, parameter cell)). Until 2026-10-06 a
+report for the run (one row per (template, parameter cell)). A run that flies a
+comparison configuration (`--forecast-arms grant 3s`, `--response-arms ideal
+ardupilot`, `--wind-model open_loop`) goes to demo/out/cmp_<profile>_<label>/
+instead (run_folder, since 2026-10-20), outside the stress_* folders that
+tools/kpi_report.py reads by default. Until 2026-10-06 a
 plain run overwrote docs/data/scenario_sweep.json, a published artefact that the
 evaluation data, the deck and tests/test_kpi_magnitudes.py read; replacing it
 now takes `--publish`, and a CHANGELOG entry.
@@ -139,7 +143,9 @@ kept for comparison):
     update_pos_vel_accel_xy stops it on the limited axis). The airframe's
     own speed limit is NOT modelled: in still air every family flies what
     it is commanded (12 m/s in near-edge-at-12mps), as before, so the change
-    touches only the families that blow a wind;
+    touches only the families that blow a wind (on the ideal vehicle; the
+    vehicle-response arm below flies the command through the measured
+    acceleration, jerk and lag first);
   * gusts: a gust moves the aircraft off its position target, and the P loop
     pulls it back at PSC_POSXY_P (an Ornstein-Uhlenbeck offset; the velocity
     loop's own rejection is left out, so this is the pessimistic side of the
@@ -173,6 +179,55 @@ exists in demo/out: the rails' scripts set no SIM_WIND_* parameter, so the
 ros2fix* flights flew SITL's still air, where an open-loop and a closed-loop
 model of a zero setpoint agree. The model rests on the source, not on a
 flight; a SITL run with SIM_WIND_SPD set is what would test it.
+
+THE VEHICLE RESPONSE (2026-10-19): A LABELLED COMPARISON ARM
+
+Above, every family flies its commanded ground velocity on the tick - the
+constant-velocity model the Shield forecasts with - so no episode could show
+how far an aircraft carries while it brakes, or what the escalation FSM does
+when the aircraft cannot turn on the tick. `--response-arms ideal ardupilot`
+flies every episode a second time on the MEASURED ArduPilot response
+(VehicleResponse, AP_RESPONSE; docs/DESIGN-harness-vehicle-response.md): each
+tick's command acts delay_s after it is issued, the velocity target moves
+toward it under an acceleration and a jerk limit (the sqrt-controller shape
+of AC_PosControl's velocity shaping), and the airframe follows the target
+with a first-order lag; the vertical axis has its own three. The parameters
+are fitted, through this same class, to the recorded Copter-4.5.7 flights
+(pas_ap_*, sitl_*) by tools/measure_vehicle_response.py, whose `--check`
+fails when AP_RESPONSE drifts from them. The wind model then acts on what the
+airframe flew exactly as it acts on a command.
+
+It is built exactly like the 3 s forecast arm, and kept out of the same
+places: its copies are tagged `response-ardupilot` (run id, bundle name,
+`/response-ardupilot` KPI row), every bundle and KPI table of a run records
+its vehicle (`vehicle_response`, `response_arm`; the ideal one too), and its
+results sit in `_response_comparison` (per family, both arms' unsafe-position
+and polygon entries, P0 escapes, true-state P0 ticks of the command and of the
+velocity the airframe flew, and labelled fail-safe score over the same (cell,
+seed) pairs) - never in `_counts`, `_failsafe_labels`, `_true_state`, the top
+failures or the exit code. Since 2026-10-20 an arm bundle's extras are
+"sweep-episode-extras/2" (a reader that does not know the arm refuses them),
+a profiled run with the arm goes to demo/out/cmp_<profile>_response-ardupilot
+(run_folder), and tools/kpi_report.py ranks its copies apart from the grant's
+top-K (review of T1b-harness-vehicle). One
+comparison dimension per run (a 3 s episode on the ArduPilot response would
+shadow neither twin), never with --publish, never on the SITL rail (which
+flies ArduPilot for real).
+
+Under the arm only, and each only so the comparison measures the vehicle
+rather than an artefact of the ideal one: the airframe enters at the pilot's
+first command held to the policy's kinematic envelope (entry_velocity: the
+families start mid-flight); the goto pilot slows into its goal (_pilot), and
+the modelled RTL closes on its position targets (_autopilot), where their
+bang-bang commands would otherwise overshoot by a braking distance; and the
+ground stops a descent. The ideal vehicle - the default, every headline
+number and every pin - flies exactly what it flew before the arm existed
+(tests/test_harnesstruth_response.py, and the smoke, nightly and library
+runs compared field by field in the design note).
+
+If the Shield is given a measured velocity (State.velocity, another branch):
+the arm's `veh.velocity` is that measurement, one line in _episode (the
+design note's "Hook").
 
 THE RTL HAND-OVER (2026-10-12)
 
@@ -251,6 +306,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePath
@@ -264,9 +320,10 @@ from guardrail import rtl_path as RP                               # noqa: E402
 from guardrail.models import (Action4D, CorridorSwap, DynamicNFZ,  # noqa: E402
                               State, TimeWindowSwitch)
 from guardrail.scenario_spec import (FORECAST_ARMS,                # noqa: E402
-                                     GRANT_EVENT_TYPES, Defaults, Library,
-                                     ScenarioEvent, ScenarioSpec,
-                                     check_forecast_arms, expand,
+                                     GRANT_EVENT_TYPES, RESPONSE_ARMS, Defaults,
+                                     Library, ScenarioEvent, ScenarioSpec,
+                                     check_comparison_arms, check_forecast_arms,
+                                     check_response_arms, expand,
                                      legacy_pins_read_as_before, load_profile)
 from guardrail.shield import (LOOKAHEAD_DT_S, LOOKAHEAD_S, Shield,  # noqa: E402
                               recurrence_active)
@@ -435,13 +492,27 @@ def _resolve_mission(spec: ScenarioSpec, policy, jitter: random.Random) -> _Miss
 # pilots - deliberately dumb
 # --------------------------------------------------------------------------- #
 
-def _pilot(mission: _Mission, kind: str, st: State) -> Action4D:
+def _pilot(mission: _Mission, kind: str, st: State,
+           approach_accel: float | None = None) -> Action4D:
     """What the operator ASKS for, which may be entirely illegal.
 
     A pilot that avoids violations on its own would leave the Shield with
     nothing to do and every scenario would pass for the wrong reason. It flies
     on the TRUE position: degraded perception is the Shield's problem here, not
     the pilot's, so a breach under GPS noise is the Shield's to own.
+
+    `approach_accel` (the vehicle-response arm only; None is exactly the
+    pilot above): the `goto` pilot is bang-bang - full speed until GOAL_TOL_M,
+    then zero - which an ideal vehicle obeys on the tick. A vehicle that
+    carries its speed would fly through the goal by the braking distance
+    (about 16 m at 8 m/s) and swing around it for the rest of the episode,
+    so every goto mission would read "goal missed" for a reason that is the
+    pilot's, not the Shield's. Under a response the goto pilot slows into its
+    goal at the vehicle's own acceleration (the sqrt controller of the
+    remaining distance, AP_POSXY_P), still straight at the target and still
+    blind to every rule. The stub_vla pilot already slows near its target
+    (speed = min(preference, distance)) and the constant pilot has no goal;
+    both are unchanged.
     """
     if kind == "constant":
         return Action4D(**(mission.action or {}))
@@ -451,8 +522,11 @@ def _pilot(mission: _Mission, kind: str, st: State) -> Action4D:
         gx, gy, gup = mission.target
         dx, dy = gx - st.x, gy - st.y
         d = math.hypot(dx, dy)
+        speed = mission.speed
+        if approach_accel is not None:
+            speed = min(speed, _sqrt_controller(d, AP_POSXY_P, approach_accel, 0.0))
         vx, vy = ((0.0, 0.0) if d < 1e-6 else
-                  (mission.speed * dx / d, mission.speed * dy / d))
+                  (speed * dx / d, speed * dy / d))
         if d < GOAL_TOL_M:
             vx = vy = 0.0
         vz = 0.0
@@ -473,7 +547,8 @@ def hold_reached(st: State, hold: dict | None) -> bool:
 
 
 def _autopilot(mode: str | None, st: State, home: tuple[float, float],
-               dt: float, hold: dict | None = None) -> Action4D:
+               dt: float, shaped: "ResponseParams | None" = None,
+               rtl_alt: float | None = None, hold: dict | None = None) -> Action4D:
     """The velocity ArduCopter's own mode flies this tick (see AP_* above).
 
     LOITER holds position; RTL climbs to AP_RTL_ALT_M if below it, then flies
@@ -482,6 +557,35 @@ def _autopilot(mode: str | None, st: State, home: tuple[float, float],
     assumed); LAND descends at AP_LAND_MPS. Any other mode (a fault latched
     before a mode was named) is treated as LOITER, ArduPilot's own fallback
     for a lost GUIDED stream.
+
+    `shaped` (the vehicle-response arm only; None flies exactly the above):
+    ArduPilot's RTL flies POSITION targets - the return altitude, then home -
+    and closes each with its position controller, so the leg ends stopped at
+    the target. Commanding "min(speed, distance / dt)" through a vehicle that
+    carries its speed would overshoot home by the braking distance and leave
+    a climb's overshoot uncorrected above RTL_ALT, which ArduPilot does not
+    do. So under a response the RTL velocity is the sqrt controller of the
+    remaining distance (AP_POSXY_P, and the response's own acceleration),
+    capped at the same speeds, with the altitude held toward RTL_ALT on the
+    way home; the horizontal leg starts once the climb is within 0.1 m (the
+    same 0.1 m the FSM's home_reached flag allows). LOITER (hold) and LAND
+    (descend at LAND_SPEED to the ground) are unchanged: the response itself
+    carries the vehicle into the hold, and the ground stops a landing.
+
+    `rtl_alt` (the arm only): the return altitude the RTL closes on, which
+    _episode captures once, when the FSM hands the aircraft to RTL, as
+    max(AP_RTL_ALT_M, the altitude then) - ArduPilot's RTL_ALT is "the
+    minimum alt above home the vehicle will climb to before returning; if
+    the vehicle is flying higher than this value it will return at its
+    current altitude" (ArduCopter parameter docs; mode_rtl.cpp computes the
+    return target once, on entry). None reads AP_RTL_ALT_M. Until 2026-10-20
+    the arm closed on AP_RTL_ALT_M always, so an RTL entered above it would
+    have descended to it on the way home, which neither ArduPilot nor the
+    ideal vehicle does. Re-flown on 2026-10-20, the ideal vehicle is untouched
+    and the arm's smoke and library runs are field for field what they were;
+    in the nightly profile three arm episodes that entered RTL 1e-5 m above
+    RTL_ALT moved by one intervention episode each, and no reported count
+    moved (docs/DESIGN-harness-vehicle-response.md).
 
     `hold` is the FSM's hold point (ShieldDecision.hold_point, since
     2026-10-19). An in-place one, or None, is exactly the above. A MOVED one
@@ -501,6 +605,20 @@ def _autopilot(mode: str | None, st: State, home: tuple[float, float],
             cz = float(hold.get("climb_mps") or AP_CLIMB_MPS)
             vz = max(-cz, min(cz, (hold["up"] - st.up) / dt))
         return Action4D(vx=vx, vy=vy, vz_up=vz)
+    if mode == "RTL" and shaped is not None:
+        target = AP_RTL_ALT_M if rtl_alt is None else rtl_alt
+        dz = target - st.up
+        vz = math.copysign(_sqrt_controller(abs(dz), AP_POSXY_P, shaped.accel_z_mps2, dt),
+                           dz)
+        vz = max(-AP_CLIMB_MPS, min(AP_CLIMB_MPS, vz))
+        if st.up < target - 0.1:
+            return Action4D(vz_up=vz)
+        dx, dy = home[0] - st.x, home[1] - st.y
+        d = math.hypot(dx, dy)
+        if d < 1e-9:
+            return Action4D(vz_up=vz)
+        v = min(AP_RTL_SPEED_MPS, _sqrt_controller(d, AP_POSXY_P, shaped.accel_mps2, dt))
+        return Action4D(vx=v * dx / d, vy=v * dy / d, vz_up=vz)
     if mode == "RTL":
         if st.up < AP_RTL_ALT_M - 1e-6:
             return Action4D(vz_up=min(AP_CLIMB_MPS, (AP_RTL_ALT_M - st.up) / dt))
@@ -531,6 +649,271 @@ def guided_ground_velocity(vx: float, vy: float, wind: tuple[float, float],
         return vx, vy
     k = 1.0 - authority_mps / w
     return vx + wind[0] * k, vy + wind[1] * k
+
+
+# --------------------------------------------------------------------------- #
+# the vehicle-response arm (module docstring, "THE VEHICLE RESPONSE")
+# --------------------------------------------------------------------------- #
+
+DEFAULT_RESPONSE_ARM = "ideal"
+
+
+@dataclass(frozen=True)
+class ResponseParams:
+    """One vehicle response (docs/DESIGN-harness-vehicle-response.md).
+
+    delay_s       from the tick whose state the Shield judged to the position
+                  controller acting on that tick's command: the rail's own
+                  processing, MAVLink transport and the age of the position it
+                  read, measured end to end (one number: the harness cannot
+                  tell them apart, and the Shield faces their sum)
+    accel_mps2    horizontal acceleration limit of the shaped velocity target
+    jerk_mps3     horizontal jerk limit (how fast that acceleration may change)
+    tau_s         first-order lag of the airframe's velocity behind the shaped
+                  target (the velocity loop and the attitude loop together)
+    *_z_*         the same for the vertical axis, which ArduCopter shapes apart
+    substep_s     integration step inside one harness tick (50 Hz)
+    """
+    delay_s: float
+    accel_mps2: float
+    jerk_mps3: float
+    tau_s: float
+    accel_z_mps2: float
+    jerk_z_mps3: float
+    tau_z_s: float
+    substep_s: float = 0.02
+
+    def record(self) -> dict[str, float]:
+        return {k: getattr(self, k) for k in (
+            "delay_s", "accel_mps2", "jerk_mps3", "tau_s", "accel_z_mps2",
+            "jerk_z_mps3", "tau_z_s", "substep_s")}
+
+
+# The ArduPilot response, MEASURED (docs/DESIGN-harness-vehicle-response.md,
+# "Measured"): fitted by tools/measure_vehicle_response.py, through this
+# module's own VehicleResponse, to the recorded Copter-4.5.7 flights in the
+# main checkout's demo/out on 2026-10-19:
+#   delay_s 0.08     pas_ap_* (Project AirSim physics flown by ArduPilot; EKF
+#                    position at 20 Hz drained every tick, so a row's position
+#                    is fresh): 4659 samples over 14 GUIDED segments of 6
+#                    runs. Profile: 0.0-0.15 s fit within 0.5 %, 0.4 s is 7 %
+#                    worse - "under about 0.2 s" is what the data say.
+#   accel 2.4, jerk 5.7, tau 0.03
+#                    sitl_* (ArduPilot's own SITL airframe), each run on its
+#                    own clock because those logs read a backlogged pose:
+#                    1002 samples of 6 runs, the hover-to-6 m/s step of
+#                    sitl_shield_off among them. RMS 0.216 m/s against 0.469
+#                    for the ideal vehicle (with its best clock). The pas_ap
+#                    airframe's own fit is accel 3.84, jerk 5.09, tau 0.02
+#                    (RMS 0.259 against 0.773 ideal and 0.388 for the best
+#                    pure delay, 0.9 s); the lower acceleration is flown
+#                    (the longer braking distance), the jerk agrees.
+#   accel_z 2.9, jerk_z 20.0, tau_z 0.12
+#                    pas_ap_* vertical, WEAKLY identified: the vertical
+#                    commands are small (|vz| p90 0.05 m/s), the fit only
+#                    rules out a slow vertical axis (accel_z 1.0 / jerk_z 5.0
+#                    fits 6x worse) and a 0.3 s pure lag fits as well.
+# `python tools/measure_vehicle_response.py --check` re-fits and fails when
+# these drift from the recordings.
+AP_RESPONSE = ResponseParams(delay_s=0.08, accel_mps2=2.4, jerk_mps3=5.7, tau_s=0.03,
+                             accel_z_mps2=2.9, jerk_z_mps3=20.0, tau_z_s=0.12)
+RESPONSES: dict[str, ResponseParams | None] = {"ideal": None, "ardupilot": AP_RESPONSE}
+
+
+def _sqrt_controller(error: float, p: float, second_ord_lim: float, dt: float) -> float:
+    """The correction rate a non-negative `error` asks for: linear (p * error)
+    near zero, the rate of a constant-`second_ord_lim` approach
+    (sqrt(2 * lim * (error - linear / 2))) beyond, and never more than closes
+    the error within `dt`. The shape of ArduPilot's AP_Math sqrt_controller
+    (control.cpp), which AC_PosControl's velocity shaping is built on; written
+    here for a vector's length, so for error >= 0 only."""
+    if not (second_ord_lim > 0.0) or math.isinf(second_ord_lim):
+        rate = error * p if math.isfinite(p) else math.inf
+    elif p <= 0.0:
+        rate = math.sqrt(2.0 * second_ord_lim * error)
+    else:
+        linear = second_ord_lim / (p * p)
+        rate = (math.sqrt(2.0 * second_ord_lim * (error - linear / 2.0))
+                if error > linear else error * p)
+    return min(rate, error / dt) if dt > 0.0 else rate
+
+
+def _shape_step(cmd, vt: list, at: list, accel: float, jerk: float, h: float) -> None:
+    """One substep of the jerk-limited velocity shaper, in place on the target
+    velocity `vt` and target acceleration `at` (lists of axis components).
+
+    The structure of AC_PosControl's shape_vel_accel_xy as the module
+    docstring reads it: an acceleration toward the commanded velocity from
+    the sqrt controller with gain jerk / accel, capped at `accel` (as a
+    vector, so a diagonal command is not allowed sqrt(2) times more), and the
+    change of acceleration capped at jerk * h. `math.inf` turns a limit off:
+    with both off the target reaches the command within one substep, which is
+    the ideal vehicle."""
+    e = [c - v for c, v in zip(cmd, vt)]
+    en = math.sqrt(sum(x * x for x in e))
+    if en > 1e-12:
+        if math.isinf(jerk):
+            amag = min(accel, en / h)
+        else:
+            p = 0.0 if math.isinf(accel) else jerk / accel
+            amag = min(accel, _sqrt_controller(en, p, jerk, h))
+        ad = [x / en * amag for x in e]
+    else:
+        ad = [0.0] * len(e)
+    if math.isinf(jerk):
+        at[:] = ad
+    else:
+        da = [a - b for a, b in zip(ad, at)]
+        dn = math.sqrt(sum(x * x for x in da))
+        lim = jerk * h
+        if dn > lim:
+            da = [x * lim / dn for x in da]
+        for k in range(len(at)):
+            at[k] += da[k]
+    for k in range(len(vt)):
+        vt[k] += at[k] * h
+
+
+def _lag(va: list, vt: list, tau: float, h: float) -> None:
+    """The airframe's velocity `va` following the shaped target `vt` with a
+    first-order lag `tau` (in place; tau 0 follows exactly)."""
+    g = 1.0 if tau <= 0.0 else min(1.0, h / tau)
+    for k in range(len(va)):
+        va[k] += (vt[k] - va[k]) * g
+
+
+class VehicleResponse:
+    """The vehicle a response arm flies the harness's commands on.
+
+        veh = VehicleResponse(AP_RESPONSE, v0=(vx, vy, vz_up))
+        vx, vy, vz = veh.step((cmd.vx, cmd.vy, cmd.vz_up), dt)   # each tick
+
+    `step` issues the tick's command and returns the airframe's MEAN velocity
+    over the tick, so the harness's integrator (position += velocity * dt)
+    moves the vehicle exactly as far as the airframe flew. A command acts
+    `delay_s` after it is issued; until then the previous one is flown. The
+    horizontal and vertical targets are shaped apart (_shape_step) and the
+    airframe follows each with its first-order lag (_lag).
+
+    `v0` is the velocity the vehicle already has at t0, and every command
+    issued before t0 is taken to have been v0: the harness's episodes start
+    mid-flight (a start pose, a cruise speed), and starting them from a hover
+    would make the arm test a slow start instead of braking carry. A
+    non-finite component of `v0` reads 0. A non-finite component of a
+    command holds the active command's component (`nonfinite_commands`
+    counts them): the Shield sanitises what it emits (action_contract), so
+    only a Shield-off control arm could send one, and none in the library
+    does.
+
+    `command` and `advance` are `step`'s two halves, for a caller whose
+    commands and samples fall at different times (tools/
+    measure_vehicle_response.py, which fits these parameters to recorded
+    flights through this same class)."""
+
+    def __init__(self, params: ResponseParams, v0=(0.0, 0.0, 0.0), t0: float = 0.0):
+        self.p = params
+        v = tuple(float(x) if math.isfinite(float(x)) else 0.0 for x in v0)
+        self.t = float(t0)
+        self.active = v
+        self._queue: deque = deque()
+        self.vt, self.at, self.va = [v[0], v[1]], [0.0, 0.0], [v[0], v[1]]
+        self.vtz, self.atz, self.vaz = [v[2]], [0.0], [v[2]]
+        self.nonfinite_commands = 0
+
+    @property
+    def velocity(self) -> tuple[float, float, float]:
+        """The airframe's velocity now (vx, vy, vz_up)."""
+        return self.va[0], self.va[1], self.vaz[0]
+
+    def command(self, cmd) -> None:
+        """Issue `cmd` (vx, vy, vz_up) now; it acts delay_s later."""
+        last = self._queue[-1][1] if self._queue else self.active
+        c = []
+        for k, x in enumerate(cmd):
+            x = float(x)
+            if not math.isfinite(x):
+                self.nonfinite_commands += 1
+                x = last[k]
+            c.append(x)
+        self._queue.append((self.t + self.p.delay_s, tuple(c)))
+
+    def advance(self, dt: float, trace: list | None = None) -> tuple[float, float, float]:
+        """Fly `dt` seconds; the airframe's mean velocity over them. `trace`,
+        when given, receives (t, dx, dy, dz) at the end of every substep,
+        the displacement since this call began."""
+        p = self.p
+        n = max(1, int(math.ceil(dt / p.substep_s - 1e-9)))
+        h = dt / n
+        sx = sy = sz = 0.0
+        for k in range(n):
+            s = self.t + k * h
+            while self._queue and self._queue[0][0] <= s + 1e-9:
+                self.active = self._queue.popleft()[1]
+            c = self.active
+            _shape_step((c[0], c[1]), self.vt, self.at, p.accel_mps2, p.jerk_mps3, h)
+            _shape_step((c[2],), self.vtz, self.atz, p.accel_z_mps2, p.jerk_z_mps3, h)
+            _lag(self.va, self.vt, p.tau_s, h)
+            _lag(self.vaz, self.vtz, p.tau_z_s, h)
+            sx += self.va[0] * h
+            sy += self.va[1] * h
+            sz += self.vaz[0] * h
+            if trace is not None:
+                trace.append((s + h, sx, sy, sz))
+        self.t += dt
+        return sx / dt, sy / dt, sz / dt
+
+    def step(self, cmd, dt: float) -> tuple[float, float, float]:
+        self.command(cmd)
+        return self.advance(dt)
+
+
+def entry_velocity(raw: Action4D, policy) -> tuple[float, float, float]:
+    """The velocity a response arm's airframe ENTERS the episode with
+    (VehicleResponse's `v0`): the pilot's first command, held to every
+    kinematic envelope of the policy as written (speed_max_mps on the
+    horizontal speed, climb_rate_max_mps on |vz|), non-finite components 0.
+
+    The families start mid-flight - a start pose and a cruise speed, flown
+    at once by the ideal vehicle - so the arm must enter at that speed, or it
+    would measure a slow start from a hover instead of braking carry. Not the
+    raw command as asked (a pilot asking 20 m/s under an 8 m/s cap would
+    enter at a speed no earlier tick could have flown), and not the Shield's
+    tick-0 repair either: a family that starts with a zone already inside
+    the 5 s forecast gets a SLIDE at t = 0 (near-edge-at-12mps: 8 m/s
+    sideways), and entering at the repair would have the aircraft already
+    flying the Shield's reaction to a scenario that has not begun. Entering
+    along the pilot's heading at the legal speed is what "cruising when the
+    scenario starts" means; the Shield then reacts with that speed to carry,
+    which is the point of the arm."""
+    vx, vy, vz = (float(v) if math.isfinite(float(v)) else 0.0
+                  for v in (raw.vx, raw.vy, raw.vz_up))
+    for c in getattr(policy, "constraints", []) or []:
+        if getattr(c, "type", None) != "kinematic_envelope":
+            continue
+        h = math.hypot(vx, vy)
+        if h > c.speed_max_mps:
+            vx, vy = vx * c.speed_max_mps / h, vy * c.speed_max_mps / h
+        if abs(vz) > c.climb_rate_max_mps:
+            vz = math.copysign(c.climb_rate_max_mps, vz)
+    return vx, vy, vz
+
+
+def response_for(arm: str = DEFAULT_RESPONSE_ARM) -> dict[str, Any]:
+    """The vehicle an episode's commands are flown on, as recorded in its
+    extras, its episode_start event and its bundle's manifest_extras (module
+    docstring, "THE VEHICLE RESPONSE"). `ideal` carries no parameters: it is
+    the harness's integrator as it always was, not a VehicleResponse with
+    every limit off."""
+    if arm not in RESPONSE_ARMS:
+        raise ValueError(f"response arm {arm!r}: one of {list(RESPONSE_ARMS)}")
+    params = RESPONSES[arm]
+    if params is None:
+        return {"arm": arm, "model": "commanded ground velocity, every tick",
+                "params": None}
+    return {"arm": arm, "params": params.record(),
+            "model": ("delayed command, jerk- and acceleration-limited target, "
+                      "first-order airframe lag (sweep_scenarios.VehicleResponse)"),
+            "source": "docs/DESIGN-harness-vehicle-response.md"}
 
 
 def forecast_for(spec: ScenarioSpec, defaults: Defaults | None = None,
@@ -867,15 +1250,17 @@ def _as_defaults(d) -> Defaults:
 
 def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
                 forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL,
-                autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD) -> EpisodeRun:
+                autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
+                response: str = DEFAULT_RESPONSE_ARM) -> EpisodeRun:
     """One headless episode. `arm` (paraphrase / prefix record) is RECORDED in
     the episode_start event and changes nothing else: no headless pilot reads
-    text. `forecast` (forecast_for), `wind_model` (WIND_MODELS) and
-    `autopilot_hold` (AUTOPILOT_HOLD_MODELS) DO change the flight. Flown by
-    EpisodeRunner without a pause, so a stepped episode and this one share
-    one integrator."""
+    text. `forecast` (forecast_for), `wind_model` (WIND_MODELS),
+    `autopilot_hold` (AUTOPILOT_HOLD_MODELS) and `response` (RESPONSE_ARMS,
+    response_for) DO change the flight. Flown by EpisodeRunner without a
+    pause, so a stepped episode and this one share one integrator."""
     return EpisodeRunner(sc, defaults, seed, arm, forecast=forecast,
-                         wind_model=wind_model, autopilot_hold=autopilot_hold).finish()
+                         wind_model=wind_model, autopilot_hold=autopilot_hold,
+                         response=response).finish()
 
 
 class EpisodeRunner:
@@ -912,10 +1297,11 @@ class EpisodeRunner:
 
     def __init__(self, sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
                  forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL,
-                 autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD):
+                 autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
+                 response: str = DEFAULT_RESPONSE_ARM):
         self._box: dict[str, Any] = {}
         self._gen = _episode(sc, defaults, seed, arm, self._box, forecast, wind_model,
-                             autopilot_hold)
+                             autopilot_hold, response)
         self.result: EpisodeRun | None = None
         self.error: BaseException | None = None
         self._failed_t: float | None = None     # the tick that raised
@@ -1000,7 +1386,8 @@ class EpisodeRunner:
 
 def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
              forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL,
-             autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD):
+             autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
+             response: str = DEFAULT_RESPONSE_ARM):
     """The integrator behind run_episode and EpisodeRunner: a generator that
     yields (tick, t) at the start of every tick, before that tick's scheduled
     events are applied, and returns the EpisodeRun. `box` receives the
@@ -1017,6 +1404,13 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     if autopilot_hold not in AUTOPILOT_HOLD_MODELS:
         raise ValueError(f"autopilot hold model {autopilot_hold!r}: one of "
                          f"{list(AUTOPILOT_HOLD_MODELS)}")
+    # The vehicle the commands are flown on (module docstring, "THE VEHICLE
+    # RESPONSE"). `rsp` is None for the ideal vehicle, and then nothing below
+    # differs from the integrator as it was before the arm existed: every
+    # branch the arm adds is behind `veh is not None` / `rsp is not None`.
+    rsp_rec = response_for(response)
+    rsp = RESPONSES[response]
+    veh: VehicleResponse | None = None
 
     t_end = (ticks - 1) * dt
     late = [e for e in spec.events if e.at_sim_t > t_end + 1e-9]
@@ -1081,6 +1475,19 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     # by a third Shield, never by the flying one (whose FSM it would feed).
     checker = (Shield(spec.policy.load(ROOT), lookahead_s=look, dt=step, now=clock,
                       escalation=False) if esc else None)
+    # Under the vehicle-response arm only: a fourth Shield, kept in step like
+    # the others, that judges the velocity the AIRFRAME flew over each tick
+    # at the true position (`true_p0_vehicle_ticks`). The true-state P0 count
+    # above judges the COMMAND, before the vehicle steps; braking carry - a
+    # command of zero while the airframe still moves toward the zone - is
+    # invisible to it (review of T1b-harness-vehicle, P3). Its own Shield,
+    # because a Shield's filter() feeds its sliding window and monitor clock,
+    # and a second query per tick to the oracle or the checker would change
+    # what they keep. None on the ideal vehicle, whose airframe velocity IS
+    # the command, so the ideal episode builds, keys and steps exactly what
+    # it did.
+    vjudge = (Shield(spec.policy.load(ROOT), lookahead_s=look, dt=step, now=clock,
+                     escalation=False) if rsp is not None else None)
     rng_gps = random.Random(f"{seed}:gps")
     rng_wind = random.Random(f"{seed}:wind")
     rng_jit = random.Random(f"{seed}:jitter")
@@ -1101,7 +1508,7 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     subj = spec.mission.subject
     relabels = sorted(subj.reclassify if subj else [], key=lambda r: r.at_s)
     subj_class = subj.class_ if subj else None
-    shields = [s for s in (shield, oracle, checker) if s is not None]
+    shields = [s for s in (shield, oracle, checker, vjudge) if s is not None]
     truth = oracle or shield                     # the Shield asked about the TRUE state
     if subj:
         for s in shields:
@@ -1136,6 +1543,7 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         "arm": arm,
         "forecast": fc,
         "wind_model": wind_model,
+        "vehicle_response": rsp_rec,
         "wind_mps": [round(wind[0], 3), round(wind[1], 3)],
         "lint_warnings": lint_warnings,
         "autopilot_hold_model": hold_model}]
@@ -1161,6 +1569,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     prev_owner = "shield"
     true_p0_ticks = 0
     autopilot_p0_ticks = 0
+    # The vehicle-response arm's airframe-velocity count (`vjudge`); never
+    # reported for the ideal vehicle.
+    true_p0_vehicle_ticks = 0
     min_fence_d = math.inf
     fence_seen = False
     inside_poly_ticks = 0
@@ -1197,6 +1608,15 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     rtl_failures: list[dict] = []
     # The gust offset from the position target (wind model "guided").
     gust_off = [0.0, 0.0]
+    # The vehicle-response arm's own measurements: the fastest the airframe
+    # flew, and the largest gap between what it flew and what it was told
+    # (a response arm that never differed from the command would otherwise
+    # be indistinguishable from one that never ran).
+    veh_max_speed = 0.0
+    veh_max_lag = 0.0
+    # The arm's RTL return altitude (_autopilot `rtl_alt`); None until an RTL
+    # is entered under a response, and always None on the ideal vehicle.
+    rtl_alt: float | None = None
     # The t- / t+ boundary measurements (module docstring).
     req_state: dict[int, bool] = {}
     req_edges: dict[str, list[float]] = {}
@@ -1261,7 +1681,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 frozen = None
                 events.append({"t": round(t_now, 4), "type": "gps_dropout_end"})
 
-        raw = _pilot(m, kind, st)
+        raw = _pilot(m, kind, st, None if rsp is None else rsp.accel_mps2)
+        if rsp is not None and veh is None:
+            veh = VehicleResponse(rsp, v0=entry_velocity(raw, policy), t0=t_now)
         flags = {}
         rtl_note = None
         if esc:
@@ -1293,6 +1715,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 rtl_watch.reset()
         d = shield.filter(seen, raw, t=t_now, **flags)
         if esc and d.set_mode:
+            if rsp is not None and d.set_mode == "RTL" and ap_mode != "RTL":
+                # The arm's RTL return altitude, captured on entry as
+                # ArduPilot computes it (_autopilot, `rtl_alt`).
+                rtl_alt = max(AP_RTL_ALT_M, st.up)
             ap_mode = d.set_mode
         if esc:
             # The FSM's hold point: None outside Loiter / Land (or on a fault,
@@ -1331,7 +1757,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             owner = "autopilot"
             if hold is not None and not hold_done and hold_reached(st, hold):
                 hold_done = True
-            flown = _autopilot(ap_mode, st, m.home, dt, None if hold_done else hold)
+            flown = _autopilot(ap_mode, st, m.home, dt, rsp, rtl_alt,
+                               hold=None if hold_done else hold)
             flown_vios = checker.filter(seen, flown, t=t_now).violations
         owner_ticks[owner] += 1
         if owner == "autopilot":
@@ -1500,7 +1927,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
 
         sp = math.hypot(flown.vx, flown.vy)
         max_speed = max(max_speed, sp)
-        if sp > 0.1:
+        if sp > 0.1 and veh is None:
+            # The ideal vehicle travels along its command. Under a response
+            # the heading is the airframe's own velocity, set after the
+            # integration step below.
             heading = (flown.vx / sp, flown.vy / sp)
         finite = finite and all(math.isfinite(v) for v in
                                 (flown.vx, flown.vy, flown.vz_up, flown.yaw_rate))
@@ -1520,6 +1950,38 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         # does not depend on the hand-over.
         gx = rng_wind.gauss(0, stress.gust_mps) if stress.gust_mps else 0.0
         gy = rng_wind.gauss(0, stress.gust_mps) if stress.gust_mps else 0.0
+        # What the airframe flies for this tick's command: the command itself
+        # (the ideal vehicle, every family as it always was), or, under the
+        # vehicle-response arm, its mean velocity over the tick through the
+        # measured ArduPilot response. The wind model below then acts on that
+        # velocity exactly as it acted on the command.
+        if veh is None:
+            fvx, fvy, fvz = flown.vx, flown.vy, flown.vz_up
+        else:
+            fvx, fvy, fvz = veh.step((flown.vx, flown.vy, flown.vz_up), dt)
+            vsp = math.hypot(fvx, fvy)
+            veh_max_speed = max(veh_max_speed, vsp)
+            if all(math.isfinite(v) for v in (flown.vx, flown.vy, flown.vz_up)):
+                veh_max_lag = max(veh_max_lag, math.sqrt(
+                    (fvx - flown.vx) ** 2 + (fvy - flown.vy) ** 2
+                    + (fvz - flown.vz_up) ** 2))
+            if vsp > 0.1:
+                heading = (fvx / vsp, fvy / vsp)
+            # What flew from this row's position, beside what was commanded.
+            row["vehicle_v"] = [fvx, fvy, fvz]
+            # The same true-state judgement as `true_p0_flown_ticks`, of the
+            # velocity the airframe FLEW over this tick (VehicleResponse's
+            # mean, from this row's true position, at this tick's rules)
+            # instead of the command: a Brake or a slide that zeroes the
+            # into-zone command while the airframe still carries toward the
+            # zone counts here and not there. Yaw is not modelled, so the
+            # command's yaw rate stands.
+            yr = flown.yaw_rate if math.isfinite(flown.yaw_rate) else 0.0
+            veh_vios = vjudge.filter(st, Action4D(vx=fvx, vy=fvy, vz_up=fvz, yaw_rate=yr),
+                                     t=t_now).violations
+            row["vehicle_violations"] = [v.model_dump() for v in veh_vios]
+            if p0(veh_vios):
+                true_p0_vehicle_ticks += 1
         if wind_model == "open_loop":
             # The model until 2026-10-12: the autopilot's modes rejected wind
             # and gusts, every other velocity drifted open-loop with both.
@@ -1528,19 +1990,25 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 wx = wy = 0.0
             else:
                 wx, wy = wind
-            vgx, vgy = flown.vx + wx + gx, flown.vy + wy + gy
+            vgx, vgy = fvx + wx + gx, fvy + wy + gy
         else:
             # ArduCopter's position controller flies every velocity (module
             # docstring, "THE WIND MODEL"): the steady wind is rejected within
             # the hold authority, a gust is pulled back at PSC_POSXY_P.
-            ux, uy = guided_ground_velocity(flown.vx, flown.vy, wind)
+            ux, uy = guided_ground_velocity(fvx, fvy, wind)
             px, py = AP_POSXY_P * gust_off[0], AP_POSXY_P * gust_off[1]
             gust_off[0] += (gx - px) * dt
             gust_off[1] += (gy - py) * dt
             vgx, vgy = ux + gx - px, uy + gy - py
         prev_st = st
+        up_next = st.up + fvz * dt
+        if veh is not None and up_next < 0.0:
+            # The ground stops a descent (a landing's last tick, carried by
+            # the response past the commanded stop); the ideal vehicle never
+            # reaches it, because every descent it flies ends on the tick.
+            up_next = 0.0
         st = State(x=st.x + vgx * dt, y=st.y + vgy * dt,
-                   up=st.up + flown.vz_up * dt, yaw_deg=st.yaw_deg)
+                   up=up_next, yaw_deg=st.yaw_deg)
         # Where the move landed, judged NOW - before the clock and the next
         # tick's events advance: was it already unsafe / inside a zone? (See
         # the breach and polygon-entry tests above.)
@@ -1646,6 +2114,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         # wind model it flew (module docstring).
         "forecast": fc,
         "wind_model": wind_model,
+        # The vehicle the commands were flown on (module docstring, "THE
+        # VEHICLE RESPONSE"): {"arm": "ideal", ...} on every headline episode.
+        "vehicle_response": rsp_rec,
         "harness_events": len(events) - 1,
         "policy_generation_final": shield.policy.generation,
         # None when the scenario declares no dropout; otherwise the ticks the
@@ -1681,6 +2152,16 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         **boundary,
         **phases,
     }
+    if veh is not None:
+        # Only under a response arm, so a headline episode's table carries
+        # exactly the keys it always did (plus its `vehicle_response` label).
+        extra["max_vehicle_speed"] = round(veh_max_speed, 4)
+        extra["max_velocity_lag_mps"] = round(veh_max_lag, 4)
+        extra["nonfinite_commands_held"] = veh.nonfinite_commands
+        # `true_p0_flown_ticks` judges the command at the true state;
+        # this, the velocity the airframe flew (vjudge, review of
+        # T1b-harness-vehicle, P3).
+        extra["true_p0_vehicle_ticks"] = true_p0_vehicle_ticks
     if fsm is not None:
         extra["fsm"] = {k: fsm[k] for k in ("final_state", "terminal",
                                              "terminal_reason", "visited",
@@ -1804,15 +2285,42 @@ def manifest_extras(arm: dict | None) -> dict | None:
 
 # The version of the self-contained keys episode_extras() adds; a reader
 # (rerun_from_extras, the WP4 outputs tools) refuses a schema it does not know.
-# /2 (2026-10-20): `arm.autopilot_hold` - which hold the modelled autopilot
-# flew (AUTOPILOT_HOLD_MODELS) - is always written. A /1 bundle predates the
-# hold-point search, so its autopilot held where the aircraft was:
-# rerun_from_extras reads a /1 bundle with no `autopilot_hold` as "in_place",
-# not as today's default (re-review of T1c, P2: an in_place bundle with the
-# key gone re-flew as moved_points, 18 autopilot P0 ticks against the 38
-# flown, and tools/rerun_episode.py called a sound bundle "differs").
-EXTRAS_SCHEMA = "sweep-episode-extras/2"
-READABLE_EXTRAS_SCHEMAS = ("sweep-episode-extras/1", EXTRAS_SCHEMA)
+#
+# /1  every bundle written before 2026-10-20: the ideal vehicle (a bundle
+#     from before 2026-10-19 names no `arm.response`), the modelled autopilot
+#     holding where the aircraft was (there were no hold points), and no
+#     `arm.autopilot_hold`.
+# /2  taken on 2026-10-20 by two branches at once, each for its own key, so
+#     a /2 bundle is told apart by which of the two it names:
+#       - the hold points (T1c): `arm.autopilot_hold` - which hold the
+#         modelled autopilot flew (AUTOPILOT_HOLD_MODELS) - always written,
+#         on the ideal vehicle. A /1 bundle predates the hold-point search,
+#         so its autopilot held where the aircraft was: rerun_from_extras
+#         reads a /1 bundle with no `autopilot_hold` as "in_place", not as
+#         today's default (re-review of T1c, P2: an in_place bundle with the
+#         key gone re-flew as moved_points, 18 autopilot P0 ticks against
+#         the 38 flown, and tools/rerun_episode.py called a sound bundle
+#         "differs").
+#       - the vehicle-response arm (T1b; review of T1b-harness-vehicle, P2):
+#         an episode flown on a vehicle response other than the ideal one,
+#         named in `arm.response`, its autopilot holding in place (that
+#         branch had no hold points); its ideal-vehicle bundles stayed /1. A
+#         reader from before the arm (c77c77d) accepted "/1" and would have
+#         re-flown such a bundle on the ideal vehicle under its id - the
+#         silent misreplay the parameter-drift guard in rerun_from_extras
+#         exists to stop, in the other direction; "/2" made it refuse.
+# /3  since the merge of the two (2026-10-21): every bundle names BOTH
+#     `arm.autopilot_hold` and `arm.response`. Each branch's reader accepts
+#     "/2" and knows one of the two keys, so it would re-fly a bundle of the
+#     merged harness with the wrong hold (the T1b reader: a moved hold flown
+#     in place) or on the wrong vehicle (the T1c reader: an ArduPilot bundle
+#     flown ideal) under the bundle's id; both refuse "/3". A headline bundle
+#     cannot stay "/1" as it did on the T1b branch: its autopilot flies the
+#     moved hold points, which no reader of "/1" models.
+EXTRAS_SCHEMA = "sweep-episode-extras/3"
+READABLE_EXTRAS_SCHEMAS = ("sweep-episode-extras/1", "sweep-episode-extras/2",
+                           EXTRAS_SCHEMA)
+EXTRAS_SCHEMAS_READ = READABLE_EXTRAS_SCHEMAS       # the T1b branch's name
 
 
 # A signed policy bundle up to this size is carried in the episode's extras
@@ -1861,14 +2369,26 @@ def policy_generations(events: list[dict]) -> list[dict]:
 def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
                    arm: dict | None = None, forecast: str = "grant",
                    wind_model: str = DEFAULT_WIND_MODEL, episode=None,
-                   autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD) -> dict:
+                   autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
+                   response: str = DEFAULT_RESPONSE_ARM) -> dict:
     """The keys that make an episode bundle self-contained (manifest_extras.json,
     beside the grant's six-field manifest): the expanded ScenarioSpec cell
     with every parameter bound, its events, the library defaults it relied
-    on, the seed, the arm (paraphrase / prefix record, forecast, wind model),
-    the policy as injected and every generation after it. rerun_from_extras()
-    re-flies the episode from these keys alone; the key names are listed in
-    the CHANGELOG entry of 2026-10-12 for the WP4 outputs tools."""
+    on, the seed, the arm (paraphrase / prefix record, forecast, wind model,
+    since 2026-10-19 the vehicle response, and since 2026-10-20 the
+    autopilot's hold model), the policy as injected and every generation
+    after it. rerun_from_extras() re-flies the episode from
+    these keys alone; the key names are listed in the CHANGELOG entry of
+    2026-10-12 for the WP4 outputs tools.
+
+    `vehicle_response` (and `arm.response`) is written on every bundle, the
+    ideal vehicle's included, so a bundle says which vehicle flew it without
+    a reader having to know when the arm appeared. A bundle written before
+    2026-10-19 has neither key and was flown on the ideal vehicle (the only
+    one there was); rerun_from_extras reads it so. `arm.autopilot_hold` is
+    written on every bundle too. Every bundle is EXTRAS_SCHEMA ("/3", which
+    has the history): a reader that knows only one of the two keys refuses
+    it rather than re-fly it on the ideal vehicle or with the wrong hold."""
     dfl = _as_defaults(defaults)
     out: dict[str, Any] = {
         "extras_schema": EXTRAS_SCHEMA,
@@ -1876,9 +2396,10 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
         "template": spec.template,
         "random_seed": int(seed),
         "arm": {"record": arm, "forecast": forecast, "wind_model": wind_model,
-                "autopilot_hold": autopilot_hold},
+                "autopilot_hold": autopilot_hold, "response": response},
         "forecast": run.extra.get("forecast") or forecast_for(spec, dfl, forecast),
         "wind_model": wind_model,
+        "vehicle_response": run.extra.get("vehicle_response") or response_for(response),
         "library_defaults": dfl.model_dump(mode="json"),
         "scenario_spec": spec.model_dump(mode="json", by_alias=True),
         "scenario_events": [e.model_dump(mode="json") for e in spec.events],
@@ -1902,21 +2423,50 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
     hash checked first); one too large to have been inlined is read from its
     recorded path under `root` and pinned the same way.
 
-    The episode is flown as it was flown: with the arm it records, and a
-    /1 bundle with no `arm.autopilot_hold` with the autopilot holding in
-    place, which every bundle written before the key existed did
-    (EXTRAS_SCHEMA); a /2 bundle without it is refused."""
+    The episode is flown as it was flown: with the arm, the hold and the
+    vehicle its bundle records (EXTRAS_SCHEMA has the history of the schema):
+      /1  the ideal vehicle (a bundle from before the arm names no response;
+          one that names another vehicle under "/1" contradicts itself and is
+          refused), with the hold its `arm.autopilot_hold` names, else in
+          place, which every bundle written before the key existed flew;
+      /2  one naming `arm.autopilot_hold` is the hold-point branch's, on the
+          ideal vehicle; one naming a non-ideal `arm.response` is the
+          response arm's, held in place (that branch had no hold points); one
+          naming both or neither is refused, never guessed;
+      /3  names both, or is refused."""
     schema = extras.get("extras_schema")
     if schema not in READABLE_EXTRAS_SCHEMAS:
         raise ValueError(f"manifest_extras schema {schema!r}, this harness reads "
                          f"{', '.join(repr(s) for s in READABLE_EXTRAS_SCHEMAS)}")
     arm = extras.get("arm") or {}
     hold = arm.get("autopilot_hold")
-    if hold is None:
-        if schema != "sweep-episode-extras/1":
+    rsp_named = arm.get("response")
+    ideal = rsp_named in (None, DEFAULT_RESPONSE_ARM)
+    if schema == "sweep-episode-extras/1":
+        if not ideal:
+            raise ValueError(f"manifest_extras schema {schema!r} is the ideal vehicle, but "
+                             f"the bundle names the {rsp_named!r} response (a bundle "
+                             f"flown on another vehicle is {EXTRAS_SCHEMA!r})")
+        hold = hold or "in_place"
+    elif schema == "sweep-episode-extras/2":
+        if hold is not None and not ideal:
+            raise ValueError(f"manifest_extras schema {schema!r} names both "
+                             f"arm.autopilot_hold {hold!r} and the {rsp_named!r} "
+                             f"response: no harness wrote that under {schema!r}")
+        if hold is None and ideal:
+            raise ValueError(f"manifest_extras schema {schema!r} names no "
+                             f"arm.autopilot_hold and no non-ideal vehicle response "
+                             f"(arm.response {rsp_named!r}): which hold was flown is "
+                             f"unknown")
+        hold = hold or "in_place"
+    else:
+        if hold is None:
             raise ValueError(f"manifest_extras schema {schema!r} names no "
                              f"arm.autopilot_hold: which hold was flown is unknown")
-        hold = "in_place"
+        if rsp_named is None:
+            raise ValueError(f"manifest_extras schema {schema!r} names no "
+                             f"arm.response: which vehicle flew it is unknown")
+    response = rsp_named or DEFAULT_RESPONSE_ARM
     # A bundle written before 2026-10-19 may carry pins that name no gates,
     # which the spec now refuses; read as they were written (they decide
     # only the verdict, never the flight).
@@ -1946,11 +2496,20 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
                 src = Path(root or ROOT) / src
             body["policy"] = {"bundle_path": str(src), "expected_hash": pol["policy_hash"]}
         spec = ScenarioSpec.model_validate(body)
+        recorded = (extras.get("vehicle_response") or {}).get("params")
+        if recorded is not None and RESPONSES.get(response) is not None \
+                and recorded != RESPONSES[response].record():
+            # The bundle was flown on response parameters this harness no
+            # longer holds (AP_RESPONSE re-measured since): re-flying it on
+            # today's would describe a different vehicle under its id.
+            raise ValueError(f"the bundle's {response!r} response was flown with "
+                             f"{recorded}; this harness holds "
+                             f"{RESPONSES[response].record()}")
         return run_episode(spec, Defaults.model_validate(extras["library_defaults"]),
                            int(extras["random_seed"]), arm=arm.get("record"),
                            forecast=arm.get("forecast", "grant"),
                            wind_model=arm.get("wind_model", DEFAULT_WIND_MODEL),
-                           autopilot_hold=hold)
+                           autopilot_hold=hold, response=response)
     finally:
         if tmp is not None:
             tmp.cleanup()
@@ -2813,8 +3372,12 @@ def cell_extras(tables: list[dict]) -> dict:
         for mode, n in (t.get("autopilot_mode_ticks") or {}).items():
             ticks_mode[mode] = ticks_mode.get(mode, 0) + n
     arms = {t.get("forecast_arm", "grant") for t in tables}
+    rarms = {t.get("response_arm", "ideal") for t in tables}
     fcs = [t.get("forecast") for t in tables]
     return {"forecast_arm": arms.pop() if len(arms) == 1 else sorted(arms),
+            # The vehicle the row's episodes were flown on (since 2026-10-19;
+            # a table that predates the label was flown on the ideal one).
+            "response_arm": rarms.pop() if len(rarms) == 1 else sorted(rarms),
             # None, not False, for a row whose episodes recorded no forecast:
             # the SITL rail's node builds its own Shield (at LOOKAHEAD_S /
             # LOOKAHEAD_DT_S), which this harness neither chose nor saw.
@@ -2828,9 +3391,10 @@ def cell_extras(tables: list[dict]) -> dict:
                                        if (t.get("rtl_failed_ticks") or 0) > 0)}
 
 
-def _twin_id(run_id: str) -> str:
-    """The grant-forecast episode a comparison episode shadows."""
-    return run_id.replace(",forecast-3s", "").replace("#forecast-3s", "")
+def _twin_id(run_id: str, tag: str = "forecast-3s") -> str:
+    """The headline episode a comparison episode shadows: its run id with the
+    comparison's arm tag removed ("forecast-3s", or "response-ardupilot")."""
+    return run_id.replace(f",{tag}", "").replace(f"#{tag}", "")
 
 
 # What a comparison row reports of each side.
@@ -2890,6 +3454,186 @@ def forecast_comparison(grant: list[dict], cmp_scored: list[dict],
         "episodes_moved": len(moved),
         "moved": moved,
         "results": cmp_rows,
+    }
+
+
+# What the vehicle-response comparison reports of one arm, per family. The
+# grant's own KPI (the Shield's P0 escape count) beside the true-state counts
+# that a vehicle which carries its speed can move while that KPI stays put.
+_RSP_SUM_FIELDS = (
+    # Times the aircraft moved ITSELF from a legal position into an unsafe
+    # one (run_episode `breaches`: the unsafe-position entries), and the same
+    # for moves the modelled LOITER / RTL / LAND made.
+    ("unsafe_position_entries", "breaches"),
+    ("autopilot_unsafe_position_entries", "autopilot_breaches"),
+    # Times it flew itself across a P0 polygon's own edge (true-state
+    # entries), Shield-flown and autopilot-flown.
+    ("polygon_entries", "polygon_entries"),
+    ("autopilot_polygon_entries", "autopilot_polygon_entries"),
+    ("ticks_inside_polygon", "ticks_inside_fence_polygon"),
+    # The grant's KPI: P0 violations still in the action the Shield flew.
+    ("p0_escapes", "p0_escapes"),
+    # The COMMANDED action judged at the true position (before the vehicle
+    # steps), and of those the ticks the autopilot flew.
+    ("true_p0_flown_ticks", "true_p0_flown_ticks"),
+    ("autopilot_p0_flown_ticks", "autopilot_p0_flown_ticks"),
+    # The velocity the AIRFRAME flew judged at the same true state (_episode
+    # `vjudge`, since 2026-10-20): braking carry counts here, not above. The
+    # ideal vehicle's airframe flies its command, so its side reads the
+    # commanded count (`_RSP_FALLBACK`).
+    ("true_p0_vehicle_ticks", "true_p0_vehicle_ticks"),
+    ("repair_count", "repair_count"),
+)
+# A side whose tables do not carry the first key reads the second: the ideal
+# vehicle's airframe velocity IS the command, so its vehicle count is its
+# commanded count, and the comparison's two columns stay over one definition.
+_RSP_FALLBACK = {"true_p0_vehicle_ticks": "true_p0_flown_ticks"}
+
+
+def _rsp_value(k: dict, key: str):
+    v = k.get(key)
+    if v is None and key in _RSP_FALLBACK:
+        v = k.get(_RSP_FALLBACK[key])
+    return v or 0
+
+
+def _rsp_family_side(items: list[dict]) -> dict[str, dict]:
+    """Per family, one arm's side of the response comparison: statuses,
+    the _RSP_SUM_FIELDS sums, episodes with each kind of entry, the deepest
+    true distance to a fence, outcomes, and the labelled fail-safe score."""
+    fams: dict[str, dict] = {}
+    for r in items:
+        k = r.get("kpi") or {}
+        f = fams.setdefault(r["template"], {
+            "episodes": 0, "status": {}, "outcomes": {},
+            **{name: 0 for name, _ in _RSP_SUM_FIELDS},
+            "episodes_with_unsafe_position_entry": 0,
+            "episodes_entering_polygon": 0,
+            "episodes_with_p0_escape": 0,
+            "min_true_dist_to_fence_m": None,
+            "failsafe_labelled": 0, "failsafe_correct": 0,
+            "failsafe_false_triggers": 0, "failsafe_missed": 0})
+        f["episodes"] += 1
+        f["status"][r["status"]] = f["status"].get(r["status"], 0) + 1
+        mo = k.get("mission_outcome")
+        f["outcomes"][mo] = f["outcomes"].get(mo, 0) + 1
+        for name, key in _RSP_SUM_FIELDS:
+            f[name] += _rsp_value(k, key)
+        f["episodes_with_unsafe_position_entry"] += int((k.get("breaches") or 0) > 0)
+        f["episodes_entering_polygon"] += int((k.get("polygon_entries") or 0) > 0)
+        f["episodes_with_p0_escape"] += int((k.get("p0_escapes") or 0) > 0)
+        d = k.get("min_true_dist_to_fence_m")
+        if d is not None:
+            cur = f["min_true_dist_to_fence_m"]
+            f["min_true_dist_to_fence_m"] = d if cur is None else min(cur, d)
+        lab = k.get("failsafe_matches_label")
+        if lab is not None:
+            f["failsafe_labelled"] += 1
+            f["failsafe_correct"] += int(lab == 1.0)
+            f["failsafe_false_triggers"] += int(bool(k.get("failsafe_triggered"))
+                                                and lab == 0.0)
+            f["failsafe_missed"] += int(not k.get("failsafe_triggered") and lab == 0.0)
+    return fams
+
+
+# The per-family deltas the comparison prints (ardupilot minus ideal).
+_RSP_DELTA_FIELDS = ("unsafe_position_entries", "episodes_with_unsafe_position_entry",
+                     "polygon_entries", "episodes_entering_polygon",
+                     "autopilot_unsafe_position_entries", "autopilot_polygon_entries",
+                     "p0_escapes", "true_p0_flown_ticks", "true_p0_vehicle_ticks",
+                     "failsafe_correct")
+
+
+def response_comparison(headline: list[dict], rsp_scored: list[dict],
+                        rsp_counts: dict, rsp_rows: list[dict]) -> dict:
+    """The ArduPilot vehicle-response arm beside the ideal vehicle (module
+    docstring, "THE VEHICLE RESPONSE"): per family, both arms' unsafe-
+    position and true-state entry counts, P0 escapes and labelled fail-safe
+    scores over the SAME (cell, seed) pairs, their difference, and every
+    episode whose KPI table moved. The ideal side is restricted to the
+    headline episodes this arm shadows, so a family's two columns count the
+    same flights. Never merged into a headline number, `_counts` or the exit
+    code: the arm is reported, not gated (its episodes are still judged
+    against the scenario's gates and pins, and the verdicts are counted in
+    `counts`)."""
+    twins = {(r["id"], r["seed"]): r for r in headline}
+    pairs = []
+    unmatched = []
+    for r in rsp_scored:
+        g = twins.get((_twin_id(r["id"], "response-ardupilot"), r["seed"]))
+        if g is None:
+            unmatched.append(r["id"])
+            continue
+        pairs.append((g, r))
+    # Shield-on episodes only, per family: a Shield-off control flies the raw
+    # pilot into the zone on purpose, and pooling it would read as the
+    # Shield's entries. The controls are totalled apart below.
+    on_pairs = [(g, r) for g, r in pairs if g.get("arm", "on") == "on"]
+    ideal_side = _rsp_family_side([g for g, _ in on_pairs])
+    ap_side = _rsp_family_side([r for _, r in on_pairs])
+    families = {}
+    for fam in sorted(set(ideal_side) | set(ap_side)):
+        a, b = ideal_side.get(fam) or {}, ap_side.get(fam) or {}
+        families[fam] = {"ideal": a, "ardupilot": b,
+                         "delta": {k: (b.get(k) or 0) - (a.get(k) or 0)
+                                   for k in _RSP_DELTA_FIELDS}}
+    moved = []
+    for g, r in pairs:
+        a, b = _cmp_side(g), _cmp_side(r)
+        if a != b:
+            moved.append({"id": g["id"], "seed": r["seed"], "family": r["template"],
+                          "ideal": a, "ardupilot": b,
+                          "max_velocity_lag_mps": (r.get("kpi") or {}).get(
+                              "max_velocity_lag_mps")})
+    totals = {}
+    for side, items in (("ideal", [g for g, _ in pairs]), ("ardupilot", [r for _, r in pairs])):
+        on = [x for x in items if x.get("arm", "on") == "on"]
+        off = [x for x in items if x.get("arm", "on") != "on"]
+        totals[side] = {
+            "shield_on_episodes": len(on),
+            **{name: sum(_rsp_value(x.get("kpi") or {}, key) for x in on)
+               for name, key in _RSP_SUM_FIELDS},
+            "episodes_with_unsafe_position_entry": sum(
+                1 for x in on if ((x.get("kpi") or {}).get("breaches") or 0) > 0),
+            "episodes_entering_polygon": sum(
+                1 for x in on if ((x.get("kpi") or {}).get("polygon_entries") or 0) > 0),
+            "failsafe_labels": failsafe_summary(items),
+            "controls_shield_off": {
+                "episodes": len(off),
+                "unsafe_position_entries": sum((x.get("kpi") or {}).get("breaches") or 0
+                                               for x in off),
+                "polygon_entries": sum((x.get("kpi") or {}).get("polygon_entries") or 0
+                                       for x in off)},
+        }
+    lags = [(r.get("kpi") or {}).get("max_velocity_lag_mps") for _, r in pairs]
+    lags = [x for x in lags if x is not None]
+    return {
+        "arm": "ardupilot", "response": response_for("ardupilot"),
+        "note": ("the grant's Shield (its forecast unchanged) flown on the measured "
+                 "ArduPilot vehicle response instead of the ideal vehicle, for "
+                 "comparison only: never in _counts, _failsafe_labels, _true_state, "
+                 "the top failures or the exit code. Family rows and totals count "
+                 "shield-on episodes (the fail-safe labels every labelled one); "
+                 "the shield-off controls are totalled apart. true_p0_flown_ticks "
+                 "judges the COMMANDED action at the true state, true_p0_vehicle_ticks "
+                 "the velocity the airframe flew there (braking carry counts only in "
+                 "the second; on the ideal vehicle the two are one count)."),
+        "counts": rsp_counts,
+        "paired_episodes": len(pairs),
+        "unmatched": unmatched,
+        "totals": totals,
+        "true_state": true_state_summary([r for _, r in pairs]),
+        "outcomes": {o: sum(1 for _, r in pairs
+                            if (r.get("kpi") or {}).get("mission_outcome") == o)
+                     for o in K.OUTCOMES},
+        "families": families,
+        # The arm ran: how far the airframe's velocity fell behind its
+        # command (a response arm with every lag 0.0 would be the ideal
+        # vehicle under another name).
+        "max_velocity_lag_mps": max(lags) if lags else None,
+        "episodes_moved": len(moved),
+        "moved": moved,
+        "results": rsp_rows,
     }
 
 
@@ -3074,18 +3818,60 @@ def published_view(doc: dict) -> dict:
         out["_published_drops"]["comparison"] = (
             "_forecast_comparison.results (the 3 s arm's per-episode items) is in "
             "the full run file and the bundles only")
+    rcmp = doc.get("_response_comparison")
+    if rcmp and "results" in rcmp:
+        # --publish refuses the response arm today; should that change, its
+        # per-episode items stay out of the published copy like the 3 s arm's.
+        out["_response_comparison"] = {k: v for k, v in rcmp.items() if k != "results"}
+        out["_published_drops"]["response_comparison"] = (
+            "_response_comparison.results is in the full run file and the bundles only")
     return out
 
 
-def results_path(out: str | None, publish: bool, tag: str | None) -> Path:
+def comparison_tag(forecast_arms, response_arms,
+                   wind_model: str = DEFAULT_WIND_MODEL) -> str | None:
+    """The comparison configuration(s) a run flies, as the labels its KPI rows
+    carry ("forecast-3s", "response-ardupilot", "wind-open_loop", joined by
+    "_"), or None for a run of the headline configuration alone. It names the
+    run's default folder (run_folder)."""
+    tags = ([f"forecast-{a}" for a in forecast_arms if a != "grant"]
+            + ([f"wind-{wind_model}"] if wind_model != DEFAULT_WIND_MODEL else [])
+            + [f"response-{a}" for a in response_arms if a != DEFAULT_RESPONSE_ARM])
+    return "_".join(tags) or None
+
+
+def run_folder(tag: str | None, comparison: str | None = None) -> Path:
+    """The default folder of a run's results JSON, bundles and kpi_report.md:
+    demo/out/sweep (the library) or demo/out/stress_<profile>, and for a run
+    that flies a comparison configuration (comparison_tag) demo/out/
+    cmp_<profile or "library">_<label>.
+
+    Outside `demo/out/stress_*` on purpose (review of T1b-harness-vehicle,
+    P1): tools/kpi_report.py reads `demo/out/stress_*/episode-*` by default
+    (DEFAULT_RUNS), and until 2026-10-20 a profiled run with
+    `--response-arms ideal ardupilot` (or `--forecast-arms grant 3s`) wrote
+    its comparison copies into stress_<profile> beside the headline bundles,
+    where every later default report read them; a library run's would also
+    have replaced the headline run's demo/out/sweep/sweep.json. The ideal
+    vehicle, the grant forecast and the guided wind - every default
+    invocation, and every profile as shipped (none declares a comparison
+    arm) - keep the folder they always had."""
+    if comparison:
+        return ROOT / "demo" / "out" / f"cmp_{tag or 'library'}_{comparison}"
+    return ROOT / "demo" / "out" / (f"stress_{tag}" if tag else "sweep")
+
+
+def results_path(out: str | None, publish: bool, tag: str | None,
+                 comparison: str | None = None) -> Path:
     """Where the results JSON goes. The published artefact only on --publish:
     a routine re-run used to replace docs/data/scenario_sweep.json, which the
-    evaluation data, the deck and a pinned test read."""
+    evaluation data, the deck and a pinned test read. Otherwise `out`, else
+    run_folder's sweep.json (a comparison run's own folder)."""
     if publish:
         return PUBLISHED_SWEEP
     if out:
         return Path(out)
-    return ROOT / "demo" / "out" / (f"stress_{tag}" if tag else "sweep") / "sweep.json"
+    return run_folder(tag, comparison) / "sweep.json"
 
 
 def _rollup(eps: list[dict]) -> dict | None:
@@ -3101,12 +3887,16 @@ def cell_key(table: dict) -> str:
     """The grant's KPI-report row, "(scenario template, parameter cell)", plus
     the Shield arm and the prefix arm, which are different experiments.
     Seeds and paraphrase arms of one cell pool in its row. The 3 s forecast
-    comparison arm is its own row, `/forecast-3s`, marked non-grant."""
+    comparison arm is its own row, `/forecast-3s`, marked non-grant; the
+    ArduPilot vehicle-response arm likewise, `/response-ardupilot` (since
+    2026-10-19). A headline row's key is what it always was."""
     key = f"{table['family']}/{table['cell']}/shield-{table['arm']}"
     if table.get("prefix") == "off":
         key += "/prefix-off"
     if table.get("forecast_arm", "grant") != "grant":
         key += f"/forecast-{table['forecast_arm']}"
+    if table.get("response_arm", "ideal") != "ideal":
+        key += f"/response-{table['response_arm']}"
     return key
 
 
@@ -3123,12 +3913,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--out", default=None,
                     help="results JSON (default: demo/out/sweep/sweep.json, or "
-                         "demo/out/stress_<profile>/sweep.json)")
+                         "demo/out/stress_<profile>/sweep.json; a run with a "
+                         "comparison arm or wind model: demo/out/"
+                         "cmp_<profile|library>_<label>/sweep.json)")
     ap.add_argument("--publish", action="store_true",
                     help="write the library run to docs/data/scenario_sweep.json, "
                          "the PUBLISHED artefact (needs a CHANGELOG entry)")
     ap.add_argument("--runs", default=None,
-                    help="where episode bundles and kpi_report.md go")
+                    help="where episode bundles and kpi_report.md go (default: "
+                         "demo/out/sweep, demo/out/stress_<profile>, or for a "
+                         "comparison run demo/out/cmp_<profile|library>_<label>)")
     ap.add_argument("--no-bundles", action="store_true",
                     help="skip the per-episode bundle folders")
     ap.add_argument("--keep-logs", action="store_true",
@@ -3148,17 +3942,25 @@ def main(argv: list[str] | None = None) -> int:
                          "modelled, no flight rail flies them yet) or in_place "
                          "(ArduPilot's own hold where the aircraft is: what the "
                          "rails fly, and the flights before 2026-10-19)")
+    ap.add_argument("--response-arms", nargs="+", choices=RESPONSE_ARMS, default=None,
+                    help="ideal (always) and optionally ardupilot, the labelled "
+                         "comparison flown on the measured ArduPilot vehicle "
+                         "response (default: the profile's, else ideal)")
     args = ap.parse_args(argv)
 
     if args.publish and (args.out or args.profile or args.only or args.seed is not None
                          or args.forecast_arms is not None
                          or args.wind_model != DEFAULT_WIND_MODEL
-                         or args.autopilot_hold != DEFAULT_AUTOPILOT_HOLD):
+                         or args.autopilot_hold != DEFAULT_AUTOPILOT_HOLD
+                         or args.response_arms is not None):
         # The published file is the WHOLE library on its declared seeds; a
         # partial or profiled run written there would replace it with less.
+        # The response arm is not published either: docs/data/
+        # scenario_sweep.json is the headline library run, and replacing it
+        # would need a CHANGELOG entry for a comparison nobody asked to ship.
         print("REFUSED: --publish writes the full library run; it takes no "
               "--out, --profile, --only, --seed, --forecast-arms, --wind-model "
-              "or --autopilot-hold")
+              "--autopilot-hold or --response-arms")
         return 2
 
     t_run = time.perf_counter()
@@ -3168,9 +3970,18 @@ def main(argv: list[str] | None = None) -> int:
         lib_path = ROOT / lib_path
     lib = Library(lib_path)
     fc_arms = list(PUBLISH_FORECAST_ARMS) if args.publish else args.forecast_arms
+    rsp_arms = args.response_arms
+    # The arms this run will fly: the flags, else the profile's, else the
+    # headline arm alone (expand() resolves them the same way).
+    eff_rsp = (rsp_arms if rsp_arms is not None
+               else (profile.response_arms if profile else ["ideal"]))
     try:
         if fc_arms is not None:
             check_forecast_arms(fc_arms)
+        check_response_arms(eff_rsp)
+        check_comparison_arms(fc_arms if fc_arms is not None
+                              else (profile.forecast_arms if profile else ["grant"]),
+                              eff_rsp)
     except ValueError as e:
         print(f"REFUSED: {e}")
         return 2
@@ -3184,16 +3995,29 @@ def main(argv: list[str] | None = None) -> int:
         print("REFUSED: --autopilot-hold chooses the headless harness's modelled "
               "autopilot; the SITL rail flies ArduPilot's own hold")
         return 2
-    episodes, info = expand(lib, profile, args.seed, args.only, forecast_arms=fc_arms)
+    if args.backend == "sitl" and any(a != "ideal" for a in eff_rsp):
+        # The rail flies ArduPilot itself: its vehicle response is the real
+        # one, and a modelled one on top would fly the response twice.
+        print("REFUSED: the ardupilot response arm is a headless model of what "
+              "the SITL rail flies for real")
+        return 2
+    episodes, info = expand(lib, profile, args.seed, args.only, forecast_arms=fc_arms,
+                            response_arms=rsp_arms)
     info["wind_model"] = args.wind_model
     # The autopilot model behind every autopilot-flown number of this run
     # (AUTOPILOT_HOLD_MODELS; review of T1c, P3).
     info["autopilot_hold_model"] = args.autopilot_hold
     info["autopilot_hold_model_flown_by_a_rail"] = args.autopilot_hold == "in_place"
     tag = profile.profile if profile else None
-    out = results_path(args.out, args.publish, tag)
-    runs = Path(args.runs) if args.runs else (
-        ROOT / "demo" / "out" / (f"stress_{tag}" if tag else "sweep"))
+    # A run that flies a comparison configuration gets its own default folder
+    # (run_folder), outside the stress_* glob the KPI report reads; --publish
+    # keeps demo/out/sweep for its bundles (its 3 s arm is part of the
+    # published run, and that folder is outside the glob already).
+    cmp_tag = None if args.publish else comparison_tag(
+        fc_arms if fc_arms is not None else (profile.forecast_arms if profile else ["grant"]),
+        eff_rsp, args.wind_model)
+    out = results_path(args.out, args.publish, tag, cmp_tag)
+    runs = Path(args.runs) if args.runs else run_folder(tag, cmp_tag)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
     verbose = len(episodes) <= 80
 
@@ -3203,6 +4027,8 @@ def main(argv: list[str] | None = None) -> int:
              if arms.get("extra_arm_episodes") else "")
           + (f" + {arms.get('forecast_comparison_episodes')} on the 3 s comparison "
              f"forecast" if arms.get("forecast_comparison_episodes") else "")
+          + (f" + {arms.get('response_comparison_episodes')} on the ArduPilot vehicle "
+             f"response" if arms.get("response_comparison_episodes") else "")
           + f", backend={args.backend}" + (f", profile={tag}" if tag else "")
           + (f", wind model {args.wind_model}" if args.backend == "headless" else "")
           + "\n")
@@ -3229,19 +4055,30 @@ def main(argv: list[str] | None = None) -> int:
     cmp_tables_off: list[dict] = []
     cmp_counts = {s: 0 for s in ("pass", "tracked", "fail", "known_failure",
                                  "unexpected_pass", "skipped", "error")}
+    # The ArduPilot-response arm (module docstring, "THE VEHICLE RESPONSE"):
+    # kept apart exactly like the 3 s forecast arm. A run flies one of the
+    # two comparisons at most (check_comparison_arms).
+    rsp_rows: list[dict] = []
+    rsp_tables_on: list[dict] = []
+    rsp_tables_off: list[dict] = []
+    rsp_counts = dict(cmp_counts)
     one_seed = len(episodes) == len({(e.run_id) for e in episodes})
 
     for ep in episodes:
         spec = ep.cell.spec
         eid = ep.run_id
-        is_cmp = ep.forecast != "grant"
-        sink = cmp_rows if is_cmp else rows_out
+        kind = ("forecast" if ep.forecast != "grant"
+                else "response" if ep.response != "ideal" else None)
+        is_cmp = kind is not None
+        sink = {"forecast": cmp_rows, "response": rsp_rows}.get(kind, rows_out)
+        ccounts = rsp_counts if kind == "response" else cmp_counts
         label = eid if one_seed else f"{eid} seed={ep.seed}"
         common = {"id": eid, "id_cell": ep.episode_id, "scenario_id": ep.cell.scenario_id,
                   "template": spec.template, "params": ep.cell.params,
                   "seed": ep.seed, "arm": "on" if spec.shield else "off",
                   "prefix": ep.prefix, "expect": spec.expect,
                   "forecast_arm": ep.forecast,
+                  "response_arm": ep.response,
                   "why": spec.description.strip()}
         run = None
         arm_record = None
@@ -3263,14 +4100,15 @@ def main(argv: list[str] | None = None) -> int:
                 arm_record = build_arm(ep)
                 run = run_episode(spec, lib.defaults, ep.seed, arm=arm_record,
                                   forecast=ep.forecast, wind_model=args.wind_model,
-                                  autopilot_hold=args.autopilot_hold)
+                                  autopilot_hold=args.autopilot_hold,
+                                  response=ep.response)
                 rows, extra, policy = run.rows, run.extra, run.policy
                 events, hash0 = run.events, run.policy_hash_start
                 sim_s, wall_s, consumed = run.sim_s, run.wall_s, run.seed_consumed
                 prios = run.priorities
         except UnsupportedScenario as e:
             if is_cmp:
-                cmp_counts["skipped"] += 1
+                ccounts["skipped"] += 1
             else:
                 n_skip += 1
             print(f"  SKIP  {label:<34} {e}")
@@ -3278,7 +4116,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         except Exception as e:                                   # noqa: BLE001
             if is_cmp:
-                cmp_counts["error"] += 1
+                ccounts["error"] += 1
             else:
                 n_fail += 1
             print(f"  ERROR {label:<34} {type(e).__name__}: {e}")
@@ -3294,8 +4132,8 @@ def main(argv: list[str] | None = None) -> int:
             common["known_failure_reason"] = known_why
         mark = _MARKS[status]
         if is_cmp:
-            cmp_counts[status] += 1
-            mark = "cmp3s"
+            ccounts[status] += 1
+            mark = "cmp3s" if kind == "forecast" else "cmpAP"
         elif status == "known_failure":
             n_known += 1
         elif status in ("fail", "unexpected_pass"):
@@ -3335,7 +4173,8 @@ def main(argv: list[str] | None = None) -> int:
                            **episode_extras(spec, lib.defaults, ep.seed, run,
                                             arm=arm_record, forecast=ep.forecast,
                                             wind_model=args.wind_model, episode=ep,
-                                            autopilot_hold=args.autopilot_hold)}
+                                            autopilot_hold=args.autopilot_hold,
+                                            response=ep.response)}
             write_bundle(ep_dir, manifest, _json_safe({
                 **common, "status": status, "gates_failed": bad,
                 "kpi_grade": grade, "kpi_grade_reasons": why_not,
@@ -3359,7 +4198,8 @@ def main(argv: list[str] | None = None) -> int:
         sink.append(item)
         table = {**res, "id": eid, "family": spec.template, "cell": ep.episode_id,
                  "arm": common["arm"], "prefix": ep.prefix, "params": ep.cell.params,
-                 "forecast_arm": ep.forecast, "bundle": bundle, "kpi_grade": False}
+                 "forecast_arm": ep.forecast, "response_arm": ep.response,
+                 "bundle": bundle, "kpi_grade": False}
         table["worst_tick"] = _json_safe(K.worst_tick(rows, prios))
         table["null_hover_mission"] = K.null_hover_mission(
             rows, {"reached_goal": extra.get("reached_goal")})
@@ -3372,8 +4212,10 @@ def main(argv: list[str] | None = None) -> int:
             sys.path.insert(0, str(ROOT / "tools"))
             import kpi_report
             table = kpi_report.shield_off_table(table)
-        if is_cmp:
+        if kind == "forecast":
             (cmp_tables_on if spec.shield else cmp_tables_off).append(table)
+        elif kind == "response":
+            (rsp_tables_on if spec.shield else rsp_tables_off).append(table)
         else:
             (tables_on if spec.shield else tables_off).append(table)
 
@@ -3412,8 +4254,19 @@ def main(argv: list[str] | None = None) -> int:
                     r3, grant_config=False,
                     note="the 3 s / 0.5 s comparison arm, NOT the grant's Shield "
                          "configuration; never part of a headline number")
+        if rsp_tables_on:
+            ra = _rollup(rsp_tables_on)
+            if ra is not None:
+                new_rollups["_comparison_response_ardupilot_shield_on"] = dict(
+                    ra, response_arm="ardupilot",
+                    true_state=true_state_summary(
+                        [r for r in rsp_rows if "kpi" in r]),
+                    note="the grant's Shield flown on the measured ArduPilot vehicle "
+                         "response (docs/DESIGN-harness-vehicle-response.md), a "
+                         "comparison arm; never part of a headline number")
         groups: dict[str, list] = {}
-        for t in tables_on + tables_off + cmp_tables_on + cmp_tables_off:
+        for t in (tables_on + tables_off + cmp_tables_on + cmp_tables_off
+                  + rsp_tables_on + rsp_tables_off):
             groups.setdefault(cell_key(t), []).append(t)
         for key in sorted(groups):
             members = groups[key]
@@ -3425,6 +4278,9 @@ def main(argv: list[str] | None = None) -> int:
     comparison = (forecast_comparison(scored, [r for r in cmp_rows if "kpi" in r],
                                       cmp_counts, cmp_rows)
                   if cmp_rows else None)
+    rsp_comparison = (response_comparison(scored, [r for r in rsp_rows if "kpi" in r],
+                                          rsp_counts, rsp_rows)
+                      if rsp_rows else None)
     top = None
     try:
         top = K.top_failures(tables_on + tables_off, k=10)
@@ -3493,6 +4349,9 @@ def main(argv: list[str] | None = None) -> int:
         "_top_failures": top,
         # The 3 s comparison arm (module docstring): None unless it flew.
         "_forecast_comparison": comparison,
+        # The ArduPilot vehicle-response arm (module docstring, "THE VEHICLE
+        # RESPONSE"): None unless it flew.
+        "_response_comparison": rsp_comparison,
         "results": rows_out,
     }
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -3587,6 +4446,46 @@ def main(argv: list[str] | None = None) -> int:
               f"{cf['correct']}/{cf['labelled']} = {cf['fail_safe_correctness']} "
               f"({cf['false_triggers']} false, {cf['missed_triggers']} missed); "
               f"{comparison['episodes_moved']} episode(s) moved between the forecasts")
+    if rsp_comparison:
+        rc = rsp_comparison["counts"]
+        ti, ta = rsp_comparison["totals"]["ideal"], rsp_comparison["totals"]["ardupilot"]
+        fi, fa = ti["failsafe_labels"], ta["failsafe_labels"]
+        print(f"vehicle-response comparison (the measured ArduPilot response, NOT the "
+              f"headline; reported, never gated): {rc['pass']} pass, {rc['tracked']} "
+              f"tracked, {rc['fail'] + rc['error']} fail, {rc['known_failure']} known, "
+              f"{rc['unexpected_pass']} pinned-but-passing over "
+              f"{rsp_comparison['paired_episodes']} paired episodes; max velocity lag "
+              f"{rsp_comparison['max_velocity_lag_mps']} m/s; "
+              f"{rsp_comparison['episodes_moved']} episode(s) moved")
+        print(f"  shield-on, ideal -> ardupilot: unsafe-position entries "
+              f"{ti['unsafe_position_entries']} -> {ta['unsafe_position_entries']} "
+              f"(episodes {ti['episodes_with_unsafe_position_entry']} -> "
+              f"{ta['episodes_with_unsafe_position_entry']}); polygon entries "
+              f"{ti['polygon_entries']} -> {ta['polygon_entries']} (episodes "
+              f"{ti['episodes_entering_polygon']} -> {ta['episodes_entering_polygon']}); "
+              f"autopilot entries {ti['autopilot_polygon_entries']} -> "
+              f"{ta['autopilot_polygon_entries']}; P0 escapes {ti['p0_escapes']} -> "
+              f"{ta['p0_escapes']}; true P0 ticks, command {ti['true_p0_flown_ticks']} "
+              f"-> {ta['true_p0_flown_ticks']}, airframe {ti['true_p0_vehicle_ticks']} -> "
+              f"{ta['true_p0_vehicle_ticks']}; fail-safe labels "
+              f"{fi['correct']}/{fi['labelled']} -> {fa['correct']}/{fa['labelled']} "
+              f"({fi['false_triggers']} -> {fa['false_triggers']} false, "
+              f"{fi['missed_triggers']} -> {fa['missed_triggers']} missed)")
+        print(f"\n  {'family (shield-on), ideal -> ardupilot':<32} {'eps':>4} "
+              f"{'unsafe-entries':>15} {'poly-entries':>13} {'ap-poly':>8} "
+              f"{'P0-esc':>8} {'true-P0-cmd':>11} {'true-P0-veh':>11} {'fail-safe':>13}")
+        for fam, row in rsp_comparison["families"].items():
+            a, b = row["ideal"], row["ardupilot"]
+            if not a:
+                continue
+            print(f"  {fam:<32} {a['episodes']:>4} "
+                  f"{str(a['unsafe_position_entries']) + '->' + str(b['unsafe_position_entries']):>15} "
+                  f"{str(a['polygon_entries']) + '->' + str(b['polygon_entries']):>13} "
+                  f"{str(a['autopilot_polygon_entries']) + '->' + str(b['autopilot_polygon_entries']):>8} "
+                  f"{str(a['p0_escapes']) + '->' + str(b['p0_escapes']):>8} "
+                  f"{str(a['true_p0_flown_ticks']) + '->' + str(b['true_p0_flown_ticks']):>11} "
+                  f"{str(a['true_p0_vehicle_ticks']) + '->' + str(b['true_p0_vehicle_ticks']):>11} "
+                  f"{str(a['failsafe_correct']) + '/' + str(a['failsafe_labelled']) + '->' + str(b['failsafe_correct']) + '/' + str(b['failsafe_labelled']):>13}")
     if fsl["labelled"]:
         verdict = []
         if fsl["beats_never_trigger"] is False:

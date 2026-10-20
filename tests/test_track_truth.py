@@ -571,6 +571,26 @@ def test_the_catch_all_binds_to_every_class():
     assert s["bound_ticks"] == 2 and s["fn"] == 2, s
 
 
+def test_an_audit_s_stop_advised_record_is_not_a_firing():
+    """Since 2026-10-20 the ArduPilot rail writes a tick's SECOND audit
+    record, decision_kind "stop_advised" (guardrail/audit.py): the Shield's
+    answer to the stop it flew instead of the pilot's action. Its violations
+    are the stop's, not the tick's decision on the pilot's command, which is
+    what the flight log's `violations` (the default source) hold. Scored from
+    the audit, a stop record citing the ring counted the tick as a firing
+    where the flight log did not; both sources now agree."""
+    ring = _Ring("standoff-pedestrian", "pedestrian", 10.0)
+    rows = [_tick(1, 0, 0, [(16.0, 0.0)]), _tick(2, 0, 0, [(16.0, 0.0)])]
+    audit = [{"tick": 1, "violations": []},
+             {"tick": 1, "decision_kind": "stop_advised",
+              "violations": [{"rule_id": "standoff-pedestrian"}]},
+             {"tick": 2, "violations": []}]
+    from_log = score_standoff_firings(rows, [ring])["standoff-pedestrian"]
+    from_audit = score_standoff_firings(rows, [ring], audit)["standoff-pedestrian"]
+    assert from_log["fires"] == from_audit["fires"] == 0, (from_log, from_audit)
+    assert from_audit["fp"] == 0, from_audit
+
+
 def test_the_recorded_flight_reproduces_the_retraction():
     """The number that was reported to the PI as proof, scored.
 
