@@ -1,6 +1,6 @@
 # WP1 cold start - a signed 50-rule bundle to a ready Shield, timed
 
-**Date:** 2026-10-19
+**Date:** 2026-10-19 (re-measured and republished 2026-10-20 after the branch review)
 **Status:** measured and published. `tools/wp1_roundtrip_kpi.py` has a `cold_start`
 section, written into `docs/data/wp1_roundtrip.json` (its `kpi` block carries
 `cold_start_50_rules` and `cold_start_within_budget`, so `tools/kpi_report.py`'s WP1
@@ -84,43 +84,47 @@ repository), and `command_env`, whether `VLAGUARD_SIGNING_KEY` was set. `cold_st
 removes its fixture folder when it ends (it left a `wp1cold_*` folder per run), the
 tool's other bundle folders are removed at exit, and the tests register theirs.
 
-## Measured, 2026-10-19
+## Measured, 2026-10-20 (published)
 
 Desktop (Intel64 Family 6 Model 183, Windows), Python 3.11.15 (`vla-drone`,
-`cryptography` 50.0.2 as the verifier), `docs/data/wp1_roundtrip.json` generated at
-bf255b1 by `python tools/wp1_roundtrip_kpi.py` (20 fresh interpreters and 100 in-process
-runs per bundle). The desktop was shared with other work while measuring.
+`cryptography` 50.0.2 as the verifier), `docs/data/wp1_roundtrip.json` regenerated at
+abf4ccc by `python tools/wp1_roundtrip_kpi.py` (20 fresh interpreters and 100 in-process
+runs per bundle; the flags it was given are in the file's `command_args`). The desktop
+was otherwise idle (CPU about 15 %).
 
 **Fresh interpreter, one process per run** (median / p95 / max, ms):
 
 | | typical (WGS84, mixed) | grid (metres, 48 squares) |
 |---|---|---|
-| imports (`guardrail.bundle`, `.replay`, `.shield`) | 344 / 361 / 363 | 343 / 360 / 379 |
-| `load_for_flight` (read, parse, validate, hash, lint, verify, gate) | 12.0 / 12.9 / 13.5 | 7.4 / 7.9 / 7.9 |
-| `rail_shield` (runtime IR) | 6.0 / 6.5 / 6.7 | 4.5 / 4.7 / 4.9 |
-| path, first call | 18.1 / 19.1 / 19.7 | 11.8 / 12.3 / 12.6 |
-| **ingest with imports (the KPI)** | **362 / 379 / 382** | **354 / 371 / 391** |
-| whole process, spawn to exit | 453 / 580 / 648 | 446 / 496 / 600 |
-| the same path again in that process | 19.4 / 21.1 / 22.0 | 7.8 / 8.2 / 9.3 |
+| imports (`guardrail.bundle`, `.replay`, `.shield`) | 344 / 359 / 360 | 344 / 359 / 364 |
+| `load_for_flight` (read, parse, validate, hash, lint, verify, gate) | 11.8 / 12.3 / 13.0 | 7.4 / 8.0 / 8.0 |
+| `rail_shield` (runtime IR) | 5.5 / 7.8 / 9.9 | 4.1 / 5.4 / 5.9 |
+| path, first call | 17.3 / 19.6 / 22.9 | 11.6 / 13.2 / 13.2 |
+| **ingest with imports (the KPI)** | **362 / 376 / 378** | **355 / 370 / 377** |
+| whole process, spawn to exit | 447 / 471 / 545 | 434 / 504 / 521 |
+| the same path again in that process | 18.1 / 19.5 / 27.6 | 7.4 / 8.8 / 9.0 |
 
-**KPI: p95 379 ms against the grant's 1000 ms** (worst bundle, imports included); the
+**KPI: p95 376 ms against the grant's 1000 ms** (worst bundle, imports included); the
 whole process including the interpreter's own start-up stays under 1 s at every one of
-the 40 runs (max 648 ms). Every run verified the signature, returned the issued hash,
-50 rules and every zone (42 / 48); the tampered and the untrusted bundle were refused.
-Imports are about 95 % of the cold start; the ingest proper is 12-19 ms, 2 % of the
-budget.
+the 40 runs (max 545 ms). Every run verified the signature, returned the issued hash,
+50 rules and every zone (42 / 48); the tampered, the untrusted and the bad-signature
+bundle were refused. Imports are about 95 % of the cold start; the ingest proper is
+12-20 ms, 2 % of the budget.
 
-In this process (after the tool's other sections, so with more garbage-collection
-pressure; median / p95): typical 24.5 / 32.6 ms, grid 14.6 / 16.0 ms. Of the warm
-typical path, the IR parse and validation is 5.6 ms, the tar read 0.6 ms and the
-Ed25519 check 0.4 ms. With the pure-Python RFC 8032 verifier instead (what a WSL venv
-without `cryptography` uses): 28.1 / 30.1 ms and 20.7 / 21.4 ms. The author's side of
+In this process (median / p95): typical 12.1 / 13.7 ms, grid 7.0 / 7.9 ms. Of the warm
+typical path, the IR parse and validation is 3.0 ms, the tar read 0.3 ms and the
+Ed25519 check 0.3 ms. With the pure-Python RFC 8032 verifier instead (what a WSL venv
+without `cryptography` uses): 14.9 / 16.3 ms and 9.4 / 9.8 ms. The author's side of
 the grant's diagram (YAML -> parse, normalise, lint -> canonical IR, hash -> signed
-bundle) for the typical policy: 87 / 98 ms, same `policy_hash` as the bundle timed.
+bundle) for the typical policy: 51 / 61 ms, same `policy_hash` as the bundle timed.
 
-Other interpreters, from the test's 3-run measurement the same day (p95, imports +
-path, ms): Python 3.10.20 (`vla-real`) typical 385 + 17 (wall 489), grid 376 + 10 (wall
-468); 3.11 with `cryptography` blocked in the parent 338 + 17. Not in the published file.
+The first publication (2026-10-19, bf255b1, the desktop shared with other work) read
+p95 379 ms (whole process p95 580 ms, max 648 ms); its in-process figures were about
+twice today's (typical 24.5 / 32.6 ms, author side 87 / 98 ms), which is the load, not
+the code: nothing on the timed path changed between the two. Other interpreters, from
+the test's 3-run measurement on 2026-10-19 (p95, imports + path, ms): Python 3.10.20
+(`vla-real`) typical 385 + 17 (wall 489), grid 376 + 10 (wall 468); 3.11 with
+`cryptography` blocked in the parent 338 + 17. Not in the published file.
 
 **The test** (`test_the_cold_start_fits_the_grants_budget_and_proves_it_did_the_work`)
 pins the path (fresh process, first call) at <= 1 s everywhere and the import-inclusive
@@ -130,16 +134,19 @@ does with its 15 ms CI bound.
 
 ## What else moved in the regenerated file
 
-`docs/data/wp1_roundtrip.json` was last written on 2026-10-08 (10451bc, Python 3.10.20).
-Regenerated from a git worktree with `--runs-root` and `--reference-repo` pointing at the
-main checkout (its gitignored flight runs and the reference repository, read-only) and
-`VLAGUARD_SIGNING_KEY` at its lab development key, so the round-trip bundles are signed
-as before (`verified` 29/29). Besides the new `cold_start` section and the two KPI
-lines: `python` 3.11.15; the stored-run census 97/97 (89/89 on 10-08; the 8 new runs
-are all `sha256-canonical-v3`, and the 2 set-aside runs are unchanged); and one
-negative case's refusal reason reads as the October validator words it ("time '25:99'
-out of range (00:00-23:59; 24:00 only as an end_time)"), still refused. Every other
-figure is unchanged.
+`docs/data/wp1_roundtrip.json` was written on 2026-10-08 (10451bc, Python 3.10.20), then
+on 2026-10-19 (bf255b1) and 2026-10-20 (abf4ccc), each time from a git worktree with
+`--runs-root` and `--reference-repo` pointing at the main checkout (its gitignored flight
+runs and the reference repository, read-only) and `VLAGUARD_SIGNING_KEY` at its lab
+development key, so the round-trip bundles are signed as before (`verified` 29/29);
+since 2026-10-20 the file says so itself (`command_args`, `command_env`). On 2026-10-19,
+besides the new `cold_start` section and the two KPI lines: `python` 3.11.15; the
+stored-run census 97/97 (89/89 on 10-08; the 8 new runs are all `sha256-canonical-v3`,
+and the 2 set-aside runs are unchanged); and one negative case's refusal reason reads as
+the October validator words it ("time '25:99' out of range (00:00-23:59; 24:00 only as
+an end_time)"), still refused. On 2026-10-20 only the timings, `refusals.bad_signature`,
+the two provenance fields, `generated` and `code_revision` moved; every other figure,
+the census included (97/97), is unchanged.
 
 ## What this does not give you
 

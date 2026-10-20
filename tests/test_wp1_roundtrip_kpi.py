@@ -309,10 +309,11 @@ def test_the_report_carries_the_both_hash_columns_and_their_null():
 
 # --------------------------------------------------------------------------- #
 # cold start (2026-10-19): the grant's "cold-start ingest of a typical 50-rule
-# bundle <= 1 s" (Policy DSL page, Acceptance KPIs). On 2026-10-19 the desktop
+# bundle <= 1 s" (Policy DSL page, Acceptance KPIs). On 2026-10-20 the desktop
 # measured, in fresh interpreters (medians, the published docs/data/wp1_roundtrip.json),
-# imports ~345 ms + bundle -> verified policy ~7-12 ms + Shield ~4.5-6 ms, the
-# KPI reading p95 379 ms, whole process ~450 ms (docs/DESIGN-wp1-cold-start.md).
+# imports ~344 ms + bundle -> verified policy ~7-12 ms + Shield ~4-5.5 ms, the
+# KPI reading p95 376 ms (379 ms on 2026-10-19), whole process ~440 ms
+# (docs/DESIGN-wp1-cold-start.md).
 # --------------------------------------------------------------------------- #
 
 def test_the_cold_start_fits_the_grants_budget_and_proves_it_did_the_work():
