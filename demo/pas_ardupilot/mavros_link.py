@@ -91,9 +91,11 @@ from guardrail.models import Action4D, State                         # noqa: E40
 
 from autopilot import (COPTER_MODES, FENCE_PARAMS, RC_OVERRIDE_IGNORE,  # noqa: E402
                        RC_OVERRIDE_RELEASE, FrameAnchor, Snapshot,
-                       enu_position_target)
+                       enu_position_target, snapshot_velocity)
 
 TOPIC_SETPOINT = "/mavros/setpoint_raw/local"
+# The aircraft's measured velocity (geometry_msgs/TwistStamped, ENU).
+TOPIC_VELOCITY = "/mavros/local_position/velocity_local"
 # Record copies only; see the module docstring for why these are not the
 # grant's /vla/action_4d.
 TOPIC_RAW_ACTION = "/pas/raw_action_4d"
@@ -106,7 +108,7 @@ LANDED_STATE_ON_GROUND = 1
 
 def load_msgs() -> SimpleNamespace:
     """The ROS 2 message and service types this module uses."""
-    from geometry_msgs.msg import PoseStamped
+    from geometry_msgs.msg import PoseStamped, TwistStamped
     from mavros_msgs.msg import (ExtendedState, OverrideRCIn, PositionTarget, RCIn,
                                  RCOut, StatusText, Waypoint)
     from mavros_msgs.msg import State as MavState
@@ -117,7 +119,8 @@ def load_msgs() -> SimpleNamespace:
     from sensor_msgs.msg import Image, NavSatFix, TimeReference
     from std_msgs.msg import Float32MultiArray, Float64
     return SimpleNamespace(
-        PoseStamped=PoseStamped, PositionTarget=PositionTarget, RCOut=RCOut,
+        PoseStamped=PoseStamped, TwistStamped=TwistStamped,
+        PositionTarget=PositionTarget, RCOut=RCOut,
         RCIn=RCIn, OverrideRCIn=OverrideRCIn, Waypoint=Waypoint,
         WaypointPush=WaypointPush, WaypointPull=WaypointPull,
         MavState=MavState, CommandBool=CommandBool, CommandTOL=CommandTOL,
@@ -195,6 +198,13 @@ class MavrosLink:
                                  self._on_rel_alt, m.qos_sensor)
         node.create_subscription(m.PoseStamped, "/mavros/local_position/pose",
                                  self._on_pose, m.qos_sensor)
+        # The EKF's local velocity, for the own-velocity forecast (ENU,
+        # swapped to North/East/up in _on_velocity). A message set without
+        # TwistStamped (a stand-in) leaves it unsubscribed: velocity() is
+        # then None and the forecast starts from the command, as before.
+        if getattr(m, "TwistStamped", None) is not None:
+            node.create_subscription(m.TwistStamped, TOPIC_VELOCITY,
+                                     self._on_velocity, m.qos_sensor)
         node.create_subscription(m.RCOut, "/mavros/rc/out", self._on_rc_out, 10)
         node.create_subscription(m.ExtendedState, "/mavros/extended_state",
                                  self._on_ext, 10)
@@ -263,6 +273,21 @@ class MavrosLink:
         q = msg.pose.orientation
         self.snap.yaw = enu_quat_to_ned_yaw(q)
         self.snap.pitch, self.snap.roll = enu_quat_to_ned_pitch_roll(q)
+
+    def _on_velocity(self, msg) -> None:
+        """/mavros/local_position/velocity_local: MAVROS's ENU twist of the
+        EKF's LOCAL_POSITION_NED (linear.x East, .y North, .z up)."""
+        lin = msg.twist.linear
+        s = self.snap
+        s.lvn, s.lve, s.lvu = float(lin.y), float(lin.x), float(lin.z)
+        s.t_lvel = self.clock()
+
+    def velocity(self):
+        """(North, East, up) m/s and its source, or (None, why): the same
+        rule as PymavlinkLink.velocity (autopilot.snapshot_velocity). MAVROS
+        2's /global position carries no velocity, so only velocity_local is
+        read here."""
+        return snapshot_velocity(self.snap, self.clock())
 
     def _on_rc_out(self, msg) -> None:
         self.snap.servo = list(msg.channels[:4])

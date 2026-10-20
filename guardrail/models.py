@@ -85,7 +85,7 @@ from typing import Annotated, Any, ClassVar, Literal, Union
 
 import yaml
 from pydantic import (BaseModel, ConfigDict, Field, field_validator,
-                      model_validator)
+                      model_serializer, model_validator)
 
 from .fsm import action_strength, canonical_action
 from .projection import LocalProjection, derive_frame_origin, project_raw
@@ -116,6 +116,33 @@ class State(BaseModel):
     y: float               # m East of the frame origin
     up: float              # m above ground
     yaw_deg: float = 0.0
+    # The MEASURED ground velocity (vx North, vy East, vz_up), m/s, in the
+    # Action4D frame - the autopilot's own estimate (EKF), never the command.
+    # Optional, and None by default, which is every caller before 2026-10-19:
+    # the Shield's forecast then starts from the commanded velocity exactly as
+    # before, and every decision is byte-identical (tests/
+    # test_own_velocity_forecast.py pins 18,000 of them against c77c77d).
+    # Given, the Shield forecasts each pose from this velocity converging to
+    # the commanded one through its response model (guardrail/response.py,
+    # docs/DESIGN-own-velocity-forecast.md), and judges that forecast beside
+    # the commanded one, so a velocity can only add: on the 14 Oct ArduPilot close
+    # approach the commanded-velocity forecast put the aircraft 1.5 m short of
+    # where it went and it ended 1.0 m inside the P0 building margin. The
+    # vertical component is recorded but not forecast from (the climb rate is
+    # still the commanded one; the design note says why). A non-finite value
+    # is not refused here - x and y are not either - but the Shield ignores
+    # it and counts it (Shield.n_velocity_nonfinite).
+    velocity: tuple[float, float, float] | None = None
+
+    @model_serializer(mode="wrap")
+    def _omit_absent_velocity(self, handler):
+        # A State without a velocity dumps exactly as it did before the field
+        # existed (demo/real_vla_demo.py writes State.model_dump() into its
+        # logs), the same rule Policy.canonical_ir applies to optional fields.
+        out = handler(self)
+        if isinstance(out, dict) and out.get("velocity", 0) is None:
+            out.pop("velocity")
+        return out
 
 
 # --------------------------------------------------------------------------- #

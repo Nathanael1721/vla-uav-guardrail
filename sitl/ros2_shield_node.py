@@ -326,6 +326,36 @@ def default_tag(shield: str, dynamic: bool) -> str:
     return f"ros2_shield_{shield}" + ("_dynamic" if dynamic else "")
 
 
+# The own-velocity forecast (docs/DESIGN-own-velocity-forecast.md) on this
+# rail: OFF by default. Its response model (guardrail.response.
+# ARDUCOPTER_GUIDED) was measured on the Project AirSim quad behind
+# ArduCopter, and this rail flies ArduPilot's own SITL physics, whose response
+# nobody has measured: on its recorded flights the aircraft reached 0.69-0.96
+# of the commanded speed in steady flight, against 0.96 on the Project AirSim
+# quad. Turn it on (`--own-velocity-forecast on`) to fly it and log the data
+# to measure it with (state_v); the velocity is logged either way.
+OWN_VELOCITY_DEFAULT = "off"
+# A velocity older than this is not the aircraft's velocity now (MAVROS
+# publishes velocity_local at the 10 Hz stream rate the node asks for).
+VELOCITY_MAX_AGE_S = 0.3
+
+
+def velocity_from_enu(linear) -> tuple[float, float, float]:
+    """/mavros/local_position/velocity_local's twist.linear (ENU: x East,
+    y North, z up) in the Shield's frame (North, East, up)."""
+    return float(linear.y), float(linear.x), float(linear.z)
+
+
+def shield_state(state: State, velocity, age_s: float | None, enabled: bool) -> State:
+    """The State the Shield is given: `state` with the measured velocity when
+    the own-velocity forecast is on and the velocity is fresh and finite,
+    else `state` itself (the commanded forecast, as before)."""
+    if (not enabled or velocity is None or age_s is None or age_s > VELOCITY_MAX_AGE_S
+            or not all(math.isfinite(c) for c in velocity)):
+        return state
+    return state.model_copy(update={"velocity": tuple(velocity)})
+
+
 def shield_step(shield: Shield, state: State, body: Action4D, shield_on: bool):
     """One tick through the Shield in the grant's body frame.
 
@@ -570,6 +600,12 @@ try:
     from rclpy.qos import (DurabilityPolicy, QoSProfile, ReliabilityPolicy,
                            qos_profile_sensor_data)
     from geometry_msgs.msg import PoseStamped
+    try:
+        # The own-velocity forecast's input; a stand-in ROS stack without it
+        # (tests/test_railinputs_node.py) runs the node without the velocity.
+        from geometry_msgs.msg import TwistStamped
+    except ImportError:
+        TwistStamped = None
     from std_msgs.msg import Float32MultiArray, String
     from mavros_msgs.msg import ExtendedState, State as MavState, StatusText
     from mavros_msgs.srv import (CommandBool, CommandTOL, SetMode, StreamRate,
@@ -644,6 +680,14 @@ if HAVE_ROS:
             # because only it sees the autopilot (guardrail.replay.rail_shield).
             self.shield = rail_shield(self.policy, lookahead_s=LOOKAHEAD_S,
                                       dt=LOOKAHEAD_DT_S, clock=self.clock)
+            # The own-velocity forecast (OWN_VELOCITY_DEFAULT: off here), the
+            # Shield-on arm only; the latest velocity_local and its receipt.
+            self.own_v = (getattr(args, "own_velocity_forecast", OWN_VELOCITY_DEFAULT)
+                          == "on" and self.shield_on)
+            self.vel: tuple | None = None
+            self.vel_rx: float | None = None
+            self.n_vel_used = 0
+            self.n_vel_seen = 0
             # Held by every control tick and by the REST hot-apply thread
             # while it swaps the Shield's rules and records the generation.
             self._lock = threading.RLock()
@@ -748,6 +792,10 @@ if HAVE_ROS:
 
             self.create_subscription(PoseStamped, "/mavros/local_position/pose",
                                      self._on_pose, qos_profile_sensor_data)
+            if TwistStamped is not None:
+                self.create_subscription(TwistStamped,
+                                         "/mavros/local_position/velocity_local",
+                                         self._on_velocity, qos_profile_sensor_data)
             self.create_subscription(MavState, "/mavros/state", self._on_state, 10)
             self.create_subscription(ExtendedState, "/mavros/extended_state",
                                      self._on_ext, qos_profile_sensor_data)
@@ -797,6 +845,12 @@ if HAVE_ROS:
             self.pose_watchdog.received(time.monotonic())
             if self.mission_t0 is not None:
                 self.n_pose += 1
+
+        def _on_velocity(self, msg) -> None:
+            # The EKF's local velocity, for the own-velocity forecast and the
+            # record (state_v); receipt on the node's monotonic clock.
+            self.vel = velocity_from_enu(msg.twist.linear)
+            self.vel_rx = time.monotonic()
 
         def _on_state(self, msg: MavState) -> None:
             self.mav_connected = msg.connected
@@ -1504,8 +1558,15 @@ if HAVE_ROS:
             # This tick's row number (1-based), bound once: the audit record
             # and the log row of one decision carry the same tick.
             tick_no = len(self.traj) + 1
+            # The measured velocity (velocity_local), fresh or None; given to
+            # the Shield only with the own-velocity forecast on.
+            vel_age = (None if self.vel_rx is None else time.monotonic() - self.vel_rx)
+            vel = self.vel if (vel_age is not None and vel_age <= VELOCITY_MAX_AGE_S) else None
+            self.n_vel_seen += vel is not None
+            st_sh = shield_state(st, vel, vel_age, self.own_v)
+            self.n_vel_used += st_sh is not st
             decision, raw_w, em_w, em_body = shield_step(
-                self.shield, st, body, self.shield_on)
+                self.shield, st_sh, body, self.shield_on)
             extra = episode_row_fields(self.shield, st, self.policy,
                                        self.rec.episode_id)
             self._recheck_deferred(st, extra["unsafe_rules"])
@@ -1602,6 +1663,10 @@ if HAVE_ROS:
             if flown is not None:
                 self._publish_body(flown)
                 pub_ns = time.monotonic_ns()
+            # What was sent, in the Shield's world frame, for the own-velocity
+            # forecast's pipe (read only for a State with a velocity).
+            self.shield.note_flown({"pass": em_w, "brake": Action4D(),
+                                    "none": None}[setpoint])
             # A stop flown for a stale input did not come from the action.
             lat = latency_fields(tick_ns, pub_ns, rx_ns,
                                  fresh=(not zeroed and seq != self._flown_seq))
@@ -1628,7 +1693,12 @@ if HAVE_ROS:
                                               else round(pose_age * 1000.0, 1)),
                                  pose_stale=pose_stale,
                                  stale_hold=bool(self._holds),
-                                 hold_reasons=sorted(self._holds))
+                                 hold_reasons=sorted(self._holds),
+                                 # The measured velocity (North, East, up)
+                                 # and whether the Shield flew on it.
+                                 state_v=(None if vel is None
+                                          else [round(c, 3) for c in vel]),
+                                 shield_velocity=st_sh is not st)
 
             # The episode ends when the autopilot has the aircraft and is done
             # with it: landed, or a bounded wait so a run stays short.
@@ -1783,6 +1853,19 @@ if HAVE_ROS:
                                      "dt_s": LOOKAHEAD_DT_S,
                                      "poses": int(round(LOOKAHEAD_S
                                                         / LOOKAHEAD_DT_S))},
+                # Which forecast the Shield flew (docs/DESIGN-own-velocity-
+                # forecast.md; OWN_VELOCITY_DEFAULT is off on this rail).
+                "shield_forecast": {
+                    "mode": "own_velocity" if self.own_v else "commanded",
+                    "flag": ("--own-velocity-forecast "
+                             + ("on" if self.own_v else "off")),
+                    "response": (self.shield.velocity_response.to_dict()
+                                 if self.shield.velocity_response else None),
+                    "velocity_source": "/mavros/local_position/velocity_local",
+                    "velocity_ticks_seen": self.n_vel_seen,
+                    "velocity_ticks": self.n_vel_used,
+                    "shield_velocity_ticks": self.shield.n_velocity_ticks,
+                    "velocity_nonfinite": self.shield.n_velocity_nonfinite},
                 "reached": self.reached,
                 # compute() reads this as "did the mission happen"; a waypoint
                 # mission expresses reaching the target in its units.
@@ -2020,6 +2103,14 @@ def make_parser() -> argparse.ArgumentParser:
                          f"has not been updated this long (default "
                          f"{POSE_TIMEOUT_S:g} s; keep it well under the Shield's "
                          f"{LOOKAHEAD_S:g} s lookahead)")
+    ap.add_argument("--own-velocity-forecast", choices=["on", "off"],
+                    default=OWN_VELOCITY_DEFAULT,
+                    help="give the Shield /mavros/local_position/velocity_local, so "
+                         "its forecast starts from the measured velocity through "
+                         "ArduCopter's measured response (default off on this rail: "
+                         "that response was measured on the Project AirSim quad, not "
+                         "on ArduPilot's own SITL physics; the velocity is logged "
+                         "either way)")
     ap.add_argument("--command", default=None,
                     help="mission text (default: fly to the northeast pad at 6 m/s)")
     ap.add_argument("--target", default=None, metavar="X,Y",

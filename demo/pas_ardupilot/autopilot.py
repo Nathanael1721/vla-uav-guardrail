@@ -151,6 +151,28 @@ EKF_READY_MASK = (EKF_ATTITUDE | EKF_VELOCITY_HORIZ | EKF_VELOCITY_VERT
                   | EKF_POS_HORIZ_ABS | EKF_POS_VERT_ABS)
 
 
+# A velocity older than this is not the aircraft's velocity now: two periods of
+# LOCAL_POSITION_NED's 10 Hz stream (and of the node's 10 Hz loop) plus slack.
+VELOCITY_MAX_AGE_S = 0.3
+
+
+def snapshot_velocity(s, now: float) -> tuple[tuple[float, float, float] | None, str | None]:
+    """(velocity North/East/up, source) from a Snapshot, freshest first; see
+    PymavlinkLink.velocity. Shared by both links (MAVROS fills lvn/lve/lvu)."""
+    def fresh(t):
+        return t is not None and now - t <= VELOCITY_MAX_AGE_S
+    if s.lvn is not None and fresh(s.t_lvel):
+        v = (s.lvn, s.lve, s.lvu)
+        if all(math.isfinite(c) for c in v):
+            return v, "local_velocity"
+    if s.vn is not None and fresh(s.t_pos):
+        v = (s.vn, s.ve, -s.vd)
+        if all(math.isfinite(c) for c in v):
+            return v, "global_position_int"
+    return None, ("no velocity received" if s.lvn is None and s.vn is None
+                  else "velocity stale or not finite")
+
+
 def ekf_ready(flags: int | None) -> bool:
     """All position/velocity solutions valid and not in constant-position mode."""
     if flags is None:
@@ -277,6 +299,14 @@ class Snapshot:
     # included (RC_CHANNELS, or MAVROS's /mavros/rc/in); None until reported.
     rc3: int | None = None
     t_rc: float | None = None
+    # The EKF's local velocity, North / East / up, m/s: LOCAL_POSITION_NED
+    # vx/vy/-vz (pymavlink) or /mavros/local_position/velocity_local (MAVROS,
+    # ENU, swapped here). The own-velocity forecast reads it
+    # (docs/DESIGN-own-velocity-forecast.md); None until one arrives.
+    lvn: float | None = None
+    lve: float | None = None
+    lvu: float | None = None
+    t_lvel: float | None = None
 
 
 class PymavlinkLink:
@@ -425,6 +455,8 @@ class PymavlinkLink:
             s.lat, s.lon = msg.lat / 1e7, msg.lon / 1e7
             s.alt_msl, s.rel_alt = msg.alt / 1000.0, msg.relative_alt / 1000.0
             s.vn, s.ve, s.vd = msg.vx / 100.0, msg.vy / 100.0, msg.vz / 100.0
+        elif kind == "LOCAL_POSITION_NED":
+            s.lvn, s.lve, s.lvu, s.t_lvel = float(msg.vx), float(msg.vy), -float(msg.vz), t
         elif kind == "ATTITUDE":
             s.roll, s.pitch, s.yaw = msg.roll, msg.pitch, msg.yaw
         elif kind == "EKF_STATUS_REPORT":
@@ -766,6 +798,19 @@ class PymavlinkLink:
         x, y = anchor.to_scene(s.lat, s.lon)
         return State(x=x, y=y, up=s.rel_alt,
                      yaw_deg=math.degrees(s.yaw or 0.0))
+
+    def velocity(self) -> tuple[tuple[float, float, float] | None, str | None]:
+        """The aircraft's measured ground velocity (North, East, up) in m/s,
+        and where it came from; (None, why) when the link has none fresh.
+
+        LOCAL_POSITION_NED first (float m/s, the EKF's local solution,
+        requested at 10 Hz in STREAMS) when it is no older than
+        VELOCITY_MAX_AGE_S; else the velocity GLOBAL_POSITION_INT carries
+        beside the position state() reads (cm/s, the same EKF), when that
+        position is itself fresh. Never the command, and never derived from
+        positions here: a stale or missing velocity is None, and the forecast
+        then starts from the command, as before."""
+        return snapshot_velocity(self.snap, self.clock())
 
     def link_age(self) -> dict:
         """How old what state() answers from is, on this link's clock: the

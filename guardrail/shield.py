@@ -69,6 +69,21 @@ ENFORCEMENT (2026-10-07; docs/DESIGN-shield-enforcement.md has the whole story)
   * `rule_status(state)` reports each rule's distance, state and breach from
     this module's own geometry, so the on-screen panel and the controller's
     FenceGuard read the one rule checker instead of keeping their own.
+  * The forecast starts from the COMMANDED velocity unless the State carries
+    the aircraft's MEASURED velocity (2026-10-19, docs/DESIGN-own-velocity-
+    forecast.md): then each pose flies the setpoints already sent
+    (note_flown) for the measured reaction time and turns towards the
+    candidate at the measured acceleration limit (guardrail/response.py,
+    `velocity_response`). That forecast only ADDS: every rule is still judged
+    on the commanded forecast from the position too (`_predict`, 2026-10-20),
+    so nothing the commanded forecast refused is emitted clean. A rule the
+    aircraft's momentum already carries it
+    into is judged from where a stop would end (`_committed`), one its
+    position already breaks exactly as before, and the clearance rule asks
+    whether a stop after one control period still ends clear. The position
+    questions (state_is_unsafe, unsafe_depth, the FSM's stop_illegal) ignore
+    the velocity. Without one, every decision is byte-identical (18,000
+    seeded decisions against c77c77d, tests/test_own_velocity_forecast.py).
   * Since 2026-10-12 the repair stack runs as guardrail/repair.py's operator
     library: the chain above, decision for decision, each call recorded
     (`ShieldDecision.trace`, the audit record's `repair_passes`), with the
@@ -95,6 +110,7 @@ from shapely.geometry import LineString, Point
 
 from . import fsm as _fsm
 from . import repair as _repair
+from . import response as _response
 from .geometry import nearest_on_polyline, point_in_fence, push_out_direction
 from .ir import FENCE_TYPES, FenceRecord, PolicyIR, anchor_reach, compile_fence, is_fence
 from .models import (
@@ -769,7 +785,7 @@ class _Tick:
     monitor clock, and the rule ids the repair chain is told to leave alone
     (monitor_only rules, and soft rules it has given up)."""
     __slots__ = ("rt", "sched", "t", "skip", "_lists", "_moving", "_swept", "unsafe",
-                 "_t_first", "given_up", "chain_runs", "ledger")
+                 "_t_first", "given_up", "chain_runs", "ledger", "committed")
 
     def __init__(self, rt: _Runtime, sched: _Schedule, t: float, t_first: float | None):
         self.rt, self.sched, self.t, self._t_first = rt, sched, t, t_first
@@ -787,6 +803,10 @@ class _Tick:
         # was retried with soft rules given up stays on the record.
         self.chain_runs = 0
         self.ledger: list = []
+        # Shield._committed's answer per measured state on this tick (the
+        # stop point and the rules its stop path breaks); empty, and never
+        # read, while no state carries a velocity.
+        self.committed: dict = {}
 
     def rules(self, name: str):
         key = (name, self.skip)
@@ -899,7 +919,8 @@ class Shield:
                  now=None, escalation: "_fsm.FSMConfig | bool | None" = True,
                  theta_horizon_s: float | None = _fsm.DEFAULT_THETA_HORIZON_S, *,
                  repair_mode: str = "chain", path_repair: bool = False,
-                 segment_check: bool = False, repair_order: tuple | None = None):
+                 segment_check: bool = False, repair_order: tuple | None = None,
+                 velocity_response: "_response.VelocityResponse | None" = _response.ARDUCOPTER_GUIDED):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
@@ -949,7 +970,21 @@ class Shield:
         priority order (repair.FIRST_FEASIBLE) in first-feasible mode - how a
         registered operator of a new name is put to work. None (the default)
         keeps the stacks above. A name the registry does not hold is refused
-        here."""
+        here.
+
+        velocity_response: how the aircraft answers a velocity setpoint
+        (guardrail/response.py), used ONLY for a State that carries a
+        measured `velocity`: each forecast pose then starts from that
+        velocity and converges to the commanded one (`_predict`; the
+        commanded forecast is judged beside it, so the velocity only adds), a rule the
+        aircraft's own momentum already carries it into is judged from where
+        a stop would end (`_committed`), and the clearance rule asks whether
+        the aircraft can still stop after flying the action for one control
+        period. A State without a velocity - every caller before 2026-10-19
+        and every rail with the flag off - is forecast exactly as before.
+        The default is the response measured on ArduCopter GUIDED
+        (ARDUCOPTER_GUIDED, tools/fit_velocity_response.py); None ignores a
+        measured velocity altogether. docs/DESIGN-own-velocity-forecast.md."""
         if repair_mode not in _repair.REPAIR_MODES:
             raise ValueError(f"repair_mode must be one of {_repair.REPAIR_MODES}, "
                              f"got {repair_mode!r}")
@@ -966,6 +1001,26 @@ class Shield:
                 raise ValueError(f"repair_order names unregistered operator(s) {unknown}; "
                                  f"registered: {sorted(self.repair_operators)}")
         self.repair_order = repair_order
+        if velocity_response is not None and not isinstance(
+                velocity_response, _response.VelocityResponse):
+            raise TypeError(f"velocity_response must be a guardrail.response."
+                            f"VelocityResponse or None, got {velocity_response!r}")
+        self.velocity_response = velocity_response
+        # States whose measured velocity was not finite: ignored (the
+        # commanded forecast flew that tick), and counted, as set_subject
+        # counts a non-finite subject. A NaN velocity would otherwise make
+        # every pose NaN, and NaN loses every comparison - the forecast
+        # would fail OPEN (see _sanitise).
+        self.n_velocity_nonfinite = 0
+        # filter() ticks whose forecast started from a measured velocity.
+        self.n_velocity_ticks = 0
+        # What the rail actually SENT the autopilot, tick by tick (note_flown):
+        # (monitor time, vx, vy), vx None for a tick it sent nothing. The
+        # setpoints of the last reaction time are still being flown when this
+        # tick's command starts to act (`pipe`); without this record the
+        # forecast assumes the aircraft keeps its measured velocity until
+        # then. Read only for a state with a measured velocity.
+        self._flown: deque = deque(maxlen=64)
         self._tubes: dict = {}
         why = self.unenforceable(policy)
         if why:
@@ -1287,9 +1342,18 @@ class Shield:
     def forecast(self, state: State, action: Action4D) -> list[tuple[float, State]]:
         """The predicted trajectory the fence and altitude rules judge: (t, pose)
         pairs over the lookahead. Public so the sliding window's "predicted
-        trajectory" can be rebuilt for any entry - see TickRecord."""
+        trajectory" can be rebuilt for any entry - see TickRecord.
+
+        For a state with a measured velocity this is the own-velocity
+        forecast, one pose per grid time; the rules judge the commanded
+        forecast from the same position beside it (`_predict`, "THE
+        MEASURED VELOCITY ONLY ADDS"), which is forecast() of the state
+        without its velocity. (`own_only` is passed only then: a subclass
+        that overrides `_predict` with the old signature, as tests/test_ir.py
+        does, still gets the old call.)"""
+        kw = {"own_only": True} if self._velocity_of(state) is not None else {}
         return [(t, State(x=p.x, y=p.y, up=p.up, yaw_deg=p.yaw_deg))
-                for t, p in self._predict(state, action)]
+                for t, p in self._predict(state, action, **kw)]
 
     @property
     def history(self) -> tuple[TickRecord, ...]:
@@ -1441,9 +1505,13 @@ class Shield:
     # ---------------- violation checking ---------------- #
 
     def _predict(self, state: State, action: Action4D,
-                 horizon_s: float | None = None):
-        """Constant-velocity forecast (the grant Shield's 50-pose forecast at
-        the default 5 s / 0.1 s; a caller may pass a shorter one). `horizon_s`
+                 horizon_s: float | None = None, *, own_only: bool = False):
+        """The forecast (the grant Shield's 50-pose forecast at the default
+        5 s / 0.1 s; a caller may pass a shorter one): the commanded velocity
+        held from t = 0 for a State without a measured velocity, as it always
+        was; for one with, the measured velocity through the response model
+        AND the commanded forecast, two poses per grid time (the own-velocity
+        branch below; `own_only` yields the first alone). `horizon_s`
         overrides the default lookahead — the clearance
         rule uses a much shorter, braking-distance-sized one (see
         `_clear_horizon_s`). The final sample always lands exactly ON the
@@ -1463,6 +1531,62 @@ class Shield:
         # products of a validated State's and Action4D's), and validating
         # each of 51 poses again was a fifth of a 50-rule filter() (2026-10-12
         # profile). `forecast` still returns States.
+        v = self._velocity_of(state)
+        if v is not None:
+            # OWN-VELOCITY FORECAST (2026-10-19; docs/DESIGN-own-velocity-
+            # forecast.md). The pose starts from the MEASURED velocity. For
+            # the response's reaction time the aircraft flies what was
+            # already sent (`pipe`; with no record of it, it keeps its
+            # velocity), then turns towards this action at the response's
+            # acceleration limit (guardrail/response.py, exact). Horizontal
+            # only: the climb rate stays the commanded one, as below - the
+            # fit found the response model forecast altitude worse than that.
+            # Same grid, same final sample exactly on the horizon.
+            #
+            # THE MEASURED VELOCITY ONLY ADDS (2026-10-20). Unless `own_only`,
+            # each grid time yields TWO poses: the own-velocity one, then the
+            # commanded one the Shield always judged. Every consumer of this
+            # generator takes the first pose that breaks its rule (fences,
+            # stand-off, corridor) or the extreme over all of them (a zone's
+            # depth, the forecast box, the closest approach), so a rule is
+            # broken if EITHER forecast breaks it, at the earlier time. The
+            # pure own-velocity forecast was less cautious than the old one
+            # whenever the aircraft was slower than its command: in the closed
+            # loop (tools/own_velocity_closed_loop.py) it streamed 3.2 m/s
+            # towards the 14 Oct building from 3.0-3.4 m off it, one tick at
+            # a time, each followed by a stop, and the old KPI basis (the
+            # emitted action re-checked on the commanded forecast) counted 6
+            # P0 escapes there against the old Shield's 0. With both judged,
+            # nothing the old Shield refused is emitted clean, and the momentum
+            # it could not see is still seen. The clearance rule, whose test
+            # reads its forecast in order, judges the two separately
+            # (_check_clearance).
+            pre = self._pipe_pre(v)
+            lag, dxl, dyl, vxl, vyl, early = pre
+            acc = self.velocity_response.accel_mps2
+            cx, cy = action.vx, action.vy
+            while True:
+                if t < lag - 1e-12:
+                    dx, dy = early(t)
+                else:
+                    ex, ey, _, _ = _response._approach(vxl, vyl, cx, cy, acc, t - lag)
+                    dx, dy = dxl + ex, dyl + ey
+                yield t, _Pose(
+                    x=state.x + dx,
+                    y=state.y + dy,
+                    up=state.up + action.vz_up * t,
+                    yaw_deg=state.yaw_deg + yaw_dps * t,
+                )
+                if not own_only:
+                    yield t, _Pose(
+                        x=state.x + action.vx * t,
+                        y=state.y + action.vy * t,
+                        up=state.up + action.vz_up * t,
+                        yaw_deg=state.yaw_deg + yaw_dps * t,
+                    )
+                if t >= horizon - 1e-9:
+                    return
+                t = min(t + self.dt, horizon)
         while True:
             yield t, _Pose(
                 x=state.x + action.vx * t,
@@ -1473,6 +1597,213 @@ class Shield:
             if t >= horizon - 1e-9:
                 return
             t = min(t + self.dt, horizon)
+
+    # ---------------- the own-velocity forecast's helpers ---------------- #
+
+    def _velocity_of(self, state) -> tuple[float, float] | None:
+        """The measured horizontal velocity (vx, vy) the forecast starts from,
+        or None for the commanded forecast: no velocity on the state (every
+        State before 2026-10-19, every forecast pose, a stop point), no
+        response model (`velocity_response=None`), or a non-finite value
+        (counted once per tick by filter(), never flown on)."""
+        vel = getattr(state, "velocity", None)
+        if vel is None or self.velocity_response is None:
+            return None
+        vx, vy = vel[0], vel[1]
+        if not (math.isfinite(vx) and math.isfinite(vy)):
+            return None
+        return float(vx), float(vy)
+
+    def note_flown(self, action: "Action4D | None", t: float | None = None) -> None:
+        """Tell the Shield what the rail SENT the autopilot this tick (None:
+        nothing - the autopilot held the aircraft, or a fault). Call it after
+        the send, once per tick. `t` is the monitor time (filter()'s), by
+        default the last tick's.
+
+        The own-velocity forecast reads it (`pipe`): a setpoint sent at t is
+        what the aircraft flies from t + reaction_s, so the ones sent in the
+        last reaction time are still to come when this tick's command starts
+        to act. Without them the forecast assumes the aircraft keeps its
+        measured velocity until then, and an aircraft at rest that has just
+        been sent 2.9 m/s towards a wall is forecast to sit still for 0.35 s
+        while it is in fact accelerating (the closed loop's second approach,
+        docs/DESIGN-own-velocity-forecast.md). It changes nothing for a state
+        without a measured velocity."""
+        t = (self._t_last if self._t_last is not None else 0.0) if t is None else float(t)
+        if action is None or not (math.isfinite(action.vx) and math.isfinite(action.vy)):
+            self._flown.append((t, None, None))
+        else:
+            self._flown.append((t, float(action.vx), float(action.vy)))
+
+    def pipe(self, t: float | None = None) -> list:
+        """The setpoints already sent that act during the next reaction time,
+        as reaction segments (guardrail/response.pipe_segments); [] with no
+        record or no response model (the forecast then keeps the measured
+        velocity for the reaction time). `t` defaults to the tick's time."""
+        if self.velocity_response is None or not self._flown:
+            return []
+        if t is None:
+            tick = self._tick_ctx()
+            t = tick.t if tick is not None else (self._t_last or 0.0)
+        return _response.pipe_segments(self._flown, t, self.velocity_response.reaction_s)
+
+    def _pipe_pre(self, v: tuple[float, float]):
+        """(reaction_s, dx, dy, vx, vy at the end of the reaction, early(t))
+        for measured velocity `v` on this tick: the part of every forecast
+        no candidate action can change, computed once per tick. `early(t)`
+        gives the displacement at a time inside the reaction."""
+        tick = self._tick_ctx()
+        segs = self.pipe()
+        key = ("pre", v, tuple(segs))
+        if tick is not None:
+            hit = tick.committed.get(key)
+            if hit is not None:
+                return hit
+        resp = self.velocity_response
+        segs = resp.reaction(segs)
+        lag = sum(s[0] for s in segs)
+        dxl, dyl, vxl, vyl = _response.integrate(v[0], v[1], segs, [lag], resp.accel_mps2)[0]
+        memo: dict = {}
+
+        def early(t: float, _segs=segs, _v=v, _a=resp.accel_mps2, _m=memo):
+            got = _m.get(t)
+            if got is None:
+                dx, dy, _, _ = _response.integrate(_v[0], _v[1], _segs, [t], _a)[0]
+                got = _m[t] = (dx, dy)
+            return got
+        out = (lag, dxl, dyl, vxl, vyl, early)
+        if tick is not None:
+            tick.committed[key] = out
+        return out
+
+    @staticmethod
+    def _positional(state: State) -> State:
+        """`state` without its measured velocity: the POSITION questions
+        (state_is_unsafe, unsafe_depth, the FSM's stop_illegal) stay about
+        where the aircraft IS, as their callers and the KPIs read them."""
+        if getattr(state, "velocity", None) is None:
+            return state
+        return state.model_copy(update={"velocity": None})
+
+    def _committed(self, state):
+        """(stop_state, rule ids) for a state with a measured velocity, else
+        None.
+
+        The rules the aircraft's own momentum already carries it into: a
+        GUIDED stop commanded NOW (zero velocity, through the response
+        model: the reaction, then the braking) would still break them - the
+        BRAKE action's check with the own-velocity forecast, which is the
+        stop path. No candidate action can avoid that part of the forecast:
+        whatever is commanded, the aircraft keeps its velocity for the
+        reaction time, and no action brakes the approach harder than a stop.
+
+        Judging such a rule on the own-velocity forecast would refuse every
+        action, the Shield would fly its best effort with the violation on
+        it, and the grant's P0 escape count would charge the Shield with an
+        incursion it could not prevent. So each committed rule is judged as
+        if the aircraft were already where the stop would end (`stop_state`,
+        with no velocity): the trend-aware "already inside" tests then ask
+        what they ask of an aircraft inside the ring or zone - is the
+        command leaving it? - and the repairs answer as they would from
+        there (ClearanceFix's push, GeofenceEscape, StandoffRecover).
+        Recovery starts while the aircraft is still outside. A rule the
+        POSITION already breaks is judged as before the change, from where
+        the aircraft is with no velocity (`_rule_state`). Every other rule is
+        judged on the own-velocity forecast from where it is, and a stop
+        (zero) is clean for each of those by construction.
+
+        Returns (stop_state, committed ids, positional_state, ids the position
+        breaks). Cached per tick and state."""
+        v = self._velocity_of(state)
+        if v is None or getattr(self._local, "no_commit", False):
+            return None
+        tick = self._tick_ctx()
+        # The rules the chain leaves alone (tick.skip) are not in the answer,
+        # so it is cached per skip set too.
+        key = (state.x, state.y, state.up, state.yaw_deg, v,
+               tick.skip if tick is not None else None)
+        if tick is not None:
+            hit = tick.committed.get(key)
+            if hit is not None:
+                return hit
+        # The GUIDED stop: the pipe (or the measured velocity kept) for the
+        # reaction, then zero at the response's limit, to the standstill.
+        path = _response.stop_path(self.velocity_response, None, state.x, state.y,
+                                   v[0], v[1], pipe=self.pipe(), dt=self.dt)
+        _, sx, sy = path[-1]
+        stop = State(x=sx, y=sy, up=state.up, yaw_deg=state.yaw_deg)
+        here = self._positional(state)
+        self._local.no_commit = True
+        try:
+            ids = frozenset(x.rule_id for x in self._check_in(state, BRAKE))
+            # Rules the POSITION already breaks are judged exactly as before:
+            # from where the aircraft is, on the commanded forecast, so the
+            # trend tests ask whether the COMMAND leaves the rule and the
+            # recovery floors size the command. On the own-velocity forecast
+            # the setpoints already in the pipe would be credited to it: a
+            # zero command 0.8 m inside the clearance ring "receded" on the
+            # one tick after a 0.5 m/s push, passed, and the escape crawled
+            # out at half the floor, push and zero alternating (the closed
+            # loop on a slower aircraft, docs/DESIGN-own-velocity-forecast.md).
+            inside = frozenset(x.rule_id for x in self._check_in(here, BRAKE))
+        finally:
+            self._local.no_commit = False
+        out = (stop, ids - inside, here, inside)
+        if tick is not None:
+            tick.committed[key] = out
+        return out
+
+    def _rule_state(self, rule, state):
+        """The state rule `rule` is judged from: where the aircraft is,
+        without its velocity, if its position already breaks the rule; the
+        stop point if its momentum carries it into the rule (`_committed`);
+        else `state` itself (always `state` without a measured velocity)."""
+        com = self._committed(state)
+        if com is None:
+            return state
+        if rule.id in com[3]:
+            return com[2]
+        if rule.id in com[1]:
+            return com[0]
+        return state
+
+    def _clear_steps(self, state: State, action: Action4D) -> list:
+        """The clearance rule's forecast: "can the aircraft still stop before
+        the ring after flying `action`?".
+
+        Commanded forecast (no measured velocity): `action` at constant
+        velocity over `_clear_horizon_s` - one control step of reaction plus
+        the stopping distance at the nominal 3 m/s^2, expressed as a time at
+        the commanded speed. Exactly as before.
+
+        Own-velocity forecast: from the measured velocity, the aircraft flies
+        what was already sent for the reaction time (`pipe`), then `action`
+        for one control period (dt), then a stop at the response's limit -
+        sampled on the grid until it is stationary (the last sample exactly
+        at the stop, at most the lookahead). The stop the old form assumed
+        at 3 m/s^2 after 0.1 s was 1.5 m shorter than the 14 Oct aircraft's
+        from 3.2 m/s."""
+        v = self._velocity_of(state)
+        if v is None:
+            return list(self._predict(state, action, self._clear_horizon_s(action)))
+        resp = self.velocity_response
+        dt, a = self.dt, resp.accel_mps2
+        pipe = self.pipe()
+        segs = resp.reaction(pipe) + [(dt, action.vx, action.vy), (math.inf, 0.0, 0.0)]
+        lag = sum(s[0] for s in resp.reaction(pipe))
+        _, _, v1x, v1y = _response.integrate(v[0], v[1], segs, [lag + dt], a)[0]
+        horizon = min(self.lookahead_s, lag + dt + math.hypot(v1x, v1y) / a)
+        times, t = [], 0.0
+        while True:
+            times.append(t)
+            if t >= horizon - 1e-9:
+                break
+            t = min(t + dt, horizon)
+        yaw_dps = math.degrees(action.yaw_rate)
+        return [(t, _Pose(x=state.x + dx, y=state.y + dy, up=state.up + action.vz_up * t,
+                          yaw_deg=state.yaw_deg + yaw_dps * t))
+                for t, (dx, dy, _, _) in zip(times, _response.integrate(v[0], v[1], segs,
+                                                                        times, a))]
 
     def _clear_horizon_s(self, action: Action4D) -> float:
         """How far ahead the CLEARANCE rule looks: one control step of reaction
@@ -1500,7 +1831,7 @@ class Shield:
         (A standstill has no forecast, so it scores its own position.)"""
         if self._dist is None:
             return float("inf")
-        steps = list(self._predict(state, a, self._clear_horizon_s(a)))
+        steps = self._clear_steps(state, a)
         return min(self._distance_at(p.x, p.y) for _, p in (steps[1:] or steps))
 
     def _clear_dir_candidates(self, a: Action4D, cap: float):
@@ -1683,6 +2014,10 @@ class Shield:
         alive = self._mask(so)
         if alive is False:
             return []
+        # From the stop point when the aircraft's momentum already carries it
+        # into the ring (`_committed`); `state` itself otherwise, and always
+        # without a measured velocity.
+        state = self._rule_state(so, state)
         # svx = svy = 0.0 with no velocity, which subtracts and adds exact
         # zeros below: every number, and so every decision, is unchanged.
         sx, sy, svx, svy = self._subject_track()
@@ -1746,6 +2081,11 @@ class Shield:
         alive = self._mask(f)
         if alive is False:
             return []
+        # A zone the aircraft's momentum already carries it into is judged
+        # from the stop point (`_committed`), on that state's own forecast.
+        st = self._rule_state(f, state)
+        if st is not state:
+            state, poses = st, None
         mv = self._motion_of(f)
         if self.segment_check and poses is None:
             poses = list(self._predict(state, action))
@@ -1889,6 +2229,7 @@ class Shield:
         alive = self._mask(c)
         if alive is False:
             return []
+        state = self._rule_state(c, state)      # the stop point, if committed
         pts = c.points()
         half = c.half_width_m
         d_now, (ux, uy) = self._corridor_geom(c, state.x, state.y)
@@ -1946,7 +2287,7 @@ class Shield:
         Shared so a repair that has already paid for the forecast does not pay
         again, once per rule per repair pass.
         """
-        steps = list(self._predict(state, action, self._clear_horizon_s(action)))
+        steps = self._clear_steps(state, action)
         return steps, [self._distance_at(p.x, p.y) for _, p in steps]
 
     def _check_clearance(self, c, state: State, action: Action4D,
@@ -1958,7 +2299,25 @@ class Shield:
         if alive is False:
             return []
         if steps is None or dists is None:
+            # A caller that passes the forecast passes it for the state the
+            # rule is judged from (_check_in, _repair_clearance).
+            state = self._rule_state(c, state)
             steps, dists = self._clear_forecast(state, action)
+        if self._velocity_of(state) is not None:
+            # THE MEASURED VELOCITY ONLY ADDS (_predict): judged on the
+            # own-velocity "stop after one control period" forecast AND, as
+            # before the change, on the commanded one from the same position.
+            # Separately, because the test below reads its forecast in order
+            # (receding, forgiving); the earlier breach is the answer.
+            own = self._clearance_verdict(c, steps, dists, alive)
+            old = self._check_clearance(c, self._positional(state), action)
+            if own and old:
+                return own if own[0].predicted_at_s <= old[0].predicted_at_s else old
+            return own or old
+        return self._clearance_verdict(c, steps, dists, alive)
+
+    def _clearance_verdict(self, c, steps, dists, alive) -> list[Violation]:
+        """_check_clearance's test on one forecast (steps, dists)."""
         if alive is not True:
             # Only the samples at which the rule is in force are judged.
             keep = [i for i, (t, _) in enumerate(steps) if alive(t)]
@@ -2033,8 +2392,23 @@ class Shield:
             # kept, so the violation list - which test_check_contract.py hashes
             # - comes out in the same order as the old walk over all of them.
             poses = list(self._predict(state, action))
-            near = self._fence_candidates(ir, state, poses)
-            box, horizon = self._forecast_box(state, poses)
+            com = self._committed(state)
+            if com is not None and (com[1] or com[3]):
+                # Some rule is judged from the stop point or from the position
+                # without the velocity (_check_fence recomputes that state's
+                # forecast): the candidate fences and the box cover every
+                # forecast in play, so such a zone is not skipped for lying
+                # off the own-velocity one.
+                both = list(poses)
+                if com[1]:
+                    both += list(self._predict(com[0], action))
+                if com[3]:
+                    both += list(self._predict(com[2], action))
+                near = self._fence_candidates(ir, state, both)
+                box, horizon = self._forecast_box(state, both)
+            else:
+                near = self._fence_candidates(ir, state, poses)
+                box, horizon = self._forecast_box(state, poses)
             for r in recs:
                 if r.index not in near:
                     continue
@@ -2045,10 +2419,27 @@ class Shield:
         for c in self._corridors:
             found += self._check_corridor(c, state, action)
         if self._dist is not None and self._clear:
-            # One forecast shared across every clearance rule, as before.
+            # One forecast shared across every clearance rule, as before - one
+            # per state judged from, when a rule is judged from the stop
+            # point (_committed).
             steps, dists = self._clear_forecast(state, action)
+            other = None
             for c in self._clear:
-                found += self._check_clearance(c, state, action, steps, dists)
+                st = self._rule_state(c, state)
+                if st is state:
+                    found += self._check_clearance(c, state, action, steps, dists)
+                else:
+                    if other is None or other[0] is not st:
+                        other = (st, *self._clear_forecast(st, action))
+                    found += self._check_clearance(c, st, action, other[1], other[2])
+        com = self._committed(state)
+        if com is not None and com[1]:
+            # THE MEASURED VELOCITY ONLY ADDS (_predict), for a rule judged
+            # from the stop point too: it is also judged as before the change,
+            # from the position on the commanded forecast. A stop and a push
+            # away pass that test from a legal position, so the decision keeps
+            # its clean fallback; what the old Shield refused stays refused.
+            found += [v for v in self._check_in(com[2], action) if v.rule_id in com[1]]
 
         # dedupe by (rule, category), keep earliest
         seen: dict[tuple, Violation] = {}
@@ -2171,11 +2562,29 @@ class Shield:
         vx, vy = a.vx, a.vy
         cap = min((k.speed_max_mps for k in self._kins), default=4.0)
 
+        outer = state
         for c in self._clear:
+            # Judged, and repaired, from the stop point when the aircraft's
+            # momentum already carries it into this ring (_committed): the
+            # push-out then starts before the aircraft reaches the ring.
+            state = self._rule_state(c, outer)
             hard_r = c.min_clearance_m
             soft_r = c.min_clearance_m + c.soft_margin_m
             probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
             steps, dists = self._clear_forecast(state, probe)
+            alive_c = self._mask(c)
+            if (alive_c is not False and self._velocity_of(state) is not None
+                    and not self._clearance_verdict(c, steps, dists, alive_c)
+                    and self._check_clearance(c, self._positional(state), probe)):
+                # THE MEASURED VELOCITY ONLY ADDS (_predict, _check_clearance):
+                # the own-velocity forecast is content and the commanded one
+                # from the position is not - a command towards the building
+                # the aircraft is too slow to have taken up yet. Repaired from
+                # the position on the commanded forecast, exactly as before the
+                # change; the forecast the repair steers by must be the one
+                # that breaks (the first offending pose below).
+                state = self._positional(state)
+                steps, dists = self._clear_forecast(state, probe)
 
             # Ask the MONITOR, against the mutating vector, rather than
             # re-deriving a weaker condition here. The two had drifted: the
@@ -2298,17 +2707,30 @@ class Shield:
         # `if not hit: continue`, decided without the per-pose tests.
         ir = self._ir
         near_for = poses = near = box = horizon = None
+        # A zone the aircraft's momentum already carries it into is repaired
+        # from the stop point, on that state's own forecast (_committed); it
+        # is relevant by construction, so the candidate test is not asked.
+        com = self._committed(state)
+        outer = state
         anchors, tick = self._fence_anchors(ir)
         for rec in anchors:
             if near_for != (vx, vy):
                 probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
-                poses = list(self._predict(state, probe))
-                near = self._fence_candidates(ir, state, poses)
-                box, horizon = self._forecast_box(state, poses)
+                poses = list(self._predict(outer, probe))
+                near = self._fence_candidates(ir, outer, poses)
+                box, horizon = self._forecast_box(outer, poses)
                 near_for = (vx, vy)
-            if rec.index not in near:
-                continue
-            rec = self._reach(rec, tick, box, horizon)
+            st = self._rule_state(rec.rule, outer) if com is not None else outer
+            if st is not outer:
+                state = st
+                probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
+                fposes = list(self._predict(state, probe))
+                rec = self._reach(rec, tick, *self._forecast_box(state, fposes))
+            else:
+                state, fposes = outer, poses
+                if rec.index not in near:
+                    continue
+                rec = self._reach(rec, tick, box, horizon)
             if rec is None:
                 continue
             f, poly, ring = rec.rule, rec.polygon, rec.buffered
@@ -2343,7 +2765,7 @@ class Shield:
                 spd = min(2.0 + max(0.0, zx * ox + zy * oy), cap)
                 out_now = vx * ox + vy * oy          # outward speed commanded
                 probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
-                if not self._check_fence(f, poly, state, probe, poses, ring):
+                if not self._check_fence(f, poly, state, probe, fposes, ring):
                     # The monitor is content, so this action IS escaping - but
                     # it forgives anything above 0.1 m/s, which would leave a
                     # crawl. Raise the outward component to the floor and leave
@@ -2369,12 +2791,13 @@ class Shield:
                                       magnitude_m=depth, axis="lateral", recovery=True))
                 continue
 
-            # `poses` is the forecast of the current (vx, vy): it was rebuilt
-            # above the moment the velocity last changed.
+            # `fposes` is the forecast of the current (vx, vy) from the state
+            # this zone is judged from: rebuilt above the moment the velocity
+            # last changed (`poses`), or for this zone's stop point.
             alive = self._mask(f)
             depth = 0.0
             hit = False
-            for t, p in poses:
+            for t, p in fposes:
                 if alive is not True and not alive(t):
                     continue
                 px, py = _to_zone_frame(p, t, mv) if mv else (p.x, p.y)
@@ -2387,7 +2810,7 @@ class Shield:
             if not hit and self.segment_check:
                 # A ring that lies wholly between two poses: the slide acts on
                 # it as on a pose inside, sized by the segment's own depth.
-                seg = self._segment_crossing(f, ring, poses, alive, mv)
+                seg = self._segment_crossing(f, ring, fposes, alive, mv)
                 if seg is not None:
                     hit, depth = True, seg[1]
             if not hit:
@@ -2604,6 +3027,10 @@ class Shield:
                 worst = so if worst is None or so.min_range_m > worst.min_range_m else worst
         if worst is None:
             return a
+        # From the stop point when the aircraft's momentum already carries it
+        # into the ring (_committed): StandoffRecover then opens the range
+        # before the aircraft gets there.
+        state = self._rule_state(worst, state)
 
         dx, dy = sx - state.x, sy - state.y
         d = math.hypot(dx, dy)
@@ -2627,6 +3054,13 @@ class Shield:
         # The check is predictive over the full lookahead, so this must be too:
         # at 4 m/s and a 3 s horizon the aircraft commits 12 m ahead of itself.
         breach_ahead = (d - closing * self.lookahead_s) < ring - 1e-9
+        if self._velocity_of(state) is not None and not breach_ahead:
+            # Own-velocity forecast: the CHECK sees the momentum the straight
+            # line on the command above does not (the aircraft keeps closing
+            # for the reaction time and while it brakes), so ask the check
+            # itself, or this operator would decline the very violation it
+            # was called for and the tick would fall through to the brake.
+            breach_ahead = bool(self._check_standoff(worst, state, a))
 
         if d < ring - 1e-9:
             # ALREADY inside. Removing the closing component would leave the
@@ -2791,7 +3225,9 @@ class Shield:
         cap = min((k.speed_max_mps for k in self._kins), default=4.0)
         L = max(self.lookahead_s, 1e-3)
 
+        outer = state
         for c in self._corridors:
+            state = self._rule_state(c, outer)      # the stop point, if committed
             # Altitude first: it is independent of the lateral geometry and its
             # repair is a straight projection, exactly as for AltitudeEnvelope.
             end_up = state.up + a.vz_up * L
@@ -2838,6 +3274,15 @@ class Shield:
             elif d + outward * L > half + 1e-9:
                 need = 0.0
                 excursion, recovering = d + outward * L - half, False
+            elif self._velocity_of(state) is not None and (
+                    ex := max((nearest_on_polyline(p.x, p.y, c.points())[0] - half
+                               for _, p in self._predict(state, a)), default=0.0)) > 1e-9:
+                # Own-velocity forecast: the aircraft's momentum can carry the
+                # forecast out where the straight line on the command does
+                # not; read the excursion off the forecast itself, as the
+                # check does, so the operator acts on what the check raised.
+                need = 0.0
+                excursion, recovering = ex, False
             else:
                 continue                        # forecast stays inside
             if inward >= need - 1e-9:
@@ -2883,8 +3328,31 @@ class Shield:
 
         Returns the violations, so a caller can say WHICH rule the position
         breaks; truthiness is the common use.
+
+        A measured velocity on `state` is dropped first (`_positional`): this
+        stays the POSITION question - the rails' `unsafe` column, the FSM's
+        stop_illegal and the time-to-safe KPI read it so - and never becomes
+        "where would a stop from this speed end", which the own-velocity
+        forecast asks inside the decision instead (`_committed`).
         """
-        return self._check(state, BRAKE)
+        return self._check(self._positional(state), BRAKE)
+
+    def stop_breaks(self, state: State) -> list[str]:
+        """The HARD, enforced rules a stop at this POSITION breaks, by id: the
+        reading the escalation FSM gives `stop_illegal` (a soft rule is capped
+        at brake, a monitor_only rule is not enforced). For a caller judging a
+        path pose by pose - the hold's stop path (guardrail/response.py
+        `hold_plan`)."""
+        if self._tick_ctx() is None and self._needs_tick():
+            with self._scope(self._new_tick(None)) as tick:
+                return self._stop_breaks_in(tick.rt, state)
+        tick = self._tick_ctx()
+        return self._stop_breaks_in(tick.rt if tick is not None else self._rt, state)
+
+    def _stop_breaks_in(self, rt: _Runtime, state: State) -> list[str]:
+        return sorted({v.rule_id for v in self.state_is_unsafe(state)
+                       if rt.hard.get(v.rule_id, True)
+                       and self._act(rt, v.rule_id) != "monitor_only"})
 
     def unsafe_depth(self, state: State, violations: list | None = None) -> float:
         """How far this POSITION is from legal, in metres: summed over the
@@ -3545,6 +4013,11 @@ class Shield:
         run their own FSM (guardrail/replay.py rail_shield) and leave them."""
         t0 = time.perf_counter()
         tick = self._begin_tick(t)
+        if getattr(state, "velocity", None) is not None and self.velocity_response is not None:
+            if self._velocity_of(state) is None:
+                self.n_velocity_nonfinite += 1
+            else:
+                self.n_velocity_ticks += 1
         with self._scope(tick):
             decision = self._decide(state, raw)
             self._last_caps = self._applied_caps(tick, decision)
@@ -3553,6 +4026,25 @@ class Shield:
         elapsed_ms = (time.perf_counter() - t0) * 1e3
         self._window.append(TickRecord(state.model_copy(), decision, elapsed_ms))
         return decision
+
+    def advise(self, state: State, raw: Action4D) -> ShieldDecision:
+        """The decision filter() WOULD make for `raw` from `state`, at the last
+        tick's time, without making it: nothing goes into the sliding window,
+        the monitor clock and the escalation FSM do not move, and the
+        floor-refusal counter is left as it was.
+
+        For a rail that must stream something other than the pilot's action
+        on a tick whose decision it has already taken - the hold that stops
+        clear (guardrail/response.py `hold_plan`): the Shield's answer to a
+        stop (`raw` zero) from a state with a measured velocity is a stop
+        where the stop ends legal, and the recovery the stop point needs
+        where the aircraft's momentum carries it into a rule."""
+        n_refused = self.n_floor_refused
+        try:
+            with self._scope(self._new_tick(None)):
+                return self._decide(state, raw)
+        finally:
+            self.n_floor_refused = n_refused
 
     def _begin_tick(self, t: float | None) -> _Tick:
         if t is None:
@@ -3583,6 +4075,7 @@ class Shield:
             self._fsm_fault = None
             self._last_caps = None
             self._window.clear()
+            self._flown.clear()
             rt = self._rt
             if rt.moving_ids and self._t_last is not None:
                 # Pin every moving zone to an explicit anchor (a policy-authored
@@ -4232,13 +4725,21 @@ class Shield:
             return d.model_copy(update=upd)
         try:
             self._stop_illegal(tick, state)          # fills tick.unsafe
+            unsafe = list(tick.unsafe)
+            if self._velocity_of(state) is not None:
+                # The FSM's stop_illegal is about the POSITION (fsm.py, "stop_
+                # illegal means standing still here breaks a HARD rule"), as
+                # on every rail; with a measured velocity tick.unsafe is about
+                # where a stop would END (_committed), so it is asked again
+                # without the velocity. Its inputs keep their meaning.
+                unsafe = self._check(self._positional(state), BRAKE)
             caps = self._applied_caps(tick, d)
             inp = _fsm.tick_input_from_decision(
                 tick.t, d, tick.rt, horizon_s=self.theta_horizon_s,
-                stop_illegal=list(tick.unsafe), rtl_failed=bool(rtl_failed),
+                stop_illegal=unsafe, rtl_failed=bool(rtl_failed),
                 home_reached=bool(home_reached), landed=bool(landed),
                 caps=caps if caps is not None else False,
-                unsafe_depth_m=self._unsafe_depth_in(state, list(tick.unsafe)))
+                unsafe_depth_m=self._unsafe_depth_in(state, unsafe))
             out = self.fsm.step(inp)
         except ValueError as e:
             self._fsm_fault = str(e)
