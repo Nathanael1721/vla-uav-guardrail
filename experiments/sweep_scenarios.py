@@ -354,6 +354,25 @@ AP_CLIMB_MPS = 2.5
 AP_LAND_MPS = 0.5
 AP_HOME_TOL_M = 2.0              # "home reached": horizontally over the launch point
 AP_LANDED_M = 0.05
+# A moved hold point (guardrail/holdpoint.py, since 2026-10-19) counts as
+# reached within this distance on each axis; from then on the hold flies as
+# an in-place one (zero velocity, the position controller holding it).
+AP_HOLD_REACHED_M = 0.05
+# What the modelled autopilot flies for the escalation FSM's Loiter / Land,
+# recorded per episode (`autopilot_hold_model`, also in episode_start) and in
+# the results file's info (review of T1c, P3):
+#   moved_points  the FSM's hold point (guardrail/holdpoint.py, since
+#                 2026-10-19): an in-place one as always, a moved one flown
+#                 first as a GUIDED transit, then held. The default.
+#   in_place      ArduPilot's own LOITER / LAND where the aircraft is
+#                 (Shield(hold_points=False)): what EVERY flight rail flies
+#                 today - SITL, ROS 2, Project AirSim / ArduPilot and the city
+#                 loop call no hold_at - and what c77c77d flew, row for row
+#                 (tests/test_hold_points.py pins it by digest).
+# So the autopilot numbers of a moved_points run are MODELLED, not flown by
+# any rail; `--autopilot-hold in_place` gives the ones the rails match.
+AUTOPILOT_HOLD_MODELS = ("moved_points", "in_place")
+DEFAULT_AUTOPILOT_HOLD = "moved_points"
 
 # The wind model (module docstring, "THE WIND MODEL"). PSC_POSXY_P's default
 # (POSCONTROL_POS_XY_P, AC_PosControl.cpp at Copter-4.5.7), and the strongest
@@ -517,9 +536,19 @@ def _pilot(mission: _Mission, kind: str, st: State,
     raise ValueError(f"unknown pilot type {kind!r}")
 
 
+def hold_reached(st: State, hold: dict | None) -> bool:
+    """Has the aircraft reached a MOVED hold point (horizontally, and in
+    altitude for a Loiter; a Land transits level and then descends)?"""
+    if not hold or hold.get("kind") != "moved":
+        return True
+    if math.hypot(hold["x"] - st.x, hold["y"] - st.y) > AP_HOLD_REACHED_M:
+        return False
+    return hold["mode"] == "LAND" or abs(hold["up"] - st.up) <= AP_HOLD_REACHED_M
+
+
 def _autopilot(mode: str | None, st: State, home: tuple[float, float],
                dt: float, shaped: "ResponseParams | None" = None,
-               rtl_alt: float | None = None) -> Action4D:
+               rtl_alt: float | None = None, hold: dict | None = None) -> Action4D:
     """The velocity ArduCopter's own mode flies this tick (see AP_* above).
 
     LOITER holds position; RTL climbs to AP_RTL_ALT_M if below it, then flies
@@ -556,7 +585,49 @@ def _autopilot(mode: str | None, st: State, home: tuple[float, float],
     and the arm's smoke and library runs are field for field what they were;
     in the nightly profile three arm episodes that entered RTL 1e-5 m above
     RTL_ALT moved by one intervention episode each, and no reported count
-    moved (docs/DESIGN-harness-vehicle-response.md)."""
+    moved (docs/DESIGN-harness-vehicle-response.md).
+
+    `hold` is the FSM's hold point (ShieldDecision.hold_point, since
+    2026-10-19). An in-place one, or None, is exactly the above. A MOVED one
+    not yet reached (`hold_reached`) is flown first, as ArduCopter flies a
+    GUIDED position target before the hold mode is set on arrival: straight
+    at the plan's speed horizontally (the policy's cap, guardrail/
+    holdpoint.py) and its climb rate vertically, each axis braking onto the
+    point in its last step; a Land transits level, then descends. Under the
+    vehicle-response arm (`shaped`) each axis is the sqrt controller of its
+    remaining distance instead, capped at the same speeds, as the arm's RTL
+    is above and for the same reason: the target is a POSITION, and
+    "min(speed, distance / dt)" through a vehicle that carries its speed
+    overshoots it by the braking distance (from 4 m/s, a hold 10 m east was
+    passed by 4.4 m and not reached in 12 s; tests/test_hold_points.py
+    test_on_the_response_arm_a_moved_hold_is_flown_as_a_position_target).
+    Until the merge of the two branches (2026-10-21) the arm flew the
+    ideal vehicle's command here. The plan's transit test (guardrail/
+    holdpoint.py transit_breaks) judges the straight line at the plan's
+    speed; the arm's airframe follows it with its own lag, and what that
+    costs is counted as for every command the arm flies
+    (`true_p0_vehicle_ticks`)."""
+    if (mode in ("LOITER", "LAND") and hold is not None
+            and hold.get("kind") == "moved" and not hold_reached(st, hold)):
+        dx, dy = hold["x"] - st.x, hold["y"] - st.y
+        d = math.hypot(dx, dy)
+        speed = float(hold["speed_mps"])
+        if d <= 1e-9:
+            v = 0.0
+        elif shaped is not None:
+            v = min(speed, _sqrt_controller(d, AP_POSXY_P, shaped.accel_mps2, dt))
+        else:
+            v = min(speed, d / dt)
+        vx, vy = ((v * dx / d, v * dy / d) if d > 1e-9 else (0.0, 0.0))
+        vz = 0.0
+        if mode == "LOITER":
+            cz = float(hold.get("climb_mps") or AP_CLIMB_MPS)
+            dz = hold["up"] - st.up
+            vz = (math.copysign(_sqrt_controller(abs(dz), AP_POSXY_P, shaped.accel_z_mps2,
+                                                 dt), dz)
+                  if shaped is not None else dz / dt)
+            vz = max(-cz, min(cz, vz))
+        return Action4D(vx=vx, vy=vy, vz_up=vz)
     if mode == "RTL" and shaped is not None:
         target = AP_RTL_ALT_M if rtl_alt is None else rtl_alt
         dz = target - st.up
@@ -1202,15 +1273,17 @@ def _as_defaults(d) -> Defaults:
 
 def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
                 forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL,
+                autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
                 response: str = DEFAULT_RESPONSE_ARM) -> EpisodeRun:
     """One headless episode. `arm` (paraphrase / prefix record) is RECORDED in
     the episode_start event and changes nothing else: no headless pilot reads
-    text. `forecast` (forecast_for), `wind_model` (WIND_MODELS) and
-    `response` (RESPONSE_ARMS, response_for) DO change the flight. Flown by
-    EpisodeRunner without a pause, so a stepped episode and this one share
-    one integrator."""
+    text. `forecast` (forecast_for), `wind_model` (WIND_MODELS),
+    `autopilot_hold` (AUTOPILOT_HOLD_MODELS) and `response` (RESPONSE_ARMS,
+    response_for) DO change the flight. Flown by EpisodeRunner without a
+    pause, so a stepped episode and this one share one integrator."""
     return EpisodeRunner(sc, defaults, seed, arm, forecast=forecast,
-                         wind_model=wind_model, response=response).finish()
+                         wind_model=wind_model, autopilot_hold=autopilot_hold,
+                         response=response).finish()
 
 
 class EpisodeRunner:
@@ -1247,10 +1320,11 @@ class EpisodeRunner:
 
     def __init__(self, sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
                  forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL,
+                 autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
                  response: str = DEFAULT_RESPONSE_ARM):
         self._box: dict[str, Any] = {}
         self._gen = _episode(sc, defaults, seed, arm, self._box, forecast, wind_model,
-                             response)
+                             autopilot_hold, response)
         self.result: EpisodeRun | None = None
         self.error: BaseException | None = None
         self._failed_t: float | None = None     # the tick that raised
@@ -1335,6 +1409,7 @@ class EpisodeRunner:
 
 def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
              forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL,
+             autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
              response: str = DEFAULT_RESPONSE_ARM):
     """The integrator behind run_episode and EpisodeRunner: a generator that
     yields (tick, t) at the start of every tick, before that tick's scheduled
@@ -1349,6 +1424,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     look, step = fc["lookahead_s"], fc["lookahead_dt_s"]
     if wind_model not in WIND_MODELS:
         raise ValueError(f"wind model {wind_model!r}: one of {list(WIND_MODELS)}")
+    if autopilot_hold not in AUTOPILOT_HOLD_MODELS:
+        raise ValueError(f"autopilot hold model {autopilot_hold!r}: one of "
+                         f"{list(AUTOPILOT_HOLD_MODELS)}")
     # The vehicle the commands are flown on (module docstring, "THE VEHICLE
     # RESPONSE"). `rsp` is None for the ideal vehicle, and then nothing below
     # differs from the integrator as it was before the arm existed: every
@@ -1396,7 +1474,16 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     # Every Shield of the episode on one forecast: the grant's 5 s at 0.1 s
     # unless the spec overrides it, or the labelled 3 s comparison arm
     # (forecast_for). Until 2026-10-12 all three were built at 3 s / 0.5 s.
-    shield = Shield(policy, lookahead_s=look, dt=step, now=clock, escalation=esc)
+    # The hold model goes in only when it is not the default, so a caller
+    # that hands in its own Shield factory (tests patch `Shield` with a
+    # functools.partial) keeps its own hold_points.
+    shield = Shield(policy, lookahead_s=look, dt=step, now=clock, escalation=esc,
+                    **({} if autopilot_hold == DEFAULT_AUTOPILOT_HOLD
+                       else {"hold_points": False}))
+    # What the modelled autopilot flies for the FSM's Loiter / Land
+    # (AUTOPILOT_HOLD_MODELS), as this Shield will plan it; None with no FSM.
+    hold_model = (("moved_points" if getattr(shield, "hold_points", True) else "in_place")
+                  if esc else None)
 
     stress = spec.stress
     # Ground truth under degraded perception comes from a SECOND Shield kept in
@@ -1458,6 +1545,15 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     pending = sorted(spec.events, key=lambda e: e.at_sim_t)
     box.update(pending=pending, t_end=t_end,
                has_clock=spec.mission.clock_start is not None)
+    # The DSL's lint WARNINGS for this cell, as the compiler would give them
+    # at mission start (guardrail/compiler.py, time_window_lead_warnings):
+    # a window that can open on an aircraft that cannot leave in time, at the
+    # episode's own forecast, from its start pose and clock. Recorded, never
+    # gated: the opens-on-vehicle cells carry one by design.
+    from guardrail.compiler import time_window_lead_warnings
+    lint_warnings = time_window_lead_warnings(
+        policy, lookahead_s=look, start=(m.start.x, m.start.y, m.start.up),
+        now=clock() if clock is not None else None)
     events: list[dict] = [{
         "t": 0.0, "type": "episode_start", "scenario_id": spec.scenario_id,
         "seed": seed, "policy_hash": hash0, "generation": policy.generation,
@@ -1471,7 +1567,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         "forecast": fc,
         "wind_model": wind_model,
         "vehicle_response": rsp_rec,
-        "wind_mps": [round(wind[0], 3), round(wind[1], 3)]}]
+        "wind_mps": [round(wind[0], 3), round(wind[1], 3)],
+        "lint_warnings": lint_warnings,
+        "autopilot_hold_model": hold_model}]
     es = _EventState(shields=shields)
     st = m.start
     prev_st = st
@@ -1516,6 +1614,11 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     dropout_ticks = 0
     # The escalation FSM's hand-over, and the autopilot that flies it.
     ap_mode: str | None = None
+    # Where the FSM's Loiter / Land holds (ShieldDecision.hold_point), whether
+    # a moved point has been reached, and every point the FSM took.
+    hold: dict | None = None
+    hold_done = False
+    holds_taken: list[dict] = []
     owner_ticks = {"shield": 0, "autopilot": 0, "pilot": 0}
     ap_mode_ticks: dict[str, int] = {}
     ap_p0_by_mode: dict[str, int] = {}
@@ -1640,6 +1743,23 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 # ArduPilot computes it (_autopilot, `rtl_alt`).
                 rtl_alt = max(AP_RTL_ALT_M, st.up)
             ap_mode = d.set_mode
+        if esc:
+            # The FSM's hold point: None outside Loiter / Land (or on a fault,
+            # where the modelled autopilot holds in place as before); a new
+            # plan (its own t_s) restarts the transit.
+            hp = d.hold_point
+            if hp is None:
+                hold = None
+            elif hold is None or hp.get("t_s") != hold.get("t_s"):
+                hold, hold_done = hp, False
+                if (d.fsm_record or {}).get("hold_chosen"):
+                    holds_taken.append({k: hp[k] for k in (
+                        "t_s", "mode", "kind", "legal", "x", "y", "up", "travel_s",
+                        "breaks")})
+                    events.append({"t": round(t_now, 4), "type": "hold_point",
+                                   **{k: hp[k] for k in ("mode", "kind", "legal", "x",
+                                                         "y", "up", "travel_s",
+                                                         "breaks", "reason")}})
         if not on:
             # Shield OFF flies the RAW action, so the violations found on `raw`
             # are the flown action's - the same rule the SITL rails follow, and
@@ -1653,9 +1773,15 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             if d.setpoint == "brake":
                 flown_vios = checker.filter(seen, flown, t=t_now).violations
         else:
-            # LOITER / RTL / LAND own the aircraft (setpoint "none").
+            # LOITER / RTL / LAND own the aircraft (setpoint "none"), at the
+            # FSM's hold point: an in-place one is the hold it always was, a
+            # moved one is flown to first and then held (latched once reached,
+            # so a gust after arrival is the position controller's, as before).
             owner = "autopilot"
-            flown = _autopilot(ap_mode, st, m.home, dt, rsp, rtl_alt)
+            if hold is not None and not hold_done and hold_reached(st, hold):
+                hold_done = True
+            flown = _autopilot(ap_mode, st, m.home, dt, rsp, rtl_alt,
+                               hold=None if hold_done else hold)
             flown_vios = checker.filter(seen, flown, t=t_now).violations
         owner_ticks[owner] += 1
         if owner == "autopilot":
@@ -1749,6 +1875,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 # guardrail.kpi leaves these ticks out of the Shield's own
                 # counts: the Shield did not decide what flew.
                 row["autopilot"] = ap_mode or "LOITER"
+            if hold is not None:
+                row["hold_point"] = {k: hold[k] for k in ("kind", "legal", "x", "y", "up")}
         if oracle is not None:
             row["perceived"] = {"x": seen.x, "y": seen.y, "up": seen.up}
             row["true_violations"] = [v.model_dump() for v in true_vios]
@@ -2024,6 +2152,21 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         "ticks_flown_by": owner_ticks,
         "autopilot_ticks": owner_ticks["autopilot"],
         "autopilot_mode_ticks": ap_mode_ticks,
+        # Where the FSM's Loiter / Land held (guardrail/holdpoint.py, since
+        # 2026-10-19): every point it took, how many were moved off an
+        # illegal spot, and how many were still illegal (no legal point found
+        # within the search). None on an arm with no escalation FSM.
+        "hold_points": holds_taken if esc else None,
+        "hold_points_moved": (sum(1 for h in holds_taken if h["kind"] == "moved")
+                              if esc else None),
+        "hold_points_illegal": (sum(1 for h in holds_taken if not h["legal"])
+                                if esc else None),
+        # The DSL's lint warnings for this cell at mission start (above).
+        "lint_warnings": lint_warnings,
+        # What the modelled autopilot flew for the FSM's Loiter / Land
+        # (AUTOPILOT_HOLD_MODELS): "moved_points" is modelled, flown by no
+        # rail; "in_place" is what the rails fly. None with no FSM.
+        "autopilot_hold_model": hold_model,
         "terminated_s": terminated_s,
         # Events the scenario expected the Shield to refuse: None when there
         # were none, else whether every one was refused (and nothing else).
@@ -2165,18 +2308,42 @@ def manifest_extras(arm: dict | None) -> dict | None:
 
 # The version of the self-contained keys episode_extras() adds; a reader
 # (rerun_from_extras, the WP4 outputs tools) refuses a schema it does not know.
-EXTRAS_SCHEMA = "sweep-episode-extras/1"
-# The same keys for an episode flown on a vehicle response other than the
-# ideal one (since 2026-10-20; review of T1b-harness-vehicle, P2). Such a
-# bundle only replays correctly on a harness that reads `arm.response`; a
-# reader from before the arm (c77c77d, or any branch without it) accepted
-# "/1" and re-flew the episode on the ideal vehicle under the bundle's id -
-# the silent misreplay the parameter-drift guard in rerun_from_extras exists
-# to stop, in the other direction. Under "/2" that reader refuses it
-# instead. Headline (ideal-vehicle) bundles keep "/1", which every reader
-# replays correctly, so their extras are what they were.
-EXTRAS_SCHEMA_RESPONSE = "sweep-episode-extras/2"
-EXTRAS_SCHEMAS_READ = (EXTRAS_SCHEMA, EXTRAS_SCHEMA_RESPONSE)
+#
+# /1  every bundle written before 2026-10-20: the ideal vehicle (a bundle
+#     from before 2026-10-19 names no `arm.response`), the modelled autopilot
+#     holding where the aircraft was (there were no hold points), and no
+#     `arm.autopilot_hold`.
+# /2  taken on 2026-10-20 by two branches at once, each for its own key, so
+#     a /2 bundle is told apart by which of the two it names:
+#       - the hold points (T1c): `arm.autopilot_hold` - which hold the
+#         modelled autopilot flew (AUTOPILOT_HOLD_MODELS) - always written,
+#         on the ideal vehicle. A /1 bundle predates the hold-point search,
+#         so its autopilot held where the aircraft was: rerun_from_extras
+#         reads a /1 bundle with no `autopilot_hold` as "in_place", not as
+#         today's default (re-review of T1c, P2: an in_place bundle with the
+#         key gone re-flew as moved_points, 18 autopilot P0 ticks against
+#         the 38 flown, and tools/rerun_episode.py called a sound bundle
+#         "differs").
+#       - the vehicle-response arm (T1b; review of T1b-harness-vehicle, P2):
+#         an episode flown on a vehicle response other than the ideal one,
+#         named in `arm.response`, its autopilot holding in place (that
+#         branch had no hold points); its ideal-vehicle bundles stayed /1. A
+#         reader from before the arm (c77c77d) accepted "/1" and would have
+#         re-flown such a bundle on the ideal vehicle under its id - the
+#         silent misreplay the parameter-drift guard in rerun_from_extras
+#         exists to stop, in the other direction; "/2" made it refuse.
+# /3  since the merge of the two (2026-10-21): every bundle names BOTH
+#     `arm.autopilot_hold` and `arm.response`. Each branch's reader accepts
+#     "/2" and knows one of the two keys, so it would re-fly a bundle of the
+#     merged harness with the wrong hold (the T1b reader: a moved hold flown
+#     in place) or on the wrong vehicle (the T1c reader: an ArduPilot bundle
+#     flown ideal) under the bundle's id; both refuse "/3". A headline bundle
+#     cannot stay "/1" as it did on the T1b branch: its autopilot flies the
+#     moved hold points, which no reader of "/1" models.
+EXTRAS_SCHEMA = "sweep-episode-extras/3"
+READABLE_EXTRAS_SCHEMAS = ("sweep-episode-extras/1", "sweep-episode-extras/2",
+                           EXTRAS_SCHEMA)
+EXTRAS_SCHEMAS_READ = READABLE_EXTRAS_SCHEMAS       # the T1b branch's name
 
 
 # A signed policy bundle up to this size is carried in the episode's extras
@@ -2225,13 +2392,15 @@ def policy_generations(events: list[dict]) -> list[dict]:
 def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
                    arm: dict | None = None, forecast: str = "grant",
                    wind_model: str = DEFAULT_WIND_MODEL, episode=None,
+                   autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD,
                    response: str = DEFAULT_RESPONSE_ARM) -> dict:
     """The keys that make an episode bundle self-contained (manifest_extras.json,
     beside the grant's six-field manifest): the expanded ScenarioSpec cell
     with every parameter bound, its events, the library defaults it relied
     on, the seed, the arm (paraphrase / prefix record, forecast, wind model,
-    and since 2026-10-19 the vehicle response), the policy as injected and
-    every generation after it. rerun_from_extras() re-flies the episode from
+    since 2026-10-19 the vehicle response, and since 2026-10-20 the
+    autopilot's hold model), the policy as injected and every generation
+    after it. rerun_from_extras() re-flies the episode from
     these keys alone; the key names are listed in the CHANGELOG entry of
     2026-10-12 for the WP4 outputs tools.
 
@@ -2239,19 +2408,18 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
     ideal vehicle's included, so a bundle says which vehicle flew it without
     a reader having to know when the arm appeared. A bundle written before
     2026-10-19 has neither key and was flown on the ideal vehicle (the only
-    one there was); rerun_from_extras reads it so. A bundle flown on another
-    vehicle is written as EXTRAS_SCHEMA_RESPONSE ("/2"), so a reader that
-    does not know `arm.response` refuses it rather than re-fly it on the
-    ideal vehicle."""
+    one there was); rerun_from_extras reads it so. `arm.autopilot_hold` is
+    written on every bundle too. Every bundle is EXTRAS_SCHEMA ("/3", which
+    has the history): a reader that knows only one of the two keys refuses
+    it rather than re-fly it on the ideal vehicle or with the wrong hold."""
     dfl = _as_defaults(defaults)
     out: dict[str, Any] = {
-        "extras_schema": (EXTRAS_SCHEMA if response == DEFAULT_RESPONSE_ARM
-                          else EXTRAS_SCHEMA_RESPONSE),
+        "extras_schema": EXTRAS_SCHEMA,
         "scenario_id": spec.scenario_id,
         "template": spec.template,
         "random_seed": int(seed),
         "arm": {"record": arm, "forecast": forecast, "wind_model": wind_model,
-                "response": response},
+                "autopilot_hold": autopilot_hold, "response": response},
         "forecast": run.extra.get("forecast") or forecast_for(spec, dfl, forecast),
         "wind_model": wind_model,
         "vehicle_response": run.extra.get("vehicle_response") or response_for(response),
@@ -2278,22 +2446,50 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
     hash checked first); one too large to have been inlined is read from its
     recorded path under `root` and pinned the same way.
 
-    Schema "/1" is the ideal vehicle (a bundle from before the arm names no
-    response; one that names another vehicle under "/1" contradicts itself
-    and is refused), "/2" (EXTRAS_SCHEMA_RESPONSE) the vehicle its
-    `arm.response` names, which it must name."""
+    The episode is flown as it was flown: with the arm, the hold and the
+    vehicle its bundle records (EXTRAS_SCHEMA has the history of the schema):
+      /1  the ideal vehicle (a bundle from before the arm names no response;
+          one that names another vehicle under "/1" contradicts itself and is
+          refused), with the hold its `arm.autopilot_hold` names, else in
+          place, which every bundle written before the key existed flew;
+      /2  one naming `arm.autopilot_hold` is the hold-point branch's, on the
+          ideal vehicle; one naming a non-ideal `arm.response` is the
+          response arm's, held in place (that branch had no hold points); one
+          naming both or neither is refused, never guessed;
+      /3  names both, or is refused."""
     schema = extras.get("extras_schema")
-    if schema not in EXTRAS_SCHEMAS_READ:
+    if schema not in READABLE_EXTRAS_SCHEMAS:
         raise ValueError(f"manifest_extras schema {schema!r}, this harness reads "
-                         f"{list(EXTRAS_SCHEMAS_READ)}")
-    rsp_named = (extras.get("arm") or {}).get("response")
-    if schema == EXTRAS_SCHEMA and rsp_named not in (None, DEFAULT_RESPONSE_ARM):
-        raise ValueError(f"manifest_extras schema {schema!r} is the ideal vehicle, but "
-                         f"the bundle names the {rsp_named!r} response (a bundle "
-                         f"flown on another vehicle is {EXTRAS_SCHEMA_RESPONSE!r})")
-    if schema == EXTRAS_SCHEMA_RESPONSE and rsp_named in (None, DEFAULT_RESPONSE_ARM):
-        raise ValueError(f"manifest_extras schema {schema!r} names no non-ideal "
-                         f"vehicle response (arm.response {rsp_named!r})")
+                         f"{', '.join(repr(s) for s in READABLE_EXTRAS_SCHEMAS)}")
+    arm = extras.get("arm") or {}
+    hold = arm.get("autopilot_hold")
+    rsp_named = arm.get("response")
+    ideal = rsp_named in (None, DEFAULT_RESPONSE_ARM)
+    if schema == "sweep-episode-extras/1":
+        if not ideal:
+            raise ValueError(f"manifest_extras schema {schema!r} is the ideal vehicle, but "
+                             f"the bundle names the {rsp_named!r} response (a bundle "
+                             f"flown on another vehicle is {EXTRAS_SCHEMA!r})")
+        hold = hold or "in_place"
+    elif schema == "sweep-episode-extras/2":
+        if hold is not None and not ideal:
+            raise ValueError(f"manifest_extras schema {schema!r} names both "
+                             f"arm.autopilot_hold {hold!r} and the {rsp_named!r} "
+                             f"response: no harness wrote that under {schema!r}")
+        if hold is None and ideal:
+            raise ValueError(f"manifest_extras schema {schema!r} names no "
+                             f"arm.autopilot_hold and no non-ideal vehicle response "
+                             f"(arm.response {rsp_named!r}): which hold was flown is "
+                             f"unknown")
+        hold = hold or "in_place"
+    else:
+        if hold is None:
+            raise ValueError(f"manifest_extras schema {schema!r} names no "
+                             f"arm.autopilot_hold: which hold was flown is unknown")
+        if rsp_named is None:
+            raise ValueError(f"manifest_extras schema {schema!r} names no "
+                             f"arm.response: which vehicle flew it is unknown")
+    response = rsp_named or DEFAULT_RESPONSE_ARM
     # A bundle written before 2026-10-19 may carry pins that name no gates,
     # which the spec now refuses; read as they were written (they decide
     # only the verdict, never the flight).
@@ -2323,8 +2519,6 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
                 src = Path(root or ROOT) / src
             body["policy"] = {"bundle_path": str(src), "expected_hash": pol["policy_hash"]}
         spec = ScenarioSpec.model_validate(body)
-        arm = extras.get("arm") or {}
-        response = arm.get("response", DEFAULT_RESPONSE_ARM)
         recorded = (extras.get("vehicle_response") or {}).get("params")
         if recorded is not None and RESPONSES.get(response) is not None \
                 and recorded != RESPONSES[response].record():
@@ -2338,7 +2532,7 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
                            int(extras["random_seed"]), arm=arm.get("record"),
                            forecast=arm.get("forecast", "grant"),
                            wind_model=arm.get("wind_model", DEFAULT_WIND_MODEL),
-                           response=response)
+                           autopilot_hold=hold, response=response)
     finally:
         if tmp is not None:
             tmp.cleanup()
@@ -3658,14 +3852,21 @@ def published_view(doc: dict) -> dict:
 
 
 def comparison_tag(forecast_arms, response_arms,
-                   wind_model: str = DEFAULT_WIND_MODEL) -> str | None:
+                   wind_model: str = DEFAULT_WIND_MODEL,
+                   autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD) -> str | None:
     """The comparison configuration(s) a run flies, as the labels its KPI rows
     carry ("forecast-3s", "response-ardupilot", "wind-open_loop", joined by
     "_"), or None for a run of the headline configuration alone. It names the
-    run's default folder (run_folder)."""
+    run's default folder (run_folder). "hold-in_place" (since the merge with
+    the hold points, 2026-10-21) is a run whose modelled autopilot holds
+    where the aircraft is (`--autopilot-hold in_place`): its rows carry it
+    as the run's `autopilot_hold_model`, not in their key, and until then
+    such a run wrote into stress_<profile> beside the headline bundles."""
     tags = ([f"forecast-{a}" for a in forecast_arms if a != "grant"]
             + ([f"wind-{wind_model}"] if wind_model != DEFAULT_WIND_MODEL else [])
-            + [f"response-{a}" for a in response_arms if a != DEFAULT_RESPONSE_ARM])
+            + [f"response-{a}" for a in response_arms if a != DEFAULT_RESPONSE_ARM]
+            + ([f"hold-{autopilot_hold}"] if autopilot_hold != DEFAULT_AUTOPILOT_HOLD
+               else []))
     return "_".join(tags) or None
 
 
@@ -3764,6 +3965,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--wind-model", choices=WIND_MODELS, default=DEFAULT_WIND_MODEL,
                     help="guided (ArduCopter's position controller, the default) "
                          "or open_loop (the model until 2026-10-12, for comparison)")
+    ap.add_argument("--autopilot-hold", choices=AUTOPILOT_HOLD_MODELS,
+                    default=DEFAULT_AUTOPILOT_HOLD,
+                    help="what the modelled autopilot flies for the FSM's Loiter / "
+                         "Land: moved_points (the FSM's hold points, the default; "
+                         "modelled, no flight rail flies them yet) or in_place "
+                         "(ArduPilot's own hold where the aircraft is: what the "
+                         "rails fly, and the flights before 2026-10-19)")
     ap.add_argument("--response-arms", nargs="+", choices=RESPONSE_ARMS, default=None,
                     help="ideal (always) and optionally ardupilot, the labelled "
                          "comparison flown on the measured ArduPilot vehicle "
@@ -3773,6 +3981,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.publish and (args.out or args.profile or args.only or args.seed is not None
                          or args.forecast_arms is not None
                          or args.wind_model != DEFAULT_WIND_MODEL
+                         or args.autopilot_hold != DEFAULT_AUTOPILOT_HOLD
                          or args.response_arms is not None):
         # The published file is the WHOLE library on its declared seeds; a
         # partial or profiled run written there would replace it with less.
@@ -3781,7 +3990,7 @@ def main(argv: list[str] | None = None) -> int:
         # would need a CHANGELOG entry for a comparison nobody asked to ship.
         print("REFUSED: --publish writes the full library run; it takes no "
               "--out, --profile, --only, --seed, --forecast-arms, --wind-model "
-              "or --response-arms")
+              "--autopilot-hold or --response-arms")
         return 2
 
     t_run = time.perf_counter()
@@ -3811,6 +4020,11 @@ def main(argv: list[str] | None = None) -> int:
         print("REFUSED: the 3 s forecast arm is a headless comparison; the SITL "
               "rail flies the node's own Shield")
         return 2
+    if args.backend == "sitl" and args.autopilot_hold != DEFAULT_AUTOPILOT_HOLD:
+        # Likewise: the SITL rail's ArduPilot flies its own hold (in place).
+        print("REFUSED: --autopilot-hold chooses the headless harness's modelled "
+              "autopilot; the SITL rail flies ArduPilot's own hold")
+        return 2
     if args.backend == "sitl" and any(a != "ideal" for a in eff_rsp):
         # The rail flies ArduPilot itself: its vehicle response is the real
         # one, and a modelled one on top would fly the response twice.
@@ -3820,6 +4034,10 @@ def main(argv: list[str] | None = None) -> int:
     episodes, info = expand(lib, profile, args.seed, args.only, forecast_arms=fc_arms,
                             response_arms=rsp_arms)
     info["wind_model"] = args.wind_model
+    # The autopilot model behind every autopilot-flown number of this run
+    # (AUTOPILOT_HOLD_MODELS; review of T1c, P3).
+    info["autopilot_hold_model"] = args.autopilot_hold
+    info["autopilot_hold_model_flown_by_a_rail"] = args.autopilot_hold == "in_place"
     tag = profile.profile if profile else None
     # A run that flies a comparison configuration gets its own default folder
     # (run_folder), outside the stress_* glob the KPI report reads; --publish
@@ -3827,7 +4045,7 @@ def main(argv: list[str] | None = None) -> int:
     # published run, and that folder is outside the glob already).
     cmp_tag = None if args.publish else comparison_tag(
         fc_arms if fc_arms is not None else (profile.forecast_arms if profile else ["grant"]),
-        eff_rsp, args.wind_model)
+        eff_rsp, args.wind_model, args.autopilot_hold)
     out = results_path(args.out, args.publish, tag, cmp_tag)
     runs = Path(args.runs) if args.runs else run_folder(tag, cmp_tag)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
@@ -3912,6 +4130,7 @@ def main(argv: list[str] | None = None) -> int:
                 arm_record = build_arm(ep)
                 run = run_episode(spec, lib.defaults, ep.seed, arm=arm_record,
                                   forecast=ep.forecast, wind_model=args.wind_model,
+                                  autopilot_hold=args.autopilot_hold,
                                   response=ep.response)
                 rows, extra, policy = run.rows, run.extra, run.policy
                 events, hash0 = run.events, run.policy_hash_start
@@ -3984,6 +4203,7 @@ def main(argv: list[str] | None = None) -> int:
                            **episode_extras(spec, lib.defaults, ep.seed, run,
                                             arm=arm_record, forecast=ep.forecast,
                                             wind_model=args.wind_model, episode=ep,
+                                            autopilot_hold=args.autopilot_hold,
                                             response=ep.response)}
             write_bundle(ep_dir, manifest, _json_safe({
                 **common, "status": status, "gates_failed": bad,
@@ -4232,7 +4452,10 @@ def main(argv: list[str] | None = None) -> int:
               f"{ts['episodes_inside_polygon_imposed_only']} more were inside "
               f"only because a zone appeared, moved, grew or switched on under "
               f"them; {ts['true_p0_flown_ticks']} P0 ticks flown at the true state")
-        print(f"  autopilot (modelled LOITER / RTL / LAND, not the Shield): "
+        print(f"  autopilot (modelled LOITER / RTL / LAND, not the Shield; hold "
+              f"model {args.autopilot_hold}"
+              + (", flown by no rail" if args.autopilot_hold != "in_place" else "")
+              + "): "
               f"{ts['autopilot_p0_flown_ticks']} of {ts['autopilot_ticks']} ticks "
               f"flew a P0-violating action in {ts['episodes_autopilot_p0_flown']} "
               f"episode(s) {ts['episodes_autopilot_p0_flown_by_status']}, by mode "

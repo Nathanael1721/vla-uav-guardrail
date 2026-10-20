@@ -15,7 +15,9 @@ This file holds:
     that does not pass one) every filter() decision is byte-identical to the
     code before the change. The digests in tests/fixtures/
     own_velocity_identity_digests.json were computed on c77c77d, before a line
-    of the change existed;
+    of the change existed (with the escalation FSM's hold-point fields left
+    out of each dump, HOLD_POINT_FIELDS: they came with the hold points, a
+    separate change merged on 2026-10-21);
   * the response model's own tests (guardrail/response.py);
   * the 14 Oct replay: the tick at which the new forecast first flags the
     building margin, against the old one, and the stop-point counterfactual;
@@ -64,6 +66,19 @@ N_FULL = 1500         # 18,000 decisions
 # The commit before State had a velocity: the identity digests are ITS
 # decisions (`--regenerate` computes them on a git archive of it).
 IDENTITY_BASE = "c77c77d"
+# The escalation FSM's hold point (guardrail/holdpoint.py, merged on
+# 2026-10-21) adds these keys to the fsm_record of a Loiter / Land decision
+# and changes nothing else a decision dumps ("No edge, guard or setpoint
+# moved", docs/DESIGN-hold-points.md). They are left out of every dump the
+# identity digests hash, so the proof stays about the velocity and stays on
+# c77c77d. Evidence: with them left out, the six escalation=True streams of
+# the merged tree hash exactly to c77c77d's digests (ci, 2026-10-21); with
+# them in, all six moved - first by the hold points themselves, then again
+# by the search's later refinements (its reach and reason text), which is
+# why a proof rebased on the hold-point branch's tip (6c7cdb0, done at the
+# merge) could not survive the next change to the search. At c77c77d the
+# keys do not exist, so `--regenerate` gives the digests it always gave.
+HOLD_POINT_FIELDS = ("hold_point", "hold_legal", "hold_needed", "hold_chosen")
 
 
 def _city_map():
@@ -109,8 +124,11 @@ def _identity_lines(name: str, n: int, *, escalation: bool, velocity: str = "non
         a = Action4D(vx=rng.uniform(-6, 6), vy=rng.uniform(-6, 6),
                      vz_up=rng.uniform(-2.5, 2.5), yaw_rate=rng.uniform(-1.0, 1.0))
         d = sh.filter(st, a, t=t)
-        out.append(json.dumps(d.model_dump(mode="json"), sort_keys=True,
-                              separators=(",", ":")))
+        dump = d.model_dump(mode="json")
+        if isinstance(dump.get("fsm_record"), dict):
+            for k in HOLD_POINT_FIELDS:
+                dump["fsm_record"].pop(k, None)
+        out.append(json.dumps(dump, sort_keys=True, separators=(",", ":")))
     return out
 
 

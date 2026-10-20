@@ -396,10 +396,11 @@ def test_main_keeps_the_arm_out_of_every_headline_and_labels_every_bundle():
             kpi = json.loads((d / "kpi.json").read_text(encoding="utf-8"))
             arm = "ardupilot" if TAG in d.name else "ideal"
             assert ex["arm"]["response"] == arm and ex["vehicle_response"]["arm"] == arm, d.name
-            # An arm bundle is schema "/2", which a pre-arm reader refuses;
-            # a headline bundle stays "/1", which every reader replays.
-            assert ex["extras_schema"] == (S.EXTRAS_SCHEMA_RESPONSE if arm == "ardupilot"
-                                           else S.EXTRAS_SCHEMA), d.name
+            # Every bundle is schema "/3" since the merge with the hold points
+            # (2026-10-21), naming both its vehicle and its hold, which a
+            # reader of either branch's "/2" refuses (EXTRAS_SCHEMA).
+            assert ex["extras_schema"] == S.EXTRAS_SCHEMA, d.name
+            assert ex["arm"]["autopilot_hold"] == S.DEFAULT_AUTOPILOT_HOLD, d.name
             assert kpi["response_arm"] == arm and kpi["kpi"]["vehicle_response"]["arm"] == arm
             start = json.loads((d / "harness_events.jsonl").read_text(
                 encoding="utf-8").splitlines()[0])
@@ -482,7 +483,7 @@ def test_a_rerun_refuses_a_bundle_flown_on_other_response_parameters():
     old = json.loads(json.dumps(ex))
     del old["vehicle_response"]
     del old["arm"]["response"]
-    old["extras_schema"] = S.EXTRAS_SCHEMA
+    old["extras_schema"] = "sweep-episode-extras/1"
     assert not any("vehicle_v" in r for r in S.rerun_from_extras(old).rows)
 
 
@@ -490,13 +491,21 @@ def test_an_arm_bundle_is_a_schema_a_reader_without_the_arm_refuses():
     """An ArduPilot bundle needs `arm.response` to replay; written as
     "sweep-episode-extras/1" (as at 31343a2), a harness from before the arm
     accepted it and re-flew it on the ideal vehicle under its id (review of
-    T1b-harness-vehicle, P2). Now it is "/2": the pre-arm reader's own check
-    (`extras_schema != "sweep-episode-extras/1"` -> refuse) stops it, this
-    harness reads both, an ideal bundle stays "/1", and a bundle whose schema
-    and vehicle disagree is refused rather than re-flown on either."""
+    T1b-harness-vehicle, P2). It became "/2", which the pre-arm reader's own
+    check (`extras_schema != "sweep-episode-extras/1"` -> refuse) stops.
+    The hold-point branch took "/2" at the same time for `arm.autopilot_hold`,
+    and each branch's reader accepts "/2" knowing one of the two keys; since
+    the merge (2026-10-21) every bundle is "/3" and names both, so neither
+    reader re-flies it on the wrong vehicle or with the wrong hold. This
+    harness still reads the arm branch's own "/1" and "/2" bundles as they
+    were flown (the ideal vehicle; the named one, held in place), and a
+    bundle whose schema and keys disagree is refused rather than re-flown on
+    either."""
+    import copy
     spec = _spec("nfz-head-on-control")
-    pre_arm_reads = "sweep-episode-extras/1"           # c77c77d's EXTRAS_SCHEMA
-    assert S.EXTRAS_SCHEMA == pre_arm_reads
+    pre_arm_reads = ("sweep-episode-extras/1",)                 # c77c77d's
+    branch_reads = ("sweep-episode-extras/1", "sweep-episode-extras/2")   # either branch's
+    assert S.EXTRAS_SCHEMA not in pre_arm_reads + branch_reads
     ex = {}
     for arm in ("ideal", "ardupilot"):
         run = S.run_episode(spec, LIBRARY.defaults, 0, response=arm)
@@ -504,15 +513,34 @@ def test_an_arm_bundle_is_a_schema_a_reader_without_the_arm_refuses():
             spec, LIBRARY.defaults, 0, run, response=arm))))
         again = S.rerun_from_extras(ex[arm])
         assert [r["x"] for r in again.rows] == [r["x"] for r in run.rows], arm
-    assert ex["ideal"]["extras_schema"] == pre_arm_reads
-    assert ex["ardupilot"]["extras_schema"] == S.EXTRAS_SCHEMA_RESPONSE != pre_arm_reads
+        assert ex[arm]["extras_schema"] == S.EXTRAS_SCHEMA, arm
+        assert (ex[arm]["arm"]["response"], ex[arm]["arm"]["autopilot_hold"]) ==             (arm, S.DEFAULT_AUTOPILOT_HOLD), ex[arm]["arm"]
+    # The arm branch's own bundles, as it wrote them (no hold key): "/2" on
+    # the vehicle it names, "/1" on the ideal one; both held in place.
+    for arm, schema in (("ardupilot", "sweep-episode-extras/2"),
+                        ("ideal", "sweep-episode-extras/1")):
+        theirs = copy.deepcopy(ex[arm])
+        theirs["extras_schema"] = schema
+        del theirs["arm"]["autopilot_hold"]
+        flown = S.run_episode(spec, LIBRARY.defaults, 0, response=arm,
+                              autopilot_hold="in_place")
+        again = S.rerun_from_extras(theirs)
+        assert [r["x"] for r in again.rows] == [r["x"] for r in flown.rows], arm
+        assert again.extra["vehicle_response"]["arm"] == arm
     mixed = json.loads(json.dumps(ex["ardupilot"]))
-    mixed["extras_schema"] = S.EXTRAS_SCHEMA
+    mixed["extras_schema"] = "sweep-episode-extras/1"
     assert "ideal vehicle" in _refused(lambda: S.rerun_from_extras(mixed))
     bare = json.loads(json.dumps(ex["ideal"]))
-    bare["extras_schema"] = S.EXTRAS_SCHEMA_RESPONSE
-    assert "names no non-ideal" in _refused(lambda: S.rerun_from_extras(bare))
-    unknown = dict(ex["ideal"], extras_schema="sweep-episode-extras/3")
+    bare["extras_schema"] = "sweep-episode-extras/2"
+    del bare["arm"]["autopilot_hold"]
+    assert "no non-ideal" in _refused(lambda: S.rerun_from_extras(bare))
+    both = json.loads(json.dumps(ex["ardupilot"]))
+    both["extras_schema"] = "sweep-episode-extras/2"
+    assert "names both" in _refused(lambda: S.rerun_from_extras(both))
+    nameless = json.loads(json.dumps(ex["ardupilot"]))
+    del nameless["arm"]["response"]
+    assert "arm.response" in _refused(lambda: S.rerun_from_extras(nameless))
+    unknown = dict(ex["ideal"], extras_schema="sweep-episode-extras/4")
     assert "schema" in _refused(lambda: S.rerun_from_extras(unknown))
 
 

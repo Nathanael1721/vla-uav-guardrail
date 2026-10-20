@@ -67,16 +67,27 @@ THE GRANT'S RECORD (Safety Shield page, "Audit log"), field by field
                        the escalation FSM's state around this tick, with its
                        edge, edge source (grant / extension), the mode it
                        requested, the setpoint it streamed and the config hash
+    fsm_hold_point     where that mode holds (Loiter) or lands (Land): the
+                       FSM's hold point (fsm.HoldPoint, chosen from the
+                       Shield's own rules by guardrail/holdpoint.py) - in
+                       place or moved, the point, whether it is legal and
+                       the rules it breaks if not, and why; null in every
+                       other state and on a rail that runs its own FSM and
+                       chooses none (record version 3, since 2026-10-20)
 
 plus `emitted_violations`, `braked`, `relaxed`, `fsm_fault`, `repair_mode`,
-`flown_run` and `record_version` (2 since AuditRecord; absent, read as 1,
-before). A record is written when the decision saw a violation, and also on
-a tick where the FSM changed state, requested a mode or refused its input,
-so a Brake -> Normal recovery on a clean tick is on record too. Since
+`flown_run` and `record_version` (3 since `fsm_hold_point`, 2026-10-20; 2
+since AuditRecord, 2026-10-12; absent, read as 1, before). A record is
+written when the decision saw a violation, and also on a tick where the FSM
+changed state, requested a mode, refused its input or chose a new hold
+point, so a Brake -> Normal recovery on a clean tick is on record too, and
+so is every place the FSM told the autopilot to hold or land. Since
 2026-10-20 a tick can have a second record, `decision_kind` "stop_advised":
 the Shield's answer to a stop that the ArduPilot rail flew instead of the
 tick's filter() decision (the hold that stops clear), always written; the
-field is absent from every other record. A READER that groups records by
+field is absent from every other record (it did not change the record
+version: a reader of version 3 that knows no `decision_kind` reads every
+record it wrote before the field as before). A READER that groups records by
 tick must take such a record as its tick's second decision, written right
 after that tick's filter() record at the same tick - never as a tick that
 failed to advance, i.e. a new flight (tools/export_episodes.audit_blocks
@@ -118,7 +129,12 @@ GRANT_CATEGORY = {
     "standoff": "envelope", "contract": "contract",
 }
 
-RECORD_VERSION = 2
+# 3 since 2026-10-20: `fsm_hold_point`. Until then the trail copied only
+# _FSM_FIELDS, and ShieldDecision.hold_point is excluded from model_dump(), so
+# where the FSM told the autopilot to hold or land - and whether that point
+# was legal - reached only the dumped fsm_record and the harness's rows, never
+# the grant's audit record (review of T1c, P7).
+RECORD_VERSION = 3
 _FALLBACK_OPERATORS = ("Brake", "ClearanceEscape")
 _FSM_FIELDS = ("fsm_state_before", "fsm_state_after", "edge", "edge_source",
                "set_mode", "setpoint", "reason", "fsm_config_hash")
@@ -180,6 +196,29 @@ class RepairAttemptRecord(_Strict):
     iterations: int | None = None
 
 
+class HoldPointRecord(_Strict):
+    """Where the escalation FSM's Loiter holds or its Land lands (fsm.HoldPoint
+    .to_dict(), the same dict as ShieldDecision.hold_point): `kind` in_place
+    (ArduPilot's own LOITER / BRAKE / LAND where the aircraft is) or moved
+    (fly to x, y, up first, `travel_s` at `speed_mps`); `legal` whether a
+    stop (Loiter) or the descent (Land) there breaks no hard enforced rule
+    over `checked_s`, `breaks` the rules it breaks if not; `t_s` the monitor
+    time the FSM took it."""
+    mode: Literal["LOITER", "LAND"]
+    kind: Literal["in_place", "moved"]
+    x: float
+    y: float
+    up: float
+    legal: bool
+    travel_s: float = 0.0
+    speed_mps: float | None = None
+    climb_mps: float | None = None
+    checked_s: float | None = None
+    breaks: list[str] = []
+    reason: str = ""
+    t_s: float | None = None
+
+
 class PassAttempt(_Strict):
     """One repair operator, one call (guardrail/repair.py RepairAttempt)."""
     operator: str
@@ -238,6 +277,8 @@ class AuditRecord(_Strict):
     chain_runs: int | None = None
     flown_run: int | None = None
     repair_passes: list[RepairPass] | None = None
+    # Since record version 3 (2026-10-20).
+    fsm_hold_point: HoldPointRecord | None = None
     # Since 2026-10-20: which decision this record is when one tick has two.
     # Absent (None) is the tick's filter() decision, every record before the
     # field existed; "stop_advised" is the Shield's answer to a stop
@@ -425,8 +466,12 @@ class AuditLogger:
         if kind is not None and kind not in DECISION_KINDS:
             raise ValueError(f"kind must be one of {DECISION_KINDS} or None, got {kind!r}")
         fsm = fsm_record if fsm_record is not None else (decision.fsm_record or {})
+        # A new hold point (the Shield's _escalate marks it `hold_chosen`) is
+        # an FSM event too: a Loiter that re-plans on a tick with no
+        # violation and no transition still goes on record.
         fsm_event = bool(fsm.get("transition") or fsm.get("set_mode")
-                         or decision.set_mode or decision.fsm_fault)
+                         or decision.set_mode or decision.fsm_fault
+                         or fsm.get("hold_chosen"))
         if not decision.touched and not fsm_event and kind is None:
             return None
         trace = decision.trace or {}
@@ -499,6 +544,10 @@ class AuditLogger:
             "chain_runs": trace.get("chain_runs"),
             "flown_run": trace.get("flown_run"),
             "repair_passes": trace.get("passes") if trace else None,
+            # The plan in force on a Loiter / Land tick: the FSM record's copy
+            # (updated by the Shield when it chose one this tick), else the
+            # decision's own; None in every other state.
+            "fsm_hold_point": fsm.get("hold_point", decision.hold_point),
         })
         if kind is not None:
             rec["decision_kind"] = kind

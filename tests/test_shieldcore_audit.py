@@ -10,6 +10,9 @@ Run:  python tests/test_shieldcore_audit.py
     the pass that logged each repair (operator AND detail);
     repair_passes lists every operator considered, in every chain run;
   * policies/audit_record.schema.json is the model's schema;
+  * where the escalation FSM told the autopilot to hold or land is on the
+    record (`fsm_hold_point`, record version 3 since 2026-10-20), on the
+    tick the FSM chose it and on the Loiter ticks after;
   * the stored audit files read into the model (tests/fixtures/ always;
     every audit*.jsonl one or two folders under demo/out when it is there),
     an old record's derived fields are the ones its writer would have
@@ -64,7 +67,8 @@ def test_a_record_is_validated_before_it_is_written():
     sh = Shield(load_policy(DEMO))
     d = sh.filter(State(x=0, y=15, up=4), Action4D(vx=1.3))
     rec = AuditLogger(Path(tempfile.mkdtemp()) / "a.jsonl", "h").record(1, d)
-    assert isinstance(rec, AuditRecord) and rec.record_version == 2
+    # 3 since 2026-10-20 (fsm_hold_point); 2 since AuditRecord.
+    assert isinstance(rec, AuditRecord) and rec.record_version == 3
     # A ledger entry with a result nobody defined is refused, and nothing is
     # written - a reader never meets it.
     bad = d.model_copy()
@@ -220,6 +224,37 @@ def test_every_chain_run_is_on_the_record_when_soft_rules_are_relaxed():
     assert [(a["operator"], a["result"], a["iterations"]) for a in r["repair_attempts"]] == \
         [("SoftRelax", "relaxed", None)]
     assert AuditRecord.model_validate(r).repair_passes[0].run == 1
+
+
+def test_the_fsm_hold_point_is_on_the_audit_record():
+    """Review of T1c, P7: until 2026-10-20 the trail copied only the FSM's
+    state fields, and ShieldDecision.hold_point is excluded from
+    model_dump(), so where the FSM told the autopilot to hold - and whether
+    it was legal - never reached the audit record. The library's
+    opens-on-vehicle start: X1 at 0.0 s, G3 at 0.1 s with the hold moved out
+    of the zone whose window opens at 07:30."""
+    from datetime import timedelta
+    pol = load_policy(ROOT / "policies" / "corridor_survey.yaml")
+    t0 = datetime(2026, 9, 7, 7, 29, 58)
+    clock = [0.0]
+    sh = Shield(pol, now=lambda: t0 + timedelta(seconds=clock[0]))
+    d0 = sh.filter(State(x=60.0, y=21.0, up=15.0), Action4D(vy=4.0), t=0.0)
+    clock[0] = 0.1
+    d1 = sh.filter(State(x=60.0, y=21.4, up=15.0), Action4D(vy=4.0), t=0.1)
+    clock[0] = 0.2
+    d2 = sh.filter(State(x=60.0, y=21.8, up=15.0), Action4D(vy=4.0), t=0.2)
+    assert (d0.fsm_edge, d1.fsm_edge) == ("X1", "G3"), (d0.fsm_edge, d1.fsm_edge)
+    recs = _log([d0, d1, d2], pol)
+    assert recs and all(r["record_version"] == 3 for r in recs), recs[:1]
+    by_tick = {r["monitor_tick"]: r for r in recs}
+    assert by_tick[1]["fsm_hold_point"] is None          # Brake: no hold
+    hp = by_tick[2]["fsm_hold_point"]
+    assert hp is not None and hp == d1.hold_point, (hp, d1.hold_point)
+    assert (hp["mode"], hp["kind"], hp["legal"]) == ("LOITER", "moved", True), hp
+    assert hp["y"] > 31.0 and "nfz-school" in hp["reason"], hp
+    if 3 in by_tick:                                      # a Loiter tick after it
+        assert by_tick[3]["fsm_hold_point"] == hp
+    AuditRecord.model_validate(by_tick[2])
 
 
 def test_the_exported_schema_is_the_models():

@@ -262,6 +262,25 @@ GUIDED to 15 m, then 20 s in BRAKE, 12 s in LOITER, 8 s in BRAKE (pymavlink,
 
 Not yet flown on the Project AirSim rail.
 
+### Where the hold is (2026-10-19)
+
+BRAKE and LOITER hold where the aircraft is; LAND lands where it is. Since
+2026-10-19 the Shield's own FSM asks for the place on every Loiter and Land
+entry (`EscalationFSM.needs_hold` / `hold_at`): where the aircraft is when a
+stop there is legal through the lookahead, else the nearest point the
+Shield's rules find legal from arrival (a landing site over the whole
+descent), reached by a transit that never enters a rule the aircraft is
+outside of nor goes deeper into one it is in (corrected 2026-10-20); a
+Loiter whose point turns illegal is re-planned, at most twice a second. No
+edge, guard or setpoint changed. The search, the measurements and what the
+rails do not yet fly are in docs/DESIGN-hold-points.md. Robust on the
+library: one false fail-safe fewer (26 to 25: `dyn-nfz-rotate-spin` at
+9 deg/s), the P0 escape ticks unchanged; the autopilot-flown P0 ticks fall
+from 1738 to 1153, but those are the harness's modelled autopilot flying a
+moved hold, which no flight rail does yet. (A first count of 26 to 19 held
+only because `three-simultaneous-violations` ended 0.2 s before the Loiter
+timeout; at 400 ticks G5 sends it home and it stays pinned.)
+
 ### Fail-safe trigger correctness, measured again (headless harness, not KPI-grade)
 
 `experiments/sweep_scenarios.py`, labelled episodes, the escalation FSM

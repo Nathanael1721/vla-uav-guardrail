@@ -222,8 +222,15 @@ scenarios:
       review of 2026-10-12: with 3 and 6 deg/s alone the time-to-safe gate
       passed on nothing), 9 deg/s was added: there the sweep does come over
       the waiting aircraft (inside the bar's ring at 8.3 s, 0.94 m from the
-      bar; time to safe 5.1 s, never censored), and it flies the old 6 deg/s
-      chain - pinned below. 12 deg/s and faster were measured and not added:
+      bar; time to safe 5.1 s, never censored), and it flew the old 6 deg/s
+      chain - pinned until 2026-10-19 (below). Since then the FSM's hold
+      point is judged against the sweep (guardrail/holdpoint.py): at 8.3 s
+      the in-place LOITER the bar is about to cover is replaced by a point
+      1.0 m away, at (-183.9, -4.5), legal from arrival through the
+      lookahead (0.25 s away), the bar passes, the Loiter clears (G8), and a
+      second N-in-T Loiter later also clears: G1 G2 G8 G1 G2 G8, no
+      fail-safe, 0 P0 ticks flown (50 before), all three nightly seeds.
+      12 deg/s and faster were measured and not added:
       at 12 the harness counts one breach (a move of the aircraft's own onto
       a spot the sweep had already made unsafe), at 18 and 24 the forecast
       exceeds theta (X1) and the Loiter timeout (G5) sends it home.
@@ -249,22 +256,20 @@ scenarios:
       breaches: { max: 0 }
       polygon_entries: { max: 0 }
     expected_failsafe: false
-    # `fails` measured 2026-10-19 over the nightly profile's 3 pinned
-    # episodes (f93283d): the fail-safe label only.
-    known_failures:
-      - params: { deg_per_s: 9 }
-        fails: [failsafe]
-        description: >
-          False fail-safe through N-in-T, then X6 (measured 2026-10-12 at the
-          grant's 5 s forecast): the bar sweeping past the waiting aircraft
-          makes the violation flicker, three onsets inside T = 5 s hand it to
-          LOITER (G2, 6.3 s), and ArduPilot's position hold keeps it where
-          the next sweep comes over it at 8.3 s (inside the ring, never the
-          polygon; 50 P0 ticks of LOITER); the stop stays illegal for T and
-          X6 sends it home (RTL 13.3 s, home 16.3 s). The FSM's question
-          (a hold that the next sweep makes illegal), not this harness's.
-          On the 3 s comparison arm: G1>G2>X7>G9, 15 ticks inside, 1.94 m
-          deep.
+    # The 9 deg/s pin, removed 2026-10-19 when its three nightly episodes and
+    # the library cell passed every gate (unexpected_pass) with the FSM's
+    # hold points; the 3 s arm passes too (0 ticks inside, was 15). It read,
+    # `params: {deg_per_s: 9}, fails: [failsafe]`:
+    #   False fail-safe through N-in-T, then X6 (measured 2026-10-12 at the
+    #   grant's 5 s forecast): the bar sweeping past the waiting aircraft
+    #   makes the violation flicker, three onsets inside T = 5 s hand it to
+    #   LOITER (G2, 6.3 s), and ArduPilot's position hold keeps it where
+    #   the next sweep comes over it at 8.3 s (inside the ring, never the
+    #   polygon; 50 P0 ticks of LOITER); the stop stays illegal for T and
+    #   X6 sends it home (RTL 13.3 s, home 16.3 s). The FSM's question
+    #   (a hold that the next sweep makes illegal), not this harness's.
+    #   On the 3 s comparison arm: G1>G2>X7>G9, 15 ticks inside, 1.94 m
+    #   deep.
     # The 6 deg/s pin, as written on 2026-10-07 and removed on 2026-10-12
     # (it passes at the grant's 5 s forecast; see the description):
     #   False fail-safe through N-in-T, then X6: the bar sweeping past the
