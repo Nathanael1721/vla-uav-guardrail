@@ -209,6 +209,11 @@ def test_a_start_with_no_legal_exit_is_said_so_without_stepping_a_week():
     policy = [w for w in ws if "its time window can open" in w]
     assert len(policy) == 1 and "inf s" not in policy[0], policy
     assert "no legal exit at all" in policy[0], policy[0]
+    # Re-review of T1c, P4: the speed clause read "it cannot leave at 4 m/s
+    # assumed: the policy has no hard speed cap or any other speed".
+    assert ("it cannot leave at any speed (planned at 4 m/s assumed: the policy "
+            "has no hard speed cap), so no forecast") in policy[0], policy[0]
+    assert "or any other speed" not in policy[0], policy[0]
 
 
 def test_the_next_opening_is_exact_at_the_minute_it_opens():

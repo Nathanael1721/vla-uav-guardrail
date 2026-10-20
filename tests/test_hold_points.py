@@ -441,21 +441,34 @@ def test_a_transit_never_crosses_a_zone_closing_on_the_aircraft():
     a stop at the start is in it too, the plan went north along the bar and
     was swept by it (23 samples). Now a rule in force that the aircraft is
     outside of is never entered: a clean escape, or none (in place, marked
-    illegal, searched again in a second)."""
+    illegal, searched again in a second).
+
+    Re-review P3: the 20 m and 60 m bars at 3 m/s were pinned "in_place",
+    but a clean escape exists - (-21.2, 21.2) round the 20 m bar's end in
+    7.5 s, (-52, 0) ahead of the 60 m one in 13 s - and the search stopped
+    only because its budget ran out. Whether the budget reaches an escape
+    that far is a question of cost, not of legality: every stop query
+    against a moving zone costs about 0.3 ms, and holdpoint.MAX_QUERIES is
+    sized so the fruitless search stays inside the 100 ms tick (the 20 m bar
+    at 2 m/s, outrun west to (-16, 0), needs about 800 of its units, 83 ms
+    on the desktop, against the 300 it has).
+    So for those three the test asks for a clean escape or an in-place plan
+    whose reason says the budget stopped it."""
     st = State(x=0.0, y=0.0, up=15.0)
     for half_len, speed, want in ((3.0, 3.0, "moved"),       # round its end
-                                  (20.0, 2.0, "moved"),      # outrun it, west
-                                  (20.0, 3.0, "in_place"),   # nothing clean in budget
-                                  (60.0, 3.0, "in_place")):
+                                  (20.0, 2.0, None),         # outrun it west, or
+                                  (20.0, 3.0, None),         # out of budget
+                                  (60.0, 3.0, None)):
         sh = _closing_bar(half_len, speed)
         assert sh.hard_violations(sh.state_is_unsafe(st)), "the start must be illegal"
         p = HP.choose_hold_point(sh, st)
-        assert p.kind == want, (half_len, speed, p)
+        assert want is None or p.kind == want, (half_len, speed, p)
         if p.kind == "moved":
             assert p.legal and _poses_in(sh, "bar", st, p) == 0, (half_len, speed, p)
             assert not (p.x > 0.0 and abs(p.y) < half_len), f"crossed the bar: {p}"
         else:
             assert not p.legal and p.breaks == ("bar",), p
+            assert f"budget of {HP.MAX_QUERIES:g} stop queries" in p.reason, p.reason
 
 
 def test_a_transit_never_closes_on_the_person_it_must_keep_clear_of():
@@ -743,6 +756,43 @@ def test_the_autopilot_hold_model_is_recorded_and_reflown():
         pass
     else:
         raise AssertionError("an unknown hold model was flown")
+
+
+def test_a_bundle_from_before_the_hold_points_is_reflown_in_place():
+    """Re-review of T1c, P2: every bundle written before the hold points has
+    extras schema /1 and no `arm.autopilot_hold`, and its autopilot held in
+    place. rerun_from_extras read the missing key as today's default
+    (moved_points): the opens-on-vehicle cell re-flew with 18 autopilot P0
+    ticks against the 38 flown, and tools/rerun_episode.py called a sound
+    bundle "differs". Now such a bundle flies in place, row for row; a /1
+    bundle that names its hold flies that one; the schema written is /2,
+    and a /2 bundle without the key is refused rather than guessed."""
+    import copy
+    import json
+    import sweep_scenarios as SW
+    lib, cell = next(_family("time-window-opens-on-vehicle"))
+    here = SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place")
+    ex = json.loads(json.dumps(SW.episode_extras(cell.spec, lib.defaults, 0, here,
+                                                 autopilot_hold="in_place")))
+    assert ex["extras_schema"] == SW.EXTRAS_SCHEMA == "sweep-episode-extras/2"
+    old = copy.deepcopy(ex)
+    old["extras_schema"] = "sweep-episode-extras/1"
+    del old["arm"]["autopilot_hold"]
+    again = SW.rerun_from_extras(old)
+    assert _row_digest(again.rows) == _row_digest(here.rows)
+    assert again.extra["autopilot_hold_model"] == "in_place"
+    assert again.extra["autopilot_p0_flown_ticks"] == 38, again.extra["autopilot_p0_flown_ticks"]
+    named = copy.deepcopy(old)
+    named["arm"]["autopilot_hold"] = "moved_points"
+    assert SW.rerun_from_extras(named).extra["autopilot_hold_model"] == "moved_points"
+    unnamed = copy.deepcopy(ex)
+    del unnamed["arm"]["autopilot_hold"]
+    try:
+        SW.rerun_from_extras(unnamed)
+    except ValueError as e:
+        assert "autopilot_hold" in str(e), e
+    else:
+        raise AssertionError("a /2 bundle without its hold model was re-flown on a guess")
 
 
 def test_three_simultaneous_climbs_out_and_is_sent_home_by_the_loiter_timeout():

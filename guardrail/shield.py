@@ -418,6 +418,39 @@ def _build_signed_distance_field(occ, res: float):
     return outside - inside
 
 
+def _field_lipschitz(d, res: float) -> float:
+    """How many metres `Shield._distance_at` can change per metre the point
+    moves, anywhere - in the grid and off it - measured from the field `d`
+    itself (RuleClearance.h_lip; the hold-point transit test bounds the
+    clearance between two evaluated poses with it, holdpoint.transit_breaks).
+
+    In the grid the field is bilinear in each cell, so its x-slope is at most
+    the largest difference between x-neighbours over `res` (lx), likewise y
+    (ly), and its gradient at most hypot(lx, ly). Off the grid
+    `_distance_at` returns max(v - off, min(v + off, off - res/2)), with v
+    the bilinear value at the nearest edge point (it moves along the edge,
+    at most max(lx, ly)) and off the distance to it (1 per metre): at most
+    hypot(max(lx, ly), 1).
+
+    Until 2026-10-20 (re-review of T1c) the transit test assumed sqrt(2),
+    "each axis changes by at most one cell per cell". That holds for the
+    outside chamfer field alone (_CHAMFER_CORR < 1) but not across a building
+    face, where a free cell reads res * _CHAMFER_CORR and its occupied
+    neighbour -res: a jump of 1.92 cells per cell, so 2.72 m per metre in the
+    grid; off the grid the `v + off` branch carries that along-edge slope at
+    any height (5 m off the map beside a border building the field falls
+    from 3.77 to 3.00 m in 0.4 m, at a 3 m limit; 2.17 m per metre), so no
+    clearance limit, however large, avoided it. Measured on a 20 x 20 map at
+    res 2 m with a building inside and one on the border (200000 random
+    probes): slopes up to 2.70 in the grid and 2.17 off it, under this
+    function's 2.72 (tests/test_hold_transit.py)."""
+    a = np.asarray(d, dtype=np.float64)
+    r = float(res)
+    lx = float(np.abs(np.diff(a, axis=0)).max()) / r if a.shape[0] > 1 else 0.0
+    ly = float(np.abs(np.diff(a, axis=1)).max()) / r if a.shape[1] > 1 else 0.0
+    return max(math.hypot(lx, ly), math.hypot(max(lx, ly), 1.0))
+
+
 class Violation(BaseModel):
     rule_id: str
     category: str            # "kinematic" | "altitude" | "geofence" | "clearance"
@@ -552,6 +585,33 @@ class _Pose(NamedTuple):
     y: float
     up: float
     yaw_deg: float
+
+
+class RuleClearance(NamedTuple):
+    """One rule's signed room at a position (Shield.rule_clearances): the
+    horizontal part `h`, the vertical parts `lo` (up - floor) and `hi`
+    (ceiling - up), whether the rule keeps OUT (a zone) or IN (everything
+    else), rule_status's in_force and breach, and `h_lip`: how many metres
+    `h` can change per metre the position moves with the rule standing still
+    (1.0 for a distance to a set - a zone's ring, a corridor's centreline, a
+    stand-off's subject - and the distance field's measured bound for
+    obstacle clearance, _field_lipschitz)."""
+    keep_out: bool
+    h: float
+    lo: float
+    hi: float
+    in_force: bool
+    breach: bool
+    h_lip: float = 1.0
+
+    @property
+    def room(self) -> float:
+        """> 0: the position does not breach the rule (its parts combined as
+        the rule combines them: a zone is breached only inside its ring AND
+        within its band, a keep-in rule past any one limit)."""
+        if self.keep_out:
+            return max(self.h, -self.lo, -self.hi)
+        return min(self.h, self.lo, self.hi)
 
 
 class TickRecord(NamedTuple):
@@ -1076,11 +1136,13 @@ class Shield:
         # fence polygons). Skipped entirely when nothing needs it.
         self._dist = None
         self._res = self._ox = self._oy = 0.0
+        self._dist_lip = 1.0
         if obstacle_map is not None and self._rt.clear:
             self._res = float(obstacle_map["res"])
             self._ox = float(obstacle_map["ox"])
             self._oy = float(obstacle_map["oy"])
             self._dist = _build_signed_distance_field(obstacle_map["occ"], self._res)
+            self._dist_lip = _field_lipschitz(self._dist, self._res)
 
     @staticmethod
     def unenforceable(policy: Policy) -> list[str]:
@@ -3077,9 +3139,11 @@ class Shield:
         rule it cannot measure (a speed cap; clearance with no map) reads
         0.0, as in unsafe_depth.
 
-        The hold-point search (guardrail/holdpoint.py, transit_breaks) reads
-        it to tell a transit LEAVING a rule from one going deeper into it
-        (since 2026-10-20)."""
+        It is what "deeper" means when the hold-point search tells a transit
+        LEAVING a rule from one going deeper into it (guardrail/holdpoint.py
+        transit_breaks, since 2026-10-20): the search reads the same terms
+        from rule_clearances' parts, which it can bound between two poses,
+        and tests/test_hold_transit.py judges every plan with this method."""
         ids = set(rule_ids)
         if self._tick_ctx() is None and self._needs_tick():
             with self._scope(self._new_tick(None)):
@@ -3087,6 +3151,140 @@ class Shield:
         out = {rid: 0.0 for rid in ids}
         for rid, d in self._depth_terms(state, ids):
             out[rid] = out[rid] + d
+        return out
+
+    def rule_clearances(self, state: State, rule_ids=None) -> dict[str, "RuleClearance"]:
+        """Each POSITION rule's signed room at `state`, split into the parts a
+        transit check can bound separately (guardrail/holdpoint.py,
+        transit_breaks), in the current tick or look-ahead view: a moving
+        zone where it is then, a moving subject advanced, the rule clock
+        read then. `rule_ids` (default: every rule) limits the answer; a rule
+        with no position geometry here (a speed cap, a switch, a stand-off
+        with no subject it binds, clearance with no map) is left out.
+
+          keep_out  True for a keep-out zone (polygon_fence, dynamic_nfz):
+                    breached inside its margin ring AND within its band.
+                    False for a keep-in rule (altitude envelope, corridor,
+                    stand-off ring, obstacle clearance): breached past any
+                    one of its limits.
+          h         horizontal room in metres: a zone's SIGNED distance to
+                    its margin ring (+ outside, - inside, the depth
+                    rule_depths reports for a breach), a corridor's half-width
+                    minus the lateral offset, the separation minus a
+                    stand-off's minimum range, the clearance minus the
+                    minimum; +inf for an altitude envelope.
+          lo, hi    vertical room: up - floor and ceiling - up of the rule's
+                    altitude band (a zone's band, an envelope's or a
+                    corridor's limits); +inf for a rule with none.
+          in_force  the rule is in force (both sides of the instant), as
+                    rule_status says.
+          breach    standing here breaks it: rule_status's own test.
+
+        The room `s` (RuleClearance.room) is max(h, -lo, -hi) for a zone and
+        min(h, lo, hi) for a keep-in rule; s > 0 means the position does not
+        breach the rule. Every part is the Shield's own number, from the same
+        compiled ring, subject track, distance field and corridor geometry
+        rule_status and rule_depths read (one rule-evaluation code path,
+        Safety Shield page). `h` changes by at most `h_lip` metres per metre
+        the position moves (1 for a distance to a set; the clearance field's
+        own measured bound, _field_lipschitz) and lo, hi by exactly the
+        change in altitude, which is what lets the hold-point search bound a
+        rule's room BETWEEN two sampled poses instead of trusting the samples
+        (review of T1c, 2026-10-20: a thin bar crossed between two 1 m
+        samples). A rule's depth - rule_depths' term - is max(0, -h) for a
+        zone within its band, and max(0, -h) + max(0, -lo, -hi) for a keep-in
+        rule (a corridor's lateral and vertical excess ADD, as in
+        unsafe_depth)."""
+        if self._tick_ctx() is None:
+            with self._scope(self._new_tick(None)):
+                return self.rule_clearances(state, rule_ids)
+        tick = self._tick_ctx()
+        rt = tick.rt
+        want = None if rule_ids is None else set(rule_ids)
+        recs = None
+        x, y, up = state.x, state.y, state.up
+        P = None
+        subject, subject_class = self._subject, self._subject_class
+        if subject is not None and tick.ahead:
+            subject = self._subject_track()[:2]
+        out: dict[str, RuleClearance] = {}
+        inf = math.inf
+        for c in rt.constraints:
+            if want is not None and c.id not in want:
+                continue
+            m = tick.sched.mask(c)
+            in_force = m is True or (m is not False and m(0.0))
+            if c.type in FENCE_TYPES:
+                if recs is None:
+                    recs = {r.rule.id: r for r in rt.ir.fences}
+                    P = Point(x, y)
+                rec = recs[c.id]
+                if rec.moving:
+                    rec = tick.current(rec)
+                if rec.buffered.contains(P):
+                    h = -rec.buffered.boundary.distance(P)
+                else:
+                    h = rec.buffered.distance(P)
+                out[c.id] = RuleClearance(
+                    True, h, up - c.altitude_floor_m, c.altitude_ceiling_m - up, in_force,
+                    in_force and point_in_fence(x, y, up, c, rec.polygon, rec.buffered))
+            elif c.type == "altitude_envelope":
+                below, above = self._alt_outside(c, up)
+                out[c.id] = RuleClearance(False, inf, up - c.alt_min_m, c.alt_max_m - up,
+                                          in_force, in_force and (below or above))
+            elif c.type == "subject_standoff":
+                if subject is None or not c.binds(subject_class):
+                    continue
+                sep = math.hypot(x - subject[0], y - subject[1])
+                if not math.isfinite(sep):
+                    continue
+                out[c.id] = RuleClearance(False, sep - c.min_range_m, inf, inf, in_force,
+                                          in_force and self._standoff_inside(c, sep))
+            elif c.type == "obstacle_clearance":
+                if self._dist is None:
+                    continue
+                d = self._distance_at(x, y)
+                if not math.isfinite(d):
+                    continue
+                out[c.id] = RuleClearance(False, d - c.min_clearance_m, inf, inf, in_force,
+                                          in_force and d < c.min_clearance_m, self._dist_lip)
+            elif c.type in ("corridor", "corridor_swap"):
+                off, _ = self._corridor_geom(c, x, y)
+                in_band = c.altitude_floor_m - 1e-9 <= up <= c.altitude_ceiling_m + 1e-9
+                out[c.id] = RuleClearance(
+                    False, c.half_width_m - off, up - c.altitude_floor_m,
+                    c.altitude_ceiling_m - up, in_force,
+                    in_force and (off > c.half_width_m + 1e-9 or not in_band))
+        return out
+
+    def rule_motion(self, rule_ids=None) -> dict[str, tuple[float, float, float, float, float]]:
+        """How each rule's geometry moves from this tick on, by the Shield's
+        own motion model: (ux, uy, omega_rad_s, cx, cy) - a moving
+        dynamic_nfz's velocity, turn rate and current rotation centre
+        (`_Tick.motion`, the frame `_to_zone_frame` undoes), and for a
+        stand-off from a moving subject the subject's constant velocity
+        (omega 0, centre the subject now). A rule whose geometry stands
+        still is left out. Read in the current tick or look-ahead view. The
+        hold-point search turns it into how fast a rule's room can change
+        along a transit (guardrail/holdpoint.py, transit_breaks)."""
+        if self._tick_ctx() is None:
+            with self._scope(self._new_tick(None)):
+                return self.rule_motion(rule_ids)
+        tick = self._tick_ctx()
+        want = None if rule_ids is None else set(rule_ids)
+        out: dict[str, tuple[float, float, float, float, float]] = {}
+        for c in tick.rt.constraints:
+            if want is not None and c.id not in want:
+                continue
+            if c.type in FENCE_TYPES:
+                mv = tick.motion(c)
+                if mv is not None and (mv[0] or mv[1] or mv[2]):
+                    out[c.id] = tuple(float(v) for v in mv)
+            elif (c.type == "subject_standoff" and self._subject is not None
+                  and self._subject_v is not None and c.binds(self._subject_class)):
+                sx, sy, svx, svy = self._subject_track()
+                if svx or svy:
+                    out[c.id] = (float(svx), float(svy), 0.0, float(sx), float(sy))
         return out
 
     # ---------------- mid-flight events (the grant's hot-apply path) ---------------- #

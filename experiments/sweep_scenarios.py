@@ -1804,7 +1804,15 @@ def manifest_extras(arm: dict | None) -> dict | None:
 
 # The version of the self-contained keys episode_extras() adds; a reader
 # (rerun_from_extras, the WP4 outputs tools) refuses a schema it does not know.
-EXTRAS_SCHEMA = "sweep-episode-extras/1"
+# /2 (2026-10-20): `arm.autopilot_hold` - which hold the modelled autopilot
+# flew (AUTOPILOT_HOLD_MODELS) - is always written. A /1 bundle predates the
+# hold-point search, so its autopilot held where the aircraft was:
+# rerun_from_extras reads a /1 bundle with no `autopilot_hold` as "in_place",
+# not as today's default (re-review of T1c, P2: an in_place bundle with the
+# key gone re-flew as moved_points, 18 autopilot P0 ticks against the 38
+# flown, and tools/rerun_episode.py called a sound bundle "differs").
+EXTRAS_SCHEMA = "sweep-episode-extras/2"
+READABLE_EXTRAS_SCHEMAS = ("sweep-episode-extras/1", EXTRAS_SCHEMA)
 
 
 # A signed policy bundle up to this size is carried in the episode's extras
@@ -1892,10 +1900,23 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
     from the one flown stops the re-run instead of flying something else. A
     bundle policy is written from `policy.bundle_b64` the same way (its file
     hash checked first); one too large to have been inlined is read from its
-    recorded path under `root` and pinned the same way."""
-    if extras.get("extras_schema") != EXTRAS_SCHEMA:
-        raise ValueError(f"manifest_extras schema {extras.get('extras_schema')!r}, "
-                         f"this harness reads {EXTRAS_SCHEMA!r}")
+    recorded path under `root` and pinned the same way.
+
+    The episode is flown as it was flown: with the arm it records, and a
+    /1 bundle with no `arm.autopilot_hold` with the autopilot holding in
+    place, which every bundle written before the key existed did
+    (EXTRAS_SCHEMA); a /2 bundle without it is refused."""
+    schema = extras.get("extras_schema")
+    if schema not in READABLE_EXTRAS_SCHEMAS:
+        raise ValueError(f"manifest_extras schema {schema!r}, this harness reads "
+                         f"{', '.join(repr(s) for s in READABLE_EXTRAS_SCHEMAS)}")
+    arm = extras.get("arm") or {}
+    hold = arm.get("autopilot_hold")
+    if hold is None:
+        if schema != "sweep-episode-extras/1":
+            raise ValueError(f"manifest_extras schema {schema!r} names no "
+                             f"arm.autopilot_hold: which hold was flown is unknown")
+        hold = "in_place"
     # A bundle written before 2026-10-19 may carry pins that name no gates,
     # which the spec now refuses; read as they were written (they decide
     # only the verdict, never the flight).
@@ -1925,12 +1946,11 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
                 src = Path(root or ROOT) / src
             body["policy"] = {"bundle_path": str(src), "expected_hash": pol["policy_hash"]}
         spec = ScenarioSpec.model_validate(body)
-        arm = extras.get("arm") or {}
         return run_episode(spec, Defaults.model_validate(extras["library_defaults"]),
                            int(extras["random_seed"]), arm=arm.get("record"),
                            forecast=arm.get("forecast", "grant"),
                            wind_model=arm.get("wind_model", DEFAULT_WIND_MODEL),
-                           autopilot_hold=arm.get("autopilot_hold", DEFAULT_AUTOPILOT_HOLD))
+                           autopilot_hold=hold)
     finally:
         if tmp is not None:
             tmp.cleanup()

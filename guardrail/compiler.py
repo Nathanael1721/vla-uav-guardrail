@@ -2072,9 +2072,13 @@ def time_window_lead_warnings(policy: Policy, *, lookahead_s: float = DEFAULT_LO
             fly = depth / speed
             if fly > lookahead_s + 1e-9:
                 # (No "leaving takes inf s": with no exit there is no time.)
-                exit_txt = (f"there is no legal exit at all: it cannot leave at {why} "
-                            f"or any other speed, so no forecast (the Shield's sees "
-                            f"{lookahead_s:g} s ahead) sees an opening early enough"
+                # "at any speed (planned at ...)": `why` is a clause of its
+                # own ("4 m/s assumed: the policy has no hard speed cap"),
+                # and spliced before "or any other speed" it read as one
+                # garbled sentence (re-review of T1c, P4).
+                exit_txt = (f"there is no legal exit at all: it cannot leave at any "
+                            f"speed (planned at {why}), so no forecast (the Shield's "
+                            f"sees {lookahead_s:g} s ahead) sees an opening early enough"
                             if math.isinf(depth) else
                             f"the nearest legal exit is {depth:.1f} m away: leaving "
                             f"takes {fly:.1f} s at {why}, longer than the "

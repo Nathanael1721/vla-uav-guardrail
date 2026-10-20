@@ -531,8 +531,11 @@ def test_the_files_the_second_october_review_found_off_ci_run_in_ci():
 def test_the_hold_point_and_window_lead_files_run_in_ci():
     """The escalation FSM's hold points (guardrail/holdpoint.py) and the
     DSL's time-window lead warning (guardrail/compiler.py) have their own
-    files since 2026-10-19; both run headless on every job."""
-    missing = {"test_hold_points.py", "test_window_lead_lint.py"} - _loop()
+    files since 2026-10-19, and the hold transit's every-instant guarantee
+    (transit_breaks) its own since 2026-10-20; all run headless on every
+    job."""
+    missing = {"test_hold_points.py", "test_hold_transit.py",
+               "test_window_lead_lint.py"} - _loop()
     assert not missing, f"not run in CI: {sorted(missing)}"
 
 
