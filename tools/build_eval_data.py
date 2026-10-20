@@ -504,7 +504,13 @@ def repo(run_tests, previous=None):
         rev = git("rev-list", "-1", "--before", stamp, "master") or "master"
         version = git("show", f"{rev}:VERSION")
         tree = git("ls-tree", "-r", "--name-only", rev).splitlines()
-    since = [l.split("|", 2) for l in git("log", "--since", LAST_MEETING, *until,
+    # The time of day is written out: git reads a bare `--since 2026-09-02` as
+    # that date at the CURRENT wall-clock time, so a commit made at 22:58 on
+    # the meeting day (96746a9) dropped out of the count whenever this ran
+    # after 22:58, and the September test read 15 commits instead of 16
+    # (found 2026-10-20 at 23:10).
+    since = [l.split("|", 2) for l in git("log", "--since",
+                                          f"{LAST_MEETING} 00:00:00", *until,
                                           "--format=%ad|%h|%s", "--date=short",
                                           "master").splitlines() if l]
     out = {"last_meeting": LAST_MEETING,

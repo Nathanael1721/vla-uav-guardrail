@@ -222,6 +222,32 @@ def test_without_the_september_history_the_git_check_skips_rather_than_fails():
         B.cutoff_revision = saved
 
 
+def test_the_meeting_day_counts_from_midnight_not_from_the_clock():
+    """git reads a bare date in `--since` as that date at the current
+    wall-clock time, so the meeting day's 22:58 commit (96746a9) left the
+    count whenever the generator ran after 22:58: the September test read 15
+    commits, not 16 (2026-10-20, 23:10). The generator must pass the time of
+    day. Checked on the arguments git receives, so it fails at any hour on the
+    old code (a bare "2026-09-02"), not only late in the evening."""
+    import subprocess
+    seen = []
+    real = subprocess.run
+
+    def spy(args, *a, **k):
+        if isinstance(args, list) and "--since" in args:
+            seen.append(args[args.index("--since") + 1])
+        return real(args, *a, **k)
+
+    subprocess.run = spy
+    try:
+        with _with_as_of(dt.date(2026, 9, 14)):
+            B.repo(run_tests=False, previous=ROOT / "docs/data/eval_sep2026.json")
+    finally:
+        subprocess.run = real
+    assert seen, "repo() never asked git for the commits since the meeting"
+    assert all(v == f"{B.LAST_MEETING} 00:00:00" for v in seen), seen
+
+
 def test_the_committed_file_is_the_september_view():
     """docs/data/eval_sep2026.json as regenerated on 2026-10-07 (pas env,
     default --as-of): the corrected September figures, not October's."""
