@@ -24,12 +24,15 @@
 #                /guardrail/mavlink_adapter, both Enforce, on /shield/setpoint:
 #                messages arrive;
 #   3 enforced   the same subscriber with NO enclave under Enforce: refused at
-#                start-up (it cannot even create its node);
+#                start-up (it cannot even create its node), with the security
+#                layer's own error - a probe that died otherwise fails;
 #   4 sealed     the same subscriber with security OFF: it starts, and hears
 #                nothing from the secured publisher;
 #   5 one root   a subscriber whose keystore was made by sros2 with its own CA
 #                (not the lab CA), same enclave name, Enforce: hears nothing -
-#                the lab CA is the trust anchor, not the enclave name;
+#                its PROBE line says received=0, or the security layer refused
+#                it at start-up - the lab CA is the trust anchor, not the
+#                enclave name;
 #   6 launch     sitl/ros2_ws/src/safety_shield/launch/guardrail_rail.launch.py
 #                run with enclave_root:=/guardrail and the probes in place of
 #                the three node scripts (python:= points at a stand-in that
@@ -122,7 +125,28 @@ PY
 probe() {  # probe ROLE NAME TOPIC SECS [OUT] -> output on stdout
   timeout $((${4%.*} + 20)) "$PY" "$WORK/probe.py" "$@" 2>&1
 }
+# --- verdict helpers (tests/test_ros2_package.py runs these with plain bash) ---
 received() { sed -n 's/.*received=\([0-9]*\).*/\1/p' | tail -1; }
+# What the security layer says when it refuses a process at start-up (rcl,
+# 2026-10-19 under Jazzy / Fast DDS: "rclpy._rclpy_pybind11.RCLError: error
+# creating node: couldn't find all security files!"). Checks 3 and 5 count a
+# start-up refusal only with these words: a probe that died for any other
+# reason (an import error, a missing interpreter module, a crash) also exits
+# non-zero with no PROBE line, and until the T1d review that read as
+# "refused by Enforce" (check 3) or as "heard 0" (check 5, which took a
+# missing count for 0).
+SEC_REFUSAL='security files|RCLError.*secur|SECURITY ERROR'
+refused_by_security() { ! grep -q '^PROBE' "$1" && grep -qiE "$SEC_REFUSAL" "$1"; }
+# The probe output in FILE says it heard nothing: its PROBE line says
+# received=0, or the security layer refused it at start-up.
+heard_nothing() {
+  if grep -q '^PROBE' "$1"; then
+    [ "$(received < "$1")" = 0 ]
+  else
+    refused_by_security "$1"
+  fi
+}
+# --- end of the verdict helpers ---
 
 secured_env() {  # the variables sitl/sros2_env.sh exports under SROS2=1
   export ROS_SECURITY_KEYSTORE="$KEYSTORE" ROS_SECURITY_ENABLE=true ROS_SECURITY_STRATEGY=Enforce
@@ -182,10 +206,12 @@ wait "$PUB" 2>/dev/null
 # 3 enforced -----------------------------------------------------------------
 ( unset ROS_SECURITY_ENCLAVE_OVERRIDE; probe sub no_enclave /shield/setpoint 2 ) > "$WORK/sub3.txt"
 rc3=$?
-if [ "$rc3" -ne 0 ] && ! grep -q '^PROBE' "$WORK/sub3.txt"; then
-  pass "3 enforced: a process with no enclave was refused (exit $rc3: $(grep -m1 -E 'RCLError|security files' "$WORK/sub3.txt" | sed 's/^ *//' | cut -c1-120))"
-else
+if [ "$rc3" -ne 0 ] && refused_by_security "$WORK/sub3.txt"; then
+  pass "3 enforced: a process with no enclave was refused (exit $rc3: $(grep -m1 -iE "$SEC_REFUSAL" "$WORK/sub3.txt" | sed 's/^ *//' | cut -c1-120))"
+elif grep -q '^PROBE' "$WORK/sub3.txt"; then
   fail "3 enforced: a process with no enclave started (exit $rc3): $(tail -2 "$WORK/sub3.txt" | tr '\n' ' ')"
+else
+  fail "3 enforced: the probe died (exit $rc3) without the security layer's refusal, so nothing shows Enforce refused it: $(tail -2 "$WORK/sub3.txt" | tr '\n' ' ')"
 fi
 
 # 4 sealed -------------------------------------------------------------------
@@ -222,9 +248,12 @@ ROS_SECURITY_KEYSTORE="$WORK/foreign" ROS_SECURITY_ENCLAVE_OVERRIDE=/guardrail/m
 wait "$CTL" 2>/dev/null
 n5="$(received < "$WORK/sub5.txt")"
 c5="$(received < "$WORK/ctl5.txt")"
-if [ -f "$WORK/foreign/enclaves/guardrail/mavlink_adapter/cert.pem" ] && [ "${n5:-0}" -eq 0 ] \
-    && [ "${c5:-0}" -gt 0 ]; then
-  pass "5 one root: the same enclave name under another CA heard 0 messages$(grep -q '^PROBE' "$WORK/sub5.txt" || echo ' (refused at start-up)'); the lab-CA control heard $c5"
+# Heard nothing: a PROBE line that says received=0, or a start-up refusal in
+# the security layer's words. A probe that died for another reason has
+# neither, and fails (it used to pass: a missing count read as 0).
+if [ -f "$WORK/foreign/enclaves/guardrail/mavlink_adapter/cert.pem" ] \
+    && heard_nothing "$WORK/sub5.txt" && [ "${c5:-0}" -gt 0 ]; then
+  pass "5 one root: the same enclave name under another CA heard 0 messages$(grep -q '^PROBE' "$WORK/sub5.txt" || echo ' (refused at start-up by the security layer)'); the lab-CA control heard $c5"
 else
   fail "5 one root: another CA heard ${n5:-?}, lab-CA control ${c5:-?}: $(tail -2 "$WORK/sub5.txt" | tr '\n' ' ')"
 fi

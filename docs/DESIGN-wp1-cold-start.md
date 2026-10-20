@@ -54,12 +54,35 @@ sits in a trust store file beside them, so the status is `verified` on any machi
 A path that skipped the signature, the hash or the IR would post the best time. So
 every timed run must also return a verified signature, the issued `policy_hash`, 50
 rules and every zone compiled; one Shield per bundle must raise a geofence violation
-from inside its first fence; and the same path must refuse a tampered bundle and one
-signed by a key the trust store does not hold. `verdict.within_budget` is true only when
-all of that holds and the p95 fits. The test
+from inside its first fence; and the same path must refuse a tampered bundle, one
+signed by a key the trust store does not hold, and one whose Ed25519 signature has one
+hex digit changed (`bad_signature`). `verdict.within_budget` is true only when all of
+that holds and the p95 fits. The test
 `test_a_cold_start_that_skips_the_work_is_not_within_budget` swaps in a loader that
-verifies nothing and a Shield that compiles no zone: both are faster, and both read as a
-failure (the loader also accepts the tampered bundle, and the record names it).
+verifies nothing, a Shield that compiles no zone, and a loader that checks the hash and
+the signer's identity but never verifies the signature: all three are faster, and all
+three read as a failure (each refusal it lets through is named in the record).
+
+**The third refusal (added 2026-10-20, branch review).** With only the first two, nothing
+showed that the signature itself is verified: the tampered IR is refused by the
+`policy_hash` comparison, the stranger's bundle by the trust-store lookup, so the
+identity-only loader above still read `checks_hold` true and `within_budget` true. The
+`bad_signature` fixture is the issued bundle with one digit of its `ed25519:` line
+changed (the low nibble of the first byte of S, so it still parses and S stays canonical);
+its IR, manifest, hash and signer are as issued. It counts as refused only when the
+loader's refusal is the verification's own ("Ed25519 verification failed", a plain
+`ValueError`; guardrail/bundle.py raises `BundleSignatureError` only for a signature that
+is absent or untrusted). `test_the_bad_signature_refusal_is_the_signature_check_and_nothing_else`
+checks the fixture differs in that one character and is refused with both verifiers
+(`cryptography` and the pure-Python RFC 8032 one).
+
+**Provenance and hygiene (same review).** The file's `command` is the line that
+reproduces it from a full checkout; since 2026-10-20 it also records `command_args`, the
+flags it was generated with (paths relative to the checkout, or reduced to
+`<main checkout>/...` when a worktree read the main checkout's runs and reference
+repository), and `command_env`, whether `VLAGUARD_SIGNING_KEY` was set. `cold_start`
+removes its fixture folder when it ends (it left a `wp1cold_*` folder per run), the
+tool's other bundle folders are removed at exit, and the tests register theirs.
 
 ## Measured, 2026-10-19
 

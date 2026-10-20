@@ -486,6 +486,30 @@ def test_the_harness_and_api_tests_cannot_skip_where_their_imports_are_installed
     assert "fastapi" in (ROOT / "tests/test_api.py").read_text(encoding="utf-8")
 
 
+def test_the_parquet_tests_run_on_the_job_that_installs_pyarrow():
+    """Review of the T1d branch (P5): the Parquet writer and its read-back
+    check (tools/export_episodes.py) were tested only on the lab desktop: no
+    job installed pyarrow, so test_wp4outputs_exporters' Parquet tests SKIPped
+    on all three while the jobs stayed green (the K4 failure mode). Shown
+    failing at 044f0fc: no job's extras named pyarrow. Now the 3.11 extras
+    job installs the version the writer was built with and lists the file in
+    `no_skip`; the requirements-only job installs none, so the absent-pyarrow
+    paths (SKIP line, stale-file removal, exit 3) still run there. pyarrow
+    26.0.0 requires Python >= 3.11 (PyPI metadata; no cp310 wheel), so the
+    3.10 job cannot take it."""
+    jobs = _matrix_jobs()
+    with_pq = [j for j in jobs if "pyarrow" in _installed(j)]
+    assert [j["python"] for j in with_pq] == ["3.11"], [j.get("extras") for j in jobs]
+    for j in with_pq:
+        assert re.search(r"(^|\s)pyarrow==26\.0\.0(\s|$)", j["extras"]), j["extras"]
+        assert "tests/test_wp4outputs_exporters.py" in str(j.get("no_skip", "")).split(), j
+    bare = [j for j in jobs if not str(j.get("extras", "")).strip()]
+    assert bare and not any("pyarrow" in _installed(j) for j in bare), bare
+    assert "test_wp4outputs_exporters.py" in _loop()
+    src = (ROOT / "tests" / "test_wp4outputs_exporters.py").read_text(encoding="utf-8")
+    assert "import pyarrow" in src, "the file no longer imports pyarrow: re-check the job"
+
+
 def test_the_job_name_does_not_carry_the_matrix_lists():
     """docs-ci P8: without a `name`, GitHub names each job after every matrix
     value, so adding a file to `no_skip` renamed the job and would break any

@@ -16,8 +16,11 @@ carrying a second copy of the node code. A colcon build in WSL
 integration check; it was run on 2026-10-06 (see docs/DESIGN-ros2-interface.md).
 """
 import ast
+import atexit
 import os
+import shutil
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -25,6 +28,18 @@ ROOT = Path(__file__).resolve().parents[1]
 WS = ROOT / "sitl" / "ros2_ws" / "src"
 PKGS = {"safety_shield": WS / "safety_shield",
         "mavlink_adapter": WS / "mavlink_adapter"}
+
+# Every temporary keystore / PKI folder a test makes, removed when the
+# interpreter exits, under either runner (the T1d review found sros2_ks_*,
+# sros2_ev_* and sros2_pki_* folders left behind, on Windows and in WSL /tmp).
+_TMP: list[Path] = []
+atexit.register(lambda: [shutil.rmtree(d, ignore_errors=True) for d in _TMP])
+
+
+def _tmp(prefix: str) -> Path:
+    d = Path(tempfile.mkdtemp(prefix=prefix))
+    _TMP.append(d)
+    return d
 
 
 def _setup_kwargs(pkg_dir: Path) -> dict:
@@ -309,11 +324,10 @@ def test_sros2_env_refuses_a_keystore_missing_an_enclave_and_is_inert_when_off()
     exports the three variables and gives each process its prefix; one file
     missing refuses (exit 2, the file named, nothing exported); SROS2 unset
     exports nothing and every prefix is empty; another value is refused."""
-    import tempfile
     if _bash() is None:
         print("      SKIP: no bash on this host")
         return SKIP
-    ks = Path(tempfile.mkdtemp(prefix="sros2_ks_"))
+    ks = _tmp("sros2_ks_")
     (ks / "enclaves").mkdir()
     (ks / "enclaves" / "governance.p7s").write_text("x")
     for enc in _enclaves():
@@ -346,6 +360,54 @@ def test_sros2_env_refuses_a_keystore_missing_an_enclave_and_is_inert_when_off()
     assert "rc=2" in out and "no enclave /guardrail/no_such_node" in err, (out, err)
 
 
+def test_the_live_check_counts_a_refusal_only_in_the_security_layers_words():
+    """tools/sros2_check.sh (review of the T1d branch, P6): check 3 passed on
+    any non-zero exit with no PROBE line, so a probe that crashed for another
+    reason (an import error, a missing module) read as "refused by
+    Enforce"; check 5 read a missing received= count as 0, so a crashed
+    foreign subscriber "heard nothing". Shown failing at 044f0fc: the script
+    had neither helper, and check 5 tested ${n5:-0}. Now both verdicts go
+    through refused_by_security / heard_nothing, run here with plain bash on
+    probe outputs: the rcl refusal text recorded on 2026-10-19 in WSL, a
+    PROBE line, and three deaths that are not a refusal."""
+    if _bash() is None:
+        print("      SKIP: no bash on this host")
+        return SKIP
+    import subprocess
+    src = (ROOT / "tools" / "sros2_check.sh").read_text(encoding="utf-8")
+    start, end = "# --- verdict helpers", "# --- end of the verdict helpers ---"
+    assert start in src and end in src, "the verdict helpers are not marked"
+    helpers = src.split(start, 1)[1].split("\n", 1)[1].split(end, 1)[0]
+    assert 'refused_by_security "$WORK/sub3.txt"' in src, "check 3 does not use the helper"
+    assert 'heard_nothing "$WORK/sub5.txt"' in src, "check 5 does not use the helper"
+    assert "${n5:-0}" not in src, "check 5 still reads a missing count as 0"
+    cases = {
+        "refused": ("Traceback (most recent call last):\n  File \"probe.py\", line 6\n"
+                    "rclpy._rclpy_pybind11.RCLError: error creating node: couldn't find all "
+                    "security files!, at ./src/rcl/node.c:271\n"),
+        "heard_zero": "PROBE role=sub node=mavlink_adapter enclave=/guardrail/mavlink_adapter "
+                      "received=0 sent=0\n",
+        "heard_some": "PROBE role=sub node=outsider enclave=- received=12 sent=0\n",
+        "import_error": ("Traceback (most recent call last):\n"
+                         "ModuleNotFoundError: No module named 'std_msgs'\n"),
+        "other_rcl_error": ("rclpy._rclpy_pybind11.RCLError: failed to initialize rcl: "
+                            "RMW implementation not found\n"),
+        "nothing": "",
+    }
+    d = _tmp("sros2_verdict_")
+    for name, text in cases.items():
+        (d / f"{name}.txt").write_text(text, encoding="utf-8", newline="\n")
+    loop = "".join(
+        f'refused_by_security "{(d / n).as_posix()}.txt" && echo "{n}:refused"\n'
+        f'heard_nothing "{(d / n).as_posix()}.txt" && echo "{n}:heard_nothing"\n'
+        for n in cases)
+    cp = subprocess.run([_bash(), "-c", helpers + "\n" + loop], capture_output=True,
+                        text=True, timeout=60)
+    got = set(cp.stdout.split())
+    assert got == {"refused:refused", "refused:heard_nothing",
+                   "heard_zero:heard_nothing"}, (got, cp.stderr)
+
+
 def test_a_flight_records_sros2_only_when_it_is_on():
     """guardrail.manifest.ros2_security_evidence, which the Shield node puts
     in hil_evidence: None with security off (the record is what it was), and
@@ -354,13 +416,12 @@ def test_a_flight_records_sros2_only_when_it_is_on():
     can be read from the record."""
     import base64
     import hashlib
-    import tempfile
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
     from guardrail.manifest import ros2_security_evidence
     assert ros2_security_evidence({}) is None
     assert ros2_security_evidence({"ROS_SECURITY_ENABLE": "false"}) is None
-    ks = Path(tempfile.mkdtemp(prefix="sros2_ev_"))
+    ks = _tmp("sros2_ev_")
     d = ks / "enclaves" / "guardrail" / "safety_shield"
     d.mkdir(parents=True)
     der = bytes(range(64))
@@ -391,7 +452,7 @@ def test_a_flight_records_sros2_only_when_it_is_on():
     if HAVE_CRYPTO:
         from guardrail.harness_service import fingerprint, generate_pki
         from guardrail.manifest import _pem_sha256_fingerprint
-        files = generate_pki(Path(tempfile.mkdtemp(prefix="sros2_pki_")))
+        files = generate_pki(_tmp("sros2_pki_"))
         assert _pem_sha256_fingerprint(files["ca_cert"]) == fingerprint(files["ca_cert"])
     else:
         print("      (no cryptography here: the fingerprint was checked on a synthetic "

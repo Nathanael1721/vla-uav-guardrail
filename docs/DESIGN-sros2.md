@@ -8,7 +8,8 @@ of the rail in its own enclave under `ROS_SECURITY_STRATEGY=Enforce`;
 `tools/sros2_check.sh` proves it is enforced (6/6 on 2026-10-19, below). **Not yet
 flown:** no SITL flight has run with `SROS2=1` (the lead flies; command at the end).
 The default, `SROS2=0`, changes nothing.
-**Card:** X-15 (docs/DESIGN-harness-grpc.md, "SROS 2 is not enabled").
+**Card:** X-15 (docs/DESIGN-harness-grpc.md, whose "SROS 2 is not enabled" status
+line was brought up to date on 2026-10-20 after the branch review).
 
 ## What the grant asks for
 
@@ -123,7 +124,21 @@ SROS 2 enforced on the rail's graph: 6/6 checks passed
 Checks 3 to 5 are the ones a disabled or permissive graph would fail: with security
 off, check 3's process starts and check 4's outsider hears everything. Checks 4 and 5
 each run a secured subscriber in the same window as the control, so "heard nothing" is
-not "nobody was publishing". Check 6 runs the real launch file with `python:=` pointing
+not "nobody was publishing".
+
+**Tightened on 2026-10-20 (branch review).** As first written, check 3 passed on any
+non-zero exit without a PROBE line, and check 5 read a missing `received=` count as 0,
+so a probe that died for an unrelated reason (an import error, a missing module) read as
+"refused by Enforce" or "heard 0". Both now count a start-up refusal only in the security
+layer's words (`security files`, `RCLError ... security`, `SECURITY ERROR`), and check 5
+otherwise needs a PROBE line saying `received=0`; the two verdicts are shell functions
+(`refused_by_security`, `heard_nothing`) that `tests/test_ros2_package.py` runs with plain
+bash on recorded outputs. Re-run in WSL the same day (throwaway PKI in `/tmp`, removed
+afterwards): 6/6 again with the rail's interpreter (check 3 quoting "couldn't find all
+security files!", check 5 a PROBE line with received=0). With a stand-in interpreter that
+exits with `ModuleNotFoundError: No module named 'std_msgs'` for exactly check 3's and
+check 5's processes, the tightened script FAILs both (4/6) where the 044f0fc script
+PASSed both. Check 6 runs the real launch file with `python:=` pointing
 at a stand-in that starts one probe per node script, so the launch file's per-node
 enclaves and its shutdown-with-the-Shield are what was exercised.
 

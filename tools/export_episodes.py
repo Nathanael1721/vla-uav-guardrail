@@ -124,7 +124,8 @@ number becomes the string "NaN" / "Infinity", never a bare token). With
 `pyarrow` importable (optional: `pip install .[export]`), also
 `steps.parquet` and `episodes.parquet`: one typed column per field, nested
 fields and mixed columns as JSON text named in the file's metadata, each
-file read back and compared with the JSONL records before it is kept
+file read back and compared with the JSONL records (every row, every key
+of every record as a column, every value) before it is kept
 (`read_parquet` returns those records; see "Parquet" below). Without
 pyarrow the tool prints SKIP, says how to install it, removes a Parquet
 file an earlier export left in the folder, and writes JSONL only
@@ -864,11 +865,14 @@ def write_jsonl(path: Path, records: list[dict]) -> None:
 #   float             int / float mixed, or float        -> float64 (NaN and
 #                     (non-finite values stored as such;     +-inf kept native)
 #                     every int exact in a double)
-#   string            all str                            -> string
+#   string            all str, each one valid UTF-8      -> string
 #   json              anything else: a dict or list in any row, mixed kinds,
-#                     an int beyond int64 -> string, each value JSON text (the
-#                     JSONL's own encoding, so non-finite floats are "NaN" /
-#                     "Infinity"), named in the schema metadata
+#                     an int beyond int64, a str with a lone surrogate (which
+#                     a UTF-8 string column cannot hold: pyarrow raised
+#                     UnicodeEncodeError, the T1d review) -> string, each
+#                     value JSON text (the JSONL's own encoding, so non-finite
+#                     floats are "NaN" / "Infinity", a surrogate is \ud800, a
+#                     dict's int key is "1"), named in the schema metadata
 # A column with no value is a null column. The file's metadata carries the
 # export schema (SCHEMA) and `vlaguard.json_columns`; `read_parquet` decodes
 # exactly those and gives non-finite floats the JSONL's strings, so a record
@@ -878,6 +882,18 @@ def write_jsonl(path: Path, records: list[dict]) -> None:
 # reads its file back and compares before it reports success: a Parquet file
 # that does not say what the JSONL says is deleted and the export fails (exit
 # 2), never published.
+#
+# WHAT THE READ-BACK COMPARES (review of the T1d branch, 2026-10-20). Its
+# first version took the column list from the file it had just read
+# (`back[0]`) and the values from json_safe(record). So a file that had lost
+# a whole column - exactly the first writer's failure, a key dropped from
+# every row - compared equal on the columns it still had and was kept
+# (shown: parquet_table dropping `b` gave [{a: 1}, {a: 2}] for
+# [{a: 1, b: 10}, {a: 2, b: 20}], and write_parquet returned True); and a
+# dict with int keys was refused although the JSONL encodes it fine. Now the
+# reference is the JSONL itself: every record as json.loads reads its line
+# back (`_as_jsonl`), every key of every record a column, and a missing or
+# an extra column is a failure named in the error.
 
 PARQUET_INSTALL_HINT = ("pip install pyarrow (or `pip install .[export]`); it is an "
                         "optional dependency, the JSONL never needs it")
@@ -909,8 +925,18 @@ def _column_kind(values: list) -> str:
         return ("float" if all(isinstance(v, float) or abs(v) <= 2 ** 53 for v in present)
                 else "json")
     if all(isinstance(v, str) for v in present):
-        return "string"
+        return "string" if all(_utf8(v) for v in present) else "json"
     return "json"
+
+
+def _utf8(s: str) -> bool:
+    """Can a Parquet (UTF-8) string column hold `s`? Not a lone surrogate,
+    which json.loads gives for a "\\ud800" escape in a flight log."""
+    try:
+        s.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def parquet_table(records: list[dict]):
@@ -976,22 +1002,48 @@ def _same_value(a, b) -> bool:
     return a == b
 
 
+def _as_jsonl(records: list[dict]) -> list[dict]:
+    """The records as the JSONL holds them: json.loads of the line
+    write_jsonl writes for each (non-finite floats as strings, tuples as
+    lists, a dict's int keys as strings)."""
+    return [json.loads(json.dumps(json_safe(r), allow_nan=False)) for r in records]
+
+
 def write_parquet(path: Path, records: list[dict]) -> bool:
     """Parquet beside the JSONL (schema above). False when pyarrow is not
     installed; ExportError (and no file) when the file it wrote does not read
-    back as the JSONL's records."""
+    back as the JSONL's records - every row, every key of every record as a
+    column, every value (WHAT THE READ-BACK COMPARES, above). Any other error
+    while writing or reading back also leaves no file behind."""
     if not have_pyarrow():
         return False
     import pyarrow.parquet as pq
-    pq.write_table(parquet_table(records), path)
-    back = read_parquet(path)
-    want = [json_safe({k: r.get(k) for k in back[0]}) if back else {} for r in records]
+    try:
+        pq.write_table(parquet_table(records), path)
+        back = read_parquet(path)
+        lines = _as_jsonl(records)
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    keys = list(dict.fromkeys(k for r in lines for k in r))
+    got = list(back[0]) if back else []
+    missing = [k for k in keys if k not in got]
+    extra = [k for k in got if k not in keys]
+    want = [{k: r.get(k) for k in keys} for r in lines]
     bad = next((i for i, (w, b) in enumerate(zip(want, back)) if not _same_value(w, b)), None)
-    if len(back) != len(records) or bad is not None:
-        path.unlink()
+    why = []
+    if len(back) != len(records):
+        why.append(f"{len(back)}/{len(records)} rows")
+    if back and missing:
+        why.append(f"missing column(s) {missing}")
+    if extra:
+        why.append(f"extra column(s) {extra}")
+    if bad is not None:
+        why.append(f"first difference at row {bad}")
+    if why:
+        path.unlink(missing_ok=True)
         raise ExportError(f"{path.name} did not read back as the JSONL's records "
-                          f"(first difference at row {bad}, {len(back)}/{len(records)} "
-                          f"rows); deleted, not published")
+                          f"({'; '.join(why)}); deleted, not published")
     return True
 
 
@@ -1058,11 +1110,15 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 write_parquet(out / "steps.parquet", steps_all)
                 write_parquet(out / "episodes.parquet", eps_all)
-            except ExportError as e:
-                # Neither file, so no half export reads as a whole one.
+            except Exception as e:                               # noqa: BLE001
+                # Neither file, so no half export reads as a whole one. Any
+                # exception, not only ExportError (review of the T1d branch,
+                # P2): a pyarrow or encoding error on episodes.parquet used
+                # to escape as a traceback, leaving the steps.parquet just
+                # written beside a stale episodes.parquet of an earlier run.
                 for p in (out / "steps.parquet", out / "episodes.parquet"):
                     p.unlink(missing_ok=True)
-                print(f"parquet NOT written: {e}", file=sys.stderr)
+                print(f"parquet NOT written: {type(e).__name__}: {e}", file=sys.stderr)
                 return 2
             print(f"wrote {out / 'steps.parquet'} ({len(steps_all)} rows) and "
                   f"{out / 'episodes.parquet'} ({len(eps_all)} rows)")

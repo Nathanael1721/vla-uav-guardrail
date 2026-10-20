@@ -9,6 +9,11 @@
     python tools/wp1_roundtrip_kpi.py --runs-root <checkout> \
         --reference-repo <checkout>/kuanting-vla-uav-guardrail
 
+The file records the flags it was generated with (`command_args`, paths
+relative to the checkout or reduced to "<main checkout>/...") and whether
+VLAGUARD_SIGNING_KEY was set (`command_env`), beside the plain `command`
+that reproduces it from a full checkout.
+
 WHAT THE GRANT ASKS FOR
 
 WP1 is accepted on "Policy load round-trip; bundle replayability" (Grant
@@ -86,7 +91,9 @@ One section added on 2026-10-19 (the audit's "KPI WP1 ... cold-start <= 1 s
                    bench's 50-rule grid. Every timed run must prove it did the
                    work (verified signature, issued hash, 50 rules, every zone
                    compiled, a violation raised inside a fence) and the same
-                   path must refuse a tampered and an untrusted bundle, or
+                   path must refuse a tampered, an untrusted and a
+                   bad-signature bundle (one signature digit changed, so only
+                   the Ed25519 verification can refuse it), or
                    `within_budget` is False however fast it was. Null: only
                    Shield construction (4.7 ms) had been timed.
 
@@ -98,6 +105,7 @@ manifest still resolves to a policy (the census, before and after the
 from __future__ import annotations
 
 import argparse
+import atexit
 import glob
 import hashlib
 import io
@@ -105,6 +113,7 @@ import json
 import math
 import os
 import platform
+import shutil
 import statistics
 import sys
 import tarfile
@@ -117,6 +126,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from guardrail.bundle import (HAVE_CRYPTO, IR_NAME, SCHEMA_PATH,       # noqa: E402
+                              SIGNATURE_NAME,
                               check_bundle, check_lock, policy_candidates,
                               policy_json_schema, verifier_name,
                               write_bundle)
@@ -138,6 +148,16 @@ GEOMETRY_TOL_M = 1e-6
 
 def say(key, value):
     print(f"  {key:44s} {value}")
+
+
+def _scratch(prefix: str) -> Path:
+    """A temporary folder for bundles this tool writes and reads back, removed
+    when the interpreter exits (the T1d review found every run leaving its
+    wp1rt_ / wp1hash_ / wp1ref_ / wp1cold_ folders behind; cold_start removes
+    its own as soon as it ends)."""
+    d = Path(tempfile.mkdtemp(prefix=prefix))
+    atexit.register(shutil.rmtree, d, True)
+    return d
 
 
 # --------------------------------------------------------------------------- #
@@ -172,12 +192,36 @@ def _tamper(src: Path, dst: Path) -> bool:
     return True
 
 
+def _flip_signature(src: Path, dst: Path) -> None:
+    """Rewrite the bundle with ONE hex digit of its Ed25519 signature changed
+    and every other byte as issued: the IR, the manifest, the policy_hash and
+    the signer's identity all still agree, so only the signature verification
+    itself can refuse it. The digit is the low nibble of the first byte of the
+    signature's S half (little-endian, so S stays below the group order and
+    the signature still parses as 64 bytes; both verifiers answer "failed",
+    neither raises)."""
+    with tarfile.open(src, "r:gz") as tar:
+        members = {m.name: tar.extractfile(m).read() for m in tar.getmembers()}
+    lines = members[SIGNATURE_NAME].decode().split("\n")
+    i = next(k for k, ln in enumerate(lines) if ln.startswith("ed25519:"))
+    head, sig = "ed25519:", lines[i][len("ed25519:"):]
+    j = 65                                   # S[0], low nibble
+    sig = sig[:j] + ("1" if sig[j] != "1" else "2") + sig[j + 1:]
+    lines[i] = head + sig
+    members[SIGNATURE_NAME] = "\n".join(lines).encode()
+    with tarfile.open(dst, "w:gz") as tar:
+        for name, data in members.items():
+            info = tarfile.TarInfo(name=name)
+            info.size, info.mtime = len(data), 0
+            tar.addfile(info, io.BytesIO(data))
+
+
 def round_trip(policies_dir: Path, signer="auto") -> dict:
     files = sorted(policies_dir.glob("*.yaml"))
     if not files:
         # Zero policies would make every count below 0/0 - a pass by silence.
         raise SystemExit(f"no policies in {policies_dir}; refusing to report 0/0")
-    tmp = Path(tempfile.mkdtemp(prefix="wp1rt_"))
+    tmp = _scratch("wp1rt_")
     rows, sig = [], Counter()
     for f in files:
         row = {"file": f.name}
@@ -276,7 +320,7 @@ def both_hashes(policies_dir: Path) -> dict:
     files = sorted(policies_dir.glob("*.yaml"))
     if not files:
         raise SystemExit(f"no policies in {policies_dir}; refusing to report 0/0")
-    tmp = Path(tempfile.mkdtemp(prefix="wp1hash_"))
+    tmp = _scratch("wp1hash_")
     rows, kinds = [], Counter()
     forged: list[tuple[str, Path]] = []
     for f in files:
@@ -566,7 +610,7 @@ def reference_cross_load(run_reference_loader: bool = True) -> dict:
     if not docs:
         return {"run": False, "note": "reference repository not present"}
     ours_docs, ours_tars, written = {}, {}, {}
-    tmp = Path(tempfile.mkdtemp(prefix="wp1ref_"))
+    tmp = _scratch("wp1ref_")
     for d in docs:
         rel = d.relative_to(REFERENCE_REPO).as_posix()
         try:
@@ -681,10 +725,21 @@ def reference_cross_load(run_reference_loader: bool = True) -> dict:
 # table. So every timed run must also return a VERIFIED signature, the
 # expected policy_hash, 50 rules and the expected number of compiled zones; one
 # Shield per bundle must raise a geofence violation from inside its first
-# fence; and the same path must REFUSE a tampered bundle and one signed by a
-# key the trust store does not hold. `verdict.within_budget` is True only when
+# fence; and the same path must REFUSE a tampered bundle, one signed by a
+# key the trust store does not hold, and one whose Ed25519 signature has one
+# hex digit changed (bad_signature). `verdict.within_budget` is True only when
 # all of that holds AND the p95 fits: a fast path that verified nothing reads
 # as a failure, not a pass.
+#
+# WHY THREE REFUSALS (review of the T1d branch, 2026-10-20). With the first
+# two only, nothing showed the signature itself was verified: the tampered IR
+# is refused by the policy_hash comparison, the stranger's bundle by the
+# trust-store lookup, so a loader that checked the hash and the signer's name
+# but skipped the Ed25519 verification still read checks_hold True and
+# within_budget True (shown with such a stub, tests/test_wp1_roundtrip_kpi.py).
+# The third differs from the issued bundle in the signature alone, and counts
+# as refused only when the refusal is the verification's own ("verification
+# failed"); a refusal for any other reason is recorded as such, and fails.
 #
 # NOT MEASURED: a reboot-cold disk (one discarded fresh run warms the OS file
 # cache and the .pyc files first, as on any second mission of a day), and the
@@ -876,6 +931,21 @@ def cold_start(warm_runs: int = 100, fresh_runs: int = 20,
     in-process repetitions per bundle; `fresh_runs` fresh interpreters per
     bundle (0 skips them); `python`, the interpreter the children run
     (default: this one)."""
+    if warm_runs < 1:
+        raise ValueError("warm_runs must be >= 1: a timing over no run is not one")
+    # The fixtures (bundles, trust store, YAML) live in a folder of their own,
+    # removed when the timing ends however it ends: until the T1d review every
+    # run left a wp1cold_* folder behind.
+    tmp = Path(tempfile.mkdtemp(prefix="wp1cold_"))
+    try:
+        return _cold_start_in(tmp, warm_runs, fresh_runs, python)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _cold_start_in(tmp: Path, warm_runs: int, fresh_runs: int,
+                   python: str | None) -> dict:
+    """cold_start's body, its fixtures written under `tmp`."""
     import subprocess
     import time
     from guardrail.bundle import (BundleSignatureError, load_for_flight,
@@ -884,9 +954,6 @@ def cold_start(warm_runs: int = 100, fresh_runs: int = 20,
     from guardrail.replay import rail_shield
     from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S
     from guardrail.models import Policy
-    if warm_runs < 1:
-        raise ValueError("warm_runs must be >= 1: a timing over no run is not one")
-    tmp = Path(tempfile.mkdtemp(prefix="wp1cold_"))
     signer = _cold_start_signer()
     store = _trust_store_file(tmp / "trusted_signers.json", signer)
     pols = _cold_start_policies()
@@ -1011,6 +1078,20 @@ def cold_start(warm_runs: int = 100, fresh_runs: int = 20,
         refusals["untrusted_signer"] = "ACCEPTED"
     except BundleSignatureError:
         refusals["untrusted_signer"] = "refused"
+    # The issued bundle with one signature digit changed (section comment,
+    # WHY THREE REFUSALS): guardrail.bundle raises a plain ValueError for a
+    # signature that is present and wrong ("Ed25519 verification failed"),
+    # BundleSignatureError only for one that is absent or untrusted.
+    forged = tmp / "bad_signature.tar.gz"
+    _flip_signature(probe, forged)
+    try:
+        load_for_flight(forged, trust_store=store)
+        refusals["bad_signature"] = "ACCEPTED"
+    except ValueError as exc:
+        refusals["bad_signature"] = (
+            "refused" if "verification failed" in str(exc) and
+            not isinstance(exc, BundleSignatureError)
+            else f"refused, but not by the signature check: {str(exc)[:100]}")
 
     fresh: dict = {}
     py = python or sys.executable
@@ -1206,10 +1287,32 @@ def schema_validation(policies_dir: Path, neg_dir: Path = NEGATIVE_DIR) -> dict:
             "failures": [r for r in authored + canonical + grant if not r["valid"]]}
 
 
+def _provenance_path(value: str | Path) -> str:
+    """A path argument as the published file names it (review of the T1d
+    branch, P7): relative to this checkout when it is inside it; under
+    "<main checkout>" (a folder holding .git) or "<another worktree>" when it
+    is inside another checkout of this repository - a worktree regenerating
+    the file reads the main checkout's gitignored runs and reference
+    repository; else "<elsewhere>/<name>" (a scratch folder or a home
+    directory: nothing a reader could use, and not for publishing)."""
+    p = Path(value).resolve()
+    try:
+        return p.relative_to(ROOT).as_posix() or "."
+    except ValueError:
+        pass
+    for anc in (p, *p.parents):
+        if (anc / "tools" / "wp1_roundtrip_kpi.py").is_file() and (anc / "guardrail").is_dir():
+            label = "<main checkout>" if (anc / ".git").is_dir() else "<another worktree>"
+            rel = p.relative_to(anc).as_posix()
+            return label if rel == "." else f"{label}/{rel}"
+    return f"<elsewhere>/{p.name}"
+
+
 def build(policies_dir: Path = ROOT / "policies", neg_dir: Path = NEGATIVE_DIR,
           runs: bool = True, signer="auto", reference: bool = True,
           cold: bool = True, cold_warm: int = 100, cold_fresh: int = 20,
-          runs_root: Path = ROOT) -> dict:
+          runs_root: Path = ROOT, command_args: list[str] | None = None,
+          command_env: dict | None = None) -> dict:
     rt = round_trip(policies_dir, signer=signer)
     neg = negative_corpus(neg_dir)
     gf = grant_form_round_trip(policies_dir)
@@ -1224,6 +1327,14 @@ def build(policies_dir: Path = ROOT / "policies", neg_dir: Path = NEGATIVE_DIR,
     return {
         "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "command": "python tools/wp1_roundtrip_kpi.py",
+        # What this file was actually generated with (review of the T1d
+        # branch, P7): `command` is the line that reproduces it from a full
+        # checkout; the flags given beyond it (--runs-root and
+        # --reference-repo change where the census and the cross-load read)
+        # and the signing key in the environment (the round-trip bundles'
+        # signature column), paths reduced by _provenance_path.
+        "command_args": list(command_args or []),
+        "command_env": dict(command_env or {}),
         "code_revision": code_revision(),
         "python": platform.python_version(),
         "cryptography_available": HAVE_CRYPTO,
@@ -1323,10 +1434,31 @@ def main(argv=None) -> int:
         global REFERENCE_REPO, REFERENCE_PY
         REFERENCE_REPO = Path(args.reference_repo).resolve()
         REFERENCE_PY = REFERENCE_REPO / ".venv" / "Scripts" / "python.exe"
+    # The flags given, from the parsed arguments (so an abbreviated or
+    # `--opt=value` spelling records the same), defaults left out.
+    used: list[str] = []
+    for flag, value, default, is_path in (
+            ("--out", args.out, str(DEFAULT_OUT), True),
+            ("--no-runs", args.no_runs, False, False),
+            ("--no-reference", args.no_reference, False, False),
+            ("--no-cold-start", args.no_cold_start, False, False),
+            ("--cold-start-runs", args.cold_start_runs, 100, False),
+            ("--cold-start-fresh", args.cold_start_fresh, 20, False),
+            ("--runs-root", args.runs_root, None, True),
+            ("--reference-repo", args.reference_repo, None, True)):
+        if value == default:
+            continue
+        if value is True:
+            used.append(flag)
+        else:
+            used += [flag, _provenance_path(value) if is_path else str(value)]
+    key = os.environ.get("VLAGUARD_SIGNING_KEY")
+    env = {"VLAGUARD_SIGNING_KEY": _provenance_path(key) if key else None}
     res = build(runs=not args.no_runs, reference=not args.no_reference,
                 cold=not args.no_cold_start, cold_warm=args.cold_start_runs,
                 cold_fresh=args.cold_start_fresh,
-                runs_root=Path(args.runs_root).resolve() if args.runs_root else ROOT)
+                runs_root=Path(args.runs_root).resolve() if args.runs_root else ROOT,
+                command_args=used, command_env=env)
 
     print("\n[wp1] policy load round-trip KPI")
     for k, v in res["kpi"].items():
@@ -1381,6 +1513,8 @@ def main(argv=None) -> int:
         say("refusals through the same path", cs["refusals"])
         say("verdict", cs["verdict"])
     print("\n[wp1] identity")
+    say("generated with", " ".join([res["command"], *res["command_args"]])
+        + "".join(f" ({k}={v})" for k, v in res["command_env"].items() if v))
     say("version lock problems", len(res["version_lock_problems"]))
     for x in res["version_lock_problems"]:
         say("  !", x)

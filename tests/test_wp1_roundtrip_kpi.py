@@ -11,7 +11,10 @@ tampered bundle refused, a broken policy refused, an empty corpus refused
 rather than reported as 0/0 - and about one deliberately crippled loader that
 must score the stated null instead of a perfect run.
 """
+import atexit
+import contextlib
 import json
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -25,6 +28,20 @@ from guardrail.models import load_policy                           # noqa: E402
 
 SKIP = "SKIP"
 N_POLICIES = len(list((ROOT / "policies").glob("*.yaml")))
+# What the cold start's refusal checks must all say (bad_signature since the
+# T1d review, 2026-10-20).
+REFUSED = {"tampered_ir": "refused", "untrusted_signer": "refused", "bad_signature": "refused"}
+
+# Every temporary folder a test makes, removed when the interpreter exits
+# (either runner): the T1d review found these tests leaving them behind.
+_TMP: list[Path] = []
+atexit.register(lambda: [shutil.rmtree(d, ignore_errors=True) for d in _TMP])
+
+
+def _tmp(prefix: str) -> Path:
+    d = Path(tempfile.mkdtemp(prefix=prefix))
+    _TMP.append(d)
+    return d
 
 
 def test_every_policy_round_trips_and_every_tamper_is_refused():
@@ -133,7 +150,7 @@ def test_a_loader_that_checks_nothing_scores_the_null_not_a_pass():
 
 
 def test_nothing_to_measure_is_refused_not_reported_as_zero_of_zero():
-    empty = Path(tempfile.mkdtemp(prefix="wp1empty_"))
+    empty = _tmp("wp1empty_")
     for fn in (lambda: W.round_trip(empty), lambda: W.negative_corpus(empty)):
         try:
             fn()
@@ -143,7 +160,7 @@ def test_nothing_to_measure_is_refused_not_reported_as_zero_of_zero():
 
 
 def test_the_report_carries_its_null_and_its_provenance():
-    out = Path(tempfile.mkdtemp(prefix="wp1out_")) / "wp1.json"
+    out = _tmp("wp1out_") / "wp1.json"
     assert W.main(["--out", str(out), "--no-runs", "--no-reference",
                    "--cold-start-runs", "3", "--cold-start-fresh", "1"]) == 0
     res = json.loads(out.read_text(encoding="utf-8"))
@@ -163,6 +180,62 @@ def test_the_report_carries_its_null_and_its_provenance():
     assert res["schema"]["current"] is True
     assert res["kpi"]["reference_hash_agrees"] == "not run", (
         "--no-reference must say the reference was not run, never a score")
+    # Review of the T1d branch (P7): `command` alone hid the flags the
+    # published file was made with. Shown failing at 044f0fc: no
+    # command_args / command_env keys. The scratch --out is not a path a
+    # reader has, so it is reduced to its name.
+    assert res["command"] == "python tools/wp1_roundtrip_kpi.py", res["command"]
+    assert res["command_args"] == ["--out", "<elsewhere>/wp1.json", "--no-runs",
+                                   "--no-reference", "--cold-start-runs", "3",
+                                   "--cold-start-fresh", "1"], res["command_args"]
+    assert set(res["command_env"]) == {"VLAGUARD_SIGNING_KEY"}, res["command_env"]
+
+
+def test_paths_in_the_provenance_name_the_checkout_not_the_machine():
+    """_provenance_path: inside this checkout, relative; inside another
+    checkout of this repository, under "<main checkout>" (it holds a .git
+    folder) or "<another worktree>" (a .git file); elsewhere, the name only."""
+    assert W._provenance_path(W.ROOT / "policies") == "policies"
+    assert W._provenance_path(W.ROOT) == "."
+    for git_is_dir, label in ((True, "<main checkout>"), (False, "<another worktree>")):
+        other = _tmp("wp1prov_") / "VLA Drone"
+        (other / "tools").mkdir(parents=True)
+        (other / "tools" / "wp1_roundtrip_kpi.py").write_text("", encoding="utf-8")
+        (other / "guardrail").mkdir()
+        if git_is_dir:
+            (other / ".git").mkdir()
+        else:
+            (other / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+        ref = other / "kuanting-vla-uav-guardrail"
+        ref.mkdir()
+        assert W._provenance_path(other) == label
+        assert W._provenance_path(ref) == f"{label}/kuanting-vla-uav-guardrail"
+    assert W._provenance_path(_tmp("wp1prov_") / "x.json") == "<elsewhere>/x.json"
+
+
+def test_the_tool_leaves_no_temporary_folder_behind():
+    """Review of the T1d branch (P7): cold_start never removed its wp1cold_*
+    folder, and round_trip / both_hashes / reference_cross_load left theirs
+    until the interpreter's end. cold_start now removes its own when it
+    returns (and when it raises); the others are registered for exit."""
+    import glob
+    import os
+    pattern = os.path.join(tempfile.gettempdir(), "wp1cold_*")
+    before = set(glob.glob(pattern))
+    W.cold_start(warm_runs=1, fresh_runs=0)
+    assert set(glob.glob(pattern)) <= before, sorted(set(glob.glob(pattern)) - before)
+    real = W._cold_start_policies
+
+    def broken():
+        raise RuntimeError("fixture build failed")
+    W._cold_start_policies = broken
+    try:
+        W.cold_start(warm_runs=1, fresh_runs=0)
+    except RuntimeError:
+        pass
+    finally:
+        W._cold_start_policies = real
+    assert set(glob.glob(pattern)) <= before, "a failed cold start left its folder"
 
 
 def test_the_grant_form_round_trip_can_fail():
@@ -218,7 +291,7 @@ def test_every_manifest_names_both_hashes_and_a_forged_one_is_refused():
 
 
 def test_the_report_carries_the_both_hash_columns_and_their_null():
-    out = Path(tempfile.mkdtemp(prefix="wp1bh_")) / "wp1.json"
+    out = _tmp("wp1bh_") / "wp1.json"
     assert W.main(["--out", str(out), "--no-runs", "--no-reference", "--no-cold-start"]) == 0
     res = json.loads(out.read_text(encoding="utf-8"))
     # Skipped is said, never scored.
@@ -267,7 +340,7 @@ def test_the_cold_start_fits_the_grants_budget_and_proves_it_did_the_work():
         assert c["geofence_raised_inside_first_fence"], (name, c)
         assert "verified" in c["verifier"], (name, c)
     assert "pure-python" in cs["pure_python_verifier"]["typical"]["verifier"]
-    assert cs["refusals"] == {"tampered_ir": "refused", "untrusted_signer": "refused"}
+    assert cs["refusals"] == REFUSED, cs["refusals"]
     assert cs["author_side"]["typical"]["same_policy_hash"] is True
     on_ci = os.environ.get("GITHUB_ACTIONS") == "true"
     bound = 2000.0 if on_ci else W.COLD_START_BUDGET_MS
@@ -326,7 +399,72 @@ def test_a_cold_start_that_skips_the_work_is_not_within_budget():
     assert cs["verdict"]["within_budget"] is False, cs["verdict"]
     for name, c in cs["checks"].items():
         assert c["fences_compiled"] == 0 and not c["geofence_raised_inside_first_fence"], c
-    assert cs["refusals"] == {"tampered_ir": "refused", "untrusted_signer": "refused"}
+    assert cs["refusals"] == REFUSED, cs["refusals"]
+
+    # Review of the T1d branch (P3): a loader that checks the hash and the
+    # signer's identity but never verifies the Ed25519 signature. The real
+    # load_for_flight runs (hash, both hash forms, lint, flight gate); only
+    # the verification is gone, so the tampered IR is still refused (hash)
+    # and the untrusted signer too (trust-store lookup). Shown failing at
+    # 044f0fc: this cold start reported checks_hold True and within_budget
+    # True, because nothing it refused needed the signature checked.
+    real_verify = gb.verify_signature
+
+    def identity_only(signed_by, sig_hex, data, trust_store=None):
+        trust = (trust_store if isinstance(trust_store, dict)
+                 else gb.load_trust_store(trust_store))
+        if signed_by not in trust:
+            return gb.SIG_UNTRUSTED, f"{signed_by!r} is not in the trust store"
+        return gb.SIG_VERIFIED, f"Ed25519 signature by {signed_by!r} verified (never checked)"
+    gb.verify_signature = identity_only
+    try:
+        cs = W.cold_start(warm_runs=3, fresh_runs=0)
+    finally:
+        gb.verify_signature = real_verify
+    assert cs["refusals"]["tampered_ir"] == "refused", cs["refusals"]
+    assert cs["refusals"]["untrusted_signer"] == "refused", cs["refusals"]
+    assert cs["refusals"]["bad_signature"] == "ACCEPTED", cs["refusals"]
+    assert all(c["runs_failing_a_check"] == 0 for c in cs["checks"].values()), cs["checks"]
+    assert cs["verdict"]["checks_hold"] is False, cs["verdict"]
+    assert cs["verdict"]["within_budget"] is False, cs["verdict"]
+
+
+def test_the_bad_signature_refusal_is_the_signature_check_and_nothing_else():
+    """The bad_signature fixture differs from the issued bundle in one hex
+    digit of its Ed25519 line: the hash, the manifest and the signer are as
+    issued, and the real loader refuses it with the verification's own words
+    (a refusal for any other reason would not show the signature is checked,
+    and is not counted as one)."""
+    import tarfile
+    import guardrail.bundle as gb
+    tmp = _tmp("wp1badsig_")
+    signer = W._cold_start_signer()
+    store = W._trust_store_file(tmp / "trusted_signers.json", signer)
+    pol = W._cold_start_policies()["typical"][0]
+    good = gb.write_bundle(pol, tmp / "good.tar.gz", changelog="t",
+                           issued_at="2026-01-01T00:00:00Z", signer=signer)
+    bad = tmp / "bad.tar.gz"
+    W._flip_signature(good, bad)
+
+    def members(p):
+        with tarfile.open(p, "r:gz") as tar:
+            return {m.name: tar.extractfile(m).read() for m in tar.getmembers()}
+    g, b = members(good), members(bad)
+    assert g.keys() == b.keys() and g[gb.IR_NAME] == b[gb.IR_NAME]
+    assert g[gb.MANIFEST_NAME] == b[gb.MANIFEST_NAME]
+    sg, sb = g[gb.SIGNATURE_NAME].decode(), b[gb.SIGNATURE_NAME].decode()
+    assert sum(x != y for x, y in zip(sg, sb)) == 1 and len(sg) == len(sb), (sg, sb)
+    gb.load_for_flight(good, trust_store=store)
+    for engine in ("cryptography", "pure-python"):
+        with (W._PurePythonVerifier() if engine == "pure-python" else contextlib.nullcontext()):
+            try:
+                gb.load_for_flight(bad, trust_store=store)
+            except gb.BundleSignatureError as e:
+                raise AssertionError(f"refused as unverified, not as a bad signature: {e}")
+            except ValueError as e:
+                assert "verification failed" in str(e), (engine, e)
+            else:
+                raise AssertionError(f"{engine}: a flipped signature digit was accepted")
 
 
 def test_a_reference_repository_elsewhere_is_named_as_in_the_checkout():
@@ -334,7 +472,7 @@ def test_a_reference_repository_elsewhere_is_named_as_in_the_checkout():
     a missing virtualenv there is reported, not a ValueError from
     Path.relative_to(ROOT) - which is what the note computed before."""
     saved = W.REFERENCE_REPO, W.REFERENCE_PY
-    elsewhere = Path(tempfile.mkdtemp(prefix="wp1ref_elsewhere_"))
+    elsewhere = _tmp("wp1ref_elsewhere_")
     W.REFERENCE_REPO, W.REFERENCE_PY = elsewhere, elsewhere / ".venv" / "Scripts" / "python.exe"
     try:
         r = W.run_reference("print(1)")
@@ -351,7 +489,7 @@ def test_a_run_set_aside_is_listed_not_dropped():
     out of the census glob, and the census rose from 83/84 to 85/85 with
     nothing said. A set-aside run is not counted, and it is listed with
     whether it resolves."""
-    root = Path(tempfile.mkdtemp(prefix="wp1census_"))
+    root = _tmp("wp1census_")
     good = load_policy(ROOT / "policies" / "sim_demo_policy.yaml").policy_hash
     for rel, h in (("demo/out/flown", good), ("demo/out/_parked/odd", "sha256:" + "0" * 64)):
         (root / rel).mkdir(parents=True)
