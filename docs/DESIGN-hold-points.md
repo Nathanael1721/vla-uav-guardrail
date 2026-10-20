@@ -422,12 +422,27 @@ Three interactions, each pinned in tests/test_hold_points.py:
   and no profile flies the arm by default. The plan's transit test judges
   the straight line at the plan's speed; the arm's airframe follows it with
   its own lag, counted like every command the arm flies
-  (`true_p0_vehicle_ticks`).
+  (`true_p0_vehicle_ticks`). Flown with `--response-arms ideal ardupilot` on
+  the two families whose holds move (9 paired episodes, 2026-10-21): in
+  time-window-opens-on-vehicle the arm's true P0 ticks on the command fell
+  from 66 at the merge to 54 (45 on the ideal vehicle; the airframe's 45
+  either way); three-simultaneous-violations, whose arm numbers are its RTL
+  leg's, went 258 -> 260 on the command and 352 -> 350 on the airframe.
 * An in-place hold run has its own folder. `--autopilot-hold in_place` is a
   configuration other than the headline one, so, like the 3 s forecast, the
   open-loop wind and the ArduPilot response, its run defaults to
   `demo/out/cmp_<profile>_hold-in_place` (`comparison_tag`), outside the
   `demo/out/stress_*` bundles tools/kpi_report.py reads by default.
+
+Re-confirmed after the merge and the final review's changes (5891cb2,
+2026-10-21): the library (grant and 3 s forecast arms), smoke and nightly
+results equal 6c7cdb0's on every field both write - 0 value differences,
+ignoring the code revision, timings, sim speed-up, the pilot's source hash
+and the command line - and the only fields added are master's
+vehicle-response records (`response_arm`, `vehicle_response`, the empty
+comparison section). Against master the differences are exactly 6c7cdb0's
+against master (the hold points' own). The library's dearest search now
+spends 317 of its 600 units (time-window-opens-on-vehicle at 07:29:58).
 
 The bundle extras schema is `sweep-episode-extras/3` since the merge: both
 branches had taken `/2` for different keys (`arm.autopilot_hold` here, a
