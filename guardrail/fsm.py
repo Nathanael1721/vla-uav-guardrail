@@ -193,6 +193,25 @@ Interpretations of terms the grant uses but does not define:
     and an unconverged tick there takes G3 as before.
   * The operator-defined Loiter timeout has no grant default. 30 s is ours.
     `None` disables it.
+  * WHERE Loiter holds and Land lands (since 2026-10-19; docs/DESIGN-hold-
+    points.md). The grant names the modes and never the place. ArduPilot's
+    LOITER / BRAKE hold where the aircraft is and LAND descends where it is,
+    so until then the hold point was "here", whatever "here" was: in the
+    library's three time-window-opens-on-vehicle cells G3 handed over to a
+    LOITER at (60, 21.8), inside a zone whose window opened 1-2 s later, and
+    the autopilot flew 26-38 P0 ticks there (CHANGELOG 2026-10-13, "Not
+    fixed"). Now every Loiter and Land entry asks the integration for a
+    `HoldPoint` (`needs_hold`, `hold_at`). The FSM stays geometry-free: the
+    point comes from the Shield's own rule queries (guardrail/holdpoint.py)
+    and the FSM checks it against what it was told this tick: an in-place
+    Loiter marked legal on a tick whose `stop_illegal` says standing still
+    here breaks a hard rule within the lookahead is REFUSED, and a Loiter
+    whose POINT later becomes illegal (a zone sweeping onto it, a window
+    about to open over it: `TickInput.hold_legal`) asks for a new one. No
+    edge, guard or setpoint changed: the state machine still goes Brake ->
+    Loiter on G2 / G3 and RTL -> Land on G6, and still streams nothing once
+    the autopilot owns the aircraft; only where the autopilot is told to
+    hold or land moved.
 
 The PI's reference ships a Phase-1 slice of this FSM (safety_shield/fsm.py:
 Normal, Brake, RTL, Land, with no Loiter, no N-in-T and no T_recover). Where
@@ -245,7 +264,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -307,6 +326,20 @@ X7_MIN_RISE_M = 0.5
 # a config that breaks that. Pending the PI (design doc, "Questions for the
 # PI").
 ONSET_CLEAR_S = 1.0
+# Hold points (module docstring, "WHERE Loiter holds and Land lands"). A
+# Loiter whose hold point the aircraft should have reached - travel_s after
+# the plan, plus this slack for an autopilot's acceleration and its waypoint
+# radius (the harness's modelled transit arrives on time; ArduCopter's WPNAV
+# does not quite) - and where standing still is STILL illegal within the
+# lookahead asks for a new point. Ours, not the grant's.
+HOLD_ARRIVAL_SLACK_S = 1.0
+# How often a Loiter with no legal point to go to (an in-place plan marked
+# illegal) searches again: once a second, so a zone that moves or closes is
+# seen within a second while a search that keeps finding nothing (up to a few
+# hundred Shield queries) does not run at the 10 Hz monitor rate.
+HOLD_REPLAN_S = 1.0
+# The plans kept in summary() (an episode re-plans at most once a second).
+HOLDS_KEPT = 200
 
 
 class FSMState(str, Enum):
@@ -888,6 +921,18 @@ class TickInput:
                x6_min_escape_mps over T is a recovery that is working (no
                X6); one shown to grow over T_recover is losing ground (X7).
                None is read as no progress, and never fires X7.
+    hold_legal  in Loiter: is the HOLD POINT (EscalationFSM.hold) still
+               legal - a stop there, from the plan's arrival time (now, once
+               it is due), breaks no hard enforced rule through the
+               lookahead (Shield.state_is_unsafe(point, ahead_s=...))? None
+               when the caller does not judge it; `needs_hold` then falls back
+               to the aircraft's own position once it should have arrived.
+               The point, not the aircraft: an aircraft pushed off a legal
+               hold (a wind beyond its authority) is X6's and X7's to judge
+               by the illegal depth, and moving the hold toward the nearest
+               exit there sent the 12 m/s wind-beyond-authority cell UPWIND,
+               where it made no headway (first measurement, 2026-10-19:
+               132 ticks inside instead of 29, then X7 and a Land).
     """
     t: float
     outcome: str
@@ -899,8 +944,11 @@ class TickInput:
     note: str = ""
     stop_illegal: bool = False
     unsafe_depth_m: float | None = None
+    hold_legal: bool | None = None
 
     def __post_init__(self) -> None:
+        if self.hold_legal is not None and not isinstance(self.hold_legal, bool):
+            raise ValueError(f"hold_legal must be a bool or None, got {self.hold_legal!r}")
         if isinstance(self.t, bool) or not isinstance(self.t, (int, float)) \
                 or not math.isfinite(self.t):
             raise ValueError(f"t must be a finite number of seconds, got {self.t!r}")
@@ -1116,6 +1164,98 @@ class FSMOutput:
     record: dict = field(default_factory=dict)
 
 
+# The two states whose autopilot mode holds the aircraft somewhere, and the
+# ArduPilot mode each one's hold point is for.
+HOLD_MODES = ("LOITER", "LAND")
+HOLD_KINDS = ("in_place", "moved")
+_HOLD_STATES = {FSMState.LOITER: "LOITER", FSMState.LAND: "LAND"}
+
+
+@dataclass(frozen=True)
+class HoldPoint:
+    """Where the autopilot holds (Loiter) or lands (Land), and why there.
+
+    Chosen by the integration from the Shield's own rule queries
+    (guardrail/holdpoint.py: `Shield.state_is_unsafe` / `rule_status` judged
+    over the forecast window from the arrival time), handed to
+    `EscalationFSM.hold_at`, and carried in every Loiter / Land record.
+
+    kind      in_place  hold (or land) where the aircraft is: ArduPilot's
+                        LOITER / BRAKE / LAND as they always flew;
+              moved     fly to (x, y, up) first - on ArduPilot a GUIDED
+                        position target, then the hold mode on arrival - at
+                        `speed_mps` horizontally and `climb_mps` vertically,
+                        `travel_s` seconds. Only ever to a point found legal.
+    legal     a stop (Loiter) or the descent (Land) at the point breaks no
+              hard enforced rule from arrival through `checked_s` seconds
+              (Loiter: the Shield's lookahead; Land: the whole descent). An
+              in-place plan may be illegal - no legal point was found, or the
+              search is off - and then names the rules it `breaks`, so the
+              record never passes an illegal hold for a legal one.
+    t_s       the monitor time the FSM took the plan (set by hold_at).
+    """
+    mode: str
+    kind: str
+    x: float
+    y: float
+    up: float
+    legal: bool
+    travel_s: float = 0.0
+    speed_mps: float | None = None
+    climb_mps: float | None = None
+    checked_s: float | None = None
+    breaks: tuple = ()
+    reason: str = ""
+    t_s: float | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode not in HOLD_MODES:
+            raise ValueError(f"HoldPoint.mode {self.mode!r} is not one of {HOLD_MODES}")
+        if self.kind not in HOLD_KINDS:
+            raise ValueError(f"HoldPoint.kind {self.kind!r} is not one of {HOLD_KINDS}")
+        if not isinstance(self.legal, bool):
+            raise ValueError(f"HoldPoint.legal must be a bool, got {self.legal!r}")
+        for name in ("x", "y", "up", "travel_s"):
+            v = getattr(self, name)
+            if not _num_ok(v):
+                raise ValueError(f"HoldPoint.{name} must be a finite number, got {v!r}")
+            object.__setattr__(self, name, float(v))
+        if self.travel_s < 0:
+            raise ValueError(f"HoldPoint.travel_s must be >= 0, got {self.travel_s!r}")
+        for name in ("speed_mps", "climb_mps", "checked_s", "t_s"):
+            v = getattr(self, name)
+            if v is not None:
+                if not _num_ok(v) or (name != "t_s" and v <= 0):
+                    raise ValueError(f"HoldPoint.{name} must be None or a finite "
+                                     f"number{' > 0' if name != 't_s' else ''}, got {v!r}")
+                object.__setattr__(self, name, float(v))
+        br = tuple(self.breaks)
+        if not all(isinstance(b, str) and b for b in br):
+            raise ValueError(f"HoldPoint.breaks must be rule ids, got {br!r}")
+        object.__setattr__(self, "breaks", br)
+        if self.kind == "in_place" and self.travel_s != 0.0:
+            raise ValueError("an in-place HoldPoint has no travel (travel_s 0)")
+        if self.kind == "moved":
+            # A move is made only TO a legal point: moving the aircraft to a
+            # spot no better than where it is would be a mode change with no
+            # reason, and the record could not say why it was made.
+            if not self.legal:
+                raise ValueError("a moved HoldPoint must be legal: the aircraft "
+                                 "is moved only to a point found legal")
+            if self.travel_s <= 0 or self.speed_mps is None:
+                raise ValueError("a moved HoldPoint needs travel_s > 0 and speed_mps")
+        if self.legal and br:
+            raise ValueError(f"a legal HoldPoint breaks nothing, got breaks={br}")
+
+    def to_dict(self) -> dict[str, Any]:
+        r = (lambda v: None if v is None else round(v, 6))
+        return {"mode": self.mode, "kind": self.kind, "x": r(self.x), "y": r(self.y),
+                "up": r(self.up), "legal": self.legal, "travel_s": r(self.travel_s),
+                "speed_mps": r(self.speed_mps), "climb_mps": r(self.climb_mps),
+                "checked_s": r(self.checked_s), "breaks": list(self.breaks),
+                "reason": self.reason, "t_s": r(self.t_s)}
+
+
 class EscalationFSM:
     """One episode's escalation state. Pure: output depends only on the inputs.
 
@@ -1146,6 +1286,14 @@ class EscalationFSM:
         self._n = 0
         self._transitions: list[dict[str, Any]] = []
         self._visited = [FSMState.NORMAL]
+        # Where the current Loiter / Land holds (hold_at), None until the
+        # integration gives a point; every plan taken this episode; and the
+        # last tick's stop_illegal, which decides whether an in-place hold is
+        # still legal (needs_hold).
+        self._hold: HoldPoint | None = None
+        self._holds: list[dict[str, Any]] = []
+        self._last_stop_illegal = False
+        self._last_hold_legal: bool | None = None
 
     # ---------------------------------------------------------------- state
     @property
@@ -1163,6 +1311,86 @@ class EscalationFSM:
     def failsafe_triggered(self, states: Sequence[FSMState] = FAILSAFE_STATES) -> bool:
         """Did this episode enter a fail-safe state? Default RTL or Land."""
         return any(s in self._visited for s in states)
+
+    # ------------------------------------------------------------ hold points
+    @property
+    def hold(self) -> HoldPoint | None:
+        """The hold point of the current Loiter / Land (None outside them, or
+        until the integration has given one)."""
+        return self._hold
+
+    @property
+    def needs_hold(self) -> bool:
+        """Must the integration choose a hold point (and pass it to hold_at)
+        before acting on this tick's output?
+
+        True on the tick the FSM enters Loiter or Land (any edge: G2, G3, X4,
+        G6, G12, X3), and in Loiter when the point held is no longer legal:
+        this tick's `hold_legal` (TickInput: the integration's judgement of
+        the POINT, from its arrival time through the lookahead) says so - a
+        zone moving onto the hold, a window about to open over it. When the
+        integration does not judge the point (`hold_legal` None: a replayed
+        log, a rail that runs its own FSM), the FSM judges the aircraft's own
+        position once it should be there (an in-place hold at once; a moved
+        one travel_s + HOLD_ARRIVAL_SLACK_S after the plan) by this tick's
+        `stop_illegal`. A plan already marked illegal (no legal point was
+        found) is searched again at most once per HOLD_REPLAN_S. A Land is
+        planned once, on entry: its point is a landing site, judged over the
+        descent, and the descent itself is what stop_illegal would object
+        to."""
+        st = self._state
+        if self._terminal or st not in _HOLD_STATES:
+            return False
+        h = self._hold
+        if h is None:
+            return True
+        if st is FSMState.LAND:
+            return False
+        t = self._t_last if self._t_last is not None else 0.0
+        t0 = h.t_s if h.t_s is not None else t
+        if not h.legal and t - t0 < HOLD_REPLAN_S - EPS:
+            return False
+        if self._last_hold_legal is not None:
+            return not self._last_hold_legal
+        if not self._last_stop_illegal:
+            return False
+        due = t0 + h.travel_s + (HOLD_ARRIVAL_SLACK_S if h.kind == "moved" else 0.0)
+        return t >= due - EPS
+
+    def hold_at(self, plan: HoldPoint) -> HoldPoint:
+        """Take `plan` as the current Loiter's or Land's hold point; returns
+        it stamped with the tick's time (`t_s`).
+
+        Refused (ValueError) outside Loiter / Land, for the other state's mode
+        (a LAND site for a Loiter), and - the one geometric fact the FSM can
+        check on its own - for an in-place Loiter marked LEGAL on a tick whose
+        `stop_illegal` says standing still here breaks a hard rule within the
+        lookahead. The honest fallback, when no legal point exists, is an
+        in-place plan marked illegal that names what it breaks; a plan that
+        claims otherwise would put the aircraft back where the 13 Oct cells
+        held it (inside a zone about to open) with a record calling it
+        legal."""
+        if not isinstance(plan, HoldPoint):
+            raise ValueError(f"hold_at() takes a HoldPoint, got {type(plan).__name__}")
+        st = self._state
+        if self._terminal or st not in _HOLD_STATES:
+            raise ValueError(f"hold_at: the FSM is in {st.value}"
+                             f"{' (terminal)' if self._terminal else ''}; only "
+                             f"Loiter and Land hold the aircraft somewhere")
+        if plan.mode != _HOLD_STATES[st]:
+            raise ValueError(f"hold_at: a {plan.mode} point for the FSM's {st.value}")
+        if (st is FSMState.LOITER and plan.kind == "in_place" and plan.legal
+                and self._last_stop_illegal):
+            raise ValueError(
+                "hold_at: an in-place Loiter marked legal, but this tick's "
+                "stop_illegal says standing still here breaks a hard rule within "
+                "the lookahead; mark it illegal (and name what it breaks) or "
+                "choose a point that is legal")
+        plan = replace(plan, t_s=self._t_last)
+        self._hold = plan
+        if len(self._holds) < HOLDS_KEPT:
+            self._holds.append(plan.to_dict())
+        return plan
 
     def summary(self) -> dict[str, Any]:
         """Per-episode facts the harness needs, including the KPI's `triggered`."""
@@ -1182,6 +1410,11 @@ class EscalationFSM:
                               "RTL_triggered" if rtl else None),
             "transitions": self.transitions,
             "fsm_config_hash": self.config.digest,
+            # Every hold point taken (hold_at), oldest first: where each
+            # Loiter held and each Land landed, and whether it was legal.
+            "holds": [dict(h) for h in self._holds],
+            "holds_moved": sum(1 for h in self._holds if h["kind"] == "moved"),
+            "holds_illegal": sum(1 for h in self._holds if not h["legal"]),
         }
 
     # ----------------------------------------------------------------- step
@@ -1227,6 +1460,8 @@ class EscalationFSM:
         self._n += 1
         if self._entered_at is None:
             self._entered_at = t
+        self._last_stop_illegal = inp.stop_illegal
+        self._last_hold_legal = inp.hold_legal
         before = self._state
 
         hits = sorted(inp.violations, key=_severity_key)
@@ -1420,6 +1655,14 @@ class EscalationFSM:
             "note": inp.note,
             "fsm_config_hash": cfg.digest,
         }
+        if after in _HOLD_STATES and not self._terminal:
+            # Only on Loiter / Land ticks, so every other record is byte for
+            # byte what it was. `hold_point` is the plan in force BEFORE this
+            # tick's hold_at (None on the entry tick); an integration that
+            # then chooses one updates its copy of the record.
+            record["hold_point"] = self._hold.to_dict() if self._hold else None
+            record["hold_legal"] = inp.hold_legal
+            record["hold_needed"] = self.needs_hold
         return FSMOutput(state=after, before=before, transition=transition,
                          edge=edge if transition else None, set_mode=set_mode,
                          setpoint=setpoint, reason=reason, terminal=self._terminal,
@@ -1515,6 +1758,9 @@ class EscalationFSM:
     def _enter(self, target: FSMState, t: float) -> None:
         self._state = target
         self._entered_at = t
+        # A new state holds nowhere yet: entering Loiter or Land asks for a
+        # point of its own (needs_hold), and leaving them drops the old one.
+        self._hold = None
         if target not in self._visited:
             self._visited.append(target)
         if target == FSMState.LOITER:
@@ -1800,7 +2046,8 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
                              landed: bool = False, note: str = "",
                              stop_illegal: Any = None,
                              caps: "KinematicCaps | None | bool" = None,
-                             unsafe_depth_m: float | None = None) -> TickInput:
+                             unsafe_depth_m: float | None = None,
+                             hold_legal: bool | None = None) -> TickInput:
     """Map one `guardrail.shield.ShieldDecision` onto a TickInput.
 
     blocked   the Shield braked, or its own re-check of the emitted action is
@@ -1840,6 +2087,9 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
 
     unsafe_depth_m: `shield.unsafe_depth(state)` (metres from legal), for
     X6's progress test. None: X6 sees no progress, as before 2026-10-08.
+
+    hold_legal: in Loiter, whether the FSM's hold point is still legal
+    (TickInput.hold_legal); passed through. None: not judged.
     """
     vios = list(getattr(decision, "violations", None) or [])
     repairs = list(getattr(decision, "repairs", None) or [])
@@ -1881,7 +2131,7 @@ def tick_input_from_decision(t: float, decision: Any, policy: Any,
     return TickInput(t=t, outcome=outcome, violations=hits, magnitude=mag,
                      rtl_failed=rtl_failed, home_reached=home_reached,
                      landed=landed, note=note, stop_illegal=bool(stop),
-                     unsafe_depth_m=unsafe_depth_m)
+                     unsafe_depth_m=unsafe_depth_m, hold_legal=hold_legal)
 
 
 # --------------------------------------------------------------------------- #

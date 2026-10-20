@@ -451,7 +451,10 @@ def test_a_known_failure_pin_names_the_gates_it_fails_and_only_real_ones():
     lib = Library(ROOT / "experiments" / "scenarios.yaml")
     pinned = [f for f in lib.families if f.raw.get("known_failures")
               or f.raw.get("expect") == "known_failure"]
-    assert len(pinned) >= 8, [f.scenario_id for f in pinned]
+    # 8 until 2026-10-19, when three-simultaneous-violations and
+    # dyn-nfz-rotate-spin's 9 deg/s cell passed every gate with the FSM's
+    # hold points (guardrail/holdpoint.py) and their pins came off.
+    assert len(pinned) >= 6, [f.scenario_id for f in pinned]
 
 
 def test_a_pinned_gate_can_carry_the_bound_it_is_pinned_within():

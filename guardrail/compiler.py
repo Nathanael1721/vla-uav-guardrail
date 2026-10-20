@@ -1858,6 +1858,214 @@ def naive_prefix_baseline(policy: Policy, budget_tokens: int,
             "n_rules_in_text": len(parts), "tokens_used": counter.count(text)}
 
 
+# --------------------------------------------------------------------------- #
+# Lint WARNINGS (never refusals): a time window that can open on an aircraft
+# that cannot get out in time
+# --------------------------------------------------------------------------- #
+#
+# WHY. The library's only P0 escape ticks (6 in the three time-window-opens-
+# on-vehicle cells, experiments/templates/time_window_switch.yaml) are a
+# window opening over an aircraft that cannot leave before it opens: from the
+# zone's middle the ring is 10 m away, 2.5 s at the 4 m/s cap, and the window
+# opens 1.0-2.0 s in. On the first tick no action clears the forecast, so the
+# Shield flies the fastest way out with the violation on it and its own
+# counter scores the escape. No repair or hold point can remove that tick;
+# only the policy (or the mission's timing) can, so the DSL says so up front.
+# The grant asks whether the lint has severity classes ("Lint severity
+# classes. Errors only, or warnings vs errors?", Policy DSL page, open
+# questions): `Policy.lint()` stays errors-only (every finding refuses), and
+# this is the first warning class - reported, never refused.
+#
+# THE TEST. A keep-out zone whose being in force can change with time (its own
+# `valid_time` recurrence, or a time_window_switch aimed at it) can come into
+# force over any point of its margin ring that the aircraft may legally be at
+# before it does. From the deepest such point (within the hard keep-in
+# corridors, if the policy has any), the nearest legal exit (outside the ring,
+# inside a corridor, outside every zone that is always in force) is `depth_m`
+# away; at the speed assumption that takes depth / speed seconds.
+#   * policy level: the Shield's forecast sees an opening `lookahead_s` ahead
+#     (5 s, the grant's), so if leaving takes longer, an aircraft inside when
+#     the opening comes into view cannot be out in time - WARNING;
+#   * mission level (`start` and `now` given, the compile-time case): the
+#     mission starts inside the ring and the window opens sooner than it can
+#     leave from there - WARNING. This is the opens-on-vehicle cell.
+# An event-driven switch (a hot-applied time_window_switch with no window)
+# gives no lead time at all and cannot be linted from the policy file.
+#
+# SPEED ASSUMPTION. `speed_mps` when given, else the tightest hard, enforced
+# speed cap in the policy (the Shield clamps every action to it), else
+# LINT_SPEED_MPS (4 m/s, the Shield's own default speed for a rescue heading;
+# guardrail/holdpoint.py plans a hold transit at the same). Every warning says
+# which it used.
+LINT_SPEED_MPS = 4.0
+_LINT_MAX_POINTS = 4000
+
+
+def _lint_speed(policy: Policy, speed_mps: float | None) -> tuple[float, str]:
+    if speed_mps is not None:
+        v = float(speed_mps)
+        if not (math.isfinite(v) and v > 0):
+            raise ValueError(f"speed_mps must be a finite number > 0, got {speed_mps!r}")
+        return v, f"{v:g} m/s as given"
+    caps = [c.speed_max_mps for c in policy.by_type(KinematicEnvelope)
+            if c.constraint_type == "hard" and c.violation_action != "monitor_only"]
+    if caps:
+        v = min(caps)
+        return v, f"{v:g} m/s, the policy's hard speed cap"
+    return LINT_SPEED_MPS, (f"{LINT_SPEED_MPS:g} m/s assumed: the policy has no hard "
+                            f"speed cap")
+
+
+def _timed_zones(policy: Policy) -> list:
+    """Hard, enforced keep-out zones whose being in force can change with
+    time: their own weekly window, or a time_window_switch aimed at them."""
+    switched = {c.target_id for c in policy.constraints if isinstance(c, TimeWindowSwitch)}
+    return [c for c in policy.constraints
+            if isinstance(c, _ZONES) and c.constraint_type == "hard"
+            and c.violation_action != "monitor_only"
+            and ((c.valid_time is not None and c.valid_time.recurrence is not None)
+                 or c.id in switched)]
+
+
+def _ring_of(zone):
+    from shapely.geometry import Polygon
+    return Polygon([(v.x, v.y) for v in zone.vertices]).buffer(max(zone.margin_m, 0.0))
+
+
+def _exits_for(policy: Policy, zone, ring):
+    """(region the aircraft may be in inside the ring, the exits from it): the
+    ring within the hard keep-in corridors (all of the ring when there are
+    none), and the legal places outside it - inside a corridor, outside every
+    hard zone that is always in force."""
+    from shapely.geometry import LineString, box
+    from shapely.ops import unary_union
+    tubes = [LineString(list(c.points())).buffer(c.half_width_m)
+             for c in policy.constraints if isinstance(c, _TUBES)
+             and c.constraint_type == "hard" and c.violation_action != "monitor_only"]
+    keep_in = unary_union(tubes) if tubes else None
+    timed = {z.id for z in _timed_zones(policy)}
+    always = [_ring_of(z) for z in policy.constraints
+              if isinstance(z, _ZONES) and z is not zone and z.constraint_type == "hard"
+              and z.violation_action != "monitor_only" and z.id not in timed
+              and z.valid_time is None]
+    minx, miny, maxx, maxy = ring.bounds
+    pad = max(maxx - minx, maxy - miny) + 1.0
+    world = box(minx - pad, miny - pad, maxx + pad, maxy + pad)
+    if keep_in is not None:
+        world = world.intersection(keep_in)
+    region = ring if keep_in is None else ring.intersection(keep_in)
+    blocked = unary_union([ring] + always)
+    return region, world.difference(blocked)
+
+
+def _deepest(region, exits) -> tuple[float, float, float] | None:
+    """(depth_m, x, y): the point of `region` farthest from every exit, on a
+    grid of at most _LINT_MAX_POINTS points (resolution reported by the
+    caller's tolerance), or None when the region is empty. inf depth when
+    there is no exit at all."""
+    import numpy as np
+    import shapely
+    if region.is_empty:
+        return None
+    minx, miny, maxx, maxy = region.bounds
+    step = max(0.25, math.sqrt(max(region.area, 1e-9) / _LINT_MAX_POINTS))
+    xs = np.arange(minx + step / 2, maxx, step)
+    ys = np.arange(miny + step / 2, maxy, step)
+    if len(xs) == 0 or len(ys) == 0:
+        c = region.representative_point()
+        xs, ys = np.array([c.x]), np.array([c.y])
+    gx, gy = np.meshgrid(xs, ys)
+    pts = shapely.points(gx.ravel(), gy.ravel())
+    inside = shapely.contains(region, pts)
+    pts = pts[inside]
+    if len(pts) == 0:
+        c = region.representative_point()
+        pts = shapely.points(np.array([c.x]), np.array([c.y]))
+    if exits.is_empty:
+        p = pts[0]
+        return math.inf, float(shapely.get_x(p)), float(shapely.get_y(p))
+    d = shapely.distance(exits, pts)
+    i = int(np.argmax(d))
+    bx, by = float(shapely.get_x(pts[i])), float(shapely.get_y(pts[i]))
+    # A second, ten times finer pass around the best grid point: the depth
+    # is then within about a twentieth of the first step (the first unit
+    # test read 25.9 m for a 26 m ring half-width on the coarse grid alone).
+    fx = np.linspace(bx - step, bx + step, 21)
+    fy = np.linspace(by - step, by + step, 21)
+    gx, gy = np.meshgrid(fx, fy)
+    fine = shapely.points(gx.ravel(), gy.ravel())
+    fine = fine[shapely.contains(region, fine)]
+    if len(fine):
+        fd = shapely.distance(exits, fine)
+        j = int(np.argmax(fd))
+        if fd[j] > d[i]:
+            return (float(fd[j]), float(shapely.get_x(fine[j])),
+                    float(shapely.get_y(fine[j])))
+    return float(d[i]), bx, by
+
+
+def time_window_lead_warnings(policy: Policy, *, lookahead_s: float = DEFAULT_LOOKAHEAD_S,
+                              speed_mps: float | None = None,
+                              start: tuple[float, float, float] | None = None,
+                              now: datetime | None = None) -> list[str]:
+    """The lint WARNINGS above: time windows that can open on an aircraft that
+    cannot leave in time. Never raises on a finding; returns [] when there is
+    none. `start` (x, y, up) and `now` add the mission-level test (both
+    needed). A dynamic_nfz is judged at its declared position."""
+    if not (math.isfinite(float(lookahead_s)) and lookahead_s > 0):
+        raise ValueError(f"lookahead_s must be a finite number > 0, got {lookahead_s!r}")
+    from shapely.geometry import Point
+    speed, why = _lint_speed(policy, speed_mps)
+    clock = _RuleClock(policy)
+    out: list[str] = []
+    for z in _timed_zones(policy):
+        ring = _ring_of(z)
+        region, exits = _exits_for(policy, z, ring)
+        deep = _deepest(region, exits)
+        if deep is not None:
+            depth, x, y = deep
+            fly = depth / speed
+            if fly > lookahead_s + 1e-9:
+                exit_txt = ("there is no legal exit at all" if math.isinf(depth)
+                            else f"the nearest legal exit is {depth:.1f} m away")
+                out.append(
+                    f"{z.id}: its time window can open with the aircraft at "
+                    f"({x:.1f}, {y:.1f}), inside its {z.margin_m:g} m margin ring, "
+                    f"where {exit_txt}: leaving takes {fly:.1f} s at {why}, longer "
+                    f"than the {lookahead_s:g} s the Shield's forecast sees an "
+                    f"opening coming. An aircraft there when the opening comes into "
+                    f"view cannot be out in time; the Shield flies the way out with "
+                    f"the P0 violation on, and its counter scores those ticks as P0 "
+                    f"escapes (a warning, not a refusal)")
+        if start is None or now is None:
+            continue
+        sx, sy, sup = (float(v) for v in start)
+        if not (ring.contains(Point(sx, sy))
+                and z.altitude_floor_m <= sup <= z.altitude_ceiling_m):
+            continue
+        if clock.on(z, now):
+            continue        # already in force at the start: start_conflicts' case
+        d_out = exits.distance(Point(sx, sy)) if not exits.is_empty else math.inf
+        fly = d_out / speed
+        horizon = min(fly, 7 * 24 * 3600.0)
+        k, opens = 1, None
+        while k * 0.05 <= horizon + 1e-9:
+            if clock.on(z, now + timedelta(seconds=k * 0.05)):
+                opens = k * 0.05
+                break
+            k += 1
+        if opens is not None:
+            out.append(
+                f"{z.id}: the mission starts at ({sx:.1f}, {sy:.1f}, {sup:.1f}), "
+                f"inside its margin ring, {opens:.2f} s before its time window opens "
+                f"(clock {now.isoformat(timespec='milliseconds')}), but leaving from "
+                f"there takes {fly:.1f} s ({d_out:.1f} m at {why}): the window opens "
+                f"on the aircraft. Every tick until it is out has no action that "
+                f"clears the forecast, and the Shield's counter scores the ticks "
+                f"it flies as P0 escapes (a warning, not a refusal)")
+    return out
+
+
 def _mission_id(m: Mission) -> str:
     if m.mission_id:
         return m.mission_id
@@ -1871,6 +2079,18 @@ def _mission_id(m: Mission) -> str:
 class ConstraintCompiler:
     def __init__(self, policy: Policy):
         self.policy = policy
+
+    def lint_warnings(self, mission: Mission | None = None, now: datetime | None = None,
+                      lookahead_s: float = DEFAULT_LOOKAHEAD_S,
+                      speed_mps: float | None = None) -> list[str]:
+        """The policy's lint WARNINGS (never refusals; `Policy.lint()` holds
+        the errors): today the time-window lead test
+        (`time_window_lead_warnings`). With a mission and a clock, the
+        mission-level test too, from its start at its cruise altitude."""
+        start = (None if mission is None
+                 else (mission.start_x, mission.start_y, mission.cruise_alt_m))
+        return time_window_lead_warnings(self.policy, lookahead_s=lookahead_s,
+                                         speed_mps=speed_mps, start=start, now=now)
 
     # ---------------- command -> Mission ---------------- #
 
@@ -2780,6 +3000,29 @@ def join_negative_xy(argv: list[str], flags=_XY_FLAGS) -> list[str]:
 _join_negative_xy = join_negative_xy      # the name tests/test_csp.py calls
 
 
+def _lint(args) -> int:
+    """`python -m guardrail.compiler lint POLICY...`: print each policy's lint
+    warnings. Warnings never refuse, so this exits 0 whatever it finds (a
+    policy that fails the DSL's error lint does not load, and that is
+    reported by load_policy as always)."""
+    from .models import load_policy
+    start = None
+    if args.start:
+        start = tuple(float(v) for v in args.start.split(","))
+        if len(start) != 3:
+            raise SystemExit("--start takes X,Y,UP")
+    now = datetime.fromisoformat(args.now) if args.now else None
+    for p in args.policy:
+        pol = load_policy(p, runtime=False)
+        ws = time_window_lead_warnings(pol, lookahead_s=args.lookahead,
+                                       speed_mps=args.speed, start=start, now=now)
+        if not ws:
+            print(f"{p}: no lint warnings")
+        for w in ws:
+            print(f"{p}: WARNING {w}")
+    return 0
+
+
 def _main(argv: list[str] | None = None) -> int:
     argv = _join_negative_xy(list(sys.argv[1:] if argv is None else argv))
     ap = argparse.ArgumentParser(prog="python -m guardrail.compiler")
@@ -2811,7 +3054,20 @@ def _main(argv: list[str] | None = None) -> int:
     s.add_argument("out")
     t = sub.add_parser("table", help="print a regenerated token table for csp.py")
     t.add_argument("--policies", default=str(Path(__file__).resolve().parents[1] / "policies"))
+    lw = sub.add_parser("lint", help="the DSL's lint WARNINGS for one or more policies "
+                                     "(time windows that can open on an aircraft that "
+                                     "cannot leave in time); always exits 0")
+    lw.add_argument("policy", nargs="+")
+    lw.add_argument("--lookahead", type=float, default=DEFAULT_LOOKAHEAD_S,
+                    help="the Shield's forecast, s (the grant's 5)")
+    lw.add_argument("--speed", type=float, default=None,
+                    help="m/s to leave a zone at (default: the policy's hard speed "
+                         f"cap, else {LINT_SPEED_MPS:g})")
+    lw.add_argument("--start", default=None, help="X,Y,UP of a mission's start")
+    lw.add_argument("--now", default=None, help="ISO clock at the mission's start")
     args = ap.parse_args(argv)
+    if args.cmd == "lint":
+        return _lint(args)
     if args.cmd == "costmap":
         return _costmap(args)
     if args.cmd == "costmap-report":

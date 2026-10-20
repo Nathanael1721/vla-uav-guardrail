@@ -25,8 +25,9 @@
 #        WP3, the Shield and the escalation FSM: test_shield,
 #          test_shield_events, test_corridor, test_clearance,
 #          test_check_contract, test_guardrail_coverage, test_frame_contract,
-#          test_fsm, test_shieldcore_*, test_api, test_profile_shield_tick,
-#          test_occ_bands, test_ros2_package.
+#          test_fsm, test_hold_points, test_shieldcore_*, test_api,
+#          test_profile_shield_tick, test_occ_bands, test_ros2_package.
+#          The DSL's lint warnings: test_window_lead_lint.
 #        WP4, the stress harness and its outputs: test_scenario_spec,
 #          test_sweep, test_kpi_magnitudes, test_kpi_report,
 #          test_harness_service, test_harnesstruth_*, test_wp4outputs_*.
@@ -414,6 +415,8 @@ jobs:
               tests/test_explainer_figures.py \
               tests/test_explainer_deck.py \
               tests/test_fsm.py \
+              tests/test_hold_points.py \
+              tests/test_window_lead_lint.py \
               tests/test_policy_hash.py \
               tests/test_csp.py \
               tests/test_policy_dsl_grant_form.py \

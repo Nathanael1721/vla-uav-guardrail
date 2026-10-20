@@ -514,6 +514,14 @@ class ShieldDecision(BaseModel):
     # lookahead caused (`window_edge`). Excluded from model_dump(), so flight
     # logs, digests and every comparison of dumped decisions are unchanged.
     trace: dict | None = Field(default=None, exclude=True)
+    # Where the autopilot holds (FSM in Loiter) or lands (Land): the FSM's
+    # current fsm.HoldPoint as a dict, None in every other state (since
+    # 2026-10-19; guardrail/holdpoint.py). "in_place" is ArduPilot's own
+    # LOITER / BRAKE / LAND where the aircraft is; "moved" asks the
+    # integration to fly to (x, y, up) first. The same dict is in
+    # `fsm_record["hold_point"]`. Excluded from model_dump() like `trace`, so
+    # a dumped decision of any other state is byte for byte what it was.
+    hold_point: dict | None = Field(default=None, exclude=True)
 
     @property
     def touched(self) -> bool:
@@ -769,10 +777,16 @@ class _Tick:
     monitor clock, and the rule ids the repair chain is told to leave alone
     (monitor_only rules, and soft rules it has given up)."""
     __slots__ = ("rt", "sched", "t", "skip", "_lists", "_moving", "_swept", "unsafe",
-                 "_t_first", "given_up", "chain_runs", "ledger")
+                 "_t_first", "given_up", "chain_runs", "ledger", "ahead", "origin")
 
     def __init__(self, rt: _Runtime, sched: _Schedule, t: float, t_first: float | None):
         self.rt, self.sched, self.t, self._t_first = rt, sched, t, t_first
+        # A LOOK-AHEAD view (Shield.looking_ahead): how many seconds after the
+        # monitor tick `origin` this view answers for - its clock, its moving
+        # zones' ages and its subject all advanced by that much. 0.0 and None
+        # on every real tick, where nothing reads them differently.
+        self.ahead = 0.0
+        self.origin: "_Tick | None" = None
         self.skip: frozenset = frozenset()
         # The soft rules _relax gave up on this tick: the repair chain skipped
         # them, so a soft speed cap among them clamped nothing (_applied_caps).
@@ -899,7 +913,8 @@ class Shield:
                  now=None, escalation: "_fsm.FSMConfig | bool | None" = True,
                  theta_horizon_s: float | None = _fsm.DEFAULT_THETA_HORIZON_S, *,
                  repair_mode: str = "chain", path_repair: bool = False,
-                 segment_check: bool = False, repair_order: tuple | None = None):
+                 segment_check: bool = False, repair_order: tuple | None = None,
+                 hold_points: bool = True, land_site_ok=None):
         """obstacle_map: None, or {"occ": uint8 NxN (1 = blocked), "res": float,
         "ox": float, "oy": float} — the same occupancy grid the global planner
         uses. A policy YAML cannot carry an 80x80 grid, so obstacle_clearance
@@ -949,7 +964,19 @@ class Shield:
         priority order (repair.FIRST_FEASIBLE) in first-feasible mode - how a
         registered operator of a new name is put to work. None (the default)
         keeps the stacks above. A name the registry does not hold is refused
-        here."""
+        here.
+
+        hold_points: where the escalation FSM's Loiter holds and its Land
+        lands (since 2026-10-19, guardrail/holdpoint.py). True (the default):
+        where the aircraft is when that is legal - every hold that was legal
+        before is unchanged - and otherwise the nearest point the Shield's own
+        rules find legal from arrival through the lookahead (Loiter) or over
+        the whole descent (Land), reached without breaking another rule.
+        False: always where the aircraft is, the behaviour before that date,
+        still recorded with whether it was legal (for comparisons).
+        land_site_ok: optional `(x, y) -> bool`, a map-based landing filter
+        (the city demo's demo/landing.py) applied on top of the policy's own
+        test; None, the policy alone."""
         if repair_mode not in _repair.REPAIR_MODES:
             raise ValueError(f"repair_mode must be one of {_repair.REPAIR_MODES}, "
                              f"got {repair_mode!r}")
@@ -966,6 +993,11 @@ class Shield:
                 raise ValueError(f"repair_order names unregistered operator(s) {unknown}; "
                                  f"registered: {sorted(self.repair_operators)}")
         self.repair_order = repair_order
+        self.hold_points = bool(hold_points)
+        if land_site_ok is not None and not callable(land_site_ok):
+            raise TypeError(f"land_site_ok must be callable (x, y) -> bool or None, "
+                            f"got {land_site_ok!r}")
+        self.land_site_ok = land_site_ok
         self._tubes: dict = {}
         why = self.unenforceable(policy)
         if why:
@@ -2517,6 +2549,11 @@ class Shield:
         a.vx - the stationary arithmetic, number for number."""
         sx, sy = self._subject
         svx, svy = self._subject_v if self._subject_v is not None else (0.0, 0.0)
+        tick = self._tick_ctx()
+        if tick is not None and tick.ahead:
+            # A look-ahead view (looking_ahead): the subject where its
+            # constant velocity puts it then. Held still, it does not move.
+            return sx + svx * tick.ahead, sy + svy * tick.ahead, svx, svy
         return sx, sy, svx, svy
 
     def _subject_min_range(self, state: State, a: Action4D) -> float:
@@ -2854,7 +2891,7 @@ class Shield:
                     magnitude_m=excursion, axis="lateral", recovery=recovering))
         return a
 
-    def state_is_unsafe(self, state: State) -> list[Violation]:
+    def state_is_unsafe(self, state: State, *, ahead_s: float = 0.0) -> list[Violation]:
         """Is this POSITION illegal, whatever the vehicle does next?
 
         The test is "would standing still here violate a rule". That separates
@@ -2883,8 +2920,77 @@ class Shield:
 
         Returns the violations, so a caller can say WHICH rule the position
         breaks; truthiness is the common use.
+
+        It judges a stop over the whole lookahead, so "illegal" includes "will
+        become illegal within the lookahead" (a window opening over it, a
+        zone moving onto it). `ahead_s` (since 2026-10-19) asks the same of a
+        stop that STARTS `ahead_s` seconds after this tick (`looking_ahead`):
+        "if the aircraft arrived here then, could it hold here through the
+        lookahead?" - the escalation FSM's hold-point test
+        (guardrail/holdpoint.py). 0.0 is exactly the call it always was.
         """
+        if ahead_s:
+            with self.looking_ahead(ahead_s):
+                return self._check_in(state, BRAKE)
         return self._check(state, BRAKE)
+
+    def looking_ahead(self, ahead_s: float):
+        """A context (`with shield.looking_ahead(3.0): ...`) in which every rule
+        query of this Shield - state_is_unsafe, rule_status, zones_now,
+        unsafe_depth, the checks behind them - answers for `ahead_s` seconds
+        after the current monitor tick: the rule clock read that much later
+        (windows, switches, swaps), each moving zone aged by it, a moving
+        subject advanced along its velocity. Nested views are relative to the
+        monitor tick, not to each other. Nothing is decided or recorded: the
+        sliding window, the FSM and the clock are untouched.
+
+        The one place the Shield reasons about a time other than now. It
+        exists so the hold-point search can ask the Shield's own rule code -
+        not a second geometry - whether a point reached at a given time is
+        legal from then on ("there is exactly one rule-evaluation code path in
+        the system", Safety Shield page)."""
+        a = float(ahead_s)
+        if not math.isfinite(a) or a < 0:
+            raise ValueError(f"ahead_s must be a finite number >= 0, got {ahead_s!r}")
+        base = self._tick_ctx()
+        if base is None:
+            base = self._new_tick(None)
+        elif base.origin is not None:
+            base = base.origin
+        when = base.sched.when
+        if when is not None:
+            when = when + timedelta(seconds=a)
+        sched = _Schedule(base.rt, when, self.dt / 2.0, self._grid())
+        view = _Tick(base.rt, sched, base.t + a,
+                     base._t_first if base._t_first is not None else base.t)
+        view.ahead = a
+        view.origin = base
+        return self._scope(view)
+
+    def hard_violations(self, violations) -> list[Violation]:
+        """The violations of HARD rules the Shield enforces (not monitor_only),
+        under the rule set of the current tick: the filter the FSM's
+        `stop_illegal` applies to state_is_unsafe (a soft rule is capped at
+        brake, so a stop that breaks only a soft rule is a response that rule
+        allows). A violation of no policy rule (the Shield's own contract
+        checks) counts as hard, as fsm.rules_from_policy reads it."""
+        tick = self._tick_ctx()
+        rt = tick.rt if tick is not None else self._rt
+        return [v for v in violations
+                if rt.hard.get(v.rule_id, True)
+                and self._act(rt, v.rule_id) != "monitor_only"]
+
+    def kinematic_caps(self) -> "_fsm.KinematicCaps | None":
+        """The smallest speed and climb caps among the enforced kinematic
+        rules in force in this tick's lookahead (not monitor_only), or None:
+        the speeds the hold-point search plans a transit at."""
+        tick = self._tick_ctx()
+        if tick is None:
+            with self._scope(self._new_tick(None)):
+                return self.kinematic_caps()
+        rt = tick.rt
+        return _fsm.KinematicCaps.of(k for k in tick.rules("kins")
+                                     if self._act(rt, k.id) != "monitor_only")
 
     def unsafe_depth(self, state: State, violations: list | None = None) -> float:
         """How far this POSITION is from legal, in metres: summed over the
@@ -3381,7 +3487,7 @@ class Shield:
 
     def rule_status(self, state: State, action: Action4D | None = None, *,
                     subject=None, subject_class=None, use_live_subject: bool = True,
-                    clearance_m: float | None = None) -> list[dict]:
+                    clearance_m: float | None = None, ahead_s: float = 0.0) -> list[dict]:
         """Each rule's distance, state and breach, from this Shield's own
         geometry, in policy order.
 
@@ -3410,7 +3516,16 @@ class Shield:
         subject when `use_live_subject` is False (an offline re-render passes
         the logged estimate); `clearance_m` overrides the distance-field read
         for a caller whose Shield has no map but measured it with the flight's.
+        `ahead_s` (since 2026-10-19) answers for `ahead_s` seconds after this
+        tick instead (`looking_ahead`): the rules in force then, moving zones
+        where they will be, a moving subject advanced; 0.0 is exactly the
+        call it always was. The hold-point search (guardrail/holdpoint.py)
+        judges a transit's poses with it.
         """
+        if ahead_s:
+            with self.looking_ahead(ahead_s) as tick:
+                return self._rule_status_in(tick, state, action, subject,
+                                            subject_class, use_live_subject, clearance_m)
         tick = self._tick_ctx()
         if tick is None:
             with self._scope(self._new_tick(None)) as tick:
@@ -3425,6 +3540,10 @@ class Shield:
         recs = {r.rule.id: r for r in rt.ir.fences}
         if use_live_subject:
             subject, subject_class = self._subject, self._subject_class
+            if subject is not None and tick.ahead:
+                # A look-ahead view: the subject advanced by its velocity, as
+                # the stand-off check reads it (_subject_track).
+                subject = self._subject_track()[:2]
         P = Point(state.x, state.y)
         out = []
         for i, c in enumerate(rt.constraints):
@@ -4238,8 +4357,20 @@ class Shield:
                 stop_illegal=list(tick.unsafe), rtl_failed=bool(rtl_failed),
                 home_reached=bool(home_reached), landed=bool(landed),
                 caps=caps if caps is not None else False,
-                unsafe_depth_m=self._unsafe_depth_in(state, list(tick.unsafe)))
+                unsafe_depth_m=self._unsafe_depth_in(state, list(tick.unsafe)),
+                hold_legal=self._hold_legal(tick))
             out = self.fsm.step(inp)
+            rec = out.record
+            if self.fsm.needs_hold:
+                # Loiter or Land was just entered, or the point held is no
+                # longer legal: choose where the autopilot holds / lands from
+                # this Shield's own rules (guardrail/holdpoint.py). The FSM
+                # refuses a plan that contradicts its own input (hold_at), and
+                # a refusal is a contract break like any other (the fault
+                # below).
+                plan = self.fsm.hold_at(self._plan_hold(tick, state, d))
+                rec = {**rec, "hold_point": plan.to_dict(), "hold_needed": False,
+                       "hold_chosen": True}
         except ValueError as e:
             self._fsm_fault = str(e)
             upd.update(fsm_fault=self._fsm_fault, set_mode="LOITER", setpoint="none",
@@ -4248,7 +4379,56 @@ class Shield:
             return d.model_copy(update=upd)
         cmd = (d.emitted if out.setpoint == "pass"
                else BRAKE if out.setpoint == "brake" else None)
+        hold = self.fsm.hold if "hold_point" in rec else None
         upd.update(fsm_state_before=out.before.value, fsm_state_after=out.state.value,
                    fsm_edge=out.edge, set_mode=out.set_mode, setpoint=out.setpoint,
-                   command=cmd, fsm_record=out.record)
+                   command=cmd, fsm_record=rec,
+                   hold_point=hold.to_dict() if hold is not None else None)
         return d.model_copy(update=upd)
+
+    def _hold_legal(self, tick: _Tick) -> bool | None:
+        """In Loiter: is the FSM's hold POINT still legal - a stop there from
+        the plan's arrival time (this tick, once it is due) breaks no hard
+        enforced rule through the lookahead? (fsm.TickInput.hold_legal.)
+        None outside Loiter or before a point is held. One stop query a
+        Loiter tick. The point is judged, not the aircraft: an aircraft
+        pushed off a legal hold is X6's and X7's (fsm.py)."""
+        h = self.fsm.hold if self.fsm is not None else None
+        if h is None or self.fsm.state is not _fsm.FSMState.LOITER:
+            return None
+        t0 = h.t_s if h.t_s is not None else tick.t
+        ahead = max(0.0, t0 + h.travel_s - tick.t)
+        p = State(x=h.x, y=h.y, up=h.up)
+        return not self.hard_violations(self.state_is_unsafe(p, ahead_s=ahead))
+
+    def _plan_hold(self, tick: _Tick, state: State, d: ShieldDecision) -> "_fsm.HoldPoint":
+        """The FSM's hold point for this tick (it asked: `needs_hold`).
+
+        `unsafe` is the stop check this tick already ran (tick.unsafe, the
+        FSM's stop_illegal), filtered to hard enforced rules; `heading` breaks
+        ties between equally near points in favour of the way the aircraft is
+        already going (this tick's Shield action, else the pilot's). A search
+        that raises - a geometry error, a rule the search cannot read - must
+        never stop the 10 Hz loop: it becomes an in-place plan marked illegal
+        whose reason names the exception, so the record shows it."""
+        from . import holdpoint as _hp      # local: holdpoint imports this module
+        mode = "LAND" if self.fsm.state is _fsm.FSMState.LAND else "LOITER"
+        unsafe = self.hard_violations(tick.unsafe or [])
+        heading = None
+        for a in (d.emitted, d.raw):
+            if math.hypot(a.vx, a.vy) > 0.1:
+                heading = (a.vx, a.vy)
+                break
+        try:
+            if mode == "LOITER":
+                return _hp.choose_hold_point(self, state, unsafe=unsafe, heading=heading,
+                                             search=self.hold_points)
+            return _hp.choose_landing_site(self, state, unsafe=unsafe, heading=heading,
+                                           search=self.hold_points,
+                                           site_ok=self.land_site_ok)
+        except Exception as e:                      # noqa: BLE001 - see docstring
+            return _fsm.HoldPoint(
+                mode, "in_place", state.x, state.y, state.up, legal=False,
+                breaks=tuple(sorted({v.rule_id for v in unsafe})),
+                reason=(f"hold-point search failed ({type(e).__name__}: {e}); "
+                        f"holding where the aircraft is, legality not established"))

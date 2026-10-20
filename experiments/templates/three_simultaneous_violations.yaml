@@ -14,30 +14,38 @@ scenarios:
   # ---- Shield matrix: "Three simultaneous violations" -------------------- #
   - scenario_id: three-simultaneous-violations
     template: three_simultaneous_violations
-    expect: known_failure
-    # What the false fail-safe fails, measured 2026-10-19 over all 54
-    # episodes of the nightly profile and the smoke run (f93283d): the two
-    # labels, nothing else. P0, finite actions, the single climb-out, the
-    # breach count and the safe end stay gated - the Shield matrix's "three
-    # simultaneous violations" item has a working P0 and zone gate again.
-    known_failure_fails: [outcome, failsafe]
+    # `expect: known_failure` and `known_failure_fails: [outcome, failsafe]`
+    # came off on 2026-10-19 (the escalation FSM's hold points): every cell
+    # passed every gate - 6 library, 1 smoke and 54 nightly episodes, both
+    # forecast arms - and was reported FIXED (unexpected_pass), as the pin
+    # mechanism requires. Measured that day; see the description.
     description: >
       tests/test_guardrail_coverage.py's unit case, flown: below the 10 m floor,
       asking 8-11 m/s against a 4 m/s cap, descending at 3 m/s, and pointed at
       the no-fly zone 4 m away - from a drawn approach angle. Repair operators
       have to interact without oscillating (bounded iteration); the aircraft
       must climb out exactly once and never enter the zone.
-      KNOWN FAILURE IN EVERY CELL since the escalation FSM was wired into the
-      Shield (measured 2026-10-07): a FALSE fail-safe through theta and X6.
-      The first repair's AltitudeFix is 12-18 m at the grant's 5 s forecast
-      (8-14 m at 3 s) against the grant's 0.5 m vertical theta, so the FSM
-      abandons projection at once (X1 then G3:
-      Brake -> Loiter); ArduPilot's LOITER holds the aircraft where it is,
-      below the floor, and five seconds of an illegal position later X6 sends
-      it home. RTL climbs to 15 m and the episode ends safe, P0 clean, the
-      zone never entered; the labels (success, no fail-safe) do not hold.
-      Variant 2 also carries the forecast-tunnelling defect pinned on
-      2026-10-06, below (FSM off).
+      From 2026-10-07 to 2026-10-19 a KNOWN FAILURE IN EVERY CELL: a FALSE
+      fail-safe through theta and X6. The first repair's AltitudeFix is
+      12-18 m at the grant's 5 s forecast (8-14 m at 3 s) against the grant's
+      0.5 m vertical theta, so the FSM abandons projection at once (X1 then
+      G3: Brake -> Loiter); ArduPilot's LOITER held the aircraft where it
+      was, below the floor (48 P0 ticks of LOITER), and five seconds of an
+      illegal position later X6 sent it home. Since 2026-10-19 the FSM's hold
+      point is chosen legally (guardrail/holdpoint.py): a stop below the
+      floor is illegal at every horizontal position, so the hold is moved
+      straight up to 10.5 m, 0.5 m inside the band, and the modelled
+      autopilot climbs there at 2 m/s (1-2 autopilot P0 ticks, where 72-78
+      were flown before). X6 no longer fires (the illegal depth falls at the
+      climb rate), the zone is never entered, the episode ends safe and P0
+      clean. NOTE what the labels now rest on: the pilot keeps asking for
+      the illegal action, so the Loiter never clears (G8) and the 30 s run
+      ends IN Loiter, 0.2 s before the operator-defined Loiter timeout (G5,
+      30 s, ours) would send it home. "Success, no fail-safe" holds for this
+      run length, not for a longer one - a question for the PI (the label,
+      the timeout or the run length), recorded in docs/DESIGN-hold-points.md.
+      The variant-2 forecast-tunnelling record (2026-10-06) is kept below as
+      a comment.
     mission:
       start_pose: { x: 2.0, y: 15.0, up: "$start_up" }
       pilot: { type: constant, action: { vx: "$ask_mps", vz_up: -3.0 } }
@@ -58,26 +66,20 @@ scenarios:
       ended_safe: { equals: true }
     expected_outcome: success
     expected_failsafe: false
-    # The 2026-10-06 cell pin, kept for its record: the whole family is a known
-    # failure now (expect: known_failure), so this pin no longer decides a
-    # status. It describes what the Shield's own action does from variant 2.
-    # Its `fails` is what its 18 nightly episodes fail today (2026-10-19,
-    # f93283d), the family's two labels: the tunnelling it records is gone
-    # at the grant's forecast, so it pins nothing the family pin does not.
-    known_failures:
-      - params: { variant: 2 }
-        fails: [outcome, failsafe]
-        description: >
-          Forecast tunnelling (measured 2026-10-06). From approach variant 2 the
-          aircraft climbs out and slides round the zone's (23, 23) corner. At
-          t = 6.8 s it is 1.016 m from the corner (outside the 1 m ring) and the
-          emitted action (-2.89, 2.77) m/s enters the ring 0.05-0.10 s later;
-          the Shield's forecast samples t+0 and t+0.5 s only (dt = 0.5, the
-          value every rail passes), both outside, so the clip is never seen and
-          the aircraft enters the ring by 0.02 m. The grant asks whether the
-          predicted SEGMENT crosses the boundary (Safety Shield p2), not
-          whether sampled points land in it. Same in all six cells of this
-          variant; the polygon itself is not entered. At the grant's forecast
-          (5 s at 0.1 s, since 2026-10-12) it is gone: the poses are 0.1 s
-          apart and the clip is seen, so with the FSM off the aircraft keeps
-          1.18 m from the zone in all six cells (0.98 m at 3 s / 0.5 s).
+    # The 2026-10-06 cell pin, removed 2026-10-19 with the family marker: its
+    # 18 nightly episodes passed every gate (unexpected_pass) once the hold
+    # point stopped holding below the floor. It read, `params: {variant: 2},
+    # fails: [outcome, failsafe]`:
+    #   Forecast tunnelling (measured 2026-10-06). From approach variant 2 the
+    #   aircraft climbs out and slides round the zone's (23, 23) corner. At
+    #   t = 6.8 s it is 1.016 m from the corner (outside the 1 m ring) and the
+    #   emitted action (-2.89, 2.77) m/s enters the ring 0.05-0.10 s later;
+    #   the Shield's forecast samples t+0 and t+0.5 s only (dt = 0.5, the
+    #   value every rail passes), both outside, so the clip is never seen and
+    #   the aircraft enters the ring by 0.02 m. The grant asks whether the
+    #   predicted SEGMENT crosses the boundary (Safety Shield p2), not
+    #   whether sampled points land in it. Same in all six cells of this
+    #   variant; the polygon itself is not entered. At the grant's forecast
+    #   (5 s at 0.1 s, since 2026-10-12) it is gone: the poses are 0.1 s
+    #   apart and the clip is seen, so with the FSM off the aircraft keeps
+    #   1.18 m from the zone in all six cells (0.98 m at 3 s / 0.5 s).

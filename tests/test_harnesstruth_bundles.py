@@ -132,31 +132,49 @@ def test_a_bundle_whose_pins_name_no_gates_still_reruns():
     so such a body is read as it was written (every gate absorbed) and the
     episode re-flies row for row. Shown failing before the reader was wired
     into rerun_from_extras (ValueError: expect: known_failure needs
-    known_failure_fails)."""
+    known_failure_fails).
+
+    Until 2026-10-19 one family carried both kinds of pin
+    (three-simultaneous-violations: the family marker and a cell pin). Its
+    pins came off that day, when the escalation FSM's hold points made every
+    cell pass (guardrail/holdpoint.py), so each kind is now exercised on a
+    family that still carries it: standoff-wedge's family marker
+    (`expect: known_failure`) and time-window-opens-on-vehicle's cell pins
+    (`known_failures`)."""
     from guardrail.scenario_spec import legacy_pins_read_as_before
-    spec = FAMILIES["three-simultaneous-violations"].first.spec
-    run = S.run_episode(spec, LIBRARY.defaults, 0)
-    ex = json.loads(json.dumps(S.episode_extras(spec, LIBRARY.defaults, 0, run)))
-    old = copy.deepcopy(ex)
-    body = old["scenario_spec"]
-    assert body["expect"] == "known_failure" and body["known_failures"], body
-    body.pop("known_failure_fails")
-    for pin in body["known_failures"]:
-        pin.pop("fails")
-    try:
-        ScenarioSpec.model_validate(body)
-    except ValueError as e:
-        assert "fails" in str(e), e
-    else:
-        raise AssertionError("a pin naming no gates was accepted")
-    assert _norm(S.rerun_from_extras(old).rows) == _norm(run.rows)
-    # Read as written: every gate and label the scenario has, nothing else.
-    read = ScenarioSpec.model_validate(legacy_pins_read_as_before(body))
-    want = set(spec.gates) | {"outcome", "failsafe"}
-    assert set(read.known_failure_fails) == want, read.known_failure_fails
-    assert all(set(p.fails) == want for p in read.known_failures)
-    # A body whose pins already name gates is left as it is.
-    assert legacy_pins_read_as_before(ex["scenario_spec"]) == ex["scenario_spec"]
+    for sid, kind in (("standoff-wedge", "family"),
+                      ("time-window-opens-on-vehicle", "cells")):
+        spec = FAMILIES[sid].first.spec
+        run = S.run_episode(spec, LIBRARY.defaults, 0)
+        ex = json.loads(json.dumps(S.episode_extras(spec, LIBRARY.defaults, 0, run)))
+        old = copy.deepcopy(ex)
+        body = old["scenario_spec"]
+        if kind == "family":
+            assert body["expect"] == "known_failure" and body["known_failure_fails"], body
+            body.pop("known_failure_fails")
+        else:
+            assert body["known_failures"] and all(p["fails"] for p in body["known_failures"]), body
+            for pin in body["known_failures"]:
+                pin.pop("fails")
+        try:
+            ScenarioSpec.model_validate(body)
+        except ValueError as e:
+            assert "fails" in str(e), (sid, e)
+        else:
+            raise AssertionError(f"{sid}: a pin naming no gates was accepted")
+        assert _norm(S.rerun_from_extras(old).rows) == _norm(run.rows), sid
+        # Read as written: every gate and label the scenario has, nothing else.
+        read = ScenarioSpec.model_validate(legacy_pins_read_as_before(body))
+        want = set(spec.gates) | {lbl for lbl, v in (("outcome", spec.expected_outcome),
+                                                     ("failsafe", spec.expected_failsafe))
+                                  if v is not None}
+        if kind == "family":
+            assert set(read.known_failure_fails) == want, (sid, read.known_failure_fails)
+        else:
+            assert read.known_failures and all(set(p.fails) == want
+                                               for p in read.known_failures), sid
+        # A body whose pins already name gates is left as it is.
+        assert legacy_pins_read_as_before(ex["scenario_spec"]) == ex["scenario_spec"], sid
 
 
 def test_a_rerun_refuses_a_policy_that_is_not_the_one_flown():

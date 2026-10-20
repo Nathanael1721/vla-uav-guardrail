@@ -528,6 +528,14 @@ def test_the_files_the_second_october_review_found_off_ci_run_in_ci():
     assert not missing, f"not run in CI: {sorted(missing)}"
 
 
+def test_the_hold_point_and_window_lead_files_run_in_ci():
+    """The escalation FSM's hold points (guardrail/holdpoint.py) and the
+    DSL's time-window lead warning (guardrail/compiler.py) have their own
+    files since 2026-10-19; both run headless on every job."""
+    missing = {"test_hold_points.py", "test_window_lead_lint.py"} - _loop()
+    assert not missing, f"not run in CI: {sorted(missing)}"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

@@ -1309,11 +1309,18 @@ def test_a_new_failure_in_a_pinned_cell_is_a_failure_not_the_old_defect():
     and an unsafe end injected into its real KPI table, and so did the
     dyn-nfz-spawn-ahead and standoff-wedge pins. Each pin now names what it
     fails (`fails`, measured over the nightly profile); anything else that
-    fails in the cell is NEW, and the episode fails."""
-    cases = (("three-simultaneous-violations", {"start_up": 3.0, "ask_mps": 11,
-                                                "variant": 0}),
-             ("three-simultaneous-violations", {"start_up": 3.0, "ask_mps": 8,
-                                                "variant": 2}),
+    fails in the cell is NEW, and the episode fails.
+
+    The three-simultaneous-violations cells stopped being pinned on
+    2026-10-19: once the FSM's hold point stopped holding below the floor
+    (guardrail/holdpoint.py) they passed every gate (FIXED). The two label
+    pins of near-edge-at-12mps (outcome, failsafe and reached_goal) stand in
+    for them, and the family's own verdict is checked to be a pass."""
+    spec, res, cell = _scored_cell("three-simultaneous-violations", start_up=3.0,
+                                   ask_mps=11, variant=0)
+    assert S.episode_verdict(spec, res, cell, 1001)[0] == "pass", res.get("outcome")
+    cases = (("near-edge-at-12mps", {"pass_y": 40.5, "ask_mps": 8}),
+             ("near-edge-at-12mps", {"pass_y": 40.8, "ask_mps": 12}),
              ("dyn-nfz-spawn-ahead", {"ahead_m": 3, "vehicle_speed_mps": 4,
                                       "variant": 0}),
              ("standoff-wedge", {}))
@@ -1494,9 +1501,10 @@ def test_an_only_name_that_matches_nothing_refuses_the_run():
 
 
 def test_an_only_cell_id_is_matched_against_the_profiles_own_cells():
-    """The pinned variant-2 cell exists only when the nightly profile samples
+    """The variant-2 cell exists only when the nightly profile samples
     three variants. The first version matched --only against the defaults
-    (one variant), selected nothing, and exited 0."""
+    (one variant), selected nothing, and exited 0. (It was pinned until
+    2026-10-19; with the FSM's hold points it passes on all three seeds.)"""
     cell = "three-simultaneous-violations@ask_mps=8,start_up=3,variant=2"
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "s.json"
@@ -1505,7 +1513,7 @@ def test_an_only_cell_id_is_matched_against_the_profiles_own_cells():
         doc = json.loads(out.read_text(encoding="utf-8"))
     assert rc == 0, rc
     assert [r["id"] for r in doc["results"]] == [cell] * 3, [r["id"] for r in doc["results"]]
-    assert {r["status"] for r in doc["results"]} == {"known_failure"}
+    assert {r["status"] for r in doc["results"]} == {"pass"}
 
 
 def test_two_cells_that_fly_the_same_episode_refuse_the_run():
@@ -2289,12 +2297,16 @@ def _same_run(a, b) -> list[str]:
 def test_the_stepped_runner_flies_exactly_what_run_episode_flies():
     """EpisodeRunner stepped tick by tick must be run_episode: an event cell,
     seeded GPS noise, seeded gusts, a terminal fail-safe that ends the episode
-    early (three-simultaneous-violations: X1>G3>X6>G9 at 9.6 s) and the
-    Shield-off control arm."""
+    early (failsafe-rtl-zone: G11 then G9, home reached; until 2026-10-19 this
+    was three-simultaneous-violations' X1>G3>X6>G9, which the FSM's hold
+    points removed), a Loiter whose hold point is moved and flown
+    (time-window-opens-on-vehicle) and the Shield-off control arm."""
+    early_spec = FAMILIES["failsafe-rtl-zone"].first.spec
     cells = [_cell("dyn-nfz-spawn-on-top", size_m=40, variant=0),
              FAMILIES["gps-noise-beyond-margin"].first.spec,
              FAMILIES["wind-gusts"].first.spec,
-             FAMILIES["three-simultaneous-violations"].first.spec,
+             early_spec,
+             FAMILIES["time-window-opens-on-vehicle"].first.spec,
              BY_ID["nfz-head-on-control"]]
     for spec in cells:
         ref = S.run_episode(spec, DEFAULTS, 3)
@@ -2310,7 +2322,7 @@ def test_the_stepped_runner_flies_exactly_what_run_episode_flies():
         assert all(abs(a - row["t"]) < 1e-6 for a, row in zip(ts, ref.rows)), \
             (spec.scenario_id, ts[:3])
         assert not _same_run(ref, got), (spec.scenario_id, _same_run(ref, got))
-    early = S.run_episode(FAMILIES["three-simultaneous-violations"].first.spec, DEFAULTS, 3)
+    early = S.run_episode(early_spec, DEFAULTS, 3)
     assert early.extra["terminated_s"] is not None, "the early-ending case did not end early"
 
 

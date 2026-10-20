@@ -297,6 +297,10 @@ AP_CLIMB_MPS = 2.5
 AP_LAND_MPS = 0.5
 AP_HOME_TOL_M = 2.0              # "home reached": horizontally over the launch point
 AP_LANDED_M = 0.05
+# A moved hold point (guardrail/holdpoint.py, since 2026-10-19) counts as
+# reached within this distance on each axis; from then on the hold flies as
+# an in-place one (zero velocity, the position controller holding it).
+AP_HOLD_REACHED_M = 0.05
 
 # The wind model (module docstring, "THE WIND MODEL"). PSC_POSXY_P's default
 # (POSCONTROL_POS_XY_P, AC_PosControl.cpp at Copter-4.5.7), and the strongest
@@ -443,8 +447,18 @@ def _pilot(mission: _Mission, kind: str, st: State) -> Action4D:
     raise ValueError(f"unknown pilot type {kind!r}")
 
 
+def hold_reached(st: State, hold: dict | None) -> bool:
+    """Has the aircraft reached a MOVED hold point (horizontally, and in
+    altitude for a Loiter; a Land transits level and then descends)?"""
+    if not hold or hold.get("kind") != "moved":
+        return True
+    if math.hypot(hold["x"] - st.x, hold["y"] - st.y) > AP_HOLD_REACHED_M:
+        return False
+    return hold["mode"] == "LAND" or abs(hold["up"] - st.up) <= AP_HOLD_REACHED_M
+
+
 def _autopilot(mode: str | None, st: State, home: tuple[float, float],
-               dt: float) -> Action4D:
+               dt: float, hold: dict | None = None) -> Action4D:
     """The velocity ArduCopter's own mode flies this tick (see AP_* above).
 
     LOITER holds position; RTL climbs to AP_RTL_ALT_M if below it, then flies
@@ -452,7 +466,26 @@ def _autopilot(mode: str | None, st: State, home: tuple[float, float],
     Shield's zones - whether the way home crosses one is measured, not
     assumed); LAND descends at AP_LAND_MPS. Any other mode (a fault latched
     before a mode was named) is treated as LOITER, ArduPilot's own fallback
-    for a lost GUIDED stream."""
+    for a lost GUIDED stream.
+
+    `hold` is the FSM's hold point (ShieldDecision.hold_point, since
+    2026-10-19). An in-place one, or None, is exactly the above. A MOVED one
+    not yet reached (`hold_reached`) is flown first, as ArduCopter flies a
+    GUIDED position target before the hold mode is set on arrival: straight
+    at the plan's speed horizontally (the policy's cap, guardrail/
+    holdpoint.py) and its climb rate vertically, each axis braking onto the
+    point in its last step; a Land transits level, then descends."""
+    if (mode in ("LOITER", "LAND") and hold is not None
+            and hold.get("kind") == "moved" and not hold_reached(st, hold)):
+        dx, dy = hold["x"] - st.x, hold["y"] - st.y
+        d = math.hypot(dx, dy)
+        v = min(float(hold["speed_mps"]), d / dt) if d > 1e-9 else 0.0
+        vx, vy = ((v * dx / d, v * dy / d) if d > 1e-9 else (0.0, 0.0))
+        vz = 0.0
+        if mode == "LOITER":
+            cz = float(hold.get("climb_mps") or AP_CLIMB_MPS)
+            vz = max(-cz, min(cz, (hold["up"] - st.up) / dt))
+        return Action4D(vx=vx, vy=vy, vz_up=vz)
     if mode == "RTL":
         if st.up < AP_RTL_ALT_M - 1e-6:
             return Action4D(vz_up=min(AP_CLIMB_MPS, (AP_RTL_ALT_M - st.up) / dt))
@@ -1051,6 +1084,15 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     pending = sorted(spec.events, key=lambda e: e.at_sim_t)
     box.update(pending=pending, t_end=t_end,
                has_clock=spec.mission.clock_start is not None)
+    # The DSL's lint WARNINGS for this cell, as the compiler would give them
+    # at mission start (guardrail/compiler.py, time_window_lead_warnings):
+    # a window that can open on an aircraft that cannot leave in time, at the
+    # episode's own forecast, from its start pose and clock. Recorded, never
+    # gated: the opens-on-vehicle cells carry one by design.
+    from guardrail.compiler import time_window_lead_warnings
+    lint_warnings = time_window_lead_warnings(
+        policy, lookahead_s=look, start=(m.start.x, m.start.y, m.start.up),
+        now=clock() if clock is not None else None)
     events: list[dict] = [{
         "t": 0.0, "type": "episode_start", "scenario_id": spec.scenario_id,
         "seed": seed, "policy_hash": hash0, "generation": policy.generation,
@@ -1063,7 +1105,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         "arm": arm,
         "forecast": fc,
         "wind_model": wind_model,
-        "wind_mps": [round(wind[0], 3), round(wind[1], 3)]}]
+        "wind_mps": [round(wind[0], 3), round(wind[1], 3)],
+        "lint_warnings": lint_warnings}]
     es = _EventState(shields=shields)
     st = m.start
     prev_st = st
@@ -1105,6 +1148,11 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     dropout_ticks = 0
     # The escalation FSM's hand-over, and the autopilot that flies it.
     ap_mode: str | None = None
+    # Where the FSM's Loiter / Land holds (ShieldDecision.hold_point), whether
+    # a moved point has been reached, and every point the FSM took.
+    hold: dict | None = None
+    hold_done = False
+    holds_taken: list[dict] = []
     owner_ticks = {"shield": 0, "autopilot": 0, "pilot": 0}
     ap_mode_ticks: dict[str, int] = {}
     ap_p0_by_mode: dict[str, int] = {}
@@ -1214,6 +1262,23 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         d = shield.filter(seen, raw, t=t_now, **flags)
         if esc and d.set_mode:
             ap_mode = d.set_mode
+        if esc:
+            # The FSM's hold point: None outside Loiter / Land (or on a fault,
+            # where the modelled autopilot holds in place as before); a new
+            # plan (its own t_s) restarts the transit.
+            hp = d.hold_point
+            if hp is None:
+                hold = None
+            elif hold is None or hp.get("t_s") != hold.get("t_s"):
+                hold, hold_done = hp, False
+                if (d.fsm_record or {}).get("hold_chosen"):
+                    holds_taken.append({k: hp[k] for k in (
+                        "t_s", "mode", "kind", "legal", "x", "y", "up", "travel_s",
+                        "breaks")})
+                    events.append({"t": round(t_now, 4), "type": "hold_point",
+                                   **{k: hp[k] for k in ("mode", "kind", "legal", "x",
+                                                         "y", "up", "travel_s",
+                                                         "breaks", "reason")}})
         if not on:
             # Shield OFF flies the RAW action, so the violations found on `raw`
             # are the flown action's - the same rule the SITL rails follow, and
@@ -1227,9 +1292,14 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             if d.setpoint == "brake":
                 flown_vios = checker.filter(seen, flown, t=t_now).violations
         else:
-            # LOITER / RTL / LAND own the aircraft (setpoint "none").
+            # LOITER / RTL / LAND own the aircraft (setpoint "none"), at the
+            # FSM's hold point: an in-place one is the hold it always was, a
+            # moved one is flown to first and then held (latched once reached,
+            # so a gust after arrival is the position controller's, as before).
             owner = "autopilot"
-            flown = _autopilot(ap_mode, st, m.home, dt)
+            if hold is not None and not hold_done and hold_reached(st, hold):
+                hold_done = True
+            flown = _autopilot(ap_mode, st, m.home, dt, None if hold_done else hold)
             flown_vios = checker.filter(seen, flown, t=t_now).violations
         owner_ticks[owner] += 1
         if owner == "autopilot":
@@ -1323,6 +1393,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 # guardrail.kpi leaves these ticks out of the Shield's own
                 # counts: the Shield did not decide what flew.
                 row["autopilot"] = ap_mode or "LOITER"
+            if hold is not None:
+                row["hold_point"] = {k: hold[k] for k in ("kind", "legal", "x", "y", "up")}
         if oracle is not None:
             row["perceived"] = {"x": seen.x, "y": seen.y, "up": seen.up}
             row["true_violations"] = [v.model_dump() for v in true_vios]
@@ -1554,6 +1626,17 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         "ticks_flown_by": owner_ticks,
         "autopilot_ticks": owner_ticks["autopilot"],
         "autopilot_mode_ticks": ap_mode_ticks,
+        # Where the FSM's Loiter / Land held (guardrail/holdpoint.py, since
+        # 2026-10-19): every point it took, how many were moved off an
+        # illegal spot, and how many were still illegal (no legal point found
+        # within the search). None on an arm with no escalation FSM.
+        "hold_points": holds_taken if esc else None,
+        "hold_points_moved": (sum(1 for h in holds_taken if h["kind"] == "moved")
+                              if esc else None),
+        "hold_points_illegal": (sum(1 for h in holds_taken if not h["legal"])
+                                if esc else None),
+        # The DSL's lint warnings for this cell at mission start (above).
+        "lint_warnings": lint_warnings,
         "terminated_s": terminated_s,
         # Events the scenario expected the Shield to refuse: None when there
         # were none, else whether every one was refused (and nothing else).
