@@ -567,12 +567,13 @@ def test_no_random_transit_called_legal_enters_or_dips():
     assert not problems, problems[:4]
 
 
-def _square_world(half: float, margin: float = 1.0, *extra: dict, now=None) -> Shield:
+def _square_world(half: float, margin: float = 1.0, *extra: dict, now=None,
+                  kin: bool = True) -> Shield:
     """The final review's reach world (scratch rv_t1d_scripts/reach.py): a
     square always-on zone `half` m either side of the aircraft at (0, 0, 15),
-    margin 1 m, the 4 m/s cap, nothing moving - the nearest legal hold is
-    half + margin + HOLD_MARGIN_M away."""
-    pol = Policy.model_validate({"policy_id": "sq", "constraints": [KIN, {
+    margin 1 m, the 4 m/s cap (none with `kin` False), nothing moving - the
+    nearest legal hold is half + margin + HOLD_MARGIN_M away."""
+    pol = Policy.model_validate({"policy_id": "sq", "constraints": ([KIN] if kin else []) + [{
         "id": "zone", "type": "polygon_fence", "constraint_type": "hard", "priority": "P0",
         "violation_action": "repair", "margin_m": margin,
         "vertices": [{"x": -half, "y": -half}, {"x": half, "y": -half},
@@ -658,10 +659,15 @@ def test_the_budget_charges_what_the_search_makes():
     search can meet; a read READ_COST plus RULE_READ_COST per rule and
     MOVING_ZONE_READ_COST per moving zone. On a hold search, what the ledger
     charged is what the calls it made cost at those prices; on one that
-    spends it all (a 40 m bar closing at 3 m/s; 20 overlapping zones) the
-    spend is the budget to within one candidate, and the plan says the
-    budget stopped it. Deterministic: a count, not a clock (the wall-clock
-    half is test_each_charge_bounds_what_its_call_costs)."""
+    spends it all (a 40 m bar closing at 3 m/s) the spend is the budget to
+    within one candidate, and the plan says the budget stopped it. 20
+    overlapping zones and the thin wall spent it too until the cheap test
+    read the rule that dropped the last candidate first (integration review
+    of T1c): now the 20 zones drop every candidate out to 60 m for one zone
+    read each, 416 reads for about 112 units, the wall's search reaches the
+    last ring at about 592 units, and both plans say nothing is legal within
+    60 m. Deterministic: a count, not a clock (the wall-clock half is
+    test_each_charge_bounds_what_its_call_costs)."""
     st = State(x=0.0, y=0.0, up=15.0)
     led = HP._Ledger(_bar(3.0, 2.0, 40.0, 3.0), st, 20.0)
     # The bar can meet the search; the demo policy's nfz-square (box 6-24 m
@@ -680,25 +686,33 @@ def test_the_budget_charges_what_the_search_makes():
     assert led.m == 0 and len(led.boxes) == 20
     assert abs(led.stop_cost(st) - (HP.STOP_QUERY_COST + 20 * HP.STATIC_ZONE_STOP_COST)) < 1e-12
     assert abs(led.read_cost(["o1", "o2"]) - (HP.READ_COST + 2 * HP.ZONE_READ_COST)) < 1e-12
-    # (world, fruitless, stop queries made): in the 20 overlapping zones
+    # (world, how it ends, stop queries made): in the 20 overlapping zones
     # every candidate is inside a still zone, so the cheap test drops each
     # one and no stop query is made at all.
     wall, low = _thin_wall()
-    for sh, at, fruitless, stops in ((_bar(3.0, 2.0, 40.0, 3.0), st, True, True),
-                                     (over, st, True, False),
-                                     (_square_world(20.0), st, False, True),
-                                     (wall, low, True, True)):
+    for sh, at, ends, stops in ((_bar(3.0, 2.0, 40.0, 3.0), st, "budget", True),
+                                (over, st, "edge", False),
+                                (_square_world(20.0), st, "moved", True),
+                                (wall, low, "edge", True)):
         p, spent, cost, kinds = _charged_search(sh, at)
         assert abs(spent - cost) < 1e-6, (spent, cost, kinds)
         assert kinds.get("rule_clearances", 0) > 0, kinds
         assert (kinds.get("state_is_unsafe", 0) > 0) == stops, kinds
-        if fruitless:
+        if ends == "budget":
             worst = HP._Ledger(sh, at, 20.0).stop_cost(at) + HP.READ_COST + 30 * (
                 HP.ZONE_READ_COST + HP.MOVING_ZONE_READ_COST)
             assert HP.MAX_QUERIES <= spent <= HP.MAX_QUERIES + worst, (spent, kinds)
             assert p.kind == "in_place" and not p.legal and HP.BUDGET_NOTE in p.reason, p
         else:
             assert spent < HP.MAX_QUERIES and HP.BUDGET_NOTE not in p.reason, (spent, p)
+            assert (p.kind == "moved") == (ends == "moved"), (ends, p)
+        if ends == "edge":
+            assert not p.legal and f"within {HP.RADII_M[-1]:g} m" in p.reason, p.reason
+        if sh is over:
+            # One read a candidate (16 headings x 26 rings): the first reads
+            # the 20 zones, each later one the zone that dropped the last.
+            assert kinds["rule_clearances"] == 16 * len(HP.RADII_M), kinds
+            assert spent < 0.25 * HP.MAX_QUERIES, spent
 
 
 def test_a_static_world_is_searched_to_its_edge():
@@ -725,6 +739,66 @@ def test_a_static_world_is_searched_to_its_edge():
     p = HP.choose_hold_point(_square_world(80.0), st)
     assert p.kind == "in_place" and not p.legal and HP.BUDGET_NOTE not in p.reason, p
     assert f"within {HP.RADII_M[-1]:g} m" in p.reason, p.reason
+
+
+def _nested(k: int) -> Shield:
+    """k always-on squares nested about the aircraft at (0, 0, 15), their
+    half-widths evenly from 50 m down to 46.5 m, margin 1 m, the 4 m/s cap
+    (the integration review of T1c): the outermost decides, so the nearest
+    legal hold is 50 + 1 + HOLD_MARGIN_M = 51.5 m off, and every candidate
+    nearer than 47.5 m (the innermost ring's box) is inside all k boxes."""
+    zones = []
+    for j in range(k):
+        h = 50.0 - 3.5 * j / max(1, k - 1)
+        zones.append({"id": f"n{j}", "type": "polygon_fence", "constraint_type": "hard",
+                      "priority": "P0", "violation_action": "repair", "margin_m": 1.0,
+                      "vertices": [{"x": -h, "y": -h}, {"x": h, "y": -h}, {"x": h, "y": h},
+                                   {"x": -h, "y": h}],
+                      "altitude_floor_m": 0, "altitude_ceiling_m": 100})
+    sh = Shield(Policy.model_validate({"policy_id": "nest", "constraints": [KIN, *zones]}),
+                escalation=False)
+    sh.filter(State(x=0.0, y=0.0, up=15.0), Action4D(), t=0.0)
+    return sh
+
+
+def test_nested_static_zones_cost_one_zone_read_a_candidate():
+    """Integration review of T1c: THE CHEAP TEST read every static zone whose
+    box held a candidate and was charged for each, so a candidate inside k
+    nested zones cost READ_COST + k * ZONE_READ_COST (1.65 units at k = 8),
+    and the candidates nearer than the 55 m ring (384 of them) cost more
+    than the 600-unit budget. With 8 or 10 squares (half-widths 50 down to
+    46.5 m) the hold and the landing stayed in place, illegal, with the
+    budget's reason, where 51.5 m out was legal (measured on 08cd0be: the
+    budget spent after 363 and 292 reads; 6 squares still reached it, at
+    494 units). Now the rule that dropped the last candidate is read first,
+    alone, and the rest only if it is not breached (_Ledger.breached): a
+    candidate inside the same zone costs READ_COST + ZONE_READ_COST whatever
+    k, and both are moved to 51.5 m well inside the budget."""
+    st = State(x=0.0, y=0.0, up=15.0)
+    sh = _nested(10)
+    led = HP._Ledger(sh, st, 20.0)
+    # The first candidate reads every zone whose box holds it; the next one
+    # inside the zone that dropped it reads that zone alone.
+    left = led.left
+    assert led.breached(sh, State(x=10.0, y=0.0, up=15.0))
+    paid = left - led.left
+    assert abs(paid - (HP.READ_COST + 10 * HP.ZONE_READ_COST)) < 1e-12, paid
+    left = led.left
+    assert led.breached(sh, State(x=0.0, y=12.0, up=15.0))
+    paid = left - led.left
+    assert abs(paid - (HP.READ_COST + HP.ZONE_READ_COST)) < 1e-12, paid
+    for k in (8, 10):
+        sh = _nested(k)
+        for fn in (HP.choose_hold_point, HP.choose_landing_site):
+            p, spent, cost, _ = _charged_search(sh, st, fn)
+            assert p.kind == "moved" and p.legal, (k, fn.__name__, p)
+            assert abs(math.hypot(p.x, p.y) - 51.5) <= HP.REFINE_STEP_M + 1e-9, \
+                (k, fn.__name__, p)
+            assert spent < 0.5 * HP.MAX_QUERIES, (k, fn.__name__, spent)
+            if fn is HP.choose_hold_point:
+                # Each read, the one-rule read included, is charged as what it
+                # read (a landing's descent chunks are charged an estimate).
+                assert abs(spent - cost) < 1e-6, (k, spent, cost)
 
 
 def test_the_cheap_test_drops_only_what_the_stop_query_refuses():
@@ -771,21 +845,63 @@ def test_a_speed_cap_that_opens_on_the_way_slows_the_whole_transit():
     force (the review's windowed_cap2.py). Now the caps in force through the
     longest transit the search plans are read one lookahead at a time
     (holdpoint._speeds), and the transit flies at the tighter cap from the
-    start: no instant over a cap in force, and the reason says why."""
-    slow = {"id": "slow", "type": "kinematic_envelope", "constraint_type": "hard",
-            "priority": "P0", "violation_action": "repair", "speed_max_mps": 1.0,
-            "climb_rate_max_mps": 1.0, "yaw_rate_max_dps": 45.0,
-            "valid_time": {"recurrence": {"days": ["Mon"], "start_time": "10:00",
-                                          "end_time": "11:00"}}}
+    start: no instant over a cap in force, and the reason says why.
+
+    Integration review of T1c: the reason was built from one found/later
+    flag for both caps, so it could call the DEFAULT speed an enforced cap
+    (no cap now, a 5 m/s / 1 m/s cap opening on the way: "planned at the
+    tightest enforced 4 m/s speed cap and 1 m/s climb cap in force before
+    the longest transit ...", where 4 m/s is DEFAULT_SPEED_MPS) or miss a
+    cap that comes into force (no cap now, a 4 m/s / 2 m/s one opening on
+    the way: "no enforced speed cap in force: 4 m/s and 2 m/s climb
+    assumed"). Now each cap's source is kept apart and worded on its own,
+    and every case's reason is asserted whole."""
+    def opening(speed: float, climb: float) -> dict:
+        return {"id": "slow", "type": "kinematic_envelope", "constraint_type": "hard",
+                "priority": "P0", "violation_action": "repair", "speed_max_mps": speed,
+                "climb_rate_max_mps": climb, "yaw_rate_max_dps": 45.0,
+                "valid_time": {"recurrence": {"days": ["Mon"], "start_time": "10:00",
+                                              "end_time": "11:00"}}}
+
+    by = "before the longest transit the search plans ends"
+
+    def in_force(axis, v):
+        return f"{axis} {v:g} m/s: the tightest enforced {axis} cap in force"
+
+    def later(axis, v, h):
+        return (f"{axis} {v:g} m/s: the tightest enforced {axis} cap, which comes into "
+                f"force {by} ({h:.1f} s)")
+
+    def assumed(axis, v, h):
+        return f"{axis} {v:g} m/s: assumed, no enforced {axis} cap in force {by} ({h:.1f} s)"
+
+    def looser(axis, v, h):
+        return (f"{axis} {v:g} m/s: assumed, no enforced {axis} cap in force now and none at "
+                f"or under {v:g} m/s {by} ({h:.1f} s)")
+
     st = State(x=0.0, y=0.0, up=15.0)
-    for ahead in (5.6, 12.0):
+    # (seconds until the cap opens, its speed and climb caps, the 4 / 2 m/s
+    # cap always on, the plan's speed and climb, the reason's words). A cap
+    # opening only after the longest transit could end (40 s) changes
+    # nothing.
+    cases = (
+        (5.6, (1.0, 1.0), True, 1.0, 1.0, later("speed", 1, 60), later("climb", 1, 60)),
+        (12.0, (1.0, 1.0), True, 1.0, 1.0, later("speed", 1, 60), later("climb", 1, 60)),
+        (5.6, (1.0, 3.0), True, 1.0, 2.0, later("speed", 1, 60), in_force("climb", 2)),
+        (5.6, (5.0, 1.0), False, 4.0, 1.0, looser("speed", 4, 15), later("climb", 1, 15)),
+        (5.6, (4.0, 2.0), False, 4.0, 2.0, later("speed", 4, 15), later("climb", 2, 15)),
+        (40.0, (1.0, 1.0), True, 4.0, 2.0, in_force("speed", 4), in_force("climb", 2)),
+        (40.0, (1.0, 1.0), False, 4.0, 2.0, assumed("speed", 4, 15), assumed("climb", 2, 15)),
+    )
+    for ahead, caps, kin, speed, climb, speed_words, climb_words in cases:
         now = datetime(2026, 10, 19, 10, 0, 0) - timedelta(seconds=ahead)
-        sh = _square_world(22.0, 1.0, slow, now=now)
+        sh = _square_world(22.0, 1.0, opening(*caps), now=now, kin=kin)
         p = HP.choose_hold_point(sh, st)
-        assert p.kind == "moved" and p.legal, (ahead, p)
-        assert p.speed_mps == 1.0 and p.climb_mps == 1.0, (ahead, p)
-        assert "1 m/s speed cap" in p.reason and "before the longest transit" in p.reason, \
-            p.reason
+        case = (ahead, caps, kin)
+        assert p.kind == "moved" and p.legal, (case, p)
+        assert (p.speed_mps, p.climb_mps) == (speed, climb), (case, p)
+        words = f"({speed_words}; {climb_words})"
+        assert words in p.reason, (case, words, p.reason)
         end = State(x=p.x, y=p.y, up=p.up)
         d = math.hypot(p.x, p.y)
         v = Action4D(vx=p.speed_mps * p.x / d, vy=p.speed_mps * p.y / d)
@@ -797,12 +913,7 @@ def test_a_speed_cap_that_opens_on_the_way_slows_the_whole_transit():
             with sh.looking_ahead(tau):
                 over = [r["id"] for r in sh.rule_status(q, v)
                         if r["type"] == "kinematic_envelope" and r["breach"]]
-            assert not over, (ahead, tau, over)
-    # A cap that comes into force only after the longest transit could end
-    # changes nothing: the plan is the one at 4 m/s.
-    now = datetime(2026, 10, 19, 10, 0, 0) - timedelta(seconds=40.0)
-    p = HP.choose_hold_point(_square_world(22.0, 1.0, slow, now=now), st)
-    assert p.kind == "moved" and p.speed_mps == 4.0, p
+            assert not over, (case, tau, over)
 
 
 def test_the_start_of_a_turning_zone_being_left_is_bounded_between_poses():
@@ -932,15 +1043,36 @@ def test_each_charge_bounds_what_its_call_costs():
         for j, r in enumerate(40.0 + 0.2 * k for k in range(5))]})
     dsh = Shield(diamonds, escalation=False)
     dsh.filter(st, Action4D(), t=0.0)
-    for name, sh in (("bar closing at 3 m/s", _bar(3.0, 2.0, 40.0, 3.0)),
-                     ("20 overlapping zones", _overlapping(20)), ("20 diamonds", dsh)):
+
+    class Kept(HP._Ledger):
+        """The search's ledger, kept to read what it spent (no call wrapped)."""
+        made: list = []
+
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            Kept.made.append(self)
+
+    # The bar spends the budget; since the cheap test reads the rule that
+    # dropped the last candidate first (integration review of T1c), the 20
+    # overlapping zones and the diamonds' core drop every candidate for one
+    # zone read and end at the last ring - each within twice what it spent.
+    for name, sh, budget in (("bar closing at 3 m/s", _bar(3.0, 2.0, 40.0, 3.0), True),
+                             ("20 overlapping zones", _overlapping(20), False),
+                             ("20 diamonds", dsh, False)):
         took = math.inf
-        for _ in range(3):
-            t = time.perf_counter()
-            p = HP.choose_hold_point(sh, st)
-            took = min(took, time.perf_counter() - t)
-        assert p.kind == "in_place" and HP.BUDGET_NOTE in p.reason, (name, p)
-        assert took <= 2.0 * HP.MAX_QUERIES * unit, (name, took * 1e3, unit * 1e3)
+        real = HP._Ledger
+        HP._Ledger = Kept
+        try:
+            for _ in range(3):
+                t = time.perf_counter()
+                p = HP.choose_hold_point(sh, st)
+                took = min(took, time.perf_counter() - t)
+        finally:
+            HP._Ledger = real
+        spent = Kept.made[-1].spent
+        assert p.kind == "in_place" and not p.legal, (name, p)
+        assert (HP.BUDGET_NOTE in p.reason) == budget, (name, p.reason)
+        assert took <= 2.0 * spent * unit, (name, took * 1e3, spent, unit * 1e3)
 
 
 if __name__ == "__main__":
