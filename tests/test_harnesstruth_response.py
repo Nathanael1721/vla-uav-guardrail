@@ -125,24 +125,50 @@ def test_expand_tags_the_response_copy_and_counts_it_apart():
 # the ideal vehicle is untouched
 # --------------------------------------------------------------------------- #
 
+# What these episodes flew at c77c77d, before the arm existed, on seed 1001:
+# (ticks, final x / y / up, rows with a repair, repair operators, min true
+# distance to a fence). Captured from a pristine `git archive c77c77d` on
+# 2026-10-20 (review of T1b-harness-vehicle, P4: until then the only pins
+# were two distances, and the default-versus-"ideal" comparison runs the
+# same code on both sides, so a leak of the arm into the ideal branch could
+# pass it). corridor-along is a goto that reaches its goal: the arm's
+# slowing goto pilot, leaked into the ideal branch, ends it 0.23 m short
+# (checked by mutation, which the other four do not see); failsafe-rtl-zone
+# ends in the modelled RTL. Positions are compared to 1e-5 m, so a last-bit
+# difference in a platform's libm cannot fail CI while a real change of the
+# flight does.
+IDEAL_AT_C77 = {
+    "nfz-head-on": (300, (-13.6, 14.600011, 15.0), 284, 284, 20.6),
+    "failsafe-rtl-zone": (52, (-198.142497, 0.741407, 15.0), 22, 22, 6.0),
+    "wind-gusts": (400, (-13.357499, 15.143921, 15.0), 356, 356, 20.072),
+    "altitude-recovery-depth": (300, (59.7, -30.0, 10.010518), 117, 120, 37.0),
+    "corridor-along": (300, (52.4, 0.0, 15.0), 0, 0, None),
+}
+
+
 def test_the_ideal_vehicle_flies_exactly_what_it_flew_before():
     """The default and an explicit "ideal" fly the same rows, with none of the
     arm's per-row keys, and the extras carry only the label. Pinned against
-    the values these episodes flew at c77c77d (before the arm): nfz-head-on
-    held 20.6 m from the fence; failsafe-rtl-zone's modelled RTL ended 6.0 m
-    from its zone; wind-gusts drew the same seeded gusts."""
-    pins = {"nfz-head-on": 20.6, "failsafe-rtl-zone": 6.0}
-    for sid in ("nfz-head-on", "failsafe-rtl-zone", "wind-gusts", "altitude-recovery-depth"):
+    what these episodes flew at c77c77d (before the arm, IDEAL_AT_C77):
+    nfz-head-on held 20.6 m from the fence; failsafe-rtl-zone's modelled RTL
+    ended 6.0 m from its zone; wind-gusts drew the same seeded gusts; and
+    each ends where it ended then, after as many ticks and repairs."""
+    for sid, (ticks, final, rep_rows, reps, dist) in IDEAL_AT_C77.items():
         a = S.run_episode(_spec(sid), LIBRARY.defaults, 1001)
         b = S.run_episode(_spec(sid), LIBRARY.defaults, 1001, response="ideal")
         assert json.dumps(a.rows, default=str) == json.dumps(b.rows, default=str), sid
-        assert not any("vehicle_v" in r for r in a.rows), sid
+        assert not any("vehicle_v" in r or "vehicle_violations" in r for r in a.rows), sid
         assert a.extra["vehicle_response"] == {"arm": "ideal", "params": None,
                                                "model": "commanded ground velocity, every tick"}
-        assert "max_vehicle_speed" not in a.extra and "max_velocity_lag_mps" not in a.extra
+        assert not {"max_vehicle_speed", "max_velocity_lag_mps",
+                    "true_p0_vehicle_ticks"} & set(a.extra), sid
         assert a.events[0]["vehicle_response"]["arm"] == "ideal"
-        if sid in pins:
-            assert a.extra["min_true_dist_to_fence_m"] == pins[sid], (sid, a.extra)
+        last = a.rows[-1]
+        got = (len(a.rows), (last["x"], last["y"], last["up"]),
+               sum(1 for r in a.rows if r["repairs"]), sum(len(r["repairs"]) for r in a.rows),
+               a.extra["min_true_dist_to_fence_m"])
+        assert got[0] == ticks and got[2:] == (rep_rows, reps, dist), (sid, got)
+        assert all(abs(g - w) <= 1e-5 for g, w in zip(got[1], final)), (sid, got[1], final)
 
 
 # --------------------------------------------------------------------------- #
@@ -298,6 +324,38 @@ def test_braking_carry_shows_under_the_arm_and_nowhere_else():
     assert all("vehicle_v" in r for r in ap.rows[:-1])
 
 
+def test_the_true_state_column_sees_the_airframe_carry_the_command_does_not():
+    """nfz-head-on under the arm: the Shield's commands never carry a P0
+    violation at the true state (`true_p0_flown_ticks` 0, as on the ideal
+    vehicle), but the airframe, still moving toward the zone while it brakes,
+    flies a velocity that does (`true_p0_vehicle_ticks` > 0, each such tick
+    logged in its row's `vehicle_violations`). Shown failing first: until
+    2026-10-20 the arm judged only the command (review of
+    T1b-harness-vehicle, P3), so the comparison's "true-state P0 ticks"
+    column read 0 -> 0 here."""
+    spec = _spec("nfz-head-on")
+    ideal = S.run_episode(spec, LIBRARY.defaults, 1001)
+    ap = S.run_episode(spec, LIBRARY.defaults, 1001, response="ardupilot")
+    assert ideal.extra["true_p0_flown_ticks"] == ap.extra["true_p0_flown_ticks"] == 0
+    n = ap.extra["true_p0_vehicle_ticks"]
+    assert n > 0, ap.extra
+    prios = ap.priorities or {}
+    p0_rows = [r for r in ap.rows if any(prios.get(v["rule_id"], "P0") == "P0"
+                                         for v in r.get("vehicle_violations") or [])]
+    assert len(p0_rows) == n, (len(p0_rows), n)
+    assert all("vehicle_violations" in r for r in ap.rows[:-1])
+    assert "true_p0_vehicle_ticks" not in ideal.extra
+    # The comparison reads the ideal side's airframe count as its command
+    # count (its airframe flies the command), so both columns keep one
+    # definition per side.
+    t_i = {"template": "static_nfz", "status": "pass", "arm": "on",
+           "kpi": {"true_p0_flown_ticks": 4}}
+    t_a = dict(t_i, kpi={"true_p0_flown_ticks": 4, "true_p0_vehicle_ticks": 9})
+    side_i, side_a = S._rsp_family_side([t_i]), S._rsp_family_side([t_a])
+    assert side_i["static_nfz"]["true_p0_vehicle_ticks"] == 4
+    assert side_a["static_nfz"]["true_p0_vehicle_ticks"] == 9
+
+
 def test_main_keeps_the_arm_out_of_every_headline_and_labels_every_bundle():
     """A run with both arms: the comparison copies are judged (one fails its
     fail-safe label: under the measured response the FSM's convergence test
@@ -338,6 +396,10 @@ def test_main_keeps_the_arm_out_of_every_headline_and_labels_every_bundle():
             kpi = json.loads((d / "kpi.json").read_text(encoding="utf-8"))
             arm = "ardupilot" if TAG in d.name else "ideal"
             assert ex["arm"]["response"] == arm and ex["vehicle_response"]["arm"] == arm, d.name
+            # An arm bundle is schema "/2", which a pre-arm reader refuses;
+            # a headline bundle stays "/1", which every reader replays.
+            assert ex["extras_schema"] == (S.EXTRAS_SCHEMA_RESPONSE if arm == "ardupilot"
+                                           else S.EXTRAS_SCHEMA), d.name
             assert kpi["response_arm"] == arm and kpi["kpi"]["vehicle_response"]["arm"] == arm
             start = json.loads((d / "harness_events.jsonl").read_text(
                 encoding="utf-8").splitlines()[0])
@@ -352,6 +414,36 @@ def test_main_keeps_the_arm_out_of_every_headline_and_labels_every_bundle():
         report = (runs / "kpi_report.md").read_text(encoding="utf-8")
         assert "## Vehicle-response comparison" in report
         assert f"/shield-on/{TAG}`" in report
+        assert "True-state P0 ticks (airframe)" in report
+        # The cross-run report over these bundles: the ArduPilot copies keep
+        # their labelled family rows but are ranked in their own top-K and
+        # index, never in the grant's (review of T1b-harness-vehicle, P1).
+        # Shown failing first: at 31343a2 the WIND_CELL copy's fail-safe
+        # mismatch was a row of `top_failures` and a key of `failures`.
+        import kpi_report as KR
+        rep = KR.build_report([str(runs / "episode-*")], [], 10, True, "test",
+                              wp1_path=None, csp_json=None, tick_profiles=None)
+        fams = [f["family"] for f in rep["top_failures"]]
+        cfams = [f["family"] for f in rep["comparison_top_failures"]]
+        assert not any(TAG in f for f in fams), fams
+        assert cfams and all(f.endswith("/" + TAG) for f in cfams), cfams
+        assert any("/wind-within-authority@" in f and f.endswith(f"/shield-on/{TAG}")
+                   for f in cfams), cfams
+        assert not any(TAG in k for k in rep["failures"]), sorted(rep["failures"])
+        assert rep["comparison_failures"] and all(
+            TAG in k for k in rep["comparison_failures"]), sorted(rep["comparison_failures"])
+        assert rep["counts"]["comparison"] == 2, rep["counts"]
+        assert sorted(e["comparison"] for e in rep["episodes"]) == ["", "", "/" + TAG,
+                                                                     "/" + TAG]
+        md = KR.render_markdown(rep)
+        assert "failure cases on comparison configurations" in md
+        # A baseline written before the split holds the copies in `failures`;
+        # read against today's report they must not come back as FIXED.
+        old = {"failures": {**rep["failures"], **rep["comparison_failures"]},
+               "episodes": rep["episodes"]}
+        cmp_ = KR.compare_baseline(KR.json_safe(rep), old, "old.json", True)
+        assert (cmp_["fixed_failures"], cmp_["new_failures"], cmp_["gone_failures"]) == \
+            ([], [], []), cmp_
 
 
 def test_main_refuses_what_the_arm_cannot_fly():
@@ -385,11 +477,94 @@ def test_a_rerun_refuses_a_bundle_flown_on_other_response_parameters():
     stale = json.loads(json.dumps(ex))
     stale["vehicle_response"]["params"]["accel_mps2"] = 9.0
     assert "flown with" in _refused(lambda: S.rerun_from_extras(stale))
-    # A bundle from before the arm (no key at all) re-flies on the ideal vehicle.
+    # A bundle from before the arm (schema "/1", no key at all) re-flies on
+    # the ideal vehicle.
     old = json.loads(json.dumps(ex))
     del old["vehicle_response"]
     del old["arm"]["response"]
+    old["extras_schema"] = S.EXTRAS_SCHEMA
     assert not any("vehicle_v" in r for r in S.rerun_from_extras(old).rows)
+
+
+def test_an_arm_bundle_is_a_schema_a_reader_without_the_arm_refuses():
+    """An ArduPilot bundle needs `arm.response` to replay; written as
+    "sweep-episode-extras/1" (as at 31343a2), a harness from before the arm
+    accepted it and re-flew it on the ideal vehicle under its id (review of
+    T1b-harness-vehicle, P2). Now it is "/2": the pre-arm reader's own check
+    (`extras_schema != "sweep-episode-extras/1"` -> refuse) stops it, this
+    harness reads both, an ideal bundle stays "/1", and a bundle whose schema
+    and vehicle disagree is refused rather than re-flown on either."""
+    spec = _spec("nfz-head-on-control")
+    pre_arm_reads = "sweep-episode-extras/1"           # c77c77d's EXTRAS_SCHEMA
+    assert S.EXTRAS_SCHEMA == pre_arm_reads
+    ex = {}
+    for arm in ("ideal", "ardupilot"):
+        run = S.run_episode(spec, LIBRARY.defaults, 0, response=arm)
+        ex[arm] = json.loads(json.dumps(S._json_safe(S.episode_extras(
+            spec, LIBRARY.defaults, 0, run, response=arm))))
+        again = S.rerun_from_extras(ex[arm])
+        assert [r["x"] for r in again.rows] == [r["x"] for r in run.rows], arm
+    assert ex["ideal"]["extras_schema"] == pre_arm_reads
+    assert ex["ardupilot"]["extras_schema"] == S.EXTRAS_SCHEMA_RESPONSE != pre_arm_reads
+    mixed = json.loads(json.dumps(ex["ardupilot"]))
+    mixed["extras_schema"] = S.EXTRAS_SCHEMA
+    assert "ideal vehicle" in _refused(lambda: S.rerun_from_extras(mixed))
+    bare = json.loads(json.dumps(ex["ideal"]))
+    bare["extras_schema"] = S.EXTRAS_SCHEMA_RESPONSE
+    assert "names no non-ideal" in _refused(lambda: S.rerun_from_extras(bare))
+    unknown = dict(ex["ideal"], extras_schema="sweep-episode-extras/3")
+    assert "schema" in _refused(lambda: S.rerun_from_extras(unknown))
+
+
+def test_a_comparison_run_writes_outside_the_folders_the_report_reads():
+    """A run that flies a comparison configuration defaults to
+    demo/out/cmp_<profile>_<label>, outside `demo/out/stress_*/episode-*`
+    (tools/kpi_report.py DEFAULT_RUNS); a headline run keeps stress_<profile>
+    / sweep, and --publish keeps its own paths. Shown failing first: at
+    31343a2 a profiled run with `--response-arms ideal ardupilot` wrote its
+    copies into stress_<profile> beside the headline bundles, and the design
+    note's re-fly command named demo/out/stress_nightly_response (review of
+    T1b-harness-vehicle, P1)."""
+    import fnmatch
+    import kpi_report as KR
+    out_root = S.ROOT / "demo" / "out"
+    assert S.comparison_tag(["grant"], ["ideal"]) is None
+    assert S.comparison_tag(["grant"], ["ideal"], S.DEFAULT_WIND_MODEL) is None
+    assert S.comparison_tag(["grant"], ["ideal", "ardupilot"]) == TAG
+    assert S.comparison_tag(["grant", "3s"], ["ideal"]) == "forecast-3s"
+    assert S.comparison_tag(["grant"], ["ideal"], "open_loop") == "wind-open_loop"
+    assert S.run_folder("smoke") == out_root / "stress_smoke"
+    assert S.run_folder(None) == out_root / "sweep"
+    assert S.run_folder("nightly", TAG) == out_root / f"cmp_nightly_{TAG}"
+    assert S.run_folder(None, TAG) == out_root / f"cmp_library_{TAG}"
+    assert S.results_path(None, False, "nightly", TAG) == out_root / f"cmp_nightly_{TAG}" / "sweep.json"
+    assert S.results_path(None, True, None, TAG) == S.PUBLISHED_SWEEP
+    stress_glob = [g for g in KR.DEFAULT_RUNS if "stress_" in g]
+    assert stress_glob, KR.DEFAULT_RUNS
+    for tag in ("smoke", "nightly", "broad", None):
+        bundle = (S.run_folder(tag, TAG) / "episode-x").relative_to(S.ROOT).as_posix()
+        assert not any(fnmatch.fnmatch(bundle, g) for g in stress_glob), bundle
+    # main() passes the run's comparison label to both defaults (recorded,
+    # not written: the paths are redirected into a temporary folder).
+    seen = []
+    real_rf, real_rp = S.run_folder, S.results_path
+    with tempfile.TemporaryDirectory() as td:
+        def rf(tag, comparison=None):
+            seen.append(("runs", tag, comparison))
+            return Path(td) / "runs"
+
+        def rp(out, publish, tag, comparison=None):
+            seen.append(("out", tag, comparison))
+            return Path(td) / "s.json"
+        S.run_folder, S.results_path = rf, rp
+        try:
+            for arms in (["ideal", "ardupilot"], ["ideal"]):
+                assert _main(["--only", "nfz-head-on-control", "--seed", "1001",
+                              "--no-bundles", "--response-arms", *arms]) == 0
+        finally:
+            S.run_folder, S.results_path = real_rf, real_rp
+    assert seen == [("out", None, TAG), ("runs", None, TAG),
+                    ("out", None, None), ("runs", None, None)], seen
 
 
 def test_the_kpi_report_files_the_arm_apart_and_says_nothing_without_it():
@@ -407,6 +582,25 @@ def test_the_kpi_report_files_the_arm_apart_and_says_nothing_without_it():
     assert KR._run_labels({"forecast_arm": "grant", "response_arm": "ardupilot"}) == "/" + TAG
     page = KR.render_sweep_markdown({"_cell_rollup": {}, "_response_comparison": None})
     assert "Vehicle-response" not in page
+    # The per-family table's intro names the comparison rows it may hold.
+    assert "`/forecast-3s` and `/response-ardupilot` for the comparison" in page
+    # Which families are comparison configurations (P1): the labels
+    # _run_labels appends after the Shield arm, never /forecast-unlabelled
+    # (the pre-label headline bundles), never a flight's family.
+    cl = KR.comparison_label
+    assert cl(f"stress-bundle/nfz_head_on/nfz-head-on/shield-on/{TAG}") == "/" + TAG
+    assert cl("sweep-json/nfz_head_on/nfz-head-on/shield-on/forecast-3s") == "/forecast-3s"
+    assert cl("stress-bundle/w/w@a=1/shield-off/prefix-off/wind-open_loop") == "/wind-open_loop"
+    assert cl("stress-bundle/nfz_head_on/nfz-head-on/shield-on/forecast-unlabelled") == ""
+    assert cl("stress-bundle/nfz_head_on/nfz-head-on/shield-on/prefix-off") == ""
+    assert cl("stress-bundle/x/response-time@k=forecast-3s/shield-on") == ""
+    assert cl(f"pas-ardupilot/policy/mission/{TAG}") == "" and cl(None) == ""
+    for d in ({"response_arm": "ardupilot"}, {"forecast_arm": "3s"},
+              {"forecast_arm": "grant", "wind_model": "open_loop"},
+              {"forecast_arm": "grant"}, {}):
+        fam = KR._bundle_family(d, "nfz-head-on", {}, "on")
+        want = KR._run_labels(d).replace("/forecast-unlabelled", "")
+        assert cl(fam) == want, (d, fam, cl(fam))
 
 
 def test_the_fit_recovers_known_parameters_from_a_synthetic_flight():

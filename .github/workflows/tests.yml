@@ -273,10 +273,12 @@
 # at 4418ae0 the step took 20-29 s, so about 55-80 s is to be expected there
 # (scaled, not measured). The standalone-test step grows too: on the desktop
 # tests/test_sweep.py took 85 s at 4418ae0 and 228 s on 2026-10-13 (its
-# episodes fly the 5 s forecast), and the five test_harnesstruth_* files add
-# 65 s, about 3.5 minutes per job in all; on GitHub, where that step took
-# 2:36-3:54 at 4418ae0, roughly 5-8 minutes is to be expected (scaled, not
-# measured). The files added on 2026-10-19 took 40-50 s together per job in
+# episodes fly the 5 s forecast), and the test_harnesstruth_* files add 65 s
+# (five files then; the sixth, test_harnesstruth_response of 2026-10-20,
+# about 20 s more on the desktop), about 3.5-4 minutes per job in all; on
+# GitHub, where that step took 2:36-3:54 at 4418ae0, roughly 5-8 minutes is
+# to be expected (scaled, not measured). The files added on 2026-10-19 took
+# 40-50 s together per job in
 # the WSL venvs, test_deploy_configs 11-14 s of it there (70-125 s alone on
 # the desktop, where its `docker compose config` and git checks run). The 40
 # files that made the list complete add about 60-75 s per job there (the

@@ -12,7 +12,11 @@ the contractual KPIs.
 
 Results go to demo/out/sweep/ (or demo/out/stress_<profile>/): the results
 JSON, one episode bundle per episode, and `kpi_report.md`, the grant's KPI
-report for the run (one row per (template, parameter cell)). Until 2026-10-06 a
+report for the run (one row per (template, parameter cell)). A run that flies a
+comparison configuration (`--forecast-arms grant 3s`, `--response-arms ideal
+ardupilot`, `--wind-model open_loop`) goes to demo/out/cmp_<profile>_<label>/
+instead (run_folder, since 2026-10-20), outside the stress_* folders that
+tools/kpi_report.py reads by default. Until 2026-10-06 a
 plain run overwrote docs/data/scenario_sweep.json, a published artefact that the
 evaluation data, the deck and tests/test_kpi_magnitudes.py read; replacing it
 now takes `--publish`, and a CHANGELOG entry.
@@ -198,9 +202,14 @@ places: its copies are tagged `response-ardupilot` (run id, bundle name,
 `/response-ardupilot` KPI row), every bundle and KPI table of a run records
 its vehicle (`vehicle_response`, `response_arm`; the ideal one too), and its
 results sit in `_response_comparison` (per family, both arms' unsafe-position
-and polygon entries, P0 escapes, true-state P0 ticks and labelled fail-safe
-score over the same (cell, seed) pairs) - never in `_counts`,
-`_failsafe_labels`, `_true_state`, the top failures or the exit code. One
+and polygon entries, P0 escapes, true-state P0 ticks of the command and of the
+velocity the airframe flew, and labelled fail-safe score over the same (cell,
+seed) pairs) - never in `_counts`, `_failsafe_labels`, `_true_state`, the top
+failures or the exit code. Since 2026-10-20 an arm bundle's extras are
+"sweep-episode-extras/2" (a reader that does not know the arm refuses them),
+a profiled run with the arm goes to demo/out/cmp_<profile>_response-ardupilot
+(run_folder), and tools/kpi_report.py ranks its copies apart from the grant's
+top-K (review of T1b-harness-vehicle). One
 comparison dimension per run (a 3 s episode on the ArduPilot response would
 shadow neither twin), never with --publish, never on the SITL rail (which
 flies ArduPilot for real).
@@ -1402,6 +1411,19 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     # by a third Shield, never by the flying one (whose FSM it would feed).
     checker = (Shield(spec.policy.load(ROOT), lookahead_s=look, dt=step, now=clock,
                       escalation=False) if esc else None)
+    # Under the vehicle-response arm only: a fourth Shield, kept in step like
+    # the others, that judges the velocity the AIRFRAME flew over each tick
+    # at the true position (`true_p0_vehicle_ticks`). The true-state P0 count
+    # above judges the COMMAND, before the vehicle steps; braking carry - a
+    # command of zero while the airframe still moves toward the zone - is
+    # invisible to it (review of T1b-harness-vehicle, P3). Its own Shield,
+    # because a Shield's filter() feeds its sliding window and monitor clock,
+    # and a second query per tick to the oracle or the checker would change
+    # what they keep. None on the ideal vehicle, whose airframe velocity IS
+    # the command, so the ideal episode builds, keys and steps exactly what
+    # it did.
+    vjudge = (Shield(spec.policy.load(ROOT), lookahead_s=look, dt=step, now=clock,
+                     escalation=False) if rsp is not None else None)
     rng_gps = random.Random(f"{seed}:gps")
     rng_wind = random.Random(f"{seed}:wind")
     rng_jit = random.Random(f"{seed}:jitter")
@@ -1422,7 +1444,7 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     subj = spec.mission.subject
     relabels = sorted(subj.reclassify if subj else [], key=lambda r: r.at_s)
     subj_class = subj.class_ if subj else None
-    shields = [s for s in (shield, oracle, checker) if s is not None]
+    shields = [s for s in (shield, oracle, checker, vjudge) if s is not None]
     truth = oracle or shield                     # the Shield asked about the TRUE state
     if subj:
         for s in shields:
@@ -1472,6 +1494,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     prev_owner = "shield"
     true_p0_ticks = 0
     autopilot_p0_ticks = 0
+    # The vehicle-response arm's airframe-velocity count (`vjudge`); never
+    # reported for the ideal vehicle.
+    true_p0_vehicle_ticks = 0
     min_fence_d = math.inf
     fence_seen = False
     inside_poly_ticks = 0
@@ -1839,6 +1864,19 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 heading = (fvx / vsp, fvy / vsp)
             # What flew from this row's position, beside what was commanded.
             row["vehicle_v"] = [fvx, fvy, fvz]
+            # The same true-state judgement as `true_p0_flown_ticks`, of the
+            # velocity the airframe FLEW over this tick (VehicleResponse's
+            # mean, from this row's true position, at this tick's rules)
+            # instead of the command: a Brake or a slide that zeroes the
+            # into-zone command while the airframe still carries toward the
+            # zone counts here and not there. Yaw is not modelled, so the
+            # command's yaw rate stands.
+            yr = flown.yaw_rate if math.isfinite(flown.yaw_rate) else 0.0
+            veh_vios = vjudge.filter(st, Action4D(vx=fvx, vy=fvy, vz_up=fvz, yaw_rate=yr),
+                                     t=t_now).violations
+            row["vehicle_violations"] = [v.model_dump() for v in veh_vios]
+            if p0(veh_vios):
+                true_p0_vehicle_ticks += 1
         if wind_model == "open_loop":
             # The model until 2026-10-12: the autopilot's modes rejected wind
             # and gusts, every other velocity drifted open-loop with both.
@@ -2000,6 +2038,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         extra["max_vehicle_speed"] = round(veh_max_speed, 4)
         extra["max_velocity_lag_mps"] = round(veh_max_lag, 4)
         extra["nonfinite_commands_held"] = veh.nonfinite_commands
+        # `true_p0_flown_ticks` judges the command at the true state;
+        # this, the velocity the airframe flew (vjudge, review of
+        # T1b-harness-vehicle, P3).
+        extra["true_p0_vehicle_ticks"] = true_p0_vehicle_ticks
     if fsm is not None:
         extra["fsm"] = {k: fsm[k] for k in ("final_state", "terminal",
                                              "terminal_reason", "visited",
@@ -2124,6 +2166,17 @@ def manifest_extras(arm: dict | None) -> dict | None:
 # The version of the self-contained keys episode_extras() adds; a reader
 # (rerun_from_extras, the WP4 outputs tools) refuses a schema it does not know.
 EXTRAS_SCHEMA = "sweep-episode-extras/1"
+# The same keys for an episode flown on a vehicle response other than the
+# ideal one (since 2026-10-20; review of T1b-harness-vehicle, P2). Such a
+# bundle only replays correctly on a harness that reads `arm.response`; a
+# reader from before the arm (c77c77d, or any branch without it) accepted
+# "/1" and re-flew the episode on the ideal vehicle under the bundle's id -
+# the silent misreplay the parameter-drift guard in rerun_from_extras exists
+# to stop, in the other direction. Under "/2" that reader refuses it
+# instead. Headline (ideal-vehicle) bundles keep "/1", which every reader
+# replays correctly, so their extras are what they were.
+EXTRAS_SCHEMA_RESPONSE = "sweep-episode-extras/2"
+EXTRAS_SCHEMAS_READ = (EXTRAS_SCHEMA, EXTRAS_SCHEMA_RESPONSE)
 
 
 # A signed policy bundle up to this size is carried in the episode's extras
@@ -2186,10 +2239,14 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
     ideal vehicle's included, so a bundle says which vehicle flew it without
     a reader having to know when the arm appeared. A bundle written before
     2026-10-19 has neither key and was flown on the ideal vehicle (the only
-    one there was); rerun_from_extras reads it so."""
+    one there was); rerun_from_extras reads it so. A bundle flown on another
+    vehicle is written as EXTRAS_SCHEMA_RESPONSE ("/2"), so a reader that
+    does not know `arm.response` refuses it rather than re-fly it on the
+    ideal vehicle."""
     dfl = _as_defaults(defaults)
     out: dict[str, Any] = {
-        "extras_schema": EXTRAS_SCHEMA,
+        "extras_schema": (EXTRAS_SCHEMA if response == DEFAULT_RESPONSE_ARM
+                          else EXTRAS_SCHEMA_RESPONSE),
         "scenario_id": spec.scenario_id,
         "template": spec.template,
         "random_seed": int(seed),
@@ -2219,10 +2276,24 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
     from the one flown stops the re-run instead of flying something else. A
     bundle policy is written from `policy.bundle_b64` the same way (its file
     hash checked first); one too large to have been inlined is read from its
-    recorded path under `root` and pinned the same way."""
-    if extras.get("extras_schema") != EXTRAS_SCHEMA:
-        raise ValueError(f"manifest_extras schema {extras.get('extras_schema')!r}, "
-                         f"this harness reads {EXTRAS_SCHEMA!r}")
+    recorded path under `root` and pinned the same way.
+
+    Schema "/1" is the ideal vehicle (a bundle from before the arm names no
+    response; one that names another vehicle under "/1" contradicts itself
+    and is refused), "/2" (EXTRAS_SCHEMA_RESPONSE) the vehicle its
+    `arm.response` names, which it must name."""
+    schema = extras.get("extras_schema")
+    if schema not in EXTRAS_SCHEMAS_READ:
+        raise ValueError(f"manifest_extras schema {schema!r}, this harness reads "
+                         f"{list(EXTRAS_SCHEMAS_READ)}")
+    rsp_named = (extras.get("arm") or {}).get("response")
+    if schema == EXTRAS_SCHEMA and rsp_named not in (None, DEFAULT_RESPONSE_ARM):
+        raise ValueError(f"manifest_extras schema {schema!r} is the ideal vehicle, but "
+                         f"the bundle names the {rsp_named!r} response (a bundle "
+                         f"flown on another vehicle is {EXTRAS_SCHEMA_RESPONSE!r})")
+    if schema == EXTRAS_SCHEMA_RESPONSE and rsp_named in (None, DEFAULT_RESPONSE_ARM):
+        raise ValueError(f"manifest_extras schema {schema!r} names no non-ideal "
+                         f"vehicle response (arm.response {rsp_named!r})")
     # A bundle written before 2026-10-19 may carry pins that name no gates,
     # which the spec now refuses; read as they were written (they decide
     # only the verdict, never the flight).
@@ -3231,10 +3302,28 @@ _RSP_SUM_FIELDS = (
     ("ticks_inside_polygon", "ticks_inside_fence_polygon"),
     # The grant's KPI: P0 violations still in the action the Shield flew.
     ("p0_escapes", "p0_escapes"),
+    # The COMMANDED action judged at the true position (before the vehicle
+    # steps), and of those the ticks the autopilot flew.
     ("true_p0_flown_ticks", "true_p0_flown_ticks"),
     ("autopilot_p0_flown_ticks", "autopilot_p0_flown_ticks"),
+    # The velocity the AIRFRAME flew judged at the same true state (_episode
+    # `vjudge`, since 2026-10-20): braking carry counts here, not above. The
+    # ideal vehicle's airframe flies its command, so its side reads the
+    # commanded count (`_RSP_FALLBACK`).
+    ("true_p0_vehicle_ticks", "true_p0_vehicle_ticks"),
     ("repair_count", "repair_count"),
 )
+# A side whose tables do not carry the first key reads the second: the ideal
+# vehicle's airframe velocity IS the command, so its vehicle count is its
+# commanded count, and the comparison's two columns stay over one definition.
+_RSP_FALLBACK = {"true_p0_vehicle_ticks": "true_p0_flown_ticks"}
+
+
+def _rsp_value(k: dict, key: str):
+    v = k.get(key)
+    if v is None and key in _RSP_FALLBACK:
+        v = k.get(_RSP_FALLBACK[key])
+    return v or 0
 
 
 def _rsp_family_side(items: list[dict]) -> dict[str, dict]:
@@ -3258,7 +3347,7 @@ def _rsp_family_side(items: list[dict]) -> dict[str, dict]:
         mo = k.get("mission_outcome")
         f["outcomes"][mo] = f["outcomes"].get(mo, 0) + 1
         for name, key in _RSP_SUM_FIELDS:
-            f[name] += k.get(key) or 0
+            f[name] += _rsp_value(k, key)
         f["episodes_with_unsafe_position_entry"] += int((k.get("breaches") or 0) > 0)
         f["episodes_entering_polygon"] += int((k.get("polygon_entries") or 0) > 0)
         f["episodes_with_p0_escape"] += int((k.get("p0_escapes") or 0) > 0)
@@ -3280,7 +3369,8 @@ def _rsp_family_side(items: list[dict]) -> dict[str, dict]:
 _RSP_DELTA_FIELDS = ("unsafe_position_entries", "episodes_with_unsafe_position_entry",
                      "polygon_entries", "episodes_entering_polygon",
                      "autopilot_unsafe_position_entries", "autopilot_polygon_entries",
-                     "p0_escapes", "true_p0_flown_ticks", "failsafe_correct")
+                     "p0_escapes", "true_p0_flown_ticks", "true_p0_vehicle_ticks",
+                     "failsafe_correct")
 
 
 def response_comparison(headline: list[dict], rsp_scored: list[dict],
@@ -3330,7 +3420,7 @@ def response_comparison(headline: list[dict], rsp_scored: list[dict],
         off = [x for x in items if x.get("arm", "on") != "on"]
         totals[side] = {
             "shield_on_episodes": len(on),
-            **{name: sum((x.get("kpi") or {}).get(key) or 0 for x in on)
+            **{name: sum(_rsp_value(x.get("kpi") or {}, key) for x in on)
                for name, key in _RSP_SUM_FIELDS},
             "episodes_with_unsafe_position_entry": sum(
                 1 for x in on if ((x.get("kpi") or {}).get("breaches") or 0) > 0),
@@ -3353,7 +3443,10 @@ def response_comparison(headline: list[dict], rsp_scored: list[dict],
                  "comparison only: never in _counts, _failsafe_labels, _true_state, "
                  "the top failures or the exit code. Family rows and totals count "
                  "shield-on episodes (the fail-safe labels every labelled one); "
-                 "the shield-off controls are totalled apart."),
+                 "the shield-off controls are totalled apart. true_p0_flown_ticks "
+                 "judges the COMMANDED action at the true state, true_p0_vehicle_ticks "
+                 "the velocity the airframe flew there (braking carry counts only in "
+                 "the second; on the ideal vehicle the two are one count)."),
         "counts": rsp_counts,
         "paired_episodes": len(pairs),
         "unmatched": unmatched,
@@ -3564,15 +3657,50 @@ def published_view(doc: dict) -> dict:
     return out
 
 
-def results_path(out: str | None, publish: bool, tag: str | None) -> Path:
+def comparison_tag(forecast_arms, response_arms,
+                   wind_model: str = DEFAULT_WIND_MODEL) -> str | None:
+    """The comparison configuration(s) a run flies, as the labels its KPI rows
+    carry ("forecast-3s", "response-ardupilot", "wind-open_loop", joined by
+    "_"), or None for a run of the headline configuration alone. It names the
+    run's default folder (run_folder)."""
+    tags = ([f"forecast-{a}" for a in forecast_arms if a != "grant"]
+            + ([f"wind-{wind_model}"] if wind_model != DEFAULT_WIND_MODEL else [])
+            + [f"response-{a}" for a in response_arms if a != DEFAULT_RESPONSE_ARM])
+    return "_".join(tags) or None
+
+
+def run_folder(tag: str | None, comparison: str | None = None) -> Path:
+    """The default folder of a run's results JSON, bundles and kpi_report.md:
+    demo/out/sweep (the library) or demo/out/stress_<profile>, and for a run
+    that flies a comparison configuration (comparison_tag) demo/out/
+    cmp_<profile or "library">_<label>.
+
+    Outside `demo/out/stress_*` on purpose (review of T1b-harness-vehicle,
+    P1): tools/kpi_report.py reads `demo/out/stress_*/episode-*` by default
+    (DEFAULT_RUNS), and until 2026-10-20 a profiled run with
+    `--response-arms ideal ardupilot` (or `--forecast-arms grant 3s`) wrote
+    its comparison copies into stress_<profile> beside the headline bundles,
+    where every later default report read them; a library run's would also
+    have replaced the headline run's demo/out/sweep/sweep.json. The ideal
+    vehicle, the grant forecast and the guided wind - every default
+    invocation, and every profile as shipped (none declares a comparison
+    arm) - keep the folder they always had."""
+    if comparison:
+        return ROOT / "demo" / "out" / f"cmp_{tag or 'library'}_{comparison}"
+    return ROOT / "demo" / "out" / (f"stress_{tag}" if tag else "sweep")
+
+
+def results_path(out: str | None, publish: bool, tag: str | None,
+                 comparison: str | None = None) -> Path:
     """Where the results JSON goes. The published artefact only on --publish:
     a routine re-run used to replace docs/data/scenario_sweep.json, which the
-    evaluation data, the deck and a pinned test read."""
+    evaluation data, the deck and a pinned test read. Otherwise `out`, else
+    run_folder's sweep.json (a comparison run's own folder)."""
     if publish:
         return PUBLISHED_SWEEP
     if out:
         return Path(out)
-    return ROOT / "demo" / "out" / (f"stress_{tag}" if tag else "sweep") / "sweep.json"
+    return run_folder(tag, comparison) / "sweep.json"
 
 
 def _rollup(eps: list[dict]) -> dict | None:
@@ -3614,12 +3742,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--out", default=None,
                     help="results JSON (default: demo/out/sweep/sweep.json, or "
-                         "demo/out/stress_<profile>/sweep.json)")
+                         "demo/out/stress_<profile>/sweep.json; a run with a "
+                         "comparison arm or wind model: demo/out/"
+                         "cmp_<profile|library>_<label>/sweep.json)")
     ap.add_argument("--publish", action="store_true",
                     help="write the library run to docs/data/scenario_sweep.json, "
                          "the PUBLISHED artefact (needs a CHANGELOG entry)")
     ap.add_argument("--runs", default=None,
-                    help="where episode bundles and kpi_report.md go")
+                    help="where episode bundles and kpi_report.md go (default: "
+                         "demo/out/sweep, demo/out/stress_<profile>, or for a "
+                         "comparison run demo/out/cmp_<profile|library>_<label>)")
     ap.add_argument("--no-bundles", action="store_true",
                     help="skip the per-episode bundle folders")
     ap.add_argument("--keep-logs", action="store_true",
@@ -3689,9 +3821,15 @@ def main(argv: list[str] | None = None) -> int:
                             response_arms=rsp_arms)
     info["wind_model"] = args.wind_model
     tag = profile.profile if profile else None
-    out = results_path(args.out, args.publish, tag)
-    runs = Path(args.runs) if args.runs else (
-        ROOT / "demo" / "out" / (f"stress_{tag}" if tag else "sweep"))
+    # A run that flies a comparison configuration gets its own default folder
+    # (run_folder), outside the stress_* glob the KPI report reads; --publish
+    # keeps demo/out/sweep for its bundles (its 3 s arm is part of the
+    # published run, and that folder is outside the glob already).
+    cmp_tag = None if args.publish else comparison_tag(
+        fc_arms if fc_arms is not None else (profile.forecast_arms if profile else ["grant"]),
+        eff_rsp, args.wind_model)
+    out = results_path(args.out, args.publish, tag, cmp_tag)
+    runs = Path(args.runs) if args.runs else run_folder(tag, cmp_tag)
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%SZ")
     verbose = len(episodes) <= 80
 
@@ -4134,14 +4272,15 @@ def main(argv: list[str] | None = None) -> int:
               f"{ti['episodes_entering_polygon']} -> {ta['episodes_entering_polygon']}); "
               f"autopilot entries {ti['autopilot_polygon_entries']} -> "
               f"{ta['autopilot_polygon_entries']}; P0 escapes {ti['p0_escapes']} -> "
-              f"{ta['p0_escapes']}; true P0 ticks {ti['true_p0_flown_ticks']} -> "
-              f"{ta['true_p0_flown_ticks']}; fail-safe labels "
+              f"{ta['p0_escapes']}; true P0 ticks, command {ti['true_p0_flown_ticks']} "
+              f"-> {ta['true_p0_flown_ticks']}, airframe {ti['true_p0_vehicle_ticks']} -> "
+              f"{ta['true_p0_vehicle_ticks']}; fail-safe labels "
               f"{fi['correct']}/{fi['labelled']} -> {fa['correct']}/{fa['labelled']} "
               f"({fi['false_triggers']} -> {fa['false_triggers']} false, "
               f"{fi['missed_triggers']} -> {fa['missed_triggers']} missed)")
         print(f"\n  {'family (shield-on), ideal -> ardupilot':<32} {'eps':>4} "
               f"{'unsafe-entries':>15} {'poly-entries':>13} {'ap-poly':>8} "
-              f"{'P0-esc':>8} {'true-P0':>11} {'fail-safe':>13}")
+              f"{'P0-esc':>8} {'true-P0-cmd':>11} {'true-P0-veh':>11} {'fail-safe':>13}")
         for fam, row in rsp_comparison["families"].items():
             a, b = row["ideal"], row["ardupilot"]
             if not a:
@@ -4152,6 +4291,7 @@ def main(argv: list[str] | None = None) -> int:
                   f"{str(a['autopilot_polygon_entries']) + '->' + str(b['autopilot_polygon_entries']):>8} "
                   f"{str(a['p0_escapes']) + '->' + str(b['p0_escapes']):>8} "
                   f"{str(a['true_p0_flown_ticks']) + '->' + str(b['true_p0_flown_ticks']):>11} "
+                  f"{str(a['true_p0_vehicle_ticks']) + '->' + str(b['true_p0_vehicle_ticks']):>11} "
                   f"{str(a['failsafe_correct']) + '/' + str(a['failsafe_labelled']) + '->' + str(b['failsafe_correct']) + '/' + str(b['failsafe_labelled']):>13}")
     if fsl["labelled"]:
         verdict = []

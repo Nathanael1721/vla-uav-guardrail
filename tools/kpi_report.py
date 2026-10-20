@@ -75,6 +75,20 @@ SINCE 2026-10-12 (the WP4 outputs the final report rests on)
   * --baseline <report.json>: new, fixed and gone failures and per-family
     deltas against an earlier report; the JSON now carries `failures` for
     the next comparison.
+
+SINCE 2026-10-20: COMPARISON CONFIGURATIONS ARE NOT HEADLINE FAILURES
+
+  * An episode flown on a comparison configuration - the 3 s forecast
+    (`/forecast-3s`), the open-loop wind (`/wind-open_loop`), the measured
+    ArduPilot vehicle response (`/response-ardupilot`) - keeps its labelled
+    family row but is ranked in its own top-K (`comparison_top_failures`)
+    and indexed in `comparison_failures`, never in the grant's top-K,
+    `failures` or the headline facts (`comparison_label`,
+    `split_comparison`).
+  * experiments/sweep_scenarios.py writes such a run to
+    `demo/out/cmp_<profile>_<label>/` unless told otherwise, outside the
+    `demo/out/stress_*/episode-*` glob this tool reads by default; give that
+    folder in --runs to read it.
 """
 from __future__ import annotations
 
@@ -620,6 +634,50 @@ def _bundle_family(doc: dict, sid, params: dict, arm: str, start: dict | None = 
     if doc.get("prefix") == "off":
         fam += "/prefix-off"
     return fam + _run_labels(doc, start)
+
+
+# The family terms _run_labels appends that name a COMPARISON configuration:
+# a forecast other than the grant's (`/forecast-3s`), a wind model other than
+# the harness's default (`/wind-open_loop`, "kept for comparison") and a
+# vehicle other than the ideal one (`/response-ardupilot`). Not
+# `/forecast-unlabelled`: those are the stress bundles written before the
+# labels (before 2026-10-13), every one of them flown as the headline run of
+# its day, and they stay where they always were.
+_COMPARISON_TERM = re.compile(r"(forecast|wind|response)-[A-Za-z0-9_.]+")
+_STRESS_FAMILY_PREFIXES = ("stress-bundle/", "sweep-json/")
+
+
+def comparison_label(family) -> str:
+    """The comparison configuration a stress family was flown in - its
+    `/forecast-<arm>` (not `/forecast-unlabelled`), `/wind-<model>` and
+    `/response-<arm>` terms, in that order - or "" for the headline
+    configuration (and for every flight: the rails fly the grant's Shield on
+    a real autopilot, never a comparison arm).
+
+    Read back from the family NAME on purpose: `_run_labels` appends exactly
+    these terms after the Shield arm (and `/prefix-off`) of every stress
+    family, so the name is the one place that carries the label on an episode
+    loaded today, on a stored table, on a sweep row AND on a `failures` entry
+    of an earlier report JSON (--baseline), which keeps only `id`, `family`
+    and its categories. Terms are looked for only after the last
+    `shield-<arm>` segment, so a cell value that happens to contain one of
+    the words is not read as a label.
+
+    Until 2026-10-20 nothing read it, and the comparison copies went into the
+    grant's top-K and `failures` beside the headline episodes they shadow
+    (review of T1b-harness-vehicle, P1: over the smoke profile flown with
+    both vehicles, 3 of the 10 top-failure rows were /response-ardupilot
+    copies; a nightly run with the arm adds 105 failing copies, enough to
+    push headline failures off a ten-row table)."""
+    fam = str(family or "")
+    if not fam.startswith(_STRESS_FAMILY_PREFIXES):
+        return ""
+    segs = fam.split("/")
+    arm_at = [i for i, s in enumerate(segs) if s.startswith("shield-")]
+    if not arm_at:
+        return ""
+    return "".join(f"/{s}" for s in segs[arm_at[-1] + 1:]
+                   if _COMPARISON_TERM.fullmatch(s) and s != "forecast-unlabelled")
 
 
 def load_bundle_log(run: Path, rows: list[dict], doc: dict, manifest: dict,
@@ -1230,8 +1288,10 @@ BASELINE_FIELDS = ("episodes", "p0_escape_rate", "p0_escapes", "mission_success_
 def failure_index(episodes: list[dict], include_controls: bool = False) -> dict[str, dict]:
     """Every failing episode (guardrail.kpi.failure_categories non-empty),
     keyed `<family>::<id>`; Shield-off control arms only when asked for, as in
-    the top-K table. Written into the report JSON as `failures`, so a later
-    run can compare against it (--baseline)."""
+    the top-K table. Written into the report JSON as `failures` (over the
+    headline episodes) and `comparison_failures` (over the comparison
+    configurations, `split_comparison`), so a later run can compare against
+    it (--baseline)."""
     out = {}
     for e in episodes:
         if not include_controls and e.get("arm") == "off":
@@ -1242,6 +1302,22 @@ def failure_index(episodes: list[dict], include_controls: bool = False) -> dict[
                 "id": e.get("id"), "family": e.get("family"),
                 "failure_category": cats, "kpi_grade": bool(e.get("kpi_grade"))}
     return out
+
+
+def split_comparison(episodes: list[dict]) -> tuple[list[dict], list[dict]]:
+    """(headline episodes, comparison-configuration episodes), by
+    `comparison_label` of each family. The grant's "Top-K failure cases"
+    (Stress Testing p6), the `failures` index --baseline compares against,
+    the headline facts and the prefix A/B are the headline configuration's;
+    a comparison copy shadows a headline episode of the same cell and seed
+    (sweep_scenarios._twin_id), so pooling it there would count one scenario
+    twice under two vehicles or forecasts. The comparison episodes get their
+    own top-K and index (`comparison_top_failures`, `comparison_failures`)
+    and keep their labelled rows in the family tables."""
+    head, cmp_ = [], []
+    for e in episodes:
+        (cmp_ if comparison_label(e.get("family")) else head).append(e)
+    return head, cmp_
 
 
 def _flat_families(rep: dict) -> dict[str, dict]:
@@ -1259,11 +1335,18 @@ def compare_baseline(now: dict, base: dict, base_path: str,
     and not failing now), GONE (failing then, absent now - not counted as
     fixed), and those failing in both whose categories changed; and per
     family the change in each BASELINE_FIELDS figure. A baseline written
-    before `failures` existed is read from its `episodes`."""
+    before `failures` existed is read from its `episodes`.
+
+    Headline against headline: `now["failures"]` holds no comparison
+    configuration since 2026-10-20 (split_comparison), and a baseline written
+    before that holds them in its `failures`. Kept, every comparison copy of
+    such a baseline that is still present would read as FIXED."""
     if isinstance(base.get("failures"), dict):
         before = base["failures"]
     else:
         before = failure_index(base.get("episodes") or [], include_controls)
+    before = {k: v for k, v in before.items()
+              if not comparison_label((v or {}).get("family"))}
     after = now["failures"]
     present = {f"{e.get('family')}::{e.get('id')}" for e in now.get("episodes") or []}
     had = ({f"{e.get('family')}::{e.get('id')}" for e in base.get("episodes") or []}
@@ -1569,6 +1652,41 @@ def _render_baseline(b: dict | None) -> list[str]:
     return L
 
 
+def _top_failure_table(rows: list[dict]) -> list[str]:
+    """A top-K table (guardrail.kpi.top_failures rows) with its time-unsafe
+    basis notes, or "(no failing episode)"; the headline's and the comparison
+    configurations' tables are the same table over different episodes."""
+    if not rows:
+        return ["(no failing episode)", ""]
+    L = ["| # | Scenario | Family | Parameters | KPI-grade | Failure category | "
+         "Max time unsafe (s) | Raw action (vx, vy, vz_up, yaw_rate) | "
+         "Repaired action | t (s) | Bundle |",
+         "|---|---|---|---|---|---|---|---|---|---|---|"]
+    notes: dict[str, list[str]] = {}       # basis -> the rows citing it
+    for i, f in enumerate(rows, 1):
+        mt = _f(f.get("max_time_to_safe_s"), 1)
+        if f.get("time_to_safe_censored"):
+            mt += f" (+{f['time_to_safe_censored']} unrecovered)"
+        b = f.get("time_to_safe_basis")
+        if b and b != "logged in flight" and (f.get("max_time_to_safe_s")
+                                              or f.get("time_to_safe_censored")):
+            notes.setdefault(b, []).append(str(i))
+            mt += f" [{list(notes).index(b) + 1}]"
+        L.append(
+            f"| {i} | `{f['scenario_id']}` | `{f['family']}` | "
+            f"{params_brief(f.get('parameters'))} | "
+            f"{'yes' if f['kpi_grade'] else 'no'} | "
+            f"{', '.join(f['failure_category'])} | {mt} | {_act(f['raw_action'])} | "
+            f"{_act(f['repaired_action'])} | {_f(f['at_t'], 1)} | "
+            f"{('`' + f['bundle'] + '`') if f['bundle'] else 'no bundle'} |")
+    L.append("")
+    for j, (b, ids) in enumerate(notes.items(), 1):
+        L.append(f"[{j}] Time unsafe {b} (rows {', '.join(ids)}).")
+    if notes:
+        L.append("")
+    return L
+
+
 def render_markdown(rep: dict) -> str:
     L = [f"# KPI rollup - {rep['generated']}", "",
          f"Generated by `tools/kpi_report.py` at code revision "
@@ -1646,36 +1764,24 @@ def render_markdown(rep: dict) -> str:
           "that fell through, and last P0 ticks the log could not measure. "
           + ("Control arms (Shield off on purpose) are excluded; "
              "`--include-controls` lists them." if not rep["include_controls"]
-             else "Control arms are included."), ""]
-    if rep["top_failures"]:
-        L += ["| # | Scenario | Family | Parameters | KPI-grade | Failure category | "
-              "Max time unsafe (s) | Raw action (vx, vy, vz_up, yaw_rate) | "
-              "Repaired action | t (s) | Bundle |",
-              "|---|---|---|---|---|---|---|---|---|---|---|"]
-        notes: dict[str, list[str]] = {}       # basis -> the rows citing it
-        for i, f in enumerate(rep["top_failures"], 1):
-            mt = _f(f.get("max_time_to_safe_s"), 1)
-            if f.get("time_to_safe_censored"):
-                mt += f" (+{f['time_to_safe_censored']} unrecovered)"
-            b = f.get("time_to_safe_basis")
-            if b and b != "logged in flight" and (f.get("max_time_to_safe_s")
-                                                  or f.get("time_to_safe_censored")):
-                notes.setdefault(b, []).append(str(i))
-                mt += f" [{list(notes).index(b) + 1}]"
-            L.append(
-                f"| {i} | `{f['scenario_id']}` | `{f['family']}` | "
-                f"{params_brief(f.get('parameters'))} | "
-                f"{'yes' if f['kpi_grade'] else 'no'} | "
-                f"{', '.join(f['failure_category'])} | {mt} | {_act(f['raw_action'])} | "
-                f"{_act(f['repaired_action'])} | {_f(f['at_t'], 1)} | "
-                f"{('`' + f['bundle'] + '`') if f['bundle'] else 'no bundle'} |")
-        L.append("")
-        for j, (b, ids) in enumerate(notes.items(), 1):
-            L.append(f"[{j}] Time unsafe {b} (rows {', '.join(ids)}).")
-        if notes:
-            L.append("")
-    else:
-        L += ["(no failing episode)", ""]
+             else "Control arms are included.")
+          + (f" Episodes flown on a comparison configuration "
+             f"({rep['counts']['comparison']}: `/forecast-3s`, `/wind-open_loop`, "
+             f"`/response-ardupilot`) are not ranked here; they have their own "
+             f"table below." if (rep.get("counts") or {}).get("comparison") else ""), ""]
+    L += _top_failure_table(rep["top_failures"])
+    if (rep.get("counts") or {}).get("comparison"):
+        # Only when a comparison configuration was read, so a headline-only
+        # report is exactly what it was.
+        L += [f"## Top-{rep['top_k']} failure cases on comparison configurations "
+              f"(not headline numbers)", "",
+              "The same ranking over the episodes flown on a comparison "
+              "configuration: the 3 s forecast (`/forecast-3s`), the open-loop "
+              "wind model (`/wind-open_loop`) or the measured ArduPilot vehicle "
+              "response (`/response-ardupilot`). Each shadows a headline episode "
+              "of the same cell and seed, so it is kept out of the table above "
+              "and out of `failures` (`comparison_failures` in the JSON).", ""]
+        L += _top_failure_table(rep.get("comparison_top_failures") or [])
 
     L += _render_wp1(rep.get("wp1"))
     L += _render_wp2(rep.get("wp2"))
@@ -1717,7 +1823,10 @@ def _render_response_comparison(rc: dict | None) -> list[str]:
     (shield-on), the ideal vehicle beside the measured ArduPilot response over
     the same (cell, seed) pairs: unsafe-position entries, true-state polygon
     entries (Shield-flown and autopilot-flown), the Shield's P0 escapes, the
-    P0 ticks flown at the true state, and the labelled fail-safe score."""
+    true-state P0 ticks twice - of the COMMANDED action and of the velocity
+    the airframe flew (`true_p0_vehicle_ticks`, since 2026-10-20: braking
+    carry counts only there; the ideal vehicle's airframe flies its command,
+    so its two are one count) - and the labelled fail-safe score."""
     if not rc:
         return []
     ti = (rc.get("totals") or {}).get("ideal") or {}
@@ -1740,16 +1849,19 @@ def _render_response_comparison(rc: dict | None) -> list[str]:
          f"polygon entries {ti.get('polygon_entries')} -> {ta.get('polygon_entries')}; "
          f"autopilot polygon entries {ti.get('autopilot_polygon_entries')} -> "
          f"{ta.get('autopilot_polygon_entries')}; P0 escapes {ti.get('p0_escapes')} -> "
-         f"{ta.get('p0_escapes')}; true-state P0 ticks {ti.get('true_p0_flown_ticks')} "
-         f"-> {ta.get('true_p0_flown_ticks')}; fail-safe labels "
+         f"{ta.get('p0_escapes')}; true-state P0 ticks of the commanded action "
+         f"{ti.get('true_p0_flown_ticks')} -> {ta.get('true_p0_flown_ticks')}, of the "
+         f"velocity the airframe flew {ti.get('true_p0_vehicle_ticks')} -> "
+         f"{ta.get('true_p0_vehicle_ticks')}; fail-safe labels "
          f"{fi.get('correct')}/{fi.get('labelled')} -> {fa.get('correct')}/"
          f"{fa.get('labelled')} ({fi.get('false_triggers')} -> "
          f"{fa.get('false_triggers')} false, {fi.get('missed_triggers')} -> "
          f"{fa.get('missed_triggers')} missed).", "",
          "| Family | Episodes | Unsafe-position entries | Polygon entries | "
-         "Autopilot polygon entries | P0 escapes | True-state P0 ticks | "
-         "Fail-safe correct | Deepest true distance (m) |",
-         "|---|---|---|---|---|---|---|---|---|"]
+         "Autopilot polygon entries | P0 escapes | True-state P0 ticks (command) | "
+         "True-state P0 ticks (airframe) | Fail-safe correct | "
+         "Deepest true distance (m) |",
+         "|---|---|---|---|---|---|---|---|---|---|"]
     for fam, row in (rc.get("families") or {}).items():
         a, b = row.get("ideal") or {}, row.get("ardupilot") or {}
         if not a:
@@ -1760,6 +1872,7 @@ def _render_response_comparison(rc: dict | None) -> list[str]:
         L.append(f"| `{fam}` | {a.get('episodes')} | {pair('unsafe_position_entries')} | "
                  f"{pair('polygon_entries')} | {pair('autopilot_polygon_entries')} | "
                  f"{pair('p0_escapes')} | {pair('true_p0_flown_ticks')} | "
+                 f"{pair('true_p0_vehicle_ticks')} | "
                  f"{a.get('failsafe_correct')}/{a.get('failsafe_labelled')} -> "
                  f"{b.get('failsafe_correct')}/{b.get('failsafe_labelled')} | "
                  f"{_f(a.get('min_true_dist_to_fence_m'), 2)} -> "
@@ -1822,7 +1935,9 @@ def render_sweep_markdown(doc: dict, top_k: int = 10) -> str:
     L += ["## Per-scenario-family stats", "",
           "One row per (scenario template, parameter cell) and Shield arm "
           "(`<template>/<cell>/shield-<arm>`, `/prefix-off` for the prefix-off "
-          "arm); seeds and paraphrase arms of one cell pool in its row.", ""]
+          "arm, `/forecast-3s` and `/response-ardupilot` for the comparison "
+          "arms, never headline numbers); seeds and paraphrase arms of one cell "
+          "pool in its row.", ""]
     if cells:
         L += _family_table(cells) + ["", "Nulls beside the scores:", ""]
         L += _null_table(cells) + [""]
@@ -1937,7 +2052,9 @@ DEFINITIONS = {
         "hot-applied in flight and where a declared subject stood. AirSim "
         "follow flights of one policy share a row: they declare no cell. A "
         "stress row flown on a comparison configuration says so "
-        "(`/forecast-3s`, `/wind-open_loop`, `/response-ardupilot`); "
+        "(`/forecast-3s`, `/wind-open_loop`, `/response-ardupilot`), and its "
+        "episodes are ranked in their own top-K (`comparison_top_failures`, "
+        "`comparison_failures`), never in the grant's; "
         "`/forecast-unlabelled` marks "
         "bundles that predate the labels (before 2026-10-13: the 3 s / 0.5 s "
         "forecast and open-loop wind), not the grant's configuration. A row "
@@ -2328,7 +2445,15 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
     def compact(e):
         return {k: v for k, v in e.items() if k not in ("violations_by_type",)}
 
-    ab, para = arms_sections(episodes)
+    # The comparison configurations (/forecast-3s, /wind-open_loop,
+    # /response-ardupilot) apart from the headline: their own top-K and
+    # failure index, never the grant's (split_comparison). Each episode says
+    # which it is (`comparison`, "" for the headline).
+    for e in episodes:
+        e["comparison"] = comparison_label(e.get("family"))
+    head_eps, cmp_eps = split_comparison(episodes)
+
+    ab, para = arms_sections(head_eps)
     wp1 = None
     if wp1_path:
         wp1_p = Path(wp1_path) if Path(wp1_path).is_absolute() else ROOT / wp1_path
@@ -2359,9 +2484,10 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                                         if e["kind"] == "stored-table"),
                    "sweep": sum(1 for e in episodes if e["kind"] == "sweep-json"),
                    "kpi_grade": len(graded), "kpi_grade_at_flight_only": len(at_flight),
+                   "comparison": len(cmp_eps),
                    "skipped": len(skipped)},
         "definitions": DEFINITIONS,
-        "headline": headline(episodes),
+        "headline": headline(head_eps),
         "kpi_grade_episodes": [{"id": e["id"], "family": e["family"],
                                 "seed": (e.get("params") or {}).get("seed"),
                                 "code_revision": e.get("code_revision"),
@@ -2374,12 +2500,14 @@ def build_report(run_globs: list[str], sweep_paths: list[str], top_k: int,
                      "other": fams(other)},
         "top_k": top_k,
         "include_controls": include_controls,
-        "top_failures": K.top_failures(episodes, top_k, include_controls),
+        "top_failures": K.top_failures(head_eps, top_k, include_controls),
+        "comparison_top_failures": K.top_failures(cmp_eps, top_k, include_controls),
         "stored_vs_recomputed": [{"id": e["id"], "diffs": e["stored_vs_recomputed"]}
                                  for e in episodes if e.get("stored_vs_recomputed")],
         "skipped": skipped,
         "episodes": [compact(e) for e in episodes],
-        "failures": failure_index(episodes, include_controls),
+        "failures": failure_index(head_eps, include_controls),
+        "comparison_failures": failure_index(cmp_eps, include_controls),
         "wp1": wp1,
         "wp2": wp2_doc,
         "tick_budget": (tick_budget_section(tick_profiles, episodes)
