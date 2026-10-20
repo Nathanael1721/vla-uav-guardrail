@@ -570,7 +570,10 @@ carries its `run`, so a run that failed before soft rules were given up
 stays on the record, and `flown_run` names the run whose action flew - with
 result ok / skip / fail / fallback / relaxed and the reason for every skip),
 the measured `iterations` (loop passes that ran, summed over the runs; 0 on
-a passthrough) and `chain_runs`, `repair_mode`, `record_version` (2), a
+a passthrough) and `chain_runs`, `repair_mode`, `record_version` (2; 3
+since 2026-10-20, when `fsm_hold_point` joined it: where the escalation
+FSM told the autopilot to hold or land, and whether that point was legal,
+docs/DESIGN-hold-points.md), a
 `priority` per violation when the logger holds the policy, and `iterations`
 on each `repair_attempts` entry: the pass of the flown run that first logged
 that repair, operator and detail (`ShieldDecision.trace["repair_iterations"]`,

@@ -49,9 +49,19 @@ WHAT "LEGAL" MEANS HERE
   transit  Every pose of the straight transit, at its own time (sampled every
            TRANSIT_STEP_M, each axis at its own speed, as the harness's
            modelled autopilot flies it), breaches no hard enforced rule
-           (`Shield.rule_status(..., ahead_s=t)['breach']`) other than those a
-           stop at the start already breaks. The aircraft may be LEAVING a
-           zone it is in, or about to be in; it never enters another.
+           (`Shield.rule_status` 'breach', in a look-ahead view at that time)
+           except one the aircraft is LEAVING: a rule a stop at the start
+           breaks within the lookahead that the aircraft is already in -
+           breached at the start now, or not in force now and in force over
+           the start by then (a window opening over it) - with the pose no
+           deeper in it than a stop at the start is then
+           (`Shield.rule_depths`). A rule in force that the aircraft is
+           outside of is never entered - a zone or a stand-off ring closing
+           on it is escaped, never crossed or swept through - and one it is
+           in is left by getting shallower, never by going through it.
+           (Until 2026-10-20 a rule a stop at the start breaks was excused at
+           every pose, and a transit could cross a zone closing on the
+           aircraft: transit_breaks.)
 
 THE SEARCH (deterministic: a sweep is reproducible on any machine)
 
@@ -67,10 +77,11 @@ THE SEARCH (deterministic: a sweep is reproducible on any machine)
      one legal with its HOLD_MARGIN_M neighbours and reached by a legal
      transit is the plan, its heading then refined every REFINE_STEP_M back
      toward the last empty ring.
-  3. Nothing legal within MAX_QUERIES stop queries or 60 m: an in-place plan
-     marked ILLEGAL that names what it breaks (the FSM then searches again
-     once a second, fsm.HOLD_REPLAN_S). A query budget, not a time budget,
-     so the answer does not depend on the machine's load.
+  3. Nothing legal within MAX_QUERIES Shield queries (a stop query or a
+     transit pose, one each) or 60 m: an in-place plan marked ILLEGAL that
+     names what it breaks (the FSM then searches again once a second,
+     fsm.HOLD_REPLAN_S). A query budget, not a time budget, so the answer
+     does not depend on the machine's load.
 
 SPEED ASSUMPTION
 
@@ -114,6 +125,14 @@ DEFAULT_CLIMB_MPS = 2.0
 LAND_DESCENT_MPS = 0.5
 TRANSIT_STEP_M = 1.0
 BAND_INSET_M = 0.5
+# The search's budget, in Shield queries: a stop query (state_is_unsafe over
+# the lookahead) or one sampled transit pose (rule_status) costs one each.
+# Until 2026-10-20 only stop queries were counted; once a transit could no
+# longer cross a zone closing on the aircraft (transit_breaks), a search
+# could transit-check every candidate whose stop was legal and fail them all
+# - up to 60 poses each, uncounted (a 40 m bar closing at 3 m/s: 106 transit
+# checks, 325 poses, 30 % of the search's time, review of T1c P2). A pose
+# costs about 0.7 of a stop query on the desktop (0.24 vs 0.33 ms).
 MAX_QUERIES = 800
 # A moved point must stay legal this far off it in each horizontal direction
 # (four more stop queries, made only for a point that already passed): the
@@ -126,6 +145,10 @@ HOLD_MARGIN_M = 0.5
 # winning heading is searched again at this step (the rings are 2 m and 5 m
 # apart past 10 m), so "nearest" is within half a metre on that heading.
 REFINE_STEP_M = 0.5
+# A transit pose may sit no deeper in a rule it is leaving than a stop at the
+# start would be at that moment (transit_breaks). This is float noise only:
+# both depths come from the same Shield, in the same look-ahead view.
+DEPTH_TOL_M = 1e-6
 # The rule categories a landing SITE can satisfy (shield.Violation.category).
 # Not "altitude" (a descent breaks every floor wherever it is flown) and not
 # "corridor" (its band likewise; its footprint is judged apart, _corridor_out).
@@ -273,22 +296,81 @@ def _pose_at(start: State, end: State, tau: float, speed: float, climb: float) -
                  yaw_deg=start.yaw_deg)
 
 
+def _breached(shield, p: State) -> set[str]:
+    """The hard enforced rules a position breaches in the current tick or
+    look-ahead view (rule_status 'breach': inside them at that instant)."""
+    return {r["id"] for r in shield.rule_status(p) if r["breach"] and _binding_row(r)}
+
+
+BUDGET_SPENT = "(query budget spent)"
+
+
 def transit_breaks(shield, start: State, end: State, travel_s: float, speed: float,
-                   climb: float, escaping: Iterable[str] = ()) -> list[str]:
+                   climb: float, escaping: Iterable[str] = (),
+                   budget: list | None = None) -> list[str]:
     """The hard enforced rules the straight transit from `start` to `end`
-    breaches on the way (rule_status 'breach' at each sampled pose, at that
-    pose's own time), leaving out `escaping` - the rules a stop at the start
-    already breaks, which the transit is leaving. [] = a legal transit."""
+    breaks on the way: at each sampled pose, at that pose's own time (a
+    look-ahead view `tau` seconds on), every rule the pose breaches
+    (rule_status 'breach'). [] = a legal transit.
+
+    The one exception is a rule the transit is LEAVING. It must be in
+    `escaping` (a stop at the start breaks it within the lookahead), the
+    aircraft must already be in it - breached at the start NOW, or not in
+    force now and in force over the start by `tau` (a window opening over
+    the aircraft) - and the pose must be no deeper in it than a stop at the
+    start is at `tau` (`Shield.rule_depths`, the per-rule terms of
+    unsafe_depth). A rule in force now that the aircraft is outside of is
+    never entered, however soon it would reach a stop at the start: a zone
+    or a stand-off ring closing on the aircraft is escaped, never crossed or
+    swept through; and a rule the aircraft is in is left by getting
+    shallower, never by going through it.
+
+    Until 2026-10-20 a rule of `escaping` was excused at EVERY pose. A stop
+    at (0, 0, 15) with a 2 m DynamicNFZ bar 3 m east, closing at 3 m/s, is
+    illegal within the lookahead, so the bar was "escaping" and the plan
+    flew east THROUGH it to (3, 0): 27 of 50 transit samples inside its
+    ring, 0.3 s inside the polygon, the point itself inside the ring on
+    arrival, while a clean escape west existed (review of T1c, P2). Excusing
+    it only while a stop at the start is in it too was not enough: the plan
+    then went north, along the bar, and was swept by it as a stop would be
+    (23 samples in the ring). tests/test_hold_points.py
+    test_a_transit_never_crosses_a_zone_closing_on_the_aircraft holds both.
+    The library's moved holds pass the stricter test: out of a window
+    opening over the aircraft (not in force at the plan, over the start from
+    the opening on, each pose nearer the edge than the start), up out of a
+    breached altitude floor, off a zone the wind pushed the aircraft into
+    (docs/DESIGN-hold-points.md has the re-measured table).
+
+    `budget` ([queries left], the search's): each sampled pose costs one; a
+    transit the budget runs out on is not a legal one ([BUDGET_SPENT])."""
     esc = set(escaping)
+    rows = [r for r in shield.rule_status(start) if _binding_row(r)]
+    inside_now = {r["id"] for r in rows if r["breach"]} & esc
+    off_now = {r["id"] for r in rows if not r["in_force"]} & esc
     span = max(math.hypot(end.x - start.x, end.y - start.y), abs(end.up - start.up))
     n = max(1, math.ceil(span / TRANSIT_STEP_M - 1e-9))
     for i in range(1, n + 1):
+        if budget is not None:
+            if budget[0] <= 0:
+                return [BUDGET_SPENT]
+            budget[0] -= 1
         tau = travel_s * i / n
         p = _pose_at(start, end, tau, speed, climb)
-        bad = sorted({r["id"] for r in shield.rule_status(p, ahead_s=tau)
-                      if r["breach"] and _binding_row(r) and r["id"] not in esc})
+        with shield.looking_ahead(tau):
+            hit = _breached(shield, p)
+            leaving = hit & inside_now
+            opened = (hit & off_now) - leaving
+            if opened:
+                # In force since the plan: the aircraft is in it only if it
+                # came into force over the start.
+                leaving |= opened & _breached(shield, start)
+            bad = hit - leaving
+            if leaving:
+                dp = shield.rule_depths(p, leaving)
+                ds = shield.rule_depths(start, leaving)
+                bad |= {r for r in leaving if dp[r] > ds[r] + DEPTH_TOL_M}
         if bad:
-            return bad
+            return sorted(bad)
     return []
 
 
@@ -334,7 +416,7 @@ def choose_hold_point(shield, state: State, *, unsafe: list | None = None,
         with shield.looking_ahead(t_a):
             if not stop_ok(p) or not all(stop_ok(q) for q in _neighbours(p)):
                 return None
-        if transit_breaks(shield, state, p, t_a, speed, climb, breaks):
+        if transit_breaks(shield, state, p, t_a, speed, climb, breaks, budget):
             return None
         return HoldPoint(
             "LOITER", "moved", p.x, p.y, p.up, legal=True, travel_s=t_a,
@@ -342,8 +424,8 @@ def choose_hold_point(shield, state: State, *, unsafe: list | None = None,
             reason=(f"{what}; ({p.x:.1f}, {p.y:.1f}, {p.up:.1f}) is the nearest "
                     f"point where a stop is legal from arrival ({t_a:.2f} s) "
                     f"through the lookahead ({HOLD_MARGIN_M:g} m about it too), "
-                    f"reached in a straight line that enters no other rule "
-                    f"({why_speed})"))
+                    f"reached in a straight line that enters no rule a stop here would "
+                    f"not break then, and goes no deeper into one ({why_speed})"))
 
     plan = _search(shield, state, speed, climb, up_t, heading,
                    lambda p, t_a: stop_ok(p), accept, budget)
@@ -503,7 +585,7 @@ def choose_landing_site(shield, state: State, *, unsafe: list | None = None,
         if landing_breaks(shield, x, y, state.up, t_a, descent_mps, edges):
             return None
         p = State(x=x, y=y, up=state.up, yaw_deg=state.yaw_deg)
-        if transit_breaks(shield, state, p, t_a, speed, climb, escaping):
+        if transit_breaks(shield, state, p, t_a, speed, climb, escaping, budget):
             return None
         return HoldPoint(
             "LAND", "moved", x, y, state.up, legal=True, travel_s=t_a,
@@ -512,7 +594,8 @@ def choose_landing_site(shield, state: State, *, unsafe: list | None = None,
                     f"descent at {descent_mps:g} m/s from arrival ({t_a:.2f} s) "
                     f"breaks none of them ({HOLD_MARGIN_M:g} m about it too), "
                     f"reached at the current altitude in a straight line that "
-                    f"enters no other rule ({why_speed}){floor_note}"))
+                    f"enters no rule a stop here would not break then, and goes "
+                    f"no deeper into one ({why_speed}){floor_note}"))
 
     def quick_ok(p: State, t_a: float) -> bool:
         if site_ok is not None and not site_ok(p.x, p.y):

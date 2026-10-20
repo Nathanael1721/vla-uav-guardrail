@@ -498,7 +498,9 @@ def _writer_run(root: Path, name: str, vx_list, *, policy=None, clock=None) -> t
 def test_a_version_2_audit_from_the_writer_is_joined_one_tick_on_and_labels_the_row():
     run, rows = _writer_run(_tmp("wp4_v2_"), "rail", [3.0, 3.1, 3.2, 3.3])
     recs = [json.loads(x) for x in (run / "audit.jsonl").read_text(encoding="utf-8").splitlines()]
-    assert recs and all(r["record_version"] == 2 for r in recs), recs[:1]
+    # The writer's own version: 3 since 2026-10-20 (fsm_hold_point, which the
+    # join does not read), 2 when this test was written.
+    assert recs and all(r["record_version"] >= 2 for r in recs), recs[:1]
     assert [r["monitor_tick"] for r in recs] == [0, 1, 2, 3]
     assert all(v.get("grant_category") == "time-window" and v.get("priority") == "P1"
                for r in recs for v in r["violations"])

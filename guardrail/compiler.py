@@ -1944,10 +1944,16 @@ def _exits_for(policy: Policy, zone, ring):
              and c.constraint_type == "hard" and c.violation_action != "monitor_only"]
     keep_in = unary_union(tubes) if tubes else None
     timed = {z.id for z in _timed_zones(policy)}
+    # Always in force: no window of its own - `valid_time` absent, or present
+    # with no recurrence (models.ValidTime: "recurrence absent means
+    # always") - and no switch aimed at it. Until 2026-10-20 only an absent
+    # `valid_time` counted, so a zone written `valid_time: {}` was neither
+    # timed nor a wall: exits could land inside it and the depth came out
+    # too small (review of T1c, P5).
     always = [_ring_of(z) for z in policy.constraints
               if isinstance(z, _ZONES) and z is not zone and z.constraint_type == "hard"
               and z.violation_action != "monitor_only" and z.id not in timed
-              and z.valid_time is None]
+              and (z.valid_time is None or z.valid_time.recurrence is None)]
     minx, miny, maxx, maxy = ring.bounds
     pad = max(maxx - minx, maxy - miny) + 1.0
     world = box(minx - pad, miny - pad, maxx + pad, maxy + pad)
@@ -2004,6 +2010,45 @@ def _deepest(region, exits) -> tuple[float, float, float] | None:
     return float(d[i]), bx, by
 
 
+# How far ahead the mission-level test looks for the window's next opening
+# when leaving would take longer still: a week, the period of every weekly
+# schedule, so an opening beyond it never comes.
+_LINT_HORIZON_S = 7 * 24 * 3600.0
+
+
+def _next_opening(clock: "_RuleClock", zone, now: datetime,
+                  horizon_s: float) -> float | None:
+    """Seconds from `now` until `zone` comes into force (it is not in force
+    at `now`), if within `horizon_s`; else None.
+
+    Exact, not sampled. Whether a rule is in force (`_RuleClock.on`: its own
+    weekly window and every switch and swap acting on it, the Shield's
+    recurrence_active) can change only at a whole minute of the clock:
+    windows are written "HH:MM", open AT their start minute, close just
+    after their end minute, and a day turns at midnight. So the clock is
+    read at each minute boundary in the horizon and just after it (a zone a
+    switch-off releases comes on a microsecond after the switch's end
+    minute), and an opening is reported at its boundary.
+
+    Until 2026-10-20 the mission-level test stepped every 0.05 s up to the
+    time it takes to leave, capped at a week: with no legal exit at all that
+    is 12 million clock reads, 12.6 s for one call, which the sweep makes
+    once per episode (review of T1c, P4). Now at most 2 x 10080 reads."""
+    if horizon_s < 0:
+        return None
+    first = now.replace(second=0, microsecond=0)
+    k = 0
+    while True:
+        b = first + timedelta(minutes=k)
+        lead = (b - now).total_seconds()
+        if lead > horizon_s + 1e-9:
+            return None
+        for x in (b, b + timedelta(microseconds=1)):
+            if x > now and clock.on(zone, x):
+                return max(0.0, lead)
+        k += 1
+
+
 def time_window_lead_warnings(policy: Policy, *, lookahead_s: float = DEFAULT_LOOKAHEAD_S,
                               speed_mps: float | None = None,
                               start: tuple[float, float, float] | None = None,
@@ -2026,14 +2071,19 @@ def time_window_lead_warnings(policy: Policy, *, lookahead_s: float = DEFAULT_LO
             depth, x, y = deep
             fly = depth / speed
             if fly > lookahead_s + 1e-9:
-                exit_txt = ("there is no legal exit at all" if math.isinf(depth)
-                            else f"the nearest legal exit is {depth:.1f} m away")
+                # (No "leaving takes inf s": with no exit there is no time.)
+                exit_txt = (f"there is no legal exit at all: it cannot leave at {why} "
+                            f"or any other speed, so no forecast (the Shield's sees "
+                            f"{lookahead_s:g} s ahead) sees an opening early enough"
+                            if math.isinf(depth) else
+                            f"the nearest legal exit is {depth:.1f} m away: leaving "
+                            f"takes {fly:.1f} s at {why}, longer than the "
+                            f"{lookahead_s:g} s the Shield's forecast sees an opening "
+                            f"coming")
                 out.append(
                     f"{z.id}: its time window can open with the aircraft at "
                     f"({x:.1f}, {y:.1f}), inside its {z.margin_m:g} m margin ring, "
-                    f"where {exit_txt}: leaving takes {fly:.1f} s at {why}, longer "
-                    f"than the {lookahead_s:g} s the Shield's forecast sees an "
-                    f"opening coming. An aircraft there when the opening comes into "
+                    f"where {exit_txt}. An aircraft there when the opening comes into "
                     f"view cannot be out in time; the Shield flies the way out with "
                     f"the P0 violation on, and its counter scores those ticks as P0 "
                     f"escapes (a warning, not a refusal)")
@@ -2046,14 +2096,25 @@ def time_window_lead_warnings(policy: Policy, *, lookahead_s: float = DEFAULT_LO
         if clock.on(z, now):
             continue        # already in force at the start: start_conflicts' case
         d_out = exits.distance(Point(sx, sy)) if not exits.is_empty else math.inf
+        if math.isinf(d_out):
+            # Nowhere to go at all (a keep-in corridor wholly inside the ring,
+            # walls of always-on zones round it): whenever the window opens,
+            # it opens on the aircraft. Said as such - not as a lead time.
+            nxt = _next_opening(clock, z, now, _LINT_HORIZON_S)
+            when = ("not within a week" if nxt is None
+                    else f"next in {nxt:.0f} s, at "
+                         f"{(now + timedelta(seconds=nxt)).isoformat(timespec='minutes')}")
+            out.append(
+                f"{z.id}: the mission starts at ({sx:.1f}, {sy:.1f}, {sup:.1f}), "
+                f"inside its margin ring, and there is no legal exit from there at "
+                f"all (outside the ring, nowhere inside the hard keep-in corridors "
+                f"is clear of the zones always in force): whenever its time window "
+                f"opens ({when}; clock {now.isoformat(timespec='milliseconds')}), "
+                f"it opens on the aircraft, and no action clears the forecast from "
+                f"then on (a warning, not a refusal)")
+            continue
         fly = d_out / speed
-        horizon = min(fly, 7 * 24 * 3600.0)
-        k, opens = 1, None
-        while k * 0.05 <= horizon + 1e-9:
-            if clock.on(z, now + timedelta(seconds=k * 0.05)):
-                opens = k * 0.05
-                break
-            k += 1
+        opens = _next_opening(clock, z, now, min(fly, _LINT_HORIZON_S))
         if opens is not None:
             out.append(
                 f"{z.id}: the mission starts at ({sx:.1f}, {sy:.1f}, {sup:.1f}), "

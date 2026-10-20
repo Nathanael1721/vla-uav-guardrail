@@ -41,8 +41,9 @@ sys.path.insert(0, str(ROOT / "experiments"))
 
 from guardrail import load_policy  # noqa: E402
 from guardrail import holdpoint as HP  # noqa: E402
-from guardrail.fsm import (HOLD_ARRIVAL_SLACK_S, HOLD_REPLAN_S, EscalationFSM,  # noqa: E402
-                           FSMState, HoldPoint, RuleHit, TickInput)
+from guardrail.fsm import (HOLD_ARRIVAL_SLACK_S, HOLD_MIN_REPLAN_S,  # noqa: E402
+                           HOLD_REPLAN_S, EscalationFSM, FSMState, HoldPoint, RuleHit,
+                           TickInput)
 from guardrail.models import Action4D, DynamicNFZ, Policy, State  # noqa: E402
 from guardrail.shield import Shield  # noqa: E402
 
@@ -116,23 +117,55 @@ def test_an_in_place_loiter_called_legal_where_a_stop_is_illegal_is_refused():
 def test_a_held_spot_that_turns_illegal_asks_again_and_an_illegal_one_once_a_second():
     f = EscalationFSM()
     _to_loiter(f)
-    f.hold_at(_in_place())
+    f.hold_at(_in_place())                          # taken at 0.1 s
     vio = (_hit(),)
     f.step(TickInput(t=0.2, outcome="blocked", violations=vio, stop_illegal=False))
     assert not f.needs_hold
-    # A zone sweeping onto the hold, a window about to open over it: at once.
+    # A zone sweeping onto the hold, a window about to open over it: as soon
+    # as the plan is HOLD_MIN_REPLAN_S old (0.6 s here), not on every tick.
     f.step(TickInput(t=0.3, outcome="blocked", violations=vio, stop_illegal=True))
+    assert not f.needs_hold, "re-planned 0.2 s after the last plan"
+    f.step(TickInput(t=round(0.1 + HOLD_MIN_REPLAN_S, 6), outcome="blocked",
+                     violations=vio, stop_illegal=True))
     assert f.needs_hold
+    t1 = round(0.1 + HOLD_MIN_REPLAN_S, 6)
     f.hold_at(_in_place(legal=False, breaks=("nfz",)))
-    t = 0.3
-    while t < 0.3 + HOLD_REPLAN_S - 0.05:
+    t = t1
+    while t < t1 + HOLD_REPLAN_S - 0.05:
         t = round(t + 0.1, 6)
         f.step(TickInput(t=t, outcome="blocked", violations=vio, stop_illegal=True))
-        if t < 0.3 + HOLD_REPLAN_S - 1e-9:
+        if t < t1 + HOLD_REPLAN_S - 1e-9:
             assert not f.needs_hold, t
-    f.step(TickInput(t=round(0.3 + HOLD_REPLAN_S, 6), outcome="blocked", violations=vio,
+    f.step(TickInput(t=round(t1 + HOLD_REPLAN_S, 6), outcome="blocked", violations=vio,
                      stop_illegal=True))
     assert f.needs_hold
+
+
+def test_a_world_that_keeps_invalidating_points_is_searched_twice_a_second():
+    """Review of T1c, P6: only an illegal plan was rate-limited, so a LEGAL
+    point that turned illegal asked for a new search on the very next tick.
+    Where the world keeps invalidating the points (a walking subject's
+    stand-off ring in the city follow, which plans holds by default) the
+    search - 28-125 ms on the desktop - ran on consecutive ticks of the
+    100 ms monitor loop. Now no plan is replaced sooner than
+    HOLD_MIN_REPLAN_S after it was taken: here every point the integration
+    picks is judged illegal on the next tick, for 10 s (the aircraft's own
+    stop legal, so X6 stays out of it)."""
+    f = EscalationFSM()
+    _to_loiter(f, stop_illegal=True)
+    plans = [f.hold_at(_moved()).t_s]
+    for k in range(2, 102):
+        t = round(0.1 * k, 6)
+        f.step(TickInput(t=t, outcome="blocked", violations=(_hit(),), stop_illegal=False,
+                         hold_legal=False))
+        assert f.state is S.LOITER, (t, f.state)
+        if f.needs_hold:
+            plans.append(f.hold_at(_moved()).t_s)
+    gaps = [round(b - a, 6) for a, b in zip(plans, plans[1:])]
+    assert gaps and min(gaps) >= HOLD_MIN_REPLAN_S - 1e-9, gaps
+    assert len(plans) <= 1 + 10.0 / HOLD_MIN_REPLAN_S + 1, len(plans)
+    # ...and still re-planned, every HOLD_MIN_REPLAN_S: it is a floor, not a lock.
+    assert len(plans) >= 10.0 / HOLD_MIN_REPLAN_S - 1, plans
 
 
 def test_a_moved_hold_is_judged_after_its_arrival_not_during_the_transit():
@@ -167,11 +200,14 @@ def test_the_point_is_judged_when_the_integration_reports_it_not_the_aircraft():
     assert f.needs_hold
     g = EscalationFSM()
     _to_loiter(g, stop_illegal=True)
-    g.hold_at(_moved(travel=2.5))
+    g.hold_at(_moved(travel=2.5))                   # taken at 0.1 s
     g.step(TickInput(t=0.5, outcome="blocked", violations=(_hit(),), stop_illegal=True,
                      hold_legal=False))
+    assert not g.needs_hold, "replaced sooner than HOLD_MIN_REPLAN_S after its plan"
+    g.step(TickInput(t=0.6, outcome="blocked", violations=(_hit(),), stop_illegal=True,
+                     hold_legal=False))
     assert g.needs_hold, "a moved point that turns illegal mid-transit is replaced"
-    rec = g.step(TickInput(t=0.6, outcome="blocked", violations=(_hit(),),
+    rec = g.step(TickInput(t=0.7, outcome="blocked", violations=(_hit(),),
                            stop_illegal=True, hold_legal=True)).record
     assert rec["hold_legal"] is True
     try:
@@ -368,6 +404,93 @@ def test_a_transit_never_enters_another_zone():
     assert "b-always" in HP.transit_breaks(sh, st, north, 6.5 / 4.0, 4.0, 2.0, ("a-timed",))
 
 
+def _closing_bar(half_len: float, speed: float) -> Shield:
+    """Review of T1c, P2: the demo policy, the aircraft at (0, 0, 15) - legal
+    now - and a 2 m-wide DynamicNFZ bar at x 3-5, `half_len` m either side
+    of y = 0, closing from the east at `speed` m/s (margin 0.5)."""
+    bar = DynamicNFZ(id="bar", type="dynamic_nfz",
+                     vertices=[{"x": 3, "y": -half_len}, {"x": 5, "y": -half_len},
+                               {"x": 5, "y": half_len}, {"x": 3, "y": half_len}],
+                     altitude_floor_m=0, altitude_ceiling_m=100, margin_m=0.5,
+                     motion={"vx_mps": -speed, "vy_mps": 0.0})
+    sh = Shield(load_policy(DEMO), escalation=False)
+    sh.spawn_nfz(bar, t=0.0)
+    sh.filter(State(x=0.0, y=0.0, up=15.0), Action4D(), t=0.0)
+    return sh
+
+
+def _poses_in(sh: Shield, rule: str, start: State, p: HoldPoint, n: int = 200) -> int:
+    """Poses of the plan's transit, sampled n times at their own time, that
+    are inside `rule` (rule_status 'breach')."""
+    end = State(x=p.x, y=p.y, up=p.up)
+    inside = 0
+    for i in range(1, n + 1):
+        tau = p.travel_s * i / n
+        q = HP._pose_at(start, end, tau, p.speed_mps, p.climb_mps)
+        inside += any(r["id"] == rule and r["breach"]
+                      for r in sh.rule_status(q, ahead_s=tau))
+    return inside
+
+
+def test_a_transit_never_crosses_a_zone_closing_on_the_aircraft():
+    """Review of T1c, P2. A stop at (0, 0) is illegal within the lookahead
+    (the bar reaches it at 0.83 s), so the bar was an "escaping" rule, which
+    transit_breaks excused at every pose: the plan flew east THROUGH the bar
+    to (3, 0) - 27 of 50 transit samples inside its ring, 0.3 s inside the
+    polygon, the point itself inside the ring on arrival. Excused only while
+    a stop at the start is in it too, the plan went north along the bar and
+    was swept by it (23 samples). Now a rule in force that the aircraft is
+    outside of is never entered: a clean escape, or none (in place, marked
+    illegal, searched again in a second)."""
+    st = State(x=0.0, y=0.0, up=15.0)
+    for half_len, speed, want in ((3.0, 3.0, "moved"),       # round its end
+                                  (20.0, 2.0, "moved"),      # outrun it, west
+                                  (20.0, 3.0, "in_place"),   # nothing clean in budget
+                                  (60.0, 3.0, "in_place")):
+        sh = _closing_bar(half_len, speed)
+        assert sh.hard_violations(sh.state_is_unsafe(st)), "the start must be illegal"
+        p = HP.choose_hold_point(sh, st)
+        assert p.kind == want, (half_len, speed, p)
+        if p.kind == "moved":
+            assert p.legal and _poses_in(sh, "bar", st, p) == 0, (half_len, speed, p)
+            assert not (p.x > 0.0 and abs(p.y) < half_len), f"crossed the bar: {p}"
+        else:
+            assert not p.legal and p.breaks == ("bar",), p
+
+
+def test_a_transit_never_closes_on_the_person_it_must_keep_clear_of():
+    """A transit LEAVING a rule the aircraft is in must get no deeper into it
+    than standing still would be. A pedestrian at (0, 0) with a 10 m
+    stand-off, the aircraft 2 m from it, and always-on zones walling off the
+    ring's north, south and east: every way out runs past the person. The
+    first version (an escaping rule excused at every pose) flew to
+    (-6.5, 8.5), passing 1.41 m from the pedestrian. Crossing would be
+    quicker out of the ring, but it is deeper in it - closer to the person
+    the rule protects - so the honest answer is no legal transit."""
+    def wall(zid, x0, y0, x1, y1):
+        return {"id": zid, "type": "polygon_fence", "constraint_type": "hard",
+                "priority": "P0", "violation_action": "repair", "margin_m": 0.5,
+                "vertices": [{"x": x0, "y": y0}, {"x": x1, "y": y0}, {"x": x1, "y": y1},
+                             {"x": x0, "y": y1}],
+                "altitude_floor_m": 0, "altitude_ceiling_m": 100}
+    pol = Policy.model_validate({"policy_id": "walled", "constraints": [
+        {"id": "ring", "type": "subject_standoff", "constraint_type": "hard",
+         "priority": "P0", "violation_action": "repair", "min_range_m": 10.0},
+        wall("north", -3, 9, 40, 40), wall("south", -3, -40, 40, -9),
+        wall("east", 9, -40, 40, 40)]})
+    sh = Shield(pol, escalation=False)
+    sh.set_subject(0.0, 0.0, "pedestrian")
+    st = State(x=2.0, y=0.0, up=15.0)
+    p = HP.choose_hold_point(sh, st, heading=(-1.0, 0.0))
+    assert p.kind == "in_place" and not p.legal and p.breaks == ("ring",), p
+    # The way out west, straight past the person, is refused by name...
+    assert HP.transit_breaks(sh, st, State(x=-11.0, y=0.0, up=15.0), 13.0 / 4.0, 4.0, 2.0,
+                             ("ring",)) == ["ring"]
+    # ...and so is one into a wall the aircraft is outside of.
+    assert "north" in HP.transit_breaks(sh, st, State(x=2.0, y=11.0, up=15.0), 11.0 / 4.0,
+                                        4.0, 2.0, ("ring",))
+
+
 def test_no_legal_point_holds_in_place_marked_illegal():
     """A zone opening over the aircraft that reaches past the 60 m search: the
     plan says so instead of inventing a legal hold."""
@@ -488,10 +611,11 @@ def test_the_opens_on_vehicle_cell_no_longer_holds_inside_the_zone():
 
 
 def test_with_the_search_off_the_cell_flies_the_old_hold_inside_the_zone():
-    """Shield(hold_points=False) is the comparison arm: the hold where the
-    aircraft is, recorded as illegal - and the flight c77c77d flew, number for
-    number (38 autopilot P0 ticks, 41 inside; on 2026-10-19 every row of 17
-    affected library cells matched the base run's flight logs this way)."""
+    """Shield(hold_points=False) - the harness's `autopilot_hold="in_place"`,
+    what every flight rail flies - is the comparison arm: the hold where the
+    aircraft is, recorded as illegal, and the flight c77c77d flew, number for
+    number (38 autopilot P0 ticks, 41 inside; every row of the 17 affected
+    library cells: test_in_place_holds_fly_c77c77ds_rows_exactly)."""
     import sweep_scenarios as SW
     lib, cell = next(_family("time-window-opens-on-vehicle"))
     orig = SW.Shield
@@ -500,6 +624,8 @@ def test_with_the_search_off_the_cell_flies_the_old_hold_inside_the_zone():
         ex = SW.run_episode(cell.spec, lib.defaults, 0).extra
     finally:
         SW.Shield = orig
+    assert ex["autopilot_hold_model"] == "in_place", ex["autopilot_hold_model"]
+    assert ex == SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place").extra
     assert (ex["autopilot_p0_flown_ticks"], ex["ticks_inside_fence_polygon"]) == (38, 41), ex
     assert ex["hold_points_moved"] == 0 and ex["hold_points_illegal"] >= 1, ex["hold_points"]
     assert ex["hold_points"][0]["breaks"] == ["nfz-school"]
@@ -522,6 +648,135 @@ def test_a_cell_whose_hold_was_legal_flies_exactly_as_before():
     assert strip(on.rows) == strip(off.rows)
     assert on.extra["hold_points"] and all(h["kind"] == "in_place" and h["legal"]
                                            for h in on.extra["hold_points"])
+
+
+# Row digests of the cells the hold points change (time-window-opens-on-
+# vehicle, three-simultaneous-violations, dyn-nfz-rotate-spin,
+# wind-beyond-authority, failsafe-rtl-blocked: every library cell, seed 0,
+# grant forecast), flown IN PLACE: sha256 of the rows with the hold keys
+# stripped and floats to 6 decimals (_row_digest), first 16 hex digits, and
+# the row count. Taken from c77c77d's own run_episode on 2026-10-20 (git
+# archive c77c77d, which has no hold points), so `autopilot_hold="in_place"`
+# / Shield(hold_points=False) must be the flight before them, row for row.
+# The three-simultaneous cells fly 400 ticks since 2026-10-20 where c77c77d
+# flew 300; in place they end at 7.4-9.7 s (X6, then home reached), so the
+# rows are the same flight.
+C77_IN_PLACE_DIGESTS = {
+    "time-window-opens-on-vehicle@clock=2026-09-07T07:29:58": ("0290a3777d5d6b8c", 300),
+    "time-window-opens-on-vehicle@clock=2026-09-07T07:29:58.5": ("cd11af1bb6082e8d", 300),
+    "time-window-opens-on-vehicle@clock=2026-09-07T07:29:59": ("3badfbc20e0b57f0", 300),
+    "three-simultaneous-violations@ask_mps=8,start_up=3,variant=0": ("63646138a2a62da5", 98),
+    "three-simultaneous-violations@ask_mps=11,start_up=3,variant=0": ("c898fcf25f59ac80", 98),
+    "three-simultaneous-violations@ask_mps=8,start_up=6,variant=0": ("2eb8628ee9e671d0", 86),
+    "three-simultaneous-violations@ask_mps=11,start_up=6,variant=0": ("5e42dd3b157d662c", 86),
+    "three-simultaneous-violations@ask_mps=8,start_up=9,variant=0": ("70143375409a14f4", 75),
+    "three-simultaneous-violations@ask_mps=11,start_up=9,variant=0": ("2e681687ac0d0c13", 75),
+    "dyn-nfz-rotate-spin@deg_per_s=3": ("92460e8154bb6297", 400),
+    "dyn-nfz-rotate-spin@deg_per_s=6": ("c033359d0407a456", 400),
+    "dyn-nfz-rotate-spin@deg_per_s=9": ("89cf8aa54cdee7d4", 164),
+    "wind-beyond-authority@lane_y=15,wind_speed_mps=8": ("8284db4b0c8f5e0d", 284),
+    "wind-beyond-authority@lane_y=15,wind_speed_mps=12": ("ed8c4ebf4ab6d1bb", 500),
+    "wind-beyond-authority@lane_y=20,wind_speed_mps=8": ("825e114b339a7d7e", 284),
+    "wind-beyond-authority@lane_y=20,wind_speed_mps=12": ("19161a818d052d77", 412),
+    "failsafe-rtl-blocked": ("7b996b76340b3e28", 351),
+}
+
+
+def _row_digest(rows) -> str:
+    import hashlib
+    import json
+
+    def canon(v):
+        if isinstance(v, float):
+            return round(v, 6) + 0.0
+        if isinstance(v, dict):
+            return {k: canon(x) for k, x in v.items() if k != "hold_point"}
+        if isinstance(v, (list, tuple)):
+            return [canon(x) for x in v]
+        return v
+    blob = json.dumps([canon(r) for r in rows], sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
+def test_in_place_holds_fly_c77c77ds_rows_exactly():
+    """Review of T1c, P8: "identical when off" rested on two counters of one
+    cell. Every row of every cell the hold points change, flown in place,
+    must be c77c77d's - the flight every rail still flies - so a drift in the
+    off mode fails here, not in a later comparison."""
+    import sweep_scenarios as SW
+    from guardrail.scenario_spec import Library
+    lib = Library(ROOT / "experiments" / "scenarios.yaml")
+    fams = lib.by_id()
+    got = {}
+    for sid in sorted({k.split("@")[0] for k in C77_IN_PLACE_DIGESTS}):
+        for cell in fams[sid].cells():
+            run = SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place")
+            got[cell.episode_id] = (_row_digest(run.rows), len(run.rows))
+    assert set(got) == set(C77_IN_PLACE_DIGESTS), sorted(set(got) ^ set(C77_IN_PLACE_DIGESTS))
+    bad = {k: (got[k], v) for k, v in C77_IN_PLACE_DIGESTS.items() if got[k] != v}
+    assert not bad, bad
+
+
+def test_the_autopilot_hold_model_is_recorded_and_reflown():
+    """Review of T1c, P3: the modelled autopilot flies moved holds that no
+    flight rail flies, so every episode says which model its autopilot
+    numbers come from (`autopilot_hold_model`, also in episode_start), and a
+    bundle's extras re-fly the same one."""
+    import sweep_scenarios as SW
+    lib, cell = next(_family("time-window-opens-on-vehicle"))
+    moved = SW.run_episode(cell.spec, lib.defaults, 0)
+    here = SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place")
+    assert moved.extra["autopilot_hold_model"] == "moved_points"
+    assert here.extra["autopilot_hold_model"] == "in_place"
+    assert here.events[0]["autopilot_hold_model"] == "in_place"
+    assert moved.extra["autopilot_p0_flown_ticks"] < here.extra["autopilot_p0_flown_ticks"]
+    ex = SW.episode_extras(cell.spec, lib.defaults, 0, here, autopilot_hold="in_place")
+    assert ex["arm"]["autopilot_hold"] == "in_place"
+    again = SW.rerun_from_extras(ex)
+    assert _row_digest(again.rows) == _row_digest(here.rows)
+    assert again.extra["autopilot_hold_model"] == "in_place"
+    _, control = next(_family("nfz-head-on-control"))      # Shield off: no FSM
+    assert SW.run_episode(control.spec, lib.defaults, 0).extra["autopilot_hold_model"] is None
+    try:
+        SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="hover")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an unknown hold model was flown")
+
+
+def test_three_simultaneous_climbs_out_and_is_sent_home_by_the_loiter_timeout():
+    """Review of T1c, P1. What is robust about the family since the hold
+    points: the hold is moved straight up into the band and X6 never fires.
+    What is not: the pilot keeps asking for the illegal action, the Loiter
+    never clears, and 30 s after G3 the Loiter timeout (G5) sends it home -
+    a fail-safe the label does not expect, which the 300-tick run hid by
+    ending 0.2 s before it. The family flies 400 ticks and is pinned on its
+    two labels; if G5 moved or stopped firing, this test (and the pin's
+    FIXED or fail verdict) says so."""
+    import sweep_scenarios as SW
+    from guardrail.fsm import FSMConfig
+    lib, cell = next(_family("three-simultaneous-violations"))
+    assert cell.spec.ticks == 400, cell.spec.ticks
+    assert cell.spec.expect == "known_failure", cell.spec.expect
+    assert set(cell.spec.known_failure_fails) == {"outcome", "failsafe"}
+    run = SW.run_episode(cell.spec, lib.defaults, 0)
+    ex = run.extra
+    tr = ex["fsm"]["transitions"]
+    assert [x["edge"] for x in tr] == ["X1", "G3", "G5", "G9"], [x["edge"] for x in tr]
+    t = {x["edge"]: x["t_s"] for x in tr}
+    timeout = FSMConfig().loiter_timeout_s
+    assert t["G5"] - t["G3"] >= timeout - 1e-6, t
+    # 300 ticks end at 29.9 s: before G5, which is why that run read as a pass.
+    assert t["G5"] > (300 - 1) * 0.1, t
+    hp = ex["hold_points"][0]
+    at = next(r for r in run.rows if abs(r["t"] - hp["t_s"]) < 1e-9)   # the G3 tick
+    assert (hp["kind"], hp["legal"]) == ("moved", True), hp
+    assert abs(hp["x"] - at["x"]) < 1e-5 and abs(hp["y"] - at["y"]) < 1e-5, (hp, at)
+    assert abs(hp["up"] - 10.5) < 1e-6, hp                  # 0.5 m inside the band
+    climb = [r for r in run.rows if r.get("autopilot") == "LOITER" and r.get("emitted_violations")]
+    assert len(climb) <= 2, len(climb)
+    assert ex["ended_safe"] and ex["breaches"] == 0, ex
 
 
 if __name__ == "__main__":

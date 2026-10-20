@@ -301,6 +301,21 @@ AP_LANDED_M = 0.05
 # reached within this distance on each axis; from then on the hold flies as
 # an in-place one (zero velocity, the position controller holding it).
 AP_HOLD_REACHED_M = 0.05
+# What the modelled autopilot flies for the escalation FSM's Loiter / Land,
+# recorded per episode (`autopilot_hold_model`, also in episode_start) and in
+# the results file's info (review of T1c, P3):
+#   moved_points  the FSM's hold point (guardrail/holdpoint.py, since
+#                 2026-10-19): an in-place one as always, a moved one flown
+#                 first as a GUIDED transit, then held. The default.
+#   in_place      ArduPilot's own LOITER / LAND where the aircraft is
+#                 (Shield(hold_points=False)): what EVERY flight rail flies
+#                 today - SITL, ROS 2, Project AirSim / ArduPilot and the city
+#                 loop call no hold_at - and what c77c77d flew, row for row
+#                 (tests/test_hold_points.py pins it by digest).
+# So the autopilot numbers of a moved_points run are MODELLED, not flown by
+# any rail; `--autopilot-hold in_place` gives the ones the rails match.
+AUTOPILOT_HOLD_MODELS = ("moved_points", "in_place")
+DEFAULT_AUTOPILOT_HOLD = "moved_points"
 
 # The wind model (module docstring, "THE WIND MODEL"). PSC_POSXY_P's default
 # (POSCONTROL_POS_XY_P, AC_PosControl.cpp at Copter-4.5.7), and the strongest
@@ -851,15 +866,16 @@ def _as_defaults(d) -> Defaults:
 
 
 def run_episode(sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
-                forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL
-                ) -> EpisodeRun:
+                forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL,
+                autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD) -> EpisodeRun:
     """One headless episode. `arm` (paraphrase / prefix record) is RECORDED in
     the episode_start event and changes nothing else: no headless pilot reads
-    text. `forecast` (forecast_for) and `wind_model` (WIND_MODELS) DO change
-    the flight. Flown by EpisodeRunner without a pause, so a stepped episode
-    and this one share one integrator."""
+    text. `forecast` (forecast_for), `wind_model` (WIND_MODELS) and
+    `autopilot_hold` (AUTOPILOT_HOLD_MODELS) DO change the flight. Flown by
+    EpisodeRunner without a pause, so a stepped episode and this one share
+    one integrator."""
     return EpisodeRunner(sc, defaults, seed, arm, forecast=forecast,
-                         wind_model=wind_model).finish()
+                         wind_model=wind_model, autopilot_hold=autopilot_hold).finish()
 
 
 class EpisodeRunner:
@@ -895,9 +911,11 @@ class EpisodeRunner:
     """
 
     def __init__(self, sc, defaults=None, seed: int = 0, arm: dict | None = None, *,
-                 forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL):
+                 forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL,
+                 autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD):
         self._box: dict[str, Any] = {}
-        self._gen = _episode(sc, defaults, seed, arm, self._box, forecast, wind_model)
+        self._gen = _episode(sc, defaults, seed, arm, self._box, forecast, wind_model,
+                             autopilot_hold)
         self.result: EpisodeRun | None = None
         self.error: BaseException | None = None
         self._failed_t: float | None = None     # the tick that raised
@@ -981,7 +999,8 @@ class EpisodeRunner:
 
 
 def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
-             forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL):
+             forecast: str = "grant", wind_model: str = DEFAULT_WIND_MODEL,
+             autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD):
     """The integrator behind run_episode and EpisodeRunner: a generator that
     yields (tick, t) at the start of every tick, before that tick's scheduled
     events are applied, and returns the EpisodeRun. `box` receives the
@@ -995,6 +1014,9 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     look, step = fc["lookahead_s"], fc["lookahead_dt_s"]
     if wind_model not in WIND_MODELS:
         raise ValueError(f"wind model {wind_model!r}: one of {list(WIND_MODELS)}")
+    if autopilot_hold not in AUTOPILOT_HOLD_MODELS:
+        raise ValueError(f"autopilot hold model {autopilot_hold!r}: one of "
+                         f"{list(AUTOPILOT_HOLD_MODELS)}")
 
     t_end = (ticks - 1) * dt
     late = [e for e in spec.events if e.at_sim_t > t_end + 1e-9]
@@ -1035,7 +1057,16 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     # Every Shield of the episode on one forecast: the grant's 5 s at 0.1 s
     # unless the spec overrides it, or the labelled 3 s comparison arm
     # (forecast_for). Until 2026-10-12 all three were built at 3 s / 0.5 s.
-    shield = Shield(policy, lookahead_s=look, dt=step, now=clock, escalation=esc)
+    # The hold model goes in only when it is not the default, so a caller
+    # that hands in its own Shield factory (tests patch `Shield` with a
+    # functools.partial) keeps its own hold_points.
+    shield = Shield(policy, lookahead_s=look, dt=step, now=clock, escalation=esc,
+                    **({} if autopilot_hold == DEFAULT_AUTOPILOT_HOLD
+                       else {"hold_points": False}))
+    # What the modelled autopilot flies for the FSM's Loiter / Land
+    # (AUTOPILOT_HOLD_MODELS), as this Shield will plan it; None with no FSM.
+    hold_model = (("moved_points" if getattr(shield, "hold_points", True) else "in_place")
+                  if esc else None)
 
     stress = spec.stress
     # Ground truth under degraded perception comes from a SECOND Shield kept in
@@ -1106,7 +1137,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         "forecast": fc,
         "wind_model": wind_model,
         "wind_mps": [round(wind[0], 3), round(wind[1], 3)],
-        "lint_warnings": lint_warnings}]
+        "lint_warnings": lint_warnings,
+        "autopilot_hold_model": hold_model}]
     es = _EventState(shields=shields)
     st = m.start
     prev_st = st
@@ -1637,6 +1669,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                                 if esc else None),
         # The DSL's lint warnings for this cell at mission start (above).
         "lint_warnings": lint_warnings,
+        # What the modelled autopilot flew for the FSM's Loiter / Land
+        # (AUTOPILOT_HOLD_MODELS): "moved_points" is modelled, flown by no
+        # rail; "in_place" is what the rails fly. None with no FSM.
+        "autopilot_hold_model": hold_model,
         "terminated_s": terminated_s,
         # Events the scenario expected the Shield to refuse: None when there
         # were none, else whether every one was refused (and nothing else).
@@ -1816,7 +1852,8 @@ def policy_generations(events: list[dict]) -> list[dict]:
 
 def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
                    arm: dict | None = None, forecast: str = "grant",
-                   wind_model: str = DEFAULT_WIND_MODEL, episode=None) -> dict:
+                   wind_model: str = DEFAULT_WIND_MODEL, episode=None,
+                   autopilot_hold: str = DEFAULT_AUTOPILOT_HOLD) -> dict:
     """The keys that make an episode bundle self-contained (manifest_extras.json,
     beside the grant's six-field manifest): the expanded ScenarioSpec cell
     with every parameter bound, its events, the library defaults it relied
@@ -1830,7 +1867,8 @@ def episode_extras(spec: ScenarioSpec, defaults, seed: int, run: EpisodeRun, *,
         "scenario_id": spec.scenario_id,
         "template": spec.template,
         "random_seed": int(seed),
-        "arm": {"record": arm, "forecast": forecast, "wind_model": wind_model},
+        "arm": {"record": arm, "forecast": forecast, "wind_model": wind_model,
+                "autopilot_hold": autopilot_hold},
         "forecast": run.extra.get("forecast") or forecast_for(spec, dfl, forecast),
         "wind_model": wind_model,
         "library_defaults": dfl.model_dump(mode="json"),
@@ -1891,7 +1929,8 @@ def rerun_from_extras(extras: dict, root: Path | None = None) -> EpisodeRun:
         return run_episode(spec, Defaults.model_validate(extras["library_defaults"]),
                            int(extras["random_seed"]), arm=arm.get("record"),
                            forecast=arm.get("forecast", "grant"),
-                           wind_model=arm.get("wind_model", DEFAULT_WIND_MODEL))
+                           wind_model=arm.get("wind_model", DEFAULT_WIND_MODEL),
+                           autopilot_hold=arm.get("autopilot_hold", DEFAULT_AUTOPILOT_HOLD))
     finally:
         if tmp is not None:
             tmp.cleanup()
@@ -3082,15 +3121,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--wind-model", choices=WIND_MODELS, default=DEFAULT_WIND_MODEL,
                     help="guided (ArduCopter's position controller, the default) "
                          "or open_loop (the model until 2026-10-12, for comparison)")
+    ap.add_argument("--autopilot-hold", choices=AUTOPILOT_HOLD_MODELS,
+                    default=DEFAULT_AUTOPILOT_HOLD,
+                    help="what the modelled autopilot flies for the FSM's Loiter / "
+                         "Land: moved_points (the FSM's hold points, the default; "
+                         "modelled, no flight rail flies them yet) or in_place "
+                         "(ArduPilot's own hold where the aircraft is: what the "
+                         "rails fly, and the flights before 2026-10-19)")
     args = ap.parse_args(argv)
 
     if args.publish and (args.out or args.profile or args.only or args.seed is not None
                          or args.forecast_arms is not None
-                         or args.wind_model != DEFAULT_WIND_MODEL):
+                         or args.wind_model != DEFAULT_WIND_MODEL
+                         or args.autopilot_hold != DEFAULT_AUTOPILOT_HOLD):
         # The published file is the WHOLE library on its declared seeds; a
         # partial or profiled run written there would replace it with less.
         print("REFUSED: --publish writes the full library run; it takes no "
-              "--out, --profile, --only, --seed, --forecast-arms or --wind-model")
+              "--out, --profile, --only, --seed, --forecast-arms, --wind-model "
+              "or --autopilot-hold")
         return 2
 
     t_run = time.perf_counter()
@@ -3111,8 +3159,17 @@ def main(argv: list[str] | None = None) -> int:
         print("REFUSED: the 3 s forecast arm is a headless comparison; the SITL "
               "rail flies the node's own Shield")
         return 2
+    if args.backend == "sitl" and args.autopilot_hold != DEFAULT_AUTOPILOT_HOLD:
+        # Likewise: the SITL rail's ArduPilot flies its own hold (in place).
+        print("REFUSED: --autopilot-hold chooses the headless harness's modelled "
+              "autopilot; the SITL rail flies ArduPilot's own hold")
+        return 2
     episodes, info = expand(lib, profile, args.seed, args.only, forecast_arms=fc_arms)
     info["wind_model"] = args.wind_model
+    # The autopilot model behind every autopilot-flown number of this run
+    # (AUTOPILOT_HOLD_MODELS; review of T1c, P3).
+    info["autopilot_hold_model"] = args.autopilot_hold
+    info["autopilot_hold_model_flown_by_a_rail"] = args.autopilot_hold == "in_place"
     tag = profile.profile if profile else None
     out = results_path(args.out, args.publish, tag)
     runs = Path(args.runs) if args.runs else (
@@ -3185,7 +3242,8 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 arm_record = build_arm(ep)
                 run = run_episode(spec, lib.defaults, ep.seed, arm=arm_record,
-                                  forecast=ep.forecast, wind_model=args.wind_model)
+                                  forecast=ep.forecast, wind_model=args.wind_model,
+                                  autopilot_hold=args.autopilot_hold)
                 rows, extra, policy = run.rows, run.extra, run.policy
                 events, hash0 = run.events, run.policy_hash_start
                 sim_s, wall_s, consumed = run.sim_s, run.wall_s, run.seed_consumed
@@ -3256,7 +3314,8 @@ def main(argv: list[str] | None = None) -> int:
             full_extras = {**(extras or {}),
                            **episode_extras(spec, lib.defaults, ep.seed, run,
                                             arm=arm_record, forecast=ep.forecast,
-                                            wind_model=args.wind_model, episode=ep)}
+                                            wind_model=args.wind_model, episode=ep,
+                                            autopilot_hold=args.autopilot_hold)}
             write_bundle(ep_dir, manifest, _json_safe({
                 **common, "status": status, "gates_failed": bad,
                 "kpi_grade": grade, "kpi_grade_reasons": why_not,
@@ -3484,7 +3543,10 @@ def main(argv: list[str] | None = None) -> int:
               f"{ts['episodes_inside_polygon_imposed_only']} more were inside "
               f"only because a zone appeared, moved, grew or switched on under "
               f"them; {ts['true_p0_flown_ticks']} P0 ticks flown at the true state")
-        print(f"  autopilot (modelled LOITER / RTL / LAND, not the Shield): "
+        print(f"  autopilot (modelled LOITER / RTL / LAND, not the Shield; hold "
+              f"model {args.autopilot_hold}"
+              + (", flown by no rail" if args.autopilot_hold != "in_place" else "")
+              + "): "
               f"{ts['autopilot_p0_flown_ticks']} of {ts['autopilot_ticks']} ticks "
               f"flew a P0-violating action in {ts['episodes_autopilot_p0_flown']} "
               f"episode(s) {ts['episodes_autopilot_p0_flown_by_status']}, by mode "

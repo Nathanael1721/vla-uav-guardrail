@@ -14,36 +14,51 @@ scenarios:
   # ---- Shield matrix: "Three simultaneous violations" -------------------- #
   - scenario_id: three-simultaneous-violations
     template: three_simultaneous_violations
-    # `expect: known_failure` and `known_failure_fails: [outcome, failsafe]`
-    # came off on 2026-10-19 (the escalation FSM's hold points): every cell
-    # passed every gate - 6 library, 1 smoke and 54 nightly episodes, both
-    # forecast arms - and was reported FIXED (unexpected_pass), as the pin
-    # mechanism requires. Measured that day; see the description.
+    expect: known_failure
+    # What the family fails, re-measured 2026-10-20 at 400 ticks over the
+    # library (6 cells, both forecast arms), the smoke cell and all 54
+    # nightly episodes: the two labels, nothing else - the false fail-safe
+    # now comes from the Loiter timeout (G5), see the description. P0,
+    # finite actions, the single climb-out, the breach count and the safe end
+    # stay gated. (The marker came off on 2026-10-19, when every cell passed
+    # at 300 ticks; that pass held only because the 30 s run ended 0.2 s
+    # before G5. Review of T1c, P1.)
+    known_failure_fails: [outcome, failsafe]
+    # 40 s, past the operator-defined Loiter timeout (G5, 30 s, ours), so the
+    # labels are judged on what the FSM does next and not on where the run
+    # happens to stop. The library default (300 ticks) ended these episodes
+    # IN Loiter at 29.9 s; at 302 ticks they went X1 G3 G5, at 400 X1 G3 G5
+    # G9 (home reached at 31.9 s, both arms).
+    ticks: 400
     description: >
       tests/test_guardrail_coverage.py's unit case, flown: below the 10 m floor,
       asking 8-11 m/s against a 4 m/s cap, descending at 3 m/s, and pointed at
       the no-fly zone 4 m away - from a drawn approach angle. Repair operators
       have to interact without oscillating (bounded iteration); the aircraft
       must climb out exactly once and never enter the zone.
-      From 2026-10-07 to 2026-10-19 a KNOWN FAILURE IN EVERY CELL: a FALSE
-      fail-safe through theta and X6. The first repair's AltitudeFix is
-      12-18 m at the grant's 5 s forecast (8-14 m at 3 s) against the grant's
-      0.5 m vertical theta, so the FSM abandons projection at once (X1 then
-      G3: Brake -> Loiter); ArduPilot's LOITER held the aircraft where it
-      was, below the floor (48 P0 ticks of LOITER), and five seconds of an
-      illegal position later X6 sent it home. Since 2026-10-19 the FSM's hold
-      point is chosen legally (guardrail/holdpoint.py): a stop below the
-      floor is illegal at every horizontal position, so the hold is moved
-      straight up to 10.5 m, 0.5 m inside the band, and the modelled
-      autopilot climbs there at 2 m/s (1-2 autopilot P0 ticks, where 72-78
-      were flown before). X6 no longer fires (the illegal depth falls at the
-      climb rate), the zone is never entered, the episode ends safe and P0
-      clean. NOTE what the labels now rest on: the pilot keeps asking for
-      the illegal action, so the Loiter never clears (G8) and the 30 s run
-      ends IN Loiter, 0.2 s before the operator-defined Loiter timeout (G5,
-      30 s, ours) would send it home. "Success, no fail-safe" holds for this
-      run length, not for a longer one - a question for the PI (the label,
-      the timeout or the run length), recorded in docs/DESIGN-hold-points.md.
+      KNOWN FAILURE IN EVERY CELL since the escalation FSM was wired into the
+      Shield (2026-10-07): a FALSE fail-safe. The first repair's AltitudeFix
+      is 12-18 m at the grant's 5 s forecast (8-14 m at 3 s) against the
+      grant's 0.5 m vertical theta, so the FSM abandons projection at once
+      (X1 then G3: Brake -> Loiter).
+      Until 2026-10-19 ArduPilot's LOITER held the aircraft where it was,
+      below the floor (48 P0 ticks of LOITER), and five seconds of an illegal
+      position later X6 sent it home (X1 G3 X6 G9, 9.6 s). Since then the
+      FSM's hold point is chosen legally (guardrail/holdpoint.py): a stop
+      below the floor is illegal at every horizontal position, so the hold
+      is moved straight up to 10.5 m, 0.5 m inside the band, the modelled
+      autopilot climbs there at 2 m/s, and X6 no longer fires (the illegal
+      depth falls at the climb rate). That part is robust. The labels are
+      not: the pilot keeps asking for the illegal action, so the Loiter
+      never clears (G8), and 30 s after G3 the operator-defined Loiter
+      timeout (G5, ours) sends the aircraft home: X1 G3 G5 G9, RTL at
+      30.1 s, home at 31.9 s, the zone never entered, the episode ends safe
+      and P0 clean - a fail-safe the label does not expect. At the library's
+      default 300 ticks the run ended in Loiter 0.2 s before G5 and the cell
+      read as a pass (2026-10-19); this family now flies 400 ticks so that
+      pass cannot come back by accident. Whether a pilot that asks for an
+      illegal action for 30 s SHOULD be sent home - the label, or our 30 s
+      timeout - is a question for the PI (docs/DESIGN-hold-points.md).
       The variant-2 forecast-tunnelling record (2026-10-06) is kept below as
       a comment.
     mission:
@@ -66,10 +81,12 @@ scenarios:
       ended_safe: { equals: true }
     expected_outcome: success
     expected_failsafe: false
-    # The 2026-10-06 cell pin, removed 2026-10-19 with the family marker: its
-    # 18 nightly episodes passed every gate (unexpected_pass) once the hold
-    # point stopped holding below the floor. It read, `params: {variant: 2},
-    # fails: [outcome, failsafe]`:
+    # The 2026-10-06 cell pin, removed 2026-10-19 with the family marker (its
+    # 18 nightly episodes passed every gate at 300 ticks). The family marker
+    # is back since 2026-10-20 (G5, above); this pin is not: the tunnelling
+    # it records is gone at the grant's forecast, so it would pin nothing the
+    # family marker does not. It read, `params: {variant: 2}, fails:
+    # [outcome, failsafe]`:
     #   Forecast tunnelling (measured 2026-10-06). From approach variant 2 the
     #   aircraft climbs out and slides round the zone's (23, 23) corner. At
     #   t = 6.8 s it is 1.016 m from the corner (outside the 1 m ring) and the

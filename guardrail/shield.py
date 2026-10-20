@@ -3020,27 +3020,43 @@ class Shield:
                and self._act(rt, v.rule_id) != "monitor_only"}
         if not ids:
             return 0.0
-        x, y, up = state.x, state.y, state.up
+        # Summed in the order the terms come (envelopes, stand-offs,
+        # clearance, corridors, zones): the same additions, in the same
+        # order, as before the terms were split out (2026-10-20), so X6's
+        # input is bit for bit what it was.
         total = 0.0
+        for _, d in self._depth_terms(state, ids):
+            total += d
+        return total
+
+    def _depth_terms(self, state: State, ids) -> list[tuple[str, float]]:
+        """(rule id, depth) for each rule in `ids` that this method can
+        measure at `state`, in unsafe_depth's order; the depth is how far past
+        that rule's limit the position is (0.0 when it is not past it). Read
+        in the current tick or look-ahead view (looking_ahead): a moving zone
+        where it is then, a moving subject advanced along its velocity
+        (`_subject_track`, which is the subject itself on every real tick)."""
+        x, y, up = state.x, state.y, state.up
+        out: list[tuple[str, float]] = []
         for env in self._alts:
             if env.id in ids:
-                total += max(0.0, env.alt_min_m - up, up - env.alt_max_m)
+                out.append((env.id, max(0.0, env.alt_min_m - up, up - env.alt_max_m)))
         if self._subject is not None:
-            sx, sy = self._subject
+            sx, sy = self._subject_track()[:2]
             d = math.hypot(x - sx, y - sy)
             for so in self._standoffs:
                 if so.id in ids and so.binds(self._subject_class):
-                    total += max(0.0, so.min_range_m - d)
+                    out.append((so.id, max(0.0, so.min_range_m - d)))
         if self._dist is not None:
             here = self._distance_at(x, y)
             for c in self._clear:
                 if c.id in ids:
-                    total += max(0.0, c.min_clearance_m - here)
+                    out.append((c.id, max(0.0, c.min_clearance_m - here)))
         for c in self._corridors:
             if c.id in ids:
                 d_lat, _ = self._corridor_geom(c, x, y)
-                total += (max(0.0, d_lat - c.half_width_m)
-                          + max(0.0, c.altitude_floor_m - up, up - c.altitude_ceiling_m))
+                out.append((c.id, max(0.0, d_lat - c.half_width_m)
+                            + max(0.0, c.altitude_floor_m - up, up - c.altitude_ceiling_m)))
         anchors, tick = self._fence_anchors(self._ir)
         for rec in anchors:
             f = rec.rule
@@ -3049,8 +3065,29 @@ class Shield:
             if rec.moving and tick is not None:
                 rec = tick.current(rec)     # only the zones a violation names
             if point_in_fence(x, y, up, f, rec.polygon, rec.buffered):
-                total += rec.buffered.boundary.distance(Point(x, y))
-        return total
+                out.append((f.id, rec.buffered.boundary.distance(Point(x, y))))
+        return out
+
+    def rule_depths(self, state: State, rule_ids) -> dict[str, float]:
+        """How far past each named rule's limit this POSITION is, in metres:
+        the per-rule terms `unsafe_depth` sums (the altitude error outside an
+        envelope or corridor band, the depth inside a zone's margin ring, the
+        distance inside a stand-off or clearance ring, the excess over a
+        corridor's half-width), in the current tick or look-ahead view. A
+        rule it cannot measure (a speed cap; clearance with no map) reads
+        0.0, as in unsafe_depth.
+
+        The hold-point search (guardrail/holdpoint.py, transit_breaks) reads
+        it to tell a transit LEAVING a rule from one going deeper into it
+        (since 2026-10-20)."""
+        ids = set(rule_ids)
+        if self._tick_ctx() is None and self._needs_tick():
+            with self._scope(self._new_tick(None)):
+                return self.rule_depths(state, ids)
+        out = {rid: 0.0 for rid in ids}
+        for rid, d in self._depth_terms(state, ids):
+            out[rid] = out[rid] + d
+        return out
 
     # ---------------- mid-flight events (the grant's hot-apply path) ---------------- #
     #

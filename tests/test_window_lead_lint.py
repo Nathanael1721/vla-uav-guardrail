@@ -149,6 +149,81 @@ def test_a_zone_that_is_always_in_force_is_no_way_out():
     assert 5.5 <= depth <= 6.0, walled[0]
 
 
+def test_a_zone_with_an_empty_valid_time_is_a_wall_too():
+    """models.ValidTime documents `recurrence` absent as "always", so a zone
+    written `valid_time: {}` is always in force. Until 2026-10-20 only an
+    absent `valid_time` counted as a wall (review of T1c, P5): the strip of
+    the test above, walled by such a zone, read 3 m to leave (east, into the
+    wall) and raised no warning."""
+    timed = _zone("timed", 2.0, 10.0)
+    wall = _zone("wall", 3.0, 40.0, window=False, cx=7.0)
+    wall["valid_time"] = {}
+    pol = _pol(timed, wall, _cap(1.0))
+    assert pol.constraints[1].valid_time is not None
+    assert pol.constraints[1].valid_time.recurrence is None
+    walled = time_window_lead_warnings(pol, lookahead_s=4.0)
+    assert len(walled) == 1, walled
+    depth = float(walled[0].split("nearest legal exit is ")[1].split(" m")[0])
+    assert 5.5 <= depth <= 6.0, walled[0]
+
+
+def test_a_start_with_no_legal_exit_is_said_so_without_stepping_a_week():
+    """Review of T1c, P4: a 100 x 100 m zone in force Mondays 08:00-17:00,
+    a keep-in corridor wholly inside its ring, the mission starting at
+    (0, 0, 15) on a Tuesday at 09:30. There is no legal exit, so the old
+    mission-level test stepped the clock every 0.05 s for up to a week
+    (10.26 million reads, 12.6 s for this one call, which the sweep makes
+    per episode) and reported the opening 513000 s later as if it were a
+    lead-time problem. Now: a 'no legal exit' warning, and the next opening
+    found by reading the clock at minute boundaries only."""
+    from guardrail import compiler as C
+    zone = _zone("monday", 50.0, 50.0)
+    zone["valid_time"] = {"recurrence": {"days": ["Mon"], "start_time": "08:00",
+                                         "end_time": "17:00"}}
+    corridor = {"id": "lane", "type": "corridor", "constraint_type": "hard",
+                "priority": "P0", "violation_action": "repair",
+                "centerline": [{"x": -20.0, "y": 0.0}, {"x": 20.0, "y": 0.0}],
+                "width_m": 10.0, "altitude_floor_m": 0.0, "altitude_ceiling_m": 100.0}
+    pol = _pol(zone, corridor)
+    reads = [0]
+    orig = C._RuleClock.on
+
+    def counted(self, rule, x):
+        reads[0] += 1
+        if reads[0] > 50_000:
+            raise AssertionError("the mission-level test is stepping the clock "
+                                 "(over 50000 reads)")
+        return orig(self, rule, x)
+    C._RuleClock.on = counted
+    try:
+        ws = time_window_lead_warnings(pol, start=(0.0, 0.0, 15.0),
+                                       now=datetime(2026, 9, 8, 9, 30))   # a Tuesday
+    finally:
+        C._RuleClock.on = orig
+    mission = [w for w in ws if "the mission starts at" in w]
+    assert len(mission) == 1, ws
+    assert "no legal exit from there at all" in mission[0], mission[0]
+    assert "before its time window opens" not in mission[0], mission[0]
+    assert "next in 513000 s, at 2026-09-14T08:00" in mission[0], mission[0]
+    # The policy-level warning gives no "inf s" either.
+    policy = [w for w in ws if "its time window can open" in w]
+    assert len(policy) == 1 and "inf s" not in policy[0], policy
+    assert "no legal exit at all" in policy[0], policy[0]
+
+
+def test_the_next_opening_is_exact_at_the_minute_it_opens():
+    """The minute-boundary search gives the same leads the 0.05 s grid gave
+    on the library cell (2.0, 1.5 and 1.0 s), exactly, and nothing past the
+    time it takes to leave (2.5 s from (60, 21))."""
+    pol = load_policy(SURVEY)
+    for sec, lead in ((58, "2.00"), (58.5, "1.50"), (59, "1.00")):
+        now = datetime(2026, 9, 7, 7, 29, int(sec), int(round((sec % 1) * 1e6)))
+        ws = time_window_lead_warnings(pol, start=(60.0, 21.0, 15.0), now=now)
+        assert len(ws) == 1 and f"{lead} s before its time window opens" in ws[0], ws
+    assert time_window_lead_warnings(pol, start=(60.0, 21.0, 15.0),
+                                     now=datetime(2026, 9, 7, 7, 29, 57, 400000)) == []
+
+
 def test_warnings_never_refuse():
     pol = load_policy(SURVEY)
     assert pol.lint() == []                     # the error lint is untouched

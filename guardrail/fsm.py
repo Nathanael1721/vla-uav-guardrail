@@ -207,7 +207,9 @@ Interpretations of terms the grant uses but does not define:
     Loiter marked legal on a tick whose `stop_illegal` says standing still
     here breaks a hard rule within the lookahead is REFUSED, and a Loiter
     whose POINT later becomes illegal (a zone sweeping onto it, a window
-    about to open over it: `TickInput.hold_legal`) asks for a new one. No
+    about to open over it: `TickInput.hold_legal`) asks for a new one - no
+    sooner than HOLD_MIN_REPLAN_S after the last, so a Loiter searches at
+    most twice a second (since 2026-10-20). No
     edge, guard or setpoint changed: the state machine still goes Brake ->
     Loiter on G2 / G3 and RTL -> Land on G6, and still streams nothing once
     the autopilot owns the aircraft; only where the autopilot is told to
@@ -338,7 +340,22 @@ HOLD_ARRIVAL_SLACK_S = 1.0
 # seen within a second while a search that keeps finding nothing (up to a few
 # hundred Shield queries) does not run at the 10 Hz monitor rate.
 HOLD_REPLAN_S = 1.0
-# The plans kept in summary() (an episode re-plans at most once a second).
+# The shortest time between two plans of one Loiter, whatever asks for the
+# second: a LEGAL point that turns illegal waits this long after its plan
+# too. Until 2026-10-20 only an illegal plan was rate-limited, so a world
+# that keeps invalidating the points (a walking subject's stand-off ring in
+# the city follow, which plans holds by default) could run the search -
+# 28-83 ms on the desktop, up to ~125 ms when it spends its whole budget
+# against a moving zone (docs/DESIGN-hold-points.md; the Orin is not
+# measured) - on consecutive ticks of the 100 ms monitor loop (review of
+# T1c, P6). With this floor a Loiter searches at most twice a second. The
+# shortest interval any library, smoke or nightly episode re-planned at was
+# 0.7 s (dyn-nfz-rotate-spin, 3 s comparison arm), so the floor changes no
+# measured flight; a point that turns illegal sooner is replaced half a
+# second after its plan, while X6 / X7 keep judging the aircraft's own depth
+# every tick. Ours, not the grant's.
+HOLD_MIN_REPLAN_S = 0.5
+# The plans kept in summary() (a Loiter re-plans at most twice a second).
 HOLDS_KEPT = 200
 
 
@@ -1334,10 +1351,12 @@ class EscalationFSM:
         position once it should be there (an in-place hold at once; a moved
         one travel_s + HOLD_ARRIVAL_SLACK_S after the plan) by this tick's
         `stop_illegal`. A plan already marked illegal (no legal point was
-        found) is searched again at most once per HOLD_REPLAN_S. A Land is
-        planned once, on entry: its point is a landing site, judged over the
-        descent, and the descent itself is what stop_illegal would object
-        to."""
+        found) is searched again at most once per HOLD_REPLAN_S, and no plan
+        is replaced sooner than HOLD_MIN_REPLAN_S after it was taken, so a
+        Loiter searches at most twice a second however fast the world
+        invalidates its points. A Land is planned once, on entry: its point
+        is a landing site, judged over the descent, and the descent itself is
+        what stop_illegal would object to."""
         st = self._state
         if self._terminal or st not in _HOLD_STATES:
             return False
@@ -1349,6 +1368,8 @@ class EscalationFSM:
         t = self._t_last if self._t_last is not None else 0.0
         t0 = h.t_s if h.t_s is not None else t
         if not h.legal and t - t0 < HOLD_REPLAN_S - EPS:
+            return False
+        if t - t0 < HOLD_MIN_REPLAN_S - EPS:
             return False
         if self._last_hold_legal is not None:
             return not self._last_hold_legal

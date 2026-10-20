@@ -1311,15 +1311,16 @@ def test_a_new_failure_in_a_pinned_cell_is_a_failure_not_the_old_defect():
     fails (`fails`, measured over the nightly profile); anything else that
     fails in the cell is NEW, and the episode fails.
 
-    The three-simultaneous-violations cells stopped being pinned on
-    2026-10-19: once the FSM's hold point stopped holding below the floor
-    (guardrail/holdpoint.py) they passed every gate (FIXED). The two label
-    pins of near-edge-at-12mps (outcome, failsafe and reached_goal) stand in
-    for them, and the family's own verdict is checked to be a pass."""
-    spec, res, cell = _scored_cell("three-simultaneous-violations", start_up=3.0,
-                                   ask_mps=11, variant=0)
-    assert S.episode_verdict(spec, res, cell, 1001)[0] == "pass", res.get("outcome")
-    cases = (("near-edge-at-12mps", {"pass_y": 40.5, "ask_mps": 8}),
+    The three-simultaneous-violations pin came off on 2026-10-19, when its
+    cells passed at 300 ticks - only because the run ended 0.2 s before the
+    Loiter timeout (G5) - and came back on 2026-10-20 at 400 ticks, where G5
+    fires (review of T1c, P1). Its two cells are back among the cases; the
+    two label pins of near-edge-at-12mps stay as further cover."""
+    cases = (("three-simultaneous-violations", {"start_up": 3.0, "ask_mps": 11,
+                                                "variant": 0}),
+             ("three-simultaneous-violations", {"start_up": 3.0, "ask_mps": 8,
+                                                "variant": 2}),
+             ("near-edge-at-12mps", {"pass_y": 40.5, "ask_mps": 8}),
              ("near-edge-at-12mps", {"pass_y": 40.8, "ask_mps": 12}),
              ("dyn-nfz-spawn-ahead", {"ahead_m": 3, "vehicle_speed_mps": 4,
                                       "variant": 0}),
@@ -1503,8 +1504,9 @@ def test_an_only_name_that_matches_nothing_refuses_the_run():
 def test_an_only_cell_id_is_matched_against_the_profiles_own_cells():
     """The variant-2 cell exists only when the nightly profile samples
     three variants. The first version matched --only against the defaults
-    (one variant), selected nothing, and exited 0. (It was pinned until
-    2026-10-19; with the FSM's hold points it passes on all three seeds.)"""
+    (one variant), selected nothing, and exited 0. (Its family pin came off
+    on 2026-10-19 and back on 2026-10-20, when the family flies 400 ticks and
+    the Loiter timeout G5 fires on all three seeds.)"""
     cell = "three-simultaneous-violations@ask_mps=8,start_up=3,variant=2"
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "s.json"
@@ -1513,7 +1515,7 @@ def test_an_only_cell_id_is_matched_against_the_profiles_own_cells():
         doc = json.loads(out.read_text(encoding="utf-8"))
     assert rc == 0, rc
     assert [r["id"] for r in doc["results"]] == [cell] * 3, [r["id"] for r in doc["results"]]
-    assert {r["status"] for r in doc["results"]} == {"pass"}
+    assert {r["status"] for r in doc["results"]} == {"known_failure"}
 
 
 def test_two_cells_that_fly_the_same_episode_refuse_the_run():
@@ -2298,8 +2300,8 @@ def test_the_stepped_runner_flies_exactly_what_run_episode_flies():
     """EpisodeRunner stepped tick by tick must be run_episode: an event cell,
     seeded GPS noise, seeded gusts, a terminal fail-safe that ends the episode
     early (failsafe-rtl-zone: G11 then G9, home reached; until 2026-10-19 this
-    was three-simultaneous-violations' X1>G3>X6>G9, which the FSM's hold
-    points removed), a Loiter whose hold point is moved and flown
+    was three-simultaneous-violations' X1>G3>X6>G9 at 9.6 s, which now runs
+    X1>G3>G5>G9 to 31.9 s), a Loiter whose hold point is moved and flown
     (time-window-opens-on-vehicle) and the Shield-off control arm."""
     early_spec = FAMILIES["failsafe-rtl-zone"].first.spec
     cells = [_cell("dyn-nfz-spawn-on-top", size_m=40, variant=0),

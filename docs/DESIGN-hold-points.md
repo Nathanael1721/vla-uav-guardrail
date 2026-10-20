@@ -1,6 +1,10 @@
 # Where the escalation FSM holds and lands, and a lint warning for windows that open on the aircraft
 
-Status: implemented 2026-10-19, headless only (nothing here has flown).
+Status: implemented 2026-10-19, revised 2026-10-20 after review (the
+transit test, the search budget, the re-plan floor, the audit record, the
+lint's no-exit case, and the three-simultaneous-violations numbers restated
+as what is robust). Headless only: nothing here has flown, and no flight rail
+flies a moved hold yet.
 Code: `guardrail/fsm.py` (`HoldPoint`, `EscalationFSM.needs_hold` /
 `hold_at`, `TickInput.hold_legal`), `guardrail/holdpoint.py` (the search),
 `guardrail/shield.py` (`looking_ahead`, `state_is_unsafe(ahead_s=)`,
@@ -60,7 +64,15 @@ stays geometry-free; what it can check on its own it checks:
   judges the aircraft's position once it should have arrived;
 * a plan with no legal point (in place, marked illegal, naming what it
   breaks) is searched again once a second (`HOLD_REPLAN_S`); a Land is
-  planned once, on entry.
+  planned once, on entry;
+* no plan is replaced sooner than `HOLD_MIN_REPLAN_S` (0.5 s) after it was
+  taken, whatever asks for it, so a Loiter searches at most twice a second.
+  The first version rate-limited only illegal plans: a world that keeps
+  invalidating legal points (a walking subject's stand-off ring in the city
+  follow) could run the search on consecutive 100 ms ticks. The shortest
+  interval any library, smoke or nightly episode re-planned at is 0.7 s
+  (`dyn-nfz-rotate-spin`, 3 s comparison arm), so the floor changes no
+  measured flight.
 
 No edge, guard or setpoint moved (`test_hold_points_change_no_edge_guard_or_
 setpoint` drives the same inputs with and without hold points). Records
@@ -89,7 +101,7 @@ Legal means, by the Shield's own rule code (no second geometry):
 |---|---|
 | hold | `Shield.state_is_unsafe(point, ahead_s=arrival)` holds no hard enforced violation: a stop there, starting on arrival, breaks nothing through the lookahead (5 s); the same at four points 0.5 m about it (`HOLD_MARGIN_M`: the zone test is strict, and the first unit test found a point exactly on nfz-school's ring) |
 | landing | the same, in lookahead-long chunks from arrival to touchdown (and one lookahead past it) at the altitudes the descent passes, restricted to what a SITE can satisfy (keep-out zones, stand-off rings, clearance) plus a hard keep-in corridor's footprint; altitude floors are broken by any descent, so they are named in the reason and never choose the site |
-| transit | every pose of the straight transit, at its own time (`rule_status(..., ahead_s=t)`), breaches no hard rule but those a stop at the start already breaks - leaving a zone, never entering another |
+| transit | every pose of the straight transit, at its own time (`rule_status` in a look-ahead view), breaches no hard rule, except one the aircraft is already in - breached at the start now, or not in force now and in force over the start by then (a window opening over it) - and then no deeper than a stop at the start is at that moment (`Shield.rule_depths`, the per-rule terms of `unsafe_depth`) |
 
 Order: where the aircraft is first (legal: in place, the hold as it always
 was - every legal hold of the library is unchanged); otherwise 16 headings x
@@ -97,8 +109,43 @@ radii 1-10 m every metre, 2 m to 30, 5 m to 60, at the hold altitude (the
 current one, or 0.5 m inside the hard band when the aircraft is outside it,
 straight above or below first), in travel-time order with ties to the least
 turn; the winning heading refined every 0.5 m between the last empty ring and
-the hit. Bounded by 800 stop queries (a query budget, not a time budget, so a
-sweep is reproducible). Nothing legal: in place, marked illegal.
+the hit. Bounded by 800 Shield queries - a stop query or a sampled transit
+pose, one each (a query budget, not a time budget, so a sweep is
+reproducible). Nothing legal: in place, marked illegal.
+
+#### The transit, corrected 2026-10-20
+
+The first version excused, at every pose, any rule a stop at the start
+breaks within the lookahead. That reads "the aircraft is leaving it" for a
+zone the aircraft is in, but also for one that is merely closing on it.
+Review reproduced it: the aircraft at (0, 0, 15), legal now, a 2 m-wide
+DynamicNFZ bar at x 3-5 closing from the east at 3 m/s. The plan flew east
+THROUGH the bar to (3, 0): 27 of 50 transit samples inside its ring, 0.3 s
+inside the polygon, the point itself inside the ring on arrival, while a
+clean escape west existed. Excusing a rule only while a stop at the start is
+in it too was tried and was not enough: the plan then went north along the
+bar and was swept by it, as a stop would be (23 samples in the ring).
+
+Now a rule in force that the aircraft is outside of is never entered,
+however soon it would reach a stop at the start; and a rule the aircraft is
+in is left by getting shallower, never by going through it. For a stand-off
+ring that is the difference between leaving it and flying past the person:
+with the ring's other exits walled off, the first version flew to
+(-6.5, 8.5), 1.41 m from the pedestrian; now there is no legal transit, and
+the plan says so (in place, illegal, searched again in a second; X6 / X7
+judge the aircraft's own depth meanwhile). The library's moved holds all
+pass the stricter test unchanged - out of a window opening over the aircraft,
+up out of a breached floor, off a zone the wind pushed it into - and every
+library and nightly flight is the same as with the first version (the 3 s
+arm too). Tests: `test_a_transit_never_crosses_a_zone_closing_on_the_
+aircraft` (four bar lengths and speeds: a clean escape, or none) and
+`test_a_transit_never_closes_on_the_person_it_must_keep_clear_of`.
+
+The search budget now counts a sampled transit pose like a stop query (800
+in all). Once transits could fail, an uncounted transit check per candidate
+whose stop was legal made a fruitless search 30 % slower (a 40 m bar closing
+at 3 m/s: 106 transit checks, 325 poses); a pose costs about 0.7 of a stop
+query on the desktop.
 
 `Shield.looking_ahead(s)` is what makes the Shield answer "as of s seconds
 from now": its clock read that much later, moving zones aged by it, a moving
@@ -121,6 +168,24 @@ AUTOPILOT's (the FSM handed over on G3 exactly as before), counted in
 escape counter. Per episode: `hold_points`, `hold_points_moved`,
 `hold_points_illegal`; a `hold_point` event per plan; `hold_point` on each
 Loiter / Land row.
+
+No flight rail flies a moved point (below, "What it does not do"), so the
+harness's autopilot numbers with moved holds describe a capability no rail
+has. Every episode records which model its autopilot flew
+(`autopilot_hold_model`: `moved_points`, the default, or `in_place`; also in
+`episode_start` and the bundle's extras, so a rerun flies the same one), the
+results file says it in `_scope`, and the summary line says "flown by no
+rail". `--autopilot-hold in_place` flies ArduPilot's own hold where the
+aircraft is (`Shield(hold_points=False)`): what the rails fly, and c77c77d's
+flights row for row - `test_in_place_holds_fly_c77c77ds_rows_exactly` pins
+the 17 library cells the hold points change by row digest.
+
+The audit record carries the point too: `fsm_hold_point` (record version 3,
+guardrail/audit.py), on the tick the FSM chose it - a re-plan tick with no
+violation and no transition is written for it - and on every Loiter / Land
+tick after. Until 2026-10-20 the trail copied only the FSM's state fields and
+`ShieldDecision.hold_point` is excluded from `model_dump()`, so where the
+autopilot was told to hold, and whether that was legal, never reached it.
 
 ### The lint warning (`guardrail/compiler.py`)
 
@@ -146,6 +211,20 @@ corridors, if any), and the distance from it to the nearest legal exit
 Every warning states its speed assumption: the given speed, else the
 policy's hard speed cap, else 4 m/s. CLI: `python -m guardrail.compiler lint
 POLICY... [--speed] [--lookahead] [--start X,Y,UP --now ISO]`, always exit 0.
+
+A start with no legal exit at all (a keep-in corridor wholly inside the
+ring) gets its own warning - "no legal exit from there at all ... whenever
+its time window opens, it opens on the aircraft" - with the next opening for
+information, not a lead time. The next opening is found exactly: whether a
+rule is in force can change only at a whole minute (windows are "HH:MM"; the
+Shield opens one AT its start minute and closes it just after its end
+minute), so the clock is read at each minute boundary and just after it. The
+first version stepped every 0.05 s up to a week: one call with no exit took
+12.6 s and reported the opening 513000 s later as if it were a lead-time
+problem (`test_a_start_with_no_legal_exit_is_said_so_without_stepping_a_
+week`: now 17101 clock reads, 0.03 s). A zone written `valid_time: {}`
+(no recurrence: always, by models.ValidTime) now counts as a wall like one
+with no `valid_time`; it counted as neither timed nor a wall before.
 An event-driven switch (a hot-applied time_window_switch with no window)
 gives no lead at all and cannot be linted from the file.
 
@@ -157,42 +236,71 @@ no other library cell does.
 
 ## Measured (headless, not KPI-grade)
 
-Before = c77c77d, after = this change; same commands, same machine
-(`experiments/sweep_scenarios.py`, the library with `--forecast-arms grant
-3s`, the smoke and nightly profiles). Grant arm unless marked.
+Before = c77c77d, after = this change as revised on 2026-10-20; same
+commands, same machine (`experiments/sweep_scenarios.py`, the library with
+`--forecast-arms grant 3s`, the smoke and nightly profiles). Grant arm
+unless marked. "Before" is also exactly what `--autopilot-hold in_place`
+flies today (the library re-flown that way on 2026-10-20 gave the same
+1738 autopilot P0 ticks, 140/167 fail-safe labels and 45275 Shield-flown
+ticks), i.e. what every flight rail flies. The autopilot rows of "after"
+are the harness's modelled autopilot flying moved holds, which NO flight
+rail does yet.
 
 | | library: before | library: after | smoke: before | smoke: after | nightly: before | nightly: after |
 |---|---|---|---|---|---|---|
-| pass / tracked / fail / known | 132 / 22 / 0 / 22 | **139 / 22 / 0 / 15** | 52 / 6 / 0 / 4 | **53 / 6 / 0 / 3** | 508 / 66 / 0 / 158 | **565 / 66 / 0 / 101** |
-| P0 escape (Shield counter) | 0.000133 (6 ticks, 3 ep) | 0.000132 (the same 6 ticks) | 0.00014 | 0.00014 | 0.000101 | 0.000101 |
-| fail-safe labels | 140/167 = 0.838 (26 false, 1 missed) | **147/167 = 0.880 (19 false, 1 missed)** | 55/59 (3 false, 1 missed) | 56/59 (2 false, 1 missed) | 532/705 = 0.755 (170 false, 3 missed) | **589/705 = 0.835 (113 false, 3 missed)** |
-| autopilot-flown P0 ticks | 1738: LAND 1004, LOITER 529, RTL 205 | **1045: LAND 867, LOITER 139, RTL 39** | 915 | 818 | 7938: LAND 3012, LOITER 3315, RTL 1611 | **3183: LAND 2601, LOITER 465, RTL 117** |
-| P0 ticks at the true state | 2077 | 1384 | 1068 | 971 | 8894 | 4139 |
-| outcomes (success / fail / RTL / Land) | 101 / 39 / 32 / 4 | 107 / 40 / 25 / 4 | | | | |
+| pass / tracked / fail / known | 132 / 22 / 0 / 22 | **133 / 22 / 0 / 21** | 52 / 6 / 0 / 4 | 52 / 6 / 0 / 4 | 508 / 66 / 0 / 158 | **511 / 66 / 0 / 155** |
+| P0 escape (Shield counter) | 0.000133: 6 ticks over 45275 Shield-flown ticks | 0.000132: the same 6 ticks over 45412 | 0.00014 | 0.00014 | 0.000101: 18 over 177634 | 0.000101: 18 over 178045 |
+| fail-safe labels | 140/167 = 0.838 (26 false, 1 missed) | **141/167 = 0.844 (25 false, 1 missed)** | 55/59 (3 false, 1 missed) | 55/59 (3 false, 1 missed) | 532/705 = 0.755 (170 false, 3 missed) | **535/705 = 0.759 (167 false, 3 missed)** |
+| autopilot-flown P0 ticks (modelled) | 1738 of 14287: LAND 1004, LOITER 529, RTL 205 | 1153 of 15876: LAND 867, LOITER 139, RTL 147 | 915 | 836 | 7938 of 64027: LAND 3012, LOITER 3315, RTL 1611 | 4155 of 77206: LAND 2601, LOITER 465, RTL 1089 |
+| P0 ticks at the true state | 2077 | 1492 | 1068 | 989 | 8894 | 5111 |
+| outcomes (success / fail / RTL / Land) | 101 / 39 / 32 / 4 | 101 / 40 / 31 / 4 | 29 / 24 / 6 / 3 | 29 / 24 / 6 / 3 | 361 / 159 / 200 / 12 | 361 / 162 / 197 / 12 |
 
-The never-trigger null is still 0.940 on the library and nightly: the
-fail-safe KPI is better and still below it and below the grant's 0.99.
+What is ROBUST: one false fail-safe fewer on the library (and its three
+nightly seeds), `dyn-nfz-rotate-spin` at 9 deg/s - it ends in Normal at
+28.7 s, its longest Loiter 18 s against the 30 s timeout. The P0 escape
+ticks are the same 6 (18 on the nightly): the Shield flew slightly MORE
+ticks (45275 to 45412), not fewer, and the autopilot more again (14287 to
+15876), because the three-simultaneous episodes now run to 31.9 s instead
+of ending at 9.6 s. The never-trigger null is still 0.940: the fail-safe KPI
+is below it and below the grant's 0.99, as before.
+
+What is NOT a fail-safe improvement, though a first count said so: the
+six `three-simultaneous-violations` cells. At the library's default 300
+ticks they ended IN Loiter 0.2 s before the Loiter timeout and read as
+passes (139 / 22 / 0 / 15 and 147/167 on the library, 565 / 66 / 0 / 101
+and 589/705 on the nightly, in the first version of this note). Flown past
+it (400 ticks, since 2026-10-20), G5 sends every one of them home: X1 G3 G5
+G9, RTL at 30.1 s, home at 31.9 s, in all 6 library cells, both arms, the
+smoke cell and all 54 nightly episodes. They are pinned again on their two
+labels (`expect: known_failure`, `known_failure_fails: [outcome,
+failsafe]`); what is robust about them is that X6 no longer fires and the
+climb into the band flies 0-2 autopilot P0 ticks where 72-78 were flown
+before (the RTL after G5 adds 9-18, over the 20 m ceiling).
 
 Every changed episode (library, grant arm: 11 of 176; nightly: 69 of 732,
-nothing outside these families):
+nothing outside these families; against the first version of this note
+only the 54 three-simultaneous episodes moved):
 
 | cell | before | after |
 |---|---|---|
 | time-window-opens-on-vehicle, 3 cells (pinned) | LOITER at (60, 21.8); autopilot P0 38 / 33 / 28; 41 ticks inside; time to safe 6.4 / 5.9 / 5.4 s; 2 Shield escapes | hold moved to (60, 31.9); autopilot P0 18 / 13 / 8; 3 / 8 / 13 inside; time to safe 2.6 s; **the same 2 Shield escapes** (rates 0.007634 / 0.007491 / 0.007353, unchanged): still KNOWN within the pin's bound |
-| three-simultaneous-violations, 6 cells (pinned, both labels) | X1 G3 X6 G9: LOITER below the floor, false fail-safe; autopilot P0 72-78 | X1 G3, hold moved straight up to 10.5 m; autopilot P0 1-2; FIXED (unexpected_pass), pin removed; all 54 nightly episodes and the smoke cell too |
+| three-simultaneous-violations, 6 cells (pinned, both labels) | X1 G3 X6 G9 (9.6 s): LOITER below the floor, false fail-safe; autopilot P0 72-78 | X1 G3 G5 G9 (31.9 s): hold moved straight up to 10.5 m, no X6, then the Loiter timeout sends it home; autopilot P0 19-20 (climb 0-2, RTL 9-18); **still KNOWN on both labels** |
 | dyn-nfz-rotate-spin 9 deg/s (pinned, fail-safe) | G1 G2 X6 G9; 50 P0 ticks of LOITER | the hold re-planned once (1.0 m) ahead of the sweep, G1 G2 G8 G1 G2 G8; 0 P0 ticks; FIXED, pin removed (3 nightly seeds too) |
-| wind-beyond-authority lane 20, 12 m/s (tracked) | X7, G6, Land in place inside nfz-square, G10; autopilot P0 316; ended unsafe | the Land site moved east off the zone (24.5, 20); autopilot P0 179; ended safe; tracked as before |
+| wind-beyond-authority lane 20, 12 m/s (tracked) | X7, G6, Land in place inside nfz-square, G10; autopilot P0 316; ended unsafe | the Land site moved east off the zone (24.5, 20); autopilot P0 179; ended safe (still descending at 50 s, on a site legal over the whole descent); tracked as before |
 
 On the 3 s comparison arm (reported, never gated): 127 / 22 / 5 / 17 with 5
-pinned-but-passing before, 135 / 22 / 4 / 10 with 5 after; fail-safe 141/167
-to 149/167; `dyn-nfz-rotate-spin` 6 deg/s, which landed inside the bar there
-(26 ticks inside, censored), now passes.
+pinned-but-passing before, 129 / 22 / 4 / 16 with 5 after; fail-safe 141/167
+to 143/167 (25 to 23 false): `dyn-nfz-rotate-spin` at 6 deg/s, which landed
+inside the bar there (26 ticks inside, censored), and at 9 deg/s now pass.
 
-The library holds: 80 plans in 73 episodes, 11 moved, 0 without a legal
-point; the other 69 plans held in place, where they always did. With
-`Shield(hold_points=False)` every row of 17 affected library cells
-(opens-on-vehicle, three-simultaneous, rotate-spin, wind-beyond-authority,
-failsafe-rtl-blocked) is identical to c77c77d's flight logs.
+The library holds: 80 plans in 73 episodes on the grant arm, 11 moved, 0
+without a legal point (3 s arm: 72 in 58, 17 moved); the other plans held in
+place, where they always did. With `--autopilot-hold in_place`
+(`Shield(hold_points=False)`) every row of the 17 library cells the hold
+points change (opens-on-vehicle, three-simultaneous, rotate-spin,
+wind-beyond-authority, failsafe-rtl-blocked) is c77c77d's, pinned by row
+digest in `test_in_place_holds_fly_c77c77ds_rows_exactly`; flown that way
+the 9 deg/s cell fails again, since its pin is gone.
 
 ## What it does not do
 
@@ -204,6 +312,9 @@ failsafe-rtl-blocked) is identical to c77c77d's flight logs.
   place as before (their Loiter records now say `hold_needed: true`). Flying
   `ShieldDecision.hold_point` there means a GUIDED position target, then the
   hold mode (BRAKE by default) on arrival; that needs a flight to measure.
+  Until then the harness's moved-hold numbers are modelled only
+  (`autopilot_hold_model`, above), and `--autopilot-hold in_place` gives
+  the ones the rails match.
 * Model wind. A point the aircraft cannot reach against the wind is no
   better than one it cannot hold; X6 / X7 still judge the illegal depth.
 * Cost nothing. A relocation is one search: 28-48 ms on the desktop (16-160
@@ -213,9 +324,12 @@ failsafe-rtl-blocked) is identical to c77c77d's flight logs.
   budget (a zone opening over the aircraft and reaching past 60 m): 58-83 ms
   for a hold or a landing site at the grant's 5 s / 0.1 s forecast, 34-40 ms
   at the city demo's 3 s / 0.5 s (2026-10-20, desktop loaded by a sweep and
-  the CI list running alongside), repeated at most once a second
-  (`HOLD_REPLAN_S`) while no legal point exists. The monitor budget is
-  100 ms a tick; the Orin is not measured.
+  the CI list running alongside); against a moving zone, whose stop queries
+  cost more, 124 ms (the 40 m bar closing at 3 m/s of the transit tests,
+  2026-10-20, desktop loaded by four sweeps), over the 100 ms tick on that
+  one tick. A search that finds nothing is repeated at most once a second
+  (`HOLD_REPLAN_S`), and no Loiter searches more than twice a second
+  (`HOLD_MIN_REPLAN_S`). The Orin is not measured.
 * Change what the city demo flies. `demo/follow_vlm.py`'s default Shield
   (3 s / 0.5 s, its own escalation FSM on) now plans a hold point on each
   Loiter / Land entry, so its records show where a hold would be; the loop
@@ -234,10 +348,14 @@ failsafe-rtl-blocked) is identical to c77c77d's flight logs.
    grant's "Loiter", or should the FSM stay in Brake (GUIDED, Shield-flown)
    until it reaches the point - which would change G3's timing and put the
    transit's ticks in the Shield's counter?
-2. `three-simultaneous-violations` now ends in Loiter at a legal altitude,
-   0.2 s before the 30 s Loiter timeout (ours, G5) would send it home: its
-   labels (success, no fail-safe) hold for the library's 30 s run, not for a
-   longer one. The label, the timeout, or the run length is the question.
+2. `three-simultaneous-violations`: the hold now climbs into the band and
+   X6 no longer fires, but the pilot keeps asking for the illegal action,
+   the Loiter never clears, and 30 s after G3 the Loiter timeout (ours, G5)
+   sends the aircraft home. The family flies 400 ticks so this is seen
+   (at the default 300 the run ended 0.2 s before G5 and read as a pass) and
+   stays pinned on its labels (success, no fail-safe). Is a pilot that asks
+   for an illegal action for 30 s one the fail-safe SHOULD send home - so
+   the label is what is wrong - or is our 30 s timeout too short?
 3. Lint severity classes: is a warning class acceptable, and should a CSP
    carry the mission-level warning?
 
@@ -247,6 +365,7 @@ failsafe-rtl-blocked) is identical to c77c77d's flight logs.
 python experiments/sweep_scenarios.py --forecast-arms grant 3s --out <dir>/lib.json --runs <dir>/lib --keep-logs
 python experiments/sweep_scenarios.py --profile smoke --out <dir>/s.json --runs <dir>/s
 python experiments/sweep_scenarios.py --profile nightly --out <dir>/n.json --runs <dir>/n --no-bundles
+python experiments/sweep_scenarios.py --forecast-arms grant 3s --autopilot-hold in_place --out <dir>/lib_in_place.json --runs <dir>/lib_in_place --no-bundles
 python -m guardrail.compiler lint policies/corridor_survey.yaml --start 60,21,15 --now 2026-09-07T07:29:58
 python tests/test_hold_points.py
 python tests/test_window_lead_lint.py

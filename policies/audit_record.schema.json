@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:guardrail:audit-record:2",
+  "$id": "urn:guardrail:audit-record:3",
   "$defs": {
     "BodyAction": {
       "additionalProperties": false,
@@ -30,6 +30,120 @@
         "yaw_rate"
       ],
       "title": "BodyAction",
+      "type": "object"
+    },
+    "HoldPointRecord": {
+      "additionalProperties": false,
+      "description": "Where the escalation FSM's Loiter holds or its Land lands (fsm.HoldPoint\n.to_dict(), the same dict as ShieldDecision.hold_point): `kind` in_place\n(ArduPilot's own LOITER / BRAKE / LAND where the aircraft is) or moved\n(fly to x, y, up first, `travel_s` at `speed_mps`); `legal` whether a\nstop (Loiter) or the descent (Land) there breaks no hard enforced rule\nover `checked_s`, `breaks` the rules it breaks if not; `t_s` the monitor\ntime the FSM took it.",
+      "properties": {
+        "mode": {
+          "enum": [
+            "LOITER",
+            "LAND"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "in_place",
+            "moved"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "x": {
+          "title": "X",
+          "type": "number"
+        },
+        "y": {
+          "title": "Y",
+          "type": "number"
+        },
+        "up": {
+          "title": "Up",
+          "type": "number"
+        },
+        "legal": {
+          "title": "Legal",
+          "type": "boolean"
+        },
+        "travel_s": {
+          "default": 0.0,
+          "title": "Travel S",
+          "type": "number"
+        },
+        "speed_mps": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Speed Mps"
+        },
+        "climb_mps": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Climb Mps"
+        },
+        "checked_s": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checked S"
+        },
+        "breaks": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Breaks",
+          "type": "array"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "t_s": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "T S"
+        }
+      },
+      "required": [
+        "mode",
+        "kind",
+        "x",
+        "y",
+        "up",
+        "legal"
+      ],
+      "title": "HoldPointRecord",
       "type": "object"
     },
     "PassAttempt": {
@@ -687,6 +801,17 @@
       ],
       "default": null,
       "title": "Repair Passes"
+    },
+    "fsm_hold_point": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/HoldPointRecord"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "required": [
