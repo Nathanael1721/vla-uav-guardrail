@@ -841,6 +841,63 @@ def network_link_evidence(fcu_url: str | None,
             "iface": iface, "link_kind": kind}
 
 
+def _pem_sha256_fingerprint(path: Path) -> str | None:
+    """`openssl x509 -fingerprint -sha256` of a PEM certificate, in plain
+    Python (base64 of the first CERTIFICATE block -> DER -> SHA-256)."""
+    import base64
+    try:
+        text = path.read_text(encoding="ascii")
+    except (OSError, UnicodeDecodeError):
+        return None
+    m = re.search(r"-----BEGIN CERTIFICATE-----(.+?)-----END CERTIFICATE-----", text, re.S)
+    if not m:
+        return None
+    try:
+        der = base64.b64decode("".join(m.group(1).split()), validate=True)
+    except ValueError:
+        return None
+    return ":".join(f"{b:02X}" for b in hashlib.sha256(der).digest())
+
+
+def ros2_security_evidence(environ=None) -> dict[str, Any] | None:
+    """SROS 2 on this node's process, read from the environment and the
+    keystore - None when security is not enabled (ROS_SECURITY_ENABLE is not
+    "true"), so a run without SROS 2 records exactly what it recorded before
+    2026-10-19.
+
+    The grant's data-flow page asks for "SROS 2 turned on for the ROS 2
+    graph using the same root CA" as the harness mTLS. A run flown with
+    SROS2=1 (sitl/run_ros2_demo.sh) records here which strategy was in force,
+    the enclave this process joined as, whether its security files are in
+    the keystore, and the SHA-256 fingerprint of the identity CA - the
+    number `python -m guardrail.harness_service gen-pki` printed for the lab
+    CA, so a reader can check "same root CA" from the record alone. Under
+    Enforce, rcl refuses a node whose files are missing before it exists
+    (tools/sros2_check.sh, check 3), so a flown Enforce run that records
+    files_present True is what was flown."""
+    env = os.environ if environ is None else environ
+    if str(env.get("ROS_SECURITY_ENABLE", "")).lower() != "true":
+        return None
+    ks = env.get("ROS_SECURITY_KEYSTORE")
+    enclave = env.get("ROS_SECURITY_ENCLAVE_OVERRIDE")
+    out: dict[str, Any] = {"enabled": True,
+                           "strategy": env.get("ROS_SECURITY_STRATEGY") or "Permissive",
+                           "keystore": ks, "enclave": enclave,
+                           "enclave_source": ("ROS_SECURITY_ENCLAVE_OVERRIDE" if enclave
+                                              else "none (the node's --enclave, or /)")}
+    files = ("cert.pem", "key.pem", "permissions.p7s", "governance.p7s",
+             "identity_ca.cert.pem", "permissions_ca.cert.pem")
+    if ks and enclave:
+        d = Path(ks) / "enclaves" / enclave.lstrip("/")
+        out["files_present"] = all((d / f).exists() for f in files)
+        out["identity_ca_sha256"] = _pem_sha256_fingerprint(d / "identity_ca.cert.pem")
+        out["permissions_ca_sha256"] = _pem_sha256_fingerprint(d / "permissions_ca.cert.pem")
+    else:
+        out["files_present"] = None
+        out["identity_ca_sha256"] = out["permissions_ca_sha256"] = None
+    return out
+
+
 # ArduPilot SITL binaries and launchers, MAVROS, and MAVLink routers, by the
 # basename of an argv entry.
 _SITL_PROCS = {"arducopter", "arducopter-heli", "arduplane", "ardurover",

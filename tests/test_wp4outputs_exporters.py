@@ -594,6 +594,287 @@ def test_parquet_alone_without_pyarrow_writes_nothing_and_exits_3():
     assert "JSONL written" not in out.getvalue() and "pyarrow" in err.getvalue()
 
 
+# --------------------------------------------------------------------------- #
+# Parquet (2026-10-19). The first writer had never run here (pyarrow was in
+# neither env). With pyarrow 26.0.0 it dropped every key the first record
+# lacked, crashed on a float column holding a NaN (JSON safety made it a mixed
+# float / "NaN" column) and on a bool / int mix, and wrote JSON text a reader
+# could not tell from a plain string. These tests fail on it: parquet_table,
+# read_parquet and have_pyarrow did not exist, and its file had no metadata.
+# --------------------------------------------------------------------------- #
+
+def _no_pyarrow():
+    try:
+        import pyarrow                                           # noqa: F401
+        import pyarrow.parquet                                   # noqa: F401
+    except ImportError:
+        print("      SKIP: pyarrow is not installed (optional; pip install .[export])")
+        return True
+    return False
+
+
+class _BlockPyarrow:
+    def __enter__(self):
+        self.saved = {m: sys.modules.get(m) for m in ("pyarrow", "pyarrow.parquet")}
+        for m in self.saved:
+            sys.modules[m] = None
+        return self
+
+    def __exit__(self, *exc):
+        for m, v in self.saved.items():
+            if v is None:
+                sys.modules.pop(m, None)
+            else:
+                sys.modules[m] = v
+        return False
+
+
+def test_parquet_reads_back_as_the_jsonl_with_one_type_per_column():
+    """A headless episode with a hot-apply and a rail run with a NaN in a raw
+    action, exported together: every Parquet record equals its JSONL line,
+    and the columns are typed (not one string per cell)."""
+    if _no_pyarrow():
+        return SKIP
+    import pyarrow.parquet as pq
+    root = _tmp("wp4_pq_rt_")
+    run = _rail_run(root)
+    rows = [json.loads(x) for x in (run / "flight_log.jsonl").read_text().splitlines()]
+    rows[0]["raw"]["vx"] = float("nan")
+    (run / "flight_log.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows),
+                                          encoding="utf-8")
+    hot = _fly(OPEN, hot=[(3.0, ZONE)])
+    out = root / "out"
+    with contextlib.redirect_stdout(io.StringIO()) as buf:
+        assert X.main([str(hot), str(run), "--out", str(out)]) == 0, buf.getvalue()
+    for name in ("steps", "episodes"):
+        jsonl = [json.loads(x) for x in
+                 (out / f"{name}.jsonl").read_text(encoding="utf-8").splitlines()]
+        back = X.read_parquet(out / f"{name}.parquet")
+        assert len(back) == len(jsonl) > 0, (name, len(back), len(jsonl))
+        assert back == jsonl, next((i, a, b) for i, (a, b) in enumerate(zip(back, jsonl))
+                                   if a != b)
+    t = pq.read_table(out / "steps.parquet")
+    types = {f.name: str(f.type) for f in t.schema}
+    assert types["step"] == "int64" and types["t"] == "double", types
+    assert types["outcome"] == "string" and types["risk_level_defaulted"] == "bool", types
+    meta = t.schema.metadata
+    assert meta[b"vlaguard.schema"].decode() == X.SCHEMA
+    jc = set(json.loads(meta[b"vlaguard.json_columns"]))
+    assert {"observation", "policy_state", "action", "violations"} <= jc, jc
+    assert "step" not in jc and "outcome" not in jc, jc
+    # The rail run's first tick carries the NaN, as the JSONL's string.
+    steps = X.read_parquet(out / "steps.parquet")
+    rail_first = next(s for s in steps if s["episode"] != steps[0]["episode"])
+    assert rail_first["step"] == 0, rail_first["step"]
+    assert rail_first["action"]["planner_output"]["vx"] == "NaN", rail_first["action"]
+
+
+def test_the_parquet_schema_keeps_every_key_and_every_mixed_column():
+    """The records that broke the first writer: a key the first record lacks,
+    a float column with NaN and infinity, a bool / int mix, a column that is a
+    dict in one row and a string in another, an int beyond int64, a column
+    with no value. Each reads back as the JSONL would say it."""
+    if _no_pyarrow():
+        return SKIP
+    import pyarrow.parquet as pq
+    recs = [{"a": 1, "f": 0.5, "m": True, "d": {"x": 1}, "big": 1, "none": None},
+            {"a": 2, "b": 3, "f": float("nan"), "m": 1, "d": "plain", "big": 2 ** 70,
+             "none": None},
+            {"a": 3, "f": float("inf"), "m": None, "d": None, "big": 3, "none": None}]
+    p = _tmp("wp4_pq_mixed_") / "x.parquet"
+    assert X.write_parquet(p, recs) is True
+    back = X.read_parquet(p)
+    want = [X.json_safe({k: r.get(k) for k in ("a", "f", "m", "d", "big", "none", "b")})
+            for r in recs]
+    assert [dict(sorted(r.items())) for r in back] == [dict(sorted(r.items())) for r in want]
+    assert back[1]["b"] == 3 and back[0]["b"] is None, "the key the first record lacked"
+    assert back[1]["f"] == "NaN" and back[2]["f"] == "Infinity", back
+    assert back[1]["d"] == "plain" and back[0]["d"] == {"x": 1}, back
+    t = pq.read_table(p)
+    types = {f.name: str(f.type) for f in t.schema}
+    assert types["f"] == "double", "NaN and infinity stay in a float column"
+    assert types["a"] == "int64" and types["b"] == "int64", types
+    jc = set(json.loads(t.schema.metadata[b"vlaguard.json_columns"]))
+    assert jc == {"m", "d", "big"}, jc
+    assert list(t.column_names) == ["a", "f", "m", "d", "big", "none", "b"], t.column_names
+
+
+def test_a_parquet_file_that_does_not_read_back_is_not_published():
+    """The writer compares its file with the records before it reports
+    success; a mismatch deletes both files and exits 2, the JSONL kept."""
+    if _no_pyarrow():
+        return SKIP
+    root = _tmp("wp4_pq_bad_")
+    run = _rail_run(root)
+    saved = X.read_parquet
+
+    def lossy(path):
+        recs = saved(path)
+        return recs[:-1] if len(recs) > 1 else [{**recs[0], "step": -1}]
+    X.read_parquet = lossy
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = X.main([str(run), "--out", str(root / "out")])
+    finally:
+        X.read_parquet = saved
+    assert rc == 2, (rc, err.getvalue())
+    assert "parquet NOT written" in err.getvalue(), err.getvalue()
+    assert not list((root / "out").glob("*.parquet")), list((root / "out").iterdir())
+    assert (root / "out" / "steps.jsonl").is_file()
+    # A Parquet file without the export's metadata (the first writer's) is
+    # refused by the reader rather than decoded by guesswork.
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    plain = root / "plain.parquet"
+    pq.write_table(pa.Table.from_pylist([{"action": json.dumps({"vx": 1.0})}]), plain)
+    try:
+        X.read_parquet(plain)
+    except X.ExportError as e:
+        assert "json_columns" in str(e), e
+    else:
+        raise AssertionError("a Parquet file with no column metadata was decoded")
+
+
+def test_a_parquet_file_missing_a_column_is_not_published():
+    """Review of the T1d branch (P1): the read-back check built its reference
+    from the columns the FILE had (`back[0]`), so a Parquet file that lost a
+    whole column - the first writer's failure mode, a key dropped from every
+    row - compared equal on the columns left and was kept. Shown failing at
+    044f0fc: with parquet_table dropping column `b`, write_parquet returned
+    True for [{a: 1, b: 10}, {a: 2, b: 20}] and read_parquet gave
+    [{a: 1}, {a: 2}]; with it dropping `violation_type`, main() exited 0 with
+    both Parquet files published. The reference is now every key of every
+    record, as the JSONL holds it."""
+    if _no_pyarrow():
+        return SKIP
+    real = X.parquet_table
+
+    def dropping(name):
+        def table(records):
+            t = real(records)
+            if name not in t.column_names:
+                return t
+            return t.drop_columns([name]).replace_schema_metadata(t.schema.metadata)
+        return table
+    p = _tmp("wp4_pq_dropcol_") / "x.parquet"
+    X.parquet_table = dropping("b")
+    try:
+        X.write_parquet(p, [{"a": 1, "b": 10}, {"a": 2, "b": 20}])
+    except X.ExportError as e:
+        assert "missing column" in str(e) and "'b'" in str(e), e
+    else:
+        raise AssertionError(f"a file without column b was kept: {X.read_parquet(p)}")
+    finally:
+        X.parquet_table = real
+    assert not p.exists(), "the file that lost a column is still on disk"
+    # The first writer's own bug: columns from the first record only.
+    X.parquet_table = lambda records: real([{k: r.get(k) for k in records[0]}
+                                             for r in records])
+    try:
+        X.write_parquet(p, [{"a": 1}, {"a": 2, "b": 3}])
+    except X.ExportError as e:
+        assert "'b'" in str(e), e
+    else:
+        raise AssertionError("columns taken from the first record only were not caught")
+    finally:
+        X.parquet_table = real
+    assert not p.exists()
+    # Through the CLI: exit 2, no Parquet file at all, the JSONL kept.
+    root = _tmp("wp4_pq_dropcol_cli_")
+    run = _rail_run(root)
+    out = root / "out"
+    X.parquet_table = dropping("violation_type")
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = X.main([str(run), "--out", str(out)])
+    finally:
+        X.parquet_table = real
+    assert rc == 2, (rc, err.getvalue())
+    assert "parquet NOT written" in err.getvalue() and "violation_type" in err.getvalue(), \
+        err.getvalue()
+    assert not list(out.glob("*.parquet")), list(out.iterdir())
+    assert (out / "steps.jsonl").is_file() and (out / "episodes.jsonl").is_file()
+
+
+def test_any_parquet_failure_leaves_no_parquet_file_and_exits_2():
+    """Review of the T1d branch (P2): only ExportError was caught around the
+    two writes, so a pyarrow or encoding error on episodes.parquet raised a
+    traceback after steps.parquet was written, and left it beside a stale
+    episodes.parquet from an earlier export. Shown failing at 044f0fc: the
+    ArrowInvalid below escaped main(). Now any failure removes both files,
+    says its type, and exits 2; the JSONL stays."""
+    if _no_pyarrow():
+        return SKIP
+    import pyarrow as pa
+    root = _tmp("wp4_pq_anyerr_")
+    run = _rail_run(root)
+    out = root / "out"
+    out.mkdir()
+    for name in ("steps.parquet", "episodes.parquet"):
+        (out / name).write_bytes(b"an earlier export")
+    real = X.parquet_table
+
+    def fails_on_episodes(records):
+        if records and "n_steps" in records[0]:
+            raise pa.ArrowInvalid("a column pyarrow cannot type")
+        return real(records)
+    X.parquet_table = fails_on_episodes
+    try:
+        with contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = X.main([str(run), "--out", str(out)])
+    finally:
+        X.parquet_table = real
+    assert rc == 2, (rc, err.getvalue())
+    assert "parquet NOT written: ArrowInvalid: a column pyarrow cannot type" in err.getvalue(), \
+        err.getvalue()
+    assert not list(out.glob("*.parquet")), list(out.iterdir())
+    assert (out / "steps.jsonl").is_file() and (out / "episodes.jsonl").is_file()
+
+
+def test_parquet_reads_back_what_the_jsonl_encodes_not_what_json_safe_returns():
+    """Review of the T1d branch (P2): the reference was json_safe(record), not
+    the JSONL's encoding, so a dict with int keys (the JSONL writes "1") was
+    refused although the JSONL holds it fine; and a string with a lone
+    surrogate (the JSONL escapes it as \\ud800) crashed pyarrow's UTF-8
+    string column with UnicodeEncodeError. Both now read back as the JSONL
+    line does: the int-keyed dict as JSON text, the surrogate column as JSON
+    text named in the metadata."""
+    if _no_pyarrow():
+        return SKIP
+    recs = [{"step": 0, "counts": {1: "one", 2: "two"}, "note": "plain"},
+            {"step": 1, "counts": {3: "three"}, "note": "half \ud800 pair"}]
+    p = _tmp("wp4_pq_jsonenc_") / "x.parquet"
+    assert X.write_parquet(p, recs) is True
+    lines = [json.loads(json.dumps(X.json_safe(r), allow_nan=False)) for r in recs]
+    assert X.read_parquet(p) == lines, (X.read_parquet(p), lines)
+    assert lines[0]["counts"] == {"1": "one", "2": "two"}
+    import pyarrow.parquet as pq
+    jc = set(json.loads(pq.read_table(p).schema.metadata[b"vlaguard.json_columns"]))
+    assert jc == {"counts", "note"}, jc
+
+
+def test_without_pyarrow_the_hint_is_printed_and_a_stale_parquet_removed():
+    """--format both without pyarrow: JSONL, a SKIP line saying how to install
+    it, and no Parquet file from an earlier export left beside the new JSONL
+    to disagree with it."""
+    root = _tmp("wp4_pq_stale_")
+    run = _rail_run(root)
+    out = root / "out"
+    out.mkdir()
+    (out / "steps.parquet").write_bytes(b"an earlier export")
+    with _BlockPyarrow():
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            assert X.main([str(run), "--out", str(out)]) == 0
+    text = buf.getvalue()
+    assert "SKIP parquet" in text and "pip install pyarrow" in text, text
+    assert "removed the earlier export's steps.parquet" in text, text
+    assert not (out / "steps.parquet").exists()
+    assert (out / "steps.jsonl").is_file()
+
+
 def test_without_extras_the_generation_timeline_comes_from_the_events():
     """A headless bundle flown before 2026-10-12 has no manifest_extras.json:
     the timeline is read from harness_events.jsonl, where a refused

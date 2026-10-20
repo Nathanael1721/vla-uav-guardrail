@@ -1,0 +1,18 @@
+# SROS 2 enclaves of the ROS 2 rail (the grant's dev graph), one per process.
+#
+# Read by tools/sros2_setup.sh (creates them in the keystore), by
+# sitl/sros2_env.sh (refuses SROS2=1 when one is missing, and gives each
+# process its own) and by tests/test_ros2_package.py (every process the
+# launch file and sitl/run_ros2_demo.sh start under SROS2=1 has one here).
+# The three Guardrail nodes are named after their launch processes
+# (guardrail_rail.launch.py: safety_shield, mavlink_adapter, vla_stub).
+/guardrail/safety_shield
+/guardrail/mavlink_adapter
+/guardrail/vla_stub
+/guardrail/mavros
+/guardrail/bag_recorder
+# No enclave for `ros2 launch` itself: guardrail_rail.launch.py starts plain
+# processes and creates no node of its own, and it ran under Enforce without
+# one (2026-10-19, docs/DESIGN-sros2.md). Given one, a node started without
+# enclave_root:= would inherit the launch's identity and all three would join
+# as the same identity; without one, such a node is refused at start-up.

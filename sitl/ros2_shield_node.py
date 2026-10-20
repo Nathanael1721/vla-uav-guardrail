@@ -203,7 +203,7 @@ from guardrail.manifest import (DEV_YAML_FLAG, TOPOLOGY_ARDUPILOT_SITL,   # noqa
                                 flight_bundle_path, flight_policy_choice,
                                 is_kpi_grade, mavros_location,
                                 network_link_evidence, pilot_record,
-                                scan_local_processes)
+                                ros2_security_evidence, scan_local_processes)
 from guardrail.models import (AltitudeEnvelope, PolygonFence,             # noqa: E402
                               SubjectStandoff, XY)
 from guardrail.replay import (EpisodeRecord, audit_tick,                  # noqa: E402
@@ -720,6 +720,14 @@ if HAVE_ROS:
                 "vla_host": None,
                 **collect_host_evidence(),
             }
+            # SROS 2 (sitl/run_ros2_demo.sh SROS2=1): recorded only when it is
+            # on, so a run without it records what it always did.
+            security = ros2_security_evidence()
+            if security is not None:
+                self.hil_evidence["ros2_security"] = security
+                self.get_logger().info(
+                    f"SROS 2 {security['strategy']}: enclave {security['enclave']}, "
+                    f"identity CA {security['identity_ca_sha256']}")
             self.vla_identity: dict | None = None
             self.fence_status: list[dict] = []
             # The autopilot's fence parameters as read back at take-off, and
