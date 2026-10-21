@@ -778,9 +778,15 @@ def land_on_the_way_out(link, asks, rec, *, crash, stage: str, takeover=None, fs
         mode = link.snap.mode
     except Exception:                                             # noqa: BLE001
         mode = None
-    owns = bool(takeover is not None
-                or (fsm is not None and (fsm.terminal or fsm.state in FAILSAFE_STATES))
-                or (mode is not None and mode != "GUIDED" and not asks.explains(mode)))
+    try:
+        owns = bool(takeover is not None
+                    or (fsm is not None and (fsm.terminal or fsm.state in FAILSAFE_STATES))
+                    or (mode is not None and mode != "GUIDED" and not asks.explains(mode)))
+    except Exception as exc:                                      # noqa: BLE001
+        # Undecidable: land unless a takeover is on record, as the loop's
+        # finally does.
+        owns = takeover is not None
+        print(f"[node]   *** who has the aircraft not judged ({type(exc).__name__}: {exc})")
     out = {"stage": stage, "autopilot_mode": mode, "autopilot_owns": owns,
            "land_accepted": None}
     if throttle is not None and getattr(throttle, "active", False):
@@ -5397,11 +5403,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             except Exception:                                     # noqa: BLE001
                 t_net = None
             # The loop's takeover (a Ctrl+C inside the loop's finally, before
-            # its LAND decision), else the hover's.
-            land_on_the_way_out(link, asks, rec, crash=crash, stage=stage,
-                                takeover=(takeover if takeover is not None else
-                                          None if watch is None else watch.takeover),
-                                fsm=fsm, throttle=throttle, t=t_net)
+            # its LAND decision), else the hover's. The net guards each of its
+            # own steps; this guard is for anything else, so the teardown
+            # below (SITL, the camera) still runs.
+            try:
+                land_on_the_way_out(link, asks, rec, crash=crash, stage=stage,
+                                    takeover=(takeover if takeover is not None else
+                                              None if watch is None else watch.takeover),
+                                    fsm=fsm, throttle=throttle, t=t_net)
+            except Exception as exc:                              # noqa: BLE001
+                print(f"[node]   *** the net failed: {type(exc).__name__}: {exc}")
         # Whatever happened above - a refused arm, an EKF that never
         # converged, Ctrl+C - the simulator connection and the SITL this
         # run started do not outlive it. Nor does the recorder thread: it
