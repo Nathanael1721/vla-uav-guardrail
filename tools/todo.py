@@ -22,16 +22,19 @@ and `check` refuses the ways a to-do list quietly goes wrong:
   - a card id the tracker does not have;
   - an item marked done with nothing that closed it: a commit git knows, a
     CHANGELOG heading that exists, or (for the auto milestone) a run folder
-    whose manifest names a real VLA. "done" with no proof reads as progress
-    that may never have happened;
+    the VLA flew (classify_run: a manifest naming a real VLA and the
+    server's answers in the run's records). "done" with no proof reads as
+    progress that may never have happened;
   - a probe (a file + a string whose presence the Dashboard reports beside
     the item) that points outside the repository.
 
 The auto milestone: an item with "auto": "first_vla_flight" shows as done on
-the Dashboard as soon as a demo/out/*/manifest.json names a real VLA in
-vla_model_hash (the same classifier as the Dashboard: an OWL-ViT detector, the
-StubVLA or a hand-written controller never count). `todo.py sync` writes that
-into the file, with the run as its proof.
+the Dashboard as soon as a demo/out run is a VLA flight (the same classifier
+as the Dashboard, classify_run): its manifest names a real VLA in
+vla_model_hash (an OWL-ViT detector, the StubVLA or a hand-written controller
+never count) AND its own records show the VLA SERVER answered and its steps
+were flown (vla_evidence). `todo.py sync` writes that into the file, with the
+run as its proof.
 
 Nothing here reads or writes the tracker's board (tracker/data/state.json).
 """
@@ -94,10 +97,177 @@ def classify_pilot(vla_model_hash) -> str:
     return "unknown"
 
 
+# ------------------------------------------------------------------ the server's evidence
+# A configured VLA is not a flown one. The manifest's vla_model_hash is
+# computed on the PILOT side, from the configured model id and the local
+# weight files (guardrail/manifest.py model_hash / weights_digest): nothing
+# in it says the server ever answered. A flight configured with AerialVLA
+# whose protocol-v2 server never answered, or answered only parse_ok=false,
+# holds zero or hovers on every tick (guardrail/vla_link.py StepTracker), and
+# the first version of this file still counted it as a VLA flight and closed
+# the first-VLA-flight milestone with it (review of 8035d0a, P2). So a run is
+# a VLA flight only on the run's OWN records of what the server returned:
+#   vla_steps.jsonl (guardrail/vla_link.py StepLog, schema vla_steps/1: one
+#     line per request with the server's answer, its model identity and what
+#     the tracker made of it), else
+#   metrics.json "pilot" (or "pilot"."vla") in RemoteVLABackend.stats() shape
+#     (decisions_accepted, ticks_by_author, identity).
+VLA_STEPS_SCHEMA = "vla_steps/1"             # guardrail/vla_link.py VLA_STEPS_SCHEMA
+# Judgements, not grant numbers: ten answers the model parsed and the tracker
+# took (about 3.5 s of decisions at the paper's 0.35 s each on an RTX 4090),
+# and one second of the 10 Hz loop flown toward their steps. Fewer is a
+# connection that answered a few times, not a flight the VLA flew.
+MIN_VLA_DECISIONS = 10
+MIN_VLA_STEP_TICKS = 10
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+
+
+def _count(x) -> int | None:
+    return x if isinstance(x, int) and not isinstance(x, bool) and x >= 0 else None
+
+
+def weights_digest_ok(d) -> bool:
+    """64 lowercase hex digits (the protocol's weights_sha256), and not one
+    digit repeated: tests/vla_fake_server.py reports "0" * 64, a stand-in
+    that is not a model."""
+    return isinstance(d, str) and bool(_HEX64.fullmatch(d)) and len(set(d)) > 1
+
+
+def _evidence_from_steps(path: Path) -> dict:
+    ev = {"source": "vla_steps.jsonl", "rows": 0, "bad_lines": 0, "scripted": 0, "decisions": 0,
+          "vla_step_ticks": 0, "no_digest": 0, "parse_fail": 0, "server_error": 0,
+          "link_failure": 0, "refused": 0}
+    digests, ids = set(), set()
+    try:
+        fh = path.open(encoding="utf-8", errors="replace")
+    except OSError:
+        return dict(ev, unreadable=True)
+    with fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                ev["bad_lines"] += 1
+                continue
+            if not isinstance(rec, dict) or rec.get("schema") != VLA_STEPS_SCHEMA:
+                continue
+            ev["rows"] += 1
+            kind = rec.get("kind")
+            if rec.get("source") == "scripted":
+                # Decision.of(): built without the link (offline replay,
+                # tests), no server ever answered it
+                ev["scripted"] += 1
+                continue
+            if kind in ("parse_fail", "server_error", "link_failure"):
+                ev[kind] += 1
+            if rec.get("accepted") is not True:
+                ev["refused"] += rec.get("accepted") is False
+                continue
+            # an answer the model PARSED (a step or LAND) that the tracker took
+            if kind not in ("step", "land") or rec.get("parse_ok") is not True:
+                continue
+            model = rec.get("model") if isinstance(rec.get("model"), dict) else {}
+            if not weights_digest_ok(model.get("weights_sha256")):
+                ev["no_digest"] += 1
+                continue
+            ev["decisions"] += 1
+            digests.add(model["weights_sha256"])
+            ids.add(str(model.get("id") or ""))
+            out = rec.get("outcome") if isinstance(rec.get("outcome"), dict) else {}
+            ticks = out.get("ticks") if isinstance(out.get("ticks"), dict) else {}
+            ev["vla_step_ticks"] += _count(ticks.get("vla_step")) or 0
+    ev["digests"] = sorted(digests)
+    ev["model_ids"] = sorted(ids)
+    return ev
+
+
+def _evidence_from_metrics(metrics: dict) -> dict | None:
+    pilot = metrics.get("pilot") if isinstance(metrics, dict) else None
+    if not isinstance(pilot, dict):
+        return None
+    for key, st in (("pilot/vla", pilot.get("vla")), ("pilot", pilot)):
+        if isinstance(st, dict) and "decisions_accepted" in st:
+            ident = st.get("identity") if isinstance(st.get("identity"), dict) else {}
+            digest = ident.get("weights_sha256")
+            by = st.get("ticks_by_author") if isinstance(st.get("ticks_by_author"), dict) else {}
+            n = _count(st.get("decisions_accepted")) or 0
+            ok = weights_digest_ok(digest)
+            return {"source": f"metrics.json#/{key}", "decisions": n if ok else 0,
+                    "no_digest": 0 if ok else n, "vla_step_ticks": _count(by.get("vla_step")) or 0,
+                    "digests": [digest] if ok else [], "model_ids": [str(ident.get("id") or "")] if ok else [],
+                    "parse_fail": _count(st.get("parse_fail")) or 0,
+                    "server_error": _count(st.get("server_error")) or 0,
+                    "link_failure": _count(st.get("link_failure")) or 0}
+    return None
+
+
+def vla_evidence(run: Path, metrics: dict | None = None) -> dict:
+    """What the VLA SERVER returned during this run, from the run's own
+    records (vla_steps.jsonl first, else metrics.json's pilot block; the
+    block above). `decisions` counts answers the model parsed (a step or
+    LAND) that the tracker accepted and that carry a real weights digest;
+    `weights_sha256` / `model_id` are set only when exactly one was seen.
+    Never raises; a run with neither record has source None."""
+    ev = None
+    try:
+        p = Path(run) / "vla_steps.jsonl"
+        if p.is_file():
+            ev = _evidence_from_steps(p)
+        else:
+            if metrics is None:
+                try:
+                    metrics = json.loads((Path(run) / "metrics.json").read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    metrics = None
+            ev = _evidence_from_metrics(metrics) if isinstance(metrics, dict) else None
+    except Exception:                                        # noqa: BLE001 - evidence never breaks a build
+        ev = None
+    ev = ev or {"source": None, "decisions": 0, "vla_step_ticks": 0, "digests": [], "model_ids": []}
+    ev["weights_sha256"] = ev["digests"][0] if len(ev.get("digests") or []) == 1 else None
+    ev["model_id"] = ev["model_ids"][0] if len(ev.get("model_ids") or []) == 1 else None
+    return ev
+
+
+def evidence_problem(ev: dict) -> str | None:
+    """Why this evidence does not show a VLA flying, as a reason code (with
+    a count after ':' where one helps), or None."""
+    if not ev or ev.get("source") is None:
+        return "no_records"
+    n = ev.get("decisions") or 0
+    if n == 0:
+        return "no_weights_digest" if ev.get("no_digest") else "no_accepted_decisions"
+    if len(ev.get("digests") or []) > 1:
+        return f"several_weights_digests:{len(ev['digests'])}"
+    if len(ev.get("model_ids") or []) != 1 or classify_pilot(ev["model_ids"][0]) != "vla":
+        return "model_not_a_vla:" + ",".join(m.split("@", 1)[0][:40] for m in ev.get("model_ids") or [])
+    if n < MIN_VLA_DECISIONS:
+        return f"too_few_decisions:{n}"
+    if (ev.get("vla_step_ticks") or 0) < MIN_VLA_STEP_TICKS:
+        return f"too_few_vla_step_ticks:{ev.get('vla_step_ticks') or 0}"
+    return None
+
+
+def classify_run(vla_model_hash, evidence: dict | None) -> tuple[str, str | None]:
+    """(pilot class, why a configured VLA is unverified). "vla" needs both
+    the rail's claim (its manifest names a real VLA: classify_pilot) and the
+    server's evidence (evidence_problem is None): records without the claim
+    may be a VLA run in the shadow of another controller, a claim without
+    records is a VLA nobody heard from. A configured VLA without the
+    evidence is "vla_unverified"; every other class is classify_pilot's."""
+    configured = classify_pilot(vla_model_hash)
+    if configured != "vla":
+        return configured, None
+    why = evidence_problem(evidence or {})
+    return ("vla", None) if why is None else ("vla_unverified", why)
+
+
 def vla_runs(demo_out: Path) -> list[tuple[str, str]]:
-    """(tag, vla_model_hash) of every demo/out/<tag>/manifest.json naming a
-    real VLA, oldest first by manifest time. Folders starting with '_' are
-    set aside and skipped."""
+    """(tag, vla_model_hash) of every demo/out/<tag> run that is a VLA
+    flight (classify_run: the manifest names a real VLA and the run's own
+    records carry the server's evidence), oldest first by manifest time.
+    Folders starting with '_' are set aside and skipped."""
     out = []
     if not demo_out.is_dir():
         return out
@@ -108,7 +278,7 @@ def vla_runs(demo_out: Path) -> list[tuple[str, str]]:
             h = json.loads(m.read_text(encoding="utf-8")).get("vla_model_hash")
         except (OSError, ValueError, AttributeError):
             continue
-        if classify_pilot(h) == "vla":
+        if classify_pilot(h) == "vla" and classify_run(h, vla_evidence(m.parent))[0] == "vla":
             out.append((m.stat().st_mtime, m.parent.name, str(h)))
     return [(t, h) for _, t, h in sorted(out)]
 
@@ -238,7 +408,8 @@ def check(doc: dict, root: Path = ROOT, demo_out: Path | None = None,
             elif cb.get("run"):
                 ok = it.get("auto") == "first_vla_flight" and cb["run"] in {t for t, _ in vla}
                 if not ok:
-                    errs.append(f"{tag}: closed_by run {cb['run']} is not a demo/out run that names a real VLA")
+                    errs.append(f"{tag}: closed_by run {cb['run']} is not a demo/out run the VLA flew "
+                                f"(a manifest naming a real VLA and records of the server's answers)")
             else:
                 errs.append(f"{tag}: done, but closed_by names no commit, CHANGELOG heading or run")
     return errs

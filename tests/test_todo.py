@@ -10,7 +10,10 @@ wrong - a missing language, a Simplified character, an owner that is a
 person's name instead of a role, an item marked done with nothing that closed
 it - by breaking one rule of a valid fixture at a time, and that the "first
 VLA flight" milestone turns done only on a run whose manifest names a real
-VLA (never the OWL-ViT detector, the StubVLA or a hand-written controller).
+VLA (never the OWL-ViT detector, the StubVLA or a hand-written controller)
+AND whose own records show the VLA server answered and its steps were flown
+(review of 8035d0a, P2: a manifest that only names AerialVLA, whose server
+never answered, counted as the first VLA flight).
 tracker/data/ is local-only (.gitignore): the real-file check SKIPs visibly
 on a fresh clone.
 """
@@ -55,8 +58,34 @@ def valid_doc():
     ]}
 
 
+AERO = "aerialvla-lora/aero_vla@196f2f32"
+DIGEST = "3f" * 32                       # a weights_sha256 as the server reports it
+
+
+def step_rows(n=12, *, kind="step", accepted=True, parse_ok=True, digest=DIGEST, model_id=AERO,
+              vla_ticks=8, source=None):
+    """n vla_steps.jsonl rows as guardrail/vla_link.py writes them (schema
+    vla_steps/1: the request, the server's answer with its model identity,
+    and what the tracker made of it)."""
+    rows = []
+    for i in range(n):
+        r = {"schema": "vla_steps/1", "seq": i, "kind": kind, "ok": kind != "server_error",
+             "parse_ok": parse_ok, "accepted": accepted, "refused": None if accepted else kind,
+             "raw_text": "20 49 49", "step": {"fwd_m": 1.0, "down_m": 0.0, "dpsi_rad": 0.0},
+             "model": {"id": model_id, "base": "openvla-7b@47a0ec7f", "weights_sha256": digest,
+                       "precision": "nf4", "attn": "eager", "merged": False},
+             "outcome": {"end": "complete", "ticks": {"vla_step": vla_ticks, "hold": 1}}}
+        if source:
+            r = {"schema": "vla_steps/1", "seq": i, "kind": kind, "source": source, "accepted": accepted,
+                 "outcome": {"ticks": {"vla_step": vla_ticks}}}
+        rows.append(r)
+    return rows
+
+
 class Repo:
-    """A temporary repository: a CHANGELOG and a demo/out with runs."""
+    """A temporary repository: a CHANGELOG and a demo/out with runs. A run
+    is a vla_model_hash, or {"hash": ..., "steps": [vla_steps rows],
+    "metrics": {...}} for one with the run's own records."""
 
     def __init__(self, runs=None):
         self.runs = runs or {}
@@ -67,7 +96,13 @@ class Repo:
         for tag, h in self.runs.items():
             d = self.root / "demo" / "out" / tag
             d.mkdir(parents=True)
-            (d / "manifest.json").write_text(json.dumps({"vla_model_hash": h}), encoding="utf-8")
+            spec = h if isinstance(h, dict) else {"hash": h}
+            (d / "manifest.json").write_text(json.dumps({"vla_model_hash": spec["hash"]}), encoding="utf-8")
+            if spec.get("steps") is not None:
+                (d / "vla_steps.jsonl").write_text(
+                    "".join(json.dumps(r) + "\n" for r in spec["steps"]), encoding="utf-8")
+            if spec.get("metrics") is not None:
+                (d / "metrics.json").write_text(json.dumps(spec["metrics"]), encoding="utf-8")
         return self.root
 
     def __exit__(self, *a):
@@ -140,13 +175,17 @@ def test_done_needs_something_that_closed_it():
            "not a commit git knows")
     expect(lambda d: d["items"][0].update(status="done", closed_by={"changelog": "### 2026-10-22 — later"}),
            "heading not found")
-    # a run closes only the auto milestone, and only a run that names a real VLA
+    # a run closes only the auto milestone, and only a run the VLA flew
+    flown = {"hash": "aerialvla:openvla-7b+aero_vla@sha256:ab", "steps": step_rows()}
     expect(lambda d: d["items"][0].update(status="done", closed_by={"run": "r1"}),
-           "not a demo/out run", runs={"r1": "aerialvla:openvla-7b+aero_vla@sha256:ab"})
+           "not a demo/out run", runs={"r1": flown})
     expect(lambda d: d["items"][1].update(status="done", closed_by={"run": "r_owl"}),
            "not a demo/out run", runs={"r_owl": "google/owlvit-base-patch32@cbc355fb36458835"})
     assert errs(lambda d: d["items"][1].update(status="done", closed_by={"run": "r1"}),
-                runs={"r1": "aerialvla:openvla-7b+aero_vla@sha256:ab"}) == []
+                runs={"r1": flown}) == []
+    # a manifest that only NAMES the VLA closes nothing (review of 8035d0a, P2)
+    expect(lambda d: d["items"][1].update(status="done", closed_by={"run": "r1"}),
+           "not a demo/out run", runs={"r1": "aerialvla:openvla-7b+aero_vla@sha256:ab"})
 
 
 def test_a_probe_stays_inside_the_repository():
@@ -169,15 +208,90 @@ def test_only_an_allow_listed_vla_counts_as_a_vla_flight():
 def test_the_first_vla_flight_milestone_turns_done_on_a_real_vla_run_only():
     auto = valid_doc()["items"][1]
     with Repo({"r_owl": "google/owlvit-base-patch32@x", "r_stub": "guardrail.vla_stub.StubVLA@src:1",
-               "r_none": "none:hand-written-controller", "_aside": "openvla/openvla-7b@1"}) as root:
+               "r_none": "none:hand-written-controller",
+               "_aside": {"hash": "openvla/openvla-7b@1", "steps": step_rows()}}) as root:
         vla = T.vla_runs(root / "demo" / "out")
         assert vla == [], f"a non-VLA (or a set-aside folder) counted: {vla}"
         assert T.effective(auto, vla) == ("open", None)
-    with Repo({"r_vla": "aerialvla:openvla-7b+aero_vla@sha256:ab"}) as root:
+    with Repo({"r_vla": {"hash": "aerialvla:openvla-7b+aero_vla@sha256:ab", "steps": step_rows()}}) as root:
         vla = T.vla_runs(root / "demo" / "out")
         st, ev = T.effective(auto, vla)
         assert st == "done" and ev["run"] == "r_vla"
         assert T.effective(valid_doc()["items"][0], vla)[0] == "open", "a non-auto item moved"
+
+
+def test_a_configured_vla_is_a_vla_flight_only_on_the_servers_own_evidence():
+    """Review of 8035d0a (P2). classify_pilot judged the manifest's
+    vla_model_hash alone, and that hash is computed on the PILOT side from
+    the configured model id and the local weight files - nothing the server
+    returned. A flight configured with AerialVLA whose v2 server never
+    answered, or answered only parse_ok=false, holds zero or hovers on every
+    tick, yet counted as a VLA flight and closed the first-VLA-flight
+    milestone (VLA-05). A run is a VLA flight only when its own records hold
+    at least MIN_VLA_DECISIONS answers the model parsed (a step or LAND)
+    that the tracker accepted, each carrying the server's weights_sha256
+    (one digest, not a placeholder) for an allow-listed model, and at least
+    MIN_VLA_STEP_TICKS loop ticks flown toward those steps. Anything else
+    configured as a VLA is "vla_unverified", with the reason."""
+    H = "aerialvla:openvla-7b+aero_vla@sha256:ab"
+    hold = step_rows(vla_ticks=0)                              # every tick a hold
+    for r in hold:
+        r["outcome"]["ticks"] = {"hold": 10}
+    cases = {
+        "no_records": {"hash": H},
+        "no_accepted_decisions": {"hash": H, "steps": step_rows(kind="parse_fail", parse_ok=False)},
+        "server_refused": {"hash": H, "steps": step_rows(kind="server_error", accepted=False, parse_ok=False)},
+        "fake_digest": {"hash": H, "steps": step_rows(digest="0" * 64)},      # tests/vla_fake_server.py
+        "no_digest": {"hash": H, "steps": step_rows(digest=None)},
+        "scripted": {"hash": H, "steps": step_rows(source="scripted")},       # Decision.of(): no reply
+        "too_few": {"hash": H, "steps": step_rows(n=T.MIN_VLA_DECISIONS - 1)},
+        "two_digests": {"hash": H, "steps": step_rows(n=6) + step_rows(n=6, digest="4e" * 32)},
+        "not_a_vla_model": {"hash": H, "steps": step_rows(model_id="my-own-net@1")},
+        "zero_vla_step_ticks": {"hash": H, "steps": hold},
+    }
+    want = {"no_records": "no_records", "no_accepted_decisions": "no_accepted_decisions",
+            "server_refused": "no_accepted_decisions", "fake_digest": "no_weights_digest",
+            "no_digest": "no_weights_digest", "scripted": "no_accepted_decisions",
+            "too_few": "too_few_decisions", "two_digests": "several_weights_digests",
+            "not_a_vla_model": "model_not_a_vla", "zero_vla_step_ticks": "too_few_vla_step_ticks"}
+    with Repo(cases) as root:
+        demo = root / "demo" / "out"
+        for tag, why in want.items():
+            ev = T.vla_evidence(demo / tag)
+            cls, reason = T.classify_run(H, ev)
+            assert cls == "vla_unverified" and reason.split(":")[0] == why, (tag, cls, reason, ev)
+        assert T.vla_runs(demo) == [], "a run without the server's evidence counted as a VLA flight"
+        auto = valid_doc()["items"][1]
+        assert T.effective(auto, T.vla_runs(demo)) == ("open", None), "VLA-05 closed on a dead model"
+    flown = step_rows()
+    with Repo({"r_ok": {"hash": H, "steps": flown},
+               # the same records under a manifest that says something else flew
+               # (a VLA run in the shadow of the hand-written controller) is not a VLA flight
+               "r_shadow": {"hash": "none:hand-written-controller", "steps": flown},
+               # the pilot's own summary in metrics.json, RemoteVLABackend.stats() shape
+               "r_metrics": {"hash": H, "metrics": {"pilot": {"vla": {
+                   "decisions_accepted": 40, "ticks_by_author": {"vla_step": 300, "hold": 20},
+                   "identity": {"id": AERO, "weights_sha256": DIGEST}}}}},
+               "r_metrics_dead": {"hash": H, "metrics": {"pilot": {"vla": {
+                   "decisions_accepted": 0, "ticks_by_author": {"none": 600},
+                   "identity": {"id": AERO, "weights_sha256": DIGEST}}}}}}) as root:
+        demo = root / "demo" / "out"
+        ev = T.vla_evidence(demo / "r_ok")
+        assert T.classify_run(H, ev) == ("vla", None), ev
+        assert ev["decisions"] == 12 and ev["vla_step_ticks"] == 96 and ev["weights_sha256"] == DIGEST
+        assert ev["source"] == "vla_steps.jsonl" and ev["model_id"] == AERO
+        assert T.classify_run("none:hand-written-controller", T.vla_evidence(demo / "r_shadow"))[0] == "none"
+        mev = T.vla_evidence(demo / "r_metrics")
+        assert T.classify_run(H, mev) == ("vla", None) and mev["source"] == "metrics.json#/pilot/vla", mev
+        assert T.classify_run(H, T.vla_evidence(demo / "r_metrics_dead"))[0] == "vla_unverified"
+        assert sorted(t for t, _ in T.vla_runs(demo)) == ["r_metrics", "r_ok"], T.vla_runs(demo)
+    # a broken or foreign line is skipped, never fatal
+    with Repo({"r_mixed": {"hash": H, "steps": flown}}) as root:
+        p = root / "demo" / "out" / "r_mixed" / "vla_steps.jsonl"
+        p.write_text("{not json\n" + json.dumps({"schema": "other"}) + "\n" + p.read_text(encoding="utf-8"),
+                     encoding="utf-8")
+        ev = T.vla_evidence(p.parent)
+        assert T.classify_run(H, ev) == ("vla", None) and ev["bad_lines"] == 1, ev
 
 
 def test_the_simplified_check_can_fail_and_pass():

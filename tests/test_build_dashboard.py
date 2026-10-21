@@ -16,7 +16,9 @@ written. Pinned, each because the opposite already happened in this project:
   published one is;
 - an OWL-ViT detector, the StubVLA or a hand-written controller in
   vla_model_hash is never a VLA flight (65 of the 99 real manifests name the
-  detector); a set-aside "_" folder is skipped;
+  detector); a set-aside "_" folder is skipped; a manifest that names a VLA
+  is one only with the server's answers in the run's own records
+  (vla_steps.jsonl), else "vla_unverified" (review of 8035d0a, P2);
 - KPI-grade is recomputed from the topology: a stored kpi_grade: true on a
   "canonical-hil" run is reported as not KPI-grade (5 real kpi.json files say
   true; the 6 Oct rollup counts 0);
@@ -75,8 +77,19 @@ def _w(p: Path, obj):
     p.write_text(obj if isinstance(obj, str) else json.dumps(obj), encoding="utf-8")
 
 
+def vla_steps(n=24, digest="3f" * 32, vla_ticks=8):
+    """vla_steps.jsonl lines as guardrail/vla_link.py writes them: answers
+    the model parsed, accepted by the tracker, with the server's identity."""
+    return "".join(json.dumps({
+        "schema": "vla_steps/1", "seq": i, "kind": "step", "ok": True, "parse_ok": True,
+        "accepted": True, "raw_text": "20 49 49",
+        "model": {"id": "aerialvla-lora/aero_vla@196f2f32", "base": "openvla-7b@47a0ec7f",
+                  "weights_sha256": digest, "precision": "nf4", "attn": "eager", "merged": False},
+        "outcome": {"end": "complete", "ticks": {"vla_step": vla_ticks}}}) + "\n" for i in range(n))
+
+
 def _run(root, tag, vla_hash, topology="projectairsim-ardupilot-pymavlink", kpi=None, metrics=None,
-         videos=(), rev="08cd0be9a9af", speed=1.0, when=None):
+         videos=(), rev="08cd0be9a9af", speed=1.0, when=None, steps=None):
     d = root / "demo" / "out" / tag
     _w(d / "manifest.json", {"code_revision": rev, "vla_model_hash": vla_hash,
                              "policy_hash": "sha256:" + "a" * 64, "random_seed": 7,
@@ -85,6 +98,8 @@ def _run(root, tag, vla_hash, topology="projectairsim-ardupilot-pymavlink", kpi=
         _w(d / "kpi.json", kpi)
     if metrics is not None:
         _w(d / "metrics.json", metrics)
+    if steps is not None:
+        _w(d / "vla_steps.jsonl", steps)
     for v in videos:
         (d / v).write_bytes(b"\x00" * 64)
     if when is not None:
@@ -95,8 +110,8 @@ def _run(root, tag, vla_hash, topology="projectairsim-ardupilot-pymavlink", kpi=
 class Fixture:
     """A small repository with everything the builder reads."""
 
-    def __init__(self, empty=False, with_vla=False):
-        self.empty, self.with_vla = empty, with_vla
+    def __init__(self, empty=False, with_vla=False, vla_configured_only=False):
+        self.empty, self.with_vla, self.vla_configured_only = empty, with_vla, vla_configured_only
 
     def __enter__(self):
         self.root = r = Path(tempfile.mkdtemp(prefix="dash_test_"))
@@ -129,7 +144,12 @@ class Fixture:
         (r / "demo" / "out" / "pas_x_compare_20261021_phone.mp4").write_bytes(b"\x00" * 64)
         if self.with_vla:
             _run(r, "vla_goto_20261101", "aerialvla:openvla-7b+aero_vla@sha256:" + "c" * 64, "hil",
-                 kpi={"ticks": 600}, metrics={"shield": "on"}, when=t0 + 500)
+                 kpi={"ticks": 600}, metrics={"shield": "on"}, when=t0 + 500, steps=vla_steps())
+        if self.vla_configured_only:
+            # Configured with AerialVLA, a server that never answered: the
+            # manifest names the VLA, the run has no record of an answer.
+            _run(r, "vla_dead_20261102", "aerialvla:openvla-7b+aero_vla@sha256:" + "c" * 64, "hil",
+                 kpi={"ticks": 600}, metrics={"shield": "on"}, when=t0 + 600)
         dd = r / "docs" / "data"
         _w(dd / "scenario_sweep.json", {
             "_rollup": {"_all_shield_on": {
@@ -264,7 +284,8 @@ def test_a_detector_stub_or_hand_written_pilot_is_never_a_vla_flight():
     with Fixture() as f:
         doc = f.build()
         c = doc["vla"]["counts"]
-        assert c == {"vla": 0, "stub": 1, "detector": 1, "none": 2, "unknown": 0, "missing": 0}, c
+        assert c == {"vla": 0, "vla_unverified": 0, "stub": 1, "detector": 1, "none": 2, "unknown": 0,
+                     "missing": 0}, c
         assert doc["vla"]["last_vla_flight"] is None
         assert "_set_aside" not in {r["tag"] for r in doc["flights"]}, "a set-aside folder was read"
         assert flight(doc, "city_owl")["pilot"]["class"] == "detector"
@@ -272,6 +293,39 @@ def test_a_detector_stub_or_hand_written_pilot_is_never_a_vla_flight():
         doc = f.build()
         assert doc["vla"]["counts"]["vla"] == 1
         assert doc["vla"]["last_vla_flight"]["tag"] == "vla_goto_20261101"
+        ev = flight(doc, "vla_goto_20261101")["pilot"]["evidence"]
+        assert ev["decisions"] == 24 and ev["vla_step_ticks"] == 192 and ev["weights_sha256"] == "3f" * 32
+        assert ev["source"] == "demo/out/vla_goto_20261101/vla_steps.jsonl", ev
+
+
+def test_a_configured_vla_without_the_servers_answers_is_not_a_vla_flight():
+    """Review of 8035d0a (P2): the pilot class came from the manifest's
+    vla_model_hash alone, a hash the PILOT computes from the configured
+    model id and its local weight files. A flight configured with AerialVLA
+    whose server never answered counted as a VLA flight, became
+    last_vla_flight and closed the first-VLA-flight milestone (VLA-05); the
+    first version of this file's with_vla fixture (a manifest hash and kpi
+    ticks, nothing else) expected exactly that. Such a run is now
+    "vla_unverified", shown apart with its reason, and closes nothing."""
+    with Fixture(vla_configured_only=True) as f:
+        doc = f.build()
+        c = doc["vla"]["counts"]
+        assert c["vla"] == 0 and c["vla_unverified"] == 1, c
+        assert doc["vla"]["last_vla_flight"] is None and doc["vla"]["first_vla_flight"] is None
+        p = flight(doc, "vla_dead_20261102")["pilot"]
+        assert p["class"] == "vla_unverified" and p["configured"] == "vla" and p["unverified_reason"] == "no_records", p
+        assert doc["vla"]["last_vla_unverified"]["tag"] == "vla_dead_20261102"
+        assert doc["vla"]["last_vla_unverified"]["reason"] == "no_records"
+        it = {i["id"]: i for i in doc["todo"]["items"]}
+        assert it["VLA-05"]["status_effective"] == "open" and it["VLA-05"]["auto_evidence"] is None
+        assert all(d["vla"] == 0 for d in doc["timeline"]["flights"])
+        # the server's answers arrive in the run folder: now it is a VLA flight
+        _w(f.root / "demo" / "out" / "vla_dead_20261102" / "vla_steps.jsonl", vla_steps())
+        doc = f.build()
+        assert doc["vla"]["counts"]["vla"] == 1 and doc["vla"]["last_vla_flight"]["tag"] == "vla_dead_20261102"
+        assert {i["id"]: i for i in doc["todo"]["items"]}["VLA-05"]["status_effective"] == "done"
+        # and the run's records are an input of the build (a new line makes it stale)
+        assert any(p.name == "vla_steps.jsonl" for p in BD.inputs(f.P))
 
 
 def test_a_stored_kpi_grade_on_canonical_hil_is_not_kpi_grade():

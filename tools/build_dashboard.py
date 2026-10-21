@@ -40,9 +40,17 @@ THE RULES, each because the opposite already happened somewhere:
     shown beside it and never trusted: 5 stored kpi.json files from the
     August MAVROS runs still say true, while the 6 Oct rollup counts 0.
   * A flight is a VLA flight only when its vla_model_hash names an allow-
-    listed VLA (tools/todo.py classify_pilot). 65 of the 99 manifests of
-    21 Oct name the OWL-ViT DETECTOR there; with the 24 StubVLA and 10
-    hand-written ones, 0 are VLA flights.
+    listed VLA (tools/todo.py classify_pilot) AND its own records show the
+    VLA SERVER answered and its steps were flown (tools/todo.py
+    vla_evidence / classify_run: accepted answers the model parsed, each
+    with the server's weights_sha256, and ticks authored by vla_step, read
+    from vla_steps.jsonl or metrics.json's pilot block). 65 of the 99
+    manifests of 21 Oct name the OWL-ViT DETECTOR there; with the 24
+    StubVLA and 10 hand-written ones, 0 are VLA flights. The vla_model_hash
+    is computed on the pilot side from the configured id and the local
+    weight files, so a run configured with AerialVLA whose server never
+    answered counted as one, and closed the first-VLA-flight milestone
+    (review of 8035d0a, P2): it is now "vla_unverified", shown apart.
   * Only browser-playable videos are linked: the per-run `_demo.mp4` files
     are MPEG-4 Part 2, which browsers do not play. With ffprobe the codec is
     read from the file (cached by size and mtime in tracker/data/dash/
@@ -304,6 +312,21 @@ def _pair_key(tag: str) -> str | None:
     return "_".join("*" if t in ("on", "off") else t for t in toks)
 
 
+def _evidence_summary(tag: str, ev: dict) -> dict:
+    """The counts the page may show of what the VLA server returned: no raw
+    text, no prompt, no image hash; the source as a logical demo/out path."""
+    src = ev.get("source")
+    return {
+        "source": None if src is None else f"demo/out/{tag}/{src}",
+        "decisions": ev.get("decisions") or 0, "vla_step_ticks": ev.get("vla_step_ticks") or 0,
+        "weights_sha256": ev.get("weights_sha256"),
+        "model_id": None if ev.get("model_id") is None else str(ev["model_id"])[:80],
+        "digests_seen": len(ev.get("digests") or []),
+        **{k: ev.get(k) or 0 for k in ("parse_fail", "server_error", "link_failure", "no_digest")},
+        "min_decisions": TODO.MIN_VLA_DECISIONS, "min_vla_step_ticks": TODO.MIN_VLA_STEP_TICKS,
+    }
+
+
 def flight_record(root: Path, run: Path) -> dict | None:
     tag = run.name
     mp = run / "manifest.json"
@@ -320,7 +343,12 @@ def flight_record(root: Path, run: Path) -> dict | None:
     except OSError:
         mt = 0.0
     h = man.get("vla_model_hash")
-    cls = TODO.classify_pilot(h)
+    # The class needs the SERVER's word for a VLA (tools/todo.py classify_run):
+    # a manifest that only names AerialVLA is "vla_unverified" (review of
+    # 8035d0a, P2).
+    ev = TODO.vla_evidence(run, met)
+    cls, unverified = TODO.classify_run(h, ev)
+    configured = TODO.classify_pilot(h)
     grade, reasons = recompute_kpi_grade(man)
     topo = man.get("topology")
     p0 = None
@@ -335,8 +363,10 @@ def flight_record(root: Path, run: Path) -> dict | None:
         "tag": tag, "date": d, "date_basis": basis, "t": round(mt, 1),
         "rail": TOPO_RAIL.get(topo) or ("pas_ap" if tag.startswith(("pas_ap", "g1_")) else "airsim"),
         "topology": topo,
-        "pilot": {"class": cls, "id": str(h).split("@", 1)[0] if h else None,
-                  "hash": str(h)[:80] if h else None, "metrics_kind": pilot_kind},
+        "pilot": {"class": cls, "configured": configured, "unverified_reason": unverified,
+                  "id": str(h).split("@", 1)[0] if h else None,
+                  "hash": str(h)[:80] if h else None, "metrics_kind": pilot_kind,
+                  "evidence": _evidence_summary(tag, ev) if (configured == "vla" or ev.get("source")) else None},
         "policy_hash": str(man.get("policy_hash") or "")[:23] or None,
         "seed": man.get("random_seed"), "code_revision": man.get("code_revision"),
         "sim_speedup": man.get("sim_speedup"),
@@ -437,19 +467,27 @@ def scan_compares(P: dict, media: Media, flights: list[dict]) -> list[dict]:
 
 # ------------------------------------------------------------------ VLA
 def vla_section(flights: list[dict], todo_items: list[dict]) -> dict:
-    counts = {k: 0 for k in ("vla", "stub", "detector", "none", "unknown", "missing")}
+    counts = {k: 0 for k in ("vla", "vla_unverified", "stub", "detector", "none", "unknown", "missing")}
     for r in flights:
         counts[r["pilot"]["class"]] = counts.get(r["pilot"]["class"], 0) + 1
     vla = [r for r in flights if r["pilot"]["class"] == "vla"]
     first = min(vla, key=lambda r: (r["date"] or "", r["t"])) if vla else None
     last = max(vla, key=lambda r: (r["date"] or "", r["t"])) if vla else None
+    # Configured as a VLA, no server evidence: shown apart, never counted.
+    unv = [r for r in flights if r["pilot"]["class"] == "vla_unverified"]
+    last_unv = max(unv, key=lambda r: (r["date"] or "", r["t"])) if unv else None
     latest_by_rail = {}
     for r in flights:                                       # newest first already
         latest_by_rail.setdefault(r["rail"], r)
     return {
         "counts": counts, "total": len(flights),
         "first_vla_flight": {"tag": first["tag"], "date": first["date"], "id": first["pilot"]["id"]} if first else None,
-        "last_vla_flight": {"tag": last["tag"], "date": last["date"], "id": last["pilot"]["id"]} if last else None,
+        "last_vla_flight": {"tag": last["tag"], "date": last["date"], "id": last["pilot"]["id"],
+                            "decisions": last["pilot"]["evidence"]["decisions"],
+                            "weights_sha256": last["pilot"]["evidence"]["weights_sha256"]} if last else None,
+        "last_vla_unverified": {"tag": last_unv["tag"], "date": last_unv["date"], "id": last_unv["pilot"]["id"],
+                                "reason": last_unv["pilot"]["unverified_reason"]} if last_unv else None,
+        "evidence_rule": {"min_decisions": TODO.MIN_VLA_DECISIONS, "min_vla_step_ticks": TODO.MIN_VLA_STEP_TICKS},
         "latest_by_rail": [{"rail": k, "tag": r["tag"], "date": r["date"], "topology": r["topology"],
                             "pilot_class": r["pilot"]["class"], "pilot_id": r["pilot"]["id"]}
                            for k, r in latest_by_rail.items()],
@@ -809,7 +847,7 @@ def inputs(P: dict) -> list[Path]:
     if P["demo_out"].is_dir():
         for run in P["demo_out"].iterdir():
             if run.is_dir() and not run.name.startswith("_"):
-                out += [run / n for n in ("manifest.json", "kpi.json", "metrics.json")]
+                out += [run / n for n in ("manifest.json", "kpi.json", "metrics.json", "vla_steps.jsonl")]
         out += [f for f in P["demo_out"].glob("*_compare_*") if f.is_file()]
     return [p for p in out if p.name != "state.json"]
 
@@ -933,7 +971,8 @@ def main(argv=None) -> int:
     write_atomic(P["out"], doc)
     m, v = doc["meta"], doc["vla"]["counts"]
     measured = sum(1 for k in doc["kpis"] if k["status"] == "measured")
-    print(f"{rel(root, P['out'])}: {m['flights_total']} flights (VLA {v['vla']}, stub {v['stub']}, "
+    print(f"{rel(root, P['out'])}: {m['flights_total']} flights (VLA {v['vla']}, VLA configured but "
+          f"unverified {v['vla_unverified']}, stub {v['stub']}, "
           f"detector {v['detector']}, none {v['none']}), {len(doc['compares'])} compare videos, "
           f"{measured}/{len(doc['kpis'])} KPIs measured, {len(doc['todo']['items'])} to-do items, "
           f"{doc['wps']['needs_review_total']} cards need review ({m['mode']})")

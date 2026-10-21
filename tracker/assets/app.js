@@ -221,8 +221,10 @@
   // from the run folders, docs/data, the cards, the update log and the CHANGELOG, each with its source
   // and date. A missing value prints "not measured", never 0 (silence reads as success). The live
   // panel polls /api/live every 5 s and the data every 60 s, only while this page is visible.
-  const PILOTS = ["vla", "stub", "detector", "none", "unknown", "missing"];
-  const PCOL = { vla: "var(--done)", stub: "var(--pi)", detector: "var(--partial)", none: "var(--todo)", unknown: "var(--drift)", missing: "var(--line)" };
+  // "vla_unverified": a manifest that names a VLA with no record of the server's answers in the
+  // run folder (tools/todo.py classify_run); shown apart, never counted as a VLA flight.
+  const PILOTS = ["vla", "vla_unverified", "stub", "detector", "none", "unknown", "missing"];
+  const PCOL = { vla: "var(--done)", vla_unverified: "var(--missing)", stub: "var(--pi)", detector: "var(--partial)", none: "var(--todo)", unknown: "var(--drift)", missing: "var(--line)" };
   const TCOL = { open: "var(--todo)", doing: "var(--doing)", blocked: "var(--missing)", done: "var(--done)" };
   const TSTATES = ["open", "doing", "blocked", "done"];
   const OWNERS = ["user", "agent", "pi"];
@@ -320,7 +322,9 @@
     return `<section class="panel vla"><h2 class="ptitle">${esc(t("vla_title"))}</h2>
       <p class="small">${esc(t("vla_goal"))}</p>
       <div class="vla-last ${last ? "ok" : "no"}"><div class="small muted">${esc(t("vla_last"))}</div>
-        <b>${last ? `${esc(last.tag)} · ${esc(fdate(last.date))} · <code>${esc(last.id)}</code>` : esc(t("vla_none_yet"))}</b></div>
+        <b>${last ? `${esc(last.tag)} · ${esc(fdate(last.date))} · <code>${esc(last.id)}</code>` : esc(t("vla_none_yet"))}</b>
+        ${last && last.decisions != null ? `<div class="small muted">${esc(tf("vla_evidence", { n: last.decisions, w: (last.weights_sha256 || "").slice(0, 12) }))}</div>` : ""}</div>
+      ${v.last_vla_unverified ? `<div class="small" style="margin-top:6px"><span class="pdot" style="background:${PCOL.vla_unverified}"></span>${esc(tf("vla_unverified_last", { tag: v.last_vla_unverified.tag, why: v.last_vla_unverified.reason }))}</div>` : ""}
       <div class="small muted" style="margin-top:10px">${esc(tf("vla_counts", { n: v.total || 0 }))}</div>
       ${stack(c, PILOTS, PCOL)}
       <div class="legend">${PILOTS.filter((k) => c[k]).map((k) => `<span><i style="background:${PCOL[k]}"></i>${esc(t("pilot_" + k))} ${c[k]}</span>`).join("")}${c.vla ? "" : `<span><i style="background:${PCOL.vla}"></i>${esc(t("pilot_vla"))} 0</span>`}</div>
@@ -381,7 +385,7 @@
     const stat = (lab, val) => `<div><span class="muted">${esc(lab)}</span> <b>${val}</b></div>`;
     return `<div class="fcard">${videoTile(f.videos[0], f.poster, f.tag)}
       <div class="fbody"><div class="row"><code class="ftag">${esc(f.tag)}</code></div>
-        <div class="row small"><span class="chip">${esc(t("rail_" + f.rail))}</span><span class="chip"><span class="pdot" style="background:${PCOL[f.pilot.class]}"></span>${esc(t("pilot_" + f.pilot.class))}</span>
+        <div class="row small"><span class="chip">${esc(t("rail_" + f.rail))}</span><span class="chip" title="${esc(f.pilot.unverified_reason || "")}"><span class="pdot" style="background:${PCOL[f.pilot.class]}"></span>${esc(t("pilot_" + f.pilot.class))}</span>
           ${f.shield ? `<span class="chip">${esc(t("shield_" + f.shield))}</span>` : ""}${f.variant && f.pair ? `<span class="chip" title="${esc(f.pair)}">${esc(t("variant"))} ${esc(f.variant)}</span>` : ""}
           <span class="chip ${f.kpi_grade ? "kg" : ""}" title="${esc(f.kpi_grade_reasons.join(", "))}">${esc(t(f.kpi_grade ? "f_kpi_grade" : "f_not_kpi"))}</span></div>
         ${f.stored_kpi_grade === true && !f.kpi_grade ? `<div class="small warn-text" title="${esc(f.stored_kpi_grade_reasons.join(" | "))}">${esc(t("f_stored_claims"))}</div>` : ""}
