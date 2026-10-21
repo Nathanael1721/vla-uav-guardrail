@@ -364,11 +364,31 @@ def mosaic_sha256(mosaic) -> str:
     return hashlib.sha256(mosaic.tobytes()).hexdigest()
 
 
+# The most pixels a wire frame may claim. The frames this protocol carries are
+# 400x225 (FrontCamera), 768x432 or 1280x720 at most, and upstream's are
+# 256x256; 4096x4096 leaves room for any camera here and stays far below
+# Pillow's own decompression-bomb limit (Image.MAX_IMAGE_PIXELS, ~89 M, with
+# DecompressionBombError at twice that). Checked on the header, before a
+# single pixel is decoded: review of V1a (P1) sent a ~390 KB PNG claiming
+# 20000x20000 pixels, which Image.open refused with DecompressionBombError -
+# not an OSError, so it escaped this function and dropped the connection.
+MAX_FRAME_PIXELS = 4096 * 4096
+
+
 def decode_image_b64(data: Any, what: str = "image"):
     """Base64 text of an encoded image (JPEG on the wire; any format Pillow
     reads) -> RGB PIL image. Strict base64 (no stray characters); a decode
-    failure is a CodecError, never a black frame."""
-    from PIL import Image, UnidentifiedImageError
+    failure is a CodecError, never a black frame.
+
+    The bytes come from the network, so ANY exception Pillow raises while
+    opening or decoding them is a bad image: its plugins raise
+    UnidentifiedImageError, OSError and ValueError, but also
+    DecompressionBombError (a plain Exception subclass), SyntaxError, EOFError
+    and struct.error on malformed files. Only MemoryError passes through: the
+    host ran out, the input is not proven bad, and the server answers it as
+    an internal error. A frame claiming more than MAX_FRAME_PIXELS is refused
+    from its header."""
+    from PIL import Image
     if not isinstance(data, str) or not data:
         raise CodecError(ERR_BAD_IMAGE, f"{what}: expected non-empty base64 text")
     try:
@@ -376,11 +396,18 @@ def decode_image_b64(data: Any, what: str = "image"):
     except (binascii.Error, ValueError) as exc:
         raise CodecError(ERR_BAD_IMAGE, f"{what}: not base64 ({exc})") from None
     try:
-        img = Image.open(io.BytesIO(raw))
+        img = Image.open(io.BytesIO(raw))           # reads the header only
+        w, h = img.size
+        if w * h > MAX_FRAME_PIXELS:
+            raise CodecError(ERR_BAD_IMAGE, f"{what}: {w}x{h} pixels, more than "
+                                            f"{MAX_FRAME_PIXELS} (4096x4096)")
         img.load()
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
-        raise CodecError(ERR_BAD_IMAGE, f"{what}: not a readable image ({exc})") from None
-    return img.convert("RGB")
+        return img.convert("RGB")
+    except (CodecError, MemoryError):
+        raise
+    except Exception as exc:                                      # noqa: BLE001
+        raise CodecError(ERR_BAD_IMAGE, f"{what}: not a readable image "
+                                        f"({type(exc).__name__}: {exc})") from None
 
 
 def encode_jpeg_b64(img, quality: int = 95) -> str:
@@ -610,6 +637,11 @@ ERR_BAD_CSP = "bad csp"
 ERR_BAD_IMAGE = "bad image"
 ERR_LINE_TOO_LONG = "line too long"
 ERR_INFERENCE = "inference failed"
+# Anything else that went wrong on the server while answering a request it
+# read (a frame decoder that raised, a host out of memory): the client still
+# gets an ok=false answer with every infer key, and the connection stays open
+# (demo/vla_server_v2.V2Server.handle_request; review of V1a, P1).
+ERR_INTERNAL = "internal error"
 
 
 class ProtocolError(CodecError):
@@ -622,8 +654,16 @@ def _is_coordinate_name(key: str) -> bool:
 
 
 def _finite_number(v: Any) -> bool:
-    return (isinstance(v, (int, float)) and not isinstance(v, bool)
-            and math.isfinite(float(v)))
+    """A JSON number that is a finite float. JSON integers have no size
+    limit, and float() of one with more than ~309 digits raises
+    OverflowError: until the review of V1a that exception came out of the
+    validator itself instead of a refusal."""
+    if not isinstance(v, (int, float)) or isinstance(v, bool):
+        return False
+    try:
+        return math.isfinite(float(v))
+    except OverflowError:
+        return False
 
 
 def validate_request(req: Any) -> dict[str, Any]:

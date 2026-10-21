@@ -50,10 +50,24 @@ one response, many requests per connection.
                                "prompt_sha256","image_sha256","model"}
   {"v":2,"op":"shutdown"}  -> {"v":2,"ok":true}, then the server exits
 
-An infer response always has every key: a refused request is ok=false with
-`error` "<code>: <detail>" (codes in aerialvla_codec, ERR_*), raw_text "",
-bins/step/latency/hashes null, land and parse_ok false, and t_capture / pose
-echoed only when they were valid. `latency_s` is the model's own time on the
+An infer response always has every key, and so does EVERY ok=false answer,
+whatever was sent - a line that is not JSON, a line longer than
+MAX_LINE_BYTES, a request with no `op` or not an object, a refused hello: ok
+false with `error` "<code>: <detail>" (codes in aerialvla_codec, ERR_*),
+raw_text "", bins/step/latency/hashes null, land and parse_ok false, seq /
+t_capture / pose echoed only when they were valid, and the model identity. A
+client reading resp["seq"] never meets a KeyError (review of V1a, P2: those
+four used to answer {v, ok, error} only). raw_text is always a string.
+
+EVERY REQUEST THE SERVER READ IS ANSWERED, and the connection stays open: an
+exception in the model is "inference failed", any other exception while
+answering (a frame decoder, the host out of memory) is "internal error", a
+line too long is answered before the connection closes (the rest of that
+line cannot be found again). The JSONL log never costs an answer: a write
+that fails is counted (counts["log_failures"], in hello's health) and warned
+about once on stderr, and serving goes on. Until the review of V1a (P1) a log
+on a full or locked disk raised after the model had answered, and the client
+met EOF on every request. `latency_s` is the model's own time on the
 server: tokenizer + image processor + generate + decode, from the moment the
 mosaic and the prompt exist to the moment the text is decoded. The whole
 server-side time (JPEG decode and mosaic too) is in the JSONL log as
@@ -114,6 +128,7 @@ import statistics
 import sys
 import threading
 import time
+import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -436,10 +451,28 @@ class V2Server:
         self.clock = clock
         self._model_lock = threading.Lock()
         self._log_lock = threading.Lock()
-        self.counts = {"requests": 0, "infer": 0, "refused": 0, "parse_fail": 0, "land": 0}
+        self._counts_lock = threading.Lock()
+        self._log_warned = False
+        # refused: a request the protocol or the codec turned down (the
+        # client's fault). inference_error: model.generate() raised or
+        # returned no timing (the model's). internal_error: anything else
+        # raised while answering (the server's). They were one counter
+        # until the review of V1a (P3), so the stop summary could not tell a
+        # dying model from bad requests.
+        self.counts = {"requests": 0, "infer": 0, "refused": 0, "parse_fail": 0, "land": 0,
+                       "inference_error": 0, "internal_error": 0, "log_failures": 0}
+
+    def _count(self, key: str, n: int = 1) -> None:
+        # ThreadingTCPServer runs one thread per connection; `+=` on a dict
+        # item is a read and a write.
+        with self._counts_lock:
+            self.counts[key] += n
 
     # -- responses ------------------------------------------------------- #
     def _infer_error(self, req: Any, error: str) -> dict:
+        """The ok=false answer, with every infer key, for ANY refused or
+        failed request (an infer, a hello, a line that was not JSON): seq,
+        t_capture and pose are echoed only when they were valid."""
         seq = req.get("seq") if isinstance(req, dict) else None
         seq = seq if isinstance(seq, int) and not isinstance(seq, bool) else None
         tcap = req.get("t_capture") if isinstance(req, dict) else None
@@ -452,47 +485,92 @@ class V2Server:
                 "latency_s": None, "t_capture": tcap, "pose": pose if pose_ok else None,
                 "prompt_sha256": None, "image_sha256": None, "model": dict(self.identity)}
 
-    def _log(self, rec: dict) -> None:
+    def _log(self, t_rx: float, req: Any, resp: dict, server_s: float,
+             extra: dict | None = None) -> None:
+        """Append one request/response record. NEVER raises: the answer has
+        been computed and the client is owed it whatever the disk does. A
+        failure (a full D:, a file OneDrive holds locked, a record that does
+        not serialise) is counted in counts["log_failures"] and warned about
+        once on stderr."""
         if self.log_path is None:
             return
-        line = json.dumps(rec, ensure_ascii=False) + "\n"
-        with self._log_lock:
-            self.log_path.parent.mkdir(parents=True, exist_ok=True)
-            with self.log_path.open("a", encoding="utf-8") as fh:
-                fh.write(line)
+        try:
+            rec = {"t_rx": t_rx, "request": _elide(req), "response": resp,
+                   "server_s": server_s, **(extra or {})}
+            line = json.dumps(rec, ensure_ascii=False, default=repr) + "\n"
+            with self._log_lock:
+                self.log_path.parent.mkdir(parents=True, exist_ok=True)
+                with self.log_path.open("a", encoding="utf-8") as fh:
+                    fh.write(line)
+        except Exception as exc:                                  # noqa: BLE001
+            self._count("log_failures")
+            if not self._log_warned:
+                self._log_warned = True
+                print(f"[vla-server] WARNING: cannot write the request log {self.log_path} "
+                      f"({type(exc).__name__}: {exc}); answering every request anyway and "
+                      f"counting log_failures (hello reports them)", file=sys.stderr, flush=True)
 
     # -- entry points ---------------------------------------------------- #
     def handle_line(self, line: bytes | str) -> tuple[dict, bool]:
-        """One request line -> (response, stop_after)."""
+        """One request line -> (response, stop_after). Never raises
+        (Exception): a line that is not JSON - including one nested so deep
+        that json.loads raises RecursionError, which is not a ValueError - is
+        a bad-json answer, and the rest goes through handle_request."""
         t_rx = time.time()
         t0 = self.clock()
         try:
             text = line.decode("utf-8") if isinstance(line, bytes) else line
             req = json.loads(text)
-        except (UnicodeDecodeError, ValueError) as exc:
-            resp, stop = ({"v": C.PROTOCOL_VERSION, "ok": False,
-                           "error": f"{C.ERR_BAD_JSON}: {exc}"}, False)
-            self.counts["requests"] += 1
-            self.counts["refused"] += 1
-            self._log({"t_rx": t_rx, "request": None, "response": resp,
-                       "server_s": self.clock() - t0})
-            return resp, stop
-        resp, stop, extra = self.handle(req)
-        self._log({"t_rx": t_rx, "request": _elide(req), "response": resp,
-                   "server_s": self.clock() - t0, **extra})
+        except (UnicodeDecodeError, ValueError, RecursionError) as exc:
+            self._count("requests")
+            self._count("refused")
+            resp = self._infer_error(None, f"{C.ERR_BAD_JSON}: {type(exc).__name__}: {exc}")
+            self._log(t_rx, None, resp, self.clock() - t0)
+            return resp, False
+        resp, stop, _ = self.handle_request(req, t_rx=t_rx, t0=t0)
         return resp, stop
 
+    def handle_request(self, req: Any, t_rx: float | None = None,
+                       t0: float | None = None) -> tuple[dict, bool, dict]:
+        """One decoded request -> (response, stop_after, log extras), and its
+        log record. Never raises (Exception): whatever `handle` raises - a
+        frame decoder's own exception, MemoryError, a bug - becomes an
+        ok=false "internal error" answer with every infer key, so the
+        connection carrying it stays usable. The transport and the bench
+        both come through here, so both write the log."""
+        t_rx = time.time() if t_rx is None else t_rx
+        t0 = self.clock() if t0 is None else t0
+        try:
+            resp, stop, extra = self.handle(req)
+        except Exception as exc:                                  # noqa: BLE001
+            self._count("internal_error")
+            resp, stop = self._infer_error(
+                req, f"{C.ERR_INTERNAL}: {type(exc).__name__}: {exc}"), False
+            extra = {"internal_error": traceback.format_exc(limit=12)}
+        self._log(t_rx, req, resp, self.clock() - t0, extra)
+        return resp, stop, extra
+
+    def refuse_line_too_long(self) -> dict:
+        """The answer to a line longer than MAX_LINE_BYTES (the transport
+        closes the connection after it: the rest of the line cannot be found
+        again). Counted and logged like any refusal."""
+        self._count("requests")
+        self._count("refused")
+        resp = self._infer_error(None, f"{C.ERR_LINE_TOO_LONG}: more than "
+                                       f"{C.MAX_LINE_BYTES} bytes")
+        self._log(time.time(), None, resp, 0.0)
+        return resp
+
     def handle(self, req: Any) -> tuple[dict, bool, dict]:
-        """(response, stop_after, log extras) for one decoded request."""
-        self.counts["requests"] += 1
-        is_infer = isinstance(req, dict) and req.get("op") == "infer"
+        """(response, stop_after, log extras) for one decoded request. May
+        raise on a server fault; handle_request is the entry point that
+        answers those too."""
+        self._count("requests")
         try:
             C.validate_request(req)
         except C.ProtocolError as exc:
-            self.counts["refused"] += 1
-            if is_infer:
-                return self._infer_error(req, str(exc)), False, {}
-            return {"v": C.PROTOCOL_VERSION, "ok": False, "error": str(exc)}, False, {}
+            self._count("refused")
+            return self._infer_error(req, str(exc)), False, {}
         op = req["op"]
         if op == "hello":
             return ({"v": C.PROTOCOL_VERSION, "ok": True,
@@ -501,8 +579,20 @@ class V2Server:
             return {"v": C.PROTOCOL_VERSION, "ok": True}, True, {}
         return self.infer(req)
 
+    @staticmethod
+    def _model_result(g: Any) -> tuple[Any, float]:
+        """(raw_text as returned, model_s) from generate()'s dict, or raise:
+        a result without a finite model_s has no latency to report (the
+        brief types latency_s a float), so it is an inference failure, not a
+        KeyError on the way out (review of V1a, P1)."""
+        if not isinstance(g, dict):
+            raise TypeError(f"generate() returned {type(g).__name__}, not a dict")
+        if not C._finite_number(g.get("model_s")):
+            raise ValueError(f"generate() returned no finite model_s ({g.get('model_s')!r})")
+        return g.get("raw_text"), float(g["model_s"])
+
     def infer(self, req: dict) -> tuple[dict, bool, dict]:
-        self.counts["infer"] += 1
+        self._count("infer")
         try:
             front, down = self.decode_frames(req)
             mosaic, minfo = self.mosaic_fn(front, down, missing_down=self.missing_down)
@@ -510,26 +600,30 @@ class V2Server:
             prompt = C.build_prompt(req["phrase"], req["object"], req["csp_text"],
                                     req["csp_mode"])
         except C.CodecError as exc:
-            self.counts["refused"] += 1
+            self._count("refused")
             return self._infer_error(req, f"{exc.code}: {exc.detail}"), False, {}
         try:
             with self._model_lock:
                 g = self.model.generate(mosaic, prompt)
+            raw, model_s = self._model_result(g)
         except Exception as exc:                                  # noqa: BLE001
             # A CUDA OOM or a driver error must answer the client, not drop the
             # connection: the client then holds zero and counts the failure.
-            self.counts["refused"] += 1
+            self._count("inference_error")
             return (self._infer_error(req, f"{C.ERR_INFERENCE}: {type(exc).__name__}: {exc}"),
                     False, {"prompt": prompt, "mosaic": minfo})
-        p = C.parse_action(g["raw_text"], require_eos=True)
-        self.counts["parse_fail"] += 0 if p.parse_ok else 1
-        self.counts["land"] += 1 if p.land else 0
+        # The reader judges what the model returned (a non-string is "not
+        # text", parse_ok false); the client is sent a string either way.
+        p = C.parse_action(raw, require_eos=True)
+        raw_text = raw if isinstance(raw, str) else ("" if raw is None else str(raw))
+        self._count("parse_fail", 0 if p.parse_ok else 1)
+        self._count("land", 1 if p.land else 0)
         resp = {"v": C.PROTOCOL_VERSION, "seq": req["seq"], "ok": True, "error": None,
-                "raw_text": g["raw_text"],
+                "raw_text": raw_text,
                 "bins": list(p.bins) if p.bins is not None else None,
                 "step": p.step.to_dict() if p.step is not None else None,
                 "land": p.land, "parse_ok": p.parse_ok,
-                "latency_s": round(float(g["model_s"]), 6),
+                "latency_s": round(model_s, 6),
                 "t_capture": req["t_capture"], "pose": req["pose"],
                 "prompt_sha256": C.prompt_sha256(prompt), "image_sha256": image_sha,
                 "model": dict(self.identity)}
@@ -545,23 +639,27 @@ class V2Server:
 class _Handler(socketserver.StreamRequestHandler):
     def handle(self):
         core: V2Server = self.server.core                         # type: ignore[attr-defined]
-        while True:
-            line = self.rfile.readline(C.MAX_LINE_BYTES + 1)
-            if not line:
-                return
-            if len(line) > C.MAX_LINE_BYTES and not line.endswith(b"\n"):
-                # The rest of the line cannot be found again: answer and close.
-                resp = {"v": C.PROTOCOL_VERSION, "ok": False,
-                        "error": f"{C.ERR_LINE_TOO_LONG}: more than {C.MAX_LINE_BYTES} bytes"}
+        try:
+            while True:
+                line = self.rfile.readline(C.MAX_LINE_BYTES + 1)
+                if not line:
+                    return
+                if len(line) > C.MAX_LINE_BYTES and not line.endswith(b"\n"):
+                    # The rest of the line cannot be found again: answer and close.
+                    self._send(core.refuse_line_too_long())
+                    return
+                if not line.strip():
+                    continue
+                # handle_line answers every line it is given (it never raises
+                # an Exception), so one bad request cannot cost the
+                # connection the next one.
+                resp, stop = core.handle_line(line)
                 self._send(resp)
-                return
-            if not line.strip():
-                continue
-            resp, stop = core.handle_line(line)
-            self._send(resp)
-            if stop:
-                threading.Thread(target=self.server.shutdown, daemon=True).start()
-                return
+                if stop:
+                    threading.Thread(target=self.server.shutdown, daemon=True).start()
+                    return
+        except (ConnectionError, OSError):
+            return              # the client went away mid-read or mid-write
 
     def _send(self, resp: dict) -> None:
         self.wfile.write((json.dumps(resp, ensure_ascii=False) + "\n").encode("utf-8"))
@@ -746,7 +844,10 @@ def run_bench(core: V2Server, timed_reqs: list[dict], warmup: int,
         frame = r.get("_frame")
         req = {k: v for k, v in r.items() if not k.startswith("_")}
         t0 = time.perf_counter()
-        resp, _, extra = core.handle(req)
+        # handle_request, not handle: it writes the JSONL record the bench
+        # output names as "log" (until the review of V1a, P3, the bench
+        # recorded a path to a log nothing ever wrote).
+        resp, _, extra = core.handle_request(req)
         total = time.perf_counter() - t0
         if not resp.get("ok"):
             raise RuntimeError(f"bench request refused: {resp.get('error')}")

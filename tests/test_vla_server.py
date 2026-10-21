@@ -19,7 +19,10 @@ with stand-in frame decoding, so what is tested on CI is the protocol itself:
   3. parse_ok=false => step null, land false (the client holds zero); LAND =>
      land true with the decoded step.
   4. It works over TCP: many requests on one connection, newline-delimited
-     JSON, shutdown stops the server.
+     JSON, shutdown stops the server. Every request the server read is
+     answered and the connection stays usable, whatever raised: an
+     unwritable log, a frame decoder, nested JSON, a model result without
+     timing (review of V1a, P1); every ok=false answer has every infer key.
   5. The weights digest is computed once and served from its sidecar until a
      file changes; the identity names the adapter and base revisions.
   6. The legacy file mode is still there, and `--v2` reaches the new server.
@@ -292,6 +295,148 @@ def test_many_requests_ride_one_connection_and_shutdown_stops_the_server():
         srv.server_close()
 
 
+# ------------------------------------- every request read gets an answer (V1a P1)
+#
+# Review of V1a (P1), probe-verified over TCP at 6519b20: only an exception
+# inside model.generate() was answered. A JSONL log that could not be written
+# (the default path is on D:, which fills up, under OneDrive, which locks
+# files) raised out of handle_line AFTER the model had answered, so the client
+# met EOF on every request and reconnected forever; nested JSON raised
+# RecursionError (not a ValueError), a frame Pillow refuses with
+# DecompressionBombError (not an OSError) and a model dict without model_s
+# raised too. Each of these dropped the connection with no answer and no log
+# line. Every test here failed there.
+
+def _serve(core):
+    srv = S.make_tcp_server(core, "127.0.0.1", 0)
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+    return srv, th, srv.server_address[1]
+
+
+def _stop(srv, th):
+    srv.shutdown()
+    srv.server_close()
+    th.join(timeout=10)
+
+
+def test_a_log_that_cannot_be_written_costs_neither_the_answer_nor_the_connection():
+    import contextlib
+    import io
+    logdir = Path(tempfile.mkdtemp(prefix="vla_log_"))      # a directory: every append fails
+    core, model = _core(["96 48 49</s>"], log=logdir)
+    srv, th, port = _serve(core)
+    err = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(err):
+            cli = S.V2Client("127.0.0.1", port, timeout=10)
+            for k in (1, 2, 3):
+                r = cli.call(_req(seq=k))
+                assert r["ok"] is True and r["seq"] == k and r["parse_ok"], r
+            junk = cli.call("{not json")
+            assert junk["ok"] is False and junk["error"].startswith(C.ERR_BAD_JSON), junk
+            assert cli.call({"v": 2, "op": "hello"})["ok"] is True
+            cli.close()
+    finally:
+        _stop(srv, th)
+    assert len(model.calls) == 3
+    assert core.counts["log_failures"] == 5, core.counts      # 3 infers, the junk, the hello
+    warned = [ln for ln in err.getvalue().splitlines() if "log" in ln.lower()]
+    assert len(warned) == 1 and str(logdir) in warned[0], err.getvalue()
+
+
+def test_any_exception_outside_generate_is_answered_and_the_connection_stays_usable():
+    def flaky_decode(req):
+        if req["seq"] == 2:
+            # stands for PIL.Image.DecompressionBombError, which is not an OSError
+            raise RuntimeError("decoder blew up")
+        if req["seq"] == 3:
+            raise MemoryError()
+        return _fake_decode(req)
+
+    class NoTiming:
+        """A model whose result dict lacks model_s (was a KeyError at line 532)."""
+        def generate(self, mosaic, prompt):
+            return {"raw_text": "96 48 49</s>"}
+
+    core = S.V2Server(S.ScriptedModel(["96 48 49</s>"]), IDENTITY, decode_frames=flaky_decode,
+                      mosaic_fn=_fake_mosaic, hash_fn=_fake_hash)
+    srv, th, port = _serve(core)
+    try:
+        cli = S.V2Client("127.0.0.1", port, timeout=10)
+        assert cli.call(_req(seq=1))["ok"] is True
+        for k in (2, 3):
+            r = cli.call(_req(seq=k))
+            assert r["ok"] is False and r["seq"] == k and set(r) == RESPONSE_KEYS, r
+            assert r["error"].split(":", 1)[0] == C.ERR_INTERNAL, r["error"]
+            assert r["step"] is None and r["land"] is False and r["parse_ok"] is False
+        deep = cli.call("[" * 100000 + "]" * 100000)          # RecursionError in json.loads
+        assert deep["ok"] is False and deep["error"].startswith(C.ERR_BAD_JSON), deep
+        assert cli.call(_req(seq=4))["ok"] is True, "the connection did not survive"
+        cli.close()
+    finally:
+        _stop(srv, th)
+    assert core.counts["internal_error"] == 2 and core.counts["infer"] == 4, core.counts
+    bare = S.V2Server(NoTiming(), IDENTITY, decode_frames=_fake_decode, mosaic_fn=_fake_mosaic,
+                      hash_fn=_fake_hash)
+    r, _ = bare.handle_line(json.dumps(_req()))
+    assert r["ok"] is False and r["error"].startswith(C.ERR_INFERENCE) and "model_s" in r["error"]
+    assert bare.counts["inference_error"] == 1 and bare.counts["refused"] == 0, bare.counts
+
+
+def test_every_refusal_has_every_infer_key_whatever_was_sent():
+    """P2: an unparseable line, a too-long line, a request without `op` and
+    a non-object were answered {v, ok, error} only, though the docstring said
+    an infer response always has every key; a client reading resp['seq']
+    met a KeyError. Every ok=false answer now has the full shape."""
+    core, _ = _core()
+    for line in (b"{not json", b"\xff\xfe", b"[1, 2, 3]", b'{"v": 2}', b'"infer"',
+                 json.dumps(_req(op=None)).encode()):
+        resp, stop = core.handle_line(line)
+        assert not stop and resp["ok"] is False and set(resp) == RESPONSE_KEYS, (line, resp)
+        assert resp["seq"] is None or resp["seq"] == 7
+        assert resp["model"] == IDENTITY and resp["raw_text"] == "" and resp["step"] is None
+    real = C.MAX_LINE_BYTES
+    C.MAX_LINE_BYTES = 2000
+    srv, th, port = _serve(core)
+    try:
+        cli = S.V2Client("127.0.0.1", port, timeout=10)
+        cli.sock.sendall(b"x" * 5000)                         # no newline in reach
+        got = json.loads(cli.rfile.readline())
+        assert got["ok"] is False and got["error"].startswith(C.ERR_LINE_TOO_LONG), got
+        assert set(got) == RESPONSE_KEYS, got
+        cli.close()
+    finally:
+        C.MAX_LINE_BYTES = real
+        _stop(srv, th)
+
+
+def test_a_number_too_big_for_a_float_is_a_bad_value_not_a_crash():
+    """`_finite_number` called float() on a JSON integer of 400 digits,
+    which raises OverflowError: the validator itself crashed."""
+    core, model = _core()
+    _refused(core, _req(t_capture=10 ** 400), C.ERR_BAD_VALUE)
+    _refused(core, _req(pose={"x": 10 ** 400, "y": 0.0, "up": 1.0, "yaw_rad": 0.0}),
+             C.ERR_BAD_VALUE)
+    assert model.calls == []
+
+
+def test_raw_text_is_always_a_string():
+    """P2: a model returning None or bytes put null or a non-string in
+    raw_text, which the brief types <str>. It is coerced; the strict reader
+    still refuses it (parse_ok false, the client holds zero)."""
+    for text, want in ((None, ""), (b"96 48 49</s>", "b'96 48 49</s>'"), (964849, "964849")):
+        class Odd:
+            def generate(self, mosaic, prompt, _t=text):
+                return {"raw_text": _t, "model_s": 0.01}
+        core = S.V2Server(Odd(), IDENTITY, decode_frames=_fake_decode, mosaic_fn=_fake_mosaic,
+                          hash_fn=_fake_hash)
+        resp, _, extra = core.handle(_req())
+        assert resp["ok"] is True and resp["raw_text"] == want, resp
+        assert resp["parse_ok"] is False and resp["step"] is None, resp
+        assert "not text" in extra["parse_reason"]
+
+
 # ---------------------------------------------------------- identity, digest
 
 def test_the_weights_digest_is_computed_once_and_recomputed_when_a_file_changes():
@@ -452,6 +597,22 @@ def test_real_frames_hash_the_mosaic_the_model_receives():
     assert resp2["image_sha256"] != resp["image_sha256"]
     bad, _, _ = core.handle(dict(req, front_jpg_b64="bm90IGFuIGltYWdl"))
     assert bad["ok"] is False and bad["error"].startswith(C.ERR_BAD_IMAGE)
+    # Review of V1a (P1): a decompression bomb dropped the connection (Pillow's
+    # DecompressionBombError is not an OSError). Over TCP it is now a bad
+    # image, and the same connection carries the next request.
+    import base64
+    from test_aerialvla_codec import png_claiming
+    bomb = base64.b64encode(png_claiming(20000, 20000)).decode("ascii")
+    srv, th, port = _serve(core)
+    try:
+        cli = S.V2Client("127.0.0.1", port, timeout=10)
+        r = cli.call(dict(req, seq=11, down_jpg_b64=bomb))
+        assert r["ok"] is False and r["error"].startswith(C.ERR_BAD_IMAGE), r
+        assert set(r) == RESPONSE_KEYS and r["seq"] == 11
+        assert cli.call(dict(req, seq=12))["ok"] is True
+        cli.close()
+    finally:
+        _stop(srv, th)
 
 
 # --------------------------------------------------------------------- runner

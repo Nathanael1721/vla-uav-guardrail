@@ -359,6 +359,44 @@ def test_frames_round_trip_through_base64_jpeg_and_bad_ones_are_refused():
         raise AssertionError(f"decoded {bad!r}")
 
 
+def png_claiming(w: int, h: int) -> bytes:
+    """A PNG whose header claims w x h RGB pixels and which carries no pixel
+    data: Image.open reads the size from IHDR alone, so a few dozen bytes
+    claim a frame of any size."""
+    import struct
+    import zlib
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return (struct.pack(">I", len(data)) + kind + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"")) + chunk(b"IEND", b""))
+
+
+def test_a_frame_claiming_too_many_pixels_is_a_bad_image_not_a_crash():
+    """Review of V1a (P1): a PNG claiming 20000x20000 pixels made Image.open
+    raise DecompressionBombError, which subclasses Exception, not OSError, so
+    it escaped decode_image_b64 and the server dropped the connection. Now
+    every decoder exception is a bad image, and a frame claiming more than
+    MAX_FRAME_PIXELS is refused from its header before any pixel is
+    decoded (5000x5000 is below Pillow's own limit and was decoded)."""
+    Image = _pil()
+    if Image is None:
+        print("      SKIP: Pillow is not installed (the VLA environment has it)")
+        return SKIP
+    import base64
+    for (w, h), says in (((20000, 20000), "DecompressionBombError"),
+                         ((5000, 5000), "5000x5000 pixels"), ((4097, 4096), "4097x4096")):
+        b64 = base64.b64encode(png_claiming(w, h)).decode("ascii")
+        try:
+            C.decode_image_b64(b64, "front_jpg_b64")
+        except C.CodecError as e:
+            assert e.code == C.ERR_BAD_IMAGE and says in e.detail, (w, h, e.detail)
+            continue
+        raise AssertionError(f"decoded a frame claiming {w}x{h}")
+    assert C.MAX_FRAME_PIXELS == 4096 * 4096 < Image.MAX_IMAGE_PIXELS
+
+
 # ------------------------------------------------------------ committed rescore
 
 def test_the_committed_rescore_is_what_the_strict_reader_says_about_each_row():
