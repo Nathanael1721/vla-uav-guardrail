@@ -1516,9 +1516,14 @@ class FakeMavrosLink(FakeLink):
                 "topology_evidence": _ev()["topology_evidence"]}
 
 
+# The last _fly's link and run folder: a test whose run() raises reads them
+# here (_fly_raising).
+_LAST: dict = {}
+
+
 def _fly(shield="on", link_cls=None, policy=CAP_POLICY, extra=(), link_kw=None,
          grounder_kw=None, max_s="3", camera_log=None, popen=None, run_cmd=None,
-         depth_m=None, clk=None, grounder_cls=None):
+         depth_m=None, clk=None, grounder_cls=None, pre=None):
     out = _tmp()
     pol = out / "policy.yaml"
     pol.write_text(policy, encoding="utf-8")
@@ -1529,14 +1534,27 @@ def _fly(shield="on", link_cls=None, policy=CAP_POLICY, extra=(), link_kw=None,
         # No start gate unless a test asks for one (`extra` comes after, and
         # argparse keeps the last value): these stand-ins test the loop.
         "--dev-yaml", "--start-when-seen", "0", *extra])
+    if pre is not None:
+        pre(out / "run")                   # the run folder as a test leaves it
     clk = clk or Clock()
     anchor = ap.FrameAnchor(35.6895, 139.6917, 40.0, "scene.home-geo-point")
     link = (link_cls or FakeLink)(clk, anchor, **(link_kw or {}))
+    _LAST.update(link=link, run=out / "run")
     rc = pn.run(args, link=link, camera=FakeCamera(link, camera_log),
                 grounder=(grounder_cls or FakeDetections)(clk, **(grounder_kw or {})),
                 obs=FakeObs(depth_m), clock=clk, sleep=clk.sleep, popen=popen,
                 run_cmd=run_cmd)
     return rc, out / "run", link
+
+
+def _fly_raising(exc_type, **kw):
+    """_fly for a run() that must raise `exc_type`: (the exception, the run
+    folder, the link as run() left it)."""
+    try:
+        _fly(**kw)
+    except exc_type as exc:
+        return exc, _LAST["run"], _LAST["link"]
+    raise AssertionError(f"run() did not raise {exc_type.__name__}")
 
 
 def _rows(run):
@@ -3604,6 +3622,202 @@ def test_a_start_gate_that_crashes_still_lands_and_writes_the_episode():
     m = _json(run, "metrics.json")
     assert m["end_reason"] == "no mission: interrupted during the start gate", m["end_reason"]
     assert m["start_gate"]["outcome"] == "interrupted"
+
+
+# --------------------------------------------------------------------------- #
+# No way out of run() from the arming on without a LAND (review 3, 2026-10-22)
+# --------------------------------------------------------------------------- #
+
+def _mission_end(run):
+    ends = [e for e in _events(run) if e["kind"] == "mission_end"]
+    assert len(ends) == 1, ends
+    return ends[0]
+
+
+def test_a_hover_log_that_cannot_be_written_still_lands():
+    """Review 3, P1 (a). The hover's finally wrote hover_log.jsonl with no
+    guard, and outside the loop's try/finally: a write that failed (here a
+    directory in its place; on the lab machine a full D: or a file OneDrive
+    holds open under a reused tag) raised PermissionError out of run() with
+    the aircraft holding in GUIDED - no LAND, no mission_end, no metrics.
+    The hover's bookkeeping is best effort now: the run goes on to its
+    no-mission end, lands, and says the log was not written."""
+    def dir_in_its_place(run):
+        (run / "hover_log.jsonl").mkdir(parents=True)
+    rc, run, link = _fly(grounder_cls=GateDetections, pre=dir_in_its_place,
+                         extra=("--start-when-seen", "5", "--start-timeout-s", "2"))
+    assert rc == 0 and link.requested == ["LAND"] and not link.sent, (rc, link.requested)
+    m = _json(run, "metrics.json")
+    assert m["end_reason"].startswith("no mission: start gate timed out"), m["end_reason"]
+    hv = m["pre_mission_hover"]
+    assert hv["log"] is None and "hover_log.jsonl" in hv["log_error"], hv
+    assert m["mission_end_land_accepted"] is True
+    reasons = _json(run, "kpi.json")["kpi_grade_reasons"]
+    assert any("hover_log.jsonl was not written" in w for w in reasons), reasons
+    _mission_end(run)
+
+
+def test_a_disk_that_fills_during_the_hover_still_lands():
+    """Review 3, P1 (b). EpisodeRecord.event raising (errno 28, a full disk)
+    from the gate's own record on: the hover's handler caught the first
+    OSError, then raised a second one writing its own hover_crashed event,
+    and that one left run() with the aircraft in GUIDED and nothing asked.
+    The handler's write is best effort now, and what raises after the hover
+    (mission_start's write, on the same full disk) meets the net that runs
+    from the arming to the end of run(): LAND first, then the error."""
+    import guardrail.replay as R
+    orig = R.EpisodeRecord.event
+    full = {"on": False}
+
+    def event(self, kind, /, t=None, **data):
+        if kind == "start_gate":
+            full["on"] = True
+        if full["on"]:
+            raise OSError(28, "No space left on device")
+        return orig(self, kind, t=t, **data)
+    R.EpisodeRecord.event = event
+    try:
+        exc, run, link = _fly_raising(OSError, grounder_cls=GateDetections,
+                                      extra=("--start-when-seen", "5", "--start-timeout-s", "2"))
+    finally:
+        R.EpisodeRecord.event = orig
+    assert exc.errno == 28, exc
+    assert link.requested == ["LAND"] and link.snap.mode == "LAND", link.requested
+    assert not link.sent
+
+
+def test_a_hover_that_starts_outside_guided_is_a_takeover():
+    """Review 3, P2. HoverWatch took the mode the bring-up left as its
+    takeover baseline and never checked that it was GUIDED: a switch
+    reported in the bring-up's last pump (the end of the climb, where an
+    altitude-fence breach from overshoot fires RTL) became the baseline, and
+    neither the hover nor the loop ever saw a change - 30 setpoints flown
+    over the pilot's LOITER, then a LAND asked over the pilot. The baseline
+    is GUIDED, what both links' bring_up leaves (or raises): a hover that
+    starts in a mode this node did not ask for is a takeover at the
+    bring-up, with or without a start gate."""
+    for gate in ("5", "0"):
+        rc, run, link = _fly(grounder_cls=GateDetections, depth_m=CAR_DEPTH_M,
+                             grounder_kw=CAR_KW, link_kw={"takeover_at": (0.0, "LOITER")},
+                             extra=("--start-when-seen", gate))
+        assert rc == 0
+        assert not link.sent and link.requested == [], (gate, len(link.sent), link.requested)
+        m = _json(run, "metrics.json")
+        tk = m["autopilot_took_over"]
+        assert tk is not None and tk["mode"] == "LOITER" and tk["previous"] == "GUIDED", (gate, tk)
+        assert tk["phase"] == "bring-up" and tk["t_hover"] == 0.0 and tk["t"] <= 0, tk
+        assert m["end_reason"].startswith("no mission: the autopilot took the aircraft"), \
+            m["end_reason"]
+        hv = m["pre_mission_hover"]
+        assert hv["mode_at_start"] == "LOITER" and hv["outcome"] == "takeover", hv
+        assert m["ticks"] == 0 and m["mission_end_land_accepted"] is None
+    # A mode not reported yet is no baseline either: the first one the link
+    # reports is judged against GUIDED.
+    clk = Clock()
+    anchor = ap.FrameAnchor(35.6895, 139.6917, 40.0, "scene.home-geo-point")
+    link = FakeLink(clk, anchor)
+    link.pump()
+    assert link.snap.mode is None
+    watch = pn.HoverWatch(link, anchor, FakeObs(), None, pn.ModeRequests(), t0=clk.t)
+    assert watch.ended is None and watch.observe(clk.t, "detector") is not None
+    clk.sleep(0.1)
+    link._mode("LOITER")
+    assert watch.observe(clk.t, "detector") is None and watch.ended == "takeover", watch.why
+    assert watch.takeover["previous"] == "GUIDED" and watch.takeover["mode"] == "LOITER"
+
+
+class ClimbFailsLink(FakeLink):
+    """Armed in GUIDED and climbing, but never at the take-off altitude:
+    PymavlinkLink.bring_up raises 'take-off did not reach N m' after its
+    60 s wait, with the aircraft armed and in the air (a ceiling, a weak
+    motor). `pilot` switches the aircraft first, as a pilot in Mission
+    Planner (or the fence) would during a stalled climb."""
+
+    def __init__(self, *a, pilot=None, **k):
+        super().__init__(*a, **k)
+        self.pilot = pilot
+
+    def bring_up(self, alt):
+        super().bring_up(alt)
+        self.up = 3.1
+        if self.pilot:
+            self._mode(self.pilot)
+        raise RuntimeError(f"take-off did not reach {alt} m (rel_alt 3.1)")
+
+
+class ArmRefusedLink(FakeLink):
+    """GUIDED accepted, arming refused: never in the air."""
+
+    def bring_up(self, alt):
+        self._mode("GUIDED")
+        self.snap.armed = False
+        self.pump()
+        raise RuntimeError("arming refused: ['PreArm: Throttle below failsafe']")
+
+
+def test_nothing_from_the_arming_to_the_loop_leaves_the_aircraft_unlanded():
+    """Review 3, P4 (open before this wave). From the arming to the hover's
+    try, an exception met only the outer finally, which stops the recorder,
+    the detector, the camera and SITL and asks nothing of the autopilot: a
+    take-off that stalled under a ceiling, a mission_start_check write on a
+    full disk, a FollowPilot or SubjectTruth that raised, a crash between
+    the hover and the loop - each left the aircraft in GUIDED mid-climb or
+    holding (on HIL or attach, with no SITL to stop). One net now runs from
+    the arming to the end of run(): unless the autopilot or a pilot has the
+    aircraft, it asks for LAND, then writes the mission_end, then lets the
+    error go."""
+    import guardrail.replay as R
+    exc, run, link = _fly_raising(RuntimeError, link_cls=ClimbFailsLink)
+    assert "take-off did not reach" in str(exc)
+    assert link.requested == ["LAND"] and not link.sent, link.requested
+    end = _mission_end(run)
+    assert "take-off did not reach" in end["why"] and end["land_accepted"] is True, end
+    # A pilot who took the stalled climb keeps it.
+    exc, run, link = _fly_raising(RuntimeError, link_cls=ClimbFailsLink,
+                                  link_kw={"pilot": "LOITER"})
+    assert link.requested == [], link.requested
+    end = _mission_end(run)
+    assert end["autopilot_owns"] is True and end["land_accepted"] is None, end
+    # A refused arm never flew: nothing is asked of a disarmed aircraft, and
+    # the bring-up is refused as before (no episode end).
+    exc, run, link = _fly_raising(RuntimeError, link_cls=ArmRefusedLink)
+    assert link.requested == [] and "mission_end" not in [e["kind"] for e in _events(run)]
+
+    def raising(*a, **k):
+        raise RuntimeError("constructor broke")
+    orig_event = R.EpisodeRecord.event
+
+    def start_check_on_full_disk(self, kind, /, t=None, **data):
+        if kind == "mission_start_check":
+            raise OSError(28, "No space left on device")
+        return orig_event(self, kind, t=t, **data)
+    for name, owner, attr, value, err in (
+            ("mission_start_check", R.EpisodeRecord, "event", start_check_on_full_disk, OSError),
+            ("FollowPilot", pn, "FollowPilot", raising, RuntimeError),
+            ("SubjectTruth", pn, "SubjectTruth", raising, RuntimeError),
+            ("after the hover", pn.HoverWatch, "summary", raising, RuntimeError)):
+        orig = getattr(owner, attr)
+        setattr(owner, attr, value)
+        try:
+            exc, run, link = _fly_raising(err, grounder_cls=GateDetections,
+                                          extra=("--start-when-seen", "5",
+                                                 "--start-timeout-s", "2"))
+        finally:
+            setattr(owner, attr, orig)
+        assert link.requested == ["LAND"] and not link.sent, (name, link.requested)
+        end = _mission_end(run)
+        assert type(exc).__name__ in end["why"] and end["land_accepted"] is True, (name, end)
+    # A crash after a takeover in the hover asks nothing of the pilot.
+    orig = pn.HoverWatch.summary
+    pn.HoverWatch.summary = raising
+    try:
+        exc, run, link = _fly_raising(RuntimeError, grounder_cls=GateDetections,
+                                      link_kw={"takeover_at": (0.5, "LOITER")},
+                                      extra=("--start-when-seen", "5", "--start-timeout-s", "2"))
+    finally:
+        pn.HoverWatch.summary = orig
+    assert link.requested == [] and not link.sent, link.requested
+    assert _mission_end(run)["autopilot_owns"] is True
 
 
 def test_the_hover_before_the_mission_is_checked_against_the_rules():

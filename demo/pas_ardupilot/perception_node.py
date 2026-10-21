@@ -746,6 +746,66 @@ def detector_thread_dead(grounder) -> bool:
                 and not th.is_alive())
 
 
+def land_on_the_way_out(link, asks, rec, *, crash, stage: str, takeover=None, fsm=None,
+                        throttle=None, t: float | None = None) -> dict:
+    """THE NET FROM THE ARMING TO THE END OF run() (review 3, 2026-10-22).
+
+    run() asks for LAND in the loop's finally, and a crash in the start
+    gate's hover reaches that finally as a no-mission end. Everything else
+    between the arming and that finally met only run()'s outer finally,
+    which stops the recorder, the detector, the camera and SITL and asks
+    nothing of the autopilot: a take-off that stalled ('take-off did not
+    reach N m', armed and climbing), the mission_start_check write on a full
+    disk, a FollowPilot or SubjectTruth that raised, mission_start's write.
+    On SITL the aircraft went with SITL; on HIL or attach it was left in
+    GUIDED mid-climb or holding, nothing commanding it (each reproduced
+    with tests/test_pas_ardupilot.py's stand-ins).
+
+    run() calls this from that outer finally when the aircraft was armed and
+    the loop's finally never made its LAND decision. As there: the throttle
+    goes back to the radio first; then LAND is asked unless the autopilot
+    or a pilot has the aircraft - a takeover the hover saw, an FSM
+    fail-safe, or any mode this node did not ask for (the climb and the
+    hover are flown in GUIDED: autopilot_took_over's baseline); then the
+    episode's mission_end, naming the crash and what was asked. Nothing
+    here raises: run() re-raises the crash itself. Returns the mission_end's
+    fields."""
+    why = (f"interrupted during {stage}" if isinstance(crash, KeyboardInterrupt) else
+           f"crashed during {stage}: {type(crash).__name__}: {crash}" if crash is not None
+           else f"left run() during {stage} with no mission end")
+    print(f"[node]   *** {why}")
+    try:
+        mode = link.snap.mode
+    except Exception:                                             # noqa: BLE001
+        mode = None
+    owns = bool(takeover is not None
+                or (fsm is not None and (fsm.terminal or fsm.state in FAILSAFE_STATES))
+                or (mode is not None and mode != "GUIDED" and not asks.explains(mode)))
+    out = {"stage": stage, "autopilot_mode": mode, "autopilot_owns": owns,
+           "land_accepted": None}
+    if throttle is not None and getattr(throttle, "active", False):
+        try:
+            throttle.release(t if t is not None else 0.0, f"episode end ({why})")
+        except Exception as exc:                                  # noqa: BLE001
+            print(f"[hold]   override release failed: {exc}")
+    if owns:
+        print(f"[node]   the autopilot has the aircraft ({mode}): nothing is asked of it")
+    else:
+        try:
+            asks.ask("LAND")
+            out["land_accepted"] = bool(link.land())
+        except Exception as exc:                                  # noqa: BLE001
+            out["land_accepted"] = False
+            print(f"[link]   LAND failed: {exc}")
+        print("[link]   LAND asked: " + ("accepted" if out["land_accepted"] else
+                                         "*** NOT confirmed by the autopilot"))
+    try:
+        rec.end(why, t=t, **out)
+    except Exception as exc:                                      # noqa: BLE001
+        print(f"[node]   *** mission_end not written: {type(exc).__name__}: {exc}")
+    return {"why": why, **out}
+
+
 class HoverWatch:
     """The aircraft while it hovers before the mission clock starts, watched
     as the loop watches it (review 2026-10-22, open item C1's start gate).
@@ -787,17 +847,40 @@ class HoverWatch:
     so a moving zone stands at its starting place. The hover's rows are NOT
     flight_log.jsonl rows: the mission's KPIs keep their definition (from the
     mission clock). The hover's own counts are metrics.json
-    pre_mission_hover, and an unsafe hover tick makes the run not KPI-grade."""
+    pre_mission_hover, and an unsafe hover tick makes the run not KPI-grade.
+
+    THE TAKEOVER BASELINE IS GUIDED (review 3, 2026-10-22). Both links'
+    bring_up end in GUIDED or raise (PymavlinkLink.set_mode("GUIDED") and
+    MavrosLink wait for the mode before arming). The baseline was the mode
+    the bring-up LEFT, unchecked: a switch reported in its last pump - the
+    end of the climb, where an altitude-fence breach from overshoot fires
+    RTL - became the baseline, and neither the hover nor the loop ever saw
+    a change (tests/test_pas_ardupilot.py: 30 setpoints flown over the
+    pilot's LOITER, then a LAND asked over the pilot). A hover that starts
+    in a mode this node did not ask for is a takeover at the bring-up; a
+    mode not reported yet is judged on the first tick that reports one.
+
+    The hover's own records (its events, hover_log.jsonl) are best effort
+    (review 3): a write that fails - a full disk, a file OneDrive holds
+    open under a reused tag - is kept in `io_errors` / `log_error` and the
+    hover goes on, so a log write can never decide whether the aircraft is
+    landed (run()'s net from the arming on is the second line)."""
+
+    # The mode both bring-ups end in (or raise): the takeover baseline.
+    BASELINE_MODE = "GUIDED"
 
     def __init__(self, link, anchor, obs, shield, asks, *, subject_class=None,
-                 act: bool = True, backstop=None, rec=None, rule_now=None) -> None:
+                 act: bool = True, backstop=None, rec=None, rule_now=None,
+                 t0: float | None = None) -> None:
         self.link, self.anchor, self.obs = link, anchor, obs
         self.shield, self.asks = shield, asks
         self.subject_class, self.act = subject_class, bool(act)
         self.backstop, self.rec, self.rule_now = backstop, rec, rule_now
-        # The mode the bring-up left, and the last one seen: the loop's
-        # takeover test starts from it, not from a read after the hover.
-        self.mode0 = self.mode = link.snap.mode
+        # The mode the bring-up left (recorded), and the last one judged:
+        # the loop's takeover test starts from it, not from a read after the
+        # hover. The judging starts from GUIDED, never from mode0.
+        self.mode0 = link.snap.mode
+        self.mode = self.BASELINE_MODE
         self.t_first = self.t_last = self.t_end = None
         self.last_phase = None
         self.ended = None            # "takeover" | "link_lost" | "unsafe"
@@ -811,6 +894,52 @@ class HoverWatch:
         self.checked_by_phase: dict = {}
         self.unsafe_by_phase: dict = {}
         self.rows: list = []
+        self.io_errors: list = []    # the hover's own record writes that failed
+        self.log_written = False
+        self.log_error = None
+        if self.mode0 is not None:
+            # `t0`: this clock's reading as the hover starts (run() turns it
+            # into mission time, as it does a hover tick's).
+            self._judge_mode(self.mode0, t0, 0.0, "bring-up", self.link.snap)
+
+    def record_event(self, kind: str, **data) -> None:
+        """One event on the episode record, best effort (see the class);
+        run()'s hover handler writes its own through it too."""
+        if self.rec is None:
+            return
+        try:
+            self.rec.event(kind, **data)
+        except Exception as exc:                                  # noqa: BLE001
+            err = f"{kind}: {type(exc).__name__}: {exc}"
+            self.io_errors.append(err)
+            print(f"[hover]  *** event not written ({err}); the hover goes on")
+
+    def _judge_mode(self, mode, t, t_hover: float, phase: str, s) -> bool:
+        """The loop's takeover test on `mode` against the last mode judged
+        (GUIDED at the start). True: the autopilot has the aircraft, and the
+        hover is over."""
+        prev = self.mode
+        if mode == "GUIDED" and prev != "GUIDED":
+            self.asks.entered_guided()
+        if not autopilot_took_over(mode, prev, self.asks):
+            self.mode = mode
+            return False
+        # "t" (mission time, negative: before the clock) is set by run() once
+        # the mission clock is read; t_abs is this clock's reading.
+        self.takeover = {"t_abs": t, "t_hover": round(t_hover, 3),
+                         "mode": mode, "previous": prev,
+                         "fence_breach_count": s.fence_breach_count,
+                         "statustext": list(s.statustext[-3:]), "phase": phase}
+        if t is None:
+            self.takeover.pop("t_abs")
+        self.mode = mode
+        self._end("takeover", f"the autopilot took the aircraft while it hovered "
+                              f"before the mission ({phase}): {prev} -> {mode}")
+        self.record_event("autopilot_took_over", mode=mode, previous=prev,
+                          phase=phase, t_hover=self.takeover["t_hover"])
+        print(f"[hover]  *** the autopilot took the aircraft: {prev} -> {mode} "
+              f"({phase}); nothing is commanded or asked of it")
+        return True
 
     def hover_s(self, t: float | None = None) -> float:
         """Seconds since the hover's first tick (to `t`, else to its end)."""
@@ -848,26 +977,9 @@ class HoverWatch:
             return None
         self.stale_since = None
         s = link.snap
-        mode, prev = s.mode, self.mode
-        if mode == "GUIDED" and prev != "GUIDED":
-            self.asks.entered_guided()
-        if autopilot_took_over(mode, prev, self.asks):
-            # "t" (mission time, negative: before the clock) is set by run()
-            # once the mission clock is read; t_abs is this clock's reading.
-            self.takeover = {"t_abs": t, "t_hover": round(t - self.t_first, 3),
-                             "mode": mode, "previous": prev,
-                             "fence_breach_count": s.fence_breach_count,
-                             "statustext": list(s.statustext[-3:]), "phase": phase}
-            self.mode = mode
-            self._end("takeover", f"the autopilot took the aircraft while it hovered "
-                                  f"before the mission ({phase}): {prev} -> {mode}")
-            if self.rec is not None:
-                self.rec.event("autopilot_took_over", mode=mode, previous=prev,
-                               phase=phase, t_hover=self.takeover["t_hover"])
-            print(f"[hover]  *** the autopilot took the aircraft: {prev} -> {mode} "
-                  f"({phase}); nothing is commanded or asked of it")
+        # A mode not reported yet is not judged (the baseline stays).
+        if s.mode is not None and self._judge_mode(s.mode, t, t - self.t_first, phase, s):
             return None
-        self.mode = mode
         if hasattr(self.obs, "put_pose_full"):
             self.obs.put_pose_full(t, st.x, st.y, st.up, math.radians(st.yaw_deg),
                                    s.pitch or 0.0, s.roll or 0.0)
@@ -897,8 +1009,7 @@ class HoverWatch:
                 self.first_unsafe = {"t_hover": th, "phase": phase, "rules": unsafe,
                                      "x": round(st.x, 2), "y": round(st.y, 2),
                                      "up": round(st.up, 2)}
-                if self.rec is not None:
-                    self.rec.event("hover_unsafe", **self.first_unsafe)
+                self.record_event("hover_unsafe", **self.first_unsafe)
                 print(f"[hover]  *** the hover point breaks {unsafe} ({phase}, "
                       f"{th:.1f} s in)"
                       + ("; the mission starts now, so the Shield and the escalation "
@@ -922,15 +1033,25 @@ class HoverWatch:
 
     def close(self, t: float, log_path: Path | None = None) -> None:
         """The hover is over at `t`; its rows go to `log_path` (written, if
-        empty, so a reused tag never shows an earlier run's hover)."""
+        empty, so a reused tag never shows an earlier run's hover). A write
+        that fails is `log_error`, not an exception: until review 3
+        (2026-10-22) it raised out of run() from the hover's finally, with
+        the aircraft holding in GUIDED and no LAND asked (a directory in the
+        file's place: PermissionError, errno 13)."""
         if self.t_first is not None and self.t_end is None:
             self.t_end = max(t, self.t_last)
             if self.last_phase is not None:
                 self.phase_s[self.last_phase] = (self.phase_s.get(self.last_phase, 0.0)
                                                  + (self.t_end - self.t_last))
         if log_path is not None:
-            Path(log_path).write_text("".join(json.dumps(r) + "\n" for r in self.rows),
-                                      encoding="utf-8")
+            try:
+                Path(log_path).write_text("".join(json.dumps(r) + "\n" for r in self.rows),
+                                          encoding="utf-8")
+                self.log_written = True
+            except Exception as exc:                              # noqa: BLE001
+                self.log_error = f"{Path(log_path).name}: {type(exc).__name__}: {exc}"
+                print(f"[hover]  *** {self.log_error}; the hover's rows are not on disk "
+                      f"(their counts are in metrics.json pre_mission_hover)")
 
     def summary(self) -> dict:
         checked = self.n_checked > 0
@@ -948,8 +1069,13 @@ class HoverWatch:
             # What ended the hover early (None: its wait ended it), and why.
             "outcome": self.ended, "why": self.why,
             "act_on_unsafe": self.act,
+            # The mode the bring-up left (the takeover test judged it
+            # against GUIDED; a non-GUIDED one is outcome "takeover").
             "mode_at_start": self.mode0,
-            "log": "hover_log.jsonl",
+            # None when the rows were not written (log_error says why).
+            "log": "hover_log.jsonl" if self.log_written else None,
+            "log_error": self.log_error,
+            "io_errors": list(self.io_errors),
             "basis": ("each hover tick before the mission clock: the link's freshness "
                       "and the autopilot's mode (the loop's takeover test), and the "
                       "Shield's state_is_unsafe on the position with the gate's "
@@ -1904,9 +2030,11 @@ class SubjectTruth:
     with truth_geo: one Req0 socket, one request at a time), made after the
     tick's setpoint went out. Given an `rpc` (OffLoopRpc; run() always gives
     one since 2026-10-21) every RPC here goes through its one worker thread
-    and the caller waits at most SIM_RPC_WAIT_S: a late answer is a tick with
-    no truth, said so ("late" / "busy"), never a stalled loop. Without one the
-    call is made in line, as before. Its latency is recorded
+    and the caller waits at most SIM_RPC_WAIT_S - in the loop, per tick, shared
+    with that tick's frame or geo check (OffLoopRpc.begin_tick; review
+    2026-10-22) - so a late answer is a tick with no truth, said so ("late" /
+    "busy" / "spent"), never a stalled loop. Without one the call is made in
+    line, as before. Its latency is recorded
     (`summary()["read_ms"]`, the RPCs answered in time). After
     TRUTH_MAX_ERRORS failed reads in a row it backs off and retries, never
     stops; a late or busy read is not a failure (the actor is not missing).
@@ -3593,6 +3721,18 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     # What the detector was built with (build_grounder); an injected one
     # (the tests' stand-ins) says so.
     grounder_rec: dict = {"injected": grounder is not None}
+    # THE NET FROM THE ARMING ON (land_on_the_way_out; review 3, 2026-10-22):
+    # whether the aircraft was armed and took off, whether the loop's finally
+    # made its LAND decision, the exception on the way out and the stage it
+    # came from, and what the net reads (the hover's takeover, the throttle).
+    airborne = land_decided = False
+    crash = None
+    stage = "the bring-up"
+    watch = throttle = None
+    # What was asked of the autopilot, in the FSM's words and ArduCopter's,
+    # and which request can explain a mode change (ModeRequests): one record
+    # from the take-off on - the hover's, the loop's and the net's.
+    asks = ModeRequests(hold_mode)
     try:
         if camera is not None:
             camera.start()                     # loads the scene: BEFORE SITL starts
@@ -3704,10 +3844,17 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     raise RuntimeError(f"not arming: {detector_ready['why']}")
 
         print(f"[link]   {link.name}: bring-up to {args.cruise_alt} m")
+        stage = "the take-off"
         if "before_arm" in inspect.signature(link.bring_up).parameters:
             link.bring_up(args.cruise_alt, before_arm=before_arm)
         else:
             link.bring_up(args.cruise_alt)
+        # Armed and at altitude: from here on no way out of run() skips a
+        # LAND request (the loop's finally, else the net in the outer one).
+        # A bring-up that raised after arming is caught there by the
+        # autopilot's own armed flag.
+        airborne = True
+        stage = "the set-up after the take-off"
         before_arm("after take-off: this link has no pre-arm step")
         # Read from the autopilot during bring-up (identify()); None if unreadable,
         # which the manifest then records as unresolved - never an assumed 1.0.
@@ -3771,13 +3918,14 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # Ctrl+C ends the episode with no mission, landed by the loop's finally
         # below and on record - never a vehicle left holding in GUIDED with
         # nothing commanding it (on HIL or attach there is no SITL for the
-        # outer finally to stop).
-        # What was asked of the autopilot, in the FSM's words and ArduCopter's,
-        # and which request can explain a mode change (ModeRequests): one
-        # record from the take-off on, the hover's and the loop's.
-        asks = ModeRequests(hold_mode)
+        # outer finally to stop). The handler's and the finally's own writes
+        # are best effort (review 3): a second exception there left run()
+        # past every LAND. The takeover test starts from GUIDED (HoverWatch):
+        # a bring-up that ended in another mode is a takeover already.
+        stage = "the hover before the mission"
         watch = HoverWatch(link, anchor, obs, shield, asks, subject_class=subject_class,
-                           act=shield_on, backstop=backstop, rec=rec, rule_now=rule_now)
+                           act=shield_on, backstop=backstop, rec=rec, rule_now=rule_now,
+                           t0=clock())
         # Why no mission is flown (None: one is): the gate timed out under
         # --start-timeout-action land, the autopilot took the aircraft or the
         # link died while it hovered, the detector died, or the hover crashed.
@@ -3884,7 +4032,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             traceback.print_exc()
             no_mission = (f"start gate crashed: {gate_crash}" if hover_phase == "start gate"
                           else f"the detector wait crashed: {gate_crash}")
-            rec.event("hover_crashed", phase=hover_phase, error=gate_crash)
+            # Best effort: on a full disk the crash IS this write's error, and
+            # a second OSError here left run() with no LAND (review 3).
+            watch.record_event("hover_crashed", phase=hover_phase, error=gate_crash)
             print(f"[node]   *** {no_mission}")
             if gate_on:
                 if gate is not None:
@@ -3894,7 +4044,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         pass
                 gate_rec.update(outcome="crashed", reached=False, error=gate_crash)
         finally:
-            watch.close(clock(), out / "hover_log.jsonl")
+            # HoverWatch.close keeps its own write error (log_error); this
+            # guard is for anything else in it - nothing in the hover's
+            # bookkeeping may leave run() before the LAND (review 3).
+            try:
+                watch.close(clock(), out / "hover_log.jsonl")
+            except Exception as exc:                              # noqa: BLE001
+                watch.log_error = watch.log_error or f"close: {type(exc).__name__}: {exc}"
+                print(f"[hover]  *** {watch.log_error}")
+        stage = "the mission's start"
         if not detector_ready:
             detector_ready.update(ready=False, outcome="crashed" if gate_crash else "interrupted",
                                   why=no_mission, waited_s=None, seq=None, timeout_s=None,
@@ -4596,6 +4754,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     print(f"[link]   LAND failed: {exc}")
                 if land_accepted is False:
                     print("[link]   *** LAND was not confirmed by the autopilot")
+            # The LAND decision is made: the net in the outer finally stands down.
+            land_decided = True
             # EpisodeRecord.end(): the one mission_end write_replay requires
             # before it packs an episode.
             rec.end(end_reason, t=round(clock() - t0, 3))
@@ -5068,6 +5228,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         elif hover_rec["ticks"] and not hover_rec["ticks_checked"]:
             why.append(f"the aircraft hovered {hover_rec['s']} s before the mission with no "
                        f"live state on any tick, so no rule was checked")
+        # The hover's records are best effort (review 3): one that was not
+        # written is a gap in the evidence, said so, never silence.
+        if hover_rec.get("log_error") or hover_rec.get("io_errors"):
+            why.append("the hover before the mission is not fully on record: "
+                       + "; ".join(
+                           ([f"hover_log.jsonl was not written ({hover_rec['log_error']})"]
+                            if hover_rec.get("log_error") else [])
+                           + [f"event not written ({e})"
+                              for e in hover_rec.get("io_errors") or []]))
         if detector_ready.get("ready") is False:
             why.append(f"the detector produced no inference in {detector_ready.get('waited_s')} s "
                        f"before the mission ({detector_ready.get('outcome')}: "
@@ -5179,7 +5348,28 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # A hover that crashed was landed and recorded above, and is still a
         # failed run: the launchers count a non-zero exit as one.
         return 1 if gate_crash else 0
+    except BaseException as exc:
+        crash = exc                        # for the net below; it still propagates
+        raise
     finally:
+        # THE NET FROM THE ARMING ON (land_on_the_way_out; review 3,
+        # 2026-10-22), first - before the simulator connection and SITL go:
+        # an aircraft that was armed and whose loop never made its LAND
+        # decision is landed (unless the autopilot or a pilot has it) and
+        # its episode ended, whatever raised. A bring-up that raised before
+        # arming (a refused arm, an EKF that never converged) is not armed.
+        try:
+            armed = airborne or getattr(getattr(link, "snap", None), "armed", None) is True
+        except Exception:                                         # noqa: BLE001
+            armed = airborne
+        if link is not None and armed and not land_decided:
+            try:
+                t_net = None if mission_t0[0] is None else round(clock() - mission_t0[0], 3)
+            except Exception:                                     # noqa: BLE001
+                t_net = None
+            land_on_the_way_out(link, asks, rec, crash=crash, stage=stage,
+                                takeover=None if watch is None else watch.takeover,
+                                fsm=fsm, throttle=throttle, t=t_net)
         # Whatever happened above - a refused arm, an EKF that never
         # converged, Ctrl+C - the simulator connection and the SITL this
         # run started do not outlive it. Nor does the recorder thread: it
