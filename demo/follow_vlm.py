@@ -2942,6 +2942,42 @@ def annotate(img, det, hud: dict):
     return im
 
 
+def negative_suppress(pos, neg, thresh: float):
+    """Each box's score for the subject phrase with the NEGATIVE queries asked
+    beside it: `(scores, n_suppressed, top)`.
+
+    `pos[i]` is box i's sigmoid score for the subject phrase, `neg[i]` its
+    best score over the negative phrases ("a traffic light"), both from the
+    same forward pass. OWL-ViT scores each (box, phrase) pair on its own (a
+    sigmoid per pair, not a softmax over phrases), so asking a negative phrase
+    leaves every box's subject score as it was: a box keeps it unless the
+    negative phrase scores HIGHER on it - it looks more like a traffic light
+    than like a red car - and then scores 0 and can never pass the detector
+    threshold. `n_suppressed` counts the boxes that would have passed
+    `thresh` and were taken away; `top` is the index of the best-scoring of
+    them (None when none). With no negative phrase, pass `neg=None`: the
+    scores come back unchanged.
+
+    Added 2026-10-21 for the ArduPilot rail (demo/pas_ardupilot/
+    perception_node.py --negative-query): on the 21 Oct flight the detector's
+    box sat on a red traffic signal on every estimate (0/186 within 6 m of
+    the car)."""
+    if neg is None:
+        return list(pos), 0, None
+    out, n, top = [], 0, None
+    for i, (p, q) in enumerate(zip(pos, neg)):
+        p, q = float(p), float(q)
+        if q > p:
+            if p >= thresh:
+                n += 1
+                if top is None or p > float(pos[top]):
+                    top = i
+            out.append(0.0)
+        else:
+            out.append(p)
+    return out, n, top
+
+
 class Grounder:
     """Open-vocabulary detector in a background thread: text in, box out.
 
@@ -2957,7 +2993,13 @@ class Grounder:
                  jump_frac: float = 0.35, log_path: Path | None = None,
                  colour_min: float = 0.10, lock: "TargetLock | None" = None,
                  colour_mask: bool = True, legacy_sat: bool = False,
-                 identity: dict | None = None):
+                 identity: dict | None = None, negatives: list | None = None):
+        # NEGATIVE PHRASES (negative_suppress; 2026-10-21). Asked beside the
+        # subject phrase in the same forward pass; a box that scores higher
+        # for one of them than for the subject is no candidate. None or []
+        # keeps the single-phrase query exactly.
+        self.negatives = [str(n) for n in (negatives or []) if str(n).strip()]
+        self.n_neg_suppressed = 0
         # Measure the colour on the object's pixels rather than the whole box.
         # `mask_stats` records which path actually ran, because a fix that
         # silently never engages is the failure mode to watch for here - the
@@ -3150,7 +3192,9 @@ class Grounder:
         model = OwlViTForObjectDetection.from_pretrained(DETECTOR_ID).to("cuda").eval()
         print(f"[grounder] {DETECTOR_ID} loaded in {time.time()-t0:.0f}s "
               f"(VRAM {torch.cuda.memory_allocated()/1e9:.2f} GB)", flush=True)
-        queries = [[self.query]]
+        # The subject phrase first: index 0 is the one candidates come from;
+        # the negative phrases, if any, follow it (negative_suppress).
+        queries = [[self.query] + self.negatives]
         gen = self._query_gen
         last = None
         while not self._stop:
@@ -3159,7 +3203,7 @@ class Grounder:
             if self._query_gen != gen:
                 with self._lock:
                     gen = self._query_gen
-                    queries = [[self.query]]
+                    queries = [[self.query] + self.negatives]
                 # The jump gate compares against where the OLD target was, so it
                 # would reject the new one on exactly the frames that matter.
                 last = None
@@ -3227,6 +3271,32 @@ class Grounder:
                 out, threshold=0.0,
                 target_sizes=torch.tensor([[H, W]]).to("cuda"))[0]
             sc, bx = res["scores"], res["boxes"]
+            neg_rec = None
+            if self.negatives:
+                # post_process takes the max over the phrases; with a negative
+                # phrase that max may be the negative's. The subject's own
+                # score per box from the logits instead (threshold 0.0 keeps
+                # every box, in the logits' order), and negative_suppress.
+                lg = out.logits[0].float()
+                pos_l = torch.sigmoid(lg[:, 0]).tolist()
+                neg_l = torch.sigmoid(lg[:, 1:]).max(dim=1).values.tolist()
+                if len(pos_l) != len(bx):
+                    # A box post_process dropped (a score of exactly 0.0)
+                    # would pair every later box with the wrong logits. Its
+                    # own labels still say which phrase won each box it kept
+                    # (the same rule: a negative phrase scored higher), so
+                    # those are suppressed; only the count is unknown.
+                    sc = torch.where(res["labels"] == 0, sc, torch.zeros_like(sc))
+                    neg_rec = {"queries": list(self.negatives), "suppressed": None,
+                               "count_unknown": f"{len(bx)} boxes for {len(pos_l)} logits"}
+                else:
+                    kept, n_sup, top = negative_suppress(pos_l, neg_l, self.thresh)
+                    sc = torch.tensor(kept, device=sc.device)
+                    self.n_neg_suppressed += n_sup
+                    neg_rec = {"queries": list(self.negatives), "suppressed": n_sup,
+                               "top": (None if top is None else
+                                       [round(float(v), 1) for v in bx[top].tolist()]
+                                       + [round(pos_l[top], 4), round(neg_l[top], 4)])}
             # One depth frame per inference, not per candidate box. It indexes
             # straight into the scene image because both captures are configured
             # at the same resolution and the same field of view - the same
@@ -3420,6 +3490,11 @@ class Grounder:
                                       "w": round(cands[1][2], 1),
                                       "score": round(cands[1][4], 4),
                                       "colour": round(cands[1][7], 3)})}
+                if neg_rec is not None:
+                    # What the negative phrases took away on this frame: how
+                    # many boxes over the threshold, and the best of them
+                    # (x0, y0, x1, y1, subject score, negative score).
+                    rec["neg"] = neg_rec
                 if self.identity is not None:
                     # EVERY candidate, HARD ones included, with what it was
                     # judged on - so a tier can be re-derived offline and a

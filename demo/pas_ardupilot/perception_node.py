@@ -103,13 +103,36 @@ RULE CLOCK, MISSION, POLICY, BACKSTOP, TRUTH (2026-10-12, as on the SITL rails)
     mode the node did not ask for, from GUIDED or from its hold, is a
     takeover and hands channel 3 back. BRAKE stays the default.
 
+THE START GATE, THE DETECTOR, THE LOOP'S TIMING (2026-10-21)
+
+  * follow_vlm's start gate (StartGate, START_WHEN_SEEN): after the take-off
+    the aircraft hovers - nothing commanded, ArduCopter's own GUIDED hold -
+    until the detector has produced 5 fresh inferences in a row each holding
+    a box follow_vlm's presence verdict does not call ABSENT, within 30 m,
+    continuous in the frame; only then does the mission clock start. The
+    Grounder publishes every candidate while it acquires and is committed to
+    the pick, which seeds its TargetLock. A gate that times out (330 s) flies
+    no mission by default (--start-timeout-action land; "fly" flies anyway),
+    and metrics.json `start_gate` records what was judged and refused, the
+    pick, and - read after the decision, evaluation only - whether it was the
+    subject. Replayed on the 21 Oct flight's boxes it never opens.
+  * --identity (follow_vlm's identity tiers: only an OK box may start or
+    steer; the start decided in the world, seen moving); --negative-query
+    (a box that looks more like "a traffic light" is no candidate).
+  * The detector starts as soon as the camera is up, so OWL-ViT loads while
+    SITL boots and the aircraft takes off, and the mission waits for its
+    first inference: on 21 Oct the load ran beside the first 26 s of ticks.
+  * The simulator's evaluation RPCs (truth, frame check, EKF check) run on
+    one worker thread (OffLoopRpc) and the loop waits for them at most
+    50 ms: one 1024.9 ms truth read was that flight's 1028 ms tick.
+
 WHAT THIS IS NOT. follow_vlm.fly()'s further layers - the target estimator,
-identity tiers, re-acquisition, trail following, the fence guard, the landing
-site - live inside that 2,500-line function and are not reused here; moving
-them needs a refactor of follow_vlm.py. Until then this node tracks with the
-servo law on the detector's box, and its numbers are not comparable with the
-simple_flight CityLife flights. Its tracking score comes from the subject
-truth above when the scene provides it (None otherwise).
+the strict lock and its re-acquisition, trail following, the fence guard, the
+landing site - live inside that 2,500-line function and are not reused here;
+moving them needs a refactor of follow_vlm.py. Until then this node tracks
+with the servo law on the detector's box, and its numbers are not comparable
+with the simple_flight CityLife flights. Its tracking score comes from the
+subject truth above when the scene provides it (None otherwise).
 
 TOPOLOGY. topology.classify() decides the label the evidence supports. The
 grant label is OFFERED to build_manifest only when the rail is qualified: gate
@@ -162,6 +185,7 @@ import math
 import random
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -325,6 +349,53 @@ ESTIMATE_NEAR_M = 6.0
 # How old a found box may be and still steer (FollowPilot's "fresh"), and so
 # how far back the frame behind an estimate can lie (capture_window_start).
 DETECTION_STALE_S = 1.0
+# THE START GATE (StartGate; 2026-10-21, open item C1). The mission clock
+# starts when the detector has produced START_WHEN_SEEN fresh inferences in a
+# row each holding a box follow_vlm's presence verdict does not call ABSENT
+# (colour, wall-sized, a width no car has at its depth range, not standing on
+# the road) and nearer than START_MAX_RANGE_M, each within the lock's gate of
+# the last - follow_vlm's Acquirer, the gate the city flights fly
+# (scripts/run_citylife_follow.ps1: 5 boxes, 30 m, 330 s). Until then the
+# aircraft hovers where it took off (ArduCopter's own GUIDED hold after the
+# take-off; nothing is commanded). Without it every pas_ap follow started at
+# take-off whatever the camera saw: on 21 Oct the car was 150-230 m away and
+# never in view, the detector boxed a red traffic signal, and 0 of 186
+# estimates were within 6 m of the car (CHANGELOG 2026-10-21).
+START_WHEN_SEEN = 5
+START_MAX_RANGE_M = 30.0
+START_TIMEOUT_S = 330.0
+# What a gate that timed out does: "land" (the default) flies no mission - the
+# episode ends before t0, landed, with the gate's record - and "fly" starts
+# the mission anyway, as follow_vlm does, recorded.
+START_TIMEOUT_ACTIONS = ("land", "fly")
+# While the gate waits, the subject's simulator pose (EVALUATION only: the
+# gate never reads it) every this many seconds, so a gate that timed out can
+# say whether the subject drove past the camera or never came.
+GATE_TRUTH_PERIOD_S = 2.0
+# THE DETECTOR LOADS BEFORE THE MISSION (2026-10-21, open item C14). The
+# Grounder thread used to be started after the take-off, at mission start,
+# so OWL-ViT's import, weight load and CUDA start ran beside the first ticks:
+# on pas_ap_ovf_on_20261021 the first inference came 26.2 s into the mission
+# (its own inference 1709 ms; first consumed at 26.3 s) and 12 of the 263
+# tick intervals before it ran over 105 ms against 9 of the 926 after,
+# among them the 114 ms interval of the flight's one 97.9 ms
+# Shield step (t = 19.4 s, a plain search tick with no detection; the
+# Shield's median is about 1 ms, so most likely the loading thread holding
+# the GIL - inferred, not profiled). The Grounder now starts as soon as the camera is up - its load runs
+# under SITL's boot and the take-off - and the mission waits for its first
+# inference (at most this long, then flies, recorded).
+DETECTOR_READY_TIMEOUT_S = 300.0
+# THE SIMULATOR'S EVALUATION RPCs LEAVE THE LOOP (OffLoopRpc; 2026-10-21,
+# C14). The subject truth's GetObjectPoses, the truth's frame check and the
+# EKF-against-simulator check are synchronous requests on Project AirSim's
+# service socket, answered on the simulator's game thread. On
+# pas_ap_ovf_on_20261021 one truth read took 1024.9 ms (subject_truth.reader.
+# read_ms max): that tick's work was 1028 ms (tick_work_ms max), and the
+# aircraft flew its last setpoint for a second with no Shield step and no
+# pose. The RPCs now run on one worker thread of their own (still one request
+# at a time on that socket), and the loop waits for an answer at most this
+# long; a later answer is dropped and counted (metrics.json sim_rpc).
+SIM_RPC_WAIT_S = 0.05
 # A fence upload in flight blocks the 10 Hz loop (one mission-protocol round
 # trip per item, twice): each phase gets this long, so an autopilot that does
 # not answer costs at most about 6 ticks, not the 2 x 10 s of the pre-arm one.
@@ -510,6 +581,282 @@ class FollowPilot:
                  "bearing": None if bearing is None else float(bearing),
                  "sweep_side": None if fresh else self.sweep_side,
                  "det": det, "cap": lat.get("cap"), "t_det": t_det})
+
+
+class StartGate:
+    """follow_vlm's start gate, ported (START_WHEN_SEEN above; open item C1).
+
+    The decision is follow_vlm's own code, not a copy: `follow_vlm.Acquirer`
+    judges every candidate of each fresh inference with its presence verdict
+    (colour, wall-sized, the width a box implies at its depth range against
+    what the named thing can be, and ground contact: a box whose bottom-edge
+    ray meets the road far beyond its depth range is not standing on it - the
+    traffic signal 4-5 m up), refuses a plausible one beyond `max_range_m`
+    (depth, else the subject width's range), and is reached when `need`
+    inferences in a row each have one within `gate_frac` of the frame of the
+    previous pick. Every candidate is judged, not just the top box: the
+    Grounder publishes all of them while acquiring (Grounder.begin_acquire).
+    Depth is the latest frame and the ground is this tick's altitude and
+    pitch, as follow_vlm's gate without identity reads them; the aircraft is
+    hovering, so they are the inference's own to within its motion.
+
+    With `identity` (the Grounder built with follow_vlm's identity config,
+    --identity) a candidate must also be identity "ok" to count (a SOFT box
+    may continue a track, never start one), and the start is decided in the
+    world as follow_vlm decides it: `follow_vlm.Reacquirer` with no anchor -
+    OK boxes, one object by its map point, within the start range, and SEEN
+    MOVING (a car-wide sign by the kerb is none of the physical rules'
+    business and all of this one's). The pixel Acquirer still runs, for its
+    counters.
+
+    A stand-in without a candidate list ("cands" absent) offers its published
+    box as the only candidate. Nothing here reads ground truth."""
+
+    def __init__(self, need: int, query: str, colour_min: float, *,
+                 max_range_m: float, width_m: float | None, hfov_deg: float,
+                 gate_frac: float = 0.12, identity: bool = False,
+                 reacq_max_range_m: float = 45.0, fv=None):
+        self.fv = fv or _fv()
+        self.need = int(need)
+        self.max_range_m = float(max_range_m)
+        self.identity = bool(identity)
+        self.acq = self.fv.Acquirer(self.need, query, colour_min, gate_frac=gate_frac,
+                                    max_range_m=self.max_range_m, width_m=width_m,
+                                    hfov_deg=hfov_deg)
+        self.acq_w = None
+        if self.identity:
+            self.acq_w = self.fv.Reacquirer(
+                need=self.need, max_range_m=(self.max_range_m if self.max_range_m > 0
+                                             else reacq_max_range_m))
+            self.acq_w.start(None)
+        self.pick = None
+        self.pick_yaw = None
+        self.rejected_by: dict = {}
+
+    def _count_rejections(self) -> None:
+        for why in self.acq.last_reasons:
+            w = str(why)
+            key = ("too far" if w.startswith("plausible but") else
+                   "identity" if w.startswith("identity:") else
+                   self.fv.block_reason_key(w))
+            self.rejected_by[key] = self.rejected_by.get(key, 0) + 1
+
+    def judge(self, lat: dict, *, depth=None, ground=None, t: float | None = None) -> bool:
+        """One FRESH inference (a Grounder.latest() answer): True once the
+        subject is confirmed; `pick` is then its box and `pick_yaw` the
+        aircraft's yaw when that frame was captured (for the lock's seed)."""
+        cands = lat.get("cands")
+        if cands is None:
+            cands = [lat["det"]] if lat.get("det") is not None else []
+        cands = list(cands)
+        ic = lat.get("inf_cap") or {}
+        if self.identity:
+            tiers = list(lat.get("cand_tiers") or [])
+            feats = list(lat.get("cand_feats") or [])
+            # The range of each candidate's OWN frame, and its tier: only an
+            # identity-OK box may start the mission (follow_vlm, as flown).
+            fr = {id(c): (f or {}).get("r") for c, f in zip(cands, feats)}
+            self.acq.step(cands, lambda c: fr.get(id(c)), ground=None, tiers=tiers)
+            reached = self.acq_w.step(cands, tiers, feats,
+                                      ic.get("t_capture") or ic.get("t_cap")
+                                      or (t if t is not None else time.time()))
+            pick = self.acq_w.pick
+        else:
+            fv = self.fv
+            reached = self.acq.step(
+                cands, (lambda c: fv.range_from_depth(depth, c)) if depth is not None
+                else (lambda c: None), ground=ground)
+            pick = self.acq.pick
+        self._count_rejections()
+        if reached:
+            self.pick = pick
+            self.pick_yaw = (ic.get("pose") or {}).get("yaw")
+        return bool(reached)
+
+    def record(self) -> dict:
+        a = self.acq
+        rec = {"needed": self.need, "max_range_m": self.max_range_m,
+               "identity": self.identity,
+               "inferences_judged": a.n, "inferences_with_plausible": a.n_plausible,
+               "candidates_judged": a.n_candidates, "best_streak": a.best_streak,
+               "plausible_but_too_far": a.n_too_far,
+               "rejected_by": dict(self.rejected_by),
+               "last_rejections": list(a.last_reasons[:3]),
+               "pick": (None if self.pick is None else
+                        {"cx": round(float(self.pick[0]), 1),
+                         "cy": round(float(self.pick[1]), 1),
+                         "w": round(float(self.pick[2]), 1),
+                         "h": round(float(self.pick[3]), 1),
+                         "score": round(float(self.pick[4]), 4),
+                         "colour": round(float(self.pick[7]), 3),
+                         "img_w": int(self.pick[5])})}
+        if self.acq_w is not None:
+            w = self.acq_w
+            rec["identity_gate"] = {
+                "refused": dict(w.refused), "best_streak": w.best_streak,
+                "static_places": [[round(v, 1) for v in sp[:2]] for sp in w.static],
+                "pick_P": (None if w.pick_feat is None or w.pick_feat.get("P") is None
+                           else [round(v, 1) for v in w.pick_feat["P"][:2]])}
+        return rec
+
+
+def wait_for_subject(gate: StartGate, grounder, link, anchor, obs, *, timeout_s: float,
+                     clock=time.time, sleep=time.sleep, truth=None, hfov_deg: float = 90.0,
+                     truth_period_s: float = GATE_TRUTH_PERIOD_S) -> dict:
+    """Hover until `gate` is reached or `timeout_s` passes: the start gate's
+    wait (START_WHEN_SEEN). Nothing is commanded - ArduCopter holds where the
+    take-off left it in GUIDED - and the link is pumped every TICK, the pose
+    given to the detector's frames (obs.put_pose_full) as the loop does. A
+    state that stays stale LINK_LOST_S ends the wait ("aborted"). The
+    subject's simulator pose (`truth`, EVALUATION only) is read every
+    `truth_period_s` into `truth_trace` [t_s, range_m, bearing off the nose
+    deg, + right]; the decision never reads it. Returns the gate's record."""
+    t0 = clock()
+    last_seq = None
+    reached = False
+    first_ok = None
+    aborted = None
+    stale_since = None
+    truth_trace: list = []
+    next_truth = 0.0
+    while clock() - t0 < timeout_s:
+        t = clock()
+        link.pump()
+        st = link.state(anchor)
+        stale, _ = link_staleness(link)
+        if st is None or stale is not None:
+            stale_since = t if stale_since is None else stale_since
+            if t - stale_since >= LINK_LOST_S:
+                aborted = f"link lost while waiting: {stale or 'no state'}"
+                break
+            sleep(TICK)
+            continue
+        stale_since = None
+        s = link.snap
+        if hasattr(obs, "put_pose_full"):
+            obs.put_pose_full(t, st.x, st.y, st.up, math.radians(st.yaw_deg),
+                              s.pitch or 0.0, s.roll or 0.0)
+        lat = grounder.latest()
+        if lat.get("seq") != last_seq:
+            last_seq = lat.get("seq")
+            # Fresh: the detector ran within the last second (the Grounder's
+            # "t"; a stand-in without one is fresh).
+            fresh = lat.get("t") is None or (t - float(lat["t"])) < 1.0
+            if fresh:
+                depth = obs.get_depth() if callable(getattr(obs, "get_depth", None)) else None
+                had = gate.acq.n_plausible
+                reached = gate.judge(lat, depth=depth, ground=(st.up, s.pitch or 0.0), t=t)
+                if gate.acq.n_plausible > had and first_ok is None:
+                    first_ok = t - t0
+                if reached:
+                    break
+        if truth is not None and t - t0 >= next_truth:
+            next_truth = t - t0 + truth_period_s
+            tr = truth.read()
+            if tr.get("xy") is not None:
+                dx, dy = tr["xy"][0] - st.x, tr["xy"][1] - st.y
+                truth_trace.append([round(t - t0, 1), round(math.hypot(dx, dy), 1),
+                                    round(_wrap_deg(math.degrees(math.atan2(dy, dx))
+                                                    - st.yaw_deg), 1)])
+        sleep(max(0.0, TICK - (clock() - t)))
+    rec = {"enabled": True, **gate.record(), "reached": bool(reached),
+           "wait_s": round(clock() - t0, 1), "timeout_s": timeout_s,
+           "first_candidate_s": None if first_ok is None else round(first_ok, 1),
+           "aborted": aborted,
+           # [t_s, range_m, bearing off the nose (deg, + right)], every
+           # truth_period_s; in view when |bearing| <= hfov / 2.
+           "truth_trace": truth_trace, "truth_hfov_deg": hfov_deg}
+    return rec
+
+
+def gate_truth_verdict(gate_rec: dict, truth, state, hfov_deg: float, fv=None) -> dict:
+    """Was the gate's pick the subject? Read AFTER the decision, from the
+    subject's simulator pose (evaluation only): the true range, whether the
+    subject was inside the camera's field of view, and the bearing between
+    the picked box and the subject (deg). None fields when there is no pick
+    or no pose."""
+    out = {"subject_range_m": None, "subject_in_shot": None, "bearing_err_deg": None}
+    if truth is None or state is None:
+        return out
+    tr = truth.read()
+    if tr.get("xy") is None:
+        out["why"] = tr.get("why")
+        return out
+    dx, dy = tr["xy"][0] - state.x, tr["xy"][1] - state.y
+    off = _wrap_deg(math.degrees(math.atan2(dy, dx)) - state.yaw_deg)
+    out["subject_range_m"] = round(math.hypot(dx, dy), 1)
+    out["subject_in_shot"] = abs(off) <= hfov_deg / 2.0
+    pick = gate_rec.get("pick")
+    if pick is not None:
+        fv = fv or _fv()
+        b = math.degrees(fv.box_bearing(float(pick["cx"]), float(pick["img_w"]), hfov_deg))
+        out["bearing_err_deg"] = round(abs(_wrap_deg(off - b)), 1)
+    return out
+
+
+def build_grounder(args, obs, out: Path, fv, hfov_deg: float) -> tuple:
+    """The detector this rail flies: `(grounder, record)`.
+
+    follow_vlm.Grounder as before, plus what follow_vlm's city flights give
+    it, as far as it applies here (2026-10-21):
+      * a TargetLock (--lock-gate; --no-lock-target for none, as before
+        2026-10-21): one instance held by position and size, seeded by the
+        start gate's pick (Grounder.commit), so a second plausible box does
+        not take the follow over;
+      * --identity: each candidate judged physically at its own frame's pose
+        and depth (demo/identity.py; the street mask next to --citymap), the
+        HARD ones dropped and only an OK one published. follow_vlm then also
+        makes the lock strict, which only lets go of a subject through its
+        estimator and Reacquirer; this rail has neither, so with --identity
+        it holds no lock (a strict lock would never re-adopt the car after a
+        2 s loss) and steers on the best OK box;
+      * --negative-query P (repeatable): P asked beside the subject phrase,
+        a box that looks more like P is no candidate
+        (follow_vlm.negative_suppress)."""
+    id_cfg, lock, why_id = None, None, None
+    if getattr(args, "identity", False):
+        import identity as identity_mod
+        th = identity_mod.load_thresholds(getattr(args, "identity_thresholds", None) or None)
+        sp = Path(args.citymap).parent / "street.npz"
+        sd = identity_mod.StreetDistance.load(sp) if sp.is_file() else None
+        if sd is None:
+            why_id = f"no street mask at {sp}: the off-street rules cannot fire"
+            print(f"[identity] *** {why_id}")
+        id_cfg = {"thresholds": th, "street": sd, "hfov": hfov_deg,
+                  "hash": identity_mod.thresholds_hash(th),
+                  "path": str(getattr(args, "identity_thresholds", None)
+                              or identity_mod.DEFAULT_THRESHOLDS),
+                  "nouns": {args.object: identity_mod.noun_of(args.object)}}
+    elif not getattr(args, "no_lock_target", False):
+        lock = fv.TargetLock(hfov_deg=hfov_deg, gate_frac=getattr(args, "lock_gate", 0.12))
+    negs = [n for n in (getattr(args, "negative_query", None) or []) if str(n).strip()]
+    g = fv.Grounder(obs, args.object, thresh=args.det_thresh, colour_min=args.colour_min,
+                    log_path=out / "detections.jsonl", lock=lock, identity=id_cfg,
+                    negatives=negs)
+    rec = {"lock": ("strict lock not used (identity without an estimator)" if id_cfg
+                    else None if lock is None else
+                    {"kind": "TargetLock", "gate_frac": lock.gate_frac}),
+           "identity": (None if id_cfg is None else
+                        {"thresholds_hash": id_cfg["hash"], "thresholds": id_cfg["path"],
+                         "street_mask": id_cfg["street"] is not None, "why": why_id,
+                         "noun": id_cfg["nouns"][args.object]}),
+           "negative_queries": negs}
+    return g, rec
+
+
+def wait_for_detector(grounder, link, *, timeout_s: float = DETECTOR_READY_TIMEOUT_S,
+                      clock=time.time, sleep=time.sleep) -> dict:
+    """Wait until the Grounder has run once (latest()["seq"] > 0), pumping the
+    link: the mission does not start on a detector still loading
+    (DETECTOR_READY_TIMEOUT_S). `{"ready", "waited_s", "seq"}`."""
+    t0 = clock()
+    seq = (grounder.latest() or {}).get("seq") or 0
+    while seq <= 0 and clock() - t0 < timeout_s:
+        link.pump()
+        sleep(TICK)
+        seq = (grounder.latest() or {}).get("seq") or 0
+    return {"ready": seq > 0, "waited_s": round(clock() - t0, 2), "seq": seq,
+            "timeout_s": timeout_s}
 
 
 def ray_depression_rad(row_px: float, img_w: float, img_h: float, hfov_deg: float,
@@ -1103,16 +1450,125 @@ def subject_actor_for(arg: str | None, object_text: str, subject_class: str | No
                   f"--subject-actor")
 
 
+class OffLoopRpc:
+    """The simulator's evaluation RPCs, off the control loop (SIM_RPC_WAIT_S).
+
+    One worker thread makes every call it is handed, one at a time - Project
+    AirSim's service socket is one Req0 socket, so the calls stay serial, and
+    nothing else uses it during the flight (the camera streams arrive on the
+    topic socket). `call(fn, *a)` hands one over and waits at most `wait_s`:
+
+      ("ok", result) | ("error", exception)   answered in time
+      ("late", None)   no answer within wait_s: the caller goes on, and the
+                       answer, when it comes, is dropped (its duration is
+                       kept in `late_ms`)
+      ("busy", None)   a late call is still running: nothing is sent
+
+    Without it the RPC sat on the loop: one 1024.9 ms GetObjectPoses on
+    pas_ap_ovf_on_20261021 was that flight's 1028 ms tick."""
+
+    def __init__(self, wait_s: float = SIM_RPC_WAIT_S, timer=time.perf_counter):
+        self.wait_s = float(wait_s)
+        self.timer = timer
+        self._cv = threading.Condition()
+        self._job = None              # (fn, args, box) handed over, not yet taken
+        self._running = None          # the box of the call being made
+        self._stop = False
+        self._thread = None
+        self.n_calls = self.n_late = self.n_busy = self.n_errors = 0
+        self.call_ms: list[float] = []    # every call's own duration
+        self.late_ms: list[float] = []    # ...of the calls answered after their wait
+
+    def _ensure(self) -> None:
+        if self._thread is None:
+            self._thread = threading.Thread(target=self._run, daemon=True,
+                                            name="sim-rpc")
+            self._thread.start()
+
+    def _run(self) -> None:
+        while True:
+            with self._cv:
+                while self._job is None and not self._stop:
+                    self._cv.wait()
+                if self._stop and self._job is None:
+                    return
+                fn, args, box = self._job
+                self._job, self._running = None, box
+            t0 = self.timer()
+            try:
+                val, status = fn(*args), "ok"
+            except Exception as exc:                              # noqa: BLE001
+                val, status = exc, "error"
+            ms = (self.timer() - t0) * 1000.0
+            with self._cv:
+                box.update(status=status, value=val, ms=ms)
+                self.call_ms.append(ms)
+                if box.get("abandoned"):
+                    self.late_ms.append(ms)
+                self._running = None
+                box["done"].set()
+
+    def call(self, fn, *args):
+        with self._cv:
+            if self._running is not None or self._job is not None:
+                self.n_busy += 1
+                return "busy", None
+            box = {"done": threading.Event()}
+            self._job = (fn, args, box)
+            self.n_calls += 1
+            self._cv.notify()
+        self._ensure()
+        if not box["done"].wait(self.wait_s):
+            with self._cv:
+                if not box["done"].is_set():
+                    box["abandoned"] = True
+                    self.n_late += 1
+                    return "late", None
+        if box["status"] == "error":
+            self.n_errors += 1
+        return box["status"], box["value"]
+
+    def close(self, timeout_s: float = 2.0) -> None:
+        """Let a running call finish (at most `timeout_s`), then end the thread."""
+        with self._cv:
+            self._stop = True
+            self._cv.notify()
+        if self._thread is not None:
+            self._thread.join(timeout_s)
+
+    def summary(self) -> dict:
+        return {"wait_ms": round(self.wait_s * 1000.0, 1), "calls": self.n_calls,
+                "late": self.n_late, "busy": self.n_busy, "errors": self.n_errors,
+                "call_ms": spread([round(v, 3) for v in self.call_ms]),
+                "late_ms": spread([round(v, 3) for v in self.late_ms]),
+                "basis": ("each RPC's own duration on the worker thread; a call "
+                          "answered after wait_ms is dropped (late) and the ticks "
+                          "until it answers send none (busy)")}
+
+
+def _direct_call(fn, *args):
+    """OffLoopRpc.call's answer, made on the caller's thread (no worker)."""
+    try:
+        return "ok", fn(*args)
+    except Exception as exc:                                      # noqa: BLE001
+        return "error", exc
+
+
 class SubjectTruth:
     """The followed subject's simulator pose, read once a tick for the RECORD:
     `read()` -> {"xy": (x, y) in the Shield's frame, or None, "why": None or
     the reason}. Nothing the Shield or the pilot sees comes from here.
 
     The read is a synchronous RPC on the simulator's service socket (shared
-    with truth_geo, so it cannot move to a thread: one Req0 socket, one
-    request at a time), made after the tick's setpoint went out. Its
-    latency is recorded (`summary()["read_ms"]`). After TRUTH_MAX_ERRORS
-    failed reads in a row it backs off and retries, never stops.
+    with truth_geo: one Req0 socket, one request at a time), made after the
+    tick's setpoint went out. Given an `rpc` (OffLoopRpc; run() always gives
+    one since 2026-10-21) every RPC here goes through its one worker thread
+    and the caller waits at most SIM_RPC_WAIT_S: a late answer is a tick with
+    no truth, said so ("late" / "busy"), never a stalled loop. Without one the
+    call is made in line, as before. Its latency is recorded
+    (`summary()["read_ms"]`, the RPCs answered in time). After
+    TRUTH_MAX_ERRORS failed reads in a row it backs off and retries, never
+    stops; a late or busy read is not a failure (the actor is not missing).
 
     `check_frame(state)` is the reader's own frame check: the AIRCRAFT read
     through the subject's own RPC (World.get_object_poses on AIRCRAFT_ACTOR)
@@ -1131,10 +1587,16 @@ class SubjectTruth:
     (demo/out/citylife_redcar_nfz_20261013 metrics.estimate_on_subject)."""
 
     def __init__(self, camera, actor: str | None, why: str | None, scene_home, anchor,
-                 timer=time.perf_counter, aircraft_actor: str = AIRCRAFT_ACTOR):
+                 timer=time.perf_counter, aircraft_actor: str = AIRCRAFT_ACTOR,
+                 rpc: "OffLoopRpc | None" = None):
         self.camera, self.actor, self.scene_home, self.anchor = camera, actor, scene_home, anchor
         self.timer = timer
         self.aircraft_actor = aircraft_actor
+        self.rpc = rpc
+        # Reads (and frame checks) with no answer within the wait, and those
+        # not sent because the late one was still running (OffLoopRpc).
+        self.late = self.busy = 0
+        self.frame_late = self.frame_busy = 0
         self.why_off = why
         if why is None and not hasattr(camera, "object_xy"):
             self.why_off = ("this camera source reads no simulator poses (no subject "
@@ -1176,10 +1638,22 @@ class SubjectTruth:
             return {"xy": None, "why": (f"backing off after {self.errors} failed reads in "
                                         f"a row (retry in {self.wait + 1} tick(s)); "
                                         f"last: {self.last_why}")}
-        self.attempts += 1
         t0 = self.timer()
+        status, val = (self.rpc.call if self.rpc is not None else _direct_call)(
+            self.camera.object_xy, self.actor)
+        if status == "busy":
+            self.busy += 1
+            return {"xy": None, "why": ("the previous pose read is still running "
+                                        "off the loop (OffLoopRpc): none sent")}
+        self.attempts += 1
+        if status == "late":
+            self.late += 1
+            return {"xy": None, "why": (f"no answer within {self.rpc.wait_s * 1000:.0f} ms "
+                                        f"(the read goes on off the loop; dropped)")}
         try:
-            x, y = self.camera.object_xy(self.actor)
+            if status == "error":
+                raise val
+            x, y = val
             why = (None if math.isfinite(x) and math.isfinite(y) else
                    f"the simulator found no actor tagged {self.actor!r} "
                    f"(GetObjectPoses answered NaN)")
@@ -1200,6 +1674,10 @@ class SubjectTruth:
     def summary(self) -> dict:
         return {"attempts": self.attempts, "failures": self.failures,
                 "backoffs": self.backoffs,
+                # Reads not answered within the wait, and ticks none was sent
+                # on because one was still running (OffLoopRpc; 0 in line).
+                "late": self.late, "busy": self.busy,
+                "off_loop": self.rpc is not None,
                 "read_ms": spread([round(v, 3) for v in self.read_ms])}
 
     def frame_off(self) -> str | None:
@@ -1232,11 +1710,21 @@ class SubjectTruth:
         if self.frame_wait > 0:
             self.frame_wait -= 1
             return None
-        self.frame_attempts += 1
         t0 = self.timer()
+        status, val = (self.rpc.call if self.rpc is not None else _direct_call)(
+            self._aircraft_pose)
+        if status == "busy":
+            self.frame_busy += 1
+            return None
+        self.frame_attempts += 1
+        if status == "late":
+            self.frame_late += 1
+            return None
         why = None
         try:
-            vx, vy, vyaw = self._aircraft_pose()
+            if status == "error":
+                raise val
+            vx, vy, vyaw = val
             if not (math.isfinite(vx) and math.isfinite(vy)):
                 why = (f"the simulator found no actor matching {self.aircraft_actor!r} "
                        f"(GetObjectPoses answered NaN)")
@@ -1308,6 +1796,7 @@ class SubjectTruth:
                         f"Shield flies on"),
                "attempts": self.frame_attempts, "failures": self.frame_failures,
                "backoffs": self.frame_backoffs, "last_failure": self.frame_last_why,
+               "late": self.frame_late, "busy": self.frame_busy,
                "check_ms": spread([round(v, 3) for v in self.frame_ms]),
                "ekf_vs_sim_m": spread([round(v, 3) for v in self.ekf_err]),
                "yaw_err_deg": spread([round(v, 2) for v in self.frame_yaw_err]),
@@ -2346,6 +2835,37 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--climb-max", type=float, default=1.8)
     ap.add_argument("--det-thresh", type=float, default=0.02)
     ap.add_argument("--colour-min", type=float, default=0.10)
+    # the start gate and the detector's selection (StartGate, build_grounder)
+    ap.add_argument("--start-when-seen", type=int, default=START_WHEN_SEEN,
+                    help="hover after take-off until the detector has produced this "
+                         "many fresh inferences in a row with a plausible box near "
+                         "enough (follow_vlm's start gate), then start the mission "
+                         f"clock; 0 = no gate (default {START_WHEN_SEEN})")
+    ap.add_argument("--start-max-range-m", type=float, default=START_MAX_RANGE_M,
+                    help="the gate accepts a box only this near (depth, else the "
+                         "subject width's range); 0 = any range "
+                         f"(default {START_MAX_RANGE_M:g})")
+    ap.add_argument("--start-timeout-s", type=float, default=START_TIMEOUT_S,
+                    help=f"give up waiting after this long (default {START_TIMEOUT_S:g})")
+    ap.add_argument("--start-timeout-action", choices=list(START_TIMEOUT_ACTIONS),
+                    default=START_TIMEOUT_ACTIONS[0],
+                    help="a gate that timed out: 'land' flies no mission (the "
+                         "default), 'fly' starts it anyway; recorded either way")
+    ap.add_argument("--negative-query", action="append", default=None, metavar="PHRASE",
+                    help="ask PHRASE beside the subject phrase: a box that scores "
+                         "higher for it (e.g. 'a traffic light') is no candidate. "
+                         "Repeatable")
+    ap.add_argument("--identity", action="store_true",
+                    help="judge every candidate physically (demo/identity.py) at its "
+                         "own frame's pose and depth; only an identity-OK box may "
+                         "start the mission or steer")
+    ap.add_argument("--identity-thresholds", default=None)
+    ap.add_argument("--lock-gate", type=float, default=0.12,
+                    help="the TargetLock's continuity gate, as a fraction of the "
+                         "image width (follow_vlm's default)")
+    ap.add_argument("--no-lock-target", action="store_true",
+                    help="no TargetLock: the best-ranked box every inference, as "
+                         "before 2026-10-21")
     ap.add_argument("--dry-run", action="store_true",
                     help="render configs, print the plan and the commands, exit")
     # the demo video, as follow_vlm records it (demo/recorder.py)
@@ -2384,6 +2904,9 @@ def check_args(args) -> None:
     if getattr(args, "live_view", False) and not getattr(args, "save_view", False):
         raise SystemExit("--live-view needs --save-view: the window draws the frames "
                          "the recorder produces, and without it none are captured")
+    if getattr(args, "start_when_seen", 0) < 0 or getattr(args, "start_timeout_s", 1.0) <= 0:
+        raise SystemExit("--start-when-seen must be >= 0 (0: no gate) and "
+                         "--start-timeout-s > 0")
 
 
 def sim_configs(args, out: Path):
@@ -2708,9 +3231,32 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     rec_summary = None
     hud_ms: list[float] = []
     hud_failed = 0
+    # The simulator's evaluation RPCs (the subject truth, its frame check, the
+    # EKF against the simulator) go through one worker thread, never on the
+    # loop (OffLoopRpc, SIM_RPC_WAIT_S).
+    rpc = OffLoopRpc()
+    # What the detector was built with (build_grounder); an injected one
+    # (the tests' stand-ins) says so.
+    grounder_rec: dict = {"injected": grounder is not None}
     try:
         if camera is not None:
             camera.start()                     # loads the scene: BEFORE SITL starts
+        # ---- the detector, loading while SITL boots (DETECTOR_READY_TIMEOUT_S):
+        # its model load no longer runs beside the mission's first ticks.
+        fv = None
+        hfov = args.hfov
+        if grounder is None or hfov is None:
+            fv = _fv()
+        if hfov is None:
+            hfov = (fv.camera_hfov_deg(config_path=Path(sim_cfg["dir"]) / sim_cfg["robot"])
+                    if sim_cfg else fv.CAMERA_HFOV_DEG)
+        if grounder is None:
+            grounder, grounder_rec = build_grounder(args, obs, out, fv, hfov)
+            grounder_rec["injected"] = False
+            grounder.start()
+            print(f"[detect] {fv.DETECTOR_ID} loading in its own thread (lock "
+                  f"{grounder_rec['lock']}; negative queries "
+                  f"{grounder_rec['negative_queries'] or 'none'})")
         if save_view:
             # Started now, writing nothing until the loop's first set_hud():
             # the video begins at mission start (after the take-off to cruise),
@@ -2807,19 +3353,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # The literal LOITER hold's throttle (--hold-mode LOITER on SITL only).
         throttle = ThrottleHold(link, hold_mode, autopilot_kind_of(link), rec)
 
-        # ---- detector and pilot --------------------------------------------------
-        fv = None
-        hfov = args.hfov
-        if grounder is None or hfov is None:
-            fv = _fv()
-        if hfov is None:
-            hfov = (fv.camera_hfov_deg(config_path=Path(sim_cfg["dir"]) / sim_cfg["robot"])
-                    if sim_cfg else fv.CAMERA_HFOV_DEG)
-        if grounder is None:
-            grounder = fv.Grounder(obs, args.object, thresh=args.det_thresh,
-                                   colour_min=args.colour_min,
-                                   log_path=out / "detections.jsonl")
-            grounder.start()
+        # ---- subject and pilot (the detector started before SITL, above) -------
         width_m, subject_class = (fv or _fv()).subject_width(args.object)
         # The stand-off rules this subject's class binds. An UNCLASSIFIED
         # subject (a phrase follow_vlm's tables do not know: "a child", "a
@@ -2850,11 +3384,66 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # Shield below is given the estimate, never this.
         actor, actor_why = subject_actor_for(getattr(args, "subject_actor", "auto"),
                                              args.object, subject_class)
-        truth = SubjectTruth(camera, actor, actor_why, scene_home, anchor)
+        truth = SubjectTruth(camera, actor, actor_why, scene_home, anchor, rpc=rpc)
         rings = [c.min_range_m for c in policy.by_type(SubjectStandoff)
                  if c.binds(subject_class)]
         ring_m = max(rings) if rings else None
         print(f"[truth]  subject pose: {truth.source or truth.why_off}")
+
+        # ---- the detector's first inference, then the start gate -------------
+        detector_ready = wait_for_detector(grounder, link, clock=clock, sleep=sleep)
+        print(f"[detect] " + (f"first inference after {detector_ready['waited_s']} s more"
+                              if detector_ready["ready"] else
+                              f"*** no inference after {detector_ready['waited_s']} s: "
+                              f"the mission starts on a detector still loading"))
+        # Why no mission is flown (None: one is): the gate timed out under
+        # --start-timeout-action land, or the link died while it waited.
+        no_mission = None
+        gate_rec: dict = {"enabled": False, "needed": 0,
+                          "why": "--start-when-seen 0: the mission started at take-off "
+                                 "whatever the camera saw"}
+        if getattr(args, "start_when_seen", 0) > 0:
+            gate = StartGate(args.start_when_seen, args.object, args.colour_min,
+                             max_range_m=args.start_max_range_m, width_m=width_m,
+                             hfov_deg=hfov, gate_frac=getattr(args, "lock_gate", 0.12),
+                             identity=getattr(args, "identity", False), fv=fv or _fv())
+            if callable(getattr(grounder, "begin_acquire", None)):
+                grounder.begin_acquire()
+            print(f"[start]  hovering until the detector has seen {args.object!r} on "
+                  f"{args.start_when_seen} inferences in a row within "
+                  f"{args.start_max_range_m:g} m (at most {args.start_timeout_s:g} s)")
+            # A reader of its own, so the flight's truth counters stay per tick.
+            gate_truth = SubjectTruth(camera, actor, actor_why, scene_home, anchor, rpc=rpc)
+            gate_rec = wait_for_subject(gate, grounder, link, anchor, obs,
+                                        timeout_s=args.start_timeout_s, clock=clock,
+                                        sleep=sleep, truth=gate_truth, hfov_deg=hfov)
+            gate_rec["timeout_action"] = args.start_timeout_action
+            if callable(getattr(grounder, "commit", None)):
+                # The confirmed box seeds the lock and the jump gate; with
+                # none, tracking starts from whatever is seen next.
+                grounder.commit(gate.pick if gate_rec["reached"] else None,
+                                yaw=gate.pick_yaw)
+            link.pump()
+            gate_rec["truth_at_decision"] = gate_truth_verdict(
+                gate_rec, gate_truth, link.state(anchor), hfov, fv=fv or _fv())
+            if not gate_rec["reached"]:
+                if gate_rec["aborted"]:
+                    no_mission = gate_rec["aborted"]
+                elif args.start_timeout_action == "land":
+                    no_mission = (f"start gate timed out after {gate_rec['wait_s']} s: no "
+                                  f"plausible {args.object!r} within "
+                                  f"{args.start_max_range_m:g} m on "
+                                  f"{args.start_when_seen} inferences in a row")
+            rec.event("start_gate", **{k: gate_rec.get(k) for k in (
+                "reached", "wait_s", "first_candidate_s", "inferences_judged",
+                "inferences_with_plausible", "best_streak", "rejected_by", "pick",
+                "aborted", "timeout_action", "truth_at_decision")})
+            print(f"[start]  {'subject acquired' if gate_rec['reached'] else '*** NO SUBJECT ***'}"
+                  f" after {gate_rec['wait_s']} s: {gate_rec['inferences_judged']} inferences "
+                  f"judged, best streak {gate_rec['best_streak']}, refused "
+                  f"{gate_rec['rejected_by']}"
+                  + ("" if gate_rec["reached"] else
+                     f" - {no_mission or 'flying anyway (--start-timeout-action fly)'}"))
 
         # ---- loop ----------------------------------------------------------------
         rows, traj, ekf_err = [], [], []
@@ -2895,11 +3484,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         takeover = None
         fsm_fault = None
         failsafe_t = None
-        end_reason = "max_s reached"
+        end_reason = "max_s reached" if no_mission is None else f"no mission: {no_mission}"
         prev_mode = link.snap.mode
         fence0 = link.snap.fence_breach_count
+        # Read AFTER the start gate: its inferences (it can wait minutes) are
+        # not the mission's, for det_hz (follow_vlm counted them once, and
+        # reported 6.9-7.5 Hz for a 3.5-3.9 Hz detector; 2026-09-29).
         g0 = grounder.latest()
         det_n0 = (g0.get("n_seen") or 0) + (g0.get("n_miss") or 0)
+        gate_rec["det_inferences_before_t0"] = det_n0
         # The FCU clock is paired with the wall time it ARRIVED at, not with
         # "now": SYSTEM_TIME comes at 2 Hz, and pairing a stale FCU stamp with
         # the current wall time read a perfect real-time run as 0.97x.
@@ -2911,8 +3504,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                   rule_clock_reading=rule_now().isoformat(timespec="seconds"))
         # The two simulator checks (SIM_CHECKS, below), half a period apart.
         t_frame, t_geo = -math.inf, t0 - TRUTH_FRAME_PERIOD_S / 2.0
+        if no_mission is not None:
+            print(f"[node]   *** {end_reason}; landing")
         try:
-            while clock() - t0 < args.max_s:
+            while no_mission is None and clock() - t0 < args.max_s:
                 t_tick = clock()
                 tick_starts.append(t_tick - t0)
                 link.pump()
@@ -3282,7 +3877,11 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 elif (t_tick - t_geo >= TRUTH_FRAME_PERIOD_S and camera is not None
                       and hasattr(camera, "truth_geo")):
                     t_geo = t_tick
-                    g = camera.truth_geo()
+                    # Through the RPC worker too (OffLoopRpc): an answer later
+                    # than SIM_RPC_WAIT_S is dropped, and this check skipped.
+                    g_st, g = rpc.call(camera.truth_geo)
+                    if g_st != "ok":
+                        g = None
                     if g is not None and s.lat is not None:
                         gx, gy = anchor.to_scene(g["lat"], g["lon"])
                         ex, ey = anchor.to_scene(s.lat, s.lon)
@@ -3845,7 +4444,34 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                                      "hold_mode", "subject_actor",
                                                      "clock_start", "clock_tz")},
             "detector": "google/owlvit-base-patch32 (demo/follow_vlm.DETECTOR_ID)",
+            # THE START GATE (StartGate, wait_for_subject; open item C1): what
+            # it judged and refused, whether and when it was reached, the box
+            # it committed to, and - read after the decision, evaluation only
+            # - whether that was the subject (truth_at_decision) and where the
+            # subject was while it waited (truth_trace). enabled false: the
+            # mission started at take-off (--start-when-seen 0).
+            "start_gate": gate_rec,
+            # The detector started before SITL, and how long the mission then
+            # still waited for its first inference (DETECTOR_READY_TIMEOUT_S).
+            "detector_ready": detector_ready,
+            # How the detector chose its box (build_grounder): the TargetLock,
+            # identity, the negative phrases and the boxes they took away;
+            # the lock's own counters.
+            "detector_selection": dict(
+                grounder_rec,
+                negative_suppressed=getattr(grounder, "n_neg_suppressed", None),
+                lock_stats=(grounder.lock.stats() if getattr(grounder, "lock", None)
+                            is not None and hasattr(grounder.lock, "stats") else None),
+                identity_counts=(dict(grounder.id_counts) if grounder_rec.get("identity")
+                                 and hasattr(grounder, "id_counts") else None)),
+            # The simulator's evaluation RPCs, off the loop (OffLoopRpc): each
+            # call's own duration, and those answered too late to use.
+            "sim_rpc": rpc.summary(),
         }
+        metrics["params"].update({k: getattr(args, k, None) for k in (
+            "start_when_seen", "start_max_range_m", "start_timeout_s",
+            "start_timeout_action", "negative_query", "identity", "lock_gate",
+            "no_lock_target")})
         # The null beside the follow proxy (guardrail.kpi.null_hover_mission):
         # would an aircraft that never left its start pass the same test? It
         # reads the truth from the rows' tgt_x / tgt_y.
@@ -3916,6 +4542,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         if policy_source.get("dev_yaml"):
             why.append(f"the policy was flown from YAML under {DEV_YAML_FLAG}: "
                        f"unsigned, not its issued bundle")
+        if no_mission is not None:
+            why.append(f"no mission was flown: {no_mission}")
+        elif gate_rec.get("enabled") and not gate_rec.get("reached"):
+            why.append(f"the start gate confirmed no subject in "
+                       f"{gate_rec.get('wait_s')} s; the mission was flown anyway "
+                       f"(--start-timeout-action fly), so it followed no confirmed subject")
         if not scored and (tsum.get("frame_check") or {}).get("agrees") is False:
             why.append("the follow is not scored: "
                        + frame_disagreement(tsum["frame_check"]))
@@ -4031,6 +4663,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 stop_recorder(recorder, view_dir)
             except Exception as exc:                              # noqa: BLE001
                 print(f"[view]   recorder stop failed: {type(exc).__name__}: {exc}")
+        # The detector thread (started before SITL, so a refused bring-up
+        # leaves it running) and the RPC worker, before the simulator
+        # connection they use goes.
+        if grounder is not None and callable(getattr(grounder, "stop", None)):
+            grounder.stop()
+        rpc.close()
         if camera is not None and hasattr(camera, "stop"):
             camera.stop()
         if sitl_proc is not None:

@@ -1526,7 +1526,9 @@ def _fly(shield="on", link_cls=None, policy=CAP_POLICY, extra=(), link_kw=None,
         "--out-root", str(out), "--tag", "run", "--policy", str(pol), "--max-s", max_s,
         "--hfov", "90", "--citymap", str(out / "no_map.npz"), "--network", "nat",
         "--windows-ip", WIN, "--wsl-ip", WSL, "--shield", shield, "--speed-max", "4",
-        "--dev-yaml", *extra])
+        # No start gate unless a test asks for one (`extra` comes after, and
+        # argparse keeps the last value): these stand-ins test the loop.
+        "--dev-yaml", "--start-when-seen", "0", *extra])
     clk = clk or Clock()
     anchor = ap.FrameAnchor(35.6895, 139.6917, 40.0, "scene.home-geo-point")
     link = (link_cls or FakeLink)(clk, anchor, **(link_kw or {}))
@@ -1611,7 +1613,8 @@ def test_a_link_that_dies_mid_flight_ends_the_episode_with_the_real_reason():
     (out / "p.yaml").write_text(CAP_POLICY, encoding="utf-8")
     args = pn.build_parser().parse_args([
         "--out-root", str(out), "--tag", "d", "--policy", str(out / "p.yaml"),
-        "--hfov", "90", "--network", "mirrored", "--max-s", "5", "--dev-yaml"])
+        "--hfov", "90", "--network", "mirrored", "--max-s", "5", "--dev-yaml",
+        "--start-when-seen", "0"])
     clk = Clock()
     link = Dying(clk, ap.FrameAnchor(35.6895, 139.6917, 40.0, "s"))
     try:
@@ -3052,6 +3055,371 @@ def test_the_mission_upload_handshake_and_its_refusals():
     q = collections.deque()
     ok, why = g1.upload_mission(MissionLink(q, early_ack=2), items, q, timeout=5)
     assert not ok and "2/7" in why, why
+
+
+# =========================================================================== #
+# The start gate, the detector's selection, and the loop's timing (2026-10-21)
+# =========================================================================== #
+
+GATE_FIXTURE = ROOT / "tests" / "fixtures" / "pas_ap_ovf_on_20261021_detections.slim.jsonl"
+# A car on the road 20 m ahead of an aircraft 8 m up, level: 4.0 m wide by its
+# depth range, its bottom-edge ray meeting the road at 21.4 m. follow_vlm's
+# presence verdict calls it PRESENT.
+CAR_BOX = (384.0, 219.4, 76.0, 20.0, 0.3, 768, 432, 0.5)
+CAR_DEPTH_M = 20.0
+
+
+def _gate_inferences():
+    lines = [json.loads(l) for l in GATE_FIXTURE.read_text(encoding="utf-8").splitlines()]
+    return [l for l in lines if "_source" not in l]
+
+
+def _replay_gate(need, max_range_m, inferences):
+    import numpy as np
+    g = pn.StartGate(need, "a red car", 0.10, max_range_m=max_range_m, width_m=4.0,
+                     hfov_deg=90.0)
+    for e in inferences:
+        lat = {"seq": e["seq"], "cands": [] if e["det"] is None else [tuple(e["det"])]}
+        depth = (None if e.get("depth_m") is None
+                 else np.full((432, 768), e["depth_m"], dtype=np.float32))
+        ground = None if e.get("up") is None else (e["up"], math.radians(e["pitch_deg"]))
+        if g.judge(lat, depth=depth, ground=ground):
+            return g, e
+    return g, None
+
+
+def test_the_start_gate_refuses_every_box_of_the_21_oct_flight():
+    """C1 (open items, 2026-10-21). pas_ap_ovf_on_20261021 started its follow
+    at take-off: the car was 150-230 m away and never in view, the detector
+    boxed a red traffic signal, and 0 of 186 estimates were within 6 m of the
+    car. Its 345 logged inferences (tests/fixtures, every box with the pose
+    and the depth read in it) replayed through the ported gate: 34 of the 39
+    boxes are not a car (19 by the width their depth implies, 15 not
+    standing on the road: the signal's base ray meets the road 3-10x beyond
+    its depth), 2 more are beyond 30 m, and no streak passes 1 - so the
+    mission would not have started. The log holds the top box only (it was
+    not acquiring, so the other candidates were not written); the gate in
+    flight judges them all. One plausible box is no start: with need 1 and
+    no range limit the gate would have started on seq 11, while the car was
+    184 m away and 125 deg off the nose."""
+    inf = _gate_inferences()
+    assert len(inf) == 345 and sum(e["det"] is not None for e in inf) == 39
+    g, hit = _replay_gate(pn.START_WHEN_SEEN, pn.START_MAX_RANGE_M, inf)
+    assert hit is None, f"the gate started on seq {hit['seq']}"
+    rec = g.record()
+    assert rec["rejected_by"] == {"implied width": 19, "not on the ground": 15,
+                                  "too far": 2}, rec["rejected_by"]
+    assert rec["best_streak"] == 1 and rec["inferences_judged"] == 345
+    # The streak, not the verdict alone, is what keeps it shut.
+    g1_, hit1 = _replay_gate(1, 0.0, inf)
+    assert hit1 is not None and hit1["seq"] == 11, hit1
+    assert hit1["truth_range_m"] > 180 and abs(hit1["truth_off_nose_deg"]) > 120
+
+
+def test_the_start_gate_confirms_a_car_on_the_road_seen_n_times_in_a_row():
+    import numpy as np
+    depth = np.full((432, 768), CAR_DEPTH_M, dtype=np.float32)
+    g = pn.StartGate(5, "a red car", 0.10, max_range_m=30.0, width_m=4.0, hfov_deg=90.0)
+    ground = (8.0, 0.0)
+    seq = 0
+
+    def see(box):
+        nonlocal seq
+        seq += 1
+        return g.judge({"seq": seq, "cands": [] if box is None else [box],
+                        "inf_cap": {"pose": {"yaw": 0.25}}}, depth=depth, ground=ground)
+
+    assert not any(see(CAR_BOX) for _ in range(4))
+    assert not see(None), "a miss is no sighting"
+    assert g.acq.streak == 0, "a miss ends the streak"
+    jumped = (CAR_BOX[0] + 200.0,) + CAR_BOX[1:]
+    assert not any(see(b) for b in (CAR_BOX, CAR_BOX, jumped)), \
+        "a box 200 px from the last pick is another object: a new streak"
+    assert g.acq.streak == 1
+    assert [see(CAR_BOX) for _ in range(5)] == [False, False, False, False, True]
+    assert g.pick == CAR_BOX and g.pick_yaw == 0.25
+    rec = g.record()
+    assert rec["pick"]["w"] == 76.0 and rec["best_streak"] == 5
+    # Beyond the range limit by depth, the same box is "too far".
+    far = pn.StartGate(5, "a red car", 0.10, max_range_m=15.0, width_m=4.0, hfov_deg=90.0)
+    for i in range(6):
+        assert not far.judge({"seq": i, "cands": [CAR_BOX]}, depth=depth, ground=ground)
+    assert far.record()["rejected_by"] == {"too far": 6}
+
+
+class GateDetections(FakeDetections):
+    """FakeDetections with the Grounder's acquisition calls, recorded."""
+
+    def __init__(self, clock, **kw):
+        super().__init__(clock, **kw)
+        self.calls = []
+
+    def begin_acquire(self):
+        self.calls.append(("begin_acquire",))
+
+    def commit(self, cand, yaw=None):
+        self.calls.append(("commit", cand, yaw))
+
+
+def test_the_rail_waits_for_the_subject_before_the_mission_clock():
+    """The gate in run(): the detector's box is a car on the road 20 m out
+    (depth from FakeObs), so five inferences confirm it; the Grounder is put
+    into acquisition first and committed to the pick; the mission clock
+    starts after, and its det_hz does not count the gate's inferences."""
+    rc, run, link = _fly(grounder_cls=GateDetections, depth_m=CAR_DEPTH_M,
+                         grounder_kw={"cx": CAR_BOX[0], "cy": CAR_BOX[1],
+                                      "w": CAR_BOX[2], "h": CAR_BOX[3]},
+                         extra=("--start-when-seen", "5"))
+    assert rc == 0
+    m = _json(run, "metrics.json")
+    gate = m["start_gate"]
+    assert gate["enabled"] and gate["reached"] and gate["inferences_judged"] == 5, gate
+    assert gate["pick"]["cx"] == CAR_BOX[0] and gate["aborted"] is None
+    assert gate["det_inferences_before_t0"] >= 5
+    assert m["end_reason"] == "max_s reached" and _rows(run)
+    events = [json.loads(l) for l in (run / "events.jsonl").read_text().splitlines()]
+    kinds = [e["kind"] for e in events]
+    assert kinds.index("start_gate") < kinds.index("mission_start"), kinds
+    kpi = _json(run, "kpi.json")
+    assert not any("start gate" in w or "no mission" in w for w in kpi["kpi_grade_reasons"])
+
+
+def test_a_gate_that_never_sees_the_subject_flies_no_mission():
+    """The default stand-in box is 20 px wide: a 4 m car that small is 96 m
+    away, beyond the 30 m start range, so the gate never confirms it. The
+    run then lands without a mission (no row, the reason on record, never
+    KPI-grade); with --start-timeout-action fly it flies, and says it
+    followed no confirmed subject."""
+    rc, run, link = _fly(grounder_cls=GateDetections,
+                         extra=("--start-when-seen", "5", "--start-timeout-s", "2"))
+    assert rc == 0
+    m = _json(run, "metrics.json")
+    assert m["start_gate"]["reached"] is False and m["ticks"] == 0, m["start_gate"]
+    assert m["start_gate"]["rejected_by"] == {"too far": m["start_gate"]["inferences_judged"]}
+    assert m["end_reason"].startswith("no mission: start gate timed out"), m["end_reason"]
+    assert "LAND" in link.requested and not link.sent, "the aircraft was commanded"
+    kpi = _json(run, "kpi.json")
+    assert kpi["kpi_grade"] is False
+    assert any(w.startswith("no mission was flown") for w in kpi["kpi_grade_reasons"])
+    rc, run, link = _fly(grounder_cls=GateDetections,
+                         extra=("--start-when-seen", "5", "--start-timeout-s", "2",
+                                "--start-timeout-action", "fly"))
+    m = _json(run, "metrics.json")
+    assert rc == 0 and m["start_gate"]["reached"] is False and m["ticks"] > 0
+    assert any("followed no confirmed subject" in w
+               for w in _json(run, "kpi.json")["kpi_grade_reasons"])
+
+
+def test_negative_phrases_take_away_only_the_boxes_they_win():
+    """--negative-query (follow_vlm.negative_suppress). OWL-ViT scores each
+    (box, phrase) pair on its own, so asking "a traffic light" beside "a red
+    car" leaves every box's car score as it was, unless the traffic-light
+    score is higher: then the box is no candidate."""
+    fv = pn._fv()
+    pos = [0.30, 0.05, 0.01, 0.04]
+    neg = [0.10, 0.20, 0.50, 0.04]
+    kept, n, top = fv.negative_suppress(pos, neg, 0.02)
+    assert kept == [0.30, 0.0, 0.0, 0.04], kept
+    # Box 2 lost too, but its car score (0.01) was under the threshold anyway.
+    assert n == 1 and top == 1
+    assert fv.negative_suppress(pos, None, 0.02) == (pos, 0, None)
+
+
+def test_the_rail_builds_its_detector_with_the_lock_negatives_and_identity_asked():
+    """build_grounder: a TargetLock by default (seeded by the gate's pick),
+    none with --no-lock-target, no lock with --identity (no estimator to
+    release a strict one), and the negative phrases handed to the Grounder."""
+    real = pn._fv()
+    made = []
+
+    class G:
+        def __init__(self, obs, query, **kw):
+            made.append((query, kw))
+
+    fake = SimpleNamespace(Grounder=G, TargetLock=real.TargetLock)
+    base = ["--network", "mirrored", "--dev-yaml", "--citymap", str(_tmp() / "occ.npz")]
+    a = pn.build_parser().parse_args(base + ["--negative-query", "a traffic light",
+                                             "--negative-query", "a stop sign"])
+    g, rec = pn.build_grounder(a, FakeObs(), _tmp(), fake, 90.0)
+    q, kw = made[-1]
+    assert q == "a red car" and kw["negatives"] == ["a traffic light", "a stop sign"]
+    assert isinstance(kw["lock"], real.TargetLock) and kw["identity"] is None
+    assert rec["lock"]["kind"] == "TargetLock" and rec["negative_queries"] == kw["negatives"]
+    g, rec = pn.build_grounder(pn.build_parser().parse_args(base + ["--no-lock-target"]),
+                               FakeObs(), _tmp(), fake, 90.0)
+    assert made[-1][1]["lock"] is None and rec["lock"] is None and made[-1][1]["negatives"] == []
+    g, rec = pn.build_grounder(pn.build_parser().parse_args(base + ["--identity"]),
+                               FakeObs(), _tmp(), fake, 90.0)
+    kw = made[-1][1]
+    assert kw["lock"] is None and kw["identity"]["hfov"] == 90.0
+    assert rec["identity"]["noun"] == "car" and rec["identity"]["street_mask"] is False
+
+
+def test_the_identity_gate_starts_only_on_an_ok_box_seen_moving():
+    """--identity: the start is decided in the world, as follow_vlm decides
+    it (Reacquirer with no anchor): only identity-OK boxes, and the object
+    must be SEEN MOVING over the streak - a car-wide sign by the kerb never
+    starts the mission however often it is seen."""
+    g = pn.StartGate(4, "a red car", 0.10, max_range_m=30.0, width_m=4.0,
+                     hfov_deg=90.0, identity=True)
+    t = 100.0
+    # A static OK box, 12 m out, for 10 s: past the Reacquirer's 8 s, after
+    # which a streak that never moved marks its place STATIC.
+    for i in range(50):
+        t += 0.2
+        assert not g.judge({"seq": i, "cands": [CAR_BOX], "cand_tiers": ["ok"],
+                            "cand_feats": [{"P": (12.0, 0.0), "rng_h": 12.0, "r": 12.0}],
+                            "inf_cap": {"t_capture": t, "pose": {"yaw": 0.0}}})
+    assert g.record()["identity_gate"]["refused"].get("static"), g.record()
+    g = pn.StartGate(4, "a red car", 0.10, max_range_m=30.0, width_m=4.0,
+                     hfov_deg=90.0, identity=True)
+    assert not g.judge({"seq": 0, "cands": [CAR_BOX], "cand_tiers": ["soft"],
+                        "cand_feats": [{"P": (12.0, 0.0), "rng_h": 12.0, "r": 12.0}],
+                        "inf_cap": {"t_capture": 1.0}})
+    reached, t = False, 1.0
+    for i in range(1, 30):            # an OK box driving east at 3 m/s
+        t += 0.2
+        reached = g.judge({"seq": i, "cands": [CAR_BOX], "cand_tiers": ["ok"],
+                           "cand_feats": [{"P": (12.0, 3.0 * (t - 1.0)), "rng_h": 12.0,
+                                           "r": 12.0}],
+                           "inf_cap": {"t_capture": t, "pose": {"yaw": 0.1}}})
+        if reached:
+            break
+    assert reached and g.pick == CAR_BOX and g.pick_yaw == 0.1
+    assert g.record()["identity_gate"]["refused"].get("not ok") == 1
+
+
+def test_a_slow_simulator_rpc_never_holds_the_loop():
+    """C14. On pas_ap_ovf_on_20261021 one GetObjectPoses took 1024.9 ms
+    (subject_truth.reader.read_ms max) and was that flight's 1028 ms tick:
+    the evaluation RPC sat on the loop. OffLoopRpc makes it on a worker and
+    waits at most SIM_RPC_WAIT_S: the caller gets "late" at once, the next
+    call "busy" while it runs, and its true duration is kept."""
+    import threading
+    import time as _time
+    gate = threading.Event()
+    rpc = pn.OffLoopRpc(wait_s=0.05)
+    t0 = _time.perf_counter()
+    st, val = rpc.call(lambda: (gate.wait(2.0), (1.0, 2.0))[1])
+    assert st == "late" and val is None and _time.perf_counter() - t0 < 0.5
+    assert rpc.call(lambda: (3.0, 4.0)) == ("busy", None)
+    _time.sleep(0.2)
+    gate.set()
+    for _ in range(100):
+        if rpc.late_ms:
+            break
+        _time.sleep(0.01)
+    assert rpc.late_ms and rpc.late_ms[0] >= 150.0, rpc.late_ms
+    assert rpc.call(lambda: (5.0, 6.0)) == ("ok", (5.0, 6.0))
+
+    def boom():
+        raise RuntimeError("Fatal Timeout")
+    st, exc = rpc.call(boom)
+    assert st == "error" and isinstance(exc, RuntimeError)
+    s = rpc.summary()
+    assert s["late"] == 1 and s["busy"] == 1 and s["errors"] == 1 and s["calls"] == 3
+    rpc.close()
+
+
+class SlowTruthCamera(FakeCamera):
+    """A simulator that knows where the car is (2 m east of the aircraft),
+    and whose answer to the 5th pose read takes 0.4 s."""
+
+    def __init__(self, link, log=None):
+        super().__init__(link, log)
+        self.n = 0
+
+    def object_xy(self, name):
+        if name == pn.AIRCRAFT_ACTOR:
+            return (self.link.x, self.link.y)
+        self.n += 1
+        if self.n == 5:
+            import time as _time
+            _time.sleep(0.4)
+        return (self.link.x, self.link.y + 2.0)
+
+
+def test_the_flight_reads_the_subject_truth_off_the_loop():
+    """run(): the slow read is a tick with no truth, said so, and the ticks
+    after it go on (none sent while it runs); metrics.json counts it."""
+    out = _tmp()
+    pol = out / "policy.yaml"
+    pol.write_text(CAP_POLICY, encoding="utf-8")
+    args = pn.build_parser().parse_args([
+        "--out-root", str(out), "--tag", "run", "--policy", str(pol), "--max-s", "2",
+        "--hfov", "90", "--citymap", str(out / "no_map.npz"), "--network", "nat",
+        "--windows-ip", WIN, "--wsl-ip", WSL, "--dev-yaml", "--start-when-seen", "0",
+        "--object", "a red car"])
+    clk = Clock()
+    link = FakeLink(clk, ap.FrameAnchor(35.6895, 139.6917, 40.0, "scene.home-geo-point"))
+    rc = pn.run(args, link=link, camera=SlowTruthCamera(link), grounder=FakeDetections(clk),
+                obs=FakeObs(), clock=clk, sleep=clk.sleep)
+    assert rc == 0
+    rows = _rows(out / "run")
+    late = [r for r in rows if "no answer within" in (r.get("subject_truth_why") or "")]
+    assert len(late) == 1, [r.get("subject_truth_why") for r in rows[:8]]
+    m = _json(out / "run", "metrics.json")
+    rd = m["subject_truth"]["reader"]
+    assert rd["off_loop"] is True and rd["late"] == 1, rd
+    assert m["sim_rpc"]["late"] >= 1 and m["sim_rpc"]["wait_ms"] == 50.0, m["sim_rpc"]
+    assert sum(r["subject_truth"] is not None for r in rows) >= len(rows) - 1 - rd["busy"]
+
+
+def test_the_detector_loads_before_sitl_starts_and_the_mission_waits_for_it():
+    """C14. The Grounder was started after the take-off, at mission start, so
+    OWL-ViT's import and load ran beside the first 26 s of ticks on 21 Oct
+    (12 of 263 tick intervals over 105 ms against 9 of 926 after, and the one
+    97.9 ms Shield step). It now starts once the camera is up, before SITL,
+    and the mission clock waits for its first inference."""
+    real = pn._fv()
+    log = []
+
+    class SlowGrounder:
+        """Loads for 3 latest() calls, then answers like FakeDetections."""
+
+        def __init__(self, obs, query, **kw):
+            self.kw, self.n, self.inner = kw, 0, None
+
+        def start(self):
+            log.append("grounder.start")
+
+        def stop(self):
+            log.append("grounder.stop")
+
+        def latest(self):
+            self.n += 1
+            if self.n <= 3:
+                return {"seq": 0, "det": None, "t_det": 0.0, "n_seen": 0, "n_miss": 0}
+            return {"seq": self.n, "det": (576.0, 216.0, 20.0, 12.0, 0.3, 768, 432, 0.5),
+                    "t_det": clk.t, "n_seen": self.n, "n_miss": 0}
+
+    fake = SimpleNamespace(**{k: getattr(real, k) for k in dir(real) if not k.startswith("__")})
+    fake.Grounder = SlowGrounder
+    old = pn._fv
+    pn._fv = lambda: fake
+    try:
+        out = _tmp()
+        pol = out / "policy.yaml"
+        pol.write_text(CAP_POLICY, encoding="utf-8")
+        args = pn.build_parser().parse_args([
+            "--out-root", str(out), "--tag", "run", "--policy", str(pol), "--max-s", "1",
+            "--hfov", "90", "--citymap", str(out / "no_map.npz"), "--network", "nat",
+            "--windows-ip", WIN, "--wsl-ip", WSL, "--dev-yaml", "--start-when-seen", "0",
+            "--start-sitl"])
+        clk = Clock()
+        link = FakeLink(clk, ap.FrameAnchor(35.6895, 139.6917, 40.0, "scene.home-geo-point"))
+        spy = Spy(log)
+        rc = pn.run(args, link=link, camera=FakeCamera(link, log), obs=FakeObs(),
+                    clock=clk, sleep=clk.sleep, popen=spy.popen, run_cmd=spy.run)
+    finally:
+        pn._fv = old
+    assert rc == 0
+    assert log[:3] == ["camera.start", "grounder.start", "sitl.popen"], log
+    m = _json(out / "run", "metrics.json")
+    assert m["detector_ready"]["ready"] is True and m["detector_ready"]["waited_s"] > 0
+    assert m["detector_selection"]["injected"] is False
+    assert m["detector_selection"]["lock"]["kind"] == "TargetLock"
+    assert "grounder.stop" in log
 
 
 if __name__ == "__main__":
