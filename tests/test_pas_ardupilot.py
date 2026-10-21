@@ -3820,6 +3820,45 @@ def test_nothing_from_the_arming_to_the_loop_leaves_the_aircraft_unlanded():
     assert _mission_end(run)["autopilot_owns"] is True
 
 
+def test_a_switch_after_the_hover_s_last_tick_is_not_landed_over():
+    """Review 3 follow-up (2026-10-22), P2's sibling at the other end of the
+    hover. The gate pumps the link once more after its last hover tick (for
+    its truth verdict); a pilot's switch reported in that pump was judged by
+    nobody on the no-mission path - the loop never ran a tick - and the
+    loop's finally asked for LAND over the pilot's LOITER, with
+    autopilot_took_over None. The LAND decision now judges the mode one last
+    time against the last one judged (the loop's takeover test)."""
+    real = pn.wait_for_subject
+    seen = {}
+
+    def then_the_pilot(gate, grounder, watch, *a, **k):
+        rec_ = real(gate, grounder, watch, *a, **k)
+        # The hover is over and never saw it: the pilot switches now, and
+        # the gate's next pump reports it.
+        watch.link.takeover_at = (0.0, "LOITER")
+        seen["hover_mode"] = watch.mode
+        return rec_
+    pn.wait_for_subject = then_the_pilot
+    try:
+        rc, run, link = _fly(grounder_cls=GateDetections,
+                             extra=("--start-when-seen", "5", "--start-timeout-s", "2"))
+    finally:
+        pn.wait_for_subject = real
+    assert seen["hover_mode"] == "GUIDED", seen
+    assert rc == 0 and link.requested == [] and not link.sent, (rc, link.requested)
+    assert link.snap.mode == "LOITER", link.snap.mode
+    m = _json(run, "metrics.json")
+    assert m["end_reason"].startswith("no mission: start gate timed out"), m["end_reason"]
+    tk = m["autopilot_took_over"]
+    assert tk is not None and tk["mode"] == "LOITER" and tk["previous"] == "GUIDED", tk
+    assert tk["phase"] == "before the mission" and m["mission_end_land_accepted"] is None, tk
+    assert any(e["kind"] == "autopilot_took_over" for e in _events(run))
+    # A mission that ended in GUIDED is still landed: the last look changes
+    # nothing when the mode did not change.
+    rc, run, link = _fly()
+    assert link.requested == ["LAND"] and _json(run, "metrics.json")["autopilot_took_over"] is None
+
+
 def test_the_hover_before_the_mission_is_checked_against_the_rules():
     """P3 (review 2026-10-22). For up to 630 s airborne (the gate's 330 s
     and the detector's 300 s) no Shield query, FSM step or fence recheck

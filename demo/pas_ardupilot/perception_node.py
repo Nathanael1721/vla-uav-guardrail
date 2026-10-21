@@ -3724,11 +3724,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     # THE NET FROM THE ARMING ON (land_on_the_way_out; review 3, 2026-10-22):
     # whether the aircraft was armed and took off, whether the loop's finally
     # made its LAND decision, the exception on the way out and the stage it
-    # came from, and what the net reads (the hover's takeover, the throttle).
+    # came from, and what the net reads (the hover's or the loop's takeover,
+    # the throttle).
     airborne = land_decided = False
     crash = None
     stage = "the bring-up"
-    watch = throttle = None
+    watch = throttle = takeover = None
     # What was asked of the autopilot, in the FSM's words and ArduCopter's,
     # and which request can explain a mode change (ModeRequests): one record
     # from the take-off on - the hover's, the loop's and the net's.
@@ -4737,6 +4738,34 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 throttle.release(round(clock() - t0, 3), f"episode end ({end_reason})")
             except Exception as exc:                              # noqa: BLE001
                 print(f"[hold]   override release failed: {exc}")
+            # THE LAST LOOK BEFORE THE LAND (review 3 follow-up, 2026-10-22):
+            # the mode is judged once more, by the loop's takeover test against
+            # the last mode judged. On the no-mission path no tick ran, and the
+            # gate pumps the link once after the hover's last tick (for its
+            # truth verdict): a pilot's switch reported in that pump was judged
+            # by nobody, and LAND was asked over the pilot's LOITER with
+            # autopilot_took_over None (tests/test_pas_ardupilot.py). A mission
+            # that ended in the mode last judged is unchanged by this.
+            if takeover is None:
+                try:
+                    s_end = link.snap
+                    if autopilot_took_over(s_end.mode, prev_mode, asks):
+                        t_end_ = round(clock() - t0, 3)
+                        takeover = {"t": t_end_, "mode": s_end.mode, "previous": prev_mode,
+                                    "fence_breach_count": s_end.fence_breach_count,
+                                    "statustext": list(s_end.statustext[-3:]),
+                                    "phase": ("before the mission" if no_mission is not None
+                                              else "mission end")}
+                        print(f"[link]   *** the autopilot took the aircraft: {prev_mode} -> "
+                              f"{s_end.mode} ({takeover['phase']}); nothing is asked of it")
+                        # Best effort: a record write never decides the LAND.
+                        try:
+                            rec.event("autopilot_took_over", t=t_end_, mode=s_end.mode,
+                                      previous=prev_mode, phase=takeover["phase"])
+                        except Exception as exc:                  # noqa: BLE001
+                            print(f"[node]   *** takeover event not written: {exc}")
+                except Exception as exc:                          # noqa: BLE001
+                    print(f"[link]   mode not judged at the end: {type(exc).__name__}: {exc}")
             # A mission end lands. A fail-safe the FSM asked for, or a mode the
             # autopilot chose itself, is left to the autopilot to finish.
             autopilot_owns = takeover is not None or (
@@ -5367,8 +5396,11 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 t_net = None if mission_t0[0] is None else round(clock() - mission_t0[0], 3)
             except Exception:                                     # noqa: BLE001
                 t_net = None
+            # The loop's takeover (a Ctrl+C inside the loop's finally, before
+            # its LAND decision), else the hover's.
             land_on_the_way_out(link, asks, rec, crash=crash, stage=stage,
-                                takeover=None if watch is None else watch.takeover,
+                                takeover=(takeover if takeover is not None else
+                                          None if watch is None else watch.takeover),
                                 fsm=fsm, throttle=throttle, t=t_net)
         # Whatever happened above - a refused arm, an EKF that never
         # converged, Ctrl+C - the simulator connection and the SITL this
