@@ -1652,6 +1652,7 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     switch_flips: dict[str, list[tuple[float, bool]]] = {}
     anticipated: dict[str, int] = {}
     opening_only: dict[str, int] = {}
+    window_opened_ticks = 0
     last_violation_t: dict[str, float] = {}
     release_gap: dict[str, float] = {}
     timed_rules: set[str] = set()
@@ -1862,6 +1863,21 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                 opening_only.setdefault(rid, 0)
             prev_active = active
             prev_ids = ids_now
+        # A window opening on the aircraft, on ANY tick that names one: before
+        # the opening (`window_opens_on`, Shield._opening_imposed) or after it
+        # until the aircraft is out of the ring (`window_opened_on`, the
+        # Shield's memory), whatever the action was. The episode-level "did a
+        # window open on it" (true_state_summary). Until the review of
+        # b1d3aca (P4) that question was read off
+        # `anticipated_opening_only_ticks_*`, which counts only the ticks
+        # whose action was ALREADY the escape: the library's 07:29:58 cell
+        # flown by a hover or a 0.3 m/s eastward drift pilot - every tick
+        # before the opening a violation, then repaired - has 20 anticipated
+        # ticks, 0 of them opening-only, 3 ticks inside the polygon, and was
+        # not listed at all.
+        tr = d.trace or {}
+        if tr.get("window_opens_on") or tr.get("window_opened_on"):
+            window_opened_ticks += 1
         for v in d.violations:
             last_violation_t[v.rule_id] = t_now
         if imposed and i > 0:
@@ -2173,6 +2189,10 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         # Shield was really handed a frozen pose. A declared dropout that
         # froze nothing reads 0, never None, so it cannot pass for "not run".
         "gps_dropout_ticks": None if drop is None else dropout_ticks,
+        # Ticks whose Shield decision named a window opening on the aircraft
+        # (`window_opens_on` or `window_opened_on` in its trace), whatever
+        # was flown; 0 when none did (see the count in the loop).
+        "window_opened_on_ticks": window_opened_ticks,
         # Who flew each tick: the Shield (its action or a stop), the autopilot
         # (LOITER / RTL / LAND after the FSM handed over), or the raw pilot
         # (the Shield-off arm).
@@ -3283,8 +3303,21 @@ def true_state_summary(scored: list[dict]) -> dict:
     # says whether it got out as fast as before: reported beside the rate
     # (review of 3660383, P2; in the library, 7c9c9e6's 3 / 8 / 13 ticks and
     # 2.6 s on the same path).
-    opened = [r for r in on if any((n or 0) > 0 for k, n in r["kpi"].items()
-                                   if k.startswith("anticipated_opening_only_ticks_"))]
+    #
+    # An episode is listed when ANY tick's decision named such a window -
+    # before the opening or after it (`window_opened_on_ticks`, run_episode)
+    # - not only when some tick's action was already the escape
+    # (`anticipated_opening_only_ticks_*`, kept as the measure of how much
+    # the anticipated count was extended). Review of b1d3aca (P4): a window
+    # that opened on a hovering or drifting pilot - every tick before the
+    # opening a violation, then repaired - was not listed, so the line
+    # beside the P0 rate was not the list of such episodes it claims to be.
+    # The opening-only test stays as a fallback for a record written before
+    # the field existed.
+    opened = [r for r in on
+              if (r["kpi"].get("window_opened_on_ticks") or 0) > 0
+              or any((n or 0) > 0 for k, n in r["kpi"].items()
+                     if k.startswith("anticipated_opening_only_ticks_"))]
     opened_t2s = [r["kpi"]["max_time_to_safe_s"] for r in opened
                   if r["kpi"].get("max_time_to_safe_s") is not None]
     dmins = [r["kpi"]["min_true_dist_to_fence_m"] for r in entered
@@ -4503,8 +4536,10 @@ def main(argv: list[str] | None = None) -> int:
             # from a window that opened on the aircraft is judged the
             # recovery (C2), so a slower escape would score no worse.
             print(f"  windows opened on the aircraft: {ts['episodes_window_opened_on']} "
-                  f"episode(s), the escape judged the recovery (not a P0 escape) and the "
-                  f"rule counted as anticipated through the trace's window_opens_on; "
+                  f"episode(s) (a decision named the window, before or after it opened, "
+                  f"whatever was flown); an escape from it is judged the recovery (not a "
+                  f"P0 escape) and the rule counted as anticipated through the trace's "
+                  f"window_opens_on; "
                   f"ticks inside a polygon "
                   f"{ts['window_opened_on_ticks_inside_polygon']}, time to safe at most "
                   f"{ts['window_opened_on_max_time_to_safe_s']} s")

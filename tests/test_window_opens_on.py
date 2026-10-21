@@ -78,6 +78,12 @@ ticks inside the polygon (14.4 s) and a 0.2 m/s one never got out. Now:
     safe and is never censored.
 
 Run on b1d3aca's code, those 4 new tests fail and the other 13 pass.
+
+The same review (P4): the sweep summary's "windows opened on the aircraft"
+listed only episodes where some tick's action was already the escape; an
+episode now records the ticks whose decision named the window at all
+(`window_opened_on_ticks`), and a window that opened on a hovering pilot is
+listed. That test fails on b1d3aca's sweep code.
 """
 import math
 import random
@@ -697,6 +703,49 @@ def test_the_headline_shows_how_long_the_aircraft_was_inside_beside_the_p0_rate(
     assert none["window_opened_on_max_time_to_safe_s"] is None, none
     md = KR.render_sweep_markdown({"_counts": {}, "_scope": {}, "_true_state": none})
     assert "Windows opened on the aircraft" not in md, md
+
+
+def test_a_window_that_opened_on_a_hovering_pilot_is_listed_too():
+    """Review of b1d3aca (P4). The summary's "windows opened on the aircraft"
+    listed only episodes with an `anticipated_opening_only_ticks_*` tick - a
+    tick whose action was ALREADY the escape. The library's 07:29:58 cell
+    flown by a hover (or a 0.3 m/s drift east): every tick before the opening
+    is a violation, then repaired, so 20 anticipated ticks, 0 opening-only -
+    and the episode, 3 ticks inside the polygon, was not listed (0 episodes,
+    []). Now each episode records `window_opened_on_ticks`: the ticks whose
+    decision named the window in `window_opens_on` or `window_opened_on`,
+    whatever was flown - 26 in each of these runs (20 before the opening, 6
+    after it until the ring is left), and the summary lists any episode with
+    one. A window opening ahead of the aircraft names none."""
+    import sweep_scenarios as SW
+    from guardrail.scenario_spec import Library, PilotSpec
+    lib = Library(ROOT / "experiments" / "scenarios.yaml")
+    fam = lib.by_id()["time-window-opens-on-vehicle"]
+    cell = next(c for c in fam.cells() if c.params["clock"] == "2026-09-07T07:29:58"
+                and c.params["vehicle_speed_mps"] == 4.0)
+    recs = []
+    for act in ({"vx": 0.0, "vy": 0.0}, {"vx": 0.3}, None):
+        spec = cell.spec.model_copy(deep=True)
+        if act is not None:
+            spec.mission.pilot = PilotSpec(type="constant", action=act)
+        run = SW.run_episode(spec, lib.defaults, 0)
+        res = SW.score(spec, run.rows, run.extra, run.policy, run.priorities)
+        only = 0 if act is not None else 20
+        assert (res["anticipated_ticks_nfz-school"],
+                res["anticipated_opening_only_ticks_nfz-school"],
+                res["window_opened_on_ticks"], res["ticks_inside_fence_polygon"]) == \
+            (20, only, 26, 3), (act, res["anticipated_opening_only_ticks_nfz-school"],
+                                res["window_opened_on_ticks"])
+        ts = SW.true_state_summary([{"status": "pass", "arm": "on", "kpi": res}])
+        assert (ts["episodes_window_opened_on"],
+                ts["window_opened_on_ticks_inside_polygon"]) == (1, [3]), (act, ts)
+        recs.append({"status": "pass", "arm": "on", "kpi": res})
+    ahead = lib.by_id()["time-window-opens-ahead"].first
+    run = SW.run_episode(ahead.spec, lib.defaults, 0)
+    res = SW.score(ahead.spec, run.rows, run.extra, run.policy, run.priorities)
+    assert res["window_opened_on_ticks"] == 0, res["window_opened_on_ticks"]
+    ts = SW.true_state_summary(recs + [{"status": "pass", "arm": "on", "kpi": res}])
+    assert ts["episodes_window_opened_on"] == 3, ts
 
 
 if __name__ == "__main__":
