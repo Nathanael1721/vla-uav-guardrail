@@ -69,7 +69,8 @@ from guardrail import kpi as kpi_mod                                # noqa: E402
 from guardrail.bundle import load_for_flight                        # noqa: E402
 from guardrail.compiler import join_negative_xy                     # noqa: E402
 from guardrail.manifest import (                                    # noqa: E402
-    NO_VLA, build_manifest, is_kpi_grade, model_hash, pilot_record,
+    DEV_YAML_FLAG, NO_VLA, build_manifest, flight_bundle_path, flight_policy_choice,
+    is_kpi_grade, model_hash, pilot_record,
 )
 from guardrail.replay import verify_replay, write_replay           # noqa: E402
 from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S           # noqa: E402
@@ -94,8 +95,58 @@ TICK = 0.1
 SIM_CONFIG_DIR = str(ROOT / "demo" / "pas_config")
 SCENE = "scene_semantic.jsonc"
 ROBOT_CONFIG = ROOT / "demo" / "pas_config" / "robot_semantic_quad.jsonc"
-# The YAML a flight falls back to when neither --policy nor --bundle is given.
+# The policy a flight flies when neither --policy nor --bundle is given: its
+# signed bundle (city_policy_choice), or this YAML under --dev-yaml.
 DEFAULT_POLICY = ROOT / "policies" / "follow_car.yaml"
+
+
+def city_policy_choice(args, bundles_dir=None) -> tuple:
+    """`(bundle, yaml, record)` for load_for_flight: the city rail flies the
+    SIGNED bundle of its policy (audit card ARCH-29, 2026-10-21).
+
+    Until now this rail loaded `--policy P` (default policies/follow_car.yaml)
+    as unsigned YAML on every flight - citylife_redcar_nfz_motion2_20261019's
+    kpi.json says policy_source "yaml", signature "unsigned" - while the
+    ArduPilot rails had flown the signed bundle by default since 12-13 Oct.
+    Now, as there (guardrail.manifest.flight_policy_choice):
+
+      --bundle B             B, signature-verified; with --dev-yaml, refused.
+      --bundle B --policy P  handed on: load_for_flight refuses "not both".
+      --policy P             P's signed bundle, bundles/<policy_id>-v<version>
+                             .tar.gz (tools/build_flight_bundles.py builds
+                             it), recorded `default_bundle: true` and
+                             `bundle_of: P`; refused when it is not on disk,
+                             or no longer flies P's policy (an edit without a
+                             version bump), naming both ways out.
+      --policy P --dev-yaml  P itself, unsigned, recorded `dev_yaml: true` and
+                             never KPI-grade: the explicit fallback.
+      neither                as --policy DEFAULT_POLICY.
+
+    `--policy` keeps naming WHICH rule set flies, as every launcher uses it;
+    only what is loaded for it changed. ValueError before anything starts."""
+    dev = bool(getattr(args, "dev_yaml", False))
+    named = getattr(args, "policy", None)
+    yaml_for = named or str(DEFAULT_POLICY)
+    if getattr(args, "bundle", None) or dev:
+        return flight_policy_choice(args.bundle, named, dev_yaml=dev,
+                                    default_yaml=yaml_for)
+    try:
+        bundle = flight_bundle_path(yaml_for, bundles_dir)
+    except Exception as exc:                                  # noqa: BLE001
+        raise ValueError(f"cannot read the policy {yaml_for}: "
+                         f"{type(exc).__name__}: {exc}") from None
+    if not bundle.is_file():
+        raise ValueError(
+            f"the signed bundle of {yaml_for} is not on disk ({bundle}). Build it "
+            f"(python tools/build_flight_bundles.py {Path(yaml_for).stem}), give "
+            f"--bundle, or pass {DEV_YAML_FLAG} to fly the YAML unsigned, recorded "
+            f"as a development run")
+    b, y, rec = flight_policy_choice(None, None, dev_yaml=False,
+                                     default_yaml=yaml_for, default_bundle=bundle)
+    shown = Path(yaml_for).resolve()
+    rec["bundle_of"] = (shown.relative_to(ROOT).as_posix()
+                        if shown.is_relative_to(ROOT) else shown.as_posix())
+    return b, y, rec
 
 
 def camera_hfov_deg(config_path=ROBOT_CONFIG, sensor: str = "FrontCamera",
@@ -3784,18 +3835,22 @@ async def fly(args) -> int:
     random.seed(args.seed)
     np.random.seed(args.seed & 0xFFFFFFFF)
 
-    # The signed bundle when --bundle is given (refused unless its signature
-    # verifies, or --allow-unverified-bundle records that it did not); else the
-    # YAML, recorded as unsigned. Audit card ARCH-29: every flight used to read
-    # YAML, so no run could show which issued policy was in force.
+    # The signed bundle (refused unless its signature verifies, or
+    # --allow-unverified-bundle records that it did not): --bundle, or the
+    # bundle of --policy / DEFAULT_POLICY that tools/build_flight_bundles.py
+    # built; a YAML only under --dev-yaml, recorded so (city_policy_choice,
+    # ARCH-29: until 2026-10-21 this rail flew --policy as unsigned YAML).
     # Loaded BEFORE the output folder is cleared: a refused bundle (or --bundle
     # with --policy) used to delete the previous run's flight log first and
     # leave its manifest, kpi.json and metrics.json describing a log that was
     # gone (2026-10-06 review).
+    try:
+        _bundle, _yaml, _choice = city_policy_choice(args)
+    except ValueError as exc:
+        raise SystemExit(f"[policy] {exc}") from None
     policy, policy_source = load_for_flight(
-        args.bundle,
-        args.policy or (None if args.bundle else DEFAULT_POLICY),
-        allow_unverified=args.allow_unverified_bundle)
+        _bundle, _yaml, allow_unverified=args.allow_unverified_bundle)
+    policy_source.update(_choice)
 
     out = ROOT / "demo" / "out" / args.tag
     out.mkdir(parents=True, exist_ok=True)
@@ -3958,7 +4013,10 @@ async def fly(args) -> int:
 
     print(f"[policy]  {policy.policy_id} {policy.policy_hash}")
     print(f"[policy]  from {policy_source['kind']} {policy_source['path']} - "
-          f"signature {policy_source['signature']}")
+          f"signature {policy_source['signature']}"
+          + (f" ({DEV_YAML_FLAG}: a development run)" if policy_source.get("dev_yaml")
+             else f" (the signed bundle of {policy_source['bundle_of']})"
+             if policy_source.get("bundle_of") else ""))
     print(f"[follow]  query = {args.object!r}")
     print("[follow]  the ONLY steering input is where the detector puts the box; "
           "no target coordinates reach the controller")
@@ -6352,6 +6410,11 @@ async def fly(args) -> int:
 
     kpis = kpi_mod.compute(rows, kpi_mod.rule_priorities(policy), metrics)
     graded, reasons = is_kpi_grade(manifest, metrics)
+    if policy_source.get("dev_yaml"):
+        # As on the ArduPilot rails: the YAML is not the issued artefact.
+        reasons = list(reasons) + [f"the policy was flown from YAML under "
+                                   f"{DEV_YAML_FLAG}: unsigned, not its issued bundle"]
+        graded = False
     kpis["kpi_grade"] = graded
     kpis["kpi_grade_reasons"] = reasons
     kpis["manifest"] = manifest
@@ -6507,8 +6570,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "reproducible and can be replayed for a video. "
                          "Absent, the flight behaves exactly as before.")
     ap.add_argument("--policy", default=None,
-                    help="policy YAML (default policies/follow_car.yaml); "
-                         "recorded as UNSIGNED")
+                    help="the rule set, by its YAML (default policies/follow_car.yaml): "
+                         "its SIGNED bundle from bundles/ flies (tools/"
+                         "build_flight_bundles.py builds it), refused when absent "
+                         "or stale unless --dev-yaml")
+    ap.add_argument(DEV_YAML_FLAG, dest="dev_yaml", action="store_true",
+                    help="fly the YAML itself (--policy, or the default), unsigned: "
+                         "a development run, recorded as such and never KPI-grade")
     ap.add_argument("--bundle", default=None,
                     help="signed policy bundle (python -m guardrail.bundle "
                          "POLICY.yaml); refused unless its signature verifies")
