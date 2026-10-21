@@ -637,9 +637,12 @@ reached), and their pins are gone. Library 133 / 22 / 0 / 21 -> 136 / 22 /
 0 / 18, P0 escape 0.000132 -> 0.0 over 175 Shield-on episodes, autopilot P0
 ticks 1153 -> 1114, fail-safe labels 141/167 unchanged; 3 s arm 129 / 22 /
 4 / 16 -> 132 / 22 / 4 / 13. Nightly 511 / 66 / 0 / 155 -> 520 / 66 / 0 /
-146, P0 0.0, fail-safe 535/705 unchanged; smoke 52 / 6 / 0 / 4 -> 53 / 6 /
-0 / 3, P0 0.0. Every other library episode's KPI record is identical
-(compared field by field, both arms). Since no Loiter is entered there, the
+146, P0 0.000101 -> 0.0, fail-safe 535/705 unchanged; smoke 52 / 6 / 0 / 4
+-> 53 / 6 / 0 / 3, P0 0.00014 -> 0.0, fail-safe 55/59 unchanged (both
+profiles flown on a pristine copy of 7c9c9e6 and on this change the same
+day). Every other episode's KPI record is identical, compared field by
+field: library (both arms), nightly (732 episodes, 9 changed: the cells
+on three seeds) and smoke (62, 1 changed). Since no Loiter is entered there, the
 cells are off the in-place digest list, and the harness's moved-hold tests
 use `three-simultaneous-violations` (hold moved up into the band: 19
 autopilot P0 ticks against 78 in place). The lint still warns: the position
