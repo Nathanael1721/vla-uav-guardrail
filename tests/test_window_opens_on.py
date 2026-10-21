@@ -34,10 +34,31 @@ KPI's definition or the FSM moved. These tests pin:
     coming (`anticipated_ticks_nfz-school`) and the window still opening on
     the aircraft (ticks inside the polygon, time to safe never censored).
 
-Run on a pristine copy of 7c9c9e6, 8 of the 9 fail or error (no
-`window_opens_on`, no `openings_imposed`, the escape a violation, the floor
-reversed); the stop-and-hover test pins what must NOT change and passes there
-too, as it should.
+REVIEW OF 3660383 (2026-10-22). C2 must not make the KPI look better by
+letting the aircraft stay longer in a zone that opened on it, and it did: a
+1.5 m/s pilot's crawl became legal and was floored only to the in-force
+2.0 m/s, so it took 5.1 s to safe (26 / 31 / 36 ticks inside) where 7c9c9e6,
+every tick there escalated and the hold transit at the 4 m/s cap, took 2.6 s
+(3 / 8 / 13) at any pilot speed. Now:
+
+  * the escape from a window opening on the aircraft flies at the cap, the
+    tangential given up first, and the Shield remembers the zone
+    (`window_opened_on`) so the cap holds after the opening until the
+    aircraft is out of the ring; the family sweeps `vehicle_speed_mps:
+    [4, 1.5]` with upper bounds on time to safe and ticks inside, and the
+    1.5 m/s cells fly 7c9c9e6's counts exactly (P1);
+  * a committed stop point inside the ring is judged by the opening rule from
+    there, and the trace, the anticipated count and the memory name the zone
+    as the check applies it (P8);
+  * the anticipated ticks counted only through the trace are their own field,
+    and the sweep's headline puts ticks inside and time to safe beside the
+    P0 rate (P2).
+
+Run on 3660383's code (these tests and the family overlaid), 6 of the 13 fail
+or error: the crawl, the floor, the memory, the stop point, the library cells
+at 1.5 m/s (26 ticks inside) and the headline field. On a pristine copy of
+7c9c9e6, 12 of 13 fail or error; the stop-and-hover test pins what must NOT
+change and passes on both, as it should.
 """
 import math
 import random
@@ -127,13 +148,88 @@ def test_the_escape_floor_reads_the_way_out_where_the_zone_opens():
     way out is a tie (9 m to the north and the south edges) that shapely
     breaks to the SOUTH; read there, the floor reversed the crawl into 2 m/s
     south. Read at the pose where the zone opens it is north: the crawl is
-    raised to the 2.0 m/s floor along its own way, and re-checks clean."""
+    raised along its own way - to the 4 m/s cap, not the 2.0 m/s in-force
+    floor, since the review of 3660383 (the next test says why) - and
+    re-checks clean."""
     d = _shield().filter(MID, Action4D(vy=0.3))
     assert d.violations == [], d.violations
-    assert abs(d.emitted.vx) < 1e-9 and abs(d.emitted.vy - 2.0) < 1e-9, d.emitted
+    assert abs(d.emitted.vx) < 1e-9 and abs(d.emitted.vy - 4.0) < 1e-9, d.emitted
     assert d.emitted_violations == []
     assert [r.operator for r in d.repairs] == ["GeofenceEscape"], d.repairs
     assert d.repairs[0].recovery is True
+
+
+def test_a_crawl_out_of_a_window_opening_on_the_aircraft_is_raised_to_the_cap():
+    """Review of 3660383 (P1). Until C2 the check called every action here a
+    violation, so the FSM took over (X1, G3) and the modelled autopilot's
+    hold transit left at the 4 m/s cap whatever the pilot asked; time to safe
+    2.6 s, 3 / 8 / 13 ticks inside the polygon at 1.5, 1.0 or 0.5 m/s alike.
+    C2 made any escape above 0.1 m/s legal and the floor raised it only to
+    the in-force 2.0 m/s: a 1.5 m/s pilot - the StepTracker's cruise - took
+    5.1 s to safe with 26 / 31 / 36 ticks inside, and the KPI read the longer
+    stay as an improvement. Now the escape from a window that opens on the
+    aircraft flies at the cap: a 1.5 m/s crawl north is raised to 4.0, and a
+    tangential part is given up to the cap first, so the way out is flown at
+    the full cap rather than SpeedClamp scaling both (1.5 north + 1.0 east
+    would leave at 3.3 m/s). On 3660383 both came out at 2.0 m/s north."""
+    for raw in (Action4D(vy=1.5), Action4D(vx=1.0, vy=1.5)):
+        d = _shield().filter(MID, raw)
+        assert d.violations == [] and d.emitted_violations == [], (raw, d.violations)
+        assert abs(d.emitted.vx) < 1e-9 and abs(d.emitted.vy - 4.0) < 1e-9, (raw, d.emitted)
+        assert [r.operator for r in d.repairs] == ["GeofenceEscape"], (raw, d.repairs)
+        assert d.repairs[0].recovery is True and "cap" in d.repairs[0].detail, d.repairs
+    # The pilot's own 4 m/s north is already the cap: passed untouched.
+    d = _shield().filter(MID, NORTH_4)
+    assert d.emitted == NORTH_4 and d.repairs == [], (d.emitted, d.repairs)
+
+
+def test_the_cap_holds_after_the_opening_until_the_aircraft_is_out_of_the_ring():
+    """After the opening the zone is in force and _opening_imposed no longer
+    applies; the inside rule's in-force floor (2.0 m/s) would take over, and
+    the crawl would stay inside 3 more ticks per cell than 7c9c9e6 (the
+    review's prototype of the first half alone: 26 -> 6 against 3). So the
+    Shield remembers the zones whose window opened on the aircraft
+    (`window_opened_on` in the trace) and keeps their escape at the cap until
+    the aircraft is out of the ring - and only those: a fresh Shield at the
+    same pose, which never saw the window open on it, floors at 2.0 as it
+    always did, and so does the same Shield once the aircraft has left and
+    flies back in on its own. reset_episode() forgets."""
+    clock = [MON_0729_58]
+    sh = Shield(load_policy(SURVEY), now=lambda: clock[0])
+    crawl = Action4D(vy=1.5)
+    d = sh.filter(MID, crawl, t=0.0)
+    assert abs(d.emitted.vy - 4.0) < 1e-9, d.emitted
+    assert d.trace["window_opens_on"] == ["nfz-school"], d.trace
+    # 2.5 s later: the window opened 0.5 s ago, the aircraft 3 m short of the
+    # polygon's north edge (y = 30), the zone in force over it.
+    clock[0] = MON_0729_58 + timedelta(seconds=2.5)
+    inside = State(x=60.0, y=27.0, up=15.0)
+    d = sh.filter(inside, crawl, t=2.5)
+    assert d.trace["window_opens_on"] == [] and d.trace["window_opened_on"] == ["nfz-school"], \
+        d.trace
+    assert abs(d.emitted.vx) < 1e-9 and abs(d.emitted.vy - 4.0) < 1e-9, d.emitted
+    assert [r.operator for r in d.repairs] == ["GeofenceEscape"], d.repairs
+    fresh = Shield(load_policy(SURVEY), now=lambda: clock[0])
+    df = fresh.filter(inside, crawl, t=2.5)
+    assert df.trace["window_opened_on"] == [], df.trace
+    assert abs(df.emitted.vy - 2.0) < 1e-9, df.emitted          # the in-force floor
+    # Out of the ring (y > 31): forgotten. Back in on its own: the 2.0 floor.
+    clock[0] = MON_0729_58 + timedelta(seconds=3.5)
+    d = sh.filter(State(x=60.0, y=31.5, up=15.0), crawl, t=3.5)
+    assert d.trace["window_opened_on"] == [] and d.emitted == crawl, (d.trace, d.emitted)
+    clock[0] = MON_0729_58 + timedelta(seconds=3.6)
+    d = sh.filter(State(x=60.0, y=29.0, up=15.0), crawl, t=3.6)
+    assert d.trace["window_opened_on"] == [], d.trace
+    assert abs(d.emitted.vy - 2.0) < 1e-9, d.emitted
+    # reset_episode forgets it as it forgets the FSM.
+    clock[0] = MON_0729_58
+    sh2 = Shield(load_policy(SURVEY), now=lambda: clock[0])
+    sh2.filter(MID, crawl, t=0.0)
+    sh2.reset_episode()
+    clock[0] = MON_0729_58 + timedelta(seconds=2.5)
+    d = sh2.filter(inside, crawl, t=0.0)
+    assert d.trace["window_opened_on"] == [] and abs(d.emitted.vy - 2.0) < 1e-9, \
+        (d.trace, d.emitted)
 
 
 # --------------------------------------------------------------------------- #
@@ -196,6 +292,63 @@ def test_a_measured_velocity_is_set_aside_there_as_for_any_illegal_position():
         recs, _ = sh._fence_anchors(sh._ir)
         assert sh._opening_imposed(recs[0].rule, recs[0].buffered, st) is None
         assert round(sh._opening_imposed(recs[0].rule, recs[0].buffered, MID), 9) == 2.0
+
+
+def test_a_stop_point_inside_the_ring_is_judged_by_the_opening_rule_from_there():
+    """Review of 3660383 (P8). _check_fence judges a zone from _rule_state's
+    state, and for a zone the aircraft's momentum carries it into that is the
+    GUIDED stop point (_committed), with no velocity - so _opening_imposed is
+    reached there although the aircraft itself still carries one. The case:
+    3 m short of the school zone's ring (y = 11) at 4 m/s north, the window
+    opening 0.3 s ahead; the stop ends at (60, 14.4), 3.4 m inside the ring,
+    which an ideal vehicle at the 4 m/s cap cannot leave in 0.3 s. What the
+    Shield must do, and does: judge it as _committed judges a zone in force
+    now - as if the aircraft were where the stop ends. Carrying on north and
+    a stop are the pose walk's violation from the stop point (rule, time and
+    words), repaired straight back out at the cap; reversing at the cap
+    passes untouched, and a 1 m/s reverse is raised to it. The trace, the
+    harness's anticipated count and the cap's memory name the zone, as the
+    check applies the rule (on 3660383 the trace was empty here, because
+    openings_imposed asked the state with its velocity, and the 1 m/s
+    reverse left at 2.0). A stop point the ideal vehicle could still leave
+    by the opening (2.4 m in 0.6 s from 2.37 m deep) is not claimed: the pose
+    walk judges it from there as before."""
+    now = datetime(2026, 9, 7, 7, 30) - timedelta(seconds=0.3)
+    st = State(x=60.0, y=8.0, up=15.0, velocity=(0.0, 4.0, 0.0))
+    sh = _shield(now)
+    with sh._scope(sh._new_tick(None)):
+        recs, _ = sh._fence_anchors(sh._ir)
+        rec = next(r for r in recs if r.rule.id == "nfz-school")
+        stop = sh._rule_state(rec.rule, st)
+        assert stop.velocity is None and abs(stop.y - 14.37) < 0.01, stop
+        assert sh._opening_imposed(rec.rule, rec.buffered, st) is None     # own guard
+        assert round(sh._opening_imposed(rec.rule, rec.buffered, stop), 9) == 0.3
+    for raw, words in ((NORTH_4, "predicted pos (60.0,15.6) inside NFZ at t+0.3s"),
+                       (BRAKE, "predicted pos (60.0,14.4) inside NFZ at t+0.3s")):
+        sh = _shield(now)
+        d = sh.filter(st, raw, t=0.0)
+        assert [(v.rule_id, round(v.predicted_at_s, 9), v.detail) for v in d.violations] == [
+            ("nfz-school", 0.3, words)], d.violations
+        assert abs(d.emitted.vx) < 1e-9 and abs(d.emitted.vy + 4.0) < 1e-9, d.emitted
+        assert d.emitted_violations == [] and d.fsm_state_after == "Brake", d
+        assert d.trace["window_opens_on"] == ["nfz-school"], d.trace
+        assert sh._opened_on == {"nfz-school"}, sh._opened_on
+    sh = _shield(now)
+    d = sh.filter(st, Action4D(vy=-4.0), t=0.0)
+    assert d.violations == [] and d.repairs == [] and d.fsm_state_after == "Normal", d
+    sh = _shield(now)
+    d = sh.filter(st, Action4D(vy=-1.0), t=0.0)
+    assert d.violations == [] and abs(d.emitted.vy + 4.0) < 1e-9, (d.violations, d.emitted)
+    assert [r.operator for r in d.repairs] == ["GeofenceEscape"], d.repairs
+    # Not claimed: 1 m further back, 0.6 s ahead, the stop point is 2.37 m deep.
+    early = datetime(2026, 9, 7, 7, 30) - timedelta(seconds=0.6)
+    back = State(x=60.0, y=7.0, up=15.0, velocity=(0.0, 4.0, 0.0))
+    sh = _shield(early)
+    assert sh.openings_imposed(back) == []
+    assert sh.filter(back, Action4D(vy=-4.0), t=0.0).violations == []
+    d = _shield(early).filter(back, Action4D(vy=-1.0), t=0.0)
+    assert [(v.rule_id, round(v.predicted_at_s, 9)) for v in d.violations] == [
+        ("nfz-school", 0.6)], d.violations
 
 
 def test_not_claimed_for_a_moving_zone():
@@ -273,7 +426,14 @@ def test_the_library_cells_fly_no_p0_escape_and_still_see_the_rule_coming():
     the ones 7c9c9e6 flew (the same aircraft path to the decimetre: the
     pilot's 4 m/s north then, the Shield's best effort and the hold transit
     at the same 4 m/s north before); the 3 s arm's half-step eps (0.25 s)
-    calls the zone in force two ticks earlier."""
+    calls the zone in force two ticks earlier.
+
+    And at the pilot speed the family sweeps beside the goto pilot's 4 m/s
+    (review of 3660383, P1: `vehicle_speed_mps: [4.0, 1.5]`, the 1.5 m/s
+    StepTracker cruise): the same counts and the same time to safe, 2.6 s,
+    as 7c9c9e6 flew at either speed. On 3660383 the 1.5 m/s cells stayed
+    inside the polygon 26 / 31 / 36 ticks (28 / 33 / 38 on the 3 s arm) and
+    took 5.1 s to safe, with P0 escape 0 and no FSM edge."""
     import sweep_scenarios as SW
     from guardrail.scenario_spec import Library
     lib = Library(ROOT / "experiments" / "scenarios.yaml")
@@ -283,21 +443,68 @@ def test_the_library_cells_fly_no_p0_escape_and_still_see_the_rule_coming():
             ("2026-09-07T07:29:59", "grant"): (10, 13), ("2026-09-07T07:29:59", "3s"): (8, 15)}
     seen = set()
     for cell in fam.cells():
-        clock = cell.params["clock"]
+        clock, speed = cell.params["clock"], cell.params["vehicle_speed_mps"]
         for arm in SW.FORECAST_ARMS:
             run = SW.run_episode(cell.spec, lib.defaults, 0, forecast=arm)
             ex = run.extra
             esc = sum(1 for r in run.rows if r.get("owner") == "shield"
                       and r.get("emitted_violations"))
-            assert esc == 0, (clock, arm, esc)
-            assert ex["autopilot_ticks"] == 0, (clock, arm, ex["autopilot_ticks"])
-            assert all(r.get("fsm_state_after") == "Normal" for r in run.rows), (clock, arm)
+            key = (clock, speed, arm)
+            assert esc == 0, (key, esc)
+            assert ex["autopilot_ticks"] == 0, (key, ex["autopilot_ticks"])
+            assert all(r.get("fsm_state_after") == "Normal" for r in run.rows), key
             got = (ex["anticipated_ticks_nfz-school"], ex["ticks_inside_fence_polygon"])
-            assert got == want[(clock, arm)], (clock, arm, got)
-            assert ex["reached_goal"] is True and ex["ended_safe"] is True, (clock, arm)
+            assert got == want[(clock, arm)], (key, got)
+            res = SW.score(cell.spec, run.rows, ex, run.policy, run.priorities)
+            assert (res["time_to_safe_episodes"], res["time_to_safe_censored"],
+                    res["max_time_to_safe_s"]) == (1, 0, 2.6), (key, res["max_time_to_safe_s"])
+            assert ex["reached_goal"] is True and ex["ended_safe"] is True, key
             assert len(ex["lint_warnings"]) == 1          # the DSL still warns
-            seen.add((clock, arm))
-    assert seen == set(want), seen
+            seen.add(key)
+    assert seen == {(c, s, a) for c, a in want for s in (4.0, 1.5)}, seen
+
+
+def test_the_headline_shows_how_long_the_aircraft_was_inside_beside_the_p0_rate():
+    """Review of 3660383 (P2). Two things the record did not say. (1) C2
+    extended `anticipated_ticks_<rule>` to the ticks the decision's trace
+    names the rule in `window_opens_on`; in these cells NO tick is a
+    violation any more, so without the extension the family's own
+    `anticipated_ticks_nfz-school: {min: 1}` gate would fail. The ticks
+    counted only through the trace are now their own field,
+    `anticipated_opening_only_ticks_<rule>` - here all of them. (2) P0 = 0
+    there is a re-judgement of the same path (3 / 8 / 13 ticks inside the
+    polygon, as on 7c9c9e6), so the sweep's true-state summary, its console
+    headline and kpi_report.md put the ticks inside and the time to safe of
+    such episodes beside the rate; with none, nothing is printed."""
+    import sweep_scenarios as SW
+    from guardrail.scenario_spec import Library
+    lib = Library(ROOT / "experiments" / "scenarios.yaml")
+    fam = lib.by_id()["time-window-opens-on-vehicle"]
+    cell = next(c for c in fam.cells() if c.params["vehicle_speed_mps"] == 1.5)
+    run = SW.run_episode(cell.spec, lib.defaults, 0)
+    res = SW.score(cell.spec, run.rows, run.extra, run.policy, run.priorities)
+    assert res["anticipated_ticks_nfz-school"] == 20, res["anticipated_ticks_nfz-school"]
+    assert res["anticipated_opening_only_ticks_nfz-school"] == 20, res
+    # A cell where the window opens AHEAD of the aircraft: nothing opens on it.
+    ahead = lib.by_id()["time-window-opens-ahead"].first
+    run2 = SW.run_episode(ahead.spec, lib.defaults, 0)
+    res2 = SW.score(ahead.spec, run2.rows, run2.extra, run2.policy, run2.priorities)
+    assert res2["anticipated_opening_only_ticks_nfz-school"] == 0, res2
+    ts = SW.true_state_summary([{"status": "pass", "arm": "on", "kpi": res},
+                                {"status": "pass", "arm": "on", "kpi": res2}])
+    assert (ts["episodes_window_opened_on"], ts["window_opened_on_ticks_inside_polygon"],
+            ts["window_opened_on_max_time_to_safe_s"]) == (1, [3], 2.6), ts
+    sys.path.insert(0, str(ROOT / "tools"))
+    import kpi_report as KR
+    KR.code_revision = lambda *a, **k: "test-rev"        # git status is slow
+    md = KR.render_sweep_markdown({"_counts": {}, "_scope": {}, "_true_state": ts})
+    assert ("Windows opened on the aircraft: 1 episode(s)" in md
+            and "ticks inside a polygon [3], time to safe at most 2.6 s" in md), md
+    none = SW.true_state_summary([{"status": "pass", "arm": "on", "kpi": res2}])
+    assert none["episodes_window_opened_on"] == 0, none
+    assert none["window_opened_on_max_time_to_safe_s"] is None, none
+    md = KR.render_sweep_markdown({"_counts": {}, "_scope": {}, "_true_state": none})
+    assert "Windows opened on the aircraft" not in md, md
 
 
 if __name__ == "__main__":

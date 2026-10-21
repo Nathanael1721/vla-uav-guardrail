@@ -240,10 +240,12 @@ def test_the_warning_says_what_the_shield_makes_of_the_opening():
     window of its own, a zone that does not move); the warning said "its
     counter scores those ticks as P0 escapes" in every case. It now says
     which: with the survey policy's 4 m/s cap, no P0 escape; with no hard
-    cap (or a moving zone), the escapes the counter still scores."""
+    cap (or a moving zone), the escapes the counter still scores. And since
+    the review of 3660383 (P1), that the way out is flown at the speed cap."""
     pol = load_policy(SURVEY)
     ws = time_window_lead_warnings(pol, start=(60.0, 21.0, 15.0), now=MON_0729_58)
     assert len(ws) == 1 and "not as a P0 escape" in ws[0], ws
+    assert "flown at the speed cap" in ws[0], ws[0]
     assert "scores those ticks as P0 escapes" not in ws[0], ws[0]
     big = _zone("big", 40.0, 40.0)
     for caps in ((), (dict(_cap(4.0), constraint_type="soft"),)):

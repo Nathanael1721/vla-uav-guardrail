@@ -1464,7 +1464,10 @@ def test_a_bounded_pin_absorbs_its_measured_magnitude_and_no_more():
         assert S.episode_verdict(spec, flown, cell, 1001)[0] == "unexpected_pass", clock
     # End to end: the re-pinned smoke cell exits 0 with the old escapes in
     # it, 1 with 0.5, and 1 as flown today (FIXED: remove the marker).
-    fam = _repinned_family(parameter_sweep={"clock": [TW_ON_VEHICLE_CLOCKS[0]]})
+    # (The 4 m/s pilot: the escapes 7c9c9e6 measured were flown at 4 m/s; the
+    # family sweeps 1.5 m/s beside it since the review of 3660383.)
+    fam = _repinned_family(parameter_sweep={"clock": [TW_ON_VEHICLE_CLOCKS[0]],
+                                            "vehicle_speed_mps": [4]})
     real = S.score
 
     def scored_as(rate):
@@ -1489,11 +1492,15 @@ def test_a_bounded_pin_absorbs_its_measured_magnitude_and_no_more():
         S.score = real
     rc, doc = _sweep_lib([fam], "--seed", "1001")
     assert rc == 1 and doc["results"][0]["status"] == "unexpected_pass", (rc, doc["_counts"])
-    # And the library's own cells, unpinned, pass as flown.
+    # And the library's own cells, unpinned, pass as flown, at both pilot
+    # speeds (the 1.5 m/s one against its time-to-safe and ticks-inside
+    # bounds, which 3660383 failed: 5.1 s, 26 ticks).
     rc, doc = _sweep_lib([_raw("time-window-opens-on-vehicle",
-                               parameter_sweep={"clock": [TW_ON_VEHICLE_CLOCKS[0]]})],
+                               parameter_sweep={"clock": [TW_ON_VEHICLE_CLOCKS[0]],
+                                                "vehicle_speed_mps": [4, 1.5]})],
                          "--seed", "1001")
-    assert rc == 0 and doc["results"][0]["status"] == "pass", (rc, doc["_counts"])
+    assert rc == 0 and [r["status"] for r in doc["results"]] == ["pass", "pass"], \
+        (rc, doc["_counts"])
 
 
 def test_a_tracked_episode_is_never_counted_as_a_pass():

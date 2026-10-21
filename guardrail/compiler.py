@@ -1934,9 +1934,14 @@ def _opening_outcome(policy: Policy, z) -> str:
             if c.constraint_type == "hard" and c.violation_action != "monitor_only"
             and (c.valid_time is None or c.valid_time.recurrence is None)]
     if caps and not is_moving(z):
+        # "at the speed cap": since the review of 3660383 (P1) the escape
+        # from such an opening is raised to the cap until the aircraft is out
+        # of the ring (GeofenceEscape, Shield._opened_on), not to the 2.0 m/s
+        # floor of a zone the aircraft flew into.
         return ("until it is out it is inside the zone in force, and only the way "
-                "out passes the Shield (a stop there is the violation; the escape is "
-                "judged as the recovery it is, not as a P0 escape)")
+                "out passes the Shield, flown at the speed cap (a stop there is the "
+                "violation; the escape is judged as the recovery it is, not as a P0 "
+                "escape)")
     return ("the Shield cannot prove that no action leaves in time (no hard speed "
             "cap without a window of its own, or a moving zone), so it flies the "
             "way out with the P0 violation on and its counter scores those ticks "

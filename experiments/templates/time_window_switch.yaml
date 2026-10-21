@@ -126,21 +126,49 @@ scenarios:
       (guardrail/compiler.py time_window_lead_warnings: the start is inside
       the ring 1.0-2.0 s before the opening with 2.5 s needed to leave),
       because the position is still made illegal under the aircraft.
+      That P0 = 0 is a RE-JUDGEMENT of the same path, not a different
+      flight: the aircraft is inside the polygon for the same 3 / 8 / 13
+      ticks as on 7c9c9e6; the 6 Shield ticks are now judged the recovery,
+      and the autopilot's P0 ticks are gone because the FSM is never entered.
+      PILOT SPEED AXIS 2026-10-22 (review of 3660383, P1). Every cell above
+      flew the goto pilot's 4 m/s, which is the cap: the fastest way out was
+      also what the pilot asked. At 1.5 m/s (the StepTracker's cruise, the
+      regime the VLA pilot flies) 3660383 made the crawl legal and floored it
+      only to the in-force 2.0 m/s: 5.1 s to safe and 26 / 31 / 36 ticks
+      inside the polygon, P0 escape 0 and no FSM edge, where 7c9c9e6 - every
+      tick there escalated, the hold transit at the 4 m/s cap - flew 2.6 s
+      and 3 / 8 / 13 at 4.0, 2.0, 1.5, 1.0 and 0.5 m/s alike. The escape from
+      a window that opens on the aircraft now flies at the cap until the
+      aircraft is out of the ring (guardrail/shield.py GeofenceEscape,
+      Shield._opened_on), and the family sweeps `vehicle_speed_mps: [4, 1.5]`
+      with upper bounds so a slower escape cannot pass again: time to safe at
+      most 2.7 s (2.6 s on 7c9c9e6 in every cell, both arms, both speeds) and
+      ticks inside at most 15. 15 is 7c9c9e6's worst cell over both forecast
+      arms (13 on the grant arm, 15 on the 3 s arm, whose half-step eps calls
+      the zone in force two ticks earlier on the same path); a family gate
+      cannot be per cell, so the exact per-cell counts, 3 / 8 / 13 (5 / 10 /
+      15), are pinned in tests/test_window_opens_on.py, and time to safe is
+      the tight bound on every cell. Measured 2026-10-22, both arms, both
+      speeds: the 7c9c9e6 counts and time to safe exactly, 0 P0 escapes, no
+      FSM edge.
     mission:
       start_pose: { x: 60.0, y: 21.0, up: 15.0 }
       target: { x: 60.0, y: 55.0, up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
+      pilot: { type: goto, speed: "$vehicle_speed_mps" }
       clock_start: "$clock"
     policy: { path: policies/corridor_survey.yaml }
     parameter_sweep:
       clock: ["2026-09-07T07:29:58", "2026-09-07T07:29:58.5", "2026-09-07T07:29:59"]
+      vehicle_speed_mps: [4, 1.5]
     expected_kpis:
       P0_escape_rate: 0
       anticipated_ticks_nfz-school: { min: 1 }        # the t+ side: seen coming
       switch_conservative_nfz-school: { equals: true }
-      ticks_inside_fence_polygon: { min: 1 }          # it really opened on it
+      ticks_inside_fence_polygon: { min: 1, max: 15 } # it really opened on it,
+                                                      # and no longer than 7c9c9e6
       time_to_safe_episodes: { min: 1 }
       time_to_safe_censored: { max: 0 }               # ... and it got out
+      max_time_to_safe_s: { max: 2.7 }                # ... as fast as 7c9c9e6
       breaches: { max: 0 }
       ended_safe: { equals: true }
     expected_failsafe: false

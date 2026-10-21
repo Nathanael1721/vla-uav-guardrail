@@ -1998,6 +1998,17 @@ def render_sweep_markdown(doc: dict, top_k: int = 10) -> str:
               f"{ts.get('episodes_autopilot_entering_polygon')} episode(s); "
               f"{ts.get('autopilot_breaches')} breach(es) in "
               f"{ts.get('episodes_autopilot_breach')} episode(s).", ""]
+        if ts.get("episodes_window_opened_on"):
+            # Beside the rate (review of 3660383, P2): the escape from a window
+            # that opened on the aircraft is judged the recovery since C2, so
+            # the P0 rate cannot show whether it got out as fast as before.
+            L[-1:-1] = [
+                f"- Windows opened on the aircraft: "
+                f"{ts.get('episodes_window_opened_on')} episode(s), the escape "
+                f"judged the recovery (not a P0 escape) and the rule counted as "
+                f"anticipated through the decision trace's window_opens_on; ticks "
+                f"inside a polygon {ts.get('window_opened_on_ticks_inside_polygon')}, "
+                f"time to safe at most {ts.get('window_opened_on_max_time_to_safe_s')} s."]
     oc = (doc.get("_outcome_labels") or {}).get("outcomes") or {}
     if oc:
         L += ["## Outcomes", "",
