@@ -30,7 +30,7 @@ The server uses the Python standard library only and listens on 127.0.0.1, so it
 1. Write the change in `CHANGELOG.md`, under a `### YYYY-MM-DD — title` section (or `## [x.y.z]` for a release).
 2. Run `python tools/add_update.py new --heading YYYY-MM-DD`. This writes a draft, `tracker/data/_update_draft.json`, with the number, version and source filled in.
 3. Fill in the title, summary and changes in `en`, `id` and `zh` (Traditional Chinese). Copy numbers exactly as the CHANGELOG has them.
-4. Run `python tools/add_update.py add` (it validates, then appends), then `python tools/add_update.py check`. An update can show a recorded flight's video or image: add `run/<tag>/<file>.mp4` (or a top-level compare video, `run/<name>_phone.mp4`) to its `media`; only media files under `demo/out` are accepted, never a log, an absolute path or a file behind a junction (the server would not serve those). `pages` may name `dashboard`.
+4. Run `python tools/add_update.py add` (it validates, then appends), then `python tools/add_update.py check`. An update can show a recorded flight's video or image: add `run/<tag>/<file>.mp4` (or a top-level compare video, `run/<name>_phone.mp4`) to its `media`; only media files under `demo/out` are accepted, never a log or an absolute path (the server would not serve those), nor a file behind a symlink or junction (a link is this machine's own arrangement: name the real file). `pages` may name `dashboard`.
 5. Reload the site. The header dot shows that there is something new.
 
 `check` refuses:

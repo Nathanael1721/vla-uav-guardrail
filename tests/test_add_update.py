@@ -334,6 +334,42 @@ def test_run_media_must_be_a_media_file_inside_demo_out():
                 os.rmdir(view) if sys.platform == "win32" else os.unlink(view)
 
 
+def test_a_link_that_stays_inside_demo_out_is_refused_by_its_own_rule():
+    """Re-review of d180e01 (P6). Nothing needed the symlink/junction check
+    on its own: with the `_is_link` loop removed, the only junction fixture
+    (to a folder OUTSIDE demo/out) was still refused by the resolve() check.
+    Here a junction (Windows) or symlink under demo/out points to another
+    folder INSIDE demo/out: it resolves inside, tracker/serve.py's safe_join
+    would serve it, and only the link rule refuses it. The rule stands
+    because a link is this machine's arrangement (the demo/out/<tag>/view
+    junctions to C: are not in any other copy), so an update names the real
+    file; the message says so and no longer claims the server would refuse."""
+    with Fixture() as f:
+        ctx = _with_runs(f)
+        demo = f.tmp / "demo" / "out"
+        alias = demo / "r1_alias"
+        if not _link_dir(alias, demo / "r1"):
+            print("      SKIP: this platform makes neither a junction nor a symlink")
+            return "SKIP"
+        try:
+            rel = "r1_alias/r1_demo_phone.mp4"
+            assert (demo / rel).resolve().is_relative_to(demo.resolve()), "the fixture must stay inside"
+            sys.path.insert(0, str(ROOT / "tracker"))
+            import serve
+            assert serve.safe_join(demo, rel) is not None, "the server serves it: the rule is add_update's own"
+            why = A.run_media_problem(rel, demo)
+            assert why is not None and "symlink or junction" in why, why
+            assert "server would not serve" not in why, why
+            d = valid_doc()
+            d["entries"][2]["media"] = ["run/" + rel]
+            assert any("media not found" in m and "junction" in m for m in A.check(d, ctx)), A.check(d, ctx)
+            # the real file it points to is fine
+            assert A.run_media_problem("r1/r1_demo_phone.mp4", demo) is None
+        finally:
+            import os
+            os.rmdir(alias) if sys.platform == "win32" else os.unlink(alias)
+
+
 def test_a_missing_source_heading_is_refused():
     expect(lambda d: d["entries"][1]["source"].update(heading="### 2026-09-20 — renamed"), "source heading not found")
 

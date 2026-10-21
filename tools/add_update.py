@@ -241,7 +241,12 @@ def run_media_problem(rel: str, demo_out: Path) -> str | None:
     P6), as did a file behind a demo/out/<tag>/view junction to C:; the
     server 404s both, so the update would have linked nothing. Now an
     absolute or drive path, a symlink or junction below demo/out, and any
-    path that resolves outside it are refused."""
+    path that resolves outside it are refused. The link rule is this
+    tool's own: safe_join serves a link that resolves INSIDE demo/out, but
+    a link is this machine's arrangement (the demo/out/<tag>/view
+    junctions to C: exist in no other copy), so an update names the real
+    file (re-review of d180e01, P6: the message said the server would not
+    serve it, and no test needed the rule on its own)."""
     p = Path(rel)
     parts = p.parts
     if (not parts or ".." in parts or rel.startswith(("/", "\\")) or p.drive or p.is_absolute()
@@ -253,7 +258,8 @@ def run_media_problem(rel: str, demo_out: Path) -> str | None:
     for part in parts:
         cur = cur / part
         if _is_link(cur):
-            return "a run media path may not pass through a symlink or junction (the server would not serve it)"
+            return ("a run media path names the real file, not one behind a symlink or junction "
+                    "(a link is this machine's own arrangement, such as a view junction to C:)")
     try:
         (Path(demo_out) / rel).resolve().relative_to(Path(demo_out).resolve())
     except (ValueError, OSError):
