@@ -57,6 +57,17 @@ It cross-checks against numbers produced by an unrelated code path:
 
 216 ticks at 0.1 s is 21.6 s exactly.
 
+> **Delayed pose (note added 2026-10-21).** `sitl_ped_on` was flown by the
+> pymavlink SITL rail (`sitl/run_sitl_demo.py`) before 79bae12 (2026-10-19).
+> That rail read pymavlink's OLDEST queued LOCAL_POSITION_NED each tick, so
+> the pose the Shield and the stub pilot flew on fell about 3.2 s behind the
+> aircraft at 33-49 s and 6.6 s behind at 97-113 s (CHANGELOG 2026-10-19;
+> docs/DESIGN-escalation-fsm.md, the X6 note). Its 216 unsafe ticks and
+> 21.6 s `alt_violation_s` agree with each other because both were read off
+> that delayed pose: they describe the rail as it flew, not where the
+> aircraft really was. The `ros2_*` rows came over MAVROS and are not
+> affected. No `sitl_*` run has been re-flown on the drained pose since.
+
 ## What the corrected metric then found, immediately
 
 The first scenario sweep that ran included a vehicle starting **below** the
