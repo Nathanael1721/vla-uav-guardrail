@@ -24,13 +24,22 @@ Pinned:
 - (2026-10-19) a request another web page can make the browser send - a
   text/plain POST, a foreign Origin, a DNS-rebound Host - is a JSON 403 and
   leaves the board unchanged; the board's own same-origin JSON POST works.
+- (2026-10-21) the Dashboard's two endpoints, /api/dashboard and /api/live,
+  pass the same refusal (403 on a foreign Host or Origin), are GET only (a
+  POST is a 404 that changes nothing), and /api/live returns whitelisted
+  fields only: no log content, no log path, no environment value; a missing
+  dashboard.json is reported, not a 500; the background rebuild is deferred
+  while a flight's heartbeat is live; /api/content and /api/dashboard answer
+  304 to their own ETag; no GPU tool means no GPU row.
 """
 import http.client
 import json
+import os
 import shutil
 import sys
 import tempfile
 import threading
+import time
 from contextlib import contextmanager
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -66,18 +75,28 @@ def _fixture(tmp: Path) -> None:
     (tmp / "img" / "a.png").write_bytes(b"\x89PNG....")
     (tmp / "secret.txt").write_text("secret", encoding="utf-8")
     (tmp / "VERSION").write_text("0.5.1\n", encoding="utf-8")
+    (d / "dashboard.json").write_text(json.dumps(
+        {"meta": {"schema": 1, "generated": "2026-10-21T00:00:00+00:00"}, "kpis": [], "flights": []}),
+        encoding="utf-8")
+    (tmp / "live").mkdir()
 
 
 @contextmanager
 def server():
     tmp = Path(tempfile.mkdtemp(prefix="tracker_test_"))
-    saved = (serve.HERE, serve.DATA, serve.STATE, serve.MEDIA, serve.VERSION_FILE)
+    saved = (serve.HERE, serve.DATA, serve.STATE, serve.MEDIA, serve.VERSION_FILE,
+             serve.BUILD_ROOT, serve.LIVE_DIR, serve.AUTO_REBUILD)
     try:
         _fixture(tmp)
         serve.HERE, serve.DATA, serve.STATE = tmp, tmp / "data", tmp / "data" / "state.json"
         serve.MEDIA = {"img": tmp / "img", "video": tmp / "video", "share": tmp / "share",
                        "run": tmp / "run"}
         serve.VERSION_FILE = tmp / "VERSION"
+        # The dashboard builder reads this temp folder, the heartbeats come
+        # from tmp/live, and no rebuild starts unless a test asks for one.
+        serve.BUILD_ROOT, serve.LIVE_DIR, serve.AUTO_REBUILD = tmp, tmp / "live", False
+        serve._rebuild.update(running=False, last_try=0.0, error=None)
+        serve._gpu.update(t=0.0, value=None)
         httpd = ThreadingHTTPServer(("127.0.0.1", 0), serve.Handler)
         th = threading.Thread(target=httpd.serve_forever, daemon=True)
         th.start()
@@ -87,7 +106,11 @@ def server():
             httpd.shutdown()
             httpd.server_close()
     finally:
-        serve.HERE, serve.DATA, serve.STATE, serve.MEDIA, serve.VERSION_FILE = saved
+        (serve.HERE, serve.DATA, serve.STATE, serve.MEDIA, serve.VERSION_FILE,
+         serve.BUILD_ROOT, serve.LIVE_DIR, serve.AUTO_REBUILD) = saved
+        t_end = time.time() + 20                 # a test's rebuild thread may still be writing
+        while serve._rebuild["running"] and time.time() < t_end:
+            time.sleep(0.05)
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -345,6 +368,118 @@ def test_a_broken_content_file_is_a_load_error_not_a_500():
         assert s == 200
         assert d["cards"][0]["id"] == "A-01" and "load_error" in d["cards"][1]
         assert "load_error" in d["updates"]
+
+
+# ------------------------------------------------------------------ dashboard + live (2026-10-21)
+def _heartbeat(tmp, name, kind="flight", age=1.0, **extra):
+    now = time.time()
+    rec = {"schema": 1, "id": f"{kind}-{name}", "kind": kind, "name": name, "pid": os.getpid(),
+           "cli": False, "started": now - 60, "heartbeat": now - age, "progress": 0.25,
+           "detail": None, "status": "running"}
+    rec.update(extra)
+    (tmp / "live" / f"{kind}-{name}.json").write_text(json.dumps(rec), encoding="utf-8")
+
+
+def test_the_dashboard_and_live_endpoints_refuse_a_foreign_host_or_origin():
+    with server() as (port, tmp):
+        _heartbeat(tmp, "pas_ap_x")
+        for path in ("/api/dashboard", "/api/live"):
+            for host, headers in ((f"attacker.example:{port}", {}),
+                                  (f"127.0.0.1:{port}", {"Origin": "https://attacker.example"}),
+                                  (f"127.0.0.1:{port}", {"Origin": "null"}),
+                                  (f"attacker.example:{port}", {"Origin": f"http://attacker.example:{port}"})):
+                s, b = _with_host(port, "GET", path, host, None, headers)
+                assert s == 403 and "refused" in json.loads(b)["error"], (path, host, headers, s)
+                assert b"pas_ap_x" not in b and b"schema" not in b, (path, b[:80])
+            for host in (f"127.0.0.1:{port}", f"localhost:{port}"):
+                s, b = _with_host(port, "GET", path, host, None, {"Origin": f"http://{host}"})
+                assert s == 200, (path, host, s)
+
+
+def test_the_dashboard_and_live_endpoints_are_get_only():
+    with server() as (port, tmp):
+        before = (tmp / "data" / "dashboard.json").read_bytes()
+        for path in ("/api/dashboard", "/api/live"):
+            s, _, _ = req(port, "POST", path, b'{"meta": {}}', {"Content-Type": "application/json"})
+            assert s == 404, (path, s)
+        assert (tmp / "data" / "dashboard.json").read_bytes() == before
+        assert not (tmp / "data" / "state.json").exists(), "a POST to a dashboard endpoint wrote the board"
+
+
+def test_live_returns_no_log_content_path_or_environment():
+    with server() as (port, tmp):
+        (tmp / "run" / "pas_ap_x").mkdir()
+        (tmp / "run" / "pas_ap_x" / "flight_log.jsonl").write_text('{"tick": 0, "SECRETLOG": 1}\n', encoding="utf-8")
+        _heartbeat(tmp, "pas_ap_x", log_dir=str(tmp / "run" / "pas_ap_x"),
+                   env={"API_TOKEN": "hunter2"}, cmd="python fly.py --token hunter2", detail="d" * 900)
+        _heartbeat(tmp, "review", kind="workflow", pid=None, cli=True)
+        s, h, b = req(port, "GET", "/api/live")
+        d = json.loads(b)
+        assert s == 200 and h.get("Cache-Control") == "no-store"
+        job = next(j for j in d["jobs"] if j["name"] == "pas_ap_x")
+        assert job["run_tag"] == "pas_ap_x" and job["state"] == "running" and len(job["detail"]) == 200
+        for leak in (b"hunter2", b"API_TOKEN", b"SECRETLOG", b"fly.py", str(tmp).encode(),
+                     json.dumps(str(tmp)).strip('"').encode(), b"log_dir"):
+            assert leak not in b, leak
+        assert d["overlap"] is True, "a flight and a workflow ran together and no banner flag"
+        assert set(d) >= {"jobs", "done", "overlap", "gpu", "now"}
+
+
+def test_the_dashboard_answers_with_its_file_a_stale_flag_and_an_etag():
+    with server() as (port, tmp):
+        s, h, b = req(port, "GET", "/api/dashboard")
+        d = json.loads(b)
+        assert s == 200 and d["meta"]["schema"] == 1 and h.get("Cache-Control") == "no-store"
+        assert set(d["server"]) == {"stale", "stale_reasons", "rebuild", "rebuild_error"}
+        assert d["server"]["rebuild"] in ("not_needed", "off")
+        tag = h.get("ETag")
+        assert tag
+        s, h2, b2 = req(port, "GET", "/api/dashboard", headers={"If-None-Match": tag})
+        assert s == 304 and b2 == b"", (s, b2[:60])
+        s, h3, _ = req(port, "GET", "/api/content")
+        assert s == 200 and h3.get("ETag")
+        s, _, b4 = req(port, "GET", "/api/content", headers={"If-None-Match": h3["ETag"]})
+        assert s == 304 and b4 == b""
+        (tmp / "data" / "dashboard.json").unlink()
+        s, _, b = req(port, "GET", "/api/dashboard")
+        d = json.loads(b)
+        assert s == 200 and d["missing"] is True and d["server"]["stale"] is True
+
+
+def test_the_background_rebuild_waits_while_a_flight_runs():
+    with server() as (port, tmp):
+        serve.AUTO_REBUILD = True
+        out = tmp / "data" / "dashboard.json"
+        old = time.time() - 3600
+        os.utime(out, (old, old))
+        (tmp / "data" / "updates.json").write_text(json.dumps({"schema": 1, "entries": []}), encoding="utf-8")
+        _heartbeat(tmp, "pas_ap_live")
+        s, _, b = req(port, "GET", "/api/dashboard")
+        d = json.loads(b)
+        assert d["server"]["stale"] is True and d["server"]["rebuild"] == "deferred_flight", d["server"]
+        assert out.stat().st_mtime == old, "a rebuild ran during a flight"
+        (tmp / "live" / "flight-pas_ap_live.json").unlink()
+        s, _, b = req(port, "GET", "/api/dashboard")
+        assert json.loads(b)["server"]["rebuild"] == "started"
+        t_end = time.time() + 20
+        while serve._rebuild["running"] and time.time() < t_end:
+            time.sleep(0.05)
+        assert serve._rebuild["error"] is None, serve._rebuild["error"]
+        rebuilt = json.loads(out.read_text(encoding="utf-8"))
+        assert out.stat().st_mtime > old and rebuilt["meta"]["mode"] == "quick"
+        s, _, b = req(port, "GET", "/api/dashboard")
+        assert json.loads(b)["server"]["rebuild"] in ("not_needed", "too_recent")
+
+
+def test_no_gpu_tool_means_no_gpu_row():
+    real = serve.shutil.which
+    serve.shutil.which = lambda name: None
+    try:
+        serve._gpu.update(t=0.0, value={"gpus": ["stale"]})
+        assert serve.gpu_snapshot() is None
+    finally:
+        serve.shutil.which = real
+        serve._gpu.update(t=0.0, value=None)
 
 
 def test_the_real_content_has_148_trilingual_cards():

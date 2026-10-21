@@ -252,6 +252,45 @@ def test_unknown_references_are_refused():
     expect(lambda d: d["entries"][0]["changes"][0].update(cat="misc"), "unknown category misc")
 
 
+def _with_runs(f):
+    run = f.tmp / "demo" / "out" / "r1"
+    run.mkdir(parents=True)
+    (run / "r1_demo_phone.mp4").write_bytes(b"mp4")
+    (run / "kpi.json").write_text("{}", encoding="utf-8")
+    (run / "flight_log.jsonl").write_text('{"tick": 0}\n', encoding="utf-8")
+    (f.tmp / "demo" / "out" / "_aside").mkdir()
+    (f.tmp / "demo" / "out" / "_aside" / "x.mp4").write_bytes(b"mp4")
+    (f.tmp / "demo" / "out" / "r_compare_20261021_phone.mp4").write_bytes(b"mp4")
+    (f.tmp / "secret.mp4").write_bytes(b"mp4")
+    (f.tmp / "tracker" / "assets" / "app.js").write_text(
+        'const MEDIA = { hud: ["img", "a.png"], v_r1: ["run", "r1/r1_demo_phone.mp4"] };', encoding="utf-8")
+    return A.load_ctx(f.tmp)
+
+
+def test_a_recorded_run_video_and_the_dashboard_page_can_be_attached():
+    """2026-10-21 (tracker audit, item 11): updates #21-#25 carry media: []
+    because the check took only img/video/share paths and img/video MEDIA
+    ids, so no flight video could be attached, and no update could point at
+    the Dashboard. Before this change all three of these were refused."""
+    with Fixture() as f:
+        ctx = _with_runs(f)
+        d = valid_doc()
+        d["entries"][2]["media"] = ["run/r1/r1_demo_phone.mp4", "run/r_compare_20261021_phone.mp4", "v_r1"]
+        d["entries"][2]["pages"] = ["dashboard"]
+        assert A.check(d, ctx) == []
+
+
+def test_run_media_must_be_a_media_file_inside_demo_out():
+    with Fixture() as f:
+        ctx = _with_runs(f)
+        for bad in ("run/r1/kpi.json", "run/r1/flight_log.jsonl", "run/r1", "run/../secret.mp4",
+                    "run/r1/../../secret.mp4", "run/r1/missing.mp4", "run/_aside/x.mp4"):
+            d = valid_doc()
+            d["entries"][2]["media"] = [bad]
+            e = A.check(d, ctx)
+            assert any("media not found" in m for m in e), (bad, e)
+
+
 def test_a_missing_source_heading_is_refused():
     expect(lambda d: d["entries"][1]["source"].update(heading="### 2026-09-20 — renamed"), "source heading not found")
 

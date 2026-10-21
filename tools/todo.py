@@ -1,0 +1,368 @@
+"""The project's open-work list: tracker/data/todo.json.
+
+    python tools/todo.py list                 # open items, overdue first
+    python tools/todo.py list --all
+    python tools/todo.py check                # validate (exit 1 on a problem)
+    python tools/todo.py set VLA-02 --status doing
+    python tools/todo.py close A-14 --commit 1a2b3c4
+    python tools/todo.py close A-03 --changelog "### 2026-10-21 — ..."
+    python tools/todo.py add --id C-18 --wp WP3 --owner agent --kind bug \\
+        --en "..." --id-text "..." --zh "..."
+
+The Dashboard's "Open to-do" panel and its VLA milestones read this file
+(through tools/build_dashboard.py). Like the update log (tools/add_update.py)
+every item carries its title in English, Indonesian and Traditional Chinese,
+and `check` refuses the ways a to-do list quietly goes wrong:
+  - an id missing, malformed or used twice;
+  - a title missing in a language, still "TODO", or with a Simplified-only
+    character in zh;
+  - an owner that is not a role (user / agent / pi: the list names no
+    colleague), a status, kind or WP outside the allowed values, a due date
+    that is not YYYY-MM-DD;
+  - a card id the tracker does not have;
+  - an item marked done with nothing that closed it: a commit git knows, a
+    CHANGELOG heading that exists, or (for the auto milestone) a run folder
+    whose manifest names a real VLA. "done" with no proof reads as progress
+    that may never have happened;
+  - a probe (a file + a string whose presence the Dashboard reports beside
+    the item) that points outside the repository.
+
+The auto milestone: an item with "auto": "first_vla_flight" shows as done on
+the Dashboard as soon as a demo/out/*/manifest.json names a real VLA in
+vla_model_hash (the same classifier as the Dashboard: an OWL-ViT detector, the
+StubVLA or a hand-written controller never count). `todo.py sync` writes that
+into the file, with the run as its proof.
+
+Nothing here reads or writes the tracker's board (tracker/data/state.json).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from datetime import date
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+TODO = ROOT / "tracker" / "data" / "todo.json"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import add_update as AU                                     # noqa: E402
+
+LANGS = ("en", "id", "zh")
+OWNERS = ("user", "agent", "pi")
+STATUSES = ("open", "doing", "blocked", "done")
+KINDS = ("milestone", "gate", "kpi", "deliverable", "bug", "decision", "task")
+AREAS = ("WP1", "WP2", "WP3", "WP4", "ARCH", "CROSS", "CLAIMS")
+AUTOS = ("first_vla_flight",)
+NEEDS = ("flight", "orin", "pi", "gpu", "push")
+EFFORTS = ("S", "M", "L")
+ID_RE = re.compile(r"^[A-Z]{1,5}-\d{2,3}$")
+# add_update's set holds the common slips; these add frequent ones that a
+# short title is likely to use (none is normal Traditional usage).
+SIMPLIFIED = set(AU.SIMPLIFIED) | set("务单车场东压参确称稳类组细终给络统继续维编联节获补装视觉计订讨训记论访评语说请读调谈负费资转轮较输运远违连选递逻针钟门闭队阶际险难项须领频题风驱")
+
+
+# ------------------------------------------------------------------ classify
+VLA_ALLOW = (re.compile(r"(?i)openvla"), re.compile(r"(?i)aerial[-_ ]?vla"),
+             re.compile(r"(?i)aero[-_]?vla"))
+
+
+def classify_pilot(vla_model_hash) -> str:
+    """vla_model_hash -> none | stub | detector | vla | unknown | missing.
+
+    Only an id on the allow-list (OpenVLA, AerialVLA and its adapter) is a
+    VLA. 65 of the 99 manifests in demo/out on 2026-10-21 record the OWL-ViT
+    DETECTOR here (google/owlvit-base-patch32@...), 24 the StubVLA and 10
+    none:hand-written-controller; none of them is a VLA flight, and a
+    dashboard that counted "anything not none" would report 89."""
+    if vla_model_hash is None or str(vla_model_hash).strip() == "":
+        return "missing"
+    s = str(vla_model_hash).strip()
+    ident = s.split("@", 1)[0].strip()
+    low = ident.lower()
+    if s.startswith("none:") or low == "none":
+        return "none"
+    if low.startswith("guardrail.vla_stub") or "stubvla" in low:
+        return "stub"
+    if "owlvit" in low or "owl-vit" in low or "owlv2" in low:
+        return "detector"
+    if any(p.search(ident) for p in VLA_ALLOW):
+        return "vla"
+    return "unknown"
+
+
+def vla_runs(demo_out: Path) -> list[tuple[str, str]]:
+    """(tag, vla_model_hash) of every demo/out/<tag>/manifest.json naming a
+    real VLA, oldest first by manifest time. Folders starting with '_' are
+    set aside and skipped."""
+    out = []
+    if not demo_out.is_dir():
+        return out
+    for m in demo_out.glob("*/manifest.json"):
+        if m.parent.name.startswith("_"):
+            continue
+        try:
+            h = json.loads(m.read_text(encoding="utf-8")).get("vla_model_hash")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if classify_pilot(h) == "vla":
+            out.append((m.stat().st_mtime, m.parent.name, str(h)))
+    return [(t, h) for _, t, h in sorted(out)]
+
+
+def effective(item: dict, vla: list[tuple[str, str]]) -> tuple[str, dict | None]:
+    """(status as the Dashboard shows it, the auto evidence or None)."""
+    if item.get("auto") == "first_vla_flight" and vla:
+        return "done", {"run": vla[0][0], "vla_model_hash": vla[0][1]}
+    return item.get("status", "open"), None
+
+
+# ------------------------------------------------------------------ check
+def card_ids(root: Path) -> set[str] | None:
+    files = sorted((root / "tracker" / "data" / "cards").glob("batch_*.json"))
+    if not files:
+        return None
+    ids = set()
+    for f in files:
+        try:
+            ids |= {c["id"] for c in json.loads(f.read_text(encoding="utf-8"))}
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+    return ids
+
+
+def commit_exists(root: Path, sha: str) -> bool:
+    if not re.fullmatch(r"[0-9a-f]{7,40}", sha or ""):
+        return False
+    try:
+        r = subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"], cwd=root,
+                           capture_output=True, timeout=20)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def changelog_headings(root: Path) -> set[str]:
+    try:
+        return {s.heading for s in AU.parse_changelog((root / "CHANGELOG.md").read_text(encoding="utf-8"))}
+    except OSError:
+        return set()
+
+
+def _safe_rel(p) -> bool:
+    if not isinstance(p, str) or not p or p.startswith(("/", "\\")) or re.match(r"^[A-Za-z]:", p):
+        return False
+    return ".." not in Path(p).parts
+
+
+def check(doc: dict, root: Path = ROOT, demo_out: Path | None = None,
+          cards: set[str] | None = None, git=commit_exists) -> list[str]:
+    errs: list[str] = []
+    items = doc.get("items") if isinstance(doc, dict) else None
+    if not isinstance(doc, dict) or doc.get("schema") != 1 or not isinstance(items, list):
+        return ['todo.json must be {"schema": 1, "items": [...]}']
+    cards = card_ids(root) if cards is None else cards
+    heads = None
+    vla = vla_runs(demo_out if demo_out is not None else root / "demo" / "out")
+    seen = set()
+    for n, it in enumerate(items):
+        tag = f"#{n + 1} {it.get('id', '?') if isinstance(it, dict) else '?'}"
+        if not isinstance(it, dict):
+            errs.append(f"{tag}: not an object")
+            continue
+        iid = it.get("id")
+        if not isinstance(iid, str) or not ID_RE.match(iid):
+            errs.append(f"{tag}: id must look like VLA-01 or A-12")
+        elif iid in seen:
+            errs.append(f"{tag}: duplicate id")
+        seen.add(iid)
+        tri = it.get("i18n") or {}
+        for lang in LANGS:
+            title = ((tri.get(lang) or {}).get("title") or "").strip()
+            if not title:
+                errs.append(f"{tag}: {lang} title missing")
+            elif "TODO" in title:
+                errs.append(f"{tag}: {lang} title still says TODO")
+        zh = " ".join(str(v) for v in (tri.get("zh") or {}).values())
+        bad = sorted({ch for ch in zh if ch in SIMPLIFIED})
+        if bad:
+            errs.append(f"{tag}: zh contains Simplified characters: {''.join(bad)}")
+        if it.get("owner") not in OWNERS:
+            errs.append(f"{tag}: owner must be a role, one of {OWNERS}")
+        if it.get("status") not in STATUSES:
+            errs.append(f"{tag}: status must be one of {STATUSES}")
+        if it.get("kind") not in KINDS:
+            errs.append(f"{tag}: kind must be one of {KINDS}")
+        if it.get("wp") not in AREAS:
+            errs.append(f"{tag}: wp must be one of {AREAS}")
+        due = it.get("due")
+        if due is not None:
+            try:
+                date.fromisoformat(due)
+            except (TypeError, ValueError):
+                errs.append(f"{tag}: due must be YYYY-MM-DD or null")
+        for k, allowed in (("needs", NEEDS),):
+            for v in it.get(k) or []:
+                if v not in allowed:
+                    errs.append(f"{tag}: {k} value {v!r} not in {allowed}")
+        if it.get("effort") not in (None,) + EFFORTS:
+            errs.append(f"{tag}: effort must be one of {EFFORTS} or null")
+        if it.get("auto") not in (None,) + AUTOS:
+            errs.append(f"{tag}: auto must be one of {AUTOS} or null")
+        if not isinstance(it.get("cards", []), list):
+            errs.append(f"{tag}: cards must be a list")
+        elif cards is not None:
+            for cid in it.get("cards", []):
+                if cid not in cards:
+                    errs.append(f"{tag}: unknown card {cid}")
+        probe = it.get("probe")
+        if probe is not None:
+            if not isinstance(probe, dict) or not _safe_rel(probe.get("file")) \
+                    or not isinstance(probe.get("contains", ""), str):
+                errs.append(f"{tag}: probe must be {{file: <repo-relative path>, contains: <text>}}")
+        if it.get("status") == "done":
+            cb = it.get("closed_by") or {}
+            ok = False
+            if cb.get("commit"):
+                ok = git(root, cb["commit"])
+                if not ok:
+                    errs.append(f"{tag}: closed_by commit {cb['commit']} is not a commit git knows")
+            elif cb.get("changelog"):
+                heads = changelog_headings(root) if heads is None else heads
+                ok = cb["changelog"] in heads
+                if not ok:
+                    errs.append(f"{tag}: closed_by changelog heading not found: {cb['changelog'][:60]}")
+            elif cb.get("run"):
+                ok = it.get("auto") == "first_vla_flight" and cb["run"] in {t for t, _ in vla}
+                if not ok:
+                    errs.append(f"{tag}: closed_by run {cb['run']} is not a demo/out run that names a real VLA")
+            else:
+                errs.append(f"{tag}: done, but closed_by names no commit, CHANGELOG heading or run")
+    return errs
+
+
+# ------------------------------------------------------------------ io
+def load(path: Path = TODO) -> dict:
+    if not path.is_file():
+        return {"schema": 1, "items": []}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def find(doc: dict, iid: str) -> dict:
+    for it in doc.get("items", []):
+        if it.get("id") == iid:
+            return it
+    raise SystemExit(f"no item {iid}")
+
+
+def _save_checked(doc: dict, path: Path, root: Path = ROOT) -> int:
+    errs = check(doc, root)
+    if errs:
+        for e in errs:
+            print("ERROR", e)
+        print("not written")
+        return 1
+    AU.write_atomic(path, doc)
+    return 0
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="Maintain the project's to-do list.")
+    ap.add_argument("--file", default=str(TODO))
+    sp = ap.add_subparsers(dest="cmd", required=True)
+    ls = sp.add_parser("list")
+    ls.add_argument("--all", action="store_true")
+    ls.add_argument("--lang", choices=LANGS, default="en")
+    sp.add_parser("check")
+    sp.add_parser("sync", help="mark the auto milestone done when a run names a real VLA")
+    st = sp.add_parser("set")
+    st.add_argument("id")
+    st.add_argument("--status", choices=STATUSES)
+    st.add_argument("--owner", choices=OWNERS)
+    st.add_argument("--due")
+    st.add_argument("--branch")
+    cl = sp.add_parser("close")
+    cl.add_argument("id")
+    g = cl.add_mutually_exclusive_group(required=True)
+    g.add_argument("--commit")
+    g.add_argument("--changelog")
+    ad = sp.add_parser("add")
+    ad.add_argument("--id", required=True)
+    ad.add_argument("--wp", required=True, choices=AREAS)
+    ad.add_argument("--owner", required=True, choices=OWNERS)
+    ad.add_argument("--kind", required=True, choices=KINDS)
+    ad.add_argument("--en", required=True)
+    ad.add_argument("--id-text", required=True, dest="id_text")
+    ad.add_argument("--zh", required=True)
+    ad.add_argument("--cards", nargs="*", default=[])
+    ad.add_argument("--due")
+    a = ap.parse_args(argv)
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+    path = Path(a.file)
+    doc = load(path)
+    if a.cmd == "check":
+        errs = check(doc)
+        for e in errs:
+            print("ERROR", e)
+        print(f"{len(doc.get('items', []))} items, {len(errs)} problem(s)")
+        return 1 if errs else 0
+    if a.cmd == "list":
+        vla = vla_runs(ROOT / "demo" / "out")
+        today = date.today().isoformat()
+        rows = []
+        for it in doc.get("items", []):
+            st, ev = effective(it, vla)
+            if st == "done" and not a.all:
+                continue
+            late = bool(it.get("due") and it["due"] < today and st != "done")
+            rows.append((not late, it.get("due") or "9999", it["id"], st, it, ev, late))
+        for _, _, iid, st, it, ev, late in sorted(rows):
+            t = ((it.get("i18n") or {}).get(a.lang) or {}).get("title", "")
+            extra = f"  [auto: {ev['run']}]" if ev else ""
+            print(f"{iid:<8} {st:<8} {it.get('owner', ''):<6} {it.get('wp', ''):<6} "
+                  f"{(it.get('due') or ''):<10}{' LATE' if late else '     '} {t}{extra}")
+        return 0
+    if a.cmd == "sync":
+        vla = vla_runs(ROOT / "demo" / "out")
+        changed = 0
+        for it in doc.get("items", []):
+            st, ev = effective(it, vla)
+            if ev and it.get("status") != "done":
+                it["status"], it["closed_by"] = "done", {"run": ev["run"]}
+                changed += 1
+        if not changed:
+            print("nothing to sync")
+            return 0
+        return _save_checked(doc, path)
+    if a.cmd == "set":
+        it = find(doc, a.id)
+        for k in ("status", "owner", "due", "branch"):
+            v = getattr(a, k)
+            if v is not None:
+                it[k] = v
+        return _save_checked(doc, path)
+    if a.cmd == "close":
+        it = find(doc, a.id)
+        it["status"] = "done"
+        it["closed_by"] = {"commit": a.commit} if a.commit else {"changelog": a.changelog}
+        return _save_checked(doc, path)
+    if a.cmd == "add":
+        if any(x.get("id") == a.id for x in doc.get("items", [])):
+            raise SystemExit(f"{a.id} exists")
+        doc.setdefault("items", []).append({
+            "id": a.id, "kind": a.kind, "wp": a.wp, "owner": a.owner, "status": "open",
+            "cards": a.cards, "due": a.due, "branch": None, "closed_by": None,
+            "milestone": None, "auto": None, "probe": None, "needs": [], "effort": None,
+            "i18n": {"en": {"title": a.en}, "id": {"title": a.id_text}, "zh": {"title": a.zh}}})
+        return _save_checked(doc, path)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -3930,6 +3930,34 @@ def cell_key(table: dict) -> str:
     return key
 
 
+class _NoBeat:
+    def beat(self, *a, **k):
+        return None
+
+    def stop(self, *a, **k):
+        return None
+
+
+def _live_heartbeat(name: str, **kw):
+    """A heartbeat for the tracker's Dashboard "running now" panel
+    (tools/live_status.py), or a no-op when anything goes wrong: beat() only
+    stores numbers in memory and a daemon thread writes at most once a second,
+    outside OneDrive, swallowing its own errors. Only a command-line run gets
+    one (the __main__ block): main() called from a test keeps the no-op."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "vlaguard_live_status", ROOT / "tools" / "live_status.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.heartbeat("harness", name, **kw)
+    except Exception:                                   # noqa: BLE001
+        return _NoBeat()
+
+
+_LIVE = _NoBeat()
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--library", default=None,
@@ -4094,7 +4122,7 @@ def main(argv: list[str] | None = None) -> int:
     rsp_counts = dict(cmp_counts)
     one_seed = len(episodes) == len({(e.run_id) for e in episodes})
 
-    for ep in episodes:
+    for i_ep, ep in enumerate(episodes):
         spec = ep.cell.spec
         eid = ep.run_id
         kind = ("forecast" if ep.forecast != "grant"
@@ -4103,6 +4131,7 @@ def main(argv: list[str] | None = None) -> int:
         sink = {"forecast": cmp_rows, "response": rsp_rows}.get(kind, rows_out)
         ccounts = rsp_counts if kind == "response" else cmp_counts
         label = eid if one_seed else f"{eid} seed={ep.seed}"
+        _LIVE.beat(progress=i_ep / max(1, len(episodes)), detail=label)   # memory only
         common = {"id": eid, "id_cell": ep.episode_id, "scenario_id": ep.cell.scenario_id,
                   "template": spec.template, "params": ep.cell.params,
                   "seed": ep.seed, "arm": "on" if spec.shield else "off",
@@ -4571,4 +4600,15 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # A command-line run reports to the Dashboard (tools/live_status.py);
+    # its heartbeat ends with the run, "failed" on a non-zero exit. An
+    # argument that is a path shows as its last part only: the Dashboard
+    # promises no folder names.
+    _LIVE = _live_heartbeat("sweep " + " ".join(
+        Path(a).name if ("/" in a or "\\" in a) else a for a in sys.argv[1:])[:80])
+    _code = 1
+    try:
+        _code = main()
+    finally:
+        _LIVE.stop("ok" if not _code else "failed")
+    sys.exit(_code)

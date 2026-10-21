@@ -3,6 +3,8 @@
     python tracker/serve.py            # http://127.0.0.1:8765
     python tracker/serve.py --port 9000
     python tracker/serve.py --state some/other/state.json   # e.g. for tests
+    python tracker/serve.py --open     # open the browser once the port is bound
+    python tracker/serve.py --demo-out D:/path/demo/out     # the recorded runs elsewhere
 
 Standard library only. Serves:
   /                  the site (tracker/index.html, tracker/assets/*)
@@ -17,6 +19,21 @@ Standard library only. Serves:
                      the update log and the project VERSION)
   GET  /api/state    the board's saved state (tracker/data/state.json)
   POST /api/state    replace that state (JSON body); written atomically
+  GET  /api/dashboard  tracker/data/dashboard.json (tools/build_dashboard.py)
+                     plus a "server" block: is it stale against its inputs,
+                     and did a background `--quick` rebuild start. The
+                     rebuild never makes posters or probes codecs, waits 30 s
+                     between attempts, and is deferred while a flight's
+                     heartbeat is live, so it cannot slow a flight.
+  GET  /api/live     the heartbeat files of running jobs (tools/live_status.py,
+                     %LOCALAPPDATA%\\vla-guardrail\\live) and one nvidia-smi
+                     snapshot, cached 5 s. Only whitelisted fields: no log
+                     content, no paths (a job's folder is shown as its
+                     demo/out tag), no environment.
+Both new endpoints are GET only (a POST to them is a 404) and pass the same
+Host / Origin refusal as everything else. /api/content and /api/dashboard
+answer with an ETag and a 304 to a matching If-None-Match, so the page's
+visibility reload no longer downloads 1.2 MB to learn nothing changed.
 
 Binds 127.0.0.1 only, so it is not exposed to the network. That alone does
 not protect the board (review of 2026-10-19, harness-tools/tracker-state-
@@ -40,13 +57,19 @@ the tests) are not a browser and are still accepted.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
 import json
 import mimetypes
 import os
 import posixpath
 import re
+import shutil
+import subprocess
 import tempfile
 import threading
+import time
+import webbrowser
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -68,6 +91,18 @@ MEDIA = {
 MEDIA_SUFFIXES = {"run": {".mp4", ".webm", ".png", ".jpg", ".jpeg"}}
 MAX_STATE_BYTES = 5 * 1024 * 1024
 _state_lock = threading.Lock()
+TOOLS = ROOT / "tools"
+BUILD_ROOT = ROOT               # the repository the dashboard builder reads
+LIVE_DIR: Path | None = None    # None: tools/live_status.py live_dir()
+AUTO_REBUILD = True
+REBUILD_MIN_AGE_S = 30.0
+GPU_CACHE_S = 5.0
+GPU_APPS = re.compile(r"(?i)python|unreal|airsim|ffmpeg|ollama")
+_rebuild = {"running": False, "last_try": 0.0, "error": None}
+_rebuild_lock = threading.Lock()
+_gpu = {"t": 0.0, "value": None}
+_gpu_lock = threading.Lock()
+_tools: dict = {}
 
 mimetypes.add_type("video/mp4", ".mp4")
 mimetypes.add_type("image/svg+xml", ".svg")
@@ -115,6 +150,128 @@ def safe_join(base: Path, rel: str) -> Path | None:
     return p
 
 
+def _tool(name: str):
+    """tools/<name>.py, loaded by path once (standard library only)."""
+    if name not in _tools:
+        spec = importlib.util.spec_from_file_location(f"tracker_tool_{name}", TOOLS / f"{name}.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _tools[name] = mod
+    return _tools[name]
+
+
+def _live_snapshot() -> dict:
+    ls = _tool("live_status")
+    return ls.snapshot(folder=LIVE_DIR, demo_out=MEDIA["run"])
+
+
+def _flight_running() -> bool:
+    try:
+        return bool(_live_snapshot().get("flight_running"))
+    except Exception:                                  # noqa: BLE001
+        return False
+
+
+def _run_rebuild(P: dict) -> None:
+    try:
+        bd = _tool("build_dashboard")
+        bd.write_atomic(P["out"], bd.build(P, quick=True))
+        _rebuild["error"] = None
+    except Exception as exc:                           # noqa: BLE001 - never kill the server
+        _rebuild["error"] = type(exc).__name__         # the class only: no path, no text
+    finally:
+        _rebuild["running"] = False
+
+
+def dashboard_payload() -> dict:
+    """dashboard.json plus the server's view of it (module docstring)."""
+    bd = _tool("build_dashboard")
+    P = bd.paths(BUILD_ROOT, demo_out=MEDIA["run"], data_dir=DATA)
+    doc = bd.read_json(P["out"])
+    reasons = bd.stale_reasons(P, doc if isinstance(doc, dict) else None)
+    # Only "an input is newer" or "no file" asks for a rebuild; stale card
+    # text needs a person, not a build.
+    want = any("newer than dashboard.json" in r or "does not exist" in r for r in reasons)
+    action = "not_needed"
+    if want:
+        try:
+            age = time.time() - P["out"].stat().st_mtime
+        except OSError:
+            age = 1e9
+        with _rebuild_lock:
+            if not AUTO_REBUILD:
+                action = "off"
+            elif _rebuild["running"]:
+                action = "running"
+            elif age < REBUILD_MIN_AGE_S or time.time() - _rebuild["last_try"] < REBUILD_MIN_AGE_S:
+                action = "too_recent"
+            elif _flight_running():
+                action = "deferred_flight"
+            else:
+                _rebuild.update(running=True, last_try=time.time())
+                threading.Thread(target=_run_rebuild, args=(P,), daemon=True).start()
+                action = "started"
+    out = dict(doc) if isinstance(doc, dict) else {"missing": True}
+    out["server"] = {"stale": bool(reasons), "stale_reasons": reasons, "rebuild": action,
+                     "rebuild_error": _rebuild["error"]}
+    return out
+
+
+def _csv_rows(text: str) -> list:
+    return [[c.strip() for c in ln.split(",")] for ln in (text or "").splitlines() if ln.strip()]
+
+
+def _int(x):
+    try:
+        return int(float(x))
+    except (TypeError, ValueError):
+        return None
+
+
+def gpu_snapshot() -> dict | None:
+    """One nvidia-smi reading, cached GPU_CACHE_S; None without a GPU tool.
+    Process names are reduced to their file name (no folders)."""
+    now = time.time()
+    with _gpu_lock:
+        if now - _gpu["t"] < GPU_CACHE_S:
+            return _gpu["value"]
+        _gpu["t"] = now
+    value = None
+    exe = shutil.which("nvidia-smi")
+    if exe:
+        kw = {"capture_output": True, "text": True, "timeout": 3}
+        if os.name == "nt":
+            kw["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            g = subprocess.run([exe, "--query-gpu=name,utilization.gpu,memory.used,memory.total",
+                                "--format=csv,noheader,nounits"], **kw)
+            a = subprocess.run([exe, "--query-compute-apps=pid,process_name,used_memory",
+                                "--format=csv,noheader,nounits"], **kw)
+            gpus = []
+            for row in _csv_rows(g.stdout)[:4]:
+                if len(row) >= 4:
+                    gpus.append({"name": row[0][:60], "util_pct": _int(row[1]),
+                                 "mem_used_mib": _int(row[2]), "mem_total_mib": _int(row[3])})
+            # On Windows every graphics process is listed, mostly with an
+            # unknown memory size: keep the ones this project runs (Python,
+            # Unreal, ffmpeg) and any with a known size; count the rest.
+            apps, other = [], 0
+            for row in _csv_rows(a.stdout)[:64]:
+                if len(row) >= 3:
+                    name = re.split(r"[\\/]", row[1])[-1][:60]
+                    mem = _int(row[2])
+                    if mem is not None or GPU_APPS.search(name):
+                        apps.append({"pid": _int(row[0]), "name": name, "mem_mib": mem})
+                    else:
+                        other += 1
+            value = {"gpus": gpus, "apps": apps[:16], "other_apps": other} if gpus else None
+        except (OSError, subprocess.SubprocessError, ValueError):
+            value = None
+    with _gpu_lock:
+        _gpu["value"] = value
+    return value
+
+
 class Handler(SimpleHTTPRequestHandler):
     server_version = "GrantTracker/1.0"
 
@@ -132,11 +289,21 @@ class Handler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     # -------------------------------------------------------------- API
-    def _json(self, obj, code=HTTPStatus.OK):
+    def _json(self, obj, code=HTTPStatus.OK, etag=False):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
+        tag = None
+        if etag and code == HTTPStatus.OK:
+            tag = '"' + hashlib.sha256(body).hexdigest()[:24] + '"'
+            if (self.headers.get("If-None-Match") or "").strip() == tag:
+                self.send_response(HTTPStatus.NOT_MODIFIED)
+                self.send_header("ETag", tag)
+                self.end_headers()
+                return
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        if tag:
+            self.send_header("ETag", tag)
         self.end_headers()
         self.wfile.write(body)
 
@@ -177,7 +344,20 @@ class Handler(SimpleHTTPRequestHandler):
             return self._forbidden(why)
         path = unquote(urlsplit(self.path).path)
         if path == "/api/content":
-            return self._json(load_content())
+            return self._json(load_content(), etag=True)
+        if path == "/api/dashboard":
+            try:
+                return self._json(dashboard_payload(), etag=True)
+            except Exception as exc:                  # noqa: BLE001
+                return self._json({"error": f"dashboard unavailable ({type(exc).__name__})"},
+                                  HTTPStatus.INTERNAL_SERVER_ERROR)
+        if path == "/api/live":
+            try:
+                snap = _live_snapshot()
+            except Exception as exc:                  # noqa: BLE001
+                snap = {"error": f"live status unavailable ({type(exc).__name__})", "jobs": []}
+            snap["gpu"] = gpu_snapshot()
+            return self._json(snap)
         if path == "/api/state":
             with _state_lock:
                 try:
@@ -290,13 +470,35 @@ def main() -> None:
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--state", default=None,
                     help="board state file (default tracker/data/state.json)")
+    ap.add_argument("--open", action="store_true", help="open the browser once the port is bound")
+    ap.add_argument("--demo-out", default=None,
+                    help="the recorded runs served at /media/run/ and read by the dashboard "
+                         "(default demo/out)")
+    ap.add_argument("--live-dir", default=None, help="heartbeat folder (default: tools/live_status.py)")
+    ap.add_argument("--no-rebuild", action="store_true",
+                    help="never rebuild dashboard.json in the background")
     a = ap.parse_args()
-    global STATE
+    global STATE, LIVE_DIR, AUTO_REBUILD
     if a.state:
         STATE = Path(a.state).resolve()
         print(f"board state: {STATE}")
-    httpd = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
-    print(f"Grant tracker: http://127.0.0.1:{a.port}/  (Ctrl+C to stop)")
+    if a.demo_out:
+        MEDIA["run"] = Path(a.demo_out).resolve()
+        print(f"recorded runs: {MEDIA['run']}")
+    if a.live_dir:
+        LIVE_DIR = Path(a.live_dir).resolve()
+    AUTO_REBUILD = not a.no_rebuild
+    try:
+        httpd = ThreadingHTTPServer(("127.0.0.1", a.port), Handler)
+    except OSError as exc:
+        print(f"could not listen on 127.0.0.1:{a.port} ({exc}); is the tracker already running?")
+        raise SystemExit(1)
+    url = f"http://127.0.0.1:{a.port}/"
+    print(f"Grant tracker: {url}  (Ctrl+C to stop)")
+    if a.open:
+        # After the bind, so the first page load cannot race the server
+        # (the old launcher opened the browser first).
+        threading.Timer(0.2, webbrowser.open, args=(url,)).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

@@ -98,6 +98,32 @@ ROBOT_CONFIG = ROOT / "demo" / "pas_config" / "robot_semantic_quad.jsonc"
 DEFAULT_POLICY = ROOT / "policies" / "follow_car.yaml"
 
 
+class _NoBeat:
+    def beat(self, *a, **k):
+        return None
+
+    def stop(self, *a, **k):
+        return None
+
+
+def _live_heartbeat(name: str, **kw):
+    """A heartbeat for the tracker's Dashboard "running now" panel
+    (tools/live_status.py), or a no-op when anything goes wrong. beat() only
+    stores numbers in memory; a daemon thread writes at most once a second to
+    %LOCALAPPDATA%, outside OneDrive, and swallows its own errors, so the
+    flight loop never waits on it and cannot be stopped by it. Loaded by path:
+    tools/ is not put on sys.path, where its modules could shadow demo/'s."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "vlaguard_live_status", ROOT / "tools" / "live_status.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.heartbeat("flight", name, **kw)
+    except Exception:                                   # noqa: BLE001
+        return _NoBeat()
+
+
 def camera_hfov_deg(config_path=ROBOT_CONFIG, sensor: str = "FrontCamera",
                     image_type: int = 0, default: float = 90.0) -> float:
     """The detector camera's horizontal FOV, READ FROM THE SIM CONFIG.
@@ -4055,6 +4081,10 @@ async def fly(args) -> int:
     client = ProjectAirSimClient()
     client.connect()
     grounder = None
+    # The Dashboard heartbeat starts here, right before the `try` whose
+    # `finally` ends it: a run refused earlier (the SystemExits above) or a
+    # failed connect leaves no row that reads "stopped unexpectedly".
+    live = _live_heartbeat(args.tag, log_dir=out, total_s=args.max_s)
     try:
         world = World(client, SCENE, delay_after_load_sec=2,
                       sim_config_path=SIM_CONFIG_DIR)
@@ -4788,6 +4818,7 @@ async def fly(args) -> int:
         while time.time() - t0 < args.max_s:
             tick += 1
             _tk0 = time.time()
+            live.beat(progress=(_tk0 - t0) / max(float(args.max_s), 1.0))   # memory only
             mode_label = None       # HUD state text when not the default
             hud_box = False         # draw the box on the video (hud_target)?
             det_tier = None         # identity tier of the steering box
@@ -6002,6 +6033,9 @@ async def fly(args) -> int:
                     fh.write(json.dumps(r) + "\n")
         except Exception as exc:
             print(f"[warn] could not write the flight log: {type(exc).__name__}: {exc}")
+        # The Dashboard row ends after the log is safe (never raises; at worst
+        # a few local retries of 50-150 ms, outside OneDrive).
+        live.stop("failed" if aborted else "ok")
 
         # BOUND THE WHOLE TEARDOWN, not just the disconnect.
         #

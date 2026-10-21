@@ -29,7 +29,10 @@ tests/test_add_update.py):
   - one `retracted` change per top-level bullet under the source section's
     Retracted headings: a retraction is never merged away;
   - no Simplified-only characters in zh;
-  - files, card ids, media and site pages that an entry names exist.
+  - files, card ids, media and site pages that an entry names exist; a
+    recorded run's video or image may be attached as "run/<tag>/<file>"
+    (served from demo/out by tracker/serve.py, media suffixes only; pass
+    --demo-out when the runs are not under this checkout's demo/out).
 
 The rules exist because an update log that quietly rounds a number, drops a
 retraction or slips into Simplified Chinese would be worse than none.
@@ -59,7 +62,12 @@ LANGS = ("en", "id", "zh")
 KINDS = ("release", "work", "site")
 CATS = ("added", "changed", "fixed", "retracted", "flown", "found", "limits", "confirmed",
         "tests", "docs", "share")
-PAGES = ("overview", "flow", "grant", "board", "evidence", "glossary", "updates")
+PAGES = ("dashboard", "overview", "flow", "grant", "board", "evidence", "glossary", "updates")
+# A recorded run's media an update may attach as "run/<tag>/<file>" (or a
+# top-level demo/out compare video): what tracker/serve.py's /media/run/
+# route serves, and nothing else - the flight logs, audit records and replay
+# bundles beside the videos stay unserved, so an update cannot link to them.
+RUN_MEDIA_SUFFIXES = (".mp4", ".webm", ".png", ".jpg", ".jpeg")
 PROOF_TYPES = ("tests", "flight", "command", "review", "api", "screenshot", "replay")
 # Characters that exist only in Simplified Chinese (their Traditional forms
 # differ). Not exhaustive; it catches the common slips.
@@ -204,9 +212,25 @@ class Ctx:
     media_ids: set[str]
     version_file: str | None
     git_text: dict = field(default_factory=dict)       # sha -> message + stat
+    demo_out: Path | None = None                       # the recorded runs (run/ media)
 
 
-def load_ctx(root: Path = ROOT) -> Ctx:
+def run_media_problem(rel: str, demo_out: Path) -> str | None:
+    """Why "run/<rel>" is not attachable media, or None. Since 2026-10-21 an
+    update can show a flight video; before, the media check accepted only
+    docs/img, docs/video and docs/share, so updates #21-#25 carried no media
+    at all although their flights were recorded."""
+    parts = Path(rel).parts
+    if not parts or ".." in parts or rel.startswith(("/", "\\")) or parts[0].startswith("_"):
+        return "a run media path stays inside demo/out (no '..', no set-aside '_' folder)"
+    if Path(rel).suffix.lower() not in RUN_MEDIA_SUFFIXES:
+        return f"only {', '.join(RUN_MEDIA_SUFFIXES)} files are served from a run, not {Path(rel).suffix or 'a folder'}"
+    if not (demo_out / rel).is_file():
+        return "no such file under demo/out"
+    return None
+
+
+def load_ctx(root: Path = ROOT, demo_out: Path | None = None) -> Ctx:
     sections = parse_changelog((root / "CHANGELOG.md").read_text(encoding="utf-8"))
     cards = set()
     for f in sorted((root / "tracker" / "data" / "cards").glob("batch_*.json")):
@@ -217,12 +241,14 @@ def load_ctx(root: Path = ROOT) -> Ctx:
     media = set()
     app = root / "tracker" / "assets" / "app.js"
     if app.is_file():
-        media = set(re.findall(r'(\w+): \["(?:img|video)"', app.read_text(encoding="utf-8")))
+        # every MEDIA kind app.js serves, the recorded runs ("run") included
+        media = set(re.findall(r'(\w+): \["(?:img|video|share|run)"', app.read_text(encoding="utf-8")))
     try:
         ver = (root / "VERSION").read_text(encoding="utf-8").strip()
     except OSError:
         ver = None
-    return Ctx(root=root, sections=sections, cards=cards, media_ids=media, version_file=ver)
+    return Ctx(root=root, sections=sections, cards=cards, media_ids=media, version_file=ver,
+               demo_out=Path(demo_out) if demo_out else root / "demo" / "out")
 
 
 def git_message(ctx: Ctx, sha: str) -> str:
@@ -391,7 +417,11 @@ def check(doc: dict, ctx: Ctx, partial: bool = False) -> list[str]:
         for m in e.get("media", []):
             if "/" in m:
                 kind_dir, _, rest = m.partition("/")
-                if kind_dir not in ("img", "video", "share") or not (ctx.root / "docs" / kind_dir / rest).is_file():
+                if kind_dir == "run":
+                    why = run_media_problem(rest, ctx.demo_out or ctx.root / "demo" / "out")
+                    if why:
+                        errs.append(f"{tag}: media not found: {m} ({why})")
+                elif kind_dir not in ("img", "video", "share") or not (ctx.root / "docs" / kind_dir / rest).is_file():
                     errs.append(f"{tag}: media not found: {m}")
             elif m not in ctx.media_ids:
                 errs.append(f"{tag}: unknown media id {m}")
@@ -481,6 +511,8 @@ def card_evidence(ctx: Ctx, cid: str) -> list:
 # ------------------------------------------------------------------ cli
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Maintain the tracker's update log.")
+    ap.add_argument("--demo-out", default=None,
+                    help="the recorded runs that run/ media resolves against (default demo/out)")
     sp = ap.add_subparsers(dest="cmd", required=True)
     sp.add_parser("list")
     c = sp.add_parser("check")
@@ -503,7 +535,7 @@ def main(argv=None) -> int:
     except (AttributeError, ValueError):
         pass
 
-    ctx = load_ctx()
+    ctx = load_ctx(demo_out=args.demo_out)
     doc = load_doc(Path(args.file)) if getattr(args, "file", None) else load_doc()
     if args.cmd == "list":
         for e in doc["entries"]:

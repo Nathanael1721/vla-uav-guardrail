@@ -563,6 +563,15 @@ def test_the_hold_point_and_window_lead_files_run_in_ci():
     assert not missing, f"not run in CI: {sorted(missing)}"
 
 
+def test_the_tracker_dashboard_files_run_in_ci():
+    """Wave V1 (2026-10-21): the tracker's Dashboard data builder, its live
+    status (heartbeats written inside the flight scripts) and the to-do list
+    each have a file; all build their own fixtures headless, and only their
+    real-data checks SKIP where tracker/data is absent (a clean clone)."""
+    missing = {"test_build_dashboard.py", "test_live_status.py", "test_todo.py"} - _loop()
+    assert not missing, f"not run in CI: {sorted(missing)}"
+
+
 def test_the_own_velocity_forecast_test_runs_in_ci():
     """Wave T1 (2026-10-20): the own-velocity forecast's file - the 18,000-
     decision identity proof against c77c77d, the response fit on the

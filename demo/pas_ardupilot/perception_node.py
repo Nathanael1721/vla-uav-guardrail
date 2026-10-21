@@ -178,6 +178,32 @@ for _p in (ROOT, ROOT / "demo", HERE):
 if str(ROOT / "sitl") not in sys.path:
     sys.path.append(str(ROOT / "sitl"))
 
+
+class _NoBeat:
+    def beat(self, *a, **k):
+        return None
+
+    def stop(self, *a, **k):
+        return None
+
+
+def _live_heartbeat(name: str, **kw):
+    """A heartbeat for the tracker's Dashboard "running now" panel
+    (tools/live_status.py), or a no-op when anything goes wrong. beat() only
+    stores numbers in memory; a daemon thread writes at most once a second to
+    %LOCALAPPDATA%, outside OneDrive, and swallows its own errors, so the 10 Hz
+    loop never waits on it and cannot be stopped by it. Loaded by path:
+    tools/ is not put on sys.path, where its modules could shadow these."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "vlaguard_live_status", ROOT / "tools" / "live_status.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.heartbeat("flight", name, **kw)
+    except Exception:                                   # noqa: BLE001
+        return _NoBeat()
+
 from guardrail import AuditLogger, State                             # noqa: E402
 from guardrail.bundle import load_for_flight                          # noqa: E402
 from guardrail.compiler import ConstraintCompiler, Mission            # noqa: E402
@@ -2564,10 +2590,12 @@ def _fine_timer_end(winmm) -> None:
 
 def run(args, *, link=None, camera=None, grounder=None, obs=None,
         clock=time.time, sleep=time.sleep, popen=None, run_cmd=None,
-        recorder_cls=None) -> int:
+        recorder_cls=None, live_status: bool = False) -> int:
     """Fly one run. Every collaborator is injectable so the loop can be tested
     without a simulator, an autopilot or a GPU (tests/test_pas_ardupilot.py);
-    `recorder_cls` stands in for demo/recorder.FrameRecorder (--save-view)."""
+    `recorder_cls` stands in for demo/recorder.FrameRecorder (--save-view).
+    `live_status` writes a Dashboard heartbeat (main() turns it on for a
+    flight; the tests leave it off, so they never touch the live folder)."""
     popen = popen or subprocess.Popen
     run_cmd = run_cmd or subprocess.run
     tag = args.tag or time.strftime("pas_ap_%Y%m%d_%H%M%S")
@@ -2708,6 +2736,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     rec_summary = None
     hud_ms: list[float] = []
     hud_failed = 0
+    live = (_live_heartbeat(tag, log_dir=out, total_s=args.max_s) if live_status
+            else _NoBeat())
     try:
         if camera is not None:
             camera.start()                     # loads the scene: BEFORE SITL starts
@@ -2915,6 +2945,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             while clock() - t0 < args.max_s:
                 t_tick = clock()
                 tick_starts.append(t_tick - t0)
+                live.beat(progress=(t_tick - t0) / max(float(args.max_s), 1.0))   # memory only
                 link.pump()
                 st = link.state(anchor)
                 if st is None:
@@ -4022,6 +4053,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                       f"only; these frames are under {view_dir}")
         return 0
     finally:
+        # The Dashboard row ends with the run (never raises; an exception on
+        # its way out reads as a failed run).
+        live.stop("failed" if sys.exc_info()[0] is not None else "ok")
         # Whatever happened above - a refused arm, an EKF that never
         # converged, Ctrl+C - the simulator connection and the SITL this
         # run started do not outlive it. Nor does the recorder thread: it
@@ -4047,7 +4081,7 @@ def main(argv=None) -> int:
     # sleeps on nothing.
     fine = None if (args.dry_run or args.scene_only) else _fine_timer_begin()
     try:
-        return run(args)
+        return run(args, live_status=not (args.dry_run or args.scene_only))
     finally:
         _fine_timer_end(fine)
 
