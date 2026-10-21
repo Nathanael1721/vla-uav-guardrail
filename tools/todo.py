@@ -134,7 +134,9 @@ MIN_VLA_STEP_TICKS = 10
 #     (stale on arrival, during a rail hold) is the guardrail's doing, not a
 #     failure of the VLA, and is left out of both sides.
 #   tick share = loop ticks the VLA authored (VLA_AUTHORS: vla_step, and
-#     hold, its finished step held; guardrail/vla_link.py AUTHORS) / the
+#     hold, its finished step held; guardrail/vla_link.py AUTHORS; from
+#     metrics.json's totals, which also author a held parse failure "hold",
+#     only the parsed decisions' part of the holds: _evidence_from_metrics) / the
 #     mission's loop ticks, read in this order: the pilot's own
 #     ticks_by_author (one per act() call, hover and none included),
 #     metrics.json "ticks", kpi.json "ticks" (one per flight-log row,
@@ -254,9 +256,22 @@ def _evidence_from_metrics(metrics: dict) -> dict | None:
     by = st.get("ticks_by_author") if isinstance(st.get("ticks_by_author"), dict) else {}
     n = _count(st.get("decisions_accepted")) or 0
     ok = weights_digest_ok(digest)
+    # The tracker ACCEPTS a malformed answer and holds zero under it
+    # (guardrail/vla_link.py StepTracker.accept: kind parse_fail), and those
+    # ticks are authored "hold" too, so the totals cannot tell a finished
+    # step held from a parse failure held. vla_steps.jsonl can (per decision)
+    # and is read first; here the hold ticks are shared out by the accepted
+    # decisions, the parsed ones' part counted: an estimate, never more than
+    # the totals say, exact when no malformed answer was taken.
+    tracker = st.get("tracker") if isinstance(st.get("tracker"), dict) else {}
+    pf_acc = _count(tracker.get("kind_parse_fail"))
+    if pf_acc is None:                              # no tracker counts: every malformed answer
+        pf_acc = _count(st.get("parse_fail")) or 0
+    hold = _count(by.get("hold")) or 0
+    hold_vla = hold if not pf_acc else (round(hold * n / (n + pf_acc)) if n else 0)
     return {"source": f"metrics.json#/{key}", "decisions": n if ok else 0,
             "no_digest": 0 if ok else n, "vla_step_ticks": _count(by.get("vla_step")) or 0,
-            "vla_ticks": sum(_count(by.get(a)) or 0 for a in VLA_AUTHORS),
+            "vla_ticks": (_count(by.get("vla_step")) or 0) + hold_vla,
             "digests": [digest] if ok else [], "model_ids": [str(ident.get("id") or "")] if ok else [],
             "parse_fail": _count(st.get("parse_fail")) or 0,
             "server_error": _count(st.get("server_error")) or 0,

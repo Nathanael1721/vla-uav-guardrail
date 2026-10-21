@@ -350,6 +350,16 @@ def test_a_vla_that_dies_early_is_not_a_vla_flight():
             "decisions_accepted": 40, "parse_fail": 0, "server_error": 0, "link_failure": 0,
             "ticks_by_author": {"vla_step": 30, "hold": 10, "hover": 1100, "none": 10},
             "identity": {"id": AERO, "weights_sha256": DIGEST}}}}}, "vla_tick_share_low"),
+        # the pilot's summary, half of the accepted answers malformed: the
+        # tracker holds zero under a parse failure and authors it "hold", so
+        # the totals' 200 hold ticks are not all the VLA's finished steps; a
+        # parsed decision's share of them (100) with 100 vla_step ticks is
+        # 200 of 500, under half (counting every hold would have made it 300)
+        "parse_fail_holds": ({"hash": H, "metrics": {"pilot": {"vla": {
+            "decisions_accepted": 20, "parse_fail": 20, "server_error": 0, "link_failure": 0,
+            "tracker": {"kind_step": 20, "kind_parse_fail": 20},
+            "ticks_by_author": {"vla_step": 100, "hold": 200, "hover": 200},
+            "identity": {"id": AERO, "weights_sha256": DIGEST}}}}}, "vla_tick_share_low"),
         # twelve good decisions (108 ticks) in a 1200-tick mission (kpi.json ticks)
         "short_vla_long_mission": ({"hash": H, "steps": step_rows(), "kpi": {"ticks": 1200}},
                                    "vla_tick_share_low"),
