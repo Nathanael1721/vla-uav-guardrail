@@ -4,8 +4,16 @@ AerialVLA (UAV-trained VLA) in the guardrail slot — goal-directed real flight.
 AerialVLA = openvla-7b base + LoRA fine-tuned on the TravelUAV benchmark
 (https://huggingface.co/XuPeng23/AerialVLA). Unlike base OpenVLA (arm-trained,
 aimless on a drone), this model was TRAINED TO FLY: it reads a front+down
-camera mosaic plus a text hint of where the target is, and emits
-(forward m/s, down m/s, yaw rad/s) — nearly 1:1 with our Action4D contract.
+camera mosaic plus a text hint of where the target is, and emits three
+numbers this script flies as (forward m/s, down m/s, yaw rad/s).
+
+CORRECTION 2026-10-21: upstream defines those three numbers as a STEP -
+forward metres along the new heading, vertical metres, heading change in
+radians per decision, flown at 1 m/s with a 0.5 s hover between steps
+(guardrail/aerialvla_codec.py cites the upstream executor). This script still
+holds them as velocities; it is kept as the record of the flights it made, not
+as the way to fly AerialVLA. Its output reader is the strict one
+(aerialvla_codec.parse_action) since the same date.
 
 Pipeline (unchanged, as always):
     cameras -> AerialVLA -> body->world convert -> RateLimiter -> Shield -> sim
@@ -19,7 +27,6 @@ import argparse
 import hashlib
 import json
 import math
-import re
 import sys
 import threading
 import time
@@ -32,6 +39,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
 from guardrail import AuditLogger, Shield, State, load_policy       # noqa: E402
+from guardrail.aerialvla_codec import parse_action                  # noqa: E402
 from guardrail.compiler import ConstraintCompiler                   # noqa: E402
 from guardrail.geometry import fence_polygon                        # noqa: E402
 from guardrail.models import Action4D                               # noqa: E402
@@ -88,6 +96,13 @@ def build_prompt(dir_text: str, obj_desc: str) -> str:
     clean string. That matters for the semantic experiment: the "no object
     description" arm must differ from the "correct description" arm by the object
     phrase alone, not by a stray space.
+
+    guardrail.aerialvla_codec.build_prompt is the byte-exact upstream template
+    (the VLA server v2 builds its prompts there). The two agree for every
+    vocabulary phrase and every non-empty object; with an EMPTY object this one
+    ends "target.\\nAction: " and the template "target. \\nAction: ". This one
+    is kept unchanged so the 4 Aug ablation and the flights it made still
+    reproduce (tests/test_aerialvla_codec.py pins the agreement).
     """
     head = " ".join(p for p in ("Fly", dir_text.strip(), "and find the target.") if p)
     body = " ".join(p for p in (head, obj_desc.strip()) if p)
@@ -159,6 +174,7 @@ class AerialVLABackend:
         self._lock = threading.Lock()
         self._stop = False
         self._n_inf = 0
+        self._n_parse_fail = 0              # malformed outputs, each held as zero
         self._fwd, self._down, self._yaw = 0.0, 0.0, 0.0
         self._land = False
         # pose captured WITH the image the latest action was inferred from —
@@ -248,37 +264,56 @@ class AerialVLABackend:
                             "gen_s": round(t_gen, 3),
                             "cycle_s": round(time.time() - t_a, 3),
                             "new_tokens": int(out.shape[1] - enc["input_ids"].shape[1])}
-            text = self.tok.decode(out[0], skip_special_tokens=False)
-            tail = text.split("Action:")[-1]
-            ints = re.findall(r"\d+", tail)
-            if len(ints) >= 3:
-                bins = (int(ints[-3]), int(ints[-2]), int(ints[-1]))
-                fwd = dequantize(bins[0], "forward")
-                dwn = dequantize(bins[1], "down")
-                yr = dequantize(bins[2], "yaw")
-                land = ("LAND" in tail) or (fwd < 0.01 and abs(dwn) < 0.01 and abs(yr) < 0.01)
-                sha8 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:8]
-                now = time.time()
-                with self._lock:
-                    self._fwd, self._down, self._yaw, self._land = fwd, dwn, yr, land
-                    self._px, self._py, self._psi = px, py, yaw
-                    self._bins = bins
-                    self._t_inf = now
-                    self._prompt_sha8 = sha8
-                    self._hint_used = bool(dir_text.strip())
-                    self._n_inf += 1
-                    seq = self._n_inf
-                if self.inference_log is not None:
-                    rec = {"seq": seq, "t": now, "prompt": prompt, "prompt_sha8": sha8,
-                           "hint_used": bool(dir_text.strip()), "bins": list(bins),
-                           "fwd": fwd, "down": dwn, "yaw": yr, "land": land,
-                           "px": px, "py": py, "psi": yaw, **self._timing}
-                    with self.inference_log.open("a", encoding="utf-8") as fh:
-                        fh.write(json.dumps(rec) + "\n")
-                if seq % 5 == 1:
-                    print(f"  [vla#{seq}] dir={dir_text.strip() or 'here'!r} "
-                          f"fwd={fwd:.2f} down={dwn:.2f} yaw={yr:.2f}"
-                          f"{' LAND' if land else ''}")
+            # The model's own continuation, decoded from the NEW tokens only and
+            # read by the strict reader (guardrail/aerialvla_codec.py). Until
+            # 2026-10-21 this took the last three integers of the decoded
+            # text (`re.findall(r"\d+", tail)[-3:]`, upstream's parser): a
+            # malformed landing output such as '00 49 494 49' became forward
+            # 2.5 m and a clamped +5 m "down" - a dive read out of a stop -
+            # and an output with fewer than three integers left the PREVIOUS
+            # action latched with no log line. Now a malformed output holds
+            # zero, is counted (parse_failures) and is logged like any other.
+            n_prompt = int(enc["input_ids"].shape[1])
+            gen_text = self.tok.decode(out[0, n_prompt:], skip_special_tokens=False)
+            parsed = parse_action(gen_text, require_eos=True)
+            sha8 = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:8]
+            now = time.time()
+            if parsed.parse_ok:
+                bins = parsed.bins
+                # Upstream's numbers are a STEP (metres, radians per decision);
+                # this demo still flies them as m/s and rad/s - see the module
+                # docstring. Only the reading changed here.
+                fwd, dwn, yr = parsed.step.fwd_m, parsed.step.down_m, parsed.step.dpsi_rad
+                # LAND as upstream's evaluator decides it (has_land_str or
+                # has_land_num): the token, or the all-zero step.
+                land = parsed.land or parsed.step.is_zero
+            else:
+                bins, fwd, dwn, yr, land = None, 0.0, 0.0, 0.0, False
+            with self._lock:
+                self._fwd, self._down, self._yaw, self._land = fwd, dwn, yr, land
+                self._px, self._py, self._psi = px, py, yaw
+                self._bins = bins
+                self._t_inf = now
+                self._prompt_sha8 = sha8
+                self._hint_used = bool(dir_text.strip())
+                self._n_inf += 1
+                self._n_parse_fail += 0 if parsed.parse_ok else 1
+                seq = self._n_inf
+            if self.inference_log is not None:
+                rec = {"seq": seq, "t": now, "prompt": prompt, "prompt_sha8": sha8,
+                       "hint_used": bool(dir_text.strip()), "raw_text": gen_text,
+                       "parse_ok": parsed.parse_ok, "parse_reason": parsed.reason,
+                       "bins": list(bins) if bins else None,
+                       "fwd": fwd, "down": dwn, "yaw": yr, "land": land,
+                       "px": px, "py": py, "psi": yaw, **self._timing}
+                with self.inference_log.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(rec) + "\n")
+            if not parsed.parse_ok:
+                print(f"  [vla#{seq}] PARSE FAIL ({parsed.reason}): {gen_text!r} -> hold zero")
+            elif seq % 5 == 1:
+                print(f"  [vla#{seq}] dir={dir_text.strip() or 'here'!r} "
+                      f"fwd={fwd:.2f} down={dwn:.2f} yaw={yr:.2f}"
+                      f"{' LAND' if land else ''}")
 
     def latest(self):
         with self._lock:
@@ -294,7 +329,9 @@ class AerialVLABackend:
         with self._lock:
             return {"seq": self._n_inf, "t_infer": self._t_inf,
                     "fwd": self._fwd, "down": self._down, "yaw": self._yaw,
-                    "land": self._land, "bins": list(self._bins),
+                    "land": self._land,
+                    "bins": list(self._bins) if self._bins is not None else None,
+                    "parse_failures": self._n_parse_fail,
                     "px": self._px, "py": self._py, "psi": self._psi,
                     "prompt_sha8": self._prompt_sha8, "hint_used": self._hint_used}
 

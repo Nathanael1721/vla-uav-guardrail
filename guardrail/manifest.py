@@ -389,8 +389,62 @@ def model_hash(model_id: str, weight_paths: list[str | Path] | None = None) -> s
     return f"{model_id}@sha256:{digest}"
 
 
+REPORTED_DIGEST_MISMATCH = "reported-digest-mismatch"
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+
+
+def resolve_vla_hash(model_id: str, weight_paths: list[str | Path] | None = None,
+                     reported_digest: str | None = None) -> tuple[str, str]:
+    """(vla_model_hash, where it came from) - `model_hash` plus the REPORTED
+    path (wave V1, 2026-10-21).
+
+    AerialVLA runs in its own server process (demo/vla_server_v2.py), which
+    holds the weights, hashes the base shards + adapter with
+    `weights_digest` and returns that `weights_sha256` with every action. A
+    flight process that cannot read those files - the ROS companion
+    container, a client on another host - got "<id>@unresolved" from
+    `model_hash`, and is_kpi_grade refused the run for a model that was in
+    fact identified (integration discovery report, section 7). So:
+
+      * no report: `model_hash(model_id, weight_paths)`, source "local";
+      * a report, and the named weights cannot all be read here (or none
+        are named): "<id>@sha256:<reported>", source "reported";
+      * a report, and the weights CAN be read here: their local digest must
+        equal the report - then `model_hash`'s own answer, source "local;
+        reported agrees" - and if it differs, "<id>@unresolved:
+        reported-digest-mismatch", source "mismatch": the server ran other
+        bytes than the ones this host holds under those names, and the KPI
+        gate (which refuses "unresolved") must not quote the run.
+
+    The digest compared is `weights_digest` over the SAME list the server
+    hashes (vla_server_v2.weight_paths: the base model-*.safetensors shards
+    and the adapter directory), so the two agree byte for byte. A model id
+    that resolves a HuggingFace snapshot has that revision mixed into the
+    local hash (`model_hash`); the server's ids ("aerialvla-lora/aero_vla@
+    196f2f32") do not, which is why the agreeing case can return the local
+    form unchanged.
+
+    Only a 64-character lowercase hex digest is accepted, and only for a
+    learned VLA: a stub or "none" pilot has no weights to report."""
+    if reported_digest is None:
+        return model_hash(model_id, weight_paths), "local"
+    if not (isinstance(reported_digest, str) and _HEX64.fullmatch(reported_digest)):
+        raise ValueError(f"reported_digest must be 64 lowercase hex characters, "
+                         f"got {reported_digest!r}")
+    if model_id == NO_VLA:
+        raise ValueError(f"{NO_VLA!r} has no weights to report a digest for")
+    local = weights_digest(list(weight_paths)) if weight_paths else None
+    if local is None:
+        return f"{model_id}@sha256:{reported_digest}", "reported"
+    if local != reported_digest:
+        return f"{model_id}@{UNRESOLVED}:{REPORTED_DIGEST_MISMATCH}", "mismatch"
+    return model_hash(model_id, weight_paths), "local; reported agrees"
+
+
 def pilot_record(model_id: str, kind: str,
                  weight_paths: list[str | Path] | None = None,
+                 reported_digest: str | None = None,
+                 reported_by: str | None = None,
                  **extra) -> dict[str, Any]:
     """What flew the aircraft, beside the six-field manifest (audit card X-16).
 
@@ -401,14 +455,26 @@ def pilot_record(model_id: str, kind: str,
     `vla_model_hash` is a hash OF, and carries anything else that steered the
     run (a detector, a tokenizer) under its own key, so a detector is never
     filed as the VLA again.
+
+    `reported_digest` (kind "vla" only) is the weights_sha256 a VLA server
+    returned, for a flight process that cannot see the weights; `reported_by`
+    says which server (host:port). The record then also carries
+    `hash_source`, the digest and its reporter (see `resolve_vla_hash`).
+    Without a report the record keeps its three-key shape.
     """
     if kind not in ("vla", "stub", "none"):
         raise ValueError(f"pilot kind {kind!r} is not one of vla / stub / none")
     if kind == "none" and model_id != NO_VLA:
         raise ValueError(f"a run with no VLA records model_id {NO_VLA!r}, "
                          f"not {model_id!r}")
-    rec = {"kind": kind, "model_id": model_id,
-           "hash": model_hash(model_id, weight_paths)}
+    if reported_digest is not None and kind != "vla":
+        raise ValueError(f"a {kind!r} pilot has no weights; a reported weights digest "
+                         f"belongs to kind 'vla' only")
+    h, source = resolve_vla_hash(model_id, weight_paths, reported_digest)
+    rec = {"kind": kind, "model_id": model_id, "hash": h}
+    if reported_digest is not None:
+        rec.update({"hash_source": source, "reported_digest": reported_digest,
+                    "reported_by": reported_by})
     rec.update(extra)
     return rec
 
@@ -1125,8 +1191,13 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
                    topology: str = TOPOLOGY_PROJECTAIRSIM,
                    repo: str | Path | None = None,
                    sim_speedup: float | None = None,
-                   hil_evidence: dict | None = None) -> dict[str, Any]:
+                   hil_evidence: dict | None = None,
+                   reported_digest: str | None = None) -> dict[str, Any]:
     """The six fields, in the grant's order and under the grant's names.
+
+    `reported_digest`: the weights_sha256 a VLA server returned, for a flight
+    process that cannot see the weights; vla_model_hash then follows
+    `resolve_vla_hash`, the rule pilot_record applies, so the two agree.
 
     `sim_speedup` may be passed only for a rail with no scene file, and only
     with a value produced by a derivation helper such as
@@ -1230,7 +1301,7 @@ def build_manifest(policy_hash: str, model_id: str, seed: int,
                else sim_speedup_from_scene(scene_path))
     return {
         "code_revision": code_revision(repo),
-        "vla_model_hash": model_hash(model_id, weight_paths),
+        "vla_model_hash": resolve_vla_hash(model_id, weight_paths, reported_digest)[0],
         "policy_hash": policy_hash or UNRESOLVED,
         "random_seed": int(seed),
         "sim_speedup": UNRESOLVED if speedup is None else speedup,

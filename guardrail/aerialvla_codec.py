@@ -1,0 +1,691 @@
+"""
+AerialVLA's input and output, byte for byte: the prompt, the compass
+vocabulary, the image mosaic, a strict reader for what the model says, and
+the wire contract of the VLA server (protocol v2).
+
+WHY THIS MODULE EXISTS (2026-10-21)
+-----------------------------------
+Every AerialVLA caller in this repository read the model's text with
+
+    ints = re.findall(r"\\d+", tail); bins = ints[-3:]
+
+(demo/aerialvla_demo.py, experiments/ablate_image_vs_hint.py, and upstream's
+own src/model_wrapper/aerialvla_wrapper_ui.py:_parse_action_from_text, which
+ours copied). That reads a MALFORMED landing output as motion: the text
+'00 49 494 49' gives the last three integers (49, 494, 49), the 494 is clamped
+to bin 98, and the action becomes forward 2.5 m, down +5.0 m - a dive - out of
+an output whose first three bins are the stop triple 00 49 49. In the 4 Aug
+ablation (docs/FINDING-what-drives-aerialvla.md) six of the 18 no-hint outputs
+were of that kind and were scored as motion; read strictly, the original
+adapter stops on 17 of 18 no-hint frames, not 11 (the re-score is
+docs/data/aerialvla_ablation_rescore.json, made by
+experiments/rescore_ablation.py with `parse_action` below).
+
+So the reader here accepts exactly the shape the model was trained to emit
+and nothing else, and every other piece of AerialVLA's interface that a flight
+depends on lives beside it, so the server (demo/vla_server_v2.py), the client
+(guardrail/vla_link.py) and the offline tools agree on one definition.
+
+No torch, no transformers, and no Pillow at module level: the Shield's import
+path and the CI jobs (which install neither) import this file. Pillow is
+imported inside the image functions only, which run in the VLA environment
+(vla-real); tests/test_env_pins.py lists it as source-tree-only for this
+module.
+
+THE UPSTREAM FACTS THIS ENCODES (each cited)
+--------------------------------------------
+Sources: the upstream repository XuPeng23/AerialVLA (copy of the training-era
+code in source/AeroVLA/; the dataset builder src/aerovla_dataset.py read from
+GitHub on 2026-10-21) and the training labels on disk,
+D:/models/aerialvla-lora/aerovla_train_dataset.json.
+
+* Prompt (aerialvla_wrapper_ui.py:146-150), byte for byte:
+      "<image>\\nFly {direction}and find the target. {object}\\nAction: "
+  `{direction}` carries its own trailing space ("straight ahead "), so with
+  the empty phrase the sentence reads "Fly and find the target.". The
+  training text is f"{instr}\\n{action}{action_str}" with action = "Action: "
+  (aerovla_dataset.py __getitem__), and OpenVLA's Llama tokenizer ends the
+  prompt in the separate token '\u2581' exactly as the training text has it
+  before the first digit (tokenizer probe 2026-10-21: prompt tail
+  ['Action', ':', '\u2581'], continuation '0','0','\u2581','4','9',... ).
+  `<image>` is plain text; Prismatic inserts the patches itself.
+  The object description is `.strip()`ed upstream
+  (aerialvla_wrapper_ui.py:93); `validate_object` refuses surrounding
+  whitespace rather than silently stripping it, so the prompt that is logged
+  is the prompt that ran.
+* Direction vocabulary (aerialvla_wrapper_ui.py:46-76): seven bearing bands
+  plus "" for "no hint". Upstream computes it from the GROUND-TRUTH target
+  position (get_semantic_direction, closeloop_util.py:120). In the training
+  set the empty phrase occurs exactly once per trajectory, always on the final
+  frame with a zero label and LAND (7,611 of 410,450 samples): the model was
+  taught that "Fly and find the target." means "you have arrived".
+* Action space (aerovla_dataset.py): NUM_BINS = 99; forward 0..5 m, down
+  -5..5 m (+ = down, NED), yaw -1.1..1.1 rad; `_quantize_action` clips then
+  returns int(norm * (NUM_BINS - 1)) - truncation, not rounding; the label
+  text is f"{fwd:02d} {down:02d} {yaw:02d}", plus " LAND" when the sample is
+  the last or penultimate step of its trajectory, plus the EOS token "</s>".
+* The numbers are a STEP, not a velocity
+  (airsim_plugin/AirVLNSimulatorClientTool_AerialVLA.py:300-385, move_path):
+  new heading = heading + yaw; if |yaw| < 0.25 rad, move fwd metres along the
+  NEW heading and `down` metres vertically at CRUISE_SPEED 1.0 m/s (a move
+  shorter than 1 m takes 1 s); otherwise rotate only and move to the new
+  altitude; then hover 0.5 s. Our flight scripts read the same three numbers
+  as m/s, m/s and rad/s and held them for seconds (vla-assets discovery
+  report, 2026-10-21); the constants below are upstream's, for the step
+  executor (guardrail/vla_link.py StepTracker).
+
+UNITS, ONCE: fwd_m and down_m are metres per step, dpsi_rad radians per step.
+Nothing in this module is a rate.
+
+THE INVERSE OF TRUNCATION (bins -> step)
+----------------------------------------
+Truncation maps the half-open cell [lo + b*w, lo + (b+1)*w), w = (hi-lo)/98,
+to bin b; bin 98 holds only hi itself (values are clipped first). The decoder
+returns the cell's LOWER EDGE, b/98 * (hi - lo) + lo, which is upstream's own
+dequantize (aerialvla_wrapper_ui.py:217-219) - kept for fidelity, so a step
+decoded here is the step upstream flew. Two consequences worth knowing:
+  * bin 49 decodes to exactly 0.0 on the down and yaw axes (49/98 = 0.5), and
+    "00 49 49" to the zero step;
+  * bin 48 on the down axis is the cell [-0.102, 0) m. The training labels of
+    level flight carry tiny negative noise (e.g. down = -0.0030 m at
+    Carla_Town01/00c9b2a9.../000015.png), which truncation puts in bin 48, and
+    the model's most frequent hinted output in the 4 Aug ablation is
+    '96 48 49'. Decoded at the lower edge that is a 0.102 m climb per step
+    the label never contained. `bin_interval` gives the whole cell for anyone
+    who wants the centre instead; the step executor's altitude band absorbs
+    either.
+"""
+from __future__ import annotations
+
+import base64
+import binascii
+import hashlib
+import io
+import math
+import re
+from dataclasses import asdict, dataclass
+from typing import Any
+
+# --------------------------------------------------------------------------- #
+# The action space (upstream src/aerovla_dataset.py)
+# --------------------------------------------------------------------------- #
+NUM_BINS = 99
+MAX_BIN = NUM_BINS - 1                          # 98: two digits, 00..98
+AXES = ("fwd_m", "down_m", "dpsi_rad")
+RANGES: dict[str, tuple[float, float]] = {
+    "fwd_m": (0.0, 5.0),        # forward displacement along the NEW heading
+    "down_m": (-5.0, 5.0),      # vertical displacement, + = down (NED)
+    "dpsi_rad": (-1.1, 1.1),    # heading change, + = clockwise seen from above
+}
+
+# The upstream step executor's constants (AirVLNSimulatorClientTool_AerialVLA.py
+# move_path, lines 340-347): a step whose |dpsi| reaches YAW_ONLY_THRESHOLD_RAD
+# only rotates (and changes altitude); a smaller one also translates, at
+# CRUISE_SPEED_MPS, and a move shorter than MICRO_MOVE_THRESHOLD_M takes 1 s.
+# Below STEP_EPSILON an axis counts as "no move". Every step ends with a
+# HOVER_AFTER_STEP_S hover before the next image is taken.
+YAW_ONLY_THRESHOLD_RAD = 0.25
+CRUISE_SPEED_MPS = 1.0
+MICRO_MOVE_THRESHOLD_M = 1.0
+STEP_EPSILON = 0.01
+HOVER_AFTER_STEP_S = 0.5
+
+# --------------------------------------------------------------------------- #
+# The prompt
+# --------------------------------------------------------------------------- #
+PROMPT_TEMPLATE = "<image>\nFly {direction}and find the target. {object}\nAction: "
+
+# Verbatim upstream strings, trailing space included. demo/vla_bridge.py and
+# demo/aerialvla_demo.semantic_direction carry the same seven; the codec's test
+# sweeps semantic_direction over the full circle and compares sets, so the
+# three cannot drift apart silently.
+STRAIGHT_AHEAD = "straight ahead "
+FORWARD_RIGHT = "forward-right "
+FORWARD_LEFT = "forward-left "
+RIGHT = "to your right "
+LEFT = "to your left "
+RIGHT_REAR = "to your right rear "
+LEFT_REAR = "to your left rear "
+NO_HINT = ""
+DIRECTION_VOCABULARY: tuple[str, ...] = (
+    STRAIGHT_AHEAD, FORWARD_RIGHT, FORWARD_LEFT, RIGHT, LEFT, RIGHT_REAR, LEFT_REAR)
+# The eight strings protocol v2 accepts in `phrase`: the seven hints and "".
+PHRASES: tuple[str, ...] = DIRECTION_VOCABULARY + (NO_HINT,)
+
+# Where a phrase came from. "goal": computed from a commanded goal position
+# by the pilot side (the trained task: a GOTO). "detector": computed from an
+# OWL-ViT box bearing (demo/vla_bridge.VLABridge). "none": no hint at all.
+# None of them is language: AerialVLA's object slot is inert (FINDING doc).
+HINT_SOURCES = ("goal", "detector", "none")
+
+# CSP arms (WP2 prefix A/B, tools/prefix_eval.py ARMS). "off" is the upstream
+# prompt byte for byte; "csp" and "neutral" put `csp_text` in the SAME place -
+# the arm name only says which text it is (the Constraint Summary Pack, or a
+# rule-free filler of about its length, the null).
+CSP_MODES = ("off", "csp", "neutral")
+
+MAX_OBJECT_CHARS = 2000     # upstream descriptions run to ~400 characters
+MAX_CSP_CHARS = 4000        # the CSP budget is 256 tokens (compiler.py)
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+
+
+class CodecError(ValueError):
+    """An input the AerialVLA interface does not accept. `code` is the short
+    machine-readable reason (the protocol's error prefix)."""
+
+    def __init__(self, code: str, detail: str):
+        super().__init__(f"{code}: {detail}")
+        self.code = code
+        self.detail = detail
+
+
+def validate_phrase(phrase: Any) -> str:
+    """`phrase` must be one of the eight strings, exactly - no stripping, no
+    case folding. A phrase the LoRA never saw is worth nothing, and
+    "straight ahead" without its space is a different string."""
+    if not isinstance(phrase, str):
+        raise CodecError(ERR_BAD_PHRASE, f"phrase must be a string, got {type(phrase).__name__}")
+    if phrase not in PHRASES:
+        raise CodecError(ERR_BAD_PHRASE, f"{phrase!r} is not one of the 8 vocabulary strings "
+                                         f"{list(PHRASES)!r}")
+    return phrase
+
+
+def validate_hint(phrase: str, hint_source: Any) -> str:
+    """The phrase and its source must agree.
+
+    * hint_source "none" carries the empty phrase and nothing else: a phrase
+      with no source is a hint nobody can account for.
+    * "detector" never carries the empty phrase: the bridge emits no phrase
+      when the detector has nothing (demo/vla_bridge.py, "No detection: no
+      prompt") and the caller must not run an inference; "" from a detector
+      would ask the model to LAND wherever the box was lost.
+    * "goal" may carry "": upstream returns "" when the goal is reached
+      (get_semantic_direction, dist_xy < 0.01), which is the trained "you have
+      arrived".
+    """
+    if hint_source not in HINT_SOURCES:
+        raise CodecError(ERR_BAD_HINT, f"hint_source {hint_source!r} is not one of {list(HINT_SOURCES)}")
+    if hint_source == "none" and phrase != NO_HINT:
+        raise CodecError(ERR_BAD_HINT, f"hint_source 'none' with phrase {phrase!r}: a hint with no source")
+    if hint_source == "detector" and phrase == NO_HINT:
+        raise CodecError(ERR_BAD_HINT, "hint_source 'detector' with the empty phrase: no detection "
+                                       "means no inference (demo/vla_bridge.py), not a LAND prompt")
+    return hint_source
+
+
+def validate_object(obj: Any) -> str:
+    """The `{object}` slot: free text, inserted verbatim. Refused: a non-string,
+    control characters (a newline would move "Action: " to another line of
+    the prompt), surrounding whitespace (upstream strips it; we refuse rather
+    than strip, so the logged prompt is the one that ran), and runaway length."""
+    if not isinstance(obj, str):
+        raise CodecError(ERR_BAD_OBJECT, f"object must be a string, got {type(obj).__name__}")
+    if _CONTROL.search(obj):
+        raise CodecError(ERR_BAD_OBJECT, "object contains a control character (newline, tab, ...)")
+    if obj != obj.strip():
+        raise CodecError(ERR_BAD_OBJECT, "object starts or ends with whitespace (upstream strips it)")
+    if len(obj) > MAX_OBJECT_CHARS:
+        raise CodecError(ERR_BAD_OBJECT, f"object is {len(obj)} characters, more than {MAX_OBJECT_CHARS}")
+    return obj
+
+
+def validate_csp(csp_mode: Any, csp_text: Any) -> str | None:
+    """`csp_mode` "off" requires `csp_text` null; "csp" and "neutral" require
+    a non-empty single-line text. Returns the text as it will be placed
+    (stripped of surrounding whitespace) or None.
+
+    An empty text in an "on" arm is refused, as demo/real_vla_demo.py
+    build_openvla_prompt refuses it: an A/B whose two arms read the same
+    prompt would report "no effect" for a flag that never did anything."""
+    if csp_mode not in CSP_MODES:
+        raise CodecError(ERR_BAD_CSP, f"csp_mode {csp_mode!r} is not one of {list(CSP_MODES)}")
+    if csp_mode == "off":
+        if csp_text is not None:
+            raise CodecError(ERR_BAD_CSP, "csp_mode 'off' with a csp_text: the off arm is the "
+                                          "upstream prompt byte for byte")
+        return None
+    if not isinstance(csp_text, str):
+        raise CodecError(ERR_BAD_CSP, f"csp_mode {csp_mode!r} needs csp_text as a string")
+    text = csp_text.strip()
+    if not text:
+        raise CodecError(ERR_BAD_CSP, f"csp_mode {csp_mode!r} with an empty csp_text: both arms "
+                                      f"would read the same prompt")
+    if _CONTROL.search(text):
+        raise CodecError(ERR_BAD_CSP, "csp_text contains a control character (newline, tab, ...): "
+                                      "the CSP stays on the instruction line")
+    if len(text) > MAX_CSP_CHARS:
+        raise CodecError(ERR_BAD_CSP, f"csp_text is {len(text)} characters, more than {MAX_CSP_CHARS}")
+    return text
+
+
+def build_prompt(phrase: str, obj: str, csp_text: str | None = None,
+                 csp_mode: str = "off") -> str:
+    """The ONE place an AerialVLA prompt is formed.
+
+    csp_mode "off" (the default): PROMPT_TEMPLATE with the phrase and object
+    substituted, byte for byte upstream's prompt.
+
+    csp_mode "csp" / "neutral": the CSP text goes on the instruction line,
+    after "<image>\\n" and before "Fly", joined by ONE space:
+
+        "<image>\\n" + csp + " " + "Fly {direction}and find the target. {object}\\nAction: "
+
+    That is where demo/real_vla_demo.py puts it for OpenVLA ("In: {csp} What
+    action ..."): inside the instruction, ahead of the task sentence, so the
+    prompt still ends in "Action: " - the place the model was trained to start
+    its digits. The model never saw rule text in training, so the arm is a
+    measurement, not an expected effect; the prompt's SHA-256 is returned to
+    the client with every action, so the exact placement is on record.
+
+    Differs from the legacy demo/aerialvla_demo.build_prompt in one case only:
+    that function normalises whitespace, so with an EMPTY object it ends the
+    sentence "target.\\nAction: " where the template (and this function) give
+    "target. \\nAction: ". The 4 Aug ablation's "(none)" object arm ran the
+    legacy form; every phrase and every non-empty object gives identical bytes
+    (tests/test_aerialvla_codec.py)."""
+    validate_phrase(phrase)
+    validate_object(obj)
+    text = validate_csp(csp_mode, csp_text)
+    body = PROMPT_TEMPLATE.format(direction=phrase, object=obj)
+    if text is None:
+        return body
+    head = "<image>\n"
+    assert body.startswith(head)
+    return head + text + " " + body[len(head):]
+
+
+def prompt_sha256(prompt: str) -> str:
+    """SHA-256 of the prompt's UTF-8 bytes (64 hex)."""
+    return hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+
+
+# --------------------------------------------------------------------------- #
+# The image mosaic (aerialvla_wrapper_ui.py:135-143)
+# --------------------------------------------------------------------------- #
+MOSAIC_TILE = (224, 224)            # (width, height) of each view
+MOSAIC_SIZE = (224, 448)            # front on top, down below
+MISSING_DOWN_POLICIES = ("black", "refuse")
+
+
+def _bicubic():
+    from PIL import Image
+    return getattr(Image, "Resampling", Image).BICUBIC
+
+
+def build_mosaic(front, down, missing_down: str = "black"):
+    """(front, down) PIL images -> (224x448 RGB mosaic, info dict).
+
+    Each view is converted to RGB and resized bicubic to 224x224 (aspect not
+    kept: upstream's cameras are square 256x256, ours are 16:9, and upstream
+    squashes whatever it is given), front pasted at the top, down at the
+    bottom, on a black canvas - upstream's own construction. The Prismatic
+    processor then squashes the 224x448 mosaic to 224x224 ("resize-naive");
+    that happens in the model's processor, not here.
+
+    A MISSING DOWN FRAME (`down is None`) is handled explicitly, never
+    silently: with missing_down="black" the lower tile is left as the black
+    canvas upstream pastes onto, and info records down_missing=True and
+    down_fill="black" - an input the model never saw in training (every
+    upstream sample has a down view), so it is a labelled distribution shift,
+    not a neutral default. missing_down="refuse" raises CodecError instead.
+    The ArduPilot rail's robot config removed DownCamera
+    (demo/pas_ardupilot/robot_citylife_ardupilot.jsonc), which is why the
+    case exists at all."""
+    from PIL import Image
+    if missing_down not in MISSING_DOWN_POLICIES:
+        raise ValueError(f"missing_down {missing_down!r} is not one of {MISSING_DOWN_POLICIES}")
+    if front is None:
+        raise CodecError(ERR_BAD_IMAGE, "no front frame")
+    info: dict[str, Any] = {
+        "size": list(MOSAIC_SIZE), "tile": list(MOSAIC_TILE), "resample": "bicubic",
+        "layout": "front over down", "front_src_size": list(front.size),
+        "down_src_size": None if down is None else list(down.size),
+        "down_missing": down is None, "down_fill": None}
+    if down is None and missing_down == "refuse":
+        raise CodecError(ERR_BAD_IMAGE, "no down frame, and missing_down='refuse'")
+    rs = _bicubic()
+    mosaic = Image.new("RGB", MOSAIC_SIZE, (0, 0, 0))
+    mosaic.paste(front.convert("RGB").resize(MOSAIC_TILE, resample=rs), (0, 0))
+    if down is not None:
+        mosaic.paste(down.convert("RGB").resize(MOSAIC_TILE, resample=rs), (0, MOSAIC_TILE[1]))
+    else:
+        info["down_fill"] = "black"
+    return mosaic, info
+
+
+def mosaic_sha256(mosaic) -> str:
+    """SHA-256 of the mosaic's raw RGB8 bytes, row-major, 224*448*3 bytes - the
+    pixels the processor is given. Not of a PNG or JPEG encoding, which
+    changes with the encoder's version and settings while the pixels do not."""
+    if mosaic.mode != "RGB" or tuple(mosaic.size) != MOSAIC_SIZE:
+        raise ValueError(f"not a {MOSAIC_SIZE} RGB mosaic: {mosaic.mode} {mosaic.size}")
+    return hashlib.sha256(mosaic.tobytes()).hexdigest()
+
+
+def decode_image_b64(data: Any, what: str = "image"):
+    """Base64 text of an encoded image (JPEG on the wire; any format Pillow
+    reads) -> RGB PIL image. Strict base64 (no stray characters); a decode
+    failure is a CodecError, never a black frame."""
+    from PIL import Image, UnidentifiedImageError
+    if not isinstance(data, str) or not data:
+        raise CodecError(ERR_BAD_IMAGE, f"{what}: expected non-empty base64 text")
+    try:
+        raw = base64.b64decode(data, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise CodecError(ERR_BAD_IMAGE, f"{what}: not base64 ({exc})") from None
+    try:
+        img = Image.open(io.BytesIO(raw))
+        img.load()
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise CodecError(ERR_BAD_IMAGE, f"{what}: not a readable image ({exc})") from None
+    return img.convert("RGB")
+
+
+def encode_jpeg_b64(img, quality: int = 95) -> str:
+    """RGB PIL image -> base64 JPEG text, the wire form of a frame."""
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=quality)
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
+
+# --------------------------------------------------------------------------- #
+# The model's text -> a step (strict)
+# --------------------------------------------------------------------------- #
+EOS_TEXT = "</s>"
+LAND_TEXT = " LAND"
+# Exactly three two-digit groups of ASCII digits separated by single spaces,
+# then optionally " LAND". [0-9], not \d: \d also matches other scripts'
+# digits, and the 4 Aug ablation holds an output with a CJK character inside a
+# bin ('9\u8fd0 48 60').
+_ACTION_RE = re.compile(r"([0-9]{2}) ([0-9]{2}) ([0-9]{2})( LAND)?")
+
+
+@dataclass(frozen=True)
+class Step:
+    """One AerialVLA decision, in upstream units: metres and radians PER STEP."""
+    fwd_m: float
+    down_m: float
+    dpsi_rad: float
+
+    @property
+    def rotate_only(self) -> bool:
+        """Upstream rotates (and changes altitude) without translating when
+        |dpsi| >= 0.25 rad (move_path: `if abs(pred_yaw) < YAW_THRESHOLD`)."""
+        return abs(self.dpsi_rad) >= YAW_ONLY_THRESHOLD_RAD
+
+    @property
+    def is_zero(self) -> bool:
+        """Every axis below upstream's 0.01 "no move" epsilon. Upstream's
+        evaluator also ENDS the episode on such a step (has_land_num,
+        aerialvla_wrapper_ui.py:195); here that is reported, not decided -
+        `land` is the LAND token alone."""
+        return (abs(self.fwd_m) < STEP_EPSILON and abs(self.down_m) < STEP_EPSILON
+                and abs(self.dpsi_rad) < STEP_EPSILON)
+
+    def to_dict(self) -> dict[str, float]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ParsedAction:
+    """What `parse_action` read. parse_ok False => bins None, step None,
+    land False: the client HOLDS ZERO and counts the failure."""
+    parse_ok: bool
+    text: str
+    bins: tuple[int, int, int] | None
+    step: Step | None
+    land: bool
+    eos: bool
+    reason: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"parse_ok": self.parse_ok, "text": self.text,
+                "bins": list(self.bins) if self.bins is not None else None,
+                "step": self.step.to_dict() if self.step is not None else None,
+                "land": self.land, "eos": self.eos, "reason": self.reason}
+
+
+def _fail(text: str, reason: str, eos: bool = False) -> ParsedAction:
+    return ParsedAction(False, text, None, None, False, eos, reason)
+
+
+def parse_action(text: Any, require_eos: bool = False) -> ParsedAction:
+    """Read the model's GENERATED text - the continuation after the prompt,
+    decoded from the new tokens only - and accept exactly
+
+        "FF DD YY"  or  "FF DD YY LAND"
+
+    each of FF, DD, YY two ASCII digits 00..98, single spaces, then the end of
+    the text, or the EOS marker "</s>" and then the end. Nothing before, after
+    or between: no leading space, no fourth group, no three-digit bin, no "L"
+    without "AND", no bin 99 (there are 99 bins, 00..98). Anything else is
+    parse_ok=False with the reason; the caller holds zero.
+
+    require_eos=True also refuses a text without the EOS marker: decoded with
+    special tokens, a text that stops without "</s>" ran out of
+    max_new_tokens rather than ending. The server decodes that way and sets it.
+
+    Decoding new tokens only matters: `decode(full).split("Action:")[-1]`
+    keeps the prompt's own trailing space (' 00 49 49</s>'), which this reader
+    refuses; `generated_from_decoded` strips exactly that space for texts that
+    were cut that way (the 4 Aug ablation's failure rows)."""
+    if not isinstance(text, str):
+        return _fail(str(text), f"not text ({type(text).__name__})")
+    body, eos = text, False
+    if body.endswith(EOS_TEXT):
+        body, eos = body[: -len(EOS_TEXT)], True
+    if require_eos and not eos:
+        return _fail(text, "no EOS marker: generation stopped at max_new_tokens", eos)
+    m = _ACTION_RE.fullmatch(body)
+    if m is None:
+        return _fail(text, _why_malformed(body), eos)
+    bins = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    over = [b for b in bins if b > MAX_BIN]
+    if over:
+        return _fail(text, f"bin {over[0]} is outside 00..{MAX_BIN:02d}", eos)
+    return ParsedAction(True, text, bins, bins_to_step(bins), m.group(4) is not None, eos, None)
+
+
+def _why_malformed(body: str) -> str:
+    if not body:
+        return "empty"
+    if not body.strip():
+        return "only whitespace"
+    if body != body.strip():
+        return "leading or trailing whitespace"
+    groups = body.split(" ")
+    digits = [g for g in groups if g.isascii() and g.isdigit()]
+    if any(not (g.isascii() and g.isdigit()) and g != "LAND" for g in groups):
+        return f"non-digit token in {body!r}"
+    if any(len(g) != 2 for g in digits):
+        return f"a bin is not two digits in {body!r}"
+    if len(digits) != 3:
+        return f"{len(digits)} bins, not 3, in {body!r}"
+    return f"malformed: {body!r}"
+
+
+def generated_from_decoded(decoded: str) -> str:
+    """The generated continuation from a decode of prompt + output, cut the
+    legacy way (`.split("Action:")[-1]`): the prompt's own trailing space
+    after "Action:" is removed - exactly one space, never more, so a model
+    that itself emitted extra spaces is still caught by `parse_action`."""
+    tail = decoded.split("Action:")[-1]
+    return tail[1:] if tail.startswith(" ") else tail
+
+
+def dequantize(b: int, axis: str) -> float:
+    """Bin -> value at the LOWER EDGE of the bin's cell: b/98*(hi-lo)+lo,
+    upstream's own decoder (module docstring, "The inverse of truncation")."""
+    if not isinstance(b, int) or isinstance(b, bool) or not 0 <= b <= MAX_BIN:
+        raise ValueError(f"bin {b!r} is not an integer in 0..{MAX_BIN}")
+    lo, hi = RANGES[axis]
+    return b / MAX_BIN * (hi - lo) + lo
+
+
+def quantize(value: float, axis: str) -> int:
+    """Upstream's `_quantize_action`: clip to the axis range, then
+    int(norm * 98) - truncation toward the lower edge."""
+    lo, hi = RANGES[axis]
+    v = min(max(float(value), lo), hi)
+    return int((v - lo) / (hi - lo) * MAX_BIN)
+
+
+def bin_interval(b: int, axis: str) -> tuple[float, float]:
+    """The values truncation maps to bin b: [lo_edge, hi_edge) - except bin 98,
+    which only the axis maximum itself reaches (returned as (hi, hi))."""
+    lo, hi = RANGES[axis]
+    w = (hi - lo) / MAX_BIN
+    if b == MAX_BIN:
+        return (hi, hi)
+    edge = dequantize(b, axis)
+    return (edge, edge + w)
+
+
+def bins_to_step(bins) -> Step:
+    """(forward, down, yaw) bins -> Step in metres and radians per step."""
+    f, d, y = bins
+    return Step(fwd_m=dequantize(f, "fwd_m"), down_m=dequantize(d, "down_m"),
+                dpsi_rad=dequantize(y, "dpsi_rad"))
+
+
+def legacy_last_three_ints(text: str) -> dict[str, Any]:
+    """THE DEFECTIVE READING, kept only so its effect can be measured: the
+    last three integers anywhere in the text, each clamped to 0..98, LAND if
+    the text contains "LAND" or the decoded step is all-near-zero - upstream's
+    _parse_action_from_text and run(), and our copies of it until 2026-10-21.
+    Never use it to fly."""
+    ints = re.findall(r"\d+", text)
+    if len(ints) < 3:
+        return {"ok": False, "bins": None, "step": None, "land": False}
+    raw = tuple(int(i) for i in ints[-3:])
+    clamped = tuple(max(0, min(MAX_BIN, b)) for b in raw)
+    step = bins_to_step(clamped)
+    land = ("LAND" in text) or step.is_zero
+    return {"ok": True, "bins": list(raw), "step": step.to_dict(), "land": land}
+
+
+# --------------------------------------------------------------------------- #
+# The wire contract: VLA server protocol v2
+# --------------------------------------------------------------------------- #
+# TCP on 127.0.0.1, newline-delimited UTF-8 JSON, one request -> one response,
+# many requests per connection (brief BRIEF-V1, "VLA server protocol v2"). The
+# server (demo/vla_server_v2.py) validates every request with
+# `validate_request`; a client may call it before sending to fail locally.
+PROTOCOL_VERSION = 2
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8790
+OPS = ("hello", "infer", "shutdown")
+HELLO_FIELDS = frozenset({"v", "op"})
+SHUTDOWN_FIELDS = frozenset({"v", "op"})
+INFER_FIELDS = frozenset({"v", "op", "seq", "t_capture", "pose", "front_jpg_b64",
+                          "down_jpg_b64", "phrase", "hint_source", "object", "csp_text",
+                          "csp_mode"})
+POSE_FIELDS = frozenset({"x", "y", "up", "yaw_rad"})
+# Keys that could carry where the TARGET is. Refused by name, with their own
+# error, before the unknown-field check: the coordinate leak is the defect
+# every earlier "semantic" run had (FINDING doc, Problem 1), and the legacy
+# file protocol carried exactly such a key ("target": [x, y], vla_server.py).
+# Any key containing "target" or "goal" is refused the same way.
+COORDINATE_FIELD_NAMES = frozenset({
+    "target", "goal", "object_position", "xy", "lat", "lon", "latitude", "longitude",
+    "tgt", "target_xy", "goal_xy", "object_xy", "object_pos", "target_pos", "goal_pos"})
+MAX_LINE_BYTES = 16 * 1024 * 1024   # one request line: two JPEGs in base64, with room
+
+# Error codes: a response's `error` is "<code>: <detail>"; match on the code
+# (error.split(":", 1)[0]).
+ERR_BAD_JSON = "bad json"
+ERR_NOT_OBJECT = "bad request"
+ERR_VERSION = "unsupported version"
+ERR_OP = "unknown op"
+ERR_UNKNOWN_FIELD = "unknown field"
+ERR_COORDINATE_FIELD = "coordinate field refused"
+ERR_MISSING_FIELD = "missing field"
+ERR_BAD_VALUE = "bad value"
+ERR_BAD_PHRASE = "phrase not in vocabulary"
+ERR_BAD_HINT = "bad hint_source"
+ERR_BAD_OBJECT = "bad object"
+ERR_BAD_CSP = "bad csp"
+ERR_BAD_IMAGE = "bad image"
+ERR_LINE_TOO_LONG = "line too long"
+ERR_INFERENCE = "inference failed"
+
+
+class ProtocolError(CodecError):
+    """A request protocol v2 refuses."""
+
+
+def _is_coordinate_name(key: str) -> bool:
+    k = key.lower()
+    return k in COORDINATE_FIELD_NAMES or "target" in k or "goal" in k
+
+
+def _finite_number(v: Any) -> bool:
+    return (isinstance(v, (int, float)) and not isinstance(v, bool)
+            and math.isfinite(float(v)))
+
+
+def validate_request(req: Any) -> dict[str, Any]:
+    """Check one decoded request against protocol v2; return it unchanged or
+    raise ProtocolError. Order: object -> coordinate-named keys (top level
+    and inside pose) -> version -> op -> unknown keys -> missing keys ->
+    types -> phrase, hint source, object, CSP. Images are only checked to be
+    non-empty text (or null for the down frame) here; the server decodes them.
+    """
+    if not isinstance(req, dict):
+        raise ProtocolError(ERR_NOT_OBJECT, f"a request is a JSON object, got {type(req).__name__}")
+    coords = sorted(k for k in req if isinstance(k, str) and _is_coordinate_name(k))
+    pose = req.get("pose")
+    if isinstance(pose, dict):
+        coords += sorted(f"pose.{k}" for k in pose if isinstance(k, str) and _is_coordinate_name(k))
+    if coords:
+        raise ProtocolError(ERR_COORDINATE_FIELD,
+                            f"{', '.join(coords)}: the VLA is never told where the target is; "
+                            f"send a compass phrase")
+    if type(req.get("v")) is not int or req["v"] != PROTOCOL_VERSION:
+        raise ProtocolError(ERR_VERSION, f"v={req.get('v')!r}; this server speaks v={PROTOCOL_VERSION}")
+    op = req.get("op")
+    if op not in OPS:
+        raise ProtocolError(ERR_OP, f"{op!r} is not one of {list(OPS)}")
+    allowed = {"hello": HELLO_FIELDS, "shutdown": SHUTDOWN_FIELDS, "infer": INFER_FIELDS}[op]
+    unknown = sorted(str(k) for k in req if k not in allowed)
+    if unknown:
+        raise ProtocolError(ERR_UNKNOWN_FIELD, ", ".join(unknown))
+    missing = sorted(allowed - set(req))
+    if missing:
+        raise ProtocolError(ERR_MISSING_FIELD, ", ".join(missing))
+    if op != "infer":
+        return req
+    seq = req["seq"]
+    if not isinstance(seq, int) or isinstance(seq, bool):
+        raise ProtocolError(ERR_BAD_VALUE, f"seq must be an integer, got {seq!r}")
+    if not _finite_number(req["t_capture"]):
+        raise ProtocolError(ERR_BAD_VALUE, f"t_capture must be a finite number of seconds, "
+                                           f"got {req['t_capture']!r}")
+    if not isinstance(pose, dict):
+        raise ProtocolError(ERR_BAD_VALUE, f"pose must be an object {sorted(POSE_FIELDS)}")
+    extra = sorted(str(k) for k in pose if k not in POSE_FIELDS)
+    if extra:
+        raise ProtocolError(ERR_UNKNOWN_FIELD, ", ".join(f"pose.{k}" for k in extra))
+    lacking = sorted(POSE_FIELDS - set(pose))
+    if lacking:
+        raise ProtocolError(ERR_MISSING_FIELD, ", ".join(f"pose.{k}" for k in lacking))
+    bad = sorted(k for k in POSE_FIELDS if not _finite_number(pose[k]))
+    if bad:
+        raise ProtocolError(ERR_BAD_VALUE, f"pose.{bad[0]} must be a finite number")
+    if not isinstance(req["front_jpg_b64"], str) or not req["front_jpg_b64"]:
+        raise ProtocolError(ERR_BAD_IMAGE, "front_jpg_b64 must be non-empty base64 text")
+    down = req["down_jpg_b64"]
+    if down is not None and (not isinstance(down, str) or not down):
+        raise ProtocolError(ERR_BAD_IMAGE, "down_jpg_b64 must be non-empty base64 text or null")
+    try:
+        validate_phrase(req["phrase"])
+        validate_hint(req["phrase"], req["hint_source"])
+        validate_object(req["object"])
+        validate_csp(req["csp_mode"], req["csp_text"])
+    except ProtocolError:
+        raise
+    except CodecError as exc:
+        raise ProtocolError(exc.code, exc.detail) from None
+    return req

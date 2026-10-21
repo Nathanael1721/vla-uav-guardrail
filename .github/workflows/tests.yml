@@ -43,7 +43,10 @@
 #          test_level_actors, test_voxel_map, test_replay_pipeline; and its
 #          flight CLIs' option parsing (a negative X,Y value):
 #          test_demo_negative_xy.
-#        The VLA side: test_vla_* (backends, the backend table, the bridge).
+#        The VLA side: test_vla_* (backends, the backend table, the bridge,
+#          the protocol-v2 server with a scripted model), and
+#          test_aerialvla_codec (AerialVLA's prompt, vocabulary, mosaic and
+#          strict output reader).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -219,8 +222,13 @@
 #          `npm install` would float), and the Windows fonts its and
 #          test_explainer_figures' fit checks read; OpenCV again, for 3 of
 #          test_make_demo_video's 4 tests; airsim and tokenizers, for 2 of
-#          test_real_vla_prompt's; and torch with a file outside git, for
-#          test_vla_backend_table's CPU-only row.
+#          test_real_vla_prompt's; torch with a file outside git, for
+#          test_vla_backend_table's CPU-only row; Pillow again, for 2 of
+#          test_aerialvla_codec's 17 tests (the mosaic, the JPEG frames) and 1
+#          of test_vla_server's 22 (real frames through the server), and the
+#          D:/models folders for 1 more of test_vla_server's (the revisions of
+#          the real checkpoints). Their protocol, parser and prompt tests run
+#          on every job, with Pillow blocked where it matters.
 #        - Opt-in wall clock: test_hold_transit's
 #          test_each_charge_bounds_what_its_call_costs (the hold-point
 #          search's charges against what each call costs on the machine)
@@ -482,6 +490,8 @@ jobs:
               tests/test_demo_negative_xy.py \
               tests/test_vla_bridge.py \
               tests/test_vla_backend_table.py \
+              tests/test_vla_server.py \
+              tests/test_aerialvla_codec.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \

@@ -217,10 +217,26 @@ PHRASE_BANDS_DEG = {
     RIGHT_REAR: (120.0, 180.0),
 }
 
-# Mean commanded yaw per phrase, original AerialVLA LoRA, 108 controlled forward
-# passes (docs/FINDING-what-drives-aerialvla.md). The two rear phrases were NOT
-# in that ablation — it varied five phrases plus the empty one — so their
-# response is unmeasured and recorded as None rather than guessed.
+# Mean commanded heading change per phrase, original AerialVLA LoRA, 108
+# controlled forward passes (docs/FINDING-what-drives-aerialvla.md). The two
+# rear phrases were NOT in that ablation — it varied five phrases plus the
+# empty one — so their response is unmeasured and recorded as None rather than
+# guessed.
+#
+# UNITS (corrected 2026-10-21): RADIANS PER STEP, not rad/s. Upstream defines
+# the yaw output as the heading change of one decision - new heading = heading
+# + dpsi, then a forward step of up to 5 m, then a 0.5 s hover
+# (guardrail/aerialvla_codec.py, which cites upstream's executor). The table's
+# name keeps its old "_RAD_S" suffix only because callers and records
+# (record_for's "expected_yaw_rad_s") read it by that name; the phrase logic is
+# unchanged. A step's turn does not grow with how long a pilot holds it, so the
+# "held for 2.7 s" arithmetic in the module docstring describes the old
+# velocity reading, not the model.
+#
+# The values are the 4 Aug means as published. Re-read with the strict output
+# parser (docs/data/aerialvla_ablation_rescore.json) four of the five are
+# unchanged; forward-right becomes +0.114 over 17 accepted outputs (one output,
+# '9运 48 60', has a non-digit inside a bin and was read as bins 9/48/60).
 PHRASE_YAW_RAD_S = {
     LEFT_REAR: None,
     LEFT: -0.466,

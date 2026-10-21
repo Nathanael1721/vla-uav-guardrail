@@ -535,6 +535,85 @@ def test_bc_v3_is_measured_on_the_cpu_only():
 
 
 # --------------------------------------------------------------------------- #
+# the AerialVLA serving configurations (wave V1, 2026-10-21)
+# --------------------------------------------------------------------------- #
+def _bench(precision, attn, merged, p50, vram, parse_fail=0, bins=(96, 48, 49)):
+    outs = [{"frame": f, "phrase": p, "raw_text": "x", "parse_ok": True, "bins": list(bins),
+             "land": False} for f in ("a.png", "b.png") for p in ("", "straight ahead ")]
+    return {"config": {"precision": precision, "attn": attn, "merged": merged},
+            "identity": {"id": "aerialvla-lora/aero_vla@196f2f32", "base": "openvla-7b@47a0ec7f",
+                         "weights_sha256": "ab" * 32},
+            "facts": {"load": {"load_total_s": 60.0}, "libraries": {"torch": "2.6.0"},
+                      "host": {"host_arch": "AMD64", "hostname": "lab-desk-42"}},
+            "warmup": 5, "timed": 50,
+            "stats_latency": {"n": 50, "p50_ms": p50, "p95_ms": p50 * 1.1, "max_ms": p50 * 1.2,
+                              "mean_ms": p50, "hz_at_p50": 1000 / p50},
+            "stats_gen": {"p50_ms": p50 * 0.9}, "stats_server": {"p50_ms": p50 * 1.05},
+            "stats_probe_latency": {"p50_ms": p50, "p95_ms": p50 * 1.2},
+            "new_tokens": [9], "parse_fail_timed": parse_fail, "parse_fail_probe": 0,
+            "land_probe": 0, "probe_outputs": outs, "timed_outputs": outs[:2],
+            "vram": {"inference_peak_allocated_gb": vram, "load_peak_allocated_gb": vram + 1,
+                     "nvidia_smi_used_mib_after_timed": 9000}}
+
+
+def test_the_serving_default_follows_the_fixed_rule_not_the_fastest_row():
+    benches = [_bench("bf16", "eager", False, 400.0, 15.5),            # the reference
+               _bench("bf16", "sdpa", True, 300.0, 15.6),              # fastest, too big
+               _bench("nf4", "sdpa", True, 520.0, 5.0, bins=(95, 48, 49)),
+               _bench("nf4", "eager", False, 450.0, 5.5, parse_fail=1),  # a parse failure
+               _bench("nf4", "eager", True, 1300.0, 5.0)]              # misses the gate
+    s = V.summarise_serving(benches, vram_budget_gb=10.0)
+    assert s["schema"] == V.SERVING_SCHEMA and s["gate_p50_ms"] == 1000.0
+    # The committed summary describes the host by hardware, not by its name.
+    assert s["host"]["host"] == {"host_arch": "AMD64"} and "lab-desk-42" not in json.dumps(s)
+    assert s["fastest"] == "bf16/sdpa/merged" and s["recommended"] == "nf4/sdpa/merged", s
+    assert s["recommended_config"] == {"precision": "nf4", "attn": "sdpa", "merged": True}
+    rows = {V._cfg_name(c): c for c in s["configs"]}
+    assert rows["nf4/eager/merged"]["meets_gate"] is False
+    assert rows["bf16/sdpa/merged"]["agreement_probe"] == {"n": 4, "exact": 1.0, "close": 1.0}
+    nf4 = rows["nf4/sdpa/merged"]["agreement_probe"]
+    assert nf4["exact"] == 0.0 and nf4["close"] == 1.0, nf4        # one forward bin off
+    assert V.summarise_serving(benches, vram_budget_gb=4.0)["recommended"] is None
+    md = "\n".join(V.render_serving(s))
+    assert "| nf4 | sdpa | merged | 520 |" in md and "Recommended serving default:** nf4/sdpa/merged" in md
+    assert "not the project's default backend" in md
+    cell = V.serving_r1_cell(s)
+    assert cell.startswith("R1 via demo/vla_server_v2.py, nf4/sdpa/merged") and "p50 520 ms" in cell
+
+
+def test_the_serving_section_reaches_the_table_only_when_it_exists():
+    empty = _tmp()
+    side = empty / "serving.json"
+    t = V.build_table(demo_out=empty, experiments_out=empty, model_root=empty, evidence=empty,
+                      serving_json=side)
+    assert t["aerialvla_serving"] is None and "AerialVLA serving" not in V.render_markdown(t)
+    s = V.summarise_serving([_bench("bf16", "eager", False, 400.0, 15.5),
+                             _bench("nf4", "sdpa", True, 520.0, 5.0)], vram_budget_gb=10.0)
+    side.write_text(json.dumps(s), encoding="utf-8")
+    t = V.build_table(demo_out=empty, experiments_out=empty, model_root=empty, evidence=empty,
+                      serving_json=side)
+    row = next(r for r in t["rows"] if r["backend"] == "aerialvla_lora")
+    assert row["cells"]["rate_desktop"].startswith("R1 via demo/vla_server_v2.py")
+    assert t["default_backend"] is None, "a serving default is not the backend default"
+    assert "## AerialVLA serving configurations" in V.render_markdown(t)
+
+
+def test_the_committed_serving_summary_is_in_the_committed_table():
+    if not (V.SERVING_JSON.is_file() and COMMITTED_TABLE.is_file()):
+        return SKIP
+    s = json.loads(V.SERVING_JSON.read_text(encoding="utf-8"))
+    t = json.loads(COMMITTED_TABLE.read_text(encoding="utf-8"))
+    assert s["schema"] == V.SERVING_SCHEMA and t["aerialvla_serving"] == V.serving_for_table(s)
+    assert all("probe_outputs" not in c for c in t["aerialvla_serving"]["configs"])
+    assert all(len(c["probe_outputs"]) == c["probe_n"] > 0 for c in s["configs"]), \
+        "the probe texts behind the agreement column are not in the serving file"
+    md = (ROOT / "deploy" / "evidence" / "vla_backend_table.md").read_text(encoding="utf-8")
+    assert md == V.render_markdown(t) + "\n", "the committed md is not its JSON re-rendered"
+    for c in s["configs"]:
+        assert c["n"] >= 30 and c["meets_gate"] == (c["p50_ms"] <= s["gate_p50_ms"]), c
+
+
+# --------------------------------------------------------------------------- #
 # the committed table
 # --------------------------------------------------------------------------- #
 def test_the_committed_table_still_matches_the_files_it_cites():

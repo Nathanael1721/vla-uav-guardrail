@@ -1,0 +1,2325 @@
+{
+ "schema": "vlaguard.aerialvla_serving/1",
+ "created_utc": "2026-10-21T14:36:17Z",
+ "made_by": "python tools/vla_backend_table.py serving (from demo/vla_server_v2.py bench, one process per configuration)",
+ "host": {
+  "libraries": {
+   "python": "3.10.20",
+   "torch": "2.6.0+cu124",
+   "transformers": "4.40.1",
+   "peft": "0.11.1",
+   "bitsandbytes": "0.49.2",
+   "accelerate": "0.32.1",
+   "PIL": "12.2.0",
+   "cuda": "12.4",
+   "gpu": "NVIDIA GeForce RTX 4090"
+  },
+  "host": {
+   "host_arch": "AMD64",
+   "device_model": null,
+   "l4t_release": null,
+   "jetpack": null
+  }
+ },
+ "model": {
+  "id": "aerialvla-lora/aero_vla@196f2f32",
+  "base": "openvla-7b@47a0ec7f"
+ },
+ "weights_sha256": "ca9e87012a098435f9e67040f90c8b94be153a990fabc4e10400d477ca19b9e0",
+ "inputs": {
+  "timed": "deploy/evidence/vla_protocol_frames (the R1 frames: 2 Project AirSim mosaics), each tile sent as JPEG q95 through the server's protocol core; phrase derived from each frame's pose to the recorded target (hint_source goal, as trained); object 'orange barrier'; greedy, max_new_tokens 12",
+  "warmup": 5,
+  "timed_n": 50,
+  "probe": "the 6 mosaics of the 4 Aug ablation (experiments/out/frames, lab desktop) x the 8 phrases = 48 inputs, the same in every configuration",
+  "why_these": "real captures, not synthetic frames: demo/out holds no front+down capture pair (checked 2026-10-21), so both sets are the Project AirSim captures of 4 Aug"
+ },
+ "latency_definition": "latency_s as the server returns it: tokenizer + image processor + generate + decode, mosaic and prompt ready to text decoded; server_p50_ms adds the JPEG decode and the mosaic; generate_p50_ms is generate() alone",
+ "conditions": "RTX 4090 (24 GB) on the lab desktop, no simulator and no second model running; ordinary desktop applications held about 3.4 GB of VRAM before the runs (nvidia_smi_used_mib includes them)",
+ "gate_p50_ms": 1000.0,
+ "reference": {
+  "precision": "bf16",
+  "attn": "eager",
+  "merged": false
+ },
+ "vram_budget_gb": 10.0,
+ "rule": "recommended = lowest p50 among configurations with p50 <= gate, no timed parse failure and inference VRAM peak <= vram_budget_gb; fidelity to the reference is reported, not filtered on",
+ "configs": [
+  {
+   "precision": "bf16",
+   "attn": "eager",
+   "merged": false,
+   "p50_ms": 503.6,
+   "p95_ms": 553.4,
+   "max_ms": 556.6,
+   "mean_ms": 507.7,
+   "hz_at_p50": 1.986,
+   "n": 50,
+   "generate_p50_ms": 500.7,
+   "server_p50_ms": 505.1,
+   "probe_p50_ms": 510.0,
+   "probe_p95_ms": 600.9,
+   "new_tokens": [
+    9
+   ],
+   "parse_fail_timed": 0,
+   "parse_fail_probe": 1,
+   "probe_n": 48,
+   "land_probe": 5,
+   "agreement_probe": {
+    "n": 48,
+    "exact": 1.0,
+    "close": 1.0
+   },
+   "agreement_timed": {
+    "n": 50,
+    "exact": 1.0,
+    "close": 1.0
+   },
+   "vram_inference_peak_gb": 15.934,
+   "vram_load_peak_gb": 16.057,
+   "nvidia_smi_used_mib": 19261,
+   "load_s": 127.5,
+   "merge_s": null,
+   "meets_gate": true,
+   "bench_created_utc": "2026-10-21T13:43:54Z",
+   "probe_outputs": [
+    {
+     "frame": "absent_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "61 19 54</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "90 48 72</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "63 69 39</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "92 48 59</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "86 48 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 17 98</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 16 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "95 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "96 49 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "91 40 44</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "64 86 49</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "92 48 38</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "92 48 59</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "68 48 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 71 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 62 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "92 62 57</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "90 48 63</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "62 86 57</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "58 48 59</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "76 68 03</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "92 47 59</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 56 00</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "96 49 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "",
+     "raw_text": "49 49 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "16 01 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "68 81 44</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "55 \u6e21 34</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "81 48 98</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "92 49 20</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "80 70 00</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 70 00</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    }
+   ]
+  },
+  {
+   "precision": "bf16",
+   "attn": "eager",
+   "merged": true,
+   "p50_ms": 301.0,
+   "p95_ms": 317.3,
+   "max_ms": 352.5,
+   "mean_ms": 302.1,
+   "hz_at_p50": 3.322,
+   "n": 50,
+   "generate_p50_ms": 298.3,
+   "server_p50_ms": 302.2,
+   "probe_p50_ms": 309.0,
+   "probe_p95_ms": 367.1,
+   "new_tokens": [
+    9
+   ],
+   "parse_fail_timed": 0,
+   "parse_fail_probe": 1,
+   "probe_n": 48,
+   "land_probe": 5,
+   "agreement_probe": {
+    "n": 48,
+    "exact": 0.896,
+    "close": 0.938
+   },
+   "agreement_timed": {
+    "n": 50,
+    "exact": 1.0,
+    "close": 1.0
+   },
+   "vram_inference_peak_gb": 15.471,
+   "vram_load_peak_gb": 16.057,
+   "nvidia_smi_used_mib": 19356,
+   "load_s": 107.7,
+   "merge_s": 0.4,
+   "meets_gate": true,
+   "bench_created_utc": "2026-10-21T13:49:17Z",
+   "probe_outputs": [
+    {
+     "frame": "absent_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "61 19 54</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "90 48 72</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "63 69 39</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "92 48 59</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "86 48 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 17 98</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 16 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "95 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "94 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "16 01 49</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "64 86 49</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "92 48 38</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "92 48 59</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "68 48 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 71 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 62 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "92 62 57</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "90 48 63</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "62 86 57</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "91 48 65</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "76 68 03</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "92 47 55</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 56 00</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "96 49 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "",
+     "raw_text": "49 49 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "16 01 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "68 81 44</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "55 \u96c51 31</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "81 48 98</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "92 49 20</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "80 70 00</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 70 00</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    }
+   ]
+  },
+  {
+   "precision": "bf16",
+   "attn": "sdpa",
+   "merged": false,
+   "p50_ms": 485.8,
+   "p95_ms": 527.4,
+   "max_ms": 538.2,
+   "mean_ms": 485.3,
+   "hz_at_p50": 2.058,
+   "n": 50,
+   "generate_p50_ms": 483.1,
+   "server_p50_ms": 487.1,
+   "probe_p50_ms": 488.6,
+   "probe_p95_ms": 600.3,
+   "new_tokens": [
+    9
+   ],
+   "parse_fail_timed": 0,
+   "parse_fail_probe": 1,
+   "probe_n": 48,
+   "land_probe": 5,
+   "agreement_probe": {
+    "n": 48,
+    "exact": 0.958,
+    "close": 0.958
+   },
+   "agreement_timed": {
+    "n": 50,
+    "exact": 1.0,
+    "close": 1.0
+   },
+   "vram_inference_peak_gb": 15.934,
+   "vram_load_peak_gb": 16.057,
+   "nvidia_smi_used_mib": 19248,
+   "load_s": 119.5,
+   "merge_s": null,
+   "meets_gate": true,
+   "bench_created_utc": "2026-10-21T13:46:51Z",
+   "probe_outputs": [
+    {
+     "frame": "absent_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "61 19 54</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "90 48 72</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "63 69 39</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "92 48 59</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "86 48 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 17 98</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 16 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "95 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "96 49 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "92 48 44</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "64 86 49</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "92 48 38</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "92 48 59</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "68 48 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 71 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 62 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "92 62 57</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "90 48 63</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "62 86 57</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "58 48 59</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "76 68 03</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "92 47 55</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 56 00</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "96 49 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "",
+     "raw_text": "49 49 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "16 01 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "68 81 44</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "55 \u6e21 34</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "81 48 98</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "92 49 20</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "80 70 00</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 70 00</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    }
+   ]
+  },
+  {
+   "precision": "bf16",
+   "attn": "sdpa",
+   "merged": true,
+   "p50_ms": 258.7,
+   "p95_ms": 293.9,
+   "max_ms": 341.4,
+   "mean_ms": 264.1,
+   "hz_at_p50": 3.865,
+   "n": 50,
+   "generate_p50_ms": 256.0,
+   "server_p50_ms": 259.9,
+   "probe_p50_ms": 257.8,
+   "probe_p95_ms": 299.5,
+   "new_tokens": [
+    9
+   ],
+   "parse_fail_timed": 0,
+   "parse_fail_probe": 1,
+   "probe_n": 48,
+   "land_probe": 5,
+   "agreement_probe": {
+    "n": 48,
+    "exact": 0.875,
+    "close": 0.917
+   },
+   "agreement_timed": {
+    "n": 50,
+    "exact": 1.0,
+    "close": 1.0
+   },
+   "vram_inference_peak_gb": 15.471,
+   "vram_load_peak_gb": 16.057,
+   "nvidia_smi_used_mib": null,
+   "load_s": 102.8,
+   "merge_s": 0.4,
+   "meets_gate": true,
+   "bench_created_utc": "2026-10-21T13:51:32Z",
+   "probe_outputs": [
+    {
+     "frame": "absent_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "62 16 49</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "90 48 72</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "63 69 39</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "92 48 59</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "86 48 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 17 98</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 16 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "95 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "96 49 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "91 40 44</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "64 86 49</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "92 48 37</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "92 48 59</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "68 48 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 71 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 62 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "92 62 57</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "90 48 63</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "62 48 62</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "91 48 65</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "76 68 03</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "92 47 55</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 56 00</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "96 49 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "",
+     "raw_text": "49 49 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "16 01 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "68 81 44</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "55 \u6e21 34</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "81 48 98</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "92 49 20</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "80 70 00</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 70 00</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    }
+   ]
+  },
+  {
+   "precision": "nf4",
+   "attn": "eager",
+   "merged": false,
+   "p50_ms": 911.8,
+   "p95_ms": 1004.8,
+   "max_ms": 1086.0,
+   "mean_ms": 922.6,
+   "hz_at_p50": 1.097,
+   "n": 50,
+   "generate_p50_ms": 908.9,
+   "server_p50_ms": 913.1,
+   "probe_p50_ms": 946.6,
+   "probe_p95_ms": 1141.4,
+   "new_tokens": [
+    9
+   ],
+   "parse_fail_timed": 0,
+   "parse_fail_probe": 3,
+   "probe_n": 48,
+   "land_probe": 3,
+   "agreement_probe": {
+    "n": 48,
+    "exact": 0.25,
+    "close": 0.479
+   },
+   "agreement_timed": {
+    "n": 50,
+    "exact": 0.0,
+    "close": 1.0
+   },
+   "vram_inference_peak_gb": 6.009,
+   "vram_load_peak_gb": 6.027,
+   "nvidia_smi_used_mib": 10027,
+   "load_s": 129.7,
+   "merge_s": null,
+   "meets_gate": true,
+   "bench_created_utc": "2026-10-21T13:30:18Z",
+   "probe_outputs": [
+    {
+     "frame": "absent_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "61 13 \u6eaa</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "90 63 68</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "61 65 49</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "91 48 54</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "81 48 03</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 49 98</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 16 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 4949</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 66 00</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "76 79 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "91 40 40</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "68 70 18</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "89 48 38</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "82 48 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "85 48 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 62 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 62 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "91 63 58</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "92 60 60</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "91 48 63</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "91 48 65</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "91 48 61</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "92 46 68</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 17 00</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 494 49"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "",
+     "raw_text": "49 49 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "09 00 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "68 81 30</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "89 48 17</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "81 48 98</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "92 48 20</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "81 67 00</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "81 70 44</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    }
+   ]
+  },
+  {
+   "precision": "nf4",
+   "attn": "eager",
+   "merged": true,
+   "p50_ms": 565.8,
+   "p95_ms": 590.4,
+   "max_ms": 598.0,
+   "mean_ms": 564.5,
+   "hz_at_p50": 1.768,
+   "n": 50,
+   "generate_p50_ms": 563.2,
+   "server_p50_ms": 567.0,
+   "probe_p50_ms": 571.2,
+   "probe_p95_ms": 654.1,
+   "new_tokens": [
+    9
+   ],
+   "parse_fail_timed": 0,
+   "parse_fail_probe": 0,
+   "probe_n": 48,
+   "land_probe": 5,
+   "agreement_probe": {
+    "n": 48,
+    "exact": 0.333,
+    "close": 0.479
+   },
+   "agreement_timed": {
+    "n": 50,
+    "exact": 0.5,
+    "close": 1.0
+   },
+   "vram_inference_peak_gb": 5.368,
+   "vram_load_peak_gb": 6.219,
+   "nvidia_smi_used_mib": 10763,
+   "load_s": 119.6,
+   "merge_s": 6.1,
+   "meets_gate": true,
+   "bench_created_utc": "2026-10-21T13:37:35Z",
+   "probe_outputs": [
+    {
+     "frame": "absent_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "91 48 67</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "90 48 69</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "62 86 56</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "91 48 54</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "82 48 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "91 49 50</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 16 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "95 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "06 00 00</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "70 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "96 48 43</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "62 83 49</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "92 48 29</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "92 48 59</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "82 48 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 60 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 62 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "91 60 62</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "92 58 68</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "91 48 73</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "58 48 98</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "91 48 59</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "91 46 68</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 17 00</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "",
+     "raw_text": "90 49 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "07 00 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "68 81 25</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "86 48 18</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "81 48 98</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "86 60 18</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "80 66 48</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 64 98</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    }
+   ]
+  },
+  {
+   "precision": "nf4",
+   "attn": "sdpa",
+   "merged": false,
+   "p50_ms": 837.6,
+   "p95_ms": 880.7,
+   "max_ms": 889.8,
+   "mean_ms": 838.7,
+   "hz_at_p50": 1.194,
+   "n": 50,
+   "generate_p50_ms": 834.8,
+   "server_p50_ms": 839.0,
+   "probe_p50_ms": 889.5,
+   "probe_p95_ms": 1059.8,
+   "new_tokens": [
+    9
+   ],
+   "parse_fail_timed": 0,
+   "parse_fail_probe": 2,
+   "probe_n": 48,
+   "land_probe": 3,
+   "agreement_probe": {
+    "n": 48,
+    "exact": 0.25,
+    "close": 0.479
+   },
+   "agreement_timed": {
+    "n": 50,
+    "exact": 0.0,
+    "close": 1.0
+   },
+   "vram_inference_peak_gb": 6.009,
+   "vram_load_peak_gb": 6.027,
+   "nvidia_smi_used_mib": 10011,
+   "load_s": 111.8,
+   "merge_s": null,
+   "meets_gate": true,
+   "bench_created_utc": "2026-10-21T13:34:30Z",
+   "probe_outputs": [
+    {
+     "frame": "absent_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "61 13 49</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "90 63 68</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "61 65 49</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "91 48 54</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "81 48 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 49 98</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 16 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 4949</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "06 00 00</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "76 79 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "91 40 40</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "68 70 18</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "89 48 38</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "82 48 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "85 48 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 62 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 62 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "91 63 58</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "92 60 60</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "91 48 63</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "91 48 65</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "91 48 61</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "59 48 00</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 17 00</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "",
+     "raw_text": "00 494494</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "",
+     "raw_text": "49 49 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "09 00 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "68 81 30</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "89 48 17</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "81 48 98</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "92 48 20</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "81 67 00</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "81 70 44</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    }
+   ]
+  },
+  {
+   "precision": "nf4",
+   "attn": "sdpa",
+   "merged": true,
+   "p50_ms": 516.8,
+   "p95_ms": 542.5,
+   "max_ms": 545.8,
+   "mean_ms": 517.5,
+   "hz_at_p50": 1.935,
+   "n": 50,
+   "generate_p50_ms": 514.1,
+   "server_p50_ms": 518.0,
+   "probe_p50_ms": 526.0,
+   "probe_p95_ms": 604.6,
+   "new_tokens": [
+    9
+   ],
+   "parse_fail_timed": 0,
+   "parse_fail_probe": 0,
+   "probe_n": 48,
+   "land_probe": 5,
+   "agreement_probe": {
+    "n": 48,
+    "exact": 0.312,
+    "close": 0.5
+   },
+   "agreement_timed": {
+    "n": 50,
+    "exact": 0.5,
+    "close": 1.0
+   },
+   "vram_inference_peak_gb": 5.367,
+   "vram_load_peak_gb": 6.219,
+   "nvidia_smi_used_mib": 10760,
+   "load_s": 131.8,
+   "merge_s": 6.3,
+   "meets_gate": true,
+   "bench_created_utc": "2026-10-21T13:40:47Z",
+   "probe_outputs": [
+    {
+     "frame": "absent_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "91 48 67</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "90 48 69</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "62 86 56</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "91 48 54</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "82 48 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "91 49 50</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 17 00</s>"
+    },
+    {
+     "frame": "absent_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "95 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "06 00 00</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "absent_+00.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "96 48 43</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "62 83 49</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "92 48 29</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "92 48 59</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "82 48 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "00 60 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 62 00</s>"
+    },
+    {
+     "frame": "absent_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "91 60 62</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-right ",
+     "raw_text": "92 54 65</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "forward-left ",
+     "raw_text": "91 48 73</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right ",
+     "raw_text": "58 48 98</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left ",
+     "raw_text": "91 48 59</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "91 46 68</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 17 00</s>"
+    },
+    {
+     "frame": "present_+35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "straight ahead ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-right ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "forward-left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your right rear ",
+     "raw_text": "96 48 48</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "to your left rear ",
+     "raw_text": "96 48 49</s>"
+    },
+    {
+     "frame": "present_+00.png",
+     "phrase": "",
+     "raw_text": "90 49 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "straight ahead ",
+     "raw_text": "07 00 49</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-right ",
+     "raw_text": "68 81 25</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "forward-left ",
+     "raw_text": "86 48 18</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right ",
+     "raw_text": "81 48 98</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left ",
+     "raw_text": "86 60 18</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your right rear ",
+     "raw_text": "80 66 48</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "to your left rear ",
+     "raw_text": "00 64 98</s>"
+    },
+    {
+     "frame": "present_-35.png",
+     "phrase": "",
+     "raw_text": "00 49 49 LAND</s>"
+    }
+   ]
+  }
+ ],
+ "fastest": "bf16/sdpa/merged",
+ "recommended": "nf4/sdpa/merged",
+ "recommended_config": {
+  "precision": "nf4",
+  "attn": "sdpa",
+  "merged": true
+ },
+ "tcp_roundtrip": {
+  "config": "nf4/sdpa/merged",
+  "n": 50,
+  "roundtrip": {
+   "n": 50,
+   "p50_ms": 539.0,
+   "p95_ms": 581.0,
+   "max_ms": 851.5,
+   "mean_ms": 550.4,
+   "hz_at_p50": 1.855
+  },
+  "server_latency": {
+   "n": 50,
+   "p50_ms": 536.7,
+   "p95_ms": 572.4,
+   "max_ms": 602.0,
+   "mean_ms": 541.7,
+   "hz_at_p50": 1.863
+  },
+  "model": "aerialvla-lora/aero_vla@196f2f32"
+ },
+ "recommendation_note": "Why this default, and what it costs. The 10 GB budget is an assumption recorded here, not a measurement: the card has 24 GB, desktop applications held about 3.4 GB, OWL-ViT takes 0.61 GB, and CityLife's own VRAM has never been logged; it rules out the four bf16 rows (15.5-15.9 GB at inference). Among the nf4 rows, merging the LoRA cuts p50 by about 40 % (838 -> 517 ms with SDPA) and SDPA saves another 8-9 %. Fidelity is the cost: 4-bit quantisation, not the attention kernel or the merge, is what moves the outputs. The bf16 rows agree with the upstream-precision reference (bf16/eager/unmerged) on 88-96 % of the 48 probe inputs (greedy near-ties), the nf4 rows on 25-33 % exactly and 48-50 % within 3 bins. On the no-hint phrase every bf16 row and both nf4 merged rows answer '00 49 49 LAND' on 5 of 6 frames, while the nf4 unmerged loader (the one every earlier AerialVLA script here used) reproduces two of the 4 Aug malformed landing outputs ('00 49 4949', '00 49 494 49'); the strict reader turns those into holds. If CityLife's VRAM is measured and leaves about 16 GB free, or the model runs without the renderer, bf16/sdpa/merged is the better choice: p50 259 ms (below the paper's 0.35 s) and the closest to upstream's outputs among the fast rows. The server takes either by flag (--precision, --attn, --merge)."
+}

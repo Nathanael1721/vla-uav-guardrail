@@ -77,8 +77,14 @@ DIST_OF = {"grpc": "grpcio", "google": "protobuf"}
 # Whole modules that exist only for an extra; importing them needs the extra.
 EXTRA_ONLY_MODULES = {"api"}
 # VLA-slot occupants: run from the source tree in the VLA env, not packaged
-# promises (pyproject.toml [tool.setuptools] comment).
-SOURCE_TREE_ONLY = {"torch": {"vla_bc"}, "training": {"vla_bc"}}
+# promises (pyproject.toml [tool.setuptools] comment). Pillow for
+# aerialvla_codec (2026-10-21): only its image functions (the AerialVLA
+# mosaic, the JPEG frames of the VLA server) import it, inside the function,
+# and they run in the VLA environment (vla-real); parsing, prompts and the
+# protocol check need nothing beyond the standard library, which
+# tests/test_aerialvla_codec.py checks with Pillow blocked.
+SOURCE_TREE_ONLY = {"torch": {"vla_bc"}, "training": {"vla_bc"},
+                    "PIL": {"aerialvla_codec"}}
 
 SKIPPED = []
 _TMP = []

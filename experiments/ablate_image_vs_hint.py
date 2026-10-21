@@ -37,7 +37,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
-from aerialvla_demo import build_prompt, dequantize          # noqa: E402
+from aerialvla_demo import build_prompt                      # noqa: E402
+from guardrail.aerialvla_codec import parse_action          # noqa: E402
 
 FRAMES = ROOT / "experiments" / "out" / "frames"
 OUT = ROOT / "experiments" / "out"
@@ -68,7 +69,16 @@ def load_model(lora_id: str):
 
 
 def infer(torch, tok, ip, model, img, hint: str, obj: str) -> dict:
-    import re
+    """One forward pass, read by the strict reader.
+
+    Until 2026-10-21 this took the last three integers of the decoded text
+    (`re.findall(r"\\d+", tail)[-3:]`), which read malformed landing outputs
+    such as '00 49 494 49' as motion; the 4 Aug results were re-scored with
+    the strict reader in docs/data/aerialvla_ablation_rescore.json
+    (experiments/rescore_ablation.py). `ok` is now parse_ok: exactly three
+    two-digit bins, optional LAND, then EOS. A row that fails keeps its text
+    and reason and enters no mean. fwd/down/yaw are a STEP (metres, radians
+    per decision), not rates."""
     prompt = build_prompt(hint, obj)
     enc = tok(prompt, return_tensors="pt")
     pv = ip(images=img, return_tensors="pt")["pixel_values"]
@@ -78,14 +88,12 @@ def infer(torch, tok, ip, model, img, hint: str, obj: str) -> dict:
                              pixel_values=pv.to("cuda", dtype=torch.bfloat16),
                              max_new_tokens=20, do_sample=False,
                              eos_token_id=[tok.eos_token_id])
-    tail = tok.decode(out[0], skip_special_tokens=False).split("Action:")[-1]
-    ints = re.findall(r"\d+", tail)
-    if len(ints) < 3:
-        return {"ok": False, "tail": tail}
-    b = (int(ints[-3]), int(ints[-2]), int(ints[-1]))
-    return {"ok": True, "bins": b, "fwd": dequantize(b[0], "forward"),
-            "down": dequantize(b[1], "down"), "yaw": dequantize(b[2], "yaw"),
-            "land": "LAND" in tail, "tail": tail.strip()}
+    gen = tok.decode(out[0, enc["input_ids"].shape[1]:], skip_special_tokens=False)
+    p = parse_action(gen, require_eos=True)
+    if not p.parse_ok:
+        return {"ok": False, "tail": gen, "reason": p.reason}
+    return {"ok": True, "bins": p.bins, "fwd": p.step.fwd_m, "down": p.step.down_m,
+            "yaw": p.step.dpsi_rad, "land": p.land, "tail": gen}
 
 
 def spread(vals) -> float:
@@ -144,7 +152,7 @@ def main() -> int:
             if len(g) > 1:
                 by_obj.append(spread([r["yaw"] for r in g]))
 
-    print("Yaw-command range (rad/s) when ONE factor varies and the others are held fixed:")
+    print("Heading-change range (rad per step) when ONE factor varies and the others are held fixed:")
     print(f"  vary the DIRECTION HINT      : mean {np.mean(by_hint):.3f}  max {np.max(by_hint):.3f}")
     print(f"  vary the IMAGE               : mean {np.mean(by_img):.3f}  max {np.max(by_img):.3f}")
     print(f"  vary the OBJECT DESCRIPTION  : mean {np.mean(by_obj):.3f}  max {np.max(by_obj):.3f}")

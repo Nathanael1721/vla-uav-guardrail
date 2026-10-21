@@ -571,6 +571,16 @@ def test_the_own_velocity_forecast_test_runs_in_ci():
     assert "test_own_velocity_forecast.py" in _loop(), "not run in CI"
 
 
+def test_the_aerialvla_codec_and_server_tests_run_in_ci():
+    """Wave V1 (2026-10-21): the strict AerialVLA output reader (every
+    malformed output of the 4 Aug ablation pinned as a parse failure), the
+    byte-exact prompt, and the protocol-v2 server driven by a scripted model.
+    Neither needs a GPU or torch; their few Pillow / D:/models checks SKIP,
+    counted, where those are absent."""
+    missing = {"test_aerialvla_codec.py", "test_vla_server.py"} - _loop()
+    assert not missing, f"not run in CI: {sorted(missing)}"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

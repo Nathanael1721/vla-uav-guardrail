@@ -905,6 +905,63 @@ def test_the_pilot_record_names_what_flew_beside_the_six_fields():
     assert "pilot" not in m and len(m) == 6
 
 
+def test_a_vla_whose_weights_the_flight_cannot_see_carries_the_server_reported_digest():
+    """Wave V1 (2026-10-21). AerialVLA runs in its own server process
+    (demo/vla_server_v2.py), which hashes the base shards + adapter it loaded
+    and returns weights_sha256 with every action. A flight process on another
+    host (the ROS companion, an Orin client) cannot read those files, so
+    model_hash() said "@unresolved" and is_kpi_grade refused the run. The
+    reported digest is now recorded, with its source; a local digest that
+    DISAGREES with the report is never papered over."""
+    import os
+    import shutil as _sh
+    from guardrail.manifest import (UNRESOLVED, build_manifest, pilot_record,
+                                    weights_digest)
+    d, a, b = _two_weight_dirs()
+    os.environ["GUARDRAIL_DIGEST_CACHE"] = str(d / "cache.json")
+    mid = "aerialvla-lora/aero_vla@196f2f32"
+    try:
+        dig_a = weights_digest([a])
+        # 1. Weights not visible here: the server's report is the hash.
+        rec = pilot_record(mid, "vla", weight_paths=[d / "not-here"],
+                           reported_digest=dig_a, reported_by="vla_server_v2@127.0.0.1:8790")
+        assert rec["hash"] == f"{mid}@sha256:{dig_a}", rec
+        assert rec["hash_source"] == "reported" and rec["reported_digest"] == dig_a
+        assert rec["reported_by"] == "vla_server_v2@127.0.0.1:8790"
+        assert UNRESOLVED not in rec["hash"]
+        no_paths = pilot_record(mid, "vla", reported_digest=dig_a)
+        assert no_paths["hash"] == rec["hash"] and no_paths["hash_source"] == "reported"
+        # 2. Visible and agreeing: the same hash a local-only record gives.
+        both = pilot_record(mid, "vla", weight_paths=[a], reported_digest=dig_a)
+        assert both["hash"] == pilot_record(mid, "vla", weight_paths=[a])["hash"] == rec["hash"]
+        assert both["hash_source"] == "local; reported agrees"
+        # 3. Visible and DISAGREEING: unresolved, so the KPI gate refuses it.
+        bad = pilot_record(mid, "vla", weight_paths=[b], reported_digest=dig_a)
+        assert UNRESOLVED in bad["hash"] and bad["hash_source"] == "mismatch", bad
+        # 4. The manifest's vla_model_hash follows the same rule.
+        m = build_manifest("sha256:p", mid, 1, reported_digest=dig_a,
+                           weight_paths=[d / "not-here"])
+        assert m["vla_model_hash"] == rec["hash"] and len(m) == 6
+        # 5. Only a 64-hex digest, only for a learned VLA.
+        for junk in ("abc", dig_a.upper(), dig_a[:63] + "g", 7):
+            try:
+                pilot_record(mid, "vla", reported_digest=junk)
+            except ValueError:
+                continue
+            raise AssertionError(f"accepted reported_digest {junk!r}")
+        try:
+            pilot_record("guardrail.vla_stub.StubVLA", "stub", reported_digest=dig_a)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("a stub pilot carried a reported weights digest")
+        # Without a report the record keeps its old shape.
+        assert set(pilot_record(mid, "vla", weight_paths=[a])) == {"kind", "model_id", "hash"}
+    finally:
+        os.environ.pop("GUARDRAIL_DIGEST_CACHE", None)
+        _sh.rmtree(d, ignore_errors=True)
+
+
 def test_no_flight_entry_point_writes_the_old_label():
     """`canonical-hil` may be READ (old manifests); it must not be written."""
     for rel in ("sitl/ros2_shield_node.py", "sitl/run_sitl_demo.py",

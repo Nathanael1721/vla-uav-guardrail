@@ -4,6 +4,114 @@
 **Status:** offline ablation complete (108 controlled forward passes per adapter);
 simultaneity flights pending.
 
+**Corrected 2026-10-21** (section "Correction, 2026-10-21" directly below): the
+tables of 4 Aug read the model's text with a parser that turned malformed
+landing outputs into motion, and labelled step quantities as rates. Read
+strictly, the original adapter stops on **17 of 18** no-hint frames, and the
+object-presence effect is **not supported**. The 4 Aug text is left as it was
+written; the correction says which of its numbers changed.
+
+## Correction, 2026-10-21: the output parser, and the units
+
+**What was wrong.**
+
+1. *The parser.* `experiments/ablate_image_vs_hint.py` (4 Aug, lines 82-85) took
+   the last three integers anywhere in the decoded text,
+   `re.findall(r"\d+", tail)[-3:]` - upstream's own `_parse_action_from_text`
+   (`source/AeroVLA/src/model_wrapper/aerialvla_wrapper_ui.py:208-223`), which
+   `demo/aerialvla_demo.py` copied too. On a malformed output that is not a
+   misreading at the margin, it is a different action: `'00 49 494 49'` gives
+   (49, 494, 49), the 494 is clamped to bin 98, and a stop becomes forward 2.5 and
+   "down" +5.0; `'00 49 4949'` gives a yaw bin of 4949, clamped to 98, i.e. +1.1.
+2. *The units.* Upstream defines the three numbers as a **step**: forward metres
+   along the new heading, vertical metres, and a heading change in radians, per
+   decision, executed at 1 m/s with a 0.5 s hover between decisions
+   (`source/AeroVLA/airsim_plugin/AirVLNSimulatorClientTool_AerialVLA.py:300-385`).
+   Every "rad/s" and "m/s" in the 4 Aug tables is that same number in radians or
+   metres **per step**.
+
+**Re-score.** The same stored outputs (`experiments/out/ablation_orig.json` and
+`ablation_ft.json`, no new inference) read with the strict reader
+`guardrail/aerialvla_codec.parse_action`: exactly three two-digit bins 00-98,
+single spaces, an optional ` LAND`, then EOS; anything else is a parse failure,
+which the client contract (VLA server protocol v2) holds as zero and counts.
+Every row, its stored text, the old reading and the new one are in
+`docs/data/aerialvla_ablation_rescore.json`
+(`python experiments/rescore_ablation.py --src <dir of the two files>`).
+Outcomes: *LAND*; *hold* (parse failure, flown as zero); *move*.
+
+Original adapter, per phrase (n = 18 each; dpsi in rad/step and forward in m/step
+are means over the outputs the strict reader accepts):
+
+| direction phrase | accepted | mean dpsi | mean forward | LAND | hold | move | 4 Aug said (yaw, fwd, LAND) |
+|---|---|---|---|---|---|---|---|
+| `to your left` | 18 | -0.466 | 4.24 | 0 | 0 | 18 | -0.466, 4.24, 0/18 |
+| `forward-left` | 18 | -0.167 | 4.20 | 0 | 0 | 18 | -0.167, 4.20, 0/18 |
+| `straight ahead` | 18 | -0.035 | 3.80 | 0 | 0 | 18 | -0.035, 3.80, 0/18 |
+| `forward-right` | 17 | +0.114 | 4.08 | 0 | 1 | 17 | +0.121, 3.87, 0/18 |
+| `to your right` | 18 | +0.161 | 4.11 | 0 | 0 | 18 | +0.161, 4.11, 0/18 |
+| **(none)** | 12 | **0.000** | 0.21 | **11** | **6** | **1** | +0.182, 0.56, 11/18 |
+
+- **No hint: 17 of 18 frames stop** - 11 clean `00 49 49 LAND` outputs and 6
+  malformed ones that all begin with the stop triple (`'00 49 4949'` twice,
+  `'00 49 494 49'`, `'00 49 4944949'`, `'00 49 49 49 49 48'`, `'00 49 49 L 49'`).
+  The 18th, `'49 49 49'` (forward 2.5 m), is the only no-hint motion. The 4 Aug
+  row's +0.182 "yaw" and 0.56 "forward" were the malformed rows read as +1.1 and
+  2.5. As the client would fly them (holds as zero) the no-hint mean forward step
+  is 0.14 m. This fits how the model was trained: the empty phrase appears once
+  per training trajectory, on its final frame, with a zero label and LAND.
+- **The object-presence effect is not supported.** The 4 Aug comparison (no
+  hint, target present vs absent) said forward 1.11 vs 0.00, LAND 4/9 vs 7/9,
+  "weakly positive". Strictly: present 1/9 frames move (the one `'49 49 49'`),
+  4 LAND and 4 holds; absent 0/9 move, 7 LAND and 2 holds. Three of the four
+  present-scene "forward 2.5" rows were stop outputs read as motion. One frame
+  in nine against none is not evidence that the object's presence changes the
+  action.
+- **Hinted rows: 0 LAND in 90**, as before; one hinted output is malformed
+  (`'9运 48 60'` under `forward-right`, a CJK character inside a bin, read on
+  4 Aug as bins 9/48/60).
+- **What still stands.** The phrase orders the heading change monotonically
+  (-0.466 < -0.167 < -0.035 < +0.114 < +0.161 rad/step), the object phrase does
+  not steer (target present, strict: `orange barrier` +0.053, `blue barrier`
+  +0.018, none -0.102 rad/step; LAND 1, 1, 2), and the factor spreads keep their
+  order (dpsi range when one factor varies: hint 0.880, image 0.877, object 0.428
+  rad/step, against 1.005 / 1.000 / 0.454 on 4 Aug).
+- **The fine-tune (`run2/epoch1`).** 96 of 108 outputs are accepted, not "106
+  of 108 parsed": the old reader also accepted outputs with a one-digit bin.
+  Three of those (`'15 51 0'`, `'15 49 0'`, `'25 49 0'`) are under `to your
+  left` and were read as yaw bin 0 = -1.1, so its mean is **-0.428**, not
+  -0.540; `to your right` stays +0.508. The "roughly ±0.52, symmetric" reading of
+  the extremes becomes -0.43 / +0.51. No hint: 16 of 18 stop (9 LAND, 7 holds),
+  2 move (`'49 49 49'` twice, both target present). The conclusion that the
+  fine-tune follows the phrase harder at the right extreme and leaves the object
+  slot inert is unchanged.
+
+**Where the malformed landing outputs come from (measured 2026-10-21).** The
+serving measurement (`docs/data/aerialvla_serving_4090.json`, `probe_outputs`)
+ran the same six mosaics with the empty phrase and the object `orange barrier`
+through eight model configurations. Every bf16 configuration (upstream's
+precision) answers `00 49 49 LAND` on five frames and `49 49 49` on
+`present_+00`. The 4-bit, unmerged loader that every earlier AerialVLA script
+here used (and that produced the 4 Aug outputs) gives `00 49 4949` on
+`absent_+35` and `00 49 494 49` (cut at 12 new tokens) on `present_+35`. That
+reproduces, frame for frame, the six no-hint `orange barrier` rows of 4 Aug
+(`ablation_orig.json`). The same loader with SDPA attention is malformed on the
+same two frames (`00 49 4949`, `00 494494`). Both 4-bit merged configurations
+answer clean `LAND` there. On these inputs, then, the malformed outputs come
+from 4-bit quantisation with an unmerged adapter, not from the model's
+training. On `present_+00` every bf16 configuration and both 4-bit unmerged
+ones say `49 49 49`, and both 4-bit merged ones `90 49 49`, so that frame's
+forward command is the
+model's own answer at every precision. This is six inputs and one object
+phrase, not a population.
+
+Code fixed the same day: `demo/aerialvla_demo.py` and
+`experiments/ablate_image_vs_hint.py` read through the strict reader (a
+malformed output is held as zero and logged, where it used to be read as motion
+or to leave the previous action latched), `demo/vla_bridge.py`'s
+`PHRASE_YAW_RAD_S` is documented as radians per step, and the VLA server v2
+(`demo/vla_server_v2.py`) returns `parse_ok` with every action.
+
 ## Why this was investigated
 
 The question being answered was *"can we command the drone with something like
