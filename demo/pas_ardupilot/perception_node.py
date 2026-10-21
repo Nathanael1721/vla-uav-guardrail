@@ -187,6 +187,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -368,6 +369,21 @@ START_TIMEOUT_S = 330.0
 # episode ends before t0, landed, with the gate's record - and "fly" starts
 # the mission anyway, as follow_vlm does, recorded.
 START_TIMEOUT_ACTIONS = ("land", "fly")
+# THE HOVER BEFORE THE MISSION IS CAPPED (review 2026-10-22). --start-timeout-s
+# bounds the airborne wait whichever wait it is spent in: the start gate's,
+# and the detector's first inference on a link with no pre-arm step, which
+# comes out of the same budget (run(); with no gate that wait has
+# DETECTOR_READY_TIMEOUT_S alone, and the links that have a pre-arm step wait
+# for the detector disarmed, on the ground). A timeout above this, or not finite, is
+# refused before anything starts. 330 s is what scripts/run_citylife_follow.ps1
+# flies ("red lights lengthen the car's lap", 2026-09-29); this leaves room for
+# a second lap and no more: the hover is watched (HoverWatch), but no KPI
+# covers it.
+START_TIMEOUT_MAX_S = 600.0
+# How long the gate's candidate stays the Shield's subject during the hover
+# (HoverWatch), and how recent an inference must be to be judged at all: the
+# gate's freshness, follow_vlm's (`time.time() - gw["t"] < 1.0`).
+GATE_FRESH_S = 1.0
 # While the gate waits, the subject's simulator pose (EVALUATION only: the
 # gate never reads it) every this many seconds, so a gate that timed out can
 # say whether the subject drove past the camera or never came.
@@ -383,7 +399,10 @@ GATE_TRUTH_PERIOD_S = 2.0
 # Shield's median is about 1 ms, so most likely the loading thread holding
 # the GIL - inferred, not profiled). The Grounder now starts as soon as the camera is up - its load runs
 # under SITL's boot and the take-off - and the mission waits for its first
-# inference (at most this long, then flies, recorded).
+# inference (at most this long, then flies, recorded). Since 2026-10-22
+# (review) that wait is made in the pre-arm step, disarmed, on the links that
+# have one (PymavlinkLink, MavrosLink): a slow load is no airborne hover. A
+# detector thread that DIED is not waited for: no mission is flown on it.
 DETECTOR_READY_TIMEOUT_S = 300.0
 # THE SIMULATOR'S EVALUATION RPCs LEAVE THE LOOP (OffLoopRpc; 2026-10-21,
 # C14). The subject truth's GetObjectPoses, the truth's frame check and the
@@ -700,56 +719,310 @@ class StartGate:
         return rec
 
 
-def wait_for_subject(gate: StartGate, grounder, link, anchor, obs, *, timeout_s: float,
+def autopilot_took_over(mode, prev_mode, asks) -> bool:
+    """The autopilot left GUIDED - or a hold this node asked for - for a mode
+    the node did not ask for: its fence fired RTL, a failsafe, or a pilot in
+    Mission Planner. From then on it has the aircraft, and nothing more is
+    commanded. One test for the loop and for the hover before it
+    (HoverWatch). (Until 2026-10-13 only a change out of GUIDED counted, so a
+    pilot taking the aircraft out of the FSM's LOITER went unseen, and the
+    throttle override went on holding channel 3.)"""
+    return bool(mode != prev_mode and mode != "GUIDED"
+                and (prev_mode == "GUIDED" or asks.explains(prev_mode))
+                and not asks.explains(mode))
+
+
+def detector_thread_dead(grounder) -> bool:
+    """The Grounder's worker was started and has ended: an OOM or a CUDA
+    error in follow_vlm.Grounder._worker kills the thread, and latest()
+    then answers its last seq forever (0 if it never ran). A stand-in with
+    no thread is never dead."""
+    th = getattr(grounder, "_thread", None)
+    return bool(th is not None and getattr(th, "ident", None) is not None
+                and not th.is_alive())
+
+
+class HoverWatch:
+    """The aircraft while it hovers before the mission clock starts, watched
+    as the loop watches it (review 2026-10-22, open item C1's start gate).
+
+    The start gate (wait_for_subject; START_WHEN_SEEN) holds the aircraft in
+    ArduCopter's GUIDED hold for up to --start-timeout-s, and until this
+    review nothing looked at it: no mode, no rule, no row. A pilot who took
+    the aircraft during the wait became the loop's baseline mode (its
+    takeover test needs a CHANGE of mode), so the node asked for LAND over
+    the pilot - or, had the gate then opened, flew 30 setpoints while the
+    pilot held LOITER (both reproduced with tests/test_pas_ardupilot.py's
+    FakeLink). The stand-offs and the time-windowed and moving zones that
+    FenceBackstop leaves to the Shield alone were neither enforced nor
+    measured, and KPIs start at the mission clock: a violation in the hover
+    could appear in no figure.
+
+    `observe(t, phase)` pumps the link and reads it, every tick:
+      * a state that stays stale LINK_LOST_S ends the hover ("link_lost");
+      * the autopilot's mode, by the loop's own test (autopilot_took_over):
+        a takeover ends the hover at once ("takeover"); run() then flies no
+        mission and asks nothing of the autopilot (no LAND over a pilot), and
+        metrics.json autopilot_took_over says when and from what;
+      * the pose goes to the detector's frames (obs.put_pose_full), as the
+        loop gives it.
+    `check(t, st, phase, subject)` asks the Shield about the POSITION
+    (state_is_unsafe: would holding here break a rule, over the lookahead),
+    with the gate's current candidate given as the subject (set_subject),
+    so the stand-off rings bind as they do in the loop; rechecks the held-back
+    fence zones (FenceBackstop.recheck); and writes one row (hover_log.jsonl).
+    With the Shield on (`act`) the first unsafe tick ends the hover ("unsafe")
+    and run() starts the loop at once: the Shield's repair and the escalation
+    FSM are this rail's answer to an illegal position, not a hold or a LAND
+    inside it. With it off the tick is recorded only, as the off arm records
+    the loop.
+
+    What the check reads of the clock: the rule clock (rule_now), which a
+    scripted --clock-start holds at its start until the mission starts, and
+    the Shield's monitor clock, which starts with the mission's first tick,
+    so a moving zone stands at its starting place. The hover's rows are NOT
+    flight_log.jsonl rows: the mission's KPIs keep their definition (from the
+    mission clock). The hover's own counts are metrics.json
+    pre_mission_hover, and an unsafe hover tick makes the run not KPI-grade."""
+
+    def __init__(self, link, anchor, obs, shield, asks, *, subject_class=None,
+                 act: bool = True, backstop=None, rec=None, rule_now=None) -> None:
+        self.link, self.anchor, self.obs = link, anchor, obs
+        self.shield, self.asks = shield, asks
+        self.subject_class, self.act = subject_class, bool(act)
+        self.backstop, self.rec, self.rule_now = backstop, rec, rule_now
+        # The mode the bring-up left, and the last one seen: the loop's
+        # takeover test starts from it, not from a read after the hover.
+        self.mode0 = self.mode = link.snap.mode
+        self.t_first = self.t_last = self.t_end = None
+        self.last_phase = None
+        self.ended = None            # "takeover" | "link_lost" | "unsafe"
+        self.why = None
+        self.takeover = None
+        self.first_unsafe = None
+        self.stale_since = None
+        self.n_ticks = self.n_stale = self.n_checked = self.n_unsafe = self.n_subject = 0
+        self.unsafe_rules: dict = {}
+        self.phase_s: dict = {}
+        self.checked_by_phase: dict = {}
+        self.unsafe_by_phase: dict = {}
+        self.rows: list = []
+
+    def hover_s(self, t: float | None = None) -> float:
+        """Seconds since the hover's first tick (to `t`, else to its end)."""
+        if self.t_first is None:
+            return 0.0
+        end = t if t is not None else (self.t_end if self.t_end is not None else self.t_last)
+        return max(0.0, end - self.t_first)
+
+    def _end(self, kind: str, why: str) -> None:
+        if self.ended is None:
+            self.ended, self.why = kind, why
+
+    def observe(self, t: float, phase: str):
+        """This hover tick's live State, or None (no live state, or the
+        hover ended: `ended` says why)."""
+        if self.ended is not None:
+            return None
+        if self.t_first is None:
+            self.t_first = t
+        elif self.last_phase is not None:
+            self.phase_s[self.last_phase] = (self.phase_s.get(self.last_phase, 0.0)
+                                             + (t - self.t_last))
+        self.t_last, self.last_phase = t, phase
+        self.n_ticks += 1
+        link = self.link
+        link.pump()
+        st = link.state(self.anchor)
+        stale, _ = link_staleness(link)
+        if st is None or stale is not None:
+            self.n_stale += 1
+            self.stale_since = t if self.stale_since is None else self.stale_since
+            if t - self.stale_since >= LINK_LOST_S:
+                self._end("link_lost", f"link lost while hovering before the mission "
+                                       f"({phase}): {stale or 'no state'}")
+            return None
+        self.stale_since = None
+        s = link.snap
+        mode, prev = s.mode, self.mode
+        if mode == "GUIDED" and prev != "GUIDED":
+            self.asks.entered_guided()
+        if autopilot_took_over(mode, prev, self.asks):
+            # "t" (mission time, negative: before the clock) is set by run()
+            # once the mission clock is read; t_abs is this clock's reading.
+            self.takeover = {"t_abs": t, "t_hover": round(t - self.t_first, 3),
+                             "mode": mode, "previous": prev,
+                             "fence_breach_count": s.fence_breach_count,
+                             "statustext": list(s.statustext[-3:]), "phase": phase}
+            self.mode = mode
+            self._end("takeover", f"the autopilot took the aircraft while it hovered "
+                                  f"before the mission ({phase}): {prev} -> {mode}")
+            if self.rec is not None:
+                self.rec.event("autopilot_took_over", mode=mode, previous=prev,
+                               phase=phase, t_hover=self.takeover["t_hover"])
+            print(f"[hover]  *** the autopilot took the aircraft: {prev} -> {mode} "
+                  f"({phase}); nothing is commanded or asked of it")
+            return None
+        self.mode = mode
+        if hasattr(self.obs, "put_pose_full"):
+            self.obs.put_pose_full(t, st.x, st.y, st.up, math.radians(st.yaw_deg),
+                                   s.pitch or 0.0, s.roll or 0.0)
+        return st
+
+    def check(self, t: float, st, phase: str, subject=None, det_seq=None) -> list:
+        """The Shield on this tick's position (the rule ids it breaks); the
+        fence recheck; the row. `subject` (x, y, source) or None."""
+        if self.ended is not None:
+            return []
+        sh = self.shield
+        if subject is not None:
+            sh.set_subject(subject[0], subject[1], self.subject_class)
+            self.n_subject += 1
+        else:
+            sh.set_subject(None)
+        unsafe = sorted({v.rule_id for v in sh.state_is_unsafe(st)})
+        self.n_checked += 1
+        self.checked_by_phase[phase] = self.checked_by_phase.get(phase, 0) + 1
+        th = round(t - self.t_first, 3)
+        if unsafe:
+            self.n_unsafe += 1
+            self.unsafe_by_phase[phase] = self.unsafe_by_phase.get(phase, 0) + 1
+            for r in unsafe:
+                self.unsafe_rules[r] = self.unsafe_rules.get(r, 0) + 1
+            if self.first_unsafe is None:
+                self.first_unsafe = {"t_hover": th, "phase": phase, "rules": unsafe,
+                                     "x": round(st.x, 2), "y": round(st.y, 2),
+                                     "up": round(st.up, 2)}
+                if self.rec is not None:
+                    self.rec.event("hover_unsafe", **self.first_unsafe)
+                print(f"[hover]  *** the hover point breaks {unsafe} ({phase}, "
+                      f"{th:.1f} s in)"
+                      + ("; the mission starts now, so the Shield and the escalation "
+                         "FSM act" if self.act else "; recorded (Shield off)"))
+        if self.backstop is not None:
+            self.backstop.recheck((st.x, st.y), unsafe)
+        self.rows.append({
+            "t_hover": th, "phase": phase,
+            "x": round(st.x, 3), "y": round(st.y, 3), "up": round(st.up, 3),
+            "yaw_deg": round(st.yaw_deg, 2), "ap_mode": self.mode, "unsafe": unsafe,
+            "subject": (None if subject is None else
+                        [round(subject[0], 2), round(subject[1], 2), subject[2]]),
+            "det_seq": det_seq,
+            "rule_clock": (None if self.rule_now is None
+                           else self.rule_now().isoformat(timespec="seconds"))})
+        if unsafe and self.act:
+            self._end("unsafe", f"the hover before the mission broke {unsafe} ({phase}, "
+                                f"{th:.1f} s in): the mission starts now, so the Shield "
+                                f"and the escalation FSM act")
+        return unsafe
+
+    def close(self, t: float, log_path: Path | None = None) -> None:
+        """The hover is over at `t`; its rows go to `log_path` (written, if
+        empty, so a reused tag never shows an earlier run's hover)."""
+        if self.t_first is not None and self.t_end is None:
+            self.t_end = max(t, self.t_last)
+            if self.last_phase is not None:
+                self.phase_s[self.last_phase] = (self.phase_s.get(self.last_phase, 0.0)
+                                                 + (self.t_end - self.t_last))
+        if log_path is not None:
+            Path(log_path).write_text("".join(json.dumps(r) + "\n" for r in self.rows),
+                                      encoding="utf-8")
+
+    def summary(self) -> dict:
+        checked = self.n_checked > 0
+        return {
+            "s": round(self.hover_s(), 3),
+            "s_by_phase": {k: round(v, 3) for k, v in self.phase_s.items()},
+            "ticks": self.n_ticks, "ticks_checked": self.n_checked,
+            "ticks_stale": self.n_stale,
+            # None, never 0, when no tick was checked (no hover, or no live
+            # state on any tick): nothing was measured.
+            "unsafe_ticks": self.n_unsafe if checked else None,
+            "unsafe_rules": dict(self.unsafe_rules) if checked else None,
+            "first_unsafe": self.first_unsafe,
+            "subject_ticks": self.n_subject if checked else None,
+            # What ended the hover early (None: its wait ended it), and why.
+            "outcome": self.ended, "why": self.why,
+            "act_on_unsafe": self.act,
+            "mode_at_start": self.mode0,
+            "log": "hover_log.jsonl",
+            "basis": ("each hover tick before the mission clock: the link's freshness "
+                      "and the autopilot's mode (the loop's takeover test), and the "
+                      "Shield's state_is_unsafe on the position with the gate's "
+                      "candidate as the subject; the rule clock as run() reads it "
+                      "(a scripted clock reads its start until the mission starts), "
+                      "moving zones at their starting places. Not in flight_log.jsonl "
+                      "or any KPI")}
+
+
+def wait_for_subject(gate: StartGate, grounder, watch: HoverWatch, obs, *, timeout_s: float,
                      clock=time.time, sleep=time.sleep, truth=None, hfov_deg: float = 90.0,
+                     width_m: float | None = None, fv=None,
                      truth_period_s: float = GATE_TRUTH_PERIOD_S) -> dict:
     """Hover until `gate` is reached or `timeout_s` passes: the start gate's
     wait (START_WHEN_SEEN). Nothing is commanded - ArduCopter holds where the
-    take-off left it in GUIDED - and the link is pumped every TICK, the pose
-    given to the detector's frames (obs.put_pose_full) as the loop does. A
-    state that stays stale LINK_LOST_S ends the wait ("aborted"). The
-    subject's simulator pose (`truth`, EVALUATION only) is read every
-    `truth_period_s` into `truth_trace` [t_s, range_m, bearing off the nose
-    deg, + right]; the decision never reads it. Returns the gate's record."""
+    take-off left it in GUIDED - and every TICK is a HoverWatch tick: the
+    link pumped and read, the pose given to the detector's frames, the mode
+    watched, and the position checked by the Shield with the gate's current
+    candidate (its plausible box, placed by subject_estimate from this tick's
+    pose and the latest depth: the aircraft is hovering) as the subject.
+    `outcome`: "reached", "timed_out", or what ended the hover - "takeover",
+    "link_lost" or "detector_dead" (`aborted` says why: no mission), or
+    "unsafe" (the mission starts, for the Shield and the FSM). The subject's
+    simulator pose (`truth`, EVALUATION only) is read every `truth_period_s`
+    into `truth_trace` [t_s, range_m, bearing off the nose deg, + right]; the
+    decision never reads it. Returns the gate's record."""
     t0 = clock()
     last_seq = None
     reached = False
     first_ok = None
     aborted = None
-    stale_since = None
+    outcome = None
     truth_trace: list = []
     next_truth = 0.0
-    while clock() - t0 < timeout_s:
+    # The gate's current candidate, placed: (x, y, source, when).
+    cand = None
+    while True:
         t = clock()
-        link.pump()
-        st = link.state(anchor)
-        stale, _ = link_staleness(link)
-        if st is None or stale is not None:
-            stale_since = t if stale_since is None else stale_since
-            if t - stale_since >= LINK_LOST_S:
-                aborted = f"link lost while waiting: {stale or 'no state'}"
-                break
+        if t - t0 >= timeout_s:
+            outcome = "timed_out"
+            break
+        if detector_thread_dead(grounder):
+            outcome = "detector_dead"
+            aborted = ("the detector thread died while the gate waited: no subject can "
+                       "be confirmed")
+            break
+        st = watch.observe(t, "start gate")
+        if watch.ended is not None:
+            break
+        if st is None:
             sleep(TICK)
             continue
-        stale_since = None
-        s = link.snap
-        if hasattr(obs, "put_pose_full"):
-            obs.put_pose_full(t, st.x, st.y, st.up, math.radians(st.yaw_deg),
-                              s.pitch or 0.0, s.roll or 0.0)
+        s = watch.link.snap
         lat = grounder.latest()
         if lat.get("seq") != last_seq:
             last_seq = lat.get("seq")
             # Fresh: the detector ran within the last second (the Grounder's
             # "t"; a stand-in without one is fresh).
-            fresh = lat.get("t") is None or (t - float(lat["t"])) < 1.0
+            fresh = lat.get("t") is None or (t - float(lat["t"])) < GATE_FRESH_S
             if fresh:
                 depth = obs.get_depth() if callable(getattr(obs, "get_depth", None)) else None
                 had = gate.acq.n_plausible
                 reached = gate.judge(lat, depth=depth, ground=(st.up, s.pitch or 0.0), t=t)
                 if gate.acq.n_plausible > had and first_ok is None:
                     first_ok = t - t0
-                if reached:
-                    break
+                pick = gate.acq.pick
+                e = (None if pick is None or width_m is None else
+                     subject_estimate(pick, depth, st, math.radians(st.yaw_deg), hfov_deg,
+                                      width_m, fv, body_pitch_rad=s.pitch or 0.0))
+                cand = None if e is None else (e[0], e[1], e[2], t)
+        subject = cand if cand is not None and t - cand[3] < GATE_FRESH_S else None
+        watch.check(t, st, "start gate", subject=subject, det_seq=last_seq)
+        if reached:
+            outcome = "reached"
+            break
+        if watch.ended is not None:
+            break
         if truth is not None and t - t0 >= next_truth:
             next_truth = t - t0 + truth_period_s
             tr = truth.read()
@@ -759,8 +1032,12 @@ def wait_for_subject(gate: StartGate, grounder, link, anchor, obs, *, timeout_s:
                                     round(_wrap_deg(math.degrees(math.atan2(dy, dx))
                                                     - st.yaw_deg), 1)])
         sleep(max(0.0, TICK - (clock() - t)))
-    rec = {"enabled": True, **gate.record(), "reached": bool(reached),
-           "wait_s": round(clock() - t0, 1), "timeout_s": timeout_s,
+    if outcome is None:
+        outcome = watch.ended
+        if outcome != "unsafe":
+            aborted = watch.why
+    rec = {"enabled": True, **gate.record(), "reached": bool(reached), "outcome": outcome,
+           "wait_s": round(clock() - t0, 1), "timeout_s": round(timeout_s, 3),
            "first_candidate_s": None if first_ok is None else round(first_ok, 1),
            "aborted": aborted,
            # [t_s, range_m, bearing off the nose (deg, + right)], every
@@ -845,18 +1122,50 @@ def build_grounder(args, obs, out: Path, fv, hfov_deg: float) -> tuple:
 
 
 def wait_for_detector(grounder, link, *, timeout_s: float = DETECTOR_READY_TIMEOUT_S,
-                      clock=time.time, sleep=time.sleep) -> dict:
-    """Wait until the Grounder has run once (latest()["seq"] > 0), pumping the
-    link: the mission does not start on a detector still loading
-    (DETECTOR_READY_TIMEOUT_S). `{"ready", "waited_s", "seq"}`."""
+                      clock=time.time, sleep=time.sleep, watch: HoverWatch | None = None
+                      ) -> dict:
+    """Wait until the Grounder has run once (latest()["seq"] > 0): the mission
+    does not start on a detector still loading (DETECTOR_READY_TIMEOUT_S).
+
+    On the ground (run() calls it in the pre-arm step, before GUIDED and
+    arming) the link is pumped. Airborne - a link with no pre-arm step - every
+    tick is a HoverWatch tick, and a takeover, a lost link or an unsafe
+    position ends the wait. A detector thread that died (detector_thread_dead:
+    seq would stay 0 for the whole timeout) ends it at once (review
+    2026-10-22). `outcome`: "ready", "timed_out", "detector_dead", or what
+    ended the hover ("takeover", "link_lost", "unsafe")."""
     t0 = clock()
     seq = (grounder.latest() or {}).get("seq") or 0
-    while seq <= 0 and clock() - t0 < timeout_s:
-        link.pump()
-        sleep(TICK)
+    outcome = "ready" if seq > 0 else None
+    while outcome is None:
+        if detector_thread_dead(grounder):
+            outcome = "detector_dead"
+            break
+        t = clock()
+        if t - t0 >= timeout_s:
+            outcome = "timed_out"
+            break
+        if watch is not None:
+            st = watch.observe(t, "detector")
+            if st is not None:
+                watch.check(t, st, "detector")
+            if watch.ended is not None:
+                outcome = watch.ended
+                break
+        else:
+            link.pump()
+        sleep(max(0.0, TICK - (clock() - t)))
         seq = (grounder.latest() or {}).get("seq") or 0
-    return {"ready": seq > 0, "waited_s": round(clock() - t0, 2), "seq": seq,
-            "timeout_s": timeout_s}
+        if seq > 0:
+            outcome = "ready"
+    why = {"ready": None,
+           "timed_out": f"no inference in {timeout_s:g} s: the detector is still loading",
+           "detector_dead": ("the detector thread died before its first inference (an "
+                             "error in Grounder._worker: an OOM, CUDA)")}.get(
+        outcome, None if watch is None else watch.why)
+    return {"ready": seq > 0, "outcome": outcome, "why": why,
+            "waited_s": round(clock() - t0, 2), "seq": seq,
+            "timeout_s": round(timeout_s, 3), "airborne": watch is not None}
 
 
 def ray_depression_rad(row_px: float, img_w: float, img_h: float, hfov_deg: float,
@@ -2904,9 +3213,13 @@ def check_args(args) -> None:
     if getattr(args, "live_view", False) and not getattr(args, "save_view", False):
         raise SystemExit("--live-view needs --save-view: the window draws the frames "
                          "the recorder produces, and without it none are captured")
-    if getattr(args, "start_when_seen", 0) < 0 or getattr(args, "start_timeout_s", 1.0) <= 0:
+    # `not (0 < x <= max)` also refuses inf and nan (START_TIMEOUT_MAX_S).
+    if getattr(args, "start_when_seen", 0) < 0 or not (
+            0.0 < getattr(args, "start_timeout_s", 1.0) <= START_TIMEOUT_MAX_S):
         raise SystemExit("--start-when-seen must be >= 0 (0: no gate) and "
-                         "--start-timeout-s > 0")
+                         f"--start-timeout-s in (0, {START_TIMEOUT_MAX_S:g}] s: the "
+                         f"airborne hover before the mission is capped "
+                         f"(START_TIMEOUT_MAX_S)")
 
 
 def sim_configs(args, out: Path):
@@ -3297,12 +3610,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     Ros2ImageSource(link.node, obs, args.image_topic)
         ap_fence = backstop = None
         pre_arm: dict = {}
+        # The detector's first inference (wait_for_detector): waited for in the
+        # pre-arm step when the link has one, else airborne after the take-off.
+        detector_ready: dict = {}
 
         def before_arm(phase: str = "before arming") -> None:
             """With the position usable and before GUIDED / arming: the frame's
             anchor (the first fix, when nothing else anchors it), the
             autopilot's own GeoFence as it holds it (recorded; no parameter is
-            changed), and the policy's zones uploaded onto it."""
+            changed), the policy's zones uploaded onto it, and - disarmed, on
+            the ground - the detector's first inference."""
             nonlocal anchor, ap_fence, backstop
             if pre_arm:
                 return
@@ -3330,6 +3647,19 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                      enabled=not getattr(args, "no_fence_upload", False),
                                      home_xy=pos0)
             backstop.publish(pos0, phase)
+            if phase == "before arming":
+                # THE DETECTOR'S FIRST INFERENCE, ON THE GROUND (review
+                # 2026-10-22). It was waited for after the take-off, so a slow
+                # model load (up to DETECTOR_READY_TIMEOUT_S) was airborne hover
+                # nothing watched. The detector loads under SITL's boot and is
+                # almost always up by now; when it is not, the aircraft waits
+                # for it disarmed. A detector thread that died is no detector:
+                # the aircraft is not armed for a mission that cannot see.
+                detector_ready.update(wait_for_detector(grounder, link, clock=clock,
+                                                        sleep=sleep), phase=phase)
+                if detector_ready["outcome"] == "detector_dead":
+                    rec.event("detector_dead", **detector_ready)
+                    raise RuntimeError(f"not arming: {detector_ready['why']}")
 
         print(f"[link]   {link.name}: bring-up to {args.cruise_alt} m")
         if "before_arm" in inspect.signature(link.bring_up).parameters:
@@ -3390,60 +3720,151 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         ring_m = max(rings) if rings else None
         print(f"[truth]  subject pose: {truth.source or truth.why_off}")
 
-        # ---- the detector's first inference, then the start gate -------------
-        detector_ready = wait_for_detector(grounder, link, clock=clock, sleep=sleep)
-        print(f"[detect] " + (f"first inference after {detector_ready['waited_s']} s more"
-                              if detector_ready["ready"] else
-                              f"*** no inference after {detector_ready['waited_s']} s: "
-                              f"the mission starts on a detector still loading"))
+        # ---- the hover before the mission, watched (HoverWatch) ---------------
+        # From the take-off to the mission clock the aircraft hovers in
+        # ArduCopter's GUIDED hold: for the start gate, and - on a link with no
+        # pre-arm step - for the detector's first inference. Every tick of it
+        # is watched (the mode, the link, the Shield on the position; review
+        # 2026-10-22), and all of it runs inside this try: an exception or a
+        # Ctrl+C ends the episode with no mission, landed by the loop's finally
+        # below and on record - never a vehicle left holding in GUIDED with
+        # nothing commanding it (on HIL or attach there is no SITL for the
+        # outer finally to stop).
+        # What was asked of the autopilot, in the FSM's words and ArduCopter's,
+        # and which request can explain a mode change (ModeRequests): one
+        # record from the take-off on, the hover's and the loop's.
+        asks = ModeRequests(hold_mode)
+        watch = HoverWatch(link, anchor, obs, shield, asks, subject_class=subject_class,
+                           act=shield_on, backstop=backstop, rec=rec, rule_now=rule_now)
         # Why no mission is flown (None: one is): the gate timed out under
-        # --start-timeout-action land, or the link died while it waited.
+        # --start-timeout-action land, the autopilot took the aircraft or the
+        # link died while it hovered, the detector died, or the hover crashed.
         no_mission = None
-        gate_rec: dict = {"enabled": False, "needed": 0,
-                          "why": "--start-when-seen 0: the mission started at take-off "
-                                 "whatever the camera saw"}
-        if getattr(args, "start_when_seen", 0) > 0:
-            gate = StartGate(args.start_when_seen, args.object, args.colour_min,
-                             max_range_m=args.start_max_range_m, width_m=width_m,
-                             hfov_deg=hfov, gate_frac=getattr(args, "lock_gate", 0.12),
-                             identity=getattr(args, "identity", False), fv=fv or _fv())
-            if callable(getattr(grounder, "begin_acquire", None)):
-                grounder.begin_acquire()
-            print(f"[start]  hovering until the detector has seen {args.object!r} on "
-                  f"{args.start_when_seen} inferences in a row within "
-                  f"{args.start_max_range_m:g} m (at most {args.start_timeout_s:g} s)")
-            # A reader of its own, so the flight's truth counters stay per tick.
-            gate_truth = SubjectTruth(camera, actor, actor_why, scene_home, anchor, rpc=rpc)
-            gate_rec = wait_for_subject(gate, grounder, link, anchor, obs,
-                                        timeout_s=args.start_timeout_s, clock=clock,
-                                        sleep=sleep, truth=gate_truth, hfov_deg=hfov)
-            gate_rec["timeout_action"] = args.start_timeout_action
-            if callable(getattr(grounder, "commit", None)):
-                # The confirmed box seeds the lock and the jump gate; with
-                # none, tracking starts from whatever is seen next.
-                grounder.commit(gate.pick if gate_rec["reached"] else None,
-                                yaw=gate.pick_yaw)
-            link.pump()
-            gate_rec["truth_at_decision"] = gate_truth_verdict(
-                gate_rec, gate_truth, link.state(anchor), hfov, fv=fv or _fv())
-            if not gate_rec["reached"]:
-                if gate_rec["aborted"]:
-                    no_mission = gate_rec["aborted"]
-                elif args.start_timeout_action == "land":
-                    no_mission = (f"start gate timed out after {gate_rec['wait_s']} s: no "
-                                  f"plausible {args.object!r} within "
-                                  f"{args.start_max_range_m:g} m on "
-                                  f"{args.start_when_seen} inferences in a row")
-            rec.event("start_gate", **{k: gate_rec.get(k) for k in (
-                "reached", "wait_s", "first_candidate_s", "inferences_judged",
-                "inferences_with_plausible", "best_streak", "rejected_by", "pick",
-                "aborted", "timeout_action", "truth_at_decision")})
-            print(f"[start]  {'subject acquired' if gate_rec['reached'] else '*** NO SUBJECT ***'}"
-                  f" after {gate_rec['wait_s']} s: {gate_rec['inferences_judged']} inferences "
-                  f"judged, best streak {gate_rec['best_streak']}, refused "
-                  f"{gate_rec['rejected_by']}"
-                  + ("" if gate_rec["reached"] else
-                     f" - {no_mission or 'flying anyway (--start-timeout-action fly)'}"))
+        gate_crash = None
+        gate = None
+        gate_on = getattr(args, "start_when_seen", 0) > 0
+        gate_rec: dict = ({"enabled": True, "needed": args.start_when_seen,
+                           "reached": False, "outcome": None, "aborted": None,
+                           "wait_s": 0.0, "timeout_action": args.start_timeout_action}
+                          if gate_on else
+                          {"enabled": False, "needed": 0,
+                           "why": "--start-when-seen 0: the mission started at take-off "
+                                  "whatever the camera saw"})
+        hover_phase = "detector wait"
+        try:
+            if not detector_ready:
+                # No pre-arm step on this link: the detector's wait is
+                # airborne, watched, and comes out of the gate's budget.
+                detector_ready.update(wait_for_detector(
+                    grounder, link, clock=clock, sleep=sleep, watch=watch,
+                    timeout_s=(min(DETECTOR_READY_TIMEOUT_S, args.start_timeout_s)
+                               if gate_on else DETECTOR_READY_TIMEOUT_S)),
+                    phase=pre_arm.get("phase"))
+            dr = detector_ready
+            print(f"[detect] " + (
+                f"first inference after {dr['waited_s']} s more "
+                f"({'airborne' if dr['airborne'] else 'on the ground'})" if dr["ready"] else
+                f"*** no inference after {dr['waited_s']} s ({dr['outcome']}): "
+                + ("no mission is flown on a detector that died"
+                   if dr["outcome"] == "detector_dead" else
+                   watch.why if dr["outcome"] in ("takeover", "link_lost", "unsafe") else
+                   "the mission starts on a detector still loading")))
+            if dr["outcome"] == "detector_dead":
+                no_mission = dr["why"]
+            elif watch.ended in ("takeover", "link_lost"):
+                no_mission = watch.why
+            if gate_on:
+                hover_phase = "start gate"
+                if no_mission is None and watch.ended is None:
+                    gate = StartGate(args.start_when_seen, args.object, args.colour_min,
+                                     max_range_m=args.start_max_range_m, width_m=width_m,
+                                     hfov_deg=hfov, gate_frac=getattr(args, "lock_gate", 0.12),
+                                     identity=getattr(args, "identity", False), fv=fv or _fv())
+                    if callable(getattr(grounder, "begin_acquire", None)):
+                        grounder.begin_acquire()
+                    # The budget left: an airborne detector wait came out of it.
+                    budget = max(0.0, args.start_timeout_s - watch.hover_s(clock()))
+                    print(f"[start]  hovering until the detector has seen {args.object!r} "
+                          f"on {args.start_when_seen} inferences in a row within "
+                          f"{args.start_max_range_m:g} m (at most {budget:g} s), the "
+                          f"hover watched")
+                    # A reader of its own, so the flight's truth counters stay per tick.
+                    gate_truth = SubjectTruth(camera, actor, actor_why, scene_home, anchor,
+                                              rpc=rpc)
+                    gate_rec = wait_for_subject(gate, grounder, watch, obs, timeout_s=budget,
+                                                clock=clock, sleep=sleep, truth=gate_truth,
+                                                hfov_deg=hfov, width_m=width_m, fv=fv)
+                    gate_rec["timeout_action"] = args.start_timeout_action
+                    if callable(getattr(grounder, "commit", None)):
+                        # The confirmed box seeds the lock and the jump gate;
+                        # with none, tracking starts from whatever is seen next.
+                        grounder.commit(gate.pick if gate_rec["reached"] else None,
+                                        yaw=gate.pick_yaw)
+                    link.pump()
+                    gate_rec["truth_at_decision"] = gate_truth_verdict(
+                        gate_rec, gate_truth, link.state(anchor), hfov, fv=fv or _fv())
+                else:
+                    gate_rec.update(outcome=watch.ended or dr["outcome"], aborted=no_mission,
+                                    why=("the hover ended before the gate ran: "
+                                         + (no_mission or watch.why or "")))
+                if no_mission is None and not gate_rec["reached"]:
+                    if gate_rec["outcome"] in ("takeover", "link_lost", "detector_dead"):
+                        no_mission = gate_rec["aborted"]
+                    elif (gate_rec["outcome"] == "timed_out"
+                          and args.start_timeout_action == "land"):
+                        no_mission = (f"start gate timed out after {gate_rec['wait_s']} s: "
+                                      f"no plausible {args.object!r} within "
+                                      f"{args.start_max_range_m:g} m on "
+                                      f"{args.start_when_seen} inferences in a row")
+                rec.event("start_gate", **{k: gate_rec.get(k) for k in (
+                    "reached", "outcome", "wait_s", "first_candidate_s", "inferences_judged",
+                    "inferences_with_plausible", "best_streak", "rejected_by", "pick",
+                    "aborted", "timeout_action", "truth_at_decision")})
+                print(f"[start]  {'subject acquired' if gate_rec['reached'] else '*** NO SUBJECT ***'}"
+                      f" after {gate_rec['wait_s']} s ({gate_rec['outcome']}): "
+                      f"{gate_rec.get('inferences_judged', 0)} inferences judged, best streak "
+                      f"{gate_rec.get('best_streak', 0)}, refused {gate_rec.get('rejected_by', {})}"
+                      + ("" if gate_rec["reached"] else
+                         f" - {no_mission}" if no_mission else
+                         " - the hover broke a rule: the mission starts, so the Shield and "
+                         "the escalation FSM act" if gate_rec["outcome"] == "unsafe" else
+                         " - flying anyway (--start-timeout-action fly)"))
+        except KeyboardInterrupt:
+            no_mission = f"interrupted during the {hover_phase}"
+            print(f"[node]   interrupted during the {hover_phase}")
+            if gate_on:
+                gate_rec.update(outcome="interrupted", reached=False)
+        except Exception as exc:
+            # A crash in the hover is no reason to leave the aircraft there:
+            # the episode ends with no mission, landed and recorded below, and
+            # run() exits non-zero (a failed run, as a crash in the loop is).
+            gate_crash = f"{type(exc).__name__}: {exc}"
+            traceback.print_exc()
+            no_mission = (f"start gate crashed: {gate_crash}" if hover_phase == "start gate"
+                          else f"the detector wait crashed: {gate_crash}")
+            rec.event("hover_crashed", phase=hover_phase, error=gate_crash)
+            print(f"[node]   *** {no_mission}")
+            if gate_on:
+                if gate is not None:
+                    try:
+                        gate_rec = {**gate_rec, **gate.record()}
+                    except Exception:                             # noqa: BLE001
+                        pass
+                gate_rec.update(outcome="crashed", reached=False, error=gate_crash)
+        finally:
+            watch.close(clock(), out / "hover_log.jsonl")
+        if not detector_ready:
+            detector_ready.update(ready=False, outcome="crashed" if gate_crash else "interrupted",
+                                  why=no_mission, waited_s=None, seq=None, timeout_s=None,
+                                  airborne=True, phase=pre_arm.get("phase"))
+        hover_rec = watch.summary()
+        if gate_on:
+            # The gate's own share of the hover (HoverWatch's "start gate"
+            # phase); None when it never hovered, or no tick was checked.
+            gate_rec["hover_s"] = hover_rec["s_by_phase"].get("start gate")
+            gate_rec["unsafe_ticks"] = (watch.unsafe_by_phase.get("start gate", 0)
+                                        if watch.checked_by_phase.get("start gate") else None)
+        takeover = watch.takeover
 
         # ---- loop ----------------------------------------------------------------
         rows, traj, ekf_err = [], [], []
@@ -3478,14 +3899,17 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         # state began (no state, a stale link): that row's point holds only
         # until then in the dwell (point_durations' `ends`).
         gap_from: dict[int, float] = {}
-        # What was asked of the autopilot, in the FSM's words and ArduCopter's,
-        # and which request can explain a mode change (ModeRequests).
-        asks = ModeRequests(hold_mode)
-        takeover = None
+        # `asks` and `takeover` come from the hover (HoverWatch): a takeover
+        # there flies no mission and asks nothing of the autopilot.
         fsm_fault = None
         failsafe_t = None
         end_reason = "max_s reached" if no_mission is None else f"no mission: {no_mission}"
-        prev_mode = link.snap.mode
+        # The loop's takeover test starts from the hover's last mode (review
+        # 2026-10-22), not from a read here: a pilot's switch reported after
+        # the hover's last tick (the link is pumped again before the gate's
+        # truth verdict) became the baseline, and the loop flew its setpoints
+        # over the pilot.
+        prev_mode = watch.mode
         fence0 = link.snap.fence_breach_count
         # Read AFTER the start gate: its inferences (it can wait minutes) are
         # not the mission's, for det_hz (follow_vlm counted them once, and
@@ -3499,13 +3923,19 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         tb0 = (link.snap.time_boot_ms, getattr(link.snap, "t_time_boot", None))
         t0 = clock()
         mission_t0[0] = t0
+        if takeover is not None and "t_abs" in takeover:
+            # Mission time, as the loop's takeovers and autopilot_events carry
+            # it: negative, before the clock.
+            takeover["t"] = round(takeover.pop("t_abs") - t0, 3)
         rec.event("mission_start", t=0.0, autopilot_mode=prev_mode,
                   fsm=None if fsm is None else fsm.config.to_dict(),
                   rule_clock_reading=rule_now().isoformat(timespec="seconds"))
         # The two simulator checks (SIM_CHECKS, below), half a period apart.
         t_frame, t_geo = -math.inf, t0 - TRUTH_FRAME_PERIOD_S / 2.0
         if no_mission is not None:
-            print(f"[node]   *** {end_reason}; landing")
+            print(f"[node]   *** {end_reason}; "
+                  + ("the autopilot has the aircraft: nothing is asked of it"
+                     if takeover is not None else "landing"))
         try:
             while no_mission is None and clock() - t0 < args.max_s:
                 t_tick = clock()
@@ -3611,20 +4041,15 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 if fence0 is None:
                     fence0 = s.fence_breach_count
                 # The autopilot left GUIDED - or a hold this node asked for -
-                # for a mode the node did not ask for: its fence fired RTL, a
-                # failsafe, or a pilot in Mission Planner. From here it has the
-                # aircraft, and nothing more is commanded. (Until 2026-10-13
-                # only a change out of GUIDED counted, so a pilot taking the
-                # aircraft out of the FSM's LOITER went unseen, and the
-                # throttle override went on holding channel 3.)
+                # for a mode the node did not ask for (autopilot_took_over, the
+                # hover's test too): from here it has the aircraft, and nothing
+                # more is commanded.
                 if mode == "GUIDED" and prev_mode != "GUIDED":
                     asks.entered_guided()
-                if (takeover is None and mode != prev_mode and mode != "GUIDED"
-                        and (prev_mode == "GUIDED" or asks.explains(prev_mode))
-                        and not asks.explains(mode)):
+                if takeover is None and autopilot_took_over(mode, prev_mode, asks):
                     takeover = {"t": round(now, 3), "mode": mode, "previous": prev_mode,
                                 "fence_breach_count": s.fence_breach_count,
-                                "statustext": s.statustext[-3:]}
+                                "statustext": s.statustext[-3:], "phase": "mission"}
                     rec.event("autopilot_took_over", t=now, mode=mode, previous=prev_mode)
                     print(f"[link]   *** the autopilot took the aircraft: GUIDED -> "
                           f"{mode}; commanding stops")
@@ -4140,6 +4565,20 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
 
         t_end = clock()
         mission_s = max(1e-6, t_end - t0)
+        # A RUN THAT FLEW NO MISSION MEASURED NO RATE AND NO DWELL (review
+        # 2026-10-22). With no tick flown, mission_s above is the 1e-6 floor or
+        # the mission-end LAND alone: a no-mission run wrote det_hz 1000000.0
+        # (det_n / 1e-6), and nfz_s, alt_violation_s, interventions,
+        # escape_ticks and dwell_gap_s 0 - a 1 MHz detector and clean dwell for
+        # anything that reads metrics.json directly (the tracker, the decks).
+        # Those are None now, with why (`not_measured`); the rates also on a
+        # mission shorter than one tick.
+        flew = no_mission is None
+        rated = flew and mission_s >= TICK
+        not_measured = None if flew else f"no mission flown: {no_mission}"
+
+        def flown_only(v):
+            return v if flew else None
         g1 = grounder.latest()
         det_n = (g1.get("n_seen") or 0) + (g1.get("n_miss") or 0) - det_n0
         tb1 = (link.snap.time_boot_ms, getattr(link.snap, "t_time_boot", None))
@@ -4189,7 +4628,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         alt_out = [(p, w) for p, w in zip(traj, traj_s) for e in env
                    if not (e.alt_min_m <= p["up"] <= e.alt_max_m)]
         alt_ticks, alt_s = len(alt_out), sum(w for _, w in alt_out)
-        loop_hz = round(len(rows) / mission_s, 3)
+        loop_hz = round(len(rows) / mission_s, 3) if rated else None
         # THE GATE JUDGES THE PACING, NOT THE MISSION CLOCK (review
         # 2026-10-19). loop_hz is rows / mission_s, kept as it always was;
         # but mission_s runs past the loop to the mission-end LAND (up to 5 s
@@ -4202,7 +4641,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                          if len(tick_starts) >= 2 and tick_starts[-1] > tick_starts[0]
                          else None)
         pace_hz = loop_hz_paced if loop_hz_paced is not None else loop_hz
-        if pace_hz < LOOP_HZ_GATE:
+        if pace_hz is not None and pace_hz < LOOP_HZ_GATE:
             print(f"[loop]   *** the loop ticked at {pace_hz} Hz, under the "
                   f"{LOOP_HZ_GATE:g} Hz gate (tick work p95 "
                   f"{spread([round(v, 3) for v in work_ms]).get('p95')} ms; "
@@ -4252,6 +4691,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             "shield_lookahead": {"horizon_s": LOOKAHEAD_S, "dt_s": LOOKAHEAD_DT_S,
                                  "poses": int(round(LOOKAHEAD_S / LOOKAHEAD_DT_S))},
             "mission_s": round(mission_s, 2), "end_reason": end_reason,
+            # Why the rates, dwell and Shield counters below are None (None:
+            # a mission was flown and they are measured).
+            "not_measured": not_measured,
             "loop_hz": loop_hz,
             # The project's loop gate, and how the loop was paced to it
             # (next_tick_deadline) on which OS timer (None: not measured,
@@ -4259,10 +4701,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # loop's own tick starts (loop_hz_paced, every tick counted), not
             # on loop_hz, whose clock includes the mission-end LAND.
             "loop_hz_paced": loop_hz_paced, "loop_ticks": len(tick_starts),
-            "loop_hz_gate": LOOP_HZ_GATE, "loop_hz_below_gate": pace_hz < LOOP_HZ_GATE,
+            "loop_hz_gate": LOOP_HZ_GATE,
+            "loop_hz_below_gate": None if pace_hz is None else pace_hz < LOOP_HZ_GATE,
             "loop_hz_gate_basis": ("loop_hz_paced: (ticks - 1) / the span of their starts"
                                    if loop_hz_paced is not None else
-                                   "loop_hz: fewer than two ticks to pace"),
+                                   "loop_hz: fewer than two ticks to pace" if rated else
+                                   f"not measured: {not_measured or 'under one tick flown'}"),
             "tick_pacing": "absolute-deadline",
             "timer_resolution_ms": TIMER_RESOLUTION_MS,
             # Ticks whose position or heartbeat the link had stopped refreshing
@@ -4298,8 +4742,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                            "hud_failed_ticks": hud_failed,
                            "policy_hud": None if rhud is None else rhud.summary()}),
             # The observation rate against the grant's 10 Hz, beside its null: a
-            # detector that never ran scores 0.0 here.
-            "det_hz": round(det_n / mission_s, 3), "det_hz_grant_target": GRANT_OBS_HZ,
+            # detector that never ran scores 0.0 here (None: no mission flown).
+            "det_hz": round(det_n / mission_s, 3) if rated else None,
+            "det_hz_grant_target": GRANT_OBS_HZ,
             "det_hz_null": 0.0,
             "track_ticks": pilot.n_track, "search_ticks": pilot.n_search,
             "subject_known_ticks": n_subject, "subject_source": subject_src,
@@ -4320,14 +4765,18 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # speed caps included); the P0 count and the KPI rate are kpi.json's
             # p0_escapes / p0_violation_escape_rate. The 2026-10-13 close
             # Shield-off run read 749 here against 727 P0 escapes.
-            "interventions": n_touched, "brakes": n_braked, "escape_ticks": n_escaped,
+            "interventions": flown_only(n_touched), "brakes": flown_only(n_braked),
+            "escape_ticks": flown_only(n_escaped),
             # Dwell in seconds from the points' own timestamps (point_durations),
             # the tick counts beside them. dwell_gap_s: time between points
             # with no live state (no state, a stale link), charged to no point;
-            # dwell_gap_points: how many points such a gap followed.
-            "nfz_s": round(dwell["nfz_s"], 2), "alt_violation_s": round(alt_s, 2),
-            "nfz_ticks": nfz_ticks, "alt_violation_ticks": alt_ticks,
-            "dwell_gap_s": round(dwell_gap_s, 2), "dwell_gap_points": len(gap_from),
+            # dwell_gap_points: how many points such a gap followed. None, with
+            # the counters above, when no mission was flown (not_measured).
+            "nfz_s": flown_only(round(dwell["nfz_s"], 2)),
+            "alt_violation_s": flown_only(round(alt_s, 2)),
+            "nfz_ticks": flown_only(nfz_ticks), "alt_violation_ticks": flown_only(alt_ticks),
+            "dwell_gap_s": flown_only(round(dwell_gap_s, 2)),
+            "dwell_gap_points": flown_only(len(gap_from)),
             "dwell_basis": ("time-weighted: each trajectory point's time to the next "
                             f"(the last point {TICK:g} s), a point followed by ticks with "
                             "no live state only until the first of them (the rest is "
@@ -4450,10 +4899,20 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # - whether that was the subject (truth_at_decision) and where the
             # subject was while it waited (truth_trace). enabled false: the
             # mission started at take-off (--start-when-seen 0).
+            # outcome: reached / timed_out / takeover / link_lost /
+            # detector_dead / unsafe / crashed / interrupted; hover_s and
+            # unsafe_ticks: its share of pre_mission_hover.
             "start_gate": gate_rec,
             # The detector started before SITL, and how long the mission then
-            # still waited for its first inference (DETECTOR_READY_TIMEOUT_S).
+            # still waited for its first inference (DETECTOR_READY_TIMEOUT_S):
+            # on the ground in the pre-arm step, or airborne (`airborne`) on a
+            # link with no pre-arm step; `outcome` as wait_for_detector says.
             "detector_ready": detector_ready,
+            # THE HOVER BEFORE THE MISSION, WATCHED (HoverWatch; review
+            # 2026-10-22): its seconds by phase, the ticks the Shield checked,
+            # the unsafe ones and their rules (None: no tick was checked), what
+            # ended it early; every tick in hover_log.jsonl. Not in any KPI.
+            "pre_mission_hover": hover_rec,
             # How the detector chose its box (build_grounder): the TargetLock,
             # identity, the negative phrases and the boxes they took away;
             # the lock's own counters.
@@ -4546,8 +5005,27 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             why.append(f"no mission was flown: {no_mission}")
         elif gate_rec.get("enabled") and not gate_rec.get("reached"):
             why.append(f"the start gate confirmed no subject in "
-                       f"{gate_rec.get('wait_s')} s; the mission was flown anyway "
-                       f"(--start-timeout-action fly), so it followed no confirmed subject")
+                       f"{gate_rec.get('wait_s')} s; the mission was flown anyway ("
+                       + ("the hover broke a rule, so it started for the Shield and the "
+                          "escalation FSM to act" if gate_rec.get("outcome") == "unsafe"
+                          else "--start-timeout-action fly")
+                       + "), so it followed no confirmed subject")
+        # The hover before the mission (HoverWatch, review 2026-10-22): the
+        # mission's KPIs start at its clock and cannot show a rule the hover
+        # broke, nor a hover nothing checked; the grade says so.
+        if hover_rec["unsafe_ticks"]:
+            fu = hover_rec["first_unsafe"]
+            why.append(f"the hover before the mission broke {sorted(hover_rec['unsafe_rules'])} "
+                       f"on {hover_rec['unsafe_ticks']} of {hover_rec['ticks_checked']} "
+                       f"checked tick(s) (first {fu['t_hover']} s in, {fu['phase']}); the "
+                       f"mission's KPIs start at its clock and do not count it")
+        elif hover_rec["ticks"] and not hover_rec["ticks_checked"]:
+            why.append(f"the aircraft hovered {hover_rec['s']} s before the mission with no "
+                       f"live state on any tick, so no rule was checked")
+        if detector_ready.get("ready") is False:
+            why.append(f"the detector produced no inference in {detector_ready.get('waited_s')} s "
+                       f"before the mission ({detector_ready.get('outcome')}: "
+                       f"{detector_ready.get('why')})")
         if not scored and (tsum.get("frame_check") or {}).get("agrees") is False:
             why.append("the follow is not scored: "
                        + frame_disagreement(tsum["frame_check"]))
@@ -4652,7 +5130,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             else:
                 print(f"[report] video: tools/make_demo_video.py reads demo/out/<tag>/view "
                       f"only; these frames are under {view_dir}")
-        return 0
+        # A hover that crashed was landed and recorded above, and is still a
+        # failed run: the launchers count a non-zero exit as one.
+        return 1 if gate_crash else 0
     finally:
         # Whatever happened above - a refused arm, an EKF that never
         # converged, Ctrl+C - the simulator connection and the SITL this

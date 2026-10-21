@@ -3422,6 +3422,352 @@ def test_the_detector_loads_before_sitl_starts_and_the_mission_waits_for_it():
     assert "grounder.stop" in log
 
 
+# =========================================================================== #
+# The hover before the mission, watched (review 2026-10-22)
+# =========================================================================== #
+
+CAR_KW = {"cx": CAR_BOX[0], "cy": CAR_BOX[1], "w": CAR_BOX[2], "h": CAR_BOX[3]}
+
+
+def _events(run):
+    return [json.loads(l) for l in (run / "events.jsonl").read_text().splitlines()]
+
+
+def _hover_rows(run):
+    return [json.loads(l) for l in (run / "hover_log.jsonl").read_text().splitlines()]
+
+
+class TakeoverAtCommitLink(FakeLink):
+    """FakeLink, kept where PilotAtCommit can reach it."""
+    made: list = []
+
+    def __init__(self, *a, **k):
+        super().__init__(*a, **k)
+        TakeoverAtCommitLink.made.append(self)
+
+
+class PilotAtCommit(GateDetections):
+    """A pilot who switches the aircraft to LOITER the moment the gate
+    commits: between the hover's last tick and the loop's first."""
+
+    def commit(self, cand, yaw=None):
+        super().commit(cand, yaw)
+        TakeoverAtCommitLink.made[-1]._mode("LOITER")
+
+
+class LoadingDetections(GateDetections):
+    """A detector still loading for `load_s`: seq 0 until then."""
+
+    def __init__(self, clock, load_s=1.0, **kw):
+        super().__init__(clock, **kw)
+        self.t_ready = clock.t + load_s
+
+    def latest(self):
+        if self.clock.t < self.t_ready:
+            return {"seq": 0, "det": None, "t_det": 0.0, "n_seen": 0, "n_miss": 0}
+        return super().latest()
+
+
+class DeadDetections(GateDetections):
+    """A Grounder whose worker died before its first inference (an OOM or a
+    CUDA error in follow_vlm.Grounder._worker ends the thread): seq stays 0
+    and the thread is not alive."""
+
+    def __init__(self, clock, **kw):
+        super().__init__(clock, **kw)
+        import threading
+        self._thread = threading.Thread(target=lambda: None)
+        self._thread.start()
+        self._thread.join()
+
+    def latest(self):
+        return {"seq": 0, "det": None, "t_det": 0.0, "n_seen": 0, "n_miss": 0}
+
+
+class PreArmLink(FakeLink):
+    """A link with a pre-arm step, as PymavlinkLink and MavrosLink have:
+    before_arm() runs with the position known, disarmed, on the ground."""
+
+    def bring_up(self, alt, before_arm=None):
+        self.snap.armed = False
+        self.pump()
+        if before_arm is not None:
+            self.armed_in_before_arm = self.snap.armed
+            before_arm()
+        self._mode("GUIDED")
+        self.snap.armed = True
+        self.pump()
+
+
+def test_a_pilot_who_takes_the_aircraft_during_the_gate_hover_keeps_it():
+    """P1 (review 2026-10-22). The gate's hover read no mode, and the loop's
+    takeover test (a CHANGE of mode) read its baseline AFTER the gate: a
+    pilot who switched to LOITER 0.5 s into the hover became that baseline,
+    and the node asked for LAND over the pilot with autopilot_took_over None.
+    The hover now watches the mode on every tick (HoverWatch): the takeover
+    ends it at once, no mission is flown, nothing is asked of the autopilot
+    or sent to it, and the takeover is on record."""
+    rc, run, link = _fly(grounder_cls=GateDetections,
+                         link_kw={"takeover_at": (0.5, "LOITER")},
+                         extra=("--start-when-seen", "5", "--start-timeout-s", "2"))
+    assert rc == 0
+    m = _json(run, "metrics.json")
+    assert not link.requested and not link.sent, (link.requested, len(link.sent))
+    tk = m["autopilot_took_over"]
+    assert tk is not None and tk["mode"] == "LOITER" and tk["previous"] == "GUIDED", tk
+    # Before the mission clock (mission time; 0.0 here, where the stand-in
+    # clock does not move between the hover's last tick and t0).
+    assert tk["phase"] == "start gate" and tk["t"] <= 0 and tk["t_hover"] == 0.5, tk
+    g = m["start_gate"]
+    assert g["outcome"] == "takeover" and g["reached"] is False and g["wait_s"] < 1.0, g
+    assert m["end_reason"].startswith("no mission: the autopilot took the aircraft"), \
+        m["end_reason"]
+    assert m["mission_end_land_accepted"] is None and m["ticks"] == 0
+    assert m["pre_mission_hover"]["outcome"] == "takeover"
+    assert _json(run, "kpi.json")["kpi_grade"] is False
+    assert any(e["kind"] == "autopilot_took_over" for e in _events(run))
+
+
+def test_a_takeover_before_the_gate_opens_is_never_flown_over():
+    """P1, the second case the review reproduced: the pilot took the aircraft
+    0.1 s into the hover with the car in view, the gate opened on the 5th
+    sighting anyway, and the mission sent 30 setpoints while the pilot held
+    LOITER, then asked for LAND. The hover now ends at the takeover."""
+    rc, run, link = _fly(grounder_cls=GateDetections, depth_m=CAR_DEPTH_M, grounder_kw=CAR_KW,
+                         link_kw={"takeover_at": (0.1, "LOITER")},
+                         extra=("--start-when-seen", "5"))
+    assert rc == 0
+    m = _json(run, "metrics.json")
+    assert not link.sent and not link.requested, (len(link.sent), link.requested)
+    assert m["ticks"] == 0 and m["start_gate"]["outcome"] == "takeover", m["start_gate"]
+    assert m["start_gate"]["inferences_judged"] < 5
+    assert m["autopilot_took_over"]["mode"] == "LOITER"
+
+
+def test_a_takeover_as_the_gate_opens_is_caught_by_the_loop():
+    """P1: the loop's mode baseline is the hover's last mode, not a fresh
+    read after the gate. A pilot's switch reported in between (here: as the
+    gate commits) became the baseline, and the loop flew its setpoints over
+    the pilot."""
+    TakeoverAtCommitLink.made.clear()
+    rc, run, link = _fly(link_cls=TakeoverAtCommitLink, grounder_cls=PilotAtCommit,
+                         depth_m=CAR_DEPTH_M, grounder_kw=CAR_KW,
+                         extra=("--start-when-seen", "5"))
+    assert rc == 0
+    m = _json(run, "metrics.json")
+    assert m["start_gate"]["reached"] is True and m["start_gate"]["outcome"] == "reached"
+    assert not link.sent and "LAND" not in link.requested, (len(link.sent), link.requested)
+    tk = m["autopilot_took_over"]
+    assert tk["mode"] == "LOITER" and tk["previous"] == "GUIDED" and tk["phase"] == "mission", tk
+
+
+def test_a_start_gate_that_crashes_still_lands_and_writes_the_episode():
+    """P2 (review 2026-10-22). The detector wait, StartGate.judge (identity
+    tiers, the Reacquirer, the presence verdict on live detector output),
+    the truth verdict and the commit ran between the take-off and the loop's
+    try/finally: an exception there left the aircraft holding in GUIDED,
+    with no LAND, no mission_end and no metrics or KPI file (on HIL or
+    attach, with nothing commanding it). It now ends the episode with no
+    mission, landed and on record, and the run exits non-zero; Ctrl+C in
+    the hover lands it the same way."""
+    old = pn.StartGate.judge
+
+    def boom(self, *a, **k):
+        raise RuntimeError("judge broke")
+    pn.StartGate.judge = boom
+    try:
+        rc, run, link = _fly(grounder_cls=GateDetections,
+                             extra=("--start-when-seen", "5", "--start-timeout-s", "2"))
+    finally:
+        pn.StartGate.judge = old
+    assert rc == 1, rc
+    assert link.requested == ["LAND"] and link.snap.mode == "LAND", link.requested
+    m = _json(run, "metrics.json")
+    assert m["end_reason"].startswith("no mission: start gate crashed: RuntimeError: judge broke"), \
+        m["end_reason"]
+    assert m["start_gate"]["outcome"] == "crashed" and "judge broke" in m["start_gate"]["error"]
+    assert m["mission_end_land_accepted"] is True and not link.sent
+    kpi = _json(run, "kpi.json")
+    assert kpi["kpi_grade"] is False
+    assert any("start gate crashed" in w for w in kpi["kpi_grade_reasons"])
+    assert "mission_end" in [e["kind"] for e in _events(run)]
+
+    def interrupt(self, *a, **k):
+        raise KeyboardInterrupt
+    pn.StartGate.judge = interrupt
+    try:
+        rc, run, link = _fly(grounder_cls=GateDetections,
+                             extra=("--start-when-seen", "5", "--start-timeout-s", "2"))
+    finally:
+        pn.StartGate.judge = old
+    assert rc == 0 and link.requested == ["LAND"], (rc, link.requested)
+    m = _json(run, "metrics.json")
+    assert m["end_reason"] == "no mission: interrupted during the start gate", m["end_reason"]
+    assert m["start_gate"]["outcome"] == "interrupted"
+
+
+def test_the_hover_before_the_mission_is_checked_against_the_rules():
+    """P3 (review 2026-10-22). For up to 630 s airborne (the gate's 330 s
+    and the detector's 300 s) no Shield query, FSM step or fence recheck
+    ran and no row was written: a zone that opened over the hover point,
+    a moving zone or the subject's stand-off ring was neither enforced nor
+    measured, and KPIs start at the mission clock. DWELL_POLICY puts the
+    hover point inside a zone and under the floor. The hover's first tick
+    is unsafe; the hover ends there and the loop starts at once, so the
+    Shield and the escalation FSM act; the gate says why; the tick is in
+    hover_log.jsonl and the run is not KPI-grade."""
+    rc, run, link = _fly(grounder_cls=GateDetections, policy=DWELL_POLICY,
+                         extra=("--start-when-seen", "5", "--start-timeout-s", "2"))
+    assert rc == 0
+    m = _json(run, "metrics.json")
+    hv = m["pre_mission_hover"]
+    assert hv["outcome"] == "unsafe" and hv["ticks_checked"] == 1 and hv["unsafe_ticks"] == 1, hv
+    assert hv["unsafe_rules"] == {"floor": 1, "nfz-here": 1}, hv
+    assert hv["first_unsafe"]["phase"] == "start gate", hv
+    g = m["start_gate"]
+    assert g["outcome"] == "unsafe" and g["reached"] is False and g["unsafe_ticks"] == 1, g
+    assert m["ticks"] > 0, "the loop did not take the aircraft"
+    rows = _hover_rows(run)
+    assert len(rows) == 1 and rows[0]["unsafe"] == ["floor", "nfz-here"], rows
+    reasons = _json(run, "kpi.json")["kpi_grade_reasons"]
+    assert any(w.startswith("the hover before the mission broke") for w in reasons), reasons
+    assert any("the Shield and the escalation FSM" in w for w in reasons), reasons
+    # The Shield-off arm records the hover, as it records the loop, and does
+    # not act on it: the gate times out with every tick unsafe.
+    rc, run, link = _fly("off", grounder_cls=GateDetections, policy=DWELL_POLICY,
+                         extra=("--start-when-seen", "5", "--start-timeout-s", "2"))
+    m = _json(run, "metrics.json")
+    hv = m["pre_mission_hover"]
+    assert hv["act_on_unsafe"] is False and m["start_gate"]["outcome"] == "timed_out", hv
+    assert hv["unsafe_ticks"] == hv["ticks_checked"] >= 15, hv
+    assert m["end_reason"].startswith("no mission: start gate timed out")
+
+
+def test_the_gate_s_candidate_binds_the_subject_standoff_while_it_hovers():
+    """P3: the Shield is given the gate's current candidate as the subject,
+    as the loop gives it the pilot's estimate (set_subject): a car placed
+    20 m out (depth) is inside STANDOFF_POLICY's 120 m ring, so the first
+    sighting makes the hover unsafe - before the gate's 5 sightings."""
+    rc, run, link = _fly(grounder_cls=GateDetections, policy=STANDOFF_POLICY,
+                         depth_m=CAR_DEPTH_M, grounder_kw=CAR_KW,
+                         extra=("--start-when-seen", "5"))
+    assert rc == 0
+    m = _json(run, "metrics.json")
+    hv = m["pre_mission_hover"]
+    assert hv["unsafe_rules"] == {"standoff-car": 1} and hv["subject_ticks"] == 1, hv
+    assert m["start_gate"]["outcome"] == "unsafe" and m["start_gate"]["inferences_judged"] == 1
+    row = _hover_rows(run)[0]
+    assert row["subject"] is not None and row["subject"][2] == "depth", row
+
+
+def test_a_clean_hover_is_counted_and_no_hover_is_none_not_zero():
+    """P3: a clean hover is measured (every tick checked, 0 unsafe); a run
+    with no hover at all says None, not 0 - no check ran."""
+    rc, run, link = _fly(grounder_cls=GateDetections, depth_m=CAR_DEPTH_M, grounder_kw=CAR_KW,
+                         extra=("--start-when-seen", "5"))
+    m = _json(run, "metrics.json")
+    hv = m["pre_mission_hover"]
+    assert hv["outcome"] is None and hv["ticks_checked"] == 5 and hv["unsafe_ticks"] == 0, hv
+    assert hv["s"] > 0 and m["start_gate"]["hover_s"] == hv["s_by_phase"]["start gate"], hv
+    rows = _hover_rows(run)
+    assert len(rows) == 5 and {r["phase"] for r in rows} == {"start gate"}
+    assert all(r["unsafe"] == [] for r in rows) and rows[-1]["det_seq"] is not None
+    rc, run, link = _fly()
+    hv = _json(run, "metrics.json")["pre_mission_hover"]
+    assert hv["ticks"] == 0 and hv["unsafe_ticks"] is None and hv["s"] == 0.0, hv
+    assert _hover_rows(run) == []
+
+
+def test_the_hover_before_the_mission_is_capped():
+    """The hover is capped at --start-timeout-s whichever wait it is spent
+    in: on a link with no pre-arm step the detector's wait is airborne, and
+    comes out of the gate's budget. A timeout that is not finite, or above
+    START_TIMEOUT_MAX_S, is refused before anything starts."""
+    base = ["--network", "mirrored", "--dev-yaml", "--citymap", str(_tmp() / "occ.npz")]
+    for bad in ("inf", "nan", str(pn.START_TIMEOUT_MAX_S + 1), "0"):
+        try:
+            pn.check_args(pn.build_parser().parse_args(base + ["--start-timeout-s", bad]))
+        except SystemExit as exc:
+            assert "--start-timeout-s" in str(exc), exc
+        else:
+            raise AssertionError(f"--start-timeout-s {bad} accepted")
+    pn.check_args(pn.build_parser().parse_args(base + ["--start-timeout-s",
+                                                       str(pn.START_TIMEOUT_MAX_S)]))
+    rc, run, link = _fly(grounder_cls=LoadingDetections, grounder_kw={"load_s": 1.0},
+                         extra=("--start-when-seen", "5", "--start-timeout-s", "2"))
+    m = _json(run, "metrics.json")
+    dr, hv, g = m["detector_ready"], m["pre_mission_hover"], m["start_gate"]
+    assert dr["ready"] and dr["airborne"] and dr["waited_s"] >= 1.0, dr
+    assert g["timeout_s"] <= 2.0 - dr["waited_s"] + 1e-6 and g["outcome"] == "timed_out", g
+    assert hv["s"] <= 2.0 + 2 * pn.TICK, hv
+    assert set(hv["s_by_phase"]) == {"detector", "start gate"}, hv
+
+
+def test_the_detector_is_waited_for_on_the_ground_when_the_link_can():
+    """The detector's first inference is waited for in the pre-arm step,
+    disarmed, on a link that has one (PymavlinkLink, MavrosLink): a slow
+    model load is no airborne hover at all."""
+    rc, run, link = _fly(link_cls=PreArmLink, grounder_cls=LoadingDetections,
+                         grounder_kw={"load_s": 1.0})
+    assert rc == 0
+    m = _json(run, "metrics.json")
+    dr = m["detector_ready"]
+    assert dr["ready"] and dr["phase"] == "before arming" and dr["airborne"] is False, dr
+    assert dr["waited_s"] >= 1.0 and link.armed_in_before_arm is False
+    assert m["pre_mission_hover"]["ticks"] == 0, m["pre_mission_hover"]
+
+
+def test_no_mission_is_flown_on_a_detector_that_died():
+    """P5 (review 2026-10-22). wait_for_detector waited its full 300 s on a
+    Grounder whose thread had died (seq stays 0), the gate 330 s more, and
+    with --start-when-seen 0 or --start-timeout-action fly the mission flew
+    on a detector that never produced an inference, with detector_ready not
+    among the KPI-grade reasons. The wait now stops on the dead thread; no
+    mission is flown on it (on the ground the aircraft is not armed), and
+    the reason is on record."""
+    clk = Clock()
+    link = FakeLink(clk, ap.FrameAnchor(35.6895, 139.6917, 40.0, "scene.home-geo-point"))
+    dr = pn.wait_for_detector(DeadDetections(clk), link, clock=clk, sleep=clk.sleep)
+    assert dr["outcome"] == "detector_dead" and dr["ready"] is False and dr["waited_s"] == 0, dr
+    for gate in ("5", "0"):
+        rc, run, link = _fly(grounder_cls=DeadDetections, extra=("--start-when-seen", gate))
+        assert rc == 0
+        m = _json(run, "metrics.json")
+        assert m["detector_ready"]["outcome"] == "detector_dead", m["detector_ready"]
+        assert m["end_reason"].startswith("no mission: the detector thread died"), m["end_reason"]
+        assert link.requested == ["LAND"] and not link.sent
+        reasons = _json(run, "kpi.json")["kpi_grade_reasons"]
+        assert any(w.startswith("the detector produced no inference") for w in reasons), reasons
+    # On a link with a pre-arm step the aircraft never arms on a dead detector.
+    try:
+        _fly(link_cls=PreArmLink, grounder_cls=DeadDetections)
+    except RuntimeError as exc:
+        assert "detector thread died" in str(exc), exc
+    else:
+        raise AssertionError("armed on a dead detector")
+
+
+def test_a_run_that_flew_no_mission_measures_no_rate_and_no_dwell():
+    """P4 (review 2026-10-22). With no tick flown mission_s was max(1e-6,
+    ...), so det_hz read 1000000.0 Hz, and nfz_s, alt_violation_s,
+    interventions, escape_ticks and dwell_gap_s read 0: a 1 MHz detector
+    and clean dwell for a run that flew nothing, for anything reading
+    metrics.json directly (the tracker, the decks). Now None, with why."""
+    rc, run, link = _fly(grounder_cls=GateDetections,
+                         extra=("--start-when-seen", "5", "--start-timeout-s", "2"))
+    m = _json(run, "metrics.json")
+    assert m["ticks"] == 0 and m["end_reason"].startswith("no mission"), m["end_reason"]
+    for k in ("det_hz", "loop_hz", "loop_hz_below_gate", "nfz_s", "alt_violation_s",
+              "nfz_ticks", "alt_violation_ticks", "interventions", "brakes",
+              "escape_ticks", "dwell_gap_s", "dwell_gap_points"):
+        assert m[k] is None, (k, m[k])
+    assert m["not_measured"].startswith("no mission flown: start gate timed out"), \
+        m["not_measured"]
+    rc, run, link = _fly()
+    m = _json(run, "metrics.json")
+    assert m["not_measured"] is None and m["det_hz"] > 0 and m["nfz_s"] == 0.0
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0
