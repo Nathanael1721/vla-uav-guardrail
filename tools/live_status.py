@@ -31,10 +31,12 @@ landing went 30 s and more without a beat. The row read "no heartbeat",
 `flight_running` was False, the server's "no rebuild during a flight" and the
 flight + workflow banner switched off silently in the heaviest phases (review
 of 8035d0a, P1). Now a record whose PID is alive counts as running, shown as
-"quiet" (alive, no beat for N s) once its last beat is older than STALE_S;
-only up to QUIET_MAX_S, because Windows reuses PIDs. The flight rails also
-beat at their phase boundaries, with a `phase` (starting / airborne /
-landing) and a short `detail`, so the row says where the flight is.
+"quiet" (alive, no beat for N s) once its last beat is older than STALE_S,
+unless that process was created after the record started (a reused PID:
+pid_alive), and only up to QUIET_MAX_S where the creation time is unknown.
+The flight rails also beat at their phase boundaries, with a `phase`
+(starting / airborne / landing) and a short `detail`, so the row says where
+the flight is.
 
 WHY IT CANNOT DISTURB A FLIGHT (the writer runs inside demo/follow_vlm.py,
 demo/pas_ardupilot/perception_node.py and experiments/sweep_scenarios.py):
@@ -81,6 +83,11 @@ STALE_S = 30.0                  # an in-process heartbeat older than this is "qu
 # boot plus EKF convergence, takes minutes), and Windows reuses PIDs, so the
 # row reads "stale" again instead of "running" forever.
 QUIET_MAX_S = 3600.0
+# A process created more than this after the record's start is another
+# process under a reused PID (pid_alive). The record's start is taken inside
+# the process, so the real one is always older; the slack only absorbs the
+# clocks' resolution (Linux btime is whole seconds).
+PID_REUSE_SLACK_S = 2.0
 LIVE_STATES = ("running", "quiet")   # the states that count as running
 CLI_TTL_S = 6 * 3600.0          # a CLI-started job (no PID, no beats) after this is "stale"
 MIN_WRITE_INTERVAL_S = 1.0      # at most one write per second per job
@@ -307,9 +314,63 @@ def heartbeat(kind: str, name: str, **kw):
 
 
 # ------------------------------------------------------------------ reader
-def pid_alive(pid) -> bool | None:
+def pid_created(pid) -> float | None:
+    """When the process with this PID was created (epoch seconds), or None
+    when it cannot tell. Windows: GetProcessTimes (no psutil); Linux:
+    /proc/<pid>/stat starttime + /proc/stat btime (1 s resolution)."""
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    try:
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.OpenProcess.restype = wintypes.HANDLE
+            h = k32.OpenProcess(0x1000, False, pid)        # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                return None
+            try:
+                ft = [wintypes.FILETIME() for _ in range(4)]   # creation, exit, kernel, user
+                if not k32.GetProcessTimes(h, *(ctypes.byref(f) for f in ft)):
+                    return None
+                ticks = (ft[0].dwHighDateTime << 32) | ft[0].dwLowDateTime   # 100 ns since 1601
+                return ticks / 1e7 - 11644473600.0
+            finally:
+                k32.CloseHandle(h)
+        stat = Path(f"/proc/{pid}/stat").read_text()
+        start_ticks = int(stat.rsplit(")", 1)[1].split()[19])   # field 22, starttime
+        btime = next(int(ln.split()[1]) for ln in Path("/proc/stat").read_text().splitlines()
+                     if ln.startswith("btime "))
+        return btime + start_ticks / os.sysconf("SC_CLK_TCK")
+    except Exception:                                      # noqa: BLE001 - macOS, no /proc, a race
+        return None
+
+
+def pid_alive(pid, started: float | None = None) -> bool | None:
     """True / False when it can tell, None when it cannot. Windows: OpenProcess
-    + GetExitCodeProcess (no psutil); elsewhere os.kill(pid, 0)."""
+    + GetExitCodeProcess (no psutil); elsewhere os.kill(pid, 0).
+
+    With `started` (the record's own start time), a live process CREATED
+    after it (by more than PID_REUSE_SLACK_S) is not that job's process but
+    a reuse of its PID: False. A heartbeat is made inside its process, so
+    the real one was always created first (re-review of d180e01, P4: a
+    hard-killed flight's file read "quiet", alive, for up to QUIET_MAX_S
+    when Windows handed its PID to another process, which kept the rebuild
+    deferred and could show the overlap banner for a flight long gone).
+    QUIET_MAX_S stays as the backstop where the creation time is unknown."""
+    lives = _pid_running(pid)
+    if lives is True and started is not None:
+        born = pid_created(pid)
+        if born is not None and born > started + PID_REUSE_SLACK_S:
+            return False
+    return lives
+
+
+def _pid_running(pid) -> bool | None:
     try:
         pid = int(pid)
     except (TypeError, ValueError):
@@ -365,10 +426,12 @@ def run_tag_of(log_dir, demo_out: Path | None) -> str | None:
 
 
 def sanitize(rec: dict, now: float, demo_out: Path | None = None,
-             alive=pid_alive) -> dict | None:
+             alive=None) -> dict | None:
     """The fields the Dashboard may show, with its state judged; None for a
     record that is not a heartbeat. Free text is cut to MAX_DETAIL; the log
-    folder becomes a demo/out tag or nothing."""
+    folder becomes a demo/out tag or nothing. `alive(pid)` stands in for the
+    process check in tests; by default it is pid_alive with the record's own
+    start, so a reused PID reads "dead" (pid_alive)."""
     if not isinstance(rec, dict) or rec.get("kind") not in KINDS:
         return None
     started, beat = _num(rec.get("started")), _num(rec.get("heartbeat"))
@@ -381,7 +444,9 @@ def sanitize(rec: dict, now: float, demo_out: Path | None = None,
     if rec.get("status") not in (None, "running"):
         state = "ended"
     else:
-        lives = alive(pid) if (not cli and pid is not None) else None
+        lives = None
+        if not cli and pid is not None:
+            lives = pid_alive(pid, started) if alive is None else alive(pid)
         if lives is False:
             state = "dead"
         elif age > (CLI_TTL_S if cli else STALE_S):
@@ -407,7 +472,7 @@ def sanitize(rec: dict, now: float, demo_out: Path | None = None,
 
 
 def snapshot(folder: Path | None = None, now: float | None = None,
-             demo_out: Path | None = None, alive=pid_alive, done_n: int = 5) -> dict:
+             demo_out: Path | None = None, alive=None, done_n: int = 5) -> dict:
     """Everything GET /api/live returns except the GPU row."""
     folder = Path(folder) if folder is not None else live_dir()
     now = time.time() if now is None else now

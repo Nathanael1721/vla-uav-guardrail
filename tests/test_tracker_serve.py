@@ -378,8 +378,13 @@ def test_a_broken_content_file_is_a_load_error_not_a_500():
 # ------------------------------------------------------------------ dashboard + live (2026-10-21)
 def _heartbeat(tmp, name, kind="flight", age=1.0, **extra):
     now = time.time()
+    # This process stands in for the flight, so the record cannot have
+    # started before the process was created: a record older than its
+    # process is a reused PID and reads "dead" (re-review of d180e01, P4).
+    born = serve._tool("live_status").pid_created(os.getpid())
+    started = now - 60 if born is None else max(now - 60, born)
     rec = {"schema": 1, "id": f"{kind}-{name}", "kind": kind, "name": name, "pid": os.getpid(),
-           "cli": False, "started": now - 60, "heartbeat": now - age, "progress": 0.25,
+           "cli": False, "started": started, "heartbeat": now - age, "progress": 0.25,
            "detail": None, "status": "running"}
     rec.update(extra)
     (tmp / "live" / f"{kind}-{name}.json").write_text(json.dumps(rec), encoding="utf-8")

@@ -307,6 +307,38 @@ def test_pid_alive_knows_this_process():
     assert LS.pid_alive(None) is None and LS.pid_alive(-3) is None
 
 
+def test_a_reused_pid_is_not_the_jobs_process():
+    """Re-review of d180e01 (P4). Windows PID reuse was bounded only by
+    QUIET_MAX_S: a hard-killed flight (Task Manager, OOM) left its file, and
+    when Windows handed its PID to another process within the hour the row
+    read "quiet" (alive), kept the rebuild deferred and could raise the
+    overlap banner for a flight that no longer existed. A heartbeat is made
+    inside its own process, so the real process is always older than the
+    record's start: a live process created after it is a reuse of the PID
+    and reads "dead". This test's own process stands in for both."""
+    me, now = os.getpid(), time.time()
+    born = LS.pid_created(me)
+    if born is None:
+        print("      SKIP: this platform does not tell a process's creation time")
+        return SKIP
+    assert now - 86400 < born <= now + 1, born
+    assert LS.pid_created(2 ** 30) is None and LS.pid_created(None) is None
+    # a record started after this process was created: the process is the job's
+    assert LS.pid_alive(me, started=born + 1) is True
+    # a record that says its job started a day before this process existed
+    assert LS.pid_alive(me, started=born - 86400) is False
+    assert LS.pid_alive(me, started=born - LS.PID_REUSE_SLACK_S / 2) is True, "the slack absorbs clock resolution"
+    # the default reader of sanitize / snapshot uses the record's own start
+    old_beat = LS.STALE_S + 45
+    mine = _rec(age=old_beat, now=now, pid=me, started=born + 1)
+    reused = _rec(age=old_beat, now=now, pid=me, started=born - 86400)
+    assert LS.sanitize(mine, now)["state"] == "quiet"
+    assert LS.sanitize(reused, now)["state"] == "dead", "a reused PID read as the job alive"
+    with Tmp() as d:
+        (d / "flight-x.json").write_text(json.dumps(dict(reused, id="flight-x")), encoding="utf-8")
+        assert LS.snapshot(d, now=now)["flight_running"] is False
+
+
 def test_the_cli_start_beat_stop_round_trip():
     with Tmp() as d:
         p = LS.cli_start("review wave V1", "workflow", detail="3 reviewers", folder=d)
