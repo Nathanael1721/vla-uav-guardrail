@@ -13,7 +13,11 @@ VLA flight" milestone turns done only on a run whose manifest names a real
 VLA (never the OWL-ViT detector, the StubVLA or a hand-written controller)
 AND whose own records show the VLA server answered and its steps were flown
 (review of 8035d0a, P2: a manifest that only names AerialVLA, whose server
-never answered, counted as the first VLA flight).
+never answered, counted as the first VLA flight), with at least half of the
+requests answered and half of the loop ticks flown by the VLA (review of
+d180e01, P3: a server that died after ten answers counted), by the model the
+manifest configured (P7: the bare OpenVLA base serving an AerialVLA run
+counted).
 tracker/data/ is local-only (.gitignore): the real-file check SKIPs visibly
 on a fresh clone.
 """
@@ -63,18 +67,22 @@ DIGEST = "3f" * 32                       # a weights_sha256 as the server report
 
 
 def step_rows(n=12, *, kind="step", accepted=True, parse_ok=True, digest=DIGEST, model_id=AERO,
-              vla_ticks=8, source=None):
+              vla_ticks=8, source=None, t0=1000.0):
     """n vla_steps.jsonl rows as guardrail/vla_link.py writes them (schema
-    vla_steps/1: the request, the server's answer with its model identity,
-    and what the tracker made of it)."""
+    vla_steps/1: the request with its capture time, the server's answer with
+    its model identity, and what the tracker made of it). One decision every
+    0.9 s, flown for 9 ticks of the 10 Hz loop until the next supersedes it."""
     rows = []
     for i in range(n):
+        tc = t0 + 0.9 * i
         r = {"schema": "vla_steps/1", "seq": i, "kind": kind, "ok": kind != "server_error",
              "parse_ok": parse_ok, "accepted": accepted, "refused": None if accepted else kind,
+             "t_capture": tc, "t_sent": tc + 0.01, "t_received": tc + 0.36,
              "raw_text": "20 49 49", "step": {"fwd_m": 1.0, "down_m": 0.0, "dpsi_rad": 0.0},
              "model": {"id": model_id, "base": "openvla-7b@47a0ec7f", "weights_sha256": digest,
                        "precision": "nf4", "attn": "eager", "merged": False},
-             "outcome": {"end": "complete", "ticks": {"vla_step": vla_ticks, "hold": 1}}}
+             "outcome": {"end": "superseded", "t_start": tc + 0.36, "t_end": tc + 1.26,
+                         "ticks": {"vla_step": vla_ticks, "hold": 1}}}
         if source:
             r = {"schema": "vla_steps/1", "seq": i, "kind": kind, "source": source, "accepted": accepted,
                  "outcome": {"ticks": {"vla_step": vla_ticks}}}
@@ -85,7 +93,7 @@ def step_rows(n=12, *, kind="step", accepted=True, parse_ok=True, digest=DIGEST,
 class Repo:
     """A temporary repository: a CHANGELOG and a demo/out with runs. A run
     is a vla_model_hash, or {"hash": ..., "steps": [vla_steps rows],
-    "metrics": {...}} for one with the run's own records."""
+    "metrics": {...}, "kpi": {...}} for one with the run's own records."""
 
     def __init__(self, runs=None):
         self.runs = runs or {}
@@ -103,6 +111,8 @@ class Repo:
                     "".join(json.dumps(r) + "\n" for r in spec["steps"]), encoding="utf-8")
             if spec.get("metrics") is not None:
                 (d / "metrics.json").write_text(json.dumps(spec["metrics"]), encoding="utf-8")
+            if spec.get("kpi") is not None:
+                (d / "kpi.json").write_text(json.dumps(spec["kpi"]), encoding="utf-8")
         return self.root
 
     def __exit__(self, *a):
@@ -292,6 +302,128 @@ def test_a_configured_vla_is_a_vla_flight_only_on_the_servers_own_evidence():
                      encoding="utf-8")
         ev = T.vla_evidence(p.parent)
         assert T.classify_run(H, ev) == ("vla", None) and ev["bad_lines"] == 1, ev
+
+
+def _dying(n_ok=10, n_fail=1150):
+    """The review's probe (review of d180e01, P3): ten answers the model
+    parsed and the tracker took, one vla_step tick each (one second of VLA
+    flight), then the server gone: 1150 link_failure rows, one per 0.1 s
+    (about 115 s of hover)."""
+    rows = step_rows(n=n_ok)
+    for r in rows:
+        r["outcome"]["ticks"] = {"vla_step": 1}
+    t = rows[-1]["t_received"]
+    for i in range(n_fail):
+        tc = t + 0.1 * (i + 1)
+        rows.append({"schema": "vla_steps/1", "seq": n_ok + i, "kind": "link_failure",
+                     "t_capture": tc, "t_sent": tc, "t_received": tc + 0.1,
+                     "failure": {"kind": "connect_refused", "detail": "[WinError 10061]"}})
+    return rows
+
+
+def test_a_vla_that_dies_early_is_not_a_vla_flight():
+    """Review of d180e01 (P3). MIN_VLA_DECISIONS and MIN_VLA_STEP_TICKS are
+    absolute counts over the whole run: a manifest naming AerialVLA with ten
+    accepted decisions (one vla_step tick each) and then 1150 link failures
+    (~115 s of hover) classified as ('vla', None), became last_vla_flight
+    and would have closed VLA-05, and the page showed only the decision
+    count and the digest. A VLA flight now also needs the VLA to have
+    answered at least MIN_DECISION_SHARE of the requests it was sent and to
+    have authored (vla_step or hold) at least MIN_VLA_TICK_SHARE of the
+    mission's loop ticks; a run with no way to count its mission ticks is
+    "mission_ticks_unknown", never a pass. The evidence carries the link
+    failures, the server errors and both shares."""
+    H = "aerialvla:openvla-7b+aero_vla@sha256:ab"
+    no_time = step_rows()
+    for r in no_time:
+        for k in ("t_capture", "t_sent", "t_received"):
+            r.pop(k)
+        r["outcome"] = {"ticks": r["outcome"]["ticks"]}
+    cases = {
+        # the probe, from the steps file alone (its own rows span ~124 s)
+        "dying_server": ({"hash": H, "steps": _dying()}, "decision_share_low"),
+        # a server that refused nearly everything it was sent
+        "erroring_server": ({"hash": H, "steps": step_rows() + step_rows(
+            n=40, kind="server_error", accepted=False, parse_ok=False, t0=1011.0)}, "decision_share_low"),
+        # the pilot's own summary: 40 good answers, then 1100 ticks of hover
+        "mostly_hover": ({"hash": H, "metrics": {"pilot": {"vla": {
+            "decisions_accepted": 40, "parse_fail": 0, "server_error": 0, "link_failure": 0,
+            "ticks_by_author": {"vla_step": 30, "hold": 10, "hover": 1100, "none": 10},
+            "identity": {"id": AERO, "weights_sha256": DIGEST}}}}}, "vla_tick_share_low"),
+        # twelve good decisions (108 ticks) in a 1200-tick mission (kpi.json ticks)
+        "short_vla_long_mission": ({"hash": H, "steps": step_rows(), "kpi": {"ticks": 1200}},
+                                   "vla_tick_share_low"),
+        # rows with no times, no metrics, no kpi: the share cannot be judged
+        "no_mission_length": ({"hash": H, "steps": no_time}, "mission_ticks_unknown"),
+    }
+    with Repo({k: v[0] for k, v in cases.items()}) as root:
+        demo = root / "demo" / "out"
+        for tag, (_, why) in cases.items():
+            ev = T.vla_evidence(demo / tag)
+            cls, reason = T.classify_run(H, ev)
+            assert cls == "vla_unverified" and reason.split(":")[0] == why, (tag, cls, reason)
+        assert T.vla_runs(demo) == [], "a VLA that died early counted as a VLA flight"
+        assert T.effective(valid_doc()["items"][1], T.vla_runs(demo)) == ("open", None)
+        ev = T.vla_evidence(demo / "dying_server")
+        assert ev["link_failure"] == 1150 and ev["requests"] == 1160 and ev["decisions"] == 10, ev
+        assert ev["decision_share"] < 0.01 and ev["vla_tick_share"] < 0.01, ev
+        assert ev["mission_ticks_source"].startswith("vla_steps.jsonl"), ev["mission_ticks_source"]
+        assert T.vla_evidence(demo / "erroring_server")["server_error"] == 40
+        assert T.vla_evidence(demo / "short_vla_long_mission")["mission_ticks"] == 1200
+    # a run the VLA flew passes, whichever record gives the mission length
+    with Repo({"rows": {"hash": H, "steps": step_rows()},
+               "kpi": {"hash": H, "steps": step_rows(), "kpi": {"ticks": 112}},
+               "pilot": {"hash": H, "steps": step_rows(), "metrics": {"ticks": 115, "pilot": {"vla": {
+                   "decisions_accepted": 12, "ticks_by_author": {"vla_step": 96, "hold": 12, "hover": 4},
+                   "identity": {"id": AERO, "weights_sha256": DIGEST}}}}, "kpi": {"ticks": 9999}}}) as root:
+        demo = root / "demo" / "out"
+        src = {}
+        for tag in ("rows", "kpi", "pilot"):
+            ev = T.vla_evidence(demo / tag)
+            assert T.classify_run(H, ev) == ("vla", None), (tag, ev)
+            assert ev["decision_share"] == 1.0 and ev["vla_tick_share"] > 0.9, (tag, ev)
+            src[tag] = ev["mission_ticks_source"]
+        assert src["kpi"] == "kpi.json#/ticks" and src["pilot"] == "metrics.json#/pilot/vla/ticks_by_author", src
+        assert T.vla_evidence(demo / "pilot")["mission_ticks"] == 112
+
+
+def test_the_server_must_have_served_the_configured_model():
+    """Review of d180e01 (P7). classify_run took any allow-listed model id
+    the server reported, never comparing it with what the manifest
+    configured: a run configured as AerialVLA and served by the bare
+    OpenVLA base (or by a run1-3 fine-tune, the velocity-label weights the
+    brief rules out) counted as that VLA flight. Now the server's model must
+    be the configured family (AerialVLA vs OpenVLA), and when the manifest's
+    vla_model_hash carries a sha256 digest the server's weights_sha256 must
+    be that digest - or the pilot side must have recorded that its local
+    digest agreed with the server's report (guardrail/manifest.py
+    resolve_vla_hash "local; reported agrees", the hash of an id that mixes
+    in a HuggingFace revision). A pilot side that itself saw the server run
+    other bytes ("@unresolved:reported-digest-mismatch") never counts."""
+    other = "5a" * 32
+    agreed = {"pilot": {"kind": "vla", "hash_source": "local; reported agrees", "reported_digest": DIGEST}}
+    runs = {
+        "base_served": ("aerialvla:openvla-7b+aero_vla@sha256:ab",
+                        {"steps": step_rows(model_id="openvla-7b@47a0ec7f")}, "server_model_differs"),
+        "other_weights": ("aerialvla-lora/aero_vla@sha256:" + other, {"steps": step_rows()},
+                          "server_model_differs"),
+        "pilot_saw_mismatch": ("aerialvla-lora/aero_vla@unresolved:reported-digest-mismatch",
+                               {"steps": step_rows()}, "server_model_differs"),
+        "same_weights": ("aerialvla-lora/aero_vla@sha256:" + DIGEST, {"steps": step_rows()}, None),
+        "rev_mixed_agreed": ("aerialvla-lora/aero_vla@sha256:" + other,
+                             {"steps": step_rows(), "metrics": agreed}, None),
+        "openvla_both": ("openvla/openvla-7b@47a0ec7f",
+                         {"steps": step_rows(model_id="openvla-7b@47a0ec7f")}, None),
+    }
+    with Repo({tag: dict(spec, hash=h) for tag, (h, spec, _) in runs.items()}) as root:
+        demo = root / "demo" / "out"
+        for tag, (h, _, why) in runs.items():
+            cls, reason = T.classify_run(h, T.vla_evidence(demo / tag))
+            if why is None:
+                assert (cls, reason) == ("vla", None), (tag, cls, reason)
+            else:
+                assert cls == "vla_unverified" and reason.split(":")[0] == why, (tag, cls, reason)
+        assert sorted(t for t, _ in T.vla_runs(demo)) == ["openvla_both", "rev_mixed_agreed", "same_weights"]
 
 
 def test_the_simplified_check_can_fail_and_pass():

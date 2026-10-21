@@ -53,7 +53,11 @@ THE RULES, each because the opposite already happened somewhere:
     is computed on the pilot side from the configured id and the local
     weight files, so a run configured with AerialVLA whose server never
     answered counted as one, and closed the first-VLA-flight milestone
-    (review of 8035d0a, P2): it is now "vla_unverified", shown apart.
+    (review of 8035d0a, P2): it is now "vla_unverified", shown apart. So is
+    a VLA that answered ten times and died (the share of requests answered
+    and of loop ticks the VLA flew must each be at least half, not only the
+    counts; review of d180e01, P3), and a server that served another model
+    than the configured one (family and weights digest; P7).
   * Only browser-playable videos are linked: the per-run `_demo.mp4` files
     are MPEG-4 Part 2, which browsers do not play. With ffprobe the codec is
     read from the file (cached by size and mtime in tracker/data/dash/
@@ -325,14 +329,23 @@ def _evidence_summary(tag: str, ev: dict) -> dict:
     """The counts the page may show of what the VLA server returned: no raw
     text, no prompt, no image hash; the source as a logical demo/out path."""
     src = ev.get("source")
+    mts = ev.get("mission_ticks_source")
     return {
         "source": None if src is None else f"demo/out/{tag}/{src}",
         "decisions": ev.get("decisions") or 0, "vla_step_ticks": ev.get("vla_step_ticks") or 0,
         "weights_sha256": ev.get("weights_sha256"),
         "model_id": None if ev.get("model_id") is None else str(ev["model_id"])[:80],
         "digests_seen": len(ev.get("digests") or []),
-        **{k: ev.get(k) or 0 for k in ("parse_fail", "server_error", "link_failure", "no_digest")},
+        **{k: ev.get(k) or 0 for k in ("parse_fail", "server_error", "link_failure", "no_digest",
+                                       "requests", "vla_ticks")},
+        # the shares the rule judges (tools/todo.py MIN_DECISION_SHARE; review
+        # of d180e01, P3: a server that died after ten answers showed only its
+        # decision count and digest); None is "nothing to divide by", never 0
+        "decision_share": ev.get("decision_share"), "vla_tick_share": ev.get("vla_tick_share"),
+        "mission_ticks": ev.get("mission_ticks"),
+        "mission_ticks_source": None if mts is None else f"demo/out/{tag}/{mts}",
         "min_decisions": TODO.MIN_VLA_DECISIONS, "min_vla_step_ticks": TODO.MIN_VLA_STEP_TICKS,
+        "min_decision_share": TODO.MIN_DECISION_SHARE, "min_vla_tick_share": TODO.MIN_VLA_TICK_SHARE,
     }
 
 
@@ -355,7 +368,7 @@ def flight_record(root: Path, run: Path) -> dict | None:
     # The class needs the SERVER's word for a VLA (tools/todo.py classify_run):
     # a manifest that only names AerialVLA is "vla_unverified" (review of
     # 8035d0a, P2).
-    ev = TODO.vla_evidence(run, met)
+    ev = TODO.vla_evidence(run, met, kpi)
     cls, unverified = TODO.classify_run(h, ev)
     configured = TODO.classify_pilot(h)
     grade, reasons = recompute_kpi_grade(man)
@@ -492,11 +505,15 @@ def vla_section(flights: list[dict], todo_items: list[dict]) -> dict:
         "counts": counts, "total": len(flights),
         "first_vla_flight": {"tag": first["tag"], "date": first["date"], "id": first["pilot"]["id"]} if first else None,
         "last_vla_flight": {"tag": last["tag"], "date": last["date"], "id": last["pilot"]["id"],
-                            "decisions": last["pilot"]["evidence"]["decisions"],
-                            "weights_sha256": last["pilot"]["evidence"]["weights_sha256"]} if last else None,
+                            **{k: last["pilot"]["evidence"][k] for k in (
+                                "decisions", "weights_sha256", "requests", "decision_share",
+                                "vla_tick_share", "link_failure", "server_error", "parse_fail")}}
+        if last else None,
         "last_vla_unverified": {"tag": last_unv["tag"], "date": last_unv["date"], "id": last_unv["pilot"]["id"],
                                 "reason": last_unv["pilot"]["unverified_reason"]} if last_unv else None,
-        "evidence_rule": {"min_decisions": TODO.MIN_VLA_DECISIONS, "min_vla_step_ticks": TODO.MIN_VLA_STEP_TICKS},
+        "evidence_rule": {"min_decisions": TODO.MIN_VLA_DECISIONS, "min_vla_step_ticks": TODO.MIN_VLA_STEP_TICKS,
+                          "min_decision_share": TODO.MIN_DECISION_SHARE,
+                          "min_vla_tick_share": TODO.MIN_VLA_TICK_SHARE},
         "latest_by_rail": [{"rail": k, "tag": r["tag"], "date": r["date"], "topology": r["topology"],
                             "pilot_class": r["pilot"]["class"], "pilot_id": r["pilot"]["id"]}
                            for k, r in latest_by_rail.items()],

@@ -33,8 +33,10 @@ the Dashboard as soon as a demo/out run is a VLA flight (the same classifier
 as the Dashboard, classify_run): its manifest names a real VLA in
 vla_model_hash (an OWL-ViT detector, the StubVLA or a hand-written controller
 never count) AND its own records show the VLA SERVER answered and its steps
-were flown (vla_evidence). `todo.py sync` writes that into the file, with the
-run as its proof.
+were flown (vla_evidence): enough answers and ticks, at least half of the
+requests answered and of the loop ticks flown by the VLA, and the model the
+server reported is the one the manifest configured (evidence_problem).
+`todo.py sync` writes that into the file, with the run as its proof.
 
 Nothing here reads or writes the tracker's board (tracker/data/state.json).
 """
@@ -119,7 +121,41 @@ VLA_STEPS_SCHEMA = "vla_steps/1"             # guardrail/vla_link.py VLA_STEPS_S
 # connection that answered a few times, not a flight the VLA flew.
 MIN_VLA_DECISIONS = 10
 MIN_VLA_STEP_TICKS = 10
+# SHARES, NOT ONLY COUNTS (review of d180e01, P3). The two floors above are
+# absolute over the whole run: a server that answered ten times and then died
+# left ten accepted decisions with one vla_step tick each and 1150
+# link_failure rows (about 115 s of hover), and the run classified as the
+# VLA's flight, became last_vla_flight and would have closed VLA-05. A VLA
+# flight now also needs the VLA to have answered most of what it was asked,
+# and to have authored most of the mission's loop:
+#   decision share = decisions / requests, the requests being the decisions
+#     plus the answers without a usable digest, the parse failures, the
+#     server errors and the link failures. A request the TRACKER refused
+#     (stale on arrival, during a rail hold) is the guardrail's doing, not a
+#     failure of the VLA, and is left out of both sides.
+#   tick share = loop ticks the VLA authored (VLA_AUTHORS: vla_step, and
+#     hold, its finished step held; guardrail/vla_link.py AUTHORS) / the
+#     mission's loop ticks, read in this order: the pilot's own
+#     ticks_by_author (one per act() call, hover and none included),
+#     metrics.json "ticks", kpi.json "ticks" (one per flight-log row,
+#     guardrail/kpi.py), else the time vla_steps.jsonl's rows span at
+#     LOOP_HZ (an under-count: ticks before the first request are not in it).
+#     No mission length at all is "mission_ticks_unknown", never a pass.
+# One half each is a judgement, not a grant number: pipelined decisions every
+# ~0.35 s supersede each other, so a run the VLA flew has nearly every tick
+# authored by it, and a run that is mostly hover or guardrail hold is not one
+# the VLA flew, whatever it did in its first seconds.
+MIN_DECISION_SHARE = 0.5
+MIN_VLA_TICK_SHARE = 0.5
+VLA_AUTHORS = ("vla_step", "hold")
+LOOP_HZ = 10.0                              # the rails' loop (perception_node TICK = 0.1 s)
 _HEX64 = re.compile(r"[0-9a-f]{64}")
+# guardrail/manifest.py resolve_vla_hash (wave V1a): the pilot side's own
+# verdict that the server ran other bytes than the ones it holds under that id,
+# and the source that says its local digest equalled the server's report.
+REPORTED_DIGEST_MISMATCH = "reported-digest-mismatch"
+REPORTED_AGREES = "local; reported agrees"
+_MANIFEST_DIGEST = re.compile(r"@sha256:([0-9a-f]{64})$")
 
 
 def _count(x) -> int | None:
@@ -133,11 +169,16 @@ def weights_digest_ok(d) -> bool:
     return isinstance(d, str) and bool(_HEX64.fullmatch(d)) and len(set(d)) > 1
 
 
+def _num(x) -> float | None:
+    return float(x) if isinstance(x, (int, float)) and not isinstance(x, bool) else None
+
+
 def _evidence_from_steps(path: Path) -> dict:
     ev = {"source": "vla_steps.jsonl", "rows": 0, "bad_lines": 0, "scripted": 0, "decisions": 0,
-          "vla_step_ticks": 0, "no_digest": 0, "parse_fail": 0, "server_error": 0,
+          "vla_step_ticks": 0, "vla_ticks": 0, "no_digest": 0, "parse_fail": 0, "server_error": 0,
           "link_failure": 0, "refused": 0}
     digests, ids = set(), set()
+    t_lo = t_hi = None
     try:
         fh = path.open(encoding="utf-8", errors="replace")
     except OSError:
@@ -160,6 +201,15 @@ def _evidence_from_steps(path: Path) -> dict:
                 # tests), no server ever answered it
                 ev["scripted"] += 1
                 continue
+            # the time this request's row covers, for the mission length when
+            # no other record gives it (MIN_VLA_TICK_SHARE above)
+            out = rec.get("outcome") if isinstance(rec.get("outcome"), dict) else {}
+            for t in (rec.get("t_capture"), rec.get("t_sent"), rec.get("t_received"),
+                      out.get("t_start"), out.get("t_end")):
+                t = _num(t)
+                if t is not None:
+                    t_lo = t if t_lo is None else min(t_lo, t)
+                    t_hi = t if t_hi is None else max(t_hi, t)
             if kind in ("parse_fail", "server_error", "link_failure"):
                 ev[kind] += 1
             if rec.get("accepted") is not True:
@@ -175,53 +225,103 @@ def _evidence_from_steps(path: Path) -> dict:
             ev["decisions"] += 1
             digests.add(model["weights_sha256"])
             ids.add(str(model.get("id") or ""))
-            out = rec.get("outcome") if isinstance(rec.get("outcome"), dict) else {}
             ticks = out.get("ticks") if isinstance(out.get("ticks"), dict) else {}
             ev["vla_step_ticks"] += _count(ticks.get("vla_step")) or 0
+            ev["vla_ticks"] += sum(_count(ticks.get(a)) or 0 for a in VLA_AUTHORS)
     ev["digests"] = sorted(digests)
     ev["model_ids"] = sorted(ids)
+    ev["span_s"] = round(t_hi - t_lo, 3) if t_lo is not None and t_hi > t_lo else None
     return ev
 
 
-def _evidence_from_metrics(metrics: dict) -> dict | None:
+def _pilot_stats(metrics) -> tuple[str | None, dict | None]:
+    """("pilot/vla" or "pilot", the RemoteVLABackend.stats() block) of a
+    metrics.json, or (None, None)."""
     pilot = metrics.get("pilot") if isinstance(metrics, dict) else None
-    if not isinstance(pilot, dict):
+    if isinstance(pilot, dict):
+        for key, st in (("pilot/vla", pilot.get("vla")), ("pilot", pilot)):
+            if isinstance(st, dict) and "decisions_accepted" in st:
+                return key, st
+    return None, None
+
+
+def _evidence_from_metrics(metrics: dict) -> dict | None:
+    key, st = _pilot_stats(metrics)
+    if st is None:
         return None
-    for key, st in (("pilot/vla", pilot.get("vla")), ("pilot", pilot)):
-        if isinstance(st, dict) and "decisions_accepted" in st:
-            ident = st.get("identity") if isinstance(st.get("identity"), dict) else {}
-            digest = ident.get("weights_sha256")
-            by = st.get("ticks_by_author") if isinstance(st.get("ticks_by_author"), dict) else {}
-            n = _count(st.get("decisions_accepted")) or 0
-            ok = weights_digest_ok(digest)
-            return {"source": f"metrics.json#/{key}", "decisions": n if ok else 0,
-                    "no_digest": 0 if ok else n, "vla_step_ticks": _count(by.get("vla_step")) or 0,
-                    "digests": [digest] if ok else [], "model_ids": [str(ident.get("id") or "")] if ok else [],
-                    "parse_fail": _count(st.get("parse_fail")) or 0,
-                    "server_error": _count(st.get("server_error")) or 0,
-                    "link_failure": _count(st.get("link_failure")) or 0}
-    return None
+    ident = st.get("identity") if isinstance(st.get("identity"), dict) else {}
+    digest = ident.get("weights_sha256")
+    by = st.get("ticks_by_author") if isinstance(st.get("ticks_by_author"), dict) else {}
+    n = _count(st.get("decisions_accepted")) or 0
+    ok = weights_digest_ok(digest)
+    return {"source": f"metrics.json#/{key}", "decisions": n if ok else 0,
+            "no_digest": 0 if ok else n, "vla_step_ticks": _count(by.get("vla_step")) or 0,
+            "vla_ticks": sum(_count(by.get(a)) or 0 for a in VLA_AUTHORS),
+            "digests": [digest] if ok else [], "model_ids": [str(ident.get("id") or "")] if ok else [],
+            "parse_fail": _count(st.get("parse_fail")) or 0,
+            "server_error": _count(st.get("server_error")) or 0,
+            "link_failure": _count(st.get("link_failure")) or 0}
 
 
-def vla_evidence(run: Path, metrics: dict | None = None) -> dict:
+def _read_json(p: Path):
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _shares(ev: dict, metrics, kpi) -> None:
+    """The decision share and the tick share (MIN_DECISION_SHARE above), with
+    the mission length's source, into `ev`."""
+    req = sum(ev.get(k) or 0 for k in ("decisions", "no_digest", "parse_fail", "server_error", "link_failure"))
+    ev["requests"] = req
+    ev["decision_share"] = round(ev["decisions"] / req, 4) if req else None
+    n = src = None
+    key, st = _pilot_stats(metrics)
+    by = st.get("ticks_by_author") if st is not None and isinstance(st.get("ticks_by_author"), dict) else {}
+    tot = sum(_count(v) or 0 for v in by.values())
+    if tot > 0:
+        n, src = tot, f"metrics.json#/{key}/ticks_by_author"
+    for name, doc in (("metrics.json#/ticks", metrics), ("kpi.json#/ticks", kpi)):
+        if n is None and isinstance(doc, dict) and (_count(doc.get("ticks")) or 0) > 0:
+            n, src = doc["ticks"], name
+    if n is None and ev.get("span_s"):
+        n, src = max(1, round(ev["span_s"] * LOOP_HZ)), f"vla_steps.jsonl time span x {LOOP_HZ:g} Hz"
+    ev["mission_ticks"], ev["mission_ticks_source"] = n, src
+    ev["vla_tick_share"] = round(min(1.0, (ev.get("vla_ticks") or 0) / n), 4) if n else None
+
+
+def vla_evidence(run: Path, metrics: dict | None = None, kpi: dict | None = None) -> dict:
     """What the VLA SERVER returned during this run, from the run's own
     records (vla_steps.jsonl first, else metrics.json's pilot block; the
     block above). `decisions` counts answers the model parsed (a step or
     LAND) that the tracker accepted and that carry a real weights digest;
-    `weights_sha256` / `model_id` are set only when exactly one was seen.
+    `weights_sha256` / `model_id` are set only when exactly one was seen;
+    `decision_share` / `vla_tick_share` are the shares MIN_DECISION_SHARE /
+    MIN_VLA_TICK_SHARE judge (None when there is nothing to divide by);
+    `pilot_agreed_digest` is the server digest the pilot side recorded its
+    own local digest agreeing with (metrics.json pilot record), if any.
     Never raises; a run with neither record has source None."""
     ev = None
     try:
-        p = Path(run) / "vla_steps.jsonl"
+        run = Path(run)
+        if metrics is None:
+            metrics = _read_json(run / "metrics.json")
+        if kpi is None:
+            kpi = _read_json(run / "kpi.json")
+        metrics = metrics if isinstance(metrics, dict) else None
+        kpi = kpi if isinstance(kpi, dict) else None
+        p = run / "vla_steps.jsonl"
         if p.is_file():
             ev = _evidence_from_steps(p)
-        else:
-            if metrics is None:
-                try:
-                    metrics = json.loads((Path(run) / "metrics.json").read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    metrics = None
-            ev = _evidence_from_metrics(metrics) if isinstance(metrics, dict) else None
+        elif metrics is not None:
+            ev = _evidence_from_metrics(metrics)
+        if ev is not None:
+            _shares(ev, metrics, kpi)
+            pilot = (metrics or {}).get("pilot")
+            if (isinstance(pilot, dict) and pilot.get("hash_source") == REPORTED_AGREES
+                    and weights_digest_ok(pilot.get("reported_digest"))):
+                ev["pilot_agreed_digest"] = pilot["reported_digest"]
     except Exception:                                        # noqa: BLE001 - evidence never breaks a build
         ev = None
     ev = ev or {"source": None, "decisions": 0, "vla_step_ticks": 0, "digests": [], "model_ids": []}
@@ -230,9 +330,46 @@ def vla_evidence(run: Path, metrics: dict | None = None) -> dict:
     return ev
 
 
-def evidence_problem(ev: dict) -> str | None:
+def vla_family(model_id) -> str | None:
+    """"aerialvla" (the AerialVLA adapter, on whatever base), "openvla" (the
+    OpenVLA base alone) or None. AerialVLA is checked first: its ids name
+    the base as well ("aerialvla:openvla-7b+aero_vla")."""
+    s = str(model_id or "").split("@", 1)[0]
+    if VLA_ALLOW[1].search(s) or VLA_ALLOW[2].search(s):
+        return "aerialvla"
+    return "openvla" if VLA_ALLOW[0].search(s) else None
+
+
+def server_model_problem(vla_model_hash, ev: dict) -> str | None:
+    """Why the model the server reported is not the one the manifest
+    configured, or None (review of d180e01, P7: classify_run took any
+    allow-listed model the server reported, so a run configured as AerialVLA
+    and served by the bare OpenVLA base, or by a run1-3 fine-tune - other
+    AerialVLA weights - counted as that VLA flight). Both the manifest's
+    digest and the server's weights_sha256 are guardrail/manifest.py
+    weights_digest over the base shards + adapter (demo/vla_server_v2.py), so
+    the same weights give the same 64 hex, except for an id that resolves a
+    HuggingFace snapshot, whose local hash mixes the revision in: that run
+    passes on the pilot side's own record that its local digest equalled the
+    server's report (resolve_vla_hash "local; reported agrees")."""
+    h = str(vla_model_hash or "").strip()
+    if REPORTED_DIGEST_MISMATCH in h:
+        return "server_model_differs:the pilot side recorded a reported-digest mismatch"
+    want, got = vla_family(h), vla_family(ev.get("model_id"))
+    if want != got:
+        return f"server_model_differs:configured {want}, server {got}"
+    m = _MANIFEST_DIGEST.search(h)
+    served = ev.get("weights_sha256")
+    if m and served and m.group(1) != served and ev.get("pilot_agreed_digest") != served:
+        return f"server_model_differs:weights {served[:12]} not the configured {m.group(1)[:12]}"
+    return None
+
+
+def evidence_problem(ev: dict, vla_model_hash=None) -> str | None:
     """Why this evidence does not show a VLA flying, as a reason code (with
-    a count after ':' where one helps), or None."""
+    a count, a share or a detail after ':' where one helps), or None. With
+    `vla_model_hash`, the server's model must also be the configured one
+    (server_model_problem)."""
     if not ev or ev.get("source") is None:
         return "no_records"
     n = ev.get("decisions") or 0
@@ -242,10 +379,21 @@ def evidence_problem(ev: dict) -> str | None:
         return f"several_weights_digests:{len(ev['digests'])}"
     if len(ev.get("model_ids") or []) != 1 or classify_pilot(ev["model_ids"][0]) != "vla":
         return "model_not_a_vla:" + ",".join(m.split("@", 1)[0][:40] for m in ev.get("model_ids") or [])
+    if vla_model_hash is not None:
+        why = server_model_problem(vla_model_hash, ev)
+        if why is not None:
+            return why
     if n < MIN_VLA_DECISIONS:
         return f"too_few_decisions:{n}"
+    share = ev.get("decision_share")
+    if share is None or share < MIN_DECISION_SHARE:
+        return f"decision_share_low:{n}/{ev.get('requests')}"
     if (ev.get("vla_step_ticks") or 0) < MIN_VLA_STEP_TICKS:
         return f"too_few_vla_step_ticks:{ev.get('vla_step_ticks') or 0}"
+    if ev.get("mission_ticks") is None:
+        return "mission_ticks_unknown"
+    if (ev.get("vla_tick_share") or 0.0) < MIN_VLA_TICK_SHARE:
+        return f"vla_tick_share_low:{ev.get('vla_ticks') or 0}/{ev['mission_ticks']}"
     return None
 
 
@@ -254,12 +402,14 @@ def classify_run(vla_model_hash, evidence: dict | None) -> tuple[str, str | None
     the rail's claim (its manifest names a real VLA: classify_pilot) and the
     server's evidence (evidence_problem is None): records without the claim
     may be a VLA run in the shadow of another controller, a claim without
-    records is a VLA nobody heard from. A configured VLA without the
-    evidence is "vla_unverified"; every other class is classify_pilot's."""
+    records is a VLA nobody heard from, and a server that served another
+    model than the configured one did not fly the configured VLA. A
+    configured VLA without the evidence is "vla_unverified"; every other
+    class is classify_pilot's."""
     configured = classify_pilot(vla_model_hash)
     if configured != "vla":
         return configured, None
-    why = evidence_problem(evidence or {})
+    why = evidence_problem(evidence or {}, vla_model_hash)
     return ("vla", None) if why is None else ("vla_unverified", why)
 
 

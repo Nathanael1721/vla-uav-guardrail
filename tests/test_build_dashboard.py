@@ -18,7 +18,9 @@ written. Pinned, each because the opposite already happened in this project:
   vla_model_hash is never a VLA flight (65 of the 99 real manifests name the
   detector); a set-aside "_" folder is skipped; a manifest that names a VLA
   is one only with the server's answers in the run's own records
-  (vla_steps.jsonl), else "vla_unverified" (review of 8035d0a, P2);
+  (vla_steps.jsonl), else "vla_unverified" (review of 8035d0a, P2), and so
+  is a VLA that answered ten times and died (review of d180e01, P3: the
+  shares, with its link failures and server errors on last_vla_flight);
 - KPI-grade is recomputed from the topology: a stored kpi_grade: true on a
   "canonical-hil" run is reported as not KPI-grade (5 real kpi.json files say
   true; the 6 Oct rollup counts 0);
@@ -142,13 +144,17 @@ class Fixture:
              videos=("pas_x_off_20261021_demo.mp4",), when=t0 + 300)
         _run(r, "_set_aside", "openvla/openvla-7b@47a0ec7f", "hil", when=t0 + 400)
         (r / "demo" / "out" / "pas_x_compare_20261021_phone.mp4").write_bytes(b"\x00" * 64)
+        # A VLA run's manifest digest is the server's weights_sha256 (both are
+        # guardrail/manifest.py weights_digest over base shards + adapter;
+        # review of d180e01, P7), and its 24 decisions of 8 vla_step ticks
+        # fly most of a 200-tick mission (P3: the share, not only the count).
         if self.with_vla:
-            _run(r, "vla_goto_20261101", "aerialvla:openvla-7b+aero_vla@sha256:" + "c" * 64, "hil",
-                 kpi={"ticks": 600}, metrics={"shield": "on"}, when=t0 + 500, steps=vla_steps())
+            _run(r, "vla_goto_20261101", "aerialvla:openvla-7b+aero_vla@sha256:" + "3f" * 32, "hil",
+                 kpi={"ticks": 200}, metrics={"shield": "on"}, when=t0 + 500, steps=vla_steps())
         if self.vla_configured_only:
             # Configured with AerialVLA, a server that never answered: the
             # manifest names the VLA, the run has no record of an answer.
-            _run(r, "vla_dead_20261102", "aerialvla:openvla-7b+aero_vla@sha256:" + "c" * 64, "hil",
+            _run(r, "vla_dead_20261102", "aerialvla:openvla-7b+aero_vla@sha256:" + "3f" * 32, "hil",
                  kpi={"ticks": 600}, metrics={"shield": "on"}, when=t0 + 600)
         dd = r / "docs" / "data"
         _w(dd / "scenario_sweep.json", {
@@ -407,12 +413,56 @@ def test_a_configured_vla_without_the_servers_answers_is_not_a_vla_flight():
         assert it["VLA-05"]["status_effective"] == "open" and it["VLA-05"]["auto_evidence"] is None
         assert all(d["vla"] == 0 for d in doc["timeline"]["flights"])
         # the server's answers arrive in the run folder: now it is a VLA flight
-        _w(f.root / "demo" / "out" / "vla_dead_20261102" / "vla_steps.jsonl", vla_steps())
+        # (75 decisions of 8 vla_step ticks: the VLA flew the 600-tick mission)
+        _w(f.root / "demo" / "out" / "vla_dead_20261102" / "vla_steps.jsonl", vla_steps(n=75))
         doc = f.build()
         assert doc["vla"]["counts"]["vla"] == 1 and doc["vla"]["last_vla_flight"]["tag"] == "vla_dead_20261102"
         assert {i["id"]: i for i in doc["todo"]["items"]}["VLA-05"]["status_effective"] == "done"
         # and the run's records are an input of the build (a new line makes it stale)
         assert any(p.name == "vla_steps.jsonl" for p in BD.inputs(f.P))
+
+
+def test_a_vla_that_died_early_is_unverified_and_the_page_shows_its_failures():
+    """Review of d180e01 (P3). Ten accepted decisions with one vla_step
+    tick each, then 1150 link failures (about 115 s of hover): the absolute
+    floors passed, the run became last_vla_flight and closed VLA-05, and
+    the page's evidence line showed only the decision count and the digest.
+    Now the run is "vla_unverified" (decision share 10/1160), and the VLA
+    flight that does count carries its requests, both shares, its link
+    failures, server errors and parse failures to last_vla_flight, and the
+    page's evidence string has a slot for each in every language."""
+    def dying():
+        rows = [json.loads(l) for l in vla_steps(n=10, vla_ticks=1).splitlines()]
+        rows += [{"schema": "vla_steps/1", "seq": 10 + i, "kind": "link_failure",
+                  "t_sent": 2000.0 + 0.1 * i, "t_received": 2000.1 + 0.1 * i} for i in range(1150)]
+        return "".join(json.dumps(r) + "\n" for r in rows)
+    with Fixture(with_vla=True) as f:
+        _run(f.root, "vla_died_20261103", "aerialvla:openvla-7b+aero_vla@sha256:" + "3f" * 32, "hil",
+             kpi={"ticks": 1160}, metrics={"shield": "on"}, when=time.time() - 86400, steps=dying())
+        doc = f.build()
+        p = flight(doc, "vla_died_20261103")["pilot"]
+        assert p["class"] == "vla_unverified" and p["unverified_reason"].startswith("decision_share_low"), p
+        assert p["evidence"]["link_failure"] == 1150 and p["evidence"]["decision_share"] < 0.01, p["evidence"]
+        assert doc["vla"]["counts"]["vla"] == 1 and doc["vla"]["last_vla_flight"]["tag"] == "vla_goto_20261101"
+        last = doc["vla"]["last_vla_flight"]
+        for k in ("requests", "decision_share", "vla_tick_share", "link_failure", "server_error", "parse_fail"):
+            assert k in last, (k, last)
+        assert last["decision_share"] == 1.0 and last["vla_tick_share"] == 0.96 and last["link_failure"] == 0, last
+        ev = flight(doc, "vla_goto_20261101")["pilot"]["evidence"]
+        assert ev["mission_ticks"] == 200 and ev["mission_ticks_source"] == "demo/out/vla_goto_20261101/kpi.json#/ticks"
+        assert resolve(f.root, ev["mission_ticks_source"]) == 200
+        rule = doc["vla"]["evidence_rule"]
+        assert rule["min_decision_share"] == 0.5 and rule["min_vla_tick_share"] == 0.5, rule
+    i18n = (ROOT / "tracker" / "assets" / "i18n.js").read_text(encoding="utf-8")
+    lines = [l for l in i18n.splitlines() if l.strip().startswith("vla_evidence:")]
+    assert len(lines) == 3, lines
+    for l in lines:
+        for slot in ("{n}", "{r}", "{ds}", "{ts}", "{lf}", "{se}", "{pf}", "{w}"):
+            assert slot in l, (slot, l)
+    app = (ROOT / "tracker" / "assets" / "app.js").read_text(encoding="utf-8")
+    call = app[app.index('tf("vla_evidence"'):][:400]
+    for key in ("r:", "ds:", "ts:", "lf:", "se:", "pf:"):
+        assert key in call, (key, call)
 
 
 def test_a_stored_kpi_grade_on_canonical_hil_is_not_kpi_grade():
