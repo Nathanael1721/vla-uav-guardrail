@@ -537,13 +537,23 @@ def test_bc_v3_is_measured_on_the_cpu_only():
 # --------------------------------------------------------------------------- #
 # the AerialVLA serving configurations (wave V1, 2026-10-21)
 # --------------------------------------------------------------------------- #
-def _bench(precision, attn, merged, p50, vram, parse_fail=0, bins=(96, 48, 49)):
+def _bench(precision, attn, merged, p50, vram, parse_fail=0, bins=(96, 48, 49),
+           smi_after=9000, smi_before=None, reserved=None, load=None):
     outs = [{"frame": f, "phrase": p, "raw_text": "x", "parse_ok": True, "bins": list(bins),
              "land": False} for f in ("a.png", "b.png") for p in ("", "straight ahead ")]
+    v = {"inference_peak_allocated_gb": vram, "load_peak_allocated_gb": vram + 1,
+         "nvidia_smi_used_mib_after_timed": smi_after}
+    if smi_before is not None:
+        v.update(nvidia_smi_used_mib_before_load=smi_before,
+                 process_delta_mib=smi_after - smi_before)
+    if reserved is not None:
+        v["inference_peak_reserved_gb"] = reserved
     return {"config": {"precision": precision, "attn": attn, "merged": merged},
             "identity": {"id": "aerialvla-lora/aero_vla@196f2f32", "base": "openvla-7b@47a0ec7f",
                          "weights_sha256": "ab" * 32},
-            "facts": {"load": {"load_total_s": 60.0}, "libraries": {"torch": "2.6.0"},
+            "created_utc": "2026-10-21T13:40:47Z",
+            "facts": {"load": {"load_total_s": 60.0} if load is None else load,
+                      "libraries": {"torch": "2.6.0"},
                       "host": {"host_arch": "AMD64", "hostname": "lab-desk-42"}},
             "warmup": 5, "timed": 50,
             "stats_latency": {"n": 50, "p50_ms": p50, "p95_ms": p50 * 1.1, "max_ms": p50 * 1.2,
@@ -552,33 +562,89 @@ def _bench(precision, attn, merged, p50, vram, parse_fail=0, bins=(96, 48, 49)):
             "stats_probe_latency": {"p50_ms": p50, "p95_ms": p50 * 1.2},
             "new_tokens": [9], "parse_fail_timed": parse_fail, "parse_fail_probe": 0,
             "land_probe": 0, "probe_outputs": outs, "timed_outputs": outs[:2],
-            "vram": {"inference_peak_allocated_gb": vram, "load_peak_allocated_gb": vram + 1,
-                     "nvidia_smi_used_mib_after_timed": 9000}}
+            "vram": v}
 
 
-def test_the_serving_default_follows_the_fixed_rule_not_the_fastest_row():
-    benches = [_bench("bf16", "eager", False, 400.0, 15.5),            # the reference
-               _bench("bf16", "sdpa", True, 300.0, 15.6),              # fastest, too big
-               _bench("nf4", "sdpa", True, 520.0, 5.0, bins=(95, 48, 49)),
-               _bench("nf4", "eager", False, 450.0, 5.5, parse_fail=1),  # a parse failure
-               _bench("nf4", "eager", True, 1300.0, 5.0)]              # misses the gate
+def test_the_low_vram_option_follows_the_fixed_rule_and_nothing_is_a_default():
+    """Decided 2026-10-22 (review of V1a): bf16 reproduces the reference,
+    nf4 agrees on only 25-33 %, so the summary names OPTIONS - the low-VRAM
+    row by a rule fixed here, the row closest to the reference, the fastest -
+    and records that there is no default (the server refuses to load without
+    an explicit configuration); the CityLife VRAM measurement decides."""
+    benches = [_bench("bf16", "eager", False, 400.0, 15.5, smi_before=3000, smi_after=19400),
+               _bench("bf16", "sdpa", False, 380.0, 15.5, smi_before=3000, smi_after=19400),
+               _bench("bf16", "sdpa", True, 300.0, 15.6, bins=(96, 48, 50),  # fastest, too big
+                      smi_before=3000, smi_after=19000),
+               _bench("nf4", "sdpa", True, 520.0, 5.0, bins=(95, 48, 49),
+                      smi_before=3000, smi_after=10500),
+               _bench("nf4", "eager", False, 450.0, 5.5, parse_fail=1,       # a parse failure
+                      smi_before=3000, smi_after=10000),
+               _bench("nf4", "eager", True, 1300.0, 5.0,                     # misses the gate
+                      smi_before=3000, smi_after=10500)]
     s = V.summarise_serving(benches, vram_budget_gb=10.0)
     assert s["schema"] == V.SERVING_SCHEMA and s["gate_p50_ms"] == 1000.0
     # The committed summary describes the host by hardware, not by its name.
     assert s["host"]["host"] == {"host_arch": "AMD64"} and "lab-desk-42" not in json.dumps(s)
-    assert s["fastest"] == "bf16/sdpa/merged" and s["recommended"] == "nf4/sdpa/merged", s
-    assert s["recommended_config"] == {"precision": "nf4", "attn": "sdpa", "merged": True}
+    assert s["fastest"] == "bf16/sdpa/merged" and s["low_vram"] == "nf4/sdpa/merged", s
+    assert s["low_vram_config"] == {"precision": "nf4", "attn": "sdpa", "merged": True}
+    assert s["fidelity"] == "bf16/sdpa/unmerged", s      # the reference itself is not an option
+    assert s["default"] is None and "recommended" not in s and "recommended_config" not in s
+    assert "CityLife" in s["choice"] and "--precision" in s["choice"]
+    assert s["measured_utc"] == ["2026-10-21T13:40:47Z", "2026-10-21T13:40:47Z"]
     rows = {V._cfg_name(c): c for c in s["configs"]}
     assert rows["nf4/eager/merged"]["meets_gate"] is False
-    assert rows["bf16/sdpa/merged"]["agreement_probe"] == {"n": 4, "exact": 1.0, "close": 1.0}
+    assert rows["bf16/sdpa/unmerged"]["agreement_probe"] == {"n": 4, "exact": 1.0, "close": 1.0}
     nf4 = rows["nf4/sdpa/merged"]["agreement_probe"]
     assert nf4["exact"] == 0.0 and nf4["close"] == 1.0, nf4        # one forward bin off
-    assert V.summarise_serving(benches, vram_budget_gb=4.0)["recommended"] is None
+    assert V.summarise_serving(benches, vram_budget_gb=4.0)["low_vram"] is None
     md = "\n".join(V.render_serving(s))
-    assert "| nf4 | sdpa | merged | 520 |" in md and "Recommended serving default:** nf4/sdpa/merged" in md
-    assert "not the project's default backend" in md
+    assert "| nf4 | sdpa | merged | 520 |" in md and "No serving default." in md, md
+    assert "Low-VRAM option:** nf4/sdpa/merged" in md and "allocated by torch" in md
+    assert "Recommended" not in md and "not the project's default backend" in md
     cell = V.serving_r1_cell(s)
     assert cell.startswith("R1 via demo/vla_server_v2.py, nf4/sdpa/merged") and "p50 520 ms" in cell
+    assert "low-VRAM option" in cell and "default" in cell and "0% of" in cell, cell
+
+
+def test_the_vram_budget_is_applied_to_what_the_process_holds_not_to_torch_allocated():
+    """Review of V1a (P5): the budget rule compared torch's
+    max_memory_allocated, which leaves out the allocator cache and the CUDA
+    context. On the RTX 4090 the nf4 merged process took about 7.9 GB by
+    nvidia-smi (desktop subtracted) against the 5.4 GB reported. The rule
+    now reads the process: nvidia-smi after minus before the load when the
+    bench recorded both, else the card minus a declared desktop baseline,
+    else torch's reserved peak; with none of them the row is not eligible.
+    And a missing load time is None, not 0.0."""
+    MIB = 1048576 / 1e9
+    tight = [_bench("bf16", "eager", False, 400.0, 15.5, smi_before=3000, smi_after=19400),
+             # 5.0 GB allocated, but the process holds (9900 - 3000) MiB = 7.24 GB
+             _bench("nf4", "sdpa", True, 520.0, 5.0, smi_before=3000, smi_after=9900)]
+    s = V.summarise_serving(tight, vram_budget_gb=6.0)
+    row = next(c for c in s["configs"] if V._cfg_name(c) == "nf4/sdpa/merged")
+    assert row["vram_process_gb"] == round(6900 * MIB, 2) and "before the load" in \
+        row["vram_process_basis"], row
+    assert s["low_vram"] is None, "the budget was applied to torch's allocated peak"
+    assert V.summarise_serving(tight, vram_budget_gb=8.0)["low_vram"] == "nf4/sdpa/merged"
+    # a bench without a per-run baseline: the declared desktop baseline (GB)
+    legacy = [_bench("nf4", "sdpa", True, 520.0, 5.0, smi_after=10760)]
+    s2 = V.summarise_serving(legacy, vram_budget_gb=10.0, desktop_baseline_gb=3.4)
+    r2 = s2["configs"][0]
+    assert r2["vram_process_gb"] == round(10760 * MIB - 3.4, 2) and "3.4 GB" in \
+        r2["vram_process_basis"], r2
+    assert s2["desktop_baseline_gb"] == 3.4
+    # torch's reserved peak, a lower bound, when nvidia-smi is missing
+    r3 = V.summarise_serving([_bench("nf4", "sdpa", True, 520.0, 5.0, smi_after=None,
+                                     reserved=5.9)], vram_budget_gb=10.0)["configs"][0]
+    assert r3["vram_process_gb"] == 5.9 and "reserved" in r3["vram_process_basis"], r3
+    # nothing but the allocated peak: not measured, not eligible
+    s4 = V.summarise_serving([_bench("nf4", "sdpa", True, 520.0, 5.0, smi_after=None)],
+                             vram_budget_gb=10.0)
+    assert s4["configs"][0]["vram_process_gb"] is None and s4["low_vram"] is None
+    assert s4["configs"][0]["vram_inference_peak_reserved_gb"] is None
+    # a missing load time is unknown, not instantaneous
+    s5 = V.summarise_serving([_bench("nf4", "sdpa", True, 520.0, 5.0, load={"merge_s": 6.0})],
+                             vram_budget_gb=10.0)
+    assert s5["configs"][0]["load_s"] is None, s5["configs"][0]
 
 
 def test_the_serving_section_reaches_the_table_only_when_it_exists():
@@ -587,8 +653,9 @@ def test_the_serving_section_reaches_the_table_only_when_it_exists():
     t = V.build_table(demo_out=empty, experiments_out=empty, model_root=empty, evidence=empty,
                       serving_json=side)
     assert t["aerialvla_serving"] is None and "AerialVLA serving" not in V.render_markdown(t)
-    s = V.summarise_serving([_bench("bf16", "eager", False, 400.0, 15.5),
-                             _bench("nf4", "sdpa", True, 520.0, 5.0)], vram_budget_gb=10.0)
+    s = V.summarise_serving([_bench("bf16", "eager", False, 400.0, 15.5, smi_before=3000),
+                             _bench("nf4", "sdpa", True, 520.0, 5.0, smi_before=3000)],
+                            vram_budget_gb=10.0)
     side.write_text(json.dumps(s), encoding="utf-8")
     t = V.build_table(demo_out=empty, experiments_out=empty, model_root=empty, evidence=empty,
                       serving_json=side)

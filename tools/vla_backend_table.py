@@ -6,9 +6,11 @@
     python tools/vla_backend_table.py measure --backend bc_v3 --topology dev
     python tools/vla_backend_table.py measure --backend aerialvla_ft_run2 \
         --allow-gpu --model-root /models --topology hil           # on the Jetson Orin
-    python tools/vla_backend_table.py serving --bench <bench JSONs> --vram-budget-gb 10
+    python tools/vla_backend_table.py serving --bench <bench JSONs> --vram-budget-gb 10 \
+        [--desktop-baseline-gb 3.4]   # for benches without a per-run reading before the load
         # AerialVLA serving configurations (demo/vla_server_v2.py bench), added to
-        # docs/data/aerialvla_serving_4090.json and to the committed table
+        # docs/data/aerialvla_serving_4090.json and to the committed table; options,
+        # no default
 
 WHY THIS EXISTS
 
@@ -208,10 +210,27 @@ CPU_BACKENDS = ("stub", "bc_v3")
 # into SERVING_JSON. The gate is the build plan's: p50 <= 1.0 s standalone
 # (vla-assets discovery report, section 7 step 0). The reference for output
 # fidelity is upstream's precision, unmerged: bf16 + eager, no merge.
+#
+# NO SERVING DEFAULT (decided 2026-10-22, review of V1a). The summary used to
+# name a "recommended" row - the lowest p50 within a VRAM budget, which was
+# nf4/sdpa/merged - and the server took it as its CLI default. But the
+# precision changes what the model says (bf16 reproduces the reference on
+# 88-96 % of the probe, nf4 on 25-33 %), so the summary now names OPTIONS: the
+# low-VRAM row (same fixed rule, applied to what the PROCESS holds), the row
+# closest to the reference, the fastest. demo/vla_server_v2.py refuses to load
+# a model without an explicit configuration; the CityLife VRAM measurement
+# (next wave) decides which flies.
 SERVING_JSON = ROOT / "docs" / "data" / "aerialvla_serving_4090.json"
 SERVING_SCHEMA = "vlaguard.aerialvla_serving/1"
 SERVING_GATE_P50_MS = 1000.0
 SERVING_REFERENCE = {"precision": "bf16", "attn": "eager", "merged": False}
+SERVING_CHOICE = (
+    "demo/vla_server_v2.py refuses to load the model until --precision, "
+    "--attn and --merge/--no-merge are all given, and every response's identity carries the "
+    "chosen configuration's agreement with the reference. Which configuration flies is decided "
+    "by measuring CityLife's own VRAM beside the model (next wave): the bf16 rows fit only if "
+    "the renderer and OWL-ViT leave about 17 GB of the 24 GB card free.")
+_MIB_GB = 1048576 / 1e9        # nvidia-smi reports MiB; the table's GB are 1e9 bytes
 
 # The assisted evaluation behind the retracted row, its null (the adapter
 # before fine-tuning, same assist), and the unassisted runs of both. Read from
@@ -881,20 +900,50 @@ def _agreement(outs: list[dict], ref: dict[tuple, tuple]) -> dict:
             "close": round(sum(close(a, b) for a, b in pairs) / len(pairs), 3)}
 
 
+def _process_vram(v: dict, desktop_baseline_gb: float | None) -> tuple[float | None, str]:
+    """(GB the model's process holds on the card, how that was read). The
+    budget rule reads this, not torch's allocated peak, which leaves out the
+    allocator's cache and the CUDA context (review of V1a, P5: 5.4 GB
+    allocated against about 7.9 GB held, nf4 merged). Best basis first:
+    nvidia-smi after the timed run minus before the load (one process per
+    bench); the card after the run minus a desktop baseline declared for the
+    whole summary (benches made before the per-run reading existed); torch's
+    reserved peak (the cache, no CUDA context: a lower bound); else None."""
+    after = v.get("nvidia_smi_used_mib_after_timed")
+    before = v.get("nvidia_smi_used_mib_before_load")
+    if after is not None and before is not None:
+        return (round((after - before) * _MIB_GB, 2),
+                "nvidia-smi after the timed run minus before the load")
+    if after is not None and desktop_baseline_gb is not None:
+        return (round(after * _MIB_GB - desktop_baseline_gb, 2),
+                f"nvidia-smi after the timed run minus the desktop's {desktop_baseline_gb:g} GB "
+                f"read once before the runs (not per run)")
+    if v.get("inference_peak_reserved_gb") is not None:
+        return (v["inference_peak_reserved_gb"],
+                "torch reserved peak (no CUDA context: a lower bound)")
+    return None, "not measured (torch allocated only)"
+
+
 def summarise_serving(benches: list[dict], vram_budget_gb: float,
                       roundtrip: dict | None = None,
-                      gate_p50_ms: float = SERVING_GATE_P50_MS) -> dict:
-    """The serving table from per-configuration bench results.
+                      gate_p50_ms: float = SERVING_GATE_P50_MS,
+                      desktop_baseline_gb: float | None = None) -> dict:
+    """The serving table from per-configuration bench results. There is NO
+    DEFAULT (see SERVING_CHOICE); three options are named, by rules fixed here
+    rather than chosen after the numbers:
 
-    RECOMMENDED DEFAULT, by a rule fixed here rather than chosen after the
-    numbers: the lowest p50 among the configurations that (1) meet the gate
-    (p50 <= gate_p50_ms), (2) produced no parse failure on the timed set, and
-    (3) peaked at or below `vram_budget_gb` during inference - the room the
-    model may take on the 24 GB card that Unreal (CityLife) and OWL-ViT share
-    in flight. Fidelity to the reference (bf16, unmerged) is reported beside
-    every row and is not a filter: the probe has 48 inputs and no ground
-    truth, so it says how far a configuration moves the outputs, not which
-    is right. The fastest configuration overall is reported too."""
+    LOW-VRAM OPTION: the lowest p50 among the configurations that (1) meet
+    the gate (p50 <= gate_p50_ms), (2) produced no parse failure on the
+    timed set, and (3) hold at most `vram_budget_gb` as a process
+    (_process_vram) - the room the model may take on the 24 GB card that
+    Unreal (CityLife) and OWL-ViT share in flight; the budget is an
+    assumption until CityLife's VRAM is measured.
+    FIDELITY OPTION: among the other configurations meeting (1) and (2), the
+    one whose probe outputs most often equal the reference's (exact, then
+    close, then p50). The probe has 48 inputs and no ground truth, so
+    agreement says how far a configuration moves the outputs from upstream's
+    precision, not which is right.
+    FASTEST: the lowest p50 overall."""
     rows = []
     ref_bench = next((b for b in benches if _cfg_key(b["config"]) == _cfg_key(SERVING_REFERENCE)),
                      None)
@@ -904,6 +953,7 @@ def summarise_serving(benches: list[dict], vram_budget_gb: float,
     for b in benches:
         s, cfg = b["stats_latency"], b["config"]
         load = (b.get("facts") or {}).get("load") or {}
+        proc_gb, proc_basis = _process_vram(b["vram"], desktop_baseline_gb)
         rows.append({
             "precision": cfg["precision"], "attn": cfg["attn"], "merged": bool(cfg["merged"]),
             "p50_ms": s.get("p50_ms"), "p95_ms": s.get("p95_ms"), "max_ms": s.get("max_ms"),
@@ -917,10 +967,15 @@ def summarise_serving(benches: list[dict], vram_budget_gb: float,
             "probe_n": len(b.get("probe_outputs") or []), "land_probe": b.get("land_probe"),
             "agreement_probe": _agreement(b.get("probe_outputs") or [], ref_probe),
             "agreement_timed": _agreement(b.get("timed_outputs") or [], ref_timed),
+            # torch's allocated peaks (the tensors only), kept under their old
+            # names; the column says "allocated by torch" since the review of V1a
             "vram_inference_peak_gb": b["vram"].get("inference_peak_allocated_gb"),
             "vram_load_peak_gb": b["vram"].get("load_peak_allocated_gb"),
+            "vram_inference_peak_reserved_gb": b["vram"].get("inference_peak_reserved_gb"),
             "nvidia_smi_used_mib": b["vram"].get("nvidia_smi_used_mib_after_timed"),
-            "load_s": round(load.get("load_total_s", 0.0), 1) if load else None,
+            "vram_process_gb": proc_gb, "vram_process_basis": proc_basis,
+            "load_s": (round(load["load_total_s"], 1)
+                       if load.get("load_total_s") is not None else None),
             "merge_s": round(load["merge_s"], 1) if load.get("merge_s") is not None else None,
             "meets_gate": s.get("p50_ms") is not None and s["p50_ms"] <= gate_p50_ms,
             "bench_created_utc": b.get("created_utc"),
@@ -928,15 +983,26 @@ def summarise_serving(benches: list[dict], vram_budget_gb: float,
                                "raw_text": o["raw_text"]} for o in b.get("probe_outputs") or []],
         })
     rows.sort(key=lambda r: (r["precision"], r["attn"], r["merged"]))
-    eligible = [r for r in rows if r["meets_gate"] and r["parse_fail_timed"] == 0
-                and r["vram_inference_peak_gb"] is not None
-                and r["vram_inference_peak_gb"] <= vram_budget_gb]
-    rec = min(eligible, key=lambda r: r["p50_ms"]) if eligible else None
+    usable = [r for r in rows if r["meets_gate"] and r["parse_fail_timed"] == 0]
+    small = [r for r in usable if r["vram_process_gb"] is not None
+             and r["vram_process_gb"] <= vram_budget_gb]
+    low = min(small, key=lambda r: r["p50_ms"]) if small else None
+    near = [r for r in usable if _cfg_key(r) != _cfg_key(SERVING_REFERENCE)
+            and r["agreement_probe"]["n"]]
+    fid = (min(near, key=lambda r: (-r["agreement_probe"]["exact"],
+                                    -r["agreement_probe"]["close"], r["p50_ms"]))
+           if near else None)
     fast = min(rows, key=lambda r: r["p50_ms"]) if rows else None
     first = benches[0] if benches else {}
+    measured = sorted(b["created_utc"] for b in benches if b.get("created_utc"))
+
+    def cfg(r):
+        return {k: r[k] for k in ("precision", "attn", "merged")} if r else None
     return {
         "schema": SERVING_SCHEMA,
         "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        # when the benches ran (first, last): created_utc is when they were summarised
+        "measured_utc": [measured[0], measured[-1]] if measured else None,
         "made_by": "python tools/vla_backend_table.py serving (from demo/vla_server_v2.py "
                    "bench, one process per configuration)",
         # The machine's name is left out: the other committed evidence files
@@ -968,27 +1034,37 @@ def summarise_serving(benches: list[dict], vram_budget_gb: float,
         "gate_p50_ms": gate_p50_ms,
         "reference": dict(SERVING_REFERENCE),
         "vram_budget_gb": vram_budget_gb,
-        "rule": "recommended = lowest p50 among configurations with p50 <= gate, no timed "
-                "parse failure and inference VRAM peak <= vram_budget_gb; fidelity to the "
-                "reference is reported, not filtered on",
+        "desktop_baseline_gb": desktop_baseline_gb,
+        "rule": "low-VRAM option = lowest p50 among configurations with p50 <= gate, no timed "
+                "parse failure and process VRAM (vram_process_gb) <= vram_budget_gb; fidelity "
+                "option = highest exact agreement with the reference among the other "
+                "configurations with p50 <= gate and no timed parse failure; neither is a "
+                "default",
         "configs": rows,
+        "default": None,
+        "choice": SERVING_CHOICE,
+        "low_vram": _cfg_name(low) if low else None,
+        "low_vram_config": cfg(low),
+        "fidelity": _cfg_name(fid) if fid else None,
+        "fidelity_config": cfg(fid),
         "fastest": _cfg_name(fast) if fast else None,
-        "recommended": _cfg_name(rec) if rec else None,
-        "recommended_config": ({k: rec[k] for k in ("precision", "attn", "merged")}
-                               if rec else None),
         "tcp_roundtrip": roundtrip,
     }
 
 
 def serving_r1_cell(serving: dict | None) -> str | None:
     """The AerialVLA row's desktop rate cell from the serving measurement:
-    the recommended configuration's R1 numbers."""
-    if not serving or not serving.get("recommended"):
+    the low-VRAM option's R1 numbers (the row is the 4-bit backend), with
+    its agreement with the reference, and said not to be a default."""
+    if not serving or not serving.get("low_vram"):
         return None
-    r = next(c for c in serving["configs"] if _cfg_name(c) == serving["recommended"])
+    r = next(c for c in serving["configs"] if _cfg_name(c) == serving["low_vram"])
     hz = r.get("hz_at_p50")
-    return (f"R1 via demo/vla_server_v2.py, {serving['recommended']} (the recommended "
-            f"serving default): p50 {r['p50_ms']:.4g} ms ({hz:.3g} Hz), p95 "
+    ap = r.get("agreement_probe") or {}
+    agree = (f"; agrees with {_cfg_name(serving['reference'])} on {ap['exact']:.0%} of "
+             f"{ap['n']} probe inputs" if ap.get("n") else "")
+    return (f"R1 via demo/vla_server_v2.py, {serving['low_vram']} (the measured low-VRAM "
+            f"option, not a default{agree}): p50 {r['p50_ms']:.4g} ms ({hz:.3g} Hz), p95 "
             f"{r['p95_ms']:.4g} ms, n={r['n']} [{_rel(SERVING_JSON)}]")
 
 
@@ -1014,8 +1090,9 @@ def load_serving(path: Path = SERVING_JSON) -> dict | None:
 
 
 def render_serving(s: dict) -> list[str]:
+    when = (s.get("measured_utc") or [s["created_utc"]])[0][:10]
     out = ["## AerialVLA serving configurations (demo/vla_server_v2.py)", "",
-           f"Measured {s['created_utc'][:10]} on the lab desktop's RTX 4090, one process per "
+           f"Measured {when} on the lab desktop's RTX 4090, one process per "
            f"configuration, through the VLA server's own protocol core (`demo/vla_server_v2.py "
            f"bench`; summarised by `python tools/vla_backend_table.py serving`). "
            f"{s['conditions']}. Timed inputs: {s['inputs']['timed']}; "
@@ -1027,29 +1104,49 @@ def render_serving(s: dict) -> list[str]:
            f"`{str(s['weights_sha256'])[:16]}...` (base shards + adapter). "
            f"Gate: p50 <= {s['gate_p50_ms']:.0f} ms.", "",
            "| Precision | Attention | LoRA | p50 ms | p95 ms | generate p50 ms | server p50 ms "
-           "| probe p50 / p95 ms | VRAM peak, inference / load (GB) | load s | parse failures, "
+           "| probe p50 / p95 ms | VRAM allocated by torch, inference / load (GB) "
+           "| VRAM of the process (GB) | load s | parse failures, "
            "timed / probe | agrees with bf16/eager/unmerged, exact / close | gate |",
-           "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+           "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
     def n0(v, fmt=".0f"):
         return "n/a" if v is None else format(v, fmt)
 
+    bases = []
     for r in s["configs"]:
         ap = r["agreement_probe"]
         agree = ("reference" if (r["precision"], r["attn"], r["merged"]) ==
                  _cfg_key(s["reference"]) else
                  (f"{ap['exact']:.0%} / {ap['close']:.0%} (n={ap['n']})" if ap["n"] else "n/a"))
+        basis = r.get("vram_process_basis")
+        if basis and basis not in bases:
+            bases.append(basis)
+        mark = "*" * (bases.index(basis) + 1) if basis else ""
         out.append(
             f"| {r['precision']} | {r['attn']} | {'merged' if r['merged'] else 'unmerged'} "
             f"| {n0(r['p50_ms'])} | {n0(r['p95_ms'])} | {n0(r['generate_p50_ms'])} "
             f"| {n0(r['server_p50_ms'])} | {n0(r['probe_p50_ms'])} / {n0(r['probe_p95_ms'])} "
             f"| {n0(r['vram_inference_peak_gb'], '.1f')} / {n0(r['vram_load_peak_gb'], '.1f')} "
-            f"| {r['load_s']} | {r['parse_fail_timed']} / {r['parse_fail_probe']} "
+            f"| {n0(r.get('vram_process_gb'), '.1f')}{mark} "
+            f"| {n0(r['load_s'], '.1f')} | {r['parse_fail_timed']} / {r['parse_fail_probe']} "
             f"| {agree} | {'meets' if r['meets_gate'] else 'misses'} |")
-    out += ["", f"**Recommended serving default:** {s['recommended'] or 'none qualifies'}. "
-                f"Rule: {s['rule']} (budget {s['vram_budget_gb']:g} GB). Fastest overall: "
-                f"{s['fastest']}."]
-    if s.get("recommendation_note"):
-        out += ["", s["recommendation_note"]]
+    if bases:
+        out += [""] + [f"{'*' * (k + 1)} VRAM of the process: {b}." for k, b in enumerate(bases)]
+
+    def opt(name):
+        if not name:
+            return "none qualifies"
+        r = next(c for c in s["configs"] if _cfg_name(c) == name)
+        ap = r["agreement_probe"]
+        return (f"{name} (p50 {n0(r['p50_ms'])} ms, process VRAM "
+                f"{n0(r.get('vram_process_gb'), '.1f')} GB, agrees with the reference on "
+                f"{ap['exact']:.0%} of {ap['n']} probe inputs)" if ap["n"] else name)
+    out += ["", f"**No serving default.** {s['choice']}", "",
+            f"**Low-VRAM option:** {opt(s.get('low_vram'))}. **Fidelity option:** "
+            f"{opt(s.get('fidelity'))}. Fastest overall: {s['fastest']}. Rule: {s['rule']} "
+            f"(budget {s['vram_budget_gb']:g} GB, an assumption until CityLife's VRAM is "
+            f"measured)."]
+    if s.get("choice_note"):
+        out += ["", s["choice_note"]]
     rt = s.get("tcp_roundtrip")
     if rt:
         out += ["", f"Over TCP (127.0.0.1, `demo/vla_server_v2.py ping`, {rt.get('config')}): "
@@ -1057,7 +1154,7 @@ def render_serving(s: dict) -> list[str]:
                     f"{rt['roundtrip']['p95_ms']:.0f} ms against server latency_s p50 "
                     f"{rt['server_latency']['p50_ms']:.0f} ms (n={rt['roundtrip']['n']}): "
                     f"the transport and JPEG frames add the difference."]
-    out += ["", "This is the AerialVLA server's default configuration, not the project's "
+    out += ["", "These are the AerialVLA server's configurations, not the project's "
                 "default backend: the grant defers that choice to the full measurement set, "
                 "and the table above still says none. Every number is standalone; in flight "
                 "the renderer shares the GPU (OWL-ViT's forward pass ran 13.8-21.5x slower "
@@ -1293,8 +1390,12 @@ def main(argv=None) -> int:
     p_v.add_argument("--roundtrip-config", default=None,
                      help="the configuration the ping ran against, e.g. nf4/sdpa/merged")
     p_v.add_argument("--vram-budget-gb", type=float, required=True,
-                     help="the most VRAM the model may take beside the simulator (recorded)")
-    p_v.add_argument("--note", default=None, help="recommendation note stored with the table")
+                     help="the most VRAM the model's process may take beside the simulator "
+                          "(recorded; the low-VRAM option's rule)")
+    p_v.add_argument("--desktop-baseline-gb", type=float, default=None,
+                     help="for benches without a per-run nvidia-smi reading before the load: "
+                          "what the desktop held on the card before the runs (recorded)")
+    p_v.add_argument("--note", default=None, help="the note on the choice stored with the table")
     p_v.add_argument("--out", type=Path, default=SERVING_JSON)
     p_v.add_argument("--table-json", type=Path, default=DEFAULT_TABLE_JSON)
     p_v.add_argument("--table-md", type=Path, default=DEFAULT_TABLE_MD)
@@ -1343,9 +1444,10 @@ def main(argv=None) -> int:
             rt = {"config": args.roundtrip_config, "n": raw.get("n"),
                   "roundtrip": raw["roundtrip"], "server_latency": raw["server_latency"],
                   "model": (raw.get("hello") or {}).get("model", {}).get("id")}
-        s = summarise_serving(benches, args.vram_budget_gb, rt)
+        s = summarise_serving(benches, args.vram_budget_gb, rt,
+                              desktop_baseline_gb=args.desktop_baseline_gb)
         if args.note:
-            s["recommendation_note"] = args.note
+            s["choice_note"] = args.note
         write_lf(args.out, json.dumps(s, indent=1) + "\n")
         # Add the section to the COMMITTED table and re-render it from its own
         # JSON: a full `table` run re-reads the gitignored run folders, which a
@@ -1360,8 +1462,10 @@ def main(argv=None) -> int:
         write_lf(args.table_md, render_markdown(t) + "\n")
         for c in s["configs"]:
             print(f"{_cfg_name(c):<22} p50 {c['p50_ms']:>7} ms  p95 {c['p95_ms']:>7} ms  "
-                  f"VRAM {c['vram_inference_peak_gb']} GB  agree {c['agreement_probe']}")
-        print(f"recommended: {s['recommended']}; fastest: {s['fastest']}")
+                  f"VRAM {c['vram_inference_peak_gb']} GB allocated, {c['vram_process_gb']} GB "
+                  f"process  agree {c['agreement_probe']}")
+        print(f"no default; low-VRAM option: {s['low_vram']}; fidelity option: {s['fidelity']}; "
+              f"fastest: {s['fastest']}")
         print(f"wrote {_rel(args.out)}, {_rel(args.table_json)} and {_rel(args.table_md)}")
         return 0
     pinned = None

@@ -498,7 +498,7 @@ def test_the_identity_names_the_adapter_and_base_revisions():
     ident = S.model_identity(base, lora_root / "aero_vla", "bf16", "eager", False, "cd" * 32)
     assert ident == {"id": "aerialvla-lora/aero_vla@196f2f32", "base": "openvla-7b@47a0ec7f",
                      "weights_sha256": "cd" * 32, "precision": "bf16", "attn": "eager",
-                     "merged": False}
+                     "merged": False, "agreement": None}
     # two revisions in one copy pin nothing
     (bmeta / "model.metadata").write_text("1" * 40 + "\n", encoding="utf-8")
     assert S.local_hf_revision(base) is None
@@ -561,20 +561,180 @@ def test_the_legacy_file_mode_is_kept_and_v2_is_reached_through_it():
     assert seen["argv"] == ["serve", "--fake-output", "00 49 49 LAND</s>"]
 
 
-def test_the_cli_defaults_are_the_measured_serving_recommendation():
-    """`serve` with no model flags runs the configuration the RTX 4090
-    measurement recommends, and --no-merge / --precision / --attn still reach
-    every other row of that table."""
+SERVING = ROOT / "docs" / "data" / "aerialvla_serving_4090.json"
+
+
+def _exits_2(fn, *a):
+    """Run fn(*a), which must exit through argparse's error (code 2); return
+    what it wrote to stderr."""
+    import contextlib
+    import io
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        try:
+            fn(*a)
+        except SystemExit as e:
+            assert e.code == 2, e.code
+            return err.getvalue()
+    raise AssertionError(f"{fn.__name__}{a!r} did not refuse")
+
+
+def test_the_model_configuration_is_chosen_explicitly_on_every_run():
+    """Decided 2026-10-22 (review of V1a): the precision changes what the
+    model says - bf16 reproduces the upstream-precision reference (96 % of
+    the 48 probe inputs, sdpa unmerged) while every nf4 row agrees on only
+    25-33 % - so no default may pick it silently. At 6519b20 `serve` with no
+    model flag loaded nf4/sdpa/merged. Now serve and bench refuse until
+    --precision, --attn and --merge/--no-merge are all given, and the refusal
+    prints the measured table so the choice is an informed one. Also P11:
+    --save-merged on anything but bf16 + --merge is refused BEFORE the
+    two-minute model load, and the model class has no default either."""
     import argparse
-    rec = json.loads((ROOT / "docs" / "data" / "aerialvla_serving_4090.json")
-                     .read_text(encoding="utf-8"))["recommended_config"]
-    assert S.RECOMMENDED == rec, (S.RECOMMENDED, rec)
     ap = argparse.ArgumentParser()
     S._add_model_args(ap)
     a = ap.parse_args([])
-    assert (a.precision, a.attn, a.merge) == (rec["precision"], rec["attn"], rec["merged"])
-    b = ap.parse_args(["--precision", "bf16", "--attn", "eager", "--no-merge"])
-    assert (b.precision, b.attn, b.merge) == ("bf16", "eager", False)
+    assert (a.precision, a.attn, a.merge) == (None, None, None)
+    for argv in ([], ["--precision", "nf4"], ["--precision", "nf4", "--attn", "sdpa"],
+                 ["--attn", "sdpa", "--no-merge"]):
+        msg = _exits_2(S.check_model_args, ap, ap.parse_args(argv))
+        assert "--precision" in msg and "--merge" in msg and "CityLife" in msg, msg
+        for row in ("nf4/sdpa/merged", "bf16/sdpa/unmerged", "bf16/eager/unmerged"):
+            assert row in msg, (row, msg)
+        assert "96%" in msg and "31%" in msg, "the agreement of each option is not shown"
+    for argv in (["--precision", "nf4", "--attn", "sdpa", "--merge"],
+                 ["--precision", "bf16", "--attn", "eager", "--no-merge"],
+                 ["--precision", "bf16", "--attn", "sdpa", "--merge", "--save-merged"]):
+        S.check_model_args(ap, ap.parse_args(argv))          # chosen: no refusal
+    for argv in (["--precision", "nf4", "--attn", "sdpa", "--merge", "--save-merged"],
+                 ["--precision", "bf16", "--attn", "sdpa", "--no-merge", "--save-merged"]):
+        assert "--save-merged" in _exits_2(S.check_model_args, ap, ap.parse_args(argv))
+    # main() checks before it builds anything (build_real would import torch)
+    assert "--precision" in _exits_2(S.main, ["serve"])
+    assert "--precision" in _exits_2(S.main, ["bench", "--out", "never.json"])
+    sig = inspect.signature(S.AerialVLAModel.__init__)
+    for k in ("precision", "attn", "merge"):
+        p = sig.parameters[k]
+        assert p.default is inspect.Parameter.empty and p.kind is p.KEYWORD_ONLY, (k, p)
+    assert not hasattr(S, "RECOMMENDED"), "a serving default is back"
+
+
+def test_the_measured_low_vram_option_is_an_option_not_a_default():
+    """The RTX 4090 measurement names nf4/sdpa/merged the low-VRAM option and
+    bf16/sdpa/unmerged the closest to the reference, and records that there
+    is no default: the CityLife VRAM measurement (next wave) decides."""
+    s = json.loads(SERVING.read_text(encoding="utf-8"))
+    assert s.get("default") is None and "recommended" not in s and "recommended_config" not in s
+    assert s["low_vram_config"] == {"precision": "nf4", "attn": "sdpa", "merged": True}, s
+    assert s["fidelity_config"] == {"precision": "bf16", "attn": "sdpa", "merged": False}, s
+    assert "CityLife" in s["choice"] and "--precision" in s["choice"], s["choice"]
+
+
+def test_the_identity_carries_the_configurations_measured_agreement():
+    """Every response's identity says how far its configuration moves
+    AerialVLA's outputs from the reference (bf16/eager/unmerged), from the
+    RTX 4090 probe - and says "not measured" for other weights, a
+    configuration the file has no row for, or no file at all."""
+    s = json.loads(SERVING.read_text(encoding="utf-8"))
+    dig = s["weights_sha256"]
+    a = S.measured_agreement("nf4", "sdpa", True, dig)
+    assert a["measured"] is True and a["reference"] == "bf16/eager/unmerged", a
+    assert (a["probe_n"], a["probe_exact"], a["probe_close"]) == (48, 0.312, 0.5), a
+    assert a["source"] == "docs/data/aerialvla_serving_4090.json" and a["why"] is None
+    b = S.measured_agreement("bf16", "sdpa", False, dig)
+    assert (b["probe_exact"], b["probe_close"]) == (0.958, 0.958), b
+    ref = S.measured_agreement("bf16", "eager", False, dig)
+    assert ref["probe_exact"] == 1.0 and "reference" in ref["note"], ref
+    for args, why in (((("nf4", "sdpa", True, "cd" * 32)), "weights"),
+                      ((("nf4", "sdpa", True, dig, Path(tempfile.mkdtemp()) / "no.json")),
+                       "no serving measurement")):
+        x = S.measured_agreement(*args)
+        assert x["measured"] is False and x["probe_exact"] is None and why in x["why"], x
+    d = Path(tempfile.mkdtemp(prefix="vla_id_"))
+    (d / "openvla-7b").mkdir()
+    (d / "aero_vla").mkdir()
+    ident = S.serving_identity(d / "openvla-7b", d / "aero_vla", "nf4", "sdpa", True, dig)
+    assert ident["agreement"] == a and ident["precision"] == "nf4" and ident["merged"] is True
+    core = S.V2Server(S.ScriptedModel(["96 48 49</s>"]), ident, decode_frames=_fake_decode,
+                      mosaic_fn=_fake_mosaic, hash_fn=_fake_hash)
+    assert core.handle(_req())[0]["model"]["agreement"] == a
+    assert S.FAKE_IDENTITY["agreement"] is None
+
+
+def test_hello_reports_health_because_hello_alone_proves_nothing():
+    """P4: hello never touches the model, so a server whose generate() hangs
+    (holding the model lock) or fails on every call answered hello ok with
+    the full identity. hello now carries health: the counts, the time of the
+    last ok infer and, while generate() runs, since when. Liveness is a
+    recent ok infer, not a hello."""
+    entered, release = threading.Event(), threading.Event()
+
+    class Hangs:
+        def generate(self, mosaic, prompt):
+            entered.set()
+            release.wait(10)
+            return {"raw_text": "96 48 49</s>", "model_s": 0.5}
+    core = S.V2Server(Hangs(), IDENTITY, decode_frames=_fake_decode, mosaic_fn=_fake_mosaic,
+                      hash_fn=_fake_hash)
+
+    def hello():
+        box = {}
+        t = threading.Thread(target=lambda: box.update(r=core.handle({"v": 2, "op": "hello"})[0]))
+        t.start()
+        t.join(5)
+        assert not t.is_alive(), "hello blocked on the model"
+        return box["r"]["model"]["health"]
+    h0 = hello()
+    assert h0["t_last_ok_infer"] is None and h0["in_flight_since"] is None, h0
+    assert h0["counts"]["infer"] == 0 and "liveness" in h0
+    worker = threading.Thread(target=lambda: core.handle(_req()))
+    worker.start()
+    assert entered.wait(5)
+    h1 = hello()
+    assert h1["in_flight_since"] is not None and h1["in_flight_s"] >= 0.0, h1
+    assert h1["t_last_ok_infer"] is None
+    release.set()
+    worker.join(10)
+    h2 = hello()
+    assert h2["in_flight_since"] is None and h2["t_last_ok_infer"] is not None, h2
+    assert h2["counts"]["infer"] == 1 and h2["s_since_last_ok_infer"] >= 0.0
+
+    class Dies:
+        def generate(self, mosaic, prompt):
+            raise RuntimeError("CUDA error: an illegal memory access")
+    dead = S.V2Server(Dies(), IDENTITY, decode_frames=_fake_decode, mosaic_fn=_fake_mosaic,
+                      hash_fn=_fake_hash)
+    for _ in range(3):
+        dead.handle(_req())
+    h = dead.handle({"v": 2, "op": "hello"})[0]["model"]["health"]
+    assert h["t_last_ok_infer"] is None and h["t_last_inference_error"] is not None, h
+    assert h["counts"]["inference_error"] == 3 and h["counts"]["refused"] == 0, h
+
+
+def test_the_bench_writes_the_log_it_names_and_measures_reserved_vram():
+    """P3: run_bench called core.handle(), which does not log, while the
+    bench output stored 'log': <path> for a file nothing wrote. P5: it
+    recorded only torch's allocated peak, which leaves out the allocator
+    cache and the CUDA context; the reserved peak is recorded too."""
+    class FakeCuda:
+        def reset_peak_memory_stats(self):
+            pass
+
+        def max_memory_allocated(self):
+            return 5.0e9
+
+        def max_memory_reserved(self):
+            return 6.5e9
+    log = Path(tempfile.mkdtemp(prefix="vla_bench_")) / "bench.jsonl"
+    core, model = _core(["96 48 49</s>"], log=log)
+    reqs = [dict(_req(seq=k), _frame=f"f{k}.png") for k in range(1, 6)]
+    probe = [dict(_req(seq=100 + k), _frame="p.png") for k in range(3)]
+    res = S.run_bench(core, reqs, 2, probe, cuda=FakeCuda(), smi=lambda: 9000)
+    rows = [json.loads(x) for x in log.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 5 + 3, len(rows)
+    assert [r["request"]["seq"] for r in rows[:5]] == [1, 2, 3, 4, 5]
+    assert res["vram"] == {"inference_peak_allocated_gb": 5.0, "inference_peak_reserved_gb": 6.5,
+                           "nvidia_smi_used_mib_after_timed": 9000}, res["vram"]
+    assert res["stats_latency"]["n"] == 3 and len(res["probe_outputs"]) == 3
 
 
 def test_real_frames_hash_the_mosaic_the_model_receives():

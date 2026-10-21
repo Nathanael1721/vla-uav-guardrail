@@ -2,15 +2,17 @@
 AerialVLA behind a socket: VLA server protocol v2, one model process, frames
 from the client.
 
-    # serve (vla-real env; loads OpenVLA-7B + the AerialVLA LoRA from D:/models)
-    python demo/vla_server_v2.py serve        # = --precision nf4 --attn sdpa --merge
+    # serve (vla-real env; loads OpenVLA-7B + the AerialVLA LoRA from D:/models).
+    # The configuration has NO default: name all three flags on every run.
+    python demo/vla_server_v2.py serve --precision bf16 --attn sdpa --no-merge   # fidelity
+    python demo/vla_server_v2.py serve --precision nf4 --attn sdpa --merge       # low VRAM
     python demo/vla_server.py --v2 serve ...                  # the same, via the old entry point
 
     # a scripted stand-in for client development (no torch, no GPU, never a VLA)
     python demo/vla_server_v2.py serve --fake-output "96 48 49</s>" "00 49 49 LAND</s>"
 
     # latency of one configuration on the GPU, in process (no socket)
-    python demo/vla_server_v2.py bench --precision bf16 --attn sdpa --out bench.json
+    python demo/vla_server_v2.py bench --precision bf16 --attn sdpa --merge --out bench.json
 
     # round trip against a running server
     python demo/vla_server_v2.py ping --port 8790 --n 20
@@ -40,7 +42,8 @@ THE PROTOCOL (v2; the brief BRIEF-V1 is the authority, the codec its code)
 TCP, 127.0.0.1:8790 by default, newline-delimited UTF-8 JSON, one request ->
 one response, many requests per connection.
 
-  {"v":2,"op":"hello"}     -> {"v":2,"ok":true,"model":{identity + serving facts}}
+  {"v":2,"op":"hello"}     -> {"v":2,"ok":true,"model":{identity + serving facts
+                                                         + "health"}}
   {"v":2,"op":"infer", "seq", "t_capture", "pose":{"x","y","up","yaw_rad"},
    "front_jpg_b64", "down_jpg_b64"|null, "phrase" (one of the 8 strings),
    "hint_source" goal|detector|none, "object", "csp_text"|null,
@@ -76,8 +79,34 @@ server_s. `image_sha256` is over the mosaic's raw RGB bytes
 logged as down_missing (aerialvla_codec.build_mosaic), or refused with
 --missing-down refuse.
 
-THE MODEL OPTIONS
------------------
+HEALTH. hello never touches the model (it does not wait for its lock), so an
+answered hello proves only that the process listens: a server whose
+generate() hangs or fails on every call still answers it. hello's model
+object therefore carries `health` (V2Server.health): the counters,
+t_last_ok_infer, t_last_inference_error and, while generate() runs,
+in_flight_since. Liveness is a RECENT OK INFER, not a hello (review of V1a,
+P4).
+
+THE MODEL OPTIONS - NO DEFAULT
+------------------------------
+`serve` and `bench` refuse to load a model until --precision, --attn and
+--merge/--no-merge are all given, and the refusal prints the measured table
+(check_model_args). Decided 2026-10-22 (review of V1a): the precision
+changes what the model says. On the RTX 4090 probe
+(docs/data/aerialvla_serving_4090.json, 48 inputs) bf16 reproduces the
+upstream-precision reference - bf16/sdpa/unmerged gives the same output as
+bf16/eager/unmerged on 96 %, the merged bf16 rows on 88-90 % - while every
+nf4 row agrees on only 25-33 % (4-bit quantisation, not the attention kernel
+or the merge, is what moves the outputs). The CLI used to default to
+nf4/sdpa/merged, the lowest-VRAM row that met the 1.0 s gate, so a run that
+named nothing flew the configuration furthest from upstream. That row is
+kept as the measured LOW-VRAM OPTION (p50 517 ms, about 7.9 GB of process
+VRAM); bf16/sdpa/unmerged is the FIDELITY OPTION (p50 486 ms, about 17 GB).
+Which one flies is decided by measuring CityLife's own VRAM beside the model
+(next wave). Every response's identity carries the configuration's measured
+agreement (`agreement`, measured_agreement), so the record of a flight says
+how far its configuration moves the outputs.
+
 --precision nf4   bitsandbytes 4-bit NF4, compute bf16, the projector kept in
                   bf16 (LoRA's modules_to_save replaces it) - the loader every
                   AerialVLA script here has used (aerialvla_demo.py).
@@ -85,15 +114,15 @@ THE MODEL OPTIONS
                   (aerialvla_wrapper_ui.py:34-39). ~15 GB of VRAM.
 --attn eager|sdpa attention implementation of the Llama backbone; Prismatic
                   delegates (modeling_prismatic.py:208-210, 249).
-(defaults: nf4, sdpa, merged - the measured serving recommendation)
---merge           (default; --no-merge to keep the adapter separate)
+--merge           (or --no-merge, to keep the adapter separate)
                   PeftModel.merge_and_unload() in memory after loading: no
                   per-token LoRA matmuls. On nf4 the merge dequantises, adds
                   and re-quantises each layer, so the weights that run are not
                   bit-identical to base+adapter; the identity says merged=true
                   and the bench compares outputs with the bf16 reference.
---save-merged     (bf16 + --merge only) write the merged model to
-                  D:/models/aerialvla-merged (~15 GB) with a provenance file.
+--save-merged     (bf16 + --merge only, refused before the load otherwise)
+                  write the merged model to D:/models/aerialvla-merged
+                  (~15 GB) with a provenance file.
 upstream calls resize_token_embeddings(len(tokenizer)) before attaching the
 adapter; that only drops the 63 padding rows of the 32064-row head (the
 adapter touches neither embeddings nor head) and crashes on a quantised head,
@@ -148,10 +177,24 @@ DEFAULT_MERGED_OUT = "D:/models/aerialvla-merged"
 DEFAULT_MAX_NEW_TOKENS = 12
 PRECISIONS = ("nf4", "bf16")
 ATTNS = ("eager", "sdpa")
-# The CLI's default model configuration: the serving default recommended by
-# the RTX 4090 measurement (docs/data/aerialvla_serving_4090.json,
-# "recommended_config"); tests/test_vla_server.py pins the two together.
-RECOMMENDED = {"precision": "nf4", "attn": "sdpa", "merged": True}
+# NO DEFAULT MODEL CONFIGURATION, by decision (2026-10-22, review of V1a).
+# The precision changes what the model says: on the RTX 4090 probe (48
+# inputs) bf16 reproduces the upstream-precision reference - bf16/sdpa/
+# unmerged agrees with bf16/eager/unmerged on 96 % - while every nf4 row
+# agrees on only 25-33 %. Until then the CLI defaulted to nf4/sdpa/merged,
+# the lowest-VRAM row that met the gate, so a run that named no precision
+# silently flew the configuration furthest from upstream's outputs. Now
+# `serve` and `bench` refuse to load the model until --precision, --attn
+# and --merge/--no-merge are all given (check_model_args), and every
+# response's identity carries that configuration's measured agreement
+# (measured_agreement). nf4/sdpa/merged stays available as the measured
+# low-VRAM option; which configuration flies is decided by measuring
+# CityLife's own VRAM beside the model (next wave).
+SERVING_JSON = ROOT / "docs" / "data" / "aerialvla_serving_4090.json"
+# The configuration every other one is compared with: upstream's precision
+# (aerialvla_wrapper_ui.py:34-39) with the adapter kept separate.
+# tools/vla_backend_table.SERVING_REFERENCE is the same.
+REFERENCE_CONFIG = {"precision": "bf16", "attn": "eager", "merged": False}
 SIDECAR_DEFAULT = Path.home() / ".cache" / "guardrail" / "vla_server_weights.json"
 BENCH_SCHEMA = "vlaguard.aerialvla_serving_bench/1"
 
@@ -264,9 +307,12 @@ def weights_sha256(paths: list[Path], sidecar: Path = SIDECAR_DEFAULT,
 
 
 def model_identity(base: str | Path, adapter: str | Path | None, precision: str, attn: str,
-                   merged: bool, digest: str | None) -> dict[str, Any]:
+                   merged: bool, digest: str | None,
+                   agreement: dict | None = None) -> dict[str, Any]:
     """The `model` object every response carries (brief: id, base,
-    weights_sha256, precision, attn, merged)."""
+    weights_sha256, precision, attn, merged), plus `agreement`
+    (measured_agreement; None when not given). Clients compare the brief's
+    six fields and allow the rest (guardrail/vla_link.py check_identity)."""
     def rev8(p):
         r = local_hf_revision(p) if p and Path(p).exists() else None
         return r[:8] if r else "unknown"
@@ -274,7 +320,105 @@ def model_identity(base: str | Path, adapter: str | Path | None, precision: str,
     aid = f"{a.parent.name}/{a.name}@{rev8(a)}" if a else "none"
     return {"id": aid, "base": f"{Path(base).name}@{rev8(base)}",
             "weights_sha256": digest, "precision": precision, "attn": attn,
-            "merged": bool(merged)}
+            "merged": bool(merged), "agreement": agreement}
+
+
+def _cfg_name(precision: str, attn: str, merged: bool) -> str:
+    return f"{precision}/{attn}/{'merged' if merged else 'unmerged'}"
+
+
+def _rel(p: Path) -> str:
+    try:
+        return Path(p).resolve().relative_to(ROOT).as_posix()
+    except ValueError:
+        return Path(p).as_posix()
+
+
+def load_serving(path: Path = SERVING_JSON) -> dict | None:
+    """The RTX 4090 serving measurement (tools/vla_backend_table.py serving),
+    or None when it is absent or unreadable."""
+    try:
+        d = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return d if isinstance(d, dict) and isinstance(d.get("configs"), list) else None
+
+
+def measured_agreement(precision: str, attn: str, merged: bool, weights_sha256: str | None,
+                       path: Path = SERVING_JSON) -> dict[str, Any]:
+    """How often this configuration's output equals the reference's
+    (REFERENCE_CONFIG, bf16/eager/unmerged) on the 48-input probe of the RTX
+    4090 measurement: exactly (parse_ok, bins, LAND) and closely (same
+    parse_ok and LAND, every bin within 3). Carried in the identity of every
+    response, so the record of what flew says how far its configuration
+    moves AerialVLA's outputs, not only which weights ran.
+
+    measured=False, with `why`, when the measurement file is absent, was made
+    on other weights (its weights_sha256 differs: the probe says nothing
+    about them), or has no row for this configuration."""
+    ref = (REFERENCE_CONFIG["precision"], REFERENCE_CONFIG["attn"], REFERENCE_CONFIG["merged"])
+    out: dict[str, Any] = {"reference": _cfg_name(*ref), "measured": False, "probe_n": None, "probe_exact": None,
+                           "probe_close": None, "close_means": "same parse_ok and LAND, "
+                                                               "every bin within 3",
+                           "source": _rel(path), "measured_utc": None, "note": None, "why": None}
+    s = load_serving(path)
+    if s is None:
+        out["why"] = f"no serving measurement at {_rel(path)}"
+        return out
+    if s.get("weights_sha256") != weights_sha256:
+        out["why"] = (f"the measurement ran weights_sha256 {str(s.get('weights_sha256'))[:16]}..., "
+                      f"this model is {str(weights_sha256)[:16]}...: other weights")
+        return out
+    row = next((c for c in s["configs"] if (c.get("precision"), c.get("attn"),
+                                             bool(c.get("merged"))) ==
+                (precision, attn, bool(merged))), None)
+    ap = (row or {}).get("agreement_probe") or {}
+    if not ap.get("n"):
+        out["why"] = f"no probe row for {_cfg_name(precision, attn, merged)} in {_rel(path)}"
+        return out
+    out.update({"measured": True, "probe_n": ap["n"], "probe_exact": ap["exact"],
+                "probe_close": ap["close"], "measured_utc": row.get("bench_created_utc")})
+    if (precision, attn, bool(merged)) == ref:
+        out["note"] = "this is the reference configuration (agreement 1.0 by definition)"
+    return out
+
+
+def serving_identity(base: str | Path, adapter: str | Path | None, precision: str, attn: str,
+                     merged: bool, digest: str | None,
+                     serving_json: Path = SERVING_JSON) -> dict[str, Any]:
+    """model_identity with the configuration's measured agreement: what a
+    real server announces (build_real)."""
+    return model_identity(base, adapter, precision, attn, merged, digest,
+                          agreement=measured_agreement(precision, attn, merged, digest,
+                                                       serving_json))
+
+
+def configuration_table(path: Path = SERVING_JSON) -> str:
+    """The measured configurations as lines a person choosing one can read:
+    p50, VRAM and agreement with the reference, the low-VRAM and fidelity
+    options named."""
+    s = load_serving(path)
+    if s is None:
+        return f"  (no serving measurement at {_rel(path)})"
+    lines = []
+    for c in sorted(s["configs"], key=lambda c: (c["precision"], c["attn"], c["merged"])):
+        name = _cfg_name(c["precision"], c["attn"], c["merged"])
+        ap = c.get("agreement_probe") or {}
+        agree = ("the reference" if name == _cfg_name(REFERENCE_CONFIG["precision"],
+                                                       REFERENCE_CONFIG["attn"],
+                                                       REFERENCE_CONFIG["merged"])
+                 else (f"agrees with the reference on {ap['exact']:.0%} of {ap['n']} probe "
+                       f"inputs" if ap.get("n") else "agreement not measured"))
+        vram, alloc = c.get("vram_process_gb"), c.get("vram_inference_peak_gb")
+        vram = (f"{vram:.1f} GB process" if vram is not None else
+                f"{alloc:.1f} GB torch-allocated" if alloc is not None else "VRAM n/a")
+        tag = (" <- the measured low-VRAM option" if name == s.get("low_vram") else
+               " <- the closest to the reference" if name == s.get("fidelity") else "")
+        flags = (f"--precision {c['precision']} --attn {c['attn']} "
+                 f"--{'merge' if c['merged'] else 'no-merge'}")
+        lines.append(f"  {name:<20} p50 {c['p50_ms']:>4.0f} ms  {vram:<22} {agree}{tag}\n"
+                     f"  {'':<20} {flags}")
+    return "\n".join(lines)
 
 
 # --------------------------------------------------------------------------- #
@@ -282,10 +426,15 @@ def model_identity(base: str | Path, adapter: str | Path | None, precision: str,
 # --------------------------------------------------------------------------- #
 class AerialVLAModel:
     """OpenVLA-7B + the AerialVLA LoRA, loaded once. `generate(mosaic, prompt)`
-    is the whole model step; nothing here decides what the text means."""
+    is the whole model step; nothing here decides what the text means.
 
-    def __init__(self, base: str = DEFAULT_BASE, adapter: str | None = DEFAULT_ADAPTER,
-                 precision: str = "nf4", attn: str = "eager", merge: bool = False,
+    precision, attn and merge are keyword-only with NO default, like the
+    CLI (see the note at PRECISIONS): until the review of V1a (P11) this
+    constructor defaulted to nf4/eager/unmerged while the CLI said
+    nf4/sdpa/merged, so a programmatic caller got a third configuration."""
+
+    def __init__(self, base: str = DEFAULT_BASE, adapter: str | None = DEFAULT_ADAPTER, *,
+                 precision: str, attn: str, merge: bool,
                  max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS, device: str = "cuda:0"):
         if precision not in PRECISIONS:
             raise ValueError(f"precision {precision!r} is not one of {PRECISIONS}")
@@ -397,7 +546,7 @@ class ScriptedModel:
 
 
 FAKE_IDENTITY = {"id": "fake:scripted", "base": "none", "weights_sha256": None,
-                 "precision": "fake", "attn": "none", "merged": False}
+                 "precision": "fake", "attn": "none", "merged": False, "agreement": None}
 
 
 # --------------------------------------------------------------------------- #
@@ -461,12 +610,39 @@ class V2Server:
         # dying model from bad requests.
         self.counts = {"requests": 0, "infer": 0, "refused": 0, "parse_fail": 0, "land": 0,
                        "inference_error": 0, "internal_error": 0, "log_failures": 0}
+        # Live facts for hello (health): wall-clock times, None until it happens.
+        self._t_start = time.time()
+        self._t_last_ok_infer: float | None = None
+        self._t_last_inference_error: float | None = None
+        self._in_flight_since: float | None = None
 
     def _count(self, key: str, n: int = 1) -> None:
         # ThreadingTCPServer runs one thread per connection; `+=` on a dict
         # item is a read and a write.
         with self._counts_lock:
             self.counts[key] += n
+
+    def health(self) -> dict[str, Any]:
+        """What hello reports beside the identity (review of V1a, P4). hello
+        never touches the model and never waits for its lock, so an answered
+        hello proves only that the process listens: a server whose
+        generate() hangs (holding the lock) or fails on every call still
+        answers it. LIVENESS IS A RECENT OK INFER: t_last_ok_infer (wall
+        clock, time.time()) and s_since_last_ok_infer; in_flight_since is
+        set while generate() runs, so a hang shows as a growing
+        in_flight_s."""
+        now = time.time()
+        with self._counts_lock:
+            counts = dict(self.counts)
+        last, err, infl = self._t_last_ok_infer, self._t_last_inference_error, \
+            self._in_flight_since
+        return {"counts": counts, "t_now": now, "uptime_s": round(now - self._t_start, 3),
+                "t_last_ok_infer": last,
+                "s_since_last_ok_infer": None if last is None else round(now - last, 3),
+                "t_last_inference_error": err,
+                "in_flight_since": infl,
+                "in_flight_s": None if infl is None else round(now - infl, 3),
+                "liveness": "a recent ok infer (t_last_ok_infer), not an answered hello"}
 
     # -- responses ------------------------------------------------------- #
     def _infer_error(self, req: Any, error: str) -> dict:
@@ -574,7 +750,8 @@ class V2Server:
         op = req["op"]
         if op == "hello":
             return ({"v": C.PROTOCOL_VERSION, "ok": True,
-                     "model": {**self.identity, **self.hello_extra}}, False, {})
+                     "model": {**self.identity, **self.hello_extra, "health": self.health()}},
+                    False, {})
         if op == "shutdown":
             return {"v": C.PROTOCOL_VERSION, "ok": True}, True, {}
         return self.infer(req)
@@ -604,16 +781,22 @@ class V2Server:
             return self._infer_error(req, f"{exc.code}: {exc.detail}"), False, {}
         try:
             with self._model_lock:
-                g = self.model.generate(mosaic, prompt)
+                self._in_flight_since = time.time()
+                try:
+                    g = self.model.generate(mosaic, prompt)
+                finally:
+                    self._in_flight_since = None
             raw, model_s = self._model_result(g)
         except Exception as exc:                                  # noqa: BLE001
             # A CUDA OOM or a driver error must answer the client, not drop the
             # connection: the client then holds zero and counts the failure.
+            self._t_last_inference_error = time.time()
             self._count("inference_error")
             return (self._infer_error(req, f"{C.ERR_INFERENCE}: {type(exc).__name__}: {exc}"),
                     False, {"prompt": prompt, "mosaic": minfo})
         # The reader judges what the model returned (a non-string is "not
         # text", parse_ok false); the client is sent a string either way.
+        self._t_last_ok_infer = time.time()
         p = C.parse_action(raw, require_eos=True)
         raw_text = raw if isinstance(raw, str) else ("" if raw is None else str(raw))
         self._count("parse_fail", 0 if p.parse_ok else 1)
@@ -743,10 +926,10 @@ def build_real(args) -> tuple[AerialVLAModel, dict, dict]:
         raise SystemExit(f"weights_sha256 did not resolve over {[str(p) for p in paths]}: a "
                          f"named weight is missing or unreadable; refusing to serve an "
                          f"unidentified model")
-    model = AerialVLAModel(args.base, args.adapter, args.precision, args.attn, args.merge,
-                           args.max_new_tokens)
-    ident = model_identity(args.base, args.adapter, args.precision, args.attn, model.merged,
-                           digest)
+    model = AerialVLAModel(args.base, args.adapter, precision=args.precision, attn=args.attn,
+                           merge=args.merge, max_new_tokens=args.max_new_tokens)
+    ident = serving_identity(args.base, args.adapter, args.precision, args.attn, model.merged,
+                             digest)
     facts = {"max_new_tokens": model.max_new_tokens, "load": model.timing,
              "digest": dinfo, "weight_files": [p.as_posix() for p in paths],
              "libraries": library_versions(), "protocol": C.PROTOCOL_VERSION}
@@ -835,11 +1018,19 @@ def _stats(seconds: list[float]) -> dict:
 
 
 def run_bench(core: V2Server, timed_reqs: list[dict], warmup: int,
-              probe: list[dict] | None = None) -> dict:
+              probe: list[dict] | None = None, cuda: Any = None,
+              smi: Callable[[], int | None] = nvidia_smi_used_mib) -> dict:
     """Send `warmup` untimed then the timed requests through the protocol core
     (decode, mosaic, prompt, generate, strict read), recording the server's
     latency_s (model time), the generate time, the whole server time and each
-    output. Then the probe set, if any."""
+    output. Then the probe set, if any. Every request is logged.
+
+    VRAM: torch's allocated peak during the timed requests, which leaves out
+    the allocator's cache and the CUDA context, and the reserved peak, which
+    includes the cache (review of V1a, P5); the whole card by nvidia-smi
+    after the timed requests. main() adds the card before the load, so the
+    process's footprint is their difference. `cuda` (torch.cuda by default)
+    and `smi` are parameters so the bench can be tested without a GPU."""
     def one(r):
         frame = r.get("_frame")
         req = {k: v for k, v in r.items() if not k.startswith("_")}
@@ -856,13 +1047,16 @@ def run_bench(core: V2Server, timed_reqs: list[dict], warmup: int,
                 "latency_s": resp["latency_s"], "gen_s": extra["timing"]["gen_s"],
                 "server_s": total, "new_tokens": extra.get("new_tokens"),
                 "image_sha256": resp["image_sha256"], "prompt_sha256": resp["prompt_sha256"]}
-    import torch
+    if cuda is None:
+        import torch
+        cuda = torch.cuda
     for r in timed_reqs[:warmup]:
         one(r)
-    torch.cuda.reset_peak_memory_stats()
+    cuda.reset_peak_memory_stats()
     timed = [one(r) for r in timed_reqs[warmup:]]
-    infer_peak = torch.cuda.max_memory_allocated() / 1e9
-    smi = nvidia_smi_used_mib()
+    infer_peak = cuda.max_memory_allocated() / 1e9
+    infer_reserved = cuda.max_memory_reserved() / 1e9
+    smi_after = smi()
     probe_out = [one(r) for r in (probe or [])]
     return {"timed_outputs": timed, "probe_outputs": probe_out,
             "stats_latency": _stats([t["latency_s"] for t in timed]),
@@ -874,31 +1068,54 @@ def run_bench(core: V2Server, timed_reqs: list[dict], warmup: int,
             "parse_fail_probe": sum(1 for t in probe_out if not t["parse_ok"]),
             "land_probe": sum(1 for t in probe_out if t["land"]),
             "vram": {"inference_peak_allocated_gb": round(infer_peak, 3),
-                     "nvidia_smi_used_mib_after_timed": smi}}
+                     "inference_peak_reserved_gb": round(infer_reserved, 3),
+                     "nvidia_smi_used_mib_after_timed": smi_after}}
 
 
 def _add_model_args(ap: argparse.ArgumentParser) -> None:
-    # The defaults are the recommended serving configuration measured on the
-    # RTX 4090 (docs/data/aerialvla_serving_4090.json, "recommended":
-    # nf4/sdpa/merged, p50 517 ms against the 1.0 s gate, 5.4 GB at
-    # inference). bf16/sdpa/merged is faster (259 ms) and closer to upstream's
-    # outputs but needs ~16 GB; pass --precision bf16 when that much is free.
-    # The reference configuration of the fidelity probe is --precision bf16
-    # --attn eager --no-merge.
+    # No default for the three model flags (see the note at PRECISIONS):
+    # check_model_args refuses a run that leaves one out and prints the
+    # measured table (docs/data/aerialvla_serving_4090.json). The reference
+    # configuration of the fidelity probe is --precision bf16 --attn eager
+    # --no-merge; the measured low-VRAM option --precision nf4 --attn sdpa
+    # --merge.
     ap.add_argument("--base", default=DEFAULT_BASE)
     ap.add_argument("--adapter", default=DEFAULT_ADAPTER)
-    ap.add_argument("--precision", choices=PRECISIONS, default=RECOMMENDED["precision"])
-    ap.add_argument("--attn", choices=ATTNS, default=RECOMMENDED["attn"])
-    ap.add_argument("--merge", action=argparse.BooleanOptionalAction,
-                    default=RECOMMENDED["merged"],
-                    help="merge_and_unload the LoRA in memory after loading "
-                         "(default on; --no-merge keeps the adapter separate)")
+    ap.add_argument("--precision", choices=PRECISIONS, default=None,
+                    help="REQUIRED for a real model: nf4 (4-bit) or bf16 (upstream's)")
+    ap.add_argument("--attn", choices=ATTNS, default=None,
+                    help="REQUIRED for a real model: eager or sdpa")
+    ap.add_argument("--merge", action=argparse.BooleanOptionalAction, default=None,
+                    help="REQUIRED for a real model, one of the two: --merge "
+                         "(merge_and_unload the LoRA in memory after loading) or "
+                         "--no-merge (keep the adapter separate)")
     ap.add_argument("--save-merged", nargs="?", const=DEFAULT_MERGED_OUT, default=None,
                     help=f"(bf16 + --merge) write the merged model (default {DEFAULT_MERGED_OUT})")
     ap.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_NEW_TOKENS)
     ap.add_argument("--digest-sidecar", default=str(SIDECAR_DEFAULT))
     ap.add_argument("--rehash", action="store_true", help="recompute weights_sha256")
     ap.add_argument("--missing-down", choices=C.MISSING_DOWN_POLICIES, default="black")
+
+
+def check_model_args(ap: argparse.ArgumentParser, args) -> None:
+    """Refuse (argparse's error, exit 2) a real-model run that does not name
+    its whole configuration, or that asks --save-merged of anything but
+    bf16 + --merge - before build_real spends two minutes loading 15 GB
+    (review of V1a, P11: save_merged refused only after the load)."""
+    missing = [flag for flag, v in (("--precision", args.precision), ("--attn", args.attn),
+                                    ("--merge/--no-merge", args.merge)) if v is None]
+    if missing:
+        ap.error(f"choose the model configuration explicitly: {', '.join(missing)} missing. "
+                 f"There is no default, because the precision changes what the model says. "
+                 f"Measured on the RTX 4090 ({_rel(SERVING_JSON)}; agreement = identical "
+                 f"output to the reference bf16/eager/unmerged on the probe):\n"
+                 f"{configuration_table()}\n"
+                 f"Which configuration flies is decided by measuring CityLife's own VRAM "
+                 f"beside the model (next wave); every response's identity carries the "
+                 f"chosen configuration's agreement.")
+    if args.save_merged and (args.precision != "bf16" or not args.merge):
+        ap.error("--save-merged needs --precision bf16 --merge: a re-quantised nf4 merge, or "
+                 "an unmerged adapter, is not the merged bf16 model upstream ran")
 
 
 def main(argv=None) -> int:
@@ -959,10 +1176,14 @@ def main(argv=None) -> int:
             Path(args.out).write_text(json.dumps(res, indent=1), encoding="utf-8")
         return 0
 
+    smi_before = None
     if args.cmd == "serve" and args.fake_output:
         model, ident, facts = ScriptedModel(args.fake_output, args.fake_delay_s), \
             dict(FAKE_IDENTITY), {"fake": True}
     else:
+        check_model_args(p_s if args.cmd == "serve" else p_b, args)
+        if args.cmd == "bench":
+            smi_before = nvidia_smi_used_mib()      # the card before this process's model
         model, ident, facts = build_real(args)
         if args.save_merged:
             out = model.save_merged(args.save_merged, {"identity": ident, **facts})
@@ -974,17 +1195,30 @@ def main(argv=None) -> int:
     if args.cmd == "bench":
         import torch
         load_peak = torch.cuda.max_memory_allocated() / 1e9
+        load_reserved = torch.cuda.max_memory_reserved() / 1e9
         timed = bench_requests(Path(args.frames), args.warmup + args.timed)
         probe = probe_requests(Path(args.probe_frames)) if args.probe_frames else None
         res = run_bench(core, timed, args.warmup, probe)
-        res["vram"]["load_peak_allocated_gb"] = round(load_peak, 3)
+        after = res["vram"]["nvidia_smi_used_mib_after_timed"]
+        res["vram"].update({
+            "load_peak_allocated_gb": round(load_peak, 3),
+            "load_peak_reserved_gb": round(load_reserved, 3),
+            "nvidia_smi_used_mib_before_load": smi_before,
+            # The process's whole footprint (CUDA context, cache, weights), as
+            # far as nothing else on the card changed during the run.
+            "process_delta_mib": (after - smi_before if after is not None and
+                                  smi_before is not None else None)})
+        res["counts"] = dict(core.counts)
         out = {"schema": BENCH_SCHEMA,
                "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                "config": {"precision": args.precision, "attn": args.attn,
                           "merged": bool(model.merged)},
                "identity": ident, "facts": facts, "warmup": args.warmup, "timed": args.timed,
                "frames": str(Path(args.frames).resolve().as_posix()),
-               "probe_frames": args.probe_frames, "log": log,
+               "probe_frames": args.probe_frames,
+               # Written by every request (run_bench -> handle_request), unless
+               # counts["log_failures"] says otherwise.
+               "log": log,
                "command": "python demo/vla_server_v2.py " + " ".join(
                    argv if argv is not None else sys.argv[1:]),
                **res}

@@ -225,7 +225,7 @@
 #          test_real_vla_prompt's; torch with a file outside git, for
 #          test_vla_backend_table's CPU-only row; Pillow again, for 3 of
 #          test_aerialvla_codec's 18 tests (the mosaic, the JPEG frames, a
-#          frame claiming too many pixels) and 1 of test_vla_server's 27 (real
+#          frame claiming too many pixels) and 1 of test_vla_server's 31 (real
 #          frames through the server, a decompression bomb over TCP), and the
 #          D:/models folders for 1 more of test_vla_server's (the revisions of
 #          the real checkpoints). Their protocol, parser and prompt tests run
