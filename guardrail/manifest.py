@@ -425,7 +425,14 @@ def resolve_vla_hash(model_id: str, weight_paths: list[str | Path] | None = None
     form unchanged.
 
     Only a 64-character lowercase hex digest is accepted, and only for a
-    learned VLA: a stub or "none" pilot has no weights to report."""
+    learned VLA: the no-VLA id, an id `model_hash` pins by its SOURCE file
+    (a code-only pilot such as "guardrail.vla_stub.StubVLA") and a "fake:*"
+    stand-in (vla_server_v2's scripted model) have no weights to report.
+    The guard is here, not only in pilot_record's kind check, because
+    build_manifest calls this directly with no kind: until the review of V1a
+    (P8) a stub id with a reported digest got "StubVLA@sha256:<digest>"
+    instead of "@src:...", and a code-only pilot looked weight-identified to
+    anything that classifies runs by hash form."""
     if reported_digest is None:
         return model_hash(model_id, weight_paths), "local"
     if not (isinstance(reported_digest, str) and _HEX64.fullmatch(reported_digest)):
@@ -433,6 +440,11 @@ def resolve_vla_hash(model_id: str, weight_paths: list[str | Path] | None = None
                          f"got {reported_digest!r}")
     if model_id == NO_VLA:
         raise ValueError(f"{NO_VLA!r} has no weights to report a digest for")
+    if model_id.startswith("fake:") or _source_of(model_id) is not None:
+        what = ("a scripted stand-in" if model_id.startswith("fake:")
+                else "a code-only pilot, hashed by its source file")
+        raise ValueError(f"{model_id!r} has no weights to report a digest for: it is {what}; "
+                         f"a reported weights digest belongs to a learned VLA only")
     local = weights_digest(list(weight_paths)) if weight_paths else None
     if local is None:
         return f"{model_id}@sha256:{reported_digest}", "reported"

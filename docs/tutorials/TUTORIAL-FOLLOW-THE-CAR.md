@@ -231,18 +231,34 @@ python experiments\ablate_image_vs_hint.py --adapter D:/models/aerialvla-ft/run2
 ```
 
 `capture_frames.py` needs the sim; the two ablation runs do not. Each takes about
-8 minutes. Expect:
+8 minutes and writes a new `experiments/out/ablation_<label>_<utc>.json`; it never
+replaces an existing file without `--force` (the 4 Aug `ablation_orig.json` and
+`ablation_ft.json` are pinned by SHA-256 in `docs/data/aerialvla_ablation_rescore.json`).
+Expect, for `--label orig` (the 4 Aug outputs as the strict reader reads them):
 
 ```
-Mean commanded yaw per hint:
-  (none)           yaw=+0.182  fwd=0.56  LAND 11/18
-  to your left     yaw=-0.466  fwd=4.24  LAND 0/18
-  to your right    yaw=+0.161  fwd=4.11  LAND 0/18
+=== orig: 101/108 parsed ===
+
+Mean commanded yaw (rad per step) and forward step (m) per hint, over every image and object:
+  (none)           yaw=+0.000  fwd=0.21  LAND 11/12 parsed, 6 held
+  to your left     yaw=-0.466  fwd=4.24  LAND 0/18 parsed, 0 held
+  to your right    yaw=+0.161  fwd=4.11  LAND 0/18 parsed, 0 held
 
 Same pixels (target present), correct vs wrong colour word:
-  orange barrier   yaw=+0.050 fwd=3.90 LAND 1/18
-  blue barrier     yaw=+0.076 fwd=3.53 LAND 1/18
+  orange barrier   yaw=+0.053 fwd=3.98 LAND 1/17 parsed, 1 held
+  blue barrier     yaw=+0.018 fwd=3.82 LAND 1/16 parsed, 2 held
 ```
+
+> **Corrected 2026-10-22.** This block used to show the old reader's output (the
+> no-hint row read yaw +0.182, forward 0.56, LAND 11/18). That reader took the
+> last three integers of the model's text, so six malformed landing outputs such
+> as `00 49 494 49` were read as motion; the strict reader
+> (`guardrail/aerialvla_codec.parse_action`) refuses them and the client holds
+> zero, so with no hint the model stops on 17 of 18 frames (11 LAND, 6 held). The
+> numbers are radians and metres **per step** (one decision), not per second. The
+> lines above are the script's own aggregation over the strict verdicts in
+> `docs/data/aerialvla_ablation_rescore.json`; the correction itself is in
+> `docs/FINDING-what-drives-aerialvla.md` (2026-10-21).
 
 The direction phrase orders the yaw command monotonically; the object phrase does
 nothing. That is the whole finding in two tables.

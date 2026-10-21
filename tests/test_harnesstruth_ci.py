@@ -581,6 +581,35 @@ def test_the_aerialvla_codec_and_server_tests_run_in_ci():
     assert not missing, f"not run in CI: {sorted(missing)}"
 
 
+def test_the_aerialvla_image_tests_run_with_pillow_on_one_job():
+    """Review of V1a (P9): the image tests - the mosaic a flight depends on,
+    the base64/JPEG round trip, the decompression-bomb refusal, real frames
+    through the server - SKIPped on every job, because no job installs
+    Pillow; a regression in build_mosaic or decode_image_b64 would ship
+    green. Shown failing at 5e2ff31: no step installed Pillow. Now one step
+    of the 3.10 job (vla-real is 3.10 with Pillow 12.2.0) installs it into a
+    directory only that step puts on PYTHONPATH - so the loop, where
+    test_railvideo_recording's wall-clock tests stay lab-only, and the smoke
+    step never see it - and runs both files with GUARDRAIL_REQUIRE_PILLOW=1,
+    which turns their Pillow SKIPs into failures."""
+    steps = [s for s in _steps(_yaml(WF / "tests.yml")) if "pillow==" in str(s.get("run", ""))]
+    assert len(steps) == 1, [s.get("name") for s in steps]
+    st = steps[0]
+    run = st["run"]
+    assert re.search(r"pip install --target \S+ pillow==12\.2\.0", run), run
+    assert "PYTHONPATH=" in run, "Pillow must reach only this step's interpreter"
+    assert "matrix.python == '3.10'" in str(st.get("if", "")), st.get("if")
+    assert str((st.get("env") or {}).get("GUARDRAIL_REQUIRE_PILLOW")) == "1", st.get("env")
+    for f in ("test_aerialvla_codec.py", "test_vla_server.py"):
+        assert f"tests/{f}" in run, f
+        src = (ROOT / "tests" / f).read_text(encoding="utf-8")
+        assert "GUARDRAIL_REQUIRE_PILLOW" in src, f"{f} would still SKIP without Pillow there"
+    names = [s.get("name") for s in _steps(_yaml(WF / "tests.yml"))]
+    assert names.index(st["name"]) > names.index("Standalone test files"), names
+    for j in _matrix_jobs():
+        assert "pillow" not in _installed(j), f"a job installs Pillow for the loop: {j}"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

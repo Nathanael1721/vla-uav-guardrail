@@ -260,6 +260,48 @@ def test_the_csp_goes_on_the_instruction_line_before_fly_and_off_is_untouched():
 
 # --------------------------------------------------------------------- import
 
+def test_a_position_written_into_the_object_or_the_csp_is_refused():
+    """Review of V1a (P10), probe-verified at 6519b20: coordinates were
+    refused by KEY only, so object='target at x=38.0 y=26.0' reached the
+    prompt - the one way left to tell the VLA where the target is. Text that
+    looks like a position is now refused with its own code. The accepted
+    texts are upstream's own kind (verbatim from the training set, which
+    has 7,611 distinct descriptions and none refused: a lone number, a year,
+    the word "target" in prose) and the CSP's rule sentences."""
+    leaks = ["target at x=38.0 y=26.0", "the car at (38, 26)", "an orange car, goal: 38",
+             "a car at lat 35.6895, lon 139.6917", "the barrier near 38.0, 26.0",
+             "coordinates [38,26]", "a red car, x=38", "the target is 38 m east",
+             "a van at y: -12", "destination = 4"]
+    for obj in leaks:
+        try:
+            C.validate_object(obj)
+        except C.CodecError as e:
+            assert e.code == C.ERR_COORDINATE_TEXT, (obj, e.code)
+            continue
+        raise AssertionError(f"object {obj!r} was accepted")
+    fine = ["a parked car", "orange barrier", "",
+            'The man is standing alone on an empty asphalt parking lot with white lines and a '
+            'number "38" marked on the ground near him',
+            "The blue car is located on a road with a speed limit of 30, surrounded by foliage",
+            "The area surrounding the target, a man, consists of dense greenery",
+            'banners advertising messages like "Live Your Dream in 2021,"',
+            "a restaurant offering 24-hour service", "a 3-story building on 5th avenue"]
+    for obj in fine:
+        assert C.validate_object(obj) == obj
+        assert C.build_prompt(C.STRAIGHT_AHEAD, obj)
+    csp = ("Stay between 5 m and 60 m altitude. Never enter zone 'nfz_1', a circle of radius "
+           "12.5 m. Keep speed at or below 4 m/s.")
+    assert C.validate_csp("csp", csp) == csp
+    for leak in ("Never enter zone 'z1': the straight path from (0, 0) to the target (38, 26) "
+                 "crosses this zone.", "Stay low. Goal at 38, 26."):
+        try:
+            C.validate_csp("csp", leak)
+        except C.CodecError as e:
+            assert e.code == C.ERR_COORDINATE_TEXT, (leak, e.code)
+            continue
+        raise AssertionError(f"csp_text {leak!r} was accepted")
+
+
 def test_the_codec_imports_without_torch_or_pillow():
     code = ("import sys\n"
             f"sys.path.insert(0, {str(ROOT)!r})\n"
@@ -292,13 +334,57 @@ def test_the_demo_and_the_ablation_read_through_the_codec():
         assert "parse_action" in imported, rel
 
 
+def test_the_ablation_never_overwrites_the_files_the_rescore_pins():
+    """Review of V1a (P7): re-running experiments/ablate_image_vs_hint.py
+    overwrote experiments/out/ablation_{label}.json - the gitignored 4 Aug
+    source that docs/data/aerialvla_ablation_rescore.json pins by SHA-256 -
+    after which `rescore_ablation.py --check` said DIFFERS and the original
+    outputs survived only inside the rescore. A run now writes a new
+    timestamped file by default, and --out onto an existing file is refused
+    (before the model loads) unless --force."""
+    import contextlib
+    import importlib.util
+    import io
+    import tempfile
+    from datetime import datetime, timezone
+    spec = importlib.util.spec_from_file_location(
+        "ablate_image_vs_hint", ROOT / "experiments" / "ablate_image_vs_hint.py")
+    ab = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(ab)
+    now = datetime(2026, 10, 22, 1, 2, 3, tzinfo=timezone.utc)
+    p = ab.output_path("orig", None, False, now)
+    assert p == ab.OUT / "ablation_orig_20261022T010203Z.json", p
+    assert p.name != "ablation_orig.json"
+    d = Path(tempfile.mkdtemp(prefix="ablate_"))
+    taken = d / "ablation_orig.json"
+    taken.write_text("[]", encoding="utf-8")
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        try:
+            ab.main(["--label", "orig", "--out", str(taken)])
+        except SystemExit as e:
+            assert e.code not in (0, None) and "--force" in str(e.code), e.code
+        else:
+            raise AssertionError("an existing ablation output was overwritten")
+    assert taken.read_text(encoding="utf-8") == "[]"
+    assert ab.output_path("orig", str(taken), True, now) == taken       # --force: on purpose
+    assert ab.output_path("orig", str(d / "new.json"), False, now) == d / "new.json"
+
+
 # ---------------------------------------------------------------------- images
 
 def _pil():
+    """Pillow's Image module, or None (the test SKIPs). With
+    GUARDRAIL_REQUIRE_PILLOW=1 - set by the CI step that installs Pillow for
+    these files (review of V1a, P9) - a missing Pillow is a broken install,
+    and the test fails instead of skipping."""
+    import os
     try:
         from PIL import Image
         return Image
     except ImportError:
+        if os.environ.get("GUARDRAIL_REQUIRE_PILLOW") == "1":
+            raise AssertionError("GUARDRAIL_REQUIRE_PILLOW=1 and Pillow does not import")
         return None
 
 

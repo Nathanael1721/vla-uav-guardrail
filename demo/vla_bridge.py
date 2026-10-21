@@ -6,9 +6,20 @@ What this restores and what it costs
 AerialVLA has exactly one prompt slot that demonstrably drives its output: the
 `{direction}` compass phrase. Over 108 controlled forward passes
 (docs/FINDING-what-drives-aerialvla.md) the commanded yaw is monotonic in that
-phrase — "to your left" -0.466 rad/s, "forward-left" -0.167, "straight ahead"
--0.035, "forward-right" +0.121, "to your right" +0.161 — while the `{object}`
-slot is inert: correct and wrong colour words give indistinguishable actions.
+phrase — "to your left" -0.466 rad per step, "forward-left" -0.167, "straight
+ahead" -0.035, "forward-right" +0.121, "to your right" +0.161 — while the
+`{object}` slot is inert: correct and wrong colour words give
+indistinguishable actions.
+
+(Corrected 2026-10-22, review of V1a. Every number in this docstring that
+came from the model is RADIANS or METRES PER STEP - the heading change and
+the forward move of one decision, which upstream's executor turns and flies
+before the next image (guardrail/aerialvla_codec.py cites it) - not rad/s or
+m/s, as this text first said. Read with the strict output reader,
+"forward-right" is +0.114 and our fine-tune's "to your left" is -0.428, not
+-0.540 (docs/FINDING-what-drives-aerialvla.md, correction of 2026-10-21;
+docs/data/aerialvla_ablation_rescore.json). Where the arithmetic below holds
+a number "for 2.7 s" it describes the old velocity reading, not the model.)
 
 In every earlier experiment that phrase was computed by
 `aerialvla_demo.semantic_direction(pos, yaw, target)` from GROUND-TRUTH TARGET
@@ -62,13 +73,14 @@ A box only exists inside the camera's field of view. FrontCamera is 90 deg
 horizontal, so `bearing_from_box()` is bounded by +-45 deg by construction and
 only "forward-left ", "straight ahead " and "forward-right " can ever be
 produced at unit gain. The two phrases with the strongest measured response —
-"to your left" (-0.466 rad/s) and "to your right" (+0.161) — are structurally
-unreachable, and the rear phrases doubly so.
+"to your left" (-0.466 rad per step) and "to your right" (+0.161) — are
+structurally unreachable, and the rear phrases doubly so.
 
 That leaves the bridge operating on the flat middle of the response curve:
--0.167, -0.035, +0.121 rad/s. Our own fine-tune (run2/epoch1) does not help
-here; it sharpened exactly the unreachable extremes (-0.540 / +0.508) and left
-the reachable band at -0.149 / +0.016 / +0.090.
+-0.167, -0.035, +0.121 rad per step. Our own fine-tune (run2/epoch1) does not
+help here; it sharpened exactly the unreachable extremes (-0.428 / +0.508 read
+strictly; -0.540 / +0.508 as published on 4 Aug) and left the reachable band
+at -0.149 / +0.016 / +0.090.
 
 `bearing_gain` scales the bearing before the band lookup, so gain 2.0 makes a
 box at the frame edge read as "to your right " and buys real yaw authority. It
@@ -113,8 +125,9 @@ one inference period of travel for a 2 m/s car. Static targets never leave the
 band; that is the regime this is for.
 
 The deadband is also biased, not neutral: "straight ahead " commands -0.035
-rad/s, i.e. -2.0 deg/s, so a dead-centred target still yaws the aircraft left by
-~5.4 deg over the 2.7 s the action is held. And the reachable band is asymmetric
+rad (-2.0 deg) per step, so a dead-centred target still turns the aircraft 2
+deg left at every decision (the old velocity reading held -2.0 deg/s for the
+2.7 s inference period, ~5.4 deg). And the reachable band is asymmetric
 (-0.167 left vs +0.121 right, 38% more authority to the left than the right), so
 equal and opposite bearing errors do not produce equal and opposite corrections.
 
@@ -124,16 +137,19 @@ When the detector has nothing, `phrase_for()` and `prompt_for()` return None and
 the caller MUST NOT run an inference. The alternatives were both worse:
 
   * Emit "" (the sentinel `semantic_direction()` returns for no hint). Measured:
-    mean forward speed collapses from ~4 m/s to 0.56 m/s and the model emits
-    LAND on 11 of 18 real frames. Handing an empty phrase to the model in flight
-    is a 61%-per-inference chance of commanding a landing, wherever the aircraft
-    happens to be. That is not a fallback, it is a hazard.
+    the mean forward step collapses from ~4 m to 0.21 m (strict reader; 0.56
+    as first published, when six malformed landing outputs were read as
+    motion) and the model emits LAND on 11 of 18 real frames, and 6 more of
+    its outputs are malformed stops the client holds: 17 of 18 stop.
+    Handing an empty phrase to the model in flight is a 61%-per-inference
+    chance of commanding a landing, wherever the aircraft happens to be.
+    That is not a fallback, it is a hazard.
   * Emit "straight ahead " and fly on. This asserts the target is in front when
-    the system does not know that, and the model answers it with ~3.8 m/s of
-    forward speed. The Shield covers fences and BUILDINGS ONLY — the obstacle map
+    the system does not know that, and the model answers it with a ~3.8 m
+    forward step. The Shield covers fences and BUILDINGS ONLY — the obstacle map
     has no trees or street furniture, and a 9 m flight already hit street
-    furniture at (48.3, -0.9) — so 3.8 m/s of confident blind forward flight is
-    the least safe option available.
+    furniture at (48.3, -0.9) — so 3.8 m steps of confident blind forward
+    flight are the least safe option available.
 
 So: no perception, no learned action. The caller falls back to the hand-written
 search/scan sweep that `follow_vlm.py` already implements (yaw only, zero
@@ -537,7 +553,7 @@ def main() -> int:
         lo, hi = PHRASE_BANDS_DEG[p]
         y = PHRASE_YAW_RAD_S[p]
         print(f"  [{lo:+7.1f},{hi:+7.1f}] deg  {p!r:22} "
-              f"measured yaw {'unmeasured' if y is None else f'{y:+.3f} rad/s'}")
+              f"measured yaw {'unmeasured' if y is None else f'{y:+.3f} rad/step'}")
     print(f"\nFrontCamera hfov {br.hfov_deg:.0f} deg, gain {br.bearing_gain:.1f} "
           f"-> bearing bounded by +-{br.max_bearing_deg:.1f} deg")
     print(f"reachable: {[p.strip() for p in br.reachable_phrases()]}")

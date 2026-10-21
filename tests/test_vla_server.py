@@ -166,6 +166,11 @@ def test_any_field_that_could_carry_the_target_is_refused_by_name():
     pose = dict(_req()["pose"], target=[1, 2])
     _refused(core, _req(pose=pose), C.ERR_COORDINATE_FIELD)
     _refused(core, {"v": 2, "op": "hello", "goal": [1, 2]}, C.ERR_COORDINATE_FIELD)
+    # ...and in the free text (review of V1a, P10): the object slot and the
+    # CSP text cannot carry a position either
+    _refused(core, _req(object="target at x=38.0 y=26.0"), C.ERR_COORDINATE_TEXT)
+    _refused(core, _req(csp_mode="csp", csp_text="the path to the target (38, 26) is clear"),
+             C.ERR_COORDINATE_TEXT)
     assert model.calls == []
 
 
@@ -343,6 +348,28 @@ def test_a_log_that_cannot_be_written_costs_neither_the_answer_nor_the_connectio
     assert core.counts["log_failures"] == 5, core.counts      # 3 infers, the junk, the hello
     warned = [ln for ln in err.getvalue().splitlines() if "log" in ln.lower()]
     assert len(warned) == 1 and str(logdir) in warned[0], err.getvalue()
+
+
+def test_an_unwritable_log_is_reported_at_startup_not_first_during_a_flight():
+    """The default log is under demo/out on D: (which fills up) in OneDrive
+    (which locks files). serve probes it once at startup, so the operator
+    reads the warning before the pilot connects; the probe never raises and
+    the warning is not repeated by the first failed write."""
+    import contextlib
+    import io
+    bad = Path(tempfile.mkdtemp(prefix="vla_log_"))                 # a directory
+    core, _ = _core(log=bad)
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err):
+        assert core.probe_log() is False
+        core.handle_line(json.dumps(_req()))
+    assert err.getvalue().count("WARNING") == 1 and str(bad) in err.getvalue(), err.getvalue()
+    assert core.counts["log_failures"] == 1, "the startup probe is not a request"
+    good = Path(tempfile.mkdtemp(prefix="vla_log_")) / "sub" / "requests.jsonl"
+    ok, _ = _core(log=good)
+    assert ok.probe_log() is True and good.parent.is_dir()
+    assert _core()[0].probe_log() is True                             # no log at all
+    assert "probe_log()" in inspect.getsource(S.main)
 
 
 def test_any_exception_outside_generate_is_answered_and_the_connection_stays_usable():
@@ -741,6 +768,10 @@ def test_real_frames_hash_the_mosaic_the_model_receives():
     try:
         from PIL import Image
     except ImportError:
+        # CI's Pillow step sets this (review of V1a, P9): there a missing
+        # Pillow is a broken install, not an absent package.
+        assert os.environ.get("GUARDRAIL_REQUIRE_PILLOW") != "1", \
+            "GUARDRAIL_REQUIRE_PILLOW=1 and Pillow does not import"
         print("      SKIP: Pillow is not installed (the VLA environment has it)")
         return SKIP
     front = Image.new("RGB", (768, 432), (200, 30, 30))

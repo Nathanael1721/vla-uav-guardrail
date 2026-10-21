@@ -21,7 +21,9 @@ decorative. That is a claim worth making carefully, hence this script.
 Prerequisite: experiments/capture_frames.py (needs the sim once).
 This script needs no simulator.
 
-Run:  python experiments/ablate_image_vs_hint.py
+Run:  python experiments/ablate_image_vs_hint.py [--label orig] [--out rows.json [--force]]
+      (writes experiments/out/ablation_<label>_<utc>.json by default and never
+      replaces an existing file without --force: see output_path)
 """
 from __future__ import annotations
 
@@ -29,6 +31,7 @@ import itertools
 import json
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -101,13 +104,42 @@ def spread(vals) -> float:
     return float(np.ptp(v)) if len(v) > 1 else 0.0
 
 
-def main() -> int:
-    from PIL import Image
+def output_path(label: str, out: str | None, force: bool,
+                now: datetime | None = None) -> Path:
+    """Where this run writes its rows.
+
+    Default: experiments/out/ablation_{label}_{utc}.json, a new file every
+    run. Until the review of V1a (P7) every run wrote
+    experiments/out/ablation_{label}.json, and ablation_orig.json /
+    ablation_ft.json are the 4 Aug outputs that
+    docs/data/aerialvla_ablation_rescore.json pins by SHA-256: one re-run
+    replaced the evidence (`rescore_ablation.py --check` then said DIFFERS)
+    and the original texts survived only inside the rescore. An --out that
+    exists is refused unless --force - checked before the model loads."""
+    if out:
+        p = Path(out)
+    else:
+        stamp = (now or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
+        p = OUT / f"ablation_{label}_{stamp}.json"
+    if p.exists() and not force:
+        raise SystemExit(f"[ablate] {p} exists and is not replaced without --force "
+                         f"(experiments/out/ablation_orig.json and ablation_ft.json are the "
+                         f"4 Aug sources docs/data/aerialvla_ablation_rescore.json pins by "
+                         f"SHA-256); pass --out elsewhere, or --force to replace it")
+    return p
+
+
+def main(argv=None) -> int:
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--adapter", default="D:/models/aerialvla-lora/aero_vla")
     ap.add_argument("--label", default="orig")
-    args = ap.parse_args()
+    ap.add_argument("--out", default=None,
+                    help="rows JSON (default experiments/out/ablation_<label>_<utc>.json)")
+    ap.add_argument("--force", action="store_true", help="replace an existing --out")
+    args = ap.parse_args(argv)
+    out_path = output_path(args.label, args.out, args.force)
+    from PIL import Image
 
     meta = json.loads((FRAMES / "frames.json").read_text(encoding="utf-8"))
     frames = meta["frames"]
@@ -126,8 +158,8 @@ def main() -> int:
                      **r})
         if k % 12 == 0:
             print(f"  {k}/{total}  ({(time.time()-t0)/k:.1f}s each)")
-    (OUT / f"ablation_{args.label}.json").write_text(
-        json.dumps(recs, indent=1), encoding="utf-8")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(recs, indent=1), encoding="utf-8")
 
     ok = [r for r in recs if r.get("ok")]
     print(f"\n=== {args.label}: {len(ok)}/{len(recs)} parsed ===\n")
@@ -158,14 +190,19 @@ def main() -> int:
     print(f"  vary the OBJECT DESCRIPTION  : mean {np.mean(by_obj):.3f}  max {np.max(by_obj):.3f}")
 
     # 2. does the hint alone predict the sign of the commanded turn?
-    print("\nMean commanded yaw per hint (averaged over every image and object):")
+    #    yaw is radians and fwd metres PER STEP (one decision), not rates;
+    #    means over the accepted outputs, `held` the refused ones (flown as zero)
+    print("\nMean commanded yaw (rad per step) and forward step (m) per hint, over every "
+          "image and object:")
     for hint in HINTS:
-        g = [r for r in ok if r["hint"] == (hint.strip() or "(none)")]
+        name = hint.strip() or "(none)"
+        g = [r for r in ok if r["hint"] == name]
+        held = sum(1 for r in recs if r["hint"] == name and not r.get("ok"))
         if g:
             lands = sum(1 for r in g if r["land"])
-            print(f"  {hint.strip() or '(none)':16} yaw={np.mean([r['yaw'] for r in g]):+.3f}  "
+            print(f"  {name:16} yaw={np.mean([r['yaw'] for r in g]):+.3f}  "
                   f"fwd={np.mean([r['fwd'] for r in g]):.2f}  "
-                  f"LAND {lands}/{len(g)}")
+                  f"LAND {lands}/{len(g)} parsed, {held} held")
 
     # 3. the decisive one for a semantic mission: with NO hint, does the
     #    presence of the object in the image change anything at all?
@@ -180,12 +217,15 @@ def main() -> int:
     # 4. and the object-grounding question: correct vs wrong colour, same pixels
     print("\nSame pixels (target present), correct vs wrong colour word:")
     for obj in OBJECTS:
-        g = [r for r in ok if r["scene"] == "present" and r["object"] == (obj or "(none)")]
+        name = obj or "(none)"
+        g = [r for r in ok if r["scene"] == "present" and r["object"] == name]
+        held = sum(1 for r in recs if r["scene"] == "present" and r["object"] == name
+                   and not r.get("ok"))
         if g:
-            print(f"  {obj or '(none)':16} yaw={np.mean([r['yaw'] for r in g]):+.3f} "
+            print(f"  {name:16} yaw={np.mean([r['yaw'] for r in g]):+.3f} "
                   f"fwd={np.mean([r['fwd'] for r in g]):.2f} "
-                  f"LAND {sum(1 for r in g if r['land'])}/{len(g)}")
-    print(f"\n[out] {OUT / f'ablation_{args.label}.json'}")
+                  f"LAND {sum(1 for r in g if r['land'])}/{len(g)} parsed, {held} held")
+    print(f"\n[out] {out_path}")
     return 0
 
 

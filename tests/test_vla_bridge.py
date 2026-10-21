@@ -299,7 +299,8 @@ def test_deadband_is_a_quarter_of_the_frame():
             if br.phrase_for(_det(cx)) == vla_bridge.STRAIGHT_AHEAD]
     assert len(same) >= int(2 * br.deadband_px(W))       # ~107 of 400 columns
     # servo() at the edge of that band already commands real yaw, the phrase
-    # path commands a constant: 1.2 * radians(15) = 0.314 rad/s vs -0.035
+    # path commands a constant: 1.2 * radians(15) = 0.314 rad/s (servo's rate)
+    # vs AerialVLA's -0.035 rad per step
     _yaw_edge, _f, brg = servo(_det(W / 2 + W / 6), W, 1.2, 0.10, 4.0)
     assert abs(_yaw_edge) > 0.3
     assert abs(PHRASE_YAW_RAD_S[vla_bridge.STRAIGHT_AHEAD]) < 0.05
@@ -309,21 +310,23 @@ def test_deadband_is_a_quarter_of_the_frame():
 
 
 def test_straight_ahead_is_biased_not_neutral():
-    """A dead-centred target still commands -0.035 rad/s, so the aircraft yaws
-    left ~5.4 deg over the 2.7 s an action is held. Recorded as a test because it
-    is the reason a static objective drifts under this bridge at all."""
+    """A dead-centred target still commands -0.035 rad, i.e. a 2.0 deg turn
+    left at every decision (radians PER STEP since the 2026-10-21 unit
+    correction; the old velocity reading held it for 2.7 s, ~5.4 deg).
+    Recorded as a test because it is the reason a static objective drifts
+    under this bridge at all."""
     y = PHRASE_YAW_RAD_S[vla_bridge.STRAIGHT_AHEAD]
     assert y != 0.0
-    assert abs(math.degrees(y) * 2.7) > 5.0
+    assert 1.5 < abs(math.degrees(y)) < 2.5
 
 
 # ---------------------------------------------------------- the no-detection path
 
 def test_no_detection_yields_no_prompt_and_never_the_empty_phrase():
     """The safety decision: no perception, no learned action. Emitting
-    semantic_direction's "" instead would command LAND on 11 of 18 real frames,
-    and emitting "straight ahead " would fly blind at ~3.8 m/s over an obstacle
-    map that contains buildings only."""
+    semantic_direction's "" instead would command LAND on 11 of 18 real frames
+    (and 6 more malformed stops), and emitting "straight ahead " would fly
+    blind in ~3.8 m steps over an obstacle map that contains buildings only."""
     br = VLABridge("an orange car")
     assert br.phrase_for(None) is None
     assert br.prompt_for(None) is NO_DETECTION_PROMPT

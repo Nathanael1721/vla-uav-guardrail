@@ -680,11 +680,31 @@ class V2Server:
                     fh.write(line)
         except Exception as exc:                                  # noqa: BLE001
             self._count("log_failures")
-            if not self._log_warned:
-                self._log_warned = True
-                print(f"[vla-server] WARNING: cannot write the request log {self.log_path} "
-                      f"({type(exc).__name__}: {exc}); answering every request anyway and "
-                      f"counting log_failures (hello reports them)", file=sys.stderr, flush=True)
+            self._warn_log(exc)
+
+    def _warn_log(self, exc: BaseException) -> None:
+        if not self._log_warned:
+            self._log_warned = True
+            print(f"[vla-server] WARNING: cannot write the request log {self.log_path} "
+                  f"({type(exc).__name__}: {exc}); answering every request anyway and "
+                  f"counting log_failures (hello reports them)", file=sys.stderr, flush=True)
+
+    def probe_log(self) -> bool:
+        """Open the log for append once, before serving, so an unwritable
+        location is reported when the server starts rather than first in the
+        middle of a flight: the default is under demo/out on D:, which fills
+        up, inside OneDrive, which can hold a file locked (review of V1a,
+        P1). Never raises; True when there is no log or it opened."""
+        if self.log_path is None:
+            return True
+        try:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.log_path.open("a", encoding="utf-8"):
+                pass
+            return True
+        except Exception as exc:                                  # noqa: BLE001
+            self._warn_log(exc)
+            return False
 
     # -- entry points ---------------------------------------------------- #
     def handle_line(self, line: bytes | str) -> tuple[dict, bool]:
@@ -1231,6 +1251,7 @@ def main(argv=None) -> int:
               f"{res['vram']['inference_peak_allocated_gb']} GB -> {args.out}", flush=True)
         return 0
 
+    core.probe_log()            # warns now, not at the first request, if it cannot write
     srv = make_tcp_server(core, args.host, args.port)
     if args.host not in ("127.0.0.1", "localhost", "::1"):
         print(f"[vla-server] WARNING: listening on {args.host}, not loopback", flush=True)

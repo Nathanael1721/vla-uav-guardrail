@@ -169,6 +169,48 @@ MAX_CSP_CHARS = 4000        # the CSP budget is 256 tokens (compiler.py)
 
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
+# COORDINATES IN FREE TEXT (review of V1a, P10). validate_request refuses a
+# coordinate by KEY, but `object` (and `csp_text`) are free text, so
+# object="target at x=38.0 y=26.0" went through to the prompt - the one way
+# left to tell the VLA where the target is over protocol v2. These patterns
+# refuse what a position looks like in text. Measured against every one of
+# the 7,611 distinct object descriptions in upstream's training set
+# (D:/models/aerialvla-lora/aerovla_train_dataset.json, 2026-10-22): none
+# matches; 39 of them carry a number ("24-hour", "speed limit of 30", a
+# lot marked "38", "Live Your Life in 2021"), none a decimal number, and 52
+# use the word "target" in prose ("the target, a man,") - so a lone number,
+# or the word alone, is NOT refused. It is a heuristic, not a proof: a
+# position spelt in words ("thirty-eight metres east") passes. The server
+# logs every prompt it ran (the JSONL log's "prompt"), so a leak that gets
+# through can be audited.
+_TARGET_NUMBER = re.compile(            # "target at 38", "goal: (38, 26)", "destination = -4"
+    r"\b(?:target|goal|destination)s?\b\W{0,4}(?:(?:is|at|of|=|:)\W{0,4})?[-+]?\d", re.I)
+_COORDINATE_TEXT = (
+    ("two decimal numbers", re.compile(r"[-+]?\d+\.\d+(?:\D+[-+]?\d+\.\d+)")),
+    ("a bracketed number pair",
+     re.compile(r"[(\[]\s*[-+]?\d+(?:\.\d+)?\s*[,;]\s*[-+]?\d+(?:\.\d+)?\s*[)\]]")),
+    ("an axis given a number",            # "x=38", "y: 26", "north=12"
+     re.compile(r"\b(?:x|y|z|xy|north(?:ing)?|east(?:ing)?)\s*[=:]\s*[-+]?\d", re.I)),
+    ("a latitude or longitude",
+     re.compile(r"\b(?:lat|lon|lng|latitude|longitude)\b\W{0,3}[-+]?\d", re.I)),
+    ("coordinates given a number", re.compile(r"\bcoord(?:inate)?s?\b\W{0,4}[-+(\[]?\d", re.I)),
+    ("the target given a number", _TARGET_NUMBER),
+)
+
+
+def coordinate_text(text: str, rules=_COORDINATE_TEXT) -> str | None:
+    """What in `text` looks like a position ("two decimal numbers", ...), or
+    None. `object` is checked against every rule; `csp_text` only against
+    the target/goal rule, because a Constraint Summary Pack legitimately
+    carries altitudes, radii and speeds - but its relevance reasons can say
+    "the straight path from (sx, sy) to the target (tx, ty)"
+    (guardrail/templates/reason/*.j2), which must not reach the VLA."""
+    for why, rx in rules:
+        m = rx.search(text)
+        if m:
+            return f"{why} ({m.group(0)!r})"
+    return None
+
 
 class CodecError(ValueError):
     """An input the AerialVLA interface does not accept. `code` is the short
@@ -219,7 +261,9 @@ def validate_object(obj: Any) -> str:
     """The `{object}` slot: free text, inserted verbatim. Refused: a non-string,
     control characters (a newline would move "Action: " to another line of
     the prompt), surrounding whitespace (upstream strips it; we refuse rather
-    than strip, so the logged prompt is the one that ran), and runaway length."""
+    than strip, so the logged prompt is the one that ran), runaway length,
+    and text that looks like a position (coordinate_text; its own error,
+    ERR_COORDINATE_TEXT)."""
     if not isinstance(obj, str):
         raise CodecError(ERR_BAD_OBJECT, f"object must be a string, got {type(obj).__name__}")
     if _CONTROL.search(obj):
@@ -228,6 +272,10 @@ def validate_object(obj: Any) -> str:
         raise CodecError(ERR_BAD_OBJECT, "object starts or ends with whitespace (upstream strips it)")
     if len(obj) > MAX_OBJECT_CHARS:
         raise CodecError(ERR_BAD_OBJECT, f"object is {len(obj)} characters, more than {MAX_OBJECT_CHARS}")
+    why = coordinate_text(obj)
+    if why:
+        raise CodecError(ERR_COORDINATE_TEXT, f"object carries {why}: the VLA is never told "
+                                              f"where the target is; describe it in words")
     return obj
 
 
@@ -257,6 +305,10 @@ def validate_csp(csp_mode: Any, csp_text: Any) -> str | None:
                                       "the CSP stays on the instruction line")
     if len(text) > MAX_CSP_CHARS:
         raise CodecError(ERR_BAD_CSP, f"csp_text is {len(text)} characters, more than {MAX_CSP_CHARS}")
+    why = coordinate_text(text, rules=(("the target given a number", _TARGET_NUMBER),))
+    if why:
+        raise CodecError(ERR_COORDINATE_TEXT, f"csp_text carries {why}: send the rule "
+                                              f"sentences, not the reasons that place the target")
     return text
 
 
@@ -628,6 +680,7 @@ ERR_VERSION = "unsupported version"
 ERR_OP = "unknown op"
 ERR_UNKNOWN_FIELD = "unknown field"
 ERR_COORDINATE_FIELD = "coordinate field refused"
+ERR_COORDINATE_TEXT = "coordinate text refused"     # a position inside object / csp_text
 ERR_MISSING_FIELD = "missing field"
 ERR_BAD_VALUE = "bad value"
 ERR_BAD_PHRASE = "phrase not in vocabulary"

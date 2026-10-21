@@ -955,6 +955,25 @@ def test_a_vla_whose_weights_the_flight_cannot_see_carries_the_server_reported_d
             pass
         else:
             raise AssertionError("a stub pilot carried a reported weights digest")
+        # 6. Review of V1a (P8): build_manifest had no kind guard, so a stub
+        #    id with a reported digest got "StubVLA@sha256:<digest>" instead of
+        #    "@src:..." and a code-only pilot looked weight-identified. The
+        #    guard is in resolve_vla_hash now, so both paths refuse: the no-VLA
+        #    id, an id hashed by its source file, a fake:* stand-in, even when
+        #    a caller files it as kind "vla".
+        from guardrail.manifest import NO_VLA, resolve_vla_hash
+        for no_weights in ("guardrail.vla_stub.StubVLA", NO_VLA, "fake:scripted"):
+            for call in (lambda m=no_weights: build_manifest("sha256:p", m, 1,
+                                                             reported_digest=dig_a),
+                         lambda m=no_weights: resolve_vla_hash(m, None, dig_a),
+                         lambda m=no_weights: pilot_record(m, "vla", reported_digest=dig_a)):
+                try:
+                    got = call()
+                except ValueError:
+                    continue
+                raise AssertionError(f"{no_weights!r} took a reported weights digest: {got}")
+        assert build_manifest("sha256:p", "guardrail.vla_stub.StubVLA", 1)[
+            "vla_model_hash"].startswith("guardrail.vla_stub.StubVLA@src:")
         # Without a report the record keeps its old shape.
         assert set(pilot_record(mid, "vla", weight_paths=[a])) == {"kind", "model_id", "hash"}
     finally:
