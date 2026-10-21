@@ -38,6 +38,16 @@ decision_hz 9.8 from malformed answers alone; ENOSPC and the ValueError of a
 bad hint raised out of act(); the goal phrase chosen with no hint source; the
 policy band (6, 14) replacing a configured (8, 30).
 
+The second review (tests citing "Review of the V1b fixes (39c447a)"): the
+drain guard is tested, and a reply that cannot be handed to the tracker keeps
+its request's line; stats() says None, not 0, for the log counts of a run
+with no log, and `log_pending` says whether `log_errors` is final. At 39c447a
+both fail: the request's line is missing, and log_errors reads 0 with no log.
+Each half of each fix was also reverted alone (the guard narrowed to
+ZeroDivisionError, the line not kept, no link_lost, a reply to a seq never
+sent counted as an answer, 0 for no log, pending hidden, stats() waiting on
+the writer): every one fails one of the two tests.
+
 Shown failing first: at 7c9c9e6 make_backend("aerovla", ...) required
 model_dir/get_frame and built the skeleton, so every test below fails there
 (TypeError on get_capture, or NotImplementedError on the first act()).
@@ -569,6 +579,139 @@ def test_a_raising_callback_never_stops_the_loop():
             assert "camera gone" in be.stats()["last_request_error"]
         finally:
             be.close()
+
+
+def _one_line_per_request(be):
+    seqs = sorted(r["seq"] for r in be.records)
+    assert seqs == list(range(1, be.counts["requests"] + 1)), seqs
+
+
+def test_a_reply_that_cannot_be_handed_to_the_tracker_is_a_lost_link():
+    """Review of the V1b fixes (39c447a), P1: the drain guard had no test.
+    With `except Exception` in RemoteVLABackend._safe_drain narrowed to
+    `except ZeroDivisionError` (the guard gone), test_vla_link.py and this
+    file still passed. A reply that cannot be handed to the tracker (here
+    decision_from_result raising, and a reply to a seq never sent) must not
+    leave act(): the tick returns the tracker's action, the error is counted
+    (drain_errors, last_drain_error) and treated as a lost link, so the tick
+    is `none`/link_lost before any decision and the step being flown is
+    dropped (`hover`/link_lost) after one. The request whose reply could not
+    be handed over keeps its vla_steps.jsonl line (refused `drain_error`):
+    at 39c447a its meta was popped and the line lost, so a run with a drain
+    error broke one line per request."""
+    import guardrail.vla_link as L
+    real = L.decision_from_result
+
+    def broken(meta, res):
+        raise RuntimeError("decoder bug")
+    reply = lambda req: F.step_reply(req, 4.0, 0.0, 0.0)          # noqa: E731
+    # Before any decision: the first reply cannot be handed over.
+    sim = _Sim()
+    with F.FakeVLAServer(reply) as srv:
+        be = _backend(srv, sim)
+        try:
+            a = be.act(sim.state())
+            be.client.wait_idle(3.0)
+            sim.step(a)
+            L.decision_from_result = broken
+            try:
+                a = be.act(sim.state())
+            finally:
+                L.decision_from_result = real
+            assert a == Action4D() and a == be.last_tick.action
+            assert (be.last_tick.author, be.last_tick.reason) == ("none", "link_lost"), be.last_tick
+            assert be.counts["drain_errors"] == 1 and be.tracker.counts["link_lost"] == 1
+            assert be.stats()["last_drain_error"] == "RuntimeError: decoder bug", be.stats()
+            lost = [r for r in be.records if r["seq"] == 1]
+            assert len(lost) == 1 and lost[0]["refused"] == "drain_error", be.records
+            assert lost[0]["accepted"] is False and lost[0]["kind"] == "step"
+            assert lost[0]["drain_error"] == "RuntimeError: decoder bug"
+            # The loop goes on: the next reply is handed over and flown.
+            be.client.wait_idle(3.0)
+            sim.step(a)
+            be.act(sim.state())
+            assert be.last_tick.author == "vla_step" and be.last_tick.seq == 2
+        finally:
+            be.close()
+    _one_line_per_request(be)
+    # After a decision: the step being flown is dropped, and the tracker hovers.
+    sim = _Sim()
+    with F.FakeVLAServer(reply) as srv:
+        be = _backend(srv, sim)
+        try:
+            assert _fly_ticks(be, sim, 2) == ["none", "vla_step"]
+            L.decision_from_result = broken
+            try:
+                a = be.act(sim.state())
+            finally:
+                L.decision_from_result = real
+            assert a == Action4D()
+            assert (be.last_tick.author, be.last_tick.reason) == ("hover", "link_lost"), be.last_tick
+            assert be.counts["drain_errors"] == 1 and be.tracker.counts["link_lost"] == 1
+            flown = next(r for r in be.records if r["seq"] == 1)
+            assert flown["accepted"] is True and flown["outcome"]["end"] == "link_lost", flown
+            assert next(r for r in be.records if r["seq"] == 2)["refused"] == "drain_error"
+        finally:
+            be.close()
+    _one_line_per_request(be)
+    # A reply to a seq this backend never sent: no request is owed a line,
+    # and it is no answer.
+    sim = _Sim()
+    late = [L.LinkResult(99, {}, None, 0.0, 0.0, "link", "never sent")]
+    stub = SimpleNamespace(counts={}, busy=False, close=lambda: None,
+                           poll=lambda: late.pop() if late else None)
+    be = make_backend("aerovla", _mission(), None, get_capture=sim.capture,
+                      get_hint=lambda cap: None, client=stub, clock=sim.clock)
+    assert be.act(sim.state()) == Action4D()
+    assert (be.last_tick.author, be.last_tick.reason) == ("none", "link_lost"), be.last_tick
+    assert be.counts["drain_errors"] == 1 and be.tracker.counts["link_lost"] == 1
+    st = be.stats()
+    assert st["last_drain_error"] == "KeyError: 99", st
+    assert st["answers"] == {} and be.records == [], (st["answers"], be.records)
+    be.close()
+    assert be.records == []
+
+
+def test_the_log_counts_say_when_nothing_was_measured_or_is_still_queued():
+    """Review of the V1b fixes (39c447a), P2: stats() said log_errors 0 when
+    there was no log at all, the same as a log written without a fault; and
+    with a log it read StepLog.errors without waiting for the writer thread,
+    so before close() it could say 0 while failing writes were still queued.
+    The zero that means 'not measured'. Now: no log is None for every log
+    count, and `log_pending` (queued, not yet written or failed) says
+    whether log_errors is final; stats() never waits for the writer."""
+    import tempfile
+    import threading
+    sim = _Sim()
+    kw = dict(get_capture=sim.capture, hint="goal", client=SimpleNamespace(counts={}))
+    st = make_backend("aerovla", _mission(), None, **kw).stats()
+    for k in ("log_errors", "last_log_error", "log_pending", "log_written"):
+        assert k in st and st[k] is None, (k, st)
+    with tempfile.TemporaryDirectory() as d:
+        be = make_backend("aerovla", _mission(), None,
+                          steps_log=Path(d) / "vla_steps.jsonl", **kw)
+        gate = threading.Event()
+
+        def stuck(s):
+            gate.wait(5.0)
+            raise OSError(28, "No space left on device")
+        be.steps_log._fh.write = stuck
+        try:
+            be.steps_log.write({"seq": 1})
+            be.steps_log.write({"seq": 2})
+            t0 = time.monotonic()
+            st = be.stats()
+            assert time.monotonic() - t0 < 0.5, "stats() waited for the writer"
+            assert st["log_errors"] == 0 and st["log_pending"] == 2, st
+            assert st["log_written"] == 0 and st["last_log_error"] is None, st
+            gate.set()
+            assert be.steps_log.flush(3.0)
+            st = be.stats()
+            assert st["log_errors"] == 2 and st["log_pending"] == 0, st
+            assert "No space left" in st["last_log_error"] and st["log_written"] == 0, st
+        finally:
+            gate.set()
+            be.steps_log.close()
 
 
 if __name__ == "__main__":

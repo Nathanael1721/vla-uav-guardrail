@@ -1097,7 +1097,9 @@ class StepLog:
     write (OSError, or a record that is not JSON) is counted in `errors`
     with `last_error`; the caller keeps its own copy (RemoteVLABackend.records).
     `n` counts lines written. `close()` drains the queue, then closes the
-    file. Opening the file can raise: that happens before the flight loop."""
+    file. Opening the file can raise: that happens before the flight loop.
+    `snapshot()` reads the counts with the number still queued, so a count
+    read before the queue drained is not taken for the final one."""
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
@@ -1122,6 +1124,16 @@ class StepLog:
             self._q.append(rec)
             self._pending += 1
             self._cv.notify_all()
+
+    def snapshot(self) -> dict:
+        """`written` (n), `errors`, `last_error` and `pending` (queued, not
+        yet written or failed), read together under the lock and without
+        waiting for the writer, so a control tick may call it. `errors` is
+        final only when `pending` is 0: after flush() or close(). (A writer
+        that hung past close()'s timeout leaves `pending` above 0.)"""
+        with self._cv:
+            return {"written": self.n, "errors": self.errors,
+                    "last_error": self.last_error, "pending": self._pending}
 
     def flush(self, timeout_s: float = 5.0) -> bool:
         """Block until every queued record is written or failed (tools,

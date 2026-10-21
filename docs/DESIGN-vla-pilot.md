@@ -272,7 +272,8 @@ it:
   `latency_server_s`, `prompt_sha256`, `image_sha256`, `model`, and
   `failure` for a link failure;
 - fate: `accepted`, `refused` (server_error / suspended / invalidated /
-  after_land / stale_on_arrival / future_capture / link_failure / closed),
+  after_land / stale_on_arrival / future_capture / link_failure / closed /
+  drain_error, the last with the error's text in `drain_error`),
   `target` (psi, x, y, up, up_raw, alt_clamped, rotate_only, time_cap_s),
   `outcome` (t_start, completed, completion tolerance / time_cap,
   t_complete, end superseded / stale / hold_timeout / link_lost /
@@ -280,11 +281,18 @@ it:
 
 `RemoteVLABackend.stats()` gives, for `metrics.json`: `decisions_accepted` and
 `decision_hz`, which count ONLY answers the model parsed (a step or LAND) that
-the tracker took; `answers` (every reply by kind, accepted or not);
-`parse_fail`, `server_error` and `link_failure` with their own rates; the
-error counts below; the altitude band and its source; refusals, ends, ticks
-by author and the link's counters. (Until 2026-10-22 the decision rate counted
-every accepted reply, server errors and malformed answers included.)
+the tracker took; `answers` (every reply to a request sent, by kind, accepted
+or not); `parse_fail`, `server_error` and `link_failure` with their own rates;
+the error counts below; the altitude band and its source; refusals, ends,
+ticks by author and the link's counters. (Until 2026-10-22 the decision rate
+counted every accepted reply, server errors and malformed answers included.)
+
+The log's counts are `log_written`, `log_errors`, `last_log_error` and
+`log_pending` (records queued and not yet written or failed). With no
+`steps_log` all four are None: nothing was measured, and until the second
+review of 2026-10-22 a 0 said the same as a log written without a fault.
+stats() reads them without waiting for the writer thread (it may run on the
+loop), so `log_errors` is final only when `log_pending` is 0: after `close()`.
 
 Nothing here may stop the 10 Hz loop:
 
@@ -301,7 +309,12 @@ Nothing here may stop the 10 Hz loop:
   the request (`Hint` and `build_infer_fields` refuse bad values by raising),
   is counted (`request_errors`, `last_request_error`) and the tick still
   returns the tracker's action. A reply that cannot be handed to the tracker
-  is counted (`drain_errors`) and treated as a lost link.
+  is counted (`drain_errors`, `last_drain_error`) and treated as a lost link
+  (`none` before any decision, `hover` after one), and its request keeps its
+  line (`refused: drain_error`; the tracker owns the record once it has the
+  decision). A reply to a seq never sent is counted the same way and is not
+  an answer. Until the second review of 2026-10-22 the guard had no test and
+  the request's line was lost.
 - The client's worker thread posts a result for every request whatever goes
   wrong in it (`failure: internal` for anything unexpected), so it never dies
   with a request outstanding and every request keeps its line.

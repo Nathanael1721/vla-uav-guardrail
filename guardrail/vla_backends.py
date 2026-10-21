@@ -102,7 +102,10 @@ class RemoteVLABackend:
     (review of 7c7cc50, P4 and P6): an exception from get_capture, get_hint
     or building the request is counted (`counts['request_errors']`, the last
     one's text in stats()) and the tick still returns the tracker's action;
-    vla_steps.jsonl is written by StepLog's own thread.
+    a reply that cannot be handed to the tracker is counted
+    (`counts['drain_errors']`), keeps its request's line (refused
+    `drain_error`) and is a lost link; vla_steps.jsonl is written by
+    StepLog's own thread.
 
     The altitude band (`policy`, `refresh_fences`): the tracker clamps into
     the tighter of the band its TrackerConfig sets and the policy's hard
@@ -246,7 +249,15 @@ class RemoteVLABackend:
         7c7cc50 (P1) they counted every accepted reply: a server refusing
         every request reported a 9.97 Hz decision rate. Malformed answers,
         server errors and link failures are counted and rated on their own
-        (`answers` has every reply by kind, accepted or not)."""
+        (`answers` has every reply to a request sent, by kind, accepted or
+        not).
+
+        The log counts (`log_written`, `log_errors`, `last_log_error`,
+        `log_pending`) are None when there is no steps_log: nothing was
+        measured, which a 0 would hide (review of 39c447a, P2). With a log
+        they are read without waiting for its writer thread (stats() may run
+        on the loop), so `log_errors` is final only when `log_pending` is 0:
+        after close(), or StepLog.flush() off the loop."""
         t = self.tracker
         n = t.counts.get("kind_step", 0) + t.counts.get("kind_land", 0)
         span = (self.clock() - self._t0) if self._t0 is not None else 0.0
@@ -256,7 +267,8 @@ class RemoteVLABackend:
         n_pf = self.answers.get("parse_fail", 0)
         n_se = self.answers.get("server_error", 0)
         n_lf = self.answers.get("link_failure", 0)
-        log = self.steps_log
+        log = (self.steps_log.snapshot() if self.steps_log is not None else
+               dict.fromkeys(("written", "errors", "last_error", "pending")))
         return {"cadence": self.cadence, "csp_mode": self.csp_mode,
                 "decisions_accepted": n, "decision_hz": rate(n),
                 "answers": dict(self.answers),
@@ -267,8 +279,8 @@ class RemoteVLABackend:
                 "last_request_error": self.last_errors.get("request_errors"),
                 "drain_errors": self.counts["drain_errors"],
                 "last_drain_error": self.last_errors.get("drain_errors"),
-                "log_errors": log.errors if log is not None else 0,
-                "last_log_error": log.last_error if log is not None else None,
+                "log_written": log["written"], "log_errors": log["errors"],
+                "last_log_error": log["last_error"], "log_pending": log["pending"],
                 "alt_band": dict(self.alt_band_info),
                 "tracker": dict(t.counts), "ticks_by_author": dict(t.ticks),
                 "requests": dict(self.counts), "link": dict(self.client.counts),
@@ -293,17 +305,45 @@ class RemoteVLABackend:
         res = self.client.poll()
         if res is None:
             return
-        self.answers[res.reply.kind if res.reply is not None else "link_failure"] += 1
+        # A reply to a seq this backend never sent raises KeyError here: no
+        # request is owed a line, and it is no answer (`answers` counts the
+        # replies to requests sent).
         meta = self._meta.pop(res.seq)
-        dec = decision_from_result(meta, res)
-        if dec is None:
-            rec = make_record(meta, res)
+        kind = res.reply.kind if res.reply is not None else "link_failure"
+        self.answers[kind] += 1
+        try:
+            dec = decision_from_result(meta, res)
+            rec = make_record(meta, res) if dec is None else None
+        except Exception as exc:                                  # noqa: BLE001
+            # The request was sent and its meta is popped: it keeps its line,
+            # one per request (close() keeps one for a request in flight the
+            # same way), then _safe_drain treats the reply as a lost link.
+            # Until the review of 39c447a (P1) the line was lost. Once the
+            # tracker has the decision, the record is the tracker's.
+            self._emit(self._unhandled_record(meta, res, kind, exc))
+            raise
+        if rec is not None:
             rec.update({"accepted": False, "refused": "link_failure",
                         "target": None, "outcome": None})
             self.tracker.link_lost(now, res.detail)
             self._emit(rec)
             return
         self.tracker.accept(dec, now)
+
+    @staticmethod
+    def _unhandled_record(meta: dict, res, kind: str, exc: BaseException) -> dict:
+        """The line for a request whose reply could not be handed to the
+        tracker: the reply's fields when make_record can still build them,
+        else the request's own, refused `drain_error` with the error's text."""
+        from .vla_link import VLA_STEPS_SCHEMA, make_record
+        try:
+            rec = make_record(meta, res)
+        except Exception:                                         # noqa: BLE001
+            rec = {"schema": VLA_STEPS_SCHEMA, "seq": res.seq, **meta, "kind": kind}
+        rec.update({"accepted": False, "refused": "drain_error",
+                    "drain_error": f"{type(exc).__name__}: {exc}",
+                    "target": None, "outcome": None})
+        return rec
 
     def _maybe_request(self, now: float) -> None:
         from .vla_link import build_infer_fields
