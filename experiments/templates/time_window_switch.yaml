@@ -150,7 +150,13 @@ scenarios:
       15), are pinned in tests/test_window_opens_on.py, and time to safe is
       the tight bound on every cell. Measured 2026-10-22, both arms, both
       speeds: the 7c9c9e6 counts and time to safe exactly, 0 P0 escapes, no
-      FSM edge.
+      FSM edge. AT THE CAP WHERE IT RE-CHECKS CLEAN (review of b1d3aca, P1):
+      the cap's escape forecasts 20 m ahead, and with another hard zone in
+      that reach it is flown at the fastest speed down to the in-force 2.0
+      m/s that re-checks clean, else the tick is reported and the FSM
+      escalates (guardrail/shield.py Shield._floor_the_escape). These cells
+      have no such zone; tests/test_window_opens_on.py flies this cell with
+      one 10, 13 and 15 m past the exit, at 1.5 and 0.5 m/s.
     mission:
       start_pose: { x: 60.0, y: 21.0, up: 15.0 }
       target: { x: 60.0, y: 55.0, up: 15.0 }

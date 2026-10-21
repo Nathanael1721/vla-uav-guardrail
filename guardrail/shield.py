@@ -166,6 +166,17 @@ ENFORCED_TYPES = frozenset({
 # raw action through while the mode change is requested.
 _STOP_ACTIONS = ("brake", "loiter", "RTL", "land")
 
+# The escape from a zone whose window opened on the aircraft leaves at the
+# speed cap (Shield._repair_geofence). When the cap's escape cannot be flown -
+# its longer forecast reaches another hard rule - Shield._floor_the_escape
+# retries it slower, down to the in-force floor min(2.0, cap) in steps of
+# this much (or (cap - floor) / _OPENED_RETRY_STEPS when that is coarser, so
+# a high cap costs no more re-runs), then with the in-force floor itself
+# (_IN_FORCE_FLOOR, the shape a zone the aircraft entered by itself gets).
+_OPENED_RETRY_MPS = 0.25
+_OPENED_RETRY_STEPS = 8
+_IN_FORCE_FLOOR = "in-force floor"
+
 
 class LockedRuleClass(ValueError):
     """A mid-flight change to a rule class the grant locks at mission start."""
@@ -862,7 +873,7 @@ class _Tick:
     (monitor_only rules, and soft rules it has given up)."""
     __slots__ = ("rt", "sched", "t", "skip", "_lists", "_moving", "_swept", "unsafe",
                  "_t_first", "given_up", "chain_runs", "ledger", "ahead", "origin",
-                 "committed", "pipe_t")
+                 "committed", "pipe_t", "opened_mps")
 
     def __init__(self, rt: _Runtime, sched: _Schedule, t: float, t_first: float | None):
         self.rt, self.sched, self.t, self._t_first = rt, sched, t, t_first
@@ -893,6 +904,13 @@ class _Tick:
         # The pipe clock's reading for this tick (Shield._pipe_now), latched
         # at its first use so every forecast of the tick reads one pipe.
         self.pipe_t: float | None = None
+        # How fast the escape from a zone whose window opened on the aircraft
+        # leaves on the chain run being made (Shield._repair_geofence): None,
+        # the speed cap; a number, that speed; _IN_FORCE_FLOOR, the in-force
+        # floor a zone the aircraft entered by itself gets. Set only by
+        # Shield._floor_the_escape, for one run of its retries
+        # (`_opened_retries`), and None again after it.
+        self.opened_mps: "float | str | None" = None
 
     def rules(self, name: str):
         key = (name, self.skip)
@@ -3251,7 +3269,21 @@ class Shield:
                 # at the 4 m/s cap - took 2.6 s and 3 / 8 / 13, at any pilot
                 # speed; the KPI read the longer stay as no escape. Not for a
                 # moving zone, which _opening_imposed never proves.
-                opened = t_open is not None or (not mv and f.id in self._opened_on)
+                #
+                # At the cap WHERE IT CAN BE FLOWN: a faster escape forecasts
+                # further, and the cap's can reach another hard rule the
+                # aircraft's own crawl does not. Then _floor_the_escape asks
+                # again with a slower one (`tick.opened_mps`, its retries:
+                # review of b1d3aca, P1), down to the in-force floor and that
+                # floor's own shape (_IN_FORCE_FLOOR), and escalates if none
+                # can be flown.
+                try_mps = getattr(self._tick_ctx(), "opened_mps", None)
+                opened = ((t_open is not None or (not mv and f.id in self._opened_on))
+                          and try_mps != _IN_FORCE_FLOOR)
+                if opened and try_mps is not None:
+                    cap_out = min(float(try_mps), cap)
+                else:
+                    cap_out = cap
                 depth = ring.boundary.distance(Point(state.x, state.y))
                 # FLOOR the exit speed, never assign it.
                 #
@@ -3273,7 +3305,7 @@ class Shield:
                 # left behind, or the last one silently wins.
                 # Against a zone that follows the aircraft outward, the exit
                 # speed is raised by the zone's own outward speed.
-                spd = cap if opened else min(2.0 + max(0.0, zx * ox + zy * oy), cap)
+                spd = cap_out if opened else min(2.0 + max(0.0, zx * ox + zy * oy), cap)
                 out_now = vx * ox + vy * oy          # outward speed commanded
                 probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
                 if opened and not self._check_fence(f, poly, state, probe, fposes, ring):
@@ -3297,7 +3329,10 @@ class Shield:
                             operator="GeofenceEscape",
                             detail=(f"{f.id}: window opened on the aircraft, leaving "
                                     f"at {out_now:.2f} m/s -> straight out at the "
-                                    f"{cap:.1f} m/s cap"),
+                                    f"{cap:.1f} m/s cap" if spd >= cap - 1e-9 else
+                                    f"{f.id}: window opened on the aircraft, leaving "
+                                    f"at {out_now:.2f} m/s -> out at {spd:.2f} m/s, "
+                                    f"under the {cap:.1f} m/s cap"),
                             magnitude_m=depth, axis="lateral", recovery=True))
                     continue
                 if not self._check_fence(f, poly, state, probe, fposes, ring):
@@ -5355,48 +5390,250 @@ class Shield:
         a monitor_only one - the escape speed hanging on an unrelated rule
         again. First-feasible mode has no such floors to apply (its
         operators run only for a target violation, so an unrelated one
-        floors nothing there either), so it is not asked."""
+        floors nothing there either), so it is not asked.
+
+        A ZONE THAT OPENED ON THE AIRCRAFT (review of b1d3aca, P1). Its
+        escape is floored at the speed CAP (`window_opens_on`,
+        `window_opened_on`; Shield._repair_geofence says why), and the cap's
+        forecast reaches twice as far as the in-force floor's: with another
+        hard zone within cap x lookahead (20 m) past the exit, the cap's
+        escape broke it, was refused, and the crawl it was meant to floor
+        flew as before - unfloored, legal under the inside rule, so the FSM
+        stayed Normal and the KPI read 0 P0 escapes. In the library's
+        07:29:58 cell with an always-on zone 13 m past the school zone's
+        ring, a 0.5 m/s pilot stayed 104 ticks inside the polygon (14.4 s to
+        safe) and a 0.2 m/s one never got out (279 ticks, censored), against
+        26 ticks / 5.1 s on 3660383 (the 2.0 floor) and 3 / 2.6 s on
+        7c9c9e6 (every tick escalated). So the cap's refusal is not the end:
+        the run is made again with the escape slower (`_opened_retries`: the
+        cap less 0.25 m/s at a time down to min(2.0, cap), then the in-force
+        floor's own shape), and the FASTEST that re-checks clean is flown,
+        its trace saying what the cap broke (`cap_refused`). If none can be
+        flown and the action still leaves such a zone slower than
+        min(2.0, cap), the tick is not passed as clean: it is reported as a
+        violation of that zone (`_escape_shortfall`, in `violations` and
+        `emitted_violations`), so the FSM escalates (Normal -> Brake [X1],
+        then G3 into a Loiter whose hold point the search picks against
+        every rule) as 7c9c9e6 did on every tick there, and the KPI counts
+        what is flown meanwhile - `raw`, which breaks no other rule - as the
+        P0 escape it is. Every run stays on the ledger then (`chain_runs`)."""
         rt = tick.rt
         violations = list(violations)
         keep = {v.rule_id for v in tick.unsafe
                 if rt.hard.get(v.rule_id, True) and self._act(rt, v.rule_id) != "monitor_only"}
         keep |= {k.id for k in rt.kins if self._act(rt, k.id) != "monitor_only"}
         skip = frozenset(c.id for c in rt.constraints if c.id not in keep)
+        # The monitor_only rules `raw` already broke are not the floor's to
+        # answer; any other rule broken is (skip is never empty here when
+        # there are any: a monitor_only rule is never kept).
+        allowed = {v.rule_id for v in violations}
         n_led, n_runs = len(tick.ledger), tick.chain_runs
-        fixed, repairs, blocking, passes = self._repair_chain(tick, state, raw, skip, [])
-        repairs = _dedupe(repairs)
-        why = None
-        after: list = []
-        if not repairs or fixed == raw:
-            pass                                        # nothing to floor
-        elif blocking:
-            why = "the floored action breaks " + ", ".join(sorted({v.rule_id for v in blocking}))
-        elif any(_fsm.theta_governs(r, stop_illegal=True) for r in repairs):
-            why = ("the run carries a projection theta governs: " + ", ".join(
-                r.operator for r in repairs if _fsm.theta_governs(r, stop_illegal=True)))
-        else:
-            # The monitor_only rules `raw` already broke are not the floor's
-            # to answer; any other rule broken is (skip is never empty here
-            # when there are any: a monitor_only rule is never kept).
-            allowed = {v.rule_id for v in violations}
-            after = self._check(state, fixed) if skip else []
-            new = sorted({v.rule_id for v in after if v.rule_id not in allowed})
-            if new:
-                why = "the floored action breaks " + ", ".join(new)
+
+        def run(setting):
+            """One run of the floors, the opened zones' escape at `setting`
+            (tick.opened_mps): (action, repairs, passes, its re-check, why it
+            may not be flown or None)."""
+            tick.opened_mps = setting
+            try:
+                fixed, repairs, blocking, passes = self._repair_chain(tick, state, raw, skip, [])
+            finally:
+                tick.opened_mps = None
+            repairs = _dedupe(repairs)
+            why = None
+            after: list = []
+            if not repairs or fixed == raw:
+                pass                                    # nothing to floor
+            elif blocking:
+                why = "the floored action breaks " + ", ".join(
+                    sorted({v.rule_id for v in blocking}))
+            elif any(_fsm.theta_governs(r, stop_illegal=True) for r in repairs):
+                why = ("the run carries a projection theta governs: " + ", ".join(
+                    r.operator for r in repairs if _fsm.theta_governs(r, stop_illegal=True)))
+            else:
+                after = self._check(state, fixed) if skip else []
+                new = sorted({v.rule_id for v in after if v.rule_id not in allowed})
+                if new:
+                    why = "the floored action breaks " + ", ".join(new)
+            return fixed, repairs, passes, after, why
+
+        fixed, repairs, passes, after, why = run(None)
+        refused, flown_at = why, None
+        if why is not None:
+            for setting in self._opened_retries(flags):
+                fixed, repairs, passes, after, why = run(setting)
+                if why is None:
+                    # Flown - or nothing left to floor: `raw` already leaves
+                    # at least this fast, and every slower try is the same.
+                    flown_at = setting
+                    break
         if why is None and repairs and fixed != raw:
-            return self._traced(
+            d = self._traced(
                 ShieldDecision(raw=raw, emitted=fixed, repairs=repairs,
                                violations=violations, emitted_violations=list(after)),
                 state, tick, passes, [], list(edge), mode, flags)
+            if refused is not None:
+                at = ("the in-force floor" if flown_at == _IN_FORCE_FLOOR
+                      else f"{flown_at:.2f} m/s")
+                d.trace["cap_refused"] = f"flown at {at}; at the cap {refused}"
+            return d
+        short = self._escape_shortfall(state, raw, flags, refused) if refused else []
+        if short:
+            d = self._traced(ShieldDecision(raw=raw, emitted=raw, violations=violations + short,
+                                            emitted_violations=violations + short),
+                             state, tick, [], [], list(edge), mode, flags)
+            self.n_floor_refused += 1
+            d.trace["floor_refused"] = f"raw flown, reported to the FSM: {refused}"
+            return d
         del tick.ledger[n_led:]
         tick.chain_runs = n_runs
         d = self._traced(ShieldDecision(raw=raw, emitted=raw, violations=violations,
                                         emitted_violations=list(violations)),
                          state, tick, [], [], list(edge), mode, flags)
-        if why is not None:
+        if refused is not None:
             self.n_floor_refused += 1
-            d.trace["floor_refused"] = f"raw flown: {why}"
+            d.trace["floor_refused"] = f"raw flown: {refused}"
         return d
+
+    def _opened_retries(self, flags: dict) -> list:
+        """The settings _floor_the_escape re-runs the floors with when the
+        escape from a zone that opened on the aircraft (`window_opens_on`,
+        `window_opened_on` in `flags`) was refused at the cap: the cap less
+        _OPENED_RETRY_MPS at a time (coarser for a high cap: at most
+        _OPENED_RETRY_STEPS of them) down to the in-force floor min(2.0, cap),
+        fastest first, then _IN_FORCE_FLOOR - the in-force floor's own shape,
+        the outward part raised and the tangential kept, as for a zone the
+        aircraft entered by itself. Empty without such a zone: nothing else
+        is floored at the cap, so a slower try would change nothing.
+
+        Fastest first, each re-checked in full, rather than a bisection: the
+        re-check is monotone in the speed for a zone straight ahead, but
+        nothing makes it so for every rule, and a bisection could step over
+        the speed that passes. Nine re-runs at most, and only on a tick whose
+        cap was refused."""
+        if not (flags.get("window_opens_on") or flags.get("window_opened_on")):
+            return []
+        cap = min((k.speed_max_mps for k in self._kins), default=4.0)
+        floor = min(2.0, cap)
+        step = max(_OPENED_RETRY_MPS, (cap - floor) / _OPENED_RETRY_STEPS)
+        out: list = []
+        s = cap - step
+        while s > floor + 1e-9:
+            out.append(round(s, 6))
+            s -= step
+        if floor < cap - 1e-9:
+            out.append(floor)
+        return out + [_IN_FORCE_FLOOR]
+
+    def _escape_shortfall(self, state: State, raw: Action4D, flags: dict,
+                          why: str) -> list[Violation]:
+        """For each zone that opened on the aircraft (`window_opens_on`,
+        `window_opened_on`) whose ring the aircraft is still in and which
+        `raw` leaves slower than the in-force floor min(2.0, cap): the
+        violation _floor_the_escape reports when no floored escape can be
+        flown (`why`), so that the FSM escalates instead of the crawl passing
+        as clean (review of b1d3aca, P1). The way out is read as
+        _repair_geofence reads it: at the pose where the zone opens, for an
+        opening still imposed. Empty when `raw` already leaves every such
+        zone at the floor or faster: that is the floor, and it flies as
+        before."""
+        ids = set(flags.get("window_opens_on") or ()) | set(flags.get("window_opened_on") or ())
+        if not ids:
+            return []
+        cap = min((k.speed_max_mps for k in self._kins), default=4.0)
+        floor = min(2.0, cap)
+        recs, _ = self._fence_anchors(self._ir)
+        out = []
+        for r in recs:
+            f = r.rule
+            if f.id not in ids or r.moving:
+                continue
+            st = self._rule_state(f, state)
+            if not point_in_fence(st.x, st.y, st.up, f, r.polygon, r.buffered):
+                continue
+            t_open = self._opening_imposed(f, r.buffered, st)
+            dt = t_open or 0.0
+            ox, oy = push_out_direction(st.x + raw.vx * dt, st.y + raw.vy * dt, r.polygon)
+            leaving = raw.vx * ox + raw.vy * oy
+            if leaving >= floor - 1e-9:
+                continue
+            out.append(Violation(
+                rule_id=f.id, category="geofence", predicted_at_s=dt,
+                detail=(f"window opened on the aircraft: leaving at {leaving:.2f} m/s, "
+                        f"under the {floor:.1f} m/s escape floor, and no floored escape "
+                        f"can be flown ({why})")))
+        return out
+
+    def _slower_opened_escape(self, state: State, raw: Action4D, flags: dict,
+                              enforced: list) -> "tuple[Action4D, Repair] | None":
+        """The escape from the one zone that opened on the aircraft
+        (`window_opens_on`, `window_opened_on`), at the fastest speed from
+        the cap down to the in-force floor min(2.0, cap) that re-checks clean
+        (`_opened_retries`' speeds), the tangential kept within the cap -
+        for a tick where `raw` is escaping that zone and its every enforced
+        violation is another zone's or a corridor's (`enforced`): the escape
+        reaches that rule in the forecast. None in every other case, and
+        when no such speed re-checks clean (the chain then runs as before,
+        and its rescue and the FSM answer). The caller asks it with the
+        monitor_only rules skipped, as the rescue is.
+
+        WHY (review of b1d3aca, P1, the other half). The same opens-on cell
+        with an always-on zone 18 m north of the aircraft (y 40-46) and the
+        goto pilot's own 4 m/s north, which reaches that zone's ring in the
+        5 s forecast: the chain's GeofenceSlide cancelled the whole
+        northward part and pushed along the zone's edge at 4 m/s, east or
+        west by the side the pilot's tiny lateral correction was on - and
+        that side flipped every tick, so the aircraft stood at (60, 21) for
+        1.7 s before it left (south), 20 ticks inside the polygon and 4.3 s
+        to safe (43 / 6.8 s on 3660383, 3 / 2.6 s on 7c9c9e6, where every
+        tick there escalated). Each of
+        those ticks was legal - before the opening "leaving" is read where
+        the zone opens, and an edge-parallel 4 m/s is out by then - so
+        nothing escalated. The way out the aircraft was already flying, at
+        3.5 m/s, broke nothing. Only geofence and corridor violations are
+        answered here: a slower straight escape is what shortens their
+        forecast, and the repair says exactly what changed (an action that
+        also breaks a speed, yaw or climb cap, an altitude band, a stand-off
+        or a clearance goes to the chain)."""
+        ids = set(flags.get("window_opens_on") or ()) | set(flags.get("window_opened_on") or ())
+        if not ids or not enforced or any(
+                v.rule_id in ids or v.category not in ("geofence", "corridor")
+                for v in enforced):
+            return None
+        recs, _ = self._fence_anchors(self._ir)
+        inside = []
+        for r in recs:
+            if r.rule.id not in ids or r.moving:
+                continue
+            st = self._rule_state(r.rule, state)
+            if point_in_fence(st.x, st.y, st.up, r.rule, r.polygon, r.buffered):
+                inside.append((r, st))
+        if len(inside) != 1:
+            return None
+        r, st = inside[0]
+        dt = self._opening_imposed(r.rule, r.buffered, st) or 0.0
+        ox, oy = push_out_direction(st.x + raw.vx * dt, st.y + raw.vy * dt, r.polygon)
+        out_now = raw.vx * ox + raw.vy * oy
+        if out_now <= 0.1:
+            return None                     # not escaping that zone (the check agrees)
+        tx, ty = raw.vx - out_now * ox, raw.vy - out_now * oy
+        t_mag = math.hypot(tx, ty)
+        cap = min((k.speed_max_mps for k in self._kins), default=4.0)
+        broke = ", ".join(sorted({v.rule_id for v in enforced}))
+        depth = r.buffered.boundary.distance(Point(st.x, st.y))
+        for s in [cap] + [x for x in self._opened_retries(flags) if x != _IN_FORCE_FLOOR]:
+            room = math.sqrt(max(cap * cap - s * s, 0.0))
+            k = min(1.0, room / t_mag) if t_mag > 1e-9 else 0.0
+            cand = Action4D(vx=tx * k + ox * s, vy=ty * k + oy * s,
+                            vz_up=raw.vz_up, yaw_rate=raw.yaw_rate)
+            if self._check(state, cand):
+                continue
+            return cand, Repair(
+                operator="GeofenceEscape",
+                detail=(f"{r.rule.id}: window opened on the aircraft, leaving at "
+                        f"{out_now:.2f} m/s -> out at {s:.2f} m/s, the fastest from the "
+                        f"{cap:.1f} m/s cap that does not break {broke}"),
+                magnitude_m=depth, axis="lateral", recovery=True)
+        return None
 
     def _decide(self, state: State, raw: Action4D) -> ShieldDecision:
         tick = self._tick_ctx()
@@ -5520,6 +5757,26 @@ class Shield:
                                emitted_violations=self._check(state, BRAKE)),
                 state, tick, [], [last_resort("Brake", "fallback", reps[-1].detail)],
                 edge, mode, flags, first)
+
+        # Escaping a zone that opened on the aircraft, at a speed whose
+        # forecast reaches ANOTHER zone: the escape slowed until it re-checks
+        # clean, before the chain's slide would turn it (_slower_opened_escape
+        # says why). In chain mode only, and only for a tick whose every
+        # enforced violation is such a zone's.
+        if self.repair_mode == "chain" and not head:
+            prev, tick.skip = tick.skip, monitor
+            try:
+                slower = self._slower_opened_escape(state, raw, flags, enforced)
+            finally:
+                tick.skip = prev
+            if slower is not None:
+                cand, rep = slower
+                reps = [rep]
+                return self._traced(
+                    ShieldDecision(raw=raw, emitted=cand, violations=violations,
+                                   repairs=reps, emitted_violations=self._check(state, cand)),
+                    state, tick, [], [last_resort("GeofenceEscape", "ok", rep.detail)],
+                    edge, mode, flags, first)
 
         fixed, repairs, blocking, passes = self._repair_chain(
             tick, state, raw, monitor, list(head), violations)

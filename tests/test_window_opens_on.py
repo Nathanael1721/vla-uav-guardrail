@@ -59,6 +59,25 @@ or error: the crawl, the floor, the memory, the stop point, the library cells
 at 1.5 m/s (26 ticks inside) and the headline field. On a pristine copy of
 7c9c9e6, 12 of 13 fail or error; the stop-and-hover test pins what must NOT
 change and passes on both, as it should.
+
+REVIEW OF b1d3aca (2026-10-22, P1). The cap was all or nothing: with another
+hard zone within the cap's 20 m forecast of the exit, the cap's escape broke
+it, the floor was refused, and the pilot's crawl flew unfloored - legal, so
+no violation, no FSM edge and P0 escape 0 while a 0.5 m/s pilot stayed 104
+ticks inside the polygon (14.4 s) and a 0.2 m/s one never got out. Now:
+
+  * the escape is re-run slower, 0.25 m/s at a time down to the in-force
+    floor, and the fastest that re-checks clean flies (`cap_refused`);
+  * if none does, the crawl is the zone's violation, reported, and the FSM
+    escalates (X1, then G3 into a Loiter), as 7c9c9e6 did there;
+  * the pilot's own escape that reaches the other zone is slowed until it
+    re-checks clean instead of being slid along that zone's edge (a slide
+    whose side flipped every tick: the aircraft stood for 1.7 s);
+  * the harness cell with the second zone 10, 13 and 15 m past the exit at
+    1.5 and 0.5 m/s, both arms, holds bounds on ticks inside and time to
+    safe and is never censored.
+
+Run on b1d3aca's code, those 4 new tests fail and the other 13 pass.
 """
 import math
 import random
@@ -108,6 +127,25 @@ def _caps(**over):
 
 def _pol(*rules):
     return Policy.model_validate({"policy_id": "opens-on", "constraints": list(rules)})
+
+
+def _north(y0):
+    """An always-on hard P0 zone north of the school zone, y0..y0+6, its 1 m
+    ring from y0 - 1: in reach of the cap's 5 s forecast (4 m/s x 5 s = 20 m)
+    from the school zone's exit (ring at y = 31) when y0 - 1 < 51."""
+    return {"id": "nfz-north", "type": "polygon_fence", "constraint_type": "hard",
+            "priority": "P0", "violation_action": "repair", "margin_m": 1.0,
+            "altitude_floor_m": 0.0, "altitude_ceiling_m": 100.0,
+            "vertices": [{"x": 50, "y": y0}, {"x": 70, "y": y0}, {"x": 70, "y": y0 + 6},
+                         {"x": 50, "y": y0 + 6}]}
+
+
+def _survey_with_north(y0):
+    """policies/corridor_survey.yaml (the library cells' policy) with _north."""
+    import yaml
+    src = yaml.safe_load(SURVEY.read_text(encoding="utf-8"))
+    src["constraints"].append(_north(y0))
+    return Policy.model_validate(src)
 
 
 # --------------------------------------------------------------------------- #
@@ -230,6 +268,108 @@ def test_the_cap_holds_after_the_opening_until_the_aircraft_is_out_of_the_ring()
     d = sh2.filter(inside, crawl, t=0.0)
     assert d.trace["window_opened_on"] == [] and abs(d.emitted.vy - 2.0) < 1e-9, \
         (d.trace, d.emitted)
+
+
+def test_a_refused_cap_escape_flies_the_fastest_speed_that_re_checks_clean():
+    """Review of b1d3aca (P1). The cap's escape forecasts 20 m ahead; with
+    another hard zone in that reach the floored action broke it, the floor
+    was refused, and the crawl flew unfloored ("raw flown: the floored action
+    breaks nfz-north"), legal by the inside rule: no violation, FSM Normal,
+    the KPI's 0. One tick of it: the Shield that remembered the opening
+    emitted the 0.2 m/s crawl at (60, 27) where a fresh Shield emitted the
+    2.0 floor. Now the run is made again slower, 0.25 m/s at a time, and the
+    fastest that re-checks clean flies: 3.25 m/s at (60, 27) with the zone's
+    ring at y = 44 (27 + 3.5 x 5 = 44.5 would be inside it), 3.5 m/s from the
+    middle before the opening with the ring at y = 39; the trace says what
+    the cap broke. A fresh Shield, which never saw the window open, still
+    floors at the in-force 2.0. On b1d3aca: 0.2 and 0.2."""
+    crawl = Action4D(vy=0.2)
+    clock = [MON_0729_58]
+    sh = Shield(_survey_with_north(45.0), now=lambda: clock[0])
+    d = sh.filter(MID, crawl, t=0.0)
+    assert abs(d.emitted.vy - 4.0) < 1e-9 and "cap_refused" not in d.trace, (d.emitted, d.trace)
+    clock[0] = MON_0729_58 + timedelta(seconds=2.5)
+    inside = State(x=60.0, y=27.0, up=15.0)
+    d = sh.filter(inside, crawl, t=2.5)
+    assert d.trace["window_opened_on"] == ["nfz-school"], d.trace
+    assert d.violations == [] and d.emitted_violations == [], (d.violations, d.emitted_violations)
+    assert abs(d.emitted.vx) < 1e-9 and abs(d.emitted.vy - 3.25) < 1e-9, d.emitted
+    assert d.trace["cap_refused"] == ("flown at 3.25 m/s; at the cap the floored action "
+                                      "breaks nfz-north"), d.trace
+    assert "floor_refused" not in d.trace and sh.n_floor_refused == 0, d.trace
+    assert [r.operator for r in d.repairs] == ["GeofenceEscape"], d.repairs
+    assert d.repairs[0].recovery is True and "under the 4.0 m/s cap" in d.repairs[0].detail
+    assert d.fsm_state_after == "Normal", d.fsm_state_after
+    fresh = Shield(_survey_with_north(45.0), now=lambda: clock[0])
+    assert abs(fresh.filter(inside, crawl, t=2.5).emitted.vy - 2.0) < 1e-9
+    # Before the opening, the zone's ring 18 m north of the middle: 4 m/s
+    # reaches y = 41, 3.75 m/s y = 39.75; 3.5 m/s stops short at 38.5.
+    d = _shield(policy=_survey_with_north(40.0)).filter(MID, crawl)
+    assert d.trace["window_opens_on"] == ["nfz-school"], d.trace
+    assert d.violations == [] and abs(d.emitted.vy - 3.5) < 1e-9, (d.violations, d.emitted)
+    assert d.trace["cap_refused"].startswith("flown at 3.50 m/s"), d.trace
+
+
+def test_with_no_floored_escape_left_the_crawl_is_reported_and_the_fsm_escalates():
+    """Review of b1d3aca (P1). When not even the in-force floor (2.0 m/s,
+    straight or with the tangential kept) re-checks clean, the crawl must not
+    pass as a clean tick: it is the zone's violation ("under the 2.0 m/s
+    escape floor"), in `violations` and in `emitted_violations`, so the FSM
+    escalates - Normal -> Brake [X1], the stop withheld because a stop there
+    is illegal, the Shield's own action (the crawl, which breaks no other
+    rule) flown - as 7c9c9e6 escalated every tick there, and the KPI counts
+    it as the P0 escape it is. At (60, 29.5), 1.5 m from the zone's ring,
+    the other zone's ring at y = 39: 2.0 m/s for 5 s reaches 39.5. A pilot
+    already leaving at the floor is the floor: it flies, nothing reported.
+    On b1d3aca the crawl flew with no violation and the FSM stayed Normal."""
+    crawl = Action4D(vy=0.2)
+    clock = [MON_0729_58]
+    sh = Shield(_survey_with_north(40.0), now=lambda: clock[0])
+    sh.filter(MID, crawl, t=0.0)
+    clock[0] = MON_0729_58 + timedelta(seconds=2.5)
+    d = sh.filter(State(x=60.0, y=29.5, up=15.0), crawl, t=2.5)
+    assert d.trace["window_opened_on"] == ["nfz-school"], d.trace
+    assert [v.rule_id for v in d.violations] == ["nfz-school"], d.violations
+    assert "under the 2.0 m/s escape floor" in d.violations[0].detail, d.violations
+    assert [v.rule_id for v in d.emitted_violations] == ["nfz-school"], d.emitted_violations
+    assert d.emitted == crawl, d.emitted
+    assert (d.fsm_state_after, d.fsm_edge) == ("Brake", "X1"), (d.fsm_state_after, d.fsm_edge)
+    assert d.command == crawl, d.command                  # the stop is withheld
+    assert d.trace["floor_refused"] == ("raw flown, reported to the FSM: the floored "
+                                        "action breaks nfz-north"), d.trace
+    assert sh.n_floor_refused == 1
+    sh = Shield(_survey_with_north(40.0), now=lambda: clock[0])
+    clock[0] = MON_0729_58
+    sh.filter(MID, crawl, t=0.0)
+    clock[0] = MON_0729_58 + timedelta(seconds=2.5)
+    at_floor = Action4D(vy=2.0)
+    d = sh.filter(State(x=60.0, y=28.5, up=15.0), at_floor, t=2.5)
+    assert d.violations == [] and d.emitted == at_floor, (d.violations, d.emitted)
+    assert d.fsm_state_after == "Normal", d.fsm_state_after
+
+
+def test_escaping_towards_another_zone_slows_down_instead_of_sliding_off():
+    """Review of b1d3aca (P1, the pilot's own escape). The goto pilot's 4 m/s
+    north from the middle, the other zone's ring 18 m north: the forecast
+    reaches it, so nfz-north is violated, and the chain's slide cancelled
+    the whole northward part and pushed 4 m/s along that zone's edge - east
+    or west by the side of the pilot's tiny lateral correction, which
+    flipped every tick: in the harness the aircraft stood for 1.7 s and left
+    south, 20 ticks inside the polygon and 4.3 s to safe (3 / 2.6 s on
+    7c9c9e6). Now the escape it was flying is slowed until it re-checks
+    clean - 3.5 m/s north, its lateral part kept on its own side - a
+    recovery the FSM reads as repaired (Normal -> Brake [G1]). On b1d3aca:
+    4 m/s east and 4 m/s west."""
+    pol = _survey_with_north(40.0)
+    for vx in (0.05, -0.05):
+        raw = Action4D(vx=vx, vy=math.sqrt(16.0 - vx * vx))
+        d = _shield(policy=pol).filter(MID, raw)
+        assert [v.rule_id for v in d.violations] == ["nfz-north"], (vx, d.violations)
+        assert d.emitted_violations == [], (vx, d.emitted_violations)
+        assert abs(d.emitted.vy - 3.5) < 1e-9 and abs(d.emitted.vx - vx) < 1e-9, (vx, d.emitted)
+        assert [r.operator for r in d.repairs] == ["GeofenceEscape"], (vx, d.repairs)
+        assert d.repairs[0].recovery is True and "nfz-north" in d.repairs[0].detail, d.repairs
+        assert (d.fsm_state_after, d.fsm_edge) == ("Brake", "G1"), (vx, d.fsm_edge)
 
 
 # --------------------------------------------------------------------------- #
@@ -462,6 +602,58 @@ def test_the_library_cells_fly_no_p0_escape_and_still_see_the_rule_coming():
             assert len(ex["lint_warnings"]) == 1          # the DSL still warns
             seen.add(key)
     assert seen == {(c, s, a) for c, a in want for s in (4.0, 1.5)}, seen
+
+
+def test_a_second_zone_past_the_exit_does_not_keep_the_aircraft_inside():
+    """Review of b1d3aca (P1), flown by the harness: the library's 07:29:58
+    cell with an always-on hard zone whose ring begins 10, 13 or 15 m past
+    the school zone's (y0 = 42, 45, 47: within the cap's 20 m forecast of
+    the exit), at the 1.5 m/s StepTracker cruise and at 0.5 m/s, on both
+    forecast arms. On b1d3aca the cap's escape was refused from part-way out
+    and the crawl flew: on the grant arm 39 / 153 ticks inside the polygon
+    and 6.6 / 19.3 s to safe at y0 = 42, 104 / 14.4 s at 0.5 m/s with
+    y0 = 45, 19 / 69 at y0 = 47 - and a 0.2 m/s pilot never got out
+    (censored). 7c9c9e6, every tick there escalated and the hold transit at
+    the cap, flew 3 ticks / 2.6 s (5 on the 3 s arm) at every pilot speed.
+    Now the escape flies at the fastest speed that re-checks clean; the
+    bounds are what this code flies (the slower escape near the other zone
+    costs up to 8 ticks / 1.0 s against 7c9c9e6 at y0 = 42), and they hold
+    at every pilot speed: never censored, out and safe at the end, no Shield
+    P0 escape."""
+    import tempfile
+    import yaml
+    import sweep_scenarios as SW
+    from guardrail.scenario_spec import Library
+    lib = Library(ROOT / "experiments" / "scenarios.yaml")
+    fam = lib.by_id()["time-window-opens-on-vehicle"]
+    cell = next(c for c in fam.cells() if c.params["clock"] == "2026-09-07T07:29:58")
+    bound = {(42.0, "grant"): (11, 3.6), (42.0, "3s"): (5, 2.6),
+             (45.0, "grant"): (6, 3.0), (45.0, "3s"): (5, 2.6),
+             (47.0, "grant"): (4, 2.8), (47.0, "3s"): (5, 2.6)}
+    with tempfile.TemporaryDirectory() as tmp:
+        for y0 in (42.0, 45.0, 47.0):
+            src = yaml.safe_load(SURVEY.read_text(encoding="utf-8"))
+            src["constraints"].append(_north(y0))
+            path = Path(tmp) / f"survey_north_{int(y0)}.yaml"
+            path.write_text(yaml.safe_dump(src), encoding="utf-8")
+            for arm in SW.FORECAST_ARMS:
+                for speed in (1.5, 0.5):
+                    spec = cell.spec.model_copy(deep=True)
+                    spec.mission.pilot.speed = speed
+                    spec.policy.path = str(path)
+                    run = SW.run_episode(spec, lib.defaults, 0, forecast=arm)
+                    ex = run.extra
+                    res = SW.score(spec, run.rows, ex, run.policy, run.priorities)
+                    key = (y0, arm, speed)
+                    esc = sum(1 for r in run.rows if r.get("owner") == "shield"
+                              and r.get("emitted_violations"))
+                    ticks, t2s = bound[(y0, arm)]
+                    assert esc == 0, (key, esc)
+                    assert res["time_to_safe_censored"] == 0, (key, res["time_to_safe_censored"])
+                    assert ex["ticks_inside_fence_polygon"] <= ticks, \
+                        (key, ex["ticks_inside_fence_polygon"])
+                    assert res["max_time_to_safe_s"] <= t2s + 1e-9, (key, res["max_time_to_safe_s"])
+                    assert ex["ended_safe"] is True, key
 
 
 def test_the_headline_shows_how_long_the_aircraft_was_inside_beside_the_p0_rate():
