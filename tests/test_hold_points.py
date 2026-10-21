@@ -25,9 +25,12 @@ be inside a zone". These tests pin:
     legal, and a landing site off a zone's footprint over the whole descent;
   * the look-ahead view the search reads (Shield.looking_ahead): the same
     answer a Shield whose clock really is that much later gives;
-  * the harness: the opens-on-vehicle cell no longer holds inside, the
+  * the harness: a hold below the floor is moved up into the band, the
     Shield's own escape count is untouched (nothing moved out of the KPI), and
-    a cell whose hold was legal flies exactly as it did.
+    a cell whose hold was legal flies exactly as it did. (The opens-on-vehicle
+    cell was the harness's moved hold until 2026-10-21; since C2 it never
+    leaves Normal, so it needs none: Shield._opening_imposed,
+    tests/test_window_opens_on.py.)
 """
 import functools
 import math
@@ -566,25 +569,44 @@ def test_a_map_that_answers_ok_and_reasons_is_read_by_its_ok():
     assert sh2.land_site_ok is city
 
 
-def test_the_shield_wires_the_plan_into_the_decision():
+def _survey_loiter_policy():
+    """corridor_survey with nfz-school's violation_action set to loiter, so a
+    violation of it takes the FSM straight to Loiter (X4) and a hold is
+    planned on that tick.
+
+    Until 2026-10-21 these tests flew the pilot's 4 m/s north from the
+    zone's middle at 07:29:58 (X1 at 0.0 s, G3 at 0.1 s). Since C2 that
+    escape is not a violation (Shield._opening_imposed;
+    tests/test_window_opens_on.py), so it never leaves Normal; a hover there
+    still breaks the opening rule, and the loiter action makes the FSM ask
+    for a hold at once."""
     pol = load_policy(SURVEY)
+    return pol.model_copy(update={"constraints": [
+        c.model_copy(update={"violation_action": "loiter"}) if c.id == "nfz-school" else c
+        for c in pol.constraints]})
+
+
+def test_the_shield_wires_the_plan_into_the_decision():
+    pol = _survey_loiter_policy()
     t0 = datetime(2026, 9, 7, 7, 29, 58)
     clock = [0.0]
     sh = Shield(pol, now=lambda: t0 + timedelta(seconds=clock[0]))
     st = State(x=60.0, y=21.0, up=15.0)
-    d0 = sh.filter(st, Action4D(vy=4.0), t=0.0)
-    assert d0.fsm_edge == "X1" and d0.hold_point is None
+    d0 = sh.filter(st, Action4D(), t=0.0)          # a hover where the window opens
+    assert d0.fsm_edge == "X4" and d0.hold_point["kind"] == "moved", (d0.fsm_edge,
+                                                                        d0.hold_point)
+    # GeofenceEscape leaves south (the way out of the middle's tie), and the
+    # hold is the nearest legal point that way, out of the ring (y 11).
+    assert d0.hold_point["legal"] and d0.hold_point["y"] < 11.0, d0.hold_point
+    assert d0.fsm_record["hold_chosen"] and d0.fsm_record["hold_point"] == d0.hold_point
+    assert "hold_point" not in d0.model_dump(), "dumped decisions must not change"
     clock[0] = 0.1
-    d1 = sh.filter(State(x=60.0, y=21.4, up=15.0), Action4D(vy=4.0), t=0.1)
-    assert d1.fsm_edge == "G3" and d1.hold_point["kind"] == "moved", d1.hold_point
-    assert d1.fsm_record["hold_chosen"] and d1.fsm_record["hold_point"] == d1.hold_point
-    assert "hold_point" not in d1.model_dump(), "dumped decisions must not change"
+    d1 = sh.filter(State(x=60.0, y=20.8, up=15.0), Action4D(), t=0.1)
+    assert d1.fsm_state_after == "Loiter" and d1.hold_point == d0.hold_point, d1.hold_point
     # Off: the old in-place hold, recorded as illegal.
     off = Shield(pol, now=lambda: t0 + timedelta(seconds=clock[0]), hold_points=False)
     clock[0] = 0.0
-    off.filter(st, Action4D(vy=4.0), t=0.0)
-    clock[0] = 0.1
-    d = off.filter(State(x=60.0, y=21.4, up=15.0), Action4D(vy=4.0), t=0.1)
+    d = off.filter(st, Action4D(), t=0.0)
     assert d.hold_point["kind"] == "in_place" and not d.hold_point["legal"]
 
 
@@ -691,37 +713,69 @@ def _family(sid):
     yield lib, lib.by_id()[sid].first
 
 
-def test_the_opens_on_vehicle_cell_no_longer_holds_inside_the_zone():
-    """Measured on c77c77d (the cell at 07:29:58, grant forecast): the LOITER
-    held at (60, 21.8), 38 autopilot ticks flew a P0-violating action, 41
-    ticks inside the polygon. Now the hold is moved out: 18 autopilot P0 ticks
-    (the transit until the window opens - no action clears the forecast
-    then), 3 inside. The Shield's own counter is untouched: 2 escape ticks
-    before and after (no tick moved out of the KPI's population)."""
+def test_the_opens_on_vehicle_cell_no_longer_needs_a_hold_at_all():
+    """Measured on c77c77d (the cell at 07:29:58, grant forecast): X1 then G3
+    into a LOITER held at (60, 21.8), 38 autopilot ticks flew a P0-violating
+    action, 41 ticks inside the polygon. From 2026-10-19 the hold was moved
+    out to (60, 31.9): 18 autopilot P0 ticks of transit, 3 inside, and the
+    Shield's own counter still scored 2 escapes (0.0 and 0.1 s). Since C2
+    (2026-10-21; Shield._opening_imposed, tests/test_window_opens_on.py) the
+    pilot's 4 m/s north is the escape from a window opening on the aircraft,
+    not a violation: the FSM never leaves Normal, no hold is asked for, no
+    autopilot tick is flown, and the Shield counts no escape - with the
+    aircraft on the same path (3 ticks inside, the window still opening on
+    it). Flown with either hold model, the flight is the same row for row."""
     import sweep_scenarios as SW
     lib, cell = next(_family("time-window-opens-on-vehicle"))
     run = SW.run_episode(cell.spec, lib.defaults, 0)
     ex = run.extra
-    assert ex["hold_points_moved"] == 1 and ex["hold_points_illegal"] == 0, ex["hold_points"]
-    assert ex["autopilot_p0_flown_ticks"] <= 20, ex["autopilot_p0_flown_ticks"]
-    assert ex["ticks_inside_fence_polygon"] <= 5, ex["ticks_inside_fence_polygon"]
-    assert ex["ticks_inside_fence_polygon"] >= 1, "the window must still open on it"
+    assert ex["hold_points"] == [] and ex["autopilot_ticks"] == 0, ex["hold_points"]
+    assert ex["fsm"]["transitions"] == [], ex["fsm"]["transitions"]
+    assert ex["ticks_inside_fence_polygon"] == 3, ex["ticks_inside_fence_polygon"]
     shield_esc = sum(1 for r in run.rows if r.get("owner") == "shield"
                      and r.get("emitted_violations"))
-    assert shield_esc == 2, shield_esc
+    assert shield_esc == 0, shield_esc
+    here = SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place")
+    assert _row_digest(here.rows) == _row_digest(run.rows)
+
+
+def test_a_hold_below_the_floor_is_moved_up_into_the_band():
+    """three-simultaneous-violations (the first cell, grant forecast): X1
+    then G3 with the aircraft 7 m under the 10 m floor, where a stop is
+    illegal at every horizontal position. The hold is moved straight up to
+    10.5 m (0.5 m inside the band) and the modelled autopilot climbs there:
+    19 autopilot P0 ticks where the in-place hold flew 78
+    (test_with_the_search_off_the_cell_flies_the_old_hold_below_the_floor).
+    The Shield's own counter is untouched: no escape either way (no tick
+    moved out of the KPI's population). Since C2 this family, not
+    time-window-opens-on-vehicle, is the library's moved hold."""
+    import sweep_scenarios as SW
+    lib, cell = next(_family("three-simultaneous-violations"))
+    run = SW.run_episode(cell.spec, lib.defaults, 0)
+    ex = run.extra
+    assert ex["hold_points_moved"] == 1 and ex["hold_points_illegal"] == 0, ex["hold_points"]
+    assert ex["autopilot_p0_flown_ticks"] <= 20, ex["autopilot_p0_flown_ticks"]
+    shield_esc = sum(1 for r in run.rows if r.get("owner") == "shield"
+                     and r.get("emitted_violations"))
+    assert shield_esc == 0, shield_esc
     hp = ex["hold_points"][0]
-    assert hp["kind"] == "moved" and hp["y"] > 31.0, hp
+    st0 = cell.spec.mission.start_pose
+    assert hp["kind"] == "moved" and hp["legal"] and hp["up"] == 10.5, hp
+    assert hp["up"] > st0.up and "alt-band" in next(
+        e["reason"] for e in run.events if e.get("type") == "hold_point"), hp
     assert any(e.get("type") == "hold_point" for e in run.events)
 
 
-def test_with_the_search_off_the_cell_flies_the_old_hold_inside_the_zone():
+def test_with_the_search_off_the_cell_flies_the_old_hold_below_the_floor():
     """Shield(hold_points=False) - the harness's `autopilot_hold="in_place"`,
     what every flight rail flies - is the comparison arm: the hold where the
     aircraft is, recorded as illegal, and the flight c77c77d flew, number for
-    number (38 autopilot P0 ticks, 41 inside; every row of the 17 affected
-    library cells: test_in_place_holds_fly_c77c77ds_rows_exactly)."""
+    number (78 autopilot P0 ticks, X6 then home; every row of the affected
+    library cells: test_in_place_holds_fly_c77c77ds_rows_exactly). Until
+    2026-10-21 this was shown on time-window-opens-on-vehicle (38 autopilot
+    P0 ticks, 41 inside), which since C2 never holds at all."""
     import sweep_scenarios as SW
-    lib, cell = next(_family("time-window-opens-on-vehicle"))
+    lib, cell = next(_family("three-simultaneous-violations"))
     orig = SW.Shield
     try:
         SW.Shield = functools.partial(orig, hold_points=False)
@@ -730,9 +784,9 @@ def test_with_the_search_off_the_cell_flies_the_old_hold_inside_the_zone():
         SW.Shield = orig
     assert ex["autopilot_hold_model"] == "in_place", ex["autopilot_hold_model"]
     assert ex == SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place").extra
-    assert (ex["autopilot_p0_flown_ticks"], ex["ticks_inside_fence_polygon"]) == (38, 41), ex
+    assert ex["autopilot_p0_flown_ticks"] == 78, ex["autopilot_p0_flown_ticks"]
     assert ex["hold_points_moved"] == 0 and ex["hold_points_illegal"] >= 1, ex["hold_points"]
-    assert ex["hold_points"][0]["breaks"] == ["nfz-school"]
+    assert ex["hold_points"][0]["breaks"] == ["alt-band"]
 
 
 def test_a_cell_whose_hold_was_legal_flies_exactly_as_before():
@@ -754,21 +808,25 @@ def test_a_cell_whose_hold_was_legal_flies_exactly_as_before():
                                            for h in on.extra["hold_points"])
 
 
-# Row digests of the cells the hold points change (time-window-opens-on-
-# vehicle, three-simultaneous-violations, dyn-nfz-rotate-spin,
-# wind-beyond-authority, failsafe-rtl-blocked: every library cell, seed 0,
-# grant forecast), flown IN PLACE: sha256 of the rows with the hold keys
-# stripped and floats to 6 decimals (_row_digest), first 16 hex digits, and
-# the row count. Taken from c77c77d's own run_episode on 2026-10-20 (git
-# archive c77c77d, which has no hold points), so `autopilot_hold="in_place"`
-# / Shield(hold_points=False) must be the flight before them, row for row.
-# The three-simultaneous cells fly 400 ticks since 2026-10-20 where c77c77d
-# flew 300; in place they end at 7.4-9.7 s (X6, then home reached), so the
-# rows are the same flight.
+# Row digests of the cells the hold points change (three-simultaneous-
+# violations, dyn-nfz-rotate-spin, wind-beyond-authority,
+# failsafe-rtl-blocked: every library cell, seed 0, grant forecast), flown IN
+# PLACE: sha256 of the rows with the hold keys stripped and floats to 6
+# decimals (_row_digest), first 16 hex digits, and the row count. Taken from
+# c77c77d's own run_episode on 2026-10-20 (git archive c77c77d, which has no
+# hold points), so `autopilot_hold="in_place"` / Shield(hold_points=False)
+# must be the flight before them, row for row. The three-simultaneous cells
+# fly 400 ticks since 2026-10-20 where c77c77d flew 300; in place they end at
+# 7.4-9.7 s (X6, then home reached), so the rows are the same flight.
+#
+# The three time-window-opens-on-vehicle cells were on this list until
+# 2026-10-21 (0290a3777d5d6b8c, cd11af1bb6082e8d, 3badfbc20e0b57f0, 300 rows
+# each). C2 changed the SHIELD's own decisions there (the escape from a
+# window opening on the aircraft is not a violation: Shield._opening_imposed),
+# so no hold is asked for and the cells are no longer c77c77d's flight in
+# either hold mode; test_the_opens_on_vehicle_cell_no_longer_needs_a_hold_at_all
+# pins that both modes fly them identically.
 C77_IN_PLACE_DIGESTS = {
-    "time-window-opens-on-vehicle@clock=2026-09-07T07:29:58": ("0290a3777d5d6b8c", 300),
-    "time-window-opens-on-vehicle@clock=2026-09-07T07:29:58.5": ("cd11af1bb6082e8d", 300),
-    "time-window-opens-on-vehicle@clock=2026-09-07T07:29:59": ("3badfbc20e0b57f0", 300),
     "three-simultaneous-violations@ask_mps=8,start_up=3,variant=0": ("63646138a2a62da5", 98),
     "three-simultaneous-violations@ask_mps=11,start_up=3,variant=0": ("c898fcf25f59ac80", 98),
     "three-simultaneous-violations@ask_mps=8,start_up=6,variant=0": ("2eb8628ee9e671d0", 86),
@@ -825,9 +883,11 @@ def test_the_autopilot_hold_model_is_recorded_and_reflown():
     """Review of T1c, P3: the modelled autopilot flies moved holds that no
     flight rail flies, so every episode says which model its autopilot
     numbers come from (`autopilot_hold_model`, also in episode_start), and a
-    bundle's extras re-fly the same one."""
+    bundle's extras re-fly the same one. (Shown on the library's moved hold:
+    time-window-opens-on-vehicle until C2, three-simultaneous-violations
+    since; test_a_hold_below_the_floor_is_moved_up_into_the_band.)"""
     import sweep_scenarios as SW
-    lib, cell = next(_family("time-window-opens-on-vehicle"))
+    lib, cell = next(_family("three-simultaneous-violations"))
     moved = SW.run_episode(cell.spec, lib.defaults, 0)
     here = SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place")
     assert moved.extra["autopilot_hold_model"] == "moved_points"
@@ -954,11 +1014,13 @@ def test_a_bundle_from_before_the_hold_points_is_reflown_in_place():
     bundle that names its hold flies that one; the schema written is /3
     since the merge with the vehicle-response arm (2026-10-21; /2 on this
     branch before it), and a /2 or /3 bundle that does not say which hold
-    it flew is refused rather than guessed."""
+    it flew is refused rather than guessed. Shown since C2 (2026-10-21) on
+    three-simultaneous-violations, the library's moved hold (78 autopilot
+    P0 ticks in place, 19 moved): the opens-on-vehicle cell no longer holds."""
     import copy
     import json
     import sweep_scenarios as SW
-    lib, cell = next(_family("time-window-opens-on-vehicle"))
+    lib, cell = next(_family("three-simultaneous-violations"))
     here = SW.run_episode(cell.spec, lib.defaults, 0, autopilot_hold="in_place")
     ex = json.loads(json.dumps(SW.episode_extras(cell.spec, lib.defaults, 0, here,
                                                  autopilot_hold="in_place")))
@@ -969,7 +1031,7 @@ def test_a_bundle_from_before_the_hold_points_is_reflown_in_place():
     again = SW.rerun_from_extras(old)
     assert _row_digest(again.rows) == _row_digest(here.rows)
     assert again.extra["autopilot_hold_model"] == "in_place"
-    assert again.extra["autopilot_p0_flown_ticks"] == 38, again.extra["autopilot_p0_flown_ticks"]
+    assert again.extra["autopilot_p0_flown_ticks"] == 78, again.extra["autopilot_p0_flown_ticks"]
     named = copy.deepcopy(old)
     named["arm"]["autopilot_hold"] = "moved_points"
     assert SW.rerun_from_extras(named).extra["autopilot_hold_model"] == "moved_points"

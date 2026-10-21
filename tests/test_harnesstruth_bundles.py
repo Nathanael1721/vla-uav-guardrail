@@ -139,11 +139,12 @@ def test_a_bundle_whose_pins_name_no_gates_still_reruns():
     pins came off that day, when the escalation FSM's hold points made every
     cell pass (guardrail/holdpoint.py), so each kind is now exercised on a
     family that still carries it: standoff-wedge's family marker
-    (`expect: known_failure`) and time-window-opens-on-vehicle's cell pins
-    (`known_failures`)."""
+    (`expect: known_failure`) and dyn-nfz-spawn-ahead's cell pins
+    (`known_failures`; time-window-opens-on-vehicle's until its pins came off
+    on 2026-10-21, C2)."""
     from guardrail.scenario_spec import legacy_pins_read_as_before
     for sid, kind in (("standoff-wedge", "family"),
-                      ("time-window-opens-on-vehicle", "cells")):
+                      ("dyn-nfz-spawn-ahead", "cells")):
         spec = FAMILIES[sid].first.spec
         run = S.run_episode(spec, LIBRARY.defaults, 0)
         ex = json.loads(json.dumps(S.episode_extras(spec, LIBRARY.defaults, 0, run)))

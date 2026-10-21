@@ -231,29 +231,35 @@ def test_the_fsm_hold_point_is_on_the_audit_record():
     state fields, and ShieldDecision.hold_point is excluded from
     model_dump(), so where the FSM told the autopilot to hold - and whether
     it was legal - never reached the audit record. The library's
-    opens-on-vehicle start: X1 at 0.0 s, G3 at 0.1 s with the hold moved out
-    of the zone whose window opens at 07:30."""
+    opens-on-vehicle start, the hold moved out of the zone whose window
+    opens at 07:30. Until 2026-10-21 the pilot's 4 m/s north there went X1
+    at 0.0 s and G3 at 0.1 s; since C2 that escape is not a violation
+    (Shield._opening_imposed) and never leaves Normal, so the zone's action
+    is set to loiter and the aircraft hovers: X4 at 0.0 s (straight to
+    Loiter), the hold on that tick's record and the next."""
     from datetime import timedelta
     pol = load_policy(ROOT / "policies" / "corridor_survey.yaml")
+    pol = pol.model_copy(update={"constraints": [
+        c.model_copy(update={"violation_action": "loiter"}) if c.id == "nfz-school" else c
+        for c in pol.constraints]})
     t0 = datetime(2026, 9, 7, 7, 29, 58)
     clock = [0.0]
     sh = Shield(pol, now=lambda: t0 + timedelta(seconds=clock[0]))
-    d0 = sh.filter(State(x=60.0, y=21.0, up=15.0), Action4D(vy=4.0), t=0.0)
+    d0 = sh.filter(State(x=60.0, y=21.0, up=15.0), Action4D(), t=0.0)
     clock[0] = 0.1
-    d1 = sh.filter(State(x=60.0, y=21.4, up=15.0), Action4D(vy=4.0), t=0.1)
-    clock[0] = 0.2
-    d2 = sh.filter(State(x=60.0, y=21.8, up=15.0), Action4D(vy=4.0), t=0.2)
-    assert (d0.fsm_edge, d1.fsm_edge) == ("X1", "G3"), (d0.fsm_edge, d1.fsm_edge)
-    recs = _log([d0, d1, d2], pol)
+    d1 = sh.filter(State(x=60.0, y=20.8, up=15.0), Action4D(), t=0.1)
+    assert (d0.fsm_edge, d1.fsm_state_after) == ("X4", "Loiter"), (d0.fsm_edge,
+                                                                   d1.fsm_state_after)
+    recs = _log([d0, d1], pol)
     assert recs and all(r["record_version"] == 3 for r in recs), recs[:1]
     by_tick = {r["monitor_tick"]: r for r in recs}
-    assert by_tick[1]["fsm_hold_point"] is None          # Brake: no hold
-    hp = by_tick[2]["fsm_hold_point"]
-    assert hp is not None and hp == d1.hold_point, (hp, d1.hold_point)
+    hp = by_tick[1]["fsm_hold_point"]
+    assert hp is not None and hp == d0.hold_point, (hp, d0.hold_point)
     assert (hp["mode"], hp["kind"], hp["legal"]) == ("LOITER", "moved", True), hp
-    assert hp["y"] > 31.0 and "nfz-school" in hp["reason"], hp
-    if 3 in by_tick:                                      # a Loiter tick after it
-        assert by_tick[3]["fsm_hold_point"] == hp
+    # Out of the ring (y 11 to 31) the way GeofenceEscape leaves, south.
+    assert hp["y"] < 11.0 and "nfz-school" in hp["reason"], hp
+    if 2 in by_tick:                                      # a Loiter tick after it
+        assert by_tick[2]["fsm_hold_point"] == hp
     AuditRecord.model_validate(by_tick[2])
 
 

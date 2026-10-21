@@ -1863,14 +1863,20 @@ def naive_prefix_baseline(policy: Policy, budget_tokens: int,
 # that cannot get out in time
 # --------------------------------------------------------------------------- #
 #
-# WHY. The library's only P0 escape ticks (6 in the three time-window-opens-
-# on-vehicle cells, experiments/templates/time_window_switch.yaml) are a
-# window opening over an aircraft that cannot leave before it opens: from the
-# zone's middle the ring is 10 m away, 2.5 s at the 4 m/s cap, and the window
-# opens 1.0-2.0 s in. On the first tick no action clears the forecast, so the
-# Shield flies the fastest way out with the violation on it and its own
-# counter scores the escape. No repair or hold point can remove that tick;
-# only the policy (or the mission's timing) can, so the DSL says so up front.
+# WHY. The library's only P0 escape ticks until 2026-10-21 (6 in the three
+# time-window-opens-on-vehicle cells, experiments/templates/
+# time_window_switch.yaml) were a window opening over an aircraft that cannot
+# leave before it opens: from the zone's middle the ring is 10 m away, 2.5 s
+# at the 4 m/s cap, and the window opens 1.0-2.0 s in. On the first tick no
+# action cleared the forecast, so the Shield flew the fastest way out with the
+# violation on it and its own counter scored the escape. Since then the
+# Shield judges such an opening by the inside rule from the moment it opens
+# (Shield._opening_imposed: escaping is the recovery, a stop is the
+# violation), when it can PROVE no action leaves in time - a hard speed cap,
+# a zone that does not move; without them the escape is still counted. Either
+# way the position is made illegal under the aircraft and it is inside a zone
+# in force until it is out, which only the policy (or the mission's timing)
+# can prevent, so the DSL says so up front.
 # The grant asks whether the lint has severity classes ("Lint severity
 # classes. Errors only, or warnings vs errors?", Policy DSL page, open
 # questions): `Policy.lint()` stays errors-only (every finding refuses), and
@@ -1914,6 +1920,27 @@ def _lint_speed(policy: Policy, speed_mps: float | None) -> tuple[float, str]:
         return v, f"{v:g} m/s, the policy's hard speed cap"
     return LINT_SPEED_MPS, (f"{LINT_SPEED_MPS:g} m/s assumed: the policy has no hard "
                             f"speed cap")
+
+
+def _opening_outcome(policy: Policy, z) -> str:
+    """What the Shield makes of a window opening on an aircraft that cannot
+    leave in time, for the warning's text: since 2026-10-21 it judges the way
+    out by the inside rule (guardrail/shield.py Shield._opening_imposed) when
+    it can prove the opening imposed - a hard, enforced kinematic cap with no
+    window of its own and a zone that does not move; otherwise its counter
+    still scores the ticks it flies out as P0 escapes."""
+    from .ir import is_moving
+    caps = [c for c in policy.by_type(KinematicEnvelope)
+            if c.constraint_type == "hard" and c.violation_action != "monitor_only"
+            and (c.valid_time is None or c.valid_time.recurrence is None)]
+    if caps and not is_moving(z):
+        return ("until it is out it is inside the zone in force, and only the way "
+                "out passes the Shield (a stop there is the violation; the escape is "
+                "judged as the recovery it is, not as a P0 escape)")
+    return ("the Shield cannot prove that no action leaves in time (no hard speed "
+            "cap without a window of its own, or a moving zone), so it flies the "
+            "way out with the P0 violation on and its counter scores those ticks "
+            "as P0 escapes")
 
 
 def _timed_zones(policy: Policy) -> list:
@@ -2088,9 +2115,8 @@ def time_window_lead_warnings(policy: Policy, *, lookahead_s: float = DEFAULT_LO
                     f"{z.id}: its time window can open with the aircraft at "
                     f"({x:.1f}, {y:.1f}), inside its {z.margin_m:g} m margin ring, "
                     f"where {exit_txt}. An aircraft there when the opening comes into "
-                    f"view cannot be out in time; the Shield flies the way out with "
-                    f"the P0 violation on, and its counter scores those ticks as P0 "
-                    f"escapes (a warning, not a refusal)")
+                    f"view cannot be out in time: {_opening_outcome(policy, z)} (a "
+                    f"warning, not a refusal)")
         if start is None or now is None:
             continue
         sx, sy, sup = (float(v) for v in start)
@@ -2125,9 +2151,8 @@ def time_window_lead_warnings(policy: Policy, *, lookahead_s: float = DEFAULT_LO
                 f"inside its margin ring, {opens:.2f} s before its time window opens "
                 f"(clock {now.isoformat(timespec='milliseconds')}), but leaving from "
                 f"there takes {fly:.1f} s ({d_out:.1f} m at {why}): the window opens "
-                f"on the aircraft. Every tick until it is out has no action that "
-                f"clears the forecast, and the Shield's counter scores the ticks "
-                f"it flies as P0 escapes (a warning, not a refusal)")
+                f"on the aircraft, and {_opening_outcome(policy, z)} (a warning, "
+                f"not a refusal)")
     return out
 
 

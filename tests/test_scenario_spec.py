@@ -455,7 +455,11 @@ def test_a_known_failure_pin_names_the_gates_it_fails_and_only_real_ones():
     # every gate with the FSM's hold points (guardrail/holdpoint.py) and its
     # pin came off. (three-simultaneous-violations' came off that day too and
     # back on 2026-10-20, at 400 ticks, where the Loiter timeout fires.)
-    assert len(pinned) >= 7, [f.scenario_id for f in pinned]
+    # 6 since 2026-10-21, when time-window-opens-on-vehicle's three cell pins
+    # came off (C2: the escape from a window opening on the aircraft is no
+    # longer a violation, Shield._opening_imposed).
+    assert len(pinned) >= 6, [f.scenario_id for f in pinned]
+    assert "time-window-opens-on-vehicle" not in {f.scenario_id for f in pinned}
 
 
 def test_a_pinned_gate_can_carry_the_bound_it_is_pinned_within():
@@ -464,7 +468,11 @@ def test_a_pinned_gate_can_carry_the_bound_it_is_pinned_within():
     `{gate: bound}` in the expected_kpis forms; known_failure_bounds() hands
     the sweep the bounds, and a gate any matching pin names bare stays
     unbounded. A label takes no bound, and a malformed entry is refused at
-    load. The library's time-window-opens-on-vehicle pins use it."""
+    load. The library's time-window-opens-on-vehicle pins used it until
+    2026-10-21 (C2 removed the escapes they bounded, and the pins); no
+    library cell carries a bounded pin since, and the sweep's own test
+    re-pins that cell to exercise one (tests/test_sweep.py
+    test_a_bounded_pin_absorbs_its_measured_magnitude_and_no_more)."""
     raw = _minimal(parameter_sweep={"s": [2, 4]},
                    known_failures=[{"params": {"s": 2}, "description": "x",
                                     "fails": [{"P0_escape_rate": {"max": 0.01}}]}])
@@ -516,12 +524,13 @@ def test_a_pinned_gate_can_carry_the_bound_it_is_pinned_within():
                      known_failure_fails=[{"P0_escape_rate": {"max": 0.02}}])
     s = ScenarioSpec.model_validate(whole)
     assert s.known_failure_bounds({}) == {"p0_violation_escape_rate": [{"max": 0.02}]}
-    # the library: the three clock cells of time-window-opens-on-vehicle
+    # the library: the three clock cells of time-window-opens-on-vehicle,
+    # bounded at max 0.01 until 2026-10-21, carry no pin since C2
     from guardrail.scenario_spec import Library
     fam = Library(ROOT / "experiments" / "scenarios.yaml").by_id()["time-window-opens-on-vehicle"]
     for c in fam.cells():
-        assert c.spec.known_failure_bounds(c.params, 1001) == \
-            {"p0_violation_escape_rate": [{"max": 0.01}]}, c.params
+        assert c.spec.known_failure_bounds(c.params, 1001) == {}, c.params
+        assert c.spec.known_failure_pins(c.params, 1001) == (None, frozenset()), c.params
 
 
 # --------------------------------------------------------------------------- #

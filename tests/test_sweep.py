@@ -1338,10 +1338,12 @@ def test_a_new_failure_in_a_pinned_cell_is_a_failure_not_the_old_defect():
         if "breaches" in spec.gates:
             status, bad, _, _ = S.episode_verdict(spec, dict(res, breaches=3), cell, 1001)
             assert status == "fail" and any("breaches=3" in b for b in bad), (sid, bad)
-    # A pin that does fail a safety gate keeps it - and only it.
-    spec, res, cell = _scored_cell("time-window-opens-on-vehicle",
-                                   clock="2026-09-07T07:29:58")
-    assert res["p0_violation_escape_rate"] > 0, "the pinned P0 failure is gone?"
+    # A pin that does fail a safety gate keeps it - and only it. (Since C2,
+    # 2026-10-21, no library cell is pinned on a safety gate; the
+    # opens-on-vehicle cell is re-pinned as it was, with 7c9c9e6's measured
+    # escapes put back into its score: _repinned_on_vehicle.)
+    spec, res, cell = _repinned_on_vehicle("2026-09-07T07:29:58")
+    assert res["p0_violation_escape_rate"] > 0, "the re-pinned P0 failure is gone?"
     status, bad, _, _ = S.episode_verdict(spec, res, cell, 1001)
     assert status == "known_failure", (status, bad)
     status, bad, _, _ = S.episode_verdict(spec, dict(res, breaches=3), cell, 1001)
@@ -1380,24 +1382,68 @@ def test_a_new_failure_in_a_pinned_cell_turns_the_sweep_red():
 
 TW_ON_VEHICLE_CLOCKS = ("2026-09-07T07:29:58", "2026-09-07T07:29:58.5",
                         "2026-09-07T07:29:59")
+# What 7c9c9e6 measured in those cells on seed 1001, grant arm: 2 Shield P0
+# escapes over this many Shield-flown ticks (the rest were the modelled
+# autopilot's LOITER). The pins were set from these; C2 (2026-10-21) removed
+# the escapes and the pins (0 escapes over 300 Shield ticks).
+TW_ON_VEHICLE_OLD_TICKS = {"2026-09-07T07:29:58": 262, "2026-09-07T07:29:58.5": 267,
+                           "2026-09-07T07:29:59": 272}
+TW_ON_VEHICLE_OLD_PINS = [
+    {"params": {"clock": c}, "fails": [{"P0_escape_rate": {"max": 0.01}}],
+     "description": "re-pinned as at 7c9c9e6 (tests/test_sweep.py) to exercise "
+                    "the bounded pin on the numbers it was set from"}
+    for c in TW_ON_VEHICLE_CLOCKS]
+
+
+def _repinned_family(**changes):
+    """time-window-opens-on-vehicle with its 7c9c9e6 pins put back."""
+    return _raw("time-window-opens-on-vehicle",
+                known_failures=copy.deepcopy(TW_ON_VEHICLE_OLD_PINS), **changes)
+
+
+def _with_old_escapes(res: dict, clock: str) -> dict:
+    """A score with 7c9c9e6's measured escapes in it (2 over the old count of
+    Shield ticks), everything else as flown today."""
+    n = TW_ON_VEHICLE_OLD_TICKS[clock]
+    return dict(res, p0_escapes=2, shield_ticks=n, p0_violation_escape_rate=round(2 / n, 6))
+
+
+def _repinned_on_vehicle(clock: str, seed: int = 1001):
+    """(spec, res, params) of the re-pinned cell at `clock`, flown and scored
+    today, with 7c9c9e6's escapes put back into the score."""
+    with tempfile.TemporaryDirectory() as td:
+        path = Path(td) / "lib.yaml"
+        path.write_text(yaml.safe_dump({"defaults": RAW["defaults"],
+                                        "scenarios": [_repinned_family()]}),
+                        encoding="utf-8")
+        fam = Library(path).by_id()["time-window-opens-on-vehicle"]
+        cell = next(c for c in fam.cells(samples=3) if c.params.get("clock") == clock)
+    run = S.run_episode(cell.spec, DEFAULTS, seed)
+    res = S.score(cell.spec, run.rows, run.extra, run.policy, run.priorities)
+    return cell.spec, _with_old_escapes(res, clock), cell.params
 
 
 def test_a_bounded_pin_absorbs_its_measured_magnitude_and_no_more():
     """REVIEW of F8-harness-tools (P3). A pin naming a safety gate absorbed
-    it at ANY magnitude: time-window-opens-on-vehicle is pinned for its P0
+    it at ANY magnitude: time-window-opens-on-vehicle was pinned for its P0
     escape rate (2 escapes over 262-272 Shield ticks, 0.0074-0.0076, on the
     grant arm these tests fly; the review of the F8b merge flew the 3 s arm
     at 264-274, 0.0073-0.0076, the YAML's range over both arms), and
     0.5 injected into those cells still printed KNOWN and exited 0 - every
     other pinned P0, breach and ended_safe gate of the nightly profile
-    turned its episode red under the same injection. The pins now carry
-    their bound, `fails: [{P0_escape_rate: {max: 0.01}}]`: the measured rate
-    is KNOWN, 0.5 is a NEW failure, and so is a third escape or a rate that
-    was not measured. Shown failing before the fix (0.5 was known_failure).
-    The measured magnitude is pinned here too, as standoff-wedge's
-    min_range is: the bound was set from it."""
+    turned its episode red under the same injection. The pins carry their
+    bound, `fails: [{P0_escape_rate: {max: 0.01}}]`: the measured rate is
+    KNOWN, 0.5 is a NEW failure, and so is a third escape or a rate that was
+    not measured. Shown failing before the fix (0.5 was known_failure).
+
+    Since C2 (2026-10-21) those cells fly no escape and carry no pin, and no
+    library cell is pinned on a safety gate with a bound, so the mechanism
+    is shown on the cell re-pinned as it was, with 7c9c9e6's measured
+    escapes put back into today's score (_repinned_on_vehicle) - and the
+    re-pinned cell as flown today is FIXED, which is why the pins came
+    off."""
     for clock in TW_ON_VEHICLE_CLOCKS:
-        spec, res, cell = _scored_cell("time-window-opens-on-vehicle", clock=clock)
+        spec, res, cell = _repinned_on_vehicle(clock)
         rate = res["p0_violation_escape_rate"]
         assert res["p0_escapes"] == 2 and 0.007 <= rate <= 0.008, (clock, rate, res["p0_escapes"])
         assert S.episode_verdict(spec, res, cell, 1001)[0] == "known_failure", clock
@@ -1413,26 +1459,41 @@ def test_a_bounded_pin_absorbs_its_measured_magnitude_and_no_more():
         # inside the bound but past the gate is still the pinned defect
         assert S.episode_verdict(spec, dict(res, p0_violation_escape_rate=0.01),
                                  cell, 1001)[0] == "known_failure"
-    # End to end: the smoke profile's cell exits 0 as flown, 1 with 0.5 in it.
-    fam = _raw("time-window-opens-on-vehicle",
-               parameter_sweep={"clock": [TW_ON_VEHICLE_CLOCKS[0]]})
-    rc, doc = _sweep_lib([fam], "--seed", "1001")
-    assert rc == 0 and doc["_counts"]["known_failure"] == 1, (rc, doc["_counts"])
+        # As flown today (0 escapes) every gate passes: the pin is stale.
+        flown = dict(res, p0_escapes=0, p0_violation_escape_rate=0.0)
+        assert S.episode_verdict(spec, flown, cell, 1001)[0] == "unexpected_pass", clock
+    # End to end: the re-pinned smoke cell exits 0 with the old escapes in
+    # it, 1 with 0.5, and 1 as flown today (FIXED: remove the marker).
+    fam = _repinned_family(parameter_sweep={"clock": [TW_ON_VEHICLE_CLOCKS[0]]})
     real = S.score
 
-    def escaping(spec, *a, **k):
-        res = real(spec, *a, **k)
-        if spec.scenario_id == "time-window-opens-on-vehicle":
-            res["p0_violation_escape_rate"] = 0.5
-        return res
-    S.score = escaping
+    def scored_as(rate):
+        def score(spec, *a, **k):
+            res = real(spec, *a, **k)
+            if spec.scenario_id == "time-window-opens-on-vehicle" and rate is not None:
+                res = _with_old_escapes(res, TW_ON_VEHICLE_CLOCKS[0])
+                if rate != "old":
+                    res["p0_violation_escape_rate"] = rate
+            return res
+        return score
     try:
+        S.score = scored_as("old")
         rc, doc = _sweep_lib([fam], "--seed", "1001")
+        assert rc == 0 and doc["_counts"]["known_failure"] == 1, (rc, doc["_counts"])
+        S.score = scored_as(0.5)
+        rc, doc = _sweep_lib([fam], "--seed", "1001")
+        r = doc["results"][0]
+        assert rc == 1 and r["status"] == "fail", (rc, r["status"], r["gates_failed"])
+        assert doc["_counts"]["known_failure"] == 0, doc["_counts"]
     finally:
         S.score = real
-    r = doc["results"][0]
-    assert rc == 1 and r["status"] == "fail", (rc, r["status"], r["gates_failed"])
-    assert doc["_counts"]["known_failure"] == 0, doc["_counts"]
+    rc, doc = _sweep_lib([fam], "--seed", "1001")
+    assert rc == 1 and doc["results"][0]["status"] == "unexpected_pass", (rc, doc["_counts"])
+    # And the library's own cells, unpinned, pass as flown.
+    rc, doc = _sweep_lib([_raw("time-window-opens-on-vehicle",
+                               parameter_sweep={"clock": [TW_ON_VEHICLE_CLOCKS[0]]})],
+                         "--seed", "1001")
+    assert rc == 0 and doc["results"][0]["status"] == "pass", (rc, doc["_counts"])
 
 
 def test_a_tracked_episode_is_never_counted_as_a_pass():

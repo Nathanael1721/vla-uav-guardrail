@@ -595,11 +595,61 @@ wind-beyond-authority, failsafe-rtl-blocked) is c77c77d's, pinned by row
 digest in `test_in_place_holds_fly_c77c77ds_rows_exactly`; flown that way
 the 9 deg/s cell fails again, since its pin is gone.
 
+## The opens-on-vehicle escapes, removed by another route (C2, 2026-10-21)
+
+The hold points could not remove the 2 Shield escape ticks per
+opens-on-vehicle cell: they are flown before G3. What made them escapes was
+the check, not the FSM. Until the window opens the school zone is not in
+force NOW, so `_check_fence` walked the forecast, found the pose at the
+opening inside the ring whatever the action, and called the pilot's 4 m/s
+north - the fastest way out - a violation; 0.1 s after the opening, the zone
+in force and the aircraft inside it, the inside rule (escaping at more than
+0.1 m/s is not a violation) called the same command legal.
+
+`Shield._opening_imposed` closes that gap. When a timed zone that is not in
+force now opens at forecast time t_open on an aircraft inside its ring and
+band, and an IDEAL vehicle at the policy's hard, enforced caps (in force over
+the whole tick) cannot be out of the ring by t_open - horizontal distance to
+the ring over speed cap, and the band's top and bottom over climb cap, each
+longer than t_open - the zone is judged by the inside rule from the opening:
+the action must be leaving at the pose where the zone opens (that pose's way
+out; from the zone's middle the current position's way out is an arbitrary
+side of a tie), and anything else gets the pose walk's violation, word for
+word. GeofenceEscape reads the way out at the same pose, so its floor raises
+a crawl along its own way (until then it would have reversed a 4 m/s exit
+north into 2 m/s south). Not proved, and so judged as before: no hard
+enforced cap, a moving zone, a state that still carries a measured velocity
+(in practice set aside there, since a stop at the position is illegal). The
+decision's trace lists such zones (`window_opens_on`), and the harness
+counts them in `anticipated_ticks_<rule>` (the rule seen coming and
+enforced), so the family's gate still measures what it did.
+
+No FSM edge, guard or setpoint and no KPI formula moved: an escape is still
+"a P0 seen and flown anyway", read off the emitted action's re-check. What
+changed is that the check no longer reports a violation where no legal
+action existed and the action is the recovery the inside rule asks for.
+
+Measured (headless, 2026-10-21, `--forecast-arms grant 3s`): the three cells
+pass on both arms (0 escapes, Normal throughout, no autopilot tick, 3 / 8 /
+13 ticks inside on the grant arm and 5 / 10 / 15 on the 3 s arm - the same
+as before, the aircraft flies the same path - time to safe 2.6 s, goal
+reached), and their pins are gone. Library 133 / 22 / 0 / 21 -> 136 / 22 /
+0 / 18, P0 escape 0.000132 -> 0.0 over 175 Shield-on episodes, autopilot P0
+ticks 1153 -> 1114, fail-safe labels 141/167 unchanged; 3 s arm 129 / 22 /
+4 / 16 -> 132 / 22 / 4 / 13. Nightly 511 / 66 / 0 / 155 -> 520 / 66 / 0 /
+146, P0 0.0, fail-safe 535/705 unchanged; smoke 52 / 6 / 0 / 4 -> 53 / 6 /
+0 / 3, P0 0.0. Every other library episode's KPI record is identical
+(compared field by field, both arms). Since no Loiter is entered there, the
+cells are off the in-place digest list, and the harness's moved-hold tests
+use `three-simultaneous-violations` (hold moved up into the band: 19
+autopilot P0 ticks against 78 in place). The lint still warns: the position
+is still made illegal under the aircraft (tests/test_window_opens_on.py).
+
 ## What it does not do
 
 * Remove the 2 Shield escape ticks per opens-on-vehicle cell: they are
-  flown before G3, and the KPI definition is unchanged. The cells stay
-  pinned at the same bound; the lint warning names their cause.
+  flown before G3, and the KPI definition is unchanged. (Removed since
+  2026-10-21 by the check instead, section above; the cells are unpinned.)
 * Fly a rail. The SITL, ROS 2 and Project AirSim rails run their own FSM
   (`guardrail/replay.py rail_shield`), call no `hold_at`, and hold or land in
   place as before (their Loiter records now say `hold_needed: true`). Flying

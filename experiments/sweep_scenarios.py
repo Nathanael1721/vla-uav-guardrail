@@ -1828,11 +1828,20 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             else:
                 events[0]["active_rules"] = sorted(active)
                 events[0]["clock"] = clock().isoformat() if clock else None
-            for v in d.violations:
-                if v.rule_id in timed_rules and v.rule_id not in active:
-                    # Enforced before it is in force: the forecast saw the
-                    # window open inside the lookahead (the t+ side).
-                    anticipated[v.rule_id] = anticipated.get(v.rule_id, 0) + 1
+            # Enforced before it is in force: the forecast saw the window
+            # open inside the lookahead (the t+ side). Either the raw action
+            # broke the rule, or (since 2026-10-21, C2) the Shield found the
+            # window opening on the aircraft sooner than it can leave
+            # (`window_opens_on` in the decision's trace, Shield.
+            # _opening_imposed): a stop there is illegal and only an
+            # escaping action passes, so a tick whose action is already the
+            # escape breaks nothing and is still the rule seen coming and
+            # enforced. Counted once per tick and rule either way.
+            seen_coming = {v.rule_id for v in d.violations}
+            seen_coming |= set((d.trace or {}).get("window_opens_on") or ())
+            for rid in seen_coming:
+                if rid in timed_rules and rid not in active:
+                    anticipated[rid] = anticipated.get(rid, 0) + 1
             for rid in timed_rules:
                 anticipated.setdefault(rid, 0)
             prev_active = active
