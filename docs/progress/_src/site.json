@@ -224,8 +224,8 @@
   },
   {
    "value": "732",
-   "label": {"en": "episodes in the nightly stress profile (221 scenario cells)", "zh": "個 episode：nightly 壓力測試設定（221 個情境組合）"},
-   "context": {"en": "The headless stress harness (no simulator); the smoke profile has 55 cells (62 episodes). On 6 Oct, at 633 episodes, the nightly profile ran in 223 s.", "zh": "不接模擬器的壓力測試框架；smoke 設定有 55 個情境組合（62 個 episode）。10 月 6 日 nightly 設定為 633 個 episode 時，執行耗時 223 s。"},
+   "label": {"en": "episodes in the nightly stress profile on 13 Oct (221 scenario cells)", "zh": "個 episode：10 月 13 日的 nightly 壓力測試設定（221 個情境組合）"},
+   "context": {"en": "The headless stress harness (no simulator); on 13 Oct the smoke profile had 55 cells (62 episodes). On 6 Oct, at 633 episodes, the nightly profile ran in 223 s.", "zh": "不接模擬器的壓力測試框架；10 月 13 日 smoke 設定有 55 個情境組合（62 個 episode）。10 月 6 日 nightly 設定為 633 個 episode 時，執行耗時 223 s。"},
    "src": ["CHANGELOG.md#2026-10-13", "CHANGELOG.md#2026-10-06"]
   }
  ],
@@ -494,7 +494,7 @@
     },
     {
      "title": {"en": "Smoke and nightly profiles", "zh": "smoke 與 nightly 測試設定"},
-     "text": {"en": "A smoke profile of 55 scenario cells (62 episodes) and a nightly profile of 221 cells (732 episodes), with stressors for wind, gusts, start jitter and GPS dropout. Every velocity the harness flies goes through a model of ArduPilot's position controller, and every Shield in it forecasts 5 s ahead at 0.1 s steps, as the grant specifies, apart from one labelled 3 s comparison arm reported on its own.", "zh": "smoke 設定有 55 個情境組合（62 個 episode），nightly 設定有 221 個情境組合（732 個 episode），並加入風、陣風、起點抖動與 GPS 訊號中斷等壓力因素。測試框架飛行的每個速度指令都經過 ArduPilot 位置控制器的模型，其中的每個 Shield 都依計畫書的規定，以每 0.1 s 一步預測未來 5 s，只有一組標明的 3 s 對照組另外單獨報告。"},
+     "text": {"en": "As of 13 Oct, a smoke profile of 55 scenario cells (62 episodes) and a nightly profile of 221 cells (732 episodes), with stressors for wind, gusts, start jitter and GPS dropout. Every velocity the harness flies goes through a model of ArduPilot's position controller, and every Shield in it forecasts 5 s ahead at 0.1 s steps, as the grant specifies, apart from one labelled 3 s comparison arm reported on its own.", "zh": "10 月 13 日時，smoke 設定有 55 個情境組合（62 個 episode），nightly 設定有 221 個情境組合（732 個 episode），並加入風、陣風、起點抖動與 GPS 訊號中斷等壓力因素。測試框架飛行的每個速度指令都經過 ArduPilot 位置控制器的模型，其中的每個 Shield 都依計畫書的規定，以每 0.1 s 一步預測未來 5 s，只有一組標明的 3 s 對照組另外單獨報告。"},
      "files": ["experiments/profiles/"],
      "src": ["CHANGELOG.md#2026-10-13"]
     },
