@@ -228,9 +228,9 @@ fact("forecast_old", "3 s at 0.5 s (6 poses)", [src(CL, "used a 3 s forecast at 
 fact("forecast", "5 s at 0.1 s (50 poses)", [src(CL, "the grant locks 5 s at 0.1 s (50 poses)"), src("guardrail/shield.py", "LOOKAHEAD_S = 5.0")]);
 fact("wind", "6.4 m/s", [src(CL, "is rejected up to 6.4 m/s, derived from the SITL default frame, not measured")]);
 fact("sweep_eps", "176", [src(SW, (o) => o._scope.episodes, 176)]);
-fact("sweep_pass", "132", [src(SW, (o) => o._counts.pass, 132)]);
+fact("sweep_pass", "133", [src(SW, (o) => o._counts.pass, 133)]);
 fact("sweep_tracked", "22", [src(SW, (o) => o._counts.tracked, 22)]);
-fact("sweep_known", "22", [src(SW, (o) => o._counts.known_failure, 22)]);
+fact("sweep_known", "21", [src(SW, (o) => o._counts.known_failure, 21)]);
 fact("sweep_fail", "0", [src(SW, (o) => o._counts.fail, 0)]);
 fact("moving_before", "2.53-2.64 ms", [src(CL, "moving 2.53-2.64 -> 0.45 ms")]);
 fact("moving_after", "0.45 ms", [src(CL, "moving 2.53-2.64 -> 0.45 ms")]);
@@ -251,21 +251,21 @@ fact("suite", "2,526 of 2,536", [src(CL, "Full suite on Python 3.10: 2526 of 253
 
 // Harness KPIs (headless library, grant's forecast).
 fact("lib_eps", "175", [src(SW, (o) => all(o).episodes, 175)]);
-fact("lib_p0", "0.000133", [src(SW, (o) => all(o).p0_escape_rate, 0.000133)]);
+fact("lib_p0", "0.000132", [src(SW, (o) => all(o).p0_escape_rate, 0.000132)]);
 fact("lib_p0_ticks", "6", [src(SW, (o) => all(o).p0_escapes, 6)]);
 fact("lib_p0_eps", "3", [src(SW, (o) => all(o).episodes_with_p0_escape, 3)]);
 fact("lib_twin_cells", "3", [src(SW, (o) => o._scope.cells_per_family["time-window-opens-on-vehicle"], 3)]);
 fact("lib_controls", "1", [src(SW, (o) => o._rollup._controls_shield_off.episodes, 1)]);
-fact("lib_p0_null", "0.236", [src(SW, (o) => Math.round(all(o).null_passthrough_p0_escape_rate * 1000) / 1000, 0.236)]);
-fact("failsafe", "0.838", [src(SW, (o) => Math.round(all(o).failsafe_labelled_episodes.failsafe_trigger_correctness * 1000) / 1000, 0.838)]);
-fact("failsafe_frac", "140/167", [src(SW, (o) => { const f = all(o).failsafe_labelled_episodes; return `${f.scored - f.false_triggers - f.missed_triggers}/${f.scored}`; }, "140/167")]);
-fact("failsafe_false", "26", [src(SW, (o) => all(o).failsafe_labelled_episodes.false_triggers, 26)]);
+fact("lib_p0_null", "0.235", [src(SW, (o) => Math.round(all(o).null_passthrough_p0_escape_rate * 1000) / 1000, 0.235)]);
+fact("failsafe", "0.844", [src(SW, (o) => Math.round(all(o).failsafe_labelled_episodes.failsafe_trigger_correctness * 1000) / 1000, 0.844)]);
+fact("failsafe_frac", "141/167", [src(SW, (o) => { const f = all(o).failsafe_labelled_episodes; return `${f.scored - f.false_triggers - f.missed_triggers}/${f.scored}`; }, "141/167")]);
+fact("failsafe_false", "25", [src(SW, (o) => all(o).failsafe_labelled_episodes.false_triggers, 25)]);
 fact("failsafe_missed", "1", [src(SW, (o) => all(o).failsafe_labelled_episodes.missed_triggers, 1)]);
 fact("failsafe_null", "0.940", [src(SW, (o) => all(o).failsafe_labelled_episodes.null_never_trigger.toFixed(3), "0.940")]);
 fact("failsafe_g3", "22", [src(SW, (o) => Object.entries(o._failsafe_labels.triggers_by_edge.false).filter(([k]) => k.includes("G3")).reduce((a, [, n]) => a + n, 0), 22)]);
 fact("mission", "0.577", [src(SW, (o) => all(o).mission_success_rate.toFixed(3), "0.577")]);
 fact("repair_mag", "7.04 m/s", [src(SW, (o) => all(o).mean_repair_magnitude_mps.toFixed(2), "7.04")]);
-fact("tts", "5.85 s", [src(SW, (o) => all(o).mean_time_to_safe_s.toFixed(2), "5.85")]);
+fact("tts", "4.51 s", [src(SW, (o) => all(o).mean_time_to_safe_s.toFixed(2), "4.51")]);
 
 // Components (progress_oct.json is regenerated from the code by build_progress_oct_data.py).
 fact("wp1_rt", "29/29", [src(PO, (o) => `${o.wp1.round_trip_passed}/${o.wp1.policies}`, "29/29")]);
