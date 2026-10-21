@@ -501,6 +501,51 @@ def test_a_live_flight_between_beats_still_defers_the_rebuild():
         assert live["flight_running"] is True and live["overlap"] is True, live
 
 
+def test_an_unreadable_live_status_is_a_possible_flight_on_both_paths():
+    """Re-review of d180e01 (P5). The rebuild deferral and the GPU throttle
+    read an unreadable live status in opposite ways: _flight_running()
+    returned False on any exception, so the background rebuild went ahead,
+    while /api/live treated the same failure as a possible flight and
+    throttled nvidia-smi. Both now treat it as a possible flight (defer when
+    unsure, the reason the rebuild waits at all: review workflows halved
+    OWL-ViT's rate), and the page says why the rebuild waits
+    ("deferred_live_unreadable", not "a flight is running")."""
+    seen = []
+    real_snap, real_gpu = serve._live_snapshot, serve.gpu_snapshot
+
+    def broken():
+        raise PermissionError("live folder")
+
+    def gpu(flight=False):
+        seen.append(flight)
+        return None
+    with server() as (port, tmp):
+        serve.AUTO_REBUILD = True
+        out = tmp / "data" / "dashboard.json"
+        old = time.time() - 3600
+        os.utime(out, (old, old))
+        (tmp / "data" / "updates.json").write_text(json.dumps({"schema": 1, "entries": []}), encoding="utf-8")
+        serve._live_snapshot, serve.gpu_snapshot = broken, gpu
+        try:
+            s, _, b = req(port, "GET", "/api/dashboard")
+            d = json.loads(b)
+            assert d["server"]["rebuild"] == "deferred_live_unreadable", d["server"]
+            assert not serve._rebuild["running"] and out.stat().st_mtime == old, \
+                "a rebuild ran while the live status could not be read"
+            s, _, b = req(port, "GET", "/api/live")
+            live = json.loads(b)
+            assert s == 200 and live["error"].startswith("live status unavailable"), live
+            assert seen == [True], seen
+        finally:
+            serve._live_snapshot, serve.gpu_snapshot = real_snap, real_gpu
+        # readable again, no flight: the rebuild goes ahead
+        s, _, b = req(port, "GET", "/api/dashboard")
+        assert json.loads(b)["server"]["rebuild"] == "started"
+    i18n = (ROOT / "tracker" / "assets" / "i18n.js").read_text(encoding="utf-8")
+    assert i18n.count("dash_rebuild_unreadable:") == 3
+    assert '"deferred_live_unreadable"' in (ROOT / "tracker" / "assets" / "app.js").read_text(encoding="utf-8")
+
+
 def test_gpu_polling_slows_down_while_a_flight_runs():
     """Review of 8035d0a (P9): /api/live spawned nvidia-smi twice every 5 s
     while the Dashboard was open, flight or not, although the rebuild was
@@ -633,6 +678,54 @@ def test_the_page_never_shows_old_data_as_current_or_a_failed_read_as_idle():
     assert "Nothing is running" in out["nothing_running"] and "No GPU reading" in out["nothing_running"]
     q = out["quiet_flight"]
     assert "alive, no beat" in q and "airborne" in q and "Nothing is running" not in q, q
+
+
+def test_a_304_after_an_outage_clears_the_server_unreachable_badge():
+    """Re-review of d180e01 (P1). loadDash returned on a 304 BEFORE it
+    cleared S.dashErr. The server's ETag hashes the whole body, server block
+    included, so a server that comes back with unchanged data answers the
+    60 s poll (and the visibility reload) with 304: dashErr stayed true and
+    the header kept the red "Server unreachable" badge over a live server
+    until the data itself changed or the page was reloaded. Now a 304 is an
+    answer like a 200: it clears dashErr and re-renders the page when the
+    badge was up; a 304 with no outage before it does not re-render (the
+    60 s poll must not repaint an unchanged page). Run with node (skipped
+    without it)."""
+    import subprocess
+    node = shutil.which("node")
+    if node is None:
+        print("      SKIP: node is not installed")
+        return "SKIP"
+    app = (ROOT / "tracker" / "assets" / "app.js").read_text(encoding="utf-8")
+    js = "\n".join([
+        "let S = {content: {}, dashEtag: 'W/\"e1\"', dash: {meta: {}}, dashErr: false};",
+        "let renders = 0; const render = () => { renders += 1; };",
+        "const route = () => 'dashboard';",
+        "const window = {scrollY: 0, scrollTo() {}};",
+        "let answers = [];",
+        "async function fetch(url, opts) { const a = answers.shift(); if (a === 'down') throw new Error('refused');"
+        " return {status: a, ok: a === 200, headers: {get: () => 'W/\"e1\"'}, json: async () => ({meta: {}})}; }",
+        "async " + _js_function(app, "loadDash"),
+        "(async () => { const out = {};",
+        "  answers = ['down']; await loadDash(false); out.after_outage = [S.dashErr, renders];",
+        "  answers = [304]; await loadDash(false); out.after_304 = [S.dashErr, renders];",
+        "  answers = [304]; await loadDash(false); out.second_304 = [S.dashErr, renders];",
+        "  answers = ['down']; await loadDash(false, true); answers = [304]; await loadDash(false, true);",
+        "  out.quiet_304 = [S.dashErr, renders];",
+        "  console.log(JSON.stringify(out)); })();"])
+    tmp = Path(tempfile.mkdtemp(prefix="tracker_js_"))
+    try:
+        f = tmp / "load.js"
+        f.write_text(js, encoding="utf-8")
+        r = subprocess.run([node, str(f)], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        assert r.returncode == 0, r.stderr[-800:]
+        out = json.loads(r.stdout)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    assert out["after_outage"] == [True, 1], out
+    assert out["after_304"] == [False, 2], f"a 304 after an outage left the badge up: {out}"
+    assert out["second_304"] == [False, 2], f"a plain 304 repainted the page: {out}"
+    assert out["quiet_304"] == [False, 2], f"a quiet load rendered or kept the error: {out}"
 
 
 def test_the_real_content_has_148_trilingual_cards():

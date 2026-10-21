@@ -232,7 +232,15 @@
   async function loadDash(force, quiet) {
     try {
       const r = await fetch("/api/dashboard", { headers: (!force && S.dashEtag) ? { "If-None-Match": S.dashEtag } : {} });
-      if (r.status === 304) return;
+      // A 304 is the server answering: it clears the "Server unreachable" badge (re-review of d180e01,
+      // P1: this returned before clearing dashErr, and the ETag hashes the whole body, so a server back
+      // with unchanged data answered every poll with 304 and the red badge stayed over a live server).
+      // Only a cleared badge repaints; a plain 304 from the 60 s poll leaves the page as it is.
+      if (r.status === 304) {
+        const was = S.dashErr; S.dashErr = false;
+        if (was && !quiet && S.content && route() === "dashboard") { const y = window.scrollY; render(); window.scrollTo(0, y); }
+        return;
+      }
       if (!r.ok) throw new Error(r.status);
       S.dashEtag = r.headers.get("ETag"); S.dash = await r.json(); S.dashErr = false;
     } catch (e) { S.dashErr = true; }
@@ -280,6 +288,8 @@
       if (sv.stale) badges.push(`<span class="badge bad" title="${esc((sv.stale_reasons || []).join("\n"))}">${esc(t("dash_stale"))}</span>`);
       if (sv.rebuild === "started" || sv.rebuild === "running") badges.push(`<span class="badge">${esc(t("dash_rebuilding"))}</span>`);
       if (sv.rebuild === "deferred_flight") badges.push(`<span class="badge">${esc(t("dash_rebuild_deferred"))}</span>`);
+      // an unreadable live status defers the rebuild as a possible flight (re-review of d180e01, P5)
+      if (sv.rebuild === "deferred_live_unreadable") badges.push(`<span class="badge warn">${esc(t("dash_rebuild_unreadable"))}</span>`);
     }
     if (m.content_stale) badges.push(`<span class="badge warn" title="${esc(tf("dash_cards_stale_help", { cl: m.changelog_newest, cr: m.cards_newest_review }))}">${esc(t("dash_cards_stale"))}</span>`);
     return `<section class="panel dash-head">

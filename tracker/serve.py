@@ -25,7 +25,8 @@ Standard library only. Serves:
                      rebuild never makes posters or probes codecs, waits 30 s
                      between attempts, and is deferred while a flight runs
                      (its heartbeat is fresh or its process is alive between
-                     beats: tools/live_status.py), so it cannot slow a flight.
+                     beats: tools/live_status.py) or the live status cannot
+                     be read (a possible flight), so it cannot slow a flight.
   GET  /api/live     the heartbeat files of running jobs (tools/live_status.py,
                      %LOCALAPPDATA%\\vla-guardrail\\live) and one nvidia-smi
                      snapshot, cached 5 s (30 s, without the process list,
@@ -172,11 +173,23 @@ def _live_snapshot() -> dict:
     return ls.snapshot(folder=LIVE_DIR, demo_out=MEDIA["run"])
 
 
-def _flight_running() -> bool:
+def _live_or_error() -> dict:
+    """The live snapshot, or {"error", "jobs": []} when it cannot be read."""
     try:
-        return bool(_live_snapshot().get("flight_running"))
-    except Exception:                                  # noqa: BLE001
-        return False
+        return _live_snapshot()
+    except Exception as exc:                           # noqa: BLE001
+        return {"error": f"live status unavailable ({type(exc).__name__})", "jobs": []}
+
+
+def _flight_possible(snap: dict) -> bool:
+    """A flight runs, or the live status could not be read and one may.
+    The ONE reading of the snapshot for both the rebuild deferral and the
+    GPU throttle (re-review of d180e01, P5: the deferral read an unreadable
+    status as "no flight" and rebuilt, while /api/live read the same failure
+    as a possible flight and throttled nvidia-smi). Defer when unsure: the
+    reason either waits at all is that background work during a flight
+    halved OWL-ViT's rate (memory note no-workflows-during-flights)."""
+    return "error" in snap or bool(snap.get("flight_running"))
 
 
 def _run_rebuild(P: dict) -> None:
@@ -212,8 +225,9 @@ def dashboard_payload() -> dict:
                 action = "running"
             elif age < REBUILD_MIN_AGE_S or time.time() - _rebuild["last_try"] < REBUILD_MIN_AGE_S:
                 action = "too_recent"
-            elif _flight_running():
-                action = "deferred_flight"
+            elif _flight_possible(live := _live_or_error()):
+                # the page says which: a flight, or a status it could not read
+                action = "deferred_live_unreadable" if "error" in live else "deferred_flight"
             else:
                 _rebuild.update(running=True, last_try=time.time())
                 threading.Thread(target=_run_rebuild, args=(P,), daemon=True).start()
@@ -367,12 +381,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json({"error": f"dashboard unavailable ({type(exc).__name__})"},
                                   HTTPStatus.INTERNAL_SERVER_ERROR)
         if path == "/api/live":
-            try:
-                snap = _live_snapshot()
-            except Exception as exc:                  # noqa: BLE001
-                snap = {"error": f"live status unavailable ({type(exc).__name__})", "jobs": []}
+            snap = _live_or_error()
             # an unreadable live status is treated as a possible flight
-            snap["gpu"] = gpu_snapshot(flight=bool(snap.get("flight_running", "error" in snap)))
+            snap["gpu"] = gpu_snapshot(flight=_flight_possible(snap))
             return self._json(snap)
         if path == "/api/state":
             with _state_lock:
