@@ -23,11 +23,13 @@ Standard library only. Serves:
                      plus a "server" block: is it stale against its inputs,
                      and did a background `--quick` rebuild start. The
                      rebuild never makes posters or probes codecs, waits 30 s
-                     between attempts, and is deferred while a flight's
-                     heartbeat is live, so it cannot slow a flight.
+                     between attempts, and is deferred while a flight runs
+                     (its heartbeat is fresh or its process is alive between
+                     beats: tools/live_status.py), so it cannot slow a flight.
   GET  /api/live     the heartbeat files of running jobs (tools/live_status.py,
                      %LOCALAPPDATA%\\vla-guardrail\\live) and one nvidia-smi
-                     snapshot, cached 5 s. Only whitelisted fields: no log
+                     snapshot, cached 5 s (30 s, without the process list,
+                     while a flight runs). Only whitelisted fields: no log
                      content, no paths (a job's folder is shown as its
                      demo/out tag), no environment.
 Both new endpoints are GET only (a POST to them is a 404) and pass the same
@@ -97,10 +99,15 @@ LIVE_DIR: Path | None = None    # None: tools/live_status.py live_dir()
 AUTO_REBUILD = True
 REBUILD_MIN_AGE_S = 30.0
 GPU_CACHE_S = 5.0
+# While a flight runs, nvidia-smi is spawned once (no process list) at most
+# every GPU_CACHE_FLIGHT_S: the same reason the rebuild waits for a flight to
+# end (review workflows halved OWL-ViT's rate, memory note no-workflows-
+# during-flights) applies to periodic process spawns (review of 8035d0a, P9).
+GPU_CACHE_FLIGHT_S = 30.0
 GPU_APPS = re.compile(r"(?i)python|unreal|airsim|ffmpeg|ollama")
 _rebuild = {"running": False, "last_try": 0.0, "error": None}
 _rebuild_lock = threading.Lock()
-_gpu = {"t": 0.0, "value": None}
+_gpu = {"t": 0.0, "value": None, "flight": False}
 _gpu_lock = threading.Lock()
 _tools: dict = {}
 
@@ -228,14 +235,19 @@ def _int(x):
         return None
 
 
-def gpu_snapshot() -> dict | None:
+def gpu_snapshot(flight: bool = False) -> dict | None:
     """One nvidia-smi reading, cached GPU_CACHE_S; None without a GPU tool.
-    Process names are reduced to their file name (no folders)."""
+    Process names are reduced to their file name (no folders). While a
+    flight runs (`flight`), one spawn without the process list, cached
+    GPU_CACHE_FLIGHT_S (module constants); the reading says so."""
     now = time.time()
     with _gpu_lock:
-        if now - _gpu["t"] < GPU_CACHE_S:
+        max_age = GPU_CACHE_FLIGHT_S if flight else GPU_CACHE_S
+        # a reading reduced for a flight is not reused once the flight is over
+        if now - _gpu["t"] < max_age and (flight or not _gpu.get("flight")):
             return _gpu["value"]
         _gpu["t"] = now
+        _gpu["flight"] = bool(flight)
     value = None
     exe = shutil.which("nvidia-smi")
     if exe:
@@ -245,8 +257,9 @@ def gpu_snapshot() -> dict | None:
         try:
             g = subprocess.run([exe, "--query-gpu=name,utilization.gpu,memory.used,memory.total",
                                 "--format=csv,noheader,nounits"], **kw)
-            a = subprocess.run([exe, "--query-compute-apps=pid,process_name,used_memory",
-                                "--format=csv,noheader,nounits"], **kw)
+            a = None if flight else subprocess.run(
+                [exe, "--query-compute-apps=pid,process_name,used_memory",
+                 "--format=csv,noheader,nounits"], **kw)
             gpus = []
             for row in _csv_rows(g.stdout)[:4]:
                 if len(row) >= 4:
@@ -256,7 +269,7 @@ def gpu_snapshot() -> dict | None:
             # unknown memory size: keep the ones this project runs (Python,
             # Unreal, ffmpeg) and any with a known size; count the rest.
             apps, other = [], 0
-            for row in _csv_rows(a.stdout)[:64]:
+            for row in _csv_rows(a.stdout if a is not None else "")[:64]:
                 if len(row) >= 3:
                     name = re.split(r"[\\/]", row[1])[-1][:60]
                     mem = _int(row[2])
@@ -264,7 +277,9 @@ def gpu_snapshot() -> dict | None:
                         apps.append({"pid": _int(row[0]), "name": name, "mem_mib": mem})
                     else:
                         other += 1
-            value = {"gpus": gpus, "apps": apps[:16], "other_apps": other} if gpus else None
+            value = ({"gpus": gpus, "apps": None if a is None else apps[:16],
+                      "other_apps": None if a is None else other,
+                      "reduced_for_flight": a is None} if gpus else None)
         except (OSError, subprocess.SubprocessError, ValueError):
             value = None
     with _gpu_lock:
@@ -356,7 +371,8 @@ class Handler(SimpleHTTPRequestHandler):
                 snap = _live_snapshot()
             except Exception as exc:                  # noqa: BLE001
                 snap = {"error": f"live status unavailable ({type(exc).__name__})", "jobs": []}
-            snap["gpu"] = gpu_snapshot()
+            # an unreadable live status is treated as a possible flight
+            snap["gpu"] = gpu_snapshot(flight=bool(snap.get("flight_running", "error" in snap)))
             return self._json(snap)
         if path == "/api/state":
             with _state_lock:

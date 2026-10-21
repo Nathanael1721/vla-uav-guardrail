@@ -2736,11 +2736,19 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     rec_summary = None
     hud_ms: list[float] = []
     hud_failed = 0
-    live = (_live_heartbeat(tag, log_dir=out, total_s=args.max_s) if live_status
+    # The Dashboard heartbeat. Beyond the mission loop's beats, every slow
+    # step below beats (memory only) with a phase and a detail: the first
+    # version beat only inside the loop, and the scene load, SITL boot, EKF,
+    # detector load, take-off and landing of a 225 s run read "no heartbeat"
+    # (review of 8035d0a, P1). It ends as the last thing the run's `finally`
+    # does, after the teardown.
+    live = (_live_heartbeat(tag, log_dir=out, total_s=args.max_s, phase="starting",
+                            detail="loading the scene") if live_status
             else _NoBeat())
     try:
         if camera is not None:
             camera.start()                     # loads the scene: BEFORE SITL starts
+            live.beat(detail="scene loaded")                                # memory only
         if save_view:
             # Started now, writing nothing until the loop's first set_hud():
             # the video begins at mission start (after the take-off to cruise),
@@ -2767,8 +2775,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             sitl_log = open(out / "sitl_wsl.log", "w", encoding="utf-8")
             sitl_proc = popen(cmd, stdout=sitl_log, stderr=subprocess.STDOUT)
             rec.event("sitl_started", command=cmd)
+            live.beat(detail="SITL started")                                # memory only
 
         # ---- autopilot -------------------------------------------------------
+        live.beat(detail="connecting to the autopilot")                     # memory only
         if link is None:
             if args.link == "pymavlink":
                 link = PymavlinkLink(args.mavlink_url or (plan.router_tcp_url if plan is not None
@@ -2816,11 +2826,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             backstop.publish(pos0, phase)
 
         print(f"[link]   {link.name}: bring-up to {args.cruise_alt} m")
+        live.beat(detail=f"EKF, arming and take-off to {args.cruise_alt:g} m")  # memory only
         if "before_arm" in inspect.signature(link.bring_up).parameters:
             link.bring_up(args.cruise_alt, before_arm=before_arm)
         else:
             link.bring_up(args.cruise_alt)
         before_arm("after take-off: this link has no pre-arm step")
+        live.beat(phase="airborne", detail="at cruise altitude")            # memory only
         # Read from the autopilot during bring-up (identify()); None if unreadable,
         # which the manifest then records as unresolved - never an assumed 1.0.
         speedup = getattr(link, "sim_speedup", None)
@@ -2846,6 +2858,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             hfov = (fv.camera_hfov_deg(config_path=Path(sim_cfg["dir"]) / sim_cfg["robot"])
                     if sim_cfg else fv.CAMERA_HFOV_DEG)
         if grounder is None:
+            live.beat(detail="loading the detector")                        # memory only
             grounder = fv.Grounder(obs, args.object, thresh=args.det_thresh,
                                    colour_min=args.colour_min,
                                    log_path=out / "detections.jsonl")
@@ -3534,6 +3547,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             end_reason = f"crashed: {type(exc).__name__}: {exc}"
             raise
         finally:
+            live.beat(progress=1.0, phase="landing", detail="episode over; landing")  # memory only
             # The throttle goes back to the radio first: an override must not
             # outlive the hold it was for.
             try:
@@ -3570,6 +3584,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 except Exception as exc:                          # noqa: BLE001
                     print(f"[view]   recorder stop failed: {type(exc).__name__}: {exc}")
 
+        live.beat(detail="writing the run's records")                       # memory only
         t_end = clock()
         mission_s = max(1e-6, t_end - t0)
         g1 = grounder.latest()
@@ -4053,25 +4068,37 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                       f"only; these frames are under {view_dir}")
         return 0
     finally:
-        # The Dashboard row ends with the run (never raises; an exception on
-        # its way out reads as a failed run).
-        live.stop("failed" if sys.exc_info()[0] is not None else "ok")
-        # Whatever happened above - a refused arm, an EKF that never
-        # converged, Ctrl+C - the simulator connection and the SITL this
-        # run started do not outlive it. Nor does the recorder thread: it
-        # stops before the camera it reads from (with its recorder.json).
-        if recorder is not None and rec_summary is None:
-            try:
-                stop_recorder(recorder, view_dir)
-            except Exception as exc:                              # noqa: BLE001
-                print(f"[view]   recorder stop failed: {type(exc).__name__}: {exc}")
-        if camera is not None and hasattr(camera, "stop"):
-            camera.stop()
-        if sitl_proc is not None:
-            run_cmd(rail.wsl_stop_command(args.wsl_distro), check=False)
-            sitl_proc.wait(timeout=30)
-        if sitl_log is not None:
-            sitl_log.close()
+        # How the run is ending, read before the teardown can replace it: an
+        # exception on its way out is a failed run, a Ctrl+C a stopped one.
+        _leaving = sys.exc_info()[0]
+        try:
+            # Whatever happened above - a refused arm, an EKF that never
+            # converged, Ctrl+C - the simulator connection and the SITL this
+            # run started do not outlive it. Nor does the recorder thread: it
+            # stops before the camera it reads from (with its recorder.json).
+            if recorder is not None and rec_summary is None:
+                try:
+                    stop_recorder(recorder, view_dir)
+                except Exception as exc:                          # noqa: BLE001
+                    print(f"[view]   recorder stop failed: {type(exc).__name__}: {exc}")
+            if camera is not None and hasattr(camera, "stop"):
+                camera.stop()
+            if sitl_proc is not None:
+                run_cmd(rail.wsl_stop_command(args.wsl_distro), check=False)
+                sitl_proc.wait(timeout=30)
+            if sitl_log is not None:
+                sitl_log.close()
+        finally:
+            # The Dashboard row ends LAST (never raises). It was the first
+            # statement of this `finally`, ahead of the teardown: a second
+            # Ctrl+C during its write retries (up to ~0.3 s) would have
+            # skipped the SITL stop that keeps SITL from outliving the run
+            # (review of 8035d0a, P8). Its own `finally`, so a teardown
+            # that raises cannot leave the row "running" either (and reads
+            # as failed).
+            _leaving = _leaving or sys.exc_info()[0]
+            live.stop("ok" if _leaving is None else
+                      "stopped" if issubclass(_leaving, KeyboardInterrupt) else "failed")
 
 
 def main(argv=None) -> int:

@@ -471,6 +471,70 @@ def test_the_background_rebuild_waits_while_a_flight_runs():
         assert json.loads(b)["server"]["rebuild"] in ("not_needed", "too_recent")
 
 
+def test_a_live_flight_between_beats_still_defers_the_rebuild():
+    """Review of 8035d0a (P1): the flights beat only inside their mission
+    loops, so a flight loading its scene, booting SITL or landing had a
+    heartbeat older than STALE_S, read "stale", and the background rebuild
+    started in the middle of it (~100 s of a 225 s run). A record whose
+    process is alive (this test's own PID) defers it however old its beat."""
+    with server() as (port, tmp):
+        serve.AUTO_REBUILD = True
+        out = tmp / "data" / "dashboard.json"
+        old = time.time() - 3600
+        os.utime(out, (old, old))
+        (tmp / "data" / "updates.json").write_text(json.dumps({"schema": 1, "entries": []}), encoding="utf-8")
+        _heartbeat(tmp, "pas_ap_takeoff", age=serve._tool("live_status").STALE_S + 45, phase="starting")
+        _heartbeat(tmp, "review", kind="workflow", pid=None, cli=True)
+        s, _, b = req(port, "GET", "/api/dashboard")
+        d = json.loads(b)
+        assert d["server"]["rebuild"] == "deferred_flight", d["server"]
+        assert out.stat().st_mtime == old, "a rebuild ran while a flight was between beats"
+        s, _, b = req(port, "GET", "/api/live")
+        live = json.loads(b)
+        job = next(j for j in live["jobs"] if j["name"] == "pas_ap_takeoff")
+        assert job["state"] == "quiet" and job["phase"] == "starting", job
+        assert live["flight_running"] is True and live["overlap"] is True, live
+
+
+def test_gpu_polling_slows_down_while_a_flight_runs():
+    """Review of 8035d0a (P9): /api/live spawned nvidia-smi twice every 5 s
+    while the Dashboard was open, flight or not, although the rebuild was
+    already deferred during flights for the same reason (review workflows
+    halved OWL-ViT's rate). During a flight it is one spawn (no process
+    list) at most every GPU_CACHE_FLIGHT_S."""
+    calls = []
+
+    class R:
+        def __init__(self, out):
+            self.stdout = out
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd[1])
+        return R("NVIDIA GeForce RTX 4090, 37, 9000, 24564\n" if cmd[1].startswith("--query-gpu")
+                 else "1234, C:\\Users\\x\\python.exe, 8000\n")
+    real_which, real_run = serve.shutil.which, serve.subprocess.run
+    serve.shutil.which = lambda name: "nvidia-smi"
+    serve.subprocess.run = fake_run
+    try:
+        serve._gpu.update(t=0.0, value=None, flight=False)
+        g = serve.gpu_snapshot(flight=False)
+        assert len(calls) == 2 and g["apps"] and g["apps"][0]["name"] == "python.exe"
+        calls.clear()
+        serve._gpu.update(t=0.0, value=None, flight=False)
+        g = serve.gpu_snapshot(flight=True)
+        assert len(calls) == 1 and calls[0].startswith("--query-gpu"), calls
+        assert g["gpus"][0]["util_pct"] == 37 and g["apps"] is None and g["reduced_for_flight"] is True
+        # within GPU_CACHE_FLIGHT_S of that reading, nothing is spawned
+        serve._gpu["t"] = time.time() - (serve.GPU_CACHE_S + 1)
+        assert serve.gpu_snapshot(flight=True) == g and len(calls) == 1, calls
+        # the flight ends: the next reading is a full one again
+        serve._gpu["t"] = time.time() - (serve.GPU_CACHE_S + 1)
+        assert serve.gpu_snapshot(flight=False)["apps"] and len(calls) == 3, calls
+    finally:
+        serve.shutil.which, serve.subprocess.run = real_which, real_run
+        serve._gpu.update(t=0.0, value=None, flight=False)
+
+
 def test_no_gpu_tool_means_no_gpu_row():
     real = serve.shutil.which
     serve.shutil.which = lambda name: None
@@ -480,6 +544,90 @@ def test_no_gpu_tool_means_no_gpu_row():
     finally:
         serve.shutil.which = real
         serve._gpu.update(t=0.0, value=None)
+
+
+# ------------------------------------------------------------------ the page (node)
+def _js_function(src: str, name: str) -> str:
+    """`function name(...) {...}` from app.js, by brace count (the bodies
+    are template literals whose `${...}` braces balance)."""
+    start = src.index(f"function {name}(")
+    i, depth = src.index("{", start), 0
+    for j in range(i, len(src)):
+        depth += {"{": 1, "}": -1}.get(src[j], 0)
+        if depth == 0:
+            return src[start:j + 1]
+    raise AssertionError(f"{name}: unbalanced braces")
+
+
+def _page(scenarios: dict) -> dict:
+    """Run app.js's dashHeader / liveHTML under node with the real UI
+    strings (i18n.js) and helpers (esc, t, tf, ftime) on each scenario's
+    S; None when node is absent."""
+    import re
+    import subprocess
+    node = shutil.which("node")
+    if node is None:
+        return None
+    app = (ROOT / "tracker" / "assets" / "app.js").read_text(encoding="utf-8")
+    helpers = [m.group(0) for m in re.finditer(r"^\s*const (LOCALE|FINAL|esc|t|tf|ftime) = .*;$", app, re.M)]
+    assert len(helpers) == 6, helpers
+    js = "\n".join([
+        "const window = {};", (ROOT / "tracker" / "assets" / "i18n.js").read_text(encoding="utf-8"),
+        "const UI = window.UI; let S = {lang: 'en'};", *helpers,
+        _js_function(app, "dashHeader"), _js_function(app, "liveHTML"),
+        f"const SC = {json.dumps(scenarios)}; const out = {{}};",
+        "for (const [k, v] of Object.entries(SC)) { S = Object.assign({lang: 'en'}, v.S);"
+        " out[k] = v.fn === 'dashHeader' ? dashHeader(v.d) : liveHTML(); }",
+        "console.log(JSON.stringify(out));"])
+    tmp = Path(tempfile.mkdtemp(prefix="tracker_js_"))
+    try:
+        f = tmp / "page.js"
+        f.write_text(js, encoding="utf-8")
+        r = subprocess.run([node, str(f)], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        assert r.returncode == 0, r.stderr[-800:]
+        return json.loads(r.stdout)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_the_page_never_shows_old_data_as_current_or_a_failed_read_as_idle():
+    """Review of 8035d0a (P3). When /api/dashboard stopped answering, the page
+    kept the last data AND its server block, so the header still said "Data
+    current" in green; a failed /api/live read printed "could not be read"
+    and then "Nothing is running." and "No GPU reading", asserting that no
+    flight ran. Now a failed dashboard read shows a red "server unreachable,
+    data from <generated>" badge (never "Data current", never the old
+    server block's badges), and a failed live read shows only that it
+    failed. Run with node (skipped without it)."""
+    meta = {"generated": "2026-10-21T00:00:00+00:00", "version": "0.5.1"}
+    fresh = {"meta": meta, "server": {"stale": False, "rebuild": "not_needed"}}
+    deferred = {"meta": meta, "server": {"stale": True, "rebuild": "deferred_flight"}}
+    job = {"id": "flight-x-1", "kind": "flight", "name": "pas_ap_x", "state": "quiet", "phase": "airborne",
+           "age_s": 45.0, "started": "2026-10-22T01:00:00+08:00", "progress": None, "detail": "climbing"}
+    out = _page({
+        "dead_server": {"fn": "dashHeader", "d": fresh, "S": {"dashErr": True}},
+        "dead_server_old_block": {"fn": "dashHeader", "d": deferred, "S": {"dashErr": True}},
+        "live_server": {"fn": "dashHeader", "d": fresh, "S": {"dashErr": False}},
+        "live_read_failed": {"fn": "liveHTML", "S": {"live": {"error": "unreachable", "jobs": []}}},
+        "nothing_running": {"fn": "liveHTML", "S": {"live": {"jobs": [], "dir_ok": True, "gpu": None}}},
+        "quiet_flight": {"fn": "liveHTML", "S": {"live": {"jobs": [job], "dir_ok": True, "gpu": None,
+                                                          "flight_running": True}}},
+    })
+    if out is None:
+        print("      SKIP: node is not installed")
+        return "SKIP"
+    assert "Server unreachable" in out["dead_server"] and "Data current" not in out["dead_server"], out["dead_server"]
+    assert "badge bad" in out["dead_server"]
+    for stale_word in ("Rebuild waits", "Data stale", "Data current"):
+        assert stale_word not in out["dead_server_old_block"], (stale_word, out["dead_server_old_block"])
+    assert "Data current" in out["live_server"] and "Server unreachable" not in out["live_server"]
+    failed = out["live_read_failed"]
+    assert "could not be read" in failed, failed
+    for claim in ("Nothing is running", "No heartbeat folder", "No GPU reading"):
+        assert claim not in failed, (claim, failed)
+    assert "Nothing is running" in out["nothing_running"] and "No GPU reading" in out["nothing_running"]
+    q = out["quiet_flight"]
+    assert "alive, no beat" in q and "airborne" in q and "Nothing is running" not in q, q
 
 
 def test_the_real_content_has_148_trilingual_cards():

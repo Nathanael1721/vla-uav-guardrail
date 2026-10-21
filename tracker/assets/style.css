@@ -352,7 +352,7 @@ code.src { word-break: break-all; font-size: .74rem; }
 .fstats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 10px; }
 .warn-text { color: var(--partial); font-weight: 600; }
 table.live tr.ls-stale td, table.live tr.ls-dead td { opacity: .55; }
-.lstate { font-weight: 700; font-size: .82rem; } .lstate.running { color: var(--done); } .lstate.stale, .lstate.dead { color: var(--missing); } .lstate.ended { color: var(--muted); }
+.lstate { font-weight: 700; font-size: .82rem; } .lstate.running { color: var(--done); } .lstate.quiet { color: var(--partial); } .lstate.stale, .lstate.dead { color: var(--missing); } .lstate.ended { color: var(--muted); }
 .bad-banner { border-left-color: var(--missing); background: var(--missing-soft); color: var(--ink); font-weight: 650; margin-bottom: 8px; }
 .gpu { margin-bottom: 6px; font-size: .9rem; }
 .dash-tl .gbar.late { outline: 2px solid var(--missing); outline-offset: 1px; }

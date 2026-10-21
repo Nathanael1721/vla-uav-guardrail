@@ -269,35 +269,46 @@
     const days = Math.max(0, Math.ceil((FINAL - new Date()) / 86400000));
     const m = d.meta || {}; const sv = d.server || {};
     const badges = [];
-    if (sv.stale) badges.push(`<span class="badge bad" title="${esc((sv.stale_reasons || []).join("\n"))}">${esc(t("dash_stale"))}</span>`);
+    // A failed /api/dashboard read keeps the last data on screen; its server block is then as old as
+    // the data, so it must not decide the badges, and "Data current" is never shown in that state
+    // (review of 8035d0a, P3: a dead server read as current data, with a green badge).
+    if (S.dashErr) badges.push(`<span class="badge bad">${esc(tf("dash_offline", { t: m.generated ? ftime(m.generated) : "?" }))}</span>`);
+    else {
+      if (sv.stale) badges.push(`<span class="badge bad" title="${esc((sv.stale_reasons || []).join("\n"))}">${esc(t("dash_stale"))}</span>`);
+      if (sv.rebuild === "started" || sv.rebuild === "running") badges.push(`<span class="badge">${esc(t("dash_rebuilding"))}</span>`);
+      if (sv.rebuild === "deferred_flight") badges.push(`<span class="badge">${esc(t("dash_rebuild_deferred"))}</span>`);
+    }
     if (m.content_stale) badges.push(`<span class="badge warn" title="${esc(tf("dash_cards_stale_help", { cl: m.changelog_newest, cr: m.cards_newest_review }))}">${esc(t("dash_cards_stale"))}</span>`);
-    if (sv.rebuild === "started" || sv.rebuild === "running") badges.push(`<span class="badge">${esc(t("dash_rebuilding"))}</span>`);
-    if (sv.rebuild === "deferred_flight") badges.push(`<span class="badge">${esc(t("dash_rebuild_deferred"))}</span>`);
     return `<section class="panel dash-head">
       <div class="stat"><span class="big-number">${days}</span><span class="muted small">${esc(t("days_left"))}</span></div>
       <div class="dh-meta small"><div><b>${esc(t("project"))}</b> ${esc(m.version || "?")} · git <code>${esc(m.git_head || "?")}</code>${m.git_dirty ? " (dirty)" : ""}</div>
         <div class="muted">${esc(t("dash_generated"))} ${esc(m.generated ? ftime(m.generated) : "?")} · ${esc(t("dash_mode_" + (m.mode || "quick")))}</div>
         <div class="muted">${esc(tf("dash_sources", { cl: m.changelog_newest || "?", cr: m.cards_newest_review || "?" }))}</div></div>
-      <div class="dh-badges">${badges.join("") || `<span class="badge ok">${esc(t("dash_fresh"))}</span>`}</div></section>`;
+      <div class="dh-badges">${badges.join("") || (S.dashErr ? "" : `<span class="badge ok">${esc(t("dash_fresh"))}</span>`)}</div></section>`;
   }
   function liveHTML() {
     const L0 = S.live || { jobs: [] };
     const jobs = L0.jobs || [];
     const g = L0.gpu;
-    const row = (j) => `<tr class="ls-${esc(j.state)}"><td><span class="chip">${esc(t("live_kind_" + j.kind))}</span></td><td><b>${esc(j.name)}</b>${j.run_tag ? `<div class="small muted"><code>demo/out/${esc(j.run_tag)}</code></div>` : ""}${j.detail ? `<div class="small muted">${esc(j.detail)}</div>` : ""}</td>
+    const row = (j) => `<tr class="ls-${esc(j.state)}"><td><span class="chip">${esc(t("live_kind_" + j.kind))}</span>${j.phase ? ` <span class="chip">${esc(t("live_phase_" + j.phase))}</span>` : ""}</td><td><b>${esc(j.name)}</b>${j.run_tag ? `<div class="small muted"><code>demo/out/${esc(j.run_tag)}</code></div>` : ""}${j.detail ? `<div class="small muted">${esc(j.detail)}</div>` : ""}</td>
       <td class="small">${esc(ftime(j.started))}</td><td>${j.progress == null ? "" : `<div class="bar" style="width:90px"><span style="width:${100 * j.progress}%"></span></div>`}</td>
       <td><span class="lstate ${esc(j.state)}">${esc(t("live_state_" + j.state))}</span><div class="small muted">${esc(tf("live_beat", { s: Math.round(j.age_s) }))}</div></td></tr>`;
     const gpu = g && g.gpus && g.gpus.length ? g.gpus.map((x) => `<div class="gpu"><b>${esc(x.name)}</b> · ${esc(t("live_util"))} ${x.util_pct == null ? "?" : x.util_pct + " %"} · ${esc(t("live_vram"))} ${x.mem_used_mib == null ? "?" : (x.mem_used_mib / 1024).toFixed(1)} / ${x.mem_total_mib == null ? "?" : (x.mem_total_mib / 1024).toFixed(1)} GB
         <div class="bar" style="margin-top:4px"><span style="width:${x.mem_total_mib ? (100 * x.mem_used_mib) / x.mem_total_mib : 0}%"></span></div></div>`).join("")
         + (g.apps && g.apps.length ? `<div class="small muted">${esc(t("live_apps"))}: ${g.apps.map((a) => `${esc(a.name)}${a.mem_mib != null ? ` (${(a.mem_mib / 1024).toFixed(1)} GB)` : ""}`).join(", ")}${g.other_apps ? ` + ${g.other_apps}` : ""}</div>` : "")
-      : `<div class="small muted">${esc(t("live_gpu_none"))}</div>`;
+        + (g.reduced_for_flight ? `<div class="small muted">${esc(t("live_gpu_reduced"))}</div>` : "")
+      // A failed /api/live read knows nothing about the GPU either: no "no GPU" line then (P3).
+      : (L0.error ? "" : `<div class="small muted">${esc(t("live_gpu_none"))}</div>`);
+    // A failed read says only that it failed: it must not also assert "Nothing is running", which
+    // would hide a flight and could never show the overlap banner (review of 8035d0a, P3).
+    const none = L0.error ? "" : `<p class="muted small">${esc(t(L0.dir_ok === false ? "live_dir_missing" : "live_none"))}</p>`;
     return `<h2 class="ptitle">${esc(t("live_title"))}</h2>
       ${L0.overlap ? `<div class="callout bad-banner">${esc(t("live_overlap"))}</div>` : ""}
-      ${L0.error ? `<p class="small muted">${esc(t("live_error"))}</p>` : ""}
+      ${L0.error ? `<div class="callout warn"><p class="small">${esc(t("live_error"))}</p></div>` : ""}
       ${jobs.length ? `<div class="table-wrap"><table class="live"><thead><tr><th>${esc(t("col_kind"))}</th><th>${esc(t("col_name"))}</th><th>${esc(t("col_started"))}</th><th>${esc(t("col_progress"))}</th><th>${esc(t("col_state"))}</th></tr></thead><tbody>${jobs.map(row).join("")}</tbody></table></div>`
-        : `<p class="muted small">${esc(t(L0.dir_ok === false ? "live_dir_missing" : "live_none"))}</p>`}
+        : none}
       ${(L0.done || []).length ? `<div class="small muted">${esc(t("live_recent"))}: ${(L0.done || []).map((j) => `${esc(j.name)} (${esc(t("live_kind_" + j.kind))}, ${esc(j.status || "")}${j.ended ? ", " + esc(ftime(j.ended)) : ""})`).join(" · ")}</div>` : ""}
-      <h3 style="margin-top:12px">${esc(t("live_gpu"))}</h3>${gpu}
+      ${gpu ? `<h3 style="margin-top:12px">${esc(t("live_gpu"))}</h3>${gpu}` : ""}
       <p class="small muted" style="margin-top:8px">${esc(t("live_help"))}</p>`;
   }
   const todoTitle = (i) => (i.i18n && i.i18n[S.lang] && i.i18n[S.lang].title) || (i.i18n && i.i18n.en && i.i18n.en.title) || i.id;

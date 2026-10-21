@@ -1,8 +1,12 @@
 """Live status for the tracker's Dashboard: one small heartbeat file per job.
 
     # in a flight, a harness run or a training script
-    hb = live_status.heartbeat("flight", "pas_ap_ovf_on_20261021", log_dir=out_dir)
+    hb = live_status.heartbeat("flight", "pas_ap_ovf_on_20261021", log_dir=out_dir,
+                               phase="starting", detail="connecting")
+    hb.beat(detail="scene loaded")       # at each slow step outside the loop
+    hb.beat(phase="airborne")
     hb.beat(progress=t / max_s)          # every tick if you like: no file IO here
+    hb.beat(phase="landing")
     hb.stop("ok")                        # or let the process end
 
     # from a shell, a workflow script or PowerShell
@@ -12,11 +16,25 @@
     python tools/live_status.py list
 
 Standard library only. The Dashboard (tracker/serve.py GET /api/live) reads
-the folder and shows one row per job, greys a row whose heartbeat is older
-than STALE_S or whose process is gone, and raises a banner when a FLIGHT and a
-WORKFLOW run at the same time: review workflows halved OWL-ViT's rate during
-the 29 Sep flights (memory note no-workflows-during-flights), so the overlap
-is the thing worth seeing.
+the folder and shows one row per job, greys a row whose process is gone (or
+whose heartbeat is older than STALE_S when the reader cannot tell whether the
+process lives), and raises a banner when a FLIGHT and a WORKFLOW run at the
+same time: review workflows halved OWL-ViT's rate during the 29 Sep flights
+(memory note no-workflows-during-flights), so the overlap is the thing worth
+seeing.
+
+A JOB IS RUNNING WHILE ITS PROCESS LIVES, not only while it beats. The first
+version judged by beat age alone, and the flights beat only inside their
+mission loops: the 21 Oct ovf_on run took about 225 s, of which 120 s was
+mission, and connect, scene load, SITL boot, EKF, OWL-ViT load, take-off and
+landing went 30 s and more without a beat. The row read "no heartbeat",
+`flight_running` was False, the server's "no rebuild during a flight" and the
+flight + workflow banner switched off silently in the heaviest phases (review
+of 8035d0a, P1). Now a record whose PID is alive counts as running, shown as
+"quiet" (alive, no beat for N s) once its last beat is older than STALE_S;
+only up to QUIET_MAX_S, because Windows reuses PIDs. The flight rails also
+beat at their phase boundaries, with a `phase` (starting / airborne /
+landing) and a short `detail`, so the row says where the flight is.
 
 WHY IT CANNOT DISTURB A FLIGHT (the writer runs inside demo/follow_vlm.py,
 demo/pas_ardupilot/perception_node.py and experiments/sweep_scenarios.py):
@@ -56,7 +74,14 @@ ENV_OFF = "VLAGUARD_LIVE_OFF"
 DEAD_HIDE_S = 6 * 3600.0        # a dead or stale job's row is dropped after this
 KINDS = ("flight", "harness", "training", "workflow", "build")
 STATUSES = ("ok", "failed", "stopped")
-STALE_S = 30.0                  # an in-process heartbeat older than this is "stale"
+PHASES = ("starting", "airborne", "landing")    # a flight's phase, when it reports one
+STALE_S = 30.0                  # an in-process heartbeat older than this is "quiet" or "stale"
+# A live PID with no beat for longer than this is not taken on trust: an
+# hour of silence is no flight phase this project has (the longest, a SITL
+# boot plus EKF convergence, takes minutes), and Windows reuses PIDs, so the
+# row reads "stale" again instead of "running" forever.
+QUIET_MAX_S = 3600.0
+LIVE_STATES = ("running", "quiet")   # the states that count as running
 CLI_TTL_S = 6 * 3600.0          # a CLI-started job (no PID, no beats) after this is "stale"
 MIN_WRITE_INTERVAL_S = 1.0      # at most one write per second per job
 KEEP_DONE = 20
@@ -139,7 +164,7 @@ class NullBeat:
     """What heartbeat() returns when it cannot work: every call is a no-op."""
     path = None
 
-    def beat(self, progress=None, detail=None, **_):
+    def beat(self, progress=None, detail=None, phase=None, **_):
         return None
 
     def stop(self, status="ok", detail=None):
@@ -160,7 +185,8 @@ class Heartbeat:
     def __init__(self, kind: str, name: str, *, log_dir: str | os.PathLike | None = None,
                  total_s: float | None = None, folder: Path | None = None,
                  pid: int | None = None, start_thread: bool = True,
-                 min_interval_s: float = MIN_WRITE_INTERVAL_S, clock=time.time):
+                 min_interval_s: float = MIN_WRITE_INTERVAL_S, clock=time.time,
+                 phase: str | None = None, detail: str | None = None):
         if kind not in KINDS:
             raise ValueError(f"kind must be one of {KINDS}, not {kind!r}")
         self._clock = clock
@@ -170,7 +196,9 @@ class Heartbeat:
         self.record = {
             "schema": 1, "id": job_id(kind, name, self.pid), "kind": kind,
             "name": str(name)[:120], "pid": self.pid, "cli": False,
-            "started": now, "heartbeat": now, "progress": None, "detail": None,
+            "started": now, "heartbeat": now, "progress": None,
+            "detail": None if detail is None else str(detail)[:MAX_DETAIL],
+            "phase": phase if phase in PHASES else None,
             "total_s": total_s, "log_dir": str(log_dir) if log_dir else None,
             "status": "running", "ended": None,
         }
@@ -189,7 +217,10 @@ class Heartbeat:
             self._thread.start()
 
     # called from the control loop: memory only
-    def beat(self, progress: float | None = None, detail: str | None = None, **_) -> None:
+    def beat(self, progress: float | None = None, detail: str | None = None,
+             phase: str | None = None, **_) -> None:
+        """Memory only. `phase` is kept only when it is one of PHASES (a
+        typo is ignored, never raised)."""
         try:
             with self._lock:
                 self.record["heartbeat"] = self._clock()
@@ -197,6 +228,8 @@ class Heartbeat:
                     self.record["progress"] = max(0.0, min(1.0, float(progress)))
                 if detail is not None:
                     self.record["detail"] = str(detail)[:MAX_DETAIL]
+                if phase in PHASES:
+                    self.record["phase"] = phase
                 self._dirty = True
         except Exception:                                  # noqa: BLE001
             pass
@@ -347,10 +380,17 @@ def sanitize(rec: dict, now: float, demo_out: Path | None = None,
     state = "running"
     if rec.get("status") not in (None, "running"):
         state = "ended"
-    elif not cli and pid is not None and alive(pid) is False:
-        state = "dead"
-    elif age > (CLI_TTL_S if cli else STALE_S):
-        state = "stale"
+    else:
+        lives = alive(pid) if (not cli and pid is not None) else None
+        if lives is False:
+            state = "dead"
+        elif age > (CLI_TTL_S if cli else STALE_S):
+            # Between beats is not stopped: a flight loading its scene,
+            # booting SITL or landing beats seldom, and its process is the
+            # proof it is still there (module docstring). Without that proof
+            # (no PID, a reader that cannot tell, an hour of silence) the
+            # beat age alone decides, as before.
+            state = "quiet" if (lives is True and age <= QUIET_MAX_S) else "stale"
     prog = _num(rec.get("progress"))
     return {
         "id": safe_name(rec.get("id") or ""), "kind": rec["kind"],
@@ -358,6 +398,7 @@ def sanitize(rec: dict, now: float, demo_out: Path | None = None,
         "started": _iso(started), "heartbeat": _iso(beat), "age_s": round(age, 1),
         "progress": None if prog is None else max(0.0, min(1.0, prog)),
         "detail": None if rec.get("detail") is None else str(rec["detail"])[:MAX_DETAIL],
+        "phase": rec.get("phase") if rec.get("phase") in PHASES else None,
         "total_s": _num(rec.get("total_s")), "state": state,
         "status": rec.get("status") if rec.get("status") in STATUSES + ("running",) else None,
         "ended": _iso(rec["ended"]) if _num(rec.get("ended")) is not None else None,
@@ -393,7 +434,9 @@ def snapshot(folder: Path | None = None, now: float | None = None,
                 if s:
                     s["state"] = "ended"
                     done.append(s)
-    running = [j for j in jobs if j["state"] == "running"]
+    # "quiet" counts: a live flight between beats still defers the server's
+    # rebuild and still raises the overlap banner (review of 8035d0a, P1).
+    running = [j for j in jobs if j["state"] in LIVE_STATES]
     kinds = {j["kind"] for j in running}
     return {
         "now": _iso(now), "dir_ok": readable, "jobs": jobs, "done": done,
@@ -490,7 +533,8 @@ def main(argv=None) -> int:
     snap = snapshot()
     for j in snap["jobs"]:
         prog = "" if j["progress"] is None else f" {100 * j['progress']:.0f}%"
-        print(f"{j['state']:<8} {j['kind']:<9} {j['name']}{prog}  beat {j['age_s']} s ago")
+        phase = f" [{j['phase']}]" if j.get("phase") else ""
+        print(f"{j['state']:<8} {j['kind']:<9} {j['name']}{phase}{prog}  beat {j['age_s']} s ago")
     if snap["overlap"]:
         print("WARNING: a flight and a workflow are running at the same time")
     if not snap["jobs"]:
