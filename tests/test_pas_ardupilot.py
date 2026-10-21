@@ -1599,6 +1599,53 @@ def test_the_episode_is_one_id_from_the_flight_log_to_the_kpi_table():
     assert idx["log_binding"] == "episode", idx["log_binding"]
 
 
+def test_a_ctrl_c_in_the_mission_loop_ends_the_dashboard_row_stopped():
+    """Re-review of d180e01 (P2). The mission loop catches a Ctrl+C
+    (`except KeyboardInterrupt: end_reason = "interrupted"`) and does not
+    re-raise it, so the run lands, writes its records and returns 0, and the
+    outer finally saw no exception leaving: the Dashboard row ended "ok"
+    while metrics.json said "interrupted". A Ctrl+C there is when one is
+    normally pressed. Driven through pn.run with the heartbeat on (into a
+    temporary VLAGUARD_LIVE_DIR) and a detector that raises KeyboardInterrupt
+    on its 15th read; a run left to its end still reads "ok"."""
+    class CtrlC(FakeDetections):
+        pressed = False
+
+        def latest(self):
+            if self.n + 1 == 15 and not self.pressed:     # one press; the report reads it again
+                self.pressed = True
+                raise KeyboardInterrupt
+            return super().latest()
+
+    def fly(grounder_cls):
+        out = _tmp()
+        live = out / "live"
+        (out / "p.yaml").write_text(CAP_POLICY, encoding="utf-8")
+        args = pn.build_parser().parse_args([
+            "--out-root", str(out), "--tag", "c", "--policy", str(out / "p.yaml"),
+            "--hfov", "90", "--network", "mirrored", "--max-s", "3", "--dev-yaml"])
+        clk = Clock()
+        link = FakeLink(clk, ap.FrameAnchor(35.6895, 139.6917, 40.0, "s"))
+        saved = os.environ.get("VLAGUARD_LIVE_DIR")
+        os.environ["VLAGUARD_LIVE_DIR"] = str(live)
+        try:
+            rc = pn.run(args, link=link, camera=FakeCamera(link), grounder=grounder_cls(clk),
+                        obs=FakeObs(), clock=clk, sleep=clk.sleep, live_status=True)
+        finally:
+            if saved is None:
+                os.environ.pop("VLAGUARD_LIVE_DIR", None)
+            else:
+                os.environ["VLAGUARD_LIVE_DIR"] = saved
+        done = sorted((live / "_done").glob("*.json"))
+        assert len(done) == 1 and not list(live.glob("*.json")), (done, list(live.iterdir()))
+        return rc, json.loads(done[0].read_text(encoding="utf-8")), _json(out / "c", "metrics.json")
+    rc, rec, m = fly(CtrlC)
+    assert m["end_reason"] == "interrupted", m["end_reason"]
+    assert rec["status"] == "stopped", f"a Ctrl+C in the mission loop ended the row {rec['status']!r}"
+    rc, rec, m = fly(FakeDetections)
+    assert rc == 0 and m["end_reason"] != "interrupted" and rec["status"] == "ok", (rc, rec["status"])
+
+
 def test_a_link_that_dies_mid_flight_ends_the_episode_with_the_real_reason():
     """The loop's finally writes the mission_end. It used to carry the reason
     the loop was initialised with ('max_s reached') when the link raised."""

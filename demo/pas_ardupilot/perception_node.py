@@ -2745,6 +2745,11 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     live = (_live_heartbeat(tag, log_dir=out, total_s=args.max_s, phase="starting",
                             detail="loading the scene") if live_status
             else _NoBeat())
+    # A Ctrl+C the mission loop caught: it lands and writes the records, so
+    # no exception leaves run(), and the row must still end "stopped"
+    # (re-review of d180e01, P2: it ended "ok" beside end_reason
+    # "interrupted"). Set in the loop's `except KeyboardInterrupt`.
+    interrupted = False
     try:
         if camera is not None:
             camera.start()                     # loads the scene: BEFORE SITL starts
@@ -3539,6 +3544,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 sleep(max(0.0, tick_deadline - _now))
         except KeyboardInterrupt:
             end_reason = "interrupted"
+            interrupted = True                 # the Dashboard row ends "stopped"
             print("[node]   interrupted")
         except Exception as exc:
             # The episode still ends on the record, with the real reason - not
@@ -4095,9 +4101,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # skipped the SITL stop that keeps SITL from outliving the run
             # (review of 8035d0a, P8). Its own `finally`, so a teardown
             # that raises cannot leave the row "running" either (and reads
-            # as failed).
+            # as failed). A Ctrl+C the mission loop caught is "stopped" too
+            # (`interrupted` above), unless something failed after it.
             _leaving = _leaving or sys.exc_info()[0]
-            live.stop("ok" if _leaving is None else
+            live.stop(("stopped" if interrupted else "ok") if _leaving is None else
                       "stopped" if issubclass(_leaving, KeyboardInterrupt) else "failed")
 
 
