@@ -233,6 +233,11 @@
 #          parallel on the desktop (final review of T1c, 2026-10-21), and
 #          the runners are shared. Its deterministic half,
 #          test_the_budget_charges_what_the_search_makes, runs everywhere.
+#        - node: test_tracker_serve's page check (the Dashboard's dashHeader
+#          and liveHTML run under node with the real UI strings: a dead
+#          server never reads as current data, a failed live read never as
+#          "nothing is running"; review of 8035d0a, P3) SKIPs, visibly,
+#          where node is absent (WSL); GitHub's ubuntu runners carry node.
 #
 #      Each file under NOT LISTED FAILs or ERRORs on a clean copy (or passes
 #      without running what it is for), measured 2026-10-19 in all three WSL

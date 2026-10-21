@@ -364,14 +364,14 @@
         if (p.set_aside_unresolved) extra.push(esc(tf("set_aside", { n: p.set_aside_unresolved })));
         if (p.correct != null) extra.push(`${esc(p.correct)}/${esc(p.n)} · ${esc(tf("fs_detail", { f: p.false_triggers, m: p.missed }))}`);
         if (p.discriminates === false) extra.push(esc(t("kpi_not_discriminating")));
-        if (p.run) extra.push(`<code>${esc(p.run)}</code>`);
+        if (p.run) extra.push(`<code>${esc(p.run)}</code>${p.what ? ` · ${esc(p.what)}` : ""}`);
         return `<tr class="${cls(k)}"><td><b>${esc(t("kpi_l_" + k.key))}</b> <span class="chip">${esc(k.contract === "acceptance" ? t("contract_acceptance") : k.contract.toUpperCase())}</span>
             <div class="small muted"><code title="${esc(k.grant_source)}">${esc(k.grant_source.replace(/^kuanting-vla-uav-guardrail\/docs\/02-implementation\//, ""))}</code></div></td>
           <td class="small">${fmtTarget(k)}</td>
           <td><b>${fmtKpi(k.value, k.unit)}</b>${k.meets_target === true ? ` <span class="mk ok">✓</span>` : k.meets_target === false ? ` <span class="mk no">✗</span>` : ""}
             ${extra.length ? `<div class="small muted">${extra.join(" · ")}</div>` : ""}
             ${(k.also || []).map((a) => `<div class="small muted">${esc(t("kpi_also"))}: ${fmtKpi(a.value, k.unit)} · ${esc(t("grade_" + a.grade))} · ${esc(a.as_of || "")} ${srcCode(a.source)}</div>`).join("")}</td>
-          <td class="small">${p.null == null ? esc(t("empty")) : fmtKpi(p.null, k.unit) + (k.beats_null === false ? ` <span class="mk no" title="${esc(t("beats_null_no"))}">✗</span>` : k.beats_null ? ` <span class="mk ok" title="${esc(t("beats_null_yes"))}">✓</span>` : "")}</td>
+          <td class="small">${p.null == null ? esc(k.status !== "measured" ? t("empty") : k.null_rule === "none" ? t("kpi_no_null") : k.null_rule === "required" ? t("kpi_null_missing") : t("empty")) : fmtKpi(p.null, k.unit) + (k.beats_null === false ? ` <span class="mk no" title="${esc(t("beats_null_no"))}">✗</span>` : k.beats_null ? ` <span class="mk ok" title="${esc(t("beats_null_yes"))}">✓</span>` : "")}${p.null_run ? `<div class="muted"><code>${esc(p.null_run)}</code></div>` : ""}</td>
           <td class="small">${k.status === "measured" ? esc(t("grade_" + p.grade)) : esc(t("empty"))}</td>
           <td class="small">${esc(p.as_of ? fdate(p.as_of) : t("empty"))}</td><td class="small">${srcCode(p.source)}</td></tr>`; }).join("")}
       </tbody></table></div><p class="small muted">${esc(t("kpi_green_rule"))}</p></section>`;

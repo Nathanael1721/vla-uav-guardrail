@@ -280,15 +280,58 @@ def test_a_recorded_run_video_and_the_dashboard_page_can_be_attached():
         assert A.check(d, ctx) == []
 
 
+def _link_dir(link: Path, target: Path) -> bool:
+    """A directory junction (Windows) or symlink at `link`; False when the
+    platform refuses both."""
+    try:
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            import os
+            os.symlink(target, link, target_is_directory=True)
+        return True
+    except (OSError, ImportError, AttributeError):
+        return False
+
+
 def test_run_media_must_be_a_media_file_inside_demo_out():
     with Fixture() as f:
         ctx = _with_runs(f)
-        for bad in ("run/r1/kpi.json", "run/r1/flight_log.jsonl", "run/r1", "run/../secret.mp4",
-                    "run/r1/../../secret.mp4", "run/r1/missing.mp4", "run/_aside/x.mp4"):
-            d = valid_doc()
-            d["entries"][2]["media"] = [bad]
-            e = A.check(d, ctx)
-            assert any("media not found" in m for m in e), (bad, e)
+        bads = ["run/r1/kpi.json", "run/r1/flight_log.jsonl", "run/r1", "run/../secret.mp4",
+                "run/r1/../../secret.mp4", "run/r1/missing.mp4", "run/_aside/x.mp4",
+                # Review of 8035d0a (P6): an absolute path made Path joining
+                # drop demo/out, so a file anywhere passed (probe: an .mp4 in
+                # the scratchpad); the server's safe_join 404s it.
+                "run/" + (f.tmp / "secret.mp4").as_posix(), "run/" + str(f.tmp / "secret.mp4"),
+                "run/C:secret.mp4", "run//" + (f.tmp / "secret.mp4").as_posix().lstrip("/")]
+        # a junction (demo/out/<tag>/view to C: is how flight frames are
+        # kept off the full D: drive) leads outside demo/out: refused, as
+        # tracker/serve.py safe_join refuses it
+        outside = f.tmp / "outside"
+        outside.mkdir()
+        (outside / "clip.mp4").write_bytes(b"mp4")
+        view = f.tmp / "demo" / "out" / "r1" / "view"
+        linked = _link_dir(view, outside)
+        if linked:
+            bads.append("run/r1/view/clip.mp4")
+        try:
+            for bad in bads:
+                d = valid_doc()
+                d["entries"][2]["media"] = [bad]
+                e = A.check(d, ctx)
+                assert any("media not found" in m for m in e), (bad, e)
+            if linked:
+                import os
+                # the server agrees: what check refuses, /media/run/ would 404
+                sys.path.insert(0, str(ROOT / "tracker"))
+                import serve
+                assert serve.safe_join(f.tmp / "demo" / "out", "r1/view/clip.mp4") is None
+                assert A.run_media_problem("r1/r1_demo_phone.mp4", f.tmp / "demo" / "out") is None
+        finally:
+            if linked:
+                import os
+                os.rmdir(view) if sys.platform == "win32" else os.unlink(view)
 
 
 def test_a_missing_source_heading_is_refused():

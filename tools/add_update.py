@@ -215,17 +215,50 @@ class Ctx:
     demo_out: Path | None = None                       # the recorded runs (run/ media)
 
 
+_REPARSE_LINKS = (0xA0000003, 0xA000000C)   # IO_REPARSE_TAG_MOUNT_POINT (junction), _SYMLINK
+
+
+def _is_link(p: Path) -> bool:
+    """A symlink or a directory junction. By reparse TAG, not by the bare
+    reparse attribute: OneDrive's cloud placeholders are reparse points too,
+    and they are ordinary files here."""
+    try:
+        return p.is_symlink() or getattr(os.lstat(p), "st_reparse_tag", 0) in _REPARSE_LINKS
+    except OSError:
+        return False
+
+
 def run_media_problem(rel: str, demo_out: Path) -> str | None:
     """Why "run/<rel>" is not attachable media, or None. Since 2026-10-21 an
     update can show a flight video; before, the media check accepted only
     docs/img, docs/video and docs/share, so updates #21-#25 carried no media
-    at all although their flights were recorded."""
-    parts = Path(rel).parts
-    if not parts or ".." in parts or rel.startswith(("/", "\\")) or parts[0].startswith("_"):
-        return "a run media path stays inside demo/out (no '..', no set-aside '_' folder)"
-    if Path(rel).suffix.lower() not in RUN_MEDIA_SUFFIXES:
-        return f"only {', '.join(RUN_MEDIA_SUFFIXES)} files are served from a run, not {Path(rel).suffix or 'a folder'}"
-    if not (demo_out / rel).is_file():
+    at all although their flights were recorded.
+
+    The path must be what tracker/serve.py's /media/run/ route serves
+    (safe_join: resolved, inside demo/out). The first version joined
+    demo_out / rel, and pathlib DROPS the left side when rel is absolute, so
+    "run/C:/Users/.../outside.mp4" passed (probed in the review of 8035d0a,
+    P6), as did a file behind a demo/out/<tag>/view junction to C:; the
+    server 404s both, so the update would have linked nothing. Now an
+    absolute or drive path, a symlink or junction below demo/out, and any
+    path that resolves outside it are refused."""
+    p = Path(rel)
+    parts = p.parts
+    if (not parts or ".." in parts or rel.startswith(("/", "\\")) or p.drive or p.is_absolute()
+            or re.match(r"^[A-Za-z]:", rel) or parts[0].startswith("_")):
+        return "a run media path stays inside demo/out (relative, no drive, no '..', no set-aside '_' folder)"
+    if p.suffix.lower() not in RUN_MEDIA_SUFFIXES:
+        return f"only {', '.join(RUN_MEDIA_SUFFIXES)} files are served from a run, not {p.suffix or 'a folder'}"
+    cur = Path(demo_out)
+    for part in parts:
+        cur = cur / part
+        if _is_link(cur):
+            return "a run media path may not pass through a symlink or junction (the server would not serve it)"
+    try:
+        (Path(demo_out) / rel).resolve().relative_to(Path(demo_out).resolve())
+    except (ValueError, OSError):
+        return "a run media path stays inside demo/out (it resolves outside)"
+    if not (Path(demo_out) / rel).is_file():
         return "no such file under demo/out"
     return None
 

@@ -31,6 +31,11 @@ Pinned:
   dashboard.json is reported, not a 500; the background rebuild is deferred
   while a flight's heartbeat is live; /api/content and /api/dashboard answer
   304 to their own ETag; no GPU tool means no GPU row.
+- (review of 8035d0a) a flight whose process is alive between beats still
+  defers the rebuild and raises the overlap flag (P1); nvidia-smi runs once,
+  without the process list, at most every 30 s during a flight (P9); the
+  page never shows a dead server's data as current nor a failed live read
+  as "nothing is running" (P3, under node; skipped without it).
 """
 import http.client
 import json

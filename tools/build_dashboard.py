@@ -31,9 +31,12 @@ THE RULES, each because the opposite already happened somewhere:
     reads as success (memory note silence-reads-as-success). A self-test
     feeds the builder nothing and checks exactly that.
   * Every KPI row carries its null baseline when the source has one, and is
-    green on the page only when it meets the target AND is KPI-grade AND
-    beats its null (the published fail-safe value, 0.838, is below its
-    never-trigger null, 0.940).
+    green on the page only when it meets the target AND is KPI-grade AND,
+    for a KPI that has a null (NULL_REQUIRED: P0 escape, fail-safe, mission
+    success, repair success, P0 coverage), beats it - a missing null is not
+    beaten (the published fail-safe value, 0.838, is below its
+    never-trigger null, 0.940). A flight's P0 null is its paired Shield-off
+    arm. Timing budgets and tracked counts have no null by definition.
   * KPI-grade is RECOMPUTED from the manifest: topology "hil" (the grant's
     Jetson Orin topology; a stored "canonical-hil" reads as "dev"), sim
     speedup 1.0, a clean tree and resolved hashes. A stored kpi_grade is
@@ -134,9 +137,15 @@ def num(x):
 
 
 def git(root: Path, *args: str) -> str | None:
+    """A read-only git query that never takes an optional lock. The server's
+    background --quick rebuild runs this up to every 30 s in the user's own
+    checkout, and a plain `git status` may take .git/index.lock to refresh
+    the index, so a `git commit` or `git checkout` the user runs at that
+    moment fails with "index.lock exists" (review of 8035d0a, P7)."""
     try:
-        r = subprocess.run(["git", *args], cwd=root, capture_output=True, text=True,
-                           encoding="utf-8", timeout=20)
+        r = subprocess.run(["git", "--no-optional-locks", *args], cwd=root, capture_output=True,
+                           text=True, encoding="utf-8", timeout=20,
+                           env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
         return r.stdout.strip() if r.returncode == 0 else None
     except (OSError, subprocess.SubprocessError):
         return None
@@ -557,10 +566,32 @@ def _frac(s) -> tuple[float, int, int] | None:
 
 
 def _latest_flight(flights, need) -> dict | None:
-    for r in flights:
-        if r.get("shield") != "off" and need(r):
-            return r
-    return None
+    """The newest Shield-on flight that has the value, preferring a run whose
+    A/B variant is not "off". Skipping only shield == "off" took
+    pas_ap_ovf_off_20261021 - the Shield on, the own-velocity forecast OFF,
+    the deliberately degraded control arm that gave 79 unsafe margin ticks -
+    as the "latest Shield-on flight" (review of 8035d0a, P5). An off arm is
+    used only when no other Shield-on run has the value; the row names the
+    arm either way (kpi_rows `flight`)."""
+    on = [r for r in flights if r.get("shield") != "off" and need(r)]
+    return next((r for r in on if r.get("variant") != "off"), on[0] if on else None)
+
+
+# Which KPIs are judged against a null, and against which one. Green needs
+# the null BEATEN for these; a missing null keeps the row from going green.
+# It used to be `beats_null is not False`, so a row with no null passed: the
+# first clean hil flight with zero P0 escapes would have gone green with no
+# null comparison, although its Shield-off pair is the natural null (review
+# of 8035d0a, P4). Every other KPI has no null by definition: a timing
+# budget (tick, monitor query, cold start, hot apply), a pass rate checked
+# against 100 % (round trip, replayability) or a tracked count.
+NULL_REQUIRED = {
+    "p0_escape_rate": "Shield off (the harness passthrough, or a flight's paired Shield-off arm)",
+    "failsafe_trigger_correctness": "never trigger",
+    "mission_success_rate": "hover",
+    "repair_success_rate": "always brake",
+    "p0_coverage": "no CSP",
+}
 
 
 def kpi_rows(P: dict, flights: list[dict]) -> list[dict]:
@@ -584,18 +615,35 @@ def kpi_rows(P: dict, flights: list[dict]) -> list[dict]:
             s["n"] = ptr(sweep, f"{allon}/{n}")
         return s
 
-    def flight(field_fn, label):
+    def flight(field_fn, label, null_fn=None):
         r = _latest_flight(flights, lambda x: field_fn(x) is not None)
         if r is None:
             return None
         v, pointer, src_key = field_fn(r)
-        return {"value": v, "source": f"{r['sources'][src_key]}#{pointer}", "as_of": r["date"],
-                "as_of_basis": "flight", "grade": "kpi" if r["kpi_grade"] else "functional",
-                "run": r["tag"], "what": label}
+        what = label if not r.get("pair") else f"{label} ({r.get('variant')} arm of {r['pair']})"
+        out = {"value": v, "source": f"{r['sources'][src_key]}#{pointer}", "as_of": r["date"],
+               "as_of_basis": "flight", "grade": "kpi" if r["kpi_grade"] else "functional",
+               "run": r["tag"], "arm": r.get("variant"), "what": what}
+        nul = null_fn(r) if null_fn else None
+        if nul is not None:
+            out["null"], out["null_source"], out["null_run"] = nul
+        return out
 
     def p0_flight(r):
         if r.get("p0") and r["p0"].get("rate") is not None and r["p0"].get("status") == "measured":
             return r["p0"]["rate"], "/p0_violation_escape_rate", "kpi"
+        return None
+
+    def p0_null(r):
+        """A flight's P0 null: its paired arm (same pair key) flown with the
+        Shield OFF, measured. A pair that compares something else (both
+        pas_ap_ovf arms fly the Shield) has none."""
+        if not r.get("pair"):
+            return None
+        for o in flights:
+            if (o is not r and o.get("pair") == r["pair"] and o.get("shield") == "off"
+                    and p0_flight(o) is not None and o["sources"].get("kpi")):
+                return o["p0"]["rate"], f"{o['sources']['kpi']}#/p0_violation_escape_rate", o["tag"]
         return None
 
     def tick_flight(r):
@@ -701,7 +749,7 @@ def kpi_rows(P: dict, flights: list[dict]) -> list[dict]:
         ("p0_escape_rate", "acceptance", ("<=", 0.0), "ratio", GRANT + "stress-testing.md:213; safety-shield.md:163",
          [lambda: harness("p0_escape_rate", null="null_passthrough_p0_escape_rate", n="p0_violation_ticks",
                           escapes=ptr(sweep, f"{allon}/p0_escapes") if sweep else None),
-          lambda: flight(p0_flight, "latest Shield-on flight")]),
+          lambda: flight(p0_flight, "latest Shield-on flight", null_fn=p0_null)]),
         ("failsafe_trigger_correctness", "acceptance", (">=", 0.99), "ratio", GRANT + "stress-testing.md:214", [fs]),
         ("mission_success_rate", "acceptance", None, "ratio", GRANT + "stress-testing.md:212",
          [lambda: harness("mission_success_rate", null="null_hover_mission_success_rate", n="episodes_mission_scored")]),
@@ -745,7 +793,11 @@ def kpi_rows(P: dict, flights: list[dict]) -> list[dict]:
         nul = num(primary.get("null")) if primary else None
         row["beats_null"] = None if nul is None else _beats(target, key, primary["value"], nul)
         row["kpi_grade"] = bool(primary and primary.get("grade") == "kpi")
-        row["green"] = bool(row["meets_target"] and row["kpi_grade"] and row["beats_null"] is not False)
+        # NULL_REQUIRED: the null must be beaten, not merely "not lost to"
+        row["null_rule"] = "required" if key in NULL_REQUIRED else "none"
+        row["null_kind"] = NULL_REQUIRED.get(key)
+        null_ok = row["beats_null"] is True if row["null_rule"] == "required" else True
+        row["green"] = bool(row["meets_target"] and row["kpi_grade"] and null_ok)
         rows.append(row)
     return rows
 

@@ -279,6 +279,93 @@ def test_the_latest_flight_reader_never_takes_a_shield_off_run():
         assert tick["primary"]["run"] == "pas_x_on_20261021" and tick["value"] == 23.159
 
 
+def test_the_latest_flight_reader_prefers_the_arm_with_the_change_on():
+    """Review of 8035d0a (P5): the reader skipped only shield == "off", so
+    the newest Shield-on run, pas_ap_ovf_off_20261021 - the Shield on but
+    the own-velocity forecast OFF, the deliberately degraded control arm
+    that gave 79 unsafe margin ticks - fed the shipped shield_tick primary
+    and the P0 "also" row as "latest Shield-on flight". A run whose A/B
+    variant is "off" is taken only when no other Shield-on run has the
+    value, and the row names the arm."""
+    with Fixture() as f:
+        t1 = time.time() - 86400
+        _run(f.root, "pas_y_off_20261022", "none:hand-written-controller",
+             kpi={"ticks": 900, "p0_escapes": 4, "p0_violation_escape_rate": 0.02,
+                  "p0_violation_escape_rate_status": "measured", "unsafe_p0_ticks": 79},
+             metrics={"shield": "on", "loop_hz": 9.9, "tick_work_ms": {"median": 9, "p95": 31.5, "max": 50}},
+             when=t1)
+        doc = f.build()
+        by = {k["key"]: k for k in doc["kpis"]}
+        assert by["shield_tick"]["primary"]["run"] == "pas_x_on_20261021", by["shield_tick"]["primary"]
+        assert "on arm of pas_x_*_20261021" in by["shield_tick"]["primary"]["what"], by["shield_tick"]["primary"]
+        assert by["shield_tick"]["primary"]["arm"] == "on"
+        runs = [a.get("run") for a in by["p0_escape_rate"]["also"]]
+        assert runs == ["pas_x_on_20261021"], runs
+        # only the control arm has the value: it is used, and says it is the off arm
+        for tag in ("pas_x_on_20261021", "pas_x_off_20261021"):
+            shutil.rmtree(f.root / "demo" / "out" / tag)
+        doc = f.build()
+        tick = next(k for k in doc["kpis"] if k["key"] == "shield_tick")["primary"]
+        assert tick["run"] == "pas_y_off_20261022" and tick["arm"] == "off", tick
+        assert "off arm" in tick["what"], tick["what"]
+
+
+def _hil_fixture(f, with_off_arm):
+    """Replace the harness sources with clean hil flights (KPI-grade by the
+    recomputed rule): the flight readers become the primaries."""
+    for p in (f.root / "docs" / "data").glob("*.json"):
+        p.unlink()
+    shutil.rmtree(f.root / "demo" / "out")
+    t1 = time.time() - 3600
+    _run(f.root, "hil_g_on_20261103", "none:hand-written-controller", "hil",
+         kpi={"ticks": 1200, "p0_escapes": 0, "p0_violation_escape_rate": 0.0,
+              "p0_violation_escape_rate_status": "measured"},
+         metrics={"shield": "on", "tick_work_ms": {"median": 10, "p95": 41.0, "max": 70}}, when=t1 + 60)
+    if with_off_arm:
+        _run(f.root, "hil_g_off_20261103", "none:hand-written-controller", "hil",
+             kpi={"ticks": 1200, "p0_escapes": 30, "p0_violation_escape_rate": 0.3,
+                  "p0_violation_escape_rate_status": "measured"},
+             metrics={"shield": "off", "tick_work_ms": {"median": 1, "p95": 2.0, "max": 3}}, when=t1)
+
+
+def test_a_kpi_with_a_null_goes_green_only_when_it_beats_that_null():
+    """Review of 8035d0a (P4): green was `meets_target and kpi_grade and
+    beats_null is not False`, so a row with NO null passed, while the
+    claim, the README and the page's rule say green needs the null beaten.
+    The flight-derived P0 reader never carries a null, so the first clean
+    hil flight with zero P0 escapes would have gone green with no null
+    comparison although its Shield-off pair (the natural null for P0
+    escape) is in the same data. Now every KPI declares its null rule:
+    P0 escape, fail-safe, mission success, repair success and P0 coverage
+    need their null beaten (a flight's P0 null is its paired Shield-off
+    arm); the timing budgets and the tracked counts have no null by
+    definition."""
+    with Fixture() as f:
+        doc = f.build()
+        rules = {k["key"]: k["null_rule"] for k in doc["kpis"]}
+        assert {k for k, v in rules.items() if v == "required"} == {
+            "p0_escape_rate", "failsafe_trigger_correctness", "mission_success_rate",
+            "repair_success_rate", "p0_coverage"}, rules
+        assert set(rules.values()) == {"required", "none"}
+    with Fixture() as f:
+        _hil_fixture(f, with_off_arm=False)
+        by = {k["key"]: k for k in f.build()["kpis"]}
+        p0 = by["p0_escape_rate"]
+        assert p0["primary"]["run"] == "hil_g_on_20261103" and p0["meets_target"] and p0["kpi_grade"]
+        assert p0["beats_null"] is None and p0["green"] is False, "a P0 row with no null went green"
+        tick = by["shield_tick"]
+        assert tick["meets_target"] and tick["kpi_grade"] and tick["null_rule"] == "none"
+        assert tick["green"] is True, "a timing budget has no null by definition"
+    with Fixture() as f:
+        _hil_fixture(f, with_off_arm=True)
+        doc = f.build()
+        p0 = next(k for k in doc["kpis"] if k["key"] == "p0_escape_rate")
+        assert p0["primary"]["null"] == 0.3, p0["primary"]
+        assert p0["primary"]["null_source"] == "demo/out/hil_g_off_20261103/kpi.json#/p0_violation_escape_rate"
+        assert resolve(f.root, p0["primary"]["null_source"]) == 0.3
+        assert p0["beats_null"] is True and p0["green"] is True, p0
+
+
 # ------------------------------------------------------------------ pilots and grades
 def test_a_detector_stub_or_hand_written_pilot_is_never_a_vla_flight():
     with Fixture() as f:
@@ -384,6 +471,32 @@ def test_the_quick_build_runs_no_ffprobe_or_ffmpeg():
             subprocess.run = real
     media = [c for c in calls if "ffprobe" in str(c).lower() or "ffmpeg" in str(c).lower()]
     assert not media, media
+
+
+def test_every_git_call_takes_no_optional_lock():
+    """Review of 8035d0a (P7): the server's background --quick rebuild runs
+    `git status --porcelain` in the user's checkout up to every 30 s while
+    the data is stale, and a plain status may take .git/index.lock to
+    refresh the index - a concurrent `git commit` or `git checkout` by the
+    user then fails with "index.lock exists". Every git call of the build
+    passes --no-optional-locks (and GIT_OPTIONAL_LOCKS=0)."""
+    calls = []
+    real = subprocess.run
+
+    def spy(cmd, *a, **kw):
+        if isinstance(cmd, (list, tuple)) and cmd and Path(str(cmd[0])).stem.lower() == "git":
+            calls.append((list(cmd), (kw.get("env") or {}).get("GIT_OPTIONAL_LOCKS")))
+        return real(cmd, *a, **kw)
+    with Fixture() as f:
+        subprocess.run = spy
+        try:
+            f.build()
+        finally:
+            subprocess.run = real
+    assert calls, "the build ran no git at all (the test would prove nothing)"
+    assert any("status" in c for c, _ in calls), [c for c, _ in calls]
+    bad = [c for c, env in calls if c[1:2] != ["--no-optional-locks"] or env != "0"]
+    assert not bad, bad
 
 
 # ------------------------------------------------------------------ cards, todo, timeline
