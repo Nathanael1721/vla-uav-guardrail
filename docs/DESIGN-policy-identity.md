@@ -140,12 +140,22 @@ the hash algorithm, and bumping `version:` would itself change the content hash
 and orphan the runs this release exists to recover. The lock starts from today's
 `(id, version)` pairs and enforces bumps from here on.
 
-**Known defect, recorded rather than hidden:** nine generated scenario files
-(`hard_*.yaml`, `hp_*.yaml`, `random_scenario.yaml`) share
-`random-scenario@0.1.0` with nine different contents. The lock lists them under
-`shared_by_files` (each file still pinned) and refuses a tenth claimant. The fix
-— a distinct `policy_id` per file — changes their hashes and belongs to whoever
-owns `policies/*.yaml`.
+**Known defect, recorded rather than hidden (resolved 2026-10-21, WP1-22):**
+nine generated scenario files (`hard_*.yaml`, `hp_*.yaml`,
+`random_scenario.yaml`) shared `random-scenario@0.1.0` with nine different
+contents. The lock lists them under `shared_by_files` (each file still pinned)
+and refuses a tenth claimant. The fix was a distinct `policy_id` per file:
+`demo/gen_random_scenario.py` now gives each generated file its own id and
+refuses one another file claims, and the eight `hard_*` / `hp_*` files were
+re-id'd as `random-scenario-<stem>` (`hard_3.yaml` -> `random-scenario-hard-3`;
+no rule changed, but the id is part of the content, so each hash moved). Each
+gained its own lock entry carrying `previously: random-scenario@0.1.0`, which
+`check_lock` requires of a file that left the shared identity. Only
+`random_scenario.yaml` still claims `random-scenario@0.1.0`. The shared entry
+is deliberately NOT rewritten (an existing entry never is: it is how a run
+flown under the old id still traces to its content), so its `known_defect`
+string is historical: it describes the 2026-10-06 state, and its "left to
+whoever owns policies/*.yaml" was done on 2026-10-21.
 
 ## 5. The signature
 

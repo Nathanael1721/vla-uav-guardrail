@@ -27,15 +27,21 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "demo"))
 
-DEFAULT_OUT = ROOT / "policies" / "random_scenario.yaml"
+POLICIES = ROOT / "policies"
+DEFAULT_OUT = POLICIES / "random_scenario.yaml"
 BASE_ID = "random-scenario"
 
 
 def default_policy_id(out: str | Path) -> str:
     """The policy_id a generated file gets unless --policy-id says otherwise:
     the default output keeps the historical `random-scenario`; any other file
-    is `random-scenario-<stem>`, lower case, '_' and spaces as '-'. File names
-    are unique in a folder, so the ids are too."""
+    is `random-scenario-<stem>`, lower case, '_' and spaces as '-'.
+
+    NOT unique by construction: `hard_3.yaml` and `hard-3.yaml` (or
+    `Hard 3.yaml`) both map to `random-scenario-hard-3`. The ids are unique
+    because main() refuses an id another file already claims
+    (id_claimed_elsewhere), not because file names are; this docstring said
+    the opposite until the review of 3660383 (P7)."""
     stem = re.sub(r"[_\s]+", "-", Path(out).stem.strip().lower())
     return BASE_ID if stem == BASE_ID else f"{BASE_ID}-{stem}"
 
@@ -53,11 +59,26 @@ def _claimed_id(path: Path) -> str | None:
 
 
 def id_claimed_elsewhere(policy_id: str, out: str | Path) -> list[str]:
-    """The other policy files in `out`'s folder that already claim
-    `policy_id` (regenerating the same file is not a clash)."""
+    """The other policy files that already claim `policy_id`: in `out`'s
+    folder (by name), and in the repository's policies/ when `out` is
+    elsewhere (as `policies/<name>`). Regenerating the same file is not a
+    clash.
+
+    Why policies/ too (review of 3660383, P7): with only the output folder
+    scanned, `--out scratch/hard_3.yaml` minted `random-scenario-hard-3` -
+    the id policies/hard_3.yaml already carries - for different content, and
+    nothing said so until the file reached policies/ and the lock check found
+    two contents under one id@version."""
     out = Path(out).resolve()
-    return sorted(p.name for p in out.parent.glob("*.yaml")
-                  if p.resolve() != out and _claimed_id(p) == policy_id)
+    folders = [out.parent]
+    if POLICIES.resolve() != out.parent:
+        folders.append(POLICIES.resolve())
+    hits = []
+    for folder in folders:
+        for p in folder.glob("*.yaml"):
+            if p.resolve() != out and _claimed_id(p) == policy_id:
+                hits.append(p.name if folder == out.parent else f"policies/{p.name}")
+    return sorted(hits)
 
 
 def policy_yaml(policy_id: str, nfzs, band_lo: float, band_hi: float) -> str:
@@ -106,8 +127,9 @@ def main():
     policy_id = args.policy_id or default_policy_id(args.out)
     clash = id_claimed_elsewhere(policy_id, args.out)
     if clash:
-        ap.error(f"policy_id {policy_id!r} is already claimed by {', '.join(clash)} in "
-                 f"{Path(args.out).resolve().parent}; pass --policy-id or another --out")
+        ap.error(f"policy_id {policy_id!r} is already claimed by {', '.join(clash)} "
+                 f"(output folder {Path(args.out).resolve().parent}); pass --policy-id "
+                 f"or another --out")
     import city_planner as cp  # noqa: E402  (numpy; only the generation needs it)
     random.seed(args.seed)
 

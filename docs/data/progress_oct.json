@@ -393,8 +393,8 @@
  "wp4": {
   "profiles": {
    "smoke": {
-    "cells": 55,
-    "episodes": 62,
+    "cells": 56,
+    "episodes": 63,
     "seeds": [
      1001
     ],
@@ -402,8 +402,8 @@
     "cadence": "per build (CI)"
    },
    "nightly": {
-    "cells": 221,
-    "episodes": 732,
+    "cells": 224,
+    "episodes": 741,
     "seeds": [
      1001,
      1002,

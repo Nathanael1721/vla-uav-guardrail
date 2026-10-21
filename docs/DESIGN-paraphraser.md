@@ -286,16 +286,26 @@ Each was fixed in the validator. A class nobody wrote is still not measured.
   meaning changes accepted. The change's closed word lists were written with this
   set in view, so its 0/22 after the change is a dev figure, not an estimate. The
   one faithful probe refused is "fly to the waypoint located 120 m ahead, at
-  cruise altitude".
+  cruise altitude", by the novelty floor: near-identical to its source (novelty
+  0.09 < 0.15), on 7c9c9e6 as now - not a different wording, so not a paraphrase
+  the validator failed to read.
 * **`heldout_2026_10_21b` (held out).** 24 probes written after the A14 change,
   with words chosen outside its lists, never used to tune it and measured once:
   4 of 12 meaning changes accepted ("a red car with a dented door", "a person near
   the fountain", "pedestrians with strollers", "a person in uniform": `with` and
-  `in` phrases, and a place noun the list lacks), 2 of 12 faithful refused ("a car
-  coloured red" reads as a participle; a corridor text with a parenthesised
-  window). This is the closest thing here to an honest false-accept rate after
-  A14. It comes from the same author as the code, so it is not independent of the
-  code's blind spots.
+  `in` phrases, and a place noun the list lacks), 2 of 12 faithful refused. "follow
+  a car coloured red" was already refused at 7c9c9e6 by the colour slot (the
+  colour read as describing nothing, the car widened to any car); A14 only adds a
+  third reason, the participle "coloured" read as a narrowing. The corridor text
+  is refused by the novelty floor as near-identical to its source (novelty 0.09 <
+  0.15), not for its parenthesised window, as this paragraph said until the review
+  of 3660383 (P6; every probe set re-scored with both validators, all counts
+  reproduced). So 2 of the 3 faithful refusals across the two 2026-10-21 sets are
+  near-identical candidates - a probe-authoring issue (a faithful probe must be a
+  different wording), not a limit of the validator - and the third is the colour
+  slot's, which predates A14. This is the closest thing here to an honest
+  false-accept rate after A14. It comes from the same author as the code, so it
+  is not independent of the code's blind spots.
 
 **What the A14 change reads** (`guardrail/paraphraser.py`, `_narrowings`). For each
 object the extractor finds, in its own clause: a word between a determiner and the

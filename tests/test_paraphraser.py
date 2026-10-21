@@ -1206,9 +1206,14 @@ def test_probe_rates_are_measured_and_not_zero():
     heldout_2026_10_21b was written AFTER the change, with words outside its
     lists, and measured once: 4 of 12 meaning changes still pass ('with'
     phrases, a place noun the list lacks, 'in uniform') and 2 of 12 faithful
-    ones are refused ('a car coloured red' reads as a participle). Pinned so
-    the design doc's numbers cannot drift from the code; if a change moves
-    them, update the doc, and say whether the held-out set was looked at."""
+    ones are refused: 'follow a car coloured red' by the colour slot, as on
+    7c9c9e6 (A14 adds a third reason, the participle), and a corridor text by
+    the novelty floor as near-identical to its source (0.09 < 0.15) - as is
+    heldout_2026_10_21's one refused faithful probe. 2 of those 3 are a
+    probe-authoring issue, not a validator limit (review of 3660383, P6; the
+    reasons are pinned below). Pinned so the design doc's numbers cannot drift
+    from the code; if a change moves them, update the doc, and say whether the
+    held-out set was looked at."""
     rep = _live_report()
     pr = rep["probes"]
     assert isinstance(pr, dict), pr
@@ -1222,6 +1227,20 @@ def test_probe_rates_are_measured_and_not_zero():
     assert (new["false_refusals"], new["faithful"]) == (1, 22), new
     assert (after["false_accepts"], after["meaning_changing"]) == (4, 12), after
     assert (after["false_refusals"], after["faithful"]) == (2, 12), after
+    # WHY each faithful 2026-10-21 probe is refused, as the doc words it: the
+    # novelty floor (near-identical candidates) for two, the colour slot for
+    # 'a car coloured red' (A14's participle reading beside it).
+    why = {}
+    for name in ("heldout_2026_10_21", "heldout_2026_10_21b"):
+        for p in P.load_probes(STORE)["sets"][name]["probes"]:
+            if not p["meaning_changed"]:
+                v = P.validate(p["source"], p["candidate"])
+                if not v.ok:
+                    why[(name, p["candidate"][:24])] = sorted({r.split(":")[0]
+                                                               for r in v.reasons})
+    assert why == {("heldout_2026_10_21", "fly to the waypoint loca"): ["identity"],
+                   ("heldout_2026_10_21b", "follow a car coloured re"): ["colour", "object"],
+                   ("heldout_2026_10_21b", "Stay inside corridor 'co"): ["identity"]}, why
     # what each set recorded before the change it was written around
     probes = P.load_probes(STORE)["sets"]
     assert probes["heldout_2026_10_21"]["measured_before_changes"]["false_accepts"] == "21/22"

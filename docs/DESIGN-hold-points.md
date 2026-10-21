@@ -648,6 +648,104 @@ use `three-simultaneous-violations` (hold moved up into the band: 19
 autopilot P0 ticks against 78 in place). The lint still warns: the position
 is still made illegal under the aircraft (tests/test_window_opens_on.py).
 
+What that P0 = 0 is, said plainly (review of 3660383, P2): a RE-JUDGEMENT of
+the same path, not a different flight. The aircraft is inside the polygon
+for the same 3 / 8 / 13 ticks and takes the same 2.6 s to safe as on
+7c9c9e6; the 6 Shield ticks are now judged the recovery, and the autopilot's
+P0 ticks are gone because the FSM is never entered. And
+`anticipated_ticks_<rule>` was redefined by the same change to count the
+trace's `window_opens_on` too: in these cells no tick is a violation any
+more, so without the extension the family's own `anticipated_ticks_nfz-school:
+{min: 1}` gate would fail. Both are now visible where the number is read:
+the ticks counted only through the trace are their own field,
+`anticipated_opening_only_ticks_<rule>` (all of them, in these cells), and
+the sweep's headline, its true-state summary and `kpi_report.md` print the
+ticks inside and the time to safe of every episode a window opened on beside
+the P0 rate.
+
+### The escape speed, and a slow pilot (review of 3660383, 2026-10-22)
+
+The change above was measured with the goto pilot's 4 m/s, which is the
+cap: the fastest way out was also what the pilot asked. At the speeds this
+wave's VLA pilot flies (the StepTracker cruises at 1-2 m/s) it made the
+KPI look better by letting the aircraft stay longer. Before C2 every tick
+there was a violation, so the FSM took over (X1, G3) and the modelled
+autopilot's hold transit left at the 4 m/s cap whatever the pilot asked.
+After it, any escape faster than 0.1 m/s was legal, the FSM stayed Normal,
+and GeofenceEscape raised a crawl only to the in-force floor of 2.0 m/s.
+With a 1.5 m/s pilot (run_episode, only `mission.pilot.speed` changed):
+
+| cells (grant arm) | P0 escapes | ticks inside the polygon | time to safe | FSM |
+|---|---|---|---|---|
+| 7c9c9e6, any speed 0.5-4 m/s | 2 per cell | 3 / 8 / 13 | 2.6 s | X1 > G3 > G8 |
+| 3660383, 4 m/s | 0 | 3 / 8 / 13 | 2.6 s | none |
+| 3660383, 0.5-2 m/s | 0 | 26 / 31 / 36 | 5.1 s | none |
+| now, any speed 0.5-4 m/s | 0 | 3 / 8 / 13 | 2.6 s | none |
+
+The family's gates could not see it: `ticks_inside_fence_polygon` had only a
+minimum, time to safe no bound, and every test flew 4 m/s.
+
+The fix leaves the KPI and the FSM alone and changes the escape. For a zone
+whose window opens on the aircraft, GeofenceEscape raises the way out to the
+CAP, not to 2.0, with the tangential given up first (raising only the
+outward part would let SpeedClamp scale the whole vector back: 1.5 m/s out
+and 1.0 across would leave at 3.3 m/s). That holds before the opening
+(`_opening_imposed`) and after it, until the aircraft is out of the ring:
+from inside a zone in force nothing in the state says whether the aircraft
+flew in or the window opened on it, so the Shield remembers which zones
+opened on it (`Shield._opened_on`, kept by `filter()`, in the trace as
+`window_opened_on`, cleared by `reset_episode`), and forgets one once the
+aircraft is out of its ring, the zone is out of force, or it leaves the
+policy. A zone the aircraft enters by itself, or re-enters after leaving
+one that opened on it, is floored at 2.0 as before. The review's prototype
+of the first half alone (the cap before the opening) gave 6 ticks inside
+where 7c9c9e6 flew 3; the memory closes the other 3.
+
+The family now sweeps `vehicle_speed_mps: [4, 1.5]` with upper bounds:
+`max_time_to_safe_s: {max: 2.7}` and `ticks_inside_fence_polygon: {min: 1,
+max: 15}`. A family gate is one bound for every cell, so 15 is 7c9c9e6's
+worst cell over both forecast arms (13 on the grant arm, 15 on the 3 s arm,
+whose eps calls the zone in force two ticks earlier on the same path);
+time to safe is the tight bound on every cell, and the exact per-cell counts
+on both arms and both speeds are pinned in tests/test_window_opens_on.py.
+
+A committed stop point (review of 3660383, P8). `_check_fence` judges a zone
+from `_rule_state`, which for a zone the aircraft's momentum carries it into
+is the GUIDED stop point, with no velocity, so the opening rule is reached
+there. That is `_committed`'s judgement extended to a zone that comes into
+force before the aircraft gets there: 3 m short of the ring at 4 m/s, the
+stop ends 3.4 m inside it, no action brakes harder than the stop, and the
+aircraft is inside once the zone is in force whatever is commanded. So
+carrying on or stopping is the pose walk's violation from the stop point,
+repaired straight back out at the cap, and a reverse at the cap passes; a
+stop point the ideal vehicle could still leave from by the opening is not
+claimed. `openings_imposed` used to ask the state with its velocity, so the
+trace, the anticipated count and the memory missed the zone the check had
+judged this way; it now asks each zone's `_rule_state`.
+
+Measured 2026-10-22, headless, `--forecast-arms grant 3s`, against a
+pristine copy of 7c9c9e6 flown with this family definition (no pins):
+
+* the six cells: 2 Shield P0 escapes each -> 0; ticks inside 3 / 8 / 13
+  (5 / 10 / 15 on the 3 s arm) and time to safe 2.6 s at both speeds on both
+  trees; autopilot ticks 28-38 -> 0; FSM X1 > G3 > G8 -> no edge; goal
+  reached;
+* library 133 / 22 / 6 / 18 -> 139 / 22 / 0 / 18, P0 escape 0.00026 -> 0.0
+  over 178 Shield-on episodes (3660383, before the speed axis: 136 / 22 / 0
+  / 18), fail-safe labels 144/170 on both (the three new cells are three
+  correct no-trigger labels, so 141/167 -> 144/170 is the library growing,
+  not a flight); 3 s arm 129 / 22 / 10 / 13 -> 135 / 22 / 4 / 13, its 4
+  failures pre-existing;
+* smoke 52 / 6 / 2 / 3 -> 54 / 6 / 0 / 3, P0 0.000275 -> 0.0, fail-safe
+  56/60 on both;
+* nightly 511 / 66 / 18 / 146 -> 529 / 66 / 0 / 146 (741 episodes, the six
+  cells on three seeds), P0 0.0002 -> 0.0, fail-safe 544/714 on both; the 18
+  episodes a window opened on: ticks inside 3 / 8 / 13 per clock, time to
+  safe at most 2.6 s;
+* every other episode's KPI record identical, field by field, except the
+  compile-time lint text (it now says the way out is flown at the speed
+  cap) of the 12 near-edge-at-12mps episodes on the 3 s arm.
+
 ## What it does not do
 
 * Remove the 2 Shield escape ticks per opens-on-vehicle cell: they are

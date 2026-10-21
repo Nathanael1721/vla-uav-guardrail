@@ -461,14 +461,30 @@ def test_the_generator_gives_each_file_its_own_policy_id():
                 band = (c["alt_min_m"], c["alt_max_m"])
         assert G.policy_yaml(doc["policy_id"], nfzs, *band) == \
             f.read_text(encoding="utf-8"), name
-    d = _copy_policies()
+    # Read-only questions about policies/ itself (nothing is written):
+    # regenerating a file is not a clash; a new file under a taken id is.
+    assert G.id_claimed_elsewhere("random-scenario-hard-3", POLICIES / "hard_3.yaml") == []
+    assert G.id_claimed_elsewhere("random-scenario-hard-3",
+                                  POLICIES / "new.yaml") == ["hard_3.yaml"]
+    assert G.id_claimed_elsewhere("random-scenario", POLICIES / "x.yaml") == [
+        "random_scenario.yaml"]
+    # Review of 3660383 (P7). The default ids are NOT unique by file name -
+    # hard-3.yaml maps to hard_3.yaml's id - and the refusal is what keeps
+    # them unique.
+    assert G.default_policy_id(POLICIES / "hard-3.yaml") == "random-scenario-hard-3"
+    assert G.id_claimed_elsewhere(G.default_policy_id(POLICIES / "hard-3.yaml"),
+                                  POLICIES / "hard-3.yaml") == ["hard_3.yaml"]
+    d = Path(tempfile.mkdtemp())
     try:
-        # regenerating a file is not a clash; a new file under a taken id is
-        assert G.id_claimed_elsewhere("random-scenario-hard-3", d / "hard_3.yaml") == []
-        assert G.id_claimed_elsewhere("random-scenario-hard-3", d / "new.yaml") == ["hard_3.yaml"]
-        assert G.id_claimed_elsewhere("random-scenario", d / "x.yaml") == ["random_scenario.yaml"]
+        # ... and an --out elsewhere is checked against policies/ too: until
+        # the review this minted policies/hard_3.yaml's id for new content.
+        assert G.id_claimed_elsewhere("random-scenario-hard-3", d / "hard_3.yaml") == [
+            "policies/hard_3.yaml"]
         assert G.id_claimed_elsewhere(G.default_policy_id(d / "hp_99.yaml"),
                                       d / "hp_99.yaml") == []
+        (d / "mine.yaml").write_text("policy_id: random-scenario-hp-99\n", encoding="utf-8")
+        assert G.id_claimed_elsewhere("random-scenario-hp-99", d / "hp_99.yaml") == [
+            "mine.yaml"]
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
