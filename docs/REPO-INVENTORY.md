@@ -11,7 +11,7 @@ remove / archived).
 
 | Path | What |
 |---|---|
-| `guardrail/` | Core guardrail package (shield, compiler=WP2, geometry, audit, api=REST, models, vla_backends) |
+| `guardrail/` | Core guardrail package (shield, compiler=WP2, geometry, audit, api=REST, models, vla_backends, vla_link = the AerialVLA pilot's protocol v2 client and step tracker) |
 | `demo/aerialvla_demo.py` | AerialVLA in classic AirSim |
 | `demo/aerialvla_pas_demo.py` | AerialVLA on Project AirSim (planner + avoidance + `--no-shield`) |
 | `demo/real_vla_demo.py` | Base OpenVLA-7B in the slot |

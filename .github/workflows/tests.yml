@@ -43,7 +43,9 @@
 #          test_level_actors, test_voxel_map, test_replay_pipeline; and its
 #          flight CLIs' option parsing (a negative X,Y value):
 #          test_demo_negative_xy.
-#        The VLA side: test_vla_* (backends, the backend table, the bridge).
+#        The VLA side: test_vla_* (backends, the backend table, the bridge,
+#          the pilot's link and step tracker against a loopback fake
+#          server, tests/vla_fake_server.py).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -449,6 +451,7 @@ jobs:
               tests/test_policy_dsl_grant_form.py \
               tests/test_replay_identity.py \
               tests/test_vla_backends.py \
+              tests/test_vla_link.py \
               tests/test_prefix_eval.py \
               tests/test_fenceguard.py \
               tests/test_follow_motion.py \

@@ -1,4 +1,4 @@
-"""guardrail/vla_backends.py: the swappable slot's factory and its skeleton.
+"""guardrail/vla_backends.py: the swappable slot's factory and RemoteVLABackend.
 
 Run either way:
     pytest tests/test_vla_backends.py -v
@@ -6,87 +6,333 @@ Run either way:
 
 WHAT IS BEING CLAIMED
 
-AeroVLABackend is a skeleton for a real camera+language VLA. Unfilled, it
-must fail loudly on the first tick that would run the model, never hover on
-zero commands while the run looks like a VLA run. Its action-chunking cadence
-- run the model on ticks 1, 1+N, 1+2N, ... and hold the last action between -
-is finished code that a filled-in backend inherits, so it is tested here
-through a subclass that overrides only `_infer`.
+`make_backend("aerovla", ...)` puts AerialVLA in the slot: RemoteVLABackend,
+which reaches the out-of-process VLA server over protocol v2
+(guardrail/vla_link.py) and never waits for it. act() returns the step
+tracker's world-frame action on every tick, whatever the server is doing; the
+next image goes out while the current step is flown (pipelined) or after it
+is complete (stop-and-go, upstream's cadence); LAND is a flag that stops the
+requests; an answer to an image from before a rail hold ended is thrown away;
+every request leaves one vla_steps.jsonl line.
 
+CHANGED BY DESIGN ON 2026-10-21. Until then this file tested the skeleton
+AeroVLABackend: that it raised NotImplementedError on its first model tick
+(test_the_unfilled_skeleton_raises_instead_of_hovering), and its synchronous
+"run the model on ticks 1, 1+N, ..." cadence (test_the_model_runs_on_ticks_1_
+1_plus_n_and_holds_in_between, test_the_factory_forwards_the_rate). Both went
+with the skeleton: the cadence called the model INSIDE act(), which at 2.5-12 s
+per AerialVLA answer would have stalled the 10 Hz loop, and a held action is
+replaced by the step tracker. The rule those tests guarded - a backend in the
+slot must never hover on zero commands while the run looks like a VLA run -
+is now carried by Tick.author: a tick no VLA answer authored says `none` or
+`hover`, never `vla_step` (tests/test_vla_link.py).
+
+Shown failing first: at 7c9c9e6 make_backend("aerovla", ...) required
+model_dir/get_frame and built the skeleton, so every test below fails there
+(TypeError on get_capture, or NotImplementedError on the first act()).
+No model, GPU or simulator is needed; the server is tests/vla_fake_server.py.
 (tests/test_vla_backend_table.py is a different module: tools/vla_backend_table.py.)
-No model, GPU or simulator is needed.
 """
 from __future__ import annotations
 
+import json
+import math
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "tests"))
 
-from guardrail.models import Action4D, State                   # noqa: E402
-from guardrail.vla_backends import AeroVLABackend, make_backend  # noqa: E402
+from guardrail.compiler import Mission                               # noqa: E402
+from guardrail.models import Action4D, State, load_policy            # noqa: E402
+from guardrail.vla_backends import RemoteVLABackend, make_backend    # noqa: E402
+from guardrail.vla_link import (PHRASES, VLA_STEPS_SCHEMA, Capture, Hint,  # noqa: E402
+                                Pose, RemoteVLA, TrackerConfig)
+import vla_fake_server as F                                          # noqa: E402
 
 SKIP = "SKIP"
+JPG = b"\xff\xd8\xff\xe0fake-jpeg\xff\xd9"
+GOAL, GOAL_UP = (25.0, 15.0), 12.0
 
 
-def _frame():
-    return [[[0, 0, 0]]]
+def _mission(goal=GOAL):
+    return Mission(task_text="fly to the marked point", target_x=goal[0],
+                   target_y=goal[1], cruise_alt_m=GOAL_UP, speed_pref_mps=2.0)
 
 
-class _Counting(AeroVLABackend):
-    """A filled-in backend as the class docstring asks for one: only `_infer`
-    is overridden, so `act` (the cadence) is the real code."""
+class _Sim:
+    """A point multirotor on a simulated clock (velocity lag 0.3 s)."""
 
-    def __init__(self, vla_hz: float):
-        super().__init__("follow the red car", _frame, "nowhere", vla_hz=vla_hz)
-        self.calls: list[int] = []
+    def __init__(self, x=0.0, y=0.0, up=8.0, yaw_deg=0.0):
+        self.t = 0.0
+        self.x, self.y, self.up, self.yaw = x, y, up, math.radians(yaw_deg)
+        self.v = [0.0, 0.0, 0.0]
 
-    def _infer(self, frame, state):
-        self.calls.append(self._tick)
-        return Action4D(vx=float(self._tick))
+    def clock(self) -> float:
+        return self.t
+
+    def state(self) -> State:
+        return State(x=self.x, y=self.y, up=self.up, yaw_deg=math.degrees(self.yaw))
+
+    def capture(self) -> Capture:
+        return Capture(self.t, Pose(self.x, self.y, self.up, self.yaw), JPG, JPG)
+
+    def step(self, a: Action4D, dt=0.1) -> None:
+        k = min(1.0, dt / 0.3)
+        for i, c in enumerate((a.vx, a.vy, a.vz_up)):
+            self.v[i] += k * (c - self.v[i])
+        self.x += self.v[0] * dt
+        self.y += self.v[1] * dt
+        self.up += self.v[2] * dt
+        self.yaw = (self.yaw + a.yaw_rate * dt + math.pi) % (2 * math.pi) - math.pi
+        self.t = round(self.t + dt, 10)
 
 
-def test_the_unfilled_skeleton_raises_instead_of_hovering():
-    """make_backend('aerovla') built a backend whose act() returned Action4D()
-    (hover) on every tick, whatever model_dir said. Shown failing before
-    2026-10-19: act() returned vx=vy=vz_up=yaw_rate=0 without a word."""
-    mission = SimpleNamespace(task_text="follow the red car")
-    be = make_backend("aerovla", mission, None, get_frame=_frame, model_dir="nowhere")
+def _backend(srv, sim, policy=None, **kw):
+    client = RemoteVLA("127.0.0.1", srv.port, response_timeout_s=2.0,
+                       reconnect_backoff_s=0.0, clock=sim.clock)
+    return make_backend("aerovla", _mission(), policy, get_capture=sim.capture,
+                        client=client, clock=sim.clock, **kw)
+
+
+def test_aerovla_is_the_remote_backend_and_refuses_the_skeletons_arguments():
+    """make_backend('aerovla') built the skeleton from model_dir/get_frame/
+    vla_hz until 2026-10-21. Those arguments are refused by name now (the
+    model loads in the server, frames come with their capture pose, the rate
+    is the server's), and the backend takes the policy's altitude band and
+    the mission's goal phrase."""
+    pol = load_policy(ROOT / "policies" / "follow_car_citylife.yaml")
+    sim = _Sim()
+    be = make_backend("aerovla", _mission(), pol, get_capture=sim.capture,
+                      client=SimpleNamespace(counts={}), object_text="a white van")
+    assert isinstance(be, RemoteVLABackend)
+    assert be.tracker.alt_band == (6.0, 14.0) and be.cadence == "pipelined"
+    assert be.object_text == "a white van" and be.csp_mode == "off"
+    h = be.get_hint(Capture(0.0, Pose(0.0, 0.0, 8.0, 0.0), JPG))
+    assert h == Hint("forward-right ", "goal"), h      # bearing +31 deg
+    assert be.get_hint(Capture(0.0, Pose(25.1, 15.1, 8.0, 0.0), JPG)) == Hint("", "goal")
+    for old in ({"model_dir": "D:/models"}, {"get_frame": sim.capture}, {"vla_hz": 3.0}):
+        try:
+            make_backend("aerovla", _mission(), None, get_capture=sim.capture, **old)
+        except TypeError as exc:
+            assert "VLA server" in str(exc), exc
+        else:
+            raise AssertionError(f"make_backend accepted the skeleton's {old}")
+    for bad in ({"instruction": "x"}, {"cadence": "fast"}, {"csp_mode": "on"}):
+        try:
+            make_backend("aerovla", _mission(), None, get_capture=sim.capture,
+                         client=SimpleNamespace(counts={}), **bad)
+        except (TypeError, ValueError):
+            continue
+        raise AssertionError(f"make_backend accepted {bad}")
     try:
-        got = be.act(State(x=0.0, y=0.0, up=10.0))
-    except NotImplementedError as exc:
-        assert "skeleton" in str(exc), exc
+        make_backend("aerovla", _mission(), None)
+    except TypeError:
+        pass
     else:
-        raise AssertionError(f"the unfilled skeleton returned {got!r}")
+        raise AssertionError("no get_capture, and the factory did not say so")
+    try:
+        make_backend("openvla-in-process", _mission(), None)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an unknown backend name was accepted")
+    assert make_backend("stub", _mission(), None).act(State(x=0, y=0, up=12)).vx > 0
 
 
-def test_the_model_runs_on_ticks_1_1_plus_n_and_holds_in_between():
-    """`tick % every != 1` held the last action on EVERY tick when every == 1
-    (vla_hz above ~6.7, the 10 Hz contract rate included): the model never
-    ran. Shown failing before 2026-10-19 for vla_hz=10: no call at all."""
-    st = State(x=0.0, y=0.0, up=10.0)
-    for hz, want in ((10.0, list(range(1, 11))), (3.0, [1, 4, 7, 10]),
-                     (5.0, [1, 3, 5, 7, 9]), (2.0, [1, 6])):
-        be = _Counting(hz)
-        out = [be.act(st) for _ in range(10)]
-        assert be.calls == want, (hz, be.calls)
-        # Each held tick returns the action from the last model call.
-        for tick, a in enumerate(out, start=1):
-            last = max(c for c in want if c <= tick)
-            assert a.vx == float(last), (hz, tick, a)
+def test_act_never_waits_for_the_model():
+    """The server takes 1.5 s per answer (the old GPU took 2.5-12 s). Every
+    act() returns at once with an honest label: nothing has been decided, so
+    `none` and zero; the step arrives on the first tick after the answer."""
+    sim = _Sim()
+    with F.FakeVLAServer(lambda req: F.Delay(1.5, F.step_reply(req, 4.0, 0.0, 0.0))) as srv:
+        be = _backend(srv, sim)
+        try:
+            worst = 0.0
+            for _ in range(5):
+                t0 = time.monotonic()
+                a = be.act(sim.state())
+                worst = max(worst, time.monotonic() - t0)
+                assert a == Action4D() and be.last_tick.author == "none"
+                sim.step(a)
+            assert worst < 0.25, f"act() blocked for {worst:.3f} s"
+            assert len(srv.requests) <= 1 and be.client.busy
+            assert be.client.wait_idle(5.0)
+            a = be.act(sim.state())
+            assert be.last_tick.author == "vla_step" and a.vx > 0.9, be.last_tick
+            assert be.last_tick.seq == 1
+        finally:
+            be.close()
 
 
-def test_the_factory_forwards_the_rate():
-    """make_backend dropped vla_hz, so through the factory the rate was always
-    the 3 Hz default."""
-    mission = SimpleNamespace(task_text="x")
-    be = make_backend("aerovla", mission, None, get_frame=_frame,
-                      model_dir="nowhere", vla_hz=10.0)
-    assert be._every == 1
-    assert make_backend("aerovla", mission, None, get_frame=_frame,
-                        model_dir="nowhere")._every == 3
+def _fly_goto(cadence: str, tmp: Path):
+    sim = _Sim()
+    log = tmp / f"vla_steps_{cadence}.jsonl"
+    if log.exists():
+        log.unlink()
+    with F.FakeVLAServer(F.goto_responder(GOAL, GOAL_UP)) as srv:
+        be = _backend(srv, sim, cadence=cadence, steps_log=log,
+                      tracker_config=TrackerConfig(alt_band=(5.0, 30.0)))
+        authors = []
+        try:
+            while sim.t < 120.0 and not be.land_requested:
+                a = be.act(sim.state())
+                authors.append(be.last_tick.author)
+                be.client.wait_idle(3.0)      # the answer is back by the next tick
+                sim.step(a)
+            n_at_land = be.counts["requests"]
+            assert n_at_land == len(srv.requests)
+            for _ in range(20):               # LAND: the pilot stops asking
+                a = be.act(sim.state())
+                assert a == Action4D() and be.last_tick.land_requested
+                sim.step(a)
+            assert be.counts["requests"] == n_at_land, "requests continued after LAND"
+            assert not be.client.busy
+            stats = be.stats()
+        finally:
+            be.close()
+        return sim, srv, be, log, authors, stats
+
+
+def test_the_backend_flies_a_goto_through_the_link_and_lands():
+    """End to end through TCP: the vehicle follows only act()'s actions; the
+    fake server answers each image like a perfect model would (quantized to
+    99 bins), from the request's pose and phrase alone; the mission's goal
+    phrase turns "" within 0.5 m and the answer is LAND. Both cadences."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        tmp = Path(d)
+        for cadence in ("pipelined", "stop_and_go"):
+            sim, srv, be, log, authors, stats = _fly_goto(cadence, tmp)
+            assert be.land_requested, (cadence, sim.t, sim.x, sim.y)
+            assert math.hypot(sim.x - GOAL[0], sim.y - GOAL[1]) < 0.8, (cadence, sim.x, sim.y)
+            assert abs(sim.up - GOAL_UP) < 0.5, (cadence, sim.up)
+            assert srv.refused == [] and srv.overlaps == 0 and srv.connections == 1
+            assert set(authors) <= {"none", "vla_step", "hold"}, (cadence, set(authors))
+            assert authors.count("vla_step") > len(authors) / 2, cadence
+            for req in srv.requests:
+                assert req["hint_source"] == "goal" and req["phrase"] in PHRASES
+                assert "target" not in req and "goal" not in req
+            assert srv.requests[-1]["phrase"] == ""
+            raw = log.read_bytes()
+            assert b"\r\n" not in raw
+            recs = [json.loads(x) for x in raw.decode("utf-8").splitlines()]
+            assert len(recs) == len(srv.requests), (cadence, len(recs), len(srv.requests))
+            assert sorted(r["seq"] for r in recs) == list(range(1, len(recs) + 1))
+            assert all(r["schema"] == VLA_STEPS_SCHEMA for r in recs)
+            acc = [r for r in recs if r["accepted"]]
+            assert acc and all(r["outcome"] is not None for r in acc)
+            assert all(r["target"] is not None for r in acc if r["kind"] == "step")
+            assert recs[-1]["kind"] == "land" and recs[-1]["outcome"]["end"] == "land"
+            assert stats["decisions_accepted"] == len(acc) and stats["decision_hz"] > 0
+            assert stats["identity"]["id"] == F.MODEL["id"]
+            if cadence == "stop_and_go":
+                assert all(r["outcome"]["completed"] for r in acc if r["kind"] == "step")
+                assert len(recs) < 40, len(recs)
+            else:
+                assert any(not r["outcome"]["completed"] for r in acc if r["kind"] == "step")
+
+
+def test_an_answer_to_an_image_from_before_a_rail_hold_is_thrown_away():
+    """Step 1 is being flown and the image for step 2 went out at t=0.1 when
+    the rail takes the aircraft at t=0.2 (an escalation hold) and hands it
+    back at t=1.0. Step 1 ends with the hold; the answer to the t=0.1 image is
+    thrown away although it arrives after the hold, the next image goes out
+    at once, and the tracker hovers until that answer lands."""
+    sim = _Sim()
+    with F.FakeVLAServer(lambda req: F.Delay(0.3, F.step_reply(req, 4.0, 0.0, 0.0))) as srv:
+        be = _backend(srv, sim)
+        try:
+            a = be.act(sim.state())                   # request 1, captured t=0
+            be.client.wait_idle(3.0)
+            sim.step(a)
+            a = be.act(sim.state())                   # step 1 flown; request 2, t=0.1
+            assert be.last_tick.author == "vla_step" and be.last_tick.seq == 1
+            sim.step(a)
+            be.suspend()                              # t=0.2
+            assert be.records[-1]["seq"] == 1
+            assert be.records[-1]["outcome"]["end"] == "suspended"
+            while sim.t < 1.0:
+                sim.step(Action4D())                  # the rail flies; act() not called
+            be.client.wait_idle(3.0)
+            be.resume()                               # t=1.0
+            a = be.act(sim.state())
+            assert a == Action4D() and be.last_tick.author == "hover", be.last_tick
+            assert be.last_tick.reason == "awaiting_fresh_decision"
+            assert be.records[-1]["seq"] == 2
+            assert be.records[-1]["refused"] == "invalidated", be.records[-1]
+            be.client.wait_idle(3.0)
+            assert len(srv.requests) == 3 and srv.requests[2]["t_capture"] == 1.0
+            sim.step(a)
+            be.act(sim.state())
+            assert be.last_tick.author == "vla_step" and be.last_tick.seq == 3
+        finally:
+            be.close()
+
+
+def test_link_failures_and_missing_hints_are_counted_and_recorded():
+    sim = _Sim()
+    calls = {"n": 0}
+
+    def respond(req):
+        calls["n"] += 1
+        return F.CLOSE if calls["n"] == 2 else F.step_reply(req, 4.0, 0.0, 0.0)
+    with F.FakeVLAServer(respond) as srv:
+        be = _backend(srv, sim)
+        try:
+            for _ in range(3):
+                a = be.act(sim.state())
+                be.client.wait_idle(3.0)
+                sim.step(a)
+            kinds = [r["kind"] for r in be.records]
+            assert "link_failure" in kinds, kinds
+            fail = next(r for r in be.records if r["kind"] == "link_failure")
+            assert fail["refused"] == "link_failure" and fail["failure"]["kind"] == "link"
+            assert be.tracker.counts["link_lost"] == 1
+            assert be.last_tick.author in ("hover", "vla_step")
+            assert srv.connections == 2
+        finally:
+            be.close()
+    with F.FakeVLAServer(lambda req: F.step_reply(req, 1.0, 0.0, 0.0)) as srv:
+        be = make_backend("aerovla", _mission(), None, get_capture=sim.capture,
+                          get_hint=lambda cap: None, clock=sim.clock,
+                          client=RemoteVLA("127.0.0.1", srv.port, clock=sim.clock))
+        try:
+            for _ in range(5):
+                assert be.act(sim.state()) == Action4D()
+            assert srv.requests == [] and be.counts["no_hint"] == 5
+            assert be.last_tick.author == "none"
+        finally:
+            be.close()
+
+
+def test_close_leaves_a_line_for_the_request_still_in_flight():
+    """One line per request sent, even when the run ends mid-inference."""
+    sim = _Sim()
+    with F.FakeVLAServer(lambda req: F.Delay(2.0, F.step_reply(req, 1.0, 0.0, 0.0))) as srv:
+        be = _backend(srv, sim)
+        be.act(sim.state())
+        assert be.counts["requests"] == 1 and be.client.busy
+        t0 = time.monotonic()
+        be.close()
+        assert time.monotonic() - t0 < 1.5, "close() waited out the inference"
+        assert len(be.records) == 1, be.records
+        rec = be.records[0]
+        assert rec["seq"] == 1 and rec["refused"] == "closed" and not rec["accepted"]
+
+
+def test_a_hot_applied_policy_moves_the_altitude_band():
+    sim = _Sim()
+    be = make_backend("aerovla", _mission(), load_policy(ROOT / "policies" / "demo_policy.yaml"),
+                      get_capture=sim.capture, client=SimpleNamespace(counts={}))
+    assert be.tracker.alt_band == (2.0, 6.0)
+    be.refresh_fences(load_policy(ROOT / "policies" / "follow_car_citylife.yaml"))
+    assert be.tracker.alt_band == (6.0, 14.0)
+    be.refresh_fences(load_policy(ROOT / "policies" / "corridor_survey.yaml"))
+    assert be.tracker.alt_band is None
 
 
 if __name__ == "__main__":

@@ -130,6 +130,8 @@ has one shape:
 - [The HIL perception bridge](DESIGN-hil-perception-bridge.md)
 - [The orbit-building task](DESIGN-orbit-building-task.md)
 - [A native Unreal environment](DESIGN-unreal-native-environment.md)
+- [The VLA pilot: AerialVLA behind the Shield](DESIGN-vla-pilot.md)
+  — built and tested offline, not flown.
 
 ### Reports and status
 
