@@ -43,7 +43,10 @@
 #          test_level_actors, test_voxel_map, test_replay_pipeline; and its
 #          flight CLIs' option parsing (a negative X,Y value):
 #          test_demo_negative_xy.
-#        The VLA side: test_vla_* (backends, the backend table, the bridge).
+#        The VLA side: test_vla_* (backends, the backend table, the bridge,
+#          the protocol-v2 server with a scripted model), and
+#          test_aerialvla_codec (AerialVLA's prompt, vocabulary, mosaic and
+#          strict output reader).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -208,7 +211,9 @@
 #          lab desktop: 61/61 on 2026-10-19) and SKIPs elsewhere. It has not
 #          been run on Linux: this job is its first Linux run. Its rclpy-floor
 #          check needs interpreters on both sides of 3.11 and SKIPs with one.
-#        - Not installed on any job, so these run on the lab machine only:
+#        - Not installed for the loop on any job, so these run on the lab
+#          machine only (the 3.10 job's Pillow step runs the two AerialVLA
+#          files below and nothing else):
 #          Pillow, for test_railvideo_recording's HUD and recorder tests and its
 #          two wall-clock tests (loop rate within 95 %, a detector thread at
 #          85 % of its rate), which have never been measured on a shared
@@ -219,8 +224,20 @@
 #          `npm install` would float), and the Windows fonts its and
 #          test_explainer_figures' fit checks read; OpenCV again, for 3 of
 #          test_make_demo_video's 4 tests; airsim and tokenizers, for 2 of
-#          test_real_vla_prompt's; and torch with a file outside git, for
-#          test_vla_backend_table's CPU-only row.
+#          test_real_vla_prompt's; torch with a file outside git, for
+#          test_vla_backend_table's CPU-only row; and the D:/models folders
+#          for 1 of test_vla_server's 32 tests (the revisions of the real
+#          checkpoints).
+#        - Pillow for the AerialVLA image path: 3 of test_aerialvla_codec's
+#          20 tests (the mosaic, the JPEG frames, a frame claiming too many
+#          pixels) and 1 of test_vla_server's 32 (real frames through the
+#          server, a decompression bomb over TCP) SKIP in the loop on every
+#          job, and run in the 3.10 job's own step "AerialVLA image tests
+#          (Pillow)", which installs Pillow where only that step sees it and
+#          fails, not skips, if it does not import (since the review of V1a,
+#          P9; until then they ran on the lab machine only). Their protocol,
+#          parser and prompt tests run on every job, with Pillow blocked
+#          where it matters.
 #        - Opt-in wall clock: test_hold_transit's
 #          test_each_charge_bounds_what_its_call_costs (the hold-point
 #          search's charges against what each call costs on the machine)
@@ -249,7 +266,7 @@
 #          comparisons return early, counted as passes, where node is
 #          absent: WSL has no node, so they have never run on Linux.
 #        test_policy_hud.py: 6 of its 45 tests ERROR without Pillow (the
-#          overlay drawing), which no job installs.
+#          overlay drawing), which no job installs for the loop.
 #        test_range_and_lock.py: 16 of its 112 tests ERROR without OpenCV.
 #        test_two_view.py: 6 of its 9 tests ERROR without OpenCV and Pillow.
 #      END OF THE EXCLUSIONS
@@ -257,6 +274,10 @@
 #      test_env_pins' setup_sitl.sh tests build throwaway git repositories
 #      with a bash they probe for; their first GitHub run failed on a lost
 #      executable bit and was fixed (CHANGELOG, 2026-10-13 later).
+#   1b. On the 3.10 job only, the step "AerialVLA image tests (Pillow)" runs
+#      test_aerialvla_codec and test_vla_server once more with Pillow
+#      installed for that step alone, so their image tests run instead of
+#      SKIPping (since 2026-10-22, review of V1a, P9; WHAT SKIPS above).
 #   2. tools/check_claims.py, the withdrawn-claim scan, over its default
 #      scope (README, docs, the site sources, the root guides, tools and the
 #      code packages), as its own step since 2026-10-19: a live withdrawn
@@ -482,6 +503,8 @@ jobs:
               tests/test_demo_negative_xy.py \
               tests/test_vla_bridge.py \
               tests/test_vla_backend_table.py \
+              tests/test_vla_server.py \
+              tests/test_aerialvla_codec.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \
@@ -515,6 +538,35 @@ jobs:
                   fail=1
                 fi;;
             esac
+            echo "::endgroup::"
+          done
+          exit $fail
+
+      # The AerialVLA image path with Pillow (review of V1a, P9): the mosaic a
+      # flight depends on, the base64/JPEG round trip, the decompression-bomb
+      # refusal and real frames through the server SKIPped on every job,
+      # because no job installs Pillow. Here, on the 3.10 job only (vla-real,
+      # the environment that serves AerialVLA, is 3.10 with Pillow 12.2.0),
+      # Pillow goes into a directory that only this step puts on PYTHONPATH:
+      # the loop above, where test_railvideo_recording's Pillow wall-clock
+      # tests are kept lab-only, and the smoke step never see it.
+      # GUARDRAIL_REQUIRE_PILLOW=1 turns those tests' SKIP into a failure, so
+      # a broken install cannot pass as an absent package. The two files'
+      # other SKIP (the D:/models folders) stays a SKIP.
+      - name: AerialVLA image tests (Pillow)
+        if: matrix.python == '3.10'
+        env:
+          PYTHONUNBUFFERED: "1"
+          GUARDRAIL_REQUIRE_PILLOW: "1"
+        run: |
+          python -m pip install --target "$RUNNER_TEMP/pillow" pillow==12.2.0
+          fail=0
+          for img in tests/test_aerialvla_codec.py tests/test_vla_server.py; do
+            echo "::group::$img (with Pillow)"
+            if ! PYTHONPATH="$RUNNER_TEMP/pillow" python "$img"; then
+              echo "::error file=$img::$img failed with Pillow installed"
+              fail=1
+            fi
             echo "::endgroup::"
           done
           exit $fail

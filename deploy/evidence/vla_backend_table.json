@@ -444,7 +444,7 @@
     }
    ],
    "cells": {
-    "rate_desktop": "not R1 - see records",
+    "rate_desktop": "R1 via demo/vla_server_v2.py, nf4/sdpa/merged (the measured low-VRAM option, not a default; agrees with bf16/eager/unmerged on 31% of 48 probe inputs): p50 516.8 ms (1.94 Hz), p95 542.5 ms, n=50 [docs/data/aerialvla_serving_4090.json]",
     "rate_orin": "to measure on the Orin (R1)",
     "closed_loop_desktop": "not C1 - see records",
     "closed_loop_hil": "to measure on hil (C1)"
@@ -1081,5 +1081,433 @@
   }
  ],
  "default_backend": null,
- "decision": "The grant defers the choice to this measurement set, and the Orin columns are empty. The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub."
+ "decision": "The grant defers the choice to this measurement set, and the Orin columns are empty. The stored dev-rail runs (demo/out/ros2_*, not KPI-bearing: the grant takes KPI figures from hil) were flown by the stub.",
+ "aerialvla_serving": {
+  "schema": "vlaguard.aerialvla_serving/1",
+  "created_utc": "2026-10-21T18:25:13Z",
+  "measured_utc": [
+   "2026-10-21T13:30:18Z",
+   "2026-10-21T13:51:32Z"
+  ],
+  "made_by": "python tools/vla_backend_table.py serving (from demo/vla_server_v2.py bench, one process per configuration)",
+  "host": {
+   "libraries": {
+    "python": "3.10.20",
+    "torch": "2.6.0+cu124",
+    "transformers": "4.40.1",
+    "peft": "0.11.1",
+    "bitsandbytes": "0.49.2",
+    "accelerate": "0.32.1",
+    "PIL": "12.2.0",
+    "cuda": "12.4",
+    "gpu": "NVIDIA GeForce RTX 4090"
+   },
+   "host": {
+    "host_arch": "AMD64",
+    "device_model": null,
+    "l4t_release": null,
+    "jetpack": null
+   }
+  },
+  "model": {
+   "id": "aerialvla-lora/aero_vla@196f2f32",
+   "base": "openvla-7b@47a0ec7f"
+  },
+  "weights_sha256": "ca9e87012a098435f9e67040f90c8b94be153a990fabc4e10400d477ca19b9e0",
+  "inputs": {
+   "timed": "deploy/evidence/vla_protocol_frames (the R1 frames: 2 Project AirSim mosaics), each tile sent as JPEG q95 through the server's protocol core; phrase derived from each frame's pose to the recorded target (hint_source goal, as trained); object 'orange barrier'; greedy, max_new_tokens 12",
+   "warmup": 5,
+   "timed_n": 50,
+   "probe": "the 6 mosaics of the 4 Aug ablation (experiments/out/frames, lab desktop) x the 8 phrases = 48 inputs, the same in every configuration",
+   "why_these": "real captures, not synthetic frames: demo/out holds no front+down capture pair (checked 2026-10-21), so both sets are the Project AirSim captures of 4 Aug"
+  },
+  "latency_definition": "latency_s as the server returns it: tokenizer + image processor + generate + decode, mosaic and prompt ready to text decoded; server_p50_ms adds the JPEG decode and the mosaic; generate_p50_ms is generate() alone",
+  "conditions": "RTX 4090 (24 GB) on the lab desktop, no simulator and no second model running; ordinary desktop applications held about 3.4 GB of VRAM before the runs (nvidia_smi_used_mib includes them)",
+  "gate_p50_ms": 1000.0,
+  "reference": {
+   "precision": "bf16",
+   "attn": "eager",
+   "merged": false
+  },
+  "vram_budget_gb": 10.0,
+  "desktop_baseline_gb": 3.4,
+  "rule": "low-VRAM option = lowest p50 among configurations with p50 <= gate, no timed parse failure and process VRAM (vram_process_gb) <= vram_budget_gb; fidelity option = highest exact agreement with the reference among the other configurations with p50 <= gate and no timed parse failure; neither is a default",
+  "configs": [
+   {
+    "precision": "bf16",
+    "attn": "eager",
+    "merged": false,
+    "p50_ms": 503.6,
+    "p95_ms": 553.4,
+    "max_ms": 556.6,
+    "mean_ms": 507.7,
+    "hz_at_p50": 1.986,
+    "n": 50,
+    "generate_p50_ms": 500.7,
+    "server_p50_ms": 505.1,
+    "probe_p50_ms": 510.0,
+    "probe_p95_ms": 600.9,
+    "new_tokens": [
+     9
+    ],
+    "parse_fail_timed": 0,
+    "parse_fail_probe": 1,
+    "probe_n": 48,
+    "land_probe": 5,
+    "agreement_probe": {
+     "n": 48,
+     "exact": 1.0,
+     "close": 1.0
+    },
+    "agreement_timed": {
+     "n": 50,
+     "exact": 1.0,
+     "close": 1.0
+    },
+    "vram_inference_peak_gb": 15.934,
+    "vram_load_peak_gb": 16.057,
+    "vram_inference_peak_reserved_gb": null,
+    "nvidia_smi_used_mib": 19261,
+    "vram_process_gb": 16.8,
+    "vram_process_basis": "nvidia-smi after the timed run minus the desktop's 3.4 GB read once before the runs (not per run)",
+    "load_s": 127.5,
+    "merge_s": null,
+    "meets_gate": true,
+    "bench_created_utc": "2026-10-21T13:43:54Z"
+   },
+   {
+    "precision": "bf16",
+    "attn": "eager",
+    "merged": true,
+    "p50_ms": 301.0,
+    "p95_ms": 317.3,
+    "max_ms": 352.5,
+    "mean_ms": 302.1,
+    "hz_at_p50": 3.322,
+    "n": 50,
+    "generate_p50_ms": 298.3,
+    "server_p50_ms": 302.2,
+    "probe_p50_ms": 309.0,
+    "probe_p95_ms": 367.1,
+    "new_tokens": [
+     9
+    ],
+    "parse_fail_timed": 0,
+    "parse_fail_probe": 1,
+    "probe_n": 48,
+    "land_probe": 5,
+    "agreement_probe": {
+     "n": 48,
+     "exact": 0.896,
+     "close": 0.938
+    },
+    "agreement_timed": {
+     "n": 50,
+     "exact": 1.0,
+     "close": 1.0
+    },
+    "vram_inference_peak_gb": 15.471,
+    "vram_load_peak_gb": 16.057,
+    "vram_inference_peak_reserved_gb": null,
+    "nvidia_smi_used_mib": 19356,
+    "vram_process_gb": 16.9,
+    "vram_process_basis": "nvidia-smi after the timed run minus the desktop's 3.4 GB read once before the runs (not per run)",
+    "load_s": 107.7,
+    "merge_s": 0.4,
+    "meets_gate": true,
+    "bench_created_utc": "2026-10-21T13:49:17Z"
+   },
+   {
+    "precision": "bf16",
+    "attn": "sdpa",
+    "merged": false,
+    "p50_ms": 485.8,
+    "p95_ms": 527.4,
+    "max_ms": 538.2,
+    "mean_ms": 485.3,
+    "hz_at_p50": 2.058,
+    "n": 50,
+    "generate_p50_ms": 483.1,
+    "server_p50_ms": 487.1,
+    "probe_p50_ms": 488.6,
+    "probe_p95_ms": 600.3,
+    "new_tokens": [
+     9
+    ],
+    "parse_fail_timed": 0,
+    "parse_fail_probe": 1,
+    "probe_n": 48,
+    "land_probe": 5,
+    "agreement_probe": {
+     "n": 48,
+     "exact": 0.958,
+     "close": 0.958
+    },
+    "agreement_timed": {
+     "n": 50,
+     "exact": 1.0,
+     "close": 1.0
+    },
+    "vram_inference_peak_gb": 15.934,
+    "vram_load_peak_gb": 16.057,
+    "vram_inference_peak_reserved_gb": null,
+    "nvidia_smi_used_mib": 19248,
+    "vram_process_gb": 16.78,
+    "vram_process_basis": "nvidia-smi after the timed run minus the desktop's 3.4 GB read once before the runs (not per run)",
+    "load_s": 119.5,
+    "merge_s": null,
+    "meets_gate": true,
+    "bench_created_utc": "2026-10-21T13:46:51Z"
+   },
+   {
+    "precision": "bf16",
+    "attn": "sdpa",
+    "merged": true,
+    "p50_ms": 258.7,
+    "p95_ms": 293.9,
+    "max_ms": 341.4,
+    "mean_ms": 264.1,
+    "hz_at_p50": 3.865,
+    "n": 50,
+    "generate_p50_ms": 256.0,
+    "server_p50_ms": 259.9,
+    "probe_p50_ms": 257.8,
+    "probe_p95_ms": 299.5,
+    "new_tokens": [
+     9
+    ],
+    "parse_fail_timed": 0,
+    "parse_fail_probe": 1,
+    "probe_n": 48,
+    "land_probe": 5,
+    "agreement_probe": {
+     "n": 48,
+     "exact": 0.875,
+     "close": 0.917
+    },
+    "agreement_timed": {
+     "n": 50,
+     "exact": 1.0,
+     "close": 1.0
+    },
+    "vram_inference_peak_gb": 15.471,
+    "vram_load_peak_gb": 16.057,
+    "vram_inference_peak_reserved_gb": null,
+    "nvidia_smi_used_mib": null,
+    "vram_process_gb": null,
+    "vram_process_basis": "not measured (torch allocated only)",
+    "load_s": 102.8,
+    "merge_s": 0.4,
+    "meets_gate": true,
+    "bench_created_utc": "2026-10-21T13:51:32Z"
+   },
+   {
+    "precision": "nf4",
+    "attn": "eager",
+    "merged": false,
+    "p50_ms": 911.8,
+    "p95_ms": 1004.8,
+    "max_ms": 1086.0,
+    "mean_ms": 922.6,
+    "hz_at_p50": 1.097,
+    "n": 50,
+    "generate_p50_ms": 908.9,
+    "server_p50_ms": 913.1,
+    "probe_p50_ms": 946.6,
+    "probe_p95_ms": 1141.4,
+    "new_tokens": [
+     9
+    ],
+    "parse_fail_timed": 0,
+    "parse_fail_probe": 3,
+    "probe_n": 48,
+    "land_probe": 3,
+    "agreement_probe": {
+     "n": 48,
+     "exact": 0.25,
+     "close": 0.479
+    },
+    "agreement_timed": {
+     "n": 50,
+     "exact": 0.0,
+     "close": 1.0
+    },
+    "vram_inference_peak_gb": 6.009,
+    "vram_load_peak_gb": 6.027,
+    "vram_inference_peak_reserved_gb": null,
+    "nvidia_smi_used_mib": 10027,
+    "vram_process_gb": 7.11,
+    "vram_process_basis": "nvidia-smi after the timed run minus the desktop's 3.4 GB read once before the runs (not per run)",
+    "load_s": 129.7,
+    "merge_s": null,
+    "meets_gate": true,
+    "bench_created_utc": "2026-10-21T13:30:18Z"
+   },
+   {
+    "precision": "nf4",
+    "attn": "eager",
+    "merged": true,
+    "p50_ms": 565.8,
+    "p95_ms": 590.4,
+    "max_ms": 598.0,
+    "mean_ms": 564.5,
+    "hz_at_p50": 1.768,
+    "n": 50,
+    "generate_p50_ms": 563.2,
+    "server_p50_ms": 567.0,
+    "probe_p50_ms": 571.2,
+    "probe_p95_ms": 654.1,
+    "new_tokens": [
+     9
+    ],
+    "parse_fail_timed": 0,
+    "parse_fail_probe": 0,
+    "probe_n": 48,
+    "land_probe": 5,
+    "agreement_probe": {
+     "n": 48,
+     "exact": 0.333,
+     "close": 0.479
+    },
+    "agreement_timed": {
+     "n": 50,
+     "exact": 0.5,
+     "close": 1.0
+    },
+    "vram_inference_peak_gb": 5.368,
+    "vram_load_peak_gb": 6.219,
+    "vram_inference_peak_reserved_gb": null,
+    "nvidia_smi_used_mib": 10763,
+    "vram_process_gb": 7.89,
+    "vram_process_basis": "nvidia-smi after the timed run minus the desktop's 3.4 GB read once before the runs (not per run)",
+    "load_s": 119.6,
+    "merge_s": 6.1,
+    "meets_gate": true,
+    "bench_created_utc": "2026-10-21T13:37:35Z"
+   },
+   {
+    "precision": "nf4",
+    "attn": "sdpa",
+    "merged": false,
+    "p50_ms": 837.6,
+    "p95_ms": 880.7,
+    "max_ms": 889.8,
+    "mean_ms": 838.7,
+    "hz_at_p50": 1.194,
+    "n": 50,
+    "generate_p50_ms": 834.8,
+    "server_p50_ms": 839.0,
+    "probe_p50_ms": 889.5,
+    "probe_p95_ms": 1059.8,
+    "new_tokens": [
+     9
+    ],
+    "parse_fail_timed": 0,
+    "parse_fail_probe": 2,
+    "probe_n": 48,
+    "land_probe": 3,
+    "agreement_probe": {
+     "n": 48,
+     "exact": 0.25,
+     "close": 0.479
+    },
+    "agreement_timed": {
+     "n": 50,
+     "exact": 0.0,
+     "close": 1.0
+    },
+    "vram_inference_peak_gb": 6.009,
+    "vram_load_peak_gb": 6.027,
+    "vram_inference_peak_reserved_gb": null,
+    "nvidia_smi_used_mib": 10011,
+    "vram_process_gb": 7.1,
+    "vram_process_basis": "nvidia-smi after the timed run minus the desktop's 3.4 GB read once before the runs (not per run)",
+    "load_s": 111.8,
+    "merge_s": null,
+    "meets_gate": true,
+    "bench_created_utc": "2026-10-21T13:34:30Z"
+   },
+   {
+    "precision": "nf4",
+    "attn": "sdpa",
+    "merged": true,
+    "p50_ms": 516.8,
+    "p95_ms": 542.5,
+    "max_ms": 545.8,
+    "mean_ms": 517.5,
+    "hz_at_p50": 1.935,
+    "n": 50,
+    "generate_p50_ms": 514.1,
+    "server_p50_ms": 518.0,
+    "probe_p50_ms": 526.0,
+    "probe_p95_ms": 604.6,
+    "new_tokens": [
+     9
+    ],
+    "parse_fail_timed": 0,
+    "parse_fail_probe": 0,
+    "probe_n": 48,
+    "land_probe": 5,
+    "agreement_probe": {
+     "n": 48,
+     "exact": 0.312,
+     "close": 0.5
+    },
+    "agreement_timed": {
+     "n": 50,
+     "exact": 0.5,
+     "close": 1.0
+    },
+    "vram_inference_peak_gb": 5.367,
+    "vram_load_peak_gb": 6.219,
+    "vram_inference_peak_reserved_gb": null,
+    "nvidia_smi_used_mib": 10760,
+    "vram_process_gb": 7.88,
+    "vram_process_basis": "nvidia-smi after the timed run minus the desktop's 3.4 GB read once before the runs (not per run)",
+    "load_s": 131.8,
+    "merge_s": 6.3,
+    "meets_gate": true,
+    "bench_created_utc": "2026-10-21T13:40:47Z"
+   }
+  ],
+  "default": null,
+  "choice": "demo/vla_server_v2.py refuses to load the model until --precision, --attn and --merge/--no-merge are all given, and every response's identity carries the chosen configuration's agreement with the reference. Which configuration flies is decided by measuring CityLife's own VRAM beside the model (next wave): the bf16 rows fit only if the renderer and OWL-ViT leave about 17 GB of the 24 GB card free.",
+  "low_vram": "nf4/sdpa/merged",
+  "low_vram_config": {
+   "precision": "nf4",
+   "attn": "sdpa",
+   "merged": true
+  },
+  "fidelity": "bf16/sdpa/unmerged",
+  "fidelity_config": {
+   "precision": "bf16",
+   "attn": "sdpa",
+   "merged": false
+  },
+  "fastest": "bf16/sdpa/merged",
+  "tcp_roundtrip": {
+   "config": "nf4/sdpa/merged",
+   "n": 50,
+   "roundtrip": {
+    "n": 50,
+    "p50_ms": 539.0,
+    "p95_ms": 581.0,
+    "max_ms": 851.5,
+    "mean_ms": 550.4,
+    "hz_at_p50": 1.855
+   },
+   "server_latency": {
+    "n": 50,
+    "p50_ms": 536.7,
+    "p95_ms": 572.4,
+    "max_ms": 602.0,
+    "mean_ms": 541.7,
+    "hz_at_p50": 1.863
+   },
+   "model": "aerialvla-lora/aero_vla@196f2f32"
+  },
+  "choice_note": "Why there is no default, and what each option costs (decided 2026-10-22, review of V1a). The precision changes what the model says: bf16 reproduces the upstream-precision reference - bf16/sdpa/unmerged gives the reference's output on 96 % of the 48 probe inputs, the merged bf16 rows on 88-90 % (greedy near-ties) - while every nf4 row agrees on only 25-33 % exactly and 48-50 % within 3 bins; 4-bit quantisation, not the attention kernel or the merge, is what moves the outputs. On the no-hint phrase every bf16 row and both nf4 merged rows answer '00 49 49 LAND' on 5 of 6 frames, while the nf4 unmerged loader (the one every earlier AerialVLA script here used) reproduces two of the 4 Aug malformed landing outputs ('00 49 4949', '00 49 494 49'); the strict reader turns those into holds. nf4/sdpa/merged is kept as the measured low-VRAM option (p50 517 ms; about 7.9 GB held by the process, 5.4 GB of it allocated by torch), not as a default that silently changes behaviour. A bf16 process holds about 16.8-16.9 GB: bf16/sdpa/unmerged (p50 486 ms) is the closest to the reference, bf16/sdpa/merged the fastest (p50 259 ms, below the paper's 0.35 s; its nvidia-smi reading failed, so its process VRAM is not recorded). The 10 GB budget behind the low-VRAM rule is an assumption, not a measurement: the card has 24 GB, desktop applications held about 3.4 GB before the runs (one reading, subtracted from every row's nvidia-smi figure), OWL-ViT takes 0.61 GB, and CityLife's own VRAM has never been logged. Measuring CityLife's VRAM beside the model is what decides which configuration flies (next wave); until then the server loads none by default.",
+  "probe_outputs_in": "docs/data/aerialvla_serving_4090.json"
+ },
+ "serving_added_utc": "2026-10-21T18:25:13Z"
 }

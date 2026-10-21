@@ -29,6 +29,14 @@ Both are written atomically (tmp + os.replace) so a half-written file is never
 observed.
 
 Run directly for debugging; normally `semantic_seek.py --vla-proc` starts it.
+
+PROTOCOL v2 (2026-10-21): `python demo/vla_server.py --v2 serve ...` runs
+demo/vla_server_v2.py instead - TCP, frames and pose sent by the client, a
+compass phrase in place of any target coordinate (a coordinate field is
+refused by name), the strict output reader, and the model identity with a
+weights digest on every response. This file mode is kept unchanged for
+semantic_seek: it still loads a scene and still turns `target` into the
+phrase, so it must not be used on the ArduPilot rail.
 """
 from __future__ import annotations
 
@@ -67,14 +75,18 @@ def read_cmd(path: Path, cache: dict) -> dict:
         return cache
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "--v2" in argv:
+        import vla_server_v2
+        return vla_server_v2.main([a for a in argv if a != "--v2"])
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", required=True, help="directory for the two JSON files")
     ap.add_argument("--adapter", default="D:/models/aerialvla-lora/aero_vla")
     ap.add_argument("--object", default="")
     ap.add_argument("--scene", default="scene_semantic.jsonc")
     ap.add_argument("--max-new-tokens", type=int, default=12)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     out = Path(args.dir)
     out.mkdir(parents=True, exist_ok=True)
