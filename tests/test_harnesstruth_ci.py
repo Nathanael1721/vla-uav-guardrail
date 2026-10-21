@@ -610,6 +610,17 @@ def test_the_aerialvla_image_tests_run_with_pillow_on_one_job():
         assert "pillow" not in _installed(j), f"a job installs Pillow for the loop: {j}"
 
 
+def test_the_vla_pilot_link_test_runs_in_ci():
+    """Wave V1 (2026-10-21): guardrail/vla_link.py, the AerialVLA pilot's
+    protocol v2 client, step tracker and records. Its file needs no model,
+    GPU or simulator: the TCP tests run against tests/vla_fake_server.py on
+    loopback, and the closed loops are point-vehicle kinematics. Its helper
+    is not a test file, so it must not be listed as one."""
+    assert "test_vla_link.py" in _loop(), "not run in CI"
+    assert (ROOT / "tests" / "vla_fake_server.py").is_file()
+    assert "vla_fake_server.py" not in _loop()
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

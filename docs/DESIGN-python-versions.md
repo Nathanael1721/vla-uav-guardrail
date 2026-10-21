@@ -51,11 +51,14 @@ mypy `python_version = "3.11"`. Its `policy_dsl` fails to import on 3.10.20
    gRPC control plane, `guardrail/harness_service.py`; see
    `docs/DESIGN-harness-grpc.md`). `demo/`,
    `training/`, `tools/`, `sitl/`, and the OpenVLA code are **not** packages.
-   Two modules ship but are not promised by an install. `guardrail/vla_bc.py`
-   needs torch and `training/` from the source tree.
-   `vla_backends.AeroVLABackend` is an unfilled stub (its model load is a
-   commented-out TODO); once filled, it will need torch and transformers from
-   the VLA env.
+   One module ships but is not promised by an install: `guardrail/vla_bc.py`
+   needs torch and `training/` from the source tree. (Until 2026-10-21 there
+   were two: `vla_backends.AeroVLABackend` was an unfilled stub that would
+   have needed torch and transformers. Its replacement,
+   `vla_backends.RemoteVLABackend` with `guardrail/vla_link.py`, needs only
+   the standard library and the guardrail's own dependencies, on 3.10 to
+   3.12: the model, torch and transformers stay in the VLA server's process
+   and env, `docs/DESIGN-vla-pilot.md`.)
 2. **The guardrail code must keep importing on 3.10 while vla-real flies,** and
    on 3.12 for the WSL venvs. That means no `tomllib`, `enum.StrEnum`,
    `typing.Self`, `datetime.UTC`, or `except*` in `guardrail/`, and every
