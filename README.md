@@ -170,6 +170,14 @@ flight its hold fired on 44 % of ticks (`flight_shield` in
 `policies/follow_car_citylife_nfz.yaml`, not a signed bundle. The Project
 AirSim + ArduPilot node and both ArduPilot SITL rails fly the grant's forecast.
 
+The city demo flies the signed bundle of its `--policy`, not the YAML, and
+refuses to start without it. Build the bundles once, and again after a policy
+edit: `python tools/build_flight_bundles.py` builds the default set,
+`follow_pedestrian` and `follow_car` among them, and naming policies builds
+others (`python tools/build_flight_bundles.py orbit_building follow_car_gap`).
+With `--dev-yaml` the YAML flies unsigned, as a development run that is never
+KPI-grade.
+
 ```bash
 python demo/follow_vlm.py \
   --object "a yellow car" --retarget "30:a person" \

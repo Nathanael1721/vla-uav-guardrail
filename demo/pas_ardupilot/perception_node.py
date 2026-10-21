@@ -412,8 +412,12 @@ DETECTOR_READY_TIMEOUT_S = 300.0
 # read_ms max): that tick's work was 1028 ms (tick_work_ms max), and the
 # aircraft flew its last setpoint for a second with no Shield step and no
 # pose. The RPCs now run on one worker thread of their own (still one request
-# at a time on that socket), and the loop waits for an answer at most this
-# long; a later answer is dropped and counted (metrics.json sim_rpc).
+# at a time on that socket), and the loop waits for them at most this long
+# PER TICK, all of a tick's calls together (OffLoopRpc.begin_tick; review
+# 2026-10-22: until then per call, so a truth read and a frame check, each
+# answered just inside 50 ms, held the loop 100 ms - a whole tick); a later
+# answer is dropped and counted, and a call the tick has no time left for is
+# not sent (metrics.json sim_rpc).
 SIM_RPC_WAIT_S = 0.05
 # A fence upload in flight blocks the 10 Hz loop (one mission-protocol round
 # trip per item, twice): each phase gets this long, so an autopilot that does
@@ -1772,6 +1776,12 @@ class OffLoopRpc:
                        answer, when it comes, is dropped (its duration is
                        kept in `late_ms`)
       ("busy", None)   a late call is still running: nothing is sent
+      ("spent", None)  the tick's budget is used up: nothing is sent
+
+    Between `begin_tick()` and `end_tick()` the calls share ONE wait_s
+    (review 2026-10-22): each waits only what is left of it, so a tick's
+    truth read and frame check together hold the loop at most wait_s, not
+    wait_s each. Outside a tick each call has its own wait_s.
 
     Without it the RPC sat on the loop: one 1024.9 ms GetObjectPoses on
     pas_ap_ovf_on_20261021 was that flight's 1028 ms tick."""
@@ -1784,6 +1794,8 @@ class OffLoopRpc:
         self._running = None          # the box of the call being made
         self._stop = False
         self._thread = None
+        self._deadline = None         # the open tick's budget ends (timer), or None
+        self.n_ticks = self.n_spent = 0
         self.n_calls = self.n_late = self.n_busy = self.n_errors = 0
         self.call_ms: list[float] = []    # every call's own duration
         self.late_ms: list[float] = []    # ...of the calls answered after their wait
@@ -1817,17 +1829,34 @@ class OffLoopRpc:
                 self._running = None
                 box["done"].set()
 
+    def begin_tick(self) -> None:
+        """Open one tick's budget: wait_s from now, shared by the calls
+        until end_tick()."""
+        with self._cv:
+            self._deadline = self.timer() + self.wait_s
+            self.n_ticks += 1
+
+    def end_tick(self) -> None:
+        with self._cv:
+            self._deadline = None
+
     def call(self, fn, *args):
         with self._cv:
             if self._running is not None or self._job is not None:
                 self.n_busy += 1
                 return "busy", None
+            wait = self.wait_s
+            if self._deadline is not None:
+                wait = min(wait, self._deadline - self.timer())
+                if wait <= 0.0:
+                    self.n_spent += 1
+                    return "spent", None
             box = {"done": threading.Event()}
             self._job = (fn, args, box)
             self.n_calls += 1
             self._cv.notify()
         self._ensure()
-        if not box["done"].wait(self.wait_s):
+        if not box["done"].wait(wait):
             with self._cv:
                 if not box["done"].is_set():
                     box["abandoned"] = True
@@ -1848,11 +1877,14 @@ class OffLoopRpc:
     def summary(self) -> dict:
         return {"wait_ms": round(self.wait_s * 1000.0, 1), "calls": self.n_calls,
                 "late": self.n_late, "busy": self.n_busy, "errors": self.n_errors,
+                "ticks": self.n_ticks, "spent": self.n_spent,
                 "call_ms": spread([round(v, 3) for v in self.call_ms]),
                 "late_ms": spread([round(v, 3) for v in self.late_ms]),
-                "basis": ("each RPC's own duration on the worker thread; a call "
-                          "answered after wait_ms is dropped (late) and the ticks "
-                          "until it answers send none (busy)")}
+                "basis": ("each RPC's own duration on the worker thread; a tick's "
+                          "calls share one wait_ms (begin_tick), a call answered "
+                          "after its share is dropped (late), the ticks until it "
+                          "answers send none (busy), and a call the tick has no "
+                          "time left for is not sent (spent)")}
 
 
 def _direct_call(fn, *args):
@@ -1902,10 +1934,11 @@ class SubjectTruth:
         self.timer = timer
         self.aircraft_actor = aircraft_actor
         self.rpc = rpc
-        # Reads (and frame checks) with no answer within the wait, and those
-        # not sent because the late one was still running (OffLoopRpc).
-        self.late = self.busy = 0
-        self.frame_late = self.frame_busy = 0
+        # Reads (and frame checks) with no answer within the wait, those not
+        # sent because the late one was still running, and those not sent
+        # because the tick's RPC budget was used up (OffLoopRpc).
+        self.late = self.busy = self.spent = 0
+        self.frame_late = self.frame_busy = self.frame_spent = 0
         self.why_off = why
         if why is None and not hasattr(camera, "object_xy"):
             self.why_off = ("this camera source reads no simulator poses (no subject "
@@ -1954,10 +1987,15 @@ class SubjectTruth:
             self.busy += 1
             return {"xy": None, "why": ("the previous pose read is still running "
                                         "off the loop (OffLoopRpc): none sent")}
+        if status == "spent":
+            self.spent += 1
+            return {"xy": None, "why": ("the tick's simulator RPC budget was used up "
+                                        "(OffLoopRpc.begin_tick): none sent")}
         self.attempts += 1
         if status == "late":
             self.late += 1
-            return {"xy": None, "why": (f"no answer within {self.rpc.wait_s * 1000:.0f} ms "
+            return {"xy": None, "why": (f"no answer within the tick's "
+                                        f"{self.rpc.wait_s * 1000:.0f} ms RPC budget "
                                         f"(the read goes on off the loop; dropped)")}
         try:
             if status == "error":
@@ -1983,9 +2021,10 @@ class SubjectTruth:
     def summary(self) -> dict:
         return {"attempts": self.attempts, "failures": self.failures,
                 "backoffs": self.backoffs,
-                # Reads not answered within the wait, and ticks none was sent
-                # on because one was still running (OffLoopRpc; 0 in line).
-                "late": self.late, "busy": self.busy,
+                # Reads not answered within the wait, ticks none was sent on
+                # because one was still running, and ticks whose RPC budget
+                # was used up (OffLoopRpc; 0 in line).
+                "late": self.late, "busy": self.busy, "spent": self.spent,
                 "off_loop": self.rpc is not None,
                 "read_ms": spread([round(v, 3) for v in self.read_ms])}
 
@@ -2024,6 +2063,9 @@ class SubjectTruth:
             self._aircraft_pose)
         if status == "busy":
             self.frame_busy += 1
+            return None
+        if status == "spent":
+            self.frame_spent += 1
             return None
         self.frame_attempts += 1
         if status == "late":
@@ -2105,7 +2147,7 @@ class SubjectTruth:
                         f"Shield flies on"),
                "attempts": self.frame_attempts, "failures": self.frame_failures,
                "backoffs": self.frame_backoffs, "last_failure": self.frame_last_why,
-               "late": self.frame_late, "busy": self.frame_busy,
+               "late": self.frame_late, "busy": self.frame_busy, "spent": self.frame_spent,
                "check_ms": spread([round(v, 3) for v in self.frame_ms]),
                "ekf_vs_sim_m": spread([round(v, 3) for v in self.ekf_err]),
                "yaw_err_deg": spread([round(v, 2) for v in self.frame_yaw_err]),
@@ -4283,7 +4325,9 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                 # The subject's simulator pose: evaluation only, read after the
                 # setpoint went out, so its RPC is never between the action
                 # and the autopilot (review 2026-10-13); the Shield above was
-                # given the estimate.
+                # given the estimate. This read and the frame / geo check below
+                # share one SIM_RPC_WAIT_S (OffLoopRpc.begin_tick).
+                rpc.begin_tick()
                 tr = truth.read()
                 truth_xy = tr["xy"]
                 # SIM_CHECKS, RECORD ONLY, after the setpoint went out: each
@@ -4303,7 +4347,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                       and hasattr(camera, "truth_geo")):
                     t_geo = t_tick
                     # Through the RPC worker too (OffLoopRpc): an answer later
-                    # than SIM_RPC_WAIT_S is dropped, and this check skipped.
+                    # than what is left of the tick's SIM_RPC_WAIT_S is
+                    # dropped, and this check skipped.
                     g_st, g = rpc.call(camera.truth_geo)
                     if g_st != "ok":
                         g = None
@@ -4312,6 +4357,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         ex, ey = anchor.to_scene(s.lat, s.lon)
                         ekf_err.append(math.hypot(gx - ex, gy - ey))
                         truth.note_ekf_vs_sim(ekf_err[-1])
+                rpc.end_tick()
 
                 touched = bool(shield_on and d.touched)
                 n_touched += touched

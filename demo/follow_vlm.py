@@ -2978,6 +2978,54 @@ def negative_suppress(pos, neg, thresh: float):
     return out, n, top
 
 
+def subject_scores_with_negatives(logits, scores, labels, thresh: float):
+    """The detector's score per box for the SUBJECT phrase when negative
+    phrases were asked beside it (--negative-query): `(scores, record,
+    n_suppressed)`, one score per box post-processing kept.
+
+    `logits`: OWL-ViT's class logits for the image (out.logits[0]), one row
+    per box and one column per phrase in the order Grounder._worker asks
+    them - column 0 the subject, 1.. the negatives. `scores` / `labels`:
+    post_process_object_detection's answer at threshold 0.0 for the same
+    image, per box it kept the best sigmoid over the phrases and the index
+    of the phrase that won. That max may be a negative phrase's, so the
+    subject's own sigmoid is read from column 0 and negative_suppress zeroes
+    a box the negatives win. At threshold 0.0 post-processing keeps every
+    box in the logits' order, so row i is box i - unless it dropped one (a
+    score of exactly 0.0, a sigmoid underflow): the rows then cannot be
+    paired with the boxes, so the labels decide (a box a negative phrase won
+    scores 0, the rest keep post-processing's score) and the count is
+    unknown (`suppressed` None).
+
+    `record`: suppressed (int, or None when unknown), top_index (the best-
+    scoring box taken away, or None), top_pos / top_neg (its subject and
+    negative scores), count_unknown (why the count is unknown, or None).
+    Pure, on CPU arrays (a CPU torch tensor reads as one): moved out of the
+    worker so tests/test_pas_ardupilot.py can check the column, the
+    suppression and the fallback without a GPU (review 2026-10-22: in the
+    worker they had no test, and a wrong column would have failed silently,
+    on the GPU only)."""
+    lg = np.asarray(logits, dtype=np.float64)
+    if lg.ndim != 2 or lg.shape[1] < 2:
+        raise ValueError(f"logits of shape {lg.shape}: one row per box, the subject's "
+                         f"column and at least one negative phrase's")
+    sc = [float(s) for s in scores]
+    lb = [int(v) for v in labels]
+    if lg.shape[0] != len(sc):
+        kept = [s if lab == 0 else 0.0 for s, lab in zip(sc, lb)]
+        return kept, {"suppressed": None, "top_index": None, "top_pos": None,
+                      "top_neg": None,
+                      "count_unknown": f"{len(sc)} boxes for {lg.shape[0]} logits"}, 0
+    # The sigmoid as exp(-log(1 + e^-x)): no overflow for a very negative logit.
+    sig = np.exp(-np.logaddexp(0.0, -lg))
+    pos, neg = sig[:, 0], sig[:, 1:].max(axis=1)
+    kept, n_sup, top = negative_suppress(pos.tolist(), neg.tolist(), thresh)
+    return kept, {"suppressed": n_sup, "top_index": top,
+                  "top_pos": None if top is None else float(pos[top]),
+                  "top_neg": None if top is None else float(neg[top]),
+                  "count_unknown": None}, n_sup
+
+
 class Grounder:
     """Open-vocabulary detector in a background thread: text in, box out.
 
@@ -3275,28 +3323,23 @@ class Grounder:
             if self.negatives:
                 # post_process takes the max over the phrases; with a negative
                 # phrase that max may be the negative's. The subject's own
-                # score per box from the logits instead (threshold 0.0 keeps
-                # every box, in the logits' order), and negative_suppress.
-                lg = out.logits[0].float()
-                pos_l = torch.sigmoid(lg[:, 0]).tolist()
-                neg_l = torch.sigmoid(lg[:, 1:]).max(dim=1).values.tolist()
-                if len(pos_l) != len(bx):
-                    # A box post_process dropped (a score of exactly 0.0)
-                    # would pair every later box with the wrong logits. Its
-                    # own labels still say which phrase won each box it kept
-                    # (the same rule: a negative phrase scored higher), so
-                    # those are suppressed; only the count is unknown.
-                    sc = torch.where(res["labels"] == 0, sc, torch.zeros_like(sc))
-                    neg_rec = {"queries": list(self.negatives), "suppressed": None,
-                               "count_unknown": f"{len(bx)} boxes for {len(pos_l)} logits"}
-                else:
-                    kept, n_sup, top = negative_suppress(pos_l, neg_l, self.thresh)
-                    sc = torch.tensor(kept, device=sc.device)
-                    self.n_neg_suppressed += n_sup
-                    neg_rec = {"queries": list(self.negatives), "suppressed": n_sup,
-                               "top": (None if top is None else
-                                       [round(float(v), 1) for v in bx[top].tolist()]
-                                       + [round(pos_l[top], 4), round(neg_l[top], 4)])}
+                # score per box from the logits instead, and negative_suppress
+                # (subject_scores_with_negatives: the column, the suppression
+                # and the fallback when post_process dropped a box, tested on
+                # CPU arrays).
+                kept, nr, n_sup = subject_scores_with_negatives(
+                    out.logits[0].float().cpu().numpy(), sc.tolist(),
+                    res["labels"].tolist(), self.thresh)
+                sc = torch.tensor(kept, device=sc.device, dtype=sc.dtype)
+                self.n_neg_suppressed += n_sup
+                top = nr["top_index"]
+                neg_rec = ({"queries": list(self.negatives), "suppressed": None,
+                            "count_unknown": nr["count_unknown"]}
+                           if nr["suppressed"] is None else
+                           {"queries": list(self.negatives), "suppressed": n_sup,
+                            "top": (None if top is None else
+                                    [round(float(v), 1) for v in bx[top].tolist()]
+                                    + [round(nr["top_pos"], 4), round(nr["top_neg"], 4)])})
             # One depth frame per inference, not per candidate box. It indexes
             # straight into the scene image because both captures are configured
             # at the same resolution and the same field of view - the same

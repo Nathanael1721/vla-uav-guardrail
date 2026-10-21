@@ -3768,6 +3768,108 @@ def test_a_run_that_flew_no_mission_measures_no_rate_and_no_dwell():
     assert m["not_measured"] is None and m["det_hz"] > 0 and m["nfz_s"] == 0.0
 
 
+def test_one_tick_waits_for_the_simulator_at_most_once():
+    """P8 (review 2026-10-22). SIM_RPC_WAIT_S bounded each call, not each
+    tick: a truth read and a frame check each answered just inside 50 ms
+    were 100 ms, a whole tick. A tick's calls now share one budget
+    (OffLoopRpc.begin_tick): a call waits only what is left, and one with
+    nothing left is not sent ("spent")."""
+    import threading
+    import time as _time
+    now = [0.0]
+    rpc = pn.OffLoopRpc(wait_s=0.05, timer=lambda: now[0])
+    rpc.begin_tick()
+    assert rpc.call(lambda: 1) == ("ok", 1)
+    now[0] = 0.06                         # the tick's first RPC used the budget
+    gate = threading.Event()
+    ran = []
+    assert rpc.call(lambda: ran.append(1)) == ("spent", None)
+    rpc.end_tick()
+    _time.sleep(0.05)
+    assert not ran, "a spent call was sent"
+    assert rpc.call(lambda: 2) == ("ok", 2), "outside a tick each call has its own wait"
+    rpc.begin_tick()                      # 10 ms of it left below
+    now[0] += 0.04
+    t0 = _time.perf_counter()
+    st, _ = rpc.call(lambda: gate.wait(2.0))
+    took = _time.perf_counter() - t0
+    assert st == "late" and took < 0.045, (st, took)
+    rpc.end_tick()
+    gate.set()
+    s = rpc.summary()
+    assert s["spent"] == 1 and s["late"] == 1 and s["ticks"] == 2, s
+    rpc.close()
+
+    made = []
+
+    class SpyRpc(pn.OffLoopRpc):
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.opened = self.closed = 0
+            made.append(self)
+
+        def begin_tick(self):
+            self.opened += 1
+            super().begin_tick()
+
+        def end_tick(self):
+            self.closed += 1
+            super().end_tick()
+
+    old = pn.OffLoopRpc
+    pn.OffLoopRpc = SpyRpc
+    try:
+        rc, run, link = _fly()
+    finally:
+        pn.OffLoopRpc = old
+    n = _json(run, "metrics.json")["ticks"]
+    assert made and made[0].opened == made[0].closed == n > 0, (made[0].opened, n)
+
+
+def test_the_negative_phrase_scores_come_from_the_subject_column():
+    """P9 (review 2026-10-22). Grounder._worker's use of the negative phrases
+    (the logits sliced into the subject's column and the negatives' max,
+    and the fallback on post_process's labels when it dropped a box) had no
+    test, and a wrong column would fail silently, on the GPU only. It is now
+    follow_vlm.subject_scores_with_negatives, checked here on CPU arrays."""
+    fv = pn._fv()
+    import numpy as np
+
+    def sig(v):
+        return 1.0 / (1.0 + math.exp(-v))
+    # Three boxes x (subject, "a traffic light"): box 0 is the car's, box 1
+    # the light's (its car score 0.5 is over the threshold: suppressed and
+    # counted), box 2 low for both.
+    lg = np.array([[1.0, -2.0], [0.0, 2.0], [-6.0, -5.0]], dtype=np.float32)
+    post = [max(sig(a), sig(b)) for a, b in lg.tolist()]
+    labels = [0, 1, 1]
+    kept, rec, n = fv.subject_scores_with_negatives(lg, post, labels, 0.02)
+    assert [round(v, 6) for v in kept] == [round(sig(1.0), 6), 0.0, 0.0], kept
+    assert n == 1 and rec["suppressed"] == 1 and rec["top_index"] == 1, rec
+    assert abs(rec["top_pos"] - 0.5) < 1e-6 and abs(rec["top_neg"] - sig(2.0)) < 1e-6
+    # A negative that never wins leaves every box's subject score as it was.
+    lg2 = np.array([[2.0, -3.0], [0.5, -1.0]], dtype=np.float32)
+    kept2, rec2, n2 = fv.subject_scores_with_negatives(
+        lg2, [sig(2.0), sig(0.5)], [0, 0], 0.02)
+    assert [round(v, 6) for v in kept2] == [round(sig(2.0), 6), round(sig(0.5), 6)]
+    assert n2 == 0 and rec2["suppressed"] == 0 and rec2["top_index"] is None
+    # post_process dropped a box (2 kept for 3 logits rows): the logits
+    # cannot be paired, so its labels decide, and the count is unknown.
+    kept3, rec3, n3 = fv.subject_scores_with_negatives(lg, [0.7, 0.9], [0, 1], 0.02)
+    assert kept3 == [0.7, 0.0] and n3 == 0 and rec3["suppressed"] is None, (kept3, rec3)
+    assert rec3["count_unknown"] == "2 boxes for 3 logits", rec3
+    # Very negative logits do not overflow; a CPU tensor reads the same.
+    k4, _, _ = fv.subject_scores_with_negatives(np.array([[-1e4, -1e4]]), [0.0], [0], 0.02)
+    assert k4 == [0.0]
+    try:
+        import torch
+    except ImportError:
+        return
+    kt, rt, nt = fv.subject_scores_with_negatives(torch.tensor(lg), torch.tensor(post),
+                                                  torch.tensor(labels), 0.02)
+    assert [round(v, 6) for v in kt] == [round(v, 6) for v in kept] and nt == 1
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

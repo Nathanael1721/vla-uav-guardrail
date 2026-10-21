@@ -60,6 +60,22 @@ Without that control, "the drone ended up near the car" could just be drift.
 
 ## 2. Running one flight by hand
 
+**Once, before the first flight by hand: build the signed policy bundles.**
+Since 21 Oct `follow_vlm.py` flies the signed bundle of the `--policy` it is
+given, not the YAML file, and it refuses to start when that bundle is not on
+disk (audit card ARCH-29). Build the bundles once, and again after you edit a
+policy:
+
+```powershell
+C:\Users\natha\.conda\envs\vla-real\python.exe tools\build_flight_bundles.py
+C:\Users\natha\.conda\envs\vla-real\python.exe tools\build_flight_bundles.py orbit_building follow_car_gap
+```
+
+The first line builds the default set, which includes `follow_car`. The two
+missions in section 5 are not in it, so the second line names them. To fly
+the YAML file instead, add `--dev-yaml` to the flight command. That flies it
+unsigned: a development run, recorded as such and never KPI-grade.
+
 Everything the script does is one Python command. This is DEMO 1:
 
 ```powershell
