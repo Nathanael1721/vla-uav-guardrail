@@ -764,30 +764,31 @@ def _print_snapshot():
 # Exact OpenVLA token counts, frozen so the upper-bound property is checked
 # where the tokenizer is NOT present (vla-drone, CI); before this, a table entry
 # set too low could only be caught on the lab PC. Measured 2026-10-06 with
-# openvla-llama2-sp@8f5e2869e180 (tokenizers 0.19.1, vla-real). Regenerate both
+# openvla-llama2-sp@8f5e2869e180 (tokenizers 0.19.1, vla-real); regenerated on
+# 2026-10-21 after C8 reworded the class stand-off. Regenerate both
 # with `python tests/test_csp.py --snapshot` where the tokenizer exists (the
 # tokenizer test checks every entry against it).
 #   _EXACT_SNAPSHOT - the texts _snapshot_texts() yields, keyed by the first 16
 #                     hex digits of each text's SHA-256;
 #   _EXACT_CHUNKS   - every table key and every chunk of those texts, by chunk.
 _EXACT_SNAPSHOT = {  # 73 texts, openvla-llama2-sp@8f5e2869e180
-    "00f0bc55f8e7e602": 32, "07dfe4c6b88b45fc": 93, "0d8e188fd6a44aaf": 28, "0e0b0f6dd4600c4b": 94,
-    "0ff469db4fccc24d": 31, "10a0a73445aec881": 54, "1817e31911532b64": 106, "1b2e6233b5a077f3": 33,
-    "1c47753acc805898": 12, "21e9c2c212492747": 14, "22364a7729029ba5": 12, "248267872c3323d3": 12,
-    "2ddd5ceccd202711": 14, "307c9dad9c9089e9": 65, "31d09d892be6ca2b": 66, "355c71360c05a745": 97,
-    "3cb3841c2e2d1e5f": 29, "42273de80c704f29": 26, "4ac481f20743839f": 66, "513e994913cc392f": 10,
-    "51a1ed0309f7dea8": 77, "5da3b9f0218eade6": 12, "6034b88977c25e5c": 60, "63f083b961472f59": 27,
-    "6437bbdc7e9a4b27": 60, "6bbc6d30dfac13d4": 82, "6e599eb9ecbb3d4b": 13, "7834a0637f580737": 12,
-    "78f23d7fe5502e42": 31, "8571981278a49de6": 70, "88f5b6edad4deef0": 106, "8a6e0d4e8080d4d3": 10,
-    "8c5e41a0f0d11bbf": 10, "8f2d55b21417ab3b": 15, "91d73077ee5d7874": 12, "94f3989888e0ab1e": 56,
-    "96445328391204ca": 82, "9ade48c9f1ca145d": 10, "9be2e457976c1cea": 37, "a2c06ed23a592cbe": 15,
-    "a34f9263b670f7ef": 13, "a4a7819f699866b3": 14, "a63cb1d0f2bd5688": 94, "a6f7e7b20d9cbe5e": 55,
-    "ab781f859395a345": 15, "acf90447e164a468": 56, "aee5fcae31363176": 12, "af4349d8007afd8f": 15,
-    "afa57e9bd3c64f48": 12, "b6d98424892678e9": 94, "c56fe1b9d5246335": 10, "cbc38f1d94571196": 104,
-    "cbcb101aa522919b": 12, "d4351cd85dc3cbb3": 82, "d939981f3ca2beca": 82, "daf79727dbfcb192": 106,
-    "ddadac0b29572443": 73, "de1de94b9893d501": 10, "deaeb5a9ad1a886d": 11, "df20041ab35a440c": 15,
+    "00f0bc55f8e7e602": 32, "0d8e188fd6a44aaf": 28, "0e0b0f6dd4600c4b": 94, "0ff469db4fccc24d": 31,
+    "10a0a73445aec881": 54, "1817e31911532b64": 106, "1b2e6233b5a077f3": 33, "1c47753acc805898": 12,
+    "216133281f9fa2fb": 76, "21e9c2c212492747": 14, "22364a7729029ba5": 12, "248267872c3323d3": 12,
+    "2c4470946568337e": 85, "307c9dad9c9089e9": 65, "31d09d892be6ca2b": 66, "355c71360c05a745": 97,
+    "3cb3841c2e2d1e5f": 29, "42273de80c704f29": 26, "47595ba686924602": 87, "4ac481f20743839f": 66,
+    "513e994913cc392f": 10, "51a1ed0309f7dea8": 77, "5da3b9f0218eade6": 12, "6034b88977c25e5c": 60,
+    "63f083b961472f59": 27, "6437bbdc7e9a4b27": 60, "6bbc6d30dfac13d4": 82, "6e599eb9ecbb3d4b": 13,
+    "70ad14a6754ca838": 96, "7834a0637f580737": 12, "78f23d7fe5502e42": 31, "8571981278a49de6": 70,
+    "88f5b6edad4deef0": 106, "8a6e0d4e8080d4d3": 10, "8c5e41a0f0d11bbf": 10, "8f2d55b21417ab3b": 15,
+    "91d73077ee5d7874": 12, "94f3989888e0ab1e": 56, "9ade48c9f1ca145d": 10, "9be2e457976c1cea": 37,
+    "a2c06ed23a592cbe": 15, "a34f9263b670f7ef": 13, "a4a7819f699866b3": 14, "a63cb1d0f2bd5688": 94,
+    "a6f7e7b20d9cbe5e": 55, "ab781f859395a345": 15, "acf90447e164a468": 56, "aee5fcae31363176": 12,
+    "af4349d8007afd8f": 15, "afa57e9bd3c64f48": 12, "b6d98424892678e9": 94, "c56fe1b9d5246335": 10,
+    "cbc38f1d94571196": 104, "cbcb101aa522919b": 12, "d4351cd85dc3cbb3": 82, "d939981f3ca2beca": 82,
+    "daf79727dbfcb192": 106, "de1de94b9893d501": 10, "deaeb5a9ad1a886d": 11, "df20041ab35a440c": 15,
     "df884d83495db743": 94, "e0b347f1e5d34cb3": 15, "e1b6aa1cacddb76d": 26, "e1ea555c78175cee": 12,
-    "e421e618da0d16bc": 31, "e5b9ce15e13a07aa": 66, "e8dc1222a830346e": 84, "ea970a4920d30e17": 12,
+    "e421e618da0d16bc": 31, "e5b9ce15e13a07aa": 66, "e6f3d011a15af556": 17, "ea970a4920d30e17": 12,
     "ecdc28a3234b85b2": 56, "ed84f4c1b683687f": 14, "f24d5f0bdfca3751": 14, "f72a2141a3df8825": 10,
     "fcc856b9d97cec0f": 12,
 }
@@ -812,8 +813,8 @@ _EXACT_CHUNKS = {  # 129 chunks, openvla-llama2-sp@8f5e2869e180
     'every': 1, 'followed': 1, 'following': 1, 'following.': 2, 'force': 1, 'from': 1,
     'in': 1, 'inside': 1, 'into': 1, 'its': 1, 'least': 1, 'limit)': 2, 'limit).': 2,
     'm': 1, 'm.': 2, 'm/s': 3, 'm/s,': 4, 'no': 1, 'of': 1, 'or': 1, 'overnight)': 3,
-    'overnight).': 3, 'pedestrian': 3, 'pedestrian.': 4, 'rate': 1, 'speed': 1,
-    'stay': 1, 'subject': 1, 'turn': 1, 'within': 1, 'you': 1, 'zone': 1,
+    'overnight).': 3, 'pedestrian': 3, 'rate': 1, 'speed': 1, 'stay': 1, 'subject': 1,
+    'the': 1, 'turn': 1, 'within': 1, 'you': 1, 'zone': 1,
 }
 
 
@@ -1281,14 +1282,28 @@ def test_a_circle_fence_compiles_as_the_keep_out_zone_it_is():
 def test_sentences_without_a_window_are_byte_identical_to_the_old_ones():
     """Every HARD fixture rule with no valid_time renders exactly the
     2026-09-01 text, so `build_prompt` reproduces for every flight that read
-    it. Windowed and soft rules get a qualifier before the full stop."""
-    n_same = n_win = n_soft = 0
+    it. Windowed and soft rules get a qualifier before the full stop.
+
+    One deliberate exception since 2026-10-21 (open item C8): a CLASS
+    stand-off said "Keep at least 10 m away from any pedestrian", but the rule
+    binds only the followed subject while it carries the class
+    (models.SubjectStandoff.binds), so it now says "the pedestrian you are
+    following". The oracle stays the 445bdbe text; the exception is applied
+    here, by rule, so any other change to the sentence still fails."""
+    from guardrail.models import SubjectStandoff
+    n_same = n_win = n_soft = n_c8 = 0
     for path in POLICIES:
         pol = load_policy(path)
         new = ConstraintCompiler(pol)._sentences()
         old = _legacy_sentences(pol)
         assert len(new) == len(old), path.name
         for c_new, c_old, rule in zip(new, old, _ordered(pol)):
+            if isinstance(rule, SubjectStandoff) and rule.subject_class != "*":
+                was = f"away from any {rule.subject_class}."
+                assert c_old.endswith(was), c_old
+                c_old = c_old[:-len(was)] + (f"away from the {rule.subject_class} "
+                                             f"you are following.")
+                n_c8 += 1
             if rule.valid_time is None and rule.constraint_type == "hard":
                 assert c_new == c_old, (path.name, c_new, c_old)
                 n_same += 1
@@ -1297,8 +1312,42 @@ def test_sentences_without_a_window_are_byte_identical_to_the_old_ones():
                 n_win += rule.valid_time is not None
                 n_soft += rule.constraint_type == "soft"
     assert n_same > 100, n_same
+    assert n_c8 >= 4, n_c8        # the four city / pedestrian fixtures at least
     print(f"      {n_same} hard window-less sentences byte-identical; "
-          f"{n_win} windowed, {n_soft} soft carry a qualifier")
+          f"{n_win} windowed, {n_soft} soft carry a qualifier; "
+          f"{n_c8} class stand-offs reworded for C8")
+
+
+def test_a_class_standoff_sentence_and_summary_name_the_followed_subject_c8():
+    """C8 (2026-10-21). The CSP the VLA reads said "Keep at least 10 m away
+    from any pedestrian" (and the P1/P2 summary ">= 10 m from any
+    pedestrian"), but models.SubjectStandoff.binds holds the rule only on the
+    ONE followed subject while perception classifies it as that class;
+    bystanders of the class are never protected by it. The text told the
+    pilot to keep clear of every pedestrian and so misdescribed the rule it is
+    judged by (demo/out/pas_ap_ovf_on_20261021/csp_g0.json carried it).
+    Failed before the template change: both texts said "any pedestrian".
+    The "*" rule's wording is unchanged."""
+    _need()
+    for path in POLICIES:
+        for r in load_policy(path).constraints:
+            if r.type != "subject_standoff":
+                continue
+            sent, summ = K.render_sentence(r), K.render_summary(r)
+            if r.subject_class == "*":
+                assert sent == f"Keep at least {r.min_range_m:g} m away from anything you are following.", sent
+                assert summ == f">= {r.min_range_m:g} m from any followed subject", summ
+                continue
+            cls = r.subject_class
+            assert f"any {cls}" not in sent and f"any {cls}" not in summ, (path.name, sent, summ)
+            assert sent.startswith(f"Keep at least {r.min_range_m:g} m away from the {cls} "
+                                   f"you are following"), (path.name, sent)
+            assert summ.startswith(f">= {r.min_range_m:g} m from the followed {cls}"), (path.name, summ)
+    pol = load_policy(ROOT / "policies" / "sitl_pedestrian.yaml")
+    csp = ConstraintCompiler(pol).compile_csp(_mission(text="follow the person"), now=None)
+    assert "10 m away from the pedestrian you are following." in csp.natural_language_prompt
+    assert "any pedestrian" not in csp.natural_language_prompt
+    assert "any pedestrian" not in (csp.P1_summary or "") + (csp.P2_summary or "")
 
 
 def test_a_soft_rule_says_so_which_the_old_text_did_not():

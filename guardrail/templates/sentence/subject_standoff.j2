@@ -1,3 +1,8 @@
 {% extends "sentence/_base.j2" %}
-{#- "*" binds to whatever is being followed, so it is worded that way. -#}
-{% block core %}Keep at least {{ r.min_range_m|g }} m away from {% if r.subject_class == "*" %}anything you are following{% else %}any {{ r.subject_class }}{% endif %}{% endblock %}
+{#- "*" binds to whatever is being followed, so it is worded that way. A named
+    class binds only to the FOLLOWED subject while it carries that class
+    (models.SubjectStandoff.binds), never to bystanders of the class, so it is
+    worded "the <class> you are following". Until 2026-10-21 it read "any
+    <class>", which told the pilot to keep 10 m from every pedestrian when the
+    rule binds only the one being followed (open item C8). -#}
+{% block core %}Keep at least {{ r.min_range_m|g }} m away from {% if r.subject_class == "*" %}anything you are following{% else %}the {{ r.subject_class }} you are following{% endif %}{% endblock %}

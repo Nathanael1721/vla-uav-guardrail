@@ -243,7 +243,9 @@ def test_the_rule_text_is_the_loaded_policy():
             assert rec["prompt"].index(phrase) < q, f"{phrase!r} after the question"
         assert rec["n_rules"] == len(pol.constraints)
     # One literal, so a template change that drops the stand-off is loud.
-    assert "10 m away from any pedestrian" in _rec(load_policy(PED))["csp_text"]
+    # (the class rule binds only the followed subject: C8, 2026-10-21)
+    assert "10 m away from the pedestrian you are following" in \
+        _rec(load_policy(PED))["csp_text"]
 
 
 def test_the_logged_csp_hash_is_the_compilers_and_matches_the_written_file():

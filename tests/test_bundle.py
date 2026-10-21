@@ -996,7 +996,10 @@ def test_the_prompt_mentions_the_standoff_in_words():
     than on content."""
     c = ConstraintCompiler(load_policy(PED))
     said = " ".join(c._sentences())
-    assert "10 m away from any pedestrian" in said, said
+    # the class rule binds only the followed subject (C8, 2026-10-21; it said
+    # "any pedestrian" before)
+    assert "10 m away from the pedestrian you are following" in said, said
+    assert "any pedestrian" not in said, said
     assert "5 m away from anything you are following" in said, said
 
 

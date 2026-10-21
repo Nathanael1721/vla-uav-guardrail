@@ -1,8 +1,8 @@
 {
   "schema": "guardrail.paraphrases.validation/1",
   "store_digest": "2b2b5788d9a021cc",
-  "validator_digest": "db9effaa13a7e2d5",
-  "probes_digest": "1aec28f44872c919",
+  "validator_digest": "16537ea2ab2a216c",
+  "probes_digest": "1c18c11e5fb9cf51",
   "places_source": "guardrail.compiler.PLACES",
   "command": "python -m guardrail.paraphraser validate",
   "sources": 14,
@@ -142,21 +142,43 @@
       ]
     },
     "heldout_2026_10_06": {
-      "status": "HELD-OUT - written on 2026-10-06 by the agent fixing the validator, after reading the review and BEFORE changing any code, and never used to tune it. Measured once before the changes and once after. Same author as the code, so not independent of its blind spots.",
+      "status": "WAS HELD-OUT - written on 2026-10-06 by the agent fixing the validator, after reading the review and BEFORE changing any code; measured once before those changes (11/30, 2/30) and once after (5/30, 2/30). USED on 2026-10-21 (A14) to tune the validator on its 5 remaining false accepts, so since then a dev set like the review's: its 0 false accepts is a regression floor, not an estimate (heldout_2026_10_21b is the post-change estimate). Same author as the code.",
       "meaning_changing": 30,
-      "false_accepts": 5,
+      "false_accepts": 0,
       "faithful": 30,
       "false_refusals": 2,
-      "false_accept_texts": [
-        "follow a dark red car",
-        "follow the person who is running",
-        "Stay out of zone 'nfz-square'. Hold altitude between 10 m and 20 m. Max speed 4 m/s; descend under 2 m/s; turn under 45 deg/s.",
-        "Fly between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn under 45 deg/s. Keep at least 10 m from pedestrians in the street and at least 5 m from your target.",
-        "Stay between 6 m and 14 m altitude, max speed 5 m/s, climb under 2 m/s, turn under 45 deg/s. Keep at least 3 m from buildings, at least 10 m from adult pedestrians and at least 5 m from whatever you follow."
-      ],
+      "false_accept_texts": [],
       "false_refusal_texts": [
         "stick with a red car",
         "Zone 'nfz-school' is off-limits Mon-Fri 07:30-17:30. Do not leave corridor 'corridor-survey-route'; stay within 20 m of its centerline and between 10 m and 20 m. Keep speed at most 4 m/s, climb rate under 2 m/s and turn rate under 45 deg/s."
+      ]
+    },
+    "heldout_2026_10_21": {
+      "status": "WRITTEN BEFORE THE CHANGE - on 2026-10-21 by the agent tightening the validator (A14), BEFORE changing any code, and measured then (21/22 accepted). The change's closed lists were written after it and with it in view, so its after figure is a dev-set figure, not an estimate (see the caveat; heldout_2026_10_21b is the estimate). Same author as the code, so not independent of its blind spots; weighted towards narrowing modifiers, the class being tightened.",
+      "meaning_changing": 22,
+      "false_accepts": 0,
+      "faithful": 22,
+      "false_refusals": 1,
+      "false_accept_texts": [],
+      "false_refusal_texts": [
+        "fly to the waypoint located 120 m ahead, at cruise altitude"
+      ]
+    },
+    "heldout_2026_10_21b": {
+      "status": "HELD-OUT - written on 2026-10-21 AFTER the A14 change and never used to tune it: measured once, after. Its words were chosen outside the change's closed lists (narrowing adjectives, place nouns), to estimate how far the lexical rules reach beyond the probes they were written beside. Same author as the code, so not independent of its blind spots.",
+      "meaning_changing": 12,
+      "false_accepts": 4,
+      "faithful": 12,
+      "false_refusals": 2,
+      "false_accept_texts": [
+        "follow a red car with a dented door",
+        "follow a person near the fountain",
+        "Keep altitude between 6 m and 14 m. Stay at least 3 m from any building, at least 5 m from anything you are following and at least 10 m from pedestrians with strollers. Speed at most 5 m/s, climb rate below 2 m/s, turn rate below 45 deg/s.",
+        "follow a person in uniform"
+      ],
+      "false_refusal_texts": [
+        "follow a car coloured red",
+        "Stay inside corridor 'corridor-survey-route' - within 20 m of its centerline and between 10 m and 20 m. Keep out of zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Speed at or below 4 m/s, climb rate below 2 m/s, turn rate below 45 deg/s."
       ]
     }
   },

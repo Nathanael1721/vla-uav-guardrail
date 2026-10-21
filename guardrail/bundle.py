@@ -1208,6 +1208,13 @@ def ir_schema_drift(locked: dict, current: dict | None = None) -> list[str]:
 UNPINNED_MODEL = "in the IR schema but not pinned"
 
 
+def _previously(ent: dict) -> set[str]:
+    """The identities a lock entry says its file claimed before (`previously`:
+    one id@version, or a list)."""
+    p = ent.get("previously")
+    return {p} if isinstance(p, str) else set(p or ())
+
+
 def check_lock(policies_dir: str | Path | None = None,
                lock: dict | None = None) -> list[str]:
     """Every way the policies on disk disagree with the lock. Empty = clean.
@@ -1233,6 +1240,7 @@ def check_lock(policies_dir: str | Path | None = None,
     else:
         problems += [f"IR schema: {x}" for x in ir_schema_drift(pinned)]
     seen_shared: dict[str, set[str]] = {}
+    seen_key: dict[str, str] = {}             # file name -> the id@version it claims
     for f in _policy_files(policies_dir):
         try:
             # runtime=False: the lock is about identity, not flyability; a
@@ -1242,6 +1250,7 @@ def check_lock(policies_dir: str | Path | None = None,
             problems.append(f"{f.name}: does not load ({type(exc).__name__}: {exc})")
             continue
         key = lock_key(pol)
+        seen_key[f.name] = key
         ent = entries.get(key)
         if ent is None:
             problems.append(f"{f.name}: {key} is not in the lock - run "
@@ -1282,6 +1291,15 @@ def check_lock(policies_dir: str | Path | None = None,
     for key, ent in entries.items():
         if "shared_by_files" in ent:
             missing = set(ent["shared_by_files"]) - seen_shared.get(key, set())
+            # A file that left the shared identity for one of its own (WP1-22,
+            # 2026-10-21: the generated hard_*/hp_* files) is not missing when
+            # it is on disk under an identity whose entry names this one as
+            # `previously` and gives it that file. The shared entry itself is
+            # never rewritten, so its per-file pins still trace a run flown
+            # under the old id.
+            missing -= {name for name in missing
+                        if key in _previously(entries.get(seen_key.get(name, "")) or {})
+                        and entries[seen_key[name]].get("file") == name}
             if missing:
                 problems.append(f"{key}: lock lists {sorted(missing)} as sharing "
                                 f"this identity, but they no longer do - drop "
@@ -1346,6 +1364,13 @@ def update_lock(policies_dir: str | Path | None = None,
                 added.append(f"{key}:{HASH_SCHEME}")
             continue
         entries[key] = {"file": f.name, "locked_on": day, **_entry(pol)}
+        # A file that a shared (colliding) identity lists, now under an id of
+        # its own: the new entry points back, so check_lock knows it moved
+        # rather than vanished, and a reader can follow the old pin.
+        was = sorted(k for k, e in entries.items() if k != key
+                     and f.name in (e.get("shared_by_files") or {}))
+        if was:
+            entries[key]["previously"] = was[0] if len(was) == 1 else was
         added.append(key)
     still = [x for x in check_lock(policies_dir, lock)
              if "not in the lock" not in x]

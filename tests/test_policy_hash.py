@@ -373,35 +373,147 @@ def test_a_version_bump_is_locked_by_adding_never_by_rewriting():
     shutil.rmtree(d, ignore_errors=True)
 
 
+GENERATED = ("hard_3", "hard_11", "hard_21", "hp_5", "hp_8", "hp_14", "hp_30", "hp_42")
+
+
 def test_the_shared_identity_is_recorded_as_a_defect_not_hidden():
-    """Nine generated files share `random-scenario@0.1.0` with nine different
-    contents. The lock names them; a tenth claimant is still refused."""
+    """Nine generated files shared `random-scenario@0.1.0` with nine different
+    contents until 2026-10-21. The lock entry that names them is never
+    rewritten (its per-file pins still trace a run flown under the old id);
+    random_scenario.yaml is the one file still claiming it, and a second
+    claimant is still refused."""
     ent = load_lock()["policies"]["random-scenario@0.1.0"]
     assert len(ent["shared_by_files"]) == 9, sorted(ent["shared_by_files"])
     assert "known_defect" in ent
     d = _copy_policies()
-    src = (d / "hard_3.yaml").read_text(encoding="utf-8")
-    (d / "hard_99.yaml").write_text(src.replace("speed_max_mps", "speed_max_mps", 1)
-                                    + "\n# a tenth copy\n", encoding="utf-8")
+    src = (d / "random_scenario.yaml").read_text(encoding="utf-8")
+    (d / "hard_99.yaml").write_text(src + "\n# a second copy\n", encoding="utf-8")
     problems = check_lock(d)
     assert any("hard_99.yaml" in x and "own policy_id" in x for x in problems), problems
     shutil.rmtree(d, ignore_errors=True)
 
 
 def test_a_content_change_inside_the_shared_identity_is_still_caught():
-    """Each of the nine files under random-scenario@0.1.0 is pinned on its own,
-    so the known collision is not a blind spot: editing one of them without a
-    version bump is reported like any other content change (mutant M34)."""
+    """The file still under random-scenario@0.1.0 is pinned on its own, so the
+    old collision is not a blind spot: editing it without a version bump is
+    reported like any other content change (mutant M34). A file that moved to
+    its own identity is judged by that identity's entry."""
     d = _copy_policies()
-    f = d / "hard_3.yaml"
-    src = f.read_text(encoding="utf-8")
-    assert "altitude_ceiling_m: 60\n" in src, src[:400]
-    f.write_text(src.replace("altitude_ceiling_m: 60\n", "altitude_ceiling_m: 61\n", 1),
-                 encoding="utf-8")
-    problems = check_lock(d)
-    assert any("hard_3.yaml" in x and "content changed under random-scenario@0.1.0" in x
-               for x in problems), problems
+    for name, want in (("random_scenario.yaml", "content changed under random-scenario@0.1.0"),
+                       ("hard_3.yaml", "content changed but version did not - "
+                                       "random-scenario-hard-3@0.1.0")):
+        f = d / name
+        src = f.read_text(encoding="utf-8")
+        assert "altitude_ceiling_m: 60\n" in src, src[:400]
+        f.write_text(src.replace("altitude_ceiling_m: 60\n", "altitude_ceiling_m: 61\n", 1),
+                     encoding="utf-8")
+        problems = check_lock(d)
+        assert any(name in x and want in x for x in problems), (name, problems)
+        f.write_text(src, encoding="utf-8")
+    assert check_lock(d) == [], check_lock(d)
     shutil.rmtree(d, ignore_errors=True)
+
+
+def test_every_policy_file_has_its_own_policy_id():
+    """WP1-22 (2026-10-21): an id@version must name one policy. Until then
+    nine generated files said `policy_id: random-scenario` (failed then: one
+    id, nine files). Now no two files under policies/ share an id."""
+    seen: dict[str, list[str]] = {}
+    for f in _policy_files():
+        seen.setdefault(load_policy(f, runtime=False).policy_id, []).append(f.name)
+    shared = {k: v for k, v in seen.items() if len(v) > 1}
+    assert not shared, shared
+    assert len(seen) == len(_policy_files()) >= 29, len(seen)
+
+
+def _generator():
+    import importlib
+    sys.path.insert(0, str(ROOT / "demo"))
+    try:
+        return importlib.import_module("gen_random_scenario")
+    finally:
+        sys.path.remove(str(ROOT / "demo"))
+
+
+def test_the_generator_gives_each_file_its_own_policy_id():
+    """WP1-22: demo/gen_random_scenario.py wrote `policy_id: random-scenario`
+    into every file it generated (the source of the nine-file collision).
+    Now the default output keeps that id and any other file is
+    `random-scenario-<stem>`; it refuses an id another file in the output
+    folder claims; and its text reproduces each shipped generated file byte
+    for byte (line endings aside), so the shipped ids are the generator's.
+    Errors before the change: the module had no default_policy_id."""
+    import yaml
+    G = _generator()
+    assert G.default_policy_id(POLICIES / "random_scenario.yaml") == "random-scenario"
+    assert G.default_policy_id(POLICIES / "hard_3.yaml") == "random-scenario-hard-3"
+    assert G.default_policy_id("out/My Scene_2.yaml") == "random-scenario-my-scene-2"
+    for name in GENERATED + ("random_scenario",):
+        f = POLICIES / f"{name}.yaml"
+        doc = yaml.safe_load(f.read_text(encoding="utf-8"))
+        assert doc["policy_id"] == G.default_policy_id(f), (name, doc["policy_id"])
+        nfzs, band = [], None
+        for c in doc["constraints"]:
+            if c["type"] == "polygon_fence":
+                v = c["vertices"]
+                nfzs.append((v[0]["x"], v[1]["x"], v[0]["y"], v[2]["y"]))
+            elif c["type"] == "altitude_envelope":
+                band = (c["alt_min_m"], c["alt_max_m"])
+        assert G.policy_yaml(doc["policy_id"], nfzs, *band) == \
+            f.read_text(encoding="utf-8"), name
+    d = _copy_policies()
+    try:
+        # regenerating a file is not a clash; a new file under a taken id is
+        assert G.id_claimed_elsewhere("random-scenario-hard-3", d / "hard_3.yaml") == []
+        assert G.id_claimed_elsewhere("random-scenario-hard-3", d / "new.yaml") == ["hard_3.yaml"]
+        assert G.id_claimed_elsewhere("random-scenario", d / "x.yaml") == ["random_scenario.yaml"]
+        assert G.id_claimed_elsewhere(G.default_policy_id(d / "hp_99.yaml"),
+                                      d / "hp_99.yaml") == []
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_file_that_left_a_shared_identity_must_be_locked_under_its_own():
+    """The lock's rule for the WP1-22 move. A generated file now under its own
+    id is clean only because its new entry names the old shared one as
+    `previously` (written by `lock --update`, which only adds); the shared
+    entry is not rewritten. Without that pointer the file reads as vanished
+    from the shared identity; with no entry at all it is unlocked; and a file
+    that still claims the old id stays pinned there."""
+    lock = load_lock()
+    ents = lock["policies"]
+    for name in GENERATED:
+        key = f"random-scenario-{name.replace('_', '-')}@0.1.0"
+        assert ents[key]["file"] == f"{name}.yaml", key
+        assert ents[key]["previously"] == "random-scenario@0.1.0", key
+        assert f"{name}.yaml" in ents["random-scenario@0.1.0"]["shared_by_files"]
+    assert check_lock(POLICIES, lock) == []
+    no_ptr = copy.deepcopy(lock)
+    del no_ptr["policies"]["random-scenario-hard-3@0.1.0"]["previously"]
+    assert any("random-scenario@0.1.0" in x and "hard_3.yaml" in x and "no longer do" in x
+               for x in check_lock(POLICIES, no_ptr)), check_lock(POLICIES, no_ptr)
+    unlocked = copy.deepcopy(lock)
+    del unlocked["policies"]["random-scenario-hp-8@0.1.0"]
+    probs = check_lock(POLICIES, unlocked)
+    assert any("hp_8.yaml" in x and "not in the lock" in x for x in probs), probs
+    assert any("hp_8.yaml" in x and "no longer do" in x for x in probs), probs
+    # lock --update writes the pointer itself, from the shared entry's list
+    d = _copy_policies()
+    try:
+        before = copy.deepcopy(lock)
+        for name in GENERATED:
+            del before["policies"][f"random-scenario-{name.replace('_', '-')}@0.1.0"]
+        lp = d / "lock.json"
+        lp.write_text(json.dumps(before), encoding="utf-8")
+        added = update_lock(d, lp, locked_on="2026-10-21")
+        assert len(added) == len(GENERATED), added
+        new = load_lock(lp)
+        assert new["policies"]["random-scenario@0.1.0"] == lock["policies"]["random-scenario@0.1.0"]
+        assert new["policies"]["random-scenario-hp-42@0.1.0"]["previously"] == \
+            "random-scenario@0.1.0"
+        assert check_lock(d, new) == []
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def test_the_lock_carries_old_and_new_hash_for_every_policy():
