@@ -124,7 +124,10 @@ THE START GATE, THE DETECTOR, THE LOOP'S TIMING (2026-10-21)
     first inference: on 21 Oct the load ran beside the first 26 s of ticks.
   * The simulator's evaluation RPCs (truth, frame check, EKF check) run on
     one worker thread (OffLoopRpc) and the loop waits for them at most
-    50 ms: one 1024.9 ms truth read was that flight's 1028 ms tick.
+    50 ms per tick, all of that tick's calls together: one 1024.9 ms truth
+    read was that flight's 1028 ms tick (measured). The 97.9 ms Shield step
+    fell inside the detector's load; that the load caused it is inferred
+    from the timing, not profiled. Neither change has flown yet.
 
 WHAT THIS IS NOT. follow_vlm.fly()'s further layers - the target estimator,
 the strict lock and its re-acquisition, trail following, the fence guard, the
