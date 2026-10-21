@@ -27,6 +27,17 @@ slot must never hover on zero commands while the run looks like a VLA run -
 is now carried by Tick.author: a tick no VLA answer authored says `none` or
 `hover`, never `vla_step` (tests/test_vla_link.py).
 
+The review fixes of 2026-10-22 (tests citing "Review of 7c7cc50"): a server
+that refuses every request never looks like a pilot (no hold ticks, backoff,
+decision rate 0); the decision rate counts only parsed answers; a full disk
+or a raising callback never stops the loop; the goal phrase needs an explicit
+hint="goal"; a policy never widens or drops a configured altitude band and
+skips MSL envelopes. At 7c7cc50, with only the new `hint` keyword tolerated,
+each of the six fails on behaviour: 299 hold ticks from a refusing server;
+decision_hz 9.8 from malformed answers alone; ENOSPC and the ValueError of a
+bad hint raised out of act(); the goal phrase chosen with no hint source; the
+policy band (6, 14) replacing a configured (8, 30).
+
 Shown failing first: at 7c9c9e6 make_backend("aerovla", ...) required
 model_dir/get_frame and built the skeleton, so every test below fails there
 (TypeError on get_capture, or NotImplementedError on the first act()).
@@ -91,9 +102,11 @@ class _Sim:
         self.t = round(self.t + dt, 10)
 
 
-def _backend(srv, sim, policy=None, **kw):
+def _backend(srv, sim, policy=None, backoff_s=0.0, **kw):
     client = RemoteVLA("127.0.0.1", srv.port, response_timeout_s=2.0,
-                       reconnect_backoff_s=0.0, clock=sim.clock)
+                       reconnect_backoff_s=backoff_s, clock=sim.clock)
+    if "get_hint" not in kw:
+        kw["hint"] = "goal"
     return make_backend("aerovla", _mission(), policy, get_capture=sim.capture,
                         client=client, clock=sim.clock, **kw)
 
@@ -106,7 +119,7 @@ def test_aerovla_is_the_remote_backend_and_refuses_the_skeletons_arguments():
     the mission's goal phrase."""
     pol = load_policy(ROOT / "policies" / "follow_car_citylife.yaml")
     sim = _Sim()
-    be = make_backend("aerovla", _mission(), pol, get_capture=sim.capture,
+    be = make_backend("aerovla", _mission(), pol, get_capture=sim.capture, hint="goal",
                       client=SimpleNamespace(counts={}), object_text="a white van")
     assert isinstance(be, RemoteVLABackend)
     assert be.tracker.alt_band == (6.0, 14.0) and be.cadence == "pipelined"
@@ -123,7 +136,7 @@ def test_aerovla_is_the_remote_backend_and_refuses_the_skeletons_arguments():
             raise AssertionError(f"make_backend accepted the skeleton's {old}")
     for bad in ({"instruction": "x"}, {"cadence": "fast"}, {"csp_mode": "on"}):
         try:
-            make_backend("aerovla", _mission(), None, get_capture=sim.capture,
+            make_backend("aerovla", _mission(), None, get_capture=sim.capture, hint="goal",
                          client=SimpleNamespace(counts={}), **bad)
         except (TypeError, ValueError):
             continue
@@ -327,12 +340,235 @@ def test_close_leaves_a_line_for_the_request_still_in_flight():
 def test_a_hot_applied_policy_moves_the_altitude_band():
     sim = _Sim()
     be = make_backend("aerovla", _mission(), load_policy(ROOT / "policies" / "demo_policy.yaml"),
-                      get_capture=sim.capture, client=SimpleNamespace(counts={}))
+                      get_capture=sim.capture, hint="goal", client=SimpleNamespace(counts={}))
     assert be.tracker.alt_band == (2.0, 6.0)
     be.refresh_fences(load_policy(ROOT / "policies" / "follow_car_citylife.yaml"))
     assert be.tracker.alt_band == (6.0, 14.0)
     be.refresh_fences(load_policy(ROOT / "policies" / "corridor_survey.yaml"))
     assert be.tracker.alt_band is None
+
+
+def test_a_configured_band_is_never_widened_or_dropped_by_the_policy():
+    """Review of 7c7cc50, P8: a policy band silently REPLACED the caller's
+    TrackerConfig.alt_band, and refresh_fences() with a policy that has no
+    envelope removed a configured clamp. The tracker now clamps into the
+    tighter of the two (stats() says which), a policy without an envelope
+    leaves the configured band in force, and an MSL envelope is skipped and
+    named. A configured band that misses the policy band entirely is refused
+    at construction; on a hot-apply the policy band wins, said so."""
+    sim = _Sim()
+    kw = dict(get_capture=sim.capture, hint="goal", client=SimpleNamespace(counts={}))
+    be = make_backend("aerovla", _mission(), load_policy(ROOT / "policies" / "follow_car_citylife.yaml"),
+                      tracker_config=TrackerConfig(alt_band=(8.0, 30.0)), **kw)
+    assert be.tracker.alt_band == (8.0, 14.0), be.tracker.alt_band
+    ab = be.stats()["alt_band"]
+    assert ab["band"] == (8.0, 14.0) and ab["source"] == "intersection", ab
+    assert ab["configured"] == (8.0, 30.0) and ab["policy"] == (6.0, 14.0)
+    be.refresh_fences(load_policy(ROOT / "policies" / "corridor_survey.yaml"))
+    assert be.tracker.alt_band == (8.0, 30.0), "a policy without an envelope dropped the clamp"
+    assert be.stats()["alt_band"]["source"] == "configured"
+    be.refresh_fences(load_policy(ROOT / "policies" / "demo_policy.yaml"))      # 2-6 m
+    assert be.tracker.alt_band == (2.0, 6.0)
+    assert be.stats()["alt_band"]["source"] == "policy_disjoint"
+    try:
+        make_backend("aerovla", _mission(), load_policy(ROOT / "policies" / "demo_policy.yaml"),
+                     tracker_config=TrackerConfig(alt_band=(8.0, 30.0)), **kw)
+    except ValueError as exc:
+        assert "overlap" in str(exc), exc
+    else:
+        raise AssertionError("a configured band outside the policy band was accepted")
+    from guardrail.models import AltitudeEnvelope
+    msl = SimpleNamespace(constraints=[AltitudeEnvelope(
+        id="msl_ceiling", type="altitude_envelope", alt_min_m=120, alt_max_m=300,
+        altitude_ref="MSL")])
+    be = make_backend("aerovla", _mission(), msl, **kw)
+    assert be.tracker.alt_band is None
+    assert be.stats()["alt_band"]["skipped_msl"] == ["msl_ceiling"]
+
+
+def test_the_goal_hint_is_only_for_an_explicit_goto():
+    """Review of 7c7cc50, P7: without get_hint the factory defaulted to the
+    phrase toward (mission.target_x, mission.target_y), labelled `goal`, for
+    ANY mission. A follow or approach mission wired without its detector hint
+    would silently get an oracle direction labelled as a GOTO goal. The brief:
+    the hint comes from the goal only for GOTO, otherwise from the detector.
+    The goal phrase is now used only when the caller says hint='goal'."""
+    sim = _Sim()
+    try:
+        make_backend("aerovla", _mission(), None, get_capture=sim.capture,
+                     client=SimpleNamespace(counts={}))
+    except TypeError as exc:
+        assert "vla_bridge" in str(exc) and "hint='goal'" in str(exc), exc
+    else:
+        raise AssertionError("no hint source, and the factory chose the goal phrase")
+    for bad in ({"hint": "detector"}, {"hint": "goal", "get_hint": lambda cap: None}):
+        try:
+            make_backend("aerovla", _mission(), None, get_capture=sim.capture,
+                         client=SimpleNamespace(counts={}), **bad)
+        except (TypeError, ValueError):
+            continue
+        raise AssertionError(f"make_backend accepted {bad}")
+    be = make_backend("aerovla", _mission(), None, get_capture=sim.capture, hint="goal",
+                      client=SimpleNamespace(counts={}))
+    assert be.get_hint(Capture(0.0, Pose(0.0, 0.0, 8.0, 0.0), JPG)) == Hint("forward-right ", "goal")
+    det = make_backend("aerovla", _mission(), None, get_capture=sim.capture,
+                       get_hint=lambda cap: Hint("to your left ", "detector"),
+                       client=SimpleNamespace(counts={}))
+    assert det.get_hint(None).source == "detector"
+
+
+def _fly_ticks(be, sim, n):
+    authors = []
+    for _ in range(n):
+        a = be.act(sim.state())
+        assert a == be.last_tick.action
+        authors.append(be.last_tick.author)
+        be.client.wait_idle(2.0)
+        sim.step(a)
+    return authors
+
+
+def test_a_server_that_refuses_every_request_never_looks_like_a_pilot():
+    """Review of 7c7cc50, P1, reproduced there: a server answering every
+    request with ok=false 'CUDA out of memory' for 30 s gave 299 `hold` ticks
+    and 0 `hover`, 300 requests (one per tick: no backoff), and stats() said
+    decisions_accepted 299, decision_hz 9.97. A dead model reported a 10 Hz
+    VLA decision rate and VLA-authored holds; the first V1a/V1b field
+    mismatch (the server refusing 'unknown field' on every request) would
+    have looked exactly like that. Now: no tick is `hold` or `vla_step`, the
+    requests are paced by the 1 s backoff, decision_hz is 0 and the refusals
+    are counted and rated on their own."""
+    from collections import Counter
+    sim = _Sim()
+    with F.FakeVLAServer(lambda req: F.error_reply(req, "CUDA out of memory")) as srv:
+        be = _backend(srv, sim, backoff_s=1.0)
+        try:
+            authors = _fly_ticks(be, sim, 300)            # 30 s of sim time
+            st = be.stats()
+        finally:
+            be.close()
+    assert set(authors) == {"none"}, Counter(authors)
+    assert be.last_tick.reason == "server_error", be.last_tick
+    n = len(srv.requests)
+    assert 25 <= n <= 31, f"{n} requests in 30 s with a 1 s backoff"
+    assert be.counts["requests"] == n and be.client.counts["server_error"] == n
+    assert st["decisions_accepted"] == 0 and not st["decision_hz"], st
+    assert st["server_error"] == n and 0.8 < st["server_error_hz"] < 1.1, st
+    assert st["answers"] == {"server_error": n}, st["answers"]
+    assert len(be.records) == n
+    assert all(r["kind"] == "server_error" and r["accepted"] is False
+               and r["refused"] == "server_error" for r in be.records)
+    # A server that fails after one good answer: the step is dropped at the
+    # first refusal and every later tick hovers; none is a hold.
+    sim = _Sim()
+    calls = {"n": 0}
+
+    def respond(req):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return F.step_reply(req, 4.0, 0.0, 0.0)
+        return F.error_reply(req, "CUDA out of memory")
+    with F.FakeVLAServer(respond) as srv:
+        be = _backend(srv, sim, backoff_s=1.0)
+        try:
+            authors = _fly_ticks(be, sim, 100)
+            st = be.stats()
+        finally:
+            be.close()
+    assert authors[:2] == ["none", "vla_step"], authors[:5]
+    assert set(authors[2:]) == {"hover"}, Counter(authors[2:])
+    assert be.last_tick.reason == "server_error"
+    assert st["decisions_accepted"] == 1 and st["server_error"] == len(srv.requests) - 1
+    assert be.records[0]["seq"] == 1 and be.records[0]["outcome"]["end"] == "server_error"
+
+
+def test_the_decision_rate_counts_only_answers_the_model_parsed():
+    """Review of 7c7cc50, P1 (stats): decision_hz counted every accepted
+    reply, malformed ones included. It is now the rate of parse_ok answers
+    (a step or LAND) the tracker took; malformed answers keep the brief's
+    counted zero hold and are rated on their own."""
+    sim = _Sim()
+    with F.FakeVLAServer(lambda req: F.parse_fail_reply(req)) as srv:
+        be = _backend(srv, sim)
+        try:
+            authors = _fly_ticks(be, sim, 50)
+            st = be.stats()
+        finally:
+            be.close()
+    assert set(authors[1:]) == {"hold"} and be.last_tick.reason == "parse_fail"
+    n = len(srv.requests) - 1                 # the last tick's answer was not read yet
+    assert st["decisions_accepted"] == 0 and st["decision_hz"] == 0.0, st
+    assert st["parse_fail"] == n and st["parse_fail_hz"] > 5.0, st
+    assert st["answers"] == {"parse_fail": n} and st["server_error"] == 0
+
+
+def test_a_full_disk_never_stops_the_loop():
+    """Review of 7c7cc50, P4, reproduced there: with the log's write raising
+    ENOSPC, act() raised '[Errno 28] No space left on device' at tick 2 and
+    would have ended the flight loop. The log is now written off the loop
+    thread; a failed write is counted (stats()['log_errors']) and the record
+    stays in memory (`records`)."""
+    import tempfile
+    sim = _Sim()
+    with tempfile.TemporaryDirectory() as d, \
+            F.FakeVLAServer(lambda req: F.step_reply(req, 1.0, 0.0, 0.0)) as srv:
+        be = _backend(srv, sim, steps_log=Path(d) / "vla_steps.jsonl")
+
+        def full(s):
+            raise OSError(28, "No space left on device")
+        be.steps_log._fh.write = full
+        try:
+            authors = _fly_ticks(be, sim, 50)
+            assert "vla_step" in authors
+            assert be.steps_log.flush(3.0)
+            st = be.stats()
+        finally:
+            be.close()
+    assert be.records and st["log_errors"] >= 1, st
+    # Every record was kept in memory, and every write of one failed, counted.
+    assert be.steps_log.n == 0 and be.steps_log.errors == len(be.records)
+
+
+def test_a_raising_callback_never_stops_the_loop():
+    """Review of 7c7cc50, P6, reproduced there: an exception from the caller's
+    get_capture or get_hint (Hint('', 'detector') raises), or from
+    build_infer_fields, went out of act() and stopped the 10 Hz loop. act()
+    now returns the tracker's action, counts the error and keeps the last
+    one's text in stats(); the next good tick sends the request."""
+    sim = _Sim()
+    state = {"raise": True}
+
+    def get_hint(cap):
+        if state["raise"]:
+            return Hint("", "detector")               # raises ValueError
+        return Hint("straight ahead ", "detector")
+    with F.FakeVLAServer(lambda req: F.step_reply(req, 4.0, 0.0, 0.0)) as srv:
+        be = _backend(srv, sim, get_hint=get_hint)
+        try:
+            for _ in range(5):
+                assert be.act(sim.state()) == Action4D()
+                assert be.last_tick.author == "none"
+            assert be.counts["request_errors"] == 5 and srv.requests == []
+            st = be.stats()
+            assert st["last_request_error"].startswith("ValueError"), st
+            state["raise"] = False
+            _fly_ticks(be, sim, 3)
+            assert be.last_tick.author == "vla_step" and len(srv.requests) >= 1
+        finally:
+            be.close()
+
+    def bad_capture():
+        raise RuntimeError("camera gone")
+    with F.FakeVLAServer(lambda req: F.step_reply(req, 4.0, 0.0, 0.0)) as srv:
+        be = make_backend("aerovla", _mission(), None, get_capture=bad_capture, hint="goal",
+                          client=RemoteVLA("127.0.0.1", srv.port, clock=sim.clock),
+                          clock=sim.clock)
+        try:
+            assert be.act(sim.state()) == Action4D()
+            assert be.counts["request_errors"] == 1
+            assert "camera gone" in be.stats()["last_request_error"]
+        finally:
+            be.close()
 
 
 if __name__ == "__main__":

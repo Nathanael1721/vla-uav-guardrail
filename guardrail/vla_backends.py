@@ -38,7 +38,7 @@ action (docs/DESIGN-vla-pilot.md).
 from __future__ import annotations
 
 import time
-from dataclasses import replace
+from collections import Counter
 from typing import Callable, Protocol
 
 from .models import Action4D, State
@@ -98,15 +98,28 @@ class RemoteVLABackend:
     flight mode. `suspend()` / `resume()` bracket a rail hold: decisions
     captured before the hold ended are thrown away.
 
+    act() never raises out of the link, the log or the caller's callbacks
+    (review of 7c7cc50, P4 and P6): an exception from get_capture, get_hint
+    or building the request is counted (`counts['request_errors']`, the last
+    one's text in stats()) and the tick still returns the tracker's action;
+    vla_steps.jsonl is written by StepLog's own thread.
+
+    The altitude band (`policy`, `refresh_fences`): the tracker clamps into
+    the tighter of the band its TrackerConfig sets and the policy's hard
+    above-ground envelopes (vla_link.combine_alt_bands); `alt_band_info`
+    says which applied. A configured band that does not overlap the policy
+    band is refused here; on a hot-apply the policy band wins, recorded.
+
     Records: every request becomes one vla_steps.jsonl line (`steps_log`, a
     vla_link.StepLog or a path) when it stops being flown; `records` keeps
-    them in memory too when no log is given.
+    every one in memory as well, so a record whose write failed is not lost.
     """
 
     CADENCES = ("pipelined", "stop_and_go")
 
     def __init__(self, client, get_capture: Callable, get_hint: Callable,
-                 object_text: str = "", *, tracker=None, csp_mode: str = "off",
+                 object_text: str = "", *, tracker=None, policy=None,
+                 csp_mode: str = "off",
                  csp_text: str | None = None, cadence: str = "pipelined",
                  settle_s: float | None = None, steps_log=None,
                  clock: Callable[[], float] = time.monotonic):
@@ -120,6 +133,15 @@ class RemoteVLABackend:
         self.get_hint = get_hint
         self.object_text = object_text
         self.tracker = tracker if tracker is not None else StepTracker()
+        self.counts: dict[str, int] = {"no_capture": 0, "no_hint": 0, "requests": 0,
+                                       "request_errors": 0, "drain_errors": 0,
+                                       "alt_band_disjoint": 0}
+        self.alt_band_info: dict = {}
+        self._apply_policy_band(policy)
+        if self.alt_band_info["source"] == "policy_disjoint":
+            raise ValueError(f"the configured altitude band {self.alt_band_info['configured']} "
+                             f"does not overlap the policy's {self.alt_band_info['policy']}: "
+                             f"the tracker would clamp into heights the Shield refuses")
         self.csp_mode, self.csp_text = csp_mode, csp_text
         self.cadence = cadence
         self.settle_s = UPSTREAM_SETTLE_S if settle_s is None else float(settle_s)
@@ -130,7 +152,10 @@ class RemoteVLABackend:
         self.clock = clock
         self._meta: dict[int, dict] = {}
         self.last_tick = None
-        self.counts: dict[str, int] = {"no_capture": 0, "no_hint": 0, "requests": 0}
+        # Every reply by kind (step / land / parse_fail / server_error /
+        # link_failure), accepted by the tracker or not.
+        self.answers: Counter = Counter()
+        self.last_errors: dict[str, str] = {}
         self._t0: float | None = None
 
     # -- the slot ------------------------------------------------------------ #
@@ -139,19 +164,38 @@ class RemoteVLABackend:
         now = self.clock()
         if self._t0 is None:
             self._t0 = now
-        self._drain(now)
+        self._safe_drain(now)
         tick = self.tracker.tick(now, Pose.from_state(state))
-        self._maybe_request(now)
+        try:
+            self._maybe_request(now)
+        except Exception as exc:                                  # noqa: BLE001
+            # get_capture / get_hint are the caller's; Hint() and
+            # build_infer_fields refuse bad values by raising. None of it may
+            # stop the 10 Hz loop: this tick still returns the tracker's
+            # action, and the next tick tries again.
+            self._error("request_errors", exc)
         self._flush()
         self.last_tick = tick
         return tick.action
 
     def refresh_fences(self, policy) -> None:
         """A hot-applied policy: the tracker clamps altitude targets into the
-        new band from the step being flown on. (The camera model reads no
-        geometry; the Shield enforces the policy downstream.)"""
-        from .vla_link import alt_band_from_policy
-        self.tracker.set_alt_band(alt_band_from_policy(policy))
+        new band (combined with the configured one) from the step being flown
+        on. (The camera model reads no geometry; the Shield enforces the
+        policy downstream.)"""
+        self._apply_policy_band(policy)
+
+    def _apply_policy_band(self, policy) -> None:
+        from .vla_link import combine_alt_bands, policy_alt_band
+        info = policy_alt_band(policy)
+        configured = self.tracker.cfg.alt_band
+        band, source = combine_alt_bands(configured, info["band"])
+        self.tracker.set_alt_band(band)
+        if source == "policy_disjoint":
+            self.counts["alt_band_disjoint"] += 1
+        self.alt_band_info = {"band": band, "source": source, "configured": configured,
+                              "policy": info["band"], "envelopes": info["envelopes"],
+                              "skipped_msl": info["skipped_msl"]}
 
     # -- the rail's controls ------------------------------------------------- #
     @property
@@ -174,7 +218,7 @@ class RemoteVLABackend:
         one line per request sent."""
         from .vla_link import VLA_STEPS_SCHEMA, make_record
         now = self.clock()
-        self._drain(now)
+        self._safe_drain(now)
         self.tracker.close(now)
         self._flush()
         self.client.close()
@@ -195,23 +239,61 @@ class RemoteVLABackend:
 
     def stats(self) -> dict:
         """For metrics.json: decisions, refusals, ends, ticks by author, the
-        decision rate over the time act() has run, and the link's counts."""
+        rates over the time act() has run, and the link's counts.
+
+        `decisions_accepted` / `decision_hz` count only answers the model
+        parsed (a step or LAND) that the tracker took. Until the review of
+        7c7cc50 (P1) they counted every accepted reply: a server refusing
+        every request reported a 9.97 Hz decision rate. Malformed answers,
+        server errors and link failures are counted and rated on their own
+        (`answers` has every reply by kind, accepted or not)."""
         t = self.tracker
-        n = t.counts.get("accepted", 0)
+        n = t.counts.get("kind_step", 0) + t.counts.get("kind_land", 0)
         span = (self.clock() - self._t0) if self._t0 is not None else 0.0
+
+        def rate(k: int) -> float | None:
+            return (k / span) if span > 0 else None
+        n_pf = self.answers.get("parse_fail", 0)
+        n_se = self.answers.get("server_error", 0)
+        n_lf = self.answers.get("link_failure", 0)
+        log = self.steps_log
         return {"cadence": self.cadence, "csp_mode": self.csp_mode,
-                "decisions_accepted": n,
-                "decision_hz": (n / span) if span > 0 else None,
+                "decisions_accepted": n, "decision_hz": rate(n),
+                "answers": dict(self.answers),
+                "parse_fail": n_pf, "parse_fail_hz": rate(n_pf),
+                "server_error": n_se, "server_error_hz": rate(n_se),
+                "link_failure": n_lf, "link_failure_hz": rate(n_lf),
+                "request_errors": self.counts["request_errors"],
+                "last_request_error": self.last_errors.get("request_errors"),
+                "drain_errors": self.counts["drain_errors"],
+                "last_drain_error": self.last_errors.get("drain_errors"),
+                "log_errors": log.errors if log is not None else 0,
+                "last_log_error": log.last_error if log is not None else None,
+                "alt_band": dict(self.alt_band_info),
                 "tracker": dict(t.counts), "ticks_by_author": dict(t.ticks),
                 "requests": dict(self.counts), "link": dict(self.client.counts),
                 "identity": getattr(self.client, "identity", None)}
 
     # -- internals ----------------------------------------------------------- #
+    def _error(self, key: str, exc: BaseException) -> None:
+        self.counts[key] += 1
+        self.last_errors[key] = f"{type(exc).__name__}: {exc}"
+
+    def _safe_drain(self, now: float) -> None:
+        try:
+            self._drain(now)
+        except Exception as exc:                                  # noqa: BLE001
+            # A reply that could not be handed to the tracker is no answer:
+            # hover, counted, and the loop goes on.
+            self._error("drain_errors", exc)
+            self.tracker.link_lost(now, f"drain: {type(exc).__name__}: {exc}")
+
     def _drain(self, now: float) -> None:
         from .vla_link import decision_from_result, make_record
         res = self.client.poll()
         if res is None:
             return
+        self.answers[res.reply.kind if res.reply is not None else "link_failure"] += 1
         meta = self._meta.pop(res.seq)
         dec = decision_from_result(meta, res)
         if dec is None:
@@ -254,16 +336,16 @@ class RemoteVLABackend:
             self._emit(rec)
 
     def _emit(self, rec: dict) -> None:
+        self.records.append(rec)
         if self.steps_log is not None:
-            self.steps_log.write(rec)
-        else:
-            self.records.append(rec)
+            self.steps_log.write(rec)       # queued; written off this thread, never raises
 
 
 # --------------------------------------------------------------------------- #
 # Factory: choose the slot occupant by name. Wire this into run_demo (--vla).
 # 'aerovla' is RemoteVLABackend: it needs a running VLA server (protocol v2,
-# demo/vla_server.py) and a `get_capture` callable from the sim/flight loop.
+# demo/vla_server.py), a `get_capture` callable from the sim/flight loop, and
+# the hint's source (`get_hint`, or hint="goal" for a GOTO mission).
 # --------------------------------------------------------------------------- #
 def make_backend(name: str, mission, policy, **kw) -> VLABackend:
     if name == "stub":
@@ -277,22 +359,28 @@ def make_backend(name: str, mission, policy, **kw) -> VLABackend:
     raise ValueError(f"unknown VLA backend: {name!r}")
 
 
-def _make_remote(mission, policy, *, get_capture, get_hint=None, client=None,
-                 host: str | None = None, port: int | None = None,
+def _make_remote(mission, policy, *, get_capture, get_hint=None, hint: str | None = None,
+                 client=None, host: str | None = None, port: int | None = None,
                  object_text: str = "", tracker_config=None,
                  arrive_radius_m: float = 0.5, **kw) -> "RemoteVLABackend":
     """RemoteVLABackend for a mission.
 
-    The hint defaults to the GOTO phrase toward (mission.target_x,
-    mission.target_y) from each capture pose (hint_source "goal"); pass
-    `get_hint` for a detector-derived phrase (demo/vla_bridge.py). The
-    tracker's altitude band is the policy's hard altitude envelope. Keyword
-    arguments of the old skeleton (model_dir, get_frame, vla_hz) are refused:
-    the model is loaded by the server, frames come with their capture pose,
-    and the decision rate is whatever the server delivers.
+    The hint's source must be named: `get_hint` (a detector-derived phrase,
+    the OWL-ViT box bearing: demo/vla_bridge.py) or `hint="goal"` for a GOTO
+    mission (the phrase toward (mission.target_x, mission.target_y) from each
+    capture pose, hint_source "goal"). Until the review of 7c7cc50 (P7) the
+    goal phrase was the silent default for ANY mission, so a follow or
+    approach mission wired without its detector hint flew on an oracle
+    direction labelled as a GOTO goal; the brief allows the goal phrase for
+    GOTO only. The tracker's altitude band is the tighter of
+    tracker_config.alt_band and the policy's hard above-ground envelopes
+    (RemoteVLABackend). Keyword arguments of the old skeleton (model_dir,
+    get_frame, vla_hz) are refused: the model is loaded by the server, frames
+    come with their capture pose, and the decision rate is whatever the
+    server delivers.
     """
     from .vla_link import (DEFAULT_HOST, DEFAULT_PORT, RemoteVLA, StepTracker,
-                           TrackerConfig, alt_band_from_policy, goal_hint)
+                           TrackerConfig, goal_hint)
     old = sorted(k for k in ("model_dir", "get_frame", "vla_hz") if k in kw)
     if old:
         raise TypeError(f"make_backend('aerovla') no longer takes {old}: the model "
@@ -303,15 +391,21 @@ def _make_remote(mission, policy, *, get_capture, get_hint=None, client=None,
     unknown = sorted(set(kw) - allowed)
     if unknown:
         raise TypeError(f"make_backend('aerovla') got unknown arguments {unknown}")
+    if get_hint is not None and hint is not None:
+        raise TypeError("make_backend('aerovla'): give get_hint or hint='goal', not both")
+    if get_hint is None:
+        if hint != "goal":
+            raise TypeError(
+                f"make_backend('aerovla') needs the hint's source (got hint={hint!r}): "
+                f"get_hint=... for a detector phrase from the OWL-ViT box bearing "
+                f"(demo/vla_bridge.py), or hint='goal' for a GOTO mission, whose phrase "
+                f"points at mission.target_x/target_y. The goal phrase is never a "
+                f"default: on a follow or approach mission it is an oracle direction.")
+        get_hint = goal_hint((mission.target_x, mission.target_y), arrive_radius_m)
     cfg = tracker_config or TrackerConfig()
-    band = alt_band_from_policy(policy) if policy is not None else None
-    if band is not None:
-        cfg = replace(cfg, alt_band=band)
     if client is None:
         client = RemoteVLA(host or DEFAULT_HOST, DEFAULT_PORT if port is None else port,
                            response_timeout_s=cfg.decision_timeout_s,
                            **({"clock": kw["clock"]} if "clock" in kw else {}))
-    if get_hint is None:
-        get_hint = goal_hint((mission.target_x, mission.target_y), arrive_radius_m)
     return RemoteVLABackend(client, get_capture, get_hint, object_text,
-                            tracker=StepTracker(cfg), **kw)
+                            tracker=StepTracker(cfg), policy=policy, **kw)

@@ -8,6 +8,14 @@ protocol v2) is a separate change. Wiring the backend into a rail
 (`perception_node --pilot vla`, the ROS 2 `/vla/action_4d` bridge), the HUD
 panel and the manifest's `pilot_record(kind="vla")` come after both.
 
+2026-10-22: the review of 7c7cc50 found nine problems; all are fixed, each
+with a failing-first test. The ones that change behaviour: a server error is
+no answer (section 5), the client re-reads `raw_text` and pins the model
+identity (section 10), the log is written off the loop thread and nothing
+from the link, the log or the caller's callbacks escapes `act()` (section
+9), the goal phrase is never a default (section 1), and a policy never
+widens or drops a configured altitude band (section 3).
+
 ## 1. Who flies
 
 | Layer | What it decides | Code |
@@ -17,6 +25,13 @@ panel and the manifest's `pilot_record(kind="vla")` come after both.
 | The step tracker | how each step is flown at 10 Hz: a deterministic interpolator, not a planner | `vla_link.StepTracker` |
 | The Shield | whether each 10 Hz action is legal, and its repair | `guardrail/shield.py` |
 | The escalation FSM and the rail | holds, Loiter, RTL, Land; the autopilot link | `guardrail/fsm.py`, the rails |
+
+The hint's source is always named by the caller: `make_backend("aerovla",
+..., get_hint=...)` for a detector phrase, or `hint="goal"` for a GOTO
+mission. Until 2026-10-22 the goal phrase toward `mission.target_x/target_y`
+was the silent default for any mission, so a follow or approach mission
+wired without its detector hint would have flown on an oracle direction
+labelled as a GOTO goal. The factory now refuses a call that names neither.
 
 The model has no language grounding. Its `{object}` slot is inert and only
 the compass phrase steers it (`docs/FINDING-what-drives-aerialvla.md`). So:
@@ -103,6 +118,21 @@ is recorded beside the clamped one (`target.up_raw`, `target.alt_clamped`, and
 the `alt_clamped` count), so a model that keeps diving shows in the record
 even though the Shield's altitude rule then rarely fires on VLA ticks.
 
+Which band: the intersection of the policy's hard altitude envelopes measured
+above ground (`vla_link.policy_alt_band`), combined with any band the caller
+set in `TrackerConfig.alt_band` (`vla_link.combine_alt_bands`): the tighter
+of the two, so a policy never widens a configured band and a hot-applied
+policy without an envelope never removes it. An envelope with `altitude_ref:
+MSL` is skipped and named (`skipped_msl`): the Shield refuses MSL envelopes
+(no ground-elevation source), and clamping its 120-300 m as heights above
+ground would be wrong. A configured band that misses the policy band entirely
+is refused when the backend is built; on a hot-apply the policy band wins
+(`source: policy_disjoint`, counted), because the Shield enforces the policy.
+`stats()["alt_band"]` records the band, its source, both inputs and the
+skipped envelopes. (Until 2026-10-22 the policy band replaced the configured
+one, MSL envelopes were clamped as above-ground heights, and a policy without
+an envelope dropped a configured clamp.)
+
 What the tracker does NOT do: choose a direction the model did not choose,
 avoid anything, look at the policy's zones, blend in a planner or a servo.
 There is no `goal_blend`. The only policy input is the altitude band.
@@ -110,8 +140,12 @@ There is no `goal_blend`. The only policy input is the altitude band.
 ## 4. Cadence: pipelined and stop-and-go
 
 One request is outstanding at a time, by construction (`RemoteVLA.submit`
-returns None while one is in flight; the fake server counts overlaps, and they
-stay at 0).
+returns None while one is in flight or its result is still unread; the fake
+server counts overlaps, and they stay at 0). The unread-result rule closed a
+loss: until 2026-10-22 a second request could go out between `act()`'s poll
+and its submit, and when that request came back within one tick (an instant
+refusal, a server that died) the worker overwrote the first result, a step or
+a LAND that never reached the tracker.
 
 - **pipelined** (default): the next image is captured and sent as soon as the
   previous answer is back, while that answer's step is being flown. The newer
@@ -137,9 +171,9 @@ per-tick rows):
 | Author | When | Action |
 |---|---|---|
 | `vla_step` | flying toward an accepted step's targets (`reason`: rotate / translate) | the tracker's law above |
-| `hold` | the step is complete (`step_complete`); the answer was malformed (`parse_fail`) or a server error (`server_error`); the model said LAND (`land`) | zero, except a completed step keeps its altitude target; parse_fail, server_error and LAND are all-zero |
-| `hover` | no usable decision: the step's image is too old (`stale`), a hold lasted past the timeout (`no_new_decision`), the link failed (`link_lost`), or a rail hold invalidated it (`awaiting_fresh_decision`) | all-zero |
-| `none` | no decision accepted yet (`no_decision`), or the rail has the tracker suspended (`suspended`) | all-zero |
+| `hold` | the step is complete (`step_complete`); the answer was malformed (`parse_fail`); the model said LAND (`land`) | zero, except a completed step keeps its altitude target; parse_fail and LAND are all-zero |
+| `hover` | no usable decision: the step's image is too old (`stale`), a hold lasted past the timeout (`no_new_decision`), the link failed (`link_lost`), the server refused the request (`server_error`), or a rail hold invalidated it (`awaiting_fresh_decision`) | all-zero |
+| `none` | no decision accepted yet (`no_decision`, or `link_lost` / `server_error` when that is why), or the rail has the tracker suspended (`suspended`) | all-zero |
 
 A malformed answer HOLDS ZERO and is counted: it replaces the step being
 flown, because a misread answer is no licence to keep flying the previous one.
@@ -147,6 +181,21 @@ flown, because a misread answer is no licence to keep flying the previous one.
 fading; the brief's rule, adopted here, is the stricter one. Its yaw-fade and
 "forward only while the box is fresh" rules were for velocity semantics; a
 step is a bounded displacement, so there is nothing to fade.)
+
+A server error (`ok: false`) is NOT an answer: the model never saw the
+request. It is refused (`refused: server_error`, counted `server_error`),
+ends the step being flown like a link failure (`end: server_error`), and the
+tracker hovers; with `hover_on_link_loss` off it leaves the step alone, as a
+link failure does. The client backs off `reconnect_backoff_s` before the next
+request, on the same connection. Until 2026-10-22 a server error was accepted
+as a `hold` and reset the hold timer, with no backoff: a fake server answering
+every request with "CUDA out of memory" for 30 s gave 299 `hold` ticks, 0
+`hover`, 300 requests and a reported decision rate of 9.97 Hz. A dead model
+looked like a pilot holding on purpose, and the first field mismatch between
+the server and the client (the server refusing `unknown field` on every
+request) would have looked the same. Now that run gives 300 `none` ticks
+(reason `server_error`), 30 requests and a decision rate of 0
+(`test_a_server_that_refuses_every_request_never_looks_like_a_pilot`).
 
 ## 6. Timeouts
 
@@ -156,7 +205,7 @@ step is a bounded displacement, so there is nothing to fade.)
 | `decision_timeout_s`, hold | 10 s | how long a hold lasts waiting for the next answer, measured from the hold's start. Then hover (`end: hold_timeout`). |
 | client response timeout | = `decision_timeout_s` (factory) | one request's round trip; a later answer would be refused as stale anyway. On timeout the connection is dropped. |
 | connect timeout | 2 s | opening the TCP connection |
-| reconnect backoff | 1 s | no new request this long after a failure |
+| reconnect backoff | 1 s | no new request this long after a failure or a server error |
 | step time cap | per step (section 3) | a step that cannot reach tolerance (wind, a Shield repair holding it back) ends and holds |
 
 The hold's timeout is measured from the hold's start, not from the capture.
@@ -222,21 +271,56 @@ it:
   `ok`, `error`, `raw_text`, `bins`, `step`, `land`, `parse_ok`,
   `latency_server_s`, `prompt_sha256`, `image_sha256`, `model`, and
   `failure` for a link failure;
-- fate: `accepted`, `refused` (suspended / invalidated / after_land /
-  stale_on_arrival / future_capture / link_failure / closed), `target` (psi, x, y, up,
-  up_raw, alt_clamped, rotate_only, time_cap_s), `outcome` (t_start,
-  completed, completion tolerance / time_cap, t_complete, end superseded /
-  stale / hold_timeout / link_lost / suspended / land / closed, t_end, ticks
-  by author).
+- fate: `accepted`, `refused` (server_error / suspended / invalidated /
+  after_land / stale_on_arrival / future_capture / link_failure / closed),
+  `target` (psi, x, y, up, up_raw, alt_clamped, rotate_only, time_cap_s),
+  `outcome` (t_start, completed, completion tolerance / time_cap,
+  t_complete, end superseded / stale / hold_timeout / link_lost /
+  server_error / suspended / land / closed, t_end, ticks by author).
 
-`RemoteVLABackend.stats()` gives the run's decision count and rate, refusals,
-ends, ticks by author and the link's counters, for `metrics.json`.
+`RemoteVLABackend.stats()` gives, for `metrics.json`: `decisions_accepted` and
+`decision_hz`, which count ONLY answers the model parsed (a step or LAND) that
+the tracker took; `answers` (every reply by kind, accepted or not);
+`parse_fail`, `server_error` and `link_failure` with their own rates; the
+error counts below; the altitude band and its source; refusals, ends, ticks
+by author and the link's counters. (Until 2026-10-22 the decision rate counted
+every accepted reply, server errors and malformed answers included.)
+
+Nothing here may stop the 10 Hz loop:
+
+- `StepLog.write()` only queues the record; a writer thread serializes and
+  writes it, and a failure (an `OSError`, a record that is not JSON) is
+  counted (`log_errors`, `last_log_error`), never raised. `close()` drains
+  the queue first. `RemoteVLABackend.records` keeps every record in memory as
+  well. Until 2026-10-22 the line was written and flushed on the loop thread
+  inside `act()`, and a full disk (D: runs near full) raised out of `act()` at
+  the second tick. The rails keep file IO off the loop the same way
+  (`demo/follow_vlm.py` writes detections on its worker thread and
+  `flight_log.jsonl` in its `finally`).
+- An exception from the caller's `get_capture` or `get_hint`, or from building
+  the request (`Hint` and `build_infer_fields` refuse bad values by raising),
+  is counted (`request_errors`, `last_request_error`) and the tick still
+  returns the tracker's action. A reply that cannot be handed to the tracker
+  is counted (`drain_errors`) and treated as a lost link.
+- The client's worker thread posts a result for every request whatever goes
+  wrong in it (`failure: internal` for anything unexpected), so it never dies
+  with a request outstanding and every request keeps its line.
 
 ## 10. Protocol v2, the client's half
 
 TCP (default 127.0.0.1:8790), one JSON object per line, UTF-8, one request to
-one response, many requests per connection; `hello` on every new connection
-(its `model` is kept as `RemoteVLA.identity`).
+one response, many requests per connection; `hello` on every new connection.
+
+The first hello's `model` is pinned as `RemoteVLA.identity`. It must be the
+brief's identity: `id` and `base` non-empty strings, `weights_sha256` 64
+lowercase hex digits, `precision` nf4 or bf16, `attn` eager or sdpa, `merged`
+true or false (serving facts beside these are kept). Every answer's `model`,
+and the hello of every reconnect, must name the same six fields; otherwise the
+reply is a protocol failure counted `model_changed`, so a server restarted
+with other weights stops the run's decisions instead of mixing two models in
+one record (the dashboard classifies runs by `weights_sha256`). A scripted
+stand-in with no weights is accepted only with `RemoteVLA(...,
+strict_identity=False)`, said out loud by the caller.
 
 The client refuses to send a request with any field the protocol does not name,
 and refuses `target`, `goal`, `object_position`, `xy`, `lat` and `lon` by name.
@@ -249,9 +333,25 @@ A reply is refused (a `protocol` failure: the connection is dropped and the
 answer is never a decision) when the version or sequence number is wrong, a
 field is missing, a step is outside AerialVLA's range, `parse_ok` is false but
 a step or LAND came with it, the bins are not three integers 0..98, the echoed
-`t_capture` or pose is not what was sent, a hash is not 64 hex digits, or the
-line is not JSON (NaN included). `ok: false` with a reason is a server error:
-held at zero and counted, not a link failure.
+`t_capture` or pose is not what was sent, a hash is not 64 hex digits, the
+model is not the pinned identity, or the line is not JSON (NaN included, and
+nesting too deep for the JSON reader).
+
+The client does not take `parse_ok: true` on trust. The brief's headline bug
+was a server-side parser (`ints[-3:]`) that turned malformed LAND outputs into
+motion; a server still running one would otherwise be flown. An answer marked
+`parse_ok` is refused unless `raw_text` IS that answer: exactly three 2-digit
+ASCII bins separated by single spaces, `" LAND"` exactly when `land` is true,
+optionally the EOS marker `</s>` (the server decodes with special tokens),
+nothing else; the three bins equal `bins`; and each step value lies within
+half a bin of its bin's value (`b / 98 * (hi - lo) + lo`, the lower edge of
+the bin's cell, upstream's decoder). So `"00 49 49 49"` (four numbers) with
+`parse_ok: true` and `"40 49 49 LAND"` with `land: false` are both refused,
+where until 2026-10-22 the first flew as a 2.5 m forward step and the second
+as motion instead of LAND.
+
+`ok: false` with a reason is a server error: no answer (section 5), counted,
+backed off, not a link failure.
 
 ## 11. Open questions for the PI
 

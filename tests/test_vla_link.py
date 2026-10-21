@@ -14,20 +14,28 @@ WHAT IS BEING CLAIMED
    and clamps the altitude target into the policy's band.
 2. A step ends by tolerance or by its time cap; a decision older than the
    timeout is never flown (hover), and neither is one captured before a rail
-   hold ended. A malformed answer holds zero, counted. LAND stops the tracker
-   and is reported as a flag; nothing in the module can request a flight mode.
+   hold ended. A malformed answer holds zero, counted; a server error is no
+   answer (hover, counted, backed off). LAND stops the tracker and is
+   reported as a flag; nothing in the module can request a flight mode.
 3. Every tick names its author: vla_step, hold, hover or none.
 4. The client speaks protocol v2 exactly (tests/vla_fake_server.py refuses
    what the real server refuses): one request outstanding, submit() never
-   blocks, timeouts and dropped connections fail cleanly and reconnect, and a
-   reply that breaks the protocol is never read as a decision.
+   blocks and never overwrites an unread result, timeouts and dropped
+   connections fail cleanly and reconnect, the worker survives anything, a
+   reply that breaks the protocol is never read as a decision (parse_ok is
+   re-checked against raw_text), the model identity is checked and pinned,
+   and the log is written off the caller's thread and never raises.
 5. Closed loop: a point vehicle that follows the tracker's actions reaches a
    goal from scripted steps (quantized to the model's 99 bins), pipelined and
    stop-and-go, with latencies from 0.4 s to 3 s.
 
 Shown failing first: guardrail/vla_link.py did not exist at 7c9c9e6, so every
-test here fails there at import. No model, GPU or simulator is needed; the
-TCP tests use a loopback fake server.
+test here fails there at import. The review fixes of 2026-10-22 (the tests
+that cite "Review of 7c7cc50") each failed at 7c7cc50: a server error was
+accepted as a hold; a second submit overwrote an unread result; raw_text was
+not checked; a nested reply killed the worker; the identity was not checked;
+StepLog had no writer thread; policy_alt_band did not exist. No model, GPU or
+simulator is needed; the TCP tests use a loopback fake server.
 """
 from __future__ import annotations
 
@@ -313,6 +321,33 @@ def test_the_altitude_target_is_clamped_into_the_policy_band():
     assert d4.record["target"]["up"] == 10.25     # inset is a quarter of a thin band
 
 
+def test_the_policy_band_skips_msl_envelopes_and_never_widens_a_configured_band():
+    """Review of 7c7cc50, P8. An MSL envelope was clamped as if its heights
+    were above ground (the Shield refuses to enforce MSL envelopes: there is
+    no ground-elevation source, Shield.unenforceable); it is now skipped and
+    named. A policy band replaced a band the caller configured instead of
+    intersecting with it; combine_alt_bands keeps the tighter of the two and
+    says which applied. When the two do not overlap the policy wins (the
+    Shield enforces the policy band, not the configured one), said so."""
+    from types import SimpleNamespace
+    from guardrail.models import AltitudeEnvelope
+    agl = AltitudeEnvelope(id="agl", type="altitude_envelope", alt_min_m=5, alt_max_m=40)
+    msl = AltitudeEnvelope(id="msl", type="altitude_envelope", alt_min_m=120,
+                           alt_max_m=300, altitude_ref="MSL")
+    soft = AltitudeEnvelope(id="soft", type="altitude_envelope", alt_min_m=10,
+                            alt_max_m=12, constraint_type="soft")
+    info = L.policy_alt_band(SimpleNamespace(constraints=[agl, msl, soft]))
+    assert info == {"band": (5.0, 40.0), "envelopes": ["agl"], "skipped_msl": ["msl"]}, info
+    assert L.alt_band_from_policy(SimpleNamespace(constraints=[agl, msl])) == (5.0, 40.0)
+    only_msl = L.policy_alt_band(SimpleNamespace(constraints=[msl]))
+    assert only_msl["band"] is None and only_msl["skipped_msl"] == ["msl"]
+    assert L.combine_alt_bands(None, None) == (None, "none")
+    assert L.combine_alt_bands((8, 20), None) == ((8.0, 20.0), "configured")
+    assert L.combine_alt_bands(None, (5, 40)) == ((5.0, 40.0), "policy")
+    assert L.combine_alt_bands((8, 50), (5, 40)) == ((8.0, 40.0), "intersection")
+    assert L.combine_alt_bands((50, 60), (5, 40)) == ((5.0, 40.0), "policy_disjoint")
+
+
 def test_speed_climb_and_yaw_caps_hold_on_every_tick():
     import random
     rng = random.Random(20261021)
@@ -398,10 +433,20 @@ def test_land_stops_the_tracker_and_is_reported_as_a_flag():
     assert tr.tick(60.1, Pose(0, 0, 10, 0)).author == "vla_step"
 
 
-def test_a_malformed_answer_or_a_server_error_holds_zero_and_is_counted():
+def test_a_malformed_answer_holds_zero_and_a_server_error_is_no_answer():
     """The brief's rule: parse_ok false means step null and the client HOLDS
     ZERO, counted. It replaces the step being flown: a misread answer is not
-    a licence to keep flying the previous one."""
+    a licence to keep flying the previous one.
+
+    CHANGED BY DESIGN ON 2026-10-22 (review of 7c7cc50, P1): a server error
+    (ok=false) was accepted the same way, as a `hold`. It is not an answer
+    from the model, and every refusal reset the hold timer, so a server that
+    refused every request (CUDA out of memory, or the server refusing an
+    'unknown field' on every request) gave 299 `hold` ticks and 0 `hover`
+    over 30 s: a dead model looked like a pilot holding on purpose. A server
+    error is now refused (`refused: server_error`, counted `server_error`),
+    ends the step being flown like a link failure, and the tracker hovers;
+    before any decision it says `none` with the reason."""
     first = Decision.of(1, 0.0, Pose(0, 0, 10, 0), Step(4.0, -3.0, 0.0))
     tr2 = StepTracker()
     tr2.accept(first, 0.0)
@@ -411,10 +456,28 @@ def test_a_malformed_answer_or_a_server_error_holds_zero_and_is_counted():
     tk = tr2.tick(0.7, Pose(0.6, 0, 10.6, 0))
     assert tk.author == "hold" and tk.reason == "parse_fail" and tk.action == Action4D()
     se = Decision.of(3, 0.8, Pose(0.6, 0, 10.6, 0), kind="server_error")
-    tr2.accept(se, 0.9)
-    tk = tr2.tick(1.0, Pose(0.6, 0, 10.6, 0))
-    assert tk.reason == "server_error" and tk.action == Action4D()
-    assert tr2.counts["kind_parse_fail"] == 1 and tr2.counts["kind_server_error"] == 1
+    assert not tr2.accept(se, 0.9), "a server error was accepted as a decision"
+    assert se.record["accepted"] is False and se.record["refused"] == "server_error"
+    assert se.record["target"] is None and se.record["outcome"] is None
+    assert pf.record["outcome"]["end"] == "server_error"
+    for t in (1.0, 1.5, 3.0):
+        tk = tr2.tick(t, Pose(0.6, 0, 10.6, 0))
+        assert tk.author == "hover" and tk.reason == "server_error", tk
+        assert tk.action == Action4D()
+    assert tr2.counts["kind_parse_fail"] == 1 and tr2.counts["server_error"] == 1
+    assert "kind_server_error" not in tr2.counts and tr2.counts["accepted"] == 2
+    assert [r["seq"] for r in tr2.pop_finished()] == [1, 2, 3]
+    # Before any decision: nothing flies, and the tick says why.
+    fresh = StepTracker()
+    assert not fresh.accept(Decision.of(1, 0.0, Pose(0, 0, 10, 0), kind="server_error"), 0.1)
+    tk = fresh.tick(0.2, Pose(0, 0, 10, 0))
+    assert tk.author == "none" and tk.reason == "server_error", tk
+    # With hover_on_link_loss off, a server error leaves the step being flown
+    # alone, exactly as a link failure does (no new answer arrived).
+    keep = StepTracker(TrackerConfig(hover_on_link_loss=False))
+    keep.accept(Decision.of(1, 0.0, Pose(0, 0, 10, 0), Step(5.0, 0.0, 0.0)), 0.0)
+    assert not keep.accept(Decision.of(2, 0.4, Pose(0, 0, 10, 0), kind="server_error"), 0.5)
+    assert keep.tick(0.6, Pose(0.3, 0, 10, 0)).author == "vla_step"
 
 
 def test_a_decision_past_the_timeout_is_never_flown():
@@ -517,6 +580,51 @@ def test_a_lost_link_hovers_unless_told_otherwise():
     assert keep.tick(0.6, Pose(0.3, 0, 10, 0)).author == "vla_step"
 
 
+def test_the_step_log_writes_off_the_callers_thread_and_never_raises():
+    """Review of 7c7cc50, P4: vla_steps.jsonl was written and flushed on the
+    10 Hz loop thread from inside act(), and an OSError went straight out of
+    act() (a full disk stopped the flight loop at tick 2 in the reviewer's
+    repro; D: is known to run near full). StepLog.write now only queues the
+    record: a writer thread serializes and writes it, and a failure (OSError,
+    or a record that is not JSON) is counted in `errors`, never raised.
+    close() drains the queue first, so every line written still lands."""
+    import tempfile
+    import threading
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "vla_steps.jsonl"
+        log = StepLog(path)
+        try:
+            seen = []
+            real = log._fh.write
+
+            def spy(s):
+                seen.append(threading.current_thread())
+                return real(s)
+            log._fh.write = spy
+            log.write({"seq": 1})
+            assert log.flush(3.0)
+            assert seen and all(t is not threading.current_thread() for t in seen), seen
+
+            def full(s):
+                raise OSError(28, "No space left on device")
+            log._fh.write = full
+            for i in range(5):
+                log.write({"seq": 2 + i})             # never raises
+            assert log.flush(3.0)
+            assert log.errors == 5 and "No space left" in log.last_error, log.last_error
+            log._fh.write = real
+            log.write({"seq": 8, "bad": float("nan")})  # not JSON: counted, not raised
+            log.write({"seq": 9})
+            assert log.flush(3.0)
+            assert log.errors == 6 and log.n == 2, (log.errors, log.n)
+        finally:
+            log.close()
+        log.write({"seq": 10})                        # after close: counted, not raised
+        assert log.errors == 7
+        lines = path.read_bytes().decode("utf-8").splitlines()
+        assert [json.loads(x)["seq"] for x in lines] == [1, 9], lines
+
+
 def test_the_record_says_what_became_of_each_decision_and_the_log_is_lf_jsonl():
     import tempfile
     with tempfile.TemporaryDirectory() as tmp:
@@ -608,6 +716,96 @@ def test_one_request_outstanding_and_submit_never_blocks():
             c.close()
 
 
+def test_a_finished_result_waits_until_it_is_polled():
+    """Review of 7c7cc50, P2: submit() checked only that no request was in
+    flight, so a second request could go out while the first one's result
+    sat unread, and the worker then overwrote it: poll() returned seq 2 and
+    seq 1 (perhaps a step, perhaps LAND) was gone. In act() the window is
+    between _drain()'s poll() and _maybe_request()'s busy check, and it bites
+    whenever the next answer comes back within one tick (an instant refusal,
+    a server that dies). A finished, unread result now counts as busy."""
+    with F.FakeVLAServer(lambda req: F.step_reply(req, 3.0, 0.0, 0.0)) as srv:
+        c = _client(srv)
+        try:
+            assert c.submit(_fields(0.0)[0]) == 1 and c.wait_idle(3.0)
+            assert c.busy, "a finished, unread result must count as busy"
+            assert c.submit(_fields(0.1)[0]) is None
+            assert c.counts["submit_unpolled"] == 1 and len(srv.requests) == 1
+            res = c.poll()
+            assert res is not None and res.seq == 1 and c.poll() is None, res
+            assert not c.busy and c.submit(_fields(0.2)[0]) == 2 and c.wait_idle(3.0)
+            assert c.poll().seq == 2 and len(srv.requests) == 2
+        finally:
+            c.close()
+
+
+def test_the_worker_survives_any_exception_and_always_posts_a_result():
+    """Review of 7c7cc50, P5: the worker caught only the link, protocol, OS
+    and value errors. Anything else killed the thread with `_busy` still set:
+    every later submit() returned None, no failure was recorded and the
+    request got no line until close(). A reply nested 200,000 deep (a
+    RecursionError in json) did it in the reviewer's repro. That reply is now
+    a protocol failure, anything else unexpected is failure "internal", and
+    either way the result is posted, the connection dropped and the worker
+    keeps serving."""
+    nested = b"[" * 200000 + b"]" * 200000 + b"\n"
+    with F.FakeVLAServer(lambda req: nested) as srv:
+        c = _client(srv)
+        try:
+            assert c.submit(_fields(0.0)[0]) == 1
+            assert c.wait_idle(5.0), "the worker died with the request outstanding"
+            res = c.poll()
+            assert res is not None and res.failure == "protocol" and res.reply is None, res
+            assert c._worker.is_alive()
+            assert c.submit(_fields(1.0)[0]) == 2 and c.wait_idle(5.0)
+            assert c.poll().failure == "protocol"
+        finally:
+            c.close()
+    with F.FakeVLAServer(lambda req: F.step_reply(req, 1.0, 0.0, 0.0)) as srv:
+        c = _client(srv)
+        real = L.parse_infer_response
+
+        def boom(*a, **k):
+            raise RuntimeError("a bug in the reply reader")
+        L.parse_infer_response = boom
+        try:
+            assert c.submit(_fields(0.0)[0]) == 1 and c.wait_idle(3.0)
+            res = c.poll()
+            assert res.failure == "internal" and "RuntimeError" in res.detail, res
+            assert c.counts["fail_internal"] == 1 and c._worker.is_alive()
+        finally:
+            L.parse_infer_response = real
+        try:
+            assert c.submit(_fields(1.0)[0]) == 2 and c.wait_idle(3.0)
+            assert c.poll().reply.kind == "step"
+            assert srv.connections == 2, "the failure did not drop the connection"
+        finally:
+            c.close()
+
+
+def test_a_server_error_backs_off_without_dropping_the_connection():
+    """Review of 7c7cc50, P1 (the client half): an ok=false reply set no
+    backoff, so a server refusing every request was asked again on every
+    tick (300 requests in 30 s). It now backs off like a failure, on the
+    same connection (the stream is still in step), and is counted."""
+    clock = {"t": 0.0}
+    with F.FakeVLAServer(lambda req: F.error_reply(req, "CUDA out of memory")) as srv:
+        c = _client(srv, reconnect_backoff_s=1.0, clock=lambda: clock["t"])
+        try:
+            assert c.submit(_fields(0.0)[0]) == 1 and c.wait_idle(3.0)
+            res = c.poll()
+            assert res.failure is None and res.reply.kind == "server_error"
+            assert c.counts["server_error"] == 1
+            assert c.backing_off and c.submit(_fields(0.1)[0]) is None
+            assert c.counts["submit_backoff"] == 1
+            clock["t"] = 1.01
+            assert c.submit(_fields(1.01)[0]) == 2 and c.wait_idle(3.0)
+            assert c.poll().reply.kind == "server_error"
+            assert srv.connections == 1 and c.counts["connects"] == 1
+        finally:
+            c.close()
+
+
 def test_a_timeout_fails_cleanly_and_the_next_request_reconnects():
     calls = {"n": 0}
 
@@ -667,6 +865,22 @@ def test_a_reply_that_breaks_the_protocol_is_never_a_decision():
         "not json": lambda req: b"00 49 49 LAND\n",
         "NaN": lambda req: json.dumps(bad(req)).replace('"latency_s": 0.01',
                                                          '"latency_s": NaN').encode() + b"\n",
+        # Review of 7c7cc50, P3: the client trusted the server's parse_ok. A
+        # server still running the old ints[-3:] parser (the brief's headline
+        # bug) would be flown. parse_ok true now needs raw_text to BE the
+        # answer: three 2-digit bins equal to `bins`, " LAND" exactly when
+        # land is true, and a step within half a bin of the bins' value.
+        "four numbers (ints[-3:])": lambda req: bad(req, raw_text="00 19 49 49"),
+        "LAND in the text, land false": lambda req: bad(req, raw_text="19 49 49 LAND"),
+        "land true, no LAND in the text": lambda req: bad(req, land=True),
+        "three-digit bin": lambda req: bad(req, raw_text="19 49 049"),
+        "text around the answer": lambda req: bad(req, raw_text=" 19 49 49"),
+        "bins are not the text's": lambda req: bad(req, raw_text="20 49 49"),
+        "step is not the bins'": lambda req: bad(req, step={"fwd_m": 4.0, "down_m": 0.0,
+                                                            "dpsi_rad": 0.0}),
+        "step off by a bin": lambda req: bad(req, step={"fwd_m": F.dequantize(20, 0.0, 5.0),
+                                                        "down_m": 0.0, "dpsi_rad": 0.0}),
+        "non-ASCII digit": lambda req: bad(req, raw_text="19 49 4٩"),
     }
     for name, respond in cases.items():
         with F.FakeVLAServer(respond) as srv:
@@ -676,6 +890,23 @@ def test_a_reply_that_breaks_the_protocol_is_never_a_decision():
                 assert c.wait_idle(3.0), name
                 res = c.poll()
                 assert res.failure == "protocol" and res.reply is None, (name, res)
+            finally:
+                c.close()
+    # The answer as the server decodes it: with special tokens, so the text
+    # may end in the EOS marker; LAND exactly when the text says it.
+    for name, respond, kind in (
+            ("EOS", lambda req: dict(F.step_reply(req, 1.0, 0.0, 0.0),
+                                     raw_text="19 49 49</s>"), "step"),
+            ("LAND", lambda req: F.land_reply(req), "land"),
+            ("LAND + EOS", lambda req: dict(F.land_reply(req), raw_text="00 49 49 LAND</s>"),
+             "land")):
+        with F.FakeVLAServer(respond) as srv:
+            c = _client(srv)
+            try:
+                c.submit(_fields(0.0)[0])
+                assert c.wait_idle(3.0), name
+                res = c.poll()
+                assert res.failure is None and res.reply.kind == kind, (name, res)
             finally:
                 c.close()
     # The malformed answer the real server sends as such is a hold, not a failure.
@@ -735,6 +966,92 @@ def test_a_closed_or_absent_server_is_a_link_failure():
         assert time.monotonic() - t0 < 2.5
     finally:
         c.close()
+
+
+def test_the_model_identity_is_checked_and_may_not_change_mid_run():
+    """Review of 7c7cc50, P9: hello accepted any object as the model ({}
+    included) and a reply's model was never compared with it. The dashboard
+    classifies VLA runs by the weights hash, so an identity without one, or
+    a model swapped mid-run by a server restart, passed unnoticed. hello
+    must now carry the brief's identity (id, base, weights_sha256 as 64 hex
+    digits, precision nf4|bf16, attn eager|sdpa, merged true|false; extra
+    serving facts are kept); every answer's model must be that identity, and
+    so must the hello on any reconnect. A scripted stand-in (no weights) is
+    accepted only with strict_identity=False, said out loud by the caller."""
+    good = dict(F.MODEL)
+    step = (lambda req: F.step_reply(req, 1.0, 0.0, 0.0))
+    for name, model in (("empty", {}),
+                        ("no digest", {k: v for k, v in good.items() if k != "weights_sha256"}),
+                        ("short digest", dict(good, weights_sha256="abc")),
+                        ("upper-case digest", dict(good, weights_sha256="A" * 64)),
+                        ("precision", dict(good, precision="fp8")),
+                        ("attn", dict(good, attn="flash")),
+                        ("merged not a bool", dict(good, merged="no")),
+                        ("empty id", dict(good, id="")),
+                        ("no base", {k: v for k, v in good.items() if k != "base"})):
+        with F.FakeVLAServer(step, model=model) as srv:
+            c = _client(srv)
+            try:
+                c.submit(_fields(0.0)[0])
+                assert c.wait_idle(3.0), name
+                res = c.poll()
+                assert res.failure == "protocol" and "identity" in res.detail, (name, res)
+                assert srv.requests == [] and c.identity is None, name
+            finally:
+                c.close()
+    # Serving facts beside the identity are kept; answers are compared on the
+    # identity's own fields.
+    with F.FakeVLAServer(step, model=dict(good, serving={"max_new_tokens": 12})) as srv:
+        c = _client(srv)
+        try:
+            assert c.connect()["serving"] == {"max_new_tokens": 12}
+            c.submit(_fields(0.0)[0])
+            assert c.wait_idle(3.0) and c.poll().reply.kind == "step"
+        finally:
+            c.close()
+    # A scripted stand-in, on purpose.
+    fake = {"id": "fake:scripted", "base": "none", "weights_sha256": None,
+            "precision": "fake", "attn": "none", "merged": False}
+    with F.FakeVLAServer(lambda req: dict(step(req), model=dict(fake)), model=fake) as srv:
+        c = _client(srv, strict_identity=False)
+        try:
+            c.submit(_fields(0.0)[0])
+            assert c.wait_idle(3.0) and c.poll().reply.kind == "step"
+        finally:
+            c.close()
+    # An answer from another model than the hello's.
+    other = dict(good, weights_sha256="1" * 64)
+    with F.FakeVLAServer(lambda req: dict(step(req), model=dict(other))) as srv:
+        c = _client(srv)
+        try:
+            c.submit(_fields(0.0)[0])
+            assert c.wait_idle(3.0)
+            res = c.poll()
+            assert res.failure == "protocol" and "model changed" in res.detail, res
+            assert c.counts["model_changed"] == 1
+        finally:
+            c.close()
+    # A restart with other weights: the reconnect's hello is refused, and
+    # nothing more is sent.
+    calls = {"n": 0}
+
+    def respond(req):
+        calls["n"] += 1
+        return F.CLOSE if calls["n"] == 1 else step(req)
+    with F.FakeVLAServer(respond) as srv:
+        c = _client(srv)
+        try:
+            c.submit(_fields(0.0)[0])
+            assert c.wait_idle(3.0) and c.poll().failure == "link"
+            srv.model = dict(good, weights_sha256="2" * 64)
+            c.submit(_fields(1.0)[0])
+            assert c.wait_idle(3.0)
+            res = c.poll()
+            assert res.failure == "protocol" and "model changed" in res.detail, res
+            assert len(srv.requests) == 1 and c.counts["model_changed"] == 1
+            assert c.identity["weights_sha256"] == "0" * 64
+        finally:
+            c.close()
 
 
 # --------------------------------------------------------------------------- #

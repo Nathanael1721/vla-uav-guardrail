@@ -47,14 +47,28 @@ EVERY TICK SAYS WHO AUTHORED IT (`Tick.author`):
     vla_step  motion toward the endpoint of an accepted VLA step
     hold      a deliberate stand-still that a VLA answer asked for: the step
               is complete (altitude still held at the step's target), the
-              answer was malformed (parse_ok false: zero, counted) or a server
-              error (zero, counted), or the model said LAND (zero, latched)
+              answer was malformed (parse_ok false: zero, counted), or the
+              model said LAND (zero, latched)
     hover     the fallback when answers stop: the step being flown is older
               than `decision_timeout_s` (capture to now), a hold has lasted
-              longer than that with no new answer, the link was lost, or a
-              rail hold invalidated the decision; all-zero
-    none      no VLA decision has been accepted yet, or the rail has the
+              longer than that with no new answer, the link was lost, the
+              server refused the request (ok=false), or a rail hold
+              invalidated the decision; all-zero
+    none      no VLA decision has been accepted yet (the reason says why:
+              no_decision, link_lost, server_error), or the rail has the
               tracker suspended (an escalation hold is flying)
+
+A SERVER ERROR IS NOT AN ANSWER. ok=false (CUDA out of memory, a refused
+field) means the model never saw the request. Until the review of 7c7cc50 it
+was accepted as a `hold` and reset the hold timer, so a server refusing every
+request looked like a pilot holding on purpose at 10 Hz. It is now refused
+like a link failure (the step being flown ends, the tracker hovers), the
+client backs off before asking again, and the decision rate counts only
+answers the model parsed.
+
+NOTHING HERE MAY STOP THE 10 Hz LOOP. The worker thread posts a result for
+every request whatever goes wrong in it; vla_steps.jsonl is written by its own
+thread (StepLog), and a failed write is counted, never raised.
 
 LAND IS A FLAG, NEVER A MODE REQUEST. A LAND answer stops the tracker and sets
 `land_requested`; the rail hands that to the escalation FSM's Land (or its own
@@ -74,7 +88,12 @@ one response, many requests per connection.
 
 The infer response carries the step (or null), land, parse_ok, raw_text, bins,
 the server's model latency, the echoed t_capture and pose, the prompt and
-mosaic hashes and the model identity. No request field can carry a target's
+mosaic hashes and the model identity. The client does not take parse_ok on
+trust: an answer marked parse_ok must BE three 2-digit bins (plus " LAND"
+exactly when land is true) equal to `bins`, with a step within half a bin of
+their value; the model identity in every answer must be the one hello
+announced, and every reconnect's hello must announce the same one
+(docs/DESIGN-vla-pilot.md section 10). No request field can carry a target's
 coordinates: the server refuses unknown fields, and refuses `target`, `goal`,
 `object_position`, `xy`, `lat` and `lon` by name; `build_infer_fields` refuses
 them before anything is sent. The hint reaches the model only as one of the
@@ -100,10 +119,11 @@ import base64
 import hashlib
 import json
 import math
+import re
 import socket
 import threading
 import time
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -148,8 +168,28 @@ STEP_FIELDS = ("fwd_m", "down_m", "dpsi_rad")
 FWD_RANGE_M = (0.0, 5.0)
 DOWN_RANGE_M = (-5.0, 5.0)
 DPSI_RANGE_RAD = (-1.1, 1.1)
+STEP_RANGES = (FWD_RANGE_M, DOWN_RANGE_M, DPSI_RANGE_RAD)
 NUM_BINS = 99
 _RANGE_EPS = 1e-6
+
+# The answer text a parse_ok reply must carry, as the server's parser accepts
+# it (the brief: zero-padded 2-digit bins "FF DD YY", optional " LAND", then
+# EOS; the server decodes with special tokens, so the text may end in the EOS
+# marker "</s>"). [0-9], not \d: \d also matches other scripts' digits. The
+# client re-reads the text because the brief's headline bug was a server-side
+# parser (ints[-3:]) that turned malformed LAND outputs into motion
+# ('00 49 494 49' -> a 5 m/s descent); a server still running one is refused
+# here, not flown (review of 7c7cc50, P3).
+ANSWER_TEXT_RE = re.compile(r"([0-9]{2}) ([0-9]{2}) ([0-9]{2})( LAND)?(?:</s>)?")
+
+# The model identity hello announces and every answer repeats (the brief). The
+# dashboard classifies VLA runs by weights_sha256, so a run whose identity has
+# none, or whose model changes mid-run, must not pass unnoticed (review of
+# 7c7cc50, P9). hello may carry serving facts beside these; only these six
+# are compared.
+IDENTITY_FIELDS = ("id", "base", "weights_sha256", "precision", "attn", "merged")
+PRECISIONS = ("nf4", "bf16")
+ATTN_IMPLS = ("eager", "sdpa")
 # |dpsi| at or above this: rotate only (plus altitude), no horizontal move.
 ROTATE_ONLY_RAD = 0.25
 # Upstream executes every step at 1.0 m/s and hovers 0.5 s after it.
@@ -164,6 +204,11 @@ _RECV_SLICE_S = 0.1
 class ProtocolError(Exception):
     """The server's reply breaks protocol v2: the stream cannot be trusted
     any more, so the client drops the connection."""
+
+
+class ModelChanged(ProtocolError):
+    """An answer, or a reconnect's hello, names another model than the one
+    the run started with (counted `model_changed`)."""
 
 
 class LinkError(Exception):
@@ -333,24 +378,71 @@ def goal_hint(goal_xy: tuple[float, float], arrive_radius_m: float = 0.5
     return get_hint
 
 
-def alt_band_from_policy(policy) -> tuple[float, float] | None:
-    """The intersection of the policy's HARD altitude envelopes, or None.
+def policy_alt_band(policy) -> dict:
+    """The intersection of the policy's HARD above-ground altitude envelopes:
+    {"band": (lo, hi) | None, "envelopes": [ids used], "skipped_msl": [ids]}.
 
     The tracker clamps each step's altitude target into it, so the pilot does
     not ask for a height the Shield would have to refuse; the Shield still
     enforces the band itself. Time-windowed envelopes are included whatever
     the clock says (a tighter band is the conservative side for a pilot-side
     clamp), and corridor bands are not (they hold only inside their tube).
-    An empty intersection returns None: the policy lint refuses such a
-    policy (guardrail/models.py), and a clamp into nothing has no answer."""
+    An envelope with altitude_ref MSL is skipped and named: its heights are
+    not above ground, the pose's `up` is, and the Shield itself refuses MSL
+    envelopes (no ground-elevation source, Shield.unenforceable); until the
+    review of 7c7cc50 (P8) a 120-300 m MSL band was clamped as metres above
+    ground. An empty intersection gives band None: the policy lint refuses
+    such a policy (guardrail/models.py), and a clamp into nothing has no
+    answer."""
     from .models import AltitudeEnvelope
-    lo, hi, found = -math.inf, math.inf, False
+    lo, hi = -math.inf, math.inf
+    used: list[str] = []
+    msl: list[str] = []
     for c in getattr(policy, "constraints", None) or ():
-        if isinstance(c, AltitudeEnvelope) and getattr(c, "constraint_type", "hard") == "hard":
-            lo, hi, found = max(lo, float(c.alt_min_m)), min(hi, float(c.alt_max_m)), True
-    if not found or not lo < hi:
-        return None
-    return (lo, hi)
+        if not isinstance(c, AltitudeEnvelope) or getattr(c, "constraint_type", "hard") != "hard":
+            continue
+        if getattr(c, "altitude_ref", None) == "MSL":
+            msl.append(c.id)
+            continue
+        lo, hi = max(lo, float(c.alt_min_m)), min(hi, float(c.alt_max_m))
+        used.append(c.id)
+    band = (lo, hi) if used and lo < hi else None
+    return {"band": band, "envelopes": used, "skipped_msl": msl}
+
+
+def alt_band_from_policy(policy) -> tuple[float, float] | None:
+    """`policy_alt_band(policy)["band"]`."""
+    return policy_alt_band(policy)["band"]
+
+
+def combine_alt_bands(configured, from_policy) -> tuple[tuple[float, float] | None, str]:
+    """(the band the tracker clamps into, which one it is).
+
+    `configured` is the caller's TrackerConfig.alt_band, `from_policy` the
+    policy's (policy_alt_band). Both: their intersection ("intersection"),
+    so a policy never widens a band the caller set, and a policy without an
+    envelope never removes it (until the review of 7c7cc50, P8, the policy
+    band replaced the configured one, and a hot-applied policy without an
+    envelope dropped the clamp). One: that one ("configured" / "policy").
+    Neither: None ("none"). Two bands that do not overlap: the POLICY band
+    ("policy_disjoint"), because the Shield enforces the policy band, not the
+    configured one; the backend refuses that at construction and records it
+    on a hot-apply."""
+    if configured is not None:
+        _check_band(configured)
+    if from_policy is not None:
+        _check_band(from_policy)
+    if configured is None and from_policy is None:
+        return None, "none"
+    if from_policy is None:
+        return (float(configured[0]), float(configured[1])), "configured"
+    pol = (float(from_policy[0]), float(from_policy[1]))
+    if configured is None:
+        return pol, "policy"
+    lo, hi = max(float(configured[0]), pol[0]), min(float(configured[1]), pol[1])
+    if lo < hi:
+        return (lo, hi), "intersection"
+    return pol, "policy_disjoint"
 
 
 # --------------------------------------------------------------------------- #
@@ -449,12 +541,73 @@ def _is_hex64(v) -> bool:
     return isinstance(v, str) and len(v) == 64 and all(c in "0123456789abcdef" for c in v)
 
 
-def parse_infer_response(raw: Any, sent: dict) -> InferReply:
+def check_identity(model: Any) -> None:
+    """Raise ValueError unless `model` is the brief's model identity: id and
+    base non-empty strings, weights_sha256 64 lowercase hex digits, precision
+    nf4 or bf16, attn eager or sdpa, merged true or false. Other keys (the
+    serving facts a hello may add) are allowed."""
+    if not isinstance(model, dict):
+        raise ValueError(f"the model identity is not an object: {model!r}")
+    missing = [k for k in IDENTITY_FIELDS if k not in model]
+    if missing:
+        raise ValueError(f"the model identity lacks {missing}")
+    for k in ("id", "base"):
+        if not isinstance(model[k], str) or not model[k]:
+            raise ValueError(f"model.{k} must be a non-empty string, got {model[k]!r}")
+    if not _is_hex64(model["weights_sha256"]):
+        raise ValueError(f"model.weights_sha256 must be 64 lowercase hex digits, "
+                         f"got {model['weights_sha256']!r}")
+    if model["precision"] not in PRECISIONS:
+        raise ValueError(f"model.precision {model['precision']!r} is not one of {PRECISIONS}")
+    if model["attn"] not in ATTN_IMPLS:
+        raise ValueError(f"model.attn {model['attn']!r} is not one of {ATTN_IMPLS}")
+    if not isinstance(model["merged"], bool):
+        raise ValueError(f"model.merged must be true or false, got {model['merged']!r}")
+
+
+def identity_of(model: Any) -> dict:
+    """The six identity fields of a model object (None where absent): what
+    is compared between hello and every answer."""
+    m = model if isinstance(model, dict) else {}
+    return {k: m.get(k) for k in IDENTITY_FIELDS}
+
+
+def dequantize_bin(b: int, lo: float, hi: float) -> float:
+    """Bin -> value at the lower edge of its cell, b/98 * (hi - lo) + lo:
+    upstream's decoder, and the server's (the inverse of int truncation)."""
+    return b / (NUM_BINS - 1) * (hi - lo) + lo
+
+
+def _check_answer_text(text: str, bins: tuple[int, int, int], step: Step, land: bool) -> None:
+    """A parse_ok reply's raw_text must be the answer it claims (ANSWER_TEXT_RE
+    comment): three 2-digit bins equal to `bins`, " LAND" exactly when `land`,
+    and each step value within half a bin of its bin's value."""
+    m = ANSWER_TEXT_RE.fullmatch(text)
+    if m is None:
+        raise ProtocolError(f"parse_ok true, but raw_text {text!r} is not an answer (three "
+                            f"2-digit bins, optional ' LAND', optional EOS): a parser that "
+                            f"reads it as one is not trusted")
+    got = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    if got != bins:
+        raise ProtocolError(f"bins {list(bins)} are not raw_text {text!r}")
+    if (m.group(4) is not None) != land:
+        raise ProtocolError(f"land {land} but raw_text {text!r}")
+    for k, b, (lo, hi) in zip(STEP_FIELDS, bins, STEP_RANGES):
+        want, v = dequantize_bin(b, lo, hi), getattr(step, k)
+        if abs(v - want) > 0.5 * (hi - lo) / (NUM_BINS - 1) + 1e-9:
+            raise ProtocolError(f"step.{k} = {v} is not bin {b}'s value {want:.6g} "
+                                f"(within half a bin)")
+
+
+def parse_infer_response(raw: Any, sent: dict, identity: dict | None = None) -> InferReply:
     """Validate an infer response against the request it answers. Raises
     ProtocolError on anything protocol v2 does not allow: a wrong version or
     sequence number, a missing field, a step outside AerialVLA's range, a
-    malformed answer that still carries a step, or an echo of t_capture or
-    the pose that is not what was sent (a reply to some other request)."""
+    malformed answer that still carries a step, an answer marked parse_ok
+    whose raw_text is not that answer, or an echo of t_capture or the pose
+    that is not what was sent (a reply to some other request). With
+    `identity` (the hello's), an answer from another model raises
+    ModelChanged."""
     if not isinstance(raw, dict):
         raise ProtocolError(f"the reply is not a JSON object: {type(raw).__name__}")
     if raw.get("v") != PROTOCOL_VERSION or isinstance(raw.get("v"), bool):
@@ -504,6 +657,7 @@ def parse_infer_response(raw: Any, sent: dict) -> InferReply:
     if raw["parse_ok"]:
         if step is None or bins is None:
             raise ProtocolError("parse_ok true needs the decoded step and its bins")
+        _check_answer_text(raw["raw_text"], bins, step, raw["land"])
     else:
         if step is not None or raw["land"]:
             raise ProtocolError("parse_ok false must carry step null and land false: "
@@ -529,6 +683,9 @@ def parse_infer_response(raw: Any, sent: dict) -> InferReply:
             raise ProtocolError(f"'{k}' must be 64 lowercase hex digits")
     if not isinstance(raw["model"], dict):
         raise ProtocolError("'model' must be an object")
+    if identity is not None and identity_of(raw["model"]) != identity_of(identity):
+        raise ModelChanged(f"the model changed mid-run: this answer is from "
+                           f"{identity_of(raw['model'])}, hello announced {identity_of(identity)}")
     return InferReply(True, None, raw["raw_text"], bins, step, raw["land"],
                       raw["parse_ok"], lat, raw["prompt_sha256"], raw["image_sha256"],
                       raw["model"], extra)
@@ -542,7 +699,9 @@ class LinkResult:
     reply: InferReply | None
     t_sent: float
     t_done: float
-    failure: str | None = None        # "timeout" | "link" | "protocol" | None
+    # "timeout" | "link" | "protocol" | "internal" (anything else that went
+    # wrong in the worker: the result is still posted) | None
+    failure: str | None = None
     detail: str = ""
 
 
@@ -553,12 +712,21 @@ class RemoteVLA:
     """Protocol v2 client. One request outstanding at a time, by construction.
 
     The 10 Hz loop never blocks on it: `submit()` hands a request to a worker
-    thread and returns at once (None while one is still outstanding, or while
-    backing off after a failure), and `poll()` returns the finished
-    `LinkResult` once. Failures close the connection; the next request
-    reconnects (after `reconnect_backoff_s`) and says hello again. A reply
-    that breaks protocol v2 is a failure too ("protocol"): after it the stream
-    cannot be trusted, so it is never read as a decision.
+    thread and returns at once (None while one is still outstanding or its
+    result is still unread, or while backing off), and `poll()` returns the
+    finished `LinkResult` once. Failures close the connection; the next
+    request reconnects (after `reconnect_backoff_s`) and says hello again. A
+    reply that breaks protocol v2 is a failure too ("protocol"): after it the
+    stream cannot be trusted, so it is never read as a decision. A server
+    error (ok=false) keeps the connection but backs off just the same: asking
+    a server that refuses every request again on every tick only fills the
+    log (review of 7c7cc50, P1).
+
+    The first hello's model identity is pinned (`identity`): it must be the
+    brief's identity (check_identity) unless `strict_identity=False` - for a
+    scripted stand-in with no weights, said out loud by the caller - and
+    every answer and every later hello must name the same model, or the
+    reply is a protocol failure counted `model_changed`.
 
     `connect()`, `hello()` and `shutdown_server()` block; call them before the
     flight loop or from tools, never from a control tick.
@@ -567,6 +735,7 @@ class RemoteVLA:
     def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, *,
                  connect_timeout_s: float = 2.0, response_timeout_s: float = 10.0,
                  reconnect_backoff_s: float = 1.0, max_line_bytes: int = 8 << 20,
+                 strict_identity: bool = True,
                  clock: Callable[[], float] = time.monotonic):
         self.host, self.port = host, int(port)
         self.connect_timeout_s = _finite(connect_timeout_s, "connect_timeout_s")
@@ -576,6 +745,7 @@ class RemoteVLA:
                 or self.reconnect_backoff_s < 0:
             raise ValueError("timeouts must be positive and the backoff non-negative")
         self.max_line_bytes = int(max_line_bytes)
+        self.strict_identity = bool(strict_identity)
         self.clock = clock
         self.identity: dict | None = None
         self._sock: socket.socket | None = None
@@ -636,7 +806,19 @@ class RemoteVLA:
             if rep.get("v") != PROTOCOL_VERSION or rep.get("ok") is not True \
                     or not isinstance(rep.get("model"), dict):
                 raise ProtocolError(f"bad hello reply: {rep!r}")
-            self.identity = rep["model"]
+            model = rep["model"]
+            if self.strict_identity:
+                try:
+                    check_identity(model)
+                except ValueError as exc:
+                    raise ProtocolError(f"bad model identity in hello: {exc}") from None
+            if self.identity is None:
+                self.identity = model
+            elif identity_of(model) != identity_of(self.identity):
+                # A server restarted with other weights: one run, one model.
+                raise ModelChanged(f"the model changed mid-run: hello announces "
+                                   f"{identity_of(model)}, the run started with "
+                                   f"{identity_of(self.identity)}")
         except BaseException:
             self._drop()
             raise
@@ -683,6 +865,9 @@ class RemoteVLA:
             obj = json.loads(line.decode("utf-8"), parse_constant=_no_constants)
         except (UnicodeDecodeError, ValueError) as exc:
             raise ProtocolError(f"the reply is not one JSON line: {exc}") from None
+        except RecursionError:
+            # '[' * 200000: json recurses per level (review of 7c7cc50, P5).
+            raise ProtocolError("the reply nests deeper than the JSON reader follows") from None
         if not isinstance(obj, dict):
             raise ProtocolError("the reply is not a JSON object")
         return obj
@@ -698,8 +883,9 @@ class RemoteVLA:
     # -- the non-blocking surface for the control loop ----------------------- #
     @property
     def busy(self) -> bool:
+        """A request is in flight, or its result has not been polled yet."""
         with self._cv:
-            return self._busy
+            return self._busy or self._result is not None
 
     @property
     def backing_off(self) -> bool:
@@ -707,13 +893,22 @@ class RemoteVLA:
 
     def submit(self, fields: dict) -> int | None:
         """Send one infer request (fields from `build_infer_fields`, without
-        `seq`) unless one is already outstanding or the client is backing off
-        after a failure. Returns the request's seq, or None."""
+        `seq`) unless one is already outstanding, the last one's result has
+        not been polled, or the client is backing off after a failure or a
+        server error. Returns the request's seq, or None.
+
+        The unpolled check: until the review of 7c7cc50 (P2) a second request
+        could go out while the first one's result sat unread (act() polls,
+        then ticks, then submits), and the worker then overwrote that result:
+        a step or a LAND that never reached the tracker."""
         with self._cv:
             if self._closed:
                 raise RuntimeError("the client is closed")
             if self._busy:
                 self.counts["submit_busy"] += 1
+                return None
+            if self._result is not None:
+                self.counts["submit_unpolled"] += 1
                 return None
             if self.clock() < self._retry_at:
                 self.counts["submit_backoff"] += 1
@@ -770,28 +965,43 @@ class RemoteVLA:
                     return
                 seq, msg = self._pending
             t_sent = self.clock()
-            reply, failure, detail = None, None, ""
+            reply, failure, detail, changed = None, None, "", False
             with self._io:
                 try:
                     self._ensure_connected()
                     self._send(msg)
                     reply = parse_infer_response(
-                        self._read(time.monotonic() + self.response_timeout_s), msg)
+                        self._read(time.monotonic() + self.response_timeout_s), msg,
+                        self.identity)
                 except LinkTimeout as exc:
                     failure, detail = "timeout", str(exc)
                 except ProtocolError as exc:
                     failure, detail = "protocol", str(exc)
+                    changed = isinstance(exc, ModelChanged)
                 except (LinkError, OSError, ValueError) as exc:
                     failure, detail = "link", str(exc)
+                except Exception as exc:                          # noqa: BLE001
+                    # Anything else must not kill this thread: it would die
+                    # with _busy set, and every later submit() would return
+                    # None with no failure recorded (review of 7c7cc50, P5).
+                    failure, detail = "internal", f"{type(exc).__name__}: {exc}"
                 if failure is not None:
                     self._drop()
             t_done = self.clock()
             with self._cv:
                 if failure is not None:
                     self.counts[f"fail_{failure}"] += 1
+                    if changed:
+                        self.counts["model_changed"] += 1
                     self._retry_at = t_done + self.reconnect_backoff_s
                 else:
                     self.counts["replies"] += 1
+                    if not reply.ok:
+                        # The stream is still in step, so the connection
+                        # stays; the backoff paces a server that refuses
+                        # every request (review of 7c7cc50, P1).
+                        self.counts["server_error"] += 1
+                        self._retry_at = t_done + self.reconnect_backoff_s
                 self._pending = None
                 self._result = LinkResult(seq, msg, reply, t_sent, t_done, failure, detail)
                 self._busy = False
@@ -876,22 +1086,98 @@ def decision_from_result(meta: dict, result: LinkResult) -> Decision | None:
 class StepLog:
     """vla_steps.jsonl: one line per request, written when the decision stops
     being flown (so the line carries what became of it). LF line endings on
-    every platform, flushed per line."""
+    every platform, flushed per line.
+
+    `write()` only queues the record and never raises: a writer thread
+    serializes and writes it. Until the review of 7c7cc50 (P4) the write and
+    flush ran on the 10 Hz loop thread inside act(), and an OSError went
+    straight out of act() - a full disk (D: runs near full) would have ended
+    the flight loop. The repo's rails keep file IO off the loop thread the
+    same way (follow_vlm writes detections on its worker thread). A failed
+    write (OSError, or a record that is not JSON) is counted in `errors`
+    with `last_error`; the caller keeps its own copy (RemoteVLABackend.records).
+    `n` counts lines written. `close()` drains the queue, then closes the
+    file. Opening the file can raise: that happens before the flight loop."""
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = open(self.path, "a", encoding="utf-8", newline="\n")
         self.n = 0
+        self.errors = 0
+        self.last_error: str | None = None
+        self._q: deque = deque()
+        self._pending = 0
+        self._closed = False
+        self._cv = threading.Condition()
+        self._writer = threading.Thread(target=self._run, name="vla-steps-log", daemon=True)
+        self._writer.start()
 
     def write(self, rec: dict) -> None:
-        self._fh.write(json.dumps(rec, ensure_ascii=False, allow_nan=False) + "\n")
-        self._fh.flush()
-        self.n += 1
+        """Queue one record; returns at once, never raises."""
+        with self._cv:
+            if self._closed:
+                self._fail("the log is closed")
+                return
+            self._q.append(rec)
+            self._pending += 1
+            self._cv.notify_all()
 
-    def close(self) -> None:
-        if not self._fh.closed:
-            self._fh.close()
+    def flush(self, timeout_s: float = 5.0) -> bool:
+        """Block until every queued record is written or failed (tools,
+        tests and close(); never from a control tick)."""
+        end = time.monotonic() + timeout_s
+        with self._cv:
+            while self._pending:
+                left = end - time.monotonic()
+                if left <= 0:
+                    return False
+                self._cv.wait(left)
+            return True
+
+    def close(self, timeout_s: float = 5.0) -> None:
+        with self._cv:
+            self._closed = True
+            self._cv.notify_all()
+        self._writer.join(timeout=timeout_s)
+        if self._writer.is_alive():
+            # A write hung (a dead network drive): leave the file to it.
+            with self._cv:
+                self._fail(f"the writer did not finish within {timeout_s:g} s")
+            return
+        try:
+            if not self._fh.closed:
+                self._fh.close()
+        except Exception as exc:                                   # noqa: BLE001
+            with self._cv:
+                self._fail(f"{type(exc).__name__}: {exc}")
+
+    def _fail(self, why: str) -> None:
+        # Under self._cv.
+        self.errors += 1
+        self.last_error = why
+
+    def _run(self) -> None:
+        while True:
+            with self._cv:
+                while not self._q and not self._closed:
+                    self._cv.wait()
+                if not self._q:
+                    return                      # closed, and everything queued is done
+                rec = self._q.popleft()
+            why = None
+            try:
+                self._fh.write(json.dumps(rec, ensure_ascii=False, allow_nan=False) + "\n")
+                self._fh.flush()
+            except Exception as exc:                               # noqa: BLE001
+                why = f"{type(exc).__name__}: {exc}"
+            with self._cv:
+                if why is None:
+                    self.n += 1
+                else:
+                    self._fail(why)
+                self._pending -= 1
+                self._cv.notify_all()
 
 
 # --------------------------------------------------------------------------- #
@@ -1016,6 +1302,7 @@ class StepTracker:
         self._band = self.cfg.alt_band
         self._cur: _Current | None = None
         self._fallback: str | None = None    # hover reason when no decision is current
+        self._none_reason = "no_decision"    # why nothing has flown yet
         self._ever = False
         self._suspended = False
         self._t_resume = -math.inf
@@ -1044,10 +1331,23 @@ class StepTracker:
             c.up_t, c.alt_clamped = self._clamp_alt(c.up_raw)
 
     def accept(self, decision: Decision, now: float) -> bool:
-        """Take a decision. Refused (and recorded as refused) while suspended,
-        when captured before the last rail hold ended, after LAND, when
-        already older than the decision timeout, or when its capture time is
-        in the future of this clock."""
+        """Take a decision. Refused (and recorded as refused) when it is a
+        server error, while suspended, when captured before the last rail
+        hold ended, after LAND, when already older than the decision timeout,
+        or when its capture time is in the future of this clock."""
+        if decision.kind == "server_error":
+            # Not an answer from the model: the server refused the request
+            # (ok=false) and the model never saw it. Until the review of
+            # 7c7cc50 (P1) it was accepted as a `hold`, and each one reset the
+            # hold timer: a server refusing every request gave 299 hold ticks
+            # and 0 hover in 30 s, a dead model holding "on purpose". It is
+            # handled as no answer at all, like a link failure.
+            self.counts["server_error"] += 1
+            self._no_answer(now, "server_error")
+            decision.record.update({"accepted": False, "refused": "server_error",
+                                    "target": None, "outcome": None})
+            self._finished.append(decision.record)
+            return False
         reason = None
         age = now - decision.t_capture
         if self._suspended:
@@ -1091,7 +1391,7 @@ class StepTracker:
             if cur.alt_clamped:
                 self.counts["alt_clamped"] += 1
         else:
-            # parse_fail / server_error: hold zero, counted.
+            # parse_fail: the model answered, malformed. Hold zero, counted.
             decision.record["target"] = None
         self._cur = cur
         return True
@@ -1101,12 +1401,19 @@ class StepTracker:
         hover_on_link_loss the decision being flown is dropped and the
         tracker hovers until a fresh one arrives."""
         self.counts["link_lost"] += 1
+        self._no_answer(now, "link_lost")
+
+    def _no_answer(self, now: float, why: str) -> None:
+        """A request came back with no answer from the model (a link failure,
+        a server error)."""
+        if not self._ever:
+            self._none_reason = why
         if not self.cfg.hover_on_link_loss:
             return
         if self._cur is not None:
-            self._finish(self._cur, now, "link_lost")
+            self._finish(self._cur, now, why)
         if self._ever and not self.land_requested:
-            self._fallback = "link_lost"
+            self._fallback = why
 
     def suspend(self, now: float) -> None:
         """The rail took the aircraft (an escalation hold, Loiter, a Shield
@@ -1194,7 +1501,7 @@ class StepTracker:
         if c is None:
             if self._fallback is not None:
                 return Tick(_ZERO, "hover", self._fallback)
-            return Tick(_ZERO, "none", "no_decision")
+            return Tick(_ZERO, "none", self._none_reason)
         seq, age = c.decision.seq, now - c.decision.t_capture
         if c.decision.kind != "step":
             return Tick(_ZERO, "hold", c.decision.kind, seq, age)

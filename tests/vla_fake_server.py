@@ -148,7 +148,7 @@ class FakeVLAServer:
 
     def __init__(self, respond: Callable[[dict], Any], model: dict | None = None):
         self.respond = respond
-        self.model = dict(model or MODEL)
+        self.model = dict(MODEL if model is None else model)   # {} is a model too
         self.requests: list[dict] = []     # every infer request received
         self.refused: list[str] = []       # why the server refused any
         self.hellos = 0
