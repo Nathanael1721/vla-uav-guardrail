@@ -47,6 +47,12 @@ WHAT IS BEING CLAIMED
    records but never frames or a link (P3-9); a fake: id is a stand-in
    (P3-13); the GOTO's object words are a fixed description (P3-14);
    flying past the goal ends the mission (P3-15).
+7. The review of the ArduPilot rail's VLA pilot (4a0da6d, 2026-10-23), on
+   this rail's warm-up: a slow cold first answer gets the timeout recorded
+   for it (P1-1), and a refused first request is followed by the next once
+   the client's backoff is over (P2-8) - vla_mission.wait_client_ready and
+   a per-request response timeout, shared with that rail. Both failed on
+   4a0da6d: refused, "not sent".
 
 Shown failing first: before this change demo/vla_mission.py, demo/vla_fly.py,
 the VLA robot and scene configs, policies/vla_goto_citylife.yaml and
@@ -1170,6 +1176,81 @@ def test_the_warm_up_gate_judges_the_last_of_several_requests():
     assert not ok and "no warm-up" in why
     silent = {"answered": False, "failure": "timeout", "detail": "no answer"}
     assert VM.warmup_series_verdict([warm, silent], 5.0)[0] is False
+
+
+def _city_warmup(respond, decision_timeout_s=1.0):
+    """demo/vla_fly._warmup on its own event loop, as the flight runs it,
+    against the scripted server; the drone, the pose ring and the camera
+    pair are stand-ins. The client is the flight's: response timeout = the
+    decision timeout, late answers awaited 120 s."""
+    import asyncio
+    srv = F.FakeVLAServer(respond, model=REAL_MODEL)
+    srv.start()
+    commits = []
+    try:
+        client = RemoteVLA("127.0.0.1", srv.port, response_timeout_s=decision_timeout_s,
+                           reconnect_backoff_s=0.5, late_reply_wait_s=120.0,
+                           strict_identity=True, clock=time.time)
+        client.connect()
+        frames = SimpleNamespace(
+            capture=lambda: Capture(time.time(), Pose(42.0, -18.0, 10.0, 1.57), JPG, JPG),
+            commit=lambda *a, **k: commits.append(k), stats=lambda: {})
+        kin = {"pose": {"position": {"x": 42.0, "y": -18.0, "z": -10.0},
+                        "orientation": {"w": 1.0, "x": 0.0, "y": 0.0, "z": 0.0}},
+               "twist": {"linear": {"x": 0.0, "y": 0.0, "z": 0.0}}, "time_stamp": 1}
+        args = SimpleNamespace(mission="goto", decision_timeout_s=decision_timeout_s,
+                               first_decision_timeout_s=60.0, warmup_max_latency_s=5.0,
+                               object=VM.GOTO_OBJECT_TEXT)
+        res = asyncio.run(vla_fly._warmup(
+            args, SimpleNamespace(get_ground_truth_kinematics=lambda: kin),
+            SimpleNamespace(put_pose_full=lambda *a, **k: None), frames, client,
+            VM.goto_hint_source((43.0, 40.0), 3.0), State, lambda q: 0.0,
+            SimpleNamespace(quat_pitch=lambda q: 0.0, quat_roll=lambda q: 0.0),
+            SimpleNamespace(beat=lambda **k: None)))
+        client.close()
+    finally:
+        srv.stop()
+    return res, srv, commits
+
+
+def test_the_city_warm_up_gives_a_slow_cold_first_answer_its_timeout():
+    """Review of the ArduPilot rail's VLA pilot (4a0da6d, P1-1), on the
+    MERGED city rail. The first warm-up request was promised
+    first_decision_timeout_s (60 s) and recorded so, while the client's
+    socket timed out at its response timeout (the decision timeout), then
+    drained the late answer: requests 2 and 3 were "not sent" and a healthy
+    server with a 3 s cold start refused the flight. Each request now
+    carries the timeout recorded for it and waits for a ready client
+    (vla_mission.wait_client_ready, shared with the ArduPilot rail)."""
+    base = _with_model(F.goto_responder((43.0, 40.0), 10.0), REAL_MODEL)
+    n = {"k": 0}
+
+    def respond(req):
+        n["k"] += 1
+        out = base(req)
+        return F.Delay(3.0, out) if n["k"] == 1 else out
+    res, srv, commits = _city_warmup(respond)
+    assert res["pass"] is True, res["why"]
+    assert [a["timeout_s"] for a in res["attempts"]] == [60.0, 1.0, 1.0], res["attempts"]
+    assert [a["kind"] for a in res["attempts"]] == ["step"] * 3
+    assert len(srv.requests) == 3 and len(commits) == 3
+
+
+def test_the_city_warm_up_waits_out_the_backoff_after_a_refused_first_request():
+    """Review of 4a0da6d, P2-8: after a server error the client backs off,
+    and the city rail's warm-up asked again at once - "not sent" twice, the
+    flight refused although the model then answered."""
+    base = _with_model(F.goto_responder((43.0, 40.0), 10.0), REAL_MODEL)
+    n = {"k": 0}
+
+    def respond(req):
+        n["k"] += 1
+        return F.error_reply(req, "warming up") if n["k"] == 1 else base(req)
+    res, srv, _ = _city_warmup(respond, decision_timeout_s=10.0)
+    assert res["pass"] is True, res["why"]
+    assert [a["kind"] for a in res["attempts"]] == ["server_error", "step", "step"], \
+        [(a["kind"], a["failure"]) for a in res["attempts"]]
+    assert res["attempts"][1]["client_ready"]["waited_on"].get("backoff", 0) >= 1
 
 
 def test_an_occupied_port_and_a_dying_server_are_refused_before_take_off():

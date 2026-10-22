@@ -703,6 +703,9 @@ class LinkResult:
     # wrong in the worker: the result is still posted) | None
     failure: str | None = None
     detail: str = ""
+    # The response timeout in force for THIS request (submit's
+    # response_timeout_s, else the client's): what a record may claim.
+    timeout_s: float | None = None
 
 
 # --------------------------------------------------------------------------- #
@@ -768,7 +771,7 @@ class RemoteVLA:
         self._buf = b""
         self._io = threading.Lock()
         self._cv = threading.Condition()
-        self._pending: tuple[int, dict] | None = None
+        self._pending: tuple[int, dict, float] | None = None   # seq, request, timeout
         self._result: LinkResult | None = None
         self._busy = False
         self._draining = False
@@ -853,12 +856,13 @@ class RemoteVLA:
         except OSError as exc:
             raise LinkError(f"send: {exc}") from None
 
-    def _read(self, deadline: float) -> dict:
+    def _read(self, deadline: float, timeout_s: float | None = None) -> dict:
         assert self._sock is not None
         while b"\n" not in self._buf:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise LinkTimeout(f"no reply within {self.response_timeout_s:g} s")
+                raise LinkTimeout(f"no reply within "
+                                  f"{self.response_timeout_s if timeout_s is None else timeout_s:g} s")
             if self._closed:
                 raise LinkError("the client was closed while waiting for a reply")
             # Short slices, so close() is seen within ~0.1 s: on Windows a
@@ -917,11 +921,17 @@ class RemoteVLA:
     def backing_off(self) -> bool:
         return self.clock() < self._retry_at
 
-    def submit(self, fields: dict) -> int | None:
+    def submit(self, fields: dict, response_timeout_s: float | None = None) -> int | None:
         """Send one infer request (fields from `build_infer_fields`, without
         `seq`) unless one is already outstanding, the last one's result has
         not been polled, or the client is backing off after a failure or a
         server error. Returns the request's seq, or None.
+
+        `response_timeout_s`: this request's own answer timeout instead of the
+        client's (the warm-up's first request, the model's first inference
+        ever, gets first_decision_timeout_s: review of 4a0da6d, P1-1 - until
+        then the record said 60 s while the socket gave up at the client's
+        10 s). The result carries the one in force (LinkResult.timeout_s).
 
         The unpolled check: until the review of 7c7cc50 (P2) a second request
         could go out while the first one's result sat unread (act() polls,
@@ -942,11 +952,15 @@ class RemoteVLA:
             if self.clock() < self._retry_at:
                 self.counts["submit_backoff"] += 1
                 return None
+            timeout = (self.response_timeout_s if response_timeout_s is None
+                       else _finite(response_timeout_s, "response_timeout_s"))
+            if timeout <= 0:
+                raise ValueError("response_timeout_s must be positive")
             msg = dict(fields)
             msg["seq"] = self._next_seq
             check_request_fields(msg)
             self._next_seq += 1
-            self._pending = (msg["seq"], msg)
+            self._pending = (msg["seq"], msg, timeout)
             self._busy = True
             self.counts["sent"] += 1
             if self._worker is None:
@@ -1004,7 +1018,7 @@ class RemoteVLA:
                     self._cv.wait()
                 if self._closed:
                     return
-                seq, msg = self._pending
+                seq, msg, timeout = self._pending
             t_sent = self.clock()
             reply, failure, detail, changed, drain = None, None, "", False, False
             with self._io:
@@ -1012,8 +1026,7 @@ class RemoteVLA:
                     self._ensure_connected()
                     self._send(msg)
                     reply = parse_infer_response(
-                        self._read(time.monotonic() + self.response_timeout_s), msg,
-                        self.identity)
+                        self._read(time.monotonic() + timeout, timeout), msg, self.identity)
                 except LinkTimeout as exc:
                     failure, detail = "timeout", str(exc)
                     # Sent and not answered in time: the server is still on
@@ -1049,13 +1062,15 @@ class RemoteVLA:
                 if drain:
                     self._draining = True
                 self._pending = None
-                self._result = LinkResult(seq, msg, reply, t_sent, t_done, failure, detail)
+                self._result = LinkResult(seq, msg, reply, t_sent, t_done, failure, detail,
+                                          timeout)
                 self._busy = False
                 self._cv.notify_all()
             if drain:
-                self._await_late_reply(seq, msg, t_sent)
+                self._await_late_reply(seq, msg, t_sent, timeout)
 
-    def _await_late_reply(self, seq: int, msg: dict, t_sent: float) -> None:
+    def _await_late_reply(self, seq: int, msg: dict, t_sent: float,
+                          timeout: float | None = None) -> None:
         """After a timeout (`late_reply_wait_s`): read the kept connection
         until the abandoned request's own answer arrives, so the next request
         is not queued behind it on the server's model lock. Anything else -
@@ -1078,7 +1093,9 @@ class RemoteVLA:
                         self.late.append({"seq": seq, "kind": rep.kind,
                                           "latency_server_s": rep.latency_s,
                                           "rtt_s": t_late - t_sent,
-                                          "late_by_s": t_late - t_sent - self.response_timeout_s})
+                                          "late_by_s": t_late - t_sent - (
+                                              self.response_timeout_s if timeout is None
+                                              else timeout)})
                     break
             except (LinkError, ProtocolError, OSError, ValueError) as exc:
                 why = f"late_reply_failed: {type(exc).__name__}"

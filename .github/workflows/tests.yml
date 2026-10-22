@@ -54,8 +54,12 @@
 #          launcher with a point vehicle; its whole flight path against a
 #          fake projectairsim module, lab-only: it SKIPs here, where no job
 #          installs OpenCV or Pillow; and the offline replay gate),
-#          and test_aerialvla_codec (AerialVLA's prompt, vocabulary,
-#          mosaic and strict output reader).
+#          test_aerialvla_codec (AerialVLA's prompt, vocabulary,
+#          mosaic and strict output reader), and test_pas_vla (the
+#          ArduPilot rail's AerialVLA pilot, perception_node --pilot vla,
+#          and its VLA cameras, on that rail's stand-ins against the
+#          loopback fake server; its Pillow drawing check and its CityLife
+#          map check SKIP here).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -188,8 +192,10 @@
 #          built deck and its local sources, test_replay_pipeline's
 #          recorded-flight check (which also needs the vla-real
 #          environment), and test_profile_shield_tick's check that the
-#          committed tick pack's flights still hash as packed, and
-#          test_kpi_magnitudes' 2 checks on the demo/out/ros2_* artefacts.
+#          committed tick pack's flights still hash as packed,
+#          test_kpi_magnitudes' 2 checks on the demo/out/ros2_* artefacts,
+#          and test_pas_vla's check of the documented example goal on the
+#          CityLife map (its doc check runs everywhere).
 #          Dropped
 #          inside a test that passes, not counted as skips: test_search's
 #          sweep over the real CityLife street mask, test_real_vla_prompt's
@@ -240,7 +246,8 @@
 #          test_real_vla_prompt's; torch with a file outside git, for
 #          test_vla_backend_table's CPU-only row; and the D:/models folders
 #          for 1 of test_vla_server's 32 tests (the revisions of the real
-#          checkpoints).
+#          checkpoints); and Pillow again, for 1 of test_pas_vla's 29 tests
+#          (the VLA panel drawn on the ArduPilot rail's frames).
 #        - Pillow for the AerialVLA image path: 3 of test_aerialvla_codec's
 #          20 tests (the mosaic, the JPEG frames, a frame claiming too many
 #          pixels) and 1 of test_vla_server's 32 (real frames through the
@@ -529,6 +536,7 @@ jobs:
               tests/test_vla_fly.py \
               tests/test_vla_fly_fakesim.py \
               tests/test_vla_replay_gate.py \
+              tests/test_pas_vla.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \

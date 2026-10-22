@@ -58,6 +58,10 @@ updated.) As of that date:
   * `demo/pas_ardupilot/autopilot.py` (`body_to_world`, used by
     `perception_node.py`): `from_body` on the way in, `to_local_ned` for the
     MAVLink setpoint on the way out.
+  * `demo/pas_ardupilot/perception_node.py` (`VLAPilot.step`, --pilot vla,
+    2026-10-23): `to_body` of the step tracker's world-frame action, for the
+    row's `body` and MAVROS's record copy only; the action itself enters the
+    Shield in world frame, never rotated.
   * `demo/real_vla_demo.py`: `from_body` for the OpenVLA action.
   * `guardrail/audit.py`: `to_body` writes each audit record's raw and
     emitted actions in the grant's body-frame keys, at the tick's heading.

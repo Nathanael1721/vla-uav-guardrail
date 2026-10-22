@@ -667,6 +667,22 @@ def test_the_vla_flight_tests_run_in_ci():
         assert not any(p.startswith(("opencv", "pillow")) for p in _installed(j)), j
 
 
+def test_the_ardupilot_vla_pilot_test_runs_in_ci():
+    """Wave V2b (2026-10-23): the ArduPilot rail's AerialVLA pilot
+    (perception_node --pilot vla, to-do VLA-07) and its VLA cameras (VLA-03).
+    The file needs no simulator, ArduPilot, GPU or model: the rail's own
+    stand-ins (tests/test_pas_ardupilot.py's FakeLink family) fly it against
+    tests/vla_fake_server.py on loopback. Its Pillow check (the panel drawn
+    on the rail's frames) SKIPs where no job installs Pillow, and its check
+    of the documented goal on the gitignored CityLife map where the map is
+    absent; its runner counts both."""
+    assert "test_pas_vla.py" in _loop(), "not run in CI"
+    src = (ROOT / "tests" / "test_pas_vla.py").read_text(encoding="utf-8")
+    assert "import vla_fake_server" in src and "return SKIP" in src
+    runner = src.split('if __name__ == "__main__":', 1)[-1]
+    assert "== SKIP" in runner, "the runner does not count the SKIP"
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

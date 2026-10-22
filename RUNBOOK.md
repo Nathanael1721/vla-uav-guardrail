@@ -17,7 +17,10 @@
 > (`guardrail.vla_stub.StubVLA`, a straight-at-the-target controller that
 > ignores every rule on purpose) by default, and Rail 3's "VLA node" is the
 > same stub (`sitl/ros2_vla_stub_node.py`). The city demo and the perception
-> rail fly a hand-written follow controller steering by OWL-ViT's boxes.
+> rail fly a hand-written follow controller steering by OWL-ViT's boxes. The
+> perception rail's AerialVLA pilot (`perception_node.py --pilot vla`, behind
+> the Shield and the escalation FSM; 2026-10-23) is built and tested offline
+> and has not flown: `docs/DESIGN-vla-pilot.md` section 14.
 
 ## ⚡ Fastest way: `scripts\fly.ps1` (launches sim + flies, one command)
 

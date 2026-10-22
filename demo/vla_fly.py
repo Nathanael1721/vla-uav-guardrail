@@ -469,80 +469,11 @@ class RecorderView:
         return base
 
 
-AUTHOR_LABEL = {
-    "vla_step": "VLA STEP", "hold": "HOLD", "hover": "HOVER", "none": "NO VLA DECISION"}
-_OVERLAY = None
-
-
-def hud_lines(hud: dict) -> list[str]:
-    """The VLA panel: time and altitude (and the goal distance or the box),
-    the decision behind this tick and how old its image is, its phrase and
-    where the phrase came from, its step, and who authored the tick. The
-    last line is the authorship, the one a viewer must not miss."""
-    l0 = f"t {hud['t']:5.1f}s  alt {hud['alt']:4.1f} m"
-    if hud.get("goal_dist_m") is not None:
-        l0 += f"  goal {hud['goal_dist_m']:.0f} m"
-    elif hud.get("box_frac") is not None:
-        l0 += f"  box {hud['box_frac']:.2f}"
-    seq, age = hud.get("seq"), hud.get("age_s")
-    cad = {"stop_and_go": "  stop-and-go", "pipelined": "  pipelined"}.get(hud.get("cadence"), "")
-    l1 = (f"AerialVLA #{seq}  image {age:.1f} s old{cad}" if seq is not None and age is not None
-          else f"AerialVLA  no decision flying{cad}")
-    ph = hud.get("phrase")
-    l2 = ("phrase -" if ph is None else
-          f"phrase '{ph.strip() or 'none: arrived?'}' ({hud.get('hint_source')})")
-    st = hud.get("step")
-    l3 = ("step -" if not st else
-          f"step fwd {st['fwd_m']:.1f} m  turn {math.degrees(st['dpsi_rad']):+.0f}deg  "
-          f"up {-st['down_m']:+.1f} m")
-    if hud.get("land"):
-        l4 = "LAND REQUESTED BY THE VLA"
-    else:
-        l4 = f"{AUTHOR_LABEL.get(hud.get('author'), hud.get('author'))} - {hud.get('reason')}"
-    if not hud.get("shield_on", True):
-        l4 += "  [SHIELD OFF]"
-    return [l0, l1, l2, l3, l4]
-
-
-def annotate_vla(img, det, hud: dict):
-    """Draw the VLA panel (and, for M2, the detector box) on the first-person
-    frame; with the policy indicator, its banner, rule panel and map too
-    (demo/policy_hud.OverlayCache, 5 Hz)."""
-    from PIL import ImageDraw
-    im = img.copy()
-    # After the mission the VLA no longer flies: the landing-site transfer
-    # (follow_vlm._fly_to_landing_site, through the Shield, whose own HUD
-    # dict says mode "land") and the descent (no Shield) say so instead of
-    # leaving the last VLA tick on screen.
-    landing = hud.get("frame") == "landing" or hud.get("mode") == "land"
-    if landing:
-        lines = [f"t {hud['t']:5.1f}s  alt {hud['alt']:4.1f} m", "MISSION OVER - VLA STOPPED",
-                 hud.get("label") or hud.get("mode_label") or "LANDING (hand-written)"]
-    else:
-        lines = hud_lines(hud)
-    d = ImageDraw.Draw(im)
-    if det is not None:
-        cx, cy, bw, bh = det[0], det[1], det[2], det[3]
-        d.rectangle([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], outline=(0, 255, 0),
-                    width=2)
-    pol = hud.get("policy")
-    if pol is not None:
-        global _OVERLAY
-        if _OVERLAY is None:
-            from policy_hud import OverlayCache
-            _OVERLAY = OverlayCache()
-        _OVERLAY.draw(im, pol, lines)
-        return im
-    if not landing:
-        lines = lines + [("SHIELD: correcting" if hud.get("shield") else "SHIELD: clear")
-                         if hud.get("shield_on", True) else "SHIELD OFF (control arm)"]
-    try:
-        from policy_hud import draw_status_box
-        draw_status_box(im, lines)
-    except Exception:                                              # noqa: BLE001
-        for i, ln in enumerate(lines):
-            d.text((6, 6 + 12 * i), ln, fill=(255, 255, 255))
-    return im
+# The VLA panel lives in demo/vla_mission.py since 2026-10-23 (wave V2b: the
+# ArduPilot rail's VLA pilot draws the same one); kept here under its names.
+AUTHOR_LABEL = VM.AUTHOR_LABEL
+hud_lines = VM.hud_lines
+annotate_vla = VM.annotate_vla
 
 
 # --------------------------------------------------------------------------- #
@@ -631,6 +562,12 @@ async def _warmup(args, drone, obs, frames, client, hint_src, State, quat_yaw, F
     attempts: list[dict] = []
     res: dict = {}
     for k in range(VM.WARMUP_REQUESTS):
+        # A ready client first (review of the ArduPilot rail's VLA pilot,
+        # 4a0da6d, P1-1 / P2-8): a late answer still awaited or the backoff
+        # after a server error made the next request "not sent" here, and a
+        # healthy server was refused. Blocking, so off the loop; the pose
+        # feed and the capture stay on it.
+        ready = await asyncio.to_thread(VM.wait_client_ready, client)
         cap = None
         t_end = time.time() + wait_frames_s
         while time.time() < t_end:
@@ -647,18 +584,16 @@ async def _warmup(args, drone, obs, frames, client, hint_src, State, quat_yaw, F
                     "attempts": attempts}
         hint = VM.warmup_hint(args.mission, hint_src, cap)
         live.beat(detail=f"warm-up inference {k + 1}/{VM.WARMUP_REQUESTS} before take-off")
-        timeout_s = (max(args.decision_timeout_s, args.first_decision_timeout_s) if k == 0
-                     else args.decision_timeout_s)
+        # The request carries its own timeout (the first: the model's first
+        # inference ever), and the record says the one the client enforced.
+        timeout_s = VM.warmup_timeout_s(k, args.decision_timeout_s, args.first_decision_timeout_s)
         res = await asyncio.to_thread(VM.warmup_infer, client, cap, hint, args.object, timeout_s)
+        res["client_ready"] = ready
         if res.get("seq") is not None:
             frames.commit(cap, hint, res["seq"], warmup=True)
         attempts.append(dict(res))
-    ok, why = VM.warmup_series_verdict(attempts, args.warmup_max_latency_s)
-    res = dict(res)
-    res.update({"pass": ok, "why": why, "max_latency_s": args.warmup_max_latency_s,
-                "judged": "last of attempts", "attempts": attempts,
-                "late_replies": list(getattr(client, "late", None) or [])})
-    return res
+    return VM.warmup_result(res, attempts, args.warmup_max_latency_s,
+                            getattr(client, "late", None))
 
 
 async def _land_here(drone) -> str:
