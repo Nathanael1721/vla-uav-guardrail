@@ -252,6 +252,124 @@ def test_unknown_references_are_refused():
     expect(lambda d: d["entries"][0]["changes"][0].update(cat="misc"), "unknown category misc")
 
 
+def _with_runs(f):
+    run = f.tmp / "demo" / "out" / "r1"
+    run.mkdir(parents=True)
+    (run / "r1_demo_phone.mp4").write_bytes(b"mp4")
+    (run / "kpi.json").write_text("{}", encoding="utf-8")
+    (run / "flight_log.jsonl").write_text('{"tick": 0}\n', encoding="utf-8")
+    (f.tmp / "demo" / "out" / "_aside").mkdir()
+    (f.tmp / "demo" / "out" / "_aside" / "x.mp4").write_bytes(b"mp4")
+    (f.tmp / "demo" / "out" / "r_compare_20261021_phone.mp4").write_bytes(b"mp4")
+    (f.tmp / "secret.mp4").write_bytes(b"mp4")
+    (f.tmp / "tracker" / "assets" / "app.js").write_text(
+        'const MEDIA = { hud: ["img", "a.png"], v_r1: ["run", "r1/r1_demo_phone.mp4"] };', encoding="utf-8")
+    return A.load_ctx(f.tmp)
+
+
+def test_a_recorded_run_video_and_the_dashboard_page_can_be_attached():
+    """2026-10-21 (tracker audit, item 11): updates #21-#25 carry media: []
+    because the check took only img/video/share paths and img/video MEDIA
+    ids, so no flight video could be attached, and no update could point at
+    the Dashboard. Before this change all three of these were refused."""
+    with Fixture() as f:
+        ctx = _with_runs(f)
+        d = valid_doc()
+        d["entries"][2]["media"] = ["run/r1/r1_demo_phone.mp4", "run/r_compare_20261021_phone.mp4", "v_r1"]
+        d["entries"][2]["pages"] = ["dashboard"]
+        assert A.check(d, ctx) == []
+
+
+def _link_dir(link: Path, target: Path) -> bool:
+    """A directory junction (Windows) or symlink at `link`; False when the
+    platform refuses both."""
+    try:
+        if sys.platform == "win32":
+            import _winapi
+            _winapi.CreateJunction(str(target), str(link))
+        else:
+            import os
+            os.symlink(target, link, target_is_directory=True)
+        return True
+    except (OSError, ImportError, AttributeError):
+        return False
+
+
+def test_run_media_must_be_a_media_file_inside_demo_out():
+    with Fixture() as f:
+        ctx = _with_runs(f)
+        bads = ["run/r1/kpi.json", "run/r1/flight_log.jsonl", "run/r1", "run/../secret.mp4",
+                "run/r1/../../secret.mp4", "run/r1/missing.mp4", "run/_aside/x.mp4",
+                # Review of 8035d0a (P6): an absolute path made Path joining
+                # drop demo/out, so a file anywhere passed (probe: an .mp4 in
+                # the scratchpad); the server's safe_join 404s it.
+                "run/" + (f.tmp / "secret.mp4").as_posix(), "run/" + str(f.tmp / "secret.mp4"),
+                "run/C:secret.mp4", "run//" + (f.tmp / "secret.mp4").as_posix().lstrip("/")]
+        # a junction (demo/out/<tag>/view to C: is how flight frames are
+        # kept off the full D: drive) leads outside demo/out: refused, as
+        # tracker/serve.py safe_join refuses it
+        outside = f.tmp / "outside"
+        outside.mkdir()
+        (outside / "clip.mp4").write_bytes(b"mp4")
+        view = f.tmp / "demo" / "out" / "r1" / "view"
+        linked = _link_dir(view, outside)
+        if linked:
+            bads.append("run/r1/view/clip.mp4")
+        try:
+            for bad in bads:
+                d = valid_doc()
+                d["entries"][2]["media"] = [bad]
+                e = A.check(d, ctx)
+                assert any("media not found" in m for m in e), (bad, e)
+            if linked:
+                import os
+                # the server agrees: what check refuses, /media/run/ would 404
+                sys.path.insert(0, str(ROOT / "tracker"))
+                import serve
+                assert serve.safe_join(f.tmp / "demo" / "out", "r1/view/clip.mp4") is None
+                assert A.run_media_problem("r1/r1_demo_phone.mp4", f.tmp / "demo" / "out") is None
+        finally:
+            if linked:
+                import os
+                os.rmdir(view) if sys.platform == "win32" else os.unlink(view)
+
+
+def test_a_link_that_stays_inside_demo_out_is_refused_by_its_own_rule():
+    """Re-review of d180e01 (P6). Nothing needed the symlink/junction check
+    on its own: with the `_is_link` loop removed, the only junction fixture
+    (to a folder OUTSIDE demo/out) was still refused by the resolve() check.
+    Here a junction (Windows) or symlink under demo/out points to another
+    folder INSIDE demo/out: it resolves inside, tracker/serve.py's safe_join
+    would serve it, and only the link rule refuses it. The rule stands
+    because a link is this machine's arrangement (the demo/out/<tag>/view
+    junctions to C: are not in any other copy), so an update names the real
+    file; the message says so and no longer claims the server would refuse."""
+    with Fixture() as f:
+        ctx = _with_runs(f)
+        demo = f.tmp / "demo" / "out"
+        alias = demo / "r1_alias"
+        if not _link_dir(alias, demo / "r1"):
+            print("      SKIP: this platform makes neither a junction nor a symlink")
+            return "SKIP"
+        try:
+            rel = "r1_alias/r1_demo_phone.mp4"
+            assert (demo / rel).resolve().is_relative_to(demo.resolve()), "the fixture must stay inside"
+            sys.path.insert(0, str(ROOT / "tracker"))
+            import serve
+            assert serve.safe_join(demo, rel) is not None, "the server serves it: the rule is add_update's own"
+            why = A.run_media_problem(rel, demo)
+            assert why is not None and "symlink or junction" in why, why
+            assert "server would not serve" not in why, why
+            d = valid_doc()
+            d["entries"][2]["media"] = ["run/" + rel]
+            assert any("media not found" in m and "junction" in m for m in A.check(d, ctx)), A.check(d, ctx)
+            # the real file it points to is fine
+            assert A.run_media_problem("r1/r1_demo_phone.mp4", demo) is None
+        finally:
+            import os
+            os.rmdir(alias) if sys.platform == "win32" else os.unlink(alias)
+
+
 def test_a_missing_source_heading_is_refused():
     expect(lambda d: d["entries"][1]["source"].update(heading="### 2026-09-20 — renamed"), "source heading not found")
 

@@ -14,6 +14,8 @@
     updTab: "log",
     updF: { q: "", kind: "", retracted: false, media: false },
     updOpen: {},
+    dash: null, dashErr: false, dashEtag: null, live: null, contentEtag: null,
+    todoF: { owner: "", status: "notdone", q: "" },
   };
   const CATS = ["retracted", "fixed", "added", "changed", "flown", "found", "limits", "confirmed", "tests", "docs", "share"];
   const CATCOL = { retracted: "var(--missing)", fixed: "var(--done)", added: "var(--accent)", changed: "var(--pi)", flown: "#0b7285",
@@ -46,6 +48,8 @@
     v_close_on: ["run", "pas_ap_video_on_20261014/pas_ap_video_on_20261014_demo_phone.mp4"],
     v_close_off: ["run", "pas_ap_video_off_20261014/pas_ap_video_off_20261014_demo_phone.mp4"],
     v_city_nfz_1013: ["run", "citylife_redcar_nfz_20261013/citylife_redcar_nfz_20261013_demo_share.mp4"],
+    v_ovf_compare: ["run", "pas_ap_ovf_compare_20261021_phone.mp4"],
+    v_city_motion_compare: ["run", "citylife_motion_compare_20261019_phone.mp4"],
   };
 
   // ------------------------------------------------------------ helpers
@@ -121,8 +125,9 @@
   }
 
   // ------------------------------------------------------------ routing
-  const PAGES = { overview: renderOverview, flow: renderFlow, grant: renderGrant, board: renderBoard, evidence: renderEvidence, glossary: renderGlossary, updates: renderUpdates };
-  function route() { const h = (location.hash || "#overview").slice(1).split("?")[0]; return PAGES[h] ? h : "overview"; }
+  // The Dashboard is the first page and the default route (2026-10-21): it is the progress monitor.
+  const PAGES = { dashboard: renderDashboard, overview: renderOverview, flow: renderFlow, grant: renderGrant, board: renderBoard, evidence: renderEvidence, glossary: renderGlossary, updates: renderUpdates };
+  function route() { const h = (location.hash || "#dashboard").slice(1).split("?")[0]; return PAGES[h] ? h : "dashboard"; }
   function renderNav() {
     $("#nav").innerHTML = Object.keys(PAGES).map((k) => `<a href="#${k}" class="${route() === k ? "on" : ""}">${esc(t("nav_" + k))}</a>`).join("");
     $$("#lang button").forEach((b) => b.classList.toggle("on", b.dataset.lang === S.lang));
@@ -209,6 +214,266 @@
         <div class="panel callout warn"><h3>${esc(t("honesty"))}</h3>${list(p.honesty)}</div>
         <div class="panel callout"><h3>${esc(t("decisions"))}</h3><ol>${(ov.decisions || []).map((d) => { const x = L(d); return `<li><b>${esc(x.question)}</b><div class="small muted">${esc(x.why)}</div></li>`; }).join("")}</ol></div>
       </div>`;
+  }
+
+  // ------------------------------------------------------------ dashboard
+  // Every number here comes from tracker/data/dashboard.json, which tools/build_dashboard.py derives
+  // from the run folders, docs/data, the cards, the update log and the CHANGELOG, each with its source
+  // and date. A missing value prints "not measured", never 0 (silence reads as success). The live
+  // panel polls /api/live every 5 s and the data every 60 s, only while this page is visible.
+  // "vla_unverified": a manifest that names a VLA whose run folder does not show that VLA flying it
+  // (tools/todo.py classify_run: no server answers, too small a share of the requests answered or of
+  // the loop ticks flown, or another model than the configured one); shown apart, never counted.
+  const PILOTS = ["vla", "vla_unverified", "stub", "detector", "none", "unknown", "missing"];
+  const PCOL = { vla: "var(--done)", vla_unverified: "var(--missing)", stub: "var(--pi)", detector: "var(--partial)", none: "var(--todo)", unknown: "var(--drift)", missing: "var(--line)" };
+  const TCOL = { open: "var(--todo)", doing: "var(--doing)", blocked: "var(--missing)", done: "var(--done)" };
+  const TSTATES = ["open", "doing", "blocked", "done"];
+  const OWNERS = ["user", "agent", "pi"];
+  async function loadDash(force, quiet) {
+    try {
+      const r = await fetch("/api/dashboard", { headers: (!force && S.dashEtag) ? { "If-None-Match": S.dashEtag } : {} });
+      // A 304 is the server answering: it clears the "Server unreachable" badge (re-review of d180e01,
+      // P1: this returned before clearing dashErr, and the ETag hashes the whole body, so a server back
+      // with unchanged data answered every poll with 304 and the red badge stayed over a live server).
+      // Only a cleared badge repaints; a plain 304 from the 60 s poll leaves the page as it is.
+      if (r.status === 304) {
+        const was = S.dashErr; S.dashErr = false;
+        if (was && !quiet && S.content && route() === "dashboard") { const y = window.scrollY; render(); window.scrollTo(0, y); }
+        return;
+      }
+      if (!r.ok) throw new Error(r.status);
+      S.dashEtag = r.headers.get("ETag"); S.dash = await r.json(); S.dashErr = false;
+    } catch (e) { S.dashErr = true; }
+    if (!quiet && S.content && route() === "dashboard") { const y = window.scrollY; render(); window.scrollTo(0, y); }
+  }
+  async function loadLive(quiet) {
+    try { const r = await fetch("/api/live"); if (!r.ok) throw new Error(r.status); S.live = await r.json(); }
+    catch (e) { S.live = { error: "unreachable", jobs: [] }; }
+    if (!quiet) { const el = $("#dash-live"); if (el) el.innerHTML = liveHTML(); }
+  }
+  let dashTimers = [];
+  function bindDashboard() {
+    dashTimers.forEach(clearInterval);
+    const on = () => route() === "dashboard" && document.visibilityState === "visible";
+    dashTimers = [setInterval(() => { if (on()) loadLive(); }, 5000), setInterval(() => { if (on()) loadDash(false); }, 60000)];
+    const upd = (k, v) => { S.todoF[k] = v; const el = $("#dash-todo"); if (el) { el.innerHTML = todoHTML(); bindTodo(); } };
+    const bindTodo = () => {
+      const o = $("#t-owner"); if (o) o.onchange = (e) => upd("owner", e.target.value);
+      const s = $("#t-status"); if (s) s.onchange = (e) => upd("status", e.target.value);
+      const q = $("#t-q"); if (q) q.oninput = (e) => { S.todoF.q = e.target.value; clearTimeout(bindTodo._t); bindTodo._t = setTimeout(() => { upd("q", S.todoF.q); const el = $("#t-q"); el.focus(); el.setSelectionRange(el.value.length, el.value.length); }, 250); };
+    };
+    bindTodo();
+    $$("#main [data-play]").forEach((el) => (el.onclick = () => openMedia(el.dataset.play, el.dataset.cap)));
+  }
+  const dnum = (v, d = 2) => (v == null ? t("not_measured") : (+v).toFixed(d));
+  function fmtKpi(v, unit) {
+    if (v == null) return `<span class="nm">${esc(t("not_measured"))}</span>`;
+    if (unit === "ratio") { const p = 100 * v; return esc((p === 0 ? "0" : p < 0.1 ? p.toPrecision(2) : p.toFixed(1)) + " %"); }
+    if (unit === "ms") return esc((v < 10 ? v.toFixed(2) : v.toFixed(1)) + " ms");
+    if (unit === "s") return esc(v.toFixed(2) + " s");
+    if (unit === "mps") return esc(v.toFixed(2) + " m/s");
+    return esc(String(Math.round(v * 100) / 100));
+  }
+  function fmtTarget(k) { if (!k.target) return esc(t("tracked")); return esc(`${k.target.op === "<=" ? "≤" : "≥"} `) + fmtKpi(k.target.value, k.unit); }
+  const srcCode = (s) => (s ? `<code class="src" title="${esc(s)}">${esc(s.replace(/^docs\/data\//, "").replace(/^demo\/out\//, ""))}</code>` : "");
+  function dashHeader(d) {
+    const days = Math.max(0, Math.ceil((FINAL - new Date()) / 86400000));
+    const m = d.meta || {}; const sv = d.server || {};
+    const badges = [];
+    // A failed /api/dashboard read keeps the last data on screen; its server block is then as old as
+    // the data, so it must not decide the badges, and "Data current" is never shown in that state
+    // (review of 8035d0a, P3: a dead server read as current data, with a green badge).
+    if (S.dashErr) badges.push(`<span class="badge bad">${esc(tf("dash_offline", { t: m.generated ? ftime(m.generated) : "?" }))}</span>`);
+    else {
+      if (sv.stale) badges.push(`<span class="badge bad" title="${esc((sv.stale_reasons || []).join("\n"))}">${esc(t("dash_stale"))}</span>`);
+      if (sv.rebuild === "started" || sv.rebuild === "running") badges.push(`<span class="badge">${esc(t("dash_rebuilding"))}</span>`);
+      if (sv.rebuild === "deferred_flight") badges.push(`<span class="badge">${esc(t("dash_rebuild_deferred"))}</span>`);
+      // an unreadable live status defers the rebuild as a possible flight (re-review of d180e01, P5)
+      if (sv.rebuild === "deferred_live_unreadable") badges.push(`<span class="badge warn">${esc(t("dash_rebuild_unreadable"))}</span>`);
+    }
+    if (m.content_stale) badges.push(`<span class="badge warn" title="${esc(tf("dash_cards_stale_help", { cl: m.changelog_newest, cr: m.cards_newest_review }))}">${esc(t("dash_cards_stale"))}</span>`);
+    return `<section class="panel dash-head">
+      <div class="stat"><span class="big-number">${days}</span><span class="muted small">${esc(t("days_left"))}</span></div>
+      <div class="dh-meta small"><div><b>${esc(t("project"))}</b> ${esc(m.version || "?")} · git <code>${esc(m.git_head || "?")}</code>${m.git_dirty ? " (dirty)" : ""}</div>
+        <div class="muted">${esc(t("dash_generated"))} ${esc(m.generated ? ftime(m.generated) : "?")} · ${esc(t("dash_mode_" + (m.mode || "quick")))}</div>
+        <div class="muted">${esc(tf("dash_sources", { cl: m.changelog_newest || "?", cr: m.cards_newest_review || "?" }))}</div></div>
+      <div class="dh-badges">${badges.join("") || (S.dashErr ? "" : `<span class="badge ok">${esc(t("dash_fresh"))}</span>`)}</div></section>`;
+  }
+  function liveHTML() {
+    const L0 = S.live || { jobs: [] };
+    const jobs = L0.jobs || [];
+    const g = L0.gpu;
+    const row = (j) => `<tr class="ls-${esc(j.state)}"><td><span class="chip">${esc(t("live_kind_" + j.kind))}</span>${j.phase ? ` <span class="chip">${esc(t("live_phase_" + j.phase))}</span>` : ""}</td><td><b>${esc(j.name)}</b>${j.run_tag ? `<div class="small muted"><code>demo/out/${esc(j.run_tag)}</code></div>` : ""}${j.detail ? `<div class="small muted">${esc(j.detail)}</div>` : ""}</td>
+      <td class="small">${esc(ftime(j.started))}</td><td>${j.progress == null ? "" : `<div class="bar" style="width:90px"><span style="width:${100 * j.progress}%"></span></div>`}</td>
+      <td><span class="lstate ${esc(j.state)}">${esc(t("live_state_" + j.state))}</span><div class="small muted">${esc(tf("live_beat", { s: Math.round(j.age_s) }))}</div></td></tr>`;
+    const gpu = g && g.gpus && g.gpus.length ? g.gpus.map((x) => `<div class="gpu"><b>${esc(x.name)}</b> · ${esc(t("live_util"))} ${x.util_pct == null ? "?" : x.util_pct + " %"} · ${esc(t("live_vram"))} ${x.mem_used_mib == null ? "?" : (x.mem_used_mib / 1024).toFixed(1)} / ${x.mem_total_mib == null ? "?" : (x.mem_total_mib / 1024).toFixed(1)} GB
+        <div class="bar" style="margin-top:4px"><span style="width:${x.mem_total_mib ? (100 * x.mem_used_mib) / x.mem_total_mib : 0}%"></span></div></div>`).join("")
+        + (g.apps && g.apps.length ? `<div class="small muted">${esc(t("live_apps"))}: ${g.apps.map((a) => `${esc(a.name)}${a.mem_mib != null ? ` (${(a.mem_mib / 1024).toFixed(1)} GB)` : ""}`).join(", ")}${g.other_apps ? ` + ${g.other_apps}` : ""}</div>` : "")
+        + (g.reduced_for_flight ? `<div class="small muted">${esc(t("live_gpu_reduced"))}</div>` : "")
+      // A failed /api/live read knows nothing about the GPU either: no "no GPU" line then (P3).
+      : (L0.error ? "" : `<div class="small muted">${esc(t("live_gpu_none"))}</div>`);
+    // A failed read says only that it failed: it must not also assert "Nothing is running", which
+    // would hide a flight and could never show the overlap banner (review of 8035d0a, P3).
+    const none = L0.error ? "" : `<p class="muted small">${esc(t(L0.dir_ok === false ? "live_dir_missing" : "live_none"))}</p>`;
+    return `<h2 class="ptitle">${esc(t("live_title"))}</h2>
+      ${L0.overlap ? `<div class="callout bad-banner">${esc(t("live_overlap"))}</div>` : ""}
+      ${L0.error ? `<div class="callout warn"><p class="small">${esc(t("live_error"))}</p></div>` : ""}
+      ${jobs.length ? `<div class="table-wrap"><table class="live"><thead><tr><th>${esc(t("col_kind"))}</th><th>${esc(t("col_name"))}</th><th>${esc(t("col_started"))}</th><th>${esc(t("col_progress"))}</th><th>${esc(t("col_state"))}</th></tr></thead><tbody>${jobs.map(row).join("")}</tbody></table></div>`
+        : none}
+      ${(L0.done || []).length ? `<div class="small muted">${esc(t("live_recent"))}: ${(L0.done || []).map((j) => `${esc(j.name)} (${esc(t("live_kind_" + j.kind))}, ${esc(j.status || "")}${j.ended ? ", " + esc(ftime(j.ended)) : ""})`).join(" · ")}</div>` : ""}
+      ${gpu ? `<h3 style="margin-top:12px">${esc(t("live_gpu"))}</h3>${gpu}` : ""}
+      <p class="small muted" style="margin-top:8px">${esc(t("live_help"))}</p>`;
+  }
+  const todoTitle = (i) => (i.i18n && i.i18n[S.lang] && i.i18n[S.lang].title) || (i.i18n && i.i18n.en && i.i18n.en.title) || i.id;
+  const tpill = (s) => `<span class="tpill" style="background:${TCOL[s] || "var(--todo)"}">${esc(t("tstatus_" + s))}</span>`;
+  function vlaPanel(d) {
+    const v = d.vla || {}; const c = v.counts || {};
+    const items = ((d.todo || {}).items || []).filter((i) => i.milestone === "vla");
+    const last = v.last_vla_flight;
+    return `<section class="panel vla"><h2 class="ptitle">${esc(t("vla_title"))}</h2>
+      <p class="small">${esc(t("vla_goal"))}</p>
+      <div class="vla-last ${last ? "ok" : "no"}"><div class="small muted">${esc(t("vla_last"))}</div>
+        <b>${last ? `${esc(last.tag)} · ${esc(fdate(last.date))} · <code>${esc(last.id)}</code>` : esc(t("vla_none_yet"))}</b>
+        ${last && last.decisions != null ? `<div class="small muted">${esc(tf("vla_evidence", { n: last.decisions, r: last.requests == null ? "?" : last.requests, ds: pct(last.decision_share), ts: pct(last.vla_tick_share), lf: last.link_failure == null ? "?" : last.link_failure, se: last.server_error == null ? "?" : last.server_error, pf: last.parse_fail == null ? "?" : last.parse_fail, w: (last.weights_sha256 || "").slice(0, 12) }))}</div>` : ""}</div>
+      ${v.last_vla_unverified ? `<div class="small" style="margin-top:6px"><span class="pdot" style="background:${PCOL.vla_unverified}"></span>${esc(tf("vla_unverified_last", { tag: v.last_vla_unverified.tag, why: v.last_vla_unverified.reason }))}</div>` : ""}
+      <div class="small muted" style="margin-top:10px">${esc(tf("vla_counts", { n: v.total || 0 }))}</div>
+      ${stack(c, PILOTS, PCOL)}
+      <div class="legend">${PILOTS.filter((k) => c[k]).map((k) => `<span><i style="background:${PCOL[k]}"></i>${esc(t("pilot_" + k))} ${c[k]}</span>`).join("")}${c.vla ? "" : `<span><i style="background:${PCOL.vla}"></i>${esc(t("pilot_vla"))} 0</span>`}</div>
+      <h3 style="margin-top:12px">${esc(t("vla_by_rail"))}</h3>
+      <ul class="plain">${(v.latest_by_rail || []).map((r) => `<li><span class="chip">${esc(t("rail_" + r.rail))}</span> <span class="pdot" style="background:${PCOL[r.pilot_class]}"></span>${esc(t("pilot_" + r.pilot_class))} · <code>${esc(r.tag)}</code> <span class="muted small">${esc(fdate(r.date))}</span></li>`).join("")}</ul>
+      <h3 style="margin-top:12px">${esc(t("vla_milestones"))}</h3>
+      ${items.length ? `<ol class="miles">${items.map((i) => `<li class="${i.status_effective === "done" ? "done" : ""}">${tpill(i.status_effective)} <b>${esc(todoTitle(i))}</b>
+        <span class="small muted">${esc(t("owner_" + i.owner))}${i.due ? " · " + esc(fdate(i.due)) : ""}</span>
+        ${i.probe ? `<span class="chip ${i.probe_ok ? "pok" : "pno"}" title="${esc(i.probe.file + " ∋ " + (i.probe.contains || ""))}">${esc(t(i.probe_ok ? "probe_found" : "probe_missing"))}</span>` : ""}
+        ${i.auto_evidence ? `<div class="small">${esc(tf("auto_done", { run: i.auto_evidence.run }))}</div>` : ""}</li>`).join("")}</ol>`
+        : `<p class="muted small">${esc(t("todo_none"))}</p>`}
+      <p class="small muted">${esc(t("vla_help"))}</p></section>`;
+  }
+  function wpPanel(d) {
+    const w = d.wps || {}; const cs = cards();
+    return `<section class="panel"><h2 class="ptitle">${esc(t("wp_title"))}</h2>
+      <div class="wpgrid">${(w.areas || []).map((a) => {
+        const sc = count(cs.filter((c) => c.area === a.area), (c) => cstate(c).state);
+        return `<div class="wprow"><div class="wpname"><b>${esc(t("area_" + a.area))}</b><span class="muted small">${a.total} ${esc(t("cards"))}</span></div>
+          <div>${stack(a.counts, VERDICTS, VCOL)}<div class="thin">${stack(sc, STATES, SCOL)}</div>
+          <div class="small muted">${VERDICTS.filter((v) => a.counts[v]).map((v) => `${esc(t("verdict_" + v))} ${a.counts[v]}`).join(" · ")}
+            ${a.gate_open.length ? ` · <span class="gate-n" title="${esc(a.gate_open.join(", "))}">${esc(tf("wp_gate_open", { n: a.gate_open.length }))}</span>` : ""}
+            · ${esc(t("wp_newest"))} ${esc(a.newest_review ? fdate(a.newest_review) : t("empty"))}
+            ${a.needs_review.length ? ` · <a href="#board" data-area="${esc(a.area)}" class="go-area rev" title="${esc(a.needs_review.join(", "))}">${esc(tf("wp_needs_review", { n: a.needs_review.length }))}</a>` : ""}</div></div></div>`; }).join("")}</div>
+      <div class="legend">${VERDICTS.map((v) => `<span><i style="background:${VCOL[v]}"></i>${esc(t("verdict_" + v))}</span>`).join("")}<span>${esc(t("wp_board"))}: ${STATES.map((s) => `<i style="background:${SCOL[s]}"></i>${esc(t("state_" + s))}`).join(" ")}</span></div>
+      <p class="small muted">${esc(t("wp_help"))}</p></section>`;
+  }
+  function kpiPanel(d) {
+    const rows = d.kpis || [];
+    const cls = (k) => (k.status !== "measured" ? "k-nm" : k.green ? "k-green" : k.meets_target === false || k.beats_null === false ? "k-red" : "k-amber");
+    return `<section class="panel"><h2 class="ptitle">${esc(t("kpi_dash_title"))}</h2>
+      <div class="table-wrap"><table class="kpis"><thead><tr><th>${esc(t("kpi_name"))}</th><th>${esc(t("kpi_target"))}</th><th>${esc(t("kpi_value"))}</th><th>${esc(t("kpi_null"))}</th><th>${esc(t("kpi_grade"))}</th><th>${esc(t("kpi_as_of"))}</th><th>${esc(t("kpi_source"))}</th></tr></thead><tbody>
+      ${rows.map((k) => { const p = k.primary || {};
+        const extra = [];
+        if (p.n != null && p.k == null) extra.push(`n = ${esc(p.n)}`);
+        if (p.k != null) extra.push(`${esc(p.k)}/${esc(p.n)}`);
+        if (p.set_aside_unresolved) extra.push(esc(tf("set_aside", { n: p.set_aside_unresolved })));
+        if (p.correct != null) extra.push(`${esc(p.correct)}/${esc(p.n)} · ${esc(tf("fs_detail", { f: p.false_triggers, m: p.missed }))}`);
+        if (p.discriminates === false) extra.push(esc(t("kpi_not_discriminating")));
+        if (p.run) extra.push(`<code>${esc(p.run)}</code>${p.what ? ` · ${esc(p.what)}` : ""}`);
+        return `<tr class="${cls(k)}"><td><b>${esc(t("kpi_l_" + k.key))}</b> <span class="chip">${esc(k.contract === "acceptance" ? t("contract_acceptance") : k.contract.toUpperCase())}</span>
+            <div class="small muted"><code title="${esc(k.grant_source)}">${esc(k.grant_source.replace(/^kuanting-vla-uav-guardrail\/docs\/02-implementation\//, ""))}</code></div></td>
+          <td class="small">${fmtTarget(k)}</td>
+          <td><b>${fmtKpi(k.value, k.unit)}</b>${k.meets_target === true ? ` <span class="mk ok">✓</span>` : k.meets_target === false ? ` <span class="mk no">✗</span>` : ""}
+            ${extra.length ? `<div class="small muted">${extra.join(" · ")}</div>` : ""}
+            ${(k.also || []).map((a) => `<div class="small muted">${esc(t("kpi_also"))}: ${fmtKpi(a.value, k.unit)} · ${esc(t("grade_" + a.grade))} · ${esc(a.as_of || "")} ${srcCode(a.source)}</div>`).join("")}</td>
+          <td class="small">${p.null == null ? esc(k.status !== "measured" ? t("empty") : k.null_rule === "none" ? t("kpi_no_null") : k.null_rule === "required" ? t("kpi_null_missing") : t("empty")) : fmtKpi(p.null, k.unit) + (k.beats_null === false ? ` <span class="mk no" title="${esc(t("beats_null_no"))}">✗</span>` : k.beats_null ? ` <span class="mk ok" title="${esc(t("beats_null_yes"))}">✓</span>` : "")}${p.null_run ? `<div class="muted"><code>${esc(p.null_run)}</code></div>` : ""}</td>
+          <td class="small">${k.status === "measured" ? esc(t("grade_" + p.grade)) : esc(t("empty"))}</td>
+          <td class="small">${esc(p.as_of ? fdate(p.as_of) : t("empty"))}</td><td class="small">${srcCode(p.source)}</td></tr>`; }).join("")}
+      </tbody></table></div><p class="small muted">${esc(t("kpi_green_rule"))}</p></section>`;
+  }
+  function videoTile(v, poster, cap) {
+    if (!v) return `<div class="ftile none">${poster ? `<img src="/${esc(poster)}" alt="" loading="lazy">` : ""}<div class="small">${esc(t("flights_no_video"))}</div></div>`;
+    return `<div class="ftile" data-play="${esc(v.path)}" data-cap="${esc(cap)}">${poster ? `<img src="/${esc(poster)}" alt="" loading="lazy">` : `<video src="/media/${esc(v.path)}#t=4" preload="metadata" muted></video>`}<div class="play">▶</div></div>`;
+  }
+  function flightCard(f) {
+    const p0 = f.p0;
+    const stat = (lab, val) => `<div><span class="muted">${esc(lab)}</span> <b>${val}</b></div>`;
+    return `<div class="fcard">${videoTile(f.videos[0], f.poster, f.tag)}
+      <div class="fbody"><div class="row"><code class="ftag">${esc(f.tag)}</code></div>
+        <div class="row small"><span class="chip">${esc(t("rail_" + f.rail))}</span><span class="chip" title="${esc(f.pilot.unverified_reason || "")}"><span class="pdot" style="background:${PCOL[f.pilot.class]}"></span>${esc(t("pilot_" + f.pilot.class))}</span>
+          ${f.shield ? `<span class="chip">${esc(t("shield_" + f.shield))}</span>` : ""}${f.variant && f.pair ? `<span class="chip" title="${esc(f.pair)}">${esc(t("variant"))} ${esc(f.variant)}</span>` : ""}
+          <span class="chip ${f.kpi_grade ? "kg" : ""}" title="${esc(f.kpi_grade_reasons.join(", "))}">${esc(t(f.kpi_grade ? "f_kpi_grade" : "f_not_kpi"))}</span></div>
+        ${f.stored_kpi_grade === true && !f.kpi_grade ? `<div class="small warn-text" title="${esc(f.stored_kpi_grade_reasons.join(" | "))}">${esc(t("f_stored_claims"))}</div>` : ""}
+        <div class="fstats small">${stat(t("f_ticks"), f.ticks == null ? esc(t("not_measured")) : esc(f.ticks))}${stat(t("f_loop"), f.loop_hz == null ? esc(t("not_measured")) : esc(dnum(f.loop_hz, 2)) + " Hz")}
+          ${stat(t("f_p0"), p0 ? `${esc(p0.escapes == null ? "?" : p0.escapes)}${p0.rate != null ? ` (${fmtKpi(p0.rate, "ratio")})` : ""}` : esc(t("not_measured")))}
+          ${stat(t("f_unsafe"), f.unsafe_p0_ticks == null ? esc(t("not_measured")) : esc(f.unsafe_p0_ticks))}
+          ${stat(t("f_within"), f.frac_within_30m == null ? esc(t("not_measured")) : fmtKpi(f.frac_within_30m, "ratio"))}
+          ${stat(t("f_nfz"), f.nfz_s == null ? esc(t("not_measured")) : esc(dnum(f.nfz_s, 1)) + " s")}</div>
+        ${f.end_reason ? `<div class="small muted">${esc(t("f_end"))}: ${esc(f.end_reason)}</div>` : ""}
+        <div class="small muted"><code>${esc(f.pilot.id || "")}</code> · seed ${esc(f.seed ?? "?")} · <code>${esc(f.code_revision || "?")}</code></div></div></div>`;
+  }
+  function flightsPanel(d) {
+    const fl = (d.flights || []).slice(0, 12); const cmp = (d.compares || []).slice(0, 4);
+    const days = []; fl.forEach((f) => { const k = f.date || "?"; let g = days.find((x) => x.d === k); if (!g) days.push((g = { d: k, fs: [] })); g.fs.push(f); });
+    return `<section class="panel"><h2 class="ptitle">${esc(t("flights_title"))}</h2>
+      <p class="small muted">${esc(tf("flights_all", { n: (d.meta || {}).flights_total || 0 }))}</p>
+      ${cmp.length ? `<h3>${esc(t("flights_compare"))}</h3><div class="fgrid">${cmp.map((c) => `<div class="fcard">${videoTile(c.videos[0], c.poster, c.key)}
+        <div class="fbody"><code class="ftag">${esc(c.key)}</code><div class="small muted">${esc(fdate(c.date))} · ${c.runs.map((r) => `<code>${esc(r)}</code>`).join(" · ")}</div></div></div>`).join("")}</div>` : ""}
+      ${days.map((g) => `<h3>${esc(g.d === "?" ? t("empty") : fdate(g.d))}</h3><div class="fgrid">${g.fs.map(flightCard).join("")}</div>`).join("")}
+      <p class="small muted">${esc(t("flights_help"))}</p></section>`;
+  }
+  function timelinePanel(d) {
+    const tl = d.timeline || {}; const ov = (S.content && S.content.overview) || {};
+    const a = new Date(tl.start || "2026-02-01"), b = new Date(tl.end || "2026-12-01");
+    const pos = (x) => Math.max(0, Math.min(100, (100 * (new Date(x) - a)) / (b - a)));
+    const months = []; for (let m = new Date(a); m < b; m = new Date(m.getFullYear(), m.getMonth() + 1, 1)) months.push(m);
+    const today = `<div class="today" style="left:${pos(new Date())}%"></div>`;
+    const gates = (tl.gates || []).map((g) => `<div class="gatemark" style="left:${pos(g.date)}%" title="${esc(t(g.key))}"></div>`).join("");
+    const upd = (S.content && S.content.updates && S.content.updates.entries) || [];
+    const ttl = (seq) => { const e = upd.find((x) => x.seq === seq); return e ? L(e).title : ""; };
+    const lane = (name, inner) => `<div class="grow"><div class="gname">${esc(name)}</div><div class="track">${inner}${gates}${today}</div></div>`;
+    const plan = (tl.plan || []).map((p) => { const g = (ov.timeline || [])[p.index] || {}; const x = L(g);
+      return lane(x.name || "", `<div class="gbar ${p.overdue ? "late" : ""}" style="left:${pos(p.start)}%;width:${Math.max(1.2, pos(p.end) - pos(p.start))}%;background:${VCOL[p.status] || "var(--todo)"}" title="${esc(x.name || "")} · ${esc(t("verdict_" + p.status))}${p.overdue ? " · " + esc(t("tl_overdue")) : ""}"></div>`); }).join("");
+    const maxN = Math.max(1, ...(tl.flights || []).map((f) => f.n));
+    return `<section class="panel gantt dash-tl"><h2 class="ptitle">${esc(t("tl_title"))}</h2>
+      <div class="axis">${months.map((m) => `<div>${esc(m.toLocaleDateString(LOCALE[S.lang], { month: "short" }))}</div>`).join("")}</div>
+      ${plan}
+      ${lane(t("tl_updates"), (tl.updates || []).map((u) => `<a class="tdot k-${esc(u.kind)}" href="#updates?v=${u.seq}" style="left:${pos(u.date)}%" title="#${u.seq} · ${esc(fdate(u.date))} · ${esc(ttl(u.seq))}"></a>`).join(""))}
+      ${lane(t("tl_flights"), (tl.flights || []).map((f) => `<span class="ftick ${f.vla ? "vla" : ""}" style="left:${pos(f.date)}%;height:${30 + (70 * f.n) / maxN}%" title="${esc(fdate(f.date))}: ${f.n}${f.vla ? " · VLA " + f.vla : ""}"></span>`).join(""))}
+      ${lane(t("tl_todo"), (tl.todo_due || []).map((x) => `<span class="tdue ${x.status === "done" ? "done" : new Date(x.due) < new Date() ? "late" : ""}" style="left:${pos(x.due)}%" title="${esc(x.id)} · ${esc(fdate(x.due))}"></span>`).join(""))}
+      <div class="legend"><span><i style="background:var(--missing);width:2px"></i>${esc(t("today"))}</span><span>┆ ${esc(t("midterm"))} / ${esc(t("final"))}</span><span><i class="late-sw"></i>${esc(t("tl_overdue"))}</span></div></section>`;
+  }
+  function todoHTML() {
+    const td = (S.dash && S.dash.todo) || { items: [] };
+    const f = S.todoF; const q = f.q.trim().toLowerCase();
+    const vis = (td.items || []).filter((i) => (!f.owner || i.owner === f.owner)
+      && (f.status === "" || (f.status === "notdone" ? i.status_effective !== "done" : i.status_effective === f.status))
+      && (!q || JSON.stringify([i.id, i.i18n, i.cards, i.wp]).toLowerCase().includes(q)))
+      .sort((x, y) => (y.overdue - x.overdue) || ((x.due || "9999") < (y.due || "9999") ? -1 : (x.due || "9999") > (y.due || "9999") ? 1 : x.id.localeCompare(y.id, undefined, { numeric: true })));
+    const opt = (vals, cur, all, pre) => `<option value="">${esc(t(all))}</option>` + vals.map((v) => `<option value="${v}" ${cur === v ? "selected" : ""}>${esc(t(pre + v))}</option>`).join("");
+    return `<div class="toolbar"><input type="search" id="t-q" placeholder="${esc(t("search"))}" value="${esc(f.q)}">
+        <select id="t-owner">${opt(OWNERS, f.owner, "todo_all_owners", "owner_")}</select>
+        <select id="t-status"><option value="notdone" ${f.status === "notdone" ? "selected" : ""}>${esc(t("todo_not_done"))}</option>${opt(TSTATES, f.status, "todo_all_status", "tstatus_")}</select>
+        <span class="spacer"></span><span class="small muted">${vis.length} / ${(td.items || []).length}${td.overdue ? ` · <b class="late-t">${esc(tf("todo_overdue_n", { n: td.overdue }))}</b>` : ""}</span></div>
+      ${(td.items || []).length ? `<div class="table-wrap"><table class="todo"><thead><tr><th>${esc(t("col_id"))}</th><th>${esc(t("col_title"))}</th><th>${esc(t("col_owner"))}</th><th>${esc(t("col_status"))}</th><th>${esc(t("col_wp"))}</th><th>${esc(t("col_cards"))}</th><th>${esc(t("col_due"))}</th></tr></thead><tbody>
+        ${vis.map((i) => `<tr class="${i.overdue ? "late" : ""}"><td><code>${esc(i.id)}</code></td><td>${esc(todoTitle(i))}${(i.needs || []).length ? `<div class="small muted">${i.needs.map((n) => esc(t("need_" + n))).join(" · ")}</div>` : ""}${i.auto_evidence ? `<div class="small">${esc(tf("auto_done", { run: i.auto_evidence.run }))}</div>` : ""}</td>
+          <td class="small">${esc(t("owner_" + i.owner))}</td><td>${tpill(i.status_effective)}</td><td><span class="chip">${esc(t("area_" + i.wp))}</span></td>
+          <td class="small">${(i.cards || []).map((c) => `<a class="cchip" href="#board?card=${encodeURIComponent(c)}">${esc(c)}</a>`).join(" ")}</td>
+          <td class="small">${i.due ? esc(fdate(i.due)) + (i.overdue ? ` <b class="late-t">${esc(t("overdue"))}</b>` : "") : esc(t("empty"))}</td></tr>`).join("")}</tbody></table></div>`
+        : `<p class="muted small">${esc(t("todo_none"))}</p>`}`;
+  }
+  function renderDashboard() {
+    const d = S.dash;
+    if (!d || d.missing || d.error) {
+      return `<h1>${esc(t("nav_dashboard"))}</h1><div class="panel callout warn"><p>${esc(t(S.dashErr || (d && d.error) ? "dash_unreachable" : "dash_missing"))}</p><code>python tools/build_dashboard.py</code></div>
+        <section class="panel" id="dash-live" style="margin-top:14px">${liveHTML()}</section>`;
+    }
+    return `${dashHeader(d)}
+      <div class="dgrid">
+        ${vlaPanel(d)}
+        <section class="panel" id="dash-live">${liveHTML()}</section>
+      </div>
+      ${wpPanel(d)}
+      ${kpiPanel(d)}
+      ${flightsPanel(d)}
+      ${timelinePanel(d)}
+      <section class="panel"><h2 class="ptitle">${esc(t("todo_title"))}</h2><div id="dash-todo">${todoHTML()}</div></section>`;
   }
 
   // ------------------------------------------------------------ diagrams
@@ -648,6 +913,7 @@
       const m = location.hash.match(/card=([^&]+)/); if (m) openCard(decodeURIComponent(m[1]));
     }
     if (page === "updates") bindUpdates();
+    if (page === "dashboard") bindDashboard();
     if (page === "glossary") {
       $("#g-q").oninput = (e) => { const q = e.target.value.toLowerCase(); $$("#gloss .gi").forEach((d) => (d.style.display = d.textContent.toLowerCase().includes(q) ? "" : "none")); };
     }
@@ -669,22 +935,37 @@
     $("#drawer").classList.remove("open"); $("#scrim").classList.remove("open"); render();
   });
 
+  // The server answers /api/content with an ETag and a 304 to a matching If-None-Match. Until
+  // 2026-10-21 a reload compared only the JSON's LENGTH, so a same-length edit (0.838 -> 0.844)
+  // never showed until a manual reload, and every return to the tab re-downloaded 1.2 MB.
+  async function fetchContent() {
+    const r = await fetch("/api/content", { headers: S.contentEtag ? { "If-None-Match": S.contentEtag } : {} });
+    if (r.status === 304) return null;
+    if (!r.ok) throw new Error(r.status);
+    S.contentEtag = r.headers.get("ETag");
+    return r.json();
+  }
   async function reloadContent(manual) {
     try {
-      const c = await fetch("/api/content").then((r) => r.json());
-      if (JSON.stringify(c).length !== JSON.stringify(S.content || {}).length || manual) {
+      if (manual) S.contentEtag = null;
+      const c = await fetchContent();
+      if (c && (manual || JSON.stringify(c) !== JSON.stringify(S.content || {}))) {
         S.content = c; const y = window.scrollY; render(); window.scrollTo(0, y);
-        if (manual) toast(t("reloaded"));
       }
+      if (manual) { await loadDash(true); toast(t("reloaded")); }
     } catch (e) { if (manual) toast(t("load_failed"), true); }
   }
-  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && S.content) reloadContent(false); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" || !S.content) return;
+    reloadContent(false);
+    if (route() === "dashboard") { loadDash(false); loadLive(); }
+  });
   $("#reload").onclick = () => reloadContent(true);
 
   async function boot() {
     renderNav();
     try {
-      const [c, s] = await Promise.all([fetch("/api/content").then((r) => r.json()), fetch("/api/state").then((r) => r.json()).catch(() => null)]);
+      const [c, s] = await Promise.all([fetchContent(), fetch("/api/state").then((r) => r.json()).catch(() => null), loadDash(false, true), loadLive(true)]);
       S.content = c;
       const local = safeGet("board");
       S.board = (s && s.cards) ? s : (local ? JSON.parse(local) : { cards: {}, updated: null });

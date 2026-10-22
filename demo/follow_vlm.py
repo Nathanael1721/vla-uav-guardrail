@@ -98,6 +98,32 @@ ROBOT_CONFIG = ROOT / "demo" / "pas_config" / "robot_semantic_quad.jsonc"
 DEFAULT_POLICY = ROOT / "policies" / "follow_car.yaml"
 
 
+class _NoBeat:
+    def beat(self, *a, **k):
+        return None
+
+    def stop(self, *a, **k):
+        return None
+
+
+def _live_heartbeat(name: str, **kw):
+    """A heartbeat for the tracker's Dashboard "running now" panel
+    (tools/live_status.py), or a no-op when anything goes wrong. beat() only
+    stores numbers in memory; a daemon thread writes at most once a second to
+    %LOCALAPPDATA%, outside OneDrive, and swallows its own errors, so the
+    flight loop never waits on it and cannot be stopped by it. Loaded by path:
+    tools/ is not put on sys.path, where its modules could shadow demo/'s."""
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "vlaguard_live_status", ROOT / "tools" / "live_status.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod.heartbeat("flight", name, **kw)
+    except Exception:                                   # noqa: BLE001
+        return _NoBeat()
+
+
 def camera_hfov_deg(config_path=ROBOT_CONFIG, sensor: str = "FrontCamera",
                     image_type: int = 0, default: float = 90.0) -> float:
     """The detector camera's horizontal FOV, READ FROM THE SIM CONFIG.
@@ -3633,13 +3659,17 @@ def final_report(metrics: dict, n_ticks: int, aborted) -> int:
 
 
 async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
-                               pind=None, recorder=None, t0=None, query="") -> dict:
+                               pind=None, recorder=None, t0=None, query="",
+                               live=None) -> dict:
     """Fly at cruise altitude, through the Shield, to a cell demo/landing.py
     calls landable, before the vertical descent.
 
     The descent used to start wherever the mission ended: in a hedge on
     citylife_redcar_trail2, on a parked car on citylife_ped_final. Returns what
-    was chosen and whether it was reached, for metrics.json."""
+    was chosen and whether it was reached, for metrics.json. `live` is the
+    flight's Dashboard heartbeat (beat() only, memory only): up to 45 s of
+    this flight used to pass without one (review of 8035d0a, P1)."""
+    live = live if live is not None else _NoBeat()
     info = {"enabled": True}
     try:
         import landing as landing_mod
@@ -3683,6 +3713,7 @@ async def _fly_to_landing_site(drone, shield, args, timeout_s: float = 45.0,
         if d < 0.8:
             reached = True
             break
+        live.beat(detail=f"flying to the landing site, {d:.0f} m")         # memory only
         v = min(3.0, 0.6 * d)
         vz = float(np.clip((args.cruise_alt - up) * args.alt_gain,
                            -args.climb_max, args.climb_max))
@@ -4053,7 +4084,22 @@ async def fly(args) -> int:
     rng_f = None            # low-passed range, for the orbit radial term
     orbit_fwd_prev = 0.0
     client = ProjectAirSimClient()
-    client.connect()
+    # The Dashboard heartbeat starts here, at the first slow step (the
+    # connect), and ends at the very end of this function with the exit code
+    # of final_report. A run refused earlier (the SystemExits above) leaves
+    # no row; a failed connect ends its row "failed" at once rather than
+    # leaving one that reads "stopped unexpectedly". Between the mission
+    # loop's beats, the phase boundaries below beat too (memory only): the
+    # first version beat only inside the loop, and the ~100 s of connect,
+    # scene, detector load, take-off and landing of a 225 s run read "no
+    # heartbeat" (review of 8035d0a, P1).
+    live = _live_heartbeat(args.tag, log_dir=out, total_s=args.max_s, phase="starting",
+                           detail="connecting to the simulator")
+    try:
+        client.connect()
+    except BaseException:
+        live.stop("failed", detail="the simulator connection failed")
+        raise
     grounder = None
     try:
         world = World(client, SCENE, delay_after_load_sec=2,
@@ -4093,6 +4139,7 @@ async def fly(args) -> int:
 
         drone = Drone(client, world, "Drone1")
         t_connect = time.time()
+        live.beat(detail="scene loaded; placing the actors")               # memory only
 
         def _on_collision(_, m):
             # Only real contacts. `t` is seconds since connect; the metrics
@@ -4348,6 +4395,7 @@ async def fly(args) -> int:
                     break
             car.update(0.0)
 
+        live.beat(detail="arming and taking off")                           # memory only
         drone.enable_api_control()
         drone.arm()
         await (await drone.takeoff_async())
@@ -4355,8 +4403,10 @@ async def fly(args) -> int:
             kin = drone.get_ground_truth_kinematics()
             if -kin["pose"]["position"]["z"] >= args.cruise_alt - 0.5:
                 break
+            live.beat(detail=f"climbing to {args.cruise_alt:.0f} m")         # memory only
             await drone.move_by_velocity_async(0.0, 0.0, -2.0, duration=0.2)
             await asyncio.sleep(0.1)
+        live.beat(phase="airborne", detail="at cruise altitude; taking up the start heading")
 
         # POINT DOWN THE STREET BEFORE HANDING OVER, AND PROVE IT WORKED.
         #
@@ -4446,9 +4496,11 @@ async def fly(args) -> int:
                             legacy_sat=args.colour_legacy_sat,
                             identity=id_cfg)
         grounder.start()
+        live.beat(detail="loading the detector")                            # memory only
         for _ in range(600):                      # wait for the detector to load
             if grounder.latest()["seq"] > 0:
                 break
+            live.beat()                                                     # memory only
             await asyncio.sleep(0.5)
         print(f"[flight] cruise {args.cruise_alt:.0f} m — following {args.object!r}")
 
@@ -4507,6 +4559,7 @@ async def fly(args) -> int:
             truth_trace, next_truth = [], 0.0
             while time.time() - t_wait0 < args.start_timeout_s:
                 _tw = time.time()
+                live.beat(detail="waiting for the detector to see the subject")  # memory only
                 kin_w = drone.get_ground_truth_kinematics()
                 pw = kin_w["pose"]["position"]
                 _qw = kin_w["pose"]["orientation"]
@@ -4785,9 +4838,11 @@ async def fly(args) -> int:
             print(f"[flight] target estimator ON, stand-off {want_range:.1f} m "
                   f"(from --want-width {args.want_width} and a "
                   f"{args.object_width_m:.2f} m subject)")
+        live.beat(detail=f"mission: following {args.object!r}")             # memory only
         while time.time() - t0 < args.max_s:
             tick += 1
             _tk0 = time.time()
+            live.beat(progress=(_tk0 - t0) / max(float(args.max_s), 1.0))   # memory only
             mode_label = None       # HUD state text when not the default
             hud_box = False         # draw the box on the video (hud_target)?
             det_tier = None         # identity tier of the steering box
@@ -5955,15 +6010,18 @@ async def fly(args) -> int:
         # The mission window closes here, plus the last command's 0.3 s: what
         # the simulator reports after that is the descent and the landing.
         t_mission_end = time.time() + 0.3
+        live.beat(progress=1.0, phase="landing", detail="mission over; landing")   # memory only
         grounder.stop()
         _hud_live = recorder is not None and pind is not None and pind_error is None
         if args.land_site:
             landing_info = await _fly_to_landing_site(
                 drone, shield, args, pind=pind if _hud_live else None,
-                recorder=recorder if _hud_live else None, t0=t0, query=args.object)
+                recorder=recorder if _hud_live else None, t0=t0, query=args.object,
+                live=live)
         for _k in range(600):
             kin = drone.get_ground_truth_kinematics()
             up = -kin["pose"]["position"]["z"]
+            live.beat(detail=f"descending ({up:.0f} m)")                      # memory only
             if _hud_live and _k % 5 == 0:
                 # The descent is flown without the Shield and below the policy
                 # band by design; say so instead of leaving the last mission
@@ -6002,6 +6060,20 @@ async def fly(args) -> int:
                     fh.write(json.dumps(r) + "\n")
         except Exception as exc:
             print(f"[warn] could not write the flight log: {type(exc).__name__}: {exc}")
+        # The Dashboard row normally ends after final_report, at the end of
+        # this function, with its exit code. It ended here with
+        # "failed" if aborted else "ok", and `aborted` is set only by the
+        # `except Exception` above, so a Ctrl+C flight (KeyboardInterrupt,
+        # or the CancelledError asyncio.run throws into this coroutine)
+        # ended "ok", as did a run of 0 mission ticks (review of 8035d0a,
+        # P8). Only an exception that is leaving this `finally` - nothing
+        # after it will run - ends the row here (never raises).
+        _leaving = sys.exc_info()[0]
+        if _leaving is not None:
+            live.stop("stopped" if issubclass(_leaving, (KeyboardInterrupt, asyncio.CancelledError))
+                      else "failed", detail=f"ended by {_leaving.__name__}")
+        else:
+            live.beat(detail="tearing down; writing the run's records")     # memory only
 
         # BOUND THE WHOLE TEARDOWN, not just the disconnect.
         #
@@ -6404,6 +6476,12 @@ async def fly(args) -> int:
     # The closing lines and the exit code: non-zero for a flight that flew no
     # mission tick or aborted (final_report).
     code = final_report(metrics, len(traj), aborted)
+    # The Dashboard row ends with the run's own verdict (never raises). The
+    # exception class only: its message may name a folder, and the
+    # Dashboard shows no paths.
+    live.stop("ok" if code == 0 else "failed",
+              detail=None if code == 0 else (f"aborted ({str(aborted).split(':', 1)[0]})" if aborted
+                                             else "no mission tick flown"))
 
     cmk = metrics.get("colour_mask") or {}
     n_m, n_w = cmk.get("masked", 0), cmk.get("whole_box", 0)
