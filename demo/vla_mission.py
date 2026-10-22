@@ -597,6 +597,81 @@ def _r(v, n=3):
     return None if v is None else round(float(v), n)
 
 
+# The per-tick record of the decision behind a tick and of the mission, shared
+# by MissionLoop (the CityLife flight) and the ArduPilot rail's VLA pilot
+# (demo/pas_ardupilot/perception_node.VLAPilot), so the two rails write the
+# same fields from the same code (wave V2b, 2026-10-23).
+def current_decision(backend) -> tuple[dict, dict | None]:
+    """(the vla_steps record of the decision being flown - a copy, {} when
+    none - and its step, or None)."""
+    cur = getattr(backend.tracker, "current_record", None)
+    cur = cur if isinstance(cur, dict) else {}
+    step = cur.get("step") if isinstance(cur.get("step"), dict) else None
+    return cur, step
+
+
+def decision_fields(tk, cur: dict, step: dict | None, *, hint_source=None,
+                    link_failure: dict | None = None) -> dict:
+    """The row's VLA fields for one tick: who authored it (vla_link.Tick),
+    the decision being flown (its seq, image age, phrase, hint source, step,
+    bins and raw text, from its vla_steps record `cur`), what a link_lost
+    hover failed with (timeout = slow), and the latest hint SENT."""
+    last = (hint_source.last or {}) if hint_source is not None else {}
+    return {
+        # who flew this tick (vla_link.Tick) and the decision behind it
+        "author": tk.author, "author_reason": tk.reason,
+        "vla_seq": tk.seq, "vla_age_s": _r(tk.age_s),
+        "land_requested": bool(tk.land_requested),
+        # a hover on link_lost: what the link failed with (timeout = slow)
+        "link_failure": ((link_failure or {}).get("kind") if tk.reason == "link_lost" else None),
+        "phrase": cur.get("phrase"), "hint_source": cur.get("hint_source"),
+        "step": step, "bins": cur.get("bins"), "raw_text": cur.get("raw_text"),
+        "hint_sent": last.get("phrase"), "hint_sent_source": last.get("source"),
+    }
+
+
+def goal_and_box(pose: Pose, goal_xy, det) -> tuple[float | None, float | None, float | None]:
+    """(goal distance m, goal bearing deg, box width / frame width), unrounded;
+    None where there is no goal or no box."""
+    gd = gb = None
+    if goal_xy is not None:
+        gd, gb = distance_to(pose, goal_xy), math.degrees(bearing_to(pose, goal_xy))
+    return gd, gb, box_fraction(det)
+
+
+def mission_fields(gd, gb, frac, det, det_age, detector_hint: DetectorHint | None) -> dict:
+    """The row's mission fields: the goal's distance and bearing, the box and
+    its age, and what the detector hint corrected (DetectorHint)."""
+    return {
+        "goal_dist_m": _r(gd), "goal_bearing_deg": _r(gb, 2),
+        "det": (None if det is None else
+                {"cx": _r(det[0], 1), "cy": _r(det[1], 1), "w": _r(det[2], 1),
+                 "score": _r(det[4], 4), "img_w": int(det[5])}),
+        "det_age_s": _r(det_age), "box_frac": _r(frac, 4),
+        "box_age_at_hint_s": (_r(detector_hint.last_box_age_s)
+                              if detector_hint is not None else None),
+        "yaw_correction_deg_at_hint": (
+            None if detector_hint is None
+            or detector_hint.last_yaw_correction_rad is None
+            else round(math.degrees(detector_hint.last_yaw_correction_rad), 2)),
+        "detector_latency_s": (_r(detector_hint.last_detector_latency_s)
+                               if detector_hint is not None else None),
+    }
+
+
+def vla_hud(t: float, alt: float, tk, cur: dict, step: dict | None, *, touched: bool,
+            shield_on: bool, mission: str, cadence, goal_dist_m, box_frac,
+            end_reason) -> dict:
+    """What the VLA panel (hud_lines) draws for one tick."""
+    return {"t": t, "alt": alt, "author": tk.author,
+            "reason": tk.reason, "seq": tk.seq, "age_s": tk.age_s,
+            "phrase": cur.get("phrase"), "hint_source": cur.get("hint_source"),
+            "step": step, "land": bool(tk.land_requested), "shield": bool(touched),
+            "shield_on": shield_on, "mission": mission,
+            "cadence": cadence,
+            "goal_dist_m": goal_dist_m, "box_frac": box_frac, "end_reason": end_reason}
+
+
 class MissionLoop:
     """The body of the flight loop, shared by demo/vla_fly.py and the tests.
 
@@ -678,29 +753,15 @@ class MissionLoop:
         lf = lf if isinstance(lf, dict) else None
         end = self.monitor.update(now, pose, tk, goal_xy=self.goal_xy, det=det,
                                   det_age_s=det_age, server_alive=alive, link_failure=lf)
-        cur = getattr(self.backend.tracker, "current_record", None)
-        cur = cur if isinstance(cur, dict) else {}
-        step = cur.get("step") if isinstance(cur.get("step"), dict) else None
+        cur, step = current_decision(self.backend)
         self.authors[tk.author] += 1
         self.n_touched += int(bool(hd.touched))
         self.n_shadow_touched += int(d.touched)
-        gd = gb = None
-        if self.goal_xy is not None:
-            gd, gb = distance_to(pose, self.goal_xy), math.degrees(bearing_to(pose, self.goal_xy))
-        frac = box_fraction(det)
-        last = (self.hint_source.last or {}) if self.hint_source is not None else {}
+        gd, gb, frac = goal_and_box(pose, self.goal_xy, det)
         row = {
             "t": round(now - self.t0, 3), "tick": self.n,
             "x": state.x, "y": state.y, "up": state.up, "psi": round(state.yaw_deg, 3),
-            # who flew this tick (vla_link.Tick) and the decision behind it
-            "author": tk.author, "author_reason": tk.reason,
-            "vla_seq": tk.seq, "vla_age_s": _r(tk.age_s),
-            "land_requested": bool(tk.land_requested),
-            # a hover on link_lost: what the link failed with (timeout = slow)
-            "link_failure": ((lf or {}).get("kind") if tk.reason == "link_lost" else None),
-            "phrase": cur.get("phrase"), "hint_source": cur.get("hint_source"),
-            "step": step, "bins": cur.get("bins"), "raw_text": cur.get("raw_text"),
-            "hint_sent": last.get("phrase"), "hint_sent_source": last.get("source"),
+            **decision_fields(tk, cur, step, hint_source=self.hint_source, link_failure=lf),
             # the Shield
             "shield": "on" if self.shield_on else "off",
             "raw": action.model_dump(), "emitted": d.emitted.model_dump(),
@@ -710,31 +771,99 @@ class MissionLoop:
             "repairs": [r.model_dump() for r in d.repairs],
             **ff,
             # the mission
-            "goal_dist_m": _r(gd), "goal_bearing_deg": _r(gb, 2),
-            "det": (None if det is None else
-                    {"cx": _r(det[0], 1), "cy": _r(det[1], 1), "w": _r(det[2], 1),
-                     "score": _r(det[4], 4), "img_w": int(det[5])}),
-            "det_age_s": _r(det_age), "box_frac": _r(frac, 4),
-            "box_age_at_hint_s": (_r(self.detector_hint.last_box_age_s)
-                                  if self.detector_hint is not None else None),
-            "yaw_correction_deg_at_hint": (
-                None if self.detector_hint is None
-                or self.detector_hint.last_yaw_correction_rad is None
-                else round(math.degrees(self.detector_hint.last_yaw_correction_rad), 2)),
-            "detector_latency_s": (_r(self.detector_hint.last_detector_latency_s)
-                                   if self.detector_hint is not None else None),
+            **mission_fields(gd, gb, frac, det, det_age, self.detector_hint),
         }
         if extra_row:
             row.update(extra_row)
-        hud = {"t": now - self.t0, "alt": state.up, "author": tk.author,
-               "reason": tk.reason, "seq": tk.seq, "age_s": tk.age_s,
-               "phrase": cur.get("phrase"), "hint_source": cur.get("hint_source"),
-               "step": step, "land": bool(tk.land_requested), "shield": bool(hd.touched),
-               "shield_on": self.shield_on, "mission": self.mission,
-               "cadence": getattr(self.backend, "cadence", None),
-               "goal_dist_m": gd, "box_frac": frac, "end_reason": end}
+        hud = vla_hud(now - self.t0, state.up, tk, cur, step, touched=bool(hd.touched),
+                      shield_on=self.shield_on, mission=self.mission,
+                      cadence=getattr(self.backend, "cadence", None),
+                      goal_dist_m=gd, box_frac=frac, end_reason=end)
         self.n += 1
         return LoopTick(flown, d, row, hud, end, hd)
+
+
+# --------------------------------------------------------------------------- #
+# The VLA panel on the recorded frames (the recorder thread; Pillow, lazily)
+# --------------------------------------------------------------------------- #
+# Moved here from demo/vla_fly.py on 2026-10-23 (wave V2b) so the ArduPilot
+# rail's VLA pilot draws the same panel from the same code; vla_fly imports
+# them under their old names.
+AUTHOR_LABEL = {
+    "vla_step": "VLA STEP", "hold": "HOLD", "hover": "HOVER", "none": "NO VLA DECISION"}
+_OVERLAY = None
+
+
+def hud_lines(hud: dict) -> list[str]:
+    """The VLA panel: time and altitude (and the goal distance or the box),
+    the decision behind this tick and how old its image is, its phrase and
+    where the phrase came from, its step, and who authored the tick. The
+    last line is the authorship, the one a viewer must not miss."""
+    l0 = f"t {hud['t']:5.1f}s  alt {hud['alt']:4.1f} m"
+    if hud.get("goal_dist_m") is not None:
+        l0 += f"  goal {hud['goal_dist_m']:.0f} m"
+    elif hud.get("box_frac") is not None:
+        l0 += f"  box {hud['box_frac']:.2f}"
+    seq, age = hud.get("seq"), hud.get("age_s")
+    cad = {"stop_and_go": "  stop-and-go", "pipelined": "  pipelined"}.get(hud.get("cadence"), "")
+    l1 = (f"AerialVLA #{seq}  image {age:.1f} s old{cad}" if seq is not None and age is not None
+          else f"AerialVLA  no decision flying{cad}")
+    ph = hud.get("phrase")
+    l2 = ("phrase -" if ph is None else
+          f"phrase '{ph.strip() or 'none: arrived?'}' ({hud.get('hint_source')})")
+    st = hud.get("step")
+    l3 = ("step -" if not st else
+          f"step fwd {st['fwd_m']:.1f} m  turn {math.degrees(st['dpsi_rad']):+.0f}deg  "
+          f"up {-st['down_m']:+.1f} m")
+    if hud.get("land"):
+        l4 = "LAND REQUESTED BY THE VLA"
+    else:
+        l4 = f"{AUTHOR_LABEL.get(hud.get('author'), hud.get('author'))} - {hud.get('reason')}"
+    if not hud.get("shield_on", True):
+        l4 += "  [SHIELD OFF]"
+    return [l0, l1, l2, l3, l4]
+
+
+def annotate_vla(img, det, hud: dict):
+    """Draw the VLA panel (and, for M2, the detector box) on the first-person
+    frame; with the policy indicator, its banner, rule panel and map too
+    (demo/policy_hud.OverlayCache, 5 Hz). The caller has demo/ on sys.path
+    (policy_hud), as for vla_bridge."""
+    from PIL import ImageDraw
+    im = img.copy()
+    # After the mission the VLA no longer flies: the landing-site transfer
+    # (follow_vlm._fly_to_landing_site, through the Shield, whose own HUD
+    # dict says mode "land") and the descent (no Shield) say so instead of
+    # leaving the last VLA tick on screen.
+    landing = hud.get("frame") == "landing" or hud.get("mode") == "land"
+    if landing:
+        lines = [f"t {hud['t']:5.1f}s  alt {hud['alt']:4.1f} m", "MISSION OVER - VLA STOPPED",
+                 hud.get("label") or hud.get("mode_label") or "LANDING (hand-written)"]
+    else:
+        lines = hud_lines(hud)
+    d = ImageDraw.Draw(im)
+    if det is not None:
+        cx, cy, bw, bh = det[0], det[1], det[2], det[3]
+        d.rectangle([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], outline=(0, 255, 0),
+                    width=2)
+    pol = hud.get("policy")
+    if pol is not None:
+        global _OVERLAY
+        if _OVERLAY is None:
+            from policy_hud import OverlayCache
+            _OVERLAY = OverlayCache()
+        _OVERLAY.draw(im, pol, lines)
+        return im
+    if not landing:
+        lines = lines + [("SHIELD: correcting" if hud.get("shield") else "SHIELD: clear")
+                         if hud.get("shield_on", True) else "SHIELD OFF (control arm)"]
+    try:
+        from policy_hud import draw_status_box
+        draw_status_box(im, lines)
+    except Exception:                                              # noqa: BLE001
+        for i, ln in enumerate(lines):
+            d.text((6, 6 + 12 * i), ln, fill=(255, 255, 255))
+    return im
 
 
 # --------------------------------------------------------------------------- #
@@ -1236,11 +1365,14 @@ def warmup_hint(mission: str, hint_source: Callable[[Capture], Hint | None] | No
 
 
 def warmup_infer(client, capture: Capture, hint: Hint, object_text: str,
-                 timeout_s: float) -> dict:
+                 timeout_s: float, idle: Callable[[], None] | None = None) -> dict:
     """One BLOCKING request before the flight loop (tools, and vla_fly off
     the event loop): the answer's kind, the round trip on the client's clock
     (`rtt_s`), the server's own model time and the capture-to-answer
-    latency, or why there was none."""
+    latency, or why there was none. `idle()`, if given, is called about
+    every 0.1 s while the answer is awaited: the ArduPilot rail pumps its
+    autopilot link there, as its detector wait does, so a first inference of
+    a minute leaves no minute of MAVLink unread behind it."""
     fields, _ = build_infer_fields(capture, hint, object_text)
     out: dict[str, Any] = {"phrase": hint.phrase, "hint_source": hint.source,
                            "object": object_text, "seq": None, "answered": False,
@@ -1252,7 +1384,12 @@ def warmup_infer(client, capture: Capture, hint: Hint, object_text: str,
         out.update(failure="not_sent", detail="the client refused to send (busy or backing off)")
         return out
     out["seq"] = seq
-    client.wait_idle(float(timeout_s) + 2.0)
+    if idle is None:
+        client.wait_idle(float(timeout_s) + 2.0)
+    else:
+        end = time.monotonic() + float(timeout_s) + 2.0
+        while not client.wait_idle(0.1) and time.monotonic() < end:
+            idle()
     res = client.poll()
     if res is None:
         out.update(failure="no_result", detail=f"no result within {timeout_s:g} s")
@@ -1295,6 +1432,77 @@ def warmup_series_verdict(attempts: list[dict], max_latency_s: float) -> tuple[b
     if not attempts:
         return False, "no warm-up request was made"
     return warmup_verdict(attempts[-1], max_latency_s)
+
+
+def warmup_timeout_s(k: int, decision_timeout_s: float, first_decision_timeout_s: float) -> float:
+    """The k-th warm-up request's answer timeout (k from 0): the first is the
+    model's first inference ever and gets first_decision_timeout_s (re-review
+    N1), the others the flight's decision timeout."""
+    return (max(decision_timeout_s, first_decision_timeout_s) if k == 0
+            else float(decision_timeout_s))
+
+
+def warmup_result(last: dict, attempts: list[dict], max_latency_s: float,
+                  late_replies=None) -> dict:
+    """The warm-up record (metrics.json `warmup`): the last attempt's
+    measurement, the verdict over the series (warmup_series_verdict), every
+    attempt, and the late answers the client kept."""
+    ok, why = warmup_series_verdict(attempts, max_latency_s)
+    res = dict(last)
+    res.update({"pass": ok, "why": why, "max_latency_s": max_latency_s,
+                "judged": "last of attempts", "attempts": attempts,
+                "late_replies": list(late_replies or [])})
+    return res
+
+
+def run_warmup(client, next_capture: Callable[[], Capture | None], hint_source,
+               mission: str, object_text: str, *, decision_timeout_s: float,
+               first_decision_timeout_s: float, max_latency_s: float,
+               commit: Callable | None = None, beat: Callable[[int], None] | None = None,
+               n: int = WARMUP_REQUESTS, wait_frames_s: float = 30.0,
+               clock: Callable[[], float] = time.time,
+               sleep: Callable[[float], None] = time.sleep,
+               backoff_max_s: float = 10.0,
+               idle: Callable[[], None] | None = None) -> dict:
+    """The warm-up gate as one BLOCKING call, for a rail that runs it in a
+    blocking pre-arm step (demo/pas_ardupilot/perception_node.py, disarmed,
+    on the ground; demo/vla_fly.py runs the same series on its event loop
+    with warmup_timeout_s and warmup_result). `n` requests, each on a fresh
+    live capture from `next_capture()` (which waits for one itself, up to
+    `wait_frames_s`, and returns None without one), with warmup_hint's
+    phrase; the LAST is judged (warmup_series_verdict). `commit(capture,
+    hint, seq, warmup=True)` keeps each sent request's frames; `beat(k)` is
+    called before the k-th request. Never flown.
+
+    THE CLIENT'S BACKOFF. After a server error or a link failure RemoteVLA
+    refuses to send for reconnect_backoff_s; a request made at once is "not
+    sent", so one refused cold-start request made every later attempt fail
+    without asking the model, and the last-judged rule (re-review N1) could
+    not save the flight (tests/test_pas_vla.py, wave V2b). Each attempt
+    first waits out the backoff (`clock` / `sleep`, at most backoff_max_s).
+    demo/vla_fly._warmup does not (yet): there the same refusal holds.
+    `idle()` is called while each answer is awaited (warmup_infer)."""
+    attempts: list[dict] = []
+    res: dict = {}
+    for k in range(n):
+        t_end = clock() + float(backoff_max_s)
+        while getattr(client, "backing_off", False) and clock() < t_end:
+            sleep(0.1)
+        cap = next_capture()
+        if cap is None:
+            return {"pass": False, "answered": False, "max_latency_s": max_latency_s,
+                    "why": f"no VLA camera pair (front + down, paired by stamp) within "
+                           f"{wait_frames_s:g} s", "attempts": attempts}
+        hint = warmup_hint(mission, hint_source, cap)
+        if beat is not None:
+            beat(k)
+        res = warmup_infer(client, cap, hint, object_text,
+                           warmup_timeout_s(k, decision_timeout_s, first_decision_timeout_s),
+                           idle=idle)
+        if res.get("seq") is not None and commit is not None:
+            commit(cap, hint, res["seq"], warmup=True)
+        attempts.append(dict(res))
+    return warmup_result(res, attempts, max_latency_s, getattr(client, "late", None))
 
 
 # --------------------------------------------------------------------------- #
