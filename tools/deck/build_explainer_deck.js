@@ -227,8 +227,8 @@ fact("mp_hz", "19.0 Hz", [src(CL, "Windows port 14550 delivered GLOBAL_POSITION_
 fact("forecast_old", "3 s at 0.5 s (6 poses)", [src(CL, "used a 3 s forecast at 0.5 s (6 poses)")]);
 fact("forecast", "5 s at 0.1 s (50 poses)", [src(CL, "the grant locks 5 s at 0.1 s (50 poses)"), src("guardrail/shield.py", "LOOKAHEAD_S = 5.0")]);
 fact("wind", "6.4 m/s", [src(CL, "is rejected up to 6.4 m/s, derived from the SITL default frame, not measured")]);
-fact("sweep_eps", "179", [src(SW, (o) => o._scope.episodes, 179)]);
-fact("sweep_pass", "139", [src(SW, (o) => o._counts.pass, 139)]);
+fact("sweep_eps", "180", [src(SW, (o) => o._scope.episodes, 180)]);
+fact("sweep_pass", "140", [src(SW, (o) => o._counts.pass, 140)]);
 fact("sweep_tracked", "22", [src(SW, (o) => o._counts.tracked, 22)]);
 fact("sweep_known", "18", [src(SW, (o) => o._counts.known_failure, 18)]);
 fact("sweep_fail", "0", [src(SW, (o) => o._counts.fail, 0)]);
@@ -253,25 +253,30 @@ fact("suite", "2,526 of 2,536", [src(CL, "Full suite on Python 3.10: 2526 of 253
 // Republished 22 Oct (V1e branch): the time-window-opens-on-vehicle family's
 // escape is judged the recovery it is since 21 Oct (C2), so the library's P0
 // escape is 0 on the SAME path - the lib_opened_* facts are that path.
-fact("lib_eps", "178", [src(SW, (o) => all(o).episodes, 178)]);
+// Republished again 22 Oct (review of 69c27bd): the escape is judged as flown,
+// out of the ring and then a stop, and the family gained the sideways-pilot
+// cell (2 m/s east, the corridor edge 9 m past the ring): 7 cells where a
+// window opens over the aircraft, 3-13 ticks inside, at most 2.8 s to safe -
+// 7c9c9e6's counts in every one.
+fact("lib_eps", "179", [src(SW, (o) => all(o).episodes, 179)]);
 fact("lib_p0", "0", [src(SW, (o) => all(o).p0_escape_rate, 0)]);
 fact("lib_p0_ticks", "0", [src(SW, (o) => all(o).p0_escapes, 0)]);
 fact("lib_p0_eps", "0", [src(SW, (o) => all(o).episodes_with_p0_escape, 0)]);
-fact("lib_twin_cells", "6", [src(SW, (o) => o._scope.cells_per_family["time-window-opens-on-vehicle"], 6)]);
-fact("lib_opened_eps", "6", [src(SW, (o) => o._true_state.episodes_window_opened_on, 6)]);
+fact("lib_twin_cells", "7", [src(SW, (o) => o._scope.cells_per_family["time-window-opens-on-vehicle"] + o._scope.cells_per_family["time-window-opens-on-sideways-pilot"], 7)]);
+fact("lib_opened_eps", "7", [src(SW, (o) => o._true_state.episodes_window_opened_on, 7)]);
 fact("lib_opened_inside", "3-13", [src(SW, (o) => { const t = o._true_state.window_opened_on_ticks_inside_polygon; return `${Math.min(...t)}-${Math.max(...t)}`; }, "3-13")]);
-fact("lib_opened_tts", "2.6 s", [src(SW, (o) => o._true_state.window_opened_on_max_time_to_safe_s, 2.6)]);
+fact("lib_opened_tts", "2.8 s", [src(SW, (o) => o._true_state.window_opened_on_max_time_to_safe_s, 2.8)]);
 fact("lib_controls", "1", [src(SW, (o) => o._rollup._controls_shield_off.episodes, 1)]);
-fact("lib_p0_null", "0.230", [src(SW, (o) => Math.round(all(o).null_passthrough_p0_escape_rate * 1000) / 1000, 0.23)]);
-fact("failsafe", "0.847", [src(SW, (o) => Math.round(all(o).failsafe_labelled_episodes.failsafe_trigger_correctness * 1000) / 1000, 0.847)]);
-fact("failsafe_frac", "144/170", [src(SW, (o) => { const f = all(o).failsafe_labelled_episodes; return `${f.scored - f.false_triggers - f.missed_triggers}/${f.scored}`; }, "144/170")]);
+fact("lib_p0_null", "0.234", [src(SW, (o) => Math.round(all(o).null_passthrough_p0_escape_rate * 1000) / 1000, 0.234)]);
+fact("failsafe", "0.848", [src(SW, (o) => Math.round(all(o).failsafe_labelled_episodes.failsafe_trigger_correctness * 1000) / 1000, 0.848)]);
+fact("failsafe_frac", "145/171", [src(SW, (o) => { const f = all(o).failsafe_labelled_episodes; return `${f.scored - f.false_triggers - f.missed_triggers}/${f.scored}`; }, "145/171")]);
 fact("failsafe_false", "25", [src(SW, (o) => all(o).failsafe_labelled_episodes.false_triggers, 25)]);
 fact("failsafe_missed", "1", [src(SW, (o) => all(o).failsafe_labelled_episodes.missed_triggers, 1)]);
-fact("failsafe_null", "0.941", [src(SW, (o) => all(o).failsafe_labelled_episodes.null_never_trigger.toFixed(3), "0.941")]);
+fact("failsafe_null", "0.942", [src(SW, (o) => all(o).failsafe_labelled_episodes.null_never_trigger.toFixed(3), "0.942")]);
 fact("failsafe_g3", "22", [src(SW, (o) => Object.entries(o._failsafe_labels.triggers_by_edge.false).filter(([k]) => k.includes("G3")).reduce((a, [, n]) => a + n, 0), 22)]);
-fact("mission", "0.601", [src(SW, (o) => all(o).mission_success_rate.toFixed(3), "0.601")]);
-fact("repair_mag", "7.02 m/s", [src(SW, (o) => all(o).mean_repair_magnitude_mps.toFixed(2), "7.02")]);
-fact("tts", "4.35 s", [src(SW, (o) => all(o).mean_time_to_safe_s.toFixed(2), "4.35")]);
+fact("mission", "0.603", [src(SW, (o) => all(o).mission_success_rate.toFixed(3), "0.603")]);
+fact("repair_mag", "6.92 m/s", [src(SW, (o) => all(o).mean_repair_magnitude_mps.toFixed(2), "6.92")]);
+fact("tts", "4.31 s", [src(SW, (o) => all(o).mean_time_to_safe_s.toFixed(2), "4.31")]);
 
 // Components (progress_oct.json is regenerated from the code by build_progress_oct_data.py).
 fact("wp1_rt", "29/29", [src(PO, (o) => `${o.wp1.round_trip_passed}/${o.wp1.policies}`, "29/29")]);
@@ -1171,7 +1176,7 @@ async function main() {
     const rows = [
       ["Grant KPI", "Target", "Current value (headless or desktop)", "Evidence", "Next step"],
       ["Mission success rate", "tracked", `${V("mission")} over ${V("lib_eps")} Shield-on episodes (of ${V("sweep_eps")}; ${V("lib_controls")} Shield-off control)`, "scenario_sweep.json", "hil campaign, 16-23 Nov"],
-      ["P0 violation escape rate", V("t_p0"), `${V("lib_p0")} in the library, same path (${V("lib_opened_inside")} ticks inside where a window opens over the aircraft); close approach ${V("on_p0")} in ${V("on_shield_ticks")} Shield ticks`, "scenario_sweep.json, pas_ap_close_on/", "hil campaign, 16-23 Nov; target 0"],
+      ["P0 violation escape rate", V("t_p0"), `${V("lib_p0")} in the library, as long inside as before (${V("lib_opened_inside")} ticks where a window opens over the aircraft); close approach ${V("on_p0")} in ${V("on_shield_ticks")} Shield ticks`, "scenario_sweep.json, pas_ap_close_on/", "hil campaign, 16-23 Nov; target 0"],
       ["Fail-safe trigger correctness", V("t_failsafe"), `${V("failsafe")} (${V("failsafe_frac")}); never-trigger null ${V("failsafe_null")}`, "scenario_sweep.json", `fix the FSM paths behind ${V("failsafe_false")} false triggers; target ${V("t_failsafe")}`],
       ["Mean repair magnitude", "tracked", `${V("repair_mag")} (scripted stress pilots)`, "scenario_sweep.json", "hil campaign with the KPI pilot"],
       ["Mean time to safe", "tracked", `${V("tts")}; close approach ${V("on_tts")}, under ArduPilot's hold and RTL`, "scenario_sweep.json, pas_ap_close_on/", "hil campaign, 16-23 Nov"],
@@ -1182,7 +1187,7 @@ async function main() {
     H.badge(s, page);
     s.addNotes("The grant's five acceptance KPIs, each with its current development value. All of them come from the headless harness library or a desktop flight, so none is KPI-grade. " +
       "One hard target is open, fail-safe correctness, and its fix comes before the campaign on 16 November. " +
-      `The P0 escape rate in the library is ${V("lib_p0")} against a target of 0 (republished 22 Oct). That is a re-judgement, not a different flight: in the ${V("lib_twin_cells")} cells where a time window opens over the aircraft and no action clears the forecast, the way out is now judged the recovery it is, and flown at the speed cap where that re-checks clean. The aircraft flies the same path as before, ${V("lib_opened_inside")} ticks inside the polygon and at most ${V("lib_opened_tts")} to safe. ` +
+      `The P0 escape rate in the library is ${V("lib_p0")} against a target of 0 (republished 22 Oct). That is a re-judgement, not a different flight: in the ${V("lib_twin_cells")} cells where a time window opens over the aircraft and no action clears the forecast, the way out is now judged the recovery it is, and flown at the speed cap where that escape, judged out of the ring and then braked to a stop, re-checks clean. The aircraft is inside the polygon as long as before, ${V("lib_opened_inside")} ticks, and at most ${V("lib_opened_tts")} to safe.` +
       `Fail-safe trigger correctness is ${V("failsafe")} against the grant's 0.99, and below the never-trigger null of ${V("failsafe_null")}. ` +
       `${V("failsafe_g3")} of the ${V("failsafe_false")} false triggers pass through edge G3, a repair larger than theta, which tells us where to work. ` +
       `Mission success, repair magnitude and time to safe are tracked without a hard target. The close approach's ${V("on_tts")} time to safe is how long the aircraft took to leave the building margin, under ArduPilot's hold and RTL.`);
