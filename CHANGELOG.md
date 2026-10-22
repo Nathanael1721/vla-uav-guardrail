@@ -16,6 +16,59 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-23 (later) — AerialVLA in the pilot slot of the ArduPilot rail and of the ROS 2 rail; none flown
+
+Wave V2, branches b and c, each reviewed, fixed and re-reviewed (the ROS 2
+branch twice), merged 37292d1 and d0eb3be. Nothing here has run in Unreal,
+SITL, ROS or with the model; the ROS 2 rail has no camera publisher yet.
+
+#### Added
+- **`perception_node.py --pilot vla`** (Project AirSim + ArduPilot rail): the
+  step tracker's action goes through the same Shield and escalation FSM as the
+  detector pilot; FSM holds and stale-link spans suspend the tracker and pause
+  the mission's stop rules; the model's LAND is landed by the node's own
+  mission-end LAND. GOTO (`--goal`, scored on reaching it) and APPROACH (the
+  OWL-ViT box's phrase, scored on the subject's true range). The warm-up runs
+  disarmed; a refusal is recorded and exits 4. Stop-and-go only, unless
+  pipelined is explicitly allowed (this rail's captures are timed by arrival).
+  The default `--pilot servo` is unchanged.
+- The rail's robot config carries AerialVLA's VLAFront / VLADown cameras; they
+  render only in a VLA run (or with `-VlaCameras`), and the run records which.
+- **`sitl/ros2_vla_bridge_node.py`**: AerialVLA in the ROS 2 / MAVROS 2 rail's
+  VLA slot (`VLA=bridge` / `vla:=bridge`), publishing `/vla/action_4d` at 10 Hz
+  with the decision's age, seq, author and LAND/END flags; the stub stays the
+  default and its 4-value stream is read as before.
+
+#### Changed
+- **The ROS 2 Shield node refuses any VLA message that breaks the contract and
+  holds the aircraft**: a NaN anywhere, a partial tail, a missing or wrong
+  layout label, a seq going backwards, motion no decision authored, or 4 values
+  after the bridge's 8. A sound bridge's stall is left to the receipt watchdog
+  (LOITER, then GUIDED when messages return); a broken pilot ends the mission
+  through the mission-end LAND after one 10 s hold or 3 holds in 30 s, never
+  over the FSM's own Loiter or fail-safe. A lasting second publisher on
+  `/vla/action_4d` makes the run not KPI-grade.
+- `--vla-ready-timeout-s` (3300 s, added by the launch file for the bridge)
+  arms only after the bridge's warm-up passes and its layout and decision
+  timeout match the Shield's; arming then gets its full budget after the wait.
+
+#### Fixed
+- **The warm-up gate on both rails, the merged city rail included**: each
+  request now carries the answer timeout it is recorded with (the cold first
+  one gets 60 s, where the socket used to cut it at 10 s) and waits for a ready
+  client after a late answer or a backoff. Before, a cold first inference over
+  10 s, or one refused first request, refused a healthy server.
+
+#### Tests
+- The CI list runs 115 test files on the merged tree, 0 failing.
+
+#### Not done
+- No flight on either rail. The ROS 2 rail needs a camera publisher; the Orin
+  entrypoint and compose do not yet select the bridge or serve AerialVLA.
+  Small record gaps from the last reviews remain (an approach refusal's
+  start-gate record, a reused scene's camera load, the Dashboard row reading
+  quiet during a long warm-up).
+
 ### 2026-10-23 — the CityLife VLA flight is ready behind the Shield, and AerialVLA re-measured at its own precision; not yet flown
 
 Wave V2, branch a: built, reviewed twice, fixed twice, merged (988c447). The
