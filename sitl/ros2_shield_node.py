@@ -170,6 +170,62 @@ callback's own time to publication); metrics.json `tick_latency` gives p50 /
 p99 / max against the grant's 100 ms monitor tick budget. The node ticks on
 its own 10 Hz timer, so e2e includes the wait for the next tick: up to one
 tick period on top of the processing, by construction.
+
+A REAL VLA IN THE SLOT (2026-10-23, to-do VLA-08). sitl/ros2_vla_bridge_node.py
+puts AerialVLA where the stub was. Its /vla/action_4d carries the grant's four
+values and then the decision behind them (VLA_ACTION_FIELDS: the decision's
+age and seq, who authored the tick, the LAND / END flags); the four values
+are read as before, so the stub's messages change nothing here. With the
+extended message (the review of 339f23a tightened every point):
+  * a message that is not a whole valid tail is REFUSED - not flown, not a
+    receipt for the 0.5 s watchdog - and held: a non-finite value anywhere,
+    an out-of-set field, another length, a layout label that is not
+    VLA_LAYOUT_LABEL (or none, once the bridge's identity announced its
+    layout), a decision seq going backwards, motion no decision authored
+    (pilot_fields: only a vla_step moves horizontally or turns), and, once
+    the bridge has shown itself (an extended message, or an identity with
+    its action_layout), the grant's four values alone - a stub left running
+    beside it. The publishers on /vla/action_4d are counted with their
+    names; more than one on ACTION_PUBLISHERS_CHECKS consecutive checks is
+    recorded and the run is not KPI-grade.
+  * a vla_step tick whose decision is older than --decision-timeout-s
+    (default 10 s, the bridge's step-tracker timeout) plus a 1 s grace
+    (DECISION_GRACE_S), or a hold older than twice the timeout plus the
+    grace, is not flown: the node holds the aircraft as for a quiet stream
+    (reason "decision") until the next valid message that is not itself
+    stale (DecisionWatchdog). Silence ages a decision only up to the
+    receipt timeout: a pilot gone quiet is the receipt watchdog's (re-review
+    of 23c88d3, N1: a sound bridge's 2 s stall near the end of a step landed
+    the mission). A hold of this node's that lasts --decision-hold-max-s
+    (10 s), or DECISION_SPELLS_MAX holds within DECISION_SPELLS_WINDOW_S,
+    end the mission through the mission-end LAND, with where and in which
+    state recorded; the FSM's own Loiter or fail-safe is never overridden.
+    The bridge zeroes such a step
+    itself; this is the check that does not trust it (docs/DESIGN-vla-
+    pilot.md section 5: a republished held action keeps the 0.5 s receipt
+    watchdog green while the model is dead). Rows carry pilot_author,
+    decision_seq, decision_age_s, decision_stale; metrics.json `vla_pilot`.
+  * the LAND flag (the model answered LAND) or the END flag (the bridge's
+    mission ended) ends the mission through the node's own mission-end LAND
+    (_finish: never after a takeover, never over an FSM fail-safe); the VLA
+    never sends a mode request. It lands in place - this rail has no
+    landing-site transfer - and metrics.json `vla_pilot.land_request` says
+    where, in which FSM state and autopilot mode, and which keep-out rules
+    the position breaks.
+  * a kind "vla" identity with the server's weights digest is filed as
+    pilot_record kind vla with that `reported_digest`, and the manifest's
+    vla_model_hash says sha256 of it (pilot_from_identity): the companion has
+    no weights to hash, and "<id>@unresolved" was refused for KPI grade. A
+    fake: id is filed as a stub, and a bridge that never became ready loses
+    its digest ("<id>@unresolved").
+  * --vla-ready-timeout-s S (the launch file adds it for vla:=bridge, 3300 s
+    by default; 0, the default here, keeps the stub's start-up): before
+    GUIDED and arming, wait up to S for a /vla/identity saying `ready` (the
+    bridge's warm-up passed) whose layout and decision timeout are this
+    node's, and refuse to arm otherwise or on the timeout (vla_ready,
+    identity_contract_problems). An identity without `ready` (a stub) does
+    not pass. GUIDED, arming and the climb get their whole BRING_UP_S budget
+    after the wait.
 """
 from __future__ import annotations
 
@@ -295,6 +351,56 @@ TICK_BUDGET_MS = 100.0
 # bundle when bundles/ holds it, this YAML only under --dev-yaml.
 DEFAULT_POLICY_YAML = ROOT / "policies" / "sim_demo_policy.yaml"
 DEFAULT_HOTAPPLY_HOST = "127.0.0.1"
+# The VLA bridge's extended /vla/action_4d (sitl/ros2_vla_bridge_node.py
+# ACTION_FIELDS, AUTHOR_CODES, FLAG_*). This node's own copy, as tests/
+# vla_fake_server.py keeps its own copy of the protocol: a bridge that changed
+# its layout would otherwise be read with its own constants;
+# tests/test_ros2_vla_bridge.py pins the two equal.
+VLA_ACTION_FIELDS = ("vx_fwd", "vy_right", "vz_up", "yaw_rate",
+                     "decision_age_s", "decision_seq", "author", "flags")
+VLA_LAYOUT_LABEL = ",".join(VLA_ACTION_FIELDS)
+VLA_AUTHORS = {0: "none", 1: "vla_step", 2: "hold", 3: "hover"}
+VLA_FLAG_LAND = 1
+VLA_FLAG_END = 2
+VLA_ACTION_TOPIC = "/vla/action_4d"
+# Refused /vla/action_4d messages written to events.jsonl one by one; later
+# ones are counted only (metrics.json vla_pilot).
+REFUSAL_EVENTS_MAX = 20
+# A value this small is zero on the wire (float32 carries the bridge's exact
+# zeros; anything larger is motion).
+ZERO_EPS = 1e-6
+# A vla_step tick whose decision is older than this plus DECISION_GRACE_S is
+# not flown (--decision-timeout-s): the bridge's step tracker stops flying a
+# step at its own decision timeout, guardrail.vla_link.TrackerConfig.
+# decision_timeout_s (10 s; the test pins them equal), so only a broken bridge
+# sends one. The grace: a sound bridge flies a slow step until its age
+# reaches the timeout exactly (5 m at 1 m/s plus a few seconds of latency
+# gets there), and that last tick is aged here by up to one receipt period
+# more; without it the last tick of every such step held the aircraft.
+DECISION_TIMEOUT_S = 10.0
+DECISION_GRACE_S = 1.0
+# How long a decision hold may last before the mission ends through the
+# mission-end LAND (--decision-hold-max-s; review of 339f23a, P3-1). A hold
+# is a pilot fault the Shield cannot repair; a sound bridge that this hold
+# put in BRAKE suspends itself and sends no fresh step until GUIDED comes
+# back, so waiting for one longer only hovers. 10 s is the city rail's
+# dead-server timeout (vla_mission.MonitorConfig.dead_timeout_s), ours.
+DECISION_HOLD_MAX_S = 10.0
+# This many decision holds within DECISION_SPELLS_WINDOW_S end the mission
+# the same way (re-review of 23c88d3, N3): a hold ends on the next valid
+# message (N1), so a pilot that keeps sending stale or refused messages - or
+# a stub left running beside the bridge - flapped LOITER / GUIDED instead.
+# Ours, not measured: a sound bridge starts no decision hold at all.
+DECISION_SPELLS_MAX = 3
+DECISION_SPELLS_WINDOW_S = 30.0
+# Consecutive once-a-second checks that must see more than one publisher on
+# /vla/action_4d before the run is flagged (N7): a node killed with -9 stays
+# in the graph until its lease expires, a ghost the first check can see.
+ACTION_PUBLISHERS_CHECKS = 3
+# GUIDED, arming, take-off and the climb share this budget (bring_up). With
+# --vla-ready-timeout-s it starts after the wait for the VLA, which can last
+# far longer (review of 339f23a, P1-B).
+BRING_UP_S = 180.0
 
 
 # --------------------------------------------------------------------------- #
@@ -558,6 +664,271 @@ class ActionWatchdog:
                 "stale_at_end": self.stale}
 
 
+def pilot_fields(data) -> tuple[dict | None, str | None]:
+    """`(fields, error)` for the tail of one /vla/action_4d message.
+
+    The grant's four values alone (the stub): `(None, None)`. The VLA
+    bridge's eight (VLA_ACTION_FIELDS): `decision_age_s` (None for -1, no
+    decision behind the action), `decision_seq` (int or None), `author`
+    (VLA_AUTHORS) and the `land` / `end` flags. Anything else is `(None,
+    why)`, and the node refuses the message (not flown, not a receipt):
+    another length, a non-finite or out-of-set field, an age or seq of -1
+    without the other, and - the step tracker's own contract
+    (guardrail/vla_link.StepTracker; review of 339f23a, P2-1) - motion that
+    no decision authored: only a vla_step moves horizontally or turns, a
+    vla_step always has its decision, a hold may only climb or descend (its
+    step's altitude) and only with a decision behind it, a hover or a none
+    is all zero. Never raises (it runs in a subscription callback)."""
+    try:
+        d = [float(v) for v in data]
+    except (TypeError, ValueError):
+        return None, "not numbers"
+    if len(d) == 4:
+        return None, None
+    if len(d) != len(VLA_ACTION_FIELDS):
+        return None, f"{len(d)} values, not 4 or {len(VLA_ACTION_FIELDS)}"
+    if not all(math.isfinite(v) for v in d):
+        return None, "a non-finite field"
+    age, seq, author, flags = d[4:]
+    if round(author) != author or int(author) not in VLA_AUTHORS:
+        return None, f"author code {author!r}"
+    if round(flags) != flags or not 0 <= int(flags) <= VLA_FLAG_LAND | VLA_FLAG_END:
+        return None, f"flags {flags!r}"
+    none = age == -1.0 and seq == -1.0
+    if not none and (age < 0.0 or seq < 0.0 or round(seq) != seq):
+        return None, f"decision age {age!r} / seq {seq!r}"
+    who = VLA_AUTHORS[int(author)]
+    moves = [abs(d[i]) > ZERO_EPS for i in range(4)]       # vx, vy, vz, yaw_rate
+    if who == "vla_step" and none:
+        return None, "a vla_step with no decision behind it"
+    if who in ("none", "hover") and any(moves):
+        return None, f"a {who} tick that moves"
+    if who == "hold" and (moves[0] or moves[1] or moves[3]):
+        return None, "a hold that moves horizontally or turns"
+    if who == "hold" and none and moves[2]:
+        return None, "a hold with no decision that climbs or descends"
+    return {"decision_age_s": None if none else age,
+            "decision_seq": None if none else int(seq),
+            "author": who,
+            "land": bool(int(flags) & VLA_FLAG_LAND),
+            "end": bool(int(flags) & VLA_FLAG_END)}, None
+
+
+class DecisionWatchdog:
+    """Is the VLA's MOTION backed by a decision recent enough? (2026-10-23)
+
+    `check(t, fields, rx_t, refused)` once per tick, with the latest valid
+    message's pilot_fields and receipt time, and `refused` (why the latest
+    message was refused, or None). A spell starts when the latest message was
+    refused, when a vla_step's decision, aged by the time since its receipt,
+    is older than `timeout_s` + `grace_s` (DECISION_GRACE_S says why), or
+    when a hold's is older than 2 x `timeout_s` + `grace_s` - the tracker's
+    longest sound hold: a step completes within the timeout of its capture,
+    then holds at most the timeout. A hover and a none tick carry no
+    decision and no motion (pilot_fields refuses one that moves). Returns
+    "stale" on the tick a spell starts, "resumed" on the tick it ends, else
+    None; each spell is kept.
+
+    SILENCE IS NOT AGE (re-review of 23c88d3, N1). The age is the one the
+    message carried plus the time since its receipt, the latter capped at
+    `max_silence_s` (the node's receipt timeout): a pilot that has gone quiet
+    is the receipt watchdog's to hold, and it releases the hold when messages
+    come back. Uncapped, a 2 s stall near the end of a sound 10 s step aged
+    its last message past the timeout here, and the mission landed.
+
+    A SPELL ENDS ON THE NEXT VALID MESSAGE THAT IS NOT ITSELF STALE (N1).
+    23c88d3 waited for a fresh vla_step, which the hold itself prevents: this
+    node's LOITER puts a sound bridge in BRAKE, it suspends and sends none
+    ticks, and the wait ended in the escalation's LAND. A pilot that keeps
+    starting spells is counted instead (`recent(t, window)`; the node ends
+    the mission at DECISION_SPELLS_MAX within DECISION_SPELLS_WINDOW_S), and
+    one spell that lasts is ended past --decision-hold-max-s. With the
+    grant's four values only (the stub) nothing is judged and `applies`
+    stays False."""
+
+    def __init__(self, timeout_s: float = DECISION_TIMEOUT_S,
+                 grace_s: float = DECISION_GRACE_S,
+                 max_silence_s: float = ACTION_TIMEOUT_S) -> None:
+        timeout_s = float(timeout_s)
+        if not (timeout_s > 0.0 and math.isfinite(timeout_s)):
+            raise ValueError(f"the decision timeout must be a positive number of "
+                             f"seconds, got {timeout_s!r}")
+        self.timeout_s = timeout_s
+        self.grace_s = float(grace_s)
+        self.max_silence_s = float(max_silence_s)
+        self.stale = False
+        self.applies = False
+        self.spells: list[dict] = []
+
+    @property
+    def hold_limit_s(self) -> float:
+        return 2.0 * self.timeout_s + self.grace_s
+
+    def age(self, t: float, fields: dict | None, rx_t: float | None) -> float | None:
+        if not fields or fields.get("decision_age_s") is None or rx_t is None:
+            return None
+        quiet = min(max(0.0, float(t) - float(rx_t)), self.max_silence_s)
+        return float(fields["decision_age_s"]) + quiet
+
+    def verdict(self, t: float, fields: dict | None, rx_t: float | None,
+                refused: str | None = None) -> str | None:
+        """Why this tick's latest message must not fly (None: it may)."""
+        if refused is not None:
+            return f"refused: {refused}"
+        if not fields:
+            return None
+        age = self.age(t, fields, rx_t)
+        if fields.get("author") == "vla_step" and age is not None \
+                and age > self.timeout_s + self.grace_s:
+            return "stale step"
+        if fields.get("author") == "hold" and age is not None and age > self.hold_limit_s:
+            return "stale hold"
+        return None
+
+    def check(self, t: float, fields: dict | None, rx_t: float | None,
+              refused: str | None = None) -> str | None:
+        if fields is not None or refused is not None:
+            self.applies = True
+        why = self.verdict(t, fields, rx_t, refused)
+        if why is not None and not self.stale:
+            age = self.age(t, fields, rx_t)
+            self.stale = True
+            self.spells.append({"t_start": float(t), "why": why,
+                                "age_s": None if age is None else round(age, 3),
+                                "decision_seq": (fields or {}).get("decision_seq"),
+                                "t_end": None})
+            return "stale"
+        if self.stale and why is None:
+            self.stale = False
+            self.spells[-1]["t_end"] = float(t)
+            return "resumed"
+        return None
+
+    def held_for(self, t: float) -> float:
+        return float(t) - self.spells[-1]["t_start"] if self.stale else 0.0
+
+    def recent(self, t: float, window_s: float) -> int:
+        """Spells that started within the last `window_s` seconds."""
+        return sum(1 for s in self.spells if float(t) - s["t_start"] <= window_s)
+
+    def summary(self, to_mission_t=None) -> dict:
+        conv = to_mission_t or (lambda v: v)
+        return {"timeout_s": self.timeout_s, "grace_s": self.grace_s,
+                "hold_limit_s": self.hold_limit_s, "applies": self.applies,
+                "spells": [{"t_start": round(conv(s["t_start"]), 3),
+                            "t_end": (None if s["t_end"] is None
+                                      else round(conv(s["t_end"]), 3)),
+                            "why": s["why"],
+                            "decision_age_s_at_onset": s["age_s"],
+                            "decision_seq": s["decision_seq"]} for s in self.spells],
+                "n_spells": len(self.spells), "stale_at_end": self.stale,
+                "max_silence_s": self.max_silence_s,
+                "rule": ("held like a quiet stream: a refused message, a vla_step whose "
+                         "decision (its age at publication plus the time since its "
+                         "receipt, at most max_silence_s) is older than timeout_s + "
+                         "grace_s, a hold older than hold_limit_s; released by the next "
+                         "valid message that is not itself stale")}
+
+
+def pilot_from_identity(ident) -> tuple[str, dict | None, str | None]:
+    """`(model_id, pilot record or None, reported digest or None)` from the
+    VLA node's /vla/identity, for metrics.json and the manifest. Never raises:
+    it runs in _report, where an exception loses every record of the flight.
+
+    A kind "vla" identity carrying the server's `reported_digest` (the VLA
+    bridge's) is pilot_record kind vla with that digest, and the digest goes
+    to build_manifest, so vla_model_hash reads "<id>@sha256:<digest>" instead
+    of "<id>@unresolved" (the companion holds no weights). A digest the
+    manifest refuses (not 64 lowercase hex) is dropped, and the record says
+    why. Every other identity is filed as before (the stub: kind stub, no
+    digest).
+
+    Never a VLA (review of 339f23a, P3; the same rule as vla_mission.
+    identity_is_vla): a `fake:` id is a stand-in, kind stub, whatever kind
+    it announces; and a bridge that never became ready (`ready` false: no
+    hello, a refused warm-up) keeps kind vla but loses its digest, so
+    vla_model_hash reads "<id>@unresolved" (the KPI gate refuses it,
+    tools/todo.py says vla_unverified) and the record says why."""
+    ident = ident if isinstance(ident, dict) else {}
+    model_id = ident.get("model_id") or "unresolved:no-vla-identity"
+    if not (ident.get("model_id") and ident.get("kind") in ("vla", "stub", "none")):
+        return model_id, None, None
+    kind = ident["kind"]
+    extra = {"yaw_rate": ident.get("yaw_rate"), "frame": ident.get("frame")}
+    if kind == "vla" and str(model_id).startswith("fake:"):
+        kind = "stub"
+        extra["filed_as_stub_because"] = "a fake: id is a stand-in, never a VLA"
+    digest = ident.get("reported_digest") if kind == "vla" else None
+    if kind == "vla" and ident.get("ready") is False:
+        digest = None
+        extra["not_ready_because"] = str(ident.get("not_ready_because")
+                                         or "the VLA node never became ready")
+    if digest is not None:
+        try:
+            pilot = pilot_record(model_id, kind, reported_digest=digest,
+                                 reported_by=ident.get("reported_by"), **extra)
+            return model_id, pilot, digest
+        except ValueError as exc:
+            refused = str(exc)
+        try:
+            pilot = pilot_record(model_id, kind, **extra)
+        except ValueError:
+            return model_id, None, None
+        pilot["reported_digest_refused"] = refused
+        return model_id, pilot, None
+    try:
+        return model_id, pilot_record(model_id, kind, **extra), None
+    except ValueError:
+        return model_id, None, None
+
+
+def vla_ready(ident) -> tuple[bool | None, str]:
+    """`(ready, why)` from /vla/identity for --vla-ready-timeout-s: None
+    while there is none; True for `ready` true; False, with the node's
+    reason, for `ready` false - and for a node that declares no readiness
+    at all: the gate is the VLA bridge's, and until the review of 339f23a
+    (P3) a stub left running passed it."""
+    if not isinstance(ident, dict):
+        return None, "no /vla/identity yet"
+    if "ready" not in ident:
+        return False, ("the VLA node declares no readiness (not the VLA bridge: "
+                       "--vla-ready-timeout-s waits for sitl/ros2_vla_bridge_node.py)")
+    if ident["ready"] is True:
+        w = ident.get("warmup") if isinstance(ident.get("warmup"), dict) else {}
+        return True, (f"ready (warm-up last round trip {w.get('last_rtt_s')} s, gate "
+                      f"{w.get('max_latency_s')} s)")
+    return False, str(ident.get("not_ready_because") or "the VLA node says it is not ready")
+
+
+def identity_contract_problems(ident, decision_timeout_s: float) -> list[str]:
+    """What the VLA node's /vla/identity announces that this node would read
+    differently (review of 339f23a, P3): its `action_layout` against
+    VLA_ACTION_FIELDS, its `decision_timeout_s` (the bridge's step tracker)
+    against this node's --decision-timeout-s. Empty for an identity that
+    announces neither (the stub). The ready gate refuses to arm on any;
+    without the gate they are recorded. Never raises: it runs in
+    _on_identity, a subscription callback (re-review of 23c88d3, N2: a
+    layout of 5 or true raised TypeError there)."""
+    if not isinstance(ident, dict):
+        return []
+    out = []
+    layout = ident.get("action_layout")
+    if layout is not None and not (isinstance(layout, (list, tuple))
+                                   and list(layout) == list(VLA_ACTION_FIELDS)):
+        out.append(f"action layout {layout!r} is not this node's {list(VLA_ACTION_FIELDS)}")
+    dt = ident.get("decision_timeout_s")
+    if dt is not None:
+        try:
+            same = abs(float(dt) - float(decision_timeout_s)) < 1e-9
+        except (TypeError, ValueError):
+            same = False
+        if not same:
+            out.append(f"the VLA's decision timeout {dt!r} s is not this node's "
+                       f"--decision-timeout-s {decision_timeout_s:g} s: give both nodes "
+                       f"the same value")
+    return out
+
+
 def latency_fields(tick_ns: int, pub_ns: int | None, rx_ns: int | None,
                    fresh: bool) -> dict:
     """One row's latency, in ms on time.monotonic_ns(): `tick_ms` (the tick
@@ -751,6 +1122,37 @@ if HAVE_ROS:
             self._action_seq = 0
             self._action_rx_ns: int | None = None
             self._flown_seq = 0
+            # The decision behind the latest action (pilot_fields; None for
+            # the grant's four values alone, the stub), its receipt time,
+            # and the watchdog on its age (2026-10-23, the VLA bridge).
+            self.pilot: dict | None = None
+            self._pilot_rx: float | None = None
+            self.n_pilot_msgs = 0
+            self.n_pilot_malformed = 0
+            self.pilot_error: str | None = None
+            # Silence ages a decision only up to the receipt timeout (N1).
+            self.decision_watchdog = DecisionWatchdog(
+                getattr(args, "decision_timeout_s", DECISION_TIMEOUT_S),
+                max_silence_s=self.watchdog.timeout_s)
+            # When each hold reason was placed (the escalation counts the
+            # time of THIS node's decision hold, never the FSM's own: N4).
+            self._hold_t: dict[str, float] = {}
+            self.decision_escalation: dict | None = None
+            self._multi_pub_streak = 0
+            self.action_publishers_flagged = False
+            self.action_publisher_names: set[str] = set()
+            self.decision_hold_max_s = float(getattr(args, "decision_hold_max_s",
+                                                     DECISION_HOLD_MAX_S))
+            # Review of 339f23a (P1-A): why the latest message was refused
+            # (None when it was flown), what it carried, the last decision
+            # seq flown, and the most publishers seen on /vla/action_4d.
+            self.pilot_refused: str | None = None
+            self.pilot_sent: list[float] | None = None
+            self._last_seq: int | None = None
+            self.action_publishers_max: int | None = None
+            self.contract_problems: list[str] = []
+            self.vla_land: dict | None = None
+            self.vla_ready: dict | None = None
             self.mav_connected = False
             self.mode: str | None = None
             self.landed: bool | None = None
@@ -908,14 +1310,73 @@ if HAVE_ROS:
             self.rec.event("autopilot_text", t=self._t(), severity=int(msg.severity),
                            text=msg.text)
 
+        def _expects_extended(self) -> bool:
+            """Has the VLA bridge shown itself - an extended message flown,
+            or an identity announcing its action layout? From then on the
+            grant's four values alone are a refusal (a second publisher)."""
+            ident = self.vla_identity if isinstance(self.vla_identity, dict) else {}
+            return self.n_pilot_msgs > 0 or ident.get("action_layout") is not None
+
         def _on_action(self, msg: Float32MultiArray) -> None:
-            d = list(msg.data)
-            if len(d) >= 4 and all(math.isfinite(v) for v in d[:4]):
-                self.raw_body = Action4D(vx=d[0], vy=d[1], vz_up=d[2], yaw_rate=d[3])
-                self.n_actions += 1
-                self._action_rx_ns = time.monotonic_ns()
-                self._action_seq += 1
-                self.watchdog.received(self._action_rx_ns / 1e9)
+            try:
+                d = [float(v) for v in msg.data]
+            except (TypeError, ValueError):
+                d = []
+            if len(d) < 4:
+                err = f"{len(d)} values, fewer than the grant's four"
+                pf = None
+            elif not all(math.isfinite(v) for v in d[:4]):
+                # Until the re-review of 23c88d3 (N8) dropped without a word.
+                err, pf = "a non-finite action value", None
+            else:
+                # The VLA bridge's decision fields, if the message has them,
+                # and every reason to refuse it (review of 339f23a, P1-A):
+                # until then a broken tail - or a stub left running beside
+                # the bridge - was flown as the stub's four values, counted
+                # as a receipt, and released a decision hold.
+                pf, err = pilot_fields(d)
+            dims = getattr(getattr(msg, "layout", None), "dim", None) or []
+            label = getattr(dims[0], "label", None) if dims else None
+            ident = self.vla_identity if isinstance(self.vla_identity, dict) else {}
+            if err is None and len(d) == len(VLA_ACTION_FIELDS) and label \
+                    and label != VLA_LAYOUT_LABEL:
+                err = f"layout label {label!r} is not {VLA_LAYOUT_LABEL!r}"
+            if err is None and len(d) == len(VLA_ACTION_FIELDS) and not label \
+                    and ident.get("action_layout") is not None:
+                # The bridge announced its layout and labels every message
+                # (N6): an unlabelled eight is not its message.
+                err = "no layout label, where the VLA bridge announced one"
+            if err is None and pf is None and self._expects_extended():
+                err = "the grant's four values alone, where the VLA bridge sends eight"
+            seq = pf["decision_seq"] if pf is not None else None
+            if err is None and seq is not None and self._last_seq is not None \
+                    and seq < self._last_seq:
+                err = f"decision seq went backwards ({self._last_seq} -> {seq})"
+            self.pilot_sent = [round(v, 4) if math.isfinite(v) else None for v in d[:4]]
+            if err is not None:
+                # Not flown, not a receipt: the decision watchdog holds now,
+                # the receipt watchdog after its timeout if nothing valid
+                # follows.
+                self.n_pilot_malformed += 1
+                self.pilot_error = self.pilot_refused = err
+                if self.n_pilot_malformed <= REFUSAL_EVENTS_MAX:
+                    self.rec.event("vla_action_refused", t=self._t(), why=err,
+                                   values=[round(v, 4) if math.isfinite(v) else None
+                                           for v in d[:len(VLA_ACTION_FIELDS) + 1]],
+                                   n=self.n_pilot_malformed)
+                return
+            self.pilot_refused = None
+            self.raw_body = Action4D(vx=d[0], vy=d[1], vz_up=d[2], yaw_rate=d[3])
+            self.n_actions += 1
+            self._action_rx_ns = time.monotonic_ns()
+            self._action_seq += 1
+            self.watchdog.received(self._action_rx_ns / 1e9)
+            self.pilot = pf
+            self._pilot_rx = self._action_rx_ns / 1e9
+            if pf is not None:
+                self.n_pilot_msgs += 1
+                if seq is not None:
+                    self._last_seq = seq
 
         def _on_identity(self, msg: String) -> None:
             try:
@@ -935,6 +1396,13 @@ if HAVE_ROS:
                 return
             self.vla_identity = ident
             self.rec.event("vla_identity", identity=ident)
+            # A bridge that would read the contract differently (its layout,
+            # its decision timeout): refused at the ready gate, recorded here.
+            self.contract_problems = identity_contract_problems(
+                ident, self.decision_watchdog.timeout_s)
+            if self.contract_problems:
+                self.get_logger().warn("VLA identity: " + "; ".join(self.contract_problems))
+                self.rec.event("vla_contract_mismatch", problems=self.contract_problems)
             host = ident.get("host")
             # None stays None: a VLA node that does not say where it runs
             # cannot be shown to be on the Orin (manifest._vla_host_missing).
@@ -1262,7 +1730,7 @@ if HAVE_ROS:
         def bring_up(self) -> None:
             log = self.get_logger()
             self.serve_hot_apply()
-            t_end = time.time() + 180
+            t_end = time.time() + BRING_UP_S
             while time.time() < t_end and not self.mav_connected:
                 rclpy.spin_once(self, timeout_sec=0.5)
             if not self.mav_connected:
@@ -1296,6 +1764,15 @@ if HAVE_ROS:
                                             if self.fence_status else
                                             "no upload reported by the adapter"))
 
+            # A VLA that must warm up first (--vla-ready-timeout-s): refused
+            # here, before GUIDED and arming, never in the air. The wait is
+            # the VLA's, not the autopilot's: GUIDED, arming and the climb get
+            # their whole budget after it (review of 339f23a, P1-B: a 900 s
+            # cold load spent the shared 180 s, and arming "timed out (EKF)"
+            # without one attempt).
+            if self.wait_for_vla():
+                t_end = time.time() + BRING_UP_S
+
             while time.time() < t_end:
                 r = self._call(self.cli_mode, SetMode.Request(custom_mode="GUIDED"))
                 if r and r.mode_sent:
@@ -1303,7 +1780,9 @@ if HAVE_ROS:
                 time.sleep(1)
             log.info("GUIDED requested")
 
+            attempts = 0
             while time.time() < t_end:
+                attempts += 1
                 r = self._call(self.cli_arm, CommandBool.Request(value=True))
                 if r and r.success:
                     log.info("armed")
@@ -1311,7 +1790,10 @@ if HAVE_ROS:
                 time.sleep(2)
                 rclpy.spin_once(self, timeout_sec=0.1)
             else:
-                raise RuntimeError("arming timed out (EKF)")
+                raise RuntimeError(
+                    f"arming refused {attempts} time(s) within the {BRING_UP_S:g} s bring-up "
+                    f"budget (the autopilot's pre-arm checks did not pass)" if attempts else
+                    f"arming never tried: the {BRING_UP_S:g} s bring-up budget ran out first")
 
             alt = self.mission.cruise_alt_m
             while time.time() < t_end:
@@ -1353,6 +1835,42 @@ if HAVE_ROS:
                     log.info(f"SIM_SPEEDUP read from autopilot: {self.sim_speedup}")
                     return
             raise RuntimeError("never reached takeoff altitude")
+
+        def wait_for_vla(self) -> bool:
+            """--vla-ready-timeout-s S (2026-10-23): wait up to S for a
+            /vla/identity whose `ready` is true (the VLA bridge's warm-up gate
+            passed; vla_ready) and that reads the contract as this node does
+            (identity_contract_problems: its layout, its decision timeout),
+            and refuse to arm - RuntimeError, before GUIDED - otherwise, or on
+            the timeout. The wait and its verdict are an event (`vla_ready`)
+            and metrics.json `vla_ready`. True when it waited (bring_up then
+            gives arming its whole budget); 0 (the default) does not wait, as
+            before: the stub needs none."""
+            timeout = float(getattr(self.args, "vla_ready_timeout_s", 0.0) or 0.0)
+            if timeout <= 0.0:
+                return False
+            log = self.get_logger()
+            log.info(f"waiting up to {timeout:g} s for a ready VLA on /vla/identity")
+            t0 = time.time()
+            while True:
+                ready, why = vla_ready(self.vla_identity)
+                if ready is not None or time.time() - t0 >= timeout:
+                    break
+                rclpy.spin_once(self, timeout_sec=0.5)
+            problems = identity_contract_problems(self.vla_identity,
+                                                  self.decision_watchdog.timeout_s)
+            if ready is True and problems:
+                ready, why = False, "; ".join(problems)
+            self.vla_ready = {"timeout_s": timeout, "waited_s": round(time.time() - t0, 1),
+                              "ready": ready, "why": why}
+            self.rec.event("vla_ready", **self.vla_ready)
+            if ready is True:
+                log.info(f"VLA ready: {why}")
+                return True
+            msg = (f"the VLA node is not ready, refusing to arm: {why}" if ready is False
+                   else f"no ready VLA on /vla/identity within {timeout:g} s: refusing to arm")
+            log.error(msg)
+            raise RuntimeError(msg)
 
         # ---------------- mission tick ---------------- #
 
@@ -1428,20 +1946,22 @@ if HAVE_ROS:
                          or MODE_FOR[self.fsm.state] == "GUIDED"))
 
         def _hold(self, reason: str, why: str) -> bool:
-            """Hold the aircraft for one stale input (`reason` "action" or
-            "pose") the way the FSM holds it - LOITER through the adapter,
-            flown as BRAKE - while this node is the one flying it. True on
-            the tick the hold starts, which flies the Shield's answer to a
-            stop while SET_MODE goes through. A second reason joins a hold
-            already in place, with no second request."""
+            """Hold the aircraft for one stale input (`reason` "action",
+            "pose" or "decision") the way the FSM holds it - LOITER through
+            the adapter, flown as BRAKE - while this node is the one flying
+            it. True on the tick the hold starts, which flies the Shield's
+            answer to a stop while SET_MODE goes through. A second reason
+            joins a hold already in place, with no second request."""
             if reason in self._holds:
                 return False
             if self._holds:
                 self._holds.add(reason)
+                self._hold_t[reason] = time.monotonic()
                 return False
             if not self._streaming():
                 return False
             self._holds.add(reason)
+            self._hold_t[reason] = time.monotonic()
             self._request_mode("LOITER", why)
             return True
 
@@ -1455,6 +1975,7 @@ if HAVE_ROS:
             if reason not in self._holds:
                 return False
             self._holds.discard(reason)
+            self._hold_t.pop(reason, None)
             if self._holds or self.takeover is not None or self.fsm_fault is not None:
                 return False
             self._request_mode("GUIDED", why)
@@ -1519,6 +2040,99 @@ if HAVE_ROS:
                                    f"local_position/pose for {age:.2f} s")
             return self.pose_watchdog.stale, onset
 
+        def _watch_decision(self, now: float) -> tuple[bool, bool]:
+            """The decision-age watchdog (DecisionWatchdog), once per tick:
+            `(stale, hold_onset)`. A vla_step tick older than
+            --decision-timeout-s plus the grace is not flown, and the
+            aircraft is held as for a quiet stream until a fresh tick arrives
+            (_hold, _release). Inert for the stub's four values."""
+            t = time.monotonic()
+            edge = self.decision_watchdog.check(t, self.pilot, self._pilot_rx,
+                                                self.pilot_refused)
+            age = self.decision_watchdog.age(t, self.pilot, self._pilot_rx)
+            if edge == "stale":
+                why = self.decision_watchdog.spells[-1]["why"]
+                self.get_logger().warn(
+                    f"the VLA's action is not flown ({why}; decision age {age} s, timeout "
+                    f"{self.decision_watchdog.timeout_s:g} s + "
+                    f"{self.decision_watchdog.grace_s:g} s grace): holding")
+                self.rec.event("decision_stale", t=now, why=why,
+                               decision_age_s=None if age is None else round(age, 3),
+                               decision_seq=(self.pilot or {}).get("decision_seq"),
+                               timeout_s=self.decision_watchdog.timeout_s,
+                               grace_s=self.decision_watchdog.grace_s)
+            elif edge == "resumed":
+                self.get_logger().info("the VLA's decisions are fresh again")
+                held = "decision" in self._holds
+                guided = self._release("decision", "a fresh VLA decision")
+                self.rec.event("decision_resumed", t=now, held=held,
+                               guided_requested=guided)
+            onset = False
+            if self.decision_watchdog.stale:
+                onset = self._hold("decision", "the VLA's action is not flown: "
+                                   + self.decision_watchdog.spells[-1]["why"])
+            return self.decision_watchdog.stale, onset
+
+        def _check_publishers(self) -> None:
+            """One check of the publishers on /vla/action_4d (count, and
+            names where the ROS stack gives them). Never raises."""
+            count = getattr(self, "count_publishers", None)
+            if count is None:
+                return
+            try:
+                n_pub = int(count(VLA_ACTION_TOPIC))
+            except Exception:                                    # noqa: BLE001
+                return
+            self.action_publishers_max = max(self.action_publishers_max or 0, n_pub)
+            if n_pub <= 1:
+                self._multi_pub_streak = 0
+                return
+            self._multi_pub_streak += 1
+            info = getattr(self, "get_publishers_info_by_topic", None)
+            try:
+                names = {str(getattr(i, "node_name", "?")) for i in (info(VLA_ACTION_TOPIC)
+                                                                     if info else [])}
+            except Exception:                                    # noqa: BLE001
+                names = set()
+            self.action_publisher_names |= names
+            if self._multi_pub_streak >= ACTION_PUBLISHERS_CHECKS \
+                    and not self.action_publishers_flagged:
+                self.action_publishers_flagged = True
+                self.get_logger().warn(f"{n_pub} publishers on {VLA_ACTION_TOPIC}: "
+                                       f"{sorted(names) or 'names unknown'}")
+                self.rec.event("vla_publishers", t=self._t(), n=n_pub, names=sorted(names),
+                               checks=self._multi_pub_streak)
+
+        def _decision_escalation(self, st: State) -> dict | None:
+            """Why the decision holds end the mission now, with where and in
+            which state (re-review of 23c88d3, N3 / N4), or None. Only a
+            hold THIS node placed counts - the FSM's own Loiter or fail-safe
+            has the aircraft otherwise, and its rules decide - and only
+            before any takeover: one hold that has lasted
+            --decision-hold-max-s, or DECISION_SPELLS_MAX holds within
+            DECISION_SPELLS_WINDOW_S (a hold now ends on the next valid
+            message, N1, so a broken pilot flaps instead of lasting)."""
+            if "decision" not in self._holds or self.takeover is not None:
+                return None
+            t = time.monotonic()
+            held = t - self._hold_t.get("decision", t)
+            n = self.decision_watchdog.recent(t, DECISION_SPELLS_WINDOW_S)
+            if held > self.decision_hold_max_s:
+                why = f"one hold of {held:.1f} s (over {self.decision_hold_max_s:g} s)"
+            elif n >= DECISION_SPELLS_MAX:
+                why = f"{n} holds in {DECISION_SPELLS_WINDOW_S:g} s"
+            else:
+                return None
+            spell = self.decision_watchdog.spells[-1]
+            return {"why": why, "last_hold_why": spell["why"], "held_s": round(held, 3),
+                    "holds_in_window": n, "max_s": self.decision_hold_max_s,
+                    "position": {"x": round(st.x, 3), "y": round(st.y, 3),
+                                 "up": round(st.up, 3)},
+                    "position_unsafe_rules": sorted({v.rule_id for v in
+                                                     self.shield.state_is_unsafe(st)}),
+                    "fsm_state": self.fsm.state.value if self.fsm is not None else None,
+                    "mode": self.mode}
+
         def _tick_locked(self, tick_ns: int) -> None:
             if self.done or self.state is None:
                 return
@@ -1557,15 +2171,64 @@ if HAVE_ROS:
                 self._finish("target reached")
                 return
 
+            # The VLA bridge's LAND (the model's) or END (its mission over):
+            # the mission ends through this node's own mission-end LAND, the
+            # rail's landing - the VLA never asks for a mode itself.
+            pf = self.pilot
+            if pf is not None and (pf["land"] or pf["end"]) and self.takeover is None:
+                why = ("the VLA answered LAND" if pf["land"]
+                       else "the VLA bridge ended its mission")
+                # Where and in which state it lands (review of 339f23a, P3):
+                # in place, unlike the city rail's transfer to a landing
+                # site; a position inside a keep-out zone is named.
+                self.vla_land = {
+                    "t": round(now, 3), "land": pf["land"], "end": pf["end"],
+                    "decision_seq": pf["decision_seq"], "why": why,
+                    "position": {"x": round(st.x, 3), "y": round(st.y, 3),
+                                 "up": round(st.up, 3)},
+                    "position_unsafe_rules": sorted({v.rule_id for v in
+                                                     self.shield.state_is_unsafe(st)}),
+                    "fsm_state": self.fsm.state.value if self.fsm is not None else None,
+                    "mode": self.mode,
+                    "landing": ("in place: the mission-end LAND; this rail has no "
+                                "landing-site transfer")}
+                self.get_logger().info(f"{why}: mission end")
+                self.rec.event("vla_land_request", **self.vla_land)
+                self._finish(f"VLA pilot: {why}")
+                return
+
+            # How many nodes publish the pilot's topic (review of 339f23a,
+            # P1-A): a stub left running beside the bridge is a second
+            # hand on the stick. Read once a second, with their names;
+            # recorded, and a run that saw more than one on
+            # ACTION_PUBLISHERS_CHECKS consecutive checks is not KPI-grade
+            # (N7: one check can see a ghost, a node killed with -9 whose
+            # lease has not expired yet).
+            if len(self.traj) % 10 == 0:
+                self._check_publishers()
+
             # A quiet action stream is not flown: the Shield checks a stop
             # instead, and the node holds (stale-action watchdog). Nor is an
             # action flown on a position that stopped updating (stale-pose
-            # watchdog).
+            # watchdog), nor a VLA step from a decision older than the
+            # decision timeout (decision watchdog).
             stale, hold_onset = self._watch_actions(now)
             pose_stale, pose_onset = self._watch_pose(now)
+            dec_stale, dec_onset = self._watch_decision(now)
+            esc = self._decision_escalation(st)
+            if esc is not None:
+                # A pilot that stays broken (one hold that lasts) or keeps
+                # breaking (repeated holds): the mission ends through the
+                # mission-end LAND (_finish's own rules: never after a
+                # takeover, never over an FSM fail-safe).
+                self.decision_escalation = {"t": round(now, 3), **esc}
+                self.get_logger().warn(f"VLA decision holds: {esc['why']}: mission end")
+                self.rec.event("decision_hold_escalated", **self.decision_escalation)
+                self._finish(f"the VLA's actions were held: {esc['why']}")
+                return
             pose_age = self.pose_watchdog.age(time.monotonic())
-            hold_onset = hold_onset or pose_onset
-            zeroed = stale or pose_stale
+            hold_onset = hold_onset or pose_onset or dec_onset
+            zeroed = stale or pose_stale or dec_stale
             body = Action4D() if zeroed else self.raw_body
             seq, rx_ns = self._action_seq, self._action_rx_ns
             # This tick's row number (1-based), bound once: the audit record
@@ -1712,6 +2375,22 @@ if HAVE_ROS:
                                  state_v=(None if vel is None
                                           else [round(c, 3) for c in vel]),
                                  shield_velocity=st_sh is not st)
+            if self.n_pilot_msgs or self.n_pilot_malformed:
+                # The VLA bridge's decision behind this tick's action: who
+                # authored it, which decision, how old at this tick; what the
+                # latest message carried, flown or not (a held tick's raw_body
+                # is the zero the Shield judged), and why it was refused (the
+                # stub's runs keep their rows as they were).
+                pf = self.pilot or {}
+                dec_age = self.decision_watchdog.age(time.monotonic(), self.pilot,
+                                                     self._pilot_rx)
+                self.rows[-1].update(pilot_author=pf.get("author"),
+                                     decision_seq=pf.get("decision_seq"),
+                                     decision_age_s=(None if dec_age is None
+                                                     else round(dec_age, 3)),
+                                     decision_stale=dec_stale,
+                                     pilot_sent=self.pilot_sent,
+                                     pilot_refused=self.pilot_refused)
 
             # The episode ends when the autopilot has the aircraft and is done
             # with it: landed, or a bounded wait so a run stays short.
@@ -1843,13 +2522,9 @@ if HAVE_ROS:
             shield_ms = [r["shield_ms"] for r in self.rows
                          if isinstance(r.get("shield_ms"), (int, float))]
             dur = self._t() or 0.0
-            ident = self.vla_identity if isinstance(self.vla_identity, dict) else {}
-            model_id = ident.get("model_id") or "unresolved:no-vla-identity"
-            pilot = None
-            if ident.get("model_id") and ident.get("kind") in ("vla", "stub", "none"):
-                pilot = pilot_record(ident["model_id"], ident["kind"],
-                                     yaw_rate=ident.get("yaw_rate"),
-                                     frame=ident.get("frame"))
+            # A VLA bridge's identity carries the server's weights digest
+            # (pilot_from_identity); the stub's is filed as before.
+            model_id, pilot, reported_digest = pilot_from_identity(self.vla_identity)
 
             metrics = {
                 "tag": self.out.name,
@@ -1898,6 +2573,29 @@ if HAVE_ROS:
                 "pilot": pilot,
                 "vla_identity": self.vla_identity,
                 "vla_actions_received": self.n_actions,
+                # The decision behind the actions (the VLA bridge's extended
+                # /vla/action_4d; nothing to judge for the stub's four values).
+                "vla_pilot": {
+                    "extended_messages": self.n_pilot_msgs,
+                    # Refused messages: not flown, not receipts (P1-A).
+                    "malformed_tails": self.n_pilot_malformed,
+                    "last_malformed": self.pilot_error,
+                    "layout": list(VLA_ACTION_FIELDS) if self.n_pilot_msgs else None,
+                    "decision_watchdog": self.decision_watchdog.summary(
+                        lambda v: v - self.mission_t0),
+                    "decision_hold_max_s": self.decision_hold_max_s,
+                    # None: the ROS stack could not say (no count_publishers).
+                    "action_publishers_max": self.action_publishers_max,
+                    "action_publishers_flagged": self.action_publishers_flagged,
+                    "action_publishers_checks_to_flag": ACTION_PUBLISHERS_CHECKS,
+                    "action_publisher_names": sorted(self.action_publisher_names),
+                    "contract_problems": self.contract_problems,
+                    "decision_spells_max": DECISION_SPELLS_MAX,
+                    "decision_spells_window_s": DECISION_SPELLS_WINDOW_S,
+                    "decision_escalation": self.decision_escalation,
+                    "land_request": self.vla_land,
+                },
+                "vla_ready": self.vla_ready,
                 "pose_hz": (round(self.n_pose / dur, 2) if dur > 0 else None),
                 "shield_ms_p50": percentile(shield_ms, 50),
                 "shield_ms_p99": percentile(shield_ms, 99),
@@ -1943,14 +2641,15 @@ if HAVE_ROS:
                 manifest = build_manifest(
                     policy_hash=self.policy.policy_hash, model_id=model_id,
                     seed=self.args.seed, scene_path=None, sim_speedup=speedup,
-                    topology=topology, hil_evidence=self.hil_evidence)
+                    topology=topology, hil_evidence=self.hil_evidence,
+                    reported_digest=reported_digest)
             except ValueError as e:
                 self.get_logger().warn(f"not the {topology} topology: {e}")
                 metrics["topology_refused"] = str(e)
                 manifest = build_manifest(
                     policy_hash=self.policy.policy_hash, model_id=model_id,
                     seed=self.args.seed, scene_path=None, sim_speedup=speedup,
-                    topology=TOPOLOGY_ARDUPILOT_SITL)
+                    topology=TOPOLOGY_ARDUPILOT_SITL, reported_digest=reported_digest)
             metrics["topology"] = manifest["topology"]
             (self.out / "metrics.json").write_text(json.dumps(metrics, indent=2),
                                                    encoding="utf-8")
@@ -1972,6 +2671,13 @@ if HAVE_ROS:
                 graded, why = False, why + [
                     f"the policy was flown from YAML under {DEV_YAML_FLAG}: "
                     f"unsigned, not its issued bundle"]
+            if self.action_publishers_flagged:
+                # Two hands on the stick: whatever flew is not one pilot's.
+                graded, why = False, why + [
+                    f"{self.action_publishers_max} publishers on {VLA_ACTION_TOPIC} "
+                    f"({', '.join(sorted(self.action_publisher_names)) or 'names unknown'}) "
+                    f"on {ACTION_PUBLISHERS_CHECKS} consecutive checks: the actions flown "
+                    f"are not one pilot's"]
             kpi_res["kpi_grade"] = graded
             kpi_res["kpi_grade_reasons"] = why
             kpi_res["manifest"] = manifest
@@ -2111,6 +2817,20 @@ def make_parser() -> argparse.ArgumentParser:
                     help="hold the aircraft once /vla/action_4d has been quiet "
                          f"this long (default {ACTION_TIMEOUT_S:g} s: "
                          f"{ACTION_TIMEOUT_TICKS} ticks at 10 Hz)")
+    ap.add_argument("--decision-timeout-s", type=float, default=DECISION_TIMEOUT_S,
+                    help="hold the aircraft while the VLA bridge flies a step whose "
+                         f"decision is older than this plus {DECISION_GRACE_S:g} s "
+                         f"(default {DECISION_TIMEOUT_S:g} s, its step tracker's own "
+                         "timeout; give both nodes the same value). Inert for a pilot "
+                         "that sends the grant's four values")
+    ap.add_argument("--decision-hold-max-s", type=float, default=DECISION_HOLD_MAX_S,
+                    help="end the mission (mission-end LAND) once the VLA bridge's "
+                         f"actions have been held this long (default "
+                         f"{DECISION_HOLD_MAX_S:g} s): a broken pilot is not waited for")
+    ap.add_argument("--vla-ready-timeout-s", type=float, default=0.0,
+                    help="before arming, wait this long for a /vla/identity saying "
+                         "ready (the VLA bridge's warm-up passed) and refuse to arm "
+                         "without one (default 0: no wait, the stub's start-up)")
     ap.add_argument("--pose-timeout-s", type=float, default=POSE_TIMEOUT_S,
                     help="hold the aircraft once /mavros/local_position/pose "
                          f"has not been updated this long (default "
@@ -2169,6 +2889,13 @@ def main(argv: list[str] | None = None) -> None:
         rule_clock(args.clock_start, elapsed=lambda: None, tz=args.clock_tz)
         ActionWatchdog(args.action_timeout_s)
         ActionWatchdog(args.pose_timeout_s, what="pose")
+        DecisionWatchdog(args.decision_timeout_s)
+        if not (math.isfinite(args.decision_hold_max_s) and args.decision_hold_max_s > 0):
+            raise ValueError(f"--decision-hold-max-s must be a positive number of seconds, "
+                             f"got {args.decision_hold_max_s!r}")
+        if not (math.isfinite(args.vla_ready_timeout_s) and args.vla_ready_timeout_s >= 0):
+            raise ValueError(f"--vla-ready-timeout-s must be 0 or more seconds, "
+                             f"got {args.vla_ready_timeout_s!r}")
     except ValueError as exc:
         raise SystemExit(f"[safety_shield] REFUSED: {exc}")
     if not HAVE_ROS:

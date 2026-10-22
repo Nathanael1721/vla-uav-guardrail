@@ -23,6 +23,7 @@ setup(
         "console_scripts": [
             "shield_node = safety_shield.shield_node:main",
             "vla_stub_node = safety_shield.vla_stub_node:main",
+            "vla_bridge_node = safety_shield.vla_bridge_node:main",
         ],
     },
 )

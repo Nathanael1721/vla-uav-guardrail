@@ -1,9 +1,11 @@
-"""ROS 2 entry points for the Guardrail's Safety Shield and VLA stub nodes.
+"""ROS 2 entry points for the Guardrail's Safety Shield, VLA stub and VLA
+bridge nodes.
 
-The node code is the repository's sitl/ros2_shield_node.py and
-sitl/ros2_vla_stub_node.py; this package makes it installable and
-launchable (`ros2 run safety_shield shield_node`, `ros2 launch safety_shield
-guardrail_rail.launch.py`) without a second copy that could drift.
+The node code is the repository's sitl/ros2_shield_node.py,
+sitl/ros2_vla_stub_node.py and sitl/ros2_vla_bridge_node.py; this package
+makes it installable and launchable (`ros2 run safety_shield shield_node`,
+`ros2 launch safety_shield guardrail_rail.launch.py`) without a second copy
+that could drift.
 """
 import os
 import sys

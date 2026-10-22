@@ -52,6 +52,9 @@ updated.) As of that date:
     /shield/setpoint, `from_body` then `to_local_ned`.
   * `sitl/ros2_vla_stub_node.py`: `to_body`, so the stub publishes
     /vla/action in the body frame the grant's VLA contract names.
+  * `sitl/ros2_vla_bridge_node.py` (2026-10-23): `to_body` on the step
+    tracker's world-frame action, at the heading of the latest pose, as the
+    stub does, so AerialVLA's /vla/action_4d is body frame too.
   * `demo/pas_ardupilot/autopilot.py` (`body_to_world`, used by
     `perception_node.py`): `from_body` on the way in, `to_local_ned` for the
     MAVLink setpoint on the way out.

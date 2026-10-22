@@ -66,13 +66,22 @@ x-vlaguard:
   host: orin
   # The services whose processes read the host evidence.
   evidence_services: [mission, profile, facts, vla-bench]
-  # Services this file cannot offer yet, and the file each one waits for. The
-  # test suite checks that each path is still missing, so this list cannot go
-  # stale silently, and that no service runs any of them.
+  # Services this file cannot offer yet, and what each one waits for: a file
+  # that must not exist yet, or {file, contains} - a change to an existing
+  # file that has not been made. The test suite checks that each is still
+  # missing, so this list cannot go stale silently, and that no service runs
+  # any of them.
+  # (2026-10-23) sitl/ros2_vla_bridge_node.py exists now, and needs no
+  # service of its own: it fills the launch file's VLA slot (vla:=bridge)
+  # inside the mission service, in the companion image (it needs no torch).
+  # What is still missing is below.
   pending:
     - service: vla-pilot
-      needs: sitl/ros2_vla_bridge_node.py
-      why: a camera VLA from the vla image publishing /vla/action_4d for the Shield
+      needs: {file: deploy/docker/entrypoint.sh, contains: "vla:="}
+      why: the mission role's launch runs the VLA stub; nothing here selects the AerialVLA bridge (vla:=bridge)
+    - service: vla-server
+      needs: {file: deploy/docker/vla.Dockerfile, contains: "vla_server_v2.py"}
+      why: no image here serves AerialVLA over protocol v2 (demo/vla_server_v2.py) for the bridge to attach to
 
 x-companion-env: &companion-env
   VLAGUARD_TOPOLOGY: ${VLAGUARD_TOPOLOGY:?use --env-file deploy/topologies/hil.env or flight.env}

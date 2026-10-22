@@ -558,14 +558,39 @@ def test_every_file_the_entrypoint_starts_exists():
 
 
 def test_pending_services_are_still_pending_and_nothing_runs_them():
+    """`needs` is a path that must not exist yet, or (2026-10-23, review of
+    339f23a) {file, contains}: a change that is not a new file - the file
+    must exist and must not contain the text yet - so a gap such as "the
+    entrypoint does not select the VLA bridge" stays listed and cannot go
+    stale silently either."""
     doc = load_compose(COMPOSE_DIR / "docker-compose.orin.yml")
     text = (COMPOSE_DIR / "docker-compose.orin.yml").read_text(encoding="utf-8")
+    body = text.split("\nservices:", 1)[1]
     for item in doc["x-vlaguard"].get("pending") or []:
-        assert not (ROOT / item["needs"]).exists(), \
-            f"{item['needs']} exists now: add the {item['service']} service and drop it from pending"
+        needs = item["needs"]
         assert item["service"] not in doc["services"]
-        body = text.split("\nservices:", 1)[1]
-        assert item["needs"] not in body, f"a service references pending {item['needs']}"
+        if isinstance(needs, dict):
+            src = (ROOT / needs["file"]).read_text(encoding="utf-8")
+            assert needs["contains"] not in src, \
+                (f"{needs['file']} contains {needs['contains']!r} now: add the "
+                 f"{item['service']} service and drop it from pending")
+            continue
+        assert not (ROOT / needs).exists(), \
+            f"{needs} exists now: add the {item['service']} service and drop it from pending"
+        assert needs not in body, f"a service references pending {needs}"
+
+
+def test_the_vla_bridge_gaps_on_the_orin_stay_listed():
+    """Review of 339f23a: `pending: []` hid that nothing in this topology
+    selects the VLA bridge (the mission role's launch runs the stub) and that
+    no service serves AerialVLA. Both are pending entries, each checked by
+    the test above against the file that would close it."""
+    pending = load_compose(COMPOSE_DIR / "docker-compose.orin.yml")["x-vlaguard"]["pending"]
+    by = {p["service"]: p for p in pending}
+    assert by["vla-pilot"]["needs"] == {"file": "deploy/docker/entrypoint.sh",
+                                        "contains": "vla:="}, by["vla-pilot"]
+    assert by["vla-server"]["needs"]["file"] == "deploy/docker/vla.Dockerfile"
+    assert all(p.get("why") for p in pending)
 
 
 def test_ros_nodes_share_one_network_namespace_in_dev():
@@ -664,8 +689,10 @@ def test_the_mission_starts_every_node_the_native_rail_starts():
     MAVLink adapter cannot go missing from one of them, and the entrypoint must
     reach the nodes only through it."""
     nodes = _launch_nodes()
-    assert nodes == {"ros2_vla_stub_node.py", "mavlink_adapter_node.py",
-                     "ros2_shield_node.py"}, nodes
+    # The VLA slot holds the stub (default) or the AerialVLA bridge
+    # (vla:=bridge / VLA=bridge, 2026-10-23); both files name both.
+    assert nodes == {"ros2_vla_stub_node.py", "ros2_vla_bridge_node.py",
+                     "mavlink_adapter_node.py", "ros2_shield_node.py"}, nodes
     assert nodes == _native_nodes(), (nodes, _native_nodes())
     assert "guardrail_rail.launch.py" in RUN_ROS2_DEMO.read_text(encoding="utf-8")
     text = ENTRYPOINT.read_text(encoding="utf-8")
