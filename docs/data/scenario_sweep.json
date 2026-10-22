@@ -92,10 +92,10 @@
     "distinct": 127,
     "note": "episodes whose KPI tables differ (status, escapes, repairs, breaches, fail-safe, outcome, goal, time to safe, true-state distance and ticks, speed, range, offset). An upper bound on behavioural variety: float jitter in repair counts splits symmetric copies"
   },
-  "_runtime_s": 134.33,
+  "_runtime_s": 142.1,
   "_manifest_common": {
-    "code_revision": "69c27bd7e31a-dirty",
-    "vla_model_hash": "experiments.sweep_scenarios._pilot@src:42fb84a61dd985cae8c411b95707bec5468d9dcee7b4148baa07a25764b69ac6",
+    "code_revision": "fb8f87c8ce18",
+    "vla_model_hash": "experiments.sweep_scenarios._pilot@src:40c5fd16afdeecd6d3d3261d551571b05258adcf7b44273129fe296c2bcc375b",
     "topology": "headless-kinematic"
   },
   "_seeds": {
@@ -57607,7 +57607,7 @@
       },
       "at_t": 8.2,
       "worst_tick_why": "p0_escape",
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--failsafe-land-zone--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--failsafe-land-zone--seed0",
       "kpi_grade": false
     },
     {
@@ -57639,7 +57639,7 @@
       },
       "at_t": 10.2,
       "worst_tick_why": "p0_escape",
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--failsafe-rtl-blocked--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--failsafe-rtl-blocked--seed0",
       "kpi_grade": false
     },
     {
@@ -57671,7 +57671,7 @@
       },
       "at_t": 19.1,
       "worst_tick_why": "p0_escape",
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--failsafe-low-battery--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--failsafe-low-battery--seed0",
       "kpi_grade": false
     },
     {
@@ -57702,7 +57702,7 @@
       },
       "at_t": 0.0,
       "worst_tick_why": "unsafe_position",
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-recovery-depth@start_up=30--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-recovery-depth@start_up=30--seed0",
       "kpi_grade": false
     },
     {
@@ -57733,7 +57733,7 @@
       },
       "at_t": 0.0,
       "worst_tick_why": "unsafe_position",
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-recovery-depth@start_up=0.5--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-recovery-depth@start_up=0.5--seed0",
       "kpi_grade": false
     },
     {
@@ -57764,7 +57764,7 @@
       },
       "at_t": 0.0,
       "worst_tick_why": "unsafe_position",
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-recovery-depth@start_up=2--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-recovery-depth@start_up=2--seed0",
       "kpi_grade": false
     },
     {
@@ -57793,7 +57793,7 @@
       },
       "at_t": 0.0,
       "worst_tick_why": "unsafe_position",
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-floor-recovery--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-floor-recovery--seed0",
       "kpi_grade": false
     },
     {
@@ -57824,7 +57824,7 @@
       },
       "at_t": 0.0,
       "worst_tick_why": "unsafe_position",
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-recovery-depth@start_up=6--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-recovery-depth@start_up=6--seed0",
       "kpi_grade": false
     },
     {
@@ -57855,7 +57855,7 @@
       },
       "at_t": 0.0,
       "worst_tick_why": "unsafe_position",
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-recovery-depth@start_up=24--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-recovery-depth@start_up=24--seed0",
       "kpi_grade": false
     },
     {
@@ -57886,7 +57886,7 @@
       },
       "at_t": 16.7,
       "worst_tick_why": "repair_braked",
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--radius-scaling-grow-deep--seed0",
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--radius-scaling-grow-deep--seed0",
       "kpi_grade": false
     }
   ],
@@ -62661,7 +62661,7 @@
         "prompt_sha256": "sha256:30f7516f53ce54981dcf4be0362ab41ed2d582c2da7c8fa4f09b8bb7d283a39b",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--nfz-head-on--canonical,prefix-on--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--nfz-head-on--canonical,prefix-on--seed0"
     },
     {
       "id": "nfz-head-on#pp0,prefix-on",
@@ -62952,7 +62952,7 @@
         "prompt_sha256": "sha256:5fb64ae8da8959ada95810f1fcd4e93c3523cd1d237feec3c2f46b4b81b79725",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--nfz-head-on--pp0,prefix-on--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--nfz-head-on--pp0,prefix-on--seed0"
     },
     {
       "id": "nfz-head-on#pp1,prefix-on",
@@ -63243,7 +63243,7 @@
         "prompt_sha256": "sha256:4441d5187d5ac971b465f699e01f1d7da791c1659c6faaa9a9758c886606660a",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--nfz-head-on--pp1,prefix-on--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--nfz-head-on--pp1,prefix-on--seed0"
     },
     {
       "id": "nfz-head-on#canonical,prefix-off",
@@ -63534,7 +63534,7 @@
         "prompt_sha256": "sha256:acf90447e164a46853aebb483e43b5b26492c1478da2a85210d545cfe61b2e8d",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--nfz-head-on--canonical,prefix-off--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--nfz-head-on--canonical,prefix-off--seed0"
     },
     {
       "id": "nfz-head-on#pp0,prefix-off",
@@ -63825,7 +63825,7 @@
         "prompt_sha256": "sha256:6baa90a3557695bfb0b79c1f02d16613196111ba7ad30753233df34075db6887",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--nfz-head-on--pp0,prefix-off--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--nfz-head-on--pp0,prefix-off--seed0"
     },
     {
       "id": "nfz-head-on#pp1,prefix-off",
@@ -64116,7 +64116,7 @@
         "prompt_sha256": "sha256:4908ed1aef788d0db8f6d167bd38e018534520b6dbbf96c62d8073bff21690b7",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--nfz-head-on--pp1,prefix-off--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--nfz-head-on--pp1,prefix-off--seed0"
     },
     {
       "id": "nfz-head-on-control",
@@ -64290,7 +64290,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--nfz-head-on-control--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--nfz-head-on-control--seed0"
     },
     {
       "id": "rail-mission-stub-vla",
@@ -64594,7 +64594,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--rail-mission-stub-vla--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--rail-mission-stub-vla--seed0"
     },
     {
       "id": "altitude-floor-recovery",
@@ -64879,7 +64879,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-floor-recovery--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-floor-recovery--seed0"
     },
     {
       "id": "altitude-ceiling-hold",
@@ -65179,7 +65179,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-ceiling-hold--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-ceiling-hold--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=0.5",
@@ -65466,7 +65466,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-recovery-depth@start_up=0.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-recovery-depth@start_up=0.5--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=2",
@@ -65753,7 +65753,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-recovery-depth@start_up=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-recovery-depth@start_up=2--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=6",
@@ -66040,7 +66040,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-recovery-depth@start_up=6--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-recovery-depth@start_up=6--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=9.5",
@@ -66327,7 +66327,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-recovery-depth@start_up=9.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-recovery-depth@start_up=9.5--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=20.5",
@@ -66614,7 +66614,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-recovery-depth@start_up=20.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-recovery-depth@start_up=20.5--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=24",
@@ -66901,7 +66901,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-recovery-depth@start_up=24--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-recovery-depth@start_up=24--seed0"
     },
     {
       "id": "altitude-recovery-depth@start_up=30",
@@ -67188,7 +67188,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--altitude-recovery-depth@start_up=30--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--altitude-recovery-depth@start_up=30--seed0"
     },
     {
       "id": "speed-cap",
@@ -67467,7 +67467,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--speed-cap--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--speed-cap--seed0"
     },
     {
       "id": "nonfinite-action",
@@ -67746,7 +67746,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--nonfinite-action--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--nonfinite-action--seed0"
     },
     {
       "id": "corridor-along",
@@ -68015,7 +68015,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-along--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-along--seed0"
     },
     {
       "id": "corridor-drift-out",
@@ -68296,7 +68296,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-drift-out--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-drift-out--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=4,drift_deg=-60",
@@ -68601,7 +68601,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-drift-angles@ask_mps=4,drift_deg=-60--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-drift-angles@ask_mps=4,drift_deg=-60--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=8,drift_deg=-60",
@@ -68909,7 +68909,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-drift-angles@ask_mps=8,drift_deg=-60--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-drift-angles@ask_mps=8,drift_deg=-60--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=4,drift_deg=-30",
@@ -69214,7 +69214,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-drift-angles@ask_mps=4,drift_deg=-30--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-drift-angles@ask_mps=4,drift_deg=-30--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=8,drift_deg=-30",
@@ -69521,7 +69521,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-drift-angles@ask_mps=8,drift_deg=-30--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-drift-angles@ask_mps=8,drift_deg=-30--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=4,drift_deg=0",
@@ -69805,7 +69805,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-drift-angles@ask_mps=4,drift_deg=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-drift-angles@ask_mps=4,drift_deg=0--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=8,drift_deg=0",
@@ -70091,7 +70091,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-drift-angles@ask_mps=8,drift_deg=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-drift-angles@ask_mps=8,drift_deg=0--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=4,drift_deg=30",
@@ -70396,7 +70396,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-drift-angles@ask_mps=4,drift_deg=30--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-drift-angles@ask_mps=4,drift_deg=30--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=8,drift_deg=30",
@@ -70703,7 +70703,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-drift-angles@ask_mps=8,drift_deg=30--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-drift-angles@ask_mps=8,drift_deg=30--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=4,drift_deg=60",
@@ -71008,7 +71008,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-drift-angles@ask_mps=4,drift_deg=60--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-drift-angles@ask_mps=4,drift_deg=60--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=8,drift_deg=60",
@@ -71315,7 +71315,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-drift-angles@ask_mps=8,drift_deg=60--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-drift-angles@ask_mps=8,drift_deg=60--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=4,drift_deg=150",
@@ -71620,7 +71620,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-drift-angles@ask_mps=4,drift_deg=150--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-drift-angles@ask_mps=4,drift_deg=150--seed0"
     },
     {
       "id": "corridor-drift-angles@ask_mps=8,drift_deg=150",
@@ -71927,7 +71927,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-drift-angles@ask_mps=8,drift_deg=150--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-drift-angles@ask_mps=8,drift_deg=150--seed0"
     },
     {
       "id": "corridor-curfew-in-hours",
@@ -72231,7 +72231,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-curfew-in-hours--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-curfew-in-hours--seed0"
     },
     {
       "id": "corridor-curfew-out-of-hours",
@@ -72500,7 +72500,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-curfew-out-of-hours--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-curfew-out-of-hours--seed0"
     },
     {
       "id": "standoff-approach",
@@ -72770,7 +72770,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--standoff-approach--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--standoff-approach--seed0"
     },
     {
       "id": "standoff-reclassified",
@@ -73085,7 +73085,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--standoff-reclassified--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--standoff-reclassified--seed0"
     },
     {
       "id": "standoff-wedge",
@@ -73394,7 +73394,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--standoff-wedge--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--standoff-wedge--seed0"
     },
     {
       "id": "standoff-approach-angles@offset_m=7,subject_class=pedestrian,variant=0",
@@ -73724,7 +73724,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--standoff-approach-angles@offset_m=7,subject_class=pedestrian,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--standoff-approach-angles@offset_m=7,subject_class=pedestrian,variant=0--seed0"
     },
     {
       "id": "standoff-approach-angles@offset_m=7,subject_class=car,variant=0",
@@ -73999,7 +73999,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--standoff-approach-angles@offset_m=7,subject_class=car,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--standoff-approach-angles@offset_m=7,subject_class=car,variant=0--seed0"
     },
     {
       "id": "standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0",
@@ -74292,7 +74292,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--standoff-approach-angles@offset_m=9,subject_class=pedestrian,variant=0--seed0"
     },
     {
       "id": "standoff-approach-angles@offset_m=9,subject_class=car,variant=0",
@@ -74567,7 +74567,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--standoff-approach-angles@offset_m=9,subject_class=car,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--standoff-approach-angles@offset_m=9,subject_class=car,variant=0--seed0"
     },
     {
       "id": "standoff-approach-angles@offset_m=12,subject_class=pedestrian,variant=0",
@@ -74842,7 +74842,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--standoff-approach-angles@offset_m=12,subject_class=pedestrian,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--standoff-approach-angles@offset_m=12,subject_class=pedestrian,variant=0--seed0"
     },
     {
       "id": "standoff-approach-angles@offset_m=12,subject_class=car,variant=0",
@@ -75117,7 +75117,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--standoff-approach-angles@offset_m=12,subject_class=car,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--standoff-approach-angles@offset_m=12,subject_class=car,variant=0--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=2",
@@ -75450,7 +75450,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=2--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=2",
@@ -75783,7 +75783,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=2--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=2",
@@ -76077,7 +76077,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=2--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=2",
@@ -76371,7 +76371,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=2--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4",
@@ -76704,7 +76704,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=4",
@@ -77037,7 +77037,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4",
@@ -77370,7 +77370,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=4",
@@ -77664,7 +77664,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8",
@@ -77999,7 +77999,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-ahead@ahead_m=3,variant=0,vehicle_speed_mps=8--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=8",
@@ -78334,7 +78334,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-ahead@ahead_m=6,variant=0,vehicle_speed_mps=8--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=8",
@@ -78669,7 +78669,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-ahead@ahead_m=12,variant=0,vehicle_speed_mps=8--seed0"
     },
     {
       "id": "dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=8",
@@ -78965,7 +78965,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-ahead@ahead_m=30,variant=0,vehicle_speed_mps=8--seed0"
     },
     {
       "id": "dyn-nfz-spawn-on-top@size_m=20,variant=0",
@@ -79264,7 +79264,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-on-top@size_m=20,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-on-top@size_m=20,variant=0--seed0"
     },
     {
       "id": "dyn-nfz-spawn-on-top@size_m=40,variant=0",
@@ -79543,7 +79543,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-spawn-on-top@size_m=40,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-spawn-on-top@size_m=40,variant=0--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=1#canonical",
@@ -79852,7 +79852,7 @@
         "prompt_sha256": "sha256:edb0ab18f852e9c00fc9b0a6d8d496ad2e2e19cdaf0523722d837c0f46409f10",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-translate@variant=0,zone_mps=1--canonical--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-translate@variant=0,zone_mps=1--canonical--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=1#pp0",
@@ -80161,7 +80161,7 @@
         "prompt_sha256": "sha256:adf31eacc809da2b647b4c4ec76d7121bc03f4062ac0c0de766f0e2e8bed0699",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-translate@variant=0,zone_mps=1--pp0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-translate@variant=0,zone_mps=1--pp0--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=1#pp1",
@@ -80470,7 +80470,7 @@
         "prompt_sha256": "sha256:4c9f4673c46bd9364983aae0289678ff9ed4317c6438a47328b09b86f672d8b0",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-translate@variant=0,zone_mps=1--pp1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-translate@variant=0,zone_mps=1--pp1--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=2#canonical",
@@ -80777,7 +80777,7 @@
         "prompt_sha256": "sha256:edb0ab18f852e9c00fc9b0a6d8d496ad2e2e19cdaf0523722d837c0f46409f10",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-translate@variant=0,zone_mps=2--canonical--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-translate@variant=0,zone_mps=2--canonical--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=2#pp0",
@@ -81084,7 +81084,7 @@
         "prompt_sha256": "sha256:adf31eacc809da2b647b4c4ec76d7121bc03f4062ac0c0de766f0e2e8bed0699",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-translate@variant=0,zone_mps=2--pp0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-translate@variant=0,zone_mps=2--pp0--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=2#pp1",
@@ -81391,7 +81391,7 @@
         "prompt_sha256": "sha256:4c9f4673c46bd9364983aae0289678ff9ed4317c6438a47328b09b86f672d8b0",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-translate@variant=0,zone_mps=2--pp1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-translate@variant=0,zone_mps=2--pp1--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=3#canonical",
@@ -81680,7 +81680,7 @@
         "prompt_sha256": "sha256:edb0ab18f852e9c00fc9b0a6d8d496ad2e2e19cdaf0523722d837c0f46409f10",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-translate@variant=0,zone_mps=3--canonical--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-translate@variant=0,zone_mps=3--canonical--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=3#pp0",
@@ -81969,7 +81969,7 @@
         "prompt_sha256": "sha256:adf31eacc809da2b647b4c4ec76d7121bc03f4062ac0c0de766f0e2e8bed0699",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-translate@variant=0,zone_mps=3--pp0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-translate@variant=0,zone_mps=3--pp0--seed0"
     },
     {
       "id": "dyn-nfz-translate@variant=0,zone_mps=3#pp1",
@@ -82258,7 +82258,7 @@
         "prompt_sha256": "sha256:4c9f4673c46bd9364983aae0289678ff9ed4317c6438a47328b09b86f672d8b0",
         "pilot_reads_text": false
       },
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-translate@variant=0,zone_mps=3--pp1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-translate@variant=0,zone_mps=3--pp1--seed0"
     },
     {
       "id": "dyn-nfz-rotate-step",
@@ -82551,7 +82551,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-rotate-step--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-rotate-step--seed0"
     },
     {
       "id": "dyn-nfz-rotate-spin@deg_per_s=3",
@@ -82939,7 +82939,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-rotate-spin@deg_per_s=3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-rotate-spin@deg_per_s=3--seed0"
     },
     {
       "id": "dyn-nfz-rotate-spin@deg_per_s=6",
@@ -83267,7 +83267,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-rotate-spin@deg_per_s=6--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-rotate-spin@deg_per_s=6--seed0"
     },
     {
       "id": "dyn-nfz-rotate-spin@deg_per_s=9",
@@ -83625,7 +83625,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--dyn-nfz-rotate-spin@deg_per_s=9--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--dyn-nfz-rotate-spin@deg_per_s=9--seed0"
     },
     {
       "id": "time-window-closes-mid-run@clock=2026-09-07T17:29:40,vehicle_speed_mps=2",
@@ -83924,7 +83924,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-closes-mid-run@clock=2026-09-07T17_29_40,vehicle_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-closes-mid-run@clock=2026-09-07T17_29_40,vehicle_speed_mps=2--seed0"
     },
     {
       "id": "time-window-closes-mid-run@clock=2026-09-07T17:29:40,vehicle_speed_mps=4",
@@ -84244,7 +84244,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-closes-mid-run@clock=2026-09-07T17_29_40,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-closes-mid-run@clock=2026-09-07T17_29_40,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "time-window-closes-mid-run@clock=2026-09-07T17:29:50,vehicle_speed_mps=2",
@@ -84543,7 +84543,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-closes-mid-run@clock=2026-09-07T17_29_50,vehicle_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-closes-mid-run@clock=2026-09-07T17_29_50,vehicle_speed_mps=2--seed0"
     },
     {
       "id": "time-window-closes-mid-run@clock=2026-09-07T17:29:50,vehicle_speed_mps=4",
@@ -84863,7 +84863,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-closes-mid-run@clock=2026-09-07T17_29_50,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-closes-mid-run@clock=2026-09-07T17_29_50,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "time-window-opens-on-vehicle@clock=2026-09-07T07:29:58,vehicle_speed_mps=4",
@@ -85145,7 +85145,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_58,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_58,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "time-window-opens-on-vehicle@clock=2026-09-07T07:29:58,vehicle_speed_mps=1.5",
@@ -85432,7 +85432,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_58,vehicle_speed_mps=1.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_58,vehicle_speed_mps=1.5--seed0"
     },
     {
       "id": "time-window-opens-on-vehicle@clock=2026-09-07T07:29:58.5,vehicle_speed_mps=4",
@@ -85714,7 +85714,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_58.5,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_58.5,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "time-window-opens-on-vehicle@clock=2026-09-07T07:29:58.5,vehicle_speed_mps=1.5",
@@ -86001,7 +86001,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_58.5,vehicle_speed_mps=1.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_58.5,vehicle_speed_mps=1.5--seed0"
     },
     {
       "id": "time-window-opens-on-vehicle@clock=2026-09-07T07:29:59,vehicle_speed_mps=4",
@@ -86283,7 +86283,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_59,vehicle_speed_mps=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_59,vehicle_speed_mps=4--seed0"
     },
     {
       "id": "time-window-opens-on-vehicle@clock=2026-09-07T07:29:59,vehicle_speed_mps=1.5",
@@ -86570,7 +86570,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_59,vehicle_speed_mps=1.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-opens-on-vehicle@clock=2026-09-07T07_29_59,vehicle_speed_mps=1.5--seed0"
     },
     {
       "id": "time-window-opens-on-sideways-pilot",
@@ -86866,7 +86866,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-opens-on-sideways-pilot--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-opens-on-sideways-pilot--seed0"
     },
     {
       "id": "time-window-opens-ahead@clock=2026-09-07T07:29:51",
@@ -87180,7 +87180,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-opens-ahead@clock=2026-09-07T07_29_51--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-opens-ahead@clock=2026-09-07T07_29_51--seed0"
     },
     {
       "id": "time-window-opens-ahead@clock=2026-09-07T07:29:52",
@@ -87494,7 +87494,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-opens-ahead@clock=2026-09-07T07_29_52--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-opens-ahead@clock=2026-09-07T07_29_52--seed0"
     },
     {
       "id": "time-window-switch-event",
@@ -87819,7 +87819,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--time-window-switch-event--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--time-window-switch-event--seed0"
     },
     {
       "id": "rule-deactivated-mid-run",
@@ -88138,7 +88138,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--rule-deactivated-mid-run--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--rule-deactivated-mid-run--seed0"
     },
     {
       "id": "rule-activated-mid-run@at=2",
@@ -88454,7 +88454,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--rule-activated-mid-run@at=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--rule-activated-mid-run@at=2--seed0"
     },
     {
       "id": "rule-activated-mid-run@at=4",
@@ -88770,7 +88770,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--rule-activated-mid-run@at=4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--rule-activated-mid-run@at=4--seed0"
     },
     {
       "id": "radius-scaling-grow@factor=3.3",
@@ -89082,7 +89082,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--radius-scaling-grow@factor=3.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--radius-scaling-grow@factor=3.3--seed0"
     },
     {
       "id": "radius-scaling-grow@factor=3.8",
@@ -89394,7 +89394,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--radius-scaling-grow@factor=3.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--radius-scaling-grow@factor=3.8--seed0"
     },
     {
       "id": "radius-scaling-grow-deep",
@@ -89704,7 +89704,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--radius-scaling-grow-deep--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--radius-scaling-grow-deep--seed0"
     },
     {
       "id": "radius-scaling-shrink@factor=0.3",
@@ -89999,7 +89999,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--radius-scaling-shrink@factor=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--radius-scaling-shrink@factor=0.3--seed0"
     },
     {
       "id": "radius-scaling-shrink@factor=0.5",
@@ -90294,7 +90294,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--radius-scaling-shrink@factor=0.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--radius-scaling-shrink@factor=0.5--seed0"
     },
     {
       "id": "corridor-swap-shifted",
@@ -90608,7 +90608,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-swap-shifted--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-swap-shifted--seed0"
     },
     {
       "id": "corridor-swap-narrowed@ask_mps=1",
@@ -90922,7 +90922,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-swap-narrowed@ask_mps=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-swap-narrowed@ask_mps=1--seed0"
     },
     {
       "id": "corridor-swap-narrowed@ask_mps=2",
@@ -91236,7 +91236,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--corridor-swap-narrowed@ask_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--corridor-swap-narrowed@ask_mps=2--seed0"
     },
     {
       "id": "failsafe-rtl-zone@ahead_m=6,variant=0",
@@ -91538,7 +91538,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--failsafe-rtl-zone@ahead_m=6,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--failsafe-rtl-zone@ahead_m=6,variant=0--seed0"
     },
     {
       "id": "failsafe-rtl-zone@ahead_m=12,variant=0",
@@ -91840,7 +91840,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--failsafe-rtl-zone@ahead_m=12,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--failsafe-rtl-zone@ahead_m=12,variant=0--seed0"
     },
     {
       "id": "failsafe-land-zone",
@@ -92153,7 +92153,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--failsafe-land-zone--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--failsafe-land-zone--seed0"
     },
     {
       "id": "failsafe-loiter-timeout",
@@ -92471,7 +92471,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--failsafe-loiter-timeout--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--failsafe-loiter-timeout--seed0"
     },
     {
       "id": "failsafe-rtl-blocked",
@@ -92805,7 +92805,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--failsafe-rtl-blocked--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--failsafe-rtl-blocked--seed0"
     },
     {
       "id": "failsafe-low-battery",
@@ -93133,7 +93133,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--failsafe-low-battery--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--failsafe-low-battery--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.2",
@@ -93424,7 +93424,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.2",
@@ -93715,7 +93715,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.2",
@@ -94006,7 +94006,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.2",
@@ -94297,7 +94297,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.2",
@@ -94588,7 +94588,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.2",
@@ -94879,7 +94879,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.2",
@@ -95170,7 +95170,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.2",
@@ -95461,7 +95461,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.2--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.5",
@@ -95752,7 +95752,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.5",
@@ -96043,7 +96043,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.5",
@@ -96334,7 +96334,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.5",
@@ -96625,7 +96625,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.5",
@@ -96916,7 +96916,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.5",
@@ -97207,7 +97207,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.5",
@@ -97498,7 +97498,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.5",
@@ -97789,7 +97789,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.5--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.8",
@@ -98080,7 +98080,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=8,edge_deg=0,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.8",
@@ -98371,7 +98371,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=8,edge_deg=90,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.8",
@@ -98662,7 +98662,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=8,edge_deg=180,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.8",
@@ -98953,7 +98953,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=8,edge_deg=270,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.8",
@@ -99244,7 +99244,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=20,edge_deg=0,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.8",
@@ -99535,7 +99535,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=20,edge_deg=90,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.8",
@@ -99826,7 +99826,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=20,edge_deg=180,pass_y=23.8--seed0"
     },
     {
       "id": "high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.8",
@@ -100117,7 +100117,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--high-speed-near-edge@ask_mps=20,edge_deg=270,pass_y=23.8--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=8,pass_y=40.5",
@@ -100450,7 +100450,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--near-edge-at-12mps@ask_mps=8,pass_y=40.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--near-edge-at-12mps@ask_mps=8,pass_y=40.5--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=12,pass_y=40.5",
@@ -100752,7 +100752,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--near-edge-at-12mps@ask_mps=12,pass_y=40.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--near-edge-at-12mps@ask_mps=12,pass_y=40.5--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=20,pass_y=40.5",
@@ -101044,7 +101044,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--near-edge-at-12mps@ask_mps=20,pass_y=40.5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--near-edge-at-12mps@ask_mps=20,pass_y=40.5--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=8,pass_y=40.8",
@@ -101346,7 +101346,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--near-edge-at-12mps@ask_mps=8,pass_y=40.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--near-edge-at-12mps@ask_mps=8,pass_y=40.8--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=12,pass_y=40.8",
@@ -101673,7 +101673,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--near-edge-at-12mps@ask_mps=12,pass_y=40.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--near-edge-at-12mps@ask_mps=12,pass_y=40.8--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=20,pass_y=40.8",
@@ -101965,7 +101965,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--near-edge-at-12mps@ask_mps=20,pass_y=40.8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--near-edge-at-12mps@ask_mps=20,pass_y=40.8--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=8,pass_y=41.1",
@@ -102267,7 +102267,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--near-edge-at-12mps@ask_mps=8,pass_y=41.1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--near-edge-at-12mps@ask_mps=8,pass_y=41.1--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=12,pass_y=41.1",
@@ -102557,7 +102557,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--near-edge-at-12mps@ask_mps=12,pass_y=41.1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--near-edge-at-12mps@ask_mps=12,pass_y=41.1--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=20,pass_y=41.1",
@@ -102849,7 +102849,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--near-edge-at-12mps@ask_mps=20,pass_y=41.1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--near-edge-at-12mps@ask_mps=20,pass_y=41.1--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=8,pass_y=41.3",
@@ -103139,7 +103139,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--near-edge-at-12mps@ask_mps=8,pass_y=41.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--near-edge-at-12mps@ask_mps=8,pass_y=41.3--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=12,pass_y=41.3",
@@ -103429,7 +103429,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--near-edge-at-12mps@ask_mps=12,pass_y=41.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--near-edge-at-12mps@ask_mps=12,pass_y=41.3--seed0"
     },
     {
       "id": "near-edge-at-12mps@ask_mps=20,pass_y=41.3",
@@ -103721,7 +103721,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--near-edge-at-12mps@ask_mps=20,pass_y=41.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--near-edge-at-12mps@ask_mps=20,pass_y=41.3--seed0"
     },
     {
       "id": "three-simultaneous-violations@ask_mps=8,start_up=3,variant=0",
@@ -104052,7 +104052,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--three-simultaneous-violations@ask_mps=8,start_up=3,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--three-simultaneous-violations@ask_mps=8,start_up=3,variant=0--seed0"
     },
     {
       "id": "three-simultaneous-violations@ask_mps=11,start_up=3,variant=0",
@@ -104383,7 +104383,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--three-simultaneous-violations@ask_mps=11,start_up=3,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--three-simultaneous-violations@ask_mps=11,start_up=3,variant=0--seed0"
     },
     {
       "id": "three-simultaneous-violations@ask_mps=8,start_up=6,variant=0",
@@ -104714,7 +104714,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--three-simultaneous-violations@ask_mps=8,start_up=6,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--three-simultaneous-violations@ask_mps=8,start_up=6,variant=0--seed0"
     },
     {
       "id": "three-simultaneous-violations@ask_mps=11,start_up=6,variant=0",
@@ -105045,7 +105045,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--three-simultaneous-violations@ask_mps=11,start_up=6,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--three-simultaneous-violations@ask_mps=11,start_up=6,variant=0--seed0"
     },
     {
       "id": "three-simultaneous-violations@ask_mps=8,start_up=9,variant=0",
@@ -105376,7 +105376,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--three-simultaneous-violations@ask_mps=8,start_up=9,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--three-simultaneous-violations@ask_mps=8,start_up=9,variant=0--seed0"
     },
     {
       "id": "three-simultaneous-violations@ask_mps=11,start_up=9,variant=0",
@@ -105707,7 +105707,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--three-simultaneous-violations@ask_mps=11,start_up=9,variant=0--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--three-simultaneous-violations@ask_mps=11,start_up=9,variant=0--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=0,pass_y=23.2,sigma=0.2",
@@ -106070,7 +106070,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-within-margin@latency=0,pass_y=23.2,sigma=0.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-within-margin@latency=0,pass_y=23.2,sigma=0.2--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=1,pass_y=23.2,sigma=0.2",
@@ -106359,7 +106359,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-within-margin@latency=1,pass_y=23.2,sigma=0.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-within-margin@latency=1,pass_y=23.2,sigma=0.2--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=2,pass_y=23.2,sigma=0.2",
@@ -106648,7 +106648,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-within-margin@latency=2,pass_y=23.2,sigma=0.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-within-margin@latency=2,pass_y=23.2,sigma=0.2--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=0,pass_y=23.2,sigma=0.3",
@@ -106949,7 +106949,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-within-margin@latency=0,pass_y=23.2,sigma=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-within-margin@latency=0,pass_y=23.2,sigma=0.3--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=1,pass_y=23.2,sigma=0.3",
@@ -107250,7 +107250,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-within-margin@latency=1,pass_y=23.2,sigma=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-within-margin@latency=1,pass_y=23.2,sigma=0.3--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=2,pass_y=23.2,sigma=0.3",
@@ -107544,7 +107544,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-within-margin@latency=2,pass_y=23.2,sigma=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-within-margin@latency=2,pass_y=23.2,sigma=0.3--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=0,pass_y=23.6,sigma=0.2",
@@ -107833,7 +107833,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-within-margin@latency=0,pass_y=23.6,sigma=0.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-within-margin@latency=0,pass_y=23.6,sigma=0.2--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=1,pass_y=23.6,sigma=0.2",
@@ -108122,7 +108122,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-within-margin@latency=1,pass_y=23.6,sigma=0.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-within-margin@latency=1,pass_y=23.6,sigma=0.2--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=2,pass_y=23.6,sigma=0.2",
@@ -108411,7 +108411,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-within-margin@latency=2,pass_y=23.6,sigma=0.2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-within-margin@latency=2,pass_y=23.6,sigma=0.2--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=0,pass_y=23.6,sigma=0.3",
@@ -108762,7 +108762,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-within-margin@latency=0,pass_y=23.6,sigma=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-within-margin@latency=0,pass_y=23.6,sigma=0.3--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=1,pass_y=23.6,sigma=0.3",
@@ -109051,7 +109051,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-within-margin@latency=1,pass_y=23.6,sigma=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-within-margin@latency=1,pass_y=23.6,sigma=0.3--seed0"
     },
     {
       "id": "gps-noise-within-margin@latency=2,pass_y=23.6,sigma=0.3",
@@ -109352,7 +109352,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-within-margin@latency=2,pass_y=23.6,sigma=0.3--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-within-margin@latency=2,pass_y=23.6,sigma=0.3--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=5,pass_y=23.2,sigma=1",
@@ -109676,7 +109676,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-beyond-margin@latency=5,pass_y=23.2,sigma=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-beyond-margin@latency=5,pass_y=23.2,sigma=1--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=10,pass_y=23.2,sigma=1",
@@ -110000,7 +110000,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-beyond-margin@latency=10,pass_y=23.2,sigma=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-beyond-margin@latency=10,pass_y=23.2,sigma=1--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=5,pass_y=23.2,sigma=2",
@@ -110324,7 +110324,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-beyond-margin@latency=5,pass_y=23.2,sigma=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-beyond-margin@latency=5,pass_y=23.2,sigma=2--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=10,pass_y=23.2,sigma=2",
@@ -110648,7 +110648,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-beyond-margin@latency=10,pass_y=23.2,sigma=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-beyond-margin@latency=10,pass_y=23.2,sigma=2--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=5,pass_y=23.6,sigma=1",
@@ -110972,7 +110972,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-beyond-margin@latency=5,pass_y=23.6,sigma=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-beyond-margin@latency=5,pass_y=23.6,sigma=1--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=10,pass_y=23.6,sigma=1",
@@ -111296,7 +111296,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-beyond-margin@latency=10,pass_y=23.6,sigma=1--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-beyond-margin@latency=10,pass_y=23.6,sigma=1--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=5,pass_y=23.6,sigma=2",
@@ -111620,7 +111620,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-beyond-margin@latency=5,pass_y=23.6,sigma=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-beyond-margin@latency=5,pass_y=23.6,sigma=2--seed0"
     },
     {
       "id": "gps-noise-beyond-margin@latency=10,pass_y=23.6,sigma=2",
@@ -111944,7 +111944,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-noise-beyond-margin@latency=10,pass_y=23.6,sigma=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-noise-beyond-margin@latency=10,pass_y=23.6,sigma=2--seed0"
     },
     {
       "id": "gps-dropout@lane_y=15,window=2-4",
@@ -112232,7 +112232,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-dropout@lane_y=15,window=2-4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-dropout@lane_y=15,window=2-4--seed0"
     },
     {
       "id": "gps-dropout@lane_y=15,window=2-9",
@@ -112550,7 +112550,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-dropout@lane_y=15,window=2-9--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-dropout@lane_y=15,window=2-9--seed0"
     },
     {
       "id": "gps-dropout@lane_y=15,window=4-11",
@@ -112860,7 +112860,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-dropout@lane_y=15,window=4-11--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-dropout@lane_y=15,window=4-11--seed0"
     },
     {
       "id": "gps-dropout@lane_y=15,window=6-13",
@@ -113148,7 +113148,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-dropout@lane_y=15,window=6-13--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-dropout@lane_y=15,window=6-13--seed0"
     },
     {
       "id": "gps-dropout@lane_y=23.6,window=2-4",
@@ -113440,7 +113440,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-dropout@lane_y=23.6,window=2-4--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-dropout@lane_y=23.6,window=2-4--seed0"
     },
     {
       "id": "gps-dropout@lane_y=23.6,window=2-9",
@@ -113732,7 +113732,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-dropout@lane_y=23.6,window=2-9--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-dropout@lane_y=23.6,window=2-9--seed0"
     },
     {
       "id": "gps-dropout@lane_y=23.6,window=4-11",
@@ -114042,7 +114042,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-dropout@lane_y=23.6,window=4-11--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-dropout@lane_y=23.6,window=4-11--seed0"
     },
     {
       "id": "gps-dropout@lane_y=23.6,window=6-13",
@@ -114334,7 +114334,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--gps-dropout@lane_y=23.6,window=6-13--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--gps-dropout@lane_y=23.6,window=6-13--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=15,wind_speed_mps=5",
@@ -114618,7 +114618,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--wind-within-authority@lane_y=15,wind_speed_mps=5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--wind-within-authority@lane_y=15,wind_speed_mps=5--seed0"
     },
     {
       "id": "wind-within-authority@lane_y=25,wind_speed_mps=5",
@@ -114888,7 +114888,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--wind-within-authority@lane_y=25,wind_speed_mps=5--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--wind-within-authority@lane_y=25,wind_speed_mps=5--seed0"
     },
     {
       "id": "wind-beyond-authority@lane_y=15,wind_speed_mps=8",
@@ -115211,7 +115211,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--wind-beyond-authority@lane_y=15,wind_speed_mps=8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--wind-beyond-authority@lane_y=15,wind_speed_mps=8--seed0"
     },
     {
       "id": "wind-beyond-authority@lane_y=15,wind_speed_mps=12",
@@ -115527,7 +115527,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--wind-beyond-authority@lane_y=15,wind_speed_mps=12--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--wind-beyond-authority@lane_y=15,wind_speed_mps=12--seed0"
     },
     {
       "id": "wind-beyond-authority@lane_y=20,wind_speed_mps=8",
@@ -115850,7 +115850,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--wind-beyond-authority@lane_y=20,wind_speed_mps=8--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--wind-beyond-authority@lane_y=20,wind_speed_mps=8--seed0"
     },
     {
       "id": "wind-beyond-authority@lane_y=20,wind_speed_mps=12",
@@ -116195,7 +116195,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--wind-beyond-authority@lane_y=20,wind_speed_mps=12--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--wind-beyond-authority@lane_y=20,wind_speed_mps=12--seed0"
     },
     {
       "id": "wind-gusts@lane_y=15,wind_speed_mps=2",
@@ -116480,7 +116480,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--wind-gusts@lane_y=15,wind_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--wind-gusts@lane_y=15,wind_speed_mps=2--seed0"
     },
     {
       "id": "wind-gusts@lane_y=25,wind_speed_mps=2",
@@ -116751,7 +116751,7 @@
       "seed_applied": true,
       "grant_config": true,
       "manifest_extras": null,
-      "bundle": "demo/out/sweep/episode-2026-10-22T15-07-50Z--wind-gusts@lane_y=25,wind_speed_mps=2--seed0"
+      "bundle": "demo/out/sweep/episode-2026-10-22T15-33-56Z--wind-gusts@lane_y=25,wind_speed_mps=2--seed0"
     }
   ]
 }
