@@ -392,9 +392,14 @@ def annotate_vla(img, det, hud: dict):
     (demo/policy_hud.OverlayCache, 5 Hz)."""
     from PIL import ImageDraw
     im = img.copy()
-    if hud.get("frame") == "landing":
-        lines = [f"t {hud['t']:5.1f}s  alt {hud['alt']:4.1f} m", "MISSION OVER",
-                 hud.get("label") or "LANDING (hand-written, not the VLA)"]
+    # After the mission the VLA no longer flies: the landing-site transfer
+    # (follow_vlm._fly_to_landing_site, through the Shield, whose own HUD
+    # dict says mode "land") and the descent (no Shield) say so instead of
+    # leaving the last VLA tick on screen.
+    landing = hud.get("frame") == "landing" or hud.get("mode") == "land"
+    if landing:
+        lines = [f"t {hud['t']:5.1f}s  alt {hud['alt']:4.1f} m", "MISSION OVER - VLA STOPPED",
+                 hud.get("label") or hud.get("mode_label") or "LANDING (hand-written)"]
     else:
         lines = hud_lines(hud)
     d = ImageDraw.Draw(im)
@@ -410,11 +415,15 @@ def annotate_vla(img, det, hud: dict):
             _OVERLAY = OverlayCache()
         _OVERLAY.draw(im, pol, lines)
         return im
-    lines = lines + [("SHIELD: correcting" if hud.get("shield") else "SHIELD: clear")
-                     if hud.get("shield_on", True) else "SHIELD OFF (control arm)"]
-    for i, ln in enumerate(lines):
-        d.text((6, 6 + 12 * i), ln, fill=(255, 255, 255) if i < len(lines) - 2
-               else (255, 210, 90))
+    if not landing:
+        lines = lines + [("SHIELD: correcting" if hud.get("shield") else "SHIELD: clear")
+                         if hud.get("shield_on", True) else "SHIELD OFF (control arm)"]
+    try:
+        from policy_hud import draw_status_box
+        draw_status_box(im, lines)
+    except Exception:                                              # noqa: BLE001
+        for i, ln in enumerate(lines):
+            d.text((6, 6 + 12 * i), ln, fill=(255, 255, 255))
     return im
 
 
@@ -625,7 +634,7 @@ async def fly(args) -> int:
     cmd_times: list[float] = []
     t_mission_end = None
     monitor = None
-    frames_stats = saver_stats = None
+    frames_stats = saver_stats = stats_at_end = None
     sim = ProjectAirSimClient()
     try:
         sim.connect()
@@ -800,24 +809,40 @@ async def fly(args) -> int:
         t_mission_end = time.time() + 0.3
         await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.5)
         backend.close()            # the VLA stops here; its records close (vla_steps.jsonl)
+        # Read now, not after the landing: stats() rates decisions over the
+        # time since the first act(), and a minute of landing in that span
+        # understated a 2.5 Hz pilot as 1.5 Hz (fake-simulator smoke run).
+        stats_at_end = backend.stats()
 
         # ---- the controlled landing (follow_vlm's), never a mode request ---
         live.beat(progress=1.0, phase="landing", detail=f"mission over ({end_reason}); landing")
         if grounder is not None:
             grounder.stop()
+        hud_live = recorder is not None and pind is not None and pind_error is None
         if args.land_site:
             landing_info = await FV._fly_to_landing_site(
                 drone, shield, SimpleNamespace(citymap=args.citymap, cruise_alt=args.cruise_alt,
                                                alt_gain=args.alt_gain, climb_max=args.climb_max),
-                live=live)
+                pind=pind if hud_live else None, recorder=recorder if hud_live else None,
+                t0=t0, query=args.object, live=live)
         for _k in range(600):
             kin = drone.get_ground_truth_kinematics()
             up = -kin["pose"]["position"]["z"]
             live.beat(detail=f"descending ({up:.0f} m)")
             if recorder is not None and _k % 5 == 0:
+                pol = None
+                if hud_live:
+                    try:
+                        p_ = kin["pose"]["position"]
+                        pol = pind.ended(State(x=float(p_["x"]), y=float(p_["y"]), up=up),
+                                         "MISSION ENDED - DESCENDING TO LAND (Shield not in "
+                                         "this loop)", quat_yaw(kin["pose"]["orientation"]),
+                                         t=time.time() - t0)
+                    except Exception:                              # noqa: BLE001
+                        pol = None
                 recorder.set_hud({"t": time.time() - t0, "alt": up, "frame": "landing",
-                                  "label": f"LANDING: {end_reason} (not the VLA, no Shield)"},
-                                 None)
+                                  "label": f"descending after {end_reason} (no Shield)",
+                                  "policy": pol}, None)
             if up <= 1.2:
                 break
             await drone.move_by_velocity_async(0.0, 0.0, max(0.6, min(2.0, up * 0.15)),
@@ -877,7 +902,7 @@ async def fly(args) -> int:
 
     # ---- the records ------------------------------------------------------
     from guardrail.replay import zone_dwell
-    stats = backend.stats()
+    stats = stats_at_end if stats_at_end is not None else backend.stats()
     records = list(backend.records)
     dwell = zone_dwell(shield, traj, TICK)
     band = policy.by_type(AltitudeEnvelope)

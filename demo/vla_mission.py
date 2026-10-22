@@ -988,7 +988,12 @@ def pilot_summary(stats: dict, records: list[dict], rows: list[dict]) -> dict:
     vla_step = by_author.get("vla_step", 0)
     held_parsed = sum(1 for r in rows if r.get("author") == "hold"
                       and r.get("author_reason") in ("step_complete", "land"))
-    kinds = Counter(r.get("kind") for r in records)
+    # The request in flight when the mission ended comes back as a link
+    # failure refused "closed" (RemoteVLABackend.close): the run ended, the
+    # server did not fail. Counted apart, so the answers say what the server
+    # did while it was asked.
+    closed = [r for r in records if r.get("refused") == "closed"]
+    kinds = Counter(r.get("kind") for r in records if r.get("refused") != "closed")
     phrases = Counter(r.get("phrase") for r in records if "phrase" in r)
     sources = Counter(r.get("hint_source") for r in records if "hint_source" in r)
     return {
@@ -998,7 +1003,7 @@ def pilot_summary(stats: dict, records: list[dict], rows: list[dict]) -> dict:
                              "tracker took, over the time act() ran; the action stream "
                              "is 10 Hz, the decisions behind it are not"),
         "requests": len(records),
-        "answers_by_kind": dict(kinds),
+        "answers_by_kind": dict(kinds), "in_flight_at_end": len(closed),
         "latency_client_s": spread(lat_c), "latency_server_s": spread(lat_s),
         "rtt_s": spread(rtt),
         "parse_fail": stats.get("parse_fail"), "server_error": stats.get("server_error"),
