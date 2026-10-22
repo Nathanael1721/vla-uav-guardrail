@@ -60,8 +60,8 @@ if str(ROOT) not in sys.path:
 
 from guardrail.models import Action4D, State                         # noqa: E402
 from guardrail.vla_link import (                                      # noqa: E402
-    NO_HINT, Capture, Hint, Pose, RemoteVLA, LinkError, ProtocolError, check_identity,
-    goal_hint, phrase_for_bearing, wrap_pi,
+    NO_HINT, Capture, Hint, Pose, RemoteVLA, LinkError, ProtocolError, build_infer_fields,
+    check_identity, goal_hint, phrase_for_bearing, wrap_pi,
 )
 
 MISSIONS = ("goto", "approach")
@@ -113,6 +113,39 @@ DEFAULT_CRUISE_UP = 10.0
 # precision, attn, merged, agreement) goes into the pilot record beside it;
 # tools/todo.py vla_family reads "aerialvla" in both.
 MODEL_ID = "aerialvla:openvla-7b+aero_vla"
+# M1's prompt object words. Every one of upstream's 410,450 training prompts
+# carries a description of the target in this style ("The man is walking on a
+# road near some bushes and tall evergreen trees, ...", D:/models/
+# aerialvla-lora/aerovla_train_dataset.json), never an empty slot, so a GOTO
+# sends one FIXED, neutral description of the street instead of "" (review of
+# the CityLife flight, P3-14). It names no object that is there to be found
+# and no position (aerialvla_codec.validate_object): the words are inert
+# (docs/FINDING-what-drives-aerialvla.md), recorded in metrics.json and in
+# every vla_steps.jsonl line (`object`), and --object overrides them.
+GOTO_OBJECT_TEXT = ("The target is on a paved city street lined with tall buildings, "
+                    "street trees and parked cars.")
+# The altitude band the step tracker clamps into when the Shield is OFF (the
+# control arm, review of the CityLife flight, P1-2): with the Shield on it is
+# the policy's band (6-14 m here), which would quietly keep the "raw" arm
+# inside the very envelope the Shield enforces. Off, the tracker is built
+# without the policy and clamps only into this simulator safety band - above
+# the ground and the CityLife street furniture, below anything the level's
+# 2 m map was built for - recorded in metrics.json and kpi.json
+# (`pilot_alt_band`; the manifest keeps the grant's six fields only). Ours,
+# not upstream's: upstream flies unclamped.
+SIM_SAFETY_BAND_M = (2.0, 40.0)
+# How long the flight and the replay gate wait for the server's hello: a bf16
+# cold load under RAM pressure was measured at more than 15 min (2026-10-23).
+HELLO_TIMEOUT_S = 2700.0
+# The warm-up gate before arming (review of the CityLife flight, P2-5): one
+# inference on a live frame pair; slower than this round trip, the flight is
+# refused before take-off. 5 s is ours: the step tracker's decision timeout is
+# 10 s, and an answer that takes half of it leaves a 5 m step no time.
+WARMUP_MAX_LATENCY_S = 5.0
+# After a request times out, how long the client waits for its late answer
+# before it asks again (RemoteVLA late_reply_wait_s): the server cannot cancel
+# a generate() in progress, so a new request would only queue behind it.
+LATE_REPLY_WAIT_S = 120.0
 
 
 def bearing_to(pose: Pose, xy: tuple[float, float]) -> float:
@@ -123,6 +156,44 @@ def bearing_to(pose: Pose, xy: tuple[float, float]) -> float:
 
 def distance_to(pose: Pose, xy: tuple[float, float]) -> float:
     return math.hypot(float(xy[0]) - pose.x, float(xy[1]) - pose.y)
+
+
+def pilot_alt_config(shield_on: bool, policy) -> tuple[Any, tuple[float, float] | None, dict]:
+    """(the policy RemoteVLABackend clamps altitude against, the
+    TrackerConfig.alt_band, what to record). Shield on: the policy's hard
+    envelopes, as every rail. Shield OFF (the control arm): no policy, and
+    the explicit SIM_SAFETY_BAND_M - so the arm that is meant to show what
+    the VLA flies without the Shield is not held inside the Shield's own
+    altitude band by the pilot side (review of the CityLife flight, P1-2).
+    The backend's alt_band_info then says which band clamped (`source`
+    "configured" for the safety band, "policy" for the policy's)."""
+    if shield_on:
+        return policy, None, {"clamp": "policy",
+                              "why": "the Shield is on: the step tracker clamps altitude "
+                                     "targets into the policy's hard above-ground band"}
+    return None, SIM_SAFETY_BAND_M, {
+        "clamp": "sim_safety_band", "band_m": list(SIM_SAFETY_BAND_M),
+        "why": ("the Shield is off (control arm): the step tracker is built without the "
+                "policy and clamps altitude targets only into the simulator safety band "
+                f"{SIM_SAFETY_BAND_M[0]:g}-{SIM_SAFETY_BAND_M[1]:g} m (vla_mission."
+                "SIM_SAFETY_BAND_M); the policy band is the Shield's to judge, in shadow")}
+
+
+def hud_decision(d, raw: Action4D, *, shield_on: bool):
+    """The decision the policy indicator (demo/policy_hud.PolicyIndicator)
+    and its counts read - demo/pas_ardupilot/perception_node.hud_decision's
+    rule. Shield on: the Shield's own decision. Shield OFF: the same checks
+    with NO repair and no brake, the raw action that flew as the one
+    emitted, and the shadow decision's violations as flown, so the panel
+    shows WATCH and the P0 escapes, never an ACTING row or "Shield
+    corrections" for a Shield that was not in the loop (review of the
+    CityLife flight, P1-1)."""
+    if shield_on:
+        return d
+    from types import SimpleNamespace
+    return SimpleNamespace(violations=list(d.violations), repairs=[], braked=False,
+                           touched=False, emitted=raw,
+                           emitted_violations=list(d.violations))
 
 
 # --------------------------------------------------------------------------- #
@@ -171,19 +242,42 @@ def goto_hint_source(goal_xy: tuple[float, float], arrive_radius_m: float) -> Hi
     return HintSource(goal_hint(goal_xy, arrive_radius_m), "goal")
 
 
+def unpack_box(got) -> tuple[Any, float | None, float | None, float | None]:
+    """A detector source's answer -> (det, t_box, yaw_box, t_published).
+    `t_box`: the wall time the box's frame was captured; `yaw_box`: the
+    aircraft's heading (rad) at that frame; `t_published`: when the
+    detector published the box (its latency is t_published - t_box). Two-
+    tuples (det, t_box) mean no heading and no publish time."""
+    got = tuple(got) if got is not None else (None, None)
+    det, t_box = got[0], got[1]
+    yaw = got[2] if len(got) > 2 else None
+    t_pub = got[3] if len(got) > 3 else None
+    return det, t_box, yaw, t_pub
+
+
 class DetectorHint:
     """M2: the compass phrase of the newest FRESH OWL-ViT box, through
     demo/vla_bridge.VLABridge (box centre -> pinhole bearing -> the training
-    band). `latest() -> (det, t_box)`: the Grounder tuple (cx, cy, w, h,
-    score, W, H, colour) and the wall time its frame was captured, or (None,
-    None). A box older than `fresh_s` at the VLA capture, or none at all, is
-    NO REQUEST (None): the bridge never emits "", and a detector hint of ""
-    is refused by the codec, because "" asks the model to LAND wherever the
-    box was lost. 1.0 s is DETECTION_STALE_S of the ArduPilot rail
-    (perception_node.py). `box_age_s` of the last hint is kept for the rows."""
+    band). `latest()` -> (det, t_box[, yaw_box[, t_published]])
+    (unpack_box): the Grounder tuple (cx, cy, w, h, score, W, H, colour),
+    the wall time its frame was captured, the heading at that frame and when
+    the detector published it; or (None, None). A box older than `fresh_s`
+    at the VLA capture, or none at all, is NO REQUEST (None): the bridge
+    never emits "", and a detector hint of "" is refused by the codec,
+    because "" asks the model to LAND wherever the box was lost. 1.0 s is
+    DETECTION_STALE_S of the ArduPilot rail (perception_node.py).
 
-    def __init__(self, latest: Callable[[], tuple[Any, float | None]], bridge,
-                 fresh_s: float = 1.0):
+    THE TURN SINCE THE BOX (review of the CityLife flight, P2-6). The box's
+    bearing is measured on the detector's frame; the VLA's capture can be up
+    to `fresh_s` later, and at the tracker's 0.5 rad/s yaw cap the aircraft
+    can have turned 28.6 deg in that second. So the bearing is rotated by
+    (heading at the VLA capture - heading at the detector frame) before the
+    band lookup (VLABridge.phrase_for_bearing: gain and clamp unchanged).
+    Without the frame's heading the bearing is used as measured, counted
+    `n_no_yaw`. Kept for the rows and stats: the box's age at the hint, the
+    correction, and the detector's own latency (publish - frame capture)."""
+
+    def __init__(self, latest: Callable[[], tuple], bridge, fresh_s: float = 1.0):
         if not fresh_s > 0:
             raise ValueError("fresh_s must be positive")
         self.latest = latest
@@ -191,24 +285,55 @@ class DetectorHint:
         self.fresh_s = float(fresh_s)
         self.n_stale = 0
         self.n_none = 0
+        self.n_no_yaw = 0
+        self.n_hints = 0
         self.last_box_age_s: float | None = None
+        self.last_yaw_correction_rad: float | None = None
+        self.last_detector_latency_s: float | None = None
+        self._ages: deque = deque(maxlen=20000)
+        self._corr: deque = deque(maxlen=20000)
+        self._lat: deque = deque(maxlen=20000)
 
     def __call__(self, capture: Capture) -> Hint | None:
-        det, t_box = self.latest()
+        from vla_bridge import bearing_from_box
+        det, t_box, yaw_box, t_pub = unpack_box(self.latest())
+        self.last_yaw_correction_rad = None
+        self.last_detector_latency_s = None
         if det is None or t_box is None:
             self.n_none += 1
             self.last_box_age_s = None
             return None
         age = float(capture.t_capture) - float(t_box)
         self.last_box_age_s = age
+        if t_pub is not None:
+            self.last_detector_latency_s = float(t_pub) - float(t_box)
         if age > self.fresh_s:
             self.n_stale += 1
             return None
-        phrase = self.bridge.phrase_for(det)
-        if phrase is None:
-            self.n_none += 1
-            return None
+        bearing = bearing_from_box(det, self.bridge.hfov_deg)
+        if yaw_box is None:
+            self.n_no_yaw += 1
+        else:
+            corr = wrap_pi(float(capture.pose.yaw_rad) - float(yaw_box))
+            self.last_yaw_correction_rad = corr
+            bearing -= corr
+        phrase = self.bridge.phrase_for_bearing(bearing)
+        self.n_hints += 1
+        self._ages.append(age)
+        if self.last_yaw_correction_rad is not None:
+            self._corr.append(abs(math.degrees(self.last_yaw_correction_rad)))
+        if self.last_detector_latency_s is not None:
+            self._lat.append(self.last_detector_latency_s)
         return Hint(phrase, "detector")
+
+    def stats(self) -> dict:
+        return {"fresh_s": self.fresh_s, "hints": self.n_hints, "stale": self.n_stale,
+                "no_box": self.n_none, "no_frame_heading": self.n_no_yaw,
+                "box_age_at_hint_s": spread(self._ages),
+                "yaw_correction_abs_deg": spread(self._corr),
+                "detector_latency_s": spread(self._lat),
+                "rule": "bearing rotated by (heading at the VLA capture - heading at the "
+                        "detector frame) before the band lookup"}
 
 
 def box_fraction(det) -> float | None:
@@ -230,16 +355,32 @@ END_REASONS = {
     "vla_land": "the model answered LAND (Tick.land_requested): controlled landing",
     # the mission's perception-derived or goal-derived stops
     "arrived_no_land": "inside the arrive radius for arrive_grace_s with no LAND",
+    "arrived_overshoot": ("was inside the arrive radius, then the goal stayed behind the "
+                          "aircraft and receding for overshoot_s (flew past it; no LAND)"),
     "close_box": "the detector's box filled close_box_frac of its frame",
     "target_lost": "no fresh detection for lost_timeout_s",
     "timeout": "the mission time ran out",
     # the VLA failed
-    "server_dead": "no answer (link lost) for dead_timeout_s while hovering",
+    "server_dead": ("no answer for dead_timeout_s while hovering: the link failed "
+                    "(connection refused or closed, a broken reply, the server gone)"),
+    "server_slow": ("no answer for dead_timeout_s while hovering: every request timed out "
+                    "(the model answers slower than the response timeout)"),
     "server_error": "only server errors (ok=false) for dead_timeout_s while hovering",
     "parse_fail_streak": "only malformed answers (held zero) for dead_timeout_s",
     "no_first_decision": "no answer the model parsed within first_decision_timeout_s",
 }
-VLA_FAILURE_ENDS = ("server_dead", "server_error", "parse_fail_streak", "no_first_decision")
+VLA_FAILURE_ENDS = ("server_dead", "server_slow", "server_error", "parse_fail_streak",
+                    "no_first_decision")
+# Why a flight ended without its mission, set by demo/vla_fly.py (never by the
+# monitor): refused before take-off or before the mission clock, or stopped by
+# the operator.
+NOT_FLOWN_ENDS = {
+    "warmup_refused": ("the warm-up inference before arming was too slow or not answered: "
+                       "refused before take-off"),
+    "start_not_reached": ("the hand-written transfer did not bring the aircraft within "
+                          "start_tolerance_m of the mission start: refused, landed"),
+    "interrupted": "stopped by the operator (Ctrl+C): landed where it was",
+}
 
 
 @dataclass(frozen=True)
@@ -255,12 +396,14 @@ class MonitorConfig:
     det_fresh_s: float = 1.0             # M2: a box older than this is not "seen"
     dead_timeout_s: float = 10.0         # hover on link_lost / server_error this long ends it
     first_decision_timeout_s: float = 60.0
+    overshoot_s: float = 3.0             # M1: goal behind and receding this long after arriving
 
     def __post_init__(self):
         if self.mission not in MISSIONS:
             raise ValueError(f"mission {self.mission!r} is not one of {MISSIONS}")
         for k in ("max_s", "arrive_radius_m", "arrive_grace_s", "close_box_frac",
-                  "lost_timeout_s", "det_fresh_s", "dead_timeout_s", "first_decision_timeout_s"):
+                  "lost_timeout_s", "det_fresh_s", "dead_timeout_s", "first_decision_timeout_s",
+                  "overshoot_s"):
             v = getattr(self, k)
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) \
                     or v <= 0:
@@ -281,11 +424,29 @@ class MissionMonitor:
     link_lost / server_error, or held on parse_fail, for dead_timeout_s
     without a break; or no parsed answer at all within
     first_decision_timeout_s); the mission's own stop (M1: inside the arrive
-    radius for arrive_grace_s; M2: the box large enough, or no fresh box for
-    lost_timeout_s); the mission time. The server process having exited is
-    not an end by itself: its link failures make the tracker hover, and the
-    hover rule ends the mission dead_timeout_s later (the brief: hover, then
-    land after a timeout), with the exit recorded."""
+    radius for arrive_grace_s, or flown past the goal - see below; M2: the
+    box large enough, or no fresh box for lost_timeout_s); the mission time.
+    The server process having exited is not an end by itself: its link
+    failures make the tracker hover, and the hover rule ends the mission
+    dead_timeout_s later (the brief: hover, then land after a timeout), with
+    the exit recorded.
+
+    SLOW IS NOT DEAD (review of the CityLife flight, P2-5). A hover on
+    link_lost is `server_slow` when the latest link failure was a timeout
+    (`link_failure_kind` "timeout": the model is still computing) and
+    `server_dead` otherwise (refused, closed, a broken reply). Before the
+    first parsed answer a slow model is given first_decision_timeout_s - a
+    cold model's first answers are its slowest - and only then ends the
+    mission (`no_first_decision`); until 2026-10-23 the dead rule ended a
+    slow model's mission after ~20 s, and the first answer's 60 s never
+    applied. Every link failure kind seen is counted in the summary.
+
+    OVERSHOOT (M1). A model that does not LAND on the "" phrase and drifts
+    out of the arrive radius is then given the rear phrases until the time
+    runs out. Once the aircraft has been inside the radius, the goal behind
+    it (|bearing| > 90 deg) and its distance growing on every tick for
+    overshoot_s ends the mission `arrived_overshoot`, with the distance at
+    the end recorded (`overshoot_m`)."""
 
     def __init__(self, cfg: MonitorConfig, t0: float):
         self.cfg = cfg
@@ -296,10 +457,17 @@ class MissionMonitor:
         self._streak_t0: float | None = None
         self._t_first_decision: float | None = None
         self._t_inside: float | None = None
+        self._ever_inside = False
+        self._t_recede: float | None = None
+        self._d_prev: float | None = None
+        self.overshoot_m: float | None = None
+        self.min_goal_dist_m: float | None = None
         self._t_last_box: float | None = None
         self.t_server_exit: float | None = None
         self.events: list[dict] = []
         self.ticks_inside = 0
+        self.link_failure_kinds: Counter = Counter()
+        self._last_failure_key = None
 
     def _end(self, why: str, now: float) -> str:
         self.end_reason, self.t_end = why, now
@@ -307,13 +475,21 @@ class MissionMonitor:
         return why
 
     def update(self, now: float, pose: Pose, tick, *, goal_xy=None, det=None,
-               det_age_s: float | None = None, server_alive: bool = True) -> str | None:
+               det_age_s: float | None = None, server_alive: bool = True,
+               link_failure: dict | None = None) -> str | None:
+        """`link_failure`: the backend's last_link_failure ({"kind", "seq",
+        ...}, RemoteVLABackend), or None."""
         if self.end_reason is not None:
             return self.end_reason
         cfg = self.cfg
         if not server_alive and self.t_server_exit is None:
             self.t_server_exit = now
             self.events.append({"t": round(now - self.t0, 3), "event": "server_exited"})
+        if link_failure is not None:
+            key = (link_failure.get("seq"), link_failure.get("t"))
+            if key != self._last_failure_key:
+                self._last_failure_key = key
+                self.link_failure_kinds[str(link_failure.get("kind"))] += 1
         if tick.land_requested:
             return self._end("vla_land", now)
         if tick.author in ("vla_step", "hold") and tick.seq is not None \
@@ -322,28 +498,54 @@ class MissionMonitor:
         # A VLA failure: the tracker has been in one no-answer state since t.
         kind = None
         if tick.author in ("hover", "none") and tick.reason in ("link_lost", "server_error"):
-            kind = "server_error" if tick.reason == "server_error" else "server_dead"
+            if tick.reason == "server_error":
+                kind = "server_error"
+            elif (link_failure or {}).get("kind") == "timeout":
+                kind = "server_slow"
+            else:
+                kind = "server_dead"
         elif tick.author == "hold" and tick.reason == "parse_fail":
             kind = "parse_fail_streak"
         if kind != self._streak_kind:
             self._streak_kind, self._streak_t0 = kind, (now if kind else None)
-        if kind is not None and now - self._streak_t0 >= cfg.dead_timeout_s:
+        # A slow model before its first parsed answer: first_decision_timeout_s.
+        graced = kind == "server_slow" and self._t_first_decision is None
+        if kind is not None and not graced and now - self._streak_t0 >= cfg.dead_timeout_s:
             return self._end(kind, now)
         if self._t_first_decision is None and now - self.t0 >= cfg.first_decision_timeout_s:
             return self._end("no_first_decision", now)
         if cfg.mission == "goto":
             if goal_xy is None:
                 raise ValueError("a goto mission needs goal_xy")
-            if distance_to(pose, goal_xy) <= cfg.arrive_radius_m:
+            d = distance_to(pose, goal_xy)
+            self.min_goal_dist_m = d if self.min_goal_dist_m is None else min(self.min_goal_dist_m, d)
+            if d <= cfg.arrive_radius_m:
                 self.ticks_inside += 1
+                self._ever_inside = True
+                self._t_recede = None
                 if self._t_inside is None:
                     self._t_inside = now
                     self.events.append({"t": round(now - self.t0, 3), "event": "inside_arrive_radius"})
                 if now - self._t_inside >= cfg.arrive_grace_s:
                     return self._end("arrived_no_land", now)
-            elif self._t_inside is not None:
-                self.events.append({"t": round(now - self.t0, 3), "event": "left_arrive_radius"})
-                self._t_inside = None
+            else:
+                if self._t_inside is not None:
+                    self.events.append({"t": round(now - self.t0, 3), "event": "left_arrive_radius"})
+                    self._t_inside = None
+                behind = abs(bearing_to(pose, goal_xy)) > math.pi / 2
+                receding = self._d_prev is not None and d > self._d_prev + 1e-3
+                if self._ever_inside and behind and receding:
+                    if self._t_recede is None:
+                        self._t_recede = now
+                    if now - self._t_recede >= cfg.overshoot_s:
+                        self.overshoot_m = round(d, 2)
+                        self.events.append({"t": round(now - self.t0, 3), "event": "overshoot",
+                                            "dist_m": round(d, 2)})
+                        self._d_prev = d
+                        return self._end("arrived_overshoot", now)
+                else:
+                    self._t_recede = None
+            self._d_prev = d
         else:
             fresh = det is not None and det_age_s is not None and det_age_s <= cfg.det_fresh_s
             if fresh:
@@ -368,6 +570,11 @@ class MissionMonitor:
                 "t_server_exit_s": (None if self.t_server_exit is None
                                     else round(self.t_server_exit - self.t0, 3)),
                 "ticks_inside_arrive_radius": self.ticks_inside,
+                "ever_inside_arrive_radius": self._ever_inside,
+                "min_goal_dist_m": (None if self.min_goal_dist_m is None
+                                    else round(self.min_goal_dist_m, 2)),
+                "overshoot_m": self.overshoot_m,
+                "link_failure_kinds": dict(self.link_failure_kinds),
                 "events": list(self.events), "config": self.cfg.as_dict()}
 
 
@@ -377,10 +584,11 @@ class MissionMonitor:
 @dataclass
 class LoopTick:
     flown: Action4D          # what to send to the autopilot
-    decision: Any            # the ShieldDecision
+    decision: Any            # the ShieldDecision (with the Shield off: its shadow)
     row: dict                # the flight_log.jsonl row
     hud: dict                # what the recorder draws
     end_reason: str | None
+    hud_decision: Any = None  # what the policy indicator reads (hud_decision)
 
 
 def _r(v, n=3):
@@ -394,18 +602,26 @@ class MissionLoop:
       1. backend.act(state): the step tracker's world-frame Action4D, its
          author in backend.last_tick (vla_step / hold / hover / none);
       2. shield.filter(state, action): the Shield ALWAYS judges the action;
-         with shield_on the repaired `emitted` flies, with it off the VLA's
-         raw action flies and the decision is the shadow record
-         (metrics/rows "shield": "off", which guardrail/kpi.py reads as the
-         control arm). guardrail.replay.flown_fields says what was FLOWN and
-         its re-check, so the P0 escape count is measured, not inferred;
-      3. monitor.update(...): the end reason, if this tick ends the mission;
+         with shield_on the repaired `emitted` flies, with it off the
+         backend's action flies unfiltered (the step tracker's, clamped to
+         whatever altitude band the backend was built with:
+         pilot_alt_config) and the decision is the shadow record (rows
+         "shield": "off", which guardrail/kpi.py reads as the control arm;
+         the row's violations / repairs / touched are that shadow's).
+         guardrail.replay.flown_fields says what was FLOWN and its re-check,
+         so the P0 escape count is measured, not inferred. `hud_decision`
+         is what the policy indicator may read: with the Shield off, no
+         repair, the flown action, the shadow's violations as escapes;
+      3. monitor.update(...): the end reason, if this tick ends the mission
+         (with the backend's last link failure, so slow and dead differ);
       4. the row: who authored the tick, the decision being flown (seq, age,
          its phrase and hint source, step and raw text from its vla_steps
          record), the Shield's decision, and the mission's numbers.
 
-    `det_source() -> (det, box capture wall time)` for M2 (None for M1).
-    `server_alive() -> bool` for a server this process started."""
+    `det_source() -> (det, box capture wall time[, ...])` for M2 (None for
+    M1; unpack_box). `server_alive() -> bool` for a server this process
+    started. `n_touched` counts ticks the Shield corrected what FLEW (0 with
+    the Shield off), `n_shadow_touched` the shadow's would-be corrections."""
 
     def __init__(self, backend, shield, monitor: MissionMonitor, *, mission: str,
                  shield_on: bool = True, goal_xy=None, det_source=None, hint_source=None,
@@ -429,6 +645,7 @@ class MissionLoop:
         self.n = 0
         self.t0: float | None = None
         self.n_touched = 0
+        self.n_shadow_touched = 0
         self.authors: Counter = Counter()
 
     def tick(self, state: State, extra_row: dict | None = None) -> LoopTick:
@@ -440,6 +657,7 @@ class MissionLoop:
         d = self.shield.filter(state, action)
         flown = d.emitted if self.shield_on else action
         ff = self._flown_fields(self.shield, state, d, shield_on=self.shield_on)
+        hd = hud_decision(d, action, shield_on=self.shield_on)
         if self.audit is not None:
             try:
                 self.audit.log(self.n, d)
@@ -448,19 +666,22 @@ class MissionLoop:
         pose = Pose.from_state(state)
         det = t_box = None
         if self.det_source is not None:
-            det, t_box = self.det_source()
+            det, t_box, _, _ = unpack_box(self.det_source())
         det_age = None if t_box is None else now - float(t_box)
         try:
             alive = bool(self.server_alive())
         except Exception:                                        # noqa: BLE001
             alive = False
+        lf = getattr(self.backend, "last_link_failure", None)
+        lf = lf if isinstance(lf, dict) else None
         end = self.monitor.update(now, pose, tk, goal_xy=self.goal_xy, det=det,
-                                  det_age_s=det_age, server_alive=alive)
+                                  det_age_s=det_age, server_alive=alive, link_failure=lf)
         cur = getattr(self.backend.tracker, "current_record", None)
         cur = cur if isinstance(cur, dict) else {}
         step = cur.get("step") if isinstance(cur.get("step"), dict) else None
         self.authors[tk.author] += 1
-        self.n_touched += int(d.touched)
+        self.n_touched += int(bool(hd.touched))
+        self.n_shadow_touched += int(d.touched)
         gd = gb = None
         if self.goal_xy is not None:
             gd, gb = distance_to(pose, self.goal_xy), math.degrees(bearing_to(pose, self.goal_xy))
@@ -473,6 +694,8 @@ class MissionLoop:
             "author": tk.author, "author_reason": tk.reason,
             "vla_seq": tk.seq, "vla_age_s": _r(tk.age_s),
             "land_requested": bool(tk.land_requested),
+            # a hover on link_lost: what the link failed with (timeout = slow)
+            "link_failure": ((lf or {}).get("kind") if tk.reason == "link_lost" else None),
             "phrase": cur.get("phrase"), "hint_source": cur.get("hint_source"),
             "step": step, "bins": cur.get("bins"), "raw_text": cur.get("raw_text"),
             "hint_sent": last.get("phrase"), "hint_sent_source": last.get("source"),
@@ -492,17 +715,24 @@ class MissionLoop:
             "det_age_s": _r(det_age), "box_frac": _r(frac, 4),
             "box_age_at_hint_s": (_r(self.detector_hint.last_box_age_s)
                                   if self.detector_hint is not None else None),
+            "yaw_correction_deg_at_hint": (
+                None if self.detector_hint is None
+                or self.detector_hint.last_yaw_correction_rad is None
+                else round(math.degrees(self.detector_hint.last_yaw_correction_rad), 2)),
+            "detector_latency_s": (_r(self.detector_hint.last_detector_latency_s)
+                                   if self.detector_hint is not None else None),
         }
         if extra_row:
             row.update(extra_row)
         hud = {"t": now - self.t0, "alt": state.up, "author": tk.author,
                "reason": tk.reason, "seq": tk.seq, "age_s": tk.age_s,
                "phrase": cur.get("phrase"), "hint_source": cur.get("hint_source"),
-               "step": step, "land": bool(tk.land_requested), "shield": d.touched,
+               "step": step, "land": bool(tk.land_requested), "shield": bool(hd.touched),
                "shield_on": self.shield_on, "mission": self.mission,
+               "cadence": getattr(self.backend, "cadence", None),
                "goal_dist_m": gd, "box_frac": frac, "end_reason": end}
         self.n += 1
-        return LoopTick(flown, d, row, hud, end)
+        return LoopTick(flown, d, row, hud, end, hd)
 
 
 # --------------------------------------------------------------------------- #
@@ -632,10 +862,18 @@ class VLAFrames:
         loop's kinematics, interpolated at the frame's sim stamp) and the
         capture time from `obs.wall_at_stamp`, never later than the frame's
         arrival or now (the tracker refuses a capture "from the future");
-      * both tiles JPEG-encoded (`encode`, default jpeg_from_msg), handed to
-        `saver` (FrameSaver: vla_frames/<sha256>.jpg for the replay gate),
-        and a line of `log` with the pairing and the camera sizes - the
-        evidence that the frames really were 256x256."""
+      * both tiles JPEG-encoded (`encode`, default jpeg_from_msg; the
+        request carries the bytes).
+
+    Only a capture that was SENT is kept: `commit(capture, hint, seq)` -
+    RemoteVLABackend's on_submit - hands both tiles to `saver` (FrameSaver:
+    vla_frames/<sha256>.jpg for the replay gate) and adds a line to `log`
+    with the request's seq and phrase, the pairing and the camera sizes (the
+    evidence that the frames really were 256x256). Until 2026-10-23 every
+    capture was saved and logged before the hint check, so M2's captures
+    with no fresh box - never sent - filled vla_frames/ and the log (review
+    of the CityLife flight, P3-8). `counts` has "captures" (built) and
+    "committed" (sent)."""
 
     def __init__(self, obs, encode: Callable[[dict], bytes | None] | None = None,
                  saver: FrameSaver | None = None, clock: Callable[[], float] = time.time,
@@ -650,6 +888,7 @@ class VLAFrames:
         self._down: tuple[dict, float] | None = None
         self.log: deque = deque(maxlen=max_log)
         self.counts: Counter = Counter()
+        self._built: dict | None = None      # the last capture built, until committed
 
     def put_front(self, msg) -> None:
         with self._lock:
@@ -665,7 +904,6 @@ class VLAFrames:
         return None if got is None else got[0]
 
     def capture(self) -> Capture | None:
-        import hashlib
         with self._lock:
             f, d = self._front, self._down
         if f is None:
@@ -697,19 +935,40 @@ class VLAFrames:
             return None
         cap = Capture(float(t_cap), Pose(float(pose["x"]), float(pose["y"]), float(pose["up"]),
                                          float(pose["yaw"])), front, down)
+        self.counts["captures"] += 1
+        self._built = {
+            "cap": cap,
+            "rec": {"t_capture": round(cap.t_capture, 4), "t_arrival": round(t_arr, 4),
+                    "stamp_ns": stamp, "down_stamp_ns": ds, "pair_dt_s": round(pair_dt, 4),
+                    "pose_src": pose.get("src"), "pose": cap.pose.as_wire(),
+                    "front_wh": [fmsg.get("width"), fmsg.get("height")],
+                    "down_wh": [dmsg.get("width"), dmsg.get("height")]}}
+        return cap
+
+    def commit(self, capture: Capture, hint: Hint | None = None, seq: int | None = None,
+               **extra) -> None:
+        """The capture was sent (request `seq`): keep its frames and log it.
+        Called on the loop thread (RemoteVLABackend.on_submit); the frames are
+        written by the saver's own thread."""
+        import hashlib
+        built = self._built if (self._built and self._built["cap"] is capture) else None
+        rec = dict(built["rec"]) if built else {
+            "t_capture": round(capture.t_capture, 4), "pose": capture.pose.as_wire(),
+            "front_wh": [None, None], "down_wh": [None, None], "pair_dt_s": None}
+        if built:
+            self._built = None
+        front, down = capture.front_jpg, capture.down_jpg
         if self.saver is not None:
             self.saver.save(front)
-            self.saver.save(down)
-        self.counts["captures"] += 1
-        self.log.append({
-            "t_capture": round(cap.t_capture, 4), "t_arrival": round(t_arr, 4),
-            "stamp_ns": stamp, "down_stamp_ns": ds, "pair_dt_s": round(pair_dt, 4),
-            "pose_src": pose.get("src"), "pose": cap.pose.as_wire(),
-            "front_wh": [fmsg.get("width"), fmsg.get("height")],
-            "down_wh": [dmsg.get("width"), dmsg.get("height")],
-            "front_jpg_sha256": hashlib.sha256(front).hexdigest(),
-            "down_jpg_sha256": hashlib.sha256(down).hexdigest()})
-        return cap
+            if down:
+                self.saver.save(down)
+        rec.update({"seq": seq, "phrase": None if hint is None else hint.phrase,
+                    "hint_source": None if hint is None else hint.source,
+                    "front_jpg_sha256": hashlib.sha256(front).hexdigest(),
+                    "down_jpg_sha256": hashlib.sha256(down).hexdigest() if down else None,
+                    **extra})
+        self.counts["committed"] += 1
+        self.log.append(rec)
 
     def stats(self) -> dict:
         sizes = Counter(tuple(r["front_wh"]) for r in self.log)
@@ -953,6 +1212,72 @@ def local_weight_paths(identity: dict | None) -> list[str] | None:
 
 
 # --------------------------------------------------------------------------- #
+# The warm-up gate: one inference on a live frame pair before arming
+# --------------------------------------------------------------------------- #
+def warmup_hint(mission: str, hint_source: Callable[[Capture], Hint | None] | None,
+                capture: Capture) -> Hint:
+    """The warm-up request's phrase: M1 the goal phrase from the capture pose
+    (the request a GOTO would send there); M2 "straight ahead " labelled
+    "goal", as the server's own fidelity probe sends it (the detector is not
+    running yet, and a detector hint must come from a box). Never flown."""
+    if mission == "goto" and hint_source is not None:
+        h = hint_source.fn(capture) if isinstance(hint_source, HintSource) else hint_source(capture)
+        if h is not None:
+            return h
+    return Hint("straight ahead ", "goal")
+
+
+def warmup_infer(client, capture: Capture, hint: Hint, object_text: str,
+                 timeout_s: float) -> dict:
+    """One BLOCKING request before the flight loop (tools, and vla_fly off
+    the event loop): the answer's kind, the round trip on the client's clock
+    (`rtt_s`), the server's own model time and the capture-to-answer
+    latency, or why there was none."""
+    fields, _ = build_infer_fields(capture, hint, object_text)
+    out: dict[str, Any] = {"phrase": hint.phrase, "hint_source": hint.source,
+                           "object": object_text, "seq": None, "answered": False,
+                           "kind": None, "rtt_s": None, "latency_server_s": None,
+                           "latency_client_s": None, "failure": None, "detail": None,
+                           "raw_text": None, "error": None, "timeout_s": float(timeout_s)}
+    seq = client.submit(fields)
+    if seq is None:
+        out.update(failure="not_sent", detail="the client refused to send (busy or backing off)")
+        return out
+    out["seq"] = seq
+    client.wait_idle(float(timeout_s) + 2.0)
+    res = client.poll()
+    if res is None:
+        out.update(failure="no_result", detail=f"no result within {timeout_s:g} s")
+        return out
+    out["rtt_s"] = round(res.t_done - res.t_sent, 4)
+    out["latency_client_s"] = round(res.t_done - float(capture.t_capture), 4)
+    if res.reply is None:
+        out.update(kind="link_failure", failure=res.failure, detail=res.detail)
+        return out
+    r = res.reply
+    out.update(answered=True, kind=r.kind, latency_server_s=r.latency_s,
+               raw_text=r.raw_text, error=r.error)
+    return out
+
+
+def warmup_verdict(result: dict, max_latency_s: float) -> tuple[bool, str | None]:
+    """(fly?, why not). No answer, a server error, or a round trip over
+    `max_latency_s` refuse the flight; a malformed answer is answered (its
+    latency is what this gate is about; the replay gate judges the parse
+    rate)."""
+    if not result.get("answered"):
+        return False, (f"the warm-up inference got no answer ({result.get('failure')}: "
+                       f"{result.get('detail')})")
+    if result.get("kind") == "server_error":
+        return False, f"the server refused the warm-up inference ({result.get('error')})"
+    rtt = result.get("rtt_s")
+    if rtt is None or rtt > max_latency_s:
+        return False, (f"the warm-up inference took {rtt} s (round trip), over the "
+                       f"{max_latency_s:g} s gate: the pilot could not keep up")
+    return True, None
+
+
+# --------------------------------------------------------------------------- #
 # Records: metrics.pilot, metrics.json, manifest.json, kpi.json
 # --------------------------------------------------------------------------- #
 def _pct(vals: list[float], q: float) -> float | None:
@@ -994,6 +1319,11 @@ def pilot_summary(stats: dict, records: list[dict], rows: list[dict]) -> dict:
     # did while it was asked.
     closed = [r for r in records if r.get("refused") == "closed"]
     kinds = Counter(r.get("kind") for r in records if r.get("refused") != "closed")
+    # A link failure's own kind: "timeout" is a slow model, "link" /
+    # "protocol" / "internal" a broken one (review of the CityLife flight,
+    # P2-5: they used to read alike).
+    link_kinds = Counter(str((r.get("failure") or {}).get("kind")) for r in records
+                         if r.get("kind") == "link_failure" and r.get("refused") != "closed")
     phrases = Counter(r.get("phrase") for r in records if "phrase" in r)
     sources = Counter(r.get("hint_source") for r in records if "hint_source" in r)
     return {
@@ -1007,7 +1337,9 @@ def pilot_summary(stats: dict, records: list[dict], rows: list[dict]) -> dict:
         "latency_client_s": spread(lat_c), "latency_server_s": spread(lat_s),
         "rtt_s": spread(rtt),
         "parse_fail": stats.get("parse_fail"), "server_error": stats.get("server_error"),
-        "link_failure": stats.get("link_failure"),
+        "link_failure": stats.get("link_failure"), "link_failure_by_kind": dict(link_kinds),
+        "late_replies": len([x for x in (stats.get("late_replies") or [])
+                             if isinstance(x, dict) and "dropped" not in x]),
         "land": sum(1 for r in records if r.get("kind") == "land"),
         "land_accepted": sum(1 for r in records if r.get("kind") == "land" and r.get("accepted")),
         "ticks": n, "ticks_by_author": dict(by_author),
@@ -1096,7 +1428,10 @@ def finish_run(out: str | Path, rows: list[dict], metrics: dict, manifest: dict,
     kpis.update({"kpi_grade": graded, "kpi_grade_reasons": reasons, "manifest": manifest,
                  "policy_source": metrics.get("policy_source"),
                  "shield_lookahead": metrics.get("shield_lookahead"),
-                 "aborted": metrics.get("aborted"), "end_reason": metrics.get("end_reason")})
+                 "aborted": metrics.get("aborted"), "end_reason": metrics.get("end_reason"),
+                 "interrupted": metrics.get("interrupted"),
+                 "pilot_alt_band": metrics.get("pilot_alt_band"),
+                 "cadence": (metrics.get("params") or {}).get("cadence")})
     write_json(out / "kpi.json", kpis)
     metrics["kpi_grade"] = graded
     metrics["p0_violation_escape_rate"] = kpis.get("p0_violation_escape_rate")

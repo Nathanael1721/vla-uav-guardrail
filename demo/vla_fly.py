@@ -44,10 +44,26 @@ THE MISSIONS (demo/vla_mission.py has the geometry and the stop rules)
                phrase. Ends on LAND, the box large, the target lost, or time.
 
 Either way the VLA's steps go StepTracker -> Shield.filter ->
-move_by_velocity, LAND becomes the controlled landing, and a dead or
+move_by_velocity, LAND becomes the controlled landing, and a dead, slow or
 erroring server makes the tracker hover and, after --dead-timeout-s, the
-mission end and the aircraft land. --shield off flies the raw action and is
-recorded as the control arm.
+mission end and the aircraft land. --shield off flies the step tracker's
+action unfiltered (the control arm, recorded as such), its altitude targets
+clamped only to the simulator safety band (vla_mission.SIM_SAFETY_BAND_M,
+2-40 m), never to the policy's band.
+
+CADENCE: --cadence stop_and_go (the default since 2026-10-23) is upstream's:
+the next image is captured only after the step is flown and the tracker has
+held 0.5 s, so each answer's turn and climb are applied once per step, as in
+training. `pipelined` sends the next image while a step is flown; with fast
+answers it applies each answer's turn and climb at the decision rate (the
+point-vehicle probe: 30 s of a constant 2-bin turn drifts -54.6 deg pipelined
+against -12.9 deg stop-and-go; docs/DESIGN-vla-pilot.md section 13).
+
+BEFORE TAKE-OFF: one warm-up inference on a live camera pair; a round trip
+over --warmup-max-latency-s (5 s), or no answer, refuses the flight (exit 4).
+A transfer that ends further than --start-tolerance-m from the mission start
+refuses the mission and lands (exit 4). Ctrl+C lands where it is, writes the
+records marked interrupted, and exits 130.
 
 RECORDS, in demo/out/<tag>/: vla_steps.jsonl (one line per request: the
 server's answer, its model identity, what the tracker made of it),
@@ -67,6 +83,7 @@ import json
 import math
 import os
 import random
+import stat
 import sys
 import threading
 import time
@@ -90,11 +107,57 @@ DEFAULT_CITYMAP = ROOT / "demo" / "out" / "citymap_citylife" / "occ_day.npz"
 CAMERAS = {"front": "VLAFront", "down": "VLADown", "detector": "FrontCamera", "chase": "Chase"}
 # Records of an earlier run under the same tag, removed before this one
 # starts: a partial run must never sit beside the last run's manifest and
-# metrics (follow_vlm's lesson, 2026-10-06 review). view/ is the recorder's
-# (it clears its own frames).
+# metrics (follow_vlm's lesson, 2026-10-06 review) - nor beside its replay
+# bundle, its replay gate's report or its server's logs (review of the
+# CityLife flight, P3-9: the server logs are opened for append, so a reused
+# tag's log held two runs). <tag>.replay.tar.gz is added by
+# clear_previous_run. Left alone: view/ (the recorder clears its own tps/fpv
+# frames; it is usually a junction to C:, never followed here) and
+# vla_frames/ (content-addressed JPEGs: this run's vla_steps.jsonl names only
+# its own, and an earlier run's frames are not deleted).
 RUN_FILES = ("flight_log.jsonl", "vla_steps.jsonl", "vla_captures.jsonl", "detections.jsonl",
-             "metrics.json", "kpi.json", "manifest.json", "audit.jsonl", "trajectory.json")
+             "metrics.json", "kpi.json", "manifest.json", "audit.jsonl", "trajectory.json",
+             "vla_server.jsonl", "vla_server_stdout.log", "replay_gate.json",
+             "replay_gate_server.jsonl", "replay_gate_server_stdout.log")
 XY_FLAGS = ("--goal", "--start-xy", "--park-at")
+# Exit codes (scripts/run_vla_fly.ps1 reads them).
+EXIT_OK, EXIT_ABORTED, EXIT_VLA_FAILURE, EXIT_REFUSED, EXIT_INTERRUPTED = 0, 1, 3, 4, 130
+
+
+def _is_link(p: Path) -> bool:
+    """A symlink or a Windows junction (Path.is_symlink misses junctions
+    before Python 3.12)."""
+    try:
+        st = os.lstat(p)
+    except OSError:
+        return False
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    return bool(getattr(st, "st_file_attributes", 0)
+                & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+
+def clear_previous_run(out: Path, tag: str) -> dict:
+    """Remove the records of an earlier run under this tag (RUN_FILES and
+    <tag>.replay.tar.gz) - regular files only, directly in `out`; a link or
+    junction in their place is left alone and named. Never touches view/ or
+    vla_frames/ (RUN_FILES' comment says why). Returns what it did."""
+    removed, left = [], []
+    for name in RUN_FILES + (f"{tag}.replay.tar.gz",):
+        p = out / name
+        if _is_link(p):
+            left.append(f"{name} (a link: left alone)")
+            continue
+        try:
+            p.unlink()
+            removed.append(name)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            left.append(f"{name} ({type(exc).__name__}: {exc})")
+    if left:
+        print(f"[run] *** not removed from {out}: {'; '.join(left)}")
+    return {"removed": removed, "left": left}
 
 
 def parse_xy(s: str) -> tuple[float, float]:
@@ -128,15 +191,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="'goal' (M1 default: face the goal), 'street' (M2 default: "
                          f"{VM.STREET_HEADING_DEG:g} deg) or degrees")
     ap.add_argument("--cruise-alt", type=float, default=VM.DEFAULT_CRUISE_UP)
+    ap.add_argument("--start-tolerance-m", type=float, default=2.0,
+                    help="refuse the mission (land) when the transfer ends further than "
+                         "this from the mission start (default %(default)s)")
     ap.add_argument("--object", default=None,
                     help="the prompt's object words (INERT for AerialVLA) and, for M2, the "
-                         "OWL-ViT query. Default: '' for goto, 'an orange car' for approach")
+                         "OWL-ViT query. Default: vla_mission.GOTO_OBJECT_TEXT (a fixed, "
+                         "neutral street description in upstream's style) for goto, "
+                         "'an orange car' for approach")
     ap.add_argument("--park-at", type=parse_xy, default=None,
                     help=f"M2: park the scenario car here (default {VM.DEFAULT_PARK_XY}); "
                          f"truth for scoring only")
     ap.add_argument("--no-park", action="store_true", help="M2: do not place the scenario car")
     ap.add_argument("--arrive-radius-m", type=float, default=3.0)
     ap.add_argument("--arrive-grace-s", type=float, default=8.0)
+    ap.add_argument("--overshoot-s", type=float, default=3.0,
+                    help="M1: after arriving, the goal behind and receding this long ends "
+                         "the mission arrived_overshoot")
     ap.add_argument("--close-box-frac", type=float, default=0.15)
     ap.add_argument("--lost-timeout-s", type=float, default=15.0)
     ap.add_argument("--det-fresh-s", type=float, default=1.0)
@@ -150,7 +221,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "and is recorded)")
     # -- the Shield and the policy ------------------------------------------
     ap.add_argument("--shield", choices=("on", "off"), default="on",
-                    help="off flies the VLA's raw action (the control arm), recorded")
+                    help="off: the control arm, recorded - the step tracker's action flies "
+                         "unfiltered, its altitude targets clamped only to the simulator "
+                         "safety band (vla_mission.SIM_SAFETY_BAND_M), not the policy's")
     ap.add_argument("--bundle", default=None)
     ap.add_argument("--policy", default=None)
     ap.add_argument("--dev-yaml", action="store_true",
@@ -171,7 +244,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="nf4/sdpa/merge, the measured low-VRAM option (agrees with the "
                          "reference on 25-33 %% of probe inputs, against 96 %% for the "
                          "default bf16/sdpa/no-merge)")
-    ap.add_argument("--vla-hello-timeout-s", type=float, default=900.0)
+    ap.add_argument("--vla-hello-timeout-s", type=float, default=VM.HELLO_TIMEOUT_S,
+                    help="how long to wait for the server's hello (a bf16 cold load under "
+                         "RAM pressure took over 15 min; default %(default)g s)")
     ap.add_argument("--vla-fake-output", nargs="+", default=None,
                     help="start the scripted stand-in server instead of the model")
     ap.add_argument("--vla-fake-delay-s", type=float, default=0.3)
@@ -181,8 +256,17 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="record the server's reported digest without hashing the "
                          "weight files here")
     # -- the pilot ----------------------------------------------------------
-    ap.add_argument("--cadence", choices=("pipelined", "stop_and_go"), default="pipelined")
+    ap.add_argument("--cadence", choices=("pipelined", "stop_and_go"), default="stop_and_go",
+                    help="stop_and_go (default): upstream's - the next image only after the "
+                         "step is flown and held 0.5 s; pipelined: the next image while the "
+                         "step is flown (applies each answer's turn/climb at the decision rate)")
     ap.add_argument("--decision-timeout-s", type=float, default=10.0)
+    ap.add_argument("--warmup-max-latency-s", type=float, default=VM.WARMUP_MAX_LATENCY_S,
+                    help="refuse to take off when the warm-up inference's round trip is "
+                         "slower than this (default %(default)g s)")
+    ap.add_argument("--late-reply-wait-s", type=float, default=VM.LATE_REPLY_WAIT_S,
+                    help="after a request times out, wait this long for its late answer "
+                         "before asking again (the server cannot cancel it)")
     ap.add_argument("--cruise-mps", type=float, default=1.0)
     ap.add_argument("--speed-cap-mps", type=float, default=2.0)
     # -- flight infrastructure ----------------------------------------------
@@ -196,6 +280,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--live-height", type=int, default=480)
     ap.add_argument("--view-switch", type=int, default=0)
     ap.add_argument("--no-policy-hud", action="store_true")
+    ap.add_argument("--check-args", action="store_true",
+                    help="parse and resolve the arguments, print them, exit 0 (nothing "
+                         "started; scripts/run_vla_fly.ps1 runs this before the simulator)")
     return ap
 
 
@@ -220,7 +307,7 @@ def resolve_args(args):
         if args.park_at is not None or args.no_park:
             raise ValueError("--park-at / --no-park are for --mission approach")
         args.goal = tuple(args.goal) if args.goal is not None else VM.DEFAULT_GOAL_XY
-        args.object = "" if args.object is None else args.object
+        args.object = VM.GOTO_OBJECT_TEXT if args.object is None else args.object
         args.start_heading = args.start_heading or "goal"
     else:
         if args.goal is not None:
@@ -240,6 +327,20 @@ def resolve_args(args):
         except ValueError:
             raise ValueError(f"--start-heading {args.start_heading!r} is not goal, street or "
                              f"degrees")
+    # The server refuses object words it would not put in a prompt (a
+    # newline, surrounding blanks, a position): refuse them here, before
+    # anything starts, not on the first request in the air.
+    from guardrail.aerialvla_codec import CodecError, validate_object
+    try:
+        validate_object(args.object)
+    except CodecError as exc:
+        raise ValueError(f"--object {args.object!r}: {exc}")
+    for k in ("start_tolerance_m", "warmup_max_latency_s", "decision_timeout_s"):
+        v = getattr(args, k)
+        if not (math.isfinite(v) and v > 0):
+            raise ValueError(f"--{k.replace('_', '-')} must be a positive number, got {v!r}")
+    if not (math.isfinite(args.late_reply_wait_s) and args.late_reply_wait_s >= 0):
+        raise ValueError("--late-reply-wait-s must be 0 or more")
     # The VLA server's configuration: always all three, explicitly.
     if args.vla_server and (args.vla_fake_output or args.vla_low_vram or args.vla_precision
                             or args.vla_attn or args.vla_merge is not None):
@@ -274,8 +375,21 @@ def resolve_args(args):
         arrive_grace_s=args.arrive_grace_s, close_box_frac=args.close_box_frac,
         lost_timeout_s=args.lost_timeout_s, det_fresh_s=args.det_fresh_s,
         dead_timeout_s=args.dead_timeout_s,
-        first_decision_timeout_s=args.first_decision_timeout_s)
+        first_decision_timeout_s=args.first_decision_timeout_s,
+        overshoot_s=args.overshoot_s)
     return args
+
+
+def check_args_report(args) -> dict:
+    """What --check-args prints: the resolved flight, nothing started."""
+    return {"ok": True, "mission": args.mission, "tag": args.tag,
+            "goal_xy": list(args.goal) if args.goal else None,
+            "start_xy": list(args.start_xy), "park_at": list(args.park_at) if args.park_at else None,
+            "object": args.object, "shield": args.shield, "cadence": args.cadence,
+            "vla_server": args.vla_server, "vla_config": args.vla_config,
+            "vla_fake_output": args.vla_fake_output, "max_s": args.max_s,
+            "warmup_max_latency_s": args.warmup_max_latency_s,
+            "monitor": args.monitor.as_dict()}
 
 
 def server_plan(args, out: Path) -> "VM.VLAServer":
@@ -371,8 +485,9 @@ def hud_lines(hud: dict) -> list[str]:
     elif hud.get("box_frac") is not None:
         l0 += f"  box {hud['box_frac']:.2f}"
     seq, age = hud.get("seq"), hud.get("age_s")
-    l1 = (f"AerialVLA #{seq}  image {age:.1f} s old" if seq is not None and age is not None
-          else "AerialVLA  no decision flying")
+    cad = {"stop_and_go": "  stop-and-go", "pipelined": "  pipelined"}.get(hud.get("cadence"), "")
+    l1 = (f"AerialVLA #{seq}  image {age:.1f} s old{cad}" if seq is not None and age is not None
+          else f"AerialVLA  no decision flying{cad}")
     ph = hud.get("phrase")
     l2 = ("phrase -" if ph is None else
           f"phrase '{ph.strip() or 'none: arrived?'}' ({hud.get('hint_source')})")
@@ -479,7 +594,96 @@ async def _transfer(drone, shield, State, Action4D, quat_yaw, target_xy, cruise_
     return rec
 
 
+class PreflightRefused(RuntimeError):
+    """The flight is refused before its mission (vla_mission.NOT_FLOWN_ENDS:
+    `kind`), with the reason as the message."""
+
+    def __init__(self, kind: str, why: str):
+        super().__init__(why)
+        self.kind = kind
+
+
+def _feed_pose(drone, obs, State, quat_yaw, FV):
+    """One kinematics read into SemanticObs's pose ring (what VLAFrames reads
+    each capture's pose from), stamped mid-RPC as follow_vlm stamps it.
+    Returns (state, yaw, kin)."""
+    tk0 = time.time()
+    kin = drone.get_ground_truth_kinematics()
+    t_kin = (tk0 + time.time()) / 2.0
+    state, yaw = _state_from_kin(kin, State, quat_yaw)
+    q = kin["pose"]["orientation"]
+    obs.put_pose_full(t_kin, state.x, state.y, state.up, yaw, FV.quat_pitch(q),
+                      FV.quat_roll(q), stamp=kin.get("time_stamp"))
+    return state, yaw, kin
+
+
+async def _warmup(args, drone, obs, frames, client, hint_src, State, quat_yaw, FV, live,
+                  wait_frames_s: float = 30.0) -> dict:
+    """The warm-up gate, before arming (review of the CityLife flight, P2-5):
+    one inference on a LIVE camera pair (the pose ring fed here, as the loop
+    feeds it), timed on the client's clock, its frames kept like any request
+    sent (vla_captures.jsonl marks it warmup). vla_mission.warmup_verdict
+    decides. Never flown: the aircraft is on the ground."""
+    cap = None
+    t_end = time.time() + wait_frames_s
+    while time.time() < t_end:
+        _feed_pose(drone, obs, State, quat_yaw, FV)
+        cap = frames.capture()
+        if cap is not None:
+            break
+        live.beat(detail="waiting for the VLA camera pair (warm-up)")
+        await asyncio.sleep(0.1)
+    if cap is None:
+        return {"pass": False, "answered": False, "max_latency_s": args.warmup_max_latency_s,
+                "why": f"no VLA camera pair (front + down, paired by stamp) within "
+                       f"{wait_frames_s:g} s", "frames": frames.stats()}
+    hint = VM.warmup_hint(args.mission, hint_src, cap)
+    live.beat(detail="warm-up inference before take-off")
+    res = await asyncio.to_thread(VM.warmup_infer, client, cap, hint, args.object,
+                                  args.decision_timeout_s)
+    if res.get("seq") is not None:
+        frames.commit(cap, hint, res["seq"], warmup=True)
+    ok, why = VM.warmup_verdict(res, args.warmup_max_latency_s)
+    res.update({"pass": ok, "why": why, "max_latency_s": args.warmup_max_latency_s,
+                "late_replies": list(getattr(client, "late", None) or [])})
+    return res
+
+
+async def _land_here(drone) -> str:
+    """The abort's landing (an exception, Ctrl+C, a refusal in the air): stop,
+    then the simulator's land where the aircraft is. Best effort; a second
+    Ctrl+C is not swallowed. Returns what happened, for the records."""
+    try:
+        await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.5)
+        await asyncio.wait_for(await drone.land_async(), timeout=60.0)
+        return "landed where it was (land_async)"
+    except Exception as exc:                                       # noqa: BLE001
+        return f"the abort landing failed: {type(exc).__name__}: {exc}"
+
+
+def _write_json_lenient(path: Path, obj) -> None:
+    """For the records' last resort: anything that is not JSON becomes its
+    repr instead of losing the file."""
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(obj, indent=1, ensure_ascii=False, default=repr))
+
+
 async def fly(args) -> int:
+    """The flight. A VLA server this script started is ALWAYS stopped on the
+    way out, whatever raised and wherever (review of the CityLife flight,
+    P3-10: an exception between its start and the simulator's try left about
+    17 GB on the GPU); an attached one (--vla-server) never is
+    (VLAServer.stop() has no process to stop)."""
+    holder: dict = {}
+    try:
+        return await _fly(args, holder)
+    finally:
+        srv = holder.get("server")
+        if srv is not None:
+            srv.stop()                 # idempotent: a second stop finds the process gone
+
+
+async def _fly(args, holder: dict) -> int:
     from projectairsim import Drone, EnvActor, ProjectAirSimClient, World
 
     import follow_vlm as FV
@@ -501,6 +705,7 @@ async def fly(args) -> int:
         np.random.seed(args.seed & 0xFFFFFFFF)
     except ImportError:
         pass
+    shield_on = args.shield == "on"
 
     # ---- the policy: the signed bundle by default (the SITL rails' rule) --
     bundle, yaml_path, choice = flight_policy_choice(
@@ -512,11 +717,7 @@ async def fly(args) -> int:
 
     out = Path(args.out_dir) if args.out_dir else ROOT / "demo" / "out" / args.tag
     out.mkdir(parents=True, exist_ok=True)
-    for f in RUN_FILES:
-        try:
-            (out / f).unlink()
-        except FileNotFoundError:
-            pass
+    cleared = clear_previous_run(out, args.tag)
 
     # ---- the obstacle map for the policy's band (follow_vlm's rule) --------
     cmap = city_planner.load_occ(args.citymap)
@@ -551,24 +752,47 @@ async def fly(args) -> int:
             pind = PolicyIndicator(policy, base_map=render_base_map(smap, street), shield=shield)
         except Exception as exc:                                  # noqa: BLE001
             pind_error = f"{type(exc).__name__}: {exc}"
+    # The pilot side's altitude clamp: the policy's band with the Shield on;
+    # with it off, only the simulator safety band (P1-2).
+    backend_policy, pilot_band, pilot_band_rec = VM.pilot_alt_config(shield_on, policy)
     print(f"[policy] {policy.policy_id} {policy.policy_hash} from {policy_source.get('kind')} "
           f"{policy_source.get('path')} - signature {policy_source.get('signature')}")
-    print(f"[shield] {'ON' if args.shield == 'on' else 'OFF (the raw VLA action flies: control arm)'}"
-          f", forecast {shield.lookahead_s:g} s at {shield.dt:g} s")
+    if shield_on:
+        print(f"[shield] ON, forecast {shield.lookahead_s:g} s at {shield.dt:g} s")
+    else:
+        lo, hi = VM.SIM_SAFETY_BAND_M
+        print(f"[shield] OFF (control arm): the step tracker's action flies unfiltered, its "
+              f"altitude targets clamped only to the simulator safety band {lo:g}-{hi:g} m "
+              f"(not the policy's); the Shield judges in shadow, forecast "
+              f"{shield.lookahead_s:g} s at {shield.dt:g} s")
+    print(f"[pilot] cadence {args.cadence}"
+          + (" (upstream's: capture after the step is flown and held 0.5 s)"
+             if args.cadence == "stop_and_go" else
+             " (the next capture while a step is flown: turns and climbs at the decision rate)"))
 
     live = FV._live_heartbeat(args.tag, log_dir=out, total_s=args.max_s, phase="starting",
                               detail="starting the VLA server")
     server = server_plan(args, out)
+    holder["server"] = server
     identity = None
+    said = {"t": 0.0}
+
+    def _on_wait(w: float) -> None:
+        live.beat(detail=f"waiting for the VLA server ({w:.0f} s)")
+        if w - said["t"] >= 60.0:
+            said["t"] = w
+            print(f"[vla] still waiting for the server's hello: {w:.0f} s of "
+                  f"{args.vla_hello_timeout_s:g} s"
+                  + ("" if server.alive else " - the process has exited"), flush=True)
     try:
         server.start()
         print(f"[vla] {'started ' + ' '.join(server.argv[1:]) if server.started_here else 'attaching to ' + server.host + ':' + str(server.port)}")
-        identity = server.wait_hello(
-            args.vla_hello_timeout_s,
-            on_wait=lambda w: live.beat(detail=f"waiting for the VLA server ({w:.0f} s)"))
+        identity = server.wait_hello(args.vla_hello_timeout_s, on_wait=_on_wait)
     except BaseException as exc:
         server.stop()
         live.stop("failed", detail=f"no VLA server ({type(exc).__name__})")
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
         raise SystemExit(f"[vla] *** no VLA server: {type(exc).__name__}: {exc}")
     is_vla, why_not = VM.identity_is_vla(identity)
     if not is_vla and not (args.vla_fake_output or args.allow_stand_in):
@@ -580,45 +804,68 @@ async def fly(args) -> int:
           + ("" if is_vla else f"  *** STAND-IN, not a VLA: {why_not}"))
     weight_paths = None if (args.no_local_weights or not is_vla) else VM.local_weight_paths(identity)
 
-    client = RemoteVLA(server.host, server.port, response_timeout_s=args.decision_timeout_s,
-                       strict_identity=is_vla, clock=time.time)
-    obs = SemanticObs()
-    saver = VM.FrameSaver(out / "vla_frames")
-    frames = VM.VLAFrames(obs, saver=saver)
-    det_source = detector_hint = grounder = None
-    if args.mission == "goto":
-        hint_src = VM.goto_hint_source(args.goal, args.arrive_radius_m)
-    else:
-        from vla_bridge import VLABridge
-        bridge = VLABridge(args.object, hfov_deg=90.0, bearing_gain=args.bearing_gain)
-        grounder_box = {"g": None}
-
-        def latest_box():
-            g = grounder_box["g"].latest() if grounder_box["g"] is not None else None
-            if not g or g.get("det") is None:
-                return None, None
-            cap = g.get("cap") or {}
-            return g["det"], (cap.get("t_capture") or cap.get("t_cap") or g.get("t_det"))
-        det_source = latest_box
-        detector_hint = VM.DetectorHint(latest_box, bridge, fresh_s=args.det_fresh_s)
-        hint_src = VM.HintSource(detector_hint, "detector")
-    tcfg = TrackerConfig(cruise_mps=args.cruise_mps, speed_cap_mps=args.speed_cap_mps,
-                         decision_timeout_s=args.decision_timeout_s)
-    backend = make_backend("aerovla", None, policy, get_capture=frames.capture, get_hint=hint_src,
-                           client=client, object_text=args.object, tracker_config=tcfg,
-                           cadence=args.cadence, steps_log=out / "vla_steps.jsonl",
-                           clock=time.time)
+    backend = saver = None
     try:
-        client.connect()                       # pins the identity before the loop
-    except Exception as exc:                                       # noqa: BLE001
-        backend.close()
+        client = RemoteVLA(server.host, server.port, response_timeout_s=args.decision_timeout_s,
+                           strict_identity=is_vla, late_reply_wait_s=args.late_reply_wait_s,
+                           clock=time.time)
+        obs = SemanticObs()
+        saver = VM.FrameSaver(out / "vla_frames")
+        frames = VM.VLAFrames(obs, saver=saver)
+        det_source = detector_hint = grounder = None
+        if args.mission == "goto":
+            hint_src = VM.goto_hint_source(args.goal, args.arrive_radius_m)
+        else:
+            from vla_bridge import VLABridge
+            bridge = VLABridge(args.object, hfov_deg=90.0, bearing_gain=args.bearing_gain)
+            grounder_box = {"g": None}
+
+            def latest_box():
+                """(det, t of its frame, the heading at its frame, t published)
+                from follow_vlm.Grounder (its cap carries the frame's pose)."""
+                g = grounder_box["g"].latest() if grounder_box["g"] is not None else None
+                if not g or g.get("det") is None:
+                    return None, None, None, None
+                cap = g.get("cap") or {}
+                yaw = (cap.get("pose") or {}).get("yaw")
+                return (g["det"], (cap.get("t_capture") or cap.get("t_cap") or g.get("t_det")),
+                        None if yaw is None else float(yaw), g.get("t_det"))
+            det_source = latest_box
+            detector_hint = VM.DetectorHint(latest_box, bridge, fresh_s=args.det_fresh_s)
+            hint_src = VM.HintSource(detector_hint, "detector")
+        tcfg = TrackerConfig(cruise_mps=args.cruise_mps, speed_cap_mps=args.speed_cap_mps,
+                             decision_timeout_s=args.decision_timeout_s, alt_band=pilot_band)
+        backend = make_backend("aerovla", None, backend_policy, get_capture=frames.capture,
+                               get_hint=hint_src, client=client, object_text=args.object,
+                               tracker_config=tcfg, cadence=args.cadence,
+                               steps_log=out / "vla_steps.jsonl", on_submit=frames.commit,
+                               clock=time.time)
+        pilot_alt_band = {**pilot_band_rec, "applied": dict(backend.alt_band_info)}
+        print(f"[pilot] altitude clamp {backend.alt_band_info.get('band')} "
+              f"({backend.alt_band_info.get('source')}): {pilot_band_rec['why']}")
+        try:
+            client.connect()                   # pins the identity before the loop
+        except Exception as exc:                                   # noqa: BLE001
+            raise SystemExit(f"[vla] *** the link failed before take-off: {exc}")
+        if identity_of(client.identity) != identity_of(identity):
+            raise SystemExit("[vla] *** the pinned identity is not the hello's")
+        sim = ProjectAirSimClient()
+        sim.connect()
+    except BaseException as exc:
+        # Everything between the hello and the simulator: close what opened,
+        # stop the server (fly()'s finally stops it too), say why.
+        for closer in (backend.close if backend is not None else None,
+                       saver.close if saver is not None else None):
+            try:
+                if closer is not None:
+                    closer()
+            except Exception:                                      # noqa: BLE001
+                pass
         server.stop()
-        live.stop("failed", detail="the VLA link failed before take-off")
-        raise SystemExit(f"[vla] *** the link failed before take-off: {exc}")
-    if identity_of(client.identity) != identity_of(identity):
-        backend.close()
-        server.stop()
-        raise SystemExit("[vla] *** the pinned identity is not the hello's")
+        live.stop("failed", detail=f"before take-off ({type(exc).__name__})")
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            raise
+        raise SystemExit(f"[vla] *** before take-off: {type(exc).__name__}: {exc}")
 
     rows: list[dict] = []
     traj: list[dict] = []
@@ -628,7 +875,11 @@ async def fly(args) -> int:
     landing_info = {"enabled": bool(args.land_site)}
     pre_mission: dict = {}
     car = car_truth = None
-    aborted = None
+    aborted = abort_landing = None
+    interrupted = False
+    refused = None
+    warmup = None
+    airborne = False
     end_reason = None
     loop = None
     t0 = t_connect = None
@@ -638,14 +889,7 @@ async def fly(args) -> int:
     t_mission_end = None
     monitor = None
     frames_stats = saver_stats = stats_at_end = None
-    sim = ProjectAirSimClient()
-    try:
-        sim.connect()
-    except BaseException:
-        backend.close()
-        server.stop()
-        live.stop("failed", detail="the simulator connection failed")
-        raise
+    drone = None
     try:
         live.beat(detail="loading the scene")
         world = World(sim, SCENES[args.mission], delay_after_load_sec=2,
@@ -713,9 +957,20 @@ async def fly(args) -> int:
                 print(f"[car] *** could not park the scenario car ({type(exc).__name__}: {exc})")
                 car = None
 
+        # ---- the warm-up gate: one inference on a live pair, before arming --
+        warmup = await _warmup(args, drone, obs, frames, client, hint_src, State, quat_yaw,
+                               FV, live)
+        print(f"[vla] warm-up: {warmup.get('kind')} in {warmup.get('rtt_s')} s round trip "
+              f"(server {warmup.get('latency_server_s')} s; gate "
+              f"{args.warmup_max_latency_s:g} s) - "
+              + ("PASS" if warmup["pass"] else f"REFUSED: {warmup['why']}"))
+        if not warmup["pass"]:
+            raise PreflightRefused("warmup_refused", warmup["why"])
+
         live.beat(detail="arming and taking off")
         drone.enable_api_control()
         drone.arm()
+        airborne = True
         await (await drone.takeoff_async())
         for _ in range(400):
             kin = drone.get_ground_truth_kinematics()
@@ -731,14 +986,28 @@ async def fly(args) -> int:
                                           args.cruise_alt, args, live)
             print(f"[transfer] to {start_xy}: reached {pre_mission['reached']}, "
                   f"{pre_mission['ticks']} ticks, Shield touched {pre_mission['shield_touched']}")
+        st0, _ = _state_from_kin(drone.get_ground_truth_kinematics(), State, quat_yaw)
+        start_err = math.hypot(st0.x - start_xy[0], st0.y - start_xy[1])
+        pre_mission.update({"start_xy": list(start_xy), "start_error_m": round(start_err, 2),
+                            "start_tolerance_m": args.start_tolerance_m})
+        if start_err > args.start_tolerance_m:
+            raise PreflightRefused(
+                "start_not_reached",
+                f"the transfer ended {start_err:.1f} m from the mission start "
+                f"({start_xy[0]:g}, {start_xy[1]:g}), more than --start-tolerance-m "
+                f"{args.start_tolerance_m:g}: the mission would not start where it was planned")
         psi0 = start_heading_rad(args, start_xy)
         await (await drone.rotate_to_yaw_async(yaw=psi0))
         await asyncio.sleep(0.5)
-        got = quat_yaw(drone.get_ground_truth_kinematics()["pose"]["orientation"])
+        st1, got = _state_from_kin(drone.get_ground_truth_kinematics(), State, quat_yaw)
         start_heading_err = math.degrees(abs((psi0 - got + math.pi) % (2 * math.pi) - math.pi))
         pre_mission.update({"start_heading_deg": round(math.degrees(psi0), 2),
                             "start_heading_rule": args.start_heading,
-                            "start_heading_err_deg": round(start_heading_err, 2)})
+                            "start_heading_err_deg": round(start_heading_err, 2),
+                            # where the mission really began: the pose after the turn
+                            "start_pose_actual": {"x": round(st1.x, 2), "y": round(st1.y, 2),
+                                                  "up": round(st1.up, 2),
+                                                  "yaw_deg": round(st1.yaw_deg, 2)}})
 
         if args.mission == "approach":
             grounder = FV.Grounder(obs, args.object, thresh=args.det_thresh,
@@ -756,7 +1025,7 @@ async def fly(args) -> int:
         t0 = time.time()
         monitor = VM.MissionMonitor(args.monitor, t0)
         loop = VM.MissionLoop(backend, shield, monitor, mission=args.mission,
-                              shield_on=args.shield == "on",
+                              shield_on=shield_on,
                               goal_xy=args.goal if args.mission == "goto" else None,
                               det_source=det_source, hint_source=hint_src,
                               detector_hint=detector_hint, audit=audit,
@@ -766,14 +1035,7 @@ async def fly(args) -> int:
         deadline = None
         while True:
             tk0 = time.time()
-            kin = drone.get_ground_truth_kinematics()
-            t_kin = (tk0 + time.time()) / 2.0      # mid-RPC, as follow_vlm stamps it
-            state, yaw = _state_from_kin(kin, State, quat_yaw)
-            q = kin["pose"]["orientation"]
-            # The pose ring VLAFrames reads each capture's pose from
-            # (interpolated at the camera frame's sim stamp).
-            obs.put_pose_full(t_kin, state.x, state.y, state.up, yaw, FV.quat_pitch(q),
-                              FV.quat_roll(q), stamp=kin.get("time_stamp"))
+            state, yaw, kin = _feed_pose(drone, obs, State, quat_yaw, FV)
             off_map = shield.off_map(state.x, state.y) if shield.has_obstacle_map else None
             res = loop.tick(state, extra_row={"off_map": off_map})
             e = res.flown
@@ -781,12 +1043,15 @@ async def fly(args) -> int:
             await drone.move_by_velocity_async(e.vx, e.vy, -e.vz_up, duration=0.3,
                                                yaw_is_rate=True, yaw=e.yaw_rate)
             rows.append(res.row)
-            traj.append({"x": state.x, "y": state.y, "up": state.up, "touched": res.decision.touched})
+            traj.append({"x": state.x, "y": state.y, "up": state.up,
+                         "touched": bool(res.hud_decision.touched)})
             if recorder is not None:
                 pol = None
                 if pind is not None and pind_error is None:
                     try:
-                        pol = pind.update(res.row["t"], res.decision, state,
+                        # With the Shield off: no repair, the flown action,
+                        # the shadow's violations as escapes (P1-1).
+                        pol = pind.update(res.row["t"], res.hud_decision, state,
                                           clearance_m=(shield.clearance_at(state.x, state.y)
                                                        if shield.has_obstacle_map else None),
                                           off_map=bool(off_map), yaw_rad=yaw)
@@ -801,7 +1066,9 @@ async def fly(args) -> int:
             if res.row["tick"] % 50 == 0:
                 print(f"  tick {res.row['tick']}: ({state.x:6.1f},{state.y:6.1f},{state.up:4.1f}) "
                       f"{res.row['author']:8} {res.row['author_reason']:<14} "
-                      f"phrase={res.row['phrase']!r} shield={'HIT' if res.decision.touched else '-'}")
+                      f"phrase={res.row['phrase']!r} shield="
+                      + ("-" if not res.decision.touched else
+                         "HIT" if shield_on else "shadow-HIT (not flown)"))
             work_ms.append((time.time() - tk0) * 1000.0)
             if res.end_reason is not None:
                 end_reason = res.end_reason
@@ -814,11 +1081,15 @@ async def fly(args) -> int:
             await asyncio.sleep(max(0.0, deadline - now))
         t_mission_end = time.time() + 0.3
         await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.5)
-        backend.close()            # the VLA stops here; its records close (vla_steps.jsonl)
-        # Read now, not after the landing: stats() rates decisions over the
-        # time since the first act(), and a minute of landing in that span
-        # understated a 2.5 Hz pilot as 1.5 Hz (fake-simulator smoke run).
+        # Read before close(): stats() rates decisions over the time since the
+        # first act(), and neither the close nor a minute of landing belongs
+        # in that span (a 2.5 Hz pilot read 1.5 Hz with the landing in it).
         stats_at_end = backend.stats()
+        backend.close()            # the VLA stops here; its records close (vla_steps.jsonl)
+        after = backend.stats()    # the log's counts are final only after close()
+        stats_at_end.update({k: after.get(k) for k in ("log_written", "log_errors",
+                                                       "last_log_error", "log_pending",
+                                                       "late_replies")})
 
         # ---- the controlled landing (follow_vlm's), never a mode request ---
         live.beat(progress=1.0, phase="landing", detail=f"mission over ({end_reason}); landing")
@@ -855,16 +1126,30 @@ async def fly(args) -> int:
                                                duration=0.3)
             await asyncio.sleep(0.1)
         await (await drone.land_async())
+        airborne = False
         drone.disarm()
         drone.disable_api_control()
-    except Exception as exc:
-        aborted = f"{type(exc).__name__}: {exc}"
-        print(f"[warn] flight aborted: {aborted}")
-        try:                       # best effort: stop and put it down where it is
-            await drone.move_by_velocity_async(0.0, 0.0, 0.0, duration=0.5)
-            await asyncio.wait_for(await drone.land_async(), timeout=60.0)
-        except Exception:                                          # noqa: BLE001
-            pass
+    except PreflightRefused as exc:
+        refused = {"kind": exc.kind, "why": str(exc)}
+        end_reason = exc.kind
+        print(f"[vla] *** REFUSED ({exc.kind}): {exc}")
+        if airborne and drone is not None:
+            abort_landing = await _land_here(drone)
+            airborne = False
+            print(f"[vla] {abort_landing}")
+    except (Exception, KeyboardInterrupt, asyncio.CancelledError) as exc:
+        # An abort - or Ctrl+C, which is not an Exception (P3-11): either way
+        # put it down where it is, then fall through to the records.
+        interrupted = isinstance(exc, (KeyboardInterrupt, asyncio.CancelledError))
+        aborted = (f"interrupted by the operator ({type(exc).__name__})" if interrupted
+                   else f"{type(exc).__name__}: {exc}")
+        if interrupted and end_reason is None:
+            end_reason = "interrupted"
+        print(f"[warn] flight {'interrupted' if interrupted else 'aborted'}: {aborted}")
+        if airborne and drone is not None:
+            abort_landing = await _land_here(drone)
+            airborne = False
+            print(f"[warn] {abort_landing}")
     finally:
         try:
             VM.write_jsonl(out / "flight_log.jsonl", rows)
@@ -906,75 +1191,129 @@ async def fly(args) -> int:
         except Exception:                                          # noqa: BLE001
             pass
 
-    # ---- the records ------------------------------------------------------
+    # ---- the records: every part guarded (P3-12), so a fault in one still
+    # leaves metrics.json - with the error - and the manifest if it builds ---
     from guardrail.replay import zone_dwell
-    stats = stats_at_end if stats_at_end is not None else backend.stats()
+    records_errors: list[str] = []
+
+    def guard(name, fn, default=None):
+        try:
+            return fn()
+        except Exception as exc:                                   # noqa: BLE001
+            records_errors.append(f"{name}: {type(exc).__name__}: {exc}")
+            print(f"[records] *** {name} failed: {type(exc).__name__}: {exc}")
+            return default
+
+    stats = stats_at_end if stats_at_end is not None else guard("backend.stats", backend.stats, {})
     records = list(backend.records)
-    dwell = zone_dwell(shield, traj, TICK)
+    dwell = guard("zone_dwell", lambda: zone_dwell(shield, traj, TICK), {}) or {}
     band = policy.by_type(AltitudeEnvelope)
     alt_bad = (sum(1 for p in traj if p["up"] < band[0].alt_min_m or p["up"] > band[0].alt_max_m)
                if band else 0)
-    scores = VM.mission_scores(args.mission, rows, goal_xy=args.goal if args.mission == "goto"
-                               else None, arrive_radius_m=args.arrive_radius_m,
-                               truth_xy=car_truth, approach_radius_m=args.approach_radius_m)
+    goal = args.goal if args.mission == "goto" else None
+    scores = guard("mission_scores",
+                   lambda: VM.mission_scores(args.mission, rows, goal_xy=goal,
+                                             arrive_radius_m=args.arrive_radius_m,
+                                             truth_xy=car_truth,
+                                             approach_radius_m=args.approach_radius_m),
+                   {"reached_goal": None}) or {"reached_goal": None}
     mission_s = rows[-1]["t"] if rows else None
+    n_touched = sum(1 for r in rows if r.get("touched"))
     metrics = {
         "tag": args.tag, "rail": "projectairsim-simple_flight", "level": "CityLife_Day",
         "scene": SCENES[args.mission], "ticks": len(rows), "mission_s": mission_s,
-        "loop_hz": VM.loop_rate(rows), "end_reason": end_reason, "aborted": aborted,
+        "loop_hz": VM.loop_rate(rows), "end_reason": end_reason,
+        "end_reason_means": VM.END_REASONS.get(end_reason) or VM.NOT_FLOWN_ENDS.get(end_reason),
+        "aborted": aborted, "interrupted": interrupted, "refused": refused,
+        "abort_landing": abort_landing,
         "tick_work_ms": VM.spread(work_ms),
-        "mission": {"kind": args.mission, "goal_xy": list(args.goal) if args.goal else None,
-                    "start_xy": list(VM.CITYLIFE_SPAWN_XY if args.no_transfer else args.start_xy),
-                    "spawn_xy": list(VM.CITYLIFE_SPAWN_XY), "cruise_alt_m": args.cruise_alt,
-                    "object": args.object, "object_words_are_inert": True,
-                    "hint_source": hint_src.kind, "hint": hint_src.stats(),
-                    "park_at": list(args.park_at) if args.park_at else None,
-                    "bearing_gain": args.bearing_gain if args.mission == "approach" else None,
-                    "detector": FV.DETECTOR_ID if args.mission == "approach" else None,
-                    "monitor": monitor.summary() if monitor is not None else None},
+        "mission": guard("mission", lambda: {
+            "kind": args.mission, "goal_xy": list(args.goal) if args.goal else None,
+            "start_xy": list(VM.CITYLIFE_SPAWN_XY if args.no_transfer else args.start_xy),
+            "start_pose_actual": pre_mission.get("start_pose_actual"),
+            "spawn_xy": list(VM.CITYLIFE_SPAWN_XY), "cruise_alt_m": args.cruise_alt,
+            "object": args.object, "object_words_are_inert": True,
+            "object_is_default": (args.mission == "goto" and args.object == VM.GOTO_OBJECT_TEXT),
+            "hint_source": hint_src.kind, "hint": hint_src.stats(),
+            "detector_hint": detector_hint.stats() if detector_hint is not None else None,
+            "park_at": list(args.park_at) if args.park_at else None,
+            "bearing_gain": args.bearing_gain if args.mission == "approach" else None,
+            "detector": FV.DETECTOR_ID if args.mission == "approach" else None,
+            "monitor": monitor.summary() if monitor is not None else None}),
         **scores,
-        "land": VM.land_record(rows, records, args.goal if args.mission == "goto" else None),
+        "land": guard("land", lambda: VM.land_record(rows, records, goal)),
         "pre_mission": pre_mission,
+        "warmup": warmup,
         "shield": args.shield,
-        "shield_lookahead": FV.shield_lookahead_record(shield),
+        "pilot_alt_band": pilot_alt_band,
+        "shield_lookahead": guard("shield_lookahead", lambda: FV.shield_lookahead_record(shield)),
         "shield_velocity_source": "ground-truth kinematics (Project AirSim), not an EKF",
-        "interventions": sum(1 for r in rows if r.get("touched")),
+        # Ticks on which the Shield corrected what FLEW; with the Shield off
+        # nothing it decided flew, and its would-be corrections are the
+        # shadow's (P1-1).
+        "interventions": n_touched if shield_on else 0,
+        "shadow_interventions": None if shield_on else n_touched,
         "nfz_s": dwell.get("nfz_s"), "nfz_entered": bool(dwell.get("nfz_ticks")),
         "alt_violation_s": round(alt_bad * TICK, 1),
         "off_map_ticks": (sum(1 for r in rows if r.get("off_map")) if shield.has_obstacle_map
                           else None),
         "obstacle_map_loaded": bool(shield.has_obstacle_map), "occ_band_report": occ_report,
-        "collisions": FV.collisions_summary(
+        "collisions": guard("collisions", lambda: FV.collisions_summary(
             collisions, collisions_subscribed,
             None if t0 is None or t_connect is None else t0 - t_connect,
-            None if t_mission_end is None or t_connect is None else t_mission_end - t_connect),
+            None if t_mission_end is None or t_connect is None else t_mission_end - t_connect)),
         "landing": landing_info,
         "frames": {"capture": frames_stats, "saved": saver_stats},
         "policy_hud": (None if pind is None else {"counts": dict(pind.counts),
                                                   "banner_ticks": dict(pind.banner_ticks),
-                                                  "error": pind_error}),
+                                                  "error": pind_error,
+                                                  "decision_read": ("the Shield's" if shield_on
+                                                                    else "shadow, no repairs: "
+                                                                    "vla_mission.hud_decision")}),
         "policy_source": policy_source,
+        "previous_run_cleared": cleared,
         "params": {"cadence": args.cadence, "decision_timeout_s": args.decision_timeout_s,
                    "cruise_mps": args.cruise_mps, "speed_cap_mps": args.speed_cap_mps,
+                   "warmup_max_latency_s": args.warmup_max_latency_s,
+                   "late_reply_wait_s": args.late_reply_wait_s,
+                   "start_tolerance_m": args.start_tolerance_m,
+                   "det_fresh_s": args.det_fresh_s,
                    "tracker": {k: getattr(tcfg, k) for k in tcfg.__dataclass_fields__},
                    "citymap": str(args.citymap), "seed": args.seed},
     }
-    metrics["pilot"] = VM.pilot_entry(
+    metrics["pilot"] = guard("pilot_entry", lambda: VM.pilot_entry(
         identity, stats, records, rows, server=server_rec,
         reported_by=f"{server.host}:{server.port}", weight_paths=weight_paths,
-        cadence=args.cadence,
+        cadence=args.cadence, warmup=warmup,
         # The configuration this script asked for (None when attached: then
         # the server's own identity, above, says what it runs).
         vla_config=(args.vla_config if server.started_here and not args.vla_fake_output
                     else None),
-        vla_fake_output=args.vla_fake_output, stand_in=not is_vla)
-    if not is_vla:
+        vla_fake_output=args.vla_fake_output, stand_in=not is_vla),
+        {"kind": "unrecorded", "server_identity": identity_of(identity), "server": server_rec})
+    if not is_vla and isinstance(metrics["pilot"], dict):
         metrics["pilot"]["warning"] = ("a scripted stand-in answered: this run tests the "
                                        "flight path, it is NOT a VLA flight")
-    manifest = VM.manifest_for(policy.policy_hash, identity, args.seed,
-                               SIM_CONFIG_DIR / SCENES[args.mission], weight_paths)
-    kpis = VM.finish_run(out, rows, metrics, manifest, policy)
-    VM.write_json(out / "trajectory.json", traj)
+    manifest = guard("manifest", lambda: VM.manifest_for(
+        policy.policy_hash, identity, args.seed, SIM_CONFIG_DIR / SCENES[args.mission],
+        weight_paths))
+    kpis = {}
+    if manifest is not None:
+        kpis = guard("finish_run", lambda: VM.finish_run(out, rows, metrics, manifest, policy),
+                     {}) or {}
+    if records_errors or not (out / "metrics.json").is_file():
+        # The last resort: whatever was built, with what failed.
+        metrics["records_errors"] = records_errors
+        try:
+            _write_json_lenient(out / "metrics.json", metrics)
+        except Exception as exc:                                   # noqa: BLE001
+            print(f"[records] *** metrics.json could not be written: {type(exc).__name__}: {exc}")
+        if manifest is not None and not (out / "manifest.json").is_file():
+            try:
+                _write_json_lenient(out / "manifest.json", manifest)
+            except Exception as exc:                               # noqa: BLE001
+                print(f"[records] *** manifest.json could not be written: {exc}")
+    guard("trajectory.json", lambda: VM.write_json(out / "trajectory.json", traj))
     try:
         bp = write_replay(out, policy, out / f"{args.tag}.replay.tar.gz",
                           changelog=f"VLA flight {args.tag}", policy_source=policy_source)
@@ -983,39 +1322,64 @@ async def fly(args) -> int:
     except Exception as exc:                                       # noqa: BLE001
         print(f"[replay] not written: {type(exc).__name__}: {exc}")
 
-    s = metrics["pilot"]["summary"]
-    print(f"\n[report] {args.mission}: {len(rows)} ticks, end {end_reason}, aborted {aborted}")
-    print(f"[report] decisions {s['decisions_accepted']} at {s['decision_hz']} Hz; latency "
-          f"p50 {s['latency_client_s']['median']} s p95 {s['latency_client_s']['p95']} s "
-          f"(capture -> answer); parse_fail {s['parse_fail']}, server_error "
-          f"{s['server_error']}, link_failure {s['link_failure']}, LAND {s['land']}")
-    print(f"[report] ticks by author {s['ticks_by_author']}; VLA-authored share "
-          f"{s['vla_authored_tick_share']}")
-    print(f"[report] reached_goal {metrics.get('reached_goal')}; P0 escape rate "
-          f"{kpis.get('p0_violation_escape_rate')}; interventions {metrics['interventions']}; "
-          f"nfz_s {metrics['nfz_s']}")
-    print(f"[report] manifest vla_model_hash {manifest['vla_model_hash']}")
-    if not is_vla:
-        print("[report] *** a STAND-IN answered: not a VLA flight ***")
-    if aborted or not rows:
-        code = 1
+    try:
+        s = (metrics.get("pilot") or {}).get("summary") or {}
+        lat = s.get("latency_client_s") or {}
+        print(f"\n[report] {args.mission}: {len(rows)} ticks, end {end_reason}, aborted {aborted}"
+              + (", INTERRUPTED" if interrupted else "")
+              + (f", REFUSED ({refused['kind']})" if refused else ""))
+        print(f"[report] cadence {args.cadence}; decisions {s.get('decisions_accepted')} at "
+              f"{s.get('decision_hz')} Hz; latency p50 {lat.get('median')} s p95 {lat.get('p95')} s "
+              f"(capture -> answer); parse_fail {s.get('parse_fail')}, server_error "
+              f"{s.get('server_error')}, link_failure {s.get('link_failure')} "
+              f"{s.get('link_failure_by_kind')}, LAND {s.get('land')}")
+        print(f"[report] ticks by author {s.get('ticks_by_author')}; VLA-authored share "
+              f"{s.get('vla_authored_tick_share')}")
+        print(f"[report] reached_goal {metrics.get('reached_goal')}; P0 escape rate "
+              f"{kpis.get('p0_violation_escape_rate')}; interventions {metrics['interventions']}"
+              + ("" if shield_on else f" (shadow {metrics['shadow_interventions']})")
+              + f"; nfz_s {metrics['nfz_s']}")
+        print(f"[report] manifest vla_model_hash {(manifest or {}).get('vla_model_hash')}")
+        if not is_vla:
+            print("[report] *** a STAND-IN answered: not a VLA flight ***")
+        if records_errors:
+            print(f"[report] *** RECORDS INCOMPLETE: {records_errors}")
+    except Exception as exc:                                       # noqa: BLE001
+        print(f"[report] *** the report failed: {type(exc).__name__}: {exc}")
+    if interrupted:
+        code = EXIT_INTERRUPTED
+    elif refused is not None:
+        code = EXIT_REFUSED
+    elif aborted or not rows or records_errors:
+        code = EXIT_ABORTED
     elif end_reason in VM.VLA_FAILURE_ENDS:
-        code = 3
+        code = EXIT_VLA_FAILURE
     else:
-        code = 0
-    live.stop("ok" if code == 0 else "failed",
-              detail=None if code == 0 else (f"aborted ({str(aborted).split(':', 1)[0]})"
-                                             if aborted else f"VLA ended {end_reason}"))
+        code = EXIT_OK
+    live.stop("ok" if code == 0 else ("stopped" if interrupted else "failed"),
+              detail=None if code == 0 else (
+                  "interrupted (Ctrl+C)" if interrupted else
+                  f"refused ({refused['kind']})" if refused else
+                  f"aborted ({str(aborted).split(':', 1)[0]})" if aborted else
+                  "records incomplete" if records_errors else f"VLA ended {end_reason}"))
     return code
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = build_arg_parser()
     args = parse_cli(ap, argv)
+    if args.check_args:
+        print(json.dumps(check_args_report(args)))
+        return 0
     import follow_vlm as FV
     fine = FV._fine_timer_begin()
     try:
         return asyncio.run(fly(args))
+    except KeyboardInterrupt:
+        # asyncio.run re-raises Ctrl+C after fly() has landed and written its
+        # records (marked interrupted); the exit code says so.
+        print("[vla] interrupted (Ctrl+C): the records say interrupted", file=sys.stderr)
+        return EXIT_INTERRUPTED
     finally:
         FV._fine_timer_end(fine)
 

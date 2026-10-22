@@ -13,6 +13,21 @@
 #     .\scripts\run_vla_fly.ps1 -Mission goto -Shield off -Tag vla_goto_off   # control arm
 #     .\scripts\run_vla_fly.ps1 -VlaServer 127.0.0.1:8790         # attach to a running server
 #     .\scripts\run_vla_fly.ps1 -FakeOutput "96 48 49</s>" -Tag vla_dry   # no model: plumbing only
+#     .\scripts\run_vla_fly.ps1 -Mission goto -Cadence pipelined  # the pipelined arm (labelled)
+#     .\scripts\run_vla_fly.ps1 -Mission goto -Goal 43,100 -PrintArgs   # show the flight's arguments, start nothing
+#
+# -Goal / -ParkAt take X,Y in metres, written either way: 43,100 (PowerShell
+# binds that as two numbers) or "43,100" (one string). Both reach the flight
+# as "43,100"; anything that is not exactly two finite numbers is refused
+# here, and the flight's own parser checks the whole argument list
+# (demo\vla_fly.py --check-args) - both BEFORE the simulator starts. Until
+# 2026-10-23 -Goal 43,100 bound to a [string] as "43 100" and the flight
+# refused it only after the simulator was up.
+#
+# -Cadence stop_and_go (default) is upstream's: the next image only after the
+# step is flown and held 0.5 s. pipelined sends the next image while a step
+# is flown, which applies each answer's turn and climb at the decision rate
+# (docs\DESIGN-vla-pilot.md section 13 has the measured difference).
 #
 # -Precision bf16 (default) is the FIDELITY option: --vla-precision bf16
 # --vla-attn sdpa --no-vla-merge (agrees with the upstream-precision reference
@@ -30,10 +45,11 @@ param(
     [int]$Seconds      = 180,
     [string]$Tag       = "",
     [ValidateSet("bf16", "nf4")][string]$Precision = "bf16",
-    [string]$Goal      = "",            # M1: X,Y (default 43,40: vla_mission.py)
+    [string[]]$Goal    = @(),           # M1: X,Y (default 43,40: vla_mission.py)
     [string]$Object    = "",            # M2: OWL-ViT's query (default "an orange car")
-    [string]$ParkAt    = "",            # M2: where the scenario car parks (default 48,12)
+    [string[]]$ParkAt  = @(),           # M2: where the scenario car parks (default 48,12)
     [ValidateSet("", "on", "off")][string]$Shield = "",
+    [ValidateSet("stop_and_go", "pipelined")][string]$Cadence = "stop_and_go",
     [string]$VlaServer = "",            # host:port: attach instead of starting one
     [string[]]$FakeOutput = @(),        # the scripted stand-in (no GPU; never a VLA run)
     [string]$PolicyFile = "",           # default policies\vla_goto_citylife.yaml
@@ -44,7 +60,10 @@ param(
     # empty string = write under demo\out.
     [string]$OffloadRoot = "C:\Users\natha\vla_drone_offload\demo_out",
     [switch]$KeepSim,
-    [switch]$SkipSim
+    [switch]$SkipSim,
+    # Print the flight's arguments, one per line, and exit: nothing is
+    # started (tests\test_vla_fly.py binds the real parameters this way).
+    [switch]$PrintArgs
 )
 
 $ErrorActionPreference = "Stop"
@@ -82,6 +101,29 @@ function Get-PolicyArgs([string]$BundlesDir = (Join-Path $Root "bundles")) {
     return @("--policy", $yaml, "--dev-yaml")
 }
 
+# ---- X,Y as the flight reads it -------------------------------------------
+# -Goal 43,100 binds as two values, -Goal "43,100" as one: join them with
+# ",", then require exactly two finite numbers (invariant culture, no
+# thousands separators - "43,100" must never become 43100) and write them
+# back as "X,Y". Throws, before anything starts, otherwise.
+function ConvertTo-XYArg([string[]]$Value, [string]$Name) {
+    $joined = (@($Value) | ForEach-Object { "$_".Trim() }) -join ","
+    $parts = @($joined -split "," | ForEach-Object { $_.Trim() })
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $style = [Globalization.NumberStyles]::Float
+    $nums = @()
+    foreach ($p in $parts) {
+        $d = 0.0
+        if (-not [double]::TryParse($p, $style, $inv, [ref]$d) -or [double]::IsNaN($d) -or
+            [double]::IsInfinity($d)) { $nums = $null; break }
+        $nums += $d
+    }
+    if ($null -eq $nums -or $nums.Count -ne 2) {
+        throw "$Name '$joined' is not X,Y: two finite numbers in metres (NED x North, y East), e.g. $Name 43,100"
+    }
+    return ($nums | ForEach-Object { $_.ToString("R", $inv) }) -join ","
+}
+
 # ---- the flight's arguments (tests\test_vla_fly.py runs this function) ----
 # Reads the parameters above plus $Root, $CityMap and $PolicyArgs. The model
 # configuration is ALWAYS explicit: the server has no default, because the
@@ -91,10 +133,11 @@ function Get-VlaFlyArgs {
            "--mission", $Mission,
            "--tag", $Tag,
            "--max-s", "$Seconds",
+           "--cadence", $Cadence,
            "--citymap", $CityMap)
-    if ($Goal)   { $a += @("--goal", $Goal) }
+    if (@($Goal).Count -gt 0)   { $a += @("--goal", (ConvertTo-XYArg $Goal "-Goal")) }
     if ($Object) { $a += @("--object", $Object) }
-    if ($ParkAt) { $a += @("--park-at", $ParkAt) }
+    if (@($ParkAt).Count -gt 0) { $a += @("--park-at", (ConvertTo-XYArg $ParkAt "-ParkAt")) }
     if ($Shield) { $a += @("--shield", $Shield) }
     if ($VlaServer) {
         $a += @("--vla-server", $VlaServer)
@@ -109,6 +152,15 @@ function Get-VlaFlyArgs {
     return $a
 }
 # ---- end of Get-VlaFlyArgs
+
+if ($PrintArgs) {
+    # The real parameter binding, nothing started (no simulator, no server,
+    # no Python): the arguments as they would reach demo\vla_fly.py, minus
+    # the policy choice (Get-PolicyArgs runs Python).
+    $PolicyArgs = @()
+    Get-VlaFlyArgs | ForEach-Object { Write-Output "$_" }
+    exit 0
+}
 
 . "$Root/tools/Resolve-UnrealEngine.ps1"
 $UE = Get-UnrealEditor -UProject $Proj
@@ -167,6 +219,17 @@ if ($SkipSim -and -not (Test-SimUp)) { throw "-SkipSim given but nothing on 8989
 
 $PolicyArgs = Get-PolicyArgs
 $a = Get-VlaFlyArgs
+# The flight's own parser over the whole list, BEFORE the simulator starts:
+# a refusal here costs nothing (no simulator, no server, no GPU).
+$eap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"     # argparse writes its refusal to stderr
+try { $check = @(& $Py @a --check-args 2>&1 | ForEach-Object { "$_" }) }
+finally { $ErrorActionPreference = $eap }
+if ($LASTEXITCODE -ne 0) {
+    $check | ForEach-Object { Write-Host "    $_" }
+    throw "demo\vla_fly.py refuses these arguments (above); nothing was started"
+}
+Say "arguments checked: mission $Mission, cadence $Cadence"
 
 Remove-Item (Join-Path $Root "demo\out\$Tag\metrics.json") -ErrorAction SilentlyContinue
 if ($OffloadRoot) {
@@ -209,7 +272,7 @@ if ($OffloadRoot) {
 $rc = 1
 try {
     if (-not $SkipSim) { Start-Sim }
-    Say "AerialVLA flies: mission $Mission, $Seconds s, tag $Tag, precision $Precision"
+    Say "AerialVLA flies: mission $Mission, $Seconds s, tag $Tag, precision $Precision, cadence $Cadence"
     & $Py @a
     $rc = $LASTEXITCODE
 }
@@ -223,8 +286,16 @@ finally {
 
 $metrics = Join-Path $Root "demo\out\$Tag\metrics.json"
 if ($rc -eq 3) {
-    Write-Host "  *** the mission ended on a VLA FAILURE (server dead/erroring, malformed answers or no decision); the aircraft landed. Read end_reason in $metrics" -ForegroundColor Red
+    Write-Host "  *** the mission ended on a VLA FAILURE (server dead, slow or erroring, malformed answers or no decision); the aircraft landed. Read end_reason in $metrics" -ForegroundColor Red
     exit 3
+}
+if ($rc -eq 4) {
+    Write-Host "  *** REFUSED before the mission: the warm-up inference was too slow or unanswered (never took off), or the transfer missed the mission start (landed). Read refused / warmup in $metrics" -ForegroundColor Red
+    exit 4
+}
+if ($rc -eq 130) {
+    Write-Host "  *** INTERRUPTED (Ctrl+C): the aircraft landed where it was; the records say interrupted ($metrics)" -ForegroundColor Red
+    exit 130
 }
 if ($rc -ne 0 -or -not (Test-Path $metrics)) {
     Write-Host "  *** FLIGHT FAILED (exit $rc). Read the console above." -ForegroundColor Red
