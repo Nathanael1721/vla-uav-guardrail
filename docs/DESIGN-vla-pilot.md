@@ -8,6 +8,13 @@ protocol v2) is a separate change. Wiring the backend into a rail
 (`perception_node --pilot vla`, the ROS 2 `/vla/action_4d` bridge), the HUD
 panel and the manifest's `pilot_record(kind="vla")` come after both.
 
+2026-10-22, wave V2: the CityLife flight that puts this pilot in the air is
+built (`demo/vla_fly.py`, `demo/vla_mission.py`, section 13), with its
+policy, cameras, launcher and offline replay gate. It is tested without the
+simulator (`tests/test_vla_fly.py`, `tests/test_vla_replay_gate.py`) and was
+driven end to end against a fake `projectairsim` module with the server's
+scripted stand-in; it has NOT flown in Unreal and has not flown the model.
+
 2026-10-22: the review of 7c7cc50 found nine problems; all are fixed, each
 with a failing-first test. The ones that change behaviour: a server error is
 no answer (section 5), the client re-reads `raw_text` and pins the model
@@ -390,3 +397,142 @@ backed off, not a link failure.
 - the measured decision rate on the RTX 4090 (E0) and timeouts re-set from it;
 - a camera pair matching training (256x256, 90 deg, front pitch 0, down pitch
   -90).
+
+(Since then: the server is `demo/vla_server_v2.py` with the strict reader
+(wave V1a); the HUD's VLA panel, `pilot_record(kind="vla")` and the camera
+pair are in the CityLife flight, section 13. `perception_node --pilot vla`,
+the ROS 2 bridge and the in-flight E0 measurement are still open.)
+
+## 13. Flying it: `demo/vla_fly.py` (CityLife_Day, simple_flight)
+
+### Why a new script
+
+`follow_vlm.fly()` puts a hand-written follower's layers (FenceGuard's gate
+and slide, the trail, the guard smoother, the slew limiter) between its
+controller and the Shield; a VLA arm there would have to switch each off or
+call the run hybrid (integration report, section 3.4). In `vla_fly` the step
+tracker's action IS the raw action the Shield judges
+(`vla_mission.MissionLoop`): `backend.act(state)` -> `shield.filter` ->
+`move_by_velocity` (the repaired `emitted`; the raw action with `--shield
+off`, recorded as the control arm). Infrastructure is imported from
+`follow_vlm` (heartbeat, collision topic, landing, Grounder, recorder), so a
+fix there reaches here. The Shield is the grant's 5 s / 0.1 s forecast
+without an FSM inside it (`guardrail/replay.rail_shield`): this rail flies
+`emitted`, and has no subject stand-off that made follow_vlm keep 3 s / 0.5 s.
+
+### The missions
+
+| | M1 `goto` | M2 `approach` |
+|---|---|---|
+| hint | the goal's bearing from the capture pose, relative to the heading (`vla_link.goal_phrase`), `""` inside `--arrive-radius-m` (3 m): hint_source `goal`, the trained task | the OWL-ViT box on the detector's own camera through `vla_bridge.VLABridge` (gain 1: three reachable phrases): hint_source `detector`; no box fresher than 1 s, no request |
+| ends on | LAND; inside the arrive radius 8 s without LAND (`arrived_no_land`); time | LAND; the box at 0.15 of the frame width (`close_box`); no fresh box for 15 s (`target_lost`); time |
+| default | goal (43, 40), object words `""` | the scenario car parked at (48, 12), object `"an orange car"` |
+
+Both: take off at the usual spawn (35, -20), climb to 10 m, a hand-written
+transfer through the Shield to the mission start (42, -18), face the goal
+(M1) or down the street (90 deg, M2), then the mission clock starts. Why the
+transfer: two street trees in the flight band stand at (32-34, -16) and
+(32-34, -12); every straight line east from the spawn passes them within
+0.8-1.3 m. From the start, the line to the goal never drops below 3.97 m of
+clearance on the Shield's own distance field over the 6-14 m map, the goal
+has 13.5 m, both are on the street mask (`vla_mission.py`, CityLife geometry;
+`tests/test_vla_fly.py` re-reads it from the map where the map is present).
+
+Every mission also ends, and lands, on a VLA failure: hovering on link_lost
+(`server_dead`) or server_error for `--dead-timeout-s` (10 s), malformed
+answers held that long (`parse_fail_streak`), or no parsed answer within
+60 s (`no_first_decision`). Those exit with code 3; an abort with 1. LAND is
+the tracker's flag; the landing is `follow_vlm._fly_to_landing_site` (a
+landable pavement cell, through the Shield) and its descent, never a mode
+request.
+
+### Cameras
+
+`demo/pas_config/robot_vla_quad.jsonc` (M1) and `robot_vla_quad_det.jsonc`
+(M2) keep the follow rail's airframe and controller and add `VLAFront`
+(256x256, 90 deg, pitch 0) and `VLADown` (256x256, 90 deg, pitch -90),
+AerialVLA's training cameras, captured every 0.1 s; M2 adds the detector's
+768x432, -20 deg `FrontCamera`, the camera every OWL-ViT number here was
+measured on (a 256 px frame would be upscaled 3x into OWL-ViT's 768 input).
+Only `Chase` streams. `vla_mission.VLAFrames` pairs the newest front and
+down frames by sim stamp (a lone front frame is no request: the server runs
+`--missing-down refuse`), takes the capture pose from the loop's pose ring at
+the frame's stamp, and logs the camera sizes (`vla_captures.jsonl`).
+
+### The server
+
+Started by the flight unless `--vla-server HOST:PORT` attaches to one:
+`demo/vla_server_v2.py serve --precision bf16 --attn sdpa --no-merge` (the
+fidelity option, 96 % agreement with the reference on the 4090 probe) or,
+with `--vla-low-vram` / `-Precision nf4`, `--precision nf4 --attn sdpa
+--merge` (25-33 %). The flight refuses an occupied port, waits for hello
+(up to 15 min for the load), refuses a non-VLA identity unless it started the
+scripted stand-in itself (`--vla-fake-output`) or `--allow-stand-in` is
+given, pins the identity, and stops the server at the end (op shutdown,
+then terminate). A stand-in run is recorded as kind `stub` and
+`fake:scripted@unresolved`, never as a VLA.
+
+### Records (demo/out/<tag>/)
+
+`vla_steps.jsonl` (section 9), `vla_frames/<sha256>.jpg`,
+`vla_captures.jsonl`, `flight_log.jsonl` (per tick: `author` /
+`author_reason`, `vla_seq`, `vla_age_s`, the flown decision's `phrase`,
+`hint_source`, `step`, `bins`, `raw_text`, the Shield's `raw` / `emitted` /
+`flown_action` / `violations` / `repairs` / `emitted_violations`, `flown`,
+`shield`, `goal_dist_m` or the box), `metrics.json` (`pilot` = pilot_record
+kind `vla` with the server's `reported_digest`, `server_identity` with
+precision and agreement, the backend stats under `pilot.vla` - what
+tools/todo.py and the dashboard read - and `pilot.summary`: decision rate,
+latency p50/p95, parse_fail, server_error, LAND, ticks by author,
+`vla_authored_tick_share`), `manifest.json`, `kpi.json`, `audit.jsonl`, the
+replay bundle, `view/` with the HUD panel (time, altitude, goal distance or
+box; the decision number and its image's age; the phrase and its source; the
+step; who authored the tick) and `vla_server_stdout.log`.
+
+### Commands
+
+Build the policy's signed bundle once, where the lab key is (else the
+launcher flies the YAML under `--dev-yaml`, recorded as a development run):
+
+    python tools\build_flight_bundles.py vla_goto_citylife
+
+1. CityLife frames for the gate without the model (the scripted stand-in
+   steps straight ahead; the Shield is on):
+
+       .\scripts\run_vla_fly.ps1 -Mission goto -Seconds 60 -Tag vla_dry -FakeOutput "96 48 49</s>"
+
+2. The offline replay gate, with the GPU, on those frames (or on the
+   committed protocol mosaics with `--frames-dir deploy\evidence\vla_protocol_frames`):
+
+       C:\Users\natha\.conda\envs\vla-real\python.exe tools\vla_replay_gate.py --run demo\out\vla_dry --start-server
+       C:\Users\natha\.conda\envs\vla-real\python.exe tools\vla_replay_gate.py --run demo\out\vla_dry --vla-server 127.0.0.1:8790
+
+3. M1 GOTO (bf16 fidelity by default; `-Precision nf4` for low VRAM; `-Goal 43,100` runs beside the NFZ):
+
+       .\scripts\run_vla_fly.ps1 -Mission goto -Seconds 180 -Tag vla_goto_01
+
+   or, with the simulator already on CityLife_Day:
+
+       C:\Users\natha\.conda\envs\vla-real\python.exe demo\vla_fly.py --mission goto --tag vla_goto_01 --max-s 180 --vla-precision bf16 --vla-attn sdpa --no-vla-merge
+
+4. M2 APPROACH the parked orange car:
+
+       .\scripts\run_vla_fly.ps1 -Mission approach -Seconds 180 -Tag vla_appr_01
+
+5. The control arm: `-Shield off` (recorded `shield: off`; the raw VLA action flies).
+
+### Not verified, and the risks
+
+- Nothing here has run in Unreal. The fake-simulator runs checked the
+  plumbing, not Project AirSim's camera topics, the 256x256 render or the
+  rotate/land calls.
+- Whether bf16 (about 17 GB) fits beside CityLife on the 24 GB card, and the
+  decision rate with the renderer running, are unmeasured (E0).
+- AerialVLA's competence in CityLife is unknown; the default goal is chosen
+  so a VLA that flies its phrase needs no repair, not so it will succeed.
+- M2's close rule (0.15 of the frame) is a guess at 10 m: the car leaves the
+  -20 deg camera's frame below about 8.6 m horizontally.
+- The policy has no subject stand-off: the VLA rail estimates no subject
+  position, and a declared or truth position would be an oracle.
+- The FSM's N-in-T for a slow pilot (section 8) is still a PI question; this
+  rail runs no escalation FSM.

@@ -428,6 +428,11 @@ def test_a_goto_flown_by_the_scripted_model_is_classified_vla_from_its_own_recor
     cls, why = TODO.classify_run(r.manifest["vla_model_hash"], ev)
     assert (cls, why) == ("vla", None), (cls, why, ev)
     assert ev["source"] == "vla_steps.jsonl" and ev["weights_sha256"] == REAL_MODEL["weights_sha256"]
+    import build_dashboard as BD
+    fr = BD.flight_record(ROOT, out)
+    assert fr["pilot"]["class"] == "vla" and fr["pilot"]["metrics_kind"] == "vla", fr["pilot"]
+    assert fr["end_reason"] == "vla_land" and fr["shield"] == "on" and fr["loop_hz"] == 10.0
+    assert fr["pilot"]["evidence"]["decisions"] == s["decisions_accepted"]
     raw = (out / "flight_log.jsonl").read_bytes()
     assert b"\r\n" not in raw and len(raw.splitlines()) == len(r.rows)
 
