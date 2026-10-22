@@ -48,7 +48,9 @@
 #          link and step tracker against a loopback fake server,
 #          tests/vla_fake_server.py, the CityLife VLA flight's hints,
 #          mission state machine, records, configs, server lifecycle and
-#          launcher with a point vehicle, and the offline replay gate),
+#          launcher with a point vehicle; its whole flight path against a
+#          fake projectairsim module, lab-only: it SKIPs here, where no job
+#          installs OpenCV or Pillow; and the offline replay gate),
 #          and test_aerialvla_codec (AerialVLA's prompt, vocabulary,
 #          mosaic and strict output reader).
 #        The CityLife level, checked offline (the level itself is
@@ -520,6 +522,7 @@ jobs:
               tests/test_vla_server.py \
               tests/test_aerialvla_codec.py \
               tests/test_vla_fly.py \
+              tests/test_vla_fly_fakesim.py \
               tests/test_vla_replay_gate.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \

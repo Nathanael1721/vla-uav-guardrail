@@ -639,9 +639,15 @@ def test_the_vla_flight_tests_run_in_ci():
     launcher test cuts its function out of scripts/run_vla_fly.ps1 (SKIP
     without PowerShell, after its text checks)."""
     loop = _loop()
-    for f in ("test_vla_fly.py", "test_vla_replay_gate.py"):
+    for f in ("test_vla_fly.py", "test_vla_fly_fakesim.py", "test_vla_replay_gate.py"):
         assert f in loop, f"{f} is not run in CI"
         assert (ROOT / "tests" / f).is_file()
+    # The fake-simulator file needs OpenCV and Pillow: it must SKIP, not
+    # pass, where they are absent, and no job may pretend to install them.
+    src = (ROOT / "tests" / "test_vla_fly_fakesim.py").read_text(encoding="utf-8")
+    assert "return SKIP" in src and "import cv2" in src
+    for j in _matrix_jobs():
+        assert not any(p.startswith(("opencv", "pillow")) for p in _installed(j)), j
 
 
 if __name__ == "__main__":

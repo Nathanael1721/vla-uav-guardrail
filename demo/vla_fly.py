@@ -111,6 +111,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="AerialVLA flies CityLife behind the Shield")
     ap.add_argument("--mission", choices=VM.MISSIONS, default="goto")
     ap.add_argument("--tag", default=None, help="demo/out/<tag> (default vla_<mission>)")
+    ap.add_argument("--out-dir", default=None,
+                    help="write the run here instead of demo/out/<tag> (tests; the "
+                         "dashboard reads only demo/out)")
     ap.add_argument("--max-s", type=float, default=180.0, help="mission seconds")
     ap.add_argument("--seed", type=int, default=20261022)
     # -- the mission ---------------------------------------------------------
@@ -507,7 +510,7 @@ async def fly(args) -> int:
                                             allow_unverified=args.allow_unverified_bundle)
     policy_source = {**policy_source, **choice}
 
-    out = ROOT / "demo" / "out" / args.tag
+    out = Path(args.out_dir) if args.out_dir else ROOT / "demo" / "out" / args.tag
     out.mkdir(parents=True, exist_ok=True)
     for f in RUN_FILES:
         try:
@@ -764,9 +767,12 @@ async def fly(args) -> int:
         while True:
             tk0 = time.time()
             kin = drone.get_ground_truth_kinematics()
+            t_kin = (tk0 + time.time()) / 2.0      # mid-RPC, as follow_vlm stamps it
             state, yaw = _state_from_kin(kin, State, quat_yaw)
             q = kin["pose"]["orientation"]
-            obs.put_pose_full(tk0, state.x, state.y, state.up, yaw, FV.quat_pitch(q),
+            # The pose ring VLAFrames reads each capture's pose from
+            # (interpolated at the camera frame's sim stamp).
+            obs.put_pose_full(t_kin, state.x, state.y, state.up, yaw, FV.quat_pitch(q),
                               FV.quat_roll(q), stamp=kin.get("time_stamp"))
             off_map = shield.off_map(state.x, state.y) if shield.has_obstacle_map else None
             res = loop.tick(state, extra_row={"off_map": off_map})
