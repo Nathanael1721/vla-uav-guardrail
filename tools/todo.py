@@ -82,7 +82,13 @@ def classify_pilot(vla_model_hash) -> str:
     VLA. 65 of the 99 manifests in demo/out on 2026-10-21 record the OWL-ViT
     DETECTOR here (google/owlvit-base-patch32@...), 24 the StubVLA and 10
     none:hand-written-controller; none of them is a VLA flight, and a
-    dashboard that counted "anything not none" would report 89."""
+    dashboard that counted "anything not none" would report 89.
+
+    A `fake:` id is a stand-in whatever else it names: demo/vla_mission.py
+    records a non-VLA server as fake:<its id>, and a stand-in whose hello
+    names AerialVLA's adapter ("fake:aerialvla-lora/aero_vla@...") matched
+    the allow-list and read as vla / vla_unverified until 2026-10-23 (review
+    of the CityLife flight, P3-13)."""
     if vla_model_hash is None or str(vla_model_hash).strip() == "":
         return "missing"
     s = str(vla_model_hash).strip()
@@ -90,6 +96,8 @@ def classify_pilot(vla_model_hash) -> str:
     low = ident.lower()
     if s.startswith("none:") or low == "none":
         return "none"
+    if low.startswith("fake:"):
+        return "stub"
     if low.startswith("guardrail.vla_stub") or "stubvla" in low:
         return "stub"
     if "owlvit" in low or "owl-vit" in low or "owlv2" in low:

@@ -464,7 +464,16 @@ class VLABridge:
         if det is None:
             self.n_no_detection += 1
             return None
-        raw_deg = math.degrees(bearing_from_box(det, self.hfov_deg))
+        return self.phrase_for_bearing(bearing_from_box(det, self.hfov_deg))
+
+    def phrase_for_bearing(self, bearing_rad: float) -> str:
+        """A bearing already measured from a box (bearing_from_box) -> the
+        compass phrase, through the same gain and clamp as phrase_for. For a
+        caller that corrects the box's bearing for the aircraft's turn
+        between the detector's frame and the VLA's capture (demo/
+        vla_mission.DetectorHint): still a body-frame angle, never a
+        position."""
+        raw_deg = math.degrees(float(bearing_rad))
         phrase = bearing_to_phrase(math.radians(self._scaled_deg(raw_deg)))
         assert phrase in DIRECTION_VOCABULARY, f"off-vocabulary phrase {phrase!r}"
         self.phrase_counts[phrase] += 1
