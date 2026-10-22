@@ -6680,11 +6680,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # as failed). A Ctrl+C the mission loop caught is "stopped" too
             # (`interrupted` above), unless something failed after it.
             _leaving = _leaving or sys.exc_info()[0]
-            if live_end is not None and _leaving is None:
-                live.stop(*live_end)
-            else:
-                live.stop(("stopped" if interrupted else "ok") if _leaving is None else
-                          "stopped" if issubclass(_leaving, KeyboardInterrupt) else "failed")
+            # One stop: a run refused before arming returns (live_end:
+            # "failed" and why); otherwise as before.
+            status, detail = (live_end if (live_end is not None and _leaving is None) else (
+                ("stopped" if interrupted else "ok") if _leaving is None else
+                "stopped" if issubclass(_leaving, KeyboardInterrupt) else "failed", None))
+            live.stop(status, detail=detail)
 
 
 def main(argv=None) -> int:
