@@ -328,6 +328,11 @@ RETRACTIONS: dict[str, str] = {
     "nobody standing on a zebra": "09-29",
     "every `det_hz` published before today is inflated": "det",
     "tracking score's projection was linear": "not a sentence: a scoring method, re-scored",
+    "the 4 aug aerialvla ablation": "not a sentence: the stored ablation outputs re-read with "
+                                    "the strict parser (docs/data/aerialvla_ablation_rescore.json); "
+                                    "the 4 Aug document keeps its text under a dated correction",
+    "the library has no such zone": "not a sentence: wording in branch review hand-off notes, "
+                                    "corrected where it reached docs and the lint text",
     "corner stall was the aircraft pressing": "09-23",
     "9.3 hz is the windows": "09-23",
     "start_heading_err_deg: null": "not a sentence: a metrics field, now measured",
