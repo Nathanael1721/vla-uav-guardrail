@@ -160,6 +160,11 @@ Nothing burned: the stub pilot that flies that rail has never commanded a
 non-zero yaw rate (0.0000 max across `sitl_shield_on`, `ros2_shield_on`,
 `sitl_ped_on`), so **no stored KPI figure changes**. Fixed in four files and
 pinned by tests that build a Shield and ask it, rather than reading a comment.
+(Note added 2026-10-21: `sitl_shield_on` and `sitl_ped_on` were flown by the
+pymavlink SITL rail before 79bae12, 2026-10-19, on a pose 3-6.6 s old, its
+OLDEST queued LOCAL_POSITION_NED; their position, dwell and escape figures
+describe that rail as it flew, not the aircraft. The zero yaw rate does not
+depend on the pose.)
 See `docs/FINDING-the-contract-disagreed-with-itself-about-yaw.md`.
 
 I introduced the wrong version of this claim while closing the item, wrote a test

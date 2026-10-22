@@ -27,6 +27,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "sitl"))
 sys.path.insert(0, str(ROOT / "tests"))
+# demo/ last, for demo/follow_vlm.py (the city rail's policy choice) only.
+sys.path.append(str(ROOT / "demo"))
 
 from guardrail import bundle as B                                    # noqa: E402
 from guardrail import load_policy                                    # noqa: E402
@@ -107,7 +109,7 @@ def test_the_tool_builds_signs_and_verifies_every_flight_bundle():
     out = Path(tempfile.mkdtemp(prefix="flightbundles_"))
     rows = T.build(T.FLIGHT_POLICIES, out, signer=signer, trust_store=trust,
                    issued_at="2026-10-12T00:00:00Z")
-    assert len(rows) == 5 and all(r["ok"] for r in rows), rows
+    assert len(rows) == len(T.FLIGHT_POLICIES) == 8 and all(r["ok"] for r in rows), rows
     for r in rows:
         pol, src = B.load_for_flight(r["bundle"], trust_store=trust)
         assert src["signature"] == B.SIG_VERIFIED, src
@@ -219,6 +221,122 @@ def test_the_ros_node_refuses_a_policy_other_than_the_pinned_hash():
         raise AssertionError("a policy other than the pinned one would fly")
     import experiments.sweep_scenarios as S
     assert S.SITL_EXPECTED_HASH_FLAG in S.sitl_node_flags()
+
+
+# --------------------------------------------------------------------------- #
+# The city rail (demo/follow_vlm.py), ARCH-29, 2026-10-21
+# --------------------------------------------------------------------------- #
+
+CITY = """policy_id: city-arch29-test
+version: 0.1.0
+constraints:
+  - id: kin-caps
+    type: kinematic_envelope
+    constraint_type: hard
+    priority: P1
+    violation_action: repair
+    speed_max_mps: 5.0
+    climb_rate_max_mps: 2.0
+    yaw_rate_max_dps: 45.0
+"""
+
+
+def _city_args(**kw):
+    from types import SimpleNamespace
+    base = {"policy": None, "bundle": None, "dev_yaml": False}
+    base.update(kw)
+    return SimpleNamespace(**base)
+
+
+def _city_bundle(text: str = CITY):
+    """(yaml, bundles dir, bundle): a policy file and its bundle, named as
+    tools/build_flight_bundles.py names it. Unsigned: the choice reads only
+    presence and the policy hash; load_for_flight judges the signature."""
+    from guardrail.bundle import write_bundle
+    from guardrail.manifest import flight_bundle_path
+    d = Path(tempfile.mkdtemp(prefix="city_policy_"))
+    y = d / "city.yaml"
+    y.write_text(text, encoding="utf-8")
+    bundles = d / "bundles"
+    pol = load_policy(y)
+    b = flight_bundle_path(pol, bundles)
+    write_bundle(pol, b, signer=None)
+    return y, bundles, b
+
+
+def test_the_city_rail_flies_the_signed_bundle_of_its_policy():
+    """REGRESSION (ARCH-29): follow_vlm loaded `--policy P` as unsigned YAML
+    on every flight (citylife_redcar_nfz_motion2_20261019 kpi.json:
+    policy_source yaml / unsigned) while the ArduPilot rails flew signed
+    bundles by default. Shown failing first: follow_vlm had no
+    city_policy_choice and no --dev-yaml."""
+    import follow_vlm as fv
+    y, bundles, b = _city_bundle()
+    got = fv.city_policy_choice(_city_args(policy=str(y)), bundles_dir=bundles)
+    assert got[0] == str(b) and got[1] is None, got
+    assert got[2]["default_bundle"] is True and got[2]["bundle_of"].endswith("city.yaml"), got
+    # The explicit fallback: the YAML itself, recorded as a development run.
+    b2, y2, rec = fv.city_policy_choice(_city_args(policy=str(y), dev_yaml=True),
+                                        bundles_dir=bundles)
+    assert (b2, y2) == (None, str(y)) and rec["dev_yaml"] is True, rec
+    # --bundle flies as given; with --dev-yaml it is two answers, refused.
+    assert fv.city_policy_choice(_city_args(bundle=str(b)))[0] == str(b)
+    try:
+        fv.city_policy_choice(_city_args(bundle=str(b), dev_yaml=True))
+    except ValueError as e:
+        assert "--dev-yaml" in str(e), e
+    else:
+        raise AssertionError("--bundle with --dev-yaml was accepted")
+
+
+def test_the_city_rail_refuses_a_missing_or_stale_bundle_naming_both_ways_out():
+    import follow_vlm as fv
+    y, bundles, b = _city_bundle()
+    empty = Path(tempfile.mkdtemp(prefix="city_policy_empty_"))
+    try:
+        fv.city_policy_choice(_city_args(policy=str(y)), bundles_dir=empty)
+    except ValueError as e:
+        assert "build_flight_bundles" in str(e) and "--dev-yaml" in str(e), e
+    else:
+        raise AssertionError("a policy with no bundle flew as YAML without --dev-yaml")
+    # Edited without a version bump: the bundle keeps its name, not its rules.
+    y.write_text(CITY.replace("speed_max_mps: 5.0", "speed_max_mps: 6.0"),
+                 encoding="utf-8")
+    try:
+        fv.city_policy_choice(_city_args(policy=str(y)), bundles_dir=bundles)
+    except ValueError as e:
+        assert "stale" in str(e), e
+    else:
+        raise AssertionError("a stale bundle flew")
+    # No --policy: the default policy's bundle, named in the refusal.
+    try:
+        fv.city_policy_choice(_city_args(), bundles_dir=empty)
+    except ValueError as e:
+        assert "follow_car" in str(e), e
+    else:
+        raise AssertionError("the default policy flew with no bundle on disk")
+
+
+def test_the_city_rail_wires_the_choice_and_a_dev_yaml_run_is_not_kpi_grade():
+    """The parser takes --dev-yaml, main() loads what city_policy_choice
+    chose (before the output folder is touched), and a --dev-yaml flight's
+    kpi.json gives the reason it is not KPI-grade. The tool builds the
+    bundle of every policy the city launchers name."""
+    import follow_vlm as fv
+    a = fv.build_arg_parser().parse_args(["--object", "a red car", "--dev-yaml"])
+    assert a.dev_yaml is True
+    src = (ROOT / "demo" / "follow_vlm.py").read_text(encoding="utf-8")
+    main_src = src[src.index("def fly("):] if "def fly(" in src else src
+    assert main_src.index("city_policy_choice(args)") < main_src.index("load_for_flight(")
+    assert "policy_source.update(_choice)" in src
+    assert "if policy_source.get(\"dev_yaml\"):" in src
+    T = _tool()
+    for name in ("follow_car", "follow_car_nfz", "follow_pedestrian",
+                 "follow_car_citylife", "follow_car_citylife_nfz"):
+        assert name in T.FLIGHT_POLICIES, name
+    for ps1 in ("run_citylife_follow.ps1", "run_follow_vlm.ps1", "run_retarget_demo.ps1"):
+        text = (ROOT / "scripts" / ps1).read_text(encoding="utf-8-sig")
+        assert "Get-FlightPolicyDev" in text, ps1
 
 
 if __name__ == "__main__":

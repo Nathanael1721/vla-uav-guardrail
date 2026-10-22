@@ -129,6 +129,7 @@ $Map  = "/Game/JapaneseCity/Maps/Demo_day"
 function Say($m) { Write-Host "==> $m" -ForegroundColor Cyan }
 foreach ($p in @($Py, $UE, $Proj)) { if (-not (Test-Path $p)) { throw "not found: $p" } }
 Set-Location $Root
+. "$Root/tools/Get-FlightPolicyDev.ps1"
 
 function Test-SimUp { (Test-NetConnection 127.0.0.1 -Port 8989 -WarningAction SilentlyContinue).TcpTestSucceeded }
 
@@ -164,6 +165,9 @@ function Fly($tag, $obj, $policy, $secs, $stopS, $traffic, [switch]$NoCar, [swit
            "--car-speed", "$CarSpeed", "--car-stop-s", "$stopS",
            "--policy", $policy, "--route", $Route, "--want-width", "0.16",
            "--record-hz", "$RecordHz", "--record-height", "$RecordHeight")
+    # The policy's signed bundle flies, else the YAML under --dev-yaml, said
+    # so (tools\Get-FlightPolicyDev.ps1; ARCH-29, 2026-10-21).
+    $a += @(Get-FlightPolicyDev $Root $Py $policy)
     if ($traffic -gt 0) { $a += @("--traffic", "$traffic", "--traffic-mode", "demo", "--lock-target") }
     if ($NoCar)  { $a += "--no-car" }
     if ($Record) { $a += "--save-view" }

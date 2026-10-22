@@ -51,6 +51,7 @@ $Map  = "/Game/JapaneseCity/Maps/Demo_day"
 function Say($m) { Write-Host "==> $m" -ForegroundColor Cyan }
 foreach ($p in @($Py, $UE, $Proj)) { if (-not (Test-Path $p)) { throw "not found: $p" } }
 Set-Location $Root
+. "$Root/tools/Get-FlightPolicyDev.ps1"
 
 function Test-SimUp { (Test-NetConnection 127.0.0.1 -Port 8989 -WarningAction SilentlyContinue).TcpTestSucceeded }
 
@@ -102,7 +103,8 @@ $a = @("demo\follow_vlm.py",
        "--object", $Object,
        "--retarget", "$($At):$To",
        "--tag", $Tag,
-       "--policy", "policies\follow_pedestrian.yaml",
+       "--policy", "policies\follow_pedestrian.yaml") +
+     @(Get-FlightPolicyDev $Root $Py "policies\follow_pedestrian.yaml") + @(
        "--max-s", "$Seconds",
        "--det-thresh", "0.008",
        "--want-width", "0.16",

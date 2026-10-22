@@ -69,7 +69,8 @@ from guardrail import kpi as kpi_mod                                # noqa: E402
 from guardrail.bundle import load_for_flight                        # noqa: E402
 from guardrail.compiler import join_negative_xy                     # noqa: E402
 from guardrail.manifest import (                                    # noqa: E402
-    NO_VLA, build_manifest, is_kpi_grade, model_hash, pilot_record,
+    DEV_YAML_FLAG, NO_VLA, build_manifest, flight_bundle_path, flight_policy_choice,
+    is_kpi_grade, model_hash, pilot_record,
 )
 from guardrail.replay import verify_replay, write_replay           # noqa: E402
 from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S           # noqa: E402
@@ -94,7 +95,8 @@ TICK = 0.1
 SIM_CONFIG_DIR = str(ROOT / "demo" / "pas_config")
 SCENE = "scene_semantic.jsonc"
 ROBOT_CONFIG = ROOT / "demo" / "pas_config" / "robot_semantic_quad.jsonc"
-# The YAML a flight falls back to when neither --policy nor --bundle is given.
+# The policy a flight flies when neither --policy nor --bundle is given: its
+# signed bundle (city_policy_choice), or this YAML under --dev-yaml.
 DEFAULT_POLICY = ROOT / "policies" / "follow_car.yaml"
 
 
@@ -122,6 +124,55 @@ def _live_heartbeat(name: str, **kw):
         return mod.heartbeat("flight", name, **kw)
     except Exception:                                   # noqa: BLE001
         return _NoBeat()
+
+
+def city_policy_choice(args, bundles_dir=None) -> tuple:
+    """`(bundle, yaml, record)` for load_for_flight: the city rail flies the
+    SIGNED bundle of its policy (audit card ARCH-29, 2026-10-21).
+
+    Until now this rail loaded `--policy P` (default policies/follow_car.yaml)
+    as unsigned YAML on every flight - citylife_redcar_nfz_motion2_20261019's
+    kpi.json says policy_source "yaml", signature "unsigned" - while the
+    ArduPilot rails had flown the signed bundle by default since 12-13 Oct.
+    Now, as there (guardrail.manifest.flight_policy_choice):
+
+      --bundle B             B, signature-verified; with --dev-yaml, refused.
+      --bundle B --policy P  handed on: load_for_flight refuses "not both".
+      --policy P             P's signed bundle, bundles/<policy_id>-v<version>
+                             .tar.gz (tools/build_flight_bundles.py builds
+                             it), recorded `default_bundle: true` and
+                             `bundle_of: P`; refused when it is not on disk,
+                             or no longer flies P's policy (an edit without a
+                             version bump), naming both ways out.
+      --policy P --dev-yaml  P itself, unsigned, recorded `dev_yaml: true` and
+                             never KPI-grade: the explicit fallback.
+      neither                as --policy DEFAULT_POLICY.
+
+    `--policy` keeps naming WHICH rule set flies, as every launcher uses it;
+    only what is loaded for it changed. ValueError before anything starts."""
+    dev = bool(getattr(args, "dev_yaml", False))
+    named = getattr(args, "policy", None)
+    yaml_for = named or str(DEFAULT_POLICY)
+    if getattr(args, "bundle", None) or dev:
+        return flight_policy_choice(args.bundle, named, dev_yaml=dev,
+                                    default_yaml=yaml_for)
+    try:
+        bundle = flight_bundle_path(yaml_for, bundles_dir)
+    except Exception as exc:                                  # noqa: BLE001
+        raise ValueError(f"cannot read the policy {yaml_for}: "
+                         f"{type(exc).__name__}: {exc}") from None
+    if not bundle.is_file():
+        raise ValueError(
+            f"the signed bundle of {yaml_for} is not on disk ({bundle}). Build it "
+            f"(python tools/build_flight_bundles.py {Path(yaml_for).stem}), give "
+            f"--bundle, or pass {DEV_YAML_FLAG} to fly the YAML unsigned, recorded "
+            f"as a development run")
+    b, y, rec = flight_policy_choice(None, None, dev_yaml=False,
+                                     default_yaml=yaml_for, default_bundle=bundle)
+    shown = Path(yaml_for).resolve()
+    rec["bundle_of"] = (shown.relative_to(ROOT).as_posix()
+                        if shown.is_relative_to(ROOT) else shown.as_posix())
+    return b, y, rec
 
 
 def camera_hfov_deg(config_path=ROBOT_CONFIG, sensor: str = "FrontCamera",
@@ -2917,6 +2968,90 @@ def annotate(img, det, hud: dict):
     return im
 
 
+def negative_suppress(pos, neg, thresh: float):
+    """Each box's score for the subject phrase with the NEGATIVE queries asked
+    beside it: `(scores, n_suppressed, top)`.
+
+    `pos[i]` is box i's sigmoid score for the subject phrase, `neg[i]` its
+    best score over the negative phrases ("a traffic light"), both from the
+    same forward pass. OWL-ViT scores each (box, phrase) pair on its own (a
+    sigmoid per pair, not a softmax over phrases), so asking a negative phrase
+    leaves every box's subject score as it was: a box keeps it unless the
+    negative phrase scores HIGHER on it - it looks more like a traffic light
+    than like a red car - and then scores 0 and can never pass the detector
+    threshold. `n_suppressed` counts the boxes that would have passed
+    `thresh` and were taken away; `top` is the index of the best-scoring of
+    them (None when none). With no negative phrase, pass `neg=None`: the
+    scores come back unchanged.
+
+    Added 2026-10-21 for the ArduPilot rail (demo/pas_ardupilot/
+    perception_node.py --negative-query): on the 21 Oct flight the detector's
+    box sat on a red traffic signal on every estimate (0/186 within 6 m of
+    the car)."""
+    if neg is None:
+        return list(pos), 0, None
+    out, n, top = [], 0, None
+    for i, (p, q) in enumerate(zip(pos, neg)):
+        p, q = float(p), float(q)
+        if q > p:
+            if p >= thresh:
+                n += 1
+                if top is None or p > float(pos[top]):
+                    top = i
+            out.append(0.0)
+        else:
+            out.append(p)
+    return out, n, top
+
+
+def subject_scores_with_negatives(logits, scores, labels, thresh: float):
+    """The detector's score per box for the SUBJECT phrase when negative
+    phrases were asked beside it (--negative-query): `(scores, record,
+    n_suppressed)`, one score per box post-processing kept.
+
+    `logits`: OWL-ViT's class logits for the image (out.logits[0]), one row
+    per box and one column per phrase in the order Grounder._worker asks
+    them - column 0 the subject, 1.. the negatives. `scores` / `labels`:
+    post_process_object_detection's answer at threshold 0.0 for the same
+    image, per box it kept the best sigmoid over the phrases and the index
+    of the phrase that won. That max may be a negative phrase's, so the
+    subject's own sigmoid is read from column 0 and negative_suppress zeroes
+    a box the negatives win. At threshold 0.0 post-processing keeps every
+    box in the logits' order, so row i is box i - unless it dropped one (a
+    score of exactly 0.0, a sigmoid underflow): the rows then cannot be
+    paired with the boxes, so the labels decide (a box a negative phrase won
+    scores 0, the rest keep post-processing's score) and the count is
+    unknown (`suppressed` None).
+
+    `record`: suppressed (int, or None when unknown), top_index (the best-
+    scoring box taken away, or None), top_pos / top_neg (its subject and
+    negative scores), count_unknown (why the count is unknown, or None).
+    Pure, on CPU arrays (a CPU torch tensor reads as one): moved out of the
+    worker so tests/test_pas_ardupilot.py can check the column, the
+    suppression and the fallback without a GPU (review 2026-10-22: in the
+    worker they had no test, and a wrong column would have failed silently,
+    on the GPU only)."""
+    lg = np.asarray(logits, dtype=np.float64)
+    if lg.ndim != 2 or lg.shape[1] < 2:
+        raise ValueError(f"logits of shape {lg.shape}: one row per box, the subject's "
+                         f"column and at least one negative phrase's")
+    sc = [float(s) for s in scores]
+    lb = [int(v) for v in labels]
+    if lg.shape[0] != len(sc):
+        kept = [s if lab == 0 else 0.0 for s, lab in zip(sc, lb)]
+        return kept, {"suppressed": None, "top_index": None, "top_pos": None,
+                      "top_neg": None,
+                      "count_unknown": f"{len(sc)} boxes for {lg.shape[0]} logits"}, 0
+    # The sigmoid as exp(-log(1 + e^-x)): no overflow for a very negative logit.
+    sig = np.exp(-np.logaddexp(0.0, -lg))
+    pos, neg = sig[:, 0], sig[:, 1:].max(axis=1)
+    kept, n_sup, top = negative_suppress(pos.tolist(), neg.tolist(), thresh)
+    return kept, {"suppressed": n_sup, "top_index": top,
+                  "top_pos": None if top is None else float(pos[top]),
+                  "top_neg": None if top is None else float(neg[top]),
+                  "count_unknown": None}, n_sup
+
+
 class Grounder:
     """Open-vocabulary detector in a background thread: text in, box out.
 
@@ -2932,7 +3067,13 @@ class Grounder:
                  jump_frac: float = 0.35, log_path: Path | None = None,
                  colour_min: float = 0.10, lock: "TargetLock | None" = None,
                  colour_mask: bool = True, legacy_sat: bool = False,
-                 identity: dict | None = None):
+                 identity: dict | None = None, negatives: list | None = None):
+        # NEGATIVE PHRASES (negative_suppress; 2026-10-21). Asked beside the
+        # subject phrase in the same forward pass; a box that scores higher
+        # for one of them than for the subject is no candidate. None or []
+        # keeps the single-phrase query exactly.
+        self.negatives = [str(n) for n in (negatives or []) if str(n).strip()]
+        self.n_neg_suppressed = 0
         # Measure the colour on the object's pixels rather than the whole box.
         # `mask_stats` records which path actually ran, because a fix that
         # silently never engages is the failure mode to watch for here - the
@@ -3125,7 +3266,9 @@ class Grounder:
         model = OwlViTForObjectDetection.from_pretrained(DETECTOR_ID).to("cuda").eval()
         print(f"[grounder] {DETECTOR_ID} loaded in {time.time()-t0:.0f}s "
               f"(VRAM {torch.cuda.memory_allocated()/1e9:.2f} GB)", flush=True)
-        queries = [[self.query]]
+        # The subject phrase first: index 0 is the one candidates come from;
+        # the negative phrases, if any, follow it (negative_suppress).
+        queries = [[self.query] + self.negatives]
         gen = self._query_gen
         last = None
         while not self._stop:
@@ -3134,7 +3277,7 @@ class Grounder:
             if self._query_gen != gen:
                 with self._lock:
                     gen = self._query_gen
-                    queries = [[self.query]]
+                    queries = [[self.query] + self.negatives]
                 # The jump gate compares against where the OLD target was, so it
                 # would reject the new one on exactly the frames that matter.
                 last = None
@@ -3202,6 +3345,27 @@ class Grounder:
                 out, threshold=0.0,
                 target_sizes=torch.tensor([[H, W]]).to("cuda"))[0]
             sc, bx = res["scores"], res["boxes"]
+            neg_rec = None
+            if self.negatives:
+                # post_process takes the max over the phrases; with a negative
+                # phrase that max may be the negative's. The subject's own
+                # score per box from the logits instead, and negative_suppress
+                # (subject_scores_with_negatives: the column, the suppression
+                # and the fallback when post_process dropped a box, tested on
+                # CPU arrays).
+                kept, nr, n_sup = subject_scores_with_negatives(
+                    out.logits[0].float().cpu().numpy(), sc.tolist(),
+                    res["labels"].tolist(), self.thresh)
+                sc = torch.tensor(kept, device=sc.device, dtype=sc.dtype)
+                self.n_neg_suppressed += n_sup
+                top = nr["top_index"]
+                neg_rec = ({"queries": list(self.negatives), "suppressed": None,
+                            "count_unknown": nr["count_unknown"]}
+                           if nr["suppressed"] is None else
+                           {"queries": list(self.negatives), "suppressed": n_sup,
+                            "top": (None if top is None else
+                                    [round(float(v), 1) for v in bx[top].tolist()]
+                                    + [round(nr["top_pos"], 4), round(nr["top_neg"], 4)])})
             # One depth frame per inference, not per candidate box. It indexes
             # straight into the scene image because both captures are configured
             # at the same resolution and the same field of view - the same
@@ -3395,6 +3559,11 @@ class Grounder:
                                       "w": round(cands[1][2], 1),
                                       "score": round(cands[1][4], 4),
                                       "colour": round(cands[1][7], 3)})}
+                if neg_rec is not None:
+                    # What the negative phrases took away on this frame: how
+                    # many boxes over the threshold, and the best of them
+                    # (x0, y0, x1, y1, subject score, negative score).
+                    rec["neg"] = neg_rec
                 if self.identity is not None:
                     # EVERY candidate, HARD ones included, with what it was
                     # judged on - so a tier can be re-derived offline and a
@@ -3815,18 +3984,22 @@ async def fly(args) -> int:
     random.seed(args.seed)
     np.random.seed(args.seed & 0xFFFFFFFF)
 
-    # The signed bundle when --bundle is given (refused unless its signature
-    # verifies, or --allow-unverified-bundle records that it did not); else the
-    # YAML, recorded as unsigned. Audit card ARCH-29: every flight used to read
-    # YAML, so no run could show which issued policy was in force.
+    # The signed bundle (refused unless its signature verifies, or
+    # --allow-unverified-bundle records that it did not): --bundle, or the
+    # bundle of --policy / DEFAULT_POLICY that tools/build_flight_bundles.py
+    # built; a YAML only under --dev-yaml, recorded so (city_policy_choice,
+    # ARCH-29: until 2026-10-21 this rail flew --policy as unsigned YAML).
     # Loaded BEFORE the output folder is cleared: a refused bundle (or --bundle
     # with --policy) used to delete the previous run's flight log first and
     # leave its manifest, kpi.json and metrics.json describing a log that was
     # gone (2026-10-06 review).
+    try:
+        _bundle, _yaml, _choice = city_policy_choice(args)
+    except ValueError as exc:
+        raise SystemExit(f"[policy] {exc}") from None
     policy, policy_source = load_for_flight(
-        args.bundle,
-        args.policy or (None if args.bundle else DEFAULT_POLICY),
-        allow_unverified=args.allow_unverified_bundle)
+        _bundle, _yaml, allow_unverified=args.allow_unverified_bundle)
+    policy_source.update(_choice)
 
     out = ROOT / "demo" / "out" / args.tag
     out.mkdir(parents=True, exist_ok=True)
@@ -3989,7 +4162,10 @@ async def fly(args) -> int:
 
     print(f"[policy]  {policy.policy_id} {policy.policy_hash}")
     print(f"[policy]  from {policy_source['kind']} {policy_source['path']} - "
-          f"signature {policy_source['signature']}")
+          f"signature {policy_source['signature']}"
+          + (f" ({DEV_YAML_FLAG}: a development run)" if policy_source.get("dev_yaml")
+             else f" (the signed bundle of {policy_source['bundle_of']})"
+             if policy_source.get("bundle_of") else ""))
     print(f"[follow]  query = {args.object!r}")
     print("[follow]  the ONLY steering input is where the detector puts the box; "
           "no target coordinates reach the controller")
@@ -6424,6 +6600,11 @@ async def fly(args) -> int:
 
     kpis = kpi_mod.compute(rows, kpi_mod.rule_priorities(policy), metrics)
     graded, reasons = is_kpi_grade(manifest, metrics)
+    if policy_source.get("dev_yaml"):
+        # As on the ArduPilot rails: the YAML is not the issued artefact.
+        reasons = list(reasons) + [f"the policy was flown from YAML under "
+                                   f"{DEV_YAML_FLAG}: unsigned, not its issued bundle"]
+        graded = False
     kpis["kpi_grade"] = graded
     kpis["kpi_grade_reasons"] = reasons
     kpis["manifest"] = manifest
@@ -6585,8 +6766,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "reproducible and can be replayed for a video. "
                          "Absent, the flight behaves exactly as before.")
     ap.add_argument("--policy", default=None,
-                    help="policy YAML (default policies/follow_car.yaml); "
-                         "recorded as UNSIGNED")
+                    help="the rule set, by its YAML (default policies/follow_car.yaml): "
+                         "its SIGNED bundle from bundles/ flies (tools/"
+                         "build_flight_bundles.py builds it), refused when absent "
+                         "or stale unless --dev-yaml")
+    ap.add_argument(DEV_YAML_FLAG, dest="dev_yaml", action="store_true",
+                    help="fly the YAML itself (--policy, or the default), unsigned: "
+                         "a development run, recorded as such and never KPI-grade")
     ap.add_argument("--bundle", default=None,
                     help="signed policy bundle (python -m guardrail.bundle "
                          "POLICY.yaml); refused unless its signature verifies")

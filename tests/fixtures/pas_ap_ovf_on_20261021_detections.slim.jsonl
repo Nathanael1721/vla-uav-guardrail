@@ -1,0 +1,346 @@
+{"_source": "demo/out/pas_ap_ovf_on_20261021 (read-only, main checkout): detections.jsonl, every inference, joined by det_seq with the first flight_log.jsonl row that consumed it", "_made": "2026-10-21 (tests/fixtures; open item C1, the start gate)", "_fields": {"seq": "inference number", "t": "s since the first inference", "det": "[cx, cy, w, h, score, img_w, img_h, colour] or null", "n_cands": "candidates that passed the colour gate", "up": "aircraft height m at that row", "pitch_deg": "body pitch", "yaw_deg": "heading", "depth_m": "depth read in the box at its capture (row subject_depth.r_m)", "depth_refused": "the node's own depth rule that refused it, or null", "truth_range_m": "the car's true range (evaluation only)", "truth_off_nose_deg": "its bearing off the nose (evaluation only)"}}
+{"seq": 1, "t": 0.0, "n_cands": 0, "det": null}
+{"seq": 2, "t": 0.46, "n_cands": 1, "det": [71.7, 142.3, 21.6, 17.2, 0.0533, 768, 432, 0.173], "up": 8.001, "pitch_deg": 0.15, "yaw_deg": -0.51, "depth_m": 11.0, "depth_refused": "depth 11.0 m is in front of the subject: its box's base ray meets the road at 44.8 m", "truth_range_m": 179.564, "truth_off_nose_deg": 51.32}
+{"seq": 3, "t": 0.81, "n_cands": 0, "det": null}
+{"seq": 4, "t": 1.11, "n_cands": 0, "det": null}
+{"seq": 5, "t": 1.34, "n_cands": 0, "det": null}
+{"seq": 6, "t": 1.6, "n_cands": 0, "det": null}
+{"seq": 7, "t": 1.82, "n_cands": 0, "det": null}
+{"seq": 8, "t": 2.06, "n_cands": 0, "det": null}
+{"seq": 9, "t": 2.28, "n_cands": 0, "det": null}
+{"seq": 10, "t": 2.49, "n_cands": 0, "det": null}
+{"seq": 11, "t": 2.76, "n_cands": 1, "det": [716.8, 276.2, 73.6, 27.6, 0.0364, 768, 432, 0.114], "up": 8.003, "pitch_deg": 7.15, "yaw_deg": -74.73, "depth_m": 42.0, "depth_refused": null, "truth_range_m": 183.635, "truth_off_nose_deg": 124.58}
+{"seq": 12, "t": 3.05, "n_cands": 0, "det": null}
+{"seq": 13, "t": 3.32, "n_cands": 0, "det": null}
+{"seq": 14, "t": 3.55, "n_cands": 0, "det": null}
+{"seq": 15, "t": 3.8, "n_cands": 0, "det": null}
+{"seq": 16, "t": 4.05, "n_cands": 0, "det": null}
+{"seq": 17, "t": 4.29, "n_cands": 0, "det": null}
+{"seq": 18, "t": 4.63, "n_cands": 1, "det": [173.7, 69.0, 45.7, 14.0, 0.0279, 768, 432, 0.242], "up": 8.001, "pitch_deg": 9.13, "yaw_deg": -45.79, "depth_m": 165.0, "depth_refused": null, "truth_range_m": 188.343, "truth_off_nose_deg": 94.73}
+{"seq": 19, "t": 4.91, "n_cands": 0, "det": null}
+{"seq": 20, "t": 5.16, "n_cands": 0, "det": null}
+{"seq": 21, "t": 5.44, "n_cands": 0, "det": null}
+{"seq": 22, "t": 5.71, "n_cands": 0, "det": null}
+{"seq": 23, "t": 6.02, "n_cands": 0, "det": null}
+{"seq": 24, "t": 6.38, "n_cands": 0, "det": null}
+{"seq": 25, "t": 6.72, "n_cands": 0, "det": null}
+{"seq": 26, "t": 7.11, "n_cands": 0, "det": null}
+{"seq": 27, "t": 7.56, "n_cands": 1, "det": [87.5, 142.2, 26.8, 9.0, 0.0705, 768, 432, 0.117], "up": 8.002, "pitch_deg": 4.34, "yaw_deg": -61.01, "depth_m": 31.0, "depth_refused": "depth 31.0 m is in front of the subject: its box's base ray meets the road at 210.4 m", "truth_range_m": 194.708, "truth_off_nose_deg": 108.91}
+{"seq": 28, "t": 7.85, "n_cands": 1, "det": [93.2, 133.1, 13.3, 8.2, 0.0221, 768, 432, 0.222], "up": 8.003, "pitch_deg": -1.72, "yaw_deg": -57.26, "depth_m": 31.0, "depth_refused": "depth 31.0 m is in front of the subject: its box's base ray meets the road at 133.7 m", "truth_range_m": 195.348, "truth_off_nose_deg": 104.99}
+{"seq": 29, "t": 8.15, "n_cands": 1, "det": [63.2, 126.8, 21.2, 9.4, 0.0378, 768, 432, 0.167], "up": 8.002, "pitch_deg": -12.13, "yaw_deg": -55.69, "depth_m": 31.0, "depth_refused": "depth 31.0 m is in front of the subject: its box's base ray meets the road at 75.3 m", "truth_range_m": 196.061, "truth_off_nose_deg": 103.23}
+{"seq": 30, "t": 8.45, "n_cands": 0, "det": null}
+{"seq": 31, "t": 8.77, "n_cands": 0, "det": null}
+{"seq": 32, "t": 9.07, "n_cands": 1, "det": [33.6, 7.5, 12.2, 8.7, 0.054, 768, 432, 0.292], "up": 7.998, "pitch_deg": -7.29, "yaw_deg": -71.36, "depth_m": 30.0, "depth_refused": "depth 30.0 m is in front of the subject: its box's base ray meets the road at 137.5 m", "truth_range_m": 198.214, "truth_off_nose_deg": 118.66}
+{"seq": 33, "t": 9.42, "n_cands": 1, "det": [115.6, 33.5, 23.8, 9.9, 0.0577, 768, 432, 0.139], "up": 8.002, "pitch_deg": -4.29, "yaw_deg": -85.87, "depth_m": 30.0, "depth_refused": "depth 30.0 m is in front of the subject: its box's base ray meets the road at 150.1 m", "truth_range_m": 199.363, "truth_off_nose_deg": 133.18}
+{"seq": 34, "t": 9.76, "n_cands": 1, "det": [134.9, 86.7, 11.2, 13.3, 0.066, 768, 432, 0.214], "up": 8.003, "pitch_deg": -6.05, "yaw_deg": -99.27, "depth_m": 31.0, "depth_refused": "depth 31.0 m is in front of the subject: its box's base ray meets the road at 65.5 m", "truth_range_m": 200.379, "truth_off_nose_deg": 146.56}
+{"seq": 35, "t": 10.08, "n_cands": 2, "det": [246.0, 82.7, 10.9, 13.5, 0.0457, 768, 432, 0.258], "up": 8.0, "pitch_deg": -6.77, "yaw_deg": -114.61, "depth_m": 30.0, "depth_refused": "depth 30.0 m is in front of the subject: its box's base ray meets the road at 62.3 m", "truth_range_m": 201.827, "truth_off_nose_deg": 161.87}
+{"seq": 36, "t": 10.41, "n_cands": 0, "det": null}
+{"seq": 37, "t": 10.73, "n_cands": 1, "det": [493.2, 66.7, 16.2, 11.1, 0.0272, 768, 432, 0.136], "up": 7.995, "pitch_deg": -7.59, "yaw_deg": -135.26, "depth_m": 27.0, "depth_refused": "depth 27.0 m is in front of the subject: its box's base ray meets the road at 71.3 m", "truth_range_m": 204.566, "truth_off_nose_deg": -177.57}
+{"seq": 38, "t": 11.04, "n_cands": 0, "det": null}
+{"seq": 39, "t": 11.28, "n_cands": 0, "det": null}
+{"seq": 40, "t": 11.49, "n_cands": 0, "det": null}
+{"seq": 41, "t": 11.73, "n_cands": 0, "det": null}
+{"seq": 42, "t": 11.97, "n_cands": 0, "det": null}
+{"seq": 43, "t": 12.22, "n_cands": 0, "det": null}
+{"seq": 44, "t": 12.46, "n_cands": 0, "det": null}
+{"seq": 45, "t": 12.7, "n_cands": 0, "det": null}
+{"seq": 46, "t": 12.97, "n_cands": 0, "det": null}
+{"seq": 47, "t": 13.21, "n_cands": 0, "det": null}
+{"seq": 48, "t": 13.46, "n_cands": 2, "det": [515.3, 212.7, 12.3, 17.2, 0.0255, 768, 432, 0.23], "up": 8.003, "pitch_deg": 4.45, "yaw_deg": -126.0, "depth_m": 22.0, "depth_refused": "depth 22.0 m is in front of the subject: its box's base ray meets the road at 38.4 m", "truth_range_m": 217.101, "truth_off_nose_deg": 171.45}
+{"seq": 49, "t": 13.7, "n_cands": 2, "det": [624.0, 143.3, 27.6, 11.8, 0.0278, 768, 432, 0.139], "up": 8.007, "pitch_deg": -2.15, "yaw_deg": -128.53, "depth_m": 20.0, "depth_refused": "depth 20.0 m is in front of the subject: its box's base ray meets the road at 103.6 m", "truth_range_m": 217.883, "truth_off_nose_deg": 173.78}
+{"seq": 50, "t": 13.98, "n_cands": 1, "det": [519.4, 176.5, 14.8, 17.0, 0.0233, 768, 432, 0.143], "up": 8.006, "pitch_deg": -11.97, "yaw_deg": -128.69, "depth_m": 22.0, "depth_refused": "depth 22.0 m would put the subject's centre 19 deg below the horizon, under its box's bottom edge (14 deg): outside what the camera saw", "truth_range_m": 218.689, "truth_off_nose_deg": 173.76}
+{"seq": 51, "t": 14.26, "n_cands": 1, "det": [538.5, 133.2, 14.9, 18.5, 0.0226, 768, 432, 0.168], "up": 8.002, "pitch_deg": -18.0, "yaw_deg": -125.96, "depth_m": 21.0, "depth_refused": "depth 21.0 m would put the subject's centre 20 deg below the horizon, under its box's bottom edge (15 deg): outside what the camera saw", "truth_range_m": 219.342, "truth_off_nose_deg": 170.92}
+{"seq": 52, "t": 14.56, "n_cands": 1, "det": [540.4, 52.4, 14.8, 19.1, 0.0231, 768, 432, 0.186], "up": 7.996, "pitch_deg": -15.17, "yaw_deg": -120.39, "depth_m": 21.0, "depth_refused": "depth 21.0 m is in front of the subject: its box's base ray meets the road at 35.0 m", "truth_range_m": 220.477, "truth_off_nose_deg": 165.21}
+{"seq": 53, "t": 14.83, "n_cands": 0, "det": null}
+{"seq": 54, "t": 15.11, "n_cands": 0, "det": null}
+{"seq": 55, "t": 15.42, "n_cands": 3, "det": [507.2, 51.9, 27.8, 12.7, 0.0735, 768, 432, 0.123], "up": 8.003, "pitch_deg": -3.5, "yaw_deg": -94.17, "depth_m": 18.0, "depth_refused": "depth 18.0 m is in front of the subject: its box's base ray meets the road at 108.9 m", "truth_range_m": 224.9, "truth_off_nose_deg": 138.59}
+{"seq": 56, "t": 15.74, "n_cands": 3, "det": [441.8, 73.3, 31.1, 13.5, 0.0501, 768, 432, 0.127], "up": 8.005, "pitch_deg": -1.96, "yaw_deg": -86.39, "depth_m": 17.0, "depth_refused": "depth 17.0 m is in front of the subject: its box's base ray meets the road at 104.1 m", "truth_range_m": 226.218, "truth_off_nose_deg": 130.72}
+{"seq": 57, "t": 16.04, "n_cands": 3, "det": [415.4, 84.0, 12.0, 9.9, 0.0306, 768, 432, 0.352], "up": 8.004, "pitch_deg": -2.88, "yaw_deg": -81.44, "depth_m": 17.0, "depth_refused": "depth 17.0 m is in front of the subject: its box's base ray meets the road at 109.2 m", "truth_range_m": 227.203, "truth_off_nose_deg": 125.64}
+{"seq": 58, "t": 16.34, "n_cands": 3, "det": [259.4, 184.1, 13.7, 17.4, 0.0344, 768, 432, 0.224], "up": 8.003, "pitch_deg": -4.33, "yaw_deg": -78.13, "depth_m": 17.0, "depth_refused": "depth 17.0 m would put the subject's centre 25 deg below the horizon, under its box's bottom edge (19 deg): outside what the camera saw", "truth_range_m": 228.094, "truth_off_nose_deg": 122.25}
+{"seq": 59, "t": 16.6, "n_cands": 1, "det": [325.7, 95.7, 32.8, 16.4, 0.0257, 768, 432, 0.134], "up": 8.001, "pitch_deg": -2.38, "yaw_deg": -77.35, "depth_m": 15.0, "depth_refused": "depth 15.0 m is in front of the subject: its box's base ray meets the road at 57.9 m", "truth_range_m": 228.804, "truth_off_nose_deg": 121.4}
+{"seq": 60, "t": 16.9, "n_cands": 2, "det": [318.0, 96.1, 33.2, 15.5, 0.0309, 768, 432, 0.142], "up": 8.0, "pitch_deg": -1.37, "yaw_deg": -79.13, "depth_m": 14.0, "depth_refused": "depth 14.0 m is in front of the subject: its box's base ray meets the road at 65.9 m", "truth_range_m": 229.333, "truth_off_nose_deg": 123.14}
+{"seq": 61, "t": 17.15, "n_cands": 1, "det": [320.4, 111.0, 35.1, 16.1, 0.0428, 768, 432, 0.135], "up": 8.0, "pitch_deg": -0.79, "yaw_deg": -81.76, "depth_m": 13.0, "depth_refused": "depth 13.0 m is in front of the subject: its box's base ray meets the road at 62.1 m", "truth_range_m": 229.6, "truth_off_nose_deg": 125.75}
+{"seq": 62, "t": 17.39, "n_cands": 1, "det": [329.3, 116.6, 33.7, 16.1, 0.0359, 768, 432, 0.138], "up": 7.999, "pitch_deg": -0.99, "yaw_deg": -85.62, "depth_m": 13.0, "depth_refused": "depth 13.0 m is in front of the subject: its box's base ray meets the road at 58.8 m", "truth_range_m": 229.769, "truth_off_nose_deg": 129.56}
+{"seq": 63, "t": 17.64, "n_cands": 2, "det": [344.6, 120.8, 37.8, 16.1, 0.0402, 768, 432, 0.134], "up": 7.999, "pitch_deg": -0.91, "yaw_deg": -88.21, "depth_m": 12.0, "depth_refused": "depth 12.0 m is in front of the subject: its box's base ray meets the road at 57.7 m", "truth_range_m": 229.888, "truth_off_nose_deg": 132.14}
+{"seq": 64, "t": 17.93, "n_cands": 2, "det": [389.9, 125.9, 16.5, 13.4, 0.0224, 768, 432, 0.401], "up": 7.999, "pitch_deg": -0.91, "yaw_deg": -90.84, "depth_m": 11.0, "depth_refused": "depth 11.0 m is in front of the subject: its box's base ray meets the road at 53.7 m", "truth_range_m": 230.022, "truth_off_nose_deg": 134.78}
+{"seq": 65, "t": 18.2, "n_cands": 2, "det": [390.9, 126.0, 41.3, 15.6, 0.0593, 768, 432, 0.145], "up": 7.998, "pitch_deg": -2.45, "yaw_deg": -92.07, "depth_m": 10.0, "depth_refused": "depth 10.0 m is in front of the subject: its box's base ray meets the road at 50.3 m", "truth_range_m": 230.047, "truth_off_nose_deg": 136.02}
+{"seq": 66, "t": 18.45, "n_cands": 1, "det": [402.5, 131.4, 51.5, 21.2, 0.0374, 768, 432, 0.134], "up": 7.997, "pitch_deg": 2.81, "yaw_deg": -92.2, "depth_m": 9.0, "depth_refused": "depth 9.0 m is in front of the subject: its box's base ray meets the road at 40.7 m", "truth_range_m": 230.067, "truth_off_nose_deg": 136.17}
+{"seq": 67, "t": 18.75, "n_cands": 1, "det": [408.3, 134.6, 54.1, 22.2, 0.0254, 768, 432, 0.136], "up": 7.996, "pitch_deg": 11.79, "yaw_deg": -91.04, "depth_m": 8.0, "depth_refused": "depth 8.0 m is in front of the subject: its box's base ray meets the road at 46.3 m", "truth_range_m": 230.085, "truth_off_nose_deg": 135.03}
+{"seq": 68, "t": 19.04, "n_cands": 2, "det": [404.2, 184.5, 58.9, 24.1, 0.059, 768, 432, 0.128], "up": 7.994, "pitch_deg": 13.57, "yaw_deg": -89.62, "depth_m": 7.0, "depth_refused": "depth 7.0 m along a ray 7 deg below the horizon ends 7.1 m above the road, above any subject (under 2.5 m); the camera cannot see under the aircraft", "truth_range_m": 229.953, "truth_off_nose_deg": 133.57}
+{"seq": 69, "t": 19.3, "n_cands": 1, "det": [400.6, 246.3, 65.9, 28.3, 0.0417, 768, 432, 0.121], "up": 7.991, "pitch_deg": 13.54, "yaw_deg": -88.25, "depth_m": 6.0, "depth_refused": "depth 6.0 m along a ray 13 deg below the horizon ends 6.7 m above the road, above any subject (under 2.5 m); the camera cannot see under the aircraft", "truth_range_m": 229.713, "truth_off_nose_deg": 132.15}
+{"seq": 70, "t": 19.62, "n_cands": 2, "det": [405.2, 280.3, 68.2, 25.7, 0.0271, 768, 432, 0.131], "up": 7.993, "pitch_deg": 9.64, "yaw_deg": -87.45, "depth_m": 6.0, "depth_refused": "depth 6.0 m along a ray 14 deg below the horizon ends 6.6 m above the road, above any subject (under 2.5 m); the camera cannot see under the aircraft", "truth_range_m": 229.28, "truth_off_nose_deg": 131.27}
+{"seq": 71, "t": 19.93, "n_cands": 1, "det": [395.8, 252.8, 85.1, 38.1, 0.0318, 768, 432, 0.102], "up": 7.998, "pitch_deg": 7.47, "yaw_deg": -86.73, "depth_m": 5.0, "depth_refused": "depth 5.0 m is nearer than the camera's height above any subject (8.0 m up, subjects under 2.5 m), whatever the ray", "truth_range_m": 228.774, "truth_off_nose_deg": 130.43}
+{"seq": 72, "t": 20.23, "n_cands": 0, "det": null}
+{"seq": 73, "t": 20.53, "n_cands": 0, "det": null}
+{"seq": 74, "t": 20.8, "n_cands": 0, "det": null}
+{"seq": 75, "t": 21.05, "n_cands": 1, "det": [253.4, 206.4, 23.2, 24.3, 0.0207, 768, 432, 0.118], "up": 8.005, "pitch_deg": 0.53, "yaw_deg": -84.91, "depth_m": 13.0, "depth_refused": "depth 13.0 m is in front of the subject: its box's base ray meets the road at 25.7 m", "truth_range_m": 226.077, "truth_off_nose_deg": 128.14}
+{"seq": 76, "t": 21.35, "n_cands": 0, "det": null}
+{"seq": 77, "t": 21.65, "n_cands": 0, "det": null}
+{"seq": 78, "t": 21.96, "n_cands": 0, "det": null}
+{"seq": 79, "t": 22.17, "n_cands": 0, "det": null}
+{"seq": 80, "t": 22.4, "n_cands": 0, "det": null}
+{"seq": 81, "t": 22.66, "n_cands": 0, "det": null}
+{"seq": 82, "t": 22.93, "n_cands": 0, "det": null}
+{"seq": 83, "t": 23.21, "n_cands": 0, "det": null}
+{"seq": 84, "t": 23.47, "n_cands": 0, "det": null}
+{"seq": 85, "t": 23.73, "n_cands": 0, "det": null}
+{"seq": 86, "t": 23.99, "n_cands": 0, "det": null}
+{"seq": 87, "t": 24.26, "n_cands": 0, "det": null}
+{"seq": 88, "t": 24.52, "n_cands": 0, "det": null}
+{"seq": 89, "t": 24.76, "n_cands": 0, "det": null}
+{"seq": 90, "t": 25.01, "n_cands": 0, "det": null}
+{"seq": 91, "t": 25.24, "n_cands": 0, "det": null}
+{"seq": 92, "t": 25.49, "n_cands": 0, "det": null}
+{"seq": 93, "t": 25.77, "n_cands": 0, "det": null}
+{"seq": 94, "t": 26.04, "n_cands": 0, "det": null}
+{"seq": 95, "t": 26.3, "n_cands": 0, "det": null}
+{"seq": 96, "t": 26.56, "n_cands": 0, "det": null}
+{"seq": 97, "t": 26.83, "n_cands": 0, "det": null}
+{"seq": 98, "t": 27.1, "n_cands": 0, "det": null}
+{"seq": 99, "t": 27.35, "n_cands": 0, "det": null}
+{"seq": 100, "t": 27.57, "n_cands": 0, "det": null}
+{"seq": 101, "t": 27.85, "n_cands": 0, "det": null}
+{"seq": 102, "t": 28.14, "n_cands": 0, "det": null}
+{"seq": 103, "t": 28.42, "n_cands": 0, "det": null}
+{"seq": 104, "t": 28.74, "n_cands": 0, "det": null}
+{"seq": 105, "t": 29.0, "n_cands": 0, "det": null}
+{"seq": 106, "t": 29.25, "n_cands": 0, "det": null}
+{"seq": 107, "t": 29.48, "n_cands": 0, "det": null}
+{"seq": 108, "t": 29.79, "n_cands": 0, "det": null}
+{"seq": 109, "t": 30.05, "n_cands": 0, "det": null}
+{"seq": 110, "t": 30.31, "n_cands": 0, "det": null}
+{"seq": 111, "t": 30.58, "n_cands": 0, "det": null}
+{"seq": 112, "t": 30.85, "n_cands": 0, "det": null}
+{"seq": 113, "t": 31.11, "n_cands": 0, "det": null}
+{"seq": 114, "t": 31.4, "n_cands": 0, "det": null}
+{"seq": 115, "t": 31.63, "n_cands": 0, "det": null}
+{"seq": 116, "t": 31.88, "n_cands": 0, "det": null}
+{"seq": 117, "t": 32.16, "n_cands": 0, "det": null}
+{"seq": 118, "t": 32.4, "n_cands": 0, "det": null}
+{"seq": 119, "t": 32.67, "n_cands": 0, "det": null}
+{"seq": 120, "t": 32.96, "n_cands": 0, "det": null}
+{"seq": 121, "t": 33.23, "n_cands": 0, "det": null}
+{"seq": 122, "t": 33.51, "n_cands": 0, "det": null}
+{"seq": 123, "t": 33.79, "n_cands": 0, "det": null}
+{"seq": 124, "t": 34.08, "n_cands": 0, "det": null}
+{"seq": 125, "t": 34.31, "n_cands": 0, "det": null}
+{"seq": 126, "t": 34.56, "n_cands": 0, "det": null}
+{"seq": 127, "t": 34.82, "n_cands": 0, "det": null}
+{"seq": 128, "t": 35.05, "n_cands": 0, "det": null}
+{"seq": 129, "t": 35.28, "n_cands": 0, "det": null}
+{"seq": 130, "t": 35.58, "n_cands": 0, "det": null}
+{"seq": 131, "t": 35.86, "n_cands": 0, "det": null}
+{"seq": 132, "t": 36.11, "n_cands": 0, "det": null}
+{"seq": 133, "t": 36.38, "n_cands": 0, "det": null}
+{"seq": 134, "t": 36.66, "n_cands": 0, "det": null}
+{"seq": 135, "t": 36.93, "n_cands": 0, "det": null}
+{"seq": 136, "t": 37.21, "n_cands": 0, "det": null}
+{"seq": 137, "t": 37.48, "n_cands": 0, "det": null}
+{"seq": 138, "t": 37.71, "n_cands": 0, "det": null}
+{"seq": 139, "t": 37.97, "n_cands": 0, "det": null}
+{"seq": 140, "t": 38.21, "n_cands": 0, "det": null}
+{"seq": 141, "t": 38.48, "n_cands": 0, "det": null}
+{"seq": 142, "t": 38.71, "n_cands": 0, "det": null}
+{"seq": 143, "t": 38.98, "n_cands": 0, "det": null}
+{"seq": 144, "t": 39.25, "n_cands": 0, "det": null}
+{"seq": 145, "t": 39.52, "n_cands": 0, "det": null}
+{"seq": 146, "t": 39.79, "n_cands": 0, "det": null}
+{"seq": 147, "t": 40.07, "n_cands": 0, "det": null}
+{"seq": 148, "t": 40.37, "n_cands": 0, "det": null}
+{"seq": 149, "t": 40.61, "n_cands": 0, "det": null}
+{"seq": 150, "t": 40.83, "n_cands": 0, "det": null}
+{"seq": 151, "t": 41.05, "n_cands": 0, "det": null}
+{"seq": 152, "t": 41.3, "n_cands": 0, "det": null}
+{"seq": 153, "t": 41.55, "n_cands": 0, "det": null}
+{"seq": 154, "t": 41.82, "n_cands": 0, "det": null}
+{"seq": 155, "t": 42.08, "n_cands": 0, "det": null}
+{"seq": 156, "t": 42.37, "n_cands": 0, "det": null}
+{"seq": 157, "t": 42.49, "n_cands": 0, "det": null}
+{"seq": 158, "t": 42.62, "n_cands": 0, "det": null}
+{"seq": 159, "t": 42.93, "n_cands": 0, "det": null}
+{"seq": 160, "t": 43.18, "n_cands": 0, "det": null}
+{"seq": 161, "t": 43.45, "n_cands": 0, "det": null}
+{"seq": 162, "t": 43.7, "n_cands": 0, "det": null}
+{"seq": 163, "t": 44.01, "n_cands": 0, "det": null}
+{"seq": 164, "t": 44.32, "n_cands": 0, "det": null}
+{"seq": 165, "t": 44.6, "n_cands": 0, "det": null}
+{"seq": 166, "t": 44.88, "n_cands": 0, "det": null}
+{"seq": 167, "t": 45.14, "n_cands": 0, "det": null}
+{"seq": 168, "t": 45.41, "n_cands": 0, "det": null}
+{"seq": 169, "t": 45.71, "n_cands": 0, "det": null}
+{"seq": 170, "t": 45.97, "n_cands": 0, "det": null}
+{"seq": 171, "t": 46.26, "n_cands": 0, "det": null}
+{"seq": 172, "t": 46.54, "n_cands": 0, "det": null}
+{"seq": 173, "t": 46.8, "n_cands": 0, "det": null}
+{"seq": 174, "t": 47.08, "n_cands": 0, "det": null}
+{"seq": 175, "t": 47.34, "n_cands": 0, "det": null}
+{"seq": 176, "t": 47.57, "n_cands": 0, "det": null}
+{"seq": 177, "t": 47.84, "n_cands": 0, "det": null}
+{"seq": 178, "t": 48.18, "n_cands": 0, "det": null}
+{"seq": 179, "t": 48.42, "n_cands": 0, "det": null}
+{"seq": 180, "t": 48.74, "n_cands": 0, "det": null}
+{"seq": 181, "t": 49.02, "n_cands": 0, "det": null}
+{"seq": 182, "t": 49.3, "n_cands": 0, "det": null}
+{"seq": 183, "t": 49.58, "n_cands": 0, "det": null}
+{"seq": 184, "t": 49.88, "n_cands": 0, "det": null}
+{"seq": 185, "t": 50.2, "n_cands": 0, "det": null}
+{"seq": 186, "t": 50.47, "n_cands": 0, "det": null}
+{"seq": 187, "t": 50.82, "n_cands": 0, "det": null}
+{"seq": 188, "t": 51.1, "n_cands": 0, "det": null}
+{"seq": 189, "t": 51.37, "n_cands": 0, "det": null}
+{"seq": 190, "t": 51.64, "n_cands": 0, "det": null}
+{"seq": 191, "t": 51.93, "n_cands": 0, "det": null}
+{"seq": 192, "t": 52.23, "n_cands": 0, "det": null}
+{"seq": 193, "t": 52.54, "n_cands": 0, "det": null}
+{"seq": 194, "t": 52.8, "n_cands": 0, "det": null}
+{"seq": 195, "t": 53.1, "n_cands": 0, "det": null}
+{"seq": 196, "t": 53.38, "n_cands": 0, "det": null}
+{"seq": 197, "t": 53.66, "n_cands": 1, "det": [51.1, 230.7, 101.2, 76.6, 0.0398, 768, 432, 0.133], "up": 8.0, "pitch_deg": -1.36, "yaw_deg": -64.76, "depth_m": 4.0, "depth_refused": "depth 4.0 m is nearer than the camera's height above any subject (8.0 m up, subjects under 2.5 m), whatever the ray", "truth_range_m": 187.842, "truth_off_nose_deg": 94.13}
+{"seq": 198, "t": 53.99, "n_cands": 2, "det": [41.8, 231.8, 82.4, 71.1, 0.0488, 768, 432, 0.177], "up": 8.0, "pitch_deg": -4.85, "yaw_deg": -66.38, "depth_m": 4.0, "depth_refused": "depth 4.0 m is nearer than the camera's height above any subject (8.0 m up, subjects under 2.5 m), whatever the ray", "truth_range_m": 187.336, "truth_off_nose_deg": 95.51}
+{"seq": 199, "t": 54.28, "n_cands": 1, "det": [41.3, 233.6, 81.4, 72.4, 0.0534, 768, 432, 0.177], "up": 7.999, "pitch_deg": -13.63, "yaw_deg": -70.46, "depth_m": 4.0, "depth_refused": "depth 4.0 m is nearer than the camera's height above any subject (8.0 m up, subjects under 2.5 m), whatever the ray", "truth_range_m": 186.825, "truth_off_nose_deg": 99.35}
+{"seq": 200, "t": 54.59, "n_cands": 1, "det": [48.0, 193.3, 94.9, 80.3, 0.0639, 768, 432, 0.134], "up": 7.997, "pitch_deg": -10.93, "yaw_deg": -77.35, "depth_m": 4.0, "depth_refused": "depth 4.0 m is nearer than the camera's height above any subject (8.0 m up, subjects under 2.5 m), whatever the ray", "truth_range_m": 186.381, "truth_off_nose_deg": 106.08}
+{"seq": 201, "t": 54.9, "n_cands": 0, "det": null}
+{"seq": 202, "t": 55.27, "n_cands": 0, "det": null}
+{"seq": 203, "t": 55.58, "n_cands": 0, "det": null}
+{"seq": 204, "t": 55.88, "n_cands": 0, "det": null}
+{"seq": 205, "t": 56.2, "n_cands": 0, "det": null}
+{"seq": 206, "t": 56.49, "n_cands": 0, "det": null}
+{"seq": 207, "t": 56.9, "n_cands": 0, "det": null}
+{"seq": 208, "t": 57.25, "n_cands": 0, "det": null}
+{"seq": 209, "t": 57.56, "n_cands": 0, "det": null}
+{"seq": 210, "t": 57.86, "n_cands": 0, "det": null}
+{"seq": 211, "t": 58.14, "n_cands": 0, "det": null}
+{"seq": 212, "t": 58.42, "n_cands": 0, "det": null}
+{"seq": 213, "t": 58.67, "n_cands": 0, "det": null}
+{"seq": 214, "t": 58.94, "n_cands": 0, "det": null}
+{"seq": 215, "t": 59.19, "n_cands": 0, "det": null}
+{"seq": 216, "t": 59.43, "n_cands": 0, "det": null}
+{"seq": 217, "t": 59.68, "n_cands": 0, "det": null}
+{"seq": 218, "t": 59.92, "n_cands": 0, "det": null}
+{"seq": 219, "t": 60.17, "n_cands": 0, "det": null}
+{"seq": 220, "t": 60.42, "n_cands": 0, "det": null}
+{"seq": 221, "t": 60.69, "n_cands": 0, "det": null}
+{"seq": 222, "t": 60.95, "n_cands": 0, "det": null}
+{"seq": 223, "t": 61.18, "n_cands": 0, "det": null}
+{"seq": 224, "t": 61.42, "n_cands": 0, "det": null}
+{"seq": 225, "t": 61.67, "n_cands": 0, "det": null}
+{"seq": 226, "t": 61.97, "n_cands": 0, "det": null}
+{"seq": 227, "t": 62.29, "n_cands": 0, "det": null}
+{"seq": 228, "t": 62.57, "n_cands": 0, "det": null}
+{"seq": 229, "t": 62.81, "n_cands": 0, "det": null}
+{"seq": 230, "t": 63.03, "n_cands": 0, "det": null}
+{"seq": 231, "t": 63.28, "n_cands": 0, "det": null}
+{"seq": 232, "t": 63.55, "n_cands": 0, "det": null}
+{"seq": 233, "t": 63.82, "n_cands": 0, "det": null}
+{"seq": 234, "t": 64.08, "n_cands": 0, "det": null}
+{"seq": 235, "t": 64.36, "n_cands": 0, "det": null}
+{"seq": 236, "t": 64.6, "n_cands": 0, "det": null}
+{"seq": 237, "t": 64.87, "n_cands": 0, "det": null}
+{"seq": 238, "t": 65.1, "n_cands": 0, "det": null}
+{"seq": 239, "t": 65.39, "n_cands": 0, "det": null}
+{"seq": 240, "t": 65.63, "n_cands": 0, "det": null}
+{"seq": 241, "t": 65.92, "n_cands": 0, "det": null}
+{"seq": 242, "t": 66.21, "n_cands": 0, "det": null}
+{"seq": 243, "t": 66.5, "n_cands": 0, "det": null}
+{"seq": 244, "t": 66.78, "n_cands": 0, "det": null}
+{"seq": 245, "t": 67.06, "n_cands": 0, "det": null}
+{"seq": 246, "t": 67.32, "n_cands": 0, "det": null}
+{"seq": 247, "t": 67.58, "n_cands": 0, "det": null}
+{"seq": 248, "t": 67.83, "n_cands": 0, "det": null}
+{"seq": 249, "t": 68.11, "n_cands": 0, "det": null}
+{"seq": 250, "t": 68.38, "n_cands": 0, "det": null}
+{"seq": 251, "t": 68.64, "n_cands": 0, "det": null}
+{"seq": 252, "t": 68.89, "n_cands": 0, "det": null}
+{"seq": 253, "t": 69.23, "n_cands": 0, "det": null}
+{"seq": 254, "t": 69.54, "n_cands": 0, "det": null}
+{"seq": 255, "t": 69.84, "n_cands": 0, "det": null}
+{"seq": 256, "t": 70.08, "n_cands": 0, "det": null}
+{"seq": 257, "t": 70.32, "n_cands": 0, "det": null}
+{"seq": 258, "t": 70.59, "n_cands": 0, "det": null}
+{"seq": 259, "t": 70.89, "n_cands": 0, "det": null}
+{"seq": 260, "t": 71.15, "n_cands": 0, "det": null}
+{"seq": 261, "t": 71.43, "n_cands": 0, "det": null}
+{"seq": 262, "t": 71.66, "n_cands": 0, "det": null}
+{"seq": 263, "t": 71.92, "n_cands": 0, "det": null}
+{"seq": 264, "t": 72.18, "n_cands": 0, "det": null}
+{"seq": 265, "t": 72.43, "n_cands": 0, "det": null}
+{"seq": 266, "t": 72.67, "n_cands": 0, "det": null}
+{"seq": 267, "t": 72.92, "n_cands": 0, "det": null}
+{"seq": 268, "t": 73.18, "n_cands": 0, "det": null}
+{"seq": 269, "t": 73.44, "n_cands": 0, "det": null}
+{"seq": 270, "t": 73.77, "n_cands": 0, "det": null}
+{"seq": 271, "t": 74.01, "n_cands": 0, "det": null}
+{"seq": 272, "t": 74.29, "n_cands": 0, "det": null}
+{"seq": 273, "t": 74.54, "n_cands": 0, "det": null}
+{"seq": 274, "t": 74.8, "n_cands": 0, "det": null}
+{"seq": 275, "t": 75.05, "n_cands": 0, "det": null}
+{"seq": 276, "t": 75.39, "n_cands": 0, "det": null}
+{"seq": 277, "t": 75.66, "n_cands": 0, "det": null}
+{"seq": 278, "t": 75.92, "n_cands": 0, "det": null}
+{"seq": 279, "t": 76.16, "n_cands": 0, "det": null}
+{"seq": 280, "t": 76.44, "n_cands": 0, "det": null}
+{"seq": 281, "t": 76.7, "n_cands": 0, "det": null}
+{"seq": 282, "t": 76.98, "n_cands": 0, "det": null}
+{"seq": 283, "t": 77.23, "n_cands": 0, "det": null}
+{"seq": 284, "t": 77.51, "n_cands": 0, "det": null}
+{"seq": 285, "t": 77.76, "n_cands": 0, "det": null}
+{"seq": 286, "t": 78.03, "n_cands": 0, "det": null}
+{"seq": 287, "t": 78.31, "n_cands": 0, "det": null}
+{"seq": 288, "t": 78.56, "n_cands": 0, "det": null}
+{"seq": 289, "t": 78.81, "n_cands": 0, "det": null}
+{"seq": 290, "t": 79.07, "n_cands": 0, "det": null}
+{"seq": 291, "t": 79.39, "n_cands": 1, "det": [405.8, 172.8, 23.7, 25.0, 0.0275, 768, 432, 0.117], "up": 8.003, "pitch_deg": -3.1, "yaw_deg": -126.45, "depth_m": 11.0, "depth_refused": "depth 11.0 m is in front of the subject: its box's base ray meets the road at 26.0 m", "truth_range_m": 160.234, "truth_off_nose_deg": 133.0}
+{"seq": 292, "t": 79.67, "n_cands": 0, "det": null}
+{"seq": 293, "t": 79.97, "n_cands": 0, "det": null}
+{"seq": 294, "t": 80.24, "n_cands": 0, "det": null}
+{"seq": 295, "t": 80.51, "n_cands": 0, "det": null}
+{"seq": 296, "t": 80.77, "n_cands": 0, "det": null}
+{"seq": 297, "t": 81.03, "n_cands": 0, "det": null}
+{"seq": 298, "t": 81.35, "n_cands": 0, "det": null}
+{"seq": 299, "t": 81.61, "n_cands": 0, "det": null}
+{"seq": 300, "t": 81.86, "n_cands": 0, "det": null}
+{"seq": 301, "t": 82.11, "n_cands": 0, "det": null}
+{"seq": 302, "t": 82.39, "n_cands": 0, "det": null}
+{"seq": 303, "t": 82.67, "n_cands": 0, "det": null}
+{"seq": 304, "t": 82.93, "n_cands": 0, "det": null}
+{"seq": 305, "t": 83.2, "n_cands": 0, "det": null}
+{"seq": 306, "t": 83.47, "n_cands": 0, "det": null}
+{"seq": 307, "t": 83.74, "n_cands": 0, "det": null}
+{"seq": 308, "t": 84.07, "n_cands": 0, "det": null}
+{"seq": 309, "t": 84.38, "n_cands": 0, "det": null}
+{"seq": 310, "t": 84.66, "n_cands": 0, "det": null}
+{"seq": 311, "t": 84.94, "n_cands": 0, "det": null}
+{"seq": 312, "t": 85.21, "n_cands": 0, "det": null}
+{"seq": 313, "t": 85.5, "n_cands": 0, "det": null}
+{"seq": 314, "t": 85.77, "n_cands": 0, "det": null}
+{"seq": 315, "t": 86.04, "n_cands": 0, "det": null}
+{"seq": 316, "t": 86.3, "n_cands": 0, "det": null}
+{"seq": 317, "t": 86.54, "n_cands": 0, "det": null}
+{"seq": 318, "t": 86.8, "n_cands": 0, "det": null}
+{"seq": 319, "t": 87.08, "n_cands": 0, "det": null}
+{"seq": 320, "t": 87.33, "n_cands": 0, "det": null}
+{"seq": 321, "t": 87.59, "n_cands": 0, "det": null}
+{"seq": 322, "t": 87.89, "n_cands": 0, "det": null}
+{"seq": 323, "t": 88.22, "n_cands": 0, "det": null}
+{"seq": 324, "t": 88.46, "n_cands": 0, "det": null}
+{"seq": 325, "t": 88.72, "n_cands": 0, "det": null}
+{"seq": 326, "t": 89.0, "n_cands": 0, "det": null}
+{"seq": 327, "t": 89.27, "n_cands": 0, "det": null}
+{"seq": 328, "t": 89.56, "n_cands": 0, "det": null}
+{"seq": 329, "t": 89.81, "n_cands": 0, "det": null}
+{"seq": 330, "t": 90.05, "n_cands": 0, "det": null}
+{"seq": 331, "t": 90.29, "n_cands": 0, "det": null}
+{"seq": 332, "t": 90.55, "n_cands": 0, "det": null}
+{"seq": 333, "t": 90.81, "n_cands": 0, "det": null}
+{"seq": 334, "t": 91.08, "n_cands": 0, "det": null}
+{"seq": 335, "t": 91.36, "n_cands": 0, "det": null}
+{"seq": 336, "t": 91.62, "n_cands": 0, "det": null}
+{"seq": 337, "t": 91.92, "n_cands": 0, "det": null}
+{"seq": 338, "t": 92.2, "n_cands": 0, "det": null}
+{"seq": 339, "t": 92.46, "n_cands": 0, "det": null}
+{"seq": 340, "t": 92.7, "n_cands": 0, "det": null}
+{"seq": 341, "t": 92.98, "n_cands": 0, "det": null}
+{"seq": 342, "t": 93.27, "n_cands": 0, "det": null}
+{"seq": 343, "t": 93.51, "n_cands": 0, "det": null}
+{"seq": 344, "t": 93.73, "n_cands": 0, "det": null}
+{"seq": 345, "t": 94.15, "n_cands": 0, "det": null}

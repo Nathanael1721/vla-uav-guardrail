@@ -25,6 +25,15 @@ with the current code, the stored artefacts report:
 100 % of P0 ticks unmeasurable, on the rail whose whole purpose is to produce
 contractual figures.
 
+> **Delayed pose (note added 2026-10-21).** `sitl_shield_on` was flown by the
+> pymavlink SITL rail before 79bae12 (2026-10-19), which read pymavlink's
+> OLDEST queued LOCAL_POSITION_NED each tick, so its pose ran seconds behind
+> the aircraft (3-6.6 s on `sitl_ped_on`; CHANGELOG 2026-10-19). The finding
+> above (the field was missing, so no tick was measurable) does not depend on
+> the pose; any figure of that run that does (ticks, dwell, mission success)
+> describes the rail as it flew, not the aircraft's true position. The two
+> `ros2_*` runs came over MAVROS and are not affected.
+
 ## Three defects, one of them mine
 
 **I broke the dynamic-NFZ path two days earlier.** Commit `01e22ca` made

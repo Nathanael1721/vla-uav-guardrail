@@ -73,7 +73,8 @@ def _fly(policy: str, *, shield="on", max_s="3", extra=(), dev_yaml=True,
         "--out-root", str(out), "--tag", "run", "--policy", str(pol), "--max-s", max_s,
         "--hfov", "90", "--citymap", str(out / "no_map.npz"), "--network", "nat",
         "--windows-ip", T.WIN, "--wsl-ip", T.WSL, "--shield", shield,
-        "--speed-max", "4", *(["--dev-yaml"] if dev_yaml else []), *extra])
+        "--speed-max", "4", *(["--dev-yaml"] if dev_yaml else []),
+        "--start-when-seen", "0", *extra])
     clk = T.Clock()
     anchor = ap.FrameAnchor(*ANCHOR, "scene.home-geo-point")
     link = (link_cls or T.FakeLink)(clk, anchor, **(link_kw or {}))
@@ -361,6 +362,46 @@ def test_the_launcher_flies_the_signed_bundle_or_says_dev_yaml():
     got, said = _policy_args(y, _tmp())
     assert got.split("|") == ["--policy", str(y), "--dev-yaml"], got
     assert "no signed bundle" in said, said
+
+
+def _city_policy_dev(yaml: Path, bundles: Path, dev: bool = False) -> tuple[str, str]:
+    """Run tools/Get-FlightPolicyDev.ps1 (the city launchers' check) under
+    PowerShell: (its argument list joined by '|', everything it said)."""
+    fn = ROOT / "tools" / "Get-FlightPolicyDev.ps1"
+    ps = "\n".join([
+        '$ErrorActionPreference = "Stop"', f". '{fn}'",
+        f"$r = @(Get-FlightPolicyDev '{ROOT}' '{sys.executable}' '{yaml}' "
+        f"-BundlesDir '{bundles}'" + (" -DevYaml" if dev else "") + ")",
+        "Write-Output ('RESULT=' + ($r -join '|'))", ""])
+    f = _tmp() / "city_policy_dev.ps1"
+    f.write_text(ps, encoding="utf-8")
+    r = subprocess.run([_pwsh(), "-NoProfile", "-NonInteractive", "-File", str(f)],
+                       capture_output=True, text=True, timeout=180)
+    assert r.returncode == 0, r.stdout + r.stderr
+    res = [l for l in r.stdout.splitlines() if l.startswith("RESULT=")]
+    assert len(res) == 1, r.stdout
+    return res[0][len("RESULT="):], r.stdout + r.stderr
+
+
+def test_the_city_launchers_fly_the_signed_bundle_or_say_dev_yaml():
+    """ARCH-29 (2026-10-21): demo/follow_vlm.py now refuses a YAML policy
+    without --dev-yaml, so the three city launchers ask
+    tools/Get-FlightPolicyDev.ps1 first. RUN, as above: nothing extra when the
+    bundle is on disk and still the YAML's policy (follow_vlm then flies it);
+    --dev-yaml, saying why, when it is stale or missing, or under -DevYaml."""
+    if _pwsh() is None:
+        return SKIP
+    bundles = _tmp()
+    y, b = _bundle_of(NFZ_AHEAD, bundles)
+    got, said = _city_policy_dev(y, bundles)
+    assert got == "" and "signed bundle" in said, (got, said)
+    got, said = _city_policy_dev(y, bundles, dev=True)
+    assert got == "--dev-yaml" and "-DevYaml" in said, (got, said)
+    y.write_text(EDITED, encoding="utf-8")
+    got, said = _city_policy_dev(y, bundles)
+    assert got == "--dev-yaml" and "STALE" in said, (got, said)
+    got, said = _city_policy_dev(y, _tmp())
+    assert got == "--dev-yaml" and "no signed bundle" in said, (got, said)
 
 
 # =========================================================================== #

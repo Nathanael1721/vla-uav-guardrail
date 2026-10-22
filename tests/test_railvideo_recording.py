@@ -155,7 +155,8 @@ def _fly(policy: str = T.CAP_POLICY, *, shield="on", max_s="3", extra=(),
         "--out-root", str(out), "--tag", "run", "--policy", str(pol), "--max-s", max_s,
         "--hfov", "90", "--citymap", str(out / "no_map.npz"), "--network", "nat",
         "--windows-ip", T.WIN, "--wsl-ip", T.WSL, "--shield", shield,
-        "--speed-max", "4", "--dev-yaml", *(["--save-view"] if save else []), *extra])
+        "--speed-max", "4", "--dev-yaml", "--start-when-seen", "0",
+        *(["--save-view"] if save else []), *extra])
     clk = RealClock() if real else T.Clock()
     anchor = ap.FrameAnchor(*ANCHOR, "scene.home-geo-point")
     link = (link_cls or T.FakeLink)(clk, anchor, **(link_kw or {}))
