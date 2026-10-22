@@ -11,6 +11,59 @@ strictly, the original adapter stops on **17 of 18** no-hint frames, and the
 object-presence effect is **not supported**. The 4 Aug text is left as it was
 written; the correction says which of its numbers changed.
 
+**Re-measured at upstream precision 2026-10-23** (section directly below): the
+4 Aug phrase effect was measured on a 4-bit (nf4, unmerged) loader. In bf16 the
+direction phrase still orders the mean turn, but it acts only when the target
+is off to one side, and left is stronger than right on average.
+
+## Addendum, 2026-10-23: the direction phrase at upstream precision (bf16)
+
+**What was run.** The original adapter in bf16 (sdpa, adapter unmerged; 95.8 %
+exact agreement with the bf16/eager reference, `docs/data/aerialvla_serving_4090.json`)
+behind `demo/vla_server_v2.py`, answering the same six 4 Aug mosaics
+(`experiments/out/frames`: target present / absent, yaw offset -35 / 0 / +35
+deg, about 22 m up) under each direction phrase and the empty phrase, object
+`orange barrier`, through `tools/vla_replay_gate.py` (46ca291). 36 requests, no
+flight. Every request, answer and per-frame table is in
+`docs/data/aerialvla_bf16_phrase_probe_20261023.json`.
+
+**What it says.**
+
+| frame | `to your left` | `forward-left` | `straight ahead` | `forward-right` | `to your right` | empty phrase |
+|---|---|---|---|---|---|---|
+| absent, +35 deg | -1.1 | -0.224 | +0.112 | +0.516 | +0.224 | LAND |
+| absent, 0 deg | 0.0 | 0.0 | 0.0 | 0.0 | -0.022 | LAND |
+| absent, -35 deg | -1.1 | -0.247 | -0.112 | 0.0 | +0.224 | LAND |
+| present, +35 deg | -1.033 | +0.18 | +0.18 | +0.314 | +0.224 | LAND |
+| present, 0 deg | -0.022 | 0.0 | -0.022 | -0.022 | -0.022 | forward 2.5 m |
+| present, -35 deg | -0.651 | parse failure | 0.0 | -0.112 | +1.1 | LAND |
+
+(heading change in radians per step.)
+
+- The mean turn is ordered by the phrase: -0.651, -0.058, +0.026, +0.116,
+  +0.288 rad from `to your left` to `to your right` (spread 0.94 rad). On
+  4-bit it was -0.466 / -0.167 / +0.114 / +0.161.
+- **Facing the target (the two 0 deg frames) every phrase gives the same
+  answer**: about 4.9 m forward and no turn (`96 48 48` / `96 48 49`). The
+  phrase steers only when the camera already sees the scene from an angle.
+- **Left is stronger than right on average**: on the four offset frames `to
+  your left` asks for -1.1, -1.1, -1.033 and -0.651 rad; `to your right` for
+  +0.224 three times and +1.1 once.
+- Some answers command a 2-4 m descent in one step (`64 86 49`, `62 86 57`):
+  in flight the policy's altitude floor, not the model, keeps the height.
+- The empty phrase lands on 5 of 6 frames, as on 4 Aug.
+- 1 of 36 answers was malformed (`55 渡 34`, a CJK character inside a bin) and
+  is held as zero by the strict reader.
+- The replay gate's per-frame monotonicity check fails (1 of 5 scorable frames
+  ordered), so the gate fails on these inputs. Idle latency on the RTX 4090:
+  p50 391 ms server-side (20 requests).
+
+**What it means for the VLA pilot.** A GOTO hint can turn the aircraft when the
+goal is off to one side, on average more readily to the left, and once
+it faces the goal it flies straight. Six inputs at 22 m are not CityLife at
+6-14 m: the first flight is the measurement, and nothing here predicts that
+AerialVLA reaches a goal.
+
 ## Correction, 2026-10-21: the output parser, and the units
 
 **What was wrong.**

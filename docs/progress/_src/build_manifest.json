@@ -1,10 +1,10 @@
 {
  "generator": "tools/build_public_site.py",
  "as_of": "2026-10-21",
- "tracker_text_from": "tracker",
+ "tracker_text_from": "snapshot",
  "sources": {
   "CHANGELOG.md": "4f9703f5ee16",
-  "docs/progress/_src/site.json": "15e651b986d2",
+  "docs/progress/_src/site.json": "f3dbcc208f3e",
   "docs/progress/_src/tracker_extract.json": "15ff9b2e7e0a"
  },
  "pages": [

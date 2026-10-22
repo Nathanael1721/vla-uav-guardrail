@@ -213,7 +213,7 @@ def _fly(policy: str, *, camera_kw=None, max_s="3", extra=(), link_kw=None,
         "--out-root", str(out), "--tag", "run", "--policy", str(pol), "--max-s", max_s,
         "--hfov", "90", "--citymap", str(out / "no_map.npz"), "--network", "nat",
         "--windows-ip", T.WIN, "--wsl-ip", T.WSL, "--shield", "on", "--speed-max", "4",
-        "--dev-yaml", "--object", "a red car", *extra])
+        "--dev-yaml", "--object", "a red car", "--start-when-seen", "0", *extra])
     clk = T.Clock()
     # The link's own frame is the scene's: its x, y are simulator NED about
     # the home-geo-point, and its GPS fixes are that point plus them, as

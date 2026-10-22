@@ -437,6 +437,14 @@ fence read-back, zone deferral). The FSM's theta source is given per run:
 | `ros2if_on_dyn_yaw_noavoid` | Shield on, NFZ hot-applied at 8 s, yaw rate 0.2 rad/s, avoidance off | target reached in 21.5 s; 0.0 s inside any zone, never closer than 1.78 m to `nfz-square`; P0 escapes 0 of 125 P0 ticks; the fence never fired; turned 246 deg; Shield time p99 0.9 ms; pose 9.8 Hz |
 | `sitl_if_on_dyn` (pymavlink rail, `--seed 3`) | Shield on, NFZ hot-applied at 8 s | target reached in 23.2 s; 0.0 s inside any zone; P0 escapes 0 |
 
+Delayed pose (note added 2026-10-21): the two pymavlink-rail rows above,
+`sitlfix_on_dyn` and `sitl_if_on_dyn`, were flown before 79bae12
+(2026-10-19), when `sitl/run_sitl_demo.py` read pymavlink's OLDEST queued
+LOCAL_POSITION_NED each tick, so its pose ran seconds behind the aircraft
+(3-6.6 s on `sitl_ped_on`; CHANGELOG 2026-10-19). Their times, distances
+and zone dwell describe that rail as it flew, not the aircraft's true
+position. The MAVROS rows (`ros2*`) are not affected.
+
 Fixed on the way: `sitl/run_sitl_demo.py` printed `verify_replay`'s notes as
 the reasons a run was not KPI-grade (pinned by
 `test_the_kpi_grade_reasons_are_not_overwritten_before_the_report`); both

@@ -8,13 +8,17 @@ Run either way:
 
 WHY THIS FILE EXISTS
 
-The library's only P0 escape ticks (6, in the three time-window-opens-on-
-vehicle cells) are a window opening over an aircraft 10 m from the school
-zone's ring - 2.5 s at the 4 m/s cap - 1.0-2.0 s after the mission starts. No
-action clears the forecast on the first tick, so the Shield flies the way out
-with the violation on and its counter scores an escape; no repair and no hold
-point can remove that tick. Only the policy or the mission's timing can, so
-the DSL says so up front - as a warning, never a refusal (the grant leaves
+The library's only P0 escape ticks until 2026-10-21 (6, in the three
+time-window-opens-on-vehicle cells) were a window opening over an aircraft
+10 m from the school zone's ring - 2.5 s at the 4 m/s cap - 1.0-2.0 s after
+the mission starts. No action clears the forecast on the first tick, so the
+Shield flew the way out with the violation on and its counter scored an
+escape; no repair and no hold point could remove that tick. Since C2 the
+Shield judges that way out as the recovery it is when it can prove the
+opening imposed (Shield._opening_imposed, tests/test_window_opens_on.py),
+but the position is still made illegal under the aircraft, which only the
+policy or the mission's timing can prevent, so the DSL says so up front - as
+a warning, never a refusal (the grant leaves
 "Lint severity classes. Errors only, or warnings vs errors?" open; Policy.lint()
 stays errors-only). These tests pin both levels of the test, the speed
 assumption every warning states, the keep-in corridor and the always-on zones
@@ -227,6 +231,42 @@ def test_the_next_opening_is_exact_at_the_minute_it_opens():
         assert len(ws) == 1 and f"{lead} s before its time window opens" in ws[0], ws
     assert time_window_lead_warnings(pol, start=(60.0, 21.0, 15.0),
                                      now=datetime(2026, 9, 7, 7, 29, 57, 400000)) == []
+
+
+def test_the_warning_says_what_the_shield_makes_of_the_opening():
+    """Since C2 (2026-10-21) the Shield judges the way out of a window
+    opening on the aircraft as the recovery it is when it can prove the
+    opening imposed (Shield._opening_imposed: a hard, enforced cap with no
+    window of its own, a zone that does not move); the warning said "its
+    counter scores those ticks as P0 escapes" in every case. It now says
+    which: with the survey policy's 4 m/s cap, no P0 escape; with no hard
+    cap (or a moving zone), the escapes the counter still scores. And since
+    the review of 3660383 (P1), that the way out is flown at the speed cap -
+    since the review of b1d3aca (P1), only where that re-checks clean: a
+    cap whose forecast reaches another rule is flown as fast as re-checks
+    clean down to 2.0 m/s, and below that the tick is reported to the FSM
+    (the old text promised the cap unconditionally). Since the review of
+    69c27bd (P2), "re-checks clean" is judged on the escape as flown, out of
+    the ring and then braked to a stop, and the warning says so: on the
+    straight 5 s forecast the library's own corridor edge, 9 m past the
+    school zone's ring, refused the cap."""
+    pol = load_policy(SURVEY)
+    ws = time_window_lead_warnings(pol, start=(60.0, 21.0, 15.0), now=MON_0729_58)
+    assert len(ws) == 1 and "not as a P0 escape" in ws[0], ws
+    assert ("flown at the speed cap where that escape, judged out of the ring and then "
+            "braked to a stop, re-checks clean, else as fast as does down to 2.0 m/s, "
+            "else reported to the escalation FSM") in ws[0], ws[0]
+    assert "scores those ticks as P0 escapes" not in ws[0], ws[0]
+    big = _zone("big", 40.0, 40.0)
+    for caps in ((), (dict(_cap(4.0), constraint_type="soft"),)):
+        w = time_window_lead_warnings(_pol(big, *caps))[0]
+        assert "its counter scores those ticks as P0 escapes" in w, (caps, w)
+        assert "cannot prove" in w, (caps, w)
+    w = time_window_lead_warnings(_pol(big, _cap(4.0)))[0]
+    assert "not as a P0 escape" in w and "cannot prove" not in w, w
+    moving = dict(big, type="dynamic_nfz", motion={"vx_mps": 0.5})
+    w = time_window_lead_warnings(_pol(moving, _cap(4.0)))[0]
+    assert "a moving zone" in w and "scores those ticks as P0 escapes" in w, w
 
 
 def test_warnings_never_refuse():

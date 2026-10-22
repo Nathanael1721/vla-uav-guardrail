@@ -377,11 +377,21 @@ def test_a_hot_applied_run_is_not_resolved_by_id():
 
 
 def test_an_ambiguous_or_missing_policy_id_is_not_guessed():
+    """Until 2026-10-21 the shipped `random-scenario` (nine files) was the
+    live ambiguous id; WP1-22 gave each generated file its own, so no shipped
+    id is ambiguous any more (tests/test_policy_hash.py) and the ambiguity is
+    made here: a second loaded file carrying the same id."""
     h = "sha256:0123456789abcdef"
     with tempfile.TemporaryDirectory() as td:
-        pol, _, note = _resolve(td, "r", {"constraints": {
-            "policy_id": "random-scenario", "policy_hash": h}}, h)
-        assert pol is None and "policy files" in note, note
+        pid = "sitl-pedestrian-standoff"
+        run = _make_run(Path(td), "r", _rows_past_a_person(5), policy_hash=h,
+                        prompt={"constraints": {"policy_id": pid, "policy_hash": h}})
+        loaded = R.load_policies()
+        twin = [(p, pol) for p, pol in loaded if pol.policy_id == pid]
+        assert len(twin) == 1, twin
+        pol, _, note = R.resolve_policy(run, {"policy_hash": h}, {},
+                                        R.policies_by_id(loaded + twin))
+        assert pol is None and "names 2 policy files" in note, note
         pol, _, note = _resolve(td, "n", None, h)
         assert pol is None, note
 

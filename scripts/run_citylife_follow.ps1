@@ -49,6 +49,9 @@ param(
     [string]$OffloadRoot = "C:\Users\natha\vla_drone_offload\demo_out",
     [string]$PolicyFile = "",          # override the rule set, e.g.
                                         # policies\follow_car_citylife_nfz.yaml
+    [switch]$DevYaml,                   # fly the policy YAML itself (unsigned, a
+                                        # development run) even when its signed
+                                        # bundle is in bundles\
     [switch]$NoPolicyHud,               # the old one-line HUD (A/B of the indicator's cost)
     [switch]$KeepSim,                   # leave the simulator running afterwards
     [switch]$SkipSim
@@ -184,6 +187,12 @@ if ($PolicyFile) {
     if (-not (Test-Path $pf)) { throw "no policy at $PolicyFile" }
     $Policy = $PolicyFile
 }
+# THE SIGNED BUNDLE, else the YAML under --dev-yaml (ARCH-29, 2026-10-21):
+# follow_vlm flies the signed bundle of --policy and refuses the YAML without
+# --dev-yaml; tools\Get-FlightPolicyDev.ps1 checks the bundle first and says
+# which flies (-DevYaml forces the YAML).
+. "$Root/tools/Get-FlightPolicyDev.ps1"
+$PolicyDev = @(Get-FlightPolicyDev $Root $Py $Policy -DevYaml:$DevYaml)
 # Cruise altitude: 8 m for both missions. 12 m was flown (citylife_redcar_high)
 # and overshot the car policy's 14 m ceiling for 3.1 s (peak 14.32 m), each climb
 # during a phantom-wall repair (docs/FINDING-crowd-pedestrians-and-traffic.md,
@@ -192,7 +201,7 @@ if ($CruiseAlt -le 0) { $CruiseAlt = 8 }
 $a = @("demo\follow_vlm.py",
        "--object", $Object,
        "--tag", $Tag,
-       "--policy", $Policy,
+       "--policy", $Policy) + $PolicyDev + @(
        "--max-s", "$Seconds",
        "--det-thresh", "0.008",
        "--cruise-alt", "$CruiseAlt",

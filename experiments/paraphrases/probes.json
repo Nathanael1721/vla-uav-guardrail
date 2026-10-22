@@ -336,7 +336,7 @@
       ]
     },
     "heldout_2026_10_06": {
-      "status": "HELD-OUT - written on 2026-10-06 by the agent fixing the validator, after reading the review and BEFORE changing any code, and never used to tune it. Measured once before the changes and once after. Same author as the code, so not independent of its blind spots.",
+      "status": "WAS HELD-OUT - written on 2026-10-06 by the agent fixing the validator, after reading the review and BEFORE changing any code; measured once before those changes (11/30, 2/30) and once after (5/30, 2/30). USED on 2026-10-21 (A14) to tune the validator on its 5 remaining false accepts, so since then a dev set like the review's: its 0 false accepts is a regression floor, not an estimate (heldout_2026_10_21b is the post-change estimate). Same author as the code.",
       "measured_before_changes": {
         "false_accepts": "11/30",
         "false_refusals": "2/30",
@@ -642,6 +642,445 @@
           "source": "follow a person",
           "candidate": "please follow a person",
           "meaning_changed": false
+        }
+      ],
+      "measured_after_tuning_2026_10_21": {
+        "false_accepts": "0/30",
+        "false_refusals": "2/30",
+        "validator": "validator_digest 16537ea2ab2a216c"
+      }
+    },
+    "heldout_2026_10_21": {
+      "status": "WRITTEN BEFORE THE CHANGE - on 2026-10-21 by the agent tightening the validator (A14), BEFORE changing any code, and measured then (21/22 accepted). The change's closed lists were written after it and with it in view, so its after figure is a dev-set figure, not an estimate (see the caveat; heldout_2026_10_21b is the estimate). Same author as the code, so not independent of its blind spots; weighted towards narrowing modifiers, the class being tightened.",
+      "measured_before_changes": {
+        "false_accepts": "21/22",
+        "false_refusals": "1/22",
+        "validator": "validator_digest db9effaa13a7e2d5"
+      },
+      "probes": [
+        {
+          "source": "follow a red car",
+          "candidate": "follow a small red car",
+          "meaning_changed": true,
+          "label": "size narrows the class"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow a bright red car",
+          "meaning_changed": true,
+          "label": "shade narrows the colour"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow a red car that is parked",
+          "meaning_changed": true,
+          "label": "relative clause narrows"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow a red car driving on the highway",
+          "meaning_changed": true,
+          "label": "participle and place narrow"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow the red car in the left lane",
+          "meaning_changed": true,
+          "label": "place narrows"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow a red sports car",
+          "meaning_changed": true,
+          "label": "subtype narrows the class"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow the first red car you see",
+          "meaning_changed": true,
+          "label": "ordinal and relative clause narrow"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow an elderly person",
+          "meaning_changed": true,
+          "label": "age narrows the class"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow the person who is carrying a bag",
+          "meaning_changed": true,
+          "label": "relative clause narrows"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a person on the sidewalk",
+          "meaning_changed": true,
+          "label": "place narrows"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a young person",
+          "meaning_changed": true,
+          "label": "age narrows the class"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a person wearing a hat",
+          "meaning_changed": true,
+          "label": "participle narrows"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow the tallest person",
+          "meaning_changed": true,
+          "label": "superlative narrows"
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "fly forward and avoid the restricted areas near the school",
+          "meaning_changed": true,
+          "label": "the keep-out set narrowed by place"
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "fly forward and avoid the large restricted areas",
+          "meaning_changed": true,
+          "label": "the keep-out set narrowed by size"
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Never enter zone 'nfz-square'. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Hold 10 m to 20 m altitude. Do not enter zone 'nfz-square'. Speed at most 4 m/s, sink rate below 2 m/s, turn rate below 45 deg/s.",
+          "meaning_changed": true,
+          "label": "sink (descent only) for climb rate (the policy caps both)"
+        },
+        {
+          "source": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep altitude between 6 m and 14 m. Stay at least 3 m from any building, at least 5 m from anything you are following and at least 10 m from pedestrians on the sidewalk. Speed at most 5 m/s, climb rate below 2 m/s, turn rate below 45 deg/s.",
+          "meaning_changed": true,
+          "label": "pedestrians narrowed by place"
+        },
+        {
+          "source": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep altitude between 6 m and 14 m. Stay at least 3 m from tall buildings, at least 5 m from anything you are following and at least 10 m from any pedestrian. Speed at most 5 m/s, climb rate below 2 m/s, turn rate below 45 deg/s.",
+          "meaning_changed": true,
+          "label": "buildings narrowed by size"
+        },
+        {
+          "source": "Stay between 4 m and 10 m altitude. Keep at least 5 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 3 m/s, climb rate below 1.5 m/s and turn rate below 45 deg/s.",
+          "candidate": "Stay between 4 m and 10 m altitude. Keep at least 5 m from any building, at least 5 m from anything you are following and at least 10 m from any pedestrian who is crossing. Speed at most 3 m/s, climb rate under 1.5 m/s, turn rate under 45 deg/s.",
+          "meaning_changed": true,
+          "label": "pedestrians narrowed by a relative clause"
+        },
+        {
+          "source": "Stay between 4 m and 10 m altitude. Keep at least 5 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 3 m/s, climb rate below 1.5 m/s and turn rate below 45 deg/s.",
+          "candidate": "Stay between 4 m and 10 m altitude. Keep at least 5 m from any occupied building, at least 5 m from anything you are following and at least 10 m from any pedestrian. Speed at most 3 m/s, climb rate under 1.5 m/s, turn rate under 45 deg/s.",
+          "meaning_changed": true,
+          "label": "buildings narrowed by an adjective"
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Fly between 10 m and 20 m altitude. Stay at least 5 m from anything you are following and 10 m clear of pedestrians walking toward you. Speed at most 4 m/s, climb rate below 2 m/s, turn rate below 45 deg/s.",
+          "meaning_changed": true,
+          "label": "pedestrians narrowed by a participle"
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "fly forward and avoid restricted areas in the city centre",
+          "meaning_changed": true,
+          "label": "the keep-out set narrowed by place"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "track a red automobile",
+          "meaning_changed": false,
+          "label": "verb and noun synonyms"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "your task: track a red car",
+          "meaning_changed": false,
+          "label": "framing"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow a car that is red",
+          "meaning_changed": false,
+          "label": "the colour moved into a relative clause"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a human",
+          "meaning_changed": false,
+          "label": "noun synonym"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "tail a person",
+          "meaning_changed": false,
+          "label": "verb synonym"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "pursue a person",
+          "meaning_changed": false,
+          "label": "verb synonym"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow some person",
+          "meaning_changed": false,
+          "label": "determiner"
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "move forward, steering clear of restricted zones",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "fly forward and stay out of all restricted areas",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Never enter zone 'nfz-square'. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep your altitude between 10 m and 20 m. Zone 'nfz-square' is off-limits. Do not exceed 4 m/s; keep the climb rate under 2 m/s and the turn rate under 45 deg/s.",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Never enter zone 'nfz-square'. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Altitude: 10 m to 20 m. Never fly into zone 'nfz-square'. Speed no more than 4 m/s, vertical speed below 2 m/s, turn rate below 45 deg/s.",
+          "meaning_changed": false,
+          "label": "vertical speed for climb rate (the policy caps both)"
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Fly at 10 m to 20 m altitude. Stay at least 5 m from whatever you are following and at least 10 m from any pedestrian. Max speed 4 m/s, climb rate under 2 m/s, turn rate under 45 deg/s.",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following and at least 10 m away from any pedestrian. Speed at most 4 m/s, climb or descend at under 2 m/s, turn rate under 45 deg/s.",
+          "meaning_changed": false,
+          "label": "climb or descend for climb rate (the policy caps both)"
+        },
+        {
+          "source": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep altitude between 6 m and 14 m. Stay at least 3 m from every building, at least 5 m from anything you follow, and at least 10 m from any pedestrian. Speed at most 5 m/s, climb rate below 2 m/s, turn rate below 45 deg/s.",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "Stay between 4 m and 10 m altitude. Keep at least 5 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 3 m/s, climb rate below 1.5 m/s and turn rate below 45 deg/s.",
+          "candidate": "Stay between 4 m and 10 m up. Keep at least 5 m from any building, at least 5 m from anything you are following and at least 10 m from any pedestrian. Speed at or below 3 m/s, climb rate under 1.5 m/s, turn rate under 45 deg/s.",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Remain inside corridor 'corridor-survey-route', no more than 20 m from its centerline and between 10 m and 20 m. Do not enter zone 'nfz-school' Mon-Fri 07:30-17:30. Speed at most 4 m/s, climb rate below 2 m/s, turn rate below 45 deg/s.",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "fly to (40, 40) at 6 m/s altitude 20",
+          "candidate": "head to (40, 40) at a speed of 6 m/s and an altitude of 20",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "fly to the northeast pad at 6 m/s",
+          "candidate": "travel to the northeast pad, speed 6 m/s",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "Fly to the waypoint 120 m ahead at cruise altitude.",
+          "candidate": "fly to the waypoint located 120 m ahead, at cruise altitude",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "Stay between 5 m and 80 m altitude. Never enter zone 'nfz-school-yard' (in force Mon-Fri 07:30-17:30). Keep speed at or below 12 m/s, climb rate below 4 m/s and turn rate below 60 deg/s.",
+          "candidate": "Keep altitude between 5 m and 80 m. Never enter zone 'nfz-school-yard' Mon-Fri 07:30-17:30. Speed at most 12 m/s, climb rate below 4 m/s, turn rate below 60 deg/s.",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow the red car",
+          "meaning_changed": false,
+          "label": "article"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "keep following a person",
+          "meaning_changed": false,
+          "label": "aspect"
+        }
+      ],
+      "measured_after_changes": {
+        "false_accepts": "0/22",
+        "false_refusals": "1/22",
+        "validator": "validator_digest 16537ea2ab2a216c",
+        "caveat": "the change's closed lists (narrowing adjectives, place nouns) were written after this set and with it in view, so the after figure is not an estimate either; heldout_2026_10_21b, written after the change, is"
+      }
+    },
+    "heldout_2026_10_21b": {
+      "status": "HELD-OUT - written on 2026-10-21 AFTER the A14 change and never used to tune it: measured once, after. Its words were chosen outside the change's closed lists (narrowing adjectives, place nouns), to estimate how far the lexical rules reach beyond the probes they were written beside. Same author as the code, so not independent of its blind spots.",
+      "measured_once_after_changes": {
+        "false_accepts": "4/12",
+        "false_refusals": "2/12",
+        "validator": "validator_digest 16537ea2ab2a216c"
+      },
+      "probes": [
+        {
+          "source": "follow a red car",
+          "candidate": "follow a rusty red car",
+          "meaning_changed": true,
+          "label": "an adjective outside the closed list, after a determiner"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow a red car with a dented door",
+          "meaning_changed": true,
+          "label": "a 'with' phrase narrows"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a person carrying an umbrella",
+          "meaning_changed": true,
+          "label": "participle narrows"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a cheerful person",
+          "meaning_changed": true,
+          "label": "an adjective outside the closed list"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a person near the fountain",
+          "meaning_changed": true,
+          "label": "a place noun outside the closed list"
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "fly forward and avoid restricted areas marked on the map",
+          "meaning_changed": true,
+          "label": "the keep-out set narrowed by a participle"
+        },
+        {
+          "source": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep altitude between 6 m and 14 m. Stay at least 3 m from any building, at least 5 m from anything you are following and at least 10 m from pedestrians with strollers. Speed at most 5 m/s, climb rate below 2 m/s, turn rate below 45 deg/s.",
+          "meaning_changed": true,
+          "label": "pedestrians narrowed by a 'with' phrase"
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Stay between 10 m and 20 m altitude, at least 5 m from anything you are following and at least 10 m from any pedestrian crossing the road. Speed at most 4 m/s, climb rate below 2 m/s, turn rate below 45 deg/s.",
+          "meaning_changed": true,
+          "label": "pedestrians narrowed by a participle"
+        },
+        {
+          "source": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Keep altitude between 6 m and 14 m. Stay at least 3 m from any glass building, at least 5 m from anything you are following and at least 10 m from any pedestrian. Speed at most 5 m/s, climb rate below 2 m/s, turn rate below 45 deg/s.",
+          "meaning_changed": true,
+          "label": "buildings narrowed by an adjective outside the list"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a lone person",
+          "meaning_changed": true,
+          "label": "an adjective outside the closed list"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow a red car owned by the police",
+          "meaning_changed": true,
+          "label": "participle narrows"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a person in uniform",
+          "meaning_changed": true,
+          "label": "an 'in' phrase with no place noun"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow one red car",
+          "meaning_changed": false,
+          "label": "determiner"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow a single red car",
+          "meaning_changed": false,
+          "label": "neutral modifier"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a person, please",
+          "meaning_changed": false,
+          "label": "politeness"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "go ahead and follow a person",
+          "meaning_changed": false,
+          "label": "framing"
+        },
+        {
+          "source": "fly forward and avoid restricted areas",
+          "candidate": "fly forward and keep away from restricted areas",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "Stay between 6 m and 14 m altitude. Keep at least 3 m from any building. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 5 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Altitude between 6 m and 14 m. Keep 3 m or more from any building, 5 m or more from anything you are following, and 10 m or more from any pedestrian. Speed at most 5 m/s, climb rate below 2 m/s, turn rate below 45 deg/s.",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Never enter zone 'nfz-square'. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Stay within 10 m to 20 m altitude. Do not go into zone 'nfz-square'. Speed at most 4 m/s, ascent rate below 2 m/s, turn rate below 45 deg/s.",
+          "meaning_changed": false,
+          "label": "ascent rate for climb rate"
+        },
+        {
+          "source": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from any pedestrian. Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Stay between 10 m and 20 m altitude. Keep at least 5 m away from anything you are following. Keep at least 10 m away from every pedestrian. Max speed 4 m/s, climb rate under 2 m/s, turn rate under 45 deg/s.",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "fly to (40, 40) at 6 m/s altitude 20",
+          "candidate": "go to the point (40, 40) at 6 m/s and altitude 20",
+          "meaning_changed": false,
+          "label": "rewording"
+        },
+        {
+          "source": "follow a red car",
+          "candidate": "follow a car coloured red",
+          "meaning_changed": false,
+          "label": "the colour after the noun as a participle"
+        },
+        {
+          "source": "follow a person",
+          "candidate": "follow a person at all times",
+          "meaning_changed": false,
+          "label": "a phrase with no narrowing"
+        },
+        {
+          "source": "Stay inside corridor 'corridor-survey-route', within 20 m of its centerline and between 10 m and 20 m. Never enter zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Keep speed at or below 4 m/s, climb rate below 2 m/s and turn rate below 45 deg/s.",
+          "candidate": "Stay inside corridor 'corridor-survey-route' - within 20 m of its centerline and between 10 m and 20 m. Keep out of zone 'nfz-school' (in force Mon-Fri 07:30-17:30). Speed at or below 4 m/s, climb rate below 2 m/s, turn rate below 45 deg/s.",
+          "meaning_changed": false,
+          "label": "rewording"
         }
       ]
     }

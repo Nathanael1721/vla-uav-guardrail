@@ -92,6 +92,14 @@ published number. The defect was latent, waiting for the first flight that turne
 > five KPI-grade runs are all `ros2_*`. The conclusion is unchanged and now rests
 > on 2 850 ticks instead of 562.
 
+> **Delayed pose (note added 2026-10-21).** `sitl_shield_on` and `sitl_ped_on`
+> were flown by the pymavlink SITL rail before 79bae12 (2026-10-19), which read
+> pymavlink's OLDEST queued LOCAL_POSITION_NED each tick: the pose fell 3-6.6 s
+> behind the aircraft on `sitl_ped_on` (CHANGELOG 2026-10-19). The yaw finding
+> does not depend on it (the stub commands a zero yaw rate whatever the pose
+> says); any position, dwell or escape figure of those two runs describes the
+> rail as it flew, not the aircraft's true position.
+
 ## One more inconsistency, deliberately left alone
 
 `shield.py:423` forecasts heading as `yaw_deg=state.yaw_deg + action.yaw_rate * t`

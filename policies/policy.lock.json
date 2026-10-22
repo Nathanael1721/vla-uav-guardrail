@@ -460,6 +460,102 @@
       "locked_on": "2026-10-06",
       "policy_hash": "sha256:8afa2bc6059bc8d351eea8e1fae83f360fe07621ea66f726e2f7015e4393a940"
     },
+    "random-scenario-hard-11@0.1.0": {
+      "file": "hard_11.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:9d08e87649982e09",
+        "legacy16-include-defaults": "sha256:70f87acea1b742a9",
+        "legacy16-valid-time": "sha256:e8699f7bf6440268"
+      },
+      "locked_on": "2026-10-21",
+      "policy_hash": "sha256:9d08e87649982e09c48a5934f422de8d283e7c8b6afcaacd1a16f0765a841e01",
+      "previously": "random-scenario@0.1.0"
+    },
+    "random-scenario-hard-21@0.1.0": {
+      "file": "hard_21.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:957e48bc8415e788",
+        "legacy16-include-defaults": "sha256:a48f2d4c580461a3",
+        "legacy16-valid-time": "sha256:bc1ceb23eeb99247"
+      },
+      "locked_on": "2026-10-21",
+      "policy_hash": "sha256:957e48bc8415e78843614052c780832502dd57fa905bc404fa4e3f64b957e062",
+      "previously": "random-scenario@0.1.0"
+    },
+    "random-scenario-hard-3@0.1.0": {
+      "file": "hard_3.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:be70779b1c3ae7ac",
+        "legacy16-include-defaults": "sha256:91a6113191cd2621",
+        "legacy16-valid-time": "sha256:592d552446b918e9"
+      },
+      "locked_on": "2026-10-21",
+      "policy_hash": "sha256:be70779b1c3ae7acb58c65f5fd372eb7802493cbde922b7c7040924acfe9acdc",
+      "previously": "random-scenario@0.1.0"
+    },
+    "random-scenario-hp-14@0.1.0": {
+      "file": "hp_14.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:984e4ce0aedeb293",
+        "legacy16-include-defaults": "sha256:762067c2b186007c",
+        "legacy16-valid-time": "sha256:6a1d8980fc18c431"
+      },
+      "locked_on": "2026-10-21",
+      "policy_hash": "sha256:984e4ce0aedeb293631b3eea3fddb21dd37dea2241b59ad920bfeffb609fe32a",
+      "previously": "random-scenario@0.1.0"
+    },
+    "random-scenario-hp-30@0.1.0": {
+      "file": "hp_30.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:27b5d4891dc39c4f",
+        "legacy16-include-defaults": "sha256:9c7322a51616b2e1",
+        "legacy16-valid-time": "sha256:7e1fd71b09fc4ffd"
+      },
+      "locked_on": "2026-10-21",
+      "policy_hash": "sha256:27b5d4891dc39c4fa7f66432e8820605ad8052186a8d2a12b9957d93256c973d",
+      "previously": "random-scenario@0.1.0"
+    },
+    "random-scenario-hp-42@0.1.0": {
+      "file": "hp_42.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:91e649f5bc15dd76",
+        "legacy16-include-defaults": "sha256:e88ad84aee7567a3",
+        "legacy16-valid-time": "sha256:d15859fb3f97d3b7"
+      },
+      "locked_on": "2026-10-21",
+      "policy_hash": "sha256:91e649f5bc15dd768ecb6b0f5722728bb2985797246c2f26e8f8c6a7b94116ea",
+      "previously": "random-scenario@0.1.0"
+    },
+    "random-scenario-hp-5@0.1.0": {
+      "file": "hp_5.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:774fe50c2d4f1418",
+        "legacy16-include-defaults": "sha256:946c685741269c38",
+        "legacy16-valid-time": "sha256:b0ea6c3d1f0948b1"
+      },
+      "locked_on": "2026-10-21",
+      "policy_hash": "sha256:774fe50c2d4f14181b41ff69d155383f6ba020e4583dae6ce04df6f06bff2a43",
+      "previously": "random-scenario@0.1.0"
+    },
+    "random-scenario-hp-8@0.1.0": {
+      "file": "hp_8.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:cbddd95cb29c9730",
+        "legacy16-include-defaults": "sha256:5e8d433e8965f976",
+        "legacy16-valid-time": "sha256:fe830812737af53d"
+      },
+      "locked_on": "2026-10-21",
+      "policy_hash": "sha256:cbddd95cb29c973081a936c08f4632fecfb518f9c2ec0304747a7e3253d3bda8",
+      "previously": "random-scenario@0.1.0"
+    },
     "random-scenario@0.1.0": {
       "known_defect": "9 files with different content share this one policy_id and version, so `random-scenario@0.1.0` names no single policy. They are generated scenario policies (hard_*/hp_* and random_scenario.yaml). Each file is pinned below so a content change is still caught; the fix is a distinct policy_id per file, which changes their hashes and is left to whoever owns policies/*.yaml. Recorded 2026-10-06.",
       "locked_on": "2026-10-06",

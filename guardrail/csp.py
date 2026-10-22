@@ -341,6 +341,10 @@ class TokenCounter:
 # tokenizer adds. Only words and punctuation are tabled; anything holding a
 # digit or a quote (rule ids, numbers, clock times) is left to the byte bound.
 # Regenerate with `python -m guardrail.compiler table` in the vla-real env.
+# Regenerated 2026-10-21 for C8 (the class stand-off now reads "the pedestrian
+# you are following." / "the followed pedestrian"): 'the' added, 'pedestrian.'
+# dropped because no template ends a sentence on it any more; every other
+# entry came out unchanged.
 _OPENVLA_TABLE_SOURCE = "openvla-7b tokenizer.json sha256:8f5e2869e180"
 _OPENVLA_TABLE: dict[str, int] = {
     '(Mon,': 3,
@@ -419,11 +423,11 @@ _OPENVLA_TABLE: dict[str, int] = {
     'overnight)': 3,
     'overnight).': 3,
     'pedestrian': 3,
-    'pedestrian.': 4,
     'rate': 1,
     'speed': 1,
     'stay': 1,
     'subject': 1,
+    'the': 1,
     'turn': 1,
     'within': 1,
     'you': 1,

@@ -95,76 +95,154 @@ scenarios:
       on either side (2.5 s at the 4 m/s cap), and the window opens 2.0, 1.5
       and 1.0 s in. `ticks_inside_fence_polygon` and `time_to_safe_episodes`
       are gated at 1 or more, so the purpose cannot pass vacuously again.
-      All three cells are pinned (below): the mechanism, measured that day,
-      is the same on both forecasts.
+      UNPINNED 2026-10-21 (C2). Until then all three cells were known
+      failures on the Shield's P0 counter (pinned at max 0.01): on the first
+      tick no action cleared the forecast - the zone opens before any pose
+      can be out of its ring - so the Shield flew its best effort, 4 m/s
+      north, with the P0 violation still on it, at 0.0 and 0.1 s (2 P0
+      escapes per cell, rates 0.007353-0.007634, the library's whole
+      non-zero P0 headline); X1 then braked and G3 handed the aircraft to a
+      LOITER whose hold point (since 2026-10-19, guardrail/holdpoint.py) was
+      moved to (60, 31.9), with 8-18 autopilot P0 ticks of transit before
+      the opening. The same 4 m/s exit 0.1 s after the opening, the aircraft
+      inside the zone in force, was legal by the inside rule (escaping at
+      more than 0.1 m/s), so the check called the recovery a violation only
+      because the zone was not yet in force. Now a window that opens on the
+      aircraft sooner than ANY action within the hard caps can leave the
+      ring (guardrail/shield.py Shield._opening_imposed; proved with an
+      ideal vehicle at the caps, never guessed) is judged by the inside rule
+      from its opening: the pilot's 4 m/s north is the escape and breaks
+      nothing, a stop or a hover there is the same violation word for word,
+      and the decision's trace lists the zone (`window_opens_on`), which is
+      how `anticipated_ticks_nfz-school` still counts the rule seen coming
+      on every tick before it opens (20 / 15 / 10 on the grant arm, 18 / 13
+      / 8 on the 3 s arm, whose 0.25 s eps calls the zone in force two
+      ticks earlier). Measured 2026-10-21, both arms: 0 P0 escapes, no FSM
+      edge (Normal throughout, so no autopilot ticks and no hold), 3 / 8 /
+      13 ticks inside the polygon (5 / 10 / 15 on the 3 s arm; the same as
+      before, on the same path), time to safe 2.6 s (from the first tick
+      the position is unsafe, t = 0: a stop there breaks the opening rule),
+      never censored, goal reached, no fail-safe. The DSL lint still warns at compile time
+      (guardrail/compiler.py time_window_lead_warnings: the start is inside
+      the ring 1.0-2.0 s before the opening with 2.5 s needed to leave),
+      because the position is still made illegal under the aircraft.
+      That P0 = 0 is a RE-JUDGEMENT of the same path, not a different
+      flight: the aircraft is inside the polygon for the same 3 / 8 / 13
+      ticks as on 7c9c9e6; the 6 Shield ticks are now judged the recovery,
+      and the autopilot's P0 ticks are gone because the FSM is never entered.
+      PILOT SPEED AXIS 2026-10-22 (review of 3660383, P1). Every cell above
+      flew the goto pilot's 4 m/s, which is the cap: the fastest way out was
+      also what the pilot asked. At 1.5 m/s (the StepTracker's cruise, the
+      regime the VLA pilot flies) 3660383 made the crawl legal and floored it
+      only to the in-force 2.0 m/s: 5.1 s to safe and 26 / 31 / 36 ticks
+      inside the polygon, P0 escape 0 and no FSM edge, where 7c9c9e6 - every
+      tick there escalated, the hold transit at the 4 m/s cap - flew 2.6 s
+      and 3 / 8 / 13 at 4.0, 2.0, 1.5, 1.0 and 0.5 m/s alike. The escape from
+      a window that opens on the aircraft now flies at the cap until the
+      aircraft is out of the ring (guardrail/shield.py GeofenceEscape,
+      Shield._opened_on), and the family sweeps `vehicle_speed_mps: [4, 1.5]`
+      with upper bounds so a slower escape cannot pass again: time to safe at
+      most 2.7 s (2.6 s on 7c9c9e6 in every cell, both arms, both speeds) and
+      ticks inside at most 15. 15 is 7c9c9e6's worst cell over both forecast
+      arms (13 on the grant arm, 15 on the 3 s arm, whose half-step eps calls
+      the zone in force two ticks earlier on the same path); a family gate
+      cannot be per cell, so the exact per-cell counts, 3 / 8 / 13 (5 / 10 /
+      15), are pinned in tests/test_window_opens_on.py, and time to safe is
+      the tight bound on every cell. Measured 2026-10-22, both arms, both
+      speeds: the 7c9c9e6 counts and time to safe exactly, 0 P0 escapes, no
+      FSM edge. AT THE CAP WHERE IT RE-CHECKS CLEAN (review of b1d3aca, P1):
+      a floored escape flies only if it re-checks clean against every rule,
+      and with another hard rule in the way the escape is flown at the
+      fastest speed down to the in-force 2.0 m/s that does, else the tick is
+      reported and the FSM escalates (guardrail/shield.py
+      Shield._floor_the_escape). JUDGED AS FLOWN (review of 69c27bd, P2):
+      that re-check walked the cap's straight 5 s forecast, 20 m, and the
+      library is NOT free of rules in that reach - the corridor-survey-route
+      edge at x = 80 is 9 m past the zone's ring at x = 71 - so a pilot
+      escaping east had its cap refused and stayed 16 ticks inside (the next
+      family). The escape from a window that opened on the aircraft is now
+      judged as it is flown, out of the ring and then a stop (one forecast
+      step, then 3 m/s^2: Shield._shaped_escape), so only a rule inside that
+      stop refuses the cap. These cells' goto pilot escapes north, where no
+      rule lies within it (nor within 20 m); tests/test_window_opens_on.py
+      flies this cell with a zone 4-15 m past the north exit and with the
+      corridor's end 9 m past it, at 0.2-4 m/s.
     mission:
       start_pose: { x: 60.0, y: 21.0, up: 15.0 }
       target: { x: 60.0, y: 55.0, up: 15.0 }
-      pilot: { type: goto, speed: 4.0 }
+      pilot: { type: goto, speed: "$vehicle_speed_mps" }
       clock_start: "$clock"
     policy: { path: policies/corridor_survey.yaml }
     parameter_sweep:
       clock: ["2026-09-07T07:29:58", "2026-09-07T07:29:58.5", "2026-09-07T07:29:59"]
+      vehicle_speed_mps: [4, 1.5]
     expected_kpis:
       P0_escape_rate: 0
       anticipated_ticks_nfz-school: { min: 1 }        # the t+ side: seen coming
       switch_conservative_nfz-school: { equals: true }
-      ticks_inside_fence_polygon: { min: 1 }          # it really opened on it
+      ticks_inside_fence_polygon: { min: 1, max: 15 } # it really opened on it,
+                                                      # and no longer than 7c9c9e6
       time_to_safe_episodes: { min: 1 }
       time_to_safe_censored: { max: 0 }               # ... and it got out
+      max_time_to_safe_s: { max: 2.7 }                # ... as fast as 7c9c9e6
       breaches: { max: 0 }
       ended_safe: { equals: true }
     expected_failsafe: false
-    # `fails` measured 2026-10-19 over the nightly profile's 9 pinned
-    # episodes and the smoke run (f93283d): the Shield's P0 counter only. A
-    # breach, a censored or unsafe end, or a fail-safe in these cells is new.
-    # The P0 pin is BOUNDED (review of F8-harness-tools, P3): a bare
-    # `fails: [P0_escape_rate]` absorbed the gate at any magnitude, so 0.5
-    # injected here still printed KNOWN and exited 0. Measured the same day
-    # on seeds 1001-1003, both forecast arms: 2 escapes over 262-274 Shield
-    # ticks, 0.0073-0.0076. max 0.01 holds those two escapes and makes a
-    # third (3 / 274 = 0.011) NEW.
-    known_failures:
-      - params: { clock: "2026-09-07T07:29:58" }
-        fails: [{ P0_escape_rate: { max: 0.01 } }]
-        description: &opensonit >
-          A window opening on the aircraft sooner than it can leave
-          (measured 2026-10-12, grant's 5 s forecast; the 3 s arm flies the
-          same chain). On the first tick no action clears the forecast - the
-          zone opens before any pose can be out of its ring - so the Shield
-          flies its best effort, 4 m/s north (the way out), with the P0
-          violation still on it, at 0.0 and 0.1 s: 2 P0 escapes on the
-          Shield's own counter (the gate this cell fails). The repair's
-          forecast depth exceeds theta (X1, Brake), and at 0.1 s G3 hands
-          the aircraft to LOITER. Until 2026-10-19 ArduPilot held that
-          LOITER where it was, at (60, 21.8), inside the zone as the window
-          opened: 28-38 autopilot P0 ticks of LOITER, 41 ticks inside, time
-          to safe 5.4-6.4 s. Since then the FSM's hold point is chosen
-          legally (guardrail/holdpoint.py: the nearest point where a stop
-          is legal from arrival through the lookahead, 0.5 m about it too):
-          (60, 31.9), 0.9 m north of the ring, reached at the 4 m/s cap at
-          2.6 s. The transit flies 8-18 autopilot P0 ticks before the window
-          opens (no action clears the forecast then either) and none after
-          (inside and escaping): 3-13 ticks inside, time to safe 2.6 s,
-          never censored. The Loiter still clears 2 s after the opening (G8,
-          T_recover), no fail-safe, goal reached. The 2 Shield escapes are
-          untouched - they come before G3 - so the pin stands at the same
-          bound (rates 0.007353-0.007634, as before).
-          They are not this harness's either: the Shield's repairs
-          (GeofenceEscape, ClearanceEscape) cannot clear a forecast that is
-          inside the zone from its opening on whatever the heading, and it
-          counts the fastest way out as an escape, not a recovery. Only the
-          policy or the mission's timing can remove them, and the DSL now
-          says so when the mission is compiled: guardrail/compiler.py
-          time_window_lead_warnings warns that the start is inside the ring
-          1.0-2.0 s before the opening with 2.5 s needed to leave
-          (`lint_warnings` in the episode record).
-      - params: { clock: "2026-09-07T07:29:58.5" }
-        fails: [{ P0_escape_rate: { max: 0.01 } }]
-        description: *opensonit
-      - params: { clock: "2026-09-07T07:29:59" }
-        fails: [{ P0_escape_rate: { max: 0.01 } }]
-        description: *opensonit
+    # No known_failures since 2026-10-21 (C2; the description above): the
+    # three cells were pinned on the Shield's P0 counter at max 0.01 from
+    # 2026-10-19 (2 escapes over 262-274 Shield ticks, 0.0073-0.0076, seeds
+    # 1001-1003, both forecast arms). A P0 escape, a breach, a censored or
+    # unsafe end, or a fail-safe in these cells is now a NEW failure.
+
+  - scenario_id: time-window-opens-on-sideways-pilot
+    template: time_window_switch
+    description: >
+      The 07:29:58 opens-on-vehicle cell flown by a pilot holding 2 m/s EAST
+      (review of 69c27bd, P2). The way out is then east, and the
+      corridor-survey-route edge at x = 80 is only 9 m past the school
+      zone's ring at x = 71: in the plain library geometry another hard rule
+      lies within the cap's straight 5 s forecast (20 m) of the exit. On
+      69c27bd the floored escape was re-checked on that straight forecast,
+      the cap was refused, the escape slowed (3.75, 3.5 ... 2.25 m/s, the
+      speed whose straight forecast ends at x = 80), and from x = 70 the
+      pilot's own 2 m/s broke the corridor and the FSM went Normal > Brake >
+      Loiter: 16 ticks inside the polygon and 4.0 s to safe on the grant arm
+      (8 / 2.9 s on the 3 s arm), with P0 escape 0, against 5 / 2.8 s (7 on
+      the 3 s arm) on 7c9c9e6, every tick escalated and the hold transit at
+      the cap. The escape from a window that opened on the aircraft is now
+      judged as it is flown: out of the ring, then a stop (one forecast
+      step, then 3 m/s^2; guardrail/shield.py Shield._shaped_escape), which
+      ends at x = 74.1 on the grant arm (75.7 on the 3 s arm), short of the
+      corridor edge, so the cap flies. Measured 2026-10-22: 5 / 2.8 s on the
+      grant arm and 7 / 2.8 s on the 3 s arm - 7c9c9e6's counts exactly - 0
+      P0 escapes, no refused cap or floor, the FSM Normal until the aircraft
+      is out of the ring; then the pilot's 2 m/s east, whose own forecast
+      breaks the corridor from 10 m short of its edge, is projected and the
+      FSM brakes (Normal > Brake, G1), which is the corridor rule doing its
+      job outside the zone, not the escape. Bounds: ticks inside at most 7
+      (the 3 s arm's count; a family gate is one bound for both arms, and
+      tests/test_window_opens_on.py pins each arm at 7c9c9e6 + 1 for 1 and 2
+      m/s east and 1 m/s west), time to safe at most 2.9 s, never censored,
+      and no tick refusing the cap or the floor.
+    mission:
+      start_pose: { x: 60.0, y: 21.0, up: 15.0 }
+      pilot: { type: constant, action: { vx: 2.0, vy: 0.0 } }
+      clock_start: "2026-09-07T07:29:58"
+    policy: { path: policies/corridor_survey.yaml }
+    expected_kpis:
+      P0_escape_rate: 0
+      anticipated_ticks_nfz-school: { min: 1 }        # the t+ side: seen coming
+      switch_conservative_nfz-school: { equals: true }
+      ticks_inside_fence_polygon: { min: 1, max: 7 }  # it really opened on it,
+                                                      # and no longer than 7c9c9e6
+      time_to_safe_episodes: { min: 1 }
+      time_to_safe_censored: { max: 0 }               # ... it got out
+      max_time_to_safe_s: { max: 2.9 }                # ... as fast as 7c9c9e6
+      cap_refused_ticks: { max: 0 }                   # ... at the cap throughout
+      floor_refused_ticks: { max: 0 }
+      breaches: { max: 0 }
+      ended_safe: { equals: true }
+    expected_failsafe: false
 
   - scenario_id: time-window-opens-ahead
     template: time_window_switch

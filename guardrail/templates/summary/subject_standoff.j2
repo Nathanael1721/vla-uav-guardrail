@@ -1,2 +1,5 @@
 {% extends "summary/_base.j2" %}
-{% block core %}>= {{ r.min_range_m|g }} m from {% if r.subject_class == "*" %}any followed subject{% else %}any {{ r.subject_class }}{% endif %}{% endblock %}
+{#- A named class binds only to the followed subject while it carries the
+    class (models.SubjectStandoff.binds): "the followed <class>", not "any
+    <class>" (until 2026-10-21; open item C8). -#}
+{% block core %}>= {{ r.min_range_m|g }} m from {% if r.subject_class == "*" %}any followed subject{% else %}the followed {{ r.subject_class }}{% endif %}{% endblock %}

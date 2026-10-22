@@ -30,7 +30,9 @@ library of 176 episodes, 167 of them labelled where the 12 Oct one scored
 186: 0.838, 140 of 167, with 26 false and 1 missed trigger, against a
 never-trigger null of 0.940; still below the null and the grant's 0.99. The
 null fell because the library changed, not because the FSM improved;
-CHANGELOG 2026-10-13.) Every `fsm_config_hash` changed with the three new
+CHANGELOG 2026-10-13. 21 Oct: republished with the FSM's hold points
+(docs/DESIGN-hold-points.md): 0.844, 141 of 167, with 25 false and 1 missed
+trigger, the null unchanged at 0.940; still below it.) Every `fsm_config_hash` changed with the three new
 config fields: the default thresholds now hash to `sha256:5ae67785...`. The
 sweep published on 7 Oct carried `sha256:0136098f...`; the 12 Oct and 13 Oct
 republications of `docs/data/scenario_sweep.json` carry `sha256:5ae67785...`
@@ -687,6 +689,11 @@ before the standoff ring comes into the lookahead.
 
 Runs: ros2_ped_on, ros2_shield_on, ros2_shield_on_dynamic, sitl_ped_on,
 sitl_ped_side_on, sitl_shield_on, sitl_shield_on_dynamic. All have `brakes = 0`.
+(Note added 2026-10-21: the four `sitl_*` runs were flown by the pymavlink
+SITL rail before 79bae12, 2026-10-19, on a delayed pose - its OLDEST queued
+LOCAL_POSITION_NED, 3-6.6 s behind on `sitl_ped_on`; see the X6 note below.
+Their repaired ticks and θ counts describe that rail as it flew, not the
+aircraft's true position. The three `ros2_*` runs came over MAVROS.)
 Reproduce with (one line per run; change `--horizon` for the other rows):
 
 ```

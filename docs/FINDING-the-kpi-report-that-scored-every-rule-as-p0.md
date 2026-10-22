@@ -39,6 +39,14 @@ each run computed in flight with its real policy:
 | `ros2_shield_on_dynamic` | 309 | 217 |
 | `sitl_shield_on_dynamic` | 219 | 131 |
 
+> **Delayed pose (note added 2026-10-21).** `sitl_shield_on_dynamic` was flown
+> by the pymavlink SITL rail before 79bae12 (2026-10-19), which read
+> pymavlink's OLDEST queued LOCAL_POSITION_NED each tick, so its pose ran
+> seconds behind the aircraft (3-6.6 s on `sitl_ped_on`; CHANGELOG
+> 2026-10-19). The comparison above is of two scorings of the same logged
+> rows and holds; the tick counts themselves describe the rail as it flew on
+> that delayed pose, not the aircraft's true position.
+
 Reproduced on this machine:
 
 ```python

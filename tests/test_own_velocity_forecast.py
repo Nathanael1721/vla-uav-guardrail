@@ -79,6 +79,15 @@ IDENTITY_BASE = "c77c77d"
 # merge) could not survive the next change to the search. At c77c77d the
 # keys do not exist, so `--regenerate` gives the digests it always gave.
 HOLD_POINT_FIELDS = ("hold_point", "hold_legal", "hold_needed", "hold_chosen")
+# The decision's `policy_hash` names the policy, it is not part of what the
+# Shield decided. WP1-22 (2026-10-21) gave hard_21.yaml its own policy_id
+# (random-scenario -> random-scenario-hard-21) without touching a rule, which
+# moved its hash and so both hard_21 streams while every other field stayed
+# byte-identical (checked that day). The hash is left out of every dump the
+# identity digests hash, and the digests were regenerated on c77c77d with it
+# left out (`--regenerate`), so the proof is still about the velocity and
+# still on c77c77d. `generation` stays in.
+IDENTITY_FIELDS_OUT = ("policy_hash",)
 
 
 def _city_map():
@@ -125,6 +134,8 @@ def _identity_lines(name: str, n: int, *, escalation: bool, velocity: str = "non
                      vz_up=rng.uniform(-2.5, 2.5), yaw_rate=rng.uniform(-1.0, 1.0))
         d = sh.filter(st, a, t=t)
         dump = d.model_dump(mode="json")
+        for k in IDENTITY_FIELDS_OUT:
+            dump.pop(k, None)
         if isinstance(dump.get("fsm_record"), dict):
             for k in HOLD_POINT_FIELDS:
                 dump["fsm_record"].pop(k, None)

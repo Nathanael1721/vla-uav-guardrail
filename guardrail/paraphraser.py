@@ -102,7 +102,8 @@ MIN_NOVELTY = 0.15
 MAX_LENGTH_RATIO = 4.0
 MIN_LENGTH_RATIO = 0.25
 
-TEMPLATE_BANK_VERSION = 1
+# 2 since 2026-10-21: a rule for the followed-subject stand-off sentence (C8).
+TEMPLATE_BANK_VERSION = 2
 
 # The city follow missions name their subject on the launcher's command line
 # (scripts/run_citylife_follow.ps1: the default `$Object = "a person"`, and the
@@ -716,6 +717,10 @@ class Slots:
     overrides: list = field(default_factory=list)      # "ignore", "optional", ...
     soft: int = 0
     words: list = field(default_factory=list)          # for identity / novelty
+    # (qualifier, object class): what narrows an object beyond its class and
+    # colour - "mod:dark", "rel:running", "ptc:wearing", "loc:street"
+    # (_narrowings, since 2026-10-21)
+    qualifiers: set = field(default_factory=set)
 
 
 _PLACES_FALLBACK = ["northeast pad", "north pad", "east pad", "home"]
@@ -965,6 +970,144 @@ def _colour_target(ctoks: list[str], i: int, reg: dict) -> int | None:
     return None
 
 
+# --------------------------------------------------------------------------- #
+# Narrowing qualifiers (A14, 2026-10-21)
+# --------------------------------------------------------------------------- #
+#
+# WHY. The held-out probes of 2026-10-06 left five meaning changes accepted
+# (docs/DESIGN-paraphraser.md), all narrowings no slot saw: "a dark red car",
+# "the person who is running", "pedestrians in the street", "adult
+# pedestrians" - and "descend" for "climb rate" (in _tags). A narrowed subject
+# is a different mission: follow "a person who is running" and a walking person
+# is no longer the target; keep 10 m from "pedestrians in the street" and the
+# ones on the pavement are no longer protected. A fresh held-out set written
+# before this change (probes.json heldout_2026_10_21, 22 meaning changes
+# weighted towards narrowing) had 21 of them accepted.
+#
+# WHAT IS READ, per object the extractor found, in its own clause:
+#   mod:<word>  a word between a determiner and the object noun ("a SMALL red
+#               car", "the TALLEST person", "any OCCUPIED building"), colours
+#               skipped (the colour slot owns them); with no determiner within
+#               reach, only the closed list _NARROW_ADJ ("TALL buildings",
+#               "ADULT pedestrians", "DARK red cars"), since the word before a
+#               bare plural is as often a verb or preposition ("avoid
+#               buildings", "from buildings");
+#   rel:<word>  a relative clause right after the noun ("who is running", "that
+#               is parked") - unless all it says is a colour ("a car that is
+#               red"), which the colour slot already reads; the follower clause
+#               ("the car you are following") is consumed by the object;
+#   ptc:<word>  a participle right after the noun ("a person WEARING a hat",
+#               "a red car DRIVING", "pedestrians WALKING toward you");
+#   loc:<noun>  a place phrase right after the noun, read only with a place
+#               noun from a closed list ("pedestrians in the STREET", "areas
+#               near the SCHOOL"), so "at all times" or "in force" is not one.
+# A candidate whose qualifiers differ from the source's - one added (a
+# narrowing) or one dropped (a widening) - is refused. Like every slot here it
+# is lexical, not an entailment model: a narrowing in words these lists do not
+# hold, or further from the noun, still passes.
+_DETERMINERS = frozenset(_ARTICLES | {"some", "this", "that", "these", "those", "no",
+                                      "another", "one", "our", "their", "my"})
+# Between a determiner and the noun, words that do not narrow the class.
+_NEUTRAL_MODS = frozenset({"single", "same", "given", "one"})
+# Narrowing adjectives read without a determiner ("adult pedestrians").
+_SHADES = frozenset({"dark", "light", "bright", "pale", "deep", "dull", "vivid",
+                     "faded", "darker", "lighter"})
+_NARROW_ADJ = frozenset(_SHADES | {
+    "adult", "adults", "child", "children", "young", "younger", "old", "older",
+    "elderly", "senior", "small", "smaller", "large", "larger", "big", "bigger",
+    "little", "tiny", "huge", "tall", "taller", "short", "shorter", "high", "low",
+    "moving", "parked", "stationary", "stopped", "running", "speeding", "slow",
+    "fast", "male", "female", "local", "foreign", "occupied", "empty", "new",
+    "first", "second", "third", "last", "next", "lead", "leading", "other",
+    "nearest", "closest", "farthest", "furthest", "sports", "police", "delivery",
+    "electric", "private", "public", "residential", "commercial"})
+_RELATIVIZERS = frozenset({"who", "that", "which", "whom", "whose"})
+_COLOUR_CLAUSE = frozenset({"is", "are", "was", "were", "be", "being", "coloured",
+                            "colored", "painted", "'s"})
+_LOCATIVE_PREP = frozenset({"in", "on", "at", "near", "along", "across", "inside",
+                            "outside", "by", "beside", "around", "within"})
+_PLACE_NOUNS = frozenset({
+    "street", "road", "sidewalk", "pavement", "crosswalk", "crossing", "intersection",
+    "junction", "park", "plaza", "yard", "lot", "parking", "lane", "highway",
+    "motorway", "freeway", "avenue", "area", "city", "centre", "center", "town",
+    "downtown", "school", "campus", "garden", "field", "bridge", "station", "market",
+    "neighbourhood", "neighborhood", "district", "square", "village", "harbour",
+    "harbor", "port", "airport", "mall", "playground", "stadium"})
+# -ing / -ed words that are not a participle describing the noun.
+_NOT_PARTICIPLE = frozenset({"during", "including", "excluding", "regarding",
+                             "concerning", "according", "notwithstanding", "anything",
+                             "something", "everything", "nothing", "ceiling", "heading",
+                             "speed", "need", "indeed", "proceed", "exceed", "succeed",
+                             "following", "followed"})
+# "the waypoint SITTING 120 m directly ahead", "LOCATED at (40, 40)": a
+# participle of position that only introduces a slot the comparison already
+# checks (a quantity, coordinate, place, direction or named reference within
+# three tokens) restates where the object is; it does not narrow it. Found on
+# the stored set (task_fly_to_the_waypoint_120_m_ahead_at, item 7), which is
+# faithful by construction. "a person STANDING on the sidewalk" is not one.
+_POSITION_PARTICIPLES = frozenset({"located", "sitting", "situated", "positioned",
+                                   "lying", "placed", "set"})
+
+
+def _superlative(w: str) -> bool:
+    return (len(w) >= 6 and w.endswith("est")
+            and w not in {"honest", "forest", "interest", "request", "suggest", "modest",
+                          "harvest", "contest", "protest", "digest", "invest", "arrest"})
+
+
+def _narrowings(ctoks: list[str], i: int, reg: dict) -> list[str]:
+    """The qualifiers that narrow the object at ctoks[i] (see the block
+    above). `ctoks` is one clause, `reg` the placeholder registry."""
+    out: list[str] = []
+    # before the noun: back over plain words and colours to a determiner
+    mods: list[str] = []
+    det = False
+    j = i - 1
+    while j >= 0 and i - j <= 4:
+        t = ctoks[j]
+        if t in reg:
+            if reg[t][0] == "col":
+                j -= 1
+                continue
+            break
+        if t in _DETERMINERS:
+            det = True
+            break
+        if not re.fullmatch(r"[a-z]+(?:-[a-z]+)*", t):
+            break
+        mods.append(t)
+        j -= 1
+    if det:
+        out += [f"mod:{m}" for m in mods if m not in _NEUTRAL_MODS]
+    else:
+        out += [f"mod:{m}" for m in mods if m in _NARROW_ADJ or _superlative(m)]
+    # after the noun
+    if i + 1 < len(ctoks):
+        t = ctoks[i + 1]
+        if t in reg:
+            return out
+        if t in _RELATIVIZERS:
+            content = [x for x in ctoks[i + 2:i + 7]
+                       if not (x in reg and reg[x][0] == "col") and x not in _COLOUR_CLAUSE]
+            if content:
+                word = content[0] if content[0] not in reg else reg[content[0]][0]
+                out.append(f"rel:{word}")
+        elif (re.fullmatch(r"[a-z]{3,}(?:ing|ed)", t) and t not in _NOT_PARTICIPLE
+              and not (t in _POSITION_PARTICIPLES and any(
+                  x in reg and reg[x][0] in ("q", "coord", "place", "dir", "ref")
+                  for x in ctoks[i + 2:i + 5]))):
+            out.append(f"ptc:{t}")
+        elif t in _LOCATIVE_PREP:
+            for x in ctoks[i + 2:i + 6]:
+                if x in reg:
+                    break
+                noun = x[:-1] if x.endswith("s") and x[:-1] in _PLACE_NOUNS else x
+                if noun in _PLACE_NOUNS:
+                    out.append(f"loc:{noun}")
+                    break
+    return out
+
+
 def _negated_before(ctoks: list[str], i: int, reg: dict) -> bool:
     """An action or direction under a negation in its own clause: "do not
     follow", "never track", "stop following", "do not fly forward"."""
@@ -1142,6 +1285,11 @@ def extract_slots(text: str, known_ids: Iterable[str] = ()) -> Slots:
                 det = set(ctoks[max(0, i - 2):i])
                 if det & _INDEFINITE and not det & _DEFINITE:
                     slots.widened.add(reg[tk][1])
+        # what narrows each object beyond its class and colour (_narrowings)
+        for i, tk in enumerate(ctoks):
+            if reg.get(tk, ("",))[0] == "obj":
+                for q in _narrowings(ctoks, i, reg):
+                    slots.qualifiers.add((q, reg[tk][1]))
         for qi, p in enumerate(qpos):
             start = qpos[qi - 1] + 1 if qi > 0 else 0
             end = qpos[qi + 1] if qi + 1 < len(qpos) else len(ctoks)
@@ -1246,11 +1394,20 @@ def _clock(m: re.Match) -> str:
     return f"{h:02d}:{m.group('m') or '00'}"
 
 
+_VERTICAL_WORD = re.compile(r"(?:climb|ascen|descen|sink|ris(?:e|es|ing)$)")
+
+
 def _list_ors(W: list[str]) -> list[int]:
     """Positions of a list "or"/"nor" - not the "or" inside "at or below",
-    which is part of one comparative and must not split the clause."""
+    which is part of one comparative and must not split the clause, and not
+    the "or" of "climb or descend" (one vertical rate, both ways: until the
+    descent sub-attribute of 2026-10-21 nothing depended on it, and since then
+    the split read "climb or descend at under 2 m/s" as a descent-only
+    limit)."""
     return [j for j, x in enumerate(W) if x in ("or", "nor")
-            and not (j > 0 and W[j - 1] == "at")]
+            and not (j > 0 and W[j - 1] == "at")
+            and not (0 < j < len(W) - 1 and _VERTICAL_WORD.match(W[j - 1])
+                     and _VERTICAL_WORD.match(W[j + 1]))]
 
 
 def _plain(tokens: list[str], reg: dict) -> list[str]:
@@ -1375,6 +1532,15 @@ def _tags(W: list[str], A: list[str], unit: str | None, reg: dict,
         if allowed is not None:
             found = {f for f in found if f in allowed or
                      (f.startswith("obj:") and unit in ("m", "ft", "km"))}
+        # A vertical-rate limit read as DESCENT only ("descend under 2 m/s",
+        # "sink rate below 2 m/s") is a sub-attribute: the compiler's "climb
+        # rate" is the policy's |vz| cap, climb and descent both, so a
+        # descent-only limit drops the climb half (held-out probe, 2026-10-06;
+        # A14). "vertical speed", "climb or descend" and "ascent" read as the
+        # whole cap, as "climb" does.
+        if "climb" in found and re.search(r"\b(?:descen\w*|sink\w*)", text) and not \
+                re.search(r"\b(?:climb\w*|ascen\w*|ris(?:e|es|ing)|vertical\w*)", text):
+            found.add("descent")
         return found
 
     # "120 m ahead", "forward 120 m": a distance along a direction, not a
@@ -1459,6 +1625,8 @@ def _q_ok(s: Quantity, c: Quantity) -> bool:
     # spatial context ("between 10 m and 20 m in altitude" inside a corridor).
     if (s.tags & _KINEMATIC) != (c.tags & _KINEMATIC):
         return False
+    if ("descent" in s.tags) != ("descent" in c.tags):
+        return False                    # descent only vs the whole vertical cap
     if ({t for t in s.tags if t.startswith("obj:")}
             != {t for t in c.tags if t.startswith("obj:")}):
         return False
@@ -1599,6 +1767,13 @@ def validate(source: str, candidate: str) -> Verdict:
     widened = {o for _, o in s.colour_binds if o} & c.widened
     for o in sorted(widened):
         reasons.append(f"colour: '{o}' widened to any {o}, not only the coloured one")
+    # A qualifier the source does not have narrows the object; one it had and
+    # the candidate dropped widens it (_narrowings, since 2026-10-21).
+    for q, o in sorted(c.qualifiers - s.qualifiers):
+        reasons.append(f"object: '{o}' narrowed by {q.split(':', 1)[1]!r} ({q.split(':')[0]})")
+    for q, o in sorted(s.qualifiers - c.qualifiers):
+        reasons.append(f"object: '{o}' widened: dropped {q.split(':', 1)[1]!r} "
+                       f"({q.split(':')[0]})")
     if s.refs != c.refs:
         reasons.append(f"reference: {sorted(s.refs)} became {sorted(c.refs)}")
     elif s.neg_refs != c.neg_refs:
@@ -1935,6 +2110,17 @@ _TEMPLATE_RULES: list[tuple[str, tuple[str, ...]]] = [
         "Stay at least {d} m back from whatever you are following.",
         "Never close within {d} m of your target.",
         "Hold at least {d} m of separation from the target you are tracking.")),
+    # The class-specific stand-off since 2026-10-21 (C8: it binds only the
+    # FOLLOWED subject of that class, templates/sentence/subject_standoff.j2).
+    # Every rewording keeps "the <class> you are following / tracking", so the
+    # object stays the followed one (followed_person / followed_car / the
+    # class word with the follow verb, as in the source).
+    (rf"keep at least (?P<d>{_N}) m away from the (?P<cls>[a-z]+) you are following\.", (
+        "Keep at least {d} m away from the {cls} you are following.",
+        "Stay at least {d} m back from the {cls} you are following.",
+        "Never close within {d} m of the {cls} you are tracking.",
+        "Hold at least {d} m of separation from the {cls} you are following.")),
+    # The pre-C8 wording, kept for any text still written that way.
     (rf"keep at least (?P<d>{_N}) m away from any (?P<cls>[a-z]+)\.", (
         "Keep at least {d} m away from any {cls}.",
         "Stay at least {d} m from every {cls}.",

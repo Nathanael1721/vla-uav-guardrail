@@ -595,11 +595,297 @@ wind-beyond-authority, failsafe-rtl-blocked) is c77c77d's, pinned by row
 digest in `test_in_place_holds_fly_c77c77ds_rows_exactly`; flown that way
 the 9 deg/s cell fails again, since its pin is gone.
 
+## The opens-on-vehicle escapes, removed by another route (C2, 2026-10-21)
+
+The hold points could not remove the 2 Shield escape ticks per
+opens-on-vehicle cell: they are flown before G3. What made them escapes was
+the check, not the FSM. Until the window opens the school zone is not in
+force NOW, so `_check_fence` walked the forecast, found the pose at the
+opening inside the ring whatever the action, and called the pilot's 4 m/s
+north - the fastest way out - a violation; 0.1 s after the opening, the zone
+in force and the aircraft inside it, the inside rule (escaping at more than
+0.1 m/s is not a violation) called the same command legal.
+
+`Shield._opening_imposed` closes that gap. When a timed zone that is not in
+force now opens at forecast time t_open on an aircraft inside its ring and
+band, and an IDEAL vehicle at the policy's hard, enforced caps (in force over
+the whole tick) cannot be out of the ring by t_open - horizontal distance to
+the ring over speed cap, and the band's top and bottom over climb cap, each
+longer than t_open - the zone is judged by the inside rule from the opening:
+the action must be leaving at the pose where the zone opens (that pose's way
+out; from the zone's middle the current position's way out is an arbitrary
+side of a tie), and anything else gets the pose walk's violation, word for
+word. GeofenceEscape reads the way out at the same pose, so its floor raises
+a crawl along its own way (until then it would have reversed a 4 m/s exit
+north into 2 m/s south). Not proved, and so judged as before: no hard
+enforced cap, a moving zone, a state that still carries a measured velocity
+(in practice set aside there, since a stop at the position is illegal). The
+decision's trace lists such zones (`window_opens_on`), and the harness
+counts them in `anticipated_ticks_<rule>` (the rule seen coming and
+enforced), so the family's gate still measures what it did.
+
+No FSM edge, guard or setpoint and no KPI formula moved: an escape is still
+"a P0 seen and flown anyway", read off the emitted action's re-check. What
+changed is that the check no longer reports a violation where no legal
+action existed and the action is the recovery the inside rule asks for.
+
+Measured (headless, 2026-10-21, `--forecast-arms grant 3s`): the three cells
+pass on both arms (0 escapes, Normal throughout, no autopilot tick, 3 / 8 /
+13 ticks inside on the grant arm and 5 / 10 / 15 on the 3 s arm - the same
+as before, the aircraft flies the same path - time to safe 2.6 s, goal
+reached), and their pins are gone. Library 133 / 22 / 0 / 21 -> 136 / 22 /
+0 / 18, P0 escape 0.000132 -> 0.0 over 175 Shield-on episodes, autopilot P0
+ticks 1153 -> 1114, fail-safe labels 141/167 unchanged; 3 s arm 129 / 22 /
+4 / 16 -> 132 / 22 / 4 / 13. Nightly 511 / 66 / 0 / 155 -> 520 / 66 / 0 /
+146, P0 0.000101 -> 0.0, fail-safe 535/705 unchanged; smoke 52 / 6 / 0 / 4
+-> 53 / 6 / 0 / 3, P0 0.00014 -> 0.0, fail-safe 55/59 unchanged (both
+profiles flown on a pristine copy of 7c9c9e6 and on this change the same
+day). Every other episode's KPI record is identical, compared field by
+field: library (both arms), nightly (732 episodes, 9 changed: the cells
+on three seeds) and smoke (62, 1 changed). Since no Loiter is entered there, the
+cells are off the in-place digest list, and the harness's moved-hold tests
+use `three-simultaneous-violations` (hold moved up into the band: 19
+autopilot P0 ticks against 78 in place). The lint still warns: the position
+is still made illegal under the aircraft (tests/test_window_opens_on.py).
+
+What that P0 = 0 is, said plainly (review of 3660383, P2): a RE-JUDGEMENT of
+the same path, not a different flight. The aircraft is inside the polygon
+for the same 3 / 8 / 13 ticks and takes the same 2.6 s to safe as on
+7c9c9e6; the 6 Shield ticks are now judged the recovery, and the autopilot's
+P0 ticks are gone because the FSM is never entered. And
+`anticipated_ticks_<rule>` was redefined by the same change to count the
+trace's `window_opens_on` too: in these cells no tick is a violation any
+more, so without the extension the family's own `anticipated_ticks_nfz-school:
+{min: 1}` gate would fail. Both are now visible where the number is read:
+the ticks counted only through the trace are their own field,
+`anticipated_opening_only_ticks_<rule>` (all of them, in these cells), and
+the sweep's headline, its true-state summary and `kpi_report.md` print the
+ticks inside and the time to safe of every episode a window opened on beside
+the P0 rate.
+
+### The escape speed, and a slow pilot (review of 3660383, 2026-10-22)
+
+The change above was measured with the goto pilot's 4 m/s, which is the
+cap: the fastest way out was also what the pilot asked. At the speeds this
+wave's VLA pilot flies (the StepTracker cruises at 1-2 m/s) it made the
+KPI look better by letting the aircraft stay longer. Before C2 every tick
+there was a violation, so the FSM took over (X1, G3) and the modelled
+autopilot's hold transit left at the 4 m/s cap whatever the pilot asked.
+After it, any escape faster than 0.1 m/s was legal, the FSM stayed Normal,
+and GeofenceEscape raised a crawl only to the in-force floor of 2.0 m/s.
+With a 1.5 m/s pilot (run_episode, only `mission.pilot.speed` changed):
+
+| cells (grant arm) | P0 escapes | ticks inside the polygon | time to safe | FSM |
+|---|---|---|---|---|
+| 7c9c9e6, any speed 0.5-4 m/s | 2 per cell | 3 / 8 / 13 | 2.6 s | X1 > G3 > G8 |
+| 3660383, 4 m/s | 0 | 3 / 8 / 13 | 2.6 s | none |
+| 3660383, 0.5-2 m/s | 0 | 26 / 31 / 36 | 5.1 s | none |
+| now, any speed 0.5-4 m/s | 0 | 3 / 8 / 13 | 2.6 s | none |
+
+The family's gates could not see it: `ticks_inside_fence_polygon` had only a
+minimum, time to safe no bound, and every test flew 4 m/s.
+
+The fix leaves the KPI and the FSM alone and changes the escape. For a zone
+whose window opens on the aircraft, GeofenceEscape raises the way out to the
+CAP, not to 2.0 - where that re-checks clean (next section) - with the
+tangential given up first (raising only the
+outward part would let SpeedClamp scale the whole vector back: 1.5 m/s out
+and 1.0 across would leave at 3.3 m/s). That holds before the opening
+(`_opening_imposed`) and after it, until the aircraft is out of the ring:
+from inside a zone in force nothing in the state says whether the aircraft
+flew in or the window opened on it, so the Shield remembers which zones
+opened on it (`Shield._opened_on`, kept by `filter()`, in the trace as
+`window_opened_on`, cleared by `reset_episode`), and forgets one once the
+aircraft is out of its ring, the zone is out of force, or it leaves the
+policy. A zone the aircraft enters by itself, or re-enters after leaving
+one that opened on it, is floored at 2.0 as before. The review's prototype
+of the first half alone (the cap before the opening) gave 6 ticks inside
+where 7c9c9e6 flew 3; the memory closes the other 3.
+
+The family now sweeps `vehicle_speed_mps: [4, 1.5]` with upper bounds:
+`max_time_to_safe_s: {max: 2.7}` and `ticks_inside_fence_polygon: {min: 1,
+max: 15}`. A family gate is one bound for every cell, so 15 is 7c9c9e6's
+worst cell over both forecast arms (13 on the grant arm, 15 on the 3 s arm,
+whose eps calls the zone in force two ticks earlier on the same path);
+time to safe is the tight bound on every cell, and the exact per-cell counts
+on both arms and both speeds are pinned in tests/test_window_opens_on.py.
+
+A committed stop point (review of 3660383, P8). `_check_fence` judges a zone
+from `_rule_state`, which for a zone the aircraft's momentum carries it into
+is the GUIDED stop point, with no velocity, so the opening rule is reached
+there. That is `_committed`'s judgement extended to a zone that comes into
+force before the aircraft gets there: 3 m short of the ring at 4 m/s, the
+stop ends 3.4 m inside it, no action brakes harder than the stop, and the
+aircraft is inside once the zone is in force whatever is commanded. So
+carrying on or stopping is the pose walk's violation from the stop point,
+repaired straight back out at the cap, and a reverse at the cap passes; a
+stop point the ideal vehicle could still leave from by the opening is not
+claimed. `openings_imposed` used to ask the state with its velocity, so the
+trace, the anticipated count and the memory missed the zone the check had
+judged this way; it now asks each zone's `_rule_state`.
+
+Measured 2026-10-22, headless, `--forecast-arms grant 3s`, against a
+pristine copy of 7c9c9e6 flown with this family definition (no pins):
+
+* the six cells: 2 Shield P0 escapes each -> 0; ticks inside 3 / 8 / 13
+  (5 / 10 / 15 on the 3 s arm) and time to safe 2.6 s at both speeds on both
+  trees; autopilot ticks 28-38 -> 0; FSM X1 > G3 > G8 -> no edge; goal
+  reached;
+* library 133 / 22 / 6 / 18 -> 139 / 22 / 0 / 18, P0 escape 0.00026 -> 0.0
+  over 178 Shield-on episodes (3660383, before the speed axis: 136 / 22 / 0
+  / 18), fail-safe labels 144/170 on both (the three new cells are three
+  correct no-trigger labels, so 141/167 -> 144/170 is the library growing,
+  not a flight); 3 s arm 129 / 22 / 10 / 13 -> 135 / 22 / 4 / 13, its 4
+  failures pre-existing;
+* smoke 52 / 6 / 2 / 3 -> 54 / 6 / 0 / 3, P0 0.000275 -> 0.0, fail-safe
+  56/60 on both;
+* nightly 511 / 66 / 18 / 146 -> 529 / 66 / 0 / 146 (741 episodes, the six
+  cells on three seeds), P0 0.0002 -> 0.0, fail-safe 544/714 on both; the 18
+  episodes a window opened on: ticks inside 3 / 8 / 13 per clock, time to
+  safe at most 2.6 s;
+* every other episode's KPI record identical, field by field, except the
+  compile-time lint text (it now says the way out is flown at the speed
+  cap) of the 12 near-edge-at-12mps episodes on the 3 s arm.
+
+### Another rule in the cap's reach (review of b1d3aca, 2026-10-22)
+
+The cap was all or nothing. Its escape forecasts 4 m/s x 5 s = 20 m ahead,
+twice the in-force floor's reach, and the floors are flown only if the
+floored action re-checks clean against every rule
+(`Shield._floor_the_escape`). With another hard zone within those 20 m past
+the exit, the cap's escape broke it, the floor was refused, and the pilot's
+crawl flew as it came - legal by the inside rule, so no violation, no FSM
+edge, P0 escape 0. The memory made it worse than no memory: at (60, 27)
+after the opening, with a zone 13 m past the ring, the Shield that
+remembered the zone emitted the pilot's 0.2 m/s while a fresh Shield emitted
+the 2.0 floor. The family and its tests flew only the library's goto pilot,
+escaping north, where no rule lies within those 20 m - but the library's
+geometry is not free of such rules: the corridor-survey-route edge at x = 80
+is 9 m past the school zone's ring at x = 71 (the next section) - and the
+lint and this note promised the cap unconditionally.
+
+Now, in this order:
+
+1. the floors are re-run with the escape slower (`_opened_retries`: the cap
+   less 0.25 m/s at a time down to min(2.0, cap), then the in-force floor's
+   own shape, the tangential kept), and the FASTEST that re-checks clean is
+   flown; the trace says what the cap broke (`cap_refused`);
+2. if none can be flown and the action still leaves the zone slower than
+   min(2.0, cap), the tick is that zone's violation (`_escape_shortfall`,
+   in `violations` and `emitted_violations`): the FSM escalates - Normal ->
+   Brake [X1], the stop withheld because a stop there is illegal, then G3
+   into a Loiter whose hold point the search picks against every rule - as
+   on 7c9c9e6, and the KPI counts the ticks flown meanwhile as the P0
+   escapes they are (a pilot already leaving at the floor is the floor and
+   flies, nothing reported);
+3. a pilot's own escape that reaches the other zone (the goto pilot's 4 m/s
+   north, a violation of THAT zone) is slowed the same way until it
+   re-checks clean (`_slower_opened_escape`) before the chain's slide gets
+   it: the slide cancelled the whole northward part and pushed 4 m/s along
+   the other zone's edge, on the side of the pilot's tiny lateral
+   correction, which flipped every tick - the aircraft stood for 1.7 s and
+   left south. Only for a tick whose every enforced violation is another
+   zone's or a corridor's, in chain mode.
+
+Measured 2026-10-22, headless, the library's 07:29:58 cell flown by
+`run_episode` with an always-on hard zone at y = y0..y0 + 6 (1 m margin) and
+only `mission.pilot.speed` changed; ticks inside the polygon / time to safe,
+grant arm (3 s arm in brackets), and the Shield's P0 escapes:
+
+| second zone (ring past the exit) | 7c9c9e6, any speed | 3660383, 0.2-1.5 m/s | b1d3aca, 1.5 / 0.5 / 0.2 m/s | now, any speed 0.2-4 m/s |
+|---|---|---|---|---|
+| none | 3 / 2.6 s (5), 2 P0 | 26 / 5.1 s (28) | 3 / 2.6 s (5) | 3 / 2.6 s (5), 0 P0 |
+| y0 = 47 (15 m) | 3 / 2.6 s (5), 2 P0 | 26 / 5.1 s (28) | 19 / 69 / 184 (5) | 4 / 2.8 s (5 / 2.6 s), 0 P0 |
+| y0 = 45 (13 m) | 3 / 2.6 s (5), 2 P0 | 26 / 5.1 s (28) | 27 / 104 / 279 censored (5) | 6 / 3.0 s (5 / 2.6 s), 0 P0 |
+| y0 = 42 (10 m) | 3 / 2.6 s (5), 2 P0 | 26 / 5.1 s (28) | 39 / 153 / 280 censored (8 / 16 / 34) | 11 / 3.6 s (5 / 2.6 s), 0 P0 |
+| y0 = 40 (8 m) | 3 / 2.6 s (5), 2 P0 | 27 / 38 / 62 (28) | 41 / 160 / 280 censored (16 / 50 / 129) | at 0.2-1.5 m/s 15-16 / 3.8 s, 2 P0 (6 / 2.8 s, 0 P0); 4 m/s below |
+
+With the goto pilot's own 4 m/s (the step 3 case at y0 = 40): 7c9c9e6 3 /
+2.6 s, 3660383 43 / 6.8 s, b1d3aca 20 / 4.3 s, now 14 / 3.7 s (6 / 2.8 s
+on the 3 s arm).
+
+What this does not reach: 7c9c9e6's 3 ticks. That tree escalated every
+tick there and its hold transit flew the autopilot straight out at the cap,
+a path whose own 5 s forecast reaches the other zone (the autopilot's ticks
+are outside the Shield's count); the Shield flies nothing whose forecast is
+not clean, so near the other zone its escape is slower, and at 8 m (y0 =
+40) the floor itself breaks the other zone 1.5 m short of the exit and the
+tick goes to the FSM, 2 counted P0 escapes, as on 7c9c9e6. The library's
+goto pilot escapes north, where no rule lies within 20 m of the exit, so its
+numbers were unchanged (3 / 8 / 13, 2.6 s, 0 P0) - but that was not "no such
+rule in the library" (the next section).
+`tests/test_window_opens_on.py` pins the steps one tick at a time and flies
+the cell with the zone 10, 13 and 15 m past the exit at 1.5 and 0.5 m/s on
+both arms, with these bounds and time to safe never censored. (Superseded
+in part by the next section: those cells now fly 7c9c9e6's numbers.)
+
+### The escape judged as flown (review of 69c27bd, 2026-10-22)
+
+The re-check above walked the cap's escape on its STRAIGHT forecast, 4 m/s
+held for the whole 5 s, as if the aircraft kept the cap 20 m past a ring it
+leaves after a few metres. In the library's own geometry that is not
+harmless: the corridor-survey-route edge at x = 80 is 9 m past the school
+zone's ring at x = 71. A pilot holding 1-3 m/s east (or 1-2 m/s west) when
+the window opens had its cap refused, the escape slowed tick by tick to the
+speed whose straight forecast ends at the corridor's edge (3.75, 3.5 ...
+2.25 m/s), and from 10 m short of the edge the pilot's own forecast broke
+the corridor: Normal -> Brake -> Loiter, 16 ticks inside the polygon and 4.0
+s to safe on the grant arm against 5-6 / 2.8 s on 7c9c9e6. A zone 4 m or the
+corridor's end 9 m past the north exit cost the goto pilot 12-14 ticks
+against 3. Every one of those ticks was legal, so the P0 rate read 0.
+
+Out of the ring a stop is legal again and the next tick judges the next
+action from there; the straight forecast's last 15 m say nothing the Shield
+will fly. So an action ESCAPING a zone whose window opened on the aircraft
+(hard, enforced, static; in force and remembered, or its opening imposed;
+the aircraft in no other hard zone in force; a state without a measured
+velocity, which is the commanded forecast an illegal position is judged on
+anyway) is now judged, by every fence and corridor and by the repairs that
+act on what they find (GeofenceSlide, CorridorReturn), on the escape as it
+is flown (`Shield._shaped_escape`): straight until 0.1 s (one forecast step)
+after the LAST time its path leaves the ring within the horizon, then 3
+m/s^2 to a stop held to the horizon - the commanded forecast's own braking
+model, the clearance rule's (`_clear_horizon_s`). From the cap that stop is
+0.4 + 2.67 m past the exit (2.0 + 2.67 m on the 3 s arm's 0.5 s step). A
+rule beyond it no longer refuses the cap; a rule inside it still does, and
+then the retries fly the fastest speed whose stop is clean, and with none
+the tick is reported to the FSM, as above. The stand-off rule (its forecast
+moves the subject), the clearance rule (already a stop) and the altitude
+band (the climb is unchanged) keep their own forecasts; `forecast()` stays
+the straight one. A zone the aircraft flew into by itself, a stop and a
+hover are judged exactly as before.
+
+Measured 2026-10-22 with the review's probe (`run_episode`, the 07:29:58
+cell, only the policy and the pilot changed), ticks inside the polygon /
+time to safe, Shield P0 escapes, grant arm (3 s arm):
+
+| geometry, pilot | 7c9c9e6 | 69c27bd | now |
+|---|---|---|---|
+| library, 1.0-3.0 m/s east | 5 / 2.8 s, 2 P0 (7) | 16 / 4.0 s, 0-2 P0, Loiter (8 / 2.9 s) | 5 / 2.8 s, 0 P0 (7 / 2.8 s) |
+| library, 1.0-2.0 m/s west | 6 / 2.8 s, 2 P0 (8) | 16 / 3.9-4.0 s (8 / 2.9 s) | 6 / 2.8 s, 0 P0 (8 / 2.8 s) |
+| zone ring 4 m past the north exit, goto 1.5 / 0.5 | 3 / 2.6 s, 2 P0 (5) | 12-13 / 3.5 s, 2 P0 (13 / 3.3-3.4 s) | 3 / 2.6 s, 0 P0 (7 / 2.8 s: the 3 s arm's stop, 35.67, is inside that ring, so 3.5-3.75 m/s flies) |
+| corridor end 9 m past the north exit, goto 1.5 / 0.5 | 3 / 2.6 s, 2 P0 (5) | 14 / 3.8 s, 2 P0 (6 / 2.7 s) | 3 / 2.6 s, 0 P0 (5 / 2.6 s) |
+| zone ring 8-15 m past the north exit (y0 = 40-47), goto 0.2-4 | 3 / 2.6 s, 2 P0 (5) | up to 14-16 / 3.8 s | 3 / 2.6 s, 0 P0 (5 / 2.6 s) |
+
+Of the review's 52 probe rows, 29 changed, every one with 0 P0 escapes and
+to at most 7c9c9e6's ticks inside and time to safe, except the zone 4 m past
+the exit on the 3 s arm (+2 ticks, +0.2 s); the 23 rows that were already
+at 7c9c9e6's numbers (or below) are unchanged. Where the FSM
+still brakes or loiters, it does so after the aircraft is out of the ring,
+on the pilot's own action pushing into the next rule (the corridor's edge,
+the other zone), which is that rule's projection doing its job. The family
+gains a cell, `time-window-opens-on-sideways-pilot` (2 m/s east, bounds:
+ticks inside at most 7, time to safe at most 2.9 s, never censored, no tick
+refusing the cap or the floor), and the sweep counts each episode's
+`cap_refused_ticks` and `floor_refused_ticks` and prints the totals beside
+the P0 headline, zero included, so a slowed escape cannot hide behind "0
+escapes" again.
+
 ## What it does not do
 
 * Remove the 2 Shield escape ticks per opens-on-vehicle cell: they are
-  flown before G3, and the KPI definition is unchanged. The cells stay
-  pinned at the same bound; the lint warning names their cause.
+  flown before G3, and the KPI definition is unchanged. (Removed since
+  2026-10-21 by the check instead, section above; the cells are unpinned.)
 * Fly a rail. The SITL, ROS 2 and Project AirSim rails run their own FSM
   (`guardrail/replay.py rail_shield`), call no `hold_at`, and hold or land in
   place as before (their Loiter records now say `hold_needed: true`). Flying

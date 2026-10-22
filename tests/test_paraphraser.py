@@ -695,21 +695,80 @@ def test_every_instruction_in_scope_has_a_stored_set():
     output, so a change to the templated NL makes the stored set stale loudly.
 
     Until 2026-10-06 this checked build_prompt's rendering only, and the stored
-    backend raised UnknownSource for all six CSPs as compile_csp emits them."""
+    backend raised UnknownSource for all six CSPs as compile_csp emits them.
+
+    STALE SINCE C8 (2026-10-21). The class-specific stand-off sentence now
+    says it binds the FOLLOWED subject ("Keep at least 10 m away from the
+    pedestrian you are following", templates/sentence/subject_standoff.j2),
+    where it said "any pedestrian". The four city / pedestrian policies that
+    carry one render a new text in both orders, and their stored sets were
+    written by an LLM agent (generator claude-opus-5-5, 2026-10-06), not by a
+    seeded generator, so they are NOT regenerated here: re-authoring them is
+    a new LLM run, validated and frozen with write_store. Until then exactly
+    these eight texts have no stored set (`python -m guardrail.paraphraser
+    stale` lists them; backend 'auto' falls back to the template bank, which
+    has the new sentence, and says so). Any OTHER missing text still fails
+    here, and so does this list once a set is re-authored."""
     be = P.StoredBackend(STORE)
     rows = P.default_sources()
     assert any("compile_csp" in r for _, _, o in rows for r in o["renderers"])
     missing = [(k, t) for k, t, _ in rows if not be.has(t)]
-    assert not missing, "no stored set for: " + "; ".join(
-        f"{k}: {t!r}" for k, t in missing)
+    stale = [(k, t) for k, t in missing if k in STALE_SINCE_C8
+             and "away from the pedestrian you are following" in t]
+    other = [(k, t) for k, t in missing if (k, t) not in stale]
+    assert not other, "no stored set for: " + "; ".join(f"{k}: {t!r}" for k, t in other)
+    assert sorted({k for k, _ in stale}) == sorted(STALE_SINCE_C8) and len(stale) == 8, \
+        ("the C8-stale list is out of date (a set re-authored? remove it from "
+         f"STALE_SINCE_C8): {sorted(k for k, _ in stale)}")
+
+
+# The four stored sets whose source text C8 (2026-10-21) changed; see
+# test_every_instruction_in_scope_has_a_stored_set.
+STALE_SINCE_C8 = ("csp_follow_car_citylife", "csp_follow_car_citylife_nfz",
+                  "csp_follow_pedestrian", "csp_sitl_pedestrian")
+
+
+def test_the_followed_pedestrian_stays_the_followed_one_c8():
+    """C8 (2026-10-21): the class stand-off now reads "the pedestrian you are
+    following", because models.SubjectStandoff.binds holds it only on the
+    followed subject. A paraphrase must not put the old misstatement back:
+    widening it to every pedestrian (or to anything followed, or to a car) is
+    refused; naming the same followed pedestrian in other words is not. The
+    seeded template bank (version 2) covers the new sentence on every text C8
+    left without a stored set, and each rewording it serves passes. Before
+    the change the bank had no rule for the sentence: these texts had no
+    template rewording of the stand-off at all."""
+    src = CSP_PED.replace("away from any pedestrian", "away from the pedestrian you are following")
+    base = ("Fly between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, turn "
+            "under 45 deg/s. Keep at least 10 m from {who} and at least 5 m from "
+            "your target.")
+    for who in ("the pedestrian you are tracking", "the pedestrian you follow",
+                "the followed pedestrian", "the person you are following"):
+        _accepted(src, base.format(who=who))
+    for who in ("any pedestrian", "pedestrians", "every pedestrian you see",
+                "anything you are following", "the car you are following"):
+        _refused(src, base.format(who=who), "quantity")
+    rows = [(k, t) for k, t, o in P.default_sources()
+            if k in STALE_SINCE_C8 and "the pedestrian you are following" in t]
+    assert len(rows) == 8, [k for k, _ in rows]
+    tb = P.TemplateBackend()
+    for key, text in rows:
+        n = min(4, tb.capacity(text) - 1)
+        assert n >= 2, (key, tb.capacity(text))
+        out = P.paraphrase(text, n, seed=1001, backend="template")
+        for p in out:
+            assert P.validate(text, p.text).ok, (key, p.text)
+            assert "any pedestrian" not in p.text, (key, p.text)
+            assert "pedestrian you are" in p.text, (key, p.text)
 
 
 def test_compile_csp_and_build_prompt_get_the_same_paraphrases():
-    """One rule set, two sentence orders, one set of ids."""
+    """One rule set, two sentence orders, one set of ids. (The rule sets C8
+    left without a stored set are skipped: STALE_SINCE_C8.)"""
     rows = P.default_sources()
     by_rules = {}
-    for _, text, o in rows:
-        if o["kind"] == "csp_nl":
+    for key, text, o in rows:
+        if o["kind"] == "csp_nl" and key not in STALE_SINCE_C8:
             by_rules.setdefault(P.rule_set_key(text), []).append(text)
     pairs = [ts for ts in by_rules.values() if len(ts) > 1]
     assert pairs, "no rule set rendered two ways - nothing to compare"
@@ -1137,20 +1196,97 @@ def test_the_nulls_are_scored_on_both_halves():
 
 def test_probe_rates_are_measured_and_not_zero():
     """The honest number. The review set was used to tune the validator, so
-    its 0 false accepts is a regression floor, not an estimate. The held-out
-    set was written before the changes and not used to tune them: 5 of its 30
-    meaning changes still pass (narrowings no slot sees - 'dark red',
-    'pedestrians in the street', 'descend' for 'climb'). Pinned so the design
-    doc's numbers cannot drift from the code; if a change moves them, update
-    the doc, and say whether the held-out set was looked at."""
+    its 0 false accepts is a regression floor, not an estimate. So, since
+    2026-10-21, is the first held-out set: its 5 remaining false accepts
+    (narrowings no slot saw - 'dark red', 'the person who is running',
+    'pedestrians in the street', 'adult pedestrians', 'descend' for 'climb')
+    were the target of A14. heldout_2026_10_21 was written before that change
+    (21 of its 22 meaning changes accepted then) but the change's closed lists
+    were written with it in view, so its 0/22 is a dev figure too.
+    heldout_2026_10_21b was written AFTER the change, with words outside its
+    lists, and measured once: 4 of 12 meaning changes still pass ('with'
+    phrases, a place noun the list lacks, 'in uniform') and 2 of 12 faithful
+    ones are refused: 'follow a car coloured red' by the colour slot, as on
+    7c9c9e6 (A14 adds a third reason, the participle), and a corridor text by
+    the novelty floor as near-identical to its source (0.09 < 0.15) - as is
+    heldout_2026_10_21's one refused faithful probe. 2 of those 3 are a
+    probe-authoring issue, not a validator limit (review of 3660383, P6; the
+    reasons are pinned below). Pinned so the design doc's numbers cannot drift
+    from the code; if a change moves them, update the doc, and say whether the
+    held-out set was looked at."""
     rep = _live_report()
     pr = rep["probes"]
     assert isinstance(pr, dict), pr
     held, rev = pr["heldout_2026_10_06"], pr["review_2026_10_06"]
-    assert (held["false_accepts"], held["meaning_changing"]) == (5, 30), held
+    assert (held["false_accepts"], held["meaning_changing"]) == (0, 30), held
     assert (held["false_refusals"], held["faithful"]) == (2, 30), held
     assert (rev["false_accepts"], rev["meaning_changing"]) == (0, 28), rev
     assert (rev["false_refusals"], rev["faithful"]) == (3, 30), rev
+    new, after = pr["heldout_2026_10_21"], pr["heldout_2026_10_21b"]
+    assert (new["false_accepts"], new["meaning_changing"]) == (0, 22), new
+    assert (new["false_refusals"], new["faithful"]) == (1, 22), new
+    assert (after["false_accepts"], after["meaning_changing"]) == (4, 12), after
+    assert (after["false_refusals"], after["faithful"]) == (2, 12), after
+    # WHY each faithful 2026-10-21 probe is refused, as the doc words it: the
+    # novelty floor (near-identical candidates) for two, the colour slot for
+    # 'a car coloured red' (A14's participle reading beside it).
+    why = {}
+    for name in ("heldout_2026_10_21", "heldout_2026_10_21b"):
+        for p in P.load_probes(STORE)["sets"][name]["probes"]:
+            if not p["meaning_changed"]:
+                v = P.validate(p["source"], p["candidate"])
+                if not v.ok:
+                    why[(name, p["candidate"][:24])] = sorted({r.split(":")[0]
+                                                               for r in v.reasons})
+    assert why == {("heldout_2026_10_21", "fly to the waypoint loca"): ["identity"],
+                   ("heldout_2026_10_21b", "follow a car coloured re"): ["colour", "object"],
+                   ("heldout_2026_10_21b", "Stay inside corridor 'co"): ["identity"]}, why
+    # what each set recorded before the change it was written around
+    probes = P.load_probes(STORE)["sets"]
+    assert probes["heldout_2026_10_21"]["measured_before_changes"]["false_accepts"] == "21/22"
+    assert probes["heldout_2026_10_06"]["measured_before_changes"]["false_accepts"] == "11/30"
+
+
+def test_refuses_a_narrowed_object_a14():
+    """A14 (2026-10-21): the five meaning changes the 2026-10-06 held-out set
+    still let through were narrowings no slot saw. Each is refused now, as an
+    object narrowed (a qualifier the source does not have) or, for the
+    descent-only rate, a quantity that now limits something else."""
+    _refused(TASK_CAR, "follow a dark red car", "object")
+    _refused("follow a person", "follow the person who is running", "object")
+    _refused(CSP_DEMO, "Stay out of zone 'nfz-square'. Hold altitude between 10 m and "
+             "20 m. Max speed 4 m/s; descend under 2 m/s; turn under 45 deg/s.", "quantity")
+    _refused(CSP_PED, "Fly between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, "
+             "turn under 45 deg/s. Keep at least 10 m from pedestrians in the street and "
+             "at least 5 m from your target.", "object")
+    _refused(CSP_PED, "Fly between 10 m and 20 m up. Max speed 4 m/s, climb under 2 m/s, "
+             "turn under 45 deg/s. Keep at least 10 m from adult pedestrians and at least "
+             "5 m from your target.", "object")
+    # each kind of qualifier, on its own
+    for cand in ("follow a small red car", "follow the first red car you see",
+                 "follow a red car that is parked", "follow a red car driving on the highway",
+                 "follow a red sports car", "follow the tallest red car"):
+        _refused(TASK_CAR, cand, "object")
+    # and a qualifier the SOURCE had may not be dropped (a widening)
+    _refused("follow a small red car", "follow a red car", "object")
+
+
+def test_accepts_what_only_restates_a14():
+    """The other half of A14: a relative clause that only says the colour, a
+    participle of position that introduces a slot already compared, the
+    whole vertical cap in other words, and a neutral modifier are not
+    narrowings."""
+    _accepted(TASK_CAR, "follow a car that is red")
+    _accepted(TASK_CAR, "follow a single red car")
+    _accepted(TASK_WP, "At cruise altitude, proceed to the waypoint sitting 120 m "
+              "directly ahead.")
+    for rate in ("vertical speed below 2 m/s", "climb or descend at under 2 m/s",
+                 "ascent rate below 2 m/s"):
+        _accepted(CSP_DEMO, "Do not enter zone 'nfz-square'. Keep your altitude between "
+                  f"10 m and 20 m. Speed at most 4 m/s, {rate}, turn rate below 45 deg/s.")
+    # "climb or descend": the "or" joins one vertical rate, it does not split it
+    assert P._list_ors(["climb", "or", "descend", "at", "under"]) == []
+    assert P._list_ors(["building", "or", "within"]) == [1]
 
 
 def test_parser_preview_reads_the_altitude_of_every_paraphrase():
@@ -1245,7 +1381,8 @@ def test_validation_report_describes_this_store_and_this_validator():
 
 
 PINNED_ID = "pp-ddaa2423665c7006"
-PINNED_TEMPLATE_DIGEST = "3226a8c897583410"
+# Bank version 2 since 2026-10-21: the followed-subject stand-off rule (C8).
+PINNED_TEMPLATE_DIGEST = "fc8fcc3cc7aa6889"
 
 
 if __name__ == "__main__":
