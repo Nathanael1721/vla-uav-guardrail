@@ -64,7 +64,45 @@ with it (`python -m guardrail.replay pack`).
 
 Switches: `ROUTER=0` (MAVROS straight to SITL tcp 5760, as before
 2026-10-06), `BAG=0`, `USE_LAUNCH=0`, `GUARDRAIL_FENCE=0` (stock autopilot),
-`SITL_WIPE=0` (keep the EEPROM), `GCS_HOST=...`.
+`SITL_WIPE=0` (keep the EEPROM), `GCS_HOST=...`, `VLA=bridge` (AerialVLA in
+the VLA slot instead of the stub, below).
+
+### AerialVLA in the VLA slot (`VLA=bridge`)
+
+`sitl/ros2_vla_bridge_node.py` (to-do VLA-08) replaces the VLA stub on the
+same topic: it reads the front and down cameras and the pose, asks the
+AerialVLA server (protocol v2, `guardrail/vla_link.py`), flies each answer
+through the step tracker and publishes `/vla/action_4d` at 10 Hz in the body
+frame. The stub stays the default; without `VLA=bridge` nothing changes.
+
+```bash
+# on the GPU host first (Windows, vla-real env), the server with its whole configuration:
+#   python demo/vla_server_v2.py serve --precision bf16 --attn sdpa --no-merge --missing-down refuse --host <an address WSL reaches> --port 8790
+#   (the server warns when it listens off loopback; with WSL's mirrored networking 127.0.0.1 is shared)
+VLA=bridge bash sitl/run_ros2_demo.sh on - --vla-server <windows-host-ip>:8790 --tag ros2_vla_01
+VLA=bridge bash sitl/run_ros2_demo.sh on - --vla-server <host>:8790 --allow-stand-in   # a fake: server, recorded as a stub
+```
+
+| | |
+|---|---|
+| Message | `[vx_fwd, vy_right, vz_up, yaw_rate, decision_age_s, decision_seq, author, flags]`; the first four are the grant's, so a node reading `d[:4]` flies it unchanged. `decision_age_s` / `decision_seq` are -1 when no decision is behind the tick; author 0 none, 1 vla_step, 2 hold, 3 hover; flags 1 = the model answered LAND, 2 = the bridge's mission ended. The names are in `layout.dim[0].label`. |
+| Mission | GOTO only: the hint is the compass phrase toward the Shield node's own mission target (`--command` / `--target`), `""` inside 3 m. No detector topic exists on this rail, so no APPROACH. |
+| When it flies | Only once the Shield node flies the stream (armed, GUIDED, its first `/shield/setpoint`); out of GUIDED (the Shield's hold, an FSM fail-safe, a takeover) suspends the step tracker, GUIDED again resumes it and throws away every decision captured before. |
+| Zero | A hover or no decision is all-zero; a tick that fails publishes nothing, so the Shield's 0.5 s receipt watchdog holds the aircraft. |
+| Shield side | A vla_step tick whose decision is older than `--decision-timeout-s` (10 s) plus a 1 s grace is held like a quiet stream; LAND or the end flag ends the mission through the Shield node's own mission-end LAND (never a mode request from the VLA); a kind `vla` identity's `reported_digest` becomes metrics `pilot` (kind vla) and the manifest's `vla_model_hash`; `--vla-ready-timeout-s` (2700 s with `VLA=bridge`) arms only after the bridge's warm-up passed. The Shield's own 2 m reach rule still ends the mission first if the aircraft gets there before the model answers LAND. |
+| Warm-up | Three inferences on live camera pairs before `/vla/identity` is published; the last is judged against `--warmup-max-latency-s` (5 s). Not ready: the identity says why, and the Shield does not arm. |
+| Records | `vla_steps.jsonl`, `vla_frames/`, `vla_captures.jsonl`, `vla_bridge_ticks.jsonl`, `vla_bridge.json` beside the Shield's records; an earlier run's copies go to `_previous/`. |
+| SROS 2 | The bridge runs in the VLA slot's enclave, `/guardrail/vla_stub` (an enclave of its own would make every existing keystore refuse `SROS2=1`). |
+
+**Cameras.** The bridge subscribes to `/camera/front/image_raw` and
+`/camera/down/image_raw` (`--front-topic`, `--down-topic`; `sensor_msgs/Image`,
+rgb8 or bgr8; AerialVLA's training cameras are 256x256, 90 deg, pitch 0 and
+-90). Nothing on this SITL-only rail publishes them yet: ArduPilot SITL has no
+camera, so until a camera publisher runs (Project AirSim's, or a driver on the
+drone) the warm-up finds no camera pair, the bridge reports not ready and the
+Shield node refuses to arm. The bridge has not been run under ROS; its tests
+(`tests/test_ros2_vla_bridge.py`) drive it with a scripted server, a point
+vehicle and a stand-in rclpy.
 
 ### Mission Planner
 

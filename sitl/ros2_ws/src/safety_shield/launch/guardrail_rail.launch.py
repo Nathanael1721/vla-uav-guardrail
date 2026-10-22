@@ -30,6 +30,18 @@ switched on by ROS_SECURITY_KEYSTORE / ROS_SECURITY_ENABLE /
 ROS_SECURITY_STRATEGY in the environment `ros2 launch` runs in, which
 sitl/run_ros2_demo.sh sets under SROS2=1 (sitl/sros2_env.sh). The default,
 empty, sets no override: the processes start exactly as before.
+
+THE VLA SLOT (2026-10-23). `vla:=stub` (the default) starts
+sitl/ros2_vla_stub_node.py as before; `vla:=bridge` starts
+sitl/ros2_vla_bridge_node.py instead - AerialVLA through its server, the
+to-do VLA-08 - with the same vla_args, and `--out <out>` when out:= is given
+(its vla_steps.jsonl beside the Shield's records). Never both: one publisher
+on /vla/action_4d. The bridge runs in the VLA slot's enclave,
+<root>/vla_stub: an enclave of its own would make every keystore built before
+it refuse SROS2=1 until rebuilt (sros2_prepare checks every enclave in
+sitl/sros2_enclaves.txt), and the permissions tools/sros2_setup.sh grants are
+per enclave, not per topic, so the slot's identity is the bridge's whole
+permission.
 """
 import os
 import shlex
@@ -43,6 +55,10 @@ from launch.events import Shutdown
 from launch.substitutions import LaunchConfiguration
 
 SENTINEL = ("guardrail", "shield.py")
+# What may fill the VLA slot (vla:=), and the enclave every one of them runs
+# in (THE VLA SLOT above).
+VLA_KINDS = ("stub", "bridge")
+VLA_ENCLAVE = "vla_stub"
 
 
 def find_repo_root(start: str | None = None) -> str:
@@ -81,9 +97,18 @@ def _nodes(context):
             return env
         return {**env, "ROS_SECURITY_ENCLAVE_OVERRIDE": f"{enclave_root}/{name}"}
 
-    vla = ExecuteProcess(
-        cmd=[py, str(sitl / "ros2_vla_stub_node.py"), *args("vla_args")],
-        name="vla_stub", output="screen", additional_env=env_for("vla_stub"))
+    kind = LaunchConfiguration("vla").perform(context).strip() or "stub"
+    if kind not in VLA_KINDS:
+        raise RuntimeError(f"vla:={kind!r} is not one of {VLA_KINDS}")
+    if kind == "bridge":
+        vla = ExecuteProcess(
+            cmd=[py, str(sitl / "ros2_vla_bridge_node.py"), *args("vla_args"),
+                 *(["--out", out] if out else [])],
+            name="vla_bridge", output="screen", additional_env=env_for(VLA_ENCLAVE))
+    else:
+        vla = ExecuteProcess(
+            cmd=[py, str(sitl / "ros2_vla_stub_node.py"), *args("vla_args")],
+            name="vla_stub", output="screen", additional_env=env_for(VLA_ENCLAVE))
     adapter = ExecuteProcess(
         cmd=[py, str(sitl / "mavlink_adapter_node.py"),
              *(["--out", out] if out else []), *args("adapter_args")],
@@ -110,8 +135,12 @@ def generate_launch_description():
                               description="episode directory (adapter_log.jsonl)"),
         DeclareLaunchArgument("shield_args", default_value="--shield on",
                               description="arguments for sitl/ros2_shield_node.py"),
+        DeclareLaunchArgument("vla", default_value="stub",
+                              description="what fills the VLA slot: stub "
+                                          "(sitl/ros2_vla_stub_node.py) or bridge "
+                                          "(sitl/ros2_vla_bridge_node.py, AerialVLA)"),
         DeclareLaunchArgument("vla_args", default_value="",
-                              description="arguments for sitl/ros2_vla_stub_node.py"),
+                              description="arguments for the VLA node (the stub or the bridge)"),
         DeclareLaunchArgument("adapter_args", default_value="",
                               description="arguments for sitl/mavlink_adapter_node.py"),
         DeclareLaunchArgument("enclave_root", default_value="",

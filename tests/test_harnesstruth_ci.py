@@ -631,6 +631,21 @@ def test_the_vla_pilot_link_test_runs_in_ci():
     assert "vla_fake_server.py" not in _loop()
 
 
+def test_the_ros2_vla_bridge_test_runs_in_ci():
+    """Wave V2 branch c (2026-10-23): sitl/ros2_vla_bridge_node.py, AerialVLA
+    in the ROS 2 rail's VLA slot (to-do VLA-08), and the Shield node's side
+    of it. Its file needs no ROS, model or simulator: the bridge's pure core
+    flies a point vehicle against tests/vla_fake_server.py on loopback, the
+    real ShieldNode runs on tests/test_railinputs_node.py's stand-in ROS
+    stack, and the bridge's ROS class on a stand-in rclpy. It imports
+    neither OpenCV nor Pillow at module level (Pillow only to check the
+    JPEG codec where it is installed, the PNG one where it is not)."""
+    assert "test_ros2_vla_bridge.py" in _loop(), "not run in CI"
+    src = (ROOT / "tests" / "test_ros2_vla_bridge.py").read_text(encoding="utf-8")
+    assert "import cv2" not in src and "vla_fake_server" in src
+    assert "test_railinputs_node" in src, "the Shield node's stand-in stack moved"
+
+
 def test_the_vla_flight_tests_run_in_ci():
     """Wave V2 (2026-10-22): the CityLife VLA flight (demo/vla_fly.py,
     demo/vla_mission.py) and its offline replay gate (tools/

@@ -69,10 +69,14 @@ x-vlaguard:
   # Services this file cannot offer yet, and the file each one waits for. The
   # test suite checks that each path is still missing, so this list cannot go
   # stale silently, and that no service runs any of them.
-  pending:
-    - service: vla-pilot
-      needs: sitl/ros2_vla_bridge_node.py
-      why: a camera VLA from the vla image publishing /vla/action_4d for the Shield
+  # (2026-10-23) The `vla-pilot` entry waited for sitl/ros2_vla_bridge_node.py,
+  # which now exists. The bridge needs no service of its own: it fills the
+  # launch file's VLA slot (vla:=bridge) inside the mission service, in the
+  # companion image (it needs no torch), and asks the AerialVLA server where
+  # the GPU is. Not done here yet: entrypoint.sh does not pass vla:=bridge,
+  # so the mission still runs the stub, and no service runs the server
+  # (demo/vla_server_v2.py) from the vla image.
+  pending: []
 
 x-companion-env: &companion-env
   VLAGUARD_TOPOLOGY: ${VLAGUARD_TOPOLOGY:?use --env-file deploy/topologies/hil.env or flight.env}
