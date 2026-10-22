@@ -34,13 +34,27 @@ WHAT IS BEING CLAIMED
 5. The server lifecycle: every start names --precision, --attn and
    --merge/--no-merge (bf16/sdpa/--no-merge unless asked), a started server
    says hello and stops on shutdown, an occupied port and a server that dies
-   are refused before take-off; the launcher assembles the same arguments.
+   are refused before take-off; the launcher, run with its real parameter
+   binding, assembles the same arguments.
+6. The review of the CityLife flight (2026-10-23): with the Shield off the
+   pilot is clamped only by the simulator safety band and the policy HUD
+   reads no repair (P1-1, P1-2); stop-and-go flies every step whole and asks
+   only after the 0.5 s settle (P2-3); a slow model is not a dead one, its
+   first answer gets its own grace, a timed-out request is waited for and
+   never stacked behind, and the warm-up gate refuses a slow or silent model
+   (P2-5); the detector phrase is corrected for the turn since the box
+   (P2-6); only sent captures are kept (P3-8); a reused tag loses its old
+   records but never frames or a link (P3-9); a fake: id is a stand-in
+   (P3-13); the GOTO's object words are a fixed description (P3-14);
+   flying past the goal ends the mission (P3-15).
 
 Shown failing first: before this change demo/vla_mission.py, demo/vla_fly.py,
 the VLA robot and scene configs, policies/vla_goto_citylife.yaml and
 scripts/run_vla_fly.ps1 did not exist, and StepTracker had no
 current_record, so every test below failed at import or on its first
-assertion.
+assertion. The claims of 6 were run against 46ca291 (the tree before the
+review's fixes) with this file: 17 of its 33 tests failed there, every one
+of 6's among them.
 """
 from __future__ import annotations
 
