@@ -631,6 +631,27 @@ def test_the_vla_pilot_link_test_runs_in_ci():
     assert "vla_fake_server.py" not in _loop()
 
 
+def test_the_vla_flight_tests_run_in_ci():
+    """Wave V2 (2026-10-22): the CityLife VLA flight (demo/vla_fly.py,
+    demo/vla_mission.py) and its offline replay gate (tools/
+    vla_replay_gate.py). Their files need no simulator, GPU or model: a
+    point vehicle and tests/vla_fake_server.py stand in, the server
+    lifecycle starts demo/vla_server_v2.py's scripted stand-in, and the
+    launcher test runs scripts/run_vla_fly.ps1 itself with -PrintArgs - its
+    real parameter binding, nothing started (SKIP without PowerShell, after
+    its text checks)."""
+    loop = _loop()
+    for f in ("test_vla_fly.py", "test_vla_fly_fakesim.py", "test_vla_replay_gate.py"):
+        assert f in loop, f"{f} is not run in CI"
+        assert (ROOT / "tests" / f).is_file()
+    # The fake-simulator file needs OpenCV and Pillow: it must SKIP, not
+    # pass, where they are absent, and no job may pretend to install them.
+    src = (ROOT / "tests" / "test_vla_fly_fakesim.py").read_text(encoding="utf-8")
+    assert "return SKIP" in src and "import cv2" in src
+    for j in _matrix_jobs():
+        assert not any(p.startswith(("opencv", "pillow")) for p in _installed(j)), j
+
+
 if __name__ == "__main__":
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = skipped = 0

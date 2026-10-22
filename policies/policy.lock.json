@@ -674,6 +674,17 @@
       "locked_on": "2026-10-06",
       "policy_hash": "sha256:d81796e79514d4e1511f873895ca4800118de1a97bf0f67ed726e367ab63ee5b"
     },
+    "vla-goto-citylife@0.1.0": {
+      "file": "vla_goto_citylife.yaml",
+      "hash_scheme": "sha256-canonical-v3",
+      "legacy_hashes": {
+        "legacy16-exclude-none": "sha256:3e4282b8d6a06059",
+        "legacy16-include-defaults": "sha256:163aace3a14163d9",
+        "legacy16-valid-time": "sha256:01218451e77e8f25"
+      },
+      "locked_on": "2026-10-22",
+      "policy_hash": "sha256:3e4282b8d6a060597eeb92be99b25edc22e990310801c9cdb8947b8361a74bfe"
+    },
     "wgs84-taipei-demo@0.1.0": {
       "file": "wgs84_taipei.yaml",
       "hashes": {

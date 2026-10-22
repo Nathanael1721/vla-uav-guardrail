@@ -1,0 +1,54 @@
+// Scene for the AerialVLA pilot's APPROACH mission (demo/vla_fly.py
+// --mission approach) in CityLife_Day: scene_vla.jsonc (same spawn, same
+// clock; see its header) with the detector camera (robot_vla_quad_det.jsonc)
+// and the scenario car.
+//
+// SemCarActor is the follow demo's orange SM_Offroad_Body environment actor
+// (env_actor_car.jsonc; demo/moving_car.py CarSpec says why orange). Its
+// origin is ZERO for the reason scene_semantic.jsonc gives: an imported
+// trajectory carries absolute NED positions and the origin is added to them.
+// `--park-at X,Y` uploads a one-metre, one-shot route there, so the car comes
+// to rest at X,Y and stays: a STATIC object to approach. Its position is
+// truth for scoring only; nothing in the hint or the stop rule reads it.
+{
+  "id": "SceneVLAApproach",
+  "actors": [
+    {
+      "type": "robot",
+      "name": "Drone1",
+      "origin": {
+        "xyz": "35.0 -20.0 -2.0",
+        "rpy-deg": "0 0 0"
+      },
+      "robot-config": "robot_vla_quad_det.jsonc"
+    }
+  ],
+  "environment-actors": [
+    {
+      "type": "env_actor",
+      "name": "SemCarActor",
+      "origin": {
+        "xyz": "0.0 0.0 0.0",
+        "rpy-deg": "0 0 0"
+      },
+      "env-actor-config": "env_actor_car.jsonc"
+    }
+  ],
+  "clock": {
+    "type": "steppable",
+    "step-ns": 3000000,
+    "real-time-update-rate": 3000000,
+    "pause-on-start": false
+  },
+  "home-geo-point": {
+    "latitude": 35.6895,
+    "longitude": 139.6917,
+    "altitude": 40.0
+  },
+  "segmentation": {
+    "initialize-ids": false,
+    "ignore-existing": false,
+    "use-owner-name": true
+  },
+  "scene-type": "UnrealNative"
+}

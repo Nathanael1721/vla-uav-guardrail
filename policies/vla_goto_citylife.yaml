@@ -1,0 +1,86 @@
+# The rules AerialVLA flies under in CityLife (demo/vla_fly.py, missions M1
+# GOTO and M2 APPROACH on the simple_flight rail).
+#
+# WHO IS ENFORCED AGAINST. The pilot is a learned model choosing one step at a
+# time (guardrail/vla_link.StepTracker flies each at 10 Hz, cruise 1 m/s,
+# climb 1 m/s, yaw 0.5 rad/s): it can drift toward a facade, dive, or keep
+# stepping past its goal, and nothing in it knows a rule. Every one of those
+# is a rule here, and the Shield judges every tick.
+#
+# ALTITUDE 6-14 m. The band the CityLife obstacle map is true for
+# (demo/out/citymap_citylife/occ_day_flightband_6to14.npz, the map
+# occ_bands.select_for_band picks for this envelope): above or below it the
+# clearance rule would be checked against a map of the wrong heights
+# (docs/FINDING-the-map-was-true-for-the-wrong-altitude.md). It is also
+# follow_car_citylife.yaml's band. The step tracker clamps each step's
+# altitude target into it (inset 0.5 m) and records the unclamped target, so a
+# model that keeps asking to climb or dive shows in vla_steps.jsonl
+# (target.alt_clamped) even though the Shield then rarely acts. AerialVLA's
+# commonest hinted output, '96 48 49', decodes to a 0.102 m climb per step
+# (guardrail/aerialvla_codec.py, "The inverse of truncation").
+#
+# CLEARANCE 3 m (+2 m soft margin), around everything in that map, as
+# follow_car_citylife.yaml: 5 m is not satisfiable on these streets once the
+# street furniture is in the map (that file's header). The default mission
+# start (42, -18) has 4.46 m, the default goal (43, 40) 13.5 m, and the line
+# between them never less than 3.97 m (demo/vla_mission.py, measured on the
+# Shield's own distance field), so a VLA that flies the phrase it is given
+# never needs this rule; one that drifts does.
+#
+# KINEMATIC CAPS, P1. 3 m/s horizontal, 1.5 m/s climb, 45 deg/s yaw: above
+# what the step tracker commands (its own caps are 2 m/s, 1 m/s and 28.6
+# deg/s), so they bind only on a tracker fault or a mis-set TrackerConfig -
+# a cap the pilot hits by construction would make every tick a repair and
+# say nothing about the model.
+#
+# THE CITY NO-FLY ZONE, as follow_car_citylife_nfz.yaml (x 45-62, y 62-92,
+# 1 m margin; that file's header says why there). It starts 22 m past the
+# default goal and 2 m north of the open lane, so the default GOTO meets it
+# only by overshooting or drifting north; `--goal 43,100` flies beside it for
+# 30 m. The HUD's map shows it either way.
+#
+# NOT HERE: a subject stand-off. The APPROACH mission has no perceived
+# subject position to bind one to (the VLA rail runs no range estimator; its
+# stop is the detector box's size), and a stand-off from a declared or truth
+# position would be an oracle. The gap is recorded in docs/DESIGN-vla-pilot.md.
+policy_id: vla-goto-citylife
+version: 0.1.0
+constraints:
+  - id: nfz-frontage
+    type: polygon_fence
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    vertices:
+      - {x: 45, y: 62}
+      - {x: 62, y: 62}
+      - {x: 62, y: 92}
+      - {x: 45, y: 92}
+    altitude_floor_m: 0
+    altitude_ceiling_m: 60
+    margin_m: 1.0
+
+  - id: bld-clearance
+    type: obstacle_clearance
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    min_clearance_m: 3.0
+    soft_margin_m: 2.0
+
+  - id: alt-band
+    type: altitude_envelope
+    constraint_type: hard
+    priority: P0
+    violation_action: repair
+    alt_min_m: 6
+    alt_max_m: 14
+
+  - id: kin-caps
+    type: kinematic_envelope
+    constraint_type: hard
+    priority: P1
+    violation_action: repair
+    speed_max_mps: 3.0
+    climb_rate_max_mps: 1.5
+    yaw_rate_max_dps: 45.0

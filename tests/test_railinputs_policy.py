@@ -109,13 +109,16 @@ def test_the_tool_builds_signs_and_verifies_every_flight_bundle():
     out = Path(tempfile.mkdtemp(prefix="flightbundles_"))
     rows = T.build(T.FLIGHT_POLICIES, out, signer=signer, trust_store=trust,
                    issued_at="2026-10-12T00:00:00Z")
-    assert len(rows) == len(T.FLIGHT_POLICIES) == 8 and all(r["ok"] for r in rows), rows
+    # Nine since the merge of 2026-10-23: master's eight and the AerialVLA
+    # pilot's vla_goto_citylife.
+    assert len(rows) == len(T.FLIGHT_POLICIES) == 9 and all(r["ok"] for r in rows), rows
     for r in rows:
         pol, src = B.load_for_flight(r["bundle"], trust_store=trust)
         assert src["signature"] == B.SIG_VERIFIED, src
         assert pol.policy_hash == load_policy(ROOT / r["policy"]).policy_hash
     names = sorted(Path(r["bundle"]).name for r in rows)
     assert "fase3-sim-demo-v0.1.1.tar.gz" in names, names
+    assert "vla-goto-citylife-v0.1.0.tar.gz" in names, names
     # Same issue time -> same bytes (bundles are byte-derivable build products).
     again = Path(tempfile.mkdtemp(prefix="flightbundles_"))
     T.build(["sim_demo_policy"], again, signer=signer, trust_store=trust,

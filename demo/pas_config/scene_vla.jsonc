@@ -1,0 +1,48 @@
+// Scene for the AerialVLA pilot's GOTO mission (demo/vla_fly.py --mission goto)
+// in CityLife_Day. The level itself is chosen by the simulator's command line
+// (scripts/run_vla_fly.ps1 starts it on /Game/CityLife/Maps/CityLife_Day);
+// this file attaches the robot to the running level.
+//
+// The spawn is the USUAL CityLife spawn, (35, -20), the one every follow
+// flight took off from (scene_semantic.jsonc), so the take-off pad is known
+// to be clear. The VLA does not start here: two street trees in the flight
+// band stand 1-3 m from every line east from it, so the flight climbs, then a
+// hand-written transfer through the Shield takes it to the mission start
+// (42, -18) before the mission clock starts (demo/vla_mission.py, CityLife
+// geometry). The camera loadout is robot_vla_quad.jsonc: AerialVLA's training
+// cameras plus the Chase view. No environment actor: GOTO follows nothing.
+//
+// The clock is scene_semantic.jsonc's (steppable, 3 ms steps, real-time
+// rate): the manifest's sim_speedup is read from it (guardrail/manifest.py
+// sim_speedup_from_scene), and the runs are real time, not lock-step.
+{
+  "id": "SceneVLAGoto",
+  "actors": [
+    {
+      "type": "robot",
+      "name": "Drone1",
+      "origin": {
+        "xyz": "35.0 -20.0 -2.0",
+        "rpy-deg": "0 0 0"
+      },
+      "robot-config": "robot_vla_quad.jsonc"
+    }
+  ],
+  "clock": {
+    "type": "steppable",
+    "step-ns": 3000000,
+    "real-time-update-rate": 3000000,
+    "pause-on-start": false
+  },
+  "home-geo-point": {
+    "latitude": 35.6895,
+    "longitude": 139.6917,
+    "altitude": 40.0
+  },
+  "segmentation": {
+    "initialize-ids": false,
+    "ignore-existing": false,
+    "use-owner-name": true
+  },
+  "scene-type": "UnrealNative"
+}

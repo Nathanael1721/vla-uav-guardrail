@@ -116,6 +116,14 @@ class RemoteVLABackend:
     Records: every request becomes one vla_steps.jsonl line (`steps_log`, a
     vla_link.StepLog or a path) when it stops being flown; `records` keeps
     every one in memory as well, so a record whose write failed is not lost.
+    `on_submit(capture, hint, seq)`, if given, is called once per request
+    actually sent (a capture with no hint, or one the client refused, is not
+    sent): the rail keeps that capture's frames then, and only then (review
+    of the CityLife flight, P3-8). Its exceptions are counted
+    (`counts['submit_hook_errors']`), never raised: the request is already
+    out. `last_link_failure` is the latest reply that was no answer at all
+    ({"kind": the client's failure - timeout / link / protocol / internal -,
+    "seq", "t", "detail"}), so a rail can tell a slow model from a dead one.
     """
 
     CADENCES = ("pipelined", "stop_and_go")
@@ -125,6 +133,7 @@ class RemoteVLABackend:
                  csp_mode: str = "off",
                  csp_text: str | None = None, cadence: str = "pipelined",
                  settle_s: float | None = None, steps_log=None,
+                 on_submit: Callable | None = None,
                  clock: Callable[[], float] = time.monotonic):
         from .vla_link import (CSP_MODES, UPSTREAM_SETTLE_S, StepLog, StepTracker)
         if cadence not in self.CADENCES:
@@ -138,7 +147,9 @@ class RemoteVLABackend:
         self.tracker = tracker if tracker is not None else StepTracker()
         self.counts: dict[str, int] = {"no_capture": 0, "no_hint": 0, "requests": 0,
                                        "request_errors": 0, "drain_errors": 0,
-                                       "alt_band_disjoint": 0}
+                                       "alt_band_disjoint": 0, "submit_hook_errors": 0}
+        self.on_submit = on_submit
+        self.last_link_failure: dict | None = None
         self.alt_band_info: dict = {}
         self._apply_policy_band(policy)
         if self.alt_band_info["source"] == "policy_disjoint":
@@ -284,6 +295,9 @@ class RemoteVLABackend:
                 "alt_band": dict(self.alt_band_info),
                 "tracker": dict(t.counts), "ticks_by_author": dict(t.ticks),
                 "requests": dict(self.counts), "link": dict(self.client.counts),
+                "last_link_failure": self.last_link_failure,
+                "last_submit_hook_error": self.last_errors.get("submit_hook_errors"),
+                "late_replies": list(getattr(self.client, "late", None) or []),
                 "identity": getattr(self.client, "identity", None)}
 
     # -- internals ----------------------------------------------------------- #
@@ -325,6 +339,8 @@ class RemoteVLABackend:
         if rec is not None:
             rec.update({"accepted": False, "refused": "link_failure",
                         "target": None, "outcome": None})
+            self.last_link_failure = {"kind": res.failure, "seq": res.seq, "t": now,
+                                      "detail": res.detail}
             self.tracker.link_lost(now, res.detail)
             self._emit(rec)
             return
@@ -370,6 +386,11 @@ class RemoteVLABackend:
         if seq is not None:
             self._meta[seq] = meta
             self.counts["requests"] += 1
+            if self.on_submit is not None:
+                try:
+                    self.on_submit(cap, hint, seq)
+                except Exception as exc:                          # noqa: BLE001
+                    self._error("submit_hook_errors", exc)
 
     def _flush(self) -> None:
         for rec in self.tracker.pop_finished():
@@ -427,7 +448,7 @@ def _make_remote(mission, policy, *, get_capture, get_hint=None, hint: str | Non
                         f"runs in the VLA server (demo/vla_server.py, protocol v2), "
                         f"frames come from get_capture with their capture pose, and "
                         f"the decision rate is the server's")
-    allowed = {"csp_mode", "csp_text", "cadence", "settle_s", "steps_log", "clock"}
+    allowed = {"csp_mode", "csp_text", "cadence", "settle_s", "steps_log", "on_submit", "clock"}
     unknown = sorted(set(kw) - allowed)
     if unknown:
         raise TypeError(f"make_backend('aerovla') got unknown arguments {unknown}")

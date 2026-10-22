@@ -65,10 +65,11 @@ POLICIES_DIR = ROOT / "policies"
 # city_policy_choice, ARCH-29, 2026-10-21), the policies its other launchers
 # name: follow_vlm's default follow_car, follow_car_nfz (run_follow_vlm.ps1)
 # and follow_pedestrian (run_citylife_follow.ps1's person mission,
-# run_retarget_demo.ps1).
+# run_retarget_demo.ps1); and the AerialVLA pilot's CityLife policy
+# (demo/vla_fly.py flies its signed bundle by default, as the SITL rails do).
 FLIGHT_POLICIES = ("sim_demo_policy", "corridor_survey", "follow_car_citylife",
                    "follow_car_citylife_nfz", "wgs84_taipei", "follow_car",
-                   "follow_car_nfz", "follow_pedestrian")
+                   "follow_car_nfz", "follow_pedestrian", "vla_goto_citylife")
 
 
 def _policy_file(name: str) -> Path:

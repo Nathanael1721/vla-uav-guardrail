@@ -728,6 +728,21 @@ class RemoteVLA:
     every answer and every later hello must name the same model, or the
     reply is a protocol failure counted `model_changed`.
 
+    A SLOW MODEL (`late_reply_wait_s`). A request that times out is still
+    being computed: demo/vla_server_v2.py runs generate() under one model
+    lock and cannot cancel it, so a request sent on a new connection waits
+    behind the abandoned one, and with answers slower than the timeout every
+    later request times out too (review of the CityLife flight, P2-5). With
+    `late_reply_wait_s` > 0 the timeout is still posted at once (the loop
+    hovers on it), but the connection is kept and the worker reads on until
+    the abandoned request's late answer arrives - the moment the model lock
+    is free - or `late_reply_wait_s` passes (then it drops the connection);
+    meanwhile `busy` is true and `submit()` refuses (`submit_draining`).
+    Late answers are counted (`late_replies`) and kept in `late` (seq, the
+    server's latency, how late), never handed to the loop: a step that
+    arrives after the timeout is from a scene that no longer exists. 0 (the
+    default) drops the connection on a timeout, as before.
+
     `connect()`, `hello()` and `shutdown_server()` block; call them before the
     flight loop or from tools, never from a control tick.
     """
@@ -735,14 +750,15 @@ class RemoteVLA:
     def __init__(self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, *,
                  connect_timeout_s: float = 2.0, response_timeout_s: float = 10.0,
                  reconnect_backoff_s: float = 1.0, max_line_bytes: int = 8 << 20,
-                 strict_identity: bool = True,
+                 strict_identity: bool = True, late_reply_wait_s: float = 0.0,
                  clock: Callable[[], float] = time.monotonic):
         self.host, self.port = host, int(port)
         self.connect_timeout_s = _finite(connect_timeout_s, "connect_timeout_s")
         self.response_timeout_s = _finite(response_timeout_s, "response_timeout_s")
         self.reconnect_backoff_s = _finite(reconnect_backoff_s, "reconnect_backoff_s")
+        self.late_reply_wait_s = _finite(late_reply_wait_s, "late_reply_wait_s")
         if self.connect_timeout_s <= 0 or self.response_timeout_s <= 0 \
-                or self.reconnect_backoff_s < 0:
+                or self.reconnect_backoff_s < 0 or self.late_reply_wait_s < 0:
             raise ValueError("timeouts must be positive and the backoff non-negative")
         self.max_line_bytes = int(max_line_bytes)
         self.strict_identity = bool(strict_identity)
@@ -755,11 +771,13 @@ class RemoteVLA:
         self._pending: tuple[int, dict] | None = None
         self._result: LinkResult | None = None
         self._busy = False
+        self._draining = False
         self._closed = False
         self._worker: threading.Thread | None = None
         self._next_seq = 1
         self._retry_at = -math.inf
         self.counts: Counter = Counter()
+        self.late: deque = deque(maxlen=100)
 
     # -- blocking primitives (worker thread, or before the loop) ------------- #
     def connect(self) -> dict:
@@ -883,9 +901,17 @@ class RemoteVLA:
     # -- the non-blocking surface for the control loop ----------------------- #
     @property
     def busy(self) -> bool:
-        """A request is in flight, or its result has not been polled yet."""
+        """A request is in flight, or its result has not been polled yet, or
+        the server is still computing a request that timed out
+        (`late_reply_wait_s`)."""
         with self._cv:
-            return self._busy or self._result is not None
+            return self._busy or self._result is not None or self._draining
+
+    @property
+    def draining(self) -> bool:
+        """Waiting for a timed-out request's late answer (`late_reply_wait_s`)."""
+        with self._cv:
+            return self._draining
 
     @property
     def backing_off(self) -> bool:
@@ -909,6 +935,9 @@ class RemoteVLA:
                 return None
             if self._result is not None:
                 self.counts["submit_unpolled"] += 1
+                return None
+            if self._draining:
+                self.counts["submit_draining"] += 1
                 return None
             if self.clock() < self._retry_at:
                 self.counts["submit_backoff"] += 1
@@ -944,6 +973,18 @@ class RemoteVLA:
                 self._cv.wait(left)
             return True
 
+    def wait_drained(self, timeout_s: float) -> bool:
+        """Block until no timed-out request is still being waited for
+        (`late_reply_wait_s`; tools and tests only)."""
+        end = time.monotonic() + timeout_s
+        with self._cv:
+            while self._draining:
+                left = end - time.monotonic()
+                if left <= 0:
+                    return False
+                self._cv.wait(left)
+            return True
+
     def close(self) -> None:
         with self._cv:
             self._closed = True
@@ -965,7 +1006,7 @@ class RemoteVLA:
                     return
                 seq, msg = self._pending
             t_sent = self.clock()
-            reply, failure, detail, changed = None, None, "", False
+            reply, failure, detail, changed, drain = None, None, "", False, False
             with self._io:
                 try:
                     self._ensure_connected()
@@ -975,6 +1016,9 @@ class RemoteVLA:
                         self.identity)
                 except LinkTimeout as exc:
                     failure, detail = "timeout", str(exc)
+                    # Sent and not answered in time: the server is still on
+                    # it. Keep the connection and wait for that answer below.
+                    drain = self.late_reply_wait_s > 0 and self._sock is not None
                 except ProtocolError as exc:
                     failure, detail = "protocol", str(exc)
                     changed = isinstance(exc, ModelChanged)
@@ -985,7 +1029,7 @@ class RemoteVLA:
                     # with _busy set, and every later submit() would return
                     # None with no failure recorded (review of 7c7cc50, P5).
                     failure, detail = "internal", f"{type(exc).__name__}: {exc}"
-                if failure is not None:
+                if failure is not None and not drain:
                     self._drop()
             t_done = self.clock()
             with self._cv:
@@ -1002,10 +1046,52 @@ class RemoteVLA:
                         # every request (review of 7c7cc50, P1).
                         self.counts["server_error"] += 1
                         self._retry_at = t_done + self.reconnect_backoff_s
+                if drain:
+                    self._draining = True
                 self._pending = None
                 self._result = LinkResult(seq, msg, reply, t_sent, t_done, failure, detail)
                 self._busy = False
                 self._cv.notify_all()
+            if drain:
+                self._await_late_reply(seq, msg, t_sent)
+
+    def _await_late_reply(self, seq: int, msg: dict, t_sent: float) -> None:
+        """After a timeout (`late_reply_wait_s`): read the kept connection
+        until the abandoned request's own answer arrives, so the next request
+        is not queued behind it on the server's model lock. Anything else -
+        another line, a broken stream, the wait running out, close() - drops
+        the connection (the next request reconnects, as without the wait)."""
+        why = None
+        with self._io:
+            try:
+                deadline = time.monotonic() + self.late_reply_wait_s
+                while True:
+                    try:
+                        obj = self._read(deadline)
+                    except LinkTimeout:
+                        why = "late_reply_wait_expired"
+                        break
+                    rep = parse_infer_response(obj, msg, self.identity)
+                    t_late = self.clock()
+                    with self._cv:
+                        self.counts["late_replies"] += 1
+                        self.late.append({"seq": seq, "kind": rep.kind,
+                                          "latency_server_s": rep.latency_s,
+                                          "rtt_s": t_late - t_sent,
+                                          "late_by_s": t_late - t_sent - self.response_timeout_s})
+                    break
+            except (LinkError, ProtocolError, OSError, ValueError) as exc:
+                why = f"late_reply_failed: {type(exc).__name__}"
+            except Exception as exc:                              # noqa: BLE001
+                why = f"late_reply_failed: {type(exc).__name__}"
+            if why is not None:
+                self._drop()
+        with self._cv:
+            if why is not None:
+                self.counts["late_reply_dropped"] += 1
+                self.late.append({"seq": seq, "dropped": why})
+            self._draining = False
+            self._cv.notify_all()
 
 
 # --------------------------------------------------------------------------- #
@@ -1468,6 +1554,16 @@ class StepTracker:
     @property
     def current_seq(self) -> int | None:
         return self._cur.decision.seq if self._cur is not None else None
+
+    @property
+    def current_record(self) -> dict | None:
+        """A COPY of the vla_steps record of the decision being flown (its
+        phrase, hint source, step, bins and raw text), or None. For the
+        rail's per-tick rows and HUD (demo/vla_mission.MissionLoop): a tick
+        knows its author and seq, not the phrase that steered it. A copy, so
+        nothing a rail does to it reaches the log."""
+        c = self._cur
+        return dict(c.decision.record) if c is not None else None
 
     def pop_finished(self) -> list[dict]:
         out, self._finished = self._finished, []
