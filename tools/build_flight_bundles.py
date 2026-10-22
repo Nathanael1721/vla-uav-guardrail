@@ -59,10 +59,11 @@ from guardrail.models import load_policy                              # noqa: E4
 
 POLICIES_DIR = ROOT / "policies"
 # The policies the rails fly: the SITL rails' default mission policy, the
-# stress harness's corridor and geographic policies, and the perception
-# rail's two CityLife follow policies.
+# stress harness's corridor and geographic policies, the perception rail's
+# two CityLife follow policies, and the AerialVLA pilot's CityLife policy
+# (demo/vla_fly.py flies its signed bundle by default, as the SITL rails do).
 FLIGHT_POLICIES = ("sim_demo_policy", "corridor_survey", "follow_car_citylife",
-                   "follow_car_citylife_nfz", "wgs84_taipei")
+                   "follow_car_citylife_nfz", "wgs84_taipei", "vla_goto_citylife")
 
 
 def _policy_file(name: str) -> Path:

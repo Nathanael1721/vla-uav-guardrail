@@ -1469,6 +1469,16 @@ class StepTracker:
     def current_seq(self) -> int | None:
         return self._cur.decision.seq if self._cur is not None else None
 
+    @property
+    def current_record(self) -> dict | None:
+        """A COPY of the vla_steps record of the decision being flown (its
+        phrase, hint source, step, bins and raw text), or None. For the
+        rail's per-tick rows and HUD (demo/vla_mission.MissionLoop): a tick
+        knows its author and seq, not the phrase that steered it. A copy, so
+        nothing a rail does to it reaches the log."""
+        c = self._cur
+        return dict(c.decision.record) if c is not None else None
+
     def pop_finished(self) -> list[dict]:
         out, self._finished = self._finished, []
         return out

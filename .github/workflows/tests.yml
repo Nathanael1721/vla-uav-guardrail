@@ -46,9 +46,11 @@
 #        The VLA side: test_vla_* (backends, the backend table, the bridge,
 #          the protocol-v2 server with a scripted model, the pilot's
 #          link and step tracker against a loopback fake server,
-#          tests/vla_fake_server.py), and test_aerialvla_codec
-#          (AerialVLA's prompt, vocabulary, mosaic and strict output
-#          reader).
+#          tests/vla_fake_server.py, the CityLife VLA flight's hints,
+#          mission state machine, records, configs, server lifecycle and
+#          launcher with a point vehicle, and the offline replay gate),
+#          and test_aerialvla_codec (AerialVLA's prompt, vocabulary,
+#          mosaic and strict output reader).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -517,6 +519,7 @@ jobs:
               tests/test_vla_backend_table.py \
               tests/test_vla_server.py \
               tests/test_aerialvla_codec.py \
+              tests/test_vla_fly.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \

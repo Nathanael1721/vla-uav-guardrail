@@ -1,0 +1,444 @@
+// The AerialVLA pilot's airframe and cameras (demo/vla_fly.py, mission M1 GOTO).
+//
+// GENERATED from robot_semantic_quad.jsonc (the same links, joints,
+// simple_flight controller, actuators and IMU) with a new camera loadout, so
+// the airframe is the one every CityLife flight flew and only the eyes change.
+//
+// VLAFront and VLADown MATCH AERIALVLA'S TRAINING CAMERAS: 256x256, 90 deg
+// FOV, front pitch 0, down pitch -90 (upstream airsim_plugin/settings/30001/
+// settings.json, vla-assets discovery report 2026-10-21). The follow rail's
+// FrontCamera is 768x432 (16:9) at pitch -20 and its DownCamera 400x225 at
+// 2 Hz - a distribution shift for a model trained on square, level views.
+// Both are captured every 0.1 s, so the frame behind a decision is at most
+// 0.1 s older than the request (one pair per decision is used: the newest of
+// each, paired by time in demo/vla_fly.VLAFrames), Scene only, never
+// streamed. The server resizes each tile bicubic to 224x224 and stacks front
+// over down into the 224x448 mosaic (guardrail/aerialvla_codec.build_mosaic).
+//
+// Chase (960x540 at 20 Hz) is the third-person view for the video and the
+// simulator window; it is the ONLY streaming camera, so the window binds to
+// it at load (follow_vlm's --view-switch exists because there a depth stream
+// came first; here vla_fly defaults it to 0).
+//
+// No detector camera: M1's hint comes from the goal, and a 768x432 render
+// every 0.1 s on the GPU the model and Unreal share would cost decisions for
+// nothing (OWL-ViT ran 13.8-21.5x slower in flight than offline, CHANGELOG).
+// robot_vla_quad_det.jsonc adds it for M2.
+{
+  "physics-type": "fast-physics",
+  "links": [
+    {
+      "name": "Frame",
+      "inertial": {
+        "mass": 1.0,
+        "inertia": {
+          "type": "geometry",
+          "geometry": {
+            "box": {
+              "size": "0.180 0.110 0.040"
+            }
+          }
+        },
+        "aerodynamics": {
+          "drag-coefficient": 0.325,
+          "type": "geometry",
+          "geometry": {
+            "box": {
+              "size": "0.180 0.110 0.040"
+            }
+          }
+        }
+      },
+      "collision": {
+        "restitution": 0.1,
+        "friction": 0.5
+      },
+      "visual": {
+        "geometry": {
+          "type": "unreal_mesh",
+          "name": "/Drone/Quadrotor1"
+        }
+      }
+    },
+    {
+      "name": "Prop_FL",
+      "inertial": {
+        "origin": {
+          "xyz": "0.253 -0.253 -0.01",
+          "rpy-deg": "0 0 0"
+        },
+        "mass": 0.055,
+        "inertia": {
+          "type": "point-mass"
+        },
+        "aerodynamics": {
+          "drag-coefficient": 0.325,
+          "type": "geometry",
+          "geometry": {
+            "cylinder": {
+              "radius": 0.1143,
+              "length": 0.01
+            }
+          }
+        }
+      },
+      "visual": {
+        "origin": {
+          "xyz": "0.253 -0.253 -0.01",
+          "rpy-deg": "0 0 0"
+        },
+        "geometry": {
+          "type": "unreal_mesh",
+          "name": "/Drone/PropellerRed"
+        }
+      }
+    },
+    {
+      "name": "Prop_FR",
+      "inertial": {
+        "origin": {
+          "xyz": "0.253 0.253 -0.01",
+          "rpy-deg": "0 0 0"
+        },
+        "mass": 0.055,
+        "inertia": {
+          "type": "point-mass"
+        },
+        "aerodynamics": {
+          "drag-coefficient": 0.325,
+          "type": "geometry",
+          "geometry": {
+            "cylinder": {
+              "radius": 0.1143,
+              "length": 0.01
+            }
+          }
+        }
+      },
+      "visual": {
+        "origin": {
+          "xyz": "0.253 0.253 -0.01",
+          "rpy-deg": "0 0 0"
+        },
+        "geometry": {
+          "type": "unreal_mesh",
+          "name": "/Drone/PropellerRed"
+        }
+      }
+    },
+    {
+      "name": "Prop_RL",
+      "inertial": {
+        "origin": {
+          "xyz": "-0.253 -0.253 -0.01",
+          "rpy-deg": "0 0 0"
+        },
+        "mass": 0.055,
+        "inertia": {
+          "type": "point-mass"
+        },
+        "aerodynamics": {
+          "drag-coefficient": 0.325,
+          "type": "geometry",
+          "geometry": {
+            "cylinder": {
+              "radius": 0.1143,
+              "length": 0.01
+            }
+          }
+        }
+      },
+      "visual": {
+        "origin": {
+          "xyz": "-0.253 -0.253 -0.01",
+          "rpy-deg": "0 0 0"
+        },
+        "geometry": {
+          "type": "unreal_mesh",
+          "name": "/Drone/PropellerWhite"
+        }
+      }
+    },
+    {
+      "name": "Prop_RR",
+      "inertial": {
+        "origin": {
+          "xyz": "-0.253 0.253 -0.01",
+          "rpy-deg": "0 0 0"
+        },
+        "mass": 0.055,
+        "inertia": {
+          "type": "point-mass"
+        },
+        "aerodynamics": {
+          "drag-coefficient": 0.325,
+          "type": "geometry",
+          "geometry": {
+            "cylinder": {
+              "radius": 0.1143,
+              "length": 0.01
+            }
+          }
+        }
+      },
+      "visual": {
+        "origin": {
+          "xyz": "-0.253 0.253 -0.01",
+          "rpy-deg": "0 0 0"
+        },
+        "geometry": {
+          "type": "unreal_mesh",
+          "name": "/Drone/PropellerWhite"
+        }
+      }
+    }
+  ],
+  "joints": [
+    {
+      "id": "Frame_Prop_FL",
+      "type": "fixed",
+      "parent-link": "Frame",
+      "child-link": "Prop_FL",
+      "axis": "0 0 1"
+    },
+    {
+      "id": "Frame_Prop_FR",
+      "type": "fixed",
+      "parent-link": "Frame",
+      "child-link": "Prop_FR",
+      "axis": "0 0 1"
+    },
+    {
+      "id": "Frame_Prop_RL",
+      "type": "fixed",
+      "parent-link": "Frame",
+      "child-link": "Prop_RL",
+      "axis": "0 0 1"
+    },
+    {
+      "id": "Frame_Prop_RR",
+      "type": "fixed",
+      "parent-link": "Frame",
+      "child-link": "Prop_RR",
+      "axis": "0 0 1"
+    }
+  ],
+  "controller": {
+    "id": "Simple_Flight_Controller",
+    "airframe-setup": "quadrotor-x",
+    "type": "simple-flight-api",
+    "simple-flight-api-settings": {
+      "actuator-order": [
+        {
+          "id": "Prop_FR_actuator"
+        },
+        {
+          "id": "Prop_RL_actuator"
+        },
+        {
+          "id": "Prop_FL_actuator"
+        },
+        {
+          "id": "Prop_RR_actuator"
+        }
+      ]
+    }
+  },
+  "actuators": [
+    {
+      "name": "Prop_FL_actuator",
+      "type": "rotor",
+      "enabled": true,
+      "parent-link": "Frame",
+      "child-link": "Prop_FL",
+      "origin": {
+        "xyz": "0.253 -0.253 -0.01",
+        "rpy-deg": "0 0 0"
+      },
+      "rotor-settings": {
+        "turning-direction": "clock-wise",
+        "normal-vector": "0.0 0.0 -1.0",
+        "coeff-of-thrust": 0.109919,
+        "coeff-of-torque": 0.040164,
+        "max-rpm": 6396.667,
+        "propeller-diameter": 0.2286,
+        "smoothing-tc": 0.005
+      }
+    },
+    {
+      "name": "Prop_FR_actuator",
+      "type": "rotor",
+      "enabled": true,
+      "parent-link": "Frame",
+      "child-link": "Prop_FR",
+      "origin": {
+        "xyz": "0.253 0.253 -0.01",
+        "rpy-deg": "0 0 0"
+      },
+      "rotor-settings": {
+        "turning-direction": "counter-clock-wise",
+        "normal-vector": "0.0 0.0 -1.0",
+        "coeff-of-thrust": 0.109919,
+        "coeff-of-torque": 0.040164,
+        "max-rpm": 6396.667,
+        "propeller-diameter": 0.2286,
+        "smoothing-tc": 0.005
+      }
+    },
+    {
+      "name": "Prop_RL_actuator",
+      "type": "rotor",
+      "enabled": true,
+      "parent-link": "Frame",
+      "child-link": "Prop_RL",
+      "origin": {
+        "xyz": "-0.253 -0.253 -0.01",
+        "rpy-deg": "0 0 0"
+      },
+      "rotor-settings": {
+        "turning-direction": "counter-clock-wise",
+        "normal-vector": "0.0 0.0 -1.0",
+        "coeff-of-thrust": 0.109919,
+        "coeff-of-torque": 0.040164,
+        "max-rpm": 6396.667,
+        "propeller-diameter": 0.2286,
+        "smoothing-tc": 0.005
+      }
+    },
+    {
+      "name": "Prop_RR_actuator",
+      "type": "rotor",
+      "enabled": true,
+      "parent-link": "Frame",
+      "child-link": "Prop_RR",
+      "origin": {
+        "xyz": "-0.253 0.253 -0.01",
+        "rpy-deg": "0 0 0"
+      },
+      "rotor-settings": {
+        "turning-direction": "clock-wise",
+        "normal-vector": "0.0 0.0 -1.0",
+        "coeff-of-thrust": 0.109919,
+        "coeff-of-torque": 0.040164,
+        "max-rpm": 6396.667,
+        "propeller-diameter": 0.2286,
+        "smoothing-tc": 0.005
+      }
+    }
+  ],
+  "sensors": [
+    {
+      "id": "VLAFront",
+      "type": "camera",
+      "enabled": true,
+      "parent-link": "Frame",
+      "capture-interval": 0.1,
+      "capture-settings": [
+        {
+          "image-type": 0,
+          "width": 256,
+          "height": 256,
+          "fov-degrees": 90,
+          "capture-enabled": true,
+          "streaming-enabled": false,
+          "pixels-as-float": false,
+          "compress": false,
+          "target-gamma": 2.5
+        }
+      ],
+      "origin": {
+        "xyz": "0.3 0.0 0.0",
+        "rpy-deg": "0 0 0"
+      }
+    },
+    {
+      "id": "VLADown",
+      "type": "camera",
+      "enabled": true,
+      "parent-link": "Frame",
+      "capture-interval": 0.1,
+      "capture-settings": [
+        {
+          "image-type": 0,
+          "width": 256,
+          "height": 256,
+          "fov-degrees": 90,
+          "capture-enabled": true,
+          "streaming-enabled": false,
+          "pixels-as-float": false,
+          "compress": false,
+          "target-gamma": 2.5
+        }
+      ],
+      "origin": {
+        "xyz": "0 0.0 0.0",
+        "rpy-deg": "0 -90 0"
+      }
+    },
+    {
+      "id": "Chase",
+      "type": "camera",
+      "enabled": true,
+      "parent-link": "Frame",
+      "capture-interval": 0.05,
+      "capture-settings": [
+        {
+          "image-type": 0,
+          "width": 960,
+          "height": 540,
+          "fov-degrees": 90,
+          "capture-enabled": true,
+          "streaming-enabled": true,
+          "pixels-as-float": false,
+          "compress": false,
+          "target-gamma": 2.5
+        }
+      ],
+      "gimbal": {
+        "lock-roll": true,
+        "lock-pitch": true,
+        "lock-yaw": false
+      },
+      "origin": {
+        "xyz": "-16.0 0.0 -7.0",
+        "rpy-deg": "0 -22 0"
+      }
+    },
+    {
+      "id": "IMU1",
+      "type": "imu",
+      "enabled": true,
+      "parent-link": "Frame",
+      "accelerometer": {
+        "velocity-random-walk": 0.002353,
+        "tau": 800,
+        "bias-stability": 0.000353,
+        "turn-on-bias": "0 0 0"
+      },
+      "gyroscope": {
+        "angle-random-walk": 8.72644e-05,
+        "tau": 500,
+        "bias-stability": 2.23014e-05,
+        "turn-on-bias": "0 0 0"
+      }
+    },
+    {
+      "id": "GPS",
+      "type": "gps",
+      "enabled": false,
+      "parent-link": "Frame"
+    },
+    {
+      "id": "Barometer",
+      "type": "barometer",
+      "enabled": false,
+      "parent-link": "Frame"
+    },
+    {
+      "id": "Magnetometer",
+      "type": "magnetometer",
+      "enabled": false,
+      "parent-link": "Frame"
+    }
+  ]
+}
