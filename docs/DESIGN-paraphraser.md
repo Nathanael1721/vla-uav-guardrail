@@ -133,6 +133,21 @@ This module serves both.
 Where each one is used today is not frozen into the files (it went stale within a
 day the first time); `stale` computes it.
 
+**Four sets stale since 2026-10-21 (open item C8).** The class stand-off sentence
+said "Keep at least 10 m away from any pedestrian", but the rule binds only the
+followed subject while it is classified pedestrian (`models.SubjectStandoff.binds`);
+it now says "Keep at least 10 m away from the pedestrian you are following"
+(`templates/sentence/subject_standoff.j2`). The four policies that carry such a
+rule therefore render new texts, in both orders: `csp_sitl_pedestrian`,
+`csp_follow_car_citylife`, `csp_follow_pedestrian` and
+`csp_follow_car_citylife_nfz`, 8 texts in all (`stale` prints them). These sets
+were written by an LLM agent, not by a seeded generator, so they were not
+regenerated: re-authoring them is a new LLM run, validated and frozen with
+`write_store`, and their old files still describe the old sentence. Until then
+`backend="stored"` raises `UnknownSource` on those texts, and `auto` falls back to
+the seeded template bank (bank version 2 has a rule for the new sentence) and says
+so. `tests/test_paraphraser.py` pins exactly these 8 (`STALE_SINCE_C8`).
+
 Each set is varied along the axes the commissioning task named: vocabulary, word
 order, politeness, verbosity and indirect phrasing, with a `style` tag per item. A
 rule paraphrase is one or more full sentences. The task sets are half `verb_phrase`
@@ -217,8 +232,12 @@ field by field against the current store, validator, probe file and place regist
 | generated mutants refused | **3979/3979** (24 classes) | 1721/1721 (11 classes) | see below |
 | review probes (dev set): meaning changes accepted | **0/28** | 17/28 | - |
 | review probes: faithful paraphrases refused | **3/30** | 13/30 | - |
-| held-out probes: meaning changes accepted | **5/30** | 11/30 | - |
-| held-out probes: faithful paraphrases refused | **2/30** | 2/30 | - |
+| first held-out probes (dev since 2026-10-21): meaning changes accepted | **0/30** | 11/30, then 5/30 | - |
+| first held-out probes: faithful paraphrases refused | **2/30** | 2/30 | - |
+| 2026-10-21 probes, written before the A14 change (dev): meaning changes accepted | **0/22** | 21/22 | - |
+| 2026-10-21 probes: faithful paraphrases refused | **1/22** | 1/22 | - |
+| held-out probes written after the A14 change: meaning changes accepted | **4/12** | - | - |
+| held-out probes after A14: faithful paraphrases refused | **2/12** | - | - |
 
 **The nulls, scored on both halves.** A null that refused everything would "catch"
 every mutant, so each null is scored on the stored paraphrases too:
@@ -243,7 +262,7 @@ them (`negate-verb`, `negate-modal`, `post-prohibit`, `permission`, `exception`,
 re-authored and new items then showed 5 more (from old and new classes alike).
 Each was fixed in the validator. A class nobody wrote is still not measured.
 
-**What the probe numbers mean.** `probes.json` holds two sets.
+**What the probe numbers mean.** `probes.json` holds four sets.
 
 * **Review set (dev).** 58 probes written by the independent reviewer. The validator
   was tuned on them, so 0/28 is a regression floor, not an estimate. Three of the
@@ -252,16 +271,55 @@ Each was fixed in the validator. A class nobody wrote is still not measured.
   northeast" is refused because the place registry knows "northeast pad" and not
   the paraphrase. "go to the point x=40, y=40" is refused because only "(x, y)" and
   "to x, y" are read as coordinates. The labels are kept as the reviewer wrote them.
-* **Held-out set.** 60 probes written after reading the review and before changing
-  any code, and never used to tune it. It was measured once before (11/30, 2/30) and
-  once after (5/30, 2/30). This is the closest thing here to an honest
-  false-accept rate. It comes from the same author as the code, so it is not
-  independent of the code's blind spots. The five meaning changes that still pass
-  are all narrowings that no slot sees: "a dark red car", "the person who is
-  running", "descend under 2 m/s" for "climb rate below 2 m/s" (the policy caps
-  climb and descent), "pedestrians in the street" and "adult pedestrians". The two
+* **First held-out set (`heldout_2026_10_06`, dev since 2026-10-21).** 60 probes
+  written after reading the review and before changing any code. It was measured
+  once before (11/30, 2/30) and once after (5/30, 2/30). The five meaning changes
+  that then still passed were all narrowings that no slot saw: "a dark red car",
+  "the person who is running", "descend under 2 m/s" for "climb rate below 2 m/s"
+  (the policy caps climb and descent), "pedestrians in the street" and "adult
+  pedestrians". On 2026-10-21 (open item A14) the validator was tuned on exactly
+  these five, so its 0/30 is now a regression floor like the review set's. The two
   faithful paraphrases still refused are "stick with a red car" (not in the follow
   synonyms) and a corridor text whose band follows a semicolon.
+* **`heldout_2026_10_21` (dev).** 44 probes written on 2026-10-21 before the A14
+  change, weighted towards narrowing modifiers, and measured then: 21 of 22
+  meaning changes accepted. The change's closed word lists were written with this
+  set in view, so its 0/22 after the change is a dev figure, not an estimate. The
+  one faithful probe refused is "fly to the waypoint located 120 m ahead, at
+  cruise altitude", by the novelty floor: near-identical to its source (novelty
+  0.09 < 0.15), on 7c9c9e6 as now - not a different wording, so not a paraphrase
+  the validator failed to read.
+* **`heldout_2026_10_21b` (held out).** 24 probes written after the A14 change,
+  with words chosen outside its lists, never used to tune it and measured once:
+  4 of 12 meaning changes accepted ("a red car with a dented door", "a person near
+  the fountain", "pedestrians with strollers", "a person in uniform": `with` and
+  `in` phrases, and a place noun the list lacks), 2 of 12 faithful refused. "follow
+  a car coloured red" was already refused at 7c9c9e6 by the colour slot (the
+  colour read as describing nothing, the car widened to any car); A14 only adds a
+  third reason, the participle "coloured" read as a narrowing. The corridor text
+  is refused by the novelty floor as near-identical to its source (novelty 0.09 <
+  0.15), not for its parenthesised window, as this paragraph said until the review
+  of 3660383 (P6; every probe set re-scored with both validators, all counts
+  reproduced). So 2 of the 3 faithful refusals across the two 2026-10-21 sets are
+  near-identical candidates - a probe-authoring issue (a faithful probe must be a
+  different wording), not a limit of the validator - and the third is the colour
+  slot's, which predates A14. This is the closest thing here to an honest
+  false-accept rate after A14. It comes from the same author as the code, so it
+  is not independent of the code's blind spots.
+
+**What the A14 change reads** (`guardrail/paraphraser.py`, `_narrowings`). For each
+object the extractor finds, in its own clause: a word between a determiner and the
+noun ("a SMALL red car", colours left to the colour slot), or, with no determiner,
+an adjective from a closed list ("ADULT pedestrians", "DARK red"); a relative clause
+right after the noun ("who is running"), unless all it says is a colour; a
+participle right after the noun ("a person WEARING a hat"), unless it is a
+participle of position that only introduces a slot already compared ("the waypoint
+SITTING 120 m ahead"); and a place phrase after the noun with a place noun from a
+closed list ("pedestrians in the STREET"). A qualifier the source lacks is a
+narrowing, one the source had and the candidate dropped is a widening, and both
+are refused. A descent-only rate limit ("descend under 2 m/s") is now a different
+quantity from the compiler's "climb rate", which caps climb and descent alike;
+"vertical speed", "ascent rate" and "climb or descend" still read as the whole cap.
 
 **Silent defects found while this was built.** None crashed; each made the
 validator accept a changed slot. Before the review: "at or below" split as a list;
@@ -285,8 +343,11 @@ Each has a test.
 **Limits, stated so nobody over-reads any of the numbers above.** The validator is a
 lexical guard, not an entailment model:
 
-* It only sees the slot kinds in the table. A narrowing by an adjective or a
-  relative clause passes (the five held-out false accepts).
+* It only sees the slot kinds in the table. Since 2026-10-21 it also reads the
+  narrowings listed above, but only in the positions and closed word lists
+  described there: a `with` or `in` phrase, a place noun the list lacks, or a
+  qualifier further from the noun still passes (4/12 on the set held out from that
+  change).
 * Synonyms are a closed table. For example car ≡ automobile but car ≠ vehicle,
   "stick with" is not a follow verb, and "whichever car you are following" is still
   read as the wildcard (a missed narrowing).

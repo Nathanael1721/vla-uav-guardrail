@@ -1,4 +1,4 @@
-policy_id: random-scenario
+policy_id: random-scenario-hard-21
 version: 0.1.0
 constraints:
   - id: nfz-leg-1

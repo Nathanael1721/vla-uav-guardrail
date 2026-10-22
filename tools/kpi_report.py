@@ -1998,6 +1998,35 @@ def render_sweep_markdown(doc: dict, top_k: int = 10) -> str:
               f"{ts.get('episodes_autopilot_entering_polygon')} episode(s); "
               f"{ts.get('autopilot_breaches')} breach(es) in "
               f"{ts.get('episodes_autopilot_breach')} episode(s).", ""]
+        if ts.get("episodes_window_opened_on"):
+            # Beside the rate (review of 3660383, P2): the escape from a window
+            # that opened on the aircraft is judged the recovery since C2, so
+            # the P0 rate cannot show whether it got out as fast as before.
+            L[-1:-1] = [
+                f"- Windows opened on the aircraft: "
+                f"{ts.get('episodes_window_opened_on')} episode(s) (a decision named "
+                f"the window in window_opens_on or window_opened_on, whatever was "
+                f"flown); an escape from it is judged the recovery (not a P0 "
+                f"escape) and the rule counted as anticipated through the decision "
+                f"trace's window_opens_on; ticks "
+                f"inside a polygon {ts.get('window_opened_on_ticks_inside_polygon')}, "
+                f"time to safe at most {ts.get('window_opened_on_max_time_to_safe_s')} s."]
+        if ts.get("episodes_escape_slowed") is not None:
+            # Beside the rate too (review of 69c27bd, P3): a slowed escape is
+            # legal, so no P0 count sees it - printed when it is zero as well,
+            # so a zero reads as measured. A sweep written before the count
+            # existed has no such field and prints nothing.
+            n = ts.get("episodes_escape_slowed")
+            L[-1:-1] = [
+                (f"- Escapes slowed: cap refused on {ts.get('cap_refused_ticks')} "
+                 f"tick(s), floor refused on {ts.get('floor_refused_ticks')} tick(s), "
+                 f"in {n} episode(s) {ts.get('episodes_escape_slowed_by_status') or ''} "
+                 f"(the Shield's escape floor refused at the speed cap - a slower "
+                 f"escape flown - or refused outright - the action flown unfloored, "
+                 f"or reported to the FSM; legal, so the P0 rate does not count it)."
+                 if n else
+                 "- Escapes slowed: none (no tick refused the escape floor at the "
+                 "speed cap or outright).")]
     oc = (doc.get("_outcome_labels") or {}).get("outcomes") or {}
     if oc:
         L += ["## Outcomes", "",

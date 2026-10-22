@@ -16,7 +16,11 @@ is, so until 2026-10-19 the FSM's hold point was "here", whatever "here" was:
     window opens 0.9-1.9 s later. The modelled autopilot then flew 28-38 P0
     ticks of LOITER per cell (26-36 on the 3 s arm) and the aircraft sat 41
     ticks inside the polygon (CHANGELOG 2026-10-13, "Not fixed": "The FSM can
-    hold LOITER on a spot about to become illegal").
+    hold LOITER on a spot about to become illegal"). (Since 2026-10-21 those
+    cells fly no escape and never reach Loiter: the fastest way out of a
+    window opening on the aircraft is judged as the recovery it is,
+    Shield._opening_imposed. The hold points still decide the other cells
+    below.)
   * `dyn-nfz-rotate-spin` (9 deg/s) held a LOITER the spinning bar swept
     onto (50 P0 ticks, then X6: a false fail-safe); the six
     `three-simultaneous-violations` cells held LOITER below the 10 m floor

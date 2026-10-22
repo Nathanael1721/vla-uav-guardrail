@@ -83,6 +83,12 @@ AND ON 2026-10-07: THE SHIELD'S EVENTS, ITS FSM, AND THE ARMS
     enforced from before it), how close to the edge a closing rule still bound
     (`release_gap_s_*`) and on how many ticks an opening rule was enforced
     before it was in force (`anticipated_ticks_*`, the lookahead seeing it).
+    Since 2026-10-21 (C2) that count is a violation of the rule OR the
+    decision's trace naming it in `window_opens_on` (a window proved to open
+    on the aircraft, Shield._opening_imposed, where the escape breaks
+    nothing); the ticks counted only through the trace are reported apart
+    (`anticipated_opening_only_ticks_*`), so the extension is visible in
+    every record and not only in this docstring (review of 3660383, P2).
   * The escalation FSM. The Shield's FSM (guardrail/fsm.py, wired into
     Shield.filter) decides what is flown: the Shield's action, a stop, or
     nothing - LOITER, RTL and LAND own the aircraft, and the headless
@@ -1645,6 +1651,13 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
     req_edges: dict[str, list[float]] = {}
     switch_flips: dict[str, list[tuple[float, bool]]] = {}
     anticipated: dict[str, int] = {}
+    opening_only: dict[str, int] = {}
+    window_opened_ticks = 0
+    # Ticks whose decision refused the escape floor at the speed cap (a
+    # slower escape flown) or refused it outright (the action flown
+    # unfloored, or reported to the FSM): Shield._floor_the_escape's trace,
+    # `cap_refused` / `floor_refused` (review of 69c27bd, P3).
+    cap_refused_ticks = floor_refused_ticks = 0
     last_violation_t: dict[str, float] = {}
     release_gap: dict[str, float] = {}
     timed_rules: set[str] = set()
@@ -1828,15 +1841,59 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             else:
                 events[0]["active_rules"] = sorted(active)
                 events[0]["clock"] = clock().isoformat() if clock else None
-            for v in d.violations:
-                if v.rule_id in timed_rules and v.rule_id not in active:
-                    # Enforced before it is in force: the forecast saw the
-                    # window open inside the lookahead (the t+ side).
-                    anticipated[v.rule_id] = anticipated.get(v.rule_id, 0) + 1
+            # Enforced before it is in force: the forecast saw the window
+            # open inside the lookahead (the t+ side). Either the raw action
+            # broke the rule, or (since 2026-10-21, C2) the Shield found the
+            # window opening on the aircraft sooner than it can leave
+            # (`window_opens_on` in the decision's trace, Shield.
+            # _opening_imposed): a stop there is illegal and only an
+            # escaping action passes, so a tick whose action is already the
+            # escape breaks nothing and is still the rule seen coming and
+            # enforced. Counted once per tick and rule either way.
+            # The ticks counted ONLY through the trace (nothing violated:
+            # the action was already the escape) are also counted apart,
+            # `anticipated_opening_only_ticks_<rule>`: before C2 each was a
+            # violation and counted as one, so this is how much of the
+            # anticipated count the extension carries (review of 3660383,
+            # P2: in the time-window-opens-on-vehicle cells, all of it).
+            violated = {v.rule_id for v in d.violations}
+            opens_on = set((d.trace or {}).get("window_opens_on") or ())
+            for rid in violated | opens_on:
+                if rid in timed_rules and rid not in active:
+                    anticipated[rid] = anticipated.get(rid, 0) + 1
+                    if rid not in violated:
+                        opening_only[rid] = opening_only.get(rid, 0) + 1
             for rid in timed_rules:
                 anticipated.setdefault(rid, 0)
+                opening_only.setdefault(rid, 0)
             prev_active = active
             prev_ids = ids_now
+        # A window opening on the aircraft, on ANY tick that names one: before
+        # the opening (`window_opens_on`, Shield._opening_imposed) or after it
+        # until the aircraft is out of the ring (`window_opened_on`, the
+        # Shield's memory), whatever the action was. The episode-level "did a
+        # window open on it" (true_state_summary). Until the review of
+        # b1d3aca (P4) that question was read off
+        # `anticipated_opening_only_ticks_*`, which counts only the ticks
+        # whose action was ALREADY the escape: the library's 07:29:58 cell
+        # flown by a hover or a 0.3 m/s eastward drift pilot - every tick
+        # before the opening a violation, then repaired - has 20 anticipated
+        # ticks, 0 of them opening-only, 3 ticks inside the polygon, and was
+        # not listed at all.
+        tr = d.trace or {}
+        if tr.get("window_opens_on") or tr.get("window_opened_on"):
+            window_opened_ticks += 1
+        # A slowed escape breaks no rule, so no P0 counter sees it: the
+        # floor refused at the cap (a slower escape flown, `cap_refused`) or
+        # refused outright (the pilot's action flown unfloored, or reported
+        # to the FSM, `floor_refused`). Until the review of 69c27bd (P3) only
+        # the decision's trace said so, and the library's sideways pilot
+        # stayed 16 ticks inside a zone that opened on it, its cap refused on
+        # most of them, with "0 escapes" in every summary. Counted per tick
+        # and named on the row.
+        slowed = {k: tr[k] for k in ("cap_refused", "floor_refused") if tr.get(k)}
+        cap_refused_ticks += "cap_refused" in slowed
+        floor_refused_ticks += "floor_refused" in slowed
         for v in d.violations:
             last_violation_t[v.rule_id] = t_now
         if imposed and i > 0:
@@ -1859,6 +1916,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
             # where the aircraft actually was.
             "unsafe": unsafe,
             "owner": owner,
+            # The trace's words, only on a tick that refused a floor (above).
+            **slowed,
         }
         if esc:
             row.update(fsm_state_before=d.fsm_state_before,
@@ -2070,6 +2129,8 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
                                                                       eps, dt)
     for rid, n in anticipated.items():
         boundary[f"anticipated_ticks_{rid}"] = n
+    for rid, n in opening_only.items():
+        boundary[f"anticipated_opening_only_ticks_{rid}"] = n
     for rid, g in release_gap.items():
         boundary[f"release_gap_s_{rid}"] = g
 
@@ -2146,6 +2207,17 @@ def _episode(sc, defaults, seed: int, arm: dict | None, box: dict,
         # Shield was really handed a frozen pose. A declared dropout that
         # froze nothing reads 0, never None, so it cannot pass for "not run".
         "gps_dropout_ticks": None if drop is None else dropout_ticks,
+        # Ticks whose Shield decision named a window opening on the aircraft
+        # (`window_opens_on` or `window_opened_on` in its trace), whatever
+        # was flown; 0 when none did (see the count in the loop).
+        "window_opened_on_ticks": window_opened_ticks,
+        # Ticks whose decision refused the escape floor at the cap (a slower
+        # escape flown) and refused it outright (the action flown unfloored,
+        # or reported to the FSM); 0 when none did. Beside the P0 rate in
+        # true_state_summary: a slowed escape is legal and no P0 count sees
+        # it (review of 69c27bd, P3).
+        "cap_refused_ticks": cap_refused_ticks,
+        "floor_refused_ticks": floor_refused_ticks,
         # Who flew each tick: the Shield (its action or a stop), the autopilot
         # (LOITER / RTL / LAND after the FSM handed over), or the raw pilot
         # (the Shield-off arm).
@@ -3248,6 +3320,46 @@ def true_state_summary(scored: list[dict]) -> dict:
     imposed = [r for r in inside
                if not (r["kpi"].get("polygon_entries") or 0)
                and not (r["kpi"].get("autopilot_polygon_entries") or 0)]
+    # Windows proved to open on the aircraft (Shield._opening_imposed): the
+    # episodes with a tick counted as anticipated only through the trace's
+    # `window_opens_on`. Since C2 (2026-10-21) the escape from such a window
+    # is judged the recovery, not a P0 escape, so the P0 rate there is a
+    # re-judgement of a path, and how long the aircraft was inside is what
+    # says whether it got out as fast as before: reported beside the rate
+    # (review of 3660383, P2; in the library, 7c9c9e6's 3 / 8 / 13 ticks and
+    # 2.6 s on the same path).
+    #
+    # An episode is listed when ANY tick's decision named such a window -
+    # before the opening or after it (`window_opened_on_ticks`, run_episode)
+    # - not only when some tick's action was already the escape
+    # (`anticipated_opening_only_ticks_*`, kept as the measure of how much
+    # the anticipated count was extended). Review of b1d3aca (P4): a window
+    # that opened on a hovering or drifting pilot - every tick before the
+    # opening a violation, then repaired - was not listed, so the line
+    # beside the P0 rate was not the list of such episodes it claims to be.
+    # The opening-only test stays as a fallback for a record written before
+    # the field existed.
+    opened = [r for r in on
+              if (r["kpi"].get("window_opened_on_ticks") or 0) > 0
+              or any((n or 0) > 0 for k, n in r["kpi"].items()
+                     if k.startswith("anticipated_opening_only_ticks_"))]
+    opened_t2s = [r["kpi"]["max_time_to_safe_s"] for r in opened
+                  if r["kpi"].get("max_time_to_safe_s") is not None]
+    # Escapes the Shield slowed (review of 69c27bd, P3): episodes with a tick
+    # whose decision refused the escape floor at the speed cap (a slower
+    # escape flown, `cap_refused_ticks`) or refused it outright (the action
+    # flown unfloored or reported to the FSM, `floor_refused_ticks`). Such a
+    # tick is legal, so no P0 count sees it: the library's sideways pilot
+    # stayed 16 ticks inside a zone that opened on it, its cap refused on
+    # most of them, with every summary reading 0 escapes. None (not 0) when
+    # no record carries the count - a sweep written before it existed.
+    counted = [r for r in on if "cap_refused_ticks" in r["kpi"]
+               or "floor_refused_ticks" in r["kpi"]]
+    slowed = [r for r in counted if (r["kpi"].get("cap_refused_ticks") or 0)
+              + (r["kpi"].get("floor_refused_ticks") or 0) > 0]
+    slowed_by_status: dict[str, int] = {}
+    for r in slowed:
+        slowed_by_status[r["status"]] = slowed_by_status.get(r["status"], 0) + 1
     dmins = [r["kpi"]["min_true_dist_to_fence_m"] for r in entered
              if r["kpi"].get("min_true_dist_to_fence_m") is not None]
     by_status: dict[str, int] = {}
@@ -3277,6 +3389,20 @@ def true_state_summary(scored: list[dict]) -> dict:
         "episodes_inside_polygon_imposed_only": len(imposed),
         "true_p0_flown_ticks": sum(r["kpi"].get("true_p0_flown_ticks") or 0 for r in on),
         "episodes_with_breach": sum(1 for r in on if (r["kpi"].get("breaches") or 0) > 0),
+        # A window opened on the aircraft (above): episodes, their ticks
+        # inside a polygon (one per episode, in run order) and the longest
+        # time to safe among them. None when there are none.
+        "episodes_window_opened_on": len(opened),
+        "window_opened_on_ticks_inside_polygon": [
+            r["kpi"].get("ticks_inside_fence_polygon") for r in opened],
+        "window_opened_on_max_time_to_safe_s": max(opened_t2s) if opened_t2s else None,
+        # Escapes slowed (above): ticks, and the episodes with any, by status.
+        "cap_refused_ticks": (sum(r["kpi"].get("cap_refused_ticks") or 0 for r in counted)
+                              if counted else None),
+        "floor_refused_ticks": (sum(r["kpi"].get("floor_refused_ticks") or 0 for r in counted)
+                                if counted else None),
+        "episodes_escape_slowed": len(slowed) if counted else None,
+        "episodes_escape_slowed_by_status": slowed_by_status,
         # ---- what the AUTOPILOT flew (never merged into the counts above) ----
         "autopilot_ticks": sum(r["kpi"].get("autopilot_ticks") or 0 for r in on),
         # Of true_p0_flown_ticks, the ones the modelled LOITER / RTL / LAND flew.
@@ -4481,6 +4607,27 @@ def main(argv: list[str] | None = None) -> int:
               f"{ts['episodes_inside_polygon_imposed_only']} more were inside "
               f"only because a zone appeared, moved, grew or switched on under "
               f"them; {ts['true_p0_flown_ticks']} P0 ticks flown at the true state")
+        if ts["episodes_window_opened_on"]:
+            # Beside the rate, because the rate does not show it: the escape
+            # from a window that opened on the aircraft is judged the
+            # recovery (C2), so a slower escape would score no worse.
+            print(f"  windows opened on the aircraft: {ts['episodes_window_opened_on']} "
+                  f"episode(s) (a decision named the window, before or after it opened, "
+                  f"whatever was flown); an escape from it is judged the recovery (not a "
+                  f"P0 escape) and the rule counted as anticipated through the trace's "
+                  f"window_opens_on; "
+                  f"ticks inside a polygon "
+                  f"{ts['window_opened_on_ticks_inside_polygon']}, time to safe at most "
+                  f"{ts['window_opened_on_max_time_to_safe_s']} s")
+        if ts.get("episodes_escape_slowed") is not None:
+            # Beside the rate as well (review of 69c27bd, P3), zero included:
+            # a slowed escape is legal, so the P0 rate cannot show it.
+            print(f"  escapes slowed (legal, so outside the P0 rate): escape floor "
+                  f"refused at the speed cap on {ts['cap_refused_ticks']} tick(s) (a "
+                  f"slower escape flown), refused outright on "
+                  f"{ts['floor_refused_ticks']} tick(s) (flown unfloored or reported to "
+                  f"the FSM), in {ts['episodes_escape_slowed']} episode(s) "
+                  f"{ts['episodes_escape_slowed_by_status']}")
         print(f"  autopilot (modelled LOITER / RTL / LAND, not the Shield; hold "
               f"model {args.autopilot_hold}"
               + (", flown by no rail" if args.autopilot_hold != "in_place" else "")
