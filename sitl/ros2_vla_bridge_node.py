@@ -1203,8 +1203,10 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(e, KeyboardInterrupt):
             print(f"[vla_bridge] {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     finally:
-        # A second TERM must not cut the records short.
+        # A second TERM - or a second Ctrl+C, which close()'s guard does not
+        # catch (re-review of 23c88d3, N5) - must not cut the records short.
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         core.close()
         if node is not None:
             node.destroy_node()

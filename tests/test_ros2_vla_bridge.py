@@ -43,10 +43,9 @@ WHAT IS BEING CLAIMED
 6. The review of 339f23a (vla_disc/review-V2c-339f23a.md; its probes in
    rev339/): a malformed, partial, four-value-after-eight, mislabelled or
    seq-regressing message is refused (not flown, not a receipt) and held
-   (P1-A); a decision hold ends only on a fresh vla_step and ends the
-   mission past --decision-hold-max-s, also end to end with the bridge
-   suspended by the hold (P3); a second publisher is recorded and costs the
-   KPI grade; bring_up arms after a 900 s wait for the VLA and says how
+   (P1-A); a decision hold that lasts ends the mission past
+   --decision-hold-max-s (P3); a lasting second publisher is recorded and
+   costs the KPI grade; bring_up arms after a 900 s wait for the VLA and says how
    often arming was refused instead of blaming the EKF (P1-B); only a
    vla_step moves, a vla_step has a decision, a hold has its own age bound
    (P2-1); the bridge publishes nothing on a stale pose (P2-3) and writes
@@ -58,11 +57,27 @@ WHAT IS BEING CLAIMED
    host's clock; the bridge's default directory is the Shield's (P3).
    tests/test_ros2_package.py checks the launch file's gate and directory
    (P2-2), tests/test_deploy_configs.py the compose file's pending gaps.
+7. The re-review of 23c88d3 (vla_disc/rereview-V2c-23c88d3.md; rerev23c/):
+   a sound bridge's 2 s stall near the end of a 9.5 s old step, end to end
+   with the real bridge, gives LOITER then GUIDED and flies on, never LAND,
+   because silence ages a decision only up to the receipt timeout; a hold
+   ends on the next valid message, so a stray refused message between steps
+   holds once and the bridge flies on (N1); a malformed identity layout
+   never raises (N2); repeated holds end the mission instead of flapping
+   (N3); the escalation never overrides the FSM's own Loiter and records
+   where (N4); a second Ctrl+C during close() cannot cut the records short
+   (N5); an unlabelled eight is refused once the layout is announced (N6); a
+   passing second publisher is recorded without costing the grade (N7); a
+   non-finite action value is a recorded refusal (N8).
 
-Shown failing first, for 6: the 18 tests of section 6 fail (11 FAIL, 7
-ERROR) in a `git archive` copy of 339f23a with this file copied in, while
-the 20 before them pass there; the new launch and compose tests fail there
-too. For 1-5: in a `git archive` copy of 5b00e6b (before this change)
+Shown failing first, for 7: the 12 tests new or changed for it fail on
+23c88d3's code with this file (the N1-N8 tests, the two tests of 6
+rewritten for N1 because it reverses their claim - a hold ended only on a
+fresh vla_step - and the second-publisher test, now three checks long),
+among them the end-to-end stall: LOITER, LAND there. For 6: the 18 tests of
+section 6 failed (11 FAIL, 7 ERROR) in a `git archive` copy of 339f23a with
+this file copied in, while the 20 before them passed there; the new launch
+and compose tests failed there too. For 1-5: in a `git archive` copy of 5b00e6b (before this change)
 with this file copied in: it stops at its import (no
 sitl/ros2_vla_bridge_node.py). With the new bridge module added to that copy
 and the Shield node left as it was, 11 of the 20 tests fail - every test of
@@ -600,7 +615,7 @@ def test_the_shield_flies_the_bridges_stream_and_lands_on_its_land():
             msg = br.tick(clk.monotonic())
             if br.client is not None:
                 br.client.wait_idle(3.0)
-            node._on_action(N.Float32MultiArray(data=msg))
+            _send(N, node, msg, B.ACTION_LABEL)        # as the node publishes it
             n_before = len(pub.sent)
             clk.t = round(clk.t + 0.1, 10)
             node._tick()
@@ -924,21 +939,93 @@ def test_p1a_a_malformed_tail_after_extended_messages_is_held_never_flown():
     assert node.rows[-1]["setpoint"] == "pass" and node.rows[-1]["raw_body"]["vx"] == 1.0
 
 
-def test_p1a_a_decision_spell_ends_only_on_a_fresh_vla_step():
-    """P3-1 with P1-A: the "none" ticks a sound bridge sends once the Shield's
-    hold put the aircraft in BRAKE used to release the hold (and with a
-    broken bridge it flapped BRAKE / GUIDED). Only a fresh vla_step ends a
-    decision spell now; a hold or hover tick, however valid, does not."""
+def test_n1_a_decision_spell_ends_on_the_next_valid_message():
+    """Re-review of 23c88d3, N1. 23c88d3 ended a spell only on a fresh
+    vla_step, which the hold itself prevents: the Shield's LOITER puts a sound
+    bridge in BRAKE, it suspends and sends none ticks, and the mission landed
+    at the escalation. A spell now ends on the next valid message that is not
+    itself stale - a none tick included - and a bridge that keeps sending
+    stale or refused messages is caught by the repeated-spell count (N3)."""
     RN, (N, node, clk, out) = _shield(["--decision-timeout-s", "1.0"])
     node.start_mission()
     stale = [1.0, 0, 0, 0, 3.0, 2.0, STEP, 0.0]
     none = [0.0, 0.0, 0.0, 0.0, -1.0, -1.0, NONE, 0.0]
-    hold = [0.0, 0.0, 0.3, 0.0, 0.5, 3.0, HOLD, 0.0]
-    modes = _run(N, node, clk, [stale, none, none, hold])
-    assert modes == ["LOITER"], modes
-    assert all(r["decision_stale"] for r in node.rows)
-    modes = _run(N, node, clk, [[1.0, 0, 0, 0, 0.1, 4.0, STEP, 0.0]])
+    modes = _run(N, node, clk, [stale, stale, none])
     assert modes == ["LOITER", "GUIDED"], modes
+    assert [r["decision_stale"] for r in node.rows] == [True, True, False]
+    assert not node.done
+
+
+def test_n1_silence_never_ages_a_decision_past_the_receipt_watchdog():
+    """N1's cause: the decision watchdog aged the last message through a
+    silence, so a 2 s stall near the end of a sound step (decision 9 s old)
+    started a decision spell. Silence is the receipt watchdog's: the aging
+    term is capped at --action-timeout-s, and a message that itself carries
+    an old age is still caught."""
+    w = SN.DecisionWatchdog(10.0, max_silence_s=0.5)
+    step9 = {"decision_age_s": 9.0, "decision_seq": 3, "author": "vla_step"}
+    hold19 = {"decision_age_s": 19.0, "decision_seq": 3, "author": "hold"}
+    assert w.age(103.0, step9, 100.0) == 9.5
+    assert w.verdict(103.0, step9, 100.0) is None and w.verdict(102.5, hold19, 100.0) is None
+    assert w.verdict(100.0, {**step9, "decision_age_s": 11.2}, 100.0) == "stale step"
+
+
+def test_n1_a_stall_near_the_end_of_a_sound_step_holds_then_resumes_never_lands():
+    """The re-review's end-to-end probe: the real bridge flies a 5 m step at
+    0.5 m/s, so its decision is 9.5 s old near the step's end; there its
+    messages stop reaching the Shield for 2 s (a DDS or CPU stall), then flow
+    again. The receipt watchdog holds (LOITER), the bridge sees BRAKE and
+    suspends, its ticks release the hold (GUIDED), and it flies on: no
+    decision spell, no LAND (23c88d3: LOITER, LAND at x 4.8 of 40)."""
+    RN, (N, node, clk, out) = _shield(["--target", "40,0"])
+    goal = (40.0, 0.0)
+    veh = _Veh()
+    clk.t = veh.t
+    dropped_at, drop_left, after = None, 0, []
+    with F.FakeVLAServer(_with_model(F.goto_responder(goal, 15.0), REAL_MODEL),
+                         model=REAL_MODEL) as srv:
+        br = _bridge(srv, veh, out, goal, clock=clk.monotonic, cruise_mps=0.5)
+        _feed(br, veh, clk.monotonic)
+        node._on_identity(N.String(data=json.dumps(br.connect_and_warm_up())))
+        br.on_mav_state(True, "GUIDED")
+        node.start_mission()
+        pub, modes = node.pubs[N.TOPIC_SETPOINT], node.pubs[N.TOPIC_MODE_REQUEST]
+        for k in range(400):
+            veh.t = clk.t
+            node.state = veh.state()
+            _feed(br, veh, clk.monotonic)
+            msg = br.tick(clk.monotonic())
+            if br.client is not None:
+                br.client.wait_idle(3.0)
+            if dropped_at is None and msg[6] == STEP and msg[4] >= 9.5:
+                dropped_at, drop_left = k, 20
+            if drop_left > 0:
+                drop_left -= 1                       # lost on the way to the Shield
+            else:
+                _send(N, node, msg, B.ACTION_LABEL)
+            if dropped_at is not None and k > dropped_at + 60:
+                after.append(int(msg[6]))
+            n_sp, n_mode = len(pub.sent), len(modes.sent)
+            clk.t = round(clk.t + 0.1, 10)
+            node._tick()
+            for m in modes.sent[n_mode:]:
+                br.on_mav_state(True, {"LOITER": "BRAKE"}.get(m.data, m.data))
+            if node.done:
+                break
+            if len(pub.sent) > n_sp:
+                br.on_shield_setpoint()
+                b = pub.sent[-1].data
+                veh.step(from_body(b[0], b[1], b[2], b[3], veh.yaw_deg()))
+            else:
+                veh.step(Action4D())
+        br.close()
+    assert dropped_at is not None, "the step never reached a 9.5 s old decision"
+    sent = [m.data for m in modes.sent]
+    assert sent[:2] == ["LOITER", "GUIDED"] and "LAND" not in sent, sent
+    assert not node.done, "a sound bridge's 2 s stall ended the mission"
+    kinds = [e["kind"] for e in RN._events(out)]
+    assert "action_stale" in kinds and "decision_stale" not in kinds, kinds
+    assert STEP in after, "the bridge did not fly on after the stall"
 
 
 def test_p1a_a_layout_label_that_is_not_the_contract_is_refused():
@@ -964,17 +1051,52 @@ def test_p1a_the_bridges_identity_makes_the_four_values_alone_a_refusal():
     assert node.n_pilot_malformed == 1 and node.rows[-1]["raw_body"]["vx"] == 0.0
 
 
+def _publishers(node, counts, names=("vla_bridge", "vla_stub")):
+    """count_publishers / get_publishers_info_by_topic stand-ins that answer
+    counts[i] on the i-th check (the last one after that)."""
+    k = {"i": 0}
+
+    def count(topic):
+        n = counts[min(k["i"], len(counts) - 1)] if topic == "/vla/action_4d" else 0
+        k["i"] += 1
+        return n
+
+    def info(topic):
+        n = counts[min(max(k["i"] - 1, 0), len(counts) - 1)]
+        return [SimpleNamespace(node_name=names[i % len(names)], topic_name=topic)
+                for i in range(n)]
+    node.count_publishers, node.get_publishers_info_by_topic = count, info
+
+
 def test_p1a_a_second_publisher_is_recorded_and_the_run_is_not_kpi_grade():
     RN, (N, node, clk, out) = _shield([])
-    node.count_publishers = lambda topic: 2 if topic == "/vla/action_4d" else 0
+    _publishers(node, [2])
     node.start_mission()
-    _run(N, node, clk, [[1.0, 0, 0, 0, 0.2, 1.0, STEP, 0.0]] * 12)
+    _run(N, node, clk, [[1.0, 0, 0, 0, 0.2, 1.0, STEP, 0.0]] * 35)
     node._finish("test over")
     metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
     kpi = json.loads((out / "kpi.json").read_text(encoding="utf-8"))
     assert metrics["vla_pilot"]["action_publishers_max"] == 2, metrics["vla_pilot"]
+    assert metrics["vla_pilot"]["action_publishers_flagged"] is True
+    assert set(metrics["vla_pilot"]["action_publisher_names"]) == {"vla_bridge", "vla_stub"}
     assert any("publishers" in w for w in kpi["kpi_grade_reasons"]), kpi["kpi_grade_reasons"]
     assert kpi["kpi_grade"] is False
+
+
+def test_n7_a_passing_second_publisher_is_recorded_but_does_not_cost_the_grade():
+    """N7: one check that saw two publishers (a ghost after a kill -9, until
+    its lease expires) took the KPI grade off the whole run. It is recorded;
+    only ACTION_PUBLISHERS_CHECKS consecutive checks flag it."""
+    RN, (N, node, clk, out) = _shield([])
+    _publishers(node, [2, 1, 2, 1, 1])
+    node.start_mission()
+    _run(N, node, clk, [[1.0, 0, 0, 0, 0.2, 1.0, STEP, 0.0]] * 45)
+    node._finish("test over")
+    vp = json.loads((out / "metrics.json").read_text(encoding="utf-8"))["vla_pilot"]
+    kpi = json.loads((out / "kpi.json").read_text(encoding="utf-8"))
+    assert vp["action_publishers_max"] == 2 and vp["action_publishers_flagged"] is False, vp
+    assert not any("publishers" in w for w in kpi["kpi_grade_reasons"])
+    assert SN.ACTION_PUBLISHERS_CHECKS >= 3
 
 
 def test_p1a_a_decision_hold_that_lasts_ends_the_mission():
@@ -1220,7 +1342,7 @@ def test_p2_4_the_bridge_writes_its_records_on_shutdown_and_sigterm():
     name = "ros2_vla_bridge_node_shutdown"
     saved = {k: sys.modules.get(k) for k in [*fakes, name]}
     sys.modules.update(fakes)
-    old = signal.getsignal(signal.SIGTERM)
+    old = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
     out = _tmp() / "shutdown"
     try:
         spec = importlib.util.spec_from_file_location(name, ROOT / "sitl" / "ros2_vla_bridge_node.py")
@@ -1235,7 +1357,8 @@ def test_p2_4_the_bridge_writes_its_records_on_shutdown_and_sigterm():
         rc = M.main(["--vla-server", f"127.0.0.1:{port}", "--policy", str(POLICY),
                      "--out", str(out), "--vla-hello-timeout-s", "0.2"])
     finally:
-        signal.signal(signal.SIGTERM, old)
+        for sig, h in old.items():
+            signal.signal(sig, h)
         for k, v in saved.items():
             if v is None:
                 sys.modules.pop(k, None)
@@ -1245,13 +1368,13 @@ def test_p2_4_the_bridge_writes_its_records_on_shutdown_and_sigterm():
     assert (out / "vla_captures.jsonl").is_file() and (out / "vla_bridge_ticks.jsonl").is_file()
 
 
-def test_p3_a_hold_end_to_end_suspends_the_bridge_and_ends_without_flapping():
-    """The review's end-to-end gap: a stray four-value message (a stub left
-    running) lands among the bridge's stream; the Shield refuses it and holds
-    (LOITER, flown as BRAKE), the bridge sees BRAKE and suspends (none ticks),
-    those none ticks do not release the hold (no GUIDED, no flapping), and
-    past --decision-hold-max-s the mission ends through the mission-end
-    LAND."""
+def test_n1_a_stray_refused_message_between_steps_holds_once_and_does_not_land():
+    """The review's end-to-end gap, as the re-review of 23c88d3 (N1) settles
+    it: a stray four-value message (a stub's) lands among the bridge's
+    stream; the Shield refuses it and holds (LOITER, flown as BRAKE), the
+    bridge sees BRAKE and suspends, its next valid tick releases the hold
+    (GUIDED), the bridge resumes and flies on. 23c88d3 waited for a fresh
+    vla_step the suspended bridge never sent, and landed."""
     RN, (N, node, clk, out) = _shield(["--target", "40,0", "--decision-hold-max-s", "2.0"])
     goal = (40.0, 0.0)
     veh = _Veh()
@@ -1272,10 +1395,10 @@ def test_p3_a_hold_end_to_end_suspends_the_bridge_and_ends_without_flapping():
             msg = br.tick(clk.monotonic())
             if br.client is not None:
                 br.client.wait_idle(3.0)
-            node._on_action(N.Float32MultiArray(data=msg))
+            _send(N, node, msg, B.ACTION_LABEL)
             if k == 30:
                 node._on_action(N.Float32MultiArray(data=[2.0, 0.0, 0.0, 0.0]))
-            if k > 32:
+            if k > 80:
                 authors_after.append(int(msg[6]))
             n_sp, n_mode = len(pub.sent), len(modes.sent)
             clk.t = round(clk.t + 0.1, 10)
@@ -1291,12 +1414,14 @@ def test_p3_a_hold_end_to_end_suspends_the_bridge_and_ends_without_flapping():
             else:
                 veh.step(Action4D())
         br.close()
-    assert node.done and [m.data for m in modes.sent] == ["LOITER", "LAND"], \
-        [m.data for m in modes.sent]
-    assert set(authors_after) == {NONE}, "the bridge flew on in the Shield's hold"
+    sent = [m.data for m in modes.sent]
+    assert sent == ["LOITER", "GUIDED"] and not node.done, (sent, node.done)
+    assert STEP in authors_after, "the bridge did not fly on after the hold"
     kinds = [e["kind"] for e in RN._events(out)]
-    assert "vla_action_refused" in kinds and "decision_hold_escalated" in kinds, kinds
-    assert [e["event"] for e in br.events][:2] == ["mission_start", "rail_hold"]
+    assert "vla_action_refused" in kinds and "decision_resumed" in kinds, kinds
+    assert "decision_hold_escalated" not in kinds
+    assert [e["event"] for e in br.events][:3] == ["mission_start", "rail_hold",
+                                                    "rail_released"]
 
 
 def test_p3_the_bridges_default_directory_is_the_shields():
@@ -1310,6 +1435,157 @@ def test_p3_the_bridges_default_directory_is_the_shields():
         _, plan = B.resolve(args)
         assert plan["out"] == ROOT / "demo" / "out" / tag, (argv, plan["out"])
     assert SN.default_tag("off", True) == "ros2_shield_off_dynamic"
+
+
+# =========================================================================== #
+# 7. The re-review of 23c88d3 (vla_disc/rereview-V2c-23c88d3.md; rerev23c/)
+# =========================================================================== #
+def test_n2_a_malformed_identity_layout_never_raises():
+    """identity_contract_problems did list(layout): TypeError for 5 or true,
+    inside _on_identity (a subscription callback) and wait_for_vla."""
+    for bad in (5, True, "vx_fwd", {"a": 1}):
+        probs = SN.identity_contract_problems({"action_layout": bad}, 10.0)
+        assert probs and "layout" in probs[0], (bad, probs)
+    assert SN.identity_contract_problems({"decision_timeout_s": "ten"}, 10.0)
+    RN, (N, node, clk, out) = _shield(["--vla-ready-timeout-s", "5"])
+    node._on_identity(N.String(data=json.dumps({"ready": True, "action_layout": 5})))
+    assert node.contract_problems and node.vla_identity["action_layout"] == 5
+    try:
+        node.wait_for_vla()
+    except RuntimeError as e:
+        assert "layout" in str(e), e
+    else:
+        raise AssertionError("armed with a malformed layout")
+
+
+def test_n3_repeated_holds_end_the_mission_instead_of_flapping():
+    """A stub left running beside a live bridge: its messages and the
+    bridge's alternate, each stub message is refused and held, each bridge
+    message releases (N1), and the aircraft flapped LOITER / GUIDED (the
+    re-review's probe: 100 mode requests, 50 holds in 30 s, no escalation).
+    DECISION_SPELLS_MAX holds within DECISION_SPELLS_WINDOW_S end the mission
+    through the mission-end LAND."""
+    RN, (N, node, clk, out) = _shield([])
+    node.start_mission()
+    good = [1.0, 0, 0, 0, 0.5, 4.0, STEP, 0.0]
+    for k in range(60):
+        _send(N, node, good, B.ACTION_LABEL)
+        if k % 4 == 1:
+            node._on_action(N.Float32MultiArray(data=[2.0, 0.0, 0.0, 0.0]))
+        clk.t += 0.1
+        node._tick()
+        if node.done:
+            break
+    modes = [m.data for m in node.pubs[N.TOPIC_MODE_REQUEST].sent]
+    n = SN.DECISION_SPELLS_MAX
+    assert node.done and modes == ["LOITER", "GUIDED"] * (n - 1) + ["LOITER", "LAND"], modes
+    esc = [e for e in RN._events(out) if e["kind"] == "decision_hold_escalated"]
+    assert len(esc) == 1 and f"{n} holds" in esc[0]["why"], esc
+    assert SN.DECISION_SPELLS_WINDOW_S >= 10.0
+
+
+def test_n4_the_escalation_defers_to_the_fsm_and_records_where():
+    """The escalation's LAND ignored the FSM (it landed over an FSM Loiter,
+    ended the episode in an FSM RTL) and recorded no position. It now acts
+    only on a hold this node placed (the FSM's own Loiter or fail-safe owns
+    the aircraft otherwise), and records where, the FSM state, the mode and
+    the keep-out rules the position breaks."""
+    from guardrail.fsm import FSMState
+    RN, (N, node, clk, out) = _shield(["--decision-timeout-s", "1.0",
+                                       "--decision-hold-max-s", "1.0"])
+    node.start_mission()
+    node.fsm._state = FSMState.LOITER                   # the FSM has the aircraft
+    stale = [1.0, 0, 0, 0, 3.0, 2.0, STEP, 0.0]
+    _run(N, node, clk, [stale] * 15)
+    assert not node.done and "decision" not in node._holds
+    assert not any(e["kind"] == "decision_hold_escalated" for e in RN._events(out))
+    RN2, (N2, node2, clk2, out2) = _shield(["--decision-timeout-s", "1.0",
+                                            "--decision-hold-max-s", "1.0"])
+    node2.start_mission()
+    node2.state = State(x=15.0, y=15.0, up=15.0, yaw_deg=0.0)  # inside nfz-square
+    _run(N2, node2, clk2, [stale] * 20)
+    assert node2.done
+    esc = node2.decision_escalation
+    assert esc["position"] == {"x": 15.0, "y": 15.0, "up": 15.0}, esc
+    assert esc["position_unsafe_rules"] == ["nfz-square"] and esc["fsm_state"], esc
+    metrics = json.loads((out2 / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["vla_pilot"]["decision_escalation"]["position"]["x"] == 15.0
+
+
+def test_n5_a_second_interrupt_during_close_cannot_cut_the_records_short():
+    """main() ignored only SIGTERM while close() wrote the records; a second
+    Ctrl+C there raised KeyboardInterrupt, which close()'s guard does not
+    catch. Both signals are ignored now while the records are written."""
+    import signal
+    fakes, made = _fake_ros()
+    fakes["rclpy"].init = lambda args=None: None
+    fakes["rclpy"].ok = lambda: False
+
+    def spin(node):
+        raise KeyboardInterrupt
+    fakes["rclpy"].spin = spin
+    name = "ros2_vla_bridge_node_close"
+    saved = {k: sys.modules.get(k) for k in [*fakes, name]}
+    sys.modules.update(fakes)
+    old = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
+    seen = {}
+    try:
+        spec = importlib.util.spec_from_file_location(name, ROOT / "sitl" / "ros2_vla_bridge_node.py")
+        M = importlib.util.module_from_spec(spec)
+        sys.modules[name] = M
+        spec.loader.exec_module(M)
+        real_close = M.VLABridge.close
+
+        def close(self):
+            seen["int"] = signal.getsignal(signal.SIGINT)
+            seen["term"] = signal.getsignal(signal.SIGTERM)
+            return real_close(self)
+        M.VLABridge.close = close
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()
+        M.main(["--vla-server", f"127.0.0.1:{port}", "--policy", str(POLICY),
+                "--out", str(_tmp() / "close"), "--vla-hello-timeout-s", "0.2"])
+    finally:
+        for sig, h in old.items():
+            signal.signal(sig, h)
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+    assert seen == {"int": signal.SIG_IGN, "term": signal.SIG_IGN}, seen
+
+
+def test_n6_an_unlabelled_eight_value_message_is_refused_once_the_layout_is_announced():
+    RN, (N, node, clk, out) = _shield([])
+    node.start_mission()
+    ok = [1.0, 0, 0, 0, 0.2, 1.0, STEP, 0.0]
+    _run(N, node, clk, [ok])                           # no identity yet: accepted
+    assert node.n_pilot_msgs == 1 and node.n_pilot_malformed == 0
+    node._on_identity(N.String(data=json.dumps(
+        {"model_id": VM.MODEL_ID, "kind": "vla", "action_layout": list(B.ACTION_FIELDS)})))
+    _run(N, node, clk, [ok])
+    assert node.n_pilot_malformed == 1 and "label" in node.pilot_error, node.pilot_error
+    _run(N, node, clk, [ok], label=B.ACTION_LABEL)
+    assert node.n_pilot_msgs == 2
+
+
+def test_n8_a_non_finite_action_value_is_refused_and_recorded():
+    """A message with a NaN or an infinity among its four action values was
+    dropped without a word; it is a refusal like any other now: counted, an
+    event, held."""
+    RN, (N, node, clk, out) = _shield([])
+    node.start_mission()
+    modes = _run(N, node, clk, [[float("nan"), 0.0, 0.0, 0.0],
+                                [1.0, 0, float("inf"), 0, 0.2, 1.0, STEP, 0.0]])
+    assert node.n_pilot_malformed == 2 and node.n_actions == 0
+    assert modes == ["LOITER"], modes
+    ev = [e for e in RN._events(out) if e["kind"] == "vla_action_refused"]
+    assert len(ev) == 2 and "non-finite" in ev[0]["why"], ev
+    assert ev[0]["values"][0] is None, ev[0]
 
 
 if __name__ == "__main__":
