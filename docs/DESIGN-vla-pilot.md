@@ -154,14 +154,18 @@ and its submit, and when that request came back within one tick (an instant
 refusal, a server that died) the worker overwrote the first result, a step or
 a LAND that never reached the tracker.
 
-- **pipelined** (default): the next image is captured and sent as soon as the
-  previous answer is back, while that answer's step is being flown. The newer
-  step supersedes the older on arrival. With 0.35 s answers the aircraft flies
-  continuously toward a target a few metres ahead; with 3 s answers most steps
-  complete before they are superseded.
-- **stop_and_go**: upstream's own cadence, as a labelled arm. The next image is
-  taken only after the step is complete and the tracker has held for 0.5 s.
-  No step is cut short.
+- **pipelined** (`RemoteVLABackend`'s default; a labelled arm of the CityLife
+  flight): the next image is captured and sent as soon as the previous answer
+  is back, while that answer's step is being flown. The newer step supersedes
+  the older on arrival. With 0.35 s answers the aircraft flies continuously
+  toward a target a few metres ahead; with 3 s answers most steps complete
+  before they are superseded. Each answer's turn and climb are applied at the
+  DECISION rate, not once per step as in training (section 13 has the
+  measured difference).
+- **stop_and_go**: upstream's own cadence, and the CityLife flight's default
+  since 2026-10-23 (`demo/vla_fly.py --cadence`, `-Cadence` in the launcher).
+  The next image is taken only after the step is complete and the tracker has
+  held for 0.5 s. No step is cut short.
 
 Both arms reach a goal 36 m away and 6 m up in the closed-loop tests, at 0.4 s
 and 3 s of latency, from steps quantized to the model's 99 bins, and end on
@@ -210,7 +214,7 @@ request) would have looked the same. Now that run gives 300 `none` ticks
 |---|---|---|
 | `decision_timeout_s`, step | 10 s | the age of the image behind a step being flown (capture to now). Past it the step is dropped (`end: stale`) and the tracker hovers. An answer already older on arrival is refused (`stale_on_arrival`). A 5 m step at 1 m/s plus about 3 s of latency fits. |
 | `decision_timeout_s`, hold | 10 s | how long a hold lasts waiting for the next answer, measured from the hold's start. Then hover (`end: hold_timeout`). |
-| client response timeout | = `decision_timeout_s` (factory) | one request's round trip; a later answer would be refused as stale anyway. On timeout the connection is dropped. |
+| client response timeout | = `decision_timeout_s` (factory) | one request's round trip; a later answer would be refused as stale anyway. On timeout the connection is dropped - unless `late_reply_wait_s` is set (the CityLife flight sets 120 s): then the timeout is still posted at once, but the client keeps the connection and sends nothing until the abandoned request's late answer arrives, because the server cannot cancel a `generate()` and a new request would queue behind it on the model lock (`RemoteVLA`, `submit_draining`, `late_replies`). |
 | connect timeout | 2 s | opening the TCP connection |
 | reconnect backoff | 1 s | no new request this long after a failure or a server error |
 | step time cap | per step (section 3) | a step that cannot reach tolerance (wind, a Shield repair holding it back) ends and holds |
@@ -413,8 +417,9 @@ controller and the Shield; a VLA arm there would have to switch each off or
 call the run hybrid (integration report, section 3.4). In `vla_fly` the step
 tracker's action IS the raw action the Shield judges
 (`vla_mission.MissionLoop`): `backend.act(state)` -> `shield.filter` ->
-`move_by_velocity` (the repaired `emitted`; the raw action with `--shield
-off`, recorded as the control arm). Infrastructure is imported from
+`move_by_velocity` (the repaired `emitted`; with `--shield off`, the control
+arm, the step tracker's action unfiltered - see "The control arm" below).
+Infrastructure is imported from
 `follow_vlm` (heartbeat, collision topic, landing, Grounder, recorder), so a
 fix there reaches here. The Shield is the grant's 5 s / 0.1 s forecast
 without an FSM inside it (`guardrail/replay.rail_shield`): this rail flies
@@ -424,9 +429,29 @@ without an FSM inside it (`guardrail/replay.rail_shield`): this rail flies
 
 | | M1 `goto` | M2 `approach` |
 |---|---|---|
-| hint | the goal's bearing from the capture pose, relative to the heading (`vla_link.goal_phrase`), `""` inside `--arrive-radius-m` (3 m): hint_source `goal`, the trained task | the OWL-ViT box on the detector's own camera through `vla_bridge.VLABridge` (gain 1: three reachable phrases): hint_source `detector`; no box fresher than 1 s, no request |
-| ends on | LAND; inside the arrive radius 8 s without LAND (`arrived_no_land`); time | LAND; the box at 0.15 of the frame width (`close_box`); no fresh box for 15 s (`target_lost`); time |
-| default | goal (43, 40), object words `""` | the scenario car parked at (48, 12), object `"an orange car"` |
+| hint | the goal's bearing from the capture pose, relative to the heading (`vla_link.goal_phrase`), `""` inside `--arrive-radius-m` (3 m): hint_source `goal`, the trained task | the OWL-ViT box on the detector's own camera through `vla_bridge.VLABridge` (gain 1: three reachable phrases), its bearing rotated by the turn between the detector's frame and the VLA's capture (`DetectorHint`): hint_source `detector`; no box fresher than `--det-fresh-s` (1 s), no request |
+| ends on | LAND; inside the arrive radius 8 s without LAND (`arrived_no_land`); flown past the goal - it was inside the radius, and the goal has stayed behind and receding for `--overshoot-s` (3 s): `arrived_overshoot`, with `overshoot_m`; time | LAND; the box at 0.15 of the frame width (`close_box`); no fresh box for 15 s (`target_lost`); time |
+| default | goal (43, 40), object words `vla_mission.GOTO_OBJECT_TEXT` | the scenario car parked at (48, 12), object `"an orange car"` |
+
+Object words. Every one of upstream's 410,450 training prompts describes the
+target in a sentence ("The man is walking on a road near some bushes and tall
+evergreen trees, ..."); none has an empty slot. So a GOTO sends one fixed,
+neutral street description in that style, `"The target is on a paved city
+street lined with tall buildings, street trees and parked cars."`, never
+`""`; it names nothing that is there to be found and no position
+(`aerialvla_codec.validate_object`, checked before take-off), it is inert
+like any object words, it is recorded in metrics.json (`mission.object`) and
+in every vla_steps.jsonl line, and `--object` overrides it.
+
+The turn since the box (M2). The box can be up to `--det-fresh-s` older than
+the VLA's capture; at the tracker's 0.5 rad/s yaw cap that is up to 28.6 deg
+of turn, enough to move a box from "straight ahead " to "forward-left ".
+`DetectorHint` subtracts (heading at the VLA capture - heading at the
+detector's frame, from the Grounder's capture pose) from the box's bearing
+before the band lookup, and records the box's age, the correction and the
+detector's own latency (rows `box_age_at_hint_s`,
+`yaw_correction_deg_at_hint`, `detector_latency_s`; metrics
+`mission.detector_hint`).
 
 Both: take off at the usual spawn (35, -20), climb to 10 m, a hand-written
 transfer through the Shield to the mission start (42, -18), face the goal
@@ -438,13 +463,72 @@ clearance on the Shield's own distance field over the 6-14 m map, the goal
 has 13.5 m, both are on the street mask (`vla_mission.py`, CityLife geometry;
 `tests/test_vla_fly.py` re-reads it from the map where the map is present).
 
+The transfer must end within `--start-tolerance-m` (2 m) of the mission
+start, or the mission is refused and the aircraft lands
+(`start_not_reached`, exit 4); the start error and the pose the mission
+really began at are recorded (`pre_mission.start_error_m`,
+`start_pose_actual`).
+
 Every mission also ends, and lands, on a VLA failure: hovering on link_lost
-(`server_dead`) or server_error for `--dead-timeout-s` (10 s), malformed
-answers held that long (`parse_fail_streak`), or no parsed answer within
-60 s (`no_first_decision`). Those exit with code 3; an abort with 1. LAND is
-the tracker's flag; the landing is `follow_vlm._fly_to_landing_site` (a
-landable pavement cell, through the Shield) and its descent, never a mode
-request.
+for `--dead-timeout-s` (10 s) - `server_slow` when the requests timed out
+(the model is still computing), `server_dead` when the link failed (refused,
+closed, a broken reply) - or on server_error that long, malformed answers
+held that long (`parse_fail_streak`), or no parsed answer within
+`--first-decision-timeout-s` (60 s, `no_first_decision`). A slow model's
+first answer gets those 60 s: before its first parsed answer, timeouts do not
+end the mission on the 10 s rule (until 2026-10-23 a model slower than the
+response timeout ended `server_dead` after about 20 s, and the 60 s never
+applied). Rows say what each link failure was (`link_failure`: timeout /
+link / protocol), the pilot summary counts them (`link_failure_by_kind`,
+`late_replies`). Those ends exit with code 3; an abort with 1; Ctrl+C lands
+where the aircraft is, writes every record marked `interrupted` and exits
+130. LAND is the tracker's flag; the landing is
+`follow_vlm._fly_to_landing_site` (a landable pavement cell, through the
+Shield) and its descent, never a mode request.
+
+### Cadence: why stop-and-go is the default
+
+The reviewer's point-vehicle probe (the real `StepTracker`, 10 Hz, 0.3 s
+velocity lag, answers back 0.5 s after capture, 30 s, the same answer every
+time; re-run 2026-10-23):
+
+| constant answer | pipelined | stop_and_go |
+|---|---|---|
+| `96 48 49` (fwd 4.90 m, climb 0.102 m) | 59 decisions, climb +1.77 m, 29.3 m travelled | 5 decisions, climb +0.51 m, 23.5 m travelled |
+| `96 49 47` (fwd 4.90 m, dpsi -0.045 rad = 2 bins) | heading -54.6 deg | heading -12.9 deg |
+
+Pipelined applies each answer's turn and climb every time an answer arrives
+(12 answers per step at 0.5 s), so a one-bin bias the model would apply once
+per 4.9 m step in training is applied a dozen times: 4.2x the heading drift
+and 3.5x the climb in 30 s. Stop-and-go applies it once per step, as upstream
+does (step, hover 0.5 s, capture). It is the flight's default
+(`--cadence stop_and_go`); pipelined stays a labelled arm. The cadence is in
+metrics.json (`params.cadence`, `pilot.cadence`), kpi.json and on the HUD.
+Fewer decisions follow: a stop-and-go GOTO decides about once every 6 s (a
+4.9 m step, the 0.5 s hold, the answer), so the dashboard's 10-decision
+floor for a VLA flight (tools/todo.py) needs about 50 m of flying - the
+default goal is 58 m away.
+
+### The control arm (`--shield off`)
+
+The Shield still judges every tick, in shadow; nothing it decides flies. Two
+things keep that arm honest (review of 2026-10-23):
+
+- The pilot side is not held inside the policy's band either. With the
+  Shield on, the tracker clamps altitude targets into the policy's hard band
+  (6-14 m here); with it off the backend is built WITHOUT the policy and
+  clamps only into `vla_mission.SIM_SAFETY_BAND_M` (2-40 m), recorded as
+  `pilot_alt_band` in metrics.json and kpi.json (`clamp`
+  `sim_safety_band`, the band the backend applied and its source). So the
+  off arm flies the step tracker's action, not "the raw VLA action":
+  the tracker's interpolation, its speed caps and that safety band stand
+  between the model and the airframe. (The manifest keeps the grant's six
+  fields.)
+- The HUD and its counts read `vla_mission.hud_decision` (perception_node's
+  rule): no repair and no brake, the flown action as emitted, the shadow's
+  violations as escapes - never "SHIELD CORRECTED COMMAND" or an ACTING row
+  for a Shield that was not in the loop. `interventions` counts corrections
+  that flew (0 off); `shadow_interventions` the shadow's would-be ones.
 
 ### Cameras
 
@@ -466,16 +550,29 @@ Started by the flight unless `--vla-server HOST:PORT` attaches to one:
 fidelity option, 96 % agreement with the reference on the 4090 probe) or,
 with `--vla-low-vram` / `-Precision nf4`, `--precision nf4 --attn sdpa
 --merge` (25-33 %). The flight refuses an occupied port, waits for hello
-(up to 15 min for the load), refuses a non-VLA identity unless it started the
-scripted stand-in itself (`--vla-fake-output`) or `--allow-stand-in` is
-given, pins the identity, and stops the server at the end (op shutdown,
-then terminate). A stand-in run is recorded as kind `stub` and
-`fake:scripted@unresolved`, never as a VLA.
+(up to 45 min, `--vla-hello-timeout-s`: a bf16 cold load under RAM pressure
+took over 15 min; it prints how long it has waited every minute), refuses a
+non-VLA identity unless it started the scripted stand-in itself
+(`--vla-fake-output`) or `--allow-stand-in` is given, and pins the
+identity. A server the flight started is stopped on every way out (op
+shutdown, then terminate), including an exception before the simulator; an
+attached one never is. A stand-in run is recorded as kind `stub` and
+`fake:scripted@unresolved`, never as a VLA; every `fake:` id is a stand-in
+to tools/todo.py and the dashboard, whatever model name follows it.
+
+Before arming, one WARM-UP inference on a live camera pair (the mission's
+own phrase for M1, "straight ahead " labelled `goal` for M2): no answer, a
+server error or a round trip over `--warmup-max-latency-s` (5 s) refuses the
+flight before take-off (`warmup_refused`, exit 4), with the measurement in
+metrics.json (`warmup`). Its frames are kept like any request's
+(vla_captures.jsonl marks it `warmup`).
 
 ### Records (demo/out/<tag>/)
 
-`vla_steps.jsonl` (section 9), `vla_frames/<sha256>.jpg`,
-`vla_captures.jsonl`, `flight_log.jsonl` (per tick: `author` /
+`vla_steps.jsonl` (section 9), `vla_frames/<sha256>.jpg` and
+`vla_captures.jsonl` (only the captures SENT, with their seq and phrase:
+a capture with no hint, M2 without a fresh box, is neither saved nor
+logged), `flight_log.jsonl` (per tick: `author` /
 `author_reason`, `vla_seq`, `vla_age_s`, the flown decision's `phrase`,
 `hint_source`, `step`, `bins`, `raw_text`, the Shield's `raw` / `emitted` /
 `flown_action` / `violations` / `repairs` / `emitted_violations`, `flown`,
@@ -486,8 +583,15 @@ tools/todo.py and the dashboard read - and `pilot.summary`: decision rate,
 latency p50/p95, parse_fail, server_error, LAND, ticks by author,
 `vla_authored_tick_share`), `manifest.json`, `kpi.json`, `audit.jsonl`, the
 replay bundle, `view/` with the HUD panel (time, altitude, goal distance or
-box; the decision number and its image's age; the phrase and its source; the
-step; who authored the tick) and `vla_server_stdout.log`.
+box; the decision number, its image's age and the cadence; the phrase and
+its source; the step; who authored the tick) and `vla_server_stdout.log`.
+A reused tag first loses the earlier run's records - with its replay
+bundle, replay_gate.json and the server's logs, which are opened for
+append - but never `vla_frames/` (content-addressed; this run's
+vla_steps.jsonl names only its own) or `view/` (the recorder's, usually a
+junction to C:); a record that is a link is left alone. When writing a
+record fails, metrics.json is still written with `records_errors` (and the
+manifest if it was built), and the flight exits 1.
 
 ### Commands
 
@@ -497,17 +601,29 @@ launcher flies the YAML under `--dev-yaml`, recorded as a development run):
     python tools\build_flight_bundles.py vla_goto_citylife
 
 1. CityLife frames for the gate without the model (the scripted stand-in
-   steps straight ahead; the Shield is on):
+   steps straight ahead; the Shield is on; stop-and-go asks about every
+   6 s, so 180 s gives the gate its 10 frames):
 
-       .\scripts\run_vla_fly.ps1 -Mission goto -Seconds 60 -Tag vla_dry -FakeOutput "96 48 49</s>"
+       .\scripts\run_vla_fly.ps1 -Mission goto -Seconds 180 -Tag vla_dry -FakeOutput "96 48 49</s>"
 
-2. The offline replay gate, with the GPU, on those frames (or on the
-   committed protocol mosaics with `--frames-dir deploy\evidence\vla_protocol_frames`):
+2. The offline replay gate, with the GPU, on those frames - `--frames-only`,
+   because a stand-in flew them and its answers are no reference for the
+   model (or on the committed protocol mosaics with `--frames-dir
+   deploy\evidence\vla_protocol_frames`):
 
-       C:\Users\natha\.conda\envs\vla-real\python.exe tools\vla_replay_gate.py --run demo\out\vla_dry --start-server
-       C:\Users\natha\.conda\envs\vla-real\python.exe tools\vla_replay_gate.py --run demo\out\vla_dry --vla-server 127.0.0.1:8790
+       C:\Users\natha\.conda\envs\vla-real\python.exe tools\vla_replay_gate.py --run demo\out\vla_dry --start-server --frames-only
+       C:\Users\natha\.conda\envs\vla-real\python.exe tools\vla_replay_gate.py --run demo\out\vla_dry --vla-server 127.0.0.1:8790 --frames-only
 
-3. M1 GOTO (bf16 fidelity by default; `-Precision nf4` for low VRAM; `-Goal 43,100` runs beside the NFZ):
+   Exit 0 GATE PASSED, 1 a check failed, 2 the gate could not run (no input,
+   no hello within `--hello-timeout-s`, 45 min by default), 3 NOT
+   COMPARABLE (replaying a flight the server is not the model of; the
+   flight's `pilot.server_identity` is compared), 4 STAND-IN (never a
+   pass). The checks: at least 10 frames, the seven phrases monotone from
+   left rear to right rear, parse failures, LAND only near the goal or
+   without a hint, no large descents or steps toward the ground away from
+   the goal, every request answered.
+
+3. M1 GOTO (bf16 fidelity by default; `-Precision nf4` for low VRAM; `-Goal 43,100` runs beside the NFZ; `-Cadence pipelined` for that arm; `-PrintArgs` shows the flight's arguments and starts nothing):
 
        .\scripts\run_vla_fly.ps1 -Mission goto -Seconds 180 -Tag vla_goto_01
 
@@ -519,13 +635,26 @@ launcher flies the YAML under `--dev-yaml`, recorded as a development run):
 
        .\scripts\run_vla_fly.ps1 -Mission approach -Seconds 180 -Tag vla_appr_01
 
-5. The control arm: `-Shield off` (recorded `shield: off`; the raw VLA action flies).
+5. The control arm: `-Shield off` (recorded `shield: off`; the step
+   tracker's action flies unfiltered, clamped only to the 2-40 m simulator
+   safety band - "The control arm" above).
+
+Exit codes of `demo\vla_fly.py` (and the launcher): 0 the mission ended on
+its own terms; 1 aborted, no rows, or the records incomplete; 3 a VLA
+failure end; 4 refused before the mission (warm-up, start not reached); 130
+interrupted. The launcher checks `-Goal` / `-ParkAt` (X,Y, written 43,100 or
+"43,100") and runs `demo\vla_fly.py --check-args` BEFORE it starts the
+simulator.
 
 ### Not verified, and the risks
 
 - Nothing here has run in Unreal. The fake-simulator runs checked the
   plumbing, not Project AirSim's camera topics, the 256x256 render or the
-  rotate/land calls.
+  rotate/land calls. Ctrl+C was checked as a KeyboardInterrupt raised inside
+  the flight loop and handled through the same path asyncio's cancellation
+  takes; a real console Ctrl+C has not been pressed on a flight.
+- The 5 s warm-up gate, the 120 s late-answer wait and the 2 m start
+  tolerance are ours, not measured on the RTX 4090 with the renderer up.
 - Whether bf16 (about 17 GB) fits beside CityLife on the 24 GB card, and the
   decision rate with the renderer running, are unmeasured (E0).
 - AerialVLA's competence in CityLife is unknown; the default goal is chosen
