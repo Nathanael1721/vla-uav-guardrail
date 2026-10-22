@@ -16,6 +16,65 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-23 — the CityLife VLA flight is ready behind the Shield, and AerialVLA re-measured at its own precision; not yet flown
+
+Wave V2, branch a: built, reviewed twice, fixed twice, merged (988c447). The
+first AerialVLA-piloted flight has **not** flown: with the bf16 server loaded
+the machine was at 99.8 of 104 GB committed memory, too little to start the
+simulator safely, so the server was stopped and the flight waits for memory.
+
+#### Added
+- **`demo/vla_fly.py`: AerialVLA flies CityLife behind the Shield.** M1 GOTO
+  (the direction phrase from the goal's bearing at each capture; the empty
+  phrase within 3 m) and M2 APPROACH (the phrase from OWL-ViT's box through
+  `vla_bridge`, rotated by the turn since the detector's frame). Every action
+  goes through `Shield.filter`; `--shield off` is a labelled control arm
+  clamped only to a recorded 2-40 m simulator band. LAND ends the mission in
+  the script's own landing (never a mode request from the model).
+- **Upstream's stop-and-go cadence is the default** (`-Cadence pipelined` is a
+  labelled arm). On the point-vehicle probe, pipelining a constant answer for
+  30 s climbed +1.77 m against +0.51 m and drifted -54.6 deg against -12.9 deg.
+- **A warm-up gate before arming**: three inferences on live camera pairs, the
+  last judged against 5 s; a slow or silent model refuses the flight (exit 4).
+  A slow model is told apart from a dead one (`server_slow` / `server_dead`),
+  and no request is stacked behind a timed-out one.
+- **Every way out lands and is recorded**: an exception, a missed start, an
+  overshoot or Ctrl+C (exit 130, marked interrupted); a server the flight
+  started is always stopped; a records fault still leaves `metrics.json`.
+- **`tools/vla_replay_gate.py`**: the flight's own model on at least 10 recorded
+  frames, all seven phrases, descents judged; exit 3 when the server is not
+  the flight's model, 4 for a stand-in (never PASS), 2 when it could not run.
+- `policies/vla_goto_citylife.yaml` (6-14 m band, 3 m clearance, the city
+  no-fly zone) and its signed bundle; VLA cameras at 256x256, 90 deg, pitch 0
+  and -90, as upstream; `scripts/run_vla_fly.ps1`.
+
+#### Measured (offline, RTX 4090)
+- **AerialVLA's direction phrase in bf16** (`docs/data/aerialvla_bf16_phrase_probe_20261023.json`,
+  section "Addendum, 2026-10-23" of `docs/FINDING-what-drives-aerialvla.md`):
+  the mean turn is ordered by the phrase (-0.651 to +0.288 rad), but facing
+  the target every phrase gives about 4.9 m forward and no turn; the phrase
+  steers only when the target is off to one side. The 4 Aug effect was
+  measured on a 4-bit loader. 36 requests, every answer recorded.
+- Idle latency p50 391 ms per decision; about 15.8 GB of VRAM. A bf16 cold
+  load took 26 min with the machine short of memory.
+
+#### Fixed
+- `tools/check_claims.py` registers the two 22 Oct retractions; the 22 Oct log
+  had failed `test_every_changelog_retraction_is_registered`.
+- A `fake:` model id never counts as a VLA, whatever digest it reports.
+
+#### Tests
+- The CI list runs 113 test files, 0 failing. `tests/test_vla_fly.py` 35/35,
+  `tests/test_vla_replay_gate.py` 8/8; `tests/test_vla_fly_fakesim.py` 10/10 in
+  the lab environment (it skips without OpenCV, as in CI).
+
+#### Not done
+- No VLA flight yet (blocked by memory, above). Open from the second review:
+  the abort landing caps `land_async` at 60 s with no descent first (the
+  control arm can be up to 40 m high); an aborted run's decision rate includes
+  the time after landing; the replay gate can wait a full timeout per request
+  on a slow server and checks its frame count only after the server is up.
+
 ### 2026-10-22 — AerialVLA becomes a pilot the Guardrail can fly, the tracker becomes the progress monitor, and open WP items closed
 
 Wave V1: five branches, each reviewed adversarially two or three times and
