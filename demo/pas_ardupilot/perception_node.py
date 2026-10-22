@@ -749,6 +749,18 @@ def detector_thread_dead(grounder) -> bool:
                 and not th.is_alive())
 
 
+def _say(msg: str) -> None:
+    """A print that cannot raise: the landing net below runs when anything else
+    may already have failed, stdout included (a pipe whose reader died, a
+    UnicodeEncodeError on a redirected cp950/cp1252 console). Its LAND request
+    must never wait behind, or be skipped by, a failing write (re-review of
+    baa4603, N1)."""
+    try:
+        print(msg)
+    except Exception:                                             # noqa: BLE001
+        pass
+
+
 def land_on_the_way_out(link, asks, rec, *, crash, stage: str, takeover=None, fsm=None,
                         throttle=None, t: float | None = None) -> dict:
     """THE NET FROM THE ARMING TO THE END OF run() (review 3, 2026-10-22).
@@ -776,7 +788,7 @@ def land_on_the_way_out(link, asks, rec, *, crash, stage: str, takeover=None, fs
     why = (f"interrupted during {stage}" if isinstance(crash, KeyboardInterrupt) else
            f"crashed during {stage}: {type(crash).__name__}: {crash}" if crash is not None
            else f"left run() during {stage} with no mission end")
-    print(f"[node]   *** {why}")
+    _say(f"[node]   *** {why}")
     try:
         mode = link.snap.mode
     except Exception:                                             # noqa: BLE001
@@ -789,29 +801,29 @@ def land_on_the_way_out(link, asks, rec, *, crash, stage: str, takeover=None, fs
         # Undecidable: land unless a takeover is on record, as the loop's
         # finally does.
         owns = takeover is not None
-        print(f"[node]   *** who has the aircraft not judged ({type(exc).__name__}: {exc})")
+        _say(f"[node]   *** who has the aircraft not judged ({type(exc).__name__}: {exc})")
     out = {"stage": stage, "autopilot_mode": mode, "autopilot_owns": owns,
            "land_accepted": None}
     if throttle is not None and getattr(throttle, "active", False):
         try:
             throttle.release(t if t is not None else 0.0, f"episode end ({why})")
         except Exception as exc:                                  # noqa: BLE001
-            print(f"[hold]   override release failed: {exc}")
+            _say(f"[hold]   override release failed: {exc}")
     if owns:
-        print(f"[node]   the autopilot has the aircraft ({mode}): nothing is asked of it")
+        _say(f"[node]   the autopilot has the aircraft ({mode}): nothing is asked of it")
     else:
         try:
             asks.ask("LAND")
             out["land_accepted"] = bool(link.land())
         except Exception as exc:                                  # noqa: BLE001
             out["land_accepted"] = False
-            print(f"[link]   LAND failed: {exc}")
-        print("[link]   LAND asked: " + ("accepted" if out["land_accepted"] else
+            _say(f"[link]   LAND failed: {exc}")
+        _say("[link]   LAND asked: " + ("accepted" if out["land_accepted"] else
                                          "*** NOT confirmed by the autopilot"))
     try:
         rec.end(why, t=t, **out)
     except Exception as exc:                                      # noqa: BLE001
-        print(f"[node]   *** mission_end not written: {type(exc).__name__}: {exc}")
+        _say(f"[node]   *** mission_end not written: {type(exc).__name__}: {exc}")
     return {"why": why, **out}
 
 
@@ -4146,6 +4158,10 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             print(f"[node]   *** {end_reason}; "
                   + ("the autopilot has the aircraft: nothing is asked of it"
                      if takeover is not None else "landing"))
+        # The net's mission_end names where run() was left (re-review of
+        # baa4603, N2: a Ctrl+C in the loop's finally after a 30-tick mission
+        # read "interrupted during the mission's start").
+        stage = "the mission"
         try:
             while no_mission is None and clock() - t0 < args.max_s:
                 t_tick = clock()
@@ -4741,6 +4757,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             end_reason = f"crashed: {type(exc).__name__}: {exc}"
             raise
         finally:
+            stage = "the mission's end"
             # The throttle goes back to the radio first: an override must not
             # outlive the hold it was for.
             try:
@@ -5415,7 +5432,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                               None if watch is None else watch.takeover),
                                     fsm=fsm, throttle=throttle, t=t_net)
             except Exception as exc:                              # noqa: BLE001
-                print(f"[node]   *** the net failed: {type(exc).__name__}: {exc}")
+                _say(f"[node]   *** the net failed: {type(exc).__name__}: {exc}")
         # Whatever happened above - a refused arm, an EKF that never
         # converged, Ctrl+C - the simulator connection and the SITL this
         # run started do not outlive it. Nor does the recorder thread: it

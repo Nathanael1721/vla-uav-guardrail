@@ -3755,6 +3755,35 @@ class ArmRefusedLink(FakeLink):
         raise RuntimeError("arming refused: ['PreArm: Throttle below failsafe']")
 
 
+def test_a_broken_stdout_does_not_stand_between_the_net_and_its_land():
+    """Re-review of baa4603, N1. The net's first statement was an unguarded
+    print, ahead of its LAND request: a stdout that raises (a pipe whose
+    reader died, a UnicodeEncodeError on a redirected cp950/cp1252 console)
+    skipped the LAND, and the outer finally's own print raised again past
+    the teardown. Here the console fails on the net's "***" lines only, so
+    the take-off failure reaches the net as before; it must still ask for
+    LAND. Shown failing with the print in place: link.requested == []."""
+    import io
+
+    class BrokenPipeOut(io.StringIO):
+        def write(self, s):
+            if "***" in s:
+                raise OSError(32, "Broken pipe")
+            return super().write(s)
+
+    saved = sys.stdout
+    sys.stdout = BrokenPipeOut()
+    try:
+        try:
+            _fly(link_cls=ClimbFailsLink)
+        except (RuntimeError, OSError):
+            pass
+    finally:
+        sys.stdout = saved
+    link = _LAST["link"]
+    assert link.requested == ["LAND"] and not link.sent, link.requested
+
+
 def test_nothing_from_the_arming_to_the_loop_leaves_the_aircraft_unlanded():
     """Review 3, P4 (open before this wave). From the arming to the hover's
     try, an exception met only the outer finally, which stops the recorder,
