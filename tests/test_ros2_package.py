@@ -224,7 +224,8 @@ def _launch_processes(config: dict) -> dict:
         spec.loader.exec_module(launch_mod)
         ctx = {"python": "/venv/bin/python", "repo_root": str(ROOT), "out": "",
                "shield_args": "--shield on", "vla": "stub", "vla_args": "",
-               "adapter_args": "", "enclave_root": "", **config}
+               "adapter_args": "", "enclave_root": "", "vla_ready_timeout_s": "3300",
+               **config}
         launch_mod._nodes(ctx)
         # The declared default of enclave_root is empty (nothing changes).
         desc = launch_mod.generate_launch_description()
@@ -265,8 +266,8 @@ def test_each_node_gets_its_own_enclave_only_when_asked():
 def test_the_vla_slot_holds_the_stub_or_the_bridge_never_both():
     """vla:= (2026-10-23, to-do VLA-08): the default is the stub, exactly as
     before; vla:=bridge starts sitl/ros2_vla_bridge_node.py INSTEAD (one
-    publisher on /vla/action_4d), with the same vla_args, `--out <out>` when
-    out:= is given, and the VLA slot's enclave /guardrail/vla_stub (an
+    publisher on /vla/action_4d), with the same vla_args, `--out` the
+    Shield's directory, and the VLA slot's enclave /guardrail/vla_stub (an
     enclave of its own would make every existing keystore refuse SROS2=1);
     anything else is refused."""
     stub = _launch_processes({})
@@ -282,14 +283,46 @@ def test_the_vla_slot_holds_the_stub_or_the_bridge_never_both():
     env = br["processes"]["vla_bridge"]["additional_env"]
     assert env["ROS_SECURITY_ENCLAVE_OVERRIDE"] == "/guardrail/vla_stub", env
     assert "/guardrail/vla_stub" in set(_enclaves())
+    # Without out:= the bridge still writes beside the Shield (the next test).
     no_out = _launch_processes({"vla": "bridge"})["processes"]["vla_bridge"]["cmd"]
-    assert "--out" not in no_out, no_out
+    assert no_out[-2:] == ["--out", str(ROOT / "demo" / "out" / "ros2_shield_on")], no_out
     try:
         _launch_processes({"vla": "openvla"})
     except RuntimeError as e:
         assert "openvla" in str(e), e
     else:
         raise AssertionError("an unknown vla:= was accepted")
+
+
+def test_the_bridge_gates_the_shields_arming_and_writes_beside_its_records():
+    """Review of 339f23a: `ros2 launch ... vla:=bridge` left the Shield node
+    without --vla-ready-timeout-s (only run_ros2_demo.sh added it), so it
+    armed before the bridge's warm-up; and without out:= the bridge wrote to
+    demo/out/ros2_vla_bridge, not beside the Shield's records. Now vla:=bridge
+    adds the gate (vla_ready_timeout_s:=, not doubled when shield_args has
+    one), names the Shield's own directory (its --tag, else
+    ros2_shield_<on|off>[_dynamic]), and gives the bridge time to write its
+    records on shutdown; the stub's processes are unchanged."""
+    sys.path.insert(0, str(ROOT / "sitl"))
+    import ros2_shield_node as SN
+    br = _launch_processes({"vla": "bridge", "shield_args": "--shield off --dynamic"})
+    gate = br["defaults"].get("vla_ready_timeout_s")
+    assert gate and float(gate) > 0, br["defaults"]
+    shield = br["processes"]["safety_shield"]["cmd"]
+    assert shield[-2:] == ["--vla-ready-timeout-s", gate], shield
+    vla = br["processes"]["vla_bridge"]
+    want = str(ROOT / "demo" / "out" / SN.default_tag("off", True))
+    assert vla["cmd"][-2:] == ["--out", want], vla["cmd"]
+    assert float(vla.get("sigterm_timeout", 0)) >= 10, vla
+    tagged = _launch_processes({"vla": "bridge", "shield_args": "--shield on --tag t9 "
+                                "--vla-ready-timeout-s 60"})
+    assert tagged["processes"]["vla_bridge"]["cmd"][-1] == str(ROOT / "demo" / "out" / "t9")
+    assert tagged["processes"]["safety_shield"]["cmd"].count("--vla-ready-timeout-s") == 1
+    given = _launch_processes({"vla": "bridge", "out": "/runs/x"})
+    assert given["processes"]["vla_bridge"]["cmd"][-2:] == ["--out", "/runs/x"]
+    stub = _launch_processes({})
+    assert "--vla-ready-timeout-s" not in stub["processes"]["safety_shield"]["cmd"]
+    assert "sigterm_timeout" not in stub["processes"]["vla_stub"]
 
 
 def test_every_ros_process_the_runner_starts_has_an_enclave_in_the_list():

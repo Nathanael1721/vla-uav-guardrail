@@ -58,7 +58,9 @@ when answers stop, a step outlives the decision timeout, the link fails or the
 server refuses; before the first decision and while the rail holds the
 aircraft the tick is author none, all-zero. A tick that raises publishes
 nothing, so a broken bridge looks like a dead one to the Shield's receipt
-watchdog, never like a pilot holding on purpose.
+watchdog, never like a pilot holding on purpose; so does a tick whose latest
+pose is older than --pose-max-age-s (1 s; review of 339f23a, P2-3: a stalled
+pose subscription flew a frozen pose).
 
 WHEN THE VLA FLIES (`MissionGate`). The tracker anchors each step at its
 capture pose, so a decision taken on the pad or during the climb must never
@@ -92,8 +94,9 @@ Before the Shield arms, VM.WARMUP_REQUESTS warm-up inferences on live camera
 pairs; the LAST is judged (vla_mission.warmup_series_verdict; the first pays
 the model's cold start). Only then is /vla/identity published, with
 `ready` true, or false and why: the Shield node started with
---vla-ready-timeout-s (run_ros2_demo.sh passes it with VLA=bridge) waits for
-it and refuses to arm unless it is ready. A node that is not ready publishes
+--vla-ready-timeout-s (the launch file adds it for vla:=bridge) waits for it
+and refuses to arm unless it is ready and announces this node's
+action_layout and decision_timeout_s as its own. A node that is not ready publishes
 zero with FLAG_END, so a Shield that did not wait lands at its first tick.
 /vla/identity carries kind "vla" with the server's weights digest
 (`reported_digest`) only for a real AerialVLA identity, else kind "stub" under
@@ -103,7 +106,12 @@ manifest checks (guardrail/manifest._vla_host_missing) - with this node's own
 host under `bridge_host`.
 
 RECORDS, in the run's directory (--out; the launch file and run_ros2_demo.sh
-pass the Shield's demo/out/<tag>), beside the Shield node's: vla_steps.jsonl
+pass the Shield's demo/out/<tag>, and without --out it is the Shield's own
+rule: demo/out/<--tag, else ros2_shield_<on|off>[_dynamic]>), beside the
+Shield node's, written when the node stops - Ctrl+C, launch's SIGINT, or
+SIGTERM (run_ros2_demo.sh's USE_LAUNCH=0 path sends it and waits; until the
+review of 339f23a it SIGKILLed the bridge and the records were lost):
+vla_steps.jsonl
 (guardrail/vla_link.StepLog, one line per request: the answer, the model
 identity, what the tracker made of it - what tools/todo.py reads first),
 vla_frames/<sha256>.jpg (every request's image bytes, for the replay gate:
@@ -120,10 +128,13 @@ THE CAMERAS. Two sensor_msgs/Image topics (--front-topic, --down-topic,
 default /camera/front/image_raw and /camera/down/image_raw), rgb8 or bgr8,
 AerialVLA's training cameras: 256x256, 90 deg, pitch 0 and -90 (the CityLife
 VLA configs, demo/pas_config/robot_vla_quad*.jsonc). The front and down frames
-are paired by their header stamps (else by arrival) within --max-pair-dt-s;
-the capture pose is the pose ring's at the front frame's ARRIVAL on this
-node's clock (camera and MAVROS stamps need not share a clock: MAVROS stamps
-through FCU timesync). NOTHING ON THE SITL RAIL PUBLISHES THEM YET: ArduPilot
+are paired by their header stamps (else by arrival) within --max-pair-dt-s.
+The capture time is the front frame's header stamp when that stamp is on
+this host's wall clock (mapped onto the node's clock, within 2 s of the
+arrival), else its ARRIVAL; the capture pose is the pose ring's at that
+time, by arrival on this node's clock (camera and MAVROS stamps need not
+share a clock: MAVROS stamps through FCU timesync) (_RingObs; review of
+339f23a, P3). NOTHING ON THE SITL RAIL PUBLISHES THEM YET: ArduPilot
 SITL has no camera, so without a camera publisher (Project AirSim's, a
 driver on the drone) the warm-up finds no pair and the node is not ready.
 
@@ -395,19 +406,46 @@ class PoseRing:
         return None
 
 
+# A camera stamp mapped onto this node's clock further than this from the
+# frame's arrival is on another clock (sim time, another host) and is not
+# used: vla_mission.VLAFrames' own sanity rule.
+STAMP_MAX_SKEW_S = 2.0
+
+
 class _RingObs:
-    """What vla_mission.VLAFrames asks of its `obs`: the pose at a frame's
-    arrival, and no stamp-to-clock mapping (the capture time is the
-    arrival)."""
+    """What vla_mission.VLAFrames asks of its `obs`: the capture time of a
+    frame on this node's clock, and the pose then.
 
-    def __init__(self, ring: PoseRing):
-        self.ring = ring
+    THE CAPTURE TIME (review of 339f23a, P3). It was the front frame's
+    arrival, so the camera's own latency was flown as if the image were
+    newer. A header stamp on this host's wall clock (a camera driver's ROS
+    time without sim time) maps onto the node's clock by the current offset
+    between the two clocks - `stamp + (clock() - wall())` - and is the
+    capture time when it lands within STAMP_MAX_SKEW_S of the arrival and not
+    after it; a stamp on any other clock falls back to the arrival, as
+    VLAFrames does. The pose is the ring's at that same time."""
 
-    def pose_at(self, t_arrival, stamp):
-        return self.ring.at(t_arrival)
+    def __init__(self, ring: PoseRing, clock: Callable[[], float],
+                 wall: Callable[[], float]):
+        self.ring, self.clock, self.wall = ring, clock, wall
 
     def wall_at_stamp(self, stamp):
-        return None
+        """The stamp (ns, wall clock) on this node's clock, or None."""
+        if stamp is None:
+            return None
+        try:
+            return float(stamp) / 1e9 + (self.clock() - self.wall())
+        except (TypeError, ValueError):
+            return None
+
+    def capture_time(self, t_arrival, stamp) -> float:
+        t = self.wall_at_stamp(stamp)
+        if t is None or abs(t - float(t_arrival)) > STAMP_MAX_SKEW_S:
+            return float(t_arrival)
+        return min(t, float(t_arrival))
+
+    def pose_at(self, t_arrival, stamp):
+        return self.ring.at(self.capture_time(t_arrival, stamp))
 
 
 # --------------------------------------------------------------------------- #
@@ -475,6 +513,7 @@ class BridgeConfig:
     down_topic: str = DOWN_TOPIC
     image_codec: str = "auto"
     max_pair_dt_s: float = 0.25
+    pose_max_age_s: float = 1.0
     cruise_mps: float = 1.0
     speed_cap_mps: float = 2.0
     max_s: float = MAX_S
@@ -524,12 +563,23 @@ class VLABridge:
     the warm-up still running); close() writes the records.
 
     `clock` is the one clock of t_capture, the tracker and the monitor
-    (time.monotonic on the node; a test's simulated clock)."""
+    (time.monotonic on the node; a test's simulated clock); `wall` is the
+    clock camera stamps are read on (time.time; _RingObs).
+
+    A STALE POSE PUBLISHES NOTHING (review of 339f23a, P2-3). The tracker
+    steers from the latest pose; a pose subscription that stalled flew a
+    frozen pose - a 5 m step to its time cap, a spin at the yaw-rate cap.
+    Once the latest pose is older than `pose_max_age_s` (1.0 s, the Shield
+    node's own POSE_TIMEOUT_S: Mission Planner can set the shared link to
+    2-4 Hz until the Shield re-asserts 10 Hz) the tick publishes nothing, so
+    the Shield's receipt watchdog holds the aircraft; counted
+    (`ticks_pose_stale`) with pose_stale / pose_resumed events."""
 
     def __init__(self, cfg: BridgeConfig, *, mission, policy, policy_source: dict,
                  out: str | Path, clock: Callable[[], float] = time.monotonic,
                  sleep: Callable[[float], None] = time.sleep,
-                 encoder: FrameEncoder | None = None):
+                 encoder: FrameEncoder | None = None,
+                 wall: Callable[[], float] = time.time):
         self.cfg = cfg
         self.mission, self.policy, self.policy_source = mission, policy, dict(policy_source)
         self.goal = (float(mission.target_x), float(mission.target_y))
@@ -540,8 +590,10 @@ class VLABridge:
         self.encoder = encoder or FrameEncoder(cfg.image_codec)
         self.ring = PoseRing()
         self.saver = VM.FrameSaver(self.out / "vla_frames")
-        self.frames = VM.VLAFrames(_RingObs(self.ring), encode=self.encoder, saver=self.saver,
-                                   clock=clock, max_pair_dt_s=cfg.max_pair_dt_s)
+        self.frames = VM.VLAFrames(_RingObs(self.ring, clock, wall), encode=self.encoder,
+                                   saver=self.saver, clock=clock,
+                                   max_pair_dt_s=cfg.max_pair_dt_s)
+        self._pose_stale = False
         self.gate = MissionGate()
         self.hint = VM.goto_hint_source(self.goal, cfg.arrive_radius_m)
         self.server = VM.VLAServer(cfg.host, cfg.port)        # attached, never started here
@@ -759,6 +811,15 @@ class VLABridge:
 
     def tick(self, now: float) -> list[float] | None:
         st = self.state_now()
+        latest = self.ring.latest()
+        stale = latest is not None and now - latest[0] > self.cfg.pose_max_age_s
+        if stale != self._pose_stale:
+            self._pose_stale = stale
+            self.events.append({"t": now, "event": "pose_stale" if stale else "pose_resumed",
+                                "pose_age_s": round(now - latest[0], 3)})
+        if stale:
+            self.counts["ticks_pose_stale"] += 1
+            return None
         if st is None or self.ready is None:
             self.counts["ticks_silent"] += 1
             return None
@@ -908,10 +969,13 @@ def make_parser():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--tag", default=None)
     ap.add_argument("--out", default=None,
-                    help="the run's directory (default demo/out/<--tag or ros2_vla_bridge>)")
+                    help="the run's directory (default: the Shield node's, demo/out/<--tag, "
+                         "else ros2_shield_<on|off>[_dynamic]>)")
     ap.add_argument("--shield", choices=("on", "off"), default="on",
                     help="the Shield node's arm: off clamps the tracker only into the "
                          "simulator safety band (vla_mission.pilot_alt_config)")
+    ap.add_argument("--dynamic", action="store_true",
+                    help="the Shield node's flag, read here only to name its directory")
     ap.add_argument("--max-s", type=float, default=MAX_S, help="mission time cap, seconds")
     ap.add_argument("--object", default=None,
                     help=f"the prompt's object words (default: {VM.GOTO_OBJECT_TEXT!r}; inert)")
@@ -934,6 +998,9 @@ def make_parser():
     ap.add_argument("--down-topic", default=DOWN_TOPIC)
     ap.add_argument("--image-codec", choices=FrameEncoder.CODECS, default="auto")
     ap.add_argument("--max-pair-dt-s", type=float, default=0.25)
+    ap.add_argument("--pose-max-age-s", type=float, default=1.0,
+                    help="publish nothing while the latest pose is older than this "
+                         "(the Shield's receipt watchdog then holds)")
     ap.add_argument("--check-args", action="store_true",
                     help="print the resolved configuration and exit (nothing starts)")
     return ap
@@ -957,7 +1024,8 @@ def resolve(args) -> tuple[BridgeConfig, dict]:
     except CodecError as exc:
         raise ValueError(f"--object {obj!r}: {exc}") from None
     for k in ("decision_timeout_s", "warmup_max_latency_s", "wait_frames_s",
-              "vla_hello_timeout_s", "cruise_mps", "speed_cap_mps", "max_pair_dt_s"):
+              "vla_hello_timeout_s", "cruise_mps", "speed_cap_mps", "max_pair_dt_s",
+              "pose_max_age_s"):
         v = getattr(args, k)
         if not (math.isfinite(v) and v > 0):
             raise ValueError(f"--{k.replace('_', '-')} must be a positive number, got {v!r}")
@@ -972,6 +1040,7 @@ def resolve(args) -> tuple[BridgeConfig, dict]:
         allow_stand_in=args.allow_stand_in, object_text=obj,
         front_topic=args.front_topic, down_topic=args.down_topic,
         image_codec=args.image_codec, max_pair_dt_s=args.max_pair_dt_s,
+        pose_max_age_s=args.pose_max_age_s,
         cruise_mps=args.cruise_mps, speed_cap_mps=args.speed_cap_mps, max_s=args.max_s,
         arrive_radius_m=args.arrive_radius_m, arrive_grace_s=args.arrive_grace_s,
         overshoot_s=args.overshoot_s, dead_timeout_s=args.dead_timeout_s,
@@ -988,7 +1057,10 @@ def resolve(args) -> tuple[BridgeConfig, dict]:
         mission = mission.model_copy(update={"target_x": x, "target_y": y})
     if args.speed is not None:
         mission = mission.model_copy(update={"speed_pref_mps": args.speed})
-    out = Path(args.out) if args.out else ROOT / "demo" / "out" / (args.tag or "ros2_vla_bridge")
+    # Beside the Shield node's records (review of 339f23a, P3): its own
+    # directory rule (ros2_shield_node.default_tag, pinned by the test).
+    tag = args.tag or (f"ros2_shield_{args.shield}" + ("_dynamic" if args.dynamic else ""))
+    out = Path(args.out) if args.out else ROOT / "demo" / "out" / tag
     return cfg, {"mission": mission, "policy": policy, "policy_source": source,
                  "goal": (mission.target_x, mission.target_y), "out": out}
 
@@ -1096,6 +1168,16 @@ if HAVE_ROS:
                 self.pub.publish(Float32MultiArray(layout=self.layout, data=data))
 
 
+def on_sigterm(signum, frame) -> None:
+    """SIGTERM ends the spin like Ctrl+C, so main()'s `finally` writes the
+    records (review of 339f23a, P2-4: run_ros2_demo.sh's USE_LAUNCH=0 path
+    SIGKILLed the bridge in its cleanup trap, and close() never ran; now it
+    TERMs the bridge and waits). A background job of a non-interactive bash
+    starts with SIGINT ignored (run_ros2_demo.sh, the bag recorder), so
+    SIGINT cannot be the signal; ros2 launch sends SIGINT, then SIGTERM."""
+    raise KeyboardInterrupt
+
+
 def main(argv: list[str] | None = None) -> int:
     args, ros_args = make_parser().parse_known_args(argv)
     try:
@@ -1110,16 +1192,22 @@ def main(argv: list[str] | None = None) -> int:
                          "source /opt/ros/jazzy/setup.bash and use ~/venv-ros/bin/python")
     core = VLABridge(cfg, mission=plan["mission"], policy=plan["policy"],
                      policy_source=plan["policy_source"], out=plan["out"])
-    rclpy.init(args=ros_args)
-    node = VlaBridgeNode(core)
+    import signal
+    signal.signal(signal.SIGTERM, on_sigterm)
+    node = None
     try:
+        rclpy.init(args=ros_args)
+        node = VlaBridgeNode(core)
         rclpy.spin(node)
     except (KeyboardInterrupt, Exception) as e:                  # noqa: BLE001
         if not isinstance(e, KeyboardInterrupt):
-            node.get_logger().error(f"{type(e).__name__}: {e}")
+            print(f"[vla_bridge] {type(e).__name__}: {e}", file=sys.stderr, flush=True)
     finally:
+        # A second TERM must not cut the records short.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
         core.close()
-        node.destroy_node()
+        if node is not None:
+            node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
     return 0

@@ -40,8 +40,29 @@ WHAT IS BEING CLAIMED
 5. The ROS wiring of the bridge node on a stand-in rclpy: its topics,
    message types and QoS, the latched identity, the layout label, and a
    refused camera frame said once.
+6. The review of 339f23a (vla_disc/review-V2c-339f23a.md; its probes in
+   rev339/): a malformed, partial, four-value-after-eight, mislabelled or
+   seq-regressing message is refused (not flown, not a receipt) and held
+   (P1-A); a decision hold ends only on a fresh vla_step and ends the
+   mission past --decision-hold-max-s, also end to end with the bridge
+   suspended by the hold (P3); a second publisher is recorded and costs the
+   KPI grade; bring_up arms after a 900 s wait for the VLA and says how
+   often arming was refused instead of blaming the EKF (P1-B); only a
+   vla_step moves, a vla_step has a decision, a hold has its own age bound
+   (P2-1); the bridge publishes nothing on a stale pose (P2-3) and writes
+   its records on SIGTERM or an interrupted spin, the run script TERMs and
+   waits (P2-4); the ready gate refuses a stub and a contract mismatch and
+   outwaits the bridge's hello; a fake: id is a stub and a never-ready
+   bridge is unresolved; held rows keep what the VLA sent; a VLA LAND says
+   where it lands; the capture time is the camera stamp when it is on this
+   host's clock; the bridge's default directory is the Shield's (P3).
+   tests/test_ros2_package.py checks the launch file's gate and directory
+   (P2-2), tests/test_deploy_configs.py the compose file's pending gaps.
 
-Shown failing first, in a `git archive` copy of 5b00e6b (before this change)
+Shown failing first, for 6: the 18 tests of section 6 fail (11 FAIL, 7
+ERROR) in a `git archive` copy of 339f23a with this file copied in, while
+the 20 before them pass there; the new launch and compose tests fail there
+too. For 1-5: in a `git archive` copy of 5b00e6b (before this change)
 with this file copied in: it stops at its import (no
 sitl/ros2_vla_bridge_node.py). With the new bridge module added to that copy
 and the Shield node left as it was, 11 of the 20 tests fail - every test of
@@ -629,7 +650,8 @@ def test_the_shield_holds_a_stale_vla_step_and_releases_on_a_fresh_one():
     node.start_mission()
     seq = [(0.3, 1, "vla_step")] * 2 + [(1.75, 1, "vla_step")]
     seq += [(2.4, 1, "vla_step")] * 3 + [(0.2, 2, "vla_step")] * 2
-    seq += [(5.0, 2, "hold")] * 2                      # a hold is never judged
+    # A hold is judged only against its own, longer bound (2 x 1 s + 1 s).
+    seq += [(2.5, 2, "hold")] * 2
     for age, s, who in seq:
         _ext(N, node, age, s, who, vx=(0.0 if who == "hold" else 1.0))
         clk.t += 0.1
@@ -656,9 +678,10 @@ def test_the_shield_ends_the_mission_on_the_end_flag_too():
     _ext(N, node, -1.0, -1.0, "hover", flags=B.FLAG_END, vx=0.0)
     clk.t += 0.1
     node._tick()
-    assert node.done and node.vla_land == {"t": node.vla_land["t"], "land": False, "end": True,
-                                           "decision_seq": None,
-                                           "why": "the VLA bridge ended its mission"}
+    assert node.done
+    assert {k: node.vla_land[k] for k in ("land", "end", "decision_seq", "why")} == {
+        "land": False, "end": True, "decision_seq": None,
+        "why": "the VLA bridge ended its mission"}, node.vla_land
     assert [m.data for m in node.pubs[N.TOPIC_MODE_REQUEST].sent] == ["LAND"]
 
 
@@ -713,7 +736,6 @@ def test_the_shield_refuses_to_arm_without_a_ready_vla():
             assert ready is True, ident
         assert node.vla_ready["ready"] is ready, node.vla_ready
     assert [e["kind"] for e in RN._events(out)].count("vla_ready") == 3
-    assert SN.vla_ready({"model_id": "guardrail.vla_stub.StubVLA"})[0] is True
     RN2, (N2, plain, clk2, out2) = _shield([])
     plain.vla_identity = None
     plain.wait_for_vla()                              # 0: no wait, the stub's start-up
@@ -763,6 +785,9 @@ def _fake_ros():
 
         def create_timer(self, period, cb):
             made["timers"].append((period, cb))
+
+        def destroy_node(self):
+            made["destroyed"] = True
 
     m = {n: types.ModuleType(n) for n in (
         "rclpy", "rclpy.node", "rclpy.qos", "geometry_msgs", "geometry_msgs.msg",
@@ -844,6 +869,447 @@ def test_the_node_wires_its_topics_and_publishes_the_layout():
     assert out.layout.dim[0].label == B.ACTION_LABEL and out.layout.dim[0].size == 8
     assert list(out.data) == [0.0] * 4 + [-1.0, -1.0, 0.0, float(B.FLAG_END)]
     core.close()
+
+
+# =========================================================================== #
+# 6. The review of 339f23a (vla_disc/review-V2c-339f23a.md)
+# =========================================================================== #
+STEP = B.AUTHOR_CODES["vla_step"]
+HOLD = B.AUTHOR_CODES["hold"]
+NONE = B.AUTHOR_CODES["none"]
+
+
+def _send(N, node, data, label=None):
+    kw = {"data": list(data)}
+    if label is not None:
+        kw["layout"] = _Msg(dim=[_Msg(label=label, size=len(data), stride=len(data))])
+    node._on_action(N.Float32MultiArray(**kw))
+
+
+def _run(N, node, clk, msgs, label=None):
+    for d in msgs:
+        _send(N, node, d, label)
+        clk.t += 0.1
+        node._tick()
+    return [m.data for m in node.pubs[N.TOPIC_MODE_REQUEST].sent]
+
+
+def test_p1a_a_malformed_tail_after_extended_messages_is_held_never_flown():
+    """Probe1: two stale steps, then a NaN-age message moving at 2 m/s, was
+    flown, counted as a receipt and released the hold (LOITER, GUIDED). Now
+    any message after the bridge's extended ones that is not a whole valid
+    tail - a NaN, 5 values, the grant's 4 alone (a second publisher), a seq
+    going backwards - is refused: not flown, not a receipt, held, and kept in
+    the row as what the VLA sent."""
+    RN, (N, node, clk, out) = _shield(["--decision-timeout-s", "1.0"])
+    node.start_mission()
+    fresh = [1.0, 0.0, 0.0, 0.0, 0.2, 4.0, STEP, 0.0]
+    modes = _run(N, node, clk, [fresh, fresh])
+    n_ok = node.n_actions
+    bad = [[2.0, 0, 0, 0, float("nan"), 4.0, STEP, 0.0], [2.0, 0, 0, 0, 0.3],
+           [2.0, 0.0, 0.0, 0.0], [2.0, 0.0, 0.0, 0.0, 0.2, 3.0, STEP, 0.0]]
+    modes = _run(N, node, clk, bad)
+    assert node.n_actions == n_ok, "a refused message counted as a receipt"
+    assert node.n_pilot_malformed == 4 and "backwards" in node.pilot_error, node.pilot_error
+    assert modes == ["LOITER"], modes
+    rows = node.rows[2:]
+    assert all(r["raw_body"]["vx"] == 0.0 for r in rows), "a refused message was flown"
+    assert [r["setpoint"] for r in rows] == ["pass", "none", "none", "none"]
+    assert all(r["decision_stale"] for r in rows) and rows[0]["pilot_sent"][0] == 2.0
+    assert rows[-1]["pilot_refused"] and "backwards" in rows[-1]["pilot_refused"]
+    kinds = [e["kind"] for e in RN._events(out)]
+    assert kinds.count("vla_action_refused") == 4, kinds
+    modes = _run(N, node, clk, [[1.0, 0, 0, 0, 0.2, 5.0, STEP, 0.0]])
+    assert modes == ["LOITER", "GUIDED"], modes
+    assert node.rows[-1]["setpoint"] == "pass" and node.rows[-1]["raw_body"]["vx"] == 1.0
+
+
+def test_p1a_a_decision_spell_ends_only_on_a_fresh_vla_step():
+    """P3-1 with P1-A: the "none" ticks a sound bridge sends once the Shield's
+    hold put the aircraft in BRAKE used to release the hold (and with a
+    broken bridge it flapped BRAKE / GUIDED). Only a fresh vla_step ends a
+    decision spell now; a hold or hover tick, however valid, does not."""
+    RN, (N, node, clk, out) = _shield(["--decision-timeout-s", "1.0"])
+    node.start_mission()
+    stale = [1.0, 0, 0, 0, 3.0, 2.0, STEP, 0.0]
+    none = [0.0, 0.0, 0.0, 0.0, -1.0, -1.0, NONE, 0.0]
+    hold = [0.0, 0.0, 0.3, 0.0, 0.5, 3.0, HOLD, 0.0]
+    modes = _run(N, node, clk, [stale, none, none, hold])
+    assert modes == ["LOITER"], modes
+    assert all(r["decision_stale"] for r in node.rows)
+    modes = _run(N, node, clk, [[1.0, 0, 0, 0, 0.1, 4.0, STEP, 0.0]])
+    assert modes == ["LOITER", "GUIDED"], modes
+
+
+def test_p1a_a_layout_label_that_is_not_the_contract_is_refused():
+    RN, (N, node, clk, out) = _shield([])
+    node.start_mission()
+    ok = [1.0, 0, 0, 0, 0.2, 1.0, STEP, 0.0]
+    _run(N, node, clk, [ok], label=B.ACTION_LABEL)
+    assert node.n_pilot_msgs == 1 and node.n_pilot_malformed == 0
+    swapped = ",".join(["vy_right", "vx_fwd"] + list(B.ACTION_FIELDS[2:]))
+    _run(N, node, clk, [ok], label=swapped)
+    assert node.n_pilot_malformed == 1 and "label" in node.pilot_error, node.pilot_error
+
+
+def test_p1a_the_bridges_identity_makes_the_four_values_alone_a_refusal():
+    """Before any extended message has arrived, a /vla/identity announcing the
+    bridge's action_layout already makes a plain four-value message (a stub
+    left running) a refusal."""
+    RN, (N, node, clk, out) = _shield([])
+    node.start_mission()
+    node._on_identity(N.String(data=json.dumps(
+        {"model_id": VM.MODEL_ID, "kind": "vla", "action_layout": list(B.ACTION_FIELDS)})))
+    _run(N, node, clk, [[2.0, 0.0, 0.0, 0.0]])
+    assert node.n_pilot_malformed == 1 and node.rows[-1]["raw_body"]["vx"] == 0.0
+
+
+def test_p1a_a_second_publisher_is_recorded_and_the_run_is_not_kpi_grade():
+    RN, (N, node, clk, out) = _shield([])
+    node.count_publishers = lambda topic: 2 if topic == "/vla/action_4d" else 0
+    node.start_mission()
+    _run(N, node, clk, [[1.0, 0, 0, 0, 0.2, 1.0, STEP, 0.0]] * 12)
+    node._finish("test over")
+    metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    kpi = json.loads((out / "kpi.json").read_text(encoding="utf-8"))
+    assert metrics["vla_pilot"]["action_publishers_max"] == 2, metrics["vla_pilot"]
+    assert any("publishers" in w for w in kpi["kpi_grade_reasons"]), kpi["kpi_grade_reasons"]
+    assert kpi["kpi_grade"] is False
+
+
+def test_p1a_a_decision_hold_that_lasts_ends_the_mission():
+    """P3-1: a decision hold had no bound but max_s. Past
+    --decision-hold-max-s the mission ends through the mission-end LAND."""
+    RN, (N, node, clk, out) = _shield(["--decision-timeout-s", "1.0",
+                                       "--decision-hold-max-s", "1.0"])
+    node.start_mission()
+    stale = [1.0, 0, 0, 0, 3.0, 2.0, STEP, 0.0]
+    for _ in range(30):
+        _send(N, node, stale)
+        clk.t += 0.1
+        node._tick()
+        if node.done:
+            break
+    assert node.done, "a 3 s decision hold did not end"
+    assert [m.data for m in node.pubs[N.TOPIC_MODE_REQUEST].sent] == ["LOITER", "LAND"]
+    kinds = [e["kind"] for e in RN._events(out)]
+    assert "decision_hold_escalated" in kinds, kinds
+
+
+def test_p2_1_no_author_but_vla_step_may_move_and_a_hold_has_its_own_age_bound():
+    """A hold, hover or none tick with horizontal or yaw motion (probe: a hold
+    at 2 m/s on a 500 s old decision flew forever), a hover or none that
+    climbs, a hold with no decision that climbs, and a vla_step with no
+    decision are malformed; a hold older than 2 x timeout + grace is stale
+    (the tracker's longest sound hold: a step completes within the timeout of
+    its capture, then holds at most the timeout)."""
+    for d in ([2.0, 0, 0, 0, 1.0, 1, HOLD, 0], [0, 0, 0, 0.4, 1.0, 1, HOLD, 0],
+              [0, 0, 0.5, 0, -1, -1, HOLD, 0], [0, 0, 0.5, 0, -1, -1, B.AUTHOR_CODES["hover"], 0],
+              [0.3, 0, 0, 0, -1, -1, NONE, 0], [2.0, 0, 0, 0, -1, -1, STEP, 0]):
+        fields, err = SN.pilot_fields(d)
+        assert fields is None and err, (d, fields)
+    assert SN.pilot_fields([0, 0, 0.5, 0, 4.0, 2, HOLD, 0])[1] is None
+    assert SN.pilot_fields([0, 0, 0, 0, -1, -1, HOLD, B.FLAG_LAND | B.FLAG_END])[1] is None
+    RN, (N, node, clk, out) = _shield(["--decision-timeout-s", "1.0"])
+    node.start_mission()
+    _run(N, node, clk, [[0, 0, 0.3, 0, 2.8, 2, HOLD, 0], [0, 0, 0.3, 0, 3.2, 2, HOLD, 0]])
+    assert [r["decision_stale"] for r in node.rows] == [False, True]
+    assert node.rows[1]["raw_body"]["vz_up"] == 0.0
+
+
+def test_p1b_bring_up_arms_after_a_long_wait_for_the_vla():
+    """Probe2b: the bridge's identity after 900 s (a cold bf16 load) left the
+    shared 180 s bring-up deadline spent, and bring_up raised "arming timed
+    out (EKF)" without trying. The deadline for GUIDED, arming and the climb
+    now starts after the wait; an arming that is refused says how often."""
+    RN, (N, node, clk, out) = _shield(["--vla-ready-timeout-s", "3300"])
+    calls = []
+
+    def _prep(arm_ok=True):
+        node.mav_connected = True
+        node.fence_status = [{"success": True}]
+        node.fence_column_m = 100.0
+        for name in ("read_autopilot_version", "read_link", "read_autopilot_fence",
+                     "read_sim_speedup"):
+            setattr(node, name, lambda: None)
+        node._publish_fences = lambda *a, **k: None
+
+        def fake_call(client, req, timeout=5.0):
+            calls.append(client)
+            ok = arm_ok or client is not node.cli_arm
+            return SimpleNamespace(mode_sent=ok, success=ok)
+        node._call = fake_call
+    _prep()
+    ident = {"ready": True, "model_id": VM.MODEL_ID, "kind": "vla",
+             "decision_timeout_s": SN.DECISION_TIMEOUT_S, "action_layout": list(B.ACTION_FIELDS)}
+
+    def spin_once(*a, **kw):
+        clk.t += 0.5
+        if clk.t - 1000.0 > 900.0 and node.vla_identity is None:
+            node.vla_identity = dict(ident)
+    N.rclpy.spin_once = spin_once
+    node.bring_up()
+    assert node.vla_ready["ready"] is True and node.vla_ready["waited_s"] > 900.0
+    assert node.cli_arm in calls and node.cli_tol in calls, "never armed after the wait"
+    RN2, (N2, node2, clk2, out2) = _shield([])
+    node, clk, N, calls = node2, clk2, N2, []
+    _prep(arm_ok=False)
+    N.rclpy.spin_once = lambda *a, **kw: setattr(clk, "t", clk.t + 0.5)
+    try:
+        node.bring_up()
+    except RuntimeError as e:
+        assert "refused" in str(e) and "EKF" not in str(e), e
+        n = sum(1 for c in calls if c is node.cli_arm)
+        assert n > 10 and f"{n} time" in str(e), (n, e)
+    else:
+        raise AssertionError("arming that never succeeds was not refused")
+
+
+def test_p3_the_ready_gate_refuses_a_stub_and_a_contract_mismatch():
+    """vla_ready took an identity with no `ready` key (a stray stub) as
+    ready; a bridge whose decision timeout or layout is not this Shield's
+    armed anyway. The gate refuses all three now."""
+    assert SN.vla_ready({"model_id": "guardrail.vla_stub.StubVLA", "kind": "stub"})[0] is False
+    RN, (N, node, clk, out) = _shield(["--vla-ready-timeout-s", "5",
+                                       "--decision-timeout-s", "10"])
+    N.rclpy.spin_once = lambda *a, **kw: setattr(clk, "t", clk.t + 0.5)
+    good = {"ready": True, "decision_timeout_s": 10.0, "action_layout": list(B.ACTION_FIELDS)}
+    for ident, why in (({**good, "decision_timeout_s": 4.0}, "decision"),
+                       ({**good, "action_layout": ["vx_fwd"]}, "layout"), ({"kind": "stub"}, "ready")):
+        node.vla_identity = ident
+        try:
+            node.wait_for_vla()
+        except RuntimeError as e:
+            assert why in str(e), (why, e)
+        else:
+            raise AssertionError(f"armed with {ident}")
+    node.vla_identity = good
+    node.wait_for_vla()
+    assert node.vla_ready["ready"] is True
+
+
+def test_p3_the_shield_waits_longer_than_the_bridge_says_hello_and_warms_up():
+    """The Shield's default wait with VLA=bridge equalled the bridge's hello
+    timeout (2700 s): a late hello plus the warm-up lost the race."""
+    import re
+    warm = (VM.WARMUP_REQUESTS * B.WAIT_FRAMES_S + 60.0
+            + (VM.WARMUP_REQUESTS - 1) * B.BridgeConfig("h", 1).decision_timeout_s
+            + VM.WARMUP_REQUESTS * 2.0)
+    launch = (ROOT / "sitl" / "ros2_ws" / "src" / "safety_shield" / "launch"
+              / "guardrail_rail.launch.py").read_text(encoding="utf-8")
+    sh = (ROOT / "sitl" / "run_ros2_demo.sh").read_text(encoding="utf-8")
+    lw = float(re.search(r'VLA_READY_TIMEOUT_S = "(\d+)"', launch).group(1))
+    sw = float(re.search(r"VLA_READY_TIMEOUT_S:-(\d+)", sh).group(1))
+    assert lw == sw > VM.HELLO_TIMEOUT_S + warm, (lw, sw, VM.HELLO_TIMEOUT_S + warm)
+
+
+def test_p3_identities_that_are_not_a_ready_vla_are_never_filed_as_one():
+    """Probe3: a fake: id announced as kind vla kept kind vla; a bridge that
+    never became ready was filed kind vla with a resolved vla_model_hash."""
+    from guardrail.manifest import TOPOLOGY_ARDUPILOT_SITL, build_manifest
+    mid, pilot, digest = SN.pilot_from_identity(
+        {"model_id": "fake:scripted", "kind": "vla", "reported_digest": "ab" * 32})
+    assert pilot["kind"] == "stub" and digest is None and mid == "fake:scripted", pilot
+    mid, pilot, digest = SN.pilot_from_identity(
+        {"model_id": VM.MODEL_ID, "kind": "vla", "ready": False,
+         "not_ready_because": "warm-up refused: slow", "reported_digest": "ab" * 32})
+    assert digest is None and pilot["not_ready_because"] == "warm-up refused: slow"
+    m = build_manifest("0" * 64, mid, 0, scene_path=None, topology=TOPOLOGY_ARDUPILOT_SITL,
+                       reported_digest=digest)
+    assert m["vla_model_hash"].endswith("@unresolved"), m["vla_model_hash"]
+
+
+def test_p3_decision_stale_rows_keep_what_the_vla_sent():
+    RN, (N, node, clk, out) = _shield(["--decision-timeout-s", "1.0"])
+    node.start_mission()
+    _run(N, node, clk, [[1.5, -0.5, 0.0, 0.2, 3.0, 2.0, STEP, 0.0]])
+    r = node.rows[-1]
+    assert r["decision_stale"] and r["raw_body"]["vx"] == 0.0
+    assert r["pilot_sent"] == [1.5, -0.5, 0.0, 0.2], r["pilot_sent"]
+
+
+def test_p3_a_vla_land_records_where_and_in_which_state_it_lands():
+    RN, (N, node, clk, out) = _shield([])
+    node.start_mission()
+    node.state = State(x=15.0, y=15.0, up=15.0, yaw_deg=0.0)     # inside nfz-square
+    _run(N, node, clk, [[0, 0, 0, 0, -1, -1, HOLD, B.FLAG_LAND | B.FLAG_END]])
+    land = node.vla_land
+    assert land["position"] == {"x": 15.0, "y": 15.0, "up": 15.0}, land
+    assert land["position_unsafe_rules"] == ["nfz-square"], land
+    assert land["fsm_state"] is not None and "in place" in land["landing"]
+
+
+def test_p2_3_the_bridge_publishes_nothing_on_a_stale_pose():
+    """A stalled pose subscription flew a frozen pose: a 5 m step to its time
+    cap and a spin at the yaw cap. Past --pose-max-age-s the bridge publishes
+    nothing (the Shield's receipt watchdog holds) and counts it."""
+    veh = _Veh()
+    with F.FakeVLAServer(_with_model(F.goto_responder((40.0, 0.0), 15.0), REAL_MODEL),
+                         model=REAL_MODEL) as srv:
+        br = _bridge(srv, veh, _tmp() / "stale_pose", (40.0, 0.0))
+        _feed(br, veh)
+        assert br.connect_and_warm_up()["ready"]
+        br.on_mav_state(True, "GUIDED")
+        br.on_shield_setpoint()
+        assert br.tick(veh.clock()) is not None
+        veh.t += 1.5                                  # no pose for 1.5 s
+        assert br.tick(veh.clock()) is None and br.tick(veh.clock() + 0.1) is None
+        _feed(br, veh)
+        assert br.tick(veh.clock()) is not None
+        br.close()
+    assert br.counts["ticks_pose_stale"] == 2
+    assert [e["event"] for e in br.events if "pose" in e["event"]] == ["pose_stale",
+                                                                       "pose_resumed"]
+
+
+def test_p3_the_capture_time_is_the_image_stamp_when_its_clock_is_this_hosts():
+    """The capture pose and time were the front frame's arrival; camera
+    latency was ignored. A header stamp on this host's wall clock now gives
+    the capture time (and the pose then), a stamp on another clock (sim time,
+    another host: more than 2 s away) falls back to the arrival."""
+    veh = _Veh()
+    wall = {"t": 5000.0}
+    with F.FakeVLAServer(F.goto_responder((40.0, 0.0), 15.0)) as srv:
+        policy, mission = _mission((40.0, 0.0))
+        c = B.BridgeConfig(host="127.0.0.1", port=srv.port)
+        br = B.VLABridge(c, mission=mission, policy=policy, policy_source={}, out=_tmp() / "st",
+                         clock=veh.clock, sleep=lambda s: None, wall=lambda: wall["t"])
+        br.on_pose(0.0, 0.0, 15.0, 0.0, t=veh.t - 0.3)
+        br.on_pose(3.0, 0.0, 15.0, 0.0, t=veh.t)
+        stamp = int((wall["t"] - 0.15) * 1e9)            # taken 0.15 s before arrival
+        br.put_image("front", _img(stamp_ns=stamp, seed=1))
+        br.put_image("down", _img(stamp_ns=stamp, seed=2))
+        cap = br.frames.capture()
+        assert abs(cap.t_capture - (veh.t - 0.15)) < 1e-6, cap.t_capture
+        assert abs(cap.pose.x - 1.5) < 1e-6, cap.pose        # the pose 0.15 s earlier
+        far = int((wall["t"] - 900.0) * 1e9)              # another clock
+        br.put_image("front", _img(stamp_ns=far, seed=1))
+        br.put_image("down", _img(stamp_ns=far, seed=2))
+        cap = br.frames.capture()
+        assert cap.t_capture == veh.t and cap.pose.x == 3.0
+        br.close()
+
+
+def test_p2_4_the_bridge_writes_its_records_on_shutdown_and_sigterm():
+    """USE_LAUNCH=0 SIGKILLed the bridge in the cleanup trap after the pack:
+    close() never ran. The run script now TERMs the VLA node and waits before
+    the pack (and in the trap, before any kill -9); the bridge turns SIGTERM
+    into the same shutdown as Ctrl+C, and main() writes the records whatever
+    ends the spin (here a stand-in rclpy whose spin is interrupted)."""
+    import signal
+    sh = (ROOT / "sitl" / "run_ros2_demo.sh").read_text(encoding="utf-8")
+    body = sh.split("cleanup() {", 1)[1].split("\n}", 1)[0]
+    assert body.index("stop_vla") < body.index("pkill -9"), "the trap kills the bridge first"
+    assert 'kill -TERM "$VLA_PID"' in sh and "VLA_PID=$!" in sh
+    after_shield = sh.split('"$DIR/ros2_shield_node.py" "${SHIELD_ARGS[@]}"', 1)[1]
+    assert "stop_vla" in after_shield.split("guardrail.replay pack", 1)[0], \
+        "the replay pack runs before the bridge has written its records"
+    try:
+        B.on_sigterm(signal.SIGTERM, None)
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("SIGTERM does not stop the spin")
+    fakes, made = _fake_ros()
+    fakes["rclpy"].init = lambda args=None: None
+    fakes["rclpy"].ok = lambda: False
+
+    def spin(node):
+        raise KeyboardInterrupt
+    fakes["rclpy"].spin = spin
+    name = "ros2_vla_bridge_node_shutdown"
+    saved = {k: sys.modules.get(k) for k in [*fakes, name]}
+    sys.modules.update(fakes)
+    old = signal.getsignal(signal.SIGTERM)
+    out = _tmp() / "shutdown"
+    try:
+        spec = importlib.util.spec_from_file_location(name, ROOT / "sitl" / "ros2_vla_bridge_node.py")
+        M = importlib.util.module_from_spec(spec)
+        sys.modules[name] = M
+        spec.loader.exec_module(M)
+        import socket
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+        s.close()                                     # nothing listens there
+        rc = M.main(["--vla-server", f"127.0.0.1:{port}", "--policy", str(POLICY),
+                     "--out", str(out), "--vla-hello-timeout-s", "0.2"])
+    finally:
+        signal.signal(signal.SIGTERM, old)
+        for k, v in saved.items():
+            if v is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+    assert rc == 0 and (out / "vla_bridge.json").is_file(), list(out.iterdir())
+    assert (out / "vla_captures.jsonl").is_file() and (out / "vla_bridge_ticks.jsonl").is_file()
+
+
+def test_p3_a_hold_end_to_end_suspends_the_bridge_and_ends_without_flapping():
+    """The review's end-to-end gap: a stray four-value message (a stub left
+    running) lands among the bridge's stream; the Shield refuses it and holds
+    (LOITER, flown as BRAKE), the bridge sees BRAKE and suspends (none ticks),
+    those none ticks do not release the hold (no GUIDED, no flapping), and
+    past --decision-hold-max-s the mission ends through the mission-end
+    LAND."""
+    RN, (N, node, clk, out) = _shield(["--target", "40,0", "--decision-hold-max-s", "2.0"])
+    goal = (40.0, 0.0)
+    veh = _Veh()
+    clk.t = veh.t
+    with F.FakeVLAServer(_with_model(F.goto_responder(goal, 15.0), REAL_MODEL),
+                         model=REAL_MODEL) as srv:
+        br = _bridge(srv, veh, out, goal, clock=clk.monotonic)
+        _feed(br, veh, clk.monotonic)
+        node._on_identity(N.String(data=json.dumps(br.connect_and_warm_up())))
+        br.on_mav_state(True, "GUIDED")
+        node.start_mission()
+        pub, modes = node.pubs[N.TOPIC_SETPOINT], node.pubs[N.TOPIC_MODE_REQUEST]
+        authors_after = []
+        for k in range(200):
+            veh.t = clk.t
+            node.state = veh.state()
+            _feed(br, veh, clk.monotonic)
+            msg = br.tick(clk.monotonic())
+            if br.client is not None:
+                br.client.wait_idle(3.0)
+            node._on_action(N.Float32MultiArray(data=msg))
+            if k == 30:
+                node._on_action(N.Float32MultiArray(data=[2.0, 0.0, 0.0, 0.0]))
+            if k > 32:
+                authors_after.append(int(msg[6]))
+            n_sp, n_mode = len(pub.sent), len(modes.sent)
+            clk.t = round(clk.t + 0.1, 10)
+            node._tick()
+            for m in modes.sent[n_mode:]:
+                br.on_mav_state(True, {"LOITER": "BRAKE"}.get(m.data, m.data))
+            if node.done:
+                break
+            if len(pub.sent) > n_sp:
+                br.on_shield_setpoint()
+                b = pub.sent[-1].data
+                veh.step(from_body(b[0], b[1], b[2], b[3], veh.yaw_deg()))
+            else:
+                veh.step(Action4D())
+        br.close()
+    assert node.done and [m.data for m in modes.sent] == ["LOITER", "LAND"], \
+        [m.data for m in modes.sent]
+    assert set(authors_after) == {NONE}, "the bridge flew on in the Shield's hold"
+    kinds = [e["kind"] for e in RN._events(out)]
+    assert "vla_action_refused" in kinds and "decision_hold_escalated" in kinds, kinds
+    assert [e["event"] for e in br.events][:2] == ["mission_start", "rail_hold"]
+
+
+def test_p3_the_bridges_default_directory_is_the_shields():
+    """A start without --out wrote to demo/out/ros2_vla_bridge, not beside the
+    Shield's records: the default is now the Shield's own directory rule."""
+    for argv, tag in (([], "ros2_shield_on"), (["--shield", "off", "--dynamic"],
+                                                "ros2_shield_off_dynamic"),
+                      (["--tag", "t1"], "t1")):
+        args, _ = B.make_parser().parse_known_args(
+            ["--vla-server", "h:1", "--policy", str(POLICY)] + argv)
+        _, plan = B.resolve(args)
+        assert plan["out"] == ROOT / "demo" / "out" / tag, (argv, plan["out"])
+    assert SN.default_tag("off", True) == "ros2_shield_off_dynamic"
 
 
 if __name__ == "__main__":

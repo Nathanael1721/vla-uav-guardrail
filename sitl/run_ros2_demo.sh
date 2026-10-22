@@ -20,8 +20,12 @@
 # does not arm. With VLA=bridge the bridge's arguments are checked
 # (--check-args) before SITL starts, it gets `--shield <on|off>` and
 # `--out <the episode directory>` beside the extra args, and the Shield node
-# gets --vla-ready-timeout-s ${VLA_READY_TIMEOUT_S:-2700}: it arms only once
-# the bridge's warm-up has passed (a cold bf16 load took over 15 min).
+# gets --vla-ready-timeout-s ${VLA_READY_TIMEOUT_S:-3300} (through the launch
+# file's vla_ready_timeout_s:=, which adds it for vla:=bridge on any path):
+# it arms only once the bridge's warm-up has passed - more than the bridge's
+# 2700 s hello timeout (a cold bf16 load took over 15 min) plus its warm-up.
+# When the mission ends the bridge is stopped with SIGTERM and waited for
+# (stop_vla) before the replay pack, so its records are complete.
 #
 # Extra args go to BOTH the Shield node and the VLA node; each takes its own
 # and ignores the rest: --policy P | --bundle B, --subject X,Y, --target X,Y,
@@ -54,7 +58,7 @@
 #   GCS_HOST           Mission Planner's address (default: the Windows host)
 #   VLA=stub           bridge = AerialVLA in the VLA slot (THE VLA SLOT above);
 #                      it runs in the slot's SROS 2 enclave, vla_stub
-#   VLA_READY_TIMEOUT_S=2700  with VLA=bridge: how long the Shield node waits
+#   VLA_READY_TIMEOUT_S=3300  with VLA=bridge: how long the Shield node waits
 #                      for the bridge's warm-up before it refuses to arm
 #   SROS2=0            1 = SROS 2 enforced on every ROS 2 process of the rail
 #                      (sitl/sros2_env.sh): the keystore SROS2_KEYSTORE (default
@@ -87,6 +91,8 @@ OUT="$ROOT/demo/out/$TAG"
 mkdir -p "$OUT" "$HOME/sitl-run"
 
 BAG_PID=""
+VLA_PID=""
+VLA_READY_TIMEOUT_S="${VLA_READY_TIMEOUT_S:-3300}"
 # Cleanup ALWAYS runs (success, failure, Ctrl+C) - leftover arducopter/mavros
 # processes hold their ports and silently break every later run. The bag is
 # stopped FIRST and with SIGTERM, so rosbag2 closes the file and writes
@@ -101,8 +107,21 @@ stop_bag() {
   fi
   BAG_PID=""
 }
+# The VLA bridge writes its records (vla_steps.jsonl, vla_bridge.json, ...)
+# when it is stopped: SIGTERM - not SIGINT, which a background job here
+# ignores (see above) - and a wait, BEFORE anything is SIGKILLed (until the
+# review of 339f23a the trap's kill -9 was the only stop on USE_LAUNCH=0, and
+# the bridge's records were lost). With the launch file, ros2 launch stops it.
+stop_vla() {
+  if [ -n "$VLA_PID" ] && kill -0 "$VLA_PID" 2> /dev/null; then
+    kill -TERM "$VLA_PID" 2> /dev/null || true
+    for _ in $(seq 1 40); do kill -0 "$VLA_PID" 2> /dev/null || break; sleep 0.5; done
+  fi
+  VLA_PID=""
+}
 cleanup() {
   stop_bag
+  stop_vla
   pkill -TERM -f "[r]os2 bag record -s mcap" 2> /dev/null || true
   pkill -9 -f "[g]uardrail_rail.launch.py"     2> /dev/null || true
   pkill -9 -f "[r]os2_vla_stub_node"           2> /dev/null || true
@@ -222,9 +241,8 @@ SHIELD_ARGS=(--shield "$SHIELD")
 SHIELD_ARGS+=("${EXTRA[@]}")
 VLA_NODE_ARGS=("${EXTRA[@]}")
 if [ "$VLA" = "bridge" ]; then
-  # The Shield arms only after the bridge's warm-up passed; the bridge
-  # clamps its altitude targets by the arm it flies behind.
-  SHIELD_ARGS+=(--vla-ready-timeout-s "${VLA_READY_TIMEOUT_S:-2700}")
+  # The bridge clamps its altitude targets by the arm it flies behind. (The
+  # Shield's ready gate: vla_ready_timeout_s:= below, or the fallback path.)
   VLA_NODE_ARGS+=(--shield "$SHIELD")
 fi
 VLA_ARGS=""
@@ -233,18 +251,21 @@ VLA_ARGS=""
 echo "=== Guardrail nodes (shield $SHIELD, VLA $VLA) ==="
 if [ "${USE_LAUNCH:-1}" = "1" ]; then
   ros2 launch "$DIR/ros2_ws/src/safety_shield/launch/guardrail_rail.launch.py" \
-    python:="$PY" repo_root:="$ROOT" out:="$OUT" vla:="$VLA" \
+    python:="$PY" repo_root:="$ROOT" out:="$OUT" vla:="$VLA"     vla_ready_timeout_s:="$VLA_READY_TIMEOUT_S" \
     shield_args:="$(printf '%q ' "${SHIELD_ARGS[@]}")" \
     vla_args:="$VLA_ARGS" "${LAUNCH_SROS2[@]}"
 else
   if [ "$VLA" = "bridge" ]; then
     nohup "${ENC_VLA[@]}" "$PY" "$DIR/ros2_vla_bridge_node.py" "${VLA_NODE_ARGS[@]}" --out "$OUT" > ~/sitl-run/vla.log 2>&1 &
+    VLA_PID=$!
+    SHIELD_ARGS+=(--vla-ready-timeout-s "$VLA_READY_TIMEOUT_S")
   else
     nohup "${ENC_VLA[@]}" "$PY" "$DIR/ros2_vla_stub_node.py" "${EXTRA[@]}" > ~/sitl-run/vla.log 2>&1 &
   fi
   nohup "${ENC_ADAPTER[@]}" "$PY" "$DIR/mavlink_adapter_node.py" --out "$OUT" > ~/sitl-run/adapter.log 2>&1 &
   sleep 2
   "${ENC_SHIELD[@]}" "$PY" "$DIR/ros2_shield_node.py" "${SHIELD_ARGS[@]}"
+  stop_vla
 fi
 
 echo "=== close the bag, re-pack the replay bundle with it ==="
