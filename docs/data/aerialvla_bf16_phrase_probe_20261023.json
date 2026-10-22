@@ -1,0 +1,931 @@
+{
+ "schema": "vlaguard.aerialvla_bf16_phrase_probe/1",
+ "measured": "2026-10-23",
+ "what": "AerialVLA (original adapter aero_vla) at upstream precision (bf16, sdpa, adapter unmerged) answering the six 2026-08-04 CityLife mosaics (experiments/out/frames: target present/absent, yaw offset -35/0/+35 deg, about 22 m up) under each direction phrase and the empty phrase, object 'orange barrier'. Run by tools/vla_replay_gate.py at 46ca291 against demo/vla_server_v2.py serve --precision bf16 --attn sdpa --no-merge. Offline: no flight.",
+ "identity": {
+  "id": "aerialvla-lora/aero_vla@196f2f32",
+  "base": "openvla-7b@47a0ec7f",
+  "weights_sha256": "ca9e87012a098435f9e67040f90c8b94be153a990fabc4e10400d477ca19b9e0",
+  "precision": "bf16",
+  "attn": "sdpa",
+  "merged": false
+ },
+ "agreement_with_reference": {
+  "reference": "bf16/eager/unmerged",
+  "measured": true,
+  "probe_n": 48,
+  "probe_exact": 0.958,
+  "probe_close": 0.958,
+  "close_means": "same parse_ok and LAND, every bin within 3",
+  "source": "docs/data/aerialvla_serving_4090.json",
+  "measured_utc": "2026-10-21T13:46:51Z",
+  "note": null,
+  "why": null
+ },
+ "gate_checks": {
+  "answered": {
+   "pass": true,
+   "unanswered": 0,
+   "examples": []
+  },
+  "parse_fail": {
+   "pass": false,
+   "rate": 0.0278,
+   "count": 1,
+   "of": 36,
+   "max": 0.02
+  },
+  "monotonic": {
+   "pass": false,
+   "mean_dpsi_rad": {
+    "to your left ": -0.651,
+    "forward-left ": -0.0584,
+    "straight ahead ": 0.0262,
+    "forward-right ": 0.116,
+    "to your right ": 0.2881
+   },
+   "adjacent_ok": [
+    true,
+    true,
+    true,
+    true
+   ],
+   "spread_rad": 0.9391,
+   "min_spread_rad": 0.1,
+   "frame_monotone_share": 0.2,
+   "min_frame_monotone": 0.5,
+   "frames_scored": 5,
+   "tolerance_rad": 0.01122
+  },
+  "land_only_near_goal_or_without_hint": {
+   "pass": true,
+   "violations": 0,
+   "max": 0,
+   "near_goal_m": 6.0,
+   "goal_known": true,
+   "examples": []
+  }
+ },
+ "gate_pass": false,
+ "no_hint_land_rate": 0.8333,
+ "per_frame": [
+  {
+   "src": "absent_+35.png",
+   "pose": {
+    "x": 35.0,
+    "y": -20.0,
+    "up": 22.198514938354492,
+    "yaw_rad": 1.0285097263055791
+   },
+   "sweep": {
+    "to your left ": -1.1,
+    "forward-left ": -0.22448979591836737,
+    "straight ahead ": 0.11224489795918347,
+    "forward-right ": 0.5163265306122451,
+    "to your right ": 0.22448979591836737
+   },
+   "no_hint_land": true
+  },
+  {
+   "src": "absent_+00.png",
+   "pose": {
+    "x": 35.0,
+    "y": -20.0,
+    "up": 22.007335662841797,
+    "yaw_rad": 1.5613097535474965
+   },
+   "sweep": {
+    "to your left ": 0.0,
+    "forward-left ": 0.0,
+    "straight ahead ": 0.0,
+    "forward-right ": 0.0,
+    "to your right ": -0.022448979591836782
+   },
+   "no_hint_land": true
+  },
+  {
+   "src": "absent_-35.png",
+   "pose": {
+    "x": 35.0,
+    "y": -20.0,
+    "up": 21.894699096679688,
+    "yaw_rad": 2.2060412886889815
+   },
+   "sweep": {
+    "to your left ": -1.1,
+    "forward-left ": -0.24693877551020416,
+    "straight ahead ": -0.11224489795918369,
+    "forward-right ": 0.0,
+    "to your right ": 0.22448979591836737
+   },
+   "no_hint_land": true
+  },
+  {
+   "src": "present_+35.png",
+   "pose": {
+    "x": 35.0,
+    "y": -20.0,
+    "up": 21.76398277282715,
+    "yaw_rad": 0.7246116129938889
+   },
+   "sweep": {
+    "to your left ": -1.03265306122449,
+    "forward-left ": 0.1795918367346938,
+    "straight ahead ": 0.1795918367346938,
+    "forward-right ": 0.3142857142857145,
+    "to your right ": 0.22448979591836737
+   },
+   "no_hint_land": true
+  },
+  {
+   "src": "present_+00.png",
+   "pose": {
+    "x": 35.0,
+    "y": -20.0,
+    "up": 21.626619338989258,
+    "yaw_rad": 1.661283726818394
+   },
+   "sweep": {
+    "to your left ": -0.022448979591836782,
+    "forward-left ": 0.0,
+    "straight ahead ": -0.022448979591836782,
+    "forward-right ": -0.022448979591836782,
+    "to your right ": -0.022448979591836782
+   },
+   "no_hint_land": false
+  },
+  {
+   "src": "present_-35.png",
+   "pose": {
+    "x": 35.0,
+    "y": -20.0,
+    "up": 21.6645565032959,
+    "yaw_rad": 2.186076253506737
+   },
+   "sweep": {
+    "to your left ": -0.6510204081632653,
+    "forward-left ": null,
+    "straight ahead ": 0.0,
+    "forward-right ": -0.11224489795918369,
+    "to your right ": 1.1
+   },
+   "no_hint_land": true
+  }
+ ],
+ "raw_outputs": [
+  {
+   "image_sha256": "6431d80f42ae2467af529d60a3e1e4102b17ef88f5bdced3728768c199c627bc",
+   "phrase": "forward-right ",
+   "object": "orange barrier",
+   "raw_text": "90 48 72</s>",
+   "parse_ok": true,
+   "bins": [
+    90,
+    48,
+    72
+   ],
+   "step": {
+    "fwd_m": 4.591836734693878,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": 0.5163265306122451
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "6431d80f42ae2467af529d60a3e1e4102b17ef88f5bdced3728768c199c627bc",
+   "phrase": "to your right ",
+   "object": "orange barrier",
+   "raw_text": "92 48 59</s>",
+   "parse_ok": true,
+   "bins": [
+    92,
+    48,
+    59
+   ],
+   "step": {
+    "fwd_m": 4.6938775510204085,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": 0.22448979591836737
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "6431d80f42ae2467af529d60a3e1e4102b17ef88f5bdced3728768c199c627bc",
+   "phrase": "",
+   "object": "orange barrier",
+   "raw_text": "00 49 49 LAND</s>",
+   "parse_ok": true,
+   "bins": [
+    0,
+    49,
+    49
+   ],
+   "step": {
+    "fwd_m": 0.0,
+    "down_m": 0.0,
+    "dpsi_rad": 0.0
+   },
+   "land": true
+  },
+  {
+   "image_sha256": "f74baf21074b6b0c11a9e2307a4e0b2b59057991f5db27ab887c3836a7f4192a",
+   "phrase": "to your left ",
+   "object": "orange barrier",
+   "raw_text": "96 48 49</s>",
+   "parse_ok": true,
+   "bins": [
+    96,
+    48,
+    49
+   ],
+   "step": {
+    "fwd_m": 4.8979591836734695,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": 0.0
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "f74baf21074b6b0c11a9e2307a4e0b2b59057991f5db27ab887c3836a7f4192a",
+   "phrase": "forward-left ",
+   "object": "orange barrier",
+   "raw_text": "96 48 49</s>",
+   "parse_ok": true,
+   "bins": [
+    96,
+    48,
+    49
+   ],
+   "step": {
+    "fwd_m": 4.8979591836734695,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": 0.0
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "f74baf21074b6b0c11a9e2307a4e0b2b59057991f5db27ab887c3836a7f4192a",
+   "phrase": "straight ahead ",
+   "object": "orange barrier",
+   "raw_text": "95 48 49</s>",
+   "parse_ok": true,
+   "bins": [
+    95,
+    48,
+    49
+   ],
+   "step": {
+    "fwd_m": 4.846938775510204,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": 0.0
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "f74baf21074b6b0c11a9e2307a4e0b2b59057991f5db27ab887c3836a7f4192a",
+   "phrase": "forward-right ",
+   "object": "orange barrier",
+   "raw_text": "96 48 49</s>",
+   "parse_ok": true,
+   "bins": [
+    96,
+    48,
+    49
+   ],
+   "step": {
+    "fwd_m": 4.8979591836734695,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": 0.0
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "f74baf21074b6b0c11a9e2307a4e0b2b59057991f5db27ab887c3836a7f4192a",
+   "phrase": "to your right ",
+   "object": "orange barrier",
+   "raw_text": "96 48 48</s>",
+   "parse_ok": true,
+   "bins": [
+    96,
+    48,
+    48
+   ],
+   "step": {
+    "fwd_m": 4.8979591836734695,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": -0.022448979591836782
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "f74baf21074b6b0c11a9e2307a4e0b2b59057991f5db27ab887c3836a7f4192a",
+   "phrase": "",
+   "object": "orange barrier",
+   "raw_text": "00 49 49 LAND</s>",
+   "parse_ok": true,
+   "bins": [
+    0,
+    49,
+    49
+   ],
+   "step": {
+    "fwd_m": 0.0,
+    "down_m": 0.0,
+    "dpsi_rad": 0.0
+   },
+   "land": true
+  },
+  {
+   "image_sha256": "3747ca7e871fe44347c44a9b252e52a6eff5e3af8e8536502ec621796f15ff83",
+   "phrase": "to your left ",
+   "object": "orange barrier",
+   "raw_text": "68 48 00</s>",
+   "parse_ok": true,
+   "bins": [
+    68,
+    48,
+    0
+   ],
+   "step": {
+    "fwd_m": 3.4693877551020407,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": -1.1
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "3747ca7e871fe44347c44a9b252e52a6eff5e3af8e8536502ec621796f15ff83",
+   "phrase": "forward-left ",
+   "object": "orange barrier",
+   "raw_text": "92 48 38</s>",
+   "parse_ok": true,
+   "bins": [
+    92,
+    48,
+    38
+   ],
+   "step": {
+    "fwd_m": 4.6938775510204085,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": -0.24693877551020416
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "3747ca7e871fe44347c44a9b252e52a6eff5e3af8e8536502ec621796f15ff83",
+   "phrase": "straight ahead ",
+   "object": "orange barrier",
+   "raw_text": "92 48 44</s>",
+   "parse_ok": true,
+   "bins": [
+    92,
+    48,
+    44
+   ],
+   "step": {
+    "fwd_m": 4.6938775510204085,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": -0.11224489795918369
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "3747ca7e871fe44347c44a9b252e52a6eff5e3af8e8536502ec621796f15ff83",
+   "phrase": "forward-right ",
+   "object": "orange barrier",
+   "raw_text": "64 86 49</s>",
+   "parse_ok": true,
+   "bins": [
+    64,
+    86,
+    49
+   ],
+   "step": {
+    "fwd_m": 3.265306122448979,
+    "down_m": 3.775510204081632,
+    "dpsi_rad": 0.0
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "3747ca7e871fe44347c44a9b252e52a6eff5e3af8e8536502ec621796f15ff83",
+   "phrase": "to your right ",
+   "object": "orange barrier",
+   "raw_text": "92 48 59</s>",
+   "parse_ok": true,
+   "bins": [
+    92,
+    48,
+    59
+   ],
+   "step": {
+    "fwd_m": 4.6938775510204085,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": 0.22448979591836737
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "3747ca7e871fe44347c44a9b252e52a6eff5e3af8e8536502ec621796f15ff83",
+   "phrase": "",
+   "object": "orange barrier",
+   "raw_text": "00 49 49 LAND</s>",
+   "parse_ok": true,
+   "bins": [
+    0,
+    49,
+    49
+   ],
+   "step": {
+    "fwd_m": 0.0,
+    "down_m": 0.0,
+    "dpsi_rad": 0.0
+   },
+   "land": true
+  },
+  {
+   "image_sha256": "3fb91075ac4148f52989632c46bfb88104053514d990d7d5f1f104b2ddb0c444",
+   "phrase": "to your left ",
+   "object": "orange barrier",
+   "raw_text": "76 68 03</s>",
+   "parse_ok": true,
+   "bins": [
+    76,
+    68,
+    3
+   ],
+   "step": {
+    "fwd_m": 3.877551020408163,
+    "down_m": 1.9387755102040813,
+    "dpsi_rad": -1.03265306122449
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "3fb91075ac4148f52989632c46bfb88104053514d990d7d5f1f104b2ddb0c444",
+   "phrase": "forward-left ",
+   "object": "orange barrier",
+   "raw_text": "62 86 57</s>",
+   "parse_ok": true,
+   "bins": [
+    62,
+    86,
+    57
+   ],
+   "step": {
+    "fwd_m": 3.163265306122449,
+    "down_m": 3.775510204081632,
+    "dpsi_rad": 0.1795918367346938
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "3fb91075ac4148f52989632c46bfb88104053514d990d7d5f1f104b2ddb0c444",
+   "phrase": "straight ahead ",
+   "object": "orange barrier",
+   "raw_text": "92 62 57</s>",
+   "parse_ok": true,
+   "bins": [
+    92,
+    62,
+    57
+   ],
+   "step": {
+    "fwd_m": 4.6938775510204085,
+    "down_m": 1.3265306122448983,
+    "dpsi_rad": 0.1795918367346938
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "3fb91075ac4148f52989632c46bfb88104053514d990d7d5f1f104b2ddb0c444",
+   "phrase": "forward-right ",
+   "object": "orange barrier",
+   "raw_text": "90 48 63</s>",
+   "parse_ok": true,
+   "bins": [
+    90,
+    48,
+    63
+   ],
+   "step": {
+    "fwd_m": 4.591836734693878,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": 0.3142857142857145
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "3fb91075ac4148f52989632c46bfb88104053514d990d7d5f1f104b2ddb0c444",
+   "phrase": "to your right ",
+   "object": "orange barrier",
+   "raw_text": "58 48 59</s>",
+   "parse_ok": true,
+   "bins": [
+    58,
+    48,
+    59
+   ],
+   "step": {
+    "fwd_m": 2.9591836734693877,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": 0.22448979591836737
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "3fb91075ac4148f52989632c46bfb88104053514d990d7d5f1f104b2ddb0c444",
+   "phrase": "",
+   "object": "orange barrier",
+   "raw_text": "00 49 49 LAND</s>",
+   "parse_ok": true,
+   "bins": [
+    0,
+    49,
+    49
+   ],
+   "step": {
+    "fwd_m": 0.0,
+    "down_m": 0.0,
+    "dpsi_rad": 0.0
+   },
+   "land": true
+  },
+  {
+   "image_sha256": "40bc98d71ba5b4ac17b5a4e7035d5e77ca2602abd0c8e02231e755699179a295",
+   "phrase": "to your left ",
+   "object": "orange barrier",
+   "raw_text": "96 48 48</s>",
+   "parse_ok": true,
+   "bins": [
+    96,
+    48,
+    48
+   ],
+   "step": {
+    "fwd_m": 4.8979591836734695,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": -0.022448979591836782
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "40bc98d71ba5b4ac17b5a4e7035d5e77ca2602abd0c8e02231e755699179a295",
+   "phrase": "forward-left ",
+   "object": "orange barrier",
+   "raw_text": "96 48 49</s>",
+   "parse_ok": true,
+   "bins": [
+    96,
+    48,
+    49
+   ],
+   "step": {
+    "fwd_m": 4.8979591836734695,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": 0.0
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "40bc98d71ba5b4ac17b5a4e7035d5e77ca2602abd0c8e02231e755699179a295",
+   "phrase": "straight ahead ",
+   "object": "orange barrier",
+   "raw_text": "96 48 48</s>",
+   "parse_ok": true,
+   "bins": [
+    96,
+    48,
+    48
+   ],
+   "step": {
+    "fwd_m": 4.8979591836734695,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": -0.022448979591836782
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "40bc98d71ba5b4ac17b5a4e7035d5e77ca2602abd0c8e02231e755699179a295",
+   "phrase": "forward-right ",
+   "object": "orange barrier",
+   "raw_text": "96 48 48</s>",
+   "parse_ok": true,
+   "bins": [
+    96,
+    48,
+    48
+   ],
+   "step": {
+    "fwd_m": 4.8979591836734695,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": -0.022448979591836782
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "40bc98d71ba5b4ac17b5a4e7035d5e77ca2602abd0c8e02231e755699179a295",
+   "phrase": "to your right ",
+   "object": "orange barrier",
+   "raw_text": "96 48 48</s>",
+   "parse_ok": true,
+   "bins": [
+    96,
+    48,
+    48
+   ],
+   "step": {
+    "fwd_m": 4.8979591836734695,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": -0.022448979591836782
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "40bc98d71ba5b4ac17b5a4e7035d5e77ca2602abd0c8e02231e755699179a295",
+   "phrase": "",
+   "object": "orange barrier",
+   "raw_text": "49 49 49</s>",
+   "parse_ok": true,
+   "bins": [
+    49,
+    49,
+    49
+   ],
+   "step": {
+    "fwd_m": 2.5,
+    "down_m": 0.0,
+    "dpsi_rad": 0.0
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "e6a2e95f3be73f22cfe6d6bc2c28b0c52713fbc215c1bbbb2a18bc05b15cd517",
+   "phrase": "to your left ",
+   "object": "orange barrier",
+   "raw_text": "92 49 20</s>",
+   "parse_ok": true,
+   "bins": [
+    92,
+    49,
+    20
+   ],
+   "step": {
+    "fwd_m": 4.6938775510204085,
+    "down_m": 0.0,
+    "dpsi_rad": -0.6510204081632653
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "e6a2e95f3be73f22cfe6d6bc2c28b0c52713fbc215c1bbbb2a18bc05b15cd517",
+   "phrase": "forward-left ",
+   "object": "orange barrier",
+   "raw_text": "55 渡 34</s>",
+   "parse_ok": false,
+   "bins": null,
+   "step": null,
+   "land": false
+  },
+  {
+   "image_sha256": "e6a2e95f3be73f22cfe6d6bc2c28b0c52713fbc215c1bbbb2a18bc05b15cd517",
+   "phrase": "straight ahead ",
+   "object": "orange barrier",
+   "raw_text": "16 01 49</s>",
+   "parse_ok": true,
+   "bins": [
+    16,
+    1,
+    49
+   ],
+   "step": {
+    "fwd_m": 0.8163265306122448,
+    "down_m": -4.8979591836734695,
+    "dpsi_rad": 0.0
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "e6a2e95f3be73f22cfe6d6bc2c28b0c52713fbc215c1bbbb2a18bc05b15cd517",
+   "phrase": "forward-right ",
+   "object": "orange barrier",
+   "raw_text": "68 81 44</s>",
+   "parse_ok": true,
+   "bins": [
+    68,
+    81,
+    44
+   ],
+   "step": {
+    "fwd_m": 3.4693877551020407,
+    "down_m": 3.2653061224489797,
+    "dpsi_rad": -0.11224489795918369
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "e6a2e95f3be73f22cfe6d6bc2c28b0c52713fbc215c1bbbb2a18bc05b15cd517",
+   "phrase": "to your right ",
+   "object": "orange barrier",
+   "raw_text": "81 48 98</s>",
+   "parse_ok": true,
+   "bins": [
+    81,
+    48,
+    98
+   ],
+   "step": {
+    "fwd_m": 4.13265306122449,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": 1.1
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "e6a2e95f3be73f22cfe6d6bc2c28b0c52713fbc215c1bbbb2a18bc05b15cd517",
+   "phrase": "",
+   "object": "orange barrier",
+   "raw_text": "00 49 49 LAND</s>",
+   "parse_ok": true,
+   "bins": [
+    0,
+    49,
+    49
+   ],
+   "step": {
+    "fwd_m": 0.0,
+    "down_m": 0.0,
+    "dpsi_rad": 0.0
+   },
+   "land": true
+  },
+  {
+   "image_sha256": "40bc98d71ba5b4ac17b5a4e7035d5e77ca2602abd0c8e02231e755699179a295",
+   "phrase": "straight ahead ",
+   "object": "orange barrier",
+   "raw_text": "96 48 48</s>",
+   "parse_ok": true,
+   "bins": [
+    96,
+    48,
+    48
+   ],
+   "step": {
+    "fwd_m": 4.8979591836734695,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": -0.022448979591836782
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "f74baf21074b6b0c11a9e2307a4e0b2b59057991f5db27ab887c3836a7f4192a",
+   "phrase": "straight ahead ",
+   "object": "orange barrier",
+   "raw_text": "95 48 49</s>",
+   "parse_ok": true,
+   "bins": [
+    95,
+    48,
+    49
+   ],
+   "step": {
+    "fwd_m": 4.846938775510204,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": 0.0
+   },
+   "land": false
+  },
+  {
+   "image_sha256": "40bc98d71ba5b4ac17b5a4e7035d5e77ca2602abd0c8e02231e755699179a295",
+   "phrase": "straight ahead ",
+   "object": "orange barrier",
+   "raw_text": "96 48 48</s>",
+   "parse_ok": true,
+   "bins": [
+    96,
+    48,
+    48
+   ],
+   "step": {
+    "fwd_m": 4.8979591836734695,
+    "down_m": -0.1020408163265305,
+    "dpsi_rad": -0.022448979591836782
+   },
+   "land": false
+  }
+ ],
+ "latency_idle": {
+  "hello": {
+   "v": 2,
+   "ok": true,
+   "model": {
+    "id": "aerialvla-lora/aero_vla@196f2f32",
+    "base": "openvla-7b@47a0ec7f",
+    "weights_sha256": "ca9e87012a098435f9e67040f90c8b94be153a990fabc4e10400d477ca19b9e0",
+    "precision": "bf16",
+    "attn": "sdpa",
+    "merged": false,
+    "agreement": {
+     "reference": "bf16/eager/unmerged",
+     "measured": true,
+     "probe_n": 48,
+     "probe_exact": 0.958,
+     "probe_close": 0.958,
+     "close_means": "same parse_ok and LAND, every bin within 3",
+     "source": "docs/data/aerialvla_serving_4090.json",
+     "measured_utc": "2026-10-21T13:46:51Z",
+     "note": null,
+     "why": null
+    },
+    "max_new_tokens": 12,
+    "load": {
+     "load_base_s": 1578.8768742000684,
+     "load_adapter_s": 37.11893820017576,
+     "load_total_s": 1616.6761175999418
+    },
+    "digest": {
+     "source": "sidecar",
+     "sidecar": "C:\\Users\\natha\\.cache\\guardrail\\vla_server_weights.json",
+     "key": "6e7ef00c71fc939077944b4917f32a51eeecc7eedb489f4eacc3b42d4fda93f6",
+     "computed_utc": "2026-10-21T13:26:26Z"
+    },
+    "weight_files": [
+     "D:/models/openvla-7b/model-00001-of-00003.safetensors",
+     "D:/models/openvla-7b/model-00002-of-00003.safetensors",
+     "D:/models/openvla-7b/model-00003-of-00003.safetensors",
+     "D:/models/aerialvla-lora/aero_vla"
+    ],
+    "libraries": {
+     "python": "3.10.20",
+     "torch": "2.6.0+cu124",
+     "transformers": "4.40.1",
+     "peft": "0.11.1",
+     "bitsandbytes": "0.49.2",
+     "accelerate": "0.32.1",
+     "PIL": "12.2.0",
+     "cuda": "12.4",
+     "gpu": "NVIDIA GeForce RTX 4090"
+    },
+    "protocol": 2,
+    "host": {
+     "host_arch": "AMD64",
+     "device_model": null,
+     "l4t_release": null,
+     "jetpack": null,
+     "hostname": "AIoT-Nathan"
+    },
+    "health": {
+     "counts": {
+      "requests": 1,
+      "infer": 0,
+      "refused": 0,
+      "parse_fail": 0,
+      "land": 0,
+      "inference_error": 0,
+      "internal_error": 0,
+      "log_failures": 0
+     },
+     "t_now": 1792685949.563113,
+     "uptime_s": 18.43,
+     "t_last_ok_infer": null,
+     "s_since_last_ok_infer": null,
+     "t_last_inference_error": null,
+     "in_flight_since": null,
+     "in_flight_s": null,
+     "liveness": "a recent ok infer (t_last_ok_infer), not an answered hello"
+    }
+   }
+  },
+  "roundtrip": {
+   "n": 20,
+   "p50_ms": 393.2,
+   "p95_ms": 401.4,
+   "max_ms": 406.1,
+   "mean_ms": 393.6,
+   "hz_at_p50": 2.544
+  },
+  "server_latency": {
+   "n": 20,
+   "p50_ms": 390.8,
+   "p95_ms": 399.2,
+   "max_ms": 404.0,
+   "mean_ms": 391.5,
+   "hz_at_p50": 2.559
+  },
+  "n": 20,
+  "warmup": 2
+ },
+ "cold_load": {
+  "wall_s": 1575,
+  "note": "bf16 checkpoint load with the system at 99.8 of 104 GB committed and about 2 GB of RAM free (pagefile on the HDD C:); D:/models is NVMe. A load this slow is a property of the machine's memory pressure at the time, not of the model."
+ },
+ "compare_4aug_nf4": {
+  "source": "docs/FINDING-what-drives-aerialvla.md (original adapter, 18 inputs per phrase, nf4 unmerged eager)",
+  "mean_dpsi_rad": {
+   "to your left": -0.466,
+   "forward-left": -0.167,
+   "forward-right": 0.114,
+   "to your right": 0.161
+  }
+ }
+}
