@@ -141,9 +141,10 @@ THE VLA PILOT (--pilot vla; wave V2b, 2026-10-23, to-do VLA-07)
     action (VLAPilot.step); from there it takes the detector pilot's path,
     unchanged: Shield.filter, the escalation FSM, link.send of the Shield's
     output (or the FSM's brake). A tick on which the FSM, a fault or the
-    autopilot holds the aircraft suspends the tracker (backend.suspend), and
+    autopilot holds the aircraft, and a stale-link span, suspend the tracker
+    (backend.suspend) and stop the mission's timers (MissionMonitor.hold);
     every answer to an image from before is thrown away when the pilot gets
-    the aircraft back (resume).
+    the aircraft back (resume), and no VLA end names a held mission.
   * The missions: --mission goto (the default; --goal X,Y in the Shield's
     frame, no default: the spawn has two street trees in the flight band
     within about a metre of every line east, vla_mission's CityLife notes)
@@ -159,9 +160,18 @@ THE VLA PILOT (--pilot vla; wave V2b, 2026-10-23, to-do VLA-07)
     hello before ArduPilot starts. A server it started is stopped on every
     way out; an attached one never is.
   * The warm-up gate (vla_mission.run_warmup: three requests on live frames,
-    the last judged) runs in the pre-arm step, disarmed: a refusal
-    (PreArmRefused, exit 4) arms nothing. The VLA pilot therefore needs a
-    link with a pre-arm step; both real links have one.
+    each with its own answer timeout - the first, the model's first
+    inference, first_decision_timeout_s - and a ready client before it, the
+    last judged) runs in the pre-arm step, disarmed: a refusal arms nothing,
+    exits 4 and is recorded (metrics.json, manifest.json; PreArmRefused). The
+    VLA pilot therefore needs a link with a pre-arm step; both real links
+    have one.
+  * Stop-and-go only (--allow-unstamped-pipelined, recorded, for the
+    pipelined arm): this rail's pose ring has no sim stamps, so a capture is
+    paired with the EKF pose at its arrival.
+  * AerialVLA's VLAFront / VLADown render only in a VLA run's rendered robot
+    config (or with --vla-cameras, for a scene step an attaching VLA node
+    uses): rail.select_vla_cameras, sim_config.vla_cameras.
   * The start gate is a detector-subject gate: skipped for goto, recorded
     (start_gate.enabled false and why), and no detector runs at all; kept
     for approach, which needs the subject in view before the VLA is asked
@@ -169,9 +179,12 @@ THE VLA PILOT (--pilot vla; wave V2b, 2026-10-23, to-do VLA-07)
   * Records as on the city rail: vla_steps.jsonl, vla_frames/ and
     vla_captures.jsonl, rows naming each tick's author and the decision
     behind it, metrics.pilot (vla_mission.pilot_entry: kind vla only with
-    the server's real identity), metrics.vla, the manifest's vla_model_hash,
-    the HUD panel (vla_mission.annotate_vla). Exit 3 for a VLA failure end
-    (the server dead, slow or erroring, vla_mission.VLA_FAILURE_ENDS).
+    the server's real identity), metrics.vla (with nvidia-smi's free VRAM at
+    the hello and after the warm-up), the manifest's vla_model_hash, the HUD
+    panel (vla_mission.annotate_vla, the rail's own label kept). A GOTO is
+    scored on reached_goal (no follow score owed), an approach on the
+    subject's true range. Exit 3 for a VLA failure end (the server dead,
+    slow or erroring, vla_mission.VLA_FAILURE_ENDS).
   * NOT FLOWN: none of this has run against Unreal, ArduPilot or the model;
     tests/test_pas_vla.py drives it with the stand-in link and a scripted
     protocol-v2 server.
@@ -761,10 +774,13 @@ class VLAPilot:
       the HUD read the decision behind this tick (vla_mission.decision_fields,
       mission_fields, vla_hud - the city rail's code); then a tick on which
       the pilot's action did not fly (the FSM's brake, a stop it advised, a
-      hold, a fault, a takeover) suspends the tracker and the next one that
-      flies resumes it, so every answer to an image from before the hold is
-      refused (vla_link.StepTracker.resume); then the mission's stop rules
-      (LAND, a dead / slow / erroring server, the mission's own ends).
+      hold, a fault, a takeover) suspends the tracker and stops the mission's
+      timers (MissionMonitor.hold), and the next one that flies resumes both,
+      so every answer to an image from before the hold is refused
+      (vla_link.StepTracker.resume) and no VLA end names a mission the rail
+      was holding; on a tick that flies, the mission's stop rules (LAND, a
+      dead / slow / erroring server, the mission's own ends).
+    hold(now): the same hold between ticks (a stale-link span).
     close() -> the backend's stats, read before its close (the decision rate
       is over the time act() ran) with the log's counts after it.
     """
@@ -781,9 +797,25 @@ class VLAPilot:
         self.server_alive = server_alive
         self.last_tick = None
         self.n_held = 0
+        # Ticks the escalation FSM stepped on a raw action the rail itself had
+        # zeroed (the suspended tracker's): its recovery timer then runs on a
+        # zero the pilot never chose (review of 4a0da6d, P3-13: recorded).
+        self.n_fsm_on_zeroed = 0
+        self.n_stale_holds = 0
         self.authors: collections.Counter = collections.Counter()
+        self._t_last: float | None = None
         self._frozen: dict | None = None
         self._stats: dict | None = None
+
+    def hold(self, now: float) -> None:
+        """The rail holds the aircraft between ticks (a stale-link span: one
+        zero hold sent, nothing else; review of 4a0da6d, P3-13): the tracker
+        is suspended and the mission's timers stop, as on a held tick. The
+        next tick that flies resumes both."""
+        self.n_stale_holds += int(not self.backend.tracker.suspended)
+        self.backend.suspend()
+        self.monitor.hold(now)
+        self._t_last = now
 
     def detail(self) -> str | None:
         """The Dashboard heartbeat's word for the last tick."""
@@ -803,7 +835,7 @@ class VLAPilot:
                            "t_det": t_det}
 
     def after(self, now: float, st, *, flies: bool, touched: bool, shield_on: bool,
-              t_mission: float) -> tuple:
+              t_mission: float, fsm_stepped: bool = False) -> tuple:
         from guardrail.vla_link import Pose
         vm, tk = self.vm, self.last_tick
         pose = Pose.from_state(st)
@@ -815,22 +847,33 @@ class VLAPilot:
         lf = lf if isinstance(lf, dict) else None
         cur, step = vm.current_decision(self.backend)
         gd, gb, frac = vm.goal_and_box(pose, self.goal_xy, det)
+        zeroed = tk.reason == "suspended"
+        self.n_fsm_on_zeroed += int(zeroed and fsm_stepped)
         row = {"pilot": "vla",
                **vm.decision_fields(tk, cur, step, hint_source=self.hint_source,
                                     link_failure=lf),
                "pilot_held": not flies,
+               # The raw action this tick was the suspended tracker's zero.
+               "raw_zeroed_by_hold": zeroed,
                **vm.mission_fields(gd, gb, frac, det, det_age, self.detector_hint)}
+        self._t_last = now
+        end = None
         if flies:
             self.backend.resume()
+            self.monitor.unhold(now)
+            try:
+                alive = bool(self.server_alive())
+            except Exception:                                 # noqa: BLE001
+                alive = False
+            end = self.monitor.update(now, pose, tk, goal_xy=self.goal_xy, det=det,
+                                      det_age_s=det_age, server_alive=alive, link_failure=lf)
         else:
+            # Held: the tracker is suspended and the mission's stop rules
+            # wait (MissionMonitor.hold; review of 4a0da6d, P3-9): no VLA
+            # end may name a mission the rail is holding.
             self.n_held += 1
             self.backend.suspend()
-        try:
-            alive = bool(self.server_alive())
-        except Exception:                                     # noqa: BLE001
-            alive = False
-        end = self.monitor.update(now, pose, tk, goal_xy=self.goal_xy, det=det,
-                                  det_age_s=det_age, server_alive=alive, link_failure=lf)
+            self.monitor.hold(now)
         self.authors[tk.author] += 1
         hud = vm.vla_hud(t_mission, st.up, tk, cur, step, touched=touched,
                          shield_on=shield_on, mission=self.mission,
@@ -843,6 +886,8 @@ class VLAPilot:
         act() ran): at the mission's end, before the landing's time joins
         that span. Never raises."""
         if self._frozen is None:
+            if self._t_last is not None:
+                self.monitor.unhold(self._t_last)     # a hold open at the end counts
             try:
                 self._frozen = self.backend.stats()
             except Exception as exc:                          # noqa: BLE001
@@ -1837,6 +1882,7 @@ class ProjectAirSimCamera:
         self.view_switch, self.robot, self.attach = view_switch, robot, attach
         self.chase = chase
         self.vla_frames = vla_frames
+        self._live_topics: list | None = None
         self.client = self.world = self.drone = None
         self.collisions: list[dict] = []
         self.collisions_subscribed = False
@@ -1861,6 +1907,7 @@ class ProjectAirSimCamera:
         topics = getattr(self.client, "topics", None)
         prefix = f"{world.parent_topic}/robots/{self.robot}"
         live = None if topics is None else [t for t in topics if str(t).startswith(prefix)]
+        self._live_topics = live
         self.scene_record.update(parent_topic=world.parent_topic,
                                  robot_topics_live=None if live is None else len(live))
         if live is not None and not live:
@@ -1917,6 +1964,17 @@ class ProjectAirSimCamera:
                 raise RuntimeError(f"--pilot vla: the robot config has no {missing} "
                                    f"(AerialVLA's {VLA_CAMERAS['front']} / "
                                    f"{VLA_CAMERAS['down']}, robot_citylife_ardupilot.jsonc)")
+            if self.attach and self._live_topics is not None:
+                # Attached, the robot is the record's, not what the desktop
+                # loaded: the cameras must be live (rail.select_vla_cameras
+                # renders them only for a VLA run or --vla-cameras).
+                dead = [c for c in VLA_CAMERAS.values()
+                        if not any(f"/sensors/{c}/" in str(t) for t in self._live_topics)]
+                if dead:
+                    raise RuntimeError(
+                        f"--pilot vla: the scene the desktop loaded serves no {dead}: load "
+                        f"it with --vla-cameras (run_pas_ardupilot.ps1 -Step scene "
+                        f"-VlaCameras) or from a --pilot vla node")
             self.client.subscribe(self.drone.sensors[VLA_CAMERAS["front"]]["scene_camera"],
                                   lambda _, m: fr.put_front(m))
             self.client.subscribe(self.drone.sensors[VLA_CAMERAS["down"]]["scene_camera"],
@@ -3703,6 +3761,17 @@ def build_parser() -> argparse.ArgumentParser:
                          "before asking again (vla_mission.LATE_REPLY_WAIT_S)")
     ap.add_argument("--vla-cruise-mps", type=float, default=1.0)
     ap.add_argument("--vla-speed-cap-mps", type=float, default=2.0)
+    ap.add_argument("--vla-cameras", action="store_true",
+                    help="render AerialVLA's VLAFront / VLADown without --pilot vla: the "
+                         "scene step (--scene-only) a --pilot vla node attaching to it "
+                         "needs. --pilot vla renders them itself; no other run does")
+    ap.add_argument("--allow-unstamped-pipelined", action="store_true",
+                    help="allow --cadence pipelined on this rail, recorded: its pose ring "
+                         "has no sim stamps, so an image is paired with the EKF pose at its "
+                         "ARRIVAL (0.1-0.4 m and 3-9 deg off while flying pipelined)")
+    ap.add_argument("--approach-radius-m", type=float, default=10.0,
+                    help="approach: reached when the subject's true range (evaluation "
+                         "only) ends within this")
     # the start gate and the detector's selection (StartGate, build_grounder)
     ap.add_argument("--start-when-seen", type=int, default=START_WHEN_SEEN,
                     help="hover after take-off until the detector has produced this "
@@ -3871,6 +3940,15 @@ def check_pilot_args(args) -> None:
                          "attach to a running one with --vla-server HOST:PORT")
     if not 0 < args.vla_port < 65536:
         raise SystemExit(f"--vla-port {args.vla_port} is not a port")
+    if args.cadence == "pipelined" and not args.allow_unstamped_pipelined:
+        # Review of 4a0da6d, P2-5: this rail's pose ring is fed with EKF
+        # poses and no sim stamps, so a capture's time is its frame's ARRIVAL
+        # and its pose the EKF interpolated there. Stop-and-go captures while
+        # hovering (cm, under a degree off); pipelined captures in motion.
+        raise SystemExit("--cadence pipelined on this rail pairs each image with the EKF "
+                         "pose at its arrival, not its capture (no sim stamps): 0.1-0.4 m "
+                         "and 3-9 deg off in flight. Fly stop_and_go, or pass "
+                         "--allow-unstamped-pipelined to fly it recorded as such")
     for k in ("vla_decision_timeout_s", "warmup_max_latency_s", "vla_cruise_mps",
               "vla_speed_cap_mps", "vla_hello_timeout_s"):
         v = getattr(args, k)
@@ -3924,8 +4002,124 @@ def vla_server_plan(args, out: Path):
                         log_path=Path(out) / "vla_server_stdout.log")
 
 
+def rail_topology_evidence(args, sim_cfg: dict | None, link) -> tuple[dict, dict]:
+    """(the evidence topology.classify() judges, the link's own evidence):
+    the camera source, the robot's controller, where the simulator runs, the
+    link, the autopilot's heartbeat, the hil evidence and gate G1."""
+    link_ev = link.evidence()
+    ev = {"camera_source": args.camera,
+          "controller_type": sim_cfg["controller_type"] if sim_cfg else None,
+          "sim_same_desktop": (topo.sim_on_this_desktop(args.sim_host)
+                               if args.camera == "projectairsim" else None),
+          "link": link.name,
+          "autopilot": {k: link_ev.get(k) for k in ("heartbeat", "is_ardupilot",
+                                                    "heartbeat_seen", "ardupilot_seen")},
+          "topology_evidence": link_ev.get("topology_evidence") or {},
+          "g1": g1_status(args.g1_verdict)}
+    return ev, link_ev
+
+
+def vla_manifest_model(VM, identity: dict | None, rec: dict) -> dict:
+    """build_manifest's model arguments for a VLA run (vla_mission.
+    manifest_for's rule): the server's reported digest for a real AerialVLA
+    identity, else the stand-in's own fake: id."""
+    if rec.get("is_vla"):
+        return {"model_id": VM.MODEL_ID, "reported_digest": identity["weights_sha256"],
+                "weight_paths": rec.get("weight_paths")}
+    sid = str((identity or {}).get("id") or "unknown")
+    return {"model_id": sid if sid.startswith("fake:") else f"fake:{sid}"}
+
+
+def _vla_refusal_records(args, out: Path, VM, exc: "PreArmRefused", *, rec, policy,
+                         policy_source: dict, scene_path, sim_cfg, link, backend, srv,
+                         identity, vla_rec: dict, warmup, frames, saver,
+                         clock_record: dict) -> dict:
+    """A run refused in the pre-arm step (the VLA's warm-up gate), on record
+    as the city rail records one (review of 4a0da6d, P2-3; until then it left
+    events.jsonl alone, which the Dashboard does not read): the episode's
+    mission_end, metrics.json (end_reason the refusal's kind, the warm-up,
+    the pilot record, the server's record - this closes the VLA side and
+    writes vla_captures.jsonl, _vla_records) and manifest.json, stamped with
+    the rail's own topology. Nothing was armed: no rates, dwell or KPI table
+    exist. Returns the metrics."""
+    why = f"refused before arming: {exc.kind}: {exc}"
+    try:
+        rec.end(why)
+    except Exception as e:                                    # noqa: BLE001
+        print(f"[node]   *** mission_end not written: {e}")
+    ev, _ = rail_topology_evidence(args, sim_cfg, link)
+    cls = topo.classify(ev)
+    metrics = {"tag": out.name, "rail": "projectairsim-ardupilot", "episode_id": rec.episode_id,
+               "topology": cls["stamp"], "grant_topology": cls["grant"],
+               "topology_evidence": ev, "shield": args.shield, "ticks": 0,
+               "end_reason": exc.kind, "refused": {"kind": exc.kind, "why": str(exc)},
+               "not_measured": "no mission flown: " + why,
+               "policy_source": policy_source, "rule_clock": clock_record, "sim_config": sim_cfg,
+               "seed": args.seed,
+               "params": {k: getattr(args, k, None) for k in (
+                   "object", "cruise_alt", "seed", "link", "camera", "scene_mode", "pilot",
+                   "mission", "goal", "vla_object", "cadence", "vla_decision_timeout_s",
+                   "first_decision_timeout_s", "warmup_max_latency_s", "late_reply_wait_s")}}
+    try:
+        metrics.update(_vla_records(args, out, VM, None, backend, srv, identity, vla_rec,
+                                    warmup, frames, saver, [], exc.kind))
+    except Exception as e:                                    # noqa: BLE001
+        metrics["vla_records_error"] = f"{type(e).__name__}: {e}"
+    metrics["end_reason_means"] = VM.NOT_FLOWN_ENDS.get(exc.kind)
+    manifest = build_manifest(policy.policy_hash, seed=args.seed, scene_path=scene_path,
+                              topology=cls["stamp"], **vla_manifest_model(VM, identity, vla_rec))
+    (out / "metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    (out / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    print(f"[node]   *** REFUSED before arming ({exc.kind}): {exc}; metrics.json and "
+          f"manifest.json say so")
+    return metrics
+
+
+def gpu_memory(run_cmd=subprocess.run, timeout_s: float = 5.0) -> dict:
+    """The GPU's memory in MiB (the first GPU nvidia-smi lists: free, used,
+    total), best effort, for the VLA run's record (review of 4a0da6d, P2-7:
+    bf16 AerialVLA ~17 GB + OWL-ViT + Unreal on the 24 GB card is not
+    measured). nvidia-smi, never a GPU library in the flight process; any
+    failure is recorded as {"error": why}, never a number."""
+    cmd = ["nvidia-smi", "--query-gpu=memory.free,memory.used,memory.total",
+           "--format=csv,noheader,nounits"]
+    try:
+        p = run_cmd(cmd, capture_output=True, text=True, timeout=timeout_s, check=False)
+    except Exception as exc:                                  # noqa: BLE001
+        return {"error": f"{type(exc).__name__}: {exc}"}
+    if getattr(p, "returncode", 1) != 0:
+        return {"error": f"nvidia-smi exited {getattr(p, 'returncode', None)}: "
+                         f"{str(getattr(p, 'stderr', '') or '').strip()[:200]}"}
+    lines = [ln for ln in str(getattr(p, "stdout", "") or "").splitlines() if ln.strip()]
+    try:
+        free, used, total = (int(float(v)) for v in lines[0].split(","))
+    except (IndexError, ValueError):
+        return {"error": f"nvidia-smi said {lines[:1]!r}"}
+    return {"free_mib": free, "used_mib": used, "total_mib": total, "gpus": len(lines),
+            "source": "nvidia-smi"}
+
+
+def approach_scores(rows: list[dict], radius_m: float, *, scored: bool) -> dict:
+    """The approach's mission score (review of 4a0da6d, P3-11): from the
+    subject's TRUE range on each row (subject_range_m, SubjectTruth's,
+    evaluation only - it never reached the hint or the stop rule), reached
+    when the last read range is within `radius_m`. None, with why, when the
+    truth did not score (too few ticks read, or its frame disagrees)."""
+    if not scored:
+        return {"reached_goal": None,
+                "reached_goal_why": "the subject's simulator pose did not score this run "
+                                    "(subject_truth: too few ticks read, or its frame "
+                                    "disagrees), so the approach has no score"}
+    d = [float(r["subject_range_m"]) for r in rows if r.get("subject_range_m") is not None]
+    if not d:
+        return {"reached_goal": None, "reached_goal_why": "no row read the subject's range"}
+    return {"target_truth_dist_start_m": round(d[0], 2), "target_truth_dist_end_m": round(d[-1], 2),
+            "target_truth_dist_min_m": round(min(d), 2), "reached_radius_m": radius_m,
+            "reached_goal": bool(d[-1] <= radius_m)}
+
+
 def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, hfov: float,
-                  frames, live, clock, client=None) -> tuple:
+                  frames, live, clock, client=None, run_cmd=subprocess.run) -> tuple:
     """The VLA side up to the flight: the server's hello (waited for up to
     --vla-hello-timeout-s, the heartbeat beating), its identity judged
     (vla_mission.identity_is_vla: a stand-in only with --vla-fake-output or
@@ -3959,6 +4153,8 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
                          f"pass --allow-stand-in to fly a stand-in, recorded as one")
     print(f"[vla]    hello: {identity_of(identity)}"
           + ("" if is_vla else f"  *** STAND-IN, not a VLA: {why_not}"))
+    # The GPU's memory with the model loaded (review of 4a0da6d, P2-7).
+    gpu = {"at_hello": gpu_memory(run_cmd)}
     weight_paths = (None if (args.no_local_weights or not is_vla)
                     else VM.local_weight_paths(identity))
     if client is None:
@@ -4003,13 +4199,15 @@ def _vla_bring_up(args, out: Path, VM, srv, policy, shield_on: bool, grounder, h
     return identity, backend, {"is_vla": is_vla, "why_not": why_not,
                                "weight_paths": weight_paths, "client": client,
                                "hint_source": hint_src, "detector_hint": det_hint,
-                               "pilot_alt_band": alt_band,
+                               "pilot_alt_band": alt_band, "gpu_memory": gpu,
                                "tracker": {k: getattr(tcfg, k)
                                            for k in tcfg.__dataclass_fields__}}
 
 
 def _vla_records(args, out: Path, VM, vla, backend, srv, identity, rec: dict, warmup,
-                 frames, saver, rows: list[dict], end_reason: str) -> dict:
+                 frames, saver, rows: list[dict], end_reason: str, *,
+                 gate_rec: dict | None = None, detector_id: str | None = None,
+                 approach: dict | None = None) -> dict:
     """metrics.json's VLA part, the city rail's records (demo/vla_mission):
     `pilot` (pilot_entry: guardrail.manifest.pilot_record kind "vla" with the
     server's reported digest only for a real AerialVLA identity, else kind
@@ -4060,23 +4258,48 @@ def _vla_records(args, out: Path, VM, vla, backend, srv, identity, rec: dict, wa
                             "hint": None if hint_src is None else hint_src.stats(),
                             "detector_hint": None if det_hint is None else det_hint.stats(),
                             "bearing_gain": None if goto else args.bearing_gain,
-                            "detector": None if goto else "demo/follow_vlm.DETECTOR_ID",
+                            # What ran (review of 4a0da6d, P3-10): the
+                            # detector's own id, None when none ran.
+                            "detector": detector_id,
                             "monitor": None if vla is None else vla.monitor.summary()},
                 "warmup": warmup,
                 "pilot_alt_band": rec.get("pilot_alt_band"),
                 "tracker": rec.get("tracker"),
                 "cadence": args.cadence,
+                "allow_unstamped_pipelined": bool(getattr(args, "allow_unstamped_pipelined",
+                                                          False)),
                 # Ticks on which the pilot's action did not fly (the FSM's
                 # brake, a stop it advised, a hold, a fault, a takeover): the
-                # tracker was suspended through them.
+                # tracker was suspended through them; stale-link spans held it
+                # too; and ticks on which the FSM stepped on the suspended
+                # tracker's zero (its recovery timer ran on a zero the pilot
+                # never chose; review of 4a0da6d, P3-13).
                 "held_ticks": None if vla is None else vla.n_held,
+                "stale_link_holds": None if vla is None else vla.n_stale_holds,
+                "fsm_ticks_on_zeroed_raw": None if vla is None else vla.n_fsm_on_zeroed,
+                # What the start gate did (P3-10: it said "kept" with
+                # --start-when-seen 0).
                 "start_gate": ("skipped: a GOTO has no detected subject" if goto else
-                               "kept: the detector-subject gate (--start-when-seen)"),
+                               "ran: the detector-subject gate (--start-when-seen "
+                               f"{(gate_rec or {}).get('needed')})"
+                               if (gate_rec or {}).get("enabled") else
+                               "not run: --start-when-seen 0"),
+                # The GPU's memory at the hello and after the warm-up (P2-7).
+                "gpu_memory": rec.get("gpu_memory"),
                 "frames": {"capture": frames.stats() if callable(getattr(frames, "stats", None))
-                           else None, "saved": saved}},
+                           else None, "saved": saved,
+                           # How a capture's time and pose were taken on this
+                           # rail (P2-5): its pose ring carries EKF poses and no
+                           # sim stamps.
+                           "capture_time_basis": (
+                               "arrival: this rail's pose ring carries EKF poses with no "
+                               "sim stamps, so a capture's time is its frame's arrival "
+                               "and its pose the EKF interpolated there (stop-and-go "
+                               "captures while hovering)")}},
         "land": VM.land_record(rows, records, goal),
-        **VM.mission_scores(args.mission, rows, goal_xy=goal,
-                            arrive_radius_m=args.arrive_radius_m),
+        **(VM.mission_scores(args.mission, rows, goal_xy=goal,
+                             arrive_radius_m=args.arrive_radius_m) if goto else
+           (approach or {"reached_goal": None})),
     }
 
 
@@ -4085,10 +4308,14 @@ def sim_configs(args, out: Path):
     this node loads the scene, the template marked "attach" when it does not."""
     if args.camera != "projectairsim":
         return None, None
+    # AerialVLA's cameras are rendered for a VLA run only, or for a scene
+    # step an attaching VLA node will use (--vla-cameras): rail.
+    # select_vla_cameras, review of 4a0da6d, P2-4. Recorded as vla_cameras.
+    vla_cams = getattr(args, "pilot", "servo") == "vla" or bool(getattr(args, "vla_cameras", False))
     if args.scene_mode == "attach":
-        return rail.write_attach_configs(out / "pas_config"), None
+        return rail.write_attach_configs(out / "pas_config", vla_cameras=vla_cams), None
     plan = rail.plan_network(args.network, args.windows_ip, args.wsl_ip)
-    return rail.write_sim_configs(out / "pas_config", plan), plan
+    return rail.write_sim_configs(out / "pas_config", plan, vla_cameras=vla_cams), plan
 
 
 def dry_run(args, out: Path) -> dict:
@@ -4420,6 +4647,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
     vla_saver = vla_srv = vla_backend = vla = vla_identity = None
     vla_warmup: dict | None = None
     vla_rec: dict = {}
+    # vla_captures.jsonl: written with the records, else on the way out (a
+    # crash after the take-off; review of 4a0da6d, P3-15).
+    vla_captures_written = False
+    # How the Dashboard row ends when run() returns rather than raising
+    # (status, detail): a run refused before arming ends "failed", with why.
+    live_end: tuple | None = None
     if vla_on and vla_frames is None:
         vla_saver = VM.FrameSaver(out / "vla_frames")
         vla_frames = VM.VLAFrames(obs, saver=vla_saver, clock=clock)
@@ -4529,7 +4762,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # ---- the VLA server's hello and the pilot, before ArduPilot starts
             vla_identity, vla_backend, vla_rec = _vla_bring_up(
                 args, out, VM, vla_srv, policy, shield_on, grounder, hfov, vla_frames,
-                live, clock, vla_client)
+                live, clock, vla_client, run_cmd=run_cmd)
         if args.start_sitl and plan is not None:
             cmd = rail.wsl_start_command(args.wsl_distro, plan,
                                          mavros=(args.link == "mavros"))
@@ -4650,6 +4883,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         # as the detector's wait reads it.
                         clock=clock, sleep=sleep, idle=link.pump)
                     vla_warmup["phase"] = phase
+                    vla_rec["gpu_memory"]["after_warmup"] = gpu_memory(run_cmd)
                     rec.event("vla_warmup", **vla_warmup)
                     print(f"[vla]    warm-up: {vla_warmup.get('kind')} in "
                           f"{vla_warmup.get('rtt_s')} s round trip (gate "
@@ -4661,10 +4895,25 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         print(f"[link]   {link.name}: bring-up to {args.cruise_alt} m")
         stage = "the take-off"
         live.beat(detail=f"EKF, arming and take-off to {args.cruise_alt:g} m")  # memory only
-        if "before_arm" in inspect.signature(link.bring_up).parameters:
-            link.bring_up(args.cruise_alt, before_arm=before_arm)
-        else:
-            link.bring_up(args.cruise_alt)
+        try:
+            if "before_arm" in inspect.signature(link.bring_up).parameters:
+                link.bring_up(args.cruise_alt, before_arm=before_arm)
+            else:
+                link.bring_up(args.cruise_alt)
+        except PreArmRefused as exc:
+            # REFUSED IN THE PRE-ARM STEP, DISARMED (the VLA's warm-up gate):
+            # nothing was armed. On record as the city rail records it
+            # (review of 4a0da6d, P2-3) and exit 4; the outer finally stops
+            # the server and the rest, and the Dashboard row ends "failed"
+            # saying why.
+            live_end = ("failed", f"refused before arming ({exc.kind}): {exc}")
+            _vla_refusal_records(args, out, VM, exc, rec=rec, policy=policy,
+                                 policy_source=policy_source, scene_path=scene_path,
+                                 sim_cfg=sim_cfg, link=link, backend=vla_backend, srv=vla_srv,
+                                 identity=vla_identity, vla_rec=vla_rec, warmup=vla_warmup,
+                                 frames=vla_frames, saver=vla_saver, clock_record=clock_record)
+            vla_captures_written = True
+            return EXIT_REFUSED
         # Armed and at altitude: from here on no way out of run() skips a
         # LAND request (the loop's finally, else the net in the outer one).
         # A bring-up that raised after arming is caught there by the
@@ -5021,6 +5270,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                         gap_from[len(rows) - 1] = round(t_tick - t0, 3)
                     if stale_since is None:
                         stale_since = t_tick
+                        if vla is not None:
+                            # The VLA's step is not being flown through the
+                            # span (one zero hold, then nothing): the tracker
+                            # is suspended and the mission's timers stop until
+                            # a tick flies again (VLAPilot.hold; review of
+                            # 4a0da6d, P3-13).
+                            vla.hold(t_tick)
                         # STALE_HOLD (review 2026-10-19). Silence alone left
                         # the aircraft flying the last velocity setpoint until
                         # ArduCopter's GUID_TIMEOUT (3 s) - a setpoint itself
@@ -5453,7 +5709,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                     vla_end, vla_row, vla_hud = vla.after(
                         t_tick, st, flies=(flown is not None and setpoint == "pass"
                                            and not stop_advised),
-                        touched=touched, shield_on=shield_on, t_mission=now)
+                        touched=touched, shield_on=shield_on, t_mission=now,
+                        fsm_stepped=fsm_out is not None)
                 row = {
                     "t": round(now, 3), "tick": tick,
                     "x": round(st.x, 3), "y": round(st.y, 3), "up": round(st.up, 3),
@@ -5577,8 +5834,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                             touched=touched)
                         if vla_hud is not None:
                             # The city rail's VLA panel (vla_mission.hud_lines)
-                            # beside this rail's banner and rule panel.
-                            hud.update(vla_hud)
+                            # beside this rail's banner and rule panel, with
+                            # this rail's own label kept: the FSM's state, an
+                            # autopilot that took over, SHIELD OFF
+                            # (vla_mission.panel_lines; review of 4a0da6d, P3-14).
+                            hud.update(vla_hud,
+                                       rail_label=str(hud.get("mode_label") or "")
+                                       .split(" | ", 1)[-1] or None)
                         recorder.set_hud(hud, info["det"] if info["fresh"] else None)
                     except Exception as exc:                  # noqa: BLE001
                         # A recording fault costs a frame's overlay, never the
@@ -5786,16 +6048,7 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                   f"{n_stale} stale-link and {n_no_state} no-state tick(s) of "
                   f"{len(tick_starts)})")
 
-        link_ev = link.evidence()
-        ev = {"camera_source": args.camera,
-              "controller_type": sim_cfg["controller_type"] if sim_cfg else None,
-              "sim_same_desktop": (topo.sim_on_this_desktop(args.sim_host)
-                                   if args.camera == "projectairsim" else None),
-              "link": link.name,
-              "autopilot": {k: link_ev.get(k) for k in ("heartbeat", "is_ardupilot",
-                                                        "heartbeat_seen", "ardupilot_seen")},
-              "topology_evidence": link_ev.get("topology_evidence") or {},
-              "g1": g1_status(args.g1_verdict)}
+        ev, link_ev = rail_topology_evidence(args, sim_cfg, link)
         cls = topo.classify(ev)
         simulated = args.camera == "projectairsim"
         qualified = cls["rail_qualified_by_g1"] is True
@@ -5935,11 +6188,16 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # (subject_truth, TRUTH_MIN_COVERAGE); with no pose, or too few,
             # there is none to report: None, never 0 - except a dwell that
             # WAS seen, kept as its lower bound (standoff_basis says which).
-            "frac_within_30m": tsum["frac_within_30m"],
+            # A VLA GOTO follows nothing: "not applicable" (None), so
+            # guardrail.kpi decides its mission on reached_goal instead of
+            # an unscored follow (review of 4a0da6d, P2-2).
+            "frac_within_30m": None if vla_goto else tsum["frac_within_30m"],
             "standoff_s": tsum["standoff_s"],
             "standoff_basis": tsum["standoff_basis"],
             "standoff_min_range_m": tsum["min_range_m"],
-            "follow_scored": scored,
+            "follow_scored": None if vla_goto else scored,
+            "follow_scored_why": ("not applicable: a VLA GOTO has no subject to follow; "
+                                  "reached_goal scores it" if vla_goto else None),
             "subject_truth": tsum,
             "fsm": (dict(fsm.summary(), fault=fsm_fault,
                          theta_basis=theta_basis(horizon),
@@ -6082,9 +6340,13 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # mission's score and LAND, vla_captures.jsonl. A fault here is
             # recorded, never raised: the aircraft has landed by now.
             try:
-                metrics.update(_vla_records(args, out, VM, vla, vla_backend, vla_srv,
-                                            vla_identity, vla_rec, vla_warmup, vla_frames,
-                                            vla_saver, rows, end_reason))
+                metrics.update(_vla_records(
+                    args, out, VM, vla, vla_backend, vla_srv, vla_identity, vla_rec,
+                    vla_warmup, vla_frames, vla_saver, rows, end_reason, gate_rec=gate_rec,
+                    detector_id=None if vla_goto else (fv or _fv()).DETECTOR_ID,
+                    approach=(None if vla_goto else
+                              approach_scores(rows, args.approach_radius_m, scored=scored))))
+                vla_captures_written = True
             except Exception as exc:                              # noqa: BLE001
                 metrics["vla_records_error"] = f"{type(exc).__name__}: {exc}"
                 print(f"[vla]    *** records incomplete: {metrics['vla_records_error']}")
@@ -6108,16 +6370,8 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
         common = dict(policy_hash=policy.policy_hash, model_id=NO_VLA, seed=args.seed,
                       scene_path=scene_path, sim_speedup=None if scene_path else speedup)
         if vla_on:
-            # The model that answered (vla_mission.manifest_for's rule): the
-            # server's reported digest for a real AerialVLA identity, the
-            # stand-in's own fake: id otherwise.
-            if vla_rec.get("is_vla"):
-                common.update(model_id=VM.MODEL_ID,
-                              reported_digest=vla_identity["weights_sha256"],
-                              weight_paths=vla_rec.get("weight_paths"))
-            else:
-                sid = str((vla_identity or {}).get("id") or "unknown")
-                common["model_id"] = sid if sid.startswith("fake:") else f"fake:{sid}"
+            # The model that answered (vla_manifest_model).
+            common.update(vla_manifest_model(VM, vla_identity, vla_rec))
         refusal = None
         if offered:
             try:
@@ -6397,7 +6651,12 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
                                vla_backend.close if vla_backend is not None else
                                getattr(vla_rec.get("client"), "close", None))),
                     ("frames", None if vla_saver is None else vla_saver.close),
-                    ("server", None if vla_srv is None else vla_srv.stop)):
+                    ("server", None if vla_srv is None else vla_srv.stop),
+                    # The captures sent, after a crash too (P3-15).
+                    ("captures", None if (not vla_on or vla_captures_written
+                                          or vla_frames is None) else
+                     lambda: _vm().write_jsonl(out / "vla_captures.jsonl",
+                                               list(getattr(vla_frames, "log", None) or [])))):
                 if fn is None:
                     continue
                 try:
@@ -6421,8 +6680,11 @@ def run(args, *, link=None, camera=None, grounder=None, obs=None,
             # as failed). A Ctrl+C the mission loop caught is "stopped" too
             # (`interrupted` above), unless something failed after it.
             _leaving = _leaving or sys.exc_info()[0]
-            live.stop(("stopped" if interrupted else "ok") if _leaving is None else
-                      "stopped" if issubclass(_leaving, KeyboardInterrupt) else "failed")
+            if live_end is not None and _leaving is None:
+                live.stop(*live_end)
+            else:
+                live.stop(("stopped" if interrupted else "ok") if _leaving is None else
+                          "stopped" if issubclass(_leaving, KeyboardInterrupt) else "failed")
 
 
 def main(argv=None) -> int:

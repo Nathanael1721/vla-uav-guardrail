@@ -366,10 +366,28 @@ def check_robot_config(cfg: dict) -> list[str]:
     return problems
 
 
-def render_robot_config(template: dict, plan: NetworkPlan) -> dict:
-    """The template with this run's two addresses; refuses a config ArduPilot
-    could not fly rather than handing it to the simulator."""
-    cfg = copy.deepcopy(template)
+# AerialVLA's two cameras in the robot template (perception_node --pilot vla,
+# to-do VLA-03). Rendered into a run's config only when that run asks for them
+# (select_vla_cameras; review of 4a0da6d, P2-4): in the template they would
+# render two 256x256 captures every 0.1 s on every detector-pilot flight too.
+VLA_CAMERA_IDS = ("VLAFront", "VLADown")
+
+
+def select_vla_cameras(cfg: dict, on: bool) -> dict:
+    """`cfg` with AerialVLA's cameras (VLA_CAMERA_IDS) kept when `on`, else
+    dropped, so the simulator neither creates nor renders them. In place;
+    returns `cfg`."""
+    if not on:
+        cfg["sensors"] = [s for s in cfg.get("sensors", [])
+                          if s.get("id") not in VLA_CAMERA_IDS]
+    return cfg
+
+
+def render_robot_config(template: dict, plan: NetworkPlan, vla_cameras: bool = False) -> dict:
+    """The template with this run's two addresses (and AerialVLA's cameras
+    only with `vla_cameras`); refuses a config ArduPilot could not fly rather
+    than handing it to the simulator."""
+    cfg = select_vla_cameras(copy.deepcopy(template), vla_cameras)
     st = cfg.setdefault("controller", {}).setdefault("ardupilot-settings", {})
     st["ardupilot-ip"] = plan.ardupilot_ip
     st["local-host-ip"] = plan.sim_bind_ip
@@ -394,20 +412,22 @@ def render_scene(template: dict, robot_config_name: str) -> dict:
 
 def write_sim_configs(out_dir: str | Path, plan: NetworkPlan,
                       scene_path: str | Path = SCENE_TEMPLATE,
-                      robot_path: str | Path = ROBOT_TEMPLATE) -> dict:
+                      robot_path: str | Path = ROBOT_TEMPLATE,
+                      vla_cameras: bool = False) -> dict:
     """Render this run's scene + robot config into `out_dir` (plain JSON, so
     any JSONC reader accepts them) and return where they went and their hashes.
 
     The directory is what `World(client, scene_name, sim_config_path=...)`
     reads, so the configs the simulator receives are the files kept with the
-    run - evidence, not a reconstruction.
+    run - evidence, not a reconstruction. `vla_cameras`: whether AerialVLA's
+    cameras are in it (select_vla_cameras), recorded as such.
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     scene_t = load_jsonc(scene_path)
     robot_t = load_jsonc(robot_path)
     robot_name = Path(robot_path).name
-    robot = render_robot_config(robot_t, plan)
+    robot = render_robot_config(robot_t, plan, vla_cameras=vla_cameras)
     scene = render_scene(scene_t, robot_name)
     scene_file = out / Path(scene_path).name
     robot_file = out / robot_name
@@ -426,12 +446,14 @@ def write_sim_configs(out_dir: str | Path, plan: NetworkPlan,
             "controller_type": robot["controller"]["type"],
             "home": list(home_geo_point(scene)),
             "clock_ratio": scene_clock_ratio(scene),
+            "vla_cameras": bool(vla_cameras),
             "network": plan.to_dict()}
 
 
 def write_attach_configs(out_dir: str | Path,
                          scene_path: str | Path = SCENE_TEMPLATE,
-                         robot_path: str | Path = ROBOT_TEMPLATE) -> dict:
+                         robot_path: str | Path = ROBOT_TEMPLATE,
+                         vla_cameras: bool = False) -> dict:
     """The configs a node that ATTACHES to an already-loaded scene keeps.
 
     The hil node on the Jetson Orin must not load the scene: a reload resets
@@ -439,12 +461,14 @@ def write_attach_configs(out_dir: str | Path,
     desktop loaded the rendered copy (`-Step scene`) and knows the addresses;
     the Orin does not, so its record keeps the template with the network
     marked "attach" instead of inventing addresses. The scene id, home point,
-    clock and sensors - everything the node reads - are the template's.
+    clock and sensors - everything the node reads - are the template's
+    (AerialVLA's cameras only with `vla_cameras`: what the node expects the
+    desktop to have loaded; perception_node checks the live topics).
     """
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     robot_name = Path(robot_path).name
-    robot = load_jsonc(robot_path)
+    robot = select_vla_cameras(load_jsonc(robot_path), vla_cameras)
     problems = check_robot_config(robot)
     if problems:
         raise ValueError("robot template cannot be flown by ArduPilot: "
@@ -466,6 +490,7 @@ def write_attach_configs(out_dir: str | Path,
             "controller_type": robot["controller"]["type"],
             "home": list(home_geo_point(scene)),
             "clock_ratio": scene_clock_ratio(scene),
+            "vla_cameras": bool(vla_cameras),
             "network": net}
 
 

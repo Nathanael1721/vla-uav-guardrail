@@ -693,10 +693,20 @@ law on the detector's box) stays the default.
 
 A tick on which the pilot's action did not fly (the FSM's brake setpoint or
 a stop the Shield advised, Loiter / RTL / Land, a fault, a takeover) suspends
-the tracker (`backend.suspend`); the next tick that flies resumes it, and
-every answer to an image captured before is refused (`invalidated`). The rows
-say so (`pilot_held`, author `none` / `suspended`); metrics.vla `held_ticks`
-counts them.
+the tracker (`backend.suspend`) and stops the mission's timers
+(`MissionMonitor.hold`), and so does a stale-link span (`VLAPilot.hold`); the
+next tick that flies resumes both, and every answer to an image captured
+before is refused (`invalidated`). So no VLA end (no first decision, arrived
+without LAND, target lost, a failure streak) can end, or name, a mission the
+rail was holding (review of 4a0da6d, P3-9, P3-13). The rows say so
+(`pilot_held`, author `none` / `suspended`, `raw_zeroed_by_hold`); metrics.vla
+has `held_ticks`, `stale_link_holds` and `fsm_ticks_on_zeroed_raw` (the FSM
+stepping on the suspended tracker's zero, its recovery timer running on a
+zero the pilot never chose: recorded, not changed), the monitor's summary
+`held_s`. Held ticks never count as VLA-flown (`pilot.summary`:
+`ticks_held_by_rail`, excluded from `vla_authored_tick_share`), although the
+first tick of a hold is the tracker's `vla_step` (its raw action, not
+flown).
 
 ### Missions
 
@@ -706,10 +716,20 @@ counts them.
   street trees in the flight band within about a metre (`vla_mission`'s
   geometry notes), and it has no hand-written transfer to a clear start. No
   detector runs (`NoDetector`: OWL-ViT would share the GPU with the model for
-  nothing), `det_hz` is None, and no subject or stand-off binds.
+  nothing), `det_hz` is None, and no subject or stand-off binds. Its score is
+  `reached_goal`; `follow_scored` and `frac_within_30m` are None (not
+  applicable), so kpi.json does not call a GOTO an unscored follow.
 - `--mission approach`: the OWL-ViT box's phrase through `VLABridge` and
   `DetectorHint` (the turn since the box corrected), the box still placed for
-  the Shield's stand-offs as on the servo path.
+  the Shield's stand-offs as on the servo path. Its `reached_goal` is the
+  subject's true range at the end within `--approach-radius-m` (10 m),
+  evaluation only, None with why when the subject truth did not score.
+  bf16 (~17 GB) beside OWL-ViT and Unreal on the 24 GB card is unmeasured:
+  until it is, fly the approach with the low-VRAM option (nf4: `--vla-precision
+  nf4 --vla-attn sdpa --vla-merge`, agreeing with the reference on 25-33 % of
+  the probe inputs against bf16's 96 %, so say which); metrics.vla
+  `gpu_memory` has nvidia-smi's free / used memory at the hello and after the
+  warm-up.
 - Ends: the model's LAND (`vla_land`), landed by the node's own mission-end
   LAND (`link.land()`), never a mode request from the pilot; the other
   `MissionMonitor` ends (a dead, slow or erroring server, malformed answers,
@@ -721,8 +741,18 @@ counts them.
 
 It is a detector-subject gate (`StartGate`: N fresh inferences with a
 plausible box). A GOTO has no detected subject, so the gate is skipped and
-`start_gate` says why (`enabled: false`); the approach keeps it, so the VLA
-is asked to approach only a subject the detector has confirmed.
+`start_gate` says why (`enabled: false`); the approach keeps it
+(`--start-when-seen`), so the VLA is asked to approach only a subject the
+detector has confirmed. metrics.vla `start_gate` says which ran.
+
+### Cadence on this rail
+
+Stop-and-go only, unless `--allow-unstamped-pipelined` (recorded): this
+rail's pose ring carries EKF poses with no sim stamps, so a capture's time is
+its frame's arrival and its pose the EKF interpolated there (`VLAFrames`
+`t_capture_basis` "arrival", `pose_src` counts in metrics.vla.frames).
+Stop-and-go captures while hovering (centimetres, under a degree); pipelined
+captures in motion, 0.1-0.4 m and 3-9 deg off (review of 4a0da6d, P2-5).
 
 ### The server, the warm-up, the link
 
@@ -737,15 +767,29 @@ unless it is the started stand-in or `--allow-stand-in`; it is then recorded
 as kind `stub` and `fake:` in the manifest, and the KPI grade says so.
 
 The warm-up gate (`vla_mission.run_warmup`, three requests on live frames,
-the last judged) runs in the pre-arm step, disarmed; a refusal raises
-`PreArmRefused` (exit 4) and nothing is armed. So the VLA pilot needs a link
-with a pre-arm step; both real links have one, and a link without is
-refused. Each attempt first waits out the client's backoff: without that, a
-server error on the cold-start request made the next two "not sent" and the
-last-judged rule could not save the flight. `demo/vla_fly._warmup` has the
-same gap (not fixed in this change). While an answer is awaited the node
-pumps its autopilot link (`run_warmup(idle=link.pump)`), as its detector
-wait does: a cold first inference may take a minute.
+the last judged) runs in the pre-arm step, disarmed. A refusal arms nothing,
+exits 4 and is on record as the city rail records one: metrics.json
+(`end_reason` `warmup_refused`, `refused`, the warm-up, the pilot and server
+records), manifest.json (so the Dashboard lists it), vla_captures.jsonl, the
+episode's mission_end, a Dashboard row ending "failed" with why. The VLA
+pilot needs a link with a pre-arm step; both real links have one, and a link
+without is refused.
+
+Each warm-up request carries its own answer timeout
+(`RemoteVLA.submit(response_timeout_s=...)`): the first, the model's first
+inference ever (a fresh server does not warm itself), gets
+`--first-decision-timeout-s` (60 s), the others the decision timeout, and the
+record's `timeout_s` is the one the client enforced. Before each, the client
+is waited for (`vla_mission.wait_client_ready`: a request in flight, a
+timed-out request's late answer, an unpolled result, the backoff after a
+server error), bounded, with what it waited on recorded (`client_ready`).
+Until the review of 4a0da6d (P1-1, P2-8) the record said 60 s while the
+socket gave up at the client's 10 s, the late answer was then drained for
+up to 120 s and the next two requests were "not sent": a cold first answer
+over 10 s, or one refused first request, refused a healthy server. The city
+rail (`demo/vla_fly._warmup`) had the same gap and uses the same two pieces
+now. While an answer is awaited, and while the client is waited for, the
+node pumps its autopilot link (`idle=link.pump`), as its detector wait does.
 
 ### Commands
 
@@ -753,27 +797,37 @@ The simulator up on CityLife (the rail's own steps, `-Step scene` /
 `-Step sitl`), a server already serving AerialVLA (`demo/vla_server_v2.py
 serve --precision bf16 --attn sdpa --no-merge` in vla-real), then:
 
-    python demo\pas_ardupilot\perception_node.py --network nat --windows-ip <win> --wsl-ip <wsl> --pilot vla --mission goto --goal 60,-20 --vla-server 127.0.0.1:8790 --tag pas_vla_goto_01 --max-s 180 --save-view
+    python demo\pas_ardupilot\perception_node.py --network nat --windows-ip <win> --wsl-ip <wsl> --pilot vla --mission goto --goal 50,-78 --vla-server 127.0.0.1:8790 --tag pas_vla_goto_01 --max-s 180 --save-view
 
 or let the node start the server, naming its configuration:
 `--vla-precision bf16 --vla-attn sdpa --no-vla-merge` in place of
-`--vla-server`. `--dry-run` prints the server command it would start.
-(`--goal 60,-20` is an example in the Shield's frame, 25 m north of the
-spawn; it was not checked against the CityLife clearance map as section 13's
-goal was.)
+`--vla-server`. `--dry-run` prints the server command it would start. An
+attaching node (`--scene-mode attach`) needs the scene loaded with the VLA
+cameras: `run_pas_ardupilot.ps1 -Step scene -VlaCameras`.
+
+The example goal (50, -78) is 59.9 m from the spawn (35, -20), WNW of it
+(the spawn faces north, so the first phrase is "to your left "). Checked on
+the Shield's own distance field over the 6-14 m band map, as section 13's
+goal was: the straight line from the spawn never comes within 3.20 m of an
+occupied cell (the obstacle rule's margin is 3 m), the goal has 17.0 m and
+lies on the street mask (`tests/test_pas_vla.py`
+`test_the_documented_example_goal_is_clear_from_the_spawn`, which needs the
+gitignored `demo/out/citymap_citylife` and SKIPs without it). An earlier
+draft of this section gave (60, -20), an occupied cell (review of 4a0da6d,
+P2-6).
 
 ### Cameras (VLA-03)
 
-`robot_citylife_ardupilot.jsonc` carries `VLAFront` and `VLADown`, byte for
-byte the CityLife VLA configs' (256x256, 90 deg, pitch 0 / -90, every 0.1 s,
-not streamed), beside OWL-ViT's FrontCamera. In the one robot config, not a
-VLA copy: the scene is loaded before ArduPilot and the hil node only
-attaches, so both pilots fly the same scene hash. The cost on a detector run
-(two 256x256 renders per 0.1 s) is not measured. The camera subscribes the
-pair into `vla_mission.VLAFrames` (paired by stamp, the pose from the loop's
-ring) and refuses a robot config without them. (The to-do's probe string,
-`"id": "DownCamera"`, predates the CityLife naming; the down camera is
-`VLADown`.)
+The robot template `robot_citylife_ardupilot.jsonc` carries `VLAFront` and
+`VLADown`, byte for byte the CityLife VLA configs' (256x256, 90 deg, pitch 0
+/ -90, every 0.1 s, not streamed), beside OWL-ViT's FrontCamera. The run's
+rendered robot config keeps them only for `--pilot vla` or `--vla-cameras`
+(`rail.select_vla_cameras`; recorded as `sim_config.vla_cameras`): in every
+run they would add two 256x256 renders per 0.1 s beside FrontCamera and Chase,
+unmeasured (review of 4a0da6d, P2-4). So the detector and VLA arms' robot
+configs differ by exactly these two sensors. The camera subscribes the pair
+into `vla_mission.VLAFrames` and refuses a robot config without them; an
+attached node also refuses a scene whose live topics lack them.
 
 ### Records
 
@@ -783,9 +837,12 @@ decision's phrase, hint source, step and raw text, `pilot_held`, the goal or
 box fields; `metrics.pilot` (`vla_mission.pilot_entry`: kind `vla` only with
 the server's real identity, its digest as `reported_digest`, the backend's
 stats under `vla`, the summary); `metrics.vla` (mission, hint, monitor,
-warm-up, altitude clamp, held ticks, frames); `reached_goal` and `land`; the
-manifest's `vla_model_hash`; the HUD panel (`vla_mission.annotate_vla`, moved
-there from `vla_fly`) beside the rail's banner. `tools/todo.py classify_run`
+warm-up, altitude clamp, held ticks, frames, GPU memory); `reached_goal` and
+`land`; the manifest's `vla_model_hash`; the HUD panel (`vla_mission.
+annotate_vla`, moved there from `vla_fly`, with the rail's own label - the
+FSM's state, an autopilot takeover, SHIELD OFF - as its last line,
+`panel_lines`) beside the rail's banner. vla_captures.jsonl is written on
+the way out of a run that crashed too. `tools/todo.py classify_run`
 reads such a run as a VLA flight from these records (tested on the scripted
 server with a real-looking identity).
 
@@ -798,7 +855,10 @@ server with a real-looking identity).
   (approach) and the model on one GPU are not measured.
 - `scripts/run_pas_ardupilot.ps1` has no `-Pilot vla` switch yet: the flags
   reach the node through `-NodeArgs` (e.g. `-NodeArgs "--pilot","vla",
-  "--goal","60,-20","--vla-server","127.0.0.1:8790"`); the launcher does not
+  "--goal","50,-78","--vla-server","127.0.0.1:8790"`); the launcher does not
   check them before the simulator starts, as `run_vla_fly.ps1` does.
+- The free-VRAM record and the nf4 advice for the approach stand in for a
+  measurement of bf16 + OWL-ViT + Unreal on one 24 GB card, which has not
+  been made.
 - The FSM's N-in-T for a slow pilot (section 8) applies here unchanged; how
   often a stop-and-go VLA trips it is unmeasured.

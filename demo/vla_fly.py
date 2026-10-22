@@ -562,6 +562,12 @@ async def _warmup(args, drone, obs, frames, client, hint_src, State, quat_yaw, F
     attempts: list[dict] = []
     res: dict = {}
     for k in range(VM.WARMUP_REQUESTS):
+        # A ready client first (review of the ArduPilot rail's VLA pilot,
+        # 4a0da6d, P1-1 / P2-8): a late answer still awaited or the backoff
+        # after a server error made the next request "not sent" here, and a
+        # healthy server was refused. Blocking, so off the loop; the pose
+        # feed and the capture stay on it.
+        ready = await asyncio.to_thread(VM.wait_client_ready, client)
         cap = None
         t_end = time.time() + wait_frames_s
         while time.time() < t_end:
@@ -578,8 +584,11 @@ async def _warmup(args, drone, obs, frames, client, hint_src, State, quat_yaw, F
                     "attempts": attempts}
         hint = VM.warmup_hint(args.mission, hint_src, cap)
         live.beat(detail=f"warm-up inference {k + 1}/{VM.WARMUP_REQUESTS} before take-off")
+        # The request carries its own timeout (the first: the model's first
+        # inference ever), and the record says the one the client enforced.
         timeout_s = VM.warmup_timeout_s(k, args.decision_timeout_s, args.first_decision_timeout_s)
         res = await asyncio.to_thread(VM.warmup_infer, client, cap, hint, args.object, timeout_s)
+        res["client_ready"] = ready
         if res.get("seq") is not None:
             frames.commit(cap, hint, res["seq"], warmup=True)
         attempts.append(dict(res))

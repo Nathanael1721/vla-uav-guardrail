@@ -657,9 +657,10 @@ def test_the_ardupilot_vla_pilot_test_runs_in_ci():
     (perception_node --pilot vla, to-do VLA-07) and its VLA cameras (VLA-03).
     The file needs no simulator, ArduPilot, GPU or model: the rail's own
     stand-ins (tests/test_pas_ardupilot.py's FakeLink family) fly it against
-    tests/vla_fake_server.py on loopback. Its one Pillow check (the panel
-    drawn on the rail's frames) SKIPs where no job installs Pillow, counted
-    by its runner."""
+    tests/vla_fake_server.py on loopback. Its Pillow check (the panel drawn
+    on the rail's frames) SKIPs where no job installs Pillow, and its check
+    of the documented goal on the gitignored CityLife map where the map is
+    absent; its runner counts both."""
     assert "test_pas_vla.py" in _loop(), "not run in CI"
     src = (ROOT / "tests" / "test_pas_vla.py").read_text(encoding="utf-8")
     assert "import vla_fake_server" in src and "return SKIP" in src

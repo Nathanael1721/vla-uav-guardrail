@@ -31,13 +31,12 @@
 //                resizes each tile to 224x224 and stacks front over down into
 //                the 224x448 mosaic (guardrail/aerialvla_codec.build_mosaic).
 //                OWL-ViT keeps FrontCamera below (a 256 px frame would be
-//                upscaled 3x into its 768 input). In THIS file, not a VLA
-//                copy: the scene is loaded before ArduPilot starts and the
-//                hil node only attaches to it, so one robot serves both pilots
-//                and the detector and VLA arms fly the same scene hash. Their
-//                cost on a detector-pilot run: two 256x256 renders per 0.1 s
-//                beside FrontCamera's 768x432 scene and depth (about a fifth
-//                of its pixels); not measured on the RTX 4090.
+//                upscaled 3x into its 768 input). In this TEMPLATE; a run's
+//                rendered copy keeps them only for --pilot vla or
+//                --vla-cameras (rail.select_vla_cameras, recorded as
+//                sim_config.vla_cameras), so a detector-pilot flight renders
+//                neither (two more 256x256 captures every 0.1 s, unmeasured;
+//                review of 4a0da6d, P2-4).
 //
 // UNCHANGED, ON PURPOSE: the frame, mass, links and the four rotors are
 // identical to IAMAI's own ArduPilot example (client/python/example_user_scripts/

@@ -75,6 +75,7 @@ param(
     # Frames go to C: through a junction, as run_citylife_follow.ps1; "" = under demo\out.
     [string]$OffloadRoot = "C:\Users\natha\vla_drone_offload\demo_out",
     [switch]$Mavros,                    # -Step sitl: also start MAVROS 2 in WSL (dev)
+    [switch]$VlaCameras,                # -Step scene: render AerialVLA's VLAFront/VLADown for an attaching --pilot vla node
     [switch]$SkipSim,
     [switch]$KeepSim
 )
@@ -324,7 +325,12 @@ try {
     switch ($Step) {
         "sim" { Say "simulator up; Ctrl+C to stop"; while ($true) { Start-Sleep 5 } }
         "scene" {
-            & $Py $Node --scene-only --tag $Tag @net
+            # AerialVLA's cameras render only when asked (perception_node
+            # --vla-cameras; a --pilot vla node loading the scene itself
+            # renders them on its own).
+            $sceneExtra = @()
+            if ($VlaCameras) { $sceneExtra += @("--vla-cameras") }
+            & $Py $Node --scene-only --tag $Tag @net @sceneExtra
             if ($LASTEXITCODE -ne 0) { throw "scene load exited $LASTEXITCODE" }
             Say "scene loaded and left running. Next: -Step sitl -SkipSim (ArduPilot AFTER the scene, never before a reload)"
         }
