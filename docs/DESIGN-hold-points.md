@@ -758,9 +758,11 @@ crawl flew as it came - legal by the inside rule, so no violation, no FSM
 edge, P0 escape 0. The memory made it worse than no memory: at (60, 27)
 after the opening, with a zone 13 m past the ring, the Shield that
 remembered the zone emitted the pilot's 0.2 m/s while a fresh Shield emitted
-the 2.0 floor. The family and its tests flew only the library's open
-geometry, which has no such zone, and the lint and this note promised the
-cap unconditionally.
+the 2.0 floor. The family and its tests flew only the library's goto pilot,
+escaping north, where no rule lies within those 20 m - but the library's
+geometry is not free of such rules: the corridor-survey-route edge at x = 80
+is 9 m past the school zone's ring at x = 71 (the next section) - and the
+lint and this note promised the cap unconditionally.
 
 Now, in this order:
 
@@ -808,11 +810,76 @@ a path whose own 5 s forecast reaches the other zone (the autopilot's ticks
 are outside the Shield's count); the Shield flies nothing whose forecast is
 not clean, so near the other zone its escape is slower, and at 8 m (y0 =
 40) the floor itself breaks the other zone 1.5 m short of the exit and the
-tick goes to the FSM, 2 counted P0 escapes, as on 7c9c9e6. The library has
-no such zone: its numbers are unchanged (3 / 8 / 13, 2.6 s, 0 P0).
+tick goes to the FSM, 2 counted P0 escapes, as on 7c9c9e6. The library's
+goto pilot escapes north, where no rule lies within 20 m of the exit, so its
+numbers were unchanged (3 / 8 / 13, 2.6 s, 0 P0) - but that was not "no such
+rule in the library" (the next section).
 `tests/test_window_opens_on.py` pins the steps one tick at a time and flies
 the cell with the zone 10, 13 and 15 m past the exit at 1.5 and 0.5 m/s on
-both arms, with these bounds and time to safe never censored.
+both arms, with these bounds and time to safe never censored. (Superseded
+in part by the next section: those cells now fly 7c9c9e6's numbers.)
+
+### The escape judged as flown (review of 69c27bd, 2026-10-22)
+
+The re-check above walked the cap's escape on its STRAIGHT forecast, 4 m/s
+held for the whole 5 s, as if the aircraft kept the cap 20 m past a ring it
+leaves after a few metres. In the library's own geometry that is not
+harmless: the corridor-survey-route edge at x = 80 is 9 m past the school
+zone's ring at x = 71. A pilot holding 1-3 m/s east (or 1-2 m/s west) when
+the window opens had its cap refused, the escape slowed tick by tick to the
+speed whose straight forecast ends at the corridor's edge (3.75, 3.5 ...
+2.25 m/s), and from 10 m short of the edge the pilot's own forecast broke
+the corridor: Normal -> Brake -> Loiter, 16 ticks inside the polygon and 4.0
+s to safe on the grant arm against 5-6 / 2.8 s on 7c9c9e6. A zone 4 m or the
+corridor's end 9 m past the north exit cost the goto pilot 12-14 ticks
+against 3. Every one of those ticks was legal, so the P0 rate read 0.
+
+Out of the ring a stop is legal again and the next tick judges the next
+action from there; the straight forecast's last 15 m say nothing the Shield
+will fly. So an action ESCAPING a zone whose window opened on the aircraft
+(hard, enforced, static; in force and remembered, or its opening imposed;
+the aircraft in no other hard zone in force; a state without a measured
+velocity, which is the commanded forecast an illegal position is judged on
+anyway) is now judged, by every fence and corridor and by the repairs that
+act on what they find (GeofenceSlide, CorridorReturn), on the escape as it
+is flown (`Shield._shaped_escape`): straight until 0.1 s (one forecast step)
+after the LAST time its path leaves the ring within the horizon, then 3
+m/s^2 to a stop held to the horizon - the commanded forecast's own braking
+model, the clearance rule's (`_clear_horizon_s`). From the cap that stop is
+0.4 + 2.67 m past the exit (2.0 + 2.67 m on the 3 s arm's 0.5 s step). A
+rule beyond it no longer refuses the cap; a rule inside it still does, and
+then the retries fly the fastest speed whose stop is clean, and with none
+the tick is reported to the FSM, as above. The stand-off rule (its forecast
+moves the subject), the clearance rule (already a stop) and the altitude
+band (the climb is unchanged) keep their own forecasts; `forecast()` stays
+the straight one. A zone the aircraft flew into by itself, a stop and a
+hover are judged exactly as before.
+
+Measured 2026-10-22 with the review's probe (`run_episode`, the 07:29:58
+cell, only the policy and the pilot changed), ticks inside the polygon /
+time to safe, Shield P0 escapes, grant arm (3 s arm):
+
+| geometry, pilot | 7c9c9e6 | 69c27bd | now |
+|---|---|---|---|
+| library, 1.0-3.0 m/s east | 5 / 2.8 s, 2 P0 (7) | 16 / 4.0 s, 0-2 P0, Loiter (8 / 2.9 s) | 5 / 2.8 s, 0 P0 (7 / 2.8 s) |
+| library, 1.0-2.0 m/s west | 6 / 2.8 s, 2 P0 (8) | 16 / 3.9-4.0 s (8 / 2.9 s) | 6 / 2.8 s, 0 P0 (8 / 2.8 s) |
+| zone ring 4 m past the north exit, goto 1.5 / 0.5 | 3 / 2.6 s, 2 P0 (5) | 12-13 / 3.5 s, 2 P0 (13 / 3.3-3.4 s) | 3 / 2.6 s, 0 P0 (7 / 2.8 s: the 3 s arm's stop, 35.67, is inside that ring, so 3.5-3.75 m/s flies) |
+| corridor end 9 m past the north exit, goto 1.5 / 0.5 | 3 / 2.6 s, 2 P0 (5) | 14 / 3.8 s, 2 P0 (6 / 2.7 s) | 3 / 2.6 s, 0 P0 (5 / 2.6 s) |
+| zone ring 8-15 m past the north exit (y0 = 40-47), goto 0.2-4 | 3 / 2.6 s, 2 P0 (5) | up to 14-16 / 3.8 s | 3 / 2.6 s, 0 P0 (5 / 2.6 s) |
+
+Of the review's 52 probe rows, 29 changed, every one with 0 P0 escapes and
+to at most 7c9c9e6's ticks inside and time to safe, except the zone 4 m past
+the exit on the 3 s arm (+2 ticks, +0.2 s); the 23 rows that were already
+at 7c9c9e6's numbers (or below) are unchanged. Where the FSM
+still brakes or loiters, it does so after the aircraft is out of the ring,
+on the pilot's own action pushing into the next rule (the corridor's edge,
+the other zone), which is that rule's projection doing its job. The family
+gains a cell, `time-window-opens-on-sideways-pilot` (2 m/s east, bounds:
+ticks inside at most 7, time to safe at most 2.9 s, never censored, no tick
+refusing the cap or the floor), and the sweep counts each episode's
+`cap_refused_ticks` and `floor_refused_ticks` and prints the totals beside
+the P0 headline, zero included, so a slowed escape cannot hide behind "0
+escapes" again.
 
 ## What it does not do
 

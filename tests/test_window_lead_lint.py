@@ -245,12 +245,17 @@ def test_the_warning_says_what_the_shield_makes_of_the_opening():
     since the review of b1d3aca (P1), only where that re-checks clean: a
     cap whose forecast reaches another rule is flown as fast as re-checks
     clean down to 2.0 m/s, and below that the tick is reported to the FSM
-    (the old text promised the cap unconditionally)."""
+    (the old text promised the cap unconditionally). Since the review of
+    69c27bd (P2), "re-checks clean" is judged on the escape as flown, out of
+    the ring and then braked to a stop, and the warning says so: on the
+    straight 5 s forecast the library's own corridor edge, 9 m past the
+    school zone's ring, refused the cap."""
     pol = load_policy(SURVEY)
     ws = time_window_lead_warnings(pol, start=(60.0, 21.0, 15.0), now=MON_0729_58)
     assert len(ws) == 1 and "not as a P0 escape" in ws[0], ws
-    assert ("flown at the speed cap where that re-checks clean, else as fast as does "
-            "down to 2.0 m/s, else reported to the escalation FSM") in ws[0], ws[0]
+    assert ("flown at the speed cap where that escape, judged out of the ring and then "
+            "braked to a stop, re-checks clean, else as fast as does down to 2.0 m/s, "
+            "else reported to the escalation FSM") in ws[0], ws[0]
     assert "scores those ticks as P0 escapes" not in ws[0], ws[0]
     big = _zone("big", 40.0, 40.0)
     for caps in ((), (dict(_cap(4.0), constraint_type="soft"),)):

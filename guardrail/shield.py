@@ -168,8 +168,10 @@ _STOP_ACTIONS = ("brake", "loiter", "RTL", "land")
 
 # The escape from a zone whose window opened on the aircraft leaves at the
 # speed cap (Shield._repair_geofence). When the cap's escape cannot be flown -
-# its longer forecast reaches another hard rule - Shield._floor_the_escape
-# retries it slower, down to the in-force floor min(2.0, cap) in steps of
+# judged as flown, out of the ring and then braked to a stop
+# (Shield._shaped_escape), it still breaks another hard rule -
+# Shield._floor_the_escape retries it slower, down to the in-force floor
+# min(2.0, cap) in steps of
 # this much (or (cap - floor) / _OPENED_RETRY_STEPS when that is coarser, so
 # a high cap costs no more re-runs), then with the in-force floor itself
 # (_IN_FORCE_FLOOR, the shape a zone the aircraft entered by itself gets).
@@ -2471,6 +2473,161 @@ class Shield:
                 keep.add(f.id)
         self._opened_on = keep
 
+    def _shaped_escape(self, state: State, action: Action4D) -> "list | None":
+        """The forecast every rule judges `action` on when it ESCAPES a zone
+        whose window opened on the aircraft: straight out of that zone's
+        margin ring, then a stop - one forecast step (`dt`) still at the
+        speed, then `_CLEAR_DECEL_MPS2` to a standstill, held to the horizon,
+        the climb as commanded - on the forecast's own grid. None in every
+        other case, and the rules judge the straight forecast (`_predict`)
+        as they always have.
+
+        "A zone whose window opened on the aircraft": hard, enforced, not
+        moving, the position inside its ring and band, and either in force
+        now and remembered (`_opened_on`) or still to open with the opening
+        imposed (`_opening_imposed`). "Escapes": leaving it at more than 0.1
+        m/s by the inside rule's own test, at the pose where the zone opens
+        for an opening still to come (as _check_fence reads it). The action
+        must escape every such zone the aircraft is in, and the aircraft
+        must be in no hard, enforced zone in force that it was not opened
+        on; its straight path must be out of each ring before the horizon.
+        Only for a state without a measured velocity: the commanded
+        forecast, which is the one an illegal position is judged on anyway
+        (_decision_state sets the velocity aside there).
+
+        WHY (review of 69c27bd, P2). The escape from such a zone flies at the
+        speed cap until the aircraft is out of the ring (GeofenceEscape,
+        `_opened_on`); a floored escape flies only if it re-checks clean
+        against every rule (Shield._floor_the_escape), and the re-check
+        judged it on the straight 5 s forecast - the cap held for 20 m, as
+        if the aircraft kept it long after it was out. So any hard rule
+        within 20 m of the exit refused the cap, the library's own geometry
+        among them: the corridor-survey-route edge at x = 80 is 9 m past the
+        school zone's ring at x = 71, and a pilot flying 1-3 m/s east (or 1-2
+        west) at the opening had its cap refused, its escape slowed to the
+        speed whose straight forecast ends at x = 80 - 3.5, 3.0 ... 2.25 m/s
+        as it neared the edge - and from 10 m short of it the pilot's own
+        forecast broke the corridor and the FSM went Normal -> Brake ->
+        Loiter: 16 ticks inside the polygon and 4.0 s to safe on the grant
+        arm against 5-6 / 2.8 s on 7c9c9e6 (the review's probe2.py, p2_none).
+        A zone or the corridor's end 4-9 m past the north exit cost 12-14
+        ticks against 3. Nothing about the aircraft's position after the
+        exit came from that forecast: out of the ring a stop is legal again,
+        and the next tick judges the next action from there - which is what
+        this forecast says. A rule beyond the stopping point therefore no
+        longer refuses the cap; a rule inside it does, and then the retries
+        (`_opened_retries`) fly the fastest speed whose stop is clean, and
+        with none the tick is reported to the FSM (`_escape_shortfall`).
+
+        The braking model is the commanded forecast's own: the clearance
+        rule asks "can the aircraft still stop" with one step of reaction and
+        3 m/s^2 (`_clear_horizon_s`), and the ideal vehicle the harness flies
+        takes the next command on the next tick. From the cap that is 0.4 +
+        2.67 m past the exit on the grant arm's 0.1 s step (2.0 + 2.67 on
+        the 3 s arm's 0.5 s). The braking starts after the LAST time the
+        straight path leaves the ring within the horizon, so a ring the path
+        re-enters is never braked in.
+
+        Judged by every fence and corridor (`_check_in`), and by the repairs
+        that act on what they find (GeofenceSlide in _repair_geofence,
+        CorridorReturn in _repair_corridor), so the operators act on what the
+        check raised. Not by the stand-off rule, whose forecast moves the
+        subject too, nor by the clearance rule, whose forecast is already a
+        stop, nor by the altitude band (the climb is unchanged). Not
+        `forecast()`, the public rebuild of the straight forecast. Cached
+        per tick."""
+        if self._velocity_of(state) is not None:
+            return None
+        h = math.hypot(action.vx, action.vy)
+        if not (math.isfinite(h) and h > 0.1):
+            return None                       # nothing escapes at 0.1 m/s or less
+        tick = self._tick_ctx()
+        if tick is None or (not self._opened_on
+                            and (not tick.rt.timed or tick.sched.const)):
+            return None                       # no zone can have opened on it
+        key = ("shaped", state.x, state.y, state.up, state.yaw_deg, action.vx,
+               action.vy, action.vz_up, action.yaw_rate, frozenset(self._opened_on))
+        hit = tick.committed.get(key)
+        if hit is None:
+            hit = tick.committed[key] = (self._shape_escape(tick, state, action, h),)
+        return hit[0]
+
+    def _shape_escape(self, tick: _Tick, state: State, action: Action4D,
+                      h: float) -> "list | None":
+        """_shaped_escape's forecast, uncached (`h`: the horizontal speed)."""
+        rt = tick.rt
+        exits = []
+        # Every compiled zone, whatever the chain is skipping (tick.skip):
+        # whether the aircraft is escaping a zone that opened on it is a fact
+        # about the position, not about the rules being repaired.
+        for r in rt.ir.fences:
+            if r.moving:
+                continue                      # never proved opened (_opening_imposed)
+            f, poly, ring = r.rule, r.polygon, r.buffered
+            if not rt.hard.get(f.id, True) or self._act(rt, f.id) == "monitor_only":
+                continue
+            alive = tick.sched.mask(f)
+            if alive is False or not point_in_fence(state.x, state.y, state.up, f, poly, ring):
+                continue
+            if alive is True or alive(0.0):
+                if f.id not in self._opened_on:
+                    return None               # inside a zone in force it flew into
+                ox, oy = push_out_direction(state.x, state.y, poly)
+            else:
+                t_open = self._opening_imposed(f, ring, state)
+                if t_open is None:
+                    continue                  # can still leave in time: walked as before
+                px, py = state.x + action.vx * t_open, state.y + action.vy * t_open
+                if not point_in_fence(px, py, state.up + action.vz_up * t_open, f, poly, ring):
+                    return None               # over the cap: walked as before
+                ox, oy = push_out_direction(px, py, poly)
+            if action.vx * ox + action.vy * oy <= 0.1:
+                return None                   # not leaving it: that zone's violation
+            t_exit = self._ring_exit_time(ring, state, action, h)
+            if t_exit is None:
+                return None                   # still inside at the horizon
+            exits.append(t_exit)
+        if not exits:
+            return None
+        grid = self._grid()
+        t_b = max(exits) + self.dt
+        if t_b >= grid[-1] - 1e-9:
+            return None                       # no braking inside the horizon
+        a = _CLEAR_DECEL_MPS2
+        ux, uy = action.vx / h, action.vy / h
+        t_stop = h / a
+        yaw_dps = math.degrees(action.yaw_rate)
+        out = []
+        for t in grid:
+            if t <= t_b:
+                d = h * t
+            else:
+                s = min(t - t_b, t_stop)
+                d = h * t_b + h * s - 0.5 * a * s * s
+            out.append((t, _Pose(x=state.x + ux * d, y=state.y + uy * d,
+                                 up=state.up + action.vz_up * t,
+                                 yaw_deg=state.yaw_deg + yaw_dps * t)))
+        return out
+
+    def _ring_exit_time(self, ring, state: State, action: Action4D,
+                        h: float) -> float | None:
+        """When the straight path of `action` from `state` (inside `ring`)
+        crosses the ring's boundary for the LAST time within the forecast's
+        horizon, or None if it is still inside the ring at the horizon. The
+        last crossing, not the first: on a ring the path leaves and enters
+        again, the braking (_shaped_escape) never starts inside it."""
+        horizon = self._grid()[-1]
+        x1, y1 = state.x + action.vx * horizon, state.y + action.vy * horizon
+        if ring.contains(Point(x1, y1)):
+            return None
+        seg = LineString([(state.x, state.y), (x1, y1)])
+        pts = shapely.get_coordinates(seg.intersection(ring.boundary))
+        if len(pts) == 0:
+            return None
+        ux, uy = action.vx / h, action.vy / h
+        s = max((px - state.x) * ux + (py - state.y) * uy for px, py in pts)
+        return max(s, 0.0) / h
+
     def _check_fence(self, f, poly, state: State, action: Action4D,
                      poses=None, buffered=None) -> list[Violation]:
         """Trend-aware for the already-inside case.
@@ -2703,8 +2860,14 @@ class Shield:
             return d, (0.0, 0.0)          # on the line; no defined "back"
         return d, ((nx - x) / d, (ny - y) / d)
 
-    def _check_corridor(self, c, state: State, action: Action4D) -> list[Violation]:
+    def _check_corridor(self, c, state: State, action: Action4D,
+                        poses=None) -> list[Violation]:
         """Keep-IN, trend-aware. The mirror image of _check_fence.
+
+        `poses` is the forecast to walk when the caller has it for `state`
+        (_check_in passes the shaped escape, _shaped_escape); by default, and
+        whenever the rule is judged from another state (the stop point,
+        `_rule_state`), `action`'s straight forecast from there.
 
         A fence is violated by being inside it; a corridor by being outside. The
         trend logic is the same in both: already out but actively coming back
@@ -2721,7 +2884,9 @@ class Shield:
         alive = self._mask(c)
         if alive is False:
             return []
-        state = self._rule_state(c, state)      # the stop point, if committed
+        st = self._rule_state(c, state)         # the stop point, if committed
+        if st is not state:
+            state, poses = st, None
         pts = c.points()
         half = c.half_width_m
         d_now, (ux, uy) = self._corridor_geom(c, state.x, state.y)
@@ -2746,7 +2911,7 @@ class Shield:
                                   detail="outside corridor: " + "; ".join(bad))]
             return []          # coming back on every axis that is wrong
 
-        for t, p in self._predict(state, action):
+        for t, p in (poses if poses is not None else self._predict(state, action)):
             if alive is not True and not alive(t):
                 continue
             d, _, _ = nearest_on_polyline(p.x, p.y, pts)
@@ -2765,7 +2930,7 @@ class Shield:
         if self.segment_check:
             hit = self._first_segment_hit(
                 self._corridor_segment_exit(c, path, alive)
-                for path in self._segment_paths(state, action))
+                for path in self._segment_paths(state, action, poses))
             if hit is not None:
                 t_out, (x0, y0, t0), (x1, y1, t1) = hit
                 return [Violation(
@@ -2893,12 +3058,16 @@ class Shield:
                 found += self._check_standoff(so, state, action)
         ir = self._ir                       # one IR for the whole check, even
         recs, tick = self._fence_anchors(ir)    # if hot_apply swaps it meanwhile
+        # An escape from a zone whose window opened on the aircraft is judged
+        # as it is flown, out of the ring and then a stop (_shaped_escape says
+        # why); None almost always, and every rule walks the straight forecast.
+        shaped = self._shaped_escape(state, action)
         if recs:
             # One forecast for every fence (it was rebuilt per fence), and only
             # the fences the forecast's bounding box reaches. Policy order is
             # kept, so the violation list - which test_check_contract.py hashes
             # - comes out in the same order as the old walk over all of them.
-            poses = list(self._predict(state, action))
+            poses = shaped if shaped is not None else list(self._predict(state, action))
             com = self._committed(state)
             if com is not None and (com[1] or com[3]):
                 # Some rule is judged from the stop point or from the position
@@ -2924,7 +3093,7 @@ class Shield:
                     found += self._check_fence(r.rule, r.polygon, state, action,
                                                poses, r.buffered)
         for c in self._corridors:
-            found += self._check_corridor(c, state, action)
+            found += self._check_corridor(c, state, action, shaped)
         if self._dist is not None and self._clear:
             # One forecast shared across every clearance rule, as before - one
             # per state judged from, when a rule is judged from the stop
@@ -3223,7 +3392,14 @@ class Shield:
         for rec in anchors:
             if near_for != (vx, vy):
                 probe = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=a.yaw_rate)
-                poses = list(self._predict(outer, probe))
+                # The forecast the check walks (_check_in): an escape from a
+                # zone that opened on the aircraft as flown, out of the ring
+                # and then a stop (_shaped_escape), so the slide below acts on
+                # what the check raises - never on a zone only the straight
+                # forecast reaches past the stop.
+                poses = self._shaped_escape(outer, probe)
+                if poses is None:
+                    poses = list(self._predict(outer, probe))
                 near = self._fence_candidates(ir, outer, poses)
                 box, horizon = self._forecast_box(outer, poses)
                 near_for = (vx, vy)
@@ -3270,13 +3446,17 @@ class Shield:
                 # speed; the KPI read the longer stay as no escape. Not for a
                 # moving zone, which _opening_imposed never proves.
                 #
-                # At the cap WHERE IT CAN BE FLOWN: a faster escape forecasts
-                # further, and the cap's can reach another hard rule the
-                # aircraft's own crawl does not. Then _floor_the_escape asks
-                # again with a slower one (`tick.opened_mps`, its retries:
-                # review of b1d3aca, P1), down to the in-force floor and that
-                # floor's own shape (_IN_FORCE_FLOOR), and escalates if none
-                # can be flown.
+                # At the cap WHERE IT CAN BE FLOWN: a faster escape stops
+                # further past the exit, and the cap's stop can reach another
+                # hard rule the aircraft's own crawl does not. Then
+                # _floor_the_escape asks again with a slower one
+                # (`tick.opened_mps`, its retries: review of b1d3aca, P1),
+                # down to the in-force floor and that floor's own shape
+                # (_IN_FORCE_FLOOR), and escalates if none can be flown. The
+                # escape is judged as flown, out of the ring and then a stop
+                # (_shaped_escape; review of 69c27bd, P2), not on the cap held
+                # for the whole lookahead: that 20 m reached the library's
+                # own corridor edge, 9 m past the school zone's ring.
                 try_mps = getattr(self._tick_ctx(), "opened_mps", None)
                 opened = ((t_open is not None or (not mv and f.id in self._opened_on))
                           and try_mps != _IN_FORCE_FLOOR)
@@ -3870,6 +4050,17 @@ class Shield:
                 excursion, recovering = ex, False
             else:
                 continue                        # forecast stays inside
+            if (not recovering and state is outer
+                    and (shaped := self._shaped_escape(state, a)) is not None
+                    and not self._check_corridor(c, state, a, shaped)):
+                # An escape from a zone that opened on the aircraft, judged
+                # as flown - out of the ring, then a stop (_shaped_escape) -
+                # stays inside the corridor: the check raises nothing, so
+                # there is nothing to cancel. The straight line above would
+                # have cut the way out to zero in the library's own geometry
+                # (the corridor edge 9 m past the school zone's ring; review
+                # of 69c27bd, P2).
+                continue
             if inward >= need - 1e-9:
                 continue                        # already returning fast enough
 
@@ -5416,7 +5607,22 @@ class Shield:
         then G3 into a Loiter whose hold point the search picks against
         every rule) as 7c9c9e6 did on every tick there, and the KPI counts
         what is flown meanwhile - `raw`, which breaks no other rule - as the
-        P0 escape it is. Every run stays on the ledger then (`chain_runs`)."""
+        P0 escape it is. Every run stays on the ledger then (`chain_runs`).
+
+        WHAT REFUSES THE CAP (review of 69c27bd, P2). The re-check above
+        walked the cap's straight forecast, 4 m/s held for the whole 5 s,
+        and so refused the cap for any rule within 20 m of the exit - in the
+        library's own geometry too: the corridor-survey-route edge at x = 80
+        is 9 m past the school zone's ring at x = 71, and a pilot flying 2
+        m/s east at the opening stayed 16 ticks inside the polygon, 4.0 s to
+        safe, the escape slowed tick by tick and the FSM taken to a Loiter
+        (7c9c9e6: 5 / 2.8 s). Every check of an action escaping such a zone
+        now walks the escape as flown - out of the ring, then a stop
+        (_shaped_escape) - so the retries and the report above apply only
+        when a rule lies inside that stop (0.4 + 2.67 m past the exit from
+        the cap on the grant arm's 0.1 s step). The trace keeps its words;
+        the sweep counts both per episode (`cap_refused_ticks`,
+        `floor_refused_ticks`) beside the P0 rate."""
         rt = tick.rt
         violations = list(violations)
         keep = {v.rule_id for v in tick.unsafe
@@ -5593,7 +5799,14 @@ class Shield:
         answered here: a slower straight escape is what shortens their
         forecast, and the repair says exactly what changed (an action that
         also breaks a speed, yaw or climb cap, an altitude band, a stand-off
-        or a clearance goes to the chain)."""
+        or a clearance goes to the chain).
+
+        Since the review of 69c27bd (P2) the escape is judged as flown, out
+        of the ring and then a stop (_shaped_escape): the case above - the
+        zone's ring 8 m past the exit - no longer violates at all (the 4
+        m/s stops at 34.07, short of y = 39), and this applies only to a
+        rule inside the escape's stop (tests/test_window_opens_on.py: the
+        ring 2 m past the exit, the 4 m/s slowed to 3.0)."""
         ids = set(flags.get("window_opens_on") or ()) | set(flags.get("window_opened_on") or ())
         if not ids or not enforced or any(
                 v.rule_id in ids or v.category not in ("geofence", "corridor")

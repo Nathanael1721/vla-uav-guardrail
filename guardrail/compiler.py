@@ -1938,14 +1938,19 @@ def _opening_outcome(policy: Policy, z) -> str:
         # from such an opening is raised to the cap until the aircraft is out
         # of the ring (GeofenceEscape, Shield._opened_on), not to the 2.0 m/s
         # floor of a zone the aircraft flew into - where the cap re-checks
-        # clean: since the review of b1d3aca (P1) a cap whose forecast
-        # reaches another rule is flown as fast as re-checks clean down to
-        # that floor, and below it the tick is reported to the FSM
-        # (Shield._floor_the_escape). The lint does not walk the other rules,
-        # so it says which applies, not which will.
+        # clean: since the review of b1d3aca (P1) a cap that breaks another
+        # rule is flown as fast as re-checks clean down to that floor, and
+        # below it the tick is reported to the FSM (Shield._floor_the_escape).
+        # Since the review of 69c27bd (P2) "re-checks clean" is judged on the
+        # escape as flown - out of the ring, then a stop (Shield.
+        # _shaped_escape) - not on the cap held for the whole 5 s: the
+        # library's own corridor edge, 9 m past the school zone's ring,
+        # refused the straight 20 m forecast. The lint does not walk the
+        # other rules, so it says which applies, not which will.
         return ("until it is out it is inside the zone in force, and only the way "
-                "out passes the Shield, flown at the speed cap where that re-checks "
-                "clean, else as fast as does down to 2.0 m/s, else reported to the "
+                "out passes the Shield, flown at the speed cap where that escape, "
+                "judged out of the ring and then braked to a stop, re-checks clean, "
+                "else as fast as does down to 2.0 m/s, else reported to the "
                 "escalation FSM (a stop there is the violation; an escape at that "
                 "floor or faster is judged as the recovery it is, not as a P0 escape)")
     return ("the Shield cannot prove that no action leaves in time (no hard speed "
