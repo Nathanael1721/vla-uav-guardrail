@@ -15,6 +15,12 @@ simulator (`tests/test_vla_fly.py`, `tests/test_vla_replay_gate.py`) and was
 driven end to end against a fake `projectairsim` module with the server's
 scripted stand-in; it has NOT flown in Unreal and has not flown the model.
 
+2026-10-23, wave V2b: the same pilot on the Project AirSim + ArduPilot rail
+(`demo/pas_ardupilot/perception_node.py --pilot vla`, section 14), with
+AerialVLA's two cameras added to that rail's robot config. Tested with the
+rail's stand-ins against the scripted server (`tests/test_pas_vla.py`); it
+has NOT flown ArduPilot, Unreal or the model.
+
 2026-10-22: the review of 7c7cc50 found nine problems; all are fixed, each
 with a failing-first test. The ones that change behaviour: a server error is
 no answer (section 5), the client re-reads `raw_text` and pins the model
@@ -404,8 +410,9 @@ backed off, not a link failure.
 
 (Since then: the server is `demo/vla_server_v2.py` with the strict reader
 (wave V1a); the HUD's VLA panel, `pilot_record(kind="vla")` and the camera
-pair are in the CityLife flight, section 13. `perception_node --pilot vla`,
-the ROS 2 bridge and the in-flight E0 measurement are still open.)
+pair are in the CityLife flight, section 13; `perception_node --pilot vla`
+and the ArduPilot rail's camera pair in section 14, built and not flown. The
+ROS 2 bridge and the in-flight E0 measurement are still open.)
 
 ## 13. Flying it: `demo/vla_fly.py` (CityLife_Day, simple_flight)
 
@@ -665,3 +672,133 @@ simulator.
   position, and a declared or truth position would be an oracle.
 - The FSM's N-in-T for a slow pilot (section 8) is still a PI question; this
   rail runs no escalation FSM.
+
+## 14. Flying it on the ArduPilot rail: `perception_node.py --pilot vla`
+
+Wave V2b, 2026-10-23 (to-do VLA-07, and VLA-03 for the cameras). The same
+pilot as section 13, from the same parts (`guardrail/vla_link`,
+`RemoteVLABackend`, `demo/vla_mission`), in the perception node that flies
+Project AirSim through ArduPilot SITL. `--pilot servo` (follow_vlm's servo
+law on the detector's box) stays the default.
+
+### Who flies, and what stands between
+
+| Step | Detector pilot (`servo`) | VLA pilot (`vla`) |
+|---|---|---|
+| raw action | `FollowPilot.step` body action, rotated by `body_to_world` | `VLAPilot.step`: the step tracker's world-frame action, nothing between (its body copy, `guardrail.frames.to_body`, is only recorded) |
+| Shield | `shield.filter` (5 s / 0.1 s, own-velocity forecast) | the same call |
+| escalation FSM | Brake / Loiter (BRAKE) / RTL / Land, the hold that stops clear | the same code |
+| sent | the Shield's `emitted`, the FSM's brake, or nothing | the same |
+| subject for stand-offs | the Grounder's box, placed from its own capture | approach: the same box, unchanged; goto: none (no subject) |
+
+A tick on which the pilot's action did not fly (the FSM's brake setpoint or
+a stop the Shield advised, Loiter / RTL / Land, a fault, a takeover) suspends
+the tracker (`backend.suspend`); the next tick that flies resumes it, and
+every answer to an image captured before is refused (`invalidated`). The rows
+say so (`pilot_held`, author `none` / `suspended`); metrics.vla `held_ticks`
+counts them.
+
+### Missions
+
+- `--mission goto` (the default for `--pilot vla`): `--goal X,Y` in the
+  Shield's frame, required. There is no default goal: this rail takes off at
+  the CityLife spawn (35, -20), where every straight line east passes two
+  street trees in the flight band within about a metre (`vla_mission`'s
+  geometry notes), and it has no hand-written transfer to a clear start. No
+  detector runs (`NoDetector`: OWL-ViT would share the GPU with the model for
+  nothing), `det_hz` is None, and no subject or stand-off binds.
+- `--mission approach`: the OWL-ViT box's phrase through `VLABridge` and
+  `DetectorHint` (the turn since the box corrected), the box still placed for
+  the Shield's stand-offs as on the servo path.
+- Ends: the model's LAND (`vla_land`), landed by the node's own mission-end
+  LAND (`link.land()`), never a mode request from the pilot; the other
+  `MissionMonitor` ends (a dead, slow or erroring server, malformed answers,
+  no first decision, arrived without LAND, overshoot, close box, target lost);
+  and this rail's own (max_s, a lost link, a takeover, the FSM's end). A VLA
+  failure end exits 3.
+
+### The start gate
+
+It is a detector-subject gate (`StartGate`: N fresh inferences with a
+plausible box). A GOTO has no detected subject, so the gate is skipped and
+`start_gate` says why (`enabled: false`); the approach keeps it, so the VLA
+is asked to approach only a subject the detector has confirmed.
+
+### The server, the warm-up, the link
+
+`--vla-server HOST:PORT` attaches; otherwise the node starts
+`demo/vla_server_v2.py` with `--vla-precision`, `--vla-attn` and
+`--vla-merge` / `--no-vla-merge`, all three named (refused otherwise: the
+node has no default configuration), or the scripted stand-in
+(`--vla-fake-output`). The process starts before the scene loads; its hello
+is waited for (up to `--vla-hello-timeout-s`) before ArduPilot starts, and a
+started server is stopped on every way out. A non-VLA identity is refused
+unless it is the started stand-in or `--allow-stand-in`; it is then recorded
+as kind `stub` and `fake:` in the manifest, and the KPI grade says so.
+
+The warm-up gate (`vla_mission.run_warmup`, three requests on live frames,
+the last judged) runs in the pre-arm step, disarmed; a refusal raises
+`PreArmRefused` (exit 4) and nothing is armed. So the VLA pilot needs a link
+with a pre-arm step; both real links have one, and a link without is
+refused. Each attempt first waits out the client's backoff: without that, a
+server error on the cold-start request made the next two "not sent" and the
+last-judged rule could not save the flight. `demo/vla_fly._warmup` has the
+same gap (not fixed in this change). While an answer is awaited the node
+pumps its autopilot link (`run_warmup(idle=link.pump)`), as its detector
+wait does: a cold first inference may take a minute.
+
+### Commands
+
+The simulator up on CityLife (the rail's own steps, `-Step scene` /
+`-Step sitl`), a server already serving AerialVLA (`demo/vla_server_v2.py
+serve --precision bf16 --attn sdpa --no-merge` in vla-real), then:
+
+    python demo\pas_ardupilot\perception_node.py --network nat --windows-ip <win> --wsl-ip <wsl> --pilot vla --mission goto --goal 60,-20 --vla-server 127.0.0.1:8790 --tag pas_vla_goto_01 --max-s 180 --save-view
+
+or let the node start the server, naming its configuration:
+`--vla-precision bf16 --vla-attn sdpa --no-vla-merge` in place of
+`--vla-server`. `--dry-run` prints the server command it would start.
+(`--goal 60,-20` is an example in the Shield's frame, 25 m north of the
+spawn; it was not checked against the CityLife clearance map as section 13's
+goal was.)
+
+### Cameras (VLA-03)
+
+`robot_citylife_ardupilot.jsonc` carries `VLAFront` and `VLADown`, byte for
+byte the CityLife VLA configs' (256x256, 90 deg, pitch 0 / -90, every 0.1 s,
+not streamed), beside OWL-ViT's FrontCamera. In the one robot config, not a
+VLA copy: the scene is loaded before ArduPilot and the hil node only
+attaches, so both pilots fly the same scene hash. The cost on a detector run
+(two 256x256 renders per 0.1 s) is not measured. The camera subscribes the
+pair into `vla_mission.VLAFrames` (paired by stamp, the pose from the loop's
+ring) and refuses a robot config without them. (The to-do's probe string,
+`"id": "DownCamera"`, predates the CityLife naming; the down camera is
+`VLADown`.)
+
+### Records
+
+As section 13's: `vla_steps.jsonl`, `vla_frames/` and `vla_captures.jsonl`,
+rows with `pilot`, `author` / `author_reason`, `vla_seq`, `vla_age_s`, the
+decision's phrase, hint source, step and raw text, `pilot_held`, the goal or
+box fields; `metrics.pilot` (`vla_mission.pilot_entry`: kind `vla` only with
+the server's real identity, its digest as `reported_digest`, the backend's
+stats under `vla`, the summary); `metrics.vla` (mission, hint, monitor,
+warm-up, altitude clamp, held ticks, frames); `reached_goal` and `land`; the
+manifest's `vla_model_hash`; the HUD panel (`vla_mission.annotate_vla`, moved
+there from `vla_fly`) beside the rail's banner. `tools/todo.py classify_run`
+reads such a run as a VLA flight from these records (tested on the scripted
+server with a real-looking identity).
+
+### Not verified
+
+- Nothing has run against ArduPilot SITL, Unreal or the model. The camera
+  subscription was checked on a stand-in `projectairsim`; the rendered pair,
+  the pose ring's pairing with EKF poses (no sim stamps on this rail: capture
+  time falls back to arrival) and the decision rate with the renderer, OWL-ViT
+  (approach) and the model on one GPU are not measured.
+- `scripts/run_pas_ardupilot.ps1` has no `-Pilot vla` switch yet: the flags
+  reach the node through `-NodeArgs` (e.g. `-NodeArgs "--pilot","vla",
+  "--goal","60,-20","--vla-server","127.0.0.1:8790"`); the launcher does not
+  check them before the simulator starts, as `run_vla_fly.ps1` does.
+- The FSM's N-in-T for a slow pilot (section 8) applies here unchanged; how
+  often a stop-and-go VLA trips it is unmeasured.

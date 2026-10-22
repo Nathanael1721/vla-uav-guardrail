@@ -18,8 +18,26 @@
 //   magnetometer ArduPilot's EKF has no position without GPS. The JSON frame
 //                carries IMU, attitude, GPS and velocity; ArduPilot's SITL
 //                synthesises its barometer and compass from that state.
-//   DownCamera   removed. The ArduPilot rail's node never reads it, and every
-//                capture costs GPU time on the card the detector shares.
+//   DownCamera   removed (the follow rail's 400x225 at 2 Hz): the detector
+//                pilot never read it, and every capture costs GPU time on the
+//                card the detector shares.
+//   VLAFront,    added 2026-10-23 for the AerialVLA pilot (perception_node.py
+//   VLADown      --pilot vla, to-do VLA-03): AerialVLA's training cameras,
+//                256x256, 90 deg FOV, front pitch 0, down pitch -90, captured
+//                every 0.1 s, scene only, never streamed - the same two
+//                sensors as demo/pas_config/robot_vla_quad.jsonc (the
+//                CityLife VLA flight), byte for byte (tests/test_pas_vla.py),
+//                so both rails show the model the same views. The server
+//                resizes each tile to 224x224 and stacks front over down into
+//                the 224x448 mosaic (guardrail/aerialvla_codec.build_mosaic).
+//                OWL-ViT keeps FrontCamera below (a 256 px frame would be
+//                upscaled 3x into its 768 input). In THIS file, not a VLA
+//                copy: the scene is loaded before ArduPilot starts and the
+//                hil node only attaches to it, so one robot serves both pilots
+//                and the detector and VLA arms fly the same scene hash. Their
+//                cost on a detector-pilot run: two 256x256 renders per 0.1 s
+//                beside FrontCamera's 768x432 scene and depth (about a fifth
+//                of its pixels); not measured on the RTX 4090.
 //
 // UNCHANGED, ON PURPOSE: the frame, mass, links and the four rotors are
 // identical to IAMAI's own ArduPilot example (client/python/example_user_scripts/
@@ -385,6 +403,58 @@
       "origin": {
         "xyz": "0.3 0.0 0.0",
         "rpy-deg": "0 -20.0 0"
+      }
+    },
+    {
+      // AerialVLA's front camera (the header's VLAFront, VLADown): level,
+      // square, as in training (upstream airsim_plugin/settings/30001).
+      "id": "VLAFront",
+      "type": "camera",
+      "enabled": true,
+      "parent-link": "Frame",
+      "capture-interval": 0.1,
+      "capture-settings": [
+        {
+          "image-type": 0,
+          "width": 256,
+          "height": 256,
+          "fov-degrees": 90,
+          "capture-enabled": true,
+          "streaming-enabled": false,
+          "pixels-as-float": false,
+          "compress": false,
+          "target-gamma": 2.5
+        }
+      ],
+      "origin": {
+        "xyz": "0.3 0.0 0.0",
+        "rpy-deg": "0 0 0"
+      }
+    },
+    {
+      // AerialVLA's down camera: straight down, the mosaic's lower tile. The
+      // server runs --missing-down refuse, so no request goes without it.
+      "id": "VLADown",
+      "type": "camera",
+      "enabled": true,
+      "parent-link": "Frame",
+      "capture-interval": 0.1,
+      "capture-settings": [
+        {
+          "image-type": 0,
+          "width": 256,
+          "height": 256,
+          "fov-degrees": 90,
+          "capture-enabled": true,
+          "streaming-enabled": false,
+          "pixels-as-float": false,
+          "compress": false,
+          "target-gamma": 2.5
+        }
+      ],
+      "origin": {
+        "xyz": "0 0.0 0.0",
+        "rpy-deg": "0 -90 0"
       }
     },
     {
