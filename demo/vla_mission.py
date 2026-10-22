@@ -142,6 +142,8 @@ HELLO_TIMEOUT_S = 2700.0
 # refused before take-off. 5 s is ours: the step tracker's decision timeout is
 # 10 s, and an answer that takes half of it leaves a 5 m step no time.
 WARMUP_MAX_LATENCY_S = 5.0
+# Warm-up requests before arming; the last is judged (warmup_series_verdict).
+WARMUP_REQUESTS = 3
 # After a request times out, how long the client waits for its late answer
 # before it asks again (RemoteVLA late_reply_wait_s): the server cannot cancel
 # a generate() in progress, so a new request would only queue behind it.
@@ -1187,7 +1189,13 @@ def identity_is_vla(identity: dict | None) -> tuple[bool, str | None]:
     """(a real AerialVLA identity?, why not). The brief's six fields
     (vla_link.check_identity) and a weights digest that is not one repeated
     digit (tools/todo.py weights_digest_ok: the test stand-ins report
-    "0" * 64). The scripted stand-in (id fake:scripted, digest None) is not."""
+    "0" * 64). The scripted stand-in (id fake:scripted, digest None) is not,
+    nor is ANY `fake:` id whatever else it carries (re-review N4: a
+    `fake:aerialvla...` with a real-looking digest was recorded as kind vla,
+    its prefix lost under MODEL_ID)."""
+    mid = (identity or {}).get("id") if isinstance(identity, dict) else None
+    if isinstance(mid, str) and mid.startswith("fake:"):
+        return False, f"id {mid!r} is a fake: stand-in, not a model"
     try:
         check_identity(identity)
     except ValueError as exc:
@@ -1275,6 +1283,18 @@ def warmup_verdict(result: dict, max_latency_s: float) -> tuple[bool, str | None
         return False, (f"the warm-up inference took {rtt} s (round trip), over the "
                        f"{max_latency_s:g} s gate: the pilot could not keep up")
     return True, None
+
+
+def warmup_series_verdict(attempts: list[dict], max_latency_s: float) -> tuple[bool, str | None]:
+    """(fly?, why not) over WARMUP_REQUESTS warm-up requests, judging the
+    LAST (re-review N1): the server runs no inference at start, so the first
+    request is the model's first ever and pays the cold-start cost (CUDA
+    kernels, allocator) that no flight request pays; judging it alone could
+    refuse every launcher run that starts a fresh server. Every attempt is
+    recorded by the caller; a silent or failed last attempt still refuses."""
+    if not attempts:
+        return False, "no warm-up request was made"
+    return warmup_verdict(attempts[-1], max_latency_s)
 
 
 # --------------------------------------------------------------------------- #

@@ -620,31 +620,43 @@ def _feed_pose(drone, obs, State, quat_yaw, FV):
 async def _warmup(args, drone, obs, frames, client, hint_src, State, quat_yaw, FV, live,
                   wait_frames_s: float = 30.0) -> dict:
     """The warm-up gate, before arming (review of the CityLife flight, P2-5):
-    one inference on a LIVE camera pair (the pose ring fed here, as the loop
-    feeds it), timed on the client's clock, its frames kept like any request
-    sent (vla_captures.jsonl marks it warmup). vla_mission.warmup_verdict
-    decides. Never flown: the aircraft is on the ground."""
-    cap = None
-    t_end = time.time() + wait_frames_s
-    while time.time() < t_end:
-        _feed_pose(drone, obs, State, quat_yaw, FV)
-        cap = frames.capture()
-        if cap is not None:
-            break
-        live.beat(detail="waiting for the VLA camera pair (warm-up)")
-        await asyncio.sleep(0.1)
-    if cap is None:
-        return {"pass": False, "answered": False, "max_latency_s": args.warmup_max_latency_s,
-                "why": f"no VLA camera pair (front + down, paired by stamp) within "
-                       f"{wait_frames_s:g} s", "frames": frames.stats()}
-    hint = VM.warmup_hint(args.mission, hint_src, cap)
-    live.beat(detail="warm-up inference before take-off")
-    res = await asyncio.to_thread(VM.warmup_infer, client, cap, hint, args.object,
-                                  args.decision_timeout_s)
-    if res.get("seq") is not None:
-        frames.commit(cap, hint, res["seq"], warmup=True)
-    ok, why = VM.warmup_verdict(res, args.warmup_max_latency_s)
+    VM.WARMUP_REQUESTS inferences, each on a fresh LIVE camera pair (the pose
+    ring fed here, as the loop feeds it), timed on the client's clock, their
+    frames kept like any request sent (vla_captures.jsonl marks them
+    warmup). The LAST is judged (vla_mission.warmup_series_verdict; re-review
+    N1: the first is the model's first inference ever and pays a cold start
+    no flight request pays, so it gets first_decision_timeout_s). Every
+    attempt is recorded under `attempts`. Never flown: the aircraft is on
+    the ground."""
+    attempts: list[dict] = []
+    res: dict = {}
+    for k in range(VM.WARMUP_REQUESTS):
+        cap = None
+        t_end = time.time() + wait_frames_s
+        while time.time() < t_end:
+            _feed_pose(drone, obs, State, quat_yaw, FV)
+            cap = frames.capture()
+            if cap is not None:
+                break
+            live.beat(detail="waiting for the VLA camera pair (warm-up)")
+            await asyncio.sleep(0.1)
+        if cap is None:
+            return {"pass": False, "answered": False, "max_latency_s": args.warmup_max_latency_s,
+                    "why": f"no VLA camera pair (front + down, paired by stamp) within "
+                           f"{wait_frames_s:g} s", "frames": frames.stats(),
+                    "attempts": attempts}
+        hint = VM.warmup_hint(args.mission, hint_src, cap)
+        live.beat(detail=f"warm-up inference {k + 1}/{VM.WARMUP_REQUESTS} before take-off")
+        timeout_s = (max(args.decision_timeout_s, args.first_decision_timeout_s) if k == 0
+                     else args.decision_timeout_s)
+        res = await asyncio.to_thread(VM.warmup_infer, client, cap, hint, args.object, timeout_s)
+        if res.get("seq") is not None:
+            frames.commit(cap, hint, res["seq"], warmup=True)
+        attempts.append(dict(res))
+    ok, why = VM.warmup_series_verdict(attempts, args.warmup_max_latency_s)
+    res = dict(res)
     res.update({"pass": ok, "why": why, "max_latency_s": args.warmup_max_latency_s,
+                "judged": "last of attempts", "attempts": attempts,
                 "late_replies": list(getattr(client, "late", None) or [])})
     return res
 

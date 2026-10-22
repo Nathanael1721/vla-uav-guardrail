@@ -1142,6 +1142,36 @@ def test_a_started_server_says_hello_and_stops_on_shutdown():
     assert rec["mode"] == "started" and rec["identity"]["id"] == "fake:scripted"
 
 
+def test_a_fake_id_is_never_a_vla_whatever_its_digest():
+    """Re-review of the fix round, N4: a stand-in reporting
+    `fake:aerialvla...` with a real-looking digest and every identity field
+    passed identity_is_vla, and the run was recorded as kind vla (the
+    prefix lost under MODEL_ID, so todo's `fake:` rule never saw it). A
+    `fake:` id is a stand-in whatever else it carries."""
+    fake = dict(REAL_MODEL, id="fake:" + REAL_MODEL["id"])
+    ok, why = VM.identity_is_vla(fake)
+    assert ok is False and "fake:" in (why or ""), (ok, why)
+    assert VM.identity_is_vla(dict(REAL_MODEL)) == (True, None)
+
+
+def test_the_warm_up_gate_judges_the_last_of_several_requests():
+    """Re-review of the fix round, N1: the warm-up was the model's first
+    inference ever (the server runs none at start), and a cold first call
+    beside CityLife can exceed the 5 s gate, so every launcher run would
+    exit 4 before take-off. Several requests are sent and the LAST one is
+    judged; every attempt is recorded."""
+    cold = {"answered": True, "kind": "step", "rtt_s": 9.0}
+    warm = {"answered": True, "kind": "step", "rtt_s": 0.6}
+    assert VM.WARMUP_REQUESTS >= 2
+    assert VM.warmup_series_verdict([cold, warm, warm], 5.0) == (True, None)
+    ok, why = VM.warmup_series_verdict([warm, warm, cold], 5.0)
+    assert not ok and "over the 5 s gate" in why
+    ok, why = VM.warmup_series_verdict([], 5.0)
+    assert not ok and "no warm-up" in why
+    silent = {"answered": False, "failure": "timeout", "detail": "no answer"}
+    assert VM.warmup_series_verdict([warm, silent], 5.0)[0] is False
+
+
 def test_an_occupied_port_and_a_dying_server_are_refused_before_take_off():
     with F.FakeVLAServer(F.goto_responder((0, 0), 10.0), model=REAL_MODEL) as fake:
         srv = VM.VLAServer("127.0.0.1", fake.port, argv=[sys.executable, "-c", "pass"])

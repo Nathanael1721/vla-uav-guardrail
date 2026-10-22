@@ -343,9 +343,13 @@ def test_m1_flies_lands_and_records_a_stand_in_as_a_stub():
     assert all(r["object"] == VM.GOTO_OBJECT_TEXT for r in recs)
     caps = [json.loads(x) for x in (out / "vla_captures.jsonl").read_text(encoding="utf-8").splitlines()]
     assert caps and all(c["front_wh"] == [256, 256] and c["down_wh"] == [256, 256] for c in caps)
-    # One line per request SENT (the warm-up first), never a capture that was not.
-    assert caps[0].get("warmup") and caps[0]["seq"] == 1
-    assert sorted(c["seq"] for c in caps[1:]) == sorted(r["seq"] for r in recs)
+    # One line per request SENT (the warm-ups first: VM.WARMUP_REQUESTS of
+    # them, re-review N1), never a capture that was not.
+    nw = VM.WARMUP_REQUESTS
+    assert all(c.get("warmup") for c in caps[:nw]) and [c["seq"] for c in caps[:nw]] == list(range(1, nw + 1))
+    assert not any(c.get("warmup") for c in caps[nw:])
+    assert sorted(c["seq"] for c in caps[nw:]) == sorted(r["seq"] for r in recs)
+    assert len(m["warmup"]["attempts"]) == nw and m["warmup"]["judged"] == "last of attempts"
     frames = {p.stem for p in (out / "vla_frames").iterdir()}
     assert {r["front_jpg_sha256"] for r in recs} <= frames
     p = m["pilot"]
@@ -464,7 +468,11 @@ def test_a_slow_warm_up_refuses_the_flight_before_take_off():
     assert m["end_reason"] == "warmup_refused" and m["refused"]["kind"] == "warmup_refused"
     assert m["ticks"] == 0 and not m["warmup"]["pass"] and m["warmup"]["rtt_s"] > 0.9
     assert "over the 0.4 s gate" in m["warmup"]["why"] and "REFUSED" in said
-    assert m["pilot"]["server"]["stop"] == "shutdown" and m["pilot"]["warmup"]["seq"] == 1
+    # The last of the warm-up requests is the one judged (re-review N1).
+    import vla_mission as VM
+    assert m["pilot"]["server"]["stop"] == "shutdown"
+    assert m["pilot"]["warmup"]["seq"] == VM.WARMUP_REQUESTS
+    assert len(m["warmup"]["attempts"]) == VM.WARMUP_REQUESTS
     assert (out / "manifest.json").is_file()
 
 
