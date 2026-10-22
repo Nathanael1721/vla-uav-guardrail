@@ -16,6 +16,138 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-22 — AerialVLA becomes a pilot the Guardrail can fly, the tracker becomes the progress monitor, and open WP items closed
+
+Wave V1: five branches, each reviewed adversarially two or three times and
+fixed after each review, merged on 21-22 Oct (2aa03b1 for V1a-V1c, 01f7820
+for V1d, fb8f87c for V1e). **Nothing in this wave has flown
+a VLA yet**: every AerialVLA number below is offline (the model on the RTX
+4090 against recorded frames), and the rail changes are tested headless, not
+flown. The goal it serves is the user's of 21 Oct: a VLA that flies the
+drone, not a hand-written controller with a detector.
+
+#### Added
+- **AerialVLA codec** (`guardrail/aerialvla_codec.py`): the upstream prompt
+  byte for byte, the 8-phrase vocabulary, the 224x448 front-over-down mosaic
+  (a missing down frame is recorded or refused) and a strict output reader.
+  Anything but `FF DD YY[ LAND]</s>` is a parse failure the client holds as
+  zero; the old last-three-integers reader had turned `00 49 494 49` into a
+  5 m dive. Outputs are per-decision STEPS (forward 0-5 m, down -5..5 m,
+  heading change +-1.1 rad), not velocities.
+- **VLA server protocol v2** (`demo/vla_server_v2.py`, also
+  `demo/vla_server.py --v2`): TCP on 127.0.0.1, newline JSON; refuses unknown
+  fields and any field, object word or CSP text that could carry target
+  coordinates; answers every request it reads (a failing log write, a
+  decompression-bomb frame, a 400-digit number get `ok=false`, not a dropped
+  connection); puts the model identity (weights_sha256 over the base shards
+  plus the adapter, precision, attention, merge, measured agreement) on every
+  answer. **No silent model default**: it refuses to load until
+  `--precision`, `--attn` and `--merge`/`--no-merge` are given.
+- **AerialVLA serving on the RTX 4090** (`docs/data/aerialvla_serving_4090.json`):
+  all 8 precision x attention x merge configurations meet the 1.0 s p50 gate.
+  bf16/sdpa/unmerged reproduces the upstream-precision reference on 96 % of
+  the probe (p50 486 ms, ~16 GB); bf16/sdpa/merged is fastest (259 ms, 88 %);
+  nf4/sdpa/merged is the low-VRAM option (517 ms, ~7.9 GB process VRAM) but
+  agrees on only 25-33 %. CityLife loaded leaves ~19.4 GB free, so bf16 is
+  expected to fit beside it (not yet measured in flight).
+- **The pilot client** (`guardrail/vla_link.py`, `RemoteVLABackend` in
+  `guardrail/vla_backends.py`): one outstanding request, pipelined captures, a
+  `StepTracker` that turns each step and its capture pose into a 10 Hz
+  world-frame action (rotate only when |dpsi| >= 0.25 rad, as upstream; cruise
+  cap; altitude inside the tighter of the configured and policy bands), LAND
+  reported to the rail (never a raw mode request), hover on a stale or failed
+  decision. Every tick names its author (vla_step / hold / hover / none). The
+  client re-reads the answer text instead of trusting `parse_ok`, pins the
+  model identity (a different model mid-run is refused, `model_changed`), and
+  nothing in it can stop the 10 Hz loop (logging on its own thread, callback
+  errors counted).
+- **Dashboard** (default page of the local tracker, `tools/build_dashboard.py`,
+  `GET /api/dashboard`, `GET /api/live`): VLA in the loop, running now (with
+  heartbeats from `tools/live_status.py`, written outside OneDrive), WP
+  progress, grant KPIs (target / value / null / grade / as_of / source; not
+  measured never shows as 0; green only when on target, KPI-grade and better
+  than its null), latest flights with H.264 videos, timeline and the open
+  to-do list (`tools/todo.py`, `tracker/data/todo.json`, 44 items), in
+  EN/ID/zh-Hant. **A run counts as a VLA flight only on the server's own
+  answers in its records** (at least 10 accepted parsed decisions carrying one
+  real weights digest, and 10 ticks flown toward them); today 0 of 99 recorded
+  runs qualify. A red banner shows when a flight and a workflow overlap.
+- **ArduPilot rail start gate** (`demo/pas_ardupilot/perception_node.py`):
+  after take-off the aircraft hovers until the detector has seen a plausible
+  subject 5 times in a row within 30 m; a timeout flies no mission unless
+  `--start-timeout-action fly`. The hover is watched tick by tick
+  (HoverWatch): a pilot or failsafe takeover ends it at once, the Shield
+  checks every hover tick, and an unsafe hover tick starts the loop so the
+  Shield and the escalation FSM act. New options `--identity`,
+  `--negative-query`, `--lock-gate`. Replayed on the 21 Oct flight's 345
+  inferences the gate never opens: no box there was the car. Not flown.
+- **Sweep**: a sideways-pilot cell (`time-window-opens-on-sideways-pilot`,
+  2 m/s east, bounded at 7 ticks inside, 2.9 s to safe, never censored), and
+  per-episode `cap_refused_ticks` / `floor_refused_ticks` printed beside the
+  P0 headline, zero included.
+
+#### Changed
+- **The city rail flies the signed bundle of its policy by default**
+  (ARCH-29); the YAML only under `--dev-yaml`, recorded as a development run.
+  Build the bundles first: `python tools/build_flight_bundles.py`.
+- **C2, the time-window escape.** When a zone's window opens on the aircraft
+  sooner than any action within the hard caps can take it out, the zone is
+  judged by the inside rule from the opening, and the escape flies at the
+  speed cap until the aircraft is out of the ring. That escape is now
+  forecast as flown (out of the ring, then a stop at one forecast step and
+  3 m/s^2), so a rule beyond the stop no longer refuses the cap; when one
+  lies inside the stop, the Shield tries the fastest clean speed, then
+  reports a violation so the FSM escalates. No FSM edge or KPI formula
+  changed. The library P0 escape of 0 for these cells is a re-judgement of the
+  same flight path: the aircraft is still inside the polygon 3-13 ticks, as on
+  7c9c9e6, at most 2.8 s to safe.
+- **C8**: the stand-off CSP sentence binds the followed subject ("the
+  pedestrian you are following"), not "any pedestrian". **A14**: the
+  paraphraser refuses narrowed or widened objects (held-out false accepts
+  5/30 -> 0/30 on the dev set; 4/12 on a fresh held-out set). **WP1-22**:
+  generated policies get unique ids.
+- Evaluation RPCs on the ArduPilot rail run off the loop (the 21 Oct
+  flight's 1028 ms tick was a 1024.9 ms simulator truth read), and the
+  detector loads before SITL. Neither change has flown yet.
+
+#### Fixed
+- **LAND on every way out from the arming** (ArduPilot rail): an exception or
+  Ctrl+C anywhere after arming, including the start-gate hover, lands the
+  aircraft and writes the episode, unless the autopilot or a pilot has it; the
+  net's own prints cannot raise past its LAND.
+- A Ctrl+C caught by the start gate's hover ended the Dashboard row "ok"; it
+  now ends "stopped" (found by the V1c/V1d merge, failing-first test).
+- A run that flew no mission writes None (not a 1 MHz detector rate and zero
+  dwell) for its rates and counters.
+- The pilot client no longer treats a server error as a decision: a server
+  refusing every request for 30 s read as 299 VLA holds at 9.97 Hz, now as
+  300 `none` ticks and a decision rate of 0.
+
+#### Retracted
+- **The 4 Aug AerialVLA ablation**, read strictly: the original adapter stops
+  on 17 of 18 no-hint frames, not 11, and the object-presence effect is not
+  supported (`docs/data/aerialvla_ablation_rescore.json`). All its numbers are
+  per-step displacements, not rates.
+- **"The library has no such zone"** (V1e review notes): the corridor edge at
+  x = 80 is 9 m past the school zone's ring at x = 71.
+
+#### Measured (headless sweep, republished on the merged tree)
+- Library, grant arm: 140 pass / 22 tracked / 0 fail / 18 known over 180
+  episodes; P0 escape 0.0 over 179 Shield-on episodes (null passthrough
+  0.234); fail-safe 145/171 = 0.848; mission success 0.603; mean time to safe
+  4.31 s; 0 slowed escapes. The fail-safe KPI target (>= 0.99) is still not
+  met.
+
+#### Tests
+- The CI list runs 110 test files on the merged tree, 0 failing.
+
+#### Not done
+- No VLA flight. The CityLife VLA pilot (`demo/vla_fly.py`) is the next
+  branch; its first flight is the milestone.
+- The 4 LLM-authored stored paraphrase sets stale since C8 are pinned, not
+  re-authored. PI decisions, the Orin, the fail-safe gap and Gazebo remain
+  open (`docs/CHECKLIST-remaining-work.md`).
+
 ### 2026-10-21 — the Shield forecasts from the aircraft's own velocity, legal hold points, a realistic harness vehicle, and a smoother city follow, flown
 
 The to-do list's T1 wave, four branches each reviewed adversarially and again
