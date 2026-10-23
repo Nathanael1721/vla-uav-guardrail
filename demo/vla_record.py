@@ -42,7 +42,12 @@ module writes, at the cameras' 10 Hz:
     of the executed command - on the track line and the capture as
     `perturb` {active, yaw_rate, speed_scale, episode}, the schedule in
     record.json - so the builder can keep only the expert's clean motion as
-    labels. An unperturbed recording has no `perturb` key anywhere.
+    labels. An unperturbed recording has no `perturb` key anywhere;
+  * with --record-perturb-vla (DAgger, demo/vla_dagger.py), AerialVLA's
+    windows the same way: `perturb` {source "vla", active - the executed
+    command was the VLA's -, the step, its seq, latency and phrase, ...},
+    the summary in record.json, and in this folder vla_steps.jsonl (one line
+    per request) and vla_frames/ (each request's JPEGs).
 
 NEVER ON THE LOOP'S CRITICAL PATH
 
@@ -189,8 +194,10 @@ class Perturber:
                 break
         return {"active": False, "yaw_rate": 0.0, "speed_scale": 1.0, "episode": None}
 
-    def apply(self, action, s: float):
-        """(the action to send to the Shield, the tick's record)."""
+    def apply(self, action, s: float, pose=None):
+        """(the action to send to the Shield, the tick's record). `pose` is
+        not read here: follow_vlm's one call site passes it for the VLA
+        perturber (demo/vla_dagger.VLAPerturber, the same interface)."""
         st = self.state(s)
         self.n_ticks += 1
         if not st["active"]:
@@ -251,7 +258,13 @@ class ExpertVLARecorder:
     camera subscriptions, start(t0) when the mission clock starts,
     note_tick(...) once per mission tick, and stop() on every way out (it
     returns the stats, also written to record.json). Never raises into the
-    loop: a failed write is counted and the first errors are kept."""
+    loop: a failed write is counted and the first errors are kept.
+
+    A `perturber` with a lifecycle of its own (--record-perturb-vla,
+    demo/vla_dagger.VLAPerturber: put_front / put_down / start / stop) is
+    fed the same camera messages (a pointer assignment each), started with
+    the recorder and stopped first in stop(), so its summary in record.json
+    is final."""
 
     def __init__(self, out_dir: str | Path, obs, box_source: Callable[[], dict | None], *,
                  tag: str, object_text: str, expert: str = "demo/follow_vlm.py",
@@ -260,6 +273,8 @@ class ExpertVLARecorder:
                  poll_s: float = 0.01, max_pending_ticks: int = 20000, saver_queue: int = 4000,
                  flush_s: float = 1.0, perturber: Perturber | None = None):
         self.perturber = perturber          # --record-perturb's schedule, for the records
+        # --record-perturb-vla's perturber asks AerialVLA with these cameras.
+        self._tee = perturber if callable(getattr(perturber, "put_front", None)) else None
         self.dir = Path(out_dir)
         self.dir.mkdir(parents=True, exist_ok=True)
         self.tag, self.object_text, self.expert = str(tag), str(object_text), expert
@@ -298,6 +313,8 @@ class ExpertVLARecorder:
     # ---- the loop's side: pointer assignments and one append --------------
     def put_front(self, msg) -> None:
         self.frames.put_front(msg)
+        if self._tee is not None:
+            self._tee.put_front(msg)
         if self.running:
             with self._lock:
                 self._front_seq += 1
@@ -305,6 +322,8 @@ class ExpertVLARecorder:
 
     def put_down(self, msg) -> None:
         self.frames.put_down(msg)
+        if self._tee is not None:
+            self._tee.put_down(msg)
         if self.running:
             self.n_down += 1
 
@@ -318,8 +337,9 @@ class ExpertVLARecorder:
         asked for (`asked`), whether the Shield touched it, the subject's
         truth (analysis only), the object words in force and, on a perturbed
         recording only, the tick's perturbation (Perturber.apply's record:
-        active, yaw_rate, speed_scale, episode) - absent otherwise, so an
-        unperturbed recording's lines are as before."""
+        active, yaw_rate, speed_scale, episode; VLAPerturber.apply's, source
+        "vla", kept whole: the step, its seq, latency and phrase) - absent
+        otherwise, so an unperturbed recording's lines are as before."""
         if not self.running:
             return
         row = {"tick": tick, "t": float(t), "x": float(x), "y": float(y), "up": float(up),
@@ -327,7 +347,10 @@ class ExpertVLARecorder:
                "asked": _act(asked), "touched": None if touched is None else bool(touched),
                "truth": None if truth is None else [float(truth[0]), float(truth[1])],
                "object": self.object_text if obj is None else obj}
-        if perturb is not None:
+        if perturb is not None and perturb.get("source") == "vla":
+            # `active`: the executed command was AerialVLA's (the builder's rule).
+            row["perturb"] = {**perturb, "active": bool(perturb.get("active"))}
+        elif perturb is not None:
             row["perturb"] = {"active": bool(perturb.get("active")),
                               "yaw_rate": float(perturb.get("yaw_rate") or 0.0),
                               "speed_scale": float(perturb.get("speed_scale") or 1.0),
@@ -354,12 +377,24 @@ class ExpertVLARecorder:
             self.running = True
         self._thread = threading.Thread(target=self._run, name="vla-record", daemon=True)
         self._thread.start()
+        if callable(getattr(self.perturber, "start", None)):
+            try:
+                self.perturber.start(self.t0)
+            except Exception as exc:                                 # noqa: BLE001
+                self._error(exc)
 
     def stop(self, timeout_s: float = 10.0) -> dict:
         """Stop the writer, flush and close, write record.json; the stats.
-        Safe to call twice and before start()."""
+        Safe to call twice and before start(). A perturber with a lifecycle
+        is stopped first (bounded: its thread and link are joined with a
+        timeout)."""
         if self.stats_at_stop is not None:
             return self.stats_at_stop
+        if callable(getattr(self.perturber, "stop", None)):
+            try:
+                self.perturber.stop(timeout_s=timeout_s)
+            except Exception as exc:                                 # noqa: BLE001
+                self._error(exc)
         self.running = False
         self._stop.set()
         alive = False

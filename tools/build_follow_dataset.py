@@ -81,6 +81,15 @@ correcting is the point - each with `perturb.since_end_s`, and stats.json
 counts those within 3 s (post_perturb_3s) and gives every run's phrase
 counts and |dpsi| histogram, so the effect is visible run by run.
 
+DAGGER (follow_vlm --record-perturb-vla, demo/vla_dagger.py, 2026-10-24).
+AerialVLA itself flies windows of the recording; each track line's
+`perturb` has source "vla" and `active` true exactly on the ticks whose
+executed command was the VLA's (a window tick the VLA had no step for is
+flown by the expert and is not active). The same rule applies, unchanged:
+a label whose horizon overlaps a VLA-flown tick (plus the margin) is
+dropped, and the expert's recovery after it is kept - the label is always
+the expert's own motion, now from the states the model led it into.
+
 MIRROR (--mirror). Each TRAIN sample also gives a mirrored one: the mosaic
 flipped left to right (both tiles span the width, so each is flipped in
 place - the world mirrored about the aircraft's long axis), dpsi negated

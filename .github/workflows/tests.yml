@@ -72,7 +72,12 @@
 #          recorder off by default and off the loop's path, the DART
 #          perturbation and its label rule, the mirror; its two mosaic
 #          tests SKIP here and run in the Pillow step, its flight-encoder
-#          test needs OpenCV and is lab-only).
+#          test needs OpenCV and is lab-only). test_vla_dagger (DAgger:
+#          AerialVLA flying seeded windows of that recording,
+#          demo/vla_dagger.py and follow_vlm --record-perturb-vla, its
+#          launcher flags, and the builder's rule on its records; on a stub
+#          client with a fake clock and on the loopback fake server with the
+#          real protocol-v2 client and threads; nothing SKIPs).
 #        The CityLife level, checked offline (the level itself is
 #          gitignored): test_citylife_*, test_drive_signals_dsl,
 #          test_ped_walk_plan, test_parked_cars.
@@ -562,6 +567,7 @@ jobs:
               tests/test_finetune_follow.py \
               tests/test_pas_vla.py \
               tests/test_follow_dataset.py \
+              tests/test_vla_dagger.py \
               tests/test_citylife_peds.py \
               tests/test_citylife_routes.py \
               tests/test_citylife_signal_lamps.py \

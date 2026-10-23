@@ -703,6 +703,27 @@ def test_the_follow_fine_tune_and_smoothing_tests_run_in_ci():
     assert "return SKIP" in src and "GUARDRAIL_REQUIRE_PILLOW" in src
 
 
+def test_the_dagger_recording_test_runs_in_ci():
+    """DAgger for the follow fine-tune (2026-10-24): AerialVLA flying seeded
+    windows of the follow expert's recording (demo/vla_dagger.py, follow_vlm
+    --record-perturb-vla, run_citylife_follow.ps1 -RecordPerturbVla) and the
+    dataset builder's rule on its records. No simulator, GPU or model: a stub
+    client on a fake clock, and tests/vla_fake_server.py on an ephemeral
+    loopback port with the real protocol-v2 client. It needs neither OpenCV
+    nor Pillow (a fake JPEG encoder), so nothing in it may SKIP; its runner
+    counts a SKIP all the same."""
+    assert "test_vla_dagger.py" in _loop(), "not run in CI"
+    src = (ROOT / "tests" / "test_vla_dagger.py").read_text(encoding="utf-8")
+    assert "import vla_fake_server" in src and "assert srv.port != 8790" in src
+    # Every address a test connects to is an ephemeral port, never 8790 (the
+    # real server's, which may be serving the model on the lab machine).
+    addrs = re.findall(r'\bD\.make_vla_perturber\(\s*(f?"[^"]*")', src)
+    assert addrs and all(a.startswith('f"127.0.0.1:{') for a in addrs), addrs
+    assert "import cv2" not in src and "from PIL" not in src
+    runner = src.split('if __name__ == "__main__":', 1)[-1]
+    assert "== SKIP" in runner, "the runner does not count the SKIP"
+
+
 def test_the_ardupilot_vla_pilot_test_runs_in_ci():
     """Wave V2b (2026-10-23): the ArduPilot rail's AerialVLA pilot
     (perception_node --pilot vla, to-do VLA-07) and its VLA cameras (VLA-03).

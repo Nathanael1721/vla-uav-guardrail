@@ -4265,7 +4265,8 @@ async def fly(args) -> int:
     view_dir = None
     vla_rec = None              # --record-vla's writer (demo/vla_record.py)
     vla_record_stats = None     # ...its counts, for metrics.json
-    perturber = None            # --record-perturb's schedule (vla_record.Perturber)
+    perturber = None            # --record-perturb's schedule (vla_record.Perturber), or
+                                # --record-perturb-vla's (vla_dagger.VLAPerturber)
     start_heading_err_deg = None
     nfz_hold_ticks = 0
     n_fence_aim = 0          # ticks the forward aim was moved out of a zone's band
@@ -4274,6 +4275,24 @@ async def fly(args) -> int:
     presence = PresenceMonitor(args.object, args.colour_min)
     rng_f = None            # low-passed range, for the orbit radial term
     orbit_fwd_prev = 0.0
+    if args.record_perturb_vla:
+        # DAgger (demo/vla_dagger.py): AerialVLA flies windows of this
+        # recording. Its server must answer hello HERE, before the simulator
+        # is touched: a recording flight with no VLA to fly its windows is
+        # refused, not flown as a plain recording. Nothing runs yet - the
+        # recorder starts it with the mission clock and stops it first.
+        import vla_dagger
+        try:
+            perturber = vla_dagger.make_vla_perturber(
+                args.record_perturb_vla, seed=args.seed, obs=obs,
+                box_source=lambda: grounder.latest() if grounder is not None else None,
+                policy=policy, object_text=lambda: args.object, cruise_alt=args.cruise_alt,
+                record_dir=args.record_vla, every_s=args.perturb_vla_every,
+                dur_s=args.perturb_vla_dur, allow_stand_in=args.perturb_vla_allow_stand_in,
+                log=print)
+        except vla_dagger.DaggerRefused as exc:
+            raise SystemExit(f"[vla-dagger] *** refused: {exc}") from None
+        print(f"[vla-dagger] {perturber.describe()}")
     client = ProjectAirSimClient()
     # The Dashboard heartbeat starts here, at the first slow step (the
     # connect), and ends at the very end of this function with the exit code
@@ -6050,11 +6069,14 @@ async def fly(args) -> int:
             # knocked off for 1.0-1.5 s every 5-8 s, after the controller and
             # its slew limiter (whose own state stays the expert's) and before
             # the Shield, which judges and repairs what is actually sent.
-            # Without it the Shield judges `smooth`, as it always has.
+            # --record-perturb-vla (vla_dagger.VLAPerturber), the same place:
+            # in its windows AerialVLA's step tracker flies, on this pose.
+            # Without either the Shield judges `smooth`, as it always has.
             flown_in = smooth
             perturb_rec = None
             if perturber is not None:
-                flown_in, perturb_rec = perturber.apply(smooth, time.time() - t0)
+                flown_in, perturb_rec = perturber.apply(smooth, time.time() - t0,
+                                                        pose=(state.x, state.y, state.up, yaw))
             _ta = time.time()
             d = shield.filter(state, flown_in)
             audit.log(tick, d)
@@ -6317,8 +6339,18 @@ async def fly(args) -> int:
                       f"({vla_record_stats['skipped_front_frames']} front frames skipped, "
                       f"{vla_record_stats['saver'].get('dropped')} JPEGs dropped), "
                       f"{vla_record_stats['ticks']} ticks -> {args.record_vla}")
+                if args.record_perturb_vla:
+                    from vla_dagger import summary_line
+                    print(summary_line(vla_record_stats.get("perturb")))
             except Exception as exc:                                # noqa: BLE001
                 print(f"[warn] the VLA recording did not close: {type(exc).__name__}: {exc}")
+        if perturber is not None and callable(getattr(perturber, "stop", None)):
+            # --record-perturb-vla on a flight that failed before its recorder
+            # started it: close the link (a no-op after vla_rec.stop()).
+            try:
+                perturber.stop()
+            except Exception as exc:                                # noqa: BLE001
+                print(f"[warn] the VLA perturber did not close: {type(exc).__name__}: {exc}")
         # The Dashboard row normally ends after final_report, at the end of
         # this function, with its exit code. It ended here with
         # "failed" if aborted else "ok", and `aborted` is set only by the
@@ -6838,7 +6870,8 @@ XY_FLAGS = ("--park-at",)
 
 
 def _rate_range(text: str) -> tuple[float, float]:
-    """'LO,HI' -> (lo, hi) rad/s, 0 < lo <= hi (--perturb-yaw-rate)."""
+    """'LO,HI' -> (lo, hi), 0 < lo <= hi: rad/s for --perturb-yaw-rate,
+    seconds for --perturb-vla-every and --perturb-vla-dur."""
     try:
         lo, hi = (float(v) for v in str(text).split(","))
     except ValueError:
@@ -7279,6 +7312,32 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="with --record-perturb: while a perturbation lasts, only the "
                          "offset turns the aircraft (the expert's own yaw-rate command is "
                          "dropped), so the car drifts off-centre uncorrected")
+    ap.add_argument("--record-perturb-vla", default=None, metavar="HOST:PORT",
+                    help="with --record-vla only: DAgger (demo/vla_dagger.py). AerialVLA, "
+                         "served by a running demo/vla_server_v2.py at HOST:PORT, flies "
+                         "windows of this recording: every 6-10 s, for 2.5-4.0 s, the "
+                         "EXECUTED command is the one vla_fly's follow mission would fly (its "
+                         "step tracker on AerialVLA's latest step, asked from 1.5 s before "
+                         "with the VLAFront/VLADown pair and DetectorHint's phrase for this "
+                         "follow's box), after the controller and before the Shield (which "
+                         "still filters it); the expert flies the rest, and every recovery. "
+                         "Seeded by --seed, recorded per tick; the dataset builder drops every "
+                         "label that overlaps a VLA-flown tick. The server must answer hello "
+                         "as AerialVLA before the simulator is touched. Not with "
+                         "--record-perturb. Off by default.")
+    ap.add_argument("--perturb-vla-every", type=_rate_range, default=(6.0, 10.0),
+                    metavar="LO,HI",
+                    help="with --record-perturb-vla: seconds from one window's opening to "
+                         "the next (default 6,10)")
+    ap.add_argument("--perturb-vla-dur", type=_rate_range, default=(2.5, 4.0),
+                    metavar="LO,HI",
+                    help="with --record-perturb-vla: seconds each window lasts (default "
+                         "2.5,4.0); the longest window and its 1.5 s lead-in must fit the "
+                         "shortest period")
+    ap.add_argument("--perturb-vla-allow-stand-in", action="store_true",
+                    help="with --record-perturb-vla: fly the windows from a server that is "
+                         "not AerialVLA (the scripted stand-in: a plumbing dry run, recorded "
+                         "as one, never training data)")
     ap.add_argument("--record-hz", type=float, default=20.0,
                     help="frames per second the recorder writes, on its OWN "
                          "thread. Replaces --view-every, which tied recording "
@@ -7354,6 +7413,23 @@ def main(argv: list[str] | None = None) -> int:
     if not args.record_perturb and (args.perturb_replace_yaw
                                     or args.perturb_yaw_rate != (0.3, 0.5)):
         ap.error("--perturb-replace-yaw and --perturb-yaw-rate need --record-perturb")
+    if args.record_perturb_vla is not None:
+        # DAgger (demo/vla_dagger.py): the VLA's windows are training data,
+        # worth flying only into a recording, and one perturbation at a time
+        # (each is the recording's `perturb`).
+        if not args.record_vla:
+            ap.error("--record-perturb-vla needs --record-vla: AerialVLA flies windows of a "
+                     "recording, so the expert's recovery can be labelled")
+        if args.record_perturb:
+            ap.error("--record-perturb-vla and --record-perturb: one perturbation at a time")
+        from vla_dagger import check_args
+        why = check_args(args.record_perturb_vla, args.perturb_vla_every, args.perturb_vla_dur)
+        if why is not None:
+            ap.error(why)
+    elif (args.perturb_vla_every != (6.0, 10.0) or args.perturb_vla_dur != (2.5, 4.0)
+          or args.perturb_vla_allow_stand_in):
+        ap.error("--perturb-vla-every, --perturb-vla-dur and --perturb-vla-allow-stand-in "
+                 "need --record-perturb-vla")
     global LINEAR_BEARING
     LINEAR_BEARING = bool(args.linear_bearing)
     if args.coarse_timer:

@@ -1688,6 +1688,27 @@ class StepTracker:
         """Re-engage after LAND (a new leg the operator commanded)."""
         self.land_requested = False
 
+    def note_flown(self, action: Action4D, now: float) -> None:
+        """The rail flew `action` at `now` instead of this tracker's output
+        (follow_vlm --record-perturb-vla, demo/vla_dagger.py: the expert flew
+        that tick). With smoothing, the next tick's acceleration limits
+        start from what the aircraft was really told, so a hand-over to the
+        tracker ramps from the command in force instead of jumping from the
+        tracker's own last output (or from rest, after suspend()). Nothing
+        else changes: the decision being flown, its targets and timers stay.
+        No effect without smoothing; counted (rail_flown)."""
+        if not self.cfg.smoothing:
+            return
+        a = Action4D(vx=float(action.vx), vy=float(action.vy), vz_up=float(action.vz_up),
+                     yaw_rate=float(action.yaw_rate))
+        self._prev, self._t_prev = a, float(now)
+        if math.hypot(a.vx, a.vy) <= 1e-3:
+            if self._t_still is None:
+                self._t_still = float(now)
+        else:
+            self._t_still = None
+        self.counts["rail_flown"] += 1
+
     # -- outputs ----------------------------------------------------------- #
     @property
     def idle_since(self) -> float | None:
