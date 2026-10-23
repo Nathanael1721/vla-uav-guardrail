@@ -331,6 +331,9 @@ RETRACTIONS: dict[str, str] = {
     "the 4 aug aerialvla ablation": "not a sentence: the stored ablation outputs re-read with "
                                     "the strict parser (docs/data/aerialvla_ablation_rescore.json); "
                                     "the 4 Aug document keeps its text under a dated correction",
+    "every vla follow's kpi.json said mission_success true": "not a sentence: kpi.json fields, "
+                                                             "re-scored from each run's flight log "
+                                                             "by tools/rescore_vla_follow.py",
     "the library has no such zone": "not a sentence: wording in branch review hand-off notes, "
                                     "corrected where it reached docs and the lint text",
     "corner stall was the aircraft pressing": "09-23",

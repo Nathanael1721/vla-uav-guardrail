@@ -16,6 +16,42 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-23 (follow, reviewed) — the follow's score now counts, a lost car is re-acquired at once, follow #10
+
+An independent review of the follow work (no P0; truth never reaches control)
+found the follow's records overstating, and a 26 s blackout after a lapse.
+Fixed (merge d9dbbd8), then follow #10 flown.
+
+#### Retracted
+- **Every VLA follow's kpi.json said mission_success true**: the follow score
+  sat under `metrics.follow`, where guardrail/kpi.py does not look, so no follow
+  test applied. Re-scored from each run's own flight log with
+  `tools/rescore_vla_follow.py`: #2 and #3 (0.0 within 30 m) now fail
+  `follow_proxy`; the other seven pass kpi's 5 % rule. The within-30-m shares
+  quoted in the section below were computed from the flight logs and stand.
+
+#### Fixed
+- **A lost car is re-acquired at once**: with identity on, the strict lock
+  lapsed after 2 s and nothing re-acquired for memory + search (26 s); now the
+  lapse, or 3 s unseen, restarts follow_vlm's Reacquirer anchored at the last
+  sighting (in the test with the real lock and Reacquirer: back 0.6 s after the
+  car reappears, never within 20 s before).
+- The follow's records: each decision's hint kind (fresh / memory / search);
+  a LAND held as arrival is no longer a VLA landing; a follow that never asked
+  ends `subject_not_acquired`, not as a VLA failure; the start gate is the one
+  applied after the identity setup; perception resets drop the stale box.
+
+#### Flown
+- **#10** (`demo/out/vla_follow_redcar_10_20261023`, as #9 with the fixes):
+  within 30 m on 0.926 of the ticks AerialVLA flew (median 12.78 m, the box on
+  the car 133 of 151), the best chase yet - but 0.17 of the whole flight: the
+  car started 41.77 m ahead, the drone waited for it to come round, chased it,
+  and lost it when the car outran it before the corner; the re-acquisition
+  range (30 m) never took it back.
+
+#### Tests
+- `tests/test_vla_fly.py` 60/61, the CI list 115 files, 0 failing.
+
 ### 2026-10-23 (follow) — AerialVLA chases the red car: nine follow flights, each fix measured on the next
 
 The user asked for AerialVLA to follow the target as the hand-written
