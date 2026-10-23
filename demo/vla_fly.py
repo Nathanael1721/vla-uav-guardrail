@@ -42,6 +42,17 @@ THE MISSIONS (demo/vla_mission.py has the geometry and the stop rules)
                parked at --park-at (default (48, 12)); OWL-ViT looks for
                --object on its own camera, the bridge turns the box into the
                phrase. Ends on LAND, the box large, the target lost, or time.
+  M3 follow    the level's car (--level-car, default Car_10), chased on
+               OWL-ViT's phrase as M2's. Which box is the car is follow_vlm's
+               perception: TargetLock, the identity check with its strict lock
+               and follow_vlm's Reacquirer as the start gate, re-acquiring at
+               once on a lapse from the last sighting (_acquire_step); without
+               identity the DetectorHint's gate (follow_perception). The
+               Shield pinning the aircraft or a close box with no request
+               resets that perception (_perception_reset). The level car's
+               pose scores the run (frac_within_30m at the top of metrics, as
+               follow_vlm's) and reaches nothing else. Ends on the target
+               lost, nothing ever asked (subject_not_acquired), or time.
 
 Either way the VLA's steps go StepTracker -> Shield.filter ->
 move_by_velocity, LAND becomes the controlled landing, and a dead, slow or
@@ -248,6 +259,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
                          "--identity: physical size from depth, the street mask)")
     ap.add_argument("--no-stuck-reset", action="store_true",
                     help="M3: never reset the detector lock when the Shield pins the aircraft")
+    ap.add_argument("--close-stall-s", type=float, default=8.0,
+                    help="M3: a close box with no request sent this long resets the detector "
+                         "lock / re-acquires, recorded (a wrong large box held in a hover); "
+                         "0 disables")
     ap.add_argument("--no-follow-executor", action="store_true",
                     help="M3: fly upstream's execution (rotate in place on a big turn, the "
                          "model's altitude) instead of turning while moving at a held altitude")
@@ -373,6 +388,24 @@ def resolve_args(args):
     for k in ("close_bottom_frac", "close_width_frac"):
         if not 0 < getattr(args, k) <= 1:
             raise ValueError(f"--{k.replace('_', '-')} must be in (0, 1]")
+    # Review of d6e7123 (P3): the follow's perception flags, validated, and
+    # refused where the flight could not do what they say (the records then
+    # disagreed with what flew).
+    if not (math.isfinite(args.lock_gate) and 0 < args.lock_gate < 1):
+        raise ValueError("--lock-gate must be in (0, 1): a fraction of the image width")
+    if not (math.isfinite(args.acquire_max_range_m) and args.acquire_max_range_m > 0):
+        raise ValueError("--acquire-max-range-m must be a positive number of metres")
+    if not (math.isfinite(args.close_stall_s) and args.close_stall_s >= 0):
+        raise ValueError("--close-stall-s must be 0 (off) or more")
+    if m == "follow" and not args.no_identity:
+        if args.no_lock:
+            raise ValueError("--no-lock needs --no-identity: the identity check works through "
+                             "follow_vlm's strict TargetLock (follow_vlm --identity), so there "
+                             "is no identity without a lock")
+        if args.start_gate_n == 0:
+            raise ValueError("--start-gate-n 0 needs --no-identity: with identity the start "
+                             "gate is the acquisition that seeds the strict lock (follow_vlm's "
+                             "Reacquirer, at least one frame)")
     if m == "follow":
         # M3: chase the level's moving car. The phrase comes from OWL-ViT's box
         # (as M2's); the subject's truth is the level car, read for scoring.
@@ -635,40 +668,268 @@ def _feed_pose(drone, obs, State, quat_yaw, FV):
     return state, yaw, kin
 
 
-def _acquire_step(grounder, acq_box: dict, args) -> None:
-    """M3 with identity, once per tick: while acquiring, step follow_vlm's
-    Reacquirer on each new detector frame's candidates and commit its pick
-    (the strict lock's seed); once committed, a subject unseen for longer
-    than the hint's memory + search restarts the acquisition
-    (begin_reacquire), as follow_vlm does after a lapse. Perception only."""
+# follow_vlm --lapse-s's default, past TargetLock's 2 s hold: a committed
+# subject with no accepted box this long has lapsed (_acquire_step).
+LAPSE_S = 3.0
+
+
+def new_acquisition(acq, t0: float | None = None) -> dict:
+    """The follow's acquisition state for _acquire_step (identity on): the
+    Reacquirer `acq` (started by the caller), mission start `t0` (wall
+    time: the records' times are mission seconds), and the subject's memory
+    since the last commit - follow_vlm's no-estimator path: when it was last
+    seen (`seen_t`) and last seen OK (`t_ok`), the map points of its held
+    boxes (`hist`, for the measured speed), the last sighting (`last`: its
+    frame's capture time and place), the speeds."""
+    return {"acq": acq, "committed": False, "last_seq": -1, "commits": [], "reacquires": 0,
+            "lapses": [], "errors": [], "t0": t0, "seen_t": None, "t_ok": -math.inf,
+            "last_t_det": None, "hist": [], "last": None, "v": None, "v_prior": None}
+
+
+def _acquire_step(grounder, acq_box: dict, args, clock=time.time) -> None:
+    """M3 with identity, once per tick, perception only: follow_vlm's own
+    handling of the subject when it has no estimator (fly(): the start
+    gate, the measurement, the lapse, the re-acquisition).
+
+    * Acquiring: each NEW detector frame's candidates step follow_vlm's
+      Reacquirer; its pick is committed (the strict lock's seed) and the
+      subject's memory moves to it (follow_vlm's _take_subject).
+    * Committed: each NEW held box (a new t_det; a SOFT one only within 3 s
+      of an OK one) is the measurement: its map point, its frame's capture
+      time, the speed over the last 2 s (follow_vlm.measured_speed).
+    * The LAPSE: the strict lock answering "no held instance" - its 2 s hold
+      over and no estimator prior to stand in (this flight sets none: the
+      lock can never take the subject back by itself) - or no accepted box
+      for LAPSE_S: re-acquire AT ONCE, as follow_vlm does ("LAPSE: no
+      accepted measurement for lapse_s ... reacq.start(anchor);
+      grounder.begin_reacquire()"): the Reacquirer anchored at the last
+      sighting {t, P, v}, so the car is taken back within `need` frames
+      wherever it could have driven since, without the motion test.
+
+    Until the review of d6e7123 (P2-3) the re-acquisition waited for
+    memory_s + search_s (26 s) unseen, counted only once the Grounder had
+    dropped the stale box (8 s): #8 spent 1060 of its 1306 detector frames
+    acquiring and #9 hovered 54 % of the time. The hint's memory and search
+    keep the phrases coming meanwhile (DetectorHint). `args` is unused since
+    (kept for the callers); `clock` is the wall clock of the Grounder."""
+    import follow_vlm as FV
     gw = grounder.latest()
     if gw.get("seq") == acq_box["last_seq"]:
         return
     acq_box["last_seq"] = gw.get("seq")
-    now = time.time()
+    now = clock()
+    t0 = acq_box.get("t0")
+
+    def mt(t):
+        return round(t - t0, 3) if t0 is not None else round(t, 3)
     if not acq_box["committed"]:
         if not (gw.get("t") and now - gw["t"] < 1.0):
             return
         ic = gw.get("inf_cap") or {}
-        reached = acq_box["acq"].step(gw.get("cands") or [], gw.get("cand_tiers") or [],
-                                      gw.get("cand_feats") or [],
-                                      ic.get("t_capture") or ic.get("t_cap") or now)
-        if reached:
-            grounder.commit(acq_box["acq"].pick, yaw=(ic.get("pose") or {}).get("yaw"))
+        t_ic = ic.get("t_capture") or ic.get("t_cap") or now
+        acq = acq_box["acq"]
+        if acq.step(gw.get("cands") or [], gw.get("cand_tiers") or [],
+                    gw.get("cand_feats") or [], t_ic):
+            grounder.commit(acq.pick, yaw=(ic.get("pose") or {}).get("yaw"))
             acq_box["committed"] = True
-            acq_box["commits"].append(round(now, 3))
+            acq_box["commits"].append(mt(now))
+            # The subject's memory moves to the committing sighting.
+            P = (getattr(acq, "pick_feat", None) or {}).get("P")
+            if acq_box["v"] is not None:
+                acq_box["v_prior"] = acq_box["v"]
+            acq_box["v"] = None                 # a streak's ~3 m jitter is no speed
+            acq_box["hist"] = [] if P is None else [(now, float(P[0]), float(P[1]))]
+            acq_box["last"] = (None if P is None else
+                               {"t": float(t_ic), "P": (float(P[0]), float(P[1]))})
+            acq_box["seen_t"] = acq_box["t_ok"] = now
+            acq_box["last_t_det"] = gw.get("t_det")
             print("[follow] subject acquired (identity): lock seeded")
         return
-    # Unseen since its last box, never since before the commit (until the
-    # first box after a commit, t_det is still the old one, or 0).
-    seen_t = max(float(gw.get("t_det") or 0.0), acq_box["commits"][-1] if acq_box["commits"] else 0.0)
-    lost_for = now - seen_t if gw.get("det") is None else 0.0
-    if lost_for > args.follow_memory_s + args.follow_search_s:
-        grounder.begin_reacquire()
-        acq_box["acq"].start(None)
-        acq_box["committed"] = False
-        acq_box["reacquires"] += 1
-        print(f"[follow] subject unseen {lost_for:.0f} s: re-acquiring")
+    t_det = gw.get("t_det")
+    if gw.get("det") is not None and t_det and t_det != acq_box["last_t_det"]:
+        acq_box["last_t_det"] = t_det
+        tier = gw.get("tier")
+        if tier == "ok" or now - acq_box["t_ok"] < 3.0:
+            if tier == "ok":
+                acq_box["t_ok"] = now
+            acq_box["seen_t"] = now
+            P = (gw.get("feat") or {}).get("P")
+            if P is not None:
+                cap = gw.get("cap") or {}
+                hist = acq_box["hist"]
+                hist.append((now, float(P[0]), float(P[1])))
+                del hist[:-40]
+                v = FV.measured_speed(hist)
+                if v is not None:
+                    acq_box["v"] = v
+                acq_box["last"] = {"t": float(cap.get("t_capture") or cap.get("t_cap") or now),
+                                   "P": (float(P[0]), float(P[1]))}
+    unseen = now - (acq_box["seen_t"] if acq_box["seen_t"] is not None else now)
+    why = ("lock: no held instance" if gw.get("lock_why") == "no held instance"
+           else f"unseen {unseen:.1f} s" if unseen > LAPSE_S else None)
+    if why is None:
+        return
+    last = acq_box["last"]
+    v = acq_box["v"] if acq_box["v"] is not None else acq_box["v_prior"]
+    anchor = None if last is None else {"t": last["t"], "P": last["P"], "v": v}
+    grounder.begin_reacquire()
+    acq_box["acq"].start(anchor)
+    acq_box["committed"] = False
+    acq_box["reacquires"] += 1
+    acq_box["lapses"].append({"t": mt(now), "why": why, "unseen_s": round(unseen, 2),
+                              "P": None if anchor is None else [round(c, 2) for c in anchor["P"]],
+                              "v": None if v is None else round(v, 2)})
+    print(f"[follow] subject lost ({why}): re-acquiring from its last sighting")
+
+
+def _identity_setup(args, sim, drone, obs, FV) -> tuple[dict | None, str | None]:
+    """M3 with identity (follow_vlm --identity): the detector camera's depth
+    subscribed, demo/identity.py's thresholds and the street mask loaded ->
+    (follow_vlm.Grounder's identity configuration, None). Any failure -
+    (None, why), never an exception: the follow then flies without identity,
+    with the DetectorHint's start gate (follow_perception), and the records
+    say why (review of d6e7123, P2-5)."""
+    try:
+        topic = drone.sensors[CAMERAS["detector"]]["depth_camera"]
+        import identity as identity_mod
+        th = identity_mod.load_thresholds(None)
+        sp = Path(args.citymap).parent / "street.npz"
+        sd = identity_mod.StreetDistance.load(sp) if sp.is_file() else None
+        if sd is None:
+            print(f"[identity] *** no street mask at {sp}: the off-street rules cannot fire")
+        cfg = {"thresholds": th, "street": sd, "hfov": FV.CAMERA_HFOV_DEG,
+               "hash": identity_mod.thresholds_hash(th),
+               "path": str(identity_mod.DEFAULT_THRESHOLDS),
+               "nouns": {args.object: identity_mod.noun_of(args.object)}}
+        sim.subscribe(topic, lambda _, m: obs.put_depth(m))
+    except Exception as exc:                                       # noqa: BLE001
+        return None, f"{type(exc).__name__}: {exc}"
+    return cfg, None
+
+
+def follow_perception(args, identity_on: bool, identity_error: str | None = None) -> dict:
+    """What a follow's perception applies, decided AFTER the identity setup
+    (review of d6e7123, P2-5: the DetectorHint's gate was chosen from
+    --no-identity before that setup ran, so a follow whose identity failed
+    to load flew with no gate while its params claimed one):
+
+      lock        follow_vlm's TargetLock (strict with identity), unless
+                  --no-lock (refused with identity: resolve_args);
+      identity    asked for (not --no-identity), on, and why not when it
+                  was asked for and failed;
+      start_gate  identity on: follow_vlm's Reacquirer (need, range), the
+                  acquisition that seeds the strict lock; otherwise the
+                  DetectorHint's (n successive near boxes) unless
+                  --start-gate-n 0; else none."""
+    requested = not args.no_identity
+    on = bool(identity_on and requested)
+    lock = on or not args.no_lock
+    if on:
+        gate = {"kind": "identity_reacquirer", "need": int(args.start_gate_n),
+                "max_range_m": float(args.acquire_max_range_m)}
+    elif args.start_gate_n > 0:
+        gate = {"kind": "detector_hint", "n": int(args.start_gate_n),
+                "width_frac": float(args.start_gate_width)}
+    else:
+        gate = None
+    return {"lock": lock, "lock_gate": float(args.lock_gate) if lock else None,
+            "identity": {"requested": requested, "on": on,
+                         "error": identity_error if requested and not on else None},
+            "start_gate": gate}
+
+
+def follow_params(args, plan: dict | None) -> dict:
+    """params["follow"]: the follow's CONFIGURATION, as applied (`plan`:
+    follow_perception's, None when the flight ended before the perception
+    was set up). What it measured - the acquisition, the resets, the
+    close-hold ticks - is metrics["follow"]'s (follow_measured; review of
+    d6e7123, P3)."""
+    return {"memory_s": args.follow_memory_s, "search_s": args.follow_search_s,
+            "close_bottom_frac": args.close_bottom_frac,
+            "close_width_frac": args.close_width_frac,
+            "executor": args.follow_executor,
+            "perception_applied": plan is not None,
+            "lock_gate": None if plan is None else plan["lock_gate"],
+            "identity": None if plan is None else dict(plan["identity"]),
+            "start_gate": None if plan is None else plan["start_gate"],
+            "lapse_s": LAPSE_S, "stuck_reset": not args.no_stuck_reset,
+            "close_stall_s": args.close_stall_s}
+
+
+def follow_measured(acq_box: dict, resets: list[dict], loop) -> dict:
+    """The follow's measured perception outcomes for metrics["follow"], in
+    mission seconds: the identity acquisition (None with identity off) -
+    commits, lapses and re-acquisitions - every perception reset (StuckWatch
+    "stuck", CloseStall "close_stall") and the close-hold ticks."""
+    acq = None
+    if acq_box.get("acq") is not None:
+        acq = {"committed": acq_box["committed"], "commits_s": list(acq_box["commits"]),
+               "reacquires": acq_box["reacquires"], "lapses": list(acq_box["lapses"]),
+               "errors": list(acq_box["errors"])}
+    return {"acquisition": acq, "perception_resets": list(resets),
+            "stuck_resets": sum(1 for e in resets if e.get("why") == "stuck"),
+            "close_stalls": sum(1 for e in resets if e.get("why") == "close_stall"),
+            "close_hold_ticks": getattr(loop, "n_close_hold", None)}
+
+
+def _perception_reset(why: str, now: float, t_mission: float, grounder, detector_hint,
+                      acq_box: dict, state) -> dict:
+    """Drop the subject the follow steers on - the Shield pinning the
+    aircraft (StuckWatch, "stuck") or a close box with no request
+    (CloseStall, "close_stall"); perception only, the VLA still steers:
+
+      * the hint ignores every box captured up to `now` (DetectorHint.
+        forget(now)): the dropped box stays fresh for det_fresh_s and the
+        Grounder publishes it up to its drop_after (8 s), and the next hint
+        re-seeded the memory with it (review of d6e7123, P2-4);
+      * with identity, the re-acquisition starts at once and UNANCHORED
+        (begin_reacquire, Reacquirer.start(None), committed False): the box
+        was probably the wrong object, so its place is no anchor. lock.reset()
+        alone left the strict lock empty while _acquire_step still believed
+        it committed - ~26 s with nothing;
+      * without identity, the TargetLock forgets its instance.
+    Returns the event record (mission time, where)."""
+    ev: dict = {"t": t_mission, "why": why, "x": round(state.x, 2), "y": round(state.y, 2)}
+    errors = []
+    if detector_hint is not None:
+        try:
+            detector_hint.forget(now)
+        except Exception as exc:                                   # noqa: BLE001
+            errors.append(f"forget: {type(exc).__name__}: {exc}")
+    if acq_box.get("acq") is not None and grounder is not None:
+        try:
+            grounder.begin_reacquire()
+            acq_box["acq"].start(None)
+            acq_box["committed"] = False
+            ev["reacquiring"] = True
+        except Exception as exc:                                   # noqa: BLE001
+            errors.append(f"reacquire: {type(exc).__name__}: {exc}")
+    else:
+        lk = getattr(grounder, "lock", None) if grounder is not None else None
+        if lk is not None:
+            try:
+                lk.reset()
+                ev["lock_reset"] = True
+            except Exception as exc:                               # noqa: BLE001
+                errors.append(f"lock: {type(exc).__name__}: {exc}")
+    if errors:
+        ev["errors"] = errors
+    return ev
+
+
+def _follow_watch(res, state, stuck, close_watch, requests) -> str | None:
+    """Which perception reset this tick calls for, if any: "stuck" when the
+    Shield has pinned what FLEW (res.hud_decision.touched - with the Shield
+    off nothing it decided flew, and res.decision is the shadow's; review of
+    d6e7123, P3), "close_stall" when a close box has lasted CloseStall's
+    max_s with no request (the row's close_box, the backend's count)."""
+    if stuck is not None and stuck.update(res.row["t"], state.x, state.y,
+                                          bool(res.hud_decision.touched)):
+        return "stuck"
+    if close_watch is not None and close_watch.update(res.row["t"],
+                                                      bool(res.row.get("close_box")), requests):
+        return "close_stall"
+    return None
 
 
 async def _warmup(args, drone, obs, frames, client, hint_src, State, quat_yaw, FV, live,
@@ -903,14 +1164,13 @@ async def _fly(args, holder: dict) -> int:
             det_source = latest_box
             if args.mission == "follow":
                 close_rule = VM.BoxClose(args.close_bottom_frac, args.close_width_frac)
+                # Built ungated: the start gate is armed once the identity
+                # setup has run, which may fail (follow_perception; review of
+                # d6e7123, P2-5). Each hint records its kind (P2-2).
                 detector_hint = VM.DetectorHint(latest_box, bridge, fresh_s=args.det_fresh_s,
                                                 memory_s=args.follow_memory_s,
                                                 search_s=args.follow_search_s,
-                                                close=close_rule,
-                                                start_gate=((args.start_gate_n,
-                                                             args.start_gate_width)
-                                                            if args.start_gate_n > 0
-                                                            and args.no_identity else None))
+                                                close=close_rule, record_kind=True)
             else:
                 detector_hint = VM.DetectorHint(latest_box, bridge, fresh_s=args.det_fresh_s)
             hint_src = VM.HintSource(detector_hint, "detector")
@@ -962,10 +1222,10 @@ async def _fly(args, holder: dict) -> int:
     car = car_truth = None
     level_car = None
     level_truth_errors: list[str] = []
-    stuck_events: list[dict] = []
+    resets: list[dict] = []                    # perception resets (stuck, close_stall)
     identity_rec: dict = {"on": False, "hash": None}
-    acq_box: dict = {"acq": None, "committed": False, "last_seq": -1, "commits": [],
-                     "reacquires": 0, "errors": []}
+    follow_plan = None                         # follow_perception's, once set up
+    acq_box: dict = new_acquisition(None)
     aborted = abort_landing = None
     interrupted = False
     refused = None
@@ -1021,31 +1281,25 @@ async def _fly(args, holder: dict) -> int:
             # car on 157 of 1036 chase ticks. The identity tiers judge each
             # candidate physically from its frame's depth and pose and the
             # street mask (demo/identity.py), as follow_vlm --identity does.
-            # M2 keeps each frame's best box.
-            det_lock = (FV.TargetLock(gate_frac=args.lock_gate)
-                        if args.mission == "follow" and not args.no_lock else None)
-            id_cfg = None
-            if args.mission == "follow" and not args.no_identity:
-                try:
-                    sim.subscribe(drone.sensors[CAMERAS["detector"]]["depth_camera"],
-                                  lambda _, m: obs.put_depth(m))
-                    import identity as identity_mod
-                    _th = identity_mod.load_thresholds(None)
-                    _sp = Path(args.citymap).parent / "street.npz"
-                    _sd = identity_mod.StreetDistance.load(_sp) if _sp.is_file() else None
-                    if _sd is None:
-                        print(f"[identity] *** no street mask at {_sp}: the off-street rules "
-                              f"cannot fire")
-                    id_cfg = {"thresholds": _th, "street": _sd, "hfov": FV.CAMERA_HFOV_DEG,
-                              "hash": identity_mod.thresholds_hash(_th),
-                              "path": str(identity_mod.DEFAULT_THRESHOLDS),
-                              "nouns": {args.object: identity_mod.noun_of(args.object)}}
-                    if det_lock is None:
-                        det_lock = FV.TargetLock(gate_frac=args.lock_gate)
-                    print(f"[identity] ON - thresholds {id_cfg['hash']}, strict lock")
-                except Exception as exc:                           # noqa: BLE001
-                    id_cfg = None
-                    print(f"[identity] *** OFF ({type(exc).__name__}: {exc})")
+            # M2 keeps each frame's best box. The lock, the identity and the
+            # start gate are decided AFTER the identity setup, which may fail
+            # (follow_perception; review of d6e7123, P2-5).
+            det_lock = id_cfg = None
+            if args.mission == "follow":
+                id_err = None
+                if not args.no_identity:
+                    id_cfg, id_err = _identity_setup(args, sim, drone, obs, FV)
+                    print(f"[identity] ON - thresholds {id_cfg['hash']}, strict lock"
+                          if id_cfg is not None else
+                          f"[identity] *** OFF ({id_err}): the DetectorHint's start gate "
+                          f"instead")
+                follow_plan = follow_perception(args, id_cfg is not None, id_err)
+                follow_plan["identity"]["hash"] = None if id_cfg is None else id_cfg["hash"]
+                if follow_plan["lock"]:
+                    det_lock = FV.TargetLock(gate_frac=args.lock_gate)
+                gate = follow_plan["start_gate"]
+                if gate is not None and gate["kind"] == "detector_hint":
+                    detector_hint.set_start_gate((gate["n"], gate["width_frac"]))
             identity_rec["on"] = id_cfg is not None
             identity_rec["hash"] = None if id_cfg is None else id_cfg["hash"]
             grounder = FV.Grounder(obs, args.object, thresh=args.det_thresh,
@@ -1059,9 +1313,10 @@ async def _fly(args, holder: dict) -> int:
                 # candidates (acquiring), follow_vlm's Reacquirer judges them
                 # (identity tiers, range, motion) and commit() seeds the strict
                 # lock; until then there is no box, so no VLA request.
-                acq_box["acq"] = FV.Reacquirer(need=max(1, args.start_gate_n),
-                                               max_range_m=args.acquire_max_range_m)
-                acq_box["acq"].start(None)
+                # resolve_args refuses --start-gate-n 0 with identity.
+                acq = FV.Reacquirer(need=args.start_gate_n, max_range_m=args.acquire_max_range_m)
+                acq.start(None)
+                acq_box = new_acquisition(acq)
                 grounder.begin_acquire()
         if args.save_view:
             try:
@@ -1178,6 +1433,7 @@ async def _fly(args, holder: dict) -> int:
 
         # ---- the mission: AerialVLA flies ---------------------------------
         t0 = time.time()
+        acq_box["t0"] = t0                     # its records in mission seconds
         monitor = VM.MissionMonitor(args.monitor, t0)
         loop = VM.MissionLoop(backend, shield, monitor, mission=args.mission,
                               shield_on=shield_on,
@@ -1191,6 +1447,8 @@ async def _fly(args, holder: dict) -> int:
         deadline = None
         stuck = (VM.StuckWatch() if args.mission == "follow" and not args.no_stuck_reset
                  else None)
+        close_watch = (VM.CloseStall(args.close_stall_s)
+                       if args.mission == "follow" and args.close_stall_s > 0 else None)
         while True:
             tk0 = time.time()
             state, yaw, kin = _feed_pose(drone, obs, State, quat_yaw, FV)
@@ -1218,22 +1476,24 @@ async def _fly(args, holder: dict) -> int:
                 except Exception as exc:                       # noqa: BLE001
                     if len(level_truth_errors) < 20:
                         level_truth_errors.append(f"{type(exc).__name__}: {exc}")
-            if stuck is not None and stuck.update(res.row["t"], state.x, state.y,
-                                                  bool(res.decision.touched)):
-                # Pinned by the Shield: the box is probably the wrong object.
-                lk = getattr(grounder, "lock", None) if grounder is not None else None
-                try:
-                    if lk is not None:
-                        lk.reset()
-                    if detector_hint is not None:
-                        detector_hint.forget()
-                except Exception as exc:                           # noqa: BLE001
-                    print(f"[follow] *** stuck reset failed ({type(exc).__name__}: {exc})")
-                stuck_events.append({"t": res.row["t"], "x": round(state.x, 2),
-                                     "y": round(state.y, 2)})
-                res.row["stuck_reset"] = True
-                print(f"[follow] pinned by the Shield at ({state.x:.1f}, {state.y:.1f}): "
-                      f"target lock reset")
+            why_reset = (_follow_watch(res, state, stuck, close_watch,
+                                       backend.counts.get("requests", 0))
+                         if args.mission == "follow" else None)
+            if why_reset is not None:
+                # Pinned by the Shield (what flew), or a close box and no
+                # request for close_stall_s: the box is probably the wrong
+                # object. Perception only; the VLA still steers.
+                ev = _perception_reset(why_reset, time.time(), res.row["t"], grounder,
+                                       detector_hint, acq_box, state)
+                resets.append(ev)
+                res.row["perception_reset"] = why_reset
+                if why_reset == "stuck":
+                    res.row["stuck_reset"] = True
+                what = ("pinned by the Shield" if why_reset == "stuck" else
+                        f"a close box and no request for {args.close_stall_s:g} s")
+                print(f"[follow] {what} at ({state.x:.1f}, {state.y:.1f}): "
+                      + ("re-acquiring" if ev.get("reacquiring") else "target lock reset")
+                      + (f" *** {ev['errors']}" if ev.get("errors") else ""))
             rows.append(res.row)
             traj.append({"x": state.x, "y": state.y, "up": state.up,
                          "touched": bool(res.hud_decision.touched)})
@@ -1249,9 +1509,8 @@ async def _fly(args, holder: dict) -> int:
                                           off_map=bool(off_map), yaw_rad=yaw)
                     except Exception as exc:                       # noqa: BLE001
                         pind_error = f"{type(exc).__name__}: {exc}"
-                det = None
-                if args.mission in VM.DETECTOR_MISSIONS and res.row.get("det") is not None:
-                    det = det_source()[0]
+                # The box this tick read (one read per tick, MissionLoop).
+                det = res.det if args.mission in VM.DETECTOR_MISSIONS else None
                 recorder.set_hud({**res.hud, "policy": pol}, det)
             live.beat(progress=min(1.0, res.row["t"] / max(1e-6, args.max_s)),
                       detail=f"{res.row['author']} #{res.row['vla_seq']}")
@@ -1433,7 +1692,7 @@ async def _fly(args, holder: dict) -> int:
             "object": args.object, "object_words_are_inert": True,
             "object_is_default": (args.mission == "goto" and args.object == VM.GOTO_OBJECT_TEXT),
             "hint_source": hint_src.kind, "hint": hint_src.stats(),
-            "detector_hint": detector_hint.stats() if detector_hint is not None else None,
+            "detector_hint": detector_hint.stats(t0=t0) if detector_hint is not None else None,
             "park_at": list(args.park_at) if args.park_at else None,
             "bearing_gain": args.bearing_gain if args.mission in VM.DETECTOR_MISSIONS else None,
             "detector": FV.DETECTOR_ID if args.mission in VM.DETECTOR_MISSIONS else None,
@@ -1445,8 +1704,16 @@ async def _fly(args, holder: dict) -> int:
             **(fscores or {}), "level_car": args.level_car,
             "truth_period_s": LEVEL_TRUTH_PERIOD_S,
             "truth_errors": list(level_truth_errors),
-            "level_stats": level_car.stats() if level_car is not None else None})
+            "level_stats": level_car.stats() if level_car is not None else None,
+            # what the perception did, measured (review of d6e7123, P3: these
+            # were under params, with epoch times)
+            **follow_measured(acq_box, resets, loop)})
                    if args.mission == "follow" else None),
+        # The scene and robot config the simulator was given, and whether
+        # this run read the detector's depth stream (review of d6e7123, P3).
+        **({"sim_config": guard("sim_config", lambda: VM.sim_config_record(
+            SIM_CONFIG_DIR / SCENES[args.mission], depth_read=bool(identity_rec["on"])))}
+           if args.mission in VM.DETECTOR_MISSIONS else {}),
         "land": guard("land", lambda: VM.land_record(rows, records, goal)),
         "pre_mission": pre_mission,
         "warmup": warmup,
@@ -1484,19 +1751,9 @@ async def _fly(args, holder: dict) -> int:
                    "late_reply_wait_s": args.late_reply_wait_s,
                    "start_tolerance_m": args.start_tolerance_m,
                    "det_fresh_s": args.det_fresh_s,
-                   "follow": ({"memory_s": args.follow_memory_s, "search_s": args.follow_search_s,
-                               "close_bottom_frac": args.close_bottom_frac,
-                               "close_width_frac": args.close_width_frac,
-                               "executor": args.follow_executor,
-                               "lock_gate": None if args.no_lock else args.lock_gate,
-                               "identity": dict(identity_rec),
-                               "acquisition": {k: acq_box[k] for k in
-                                               ("committed", "commits", "reacquires", "errors")},
-                               "stuck_resets": (stuck_events if args.mission == "follow"
-                                                else None),
-                               "start_gate": ([args.start_gate_n, args.start_gate_width]
-                                              if args.start_gate_n > 0 else None),
-                               "close_hold_ticks": loop.n_close_hold if loop is not None else None}
+                   # the follow's configuration as APPLIED (follow_perception,
+                   # decided after the identity setup; review of d6e7123)
+                   "follow": (follow_params(args, follow_plan)
                               if args.mission == "follow" else None),
                    "tracker": {k: getattr(tcfg, k) for k in tcfg.__dataclass_fields__},
                    "citymap": str(args.citymap), "seed": args.seed},
@@ -1552,7 +1809,9 @@ async def _fly(args, holder: dict) -> int:
               f"{s.get('decision_hz')} Hz; latency p50 {lat.get('median')} s p95 {lat.get('p95')} s "
               f"(capture -> answer); parse_fail {s.get('parse_fail')}, server_error "
               f"{s.get('server_error')}, link_failure {s.get('link_failure')} "
-              f"{s.get('link_failure_by_kind')}, LAND {s.get('land')}")
+              f"{s.get('link_failure_by_kind')}, LAND {s.get('land')}"
+              + (f" (held as arrival {s['land_as_arrival']}: no landing)"
+                 if s.get("land_as_arrival") else ""))
         print(f"[report] ticks by author {s.get('ticks_by_author')}; VLA-authored share "
               f"{s.get('vla_authored_tick_share')}")
         print(f"[report] reached_goal {metrics.get('reached_goal')}; P0 escape rate "

@@ -585,6 +585,67 @@ def test_a_failure_before_the_simulator_still_stops_the_server():
                 srv.proc.kill()
 
 
+class _LevelCar:
+    """level_actors.LevelCar stand-in: the level's car 12 m ahead of the
+    spawn, standing (truth for scoring only)."""
+
+    def __init__(self, world, tag, desc=None, min_period_s=0.1):
+        self.tag, self.pos = tag, (35.0, -8.0)
+
+    def spawn(self):
+        return 1
+
+    def update(self, t):
+        pass
+
+    def stats(self):
+        return {"tag": self.tag, "fake": True}
+
+
+def test_a_follow_whose_identity_fails_flies_the_detector_gate_and_says_so():
+    """M3 through fly() (review of d6e7123): the fake robot's detector camera
+    has no depth topic, so the identity setup fails - and the follow flies
+    with the DetectorHint's start gate (P2-5: it used to fly with none),
+    the plain lock, the failure named in params.follow.identity, the gate
+    there agreeing with mission.detector_hint's; the score at the top of
+    metrics where kpi reads it (P1-1); measured outcomes in metrics.follow
+    (P3); the hint kind on every request (P2-2); sim_config saying the depth
+    stream was not read (P3)."""
+    why = _missing()
+    if why:
+        print(f"      ({why})")
+        return SKIP
+    import level_actors
+    code, out, said = _fly(["--mission", "follow", "--tag", "fakesim_follow", "--max-s", "12",
+                            "--no-transfer", "--no-land-site", "--no-save-view",
+                            "--cadence", "pipelined", "--vla-fake-output", "96 48 49</s>"],
+                           grounder=_GrowingBox,
+                           patch={(level_actors, "LevelCar"): _LevelCar})
+    assert code == 0, said[-3000:]
+    assert "[identity] *** OFF" in said and "depth_camera" in said, said[-3000:]
+    m = _metrics(out)
+    pf = m["params"]["follow"]
+    assert pf["identity"]["requested"] and not pf["identity"]["on"], pf
+    assert "depth_camera" in pf["identity"]["error"], pf
+    assert pf["start_gate"] == {"kind": "detector_hint", "n": 5, "width_frac": 0.04}, pf
+    g = m["mission"]["detector_hint"]["start_gate"]
+    assert g["n"] == 5 and g["open"] and g["t_open_s"] is not None and g["t_open_s"] >= 0, g
+    assert pf["lock_gate"] == 0.12 and pf["perception_applied"]
+    assert not {"acquisition", "stuck_resets", "close_hold_ticks"} & set(pf)
+    f = m["follow"]
+    assert f["acquisition"] is None and f["perception_resets"] == [] and "close_hold_ticks" in f
+    assert m["follow_scored"] is True and m["frac_within_30m"] == 1.0, (m["follow_scored"],
+                                                                         m["frac_within_30m"])
+    k = json.loads((out / "kpi.json").read_text(encoding="utf-8"))
+    assert k["mission_success"] is not None and "follow_not_scored" not in k["mission_fail_reasons"]
+    assert m["sim_config"]["detector_depth_read"] is False
+    assert m["sim_config"]["detector_depth_rendered"] is True
+    recs = [json.loads(x) for x in (out / "vla_steps.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert recs and all(r.get("hint_kind") in ("fresh", "memory", "search") for r in recs)
+    rows = _rows(out)
+    assert all("hint_kind" in r and "close_box" in r and "pilot_raw" in r for r in rows)
+
+
 def test_a_fault_in_the_records_still_leaves_metrics_and_the_manifest():
     """P3-12: pilot_entry raising after a real flight - metrics.json is
     still written, with the error in records_errors, the manifest and the
