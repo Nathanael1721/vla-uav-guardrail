@@ -674,6 +674,36 @@ def test_a_decision_captured_before_a_rail_hold_ended_is_thrown_away():
     assert tr.tick(5.5, Pose(1.5, 0, 10, 0)).author == "vla_step"
 
 
+def test_a_hand_over_ramps_from_the_command_the_rail_flew():
+    """note_flown (demo/vla_dagger.py, 2026-10-24): the rail flew its own
+    command (the expert, in a DAgger recording). With smoothing the next tick
+    ramps from THAT command, not from the tracker's last output or from rest;
+    the decision, its targets and timers are untouched; without smoothing it
+    changes nothing. Shown failing first: StepTracker had no note_flown."""
+    cfg = TrackerConfig(cruise_mps=4.5, speed_cap_mps=5.0, turn_while_moving=True,
+                        smooth_accel_mps2=2.5, smooth_yaw_accel_rps2=0.6, carry_s=1.0)
+    flown = Action4D(vx=4.0, vy=0.0, vz_up=0.0, yaw_rate=0.2)
+    rest, handed = StepTracker(cfg), StepTracker(cfg)
+    for tr in (rest, handed):
+        assert tr.accept(Decision.of(1, 0.0, Pose(0, 0, 10, 0), Step(5.0, 0.0, 0.0)), 0.0)
+    handed.note_flown(flown, 0.0)
+    a, b = rest.tick(0.1, Pose(0, 0, 10, 0)), handed.tick(0.1, Pose(0, 0, 10, 0))
+    # Toward 4.5 m/s (min(cruise, sqrt(2 a d)) = min(4.5, 5.0)) at 2.5 m/s^2:
+    # from rest 0.25, from the flown 4.0 m/s 4.25; the yaw rate from 0.2 toward
+    # the heading's 0 at 0.6 rad/s^2: 0.14.
+    assert math.isclose(a.action.vx, 0.25) and math.isclose(b.action.vx, 4.25), (a, b)
+    assert a.action.yaw_rate == 0.0 and math.isclose(b.action.yaw_rate, 0.14), b
+    assert b.author == "vla_step" and handed.current_seq == 1
+    assert handed.counts["rail_flown"] == 1 and "rail_flown" not in rest.counts
+    plain = StepTracker(TrackerConfig())
+    plain.accept(Decision.of(1, 0.0, Pose(0, 0, 10, 0), Step(5.0, 0.0, 0.0)), 0.0)
+    plain.note_flown(flown, 0.0)
+    ref = StepTracker(TrackerConfig())
+    ref.accept(Decision.of(1, 0.0, Pose(0, 0, 10, 0), Step(5.0, 0.0, 0.0)), 0.0)
+    assert plain.tick(0.1, Pose(0, 0, 10, 0)) == ref.tick(0.1, Pose(0, 0, 10, 0))
+    assert "rail_flown" not in plain.counts
+
+
 def test_every_tick_names_its_author():
     tr = StepTracker(TrackerConfig(decision_timeout_s=6.0))
     veh = _Vehicle()
