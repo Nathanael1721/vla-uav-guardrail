@@ -187,8 +187,8 @@ per-tick rows):
 
 | Author | When | Action |
 |---|---|---|
-| `vla_step` | flying toward an accepted step's targets (`reason`: rotate / translate) | the tracker's law above |
-| `hold` | the step is complete (`step_complete`); the answer was malformed (`parse_fail`); the model said LAND (`land`) | zero, except a completed step keeps its altitude target; parse_fail and LAND are all-zero |
+| `vla_step` | flying toward an accepted step's targets (`reason`: rotate / translate; a follow's executor flying a big turn while moving: `turn_moving`) | the tracker's law above |
+| `hold` | the step is complete (`step_complete`); the answer was malformed (`parse_fail`); the model said LAND (`land`; a follow holds it as arrival instead: `land_as_arrival`) | zero, except a completed step keeps its altitude target; parse_fail and LAND are all-zero |
 | `hover` | no usable decision: the step's image is too old (`stale`), a hold lasted past the timeout (`no_new_decision`), the link failed (`link_lost`), the server refused the request (`server_error`), or a rail hold invalidated it (`awaiting_fresh_decision`) | all-zero |
 | `none` | no decision accepted yet (`no_decision`, or `link_lost` / `server_error` when that is why), or the rail has the tracker suspended (`suspended`) | all-zero |
 
