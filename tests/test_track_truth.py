@@ -360,12 +360,14 @@ def test_the_median_separates_where_the_fraction_does_not():
     chance. (Renamed 2026-09-23 from "..._beats_every_null_on_every_flight...",
     a name its own body contradicted.)
 
-    Three shapes of exception are known and all are asserted below: a subject
+    Four shapes of exception are known and all are asserted below: a subject
     that was mostly OUT of frame; a flight whose own presence check called
     the box ABSENT on most ticks - the detector was on something else, and the
-    median says so; and a crowd flight whose ONE-figure score beats its own
+    median says so; a crowd flight whose ONE-figure score beats its own
     null, where the class-level null is the distance to the nearest of forty
-    people and measures the crowd's density, not the detector."""
+    people and measures the crowd's density, not the detector; and a tie at
+    the frame centre under 8 px, where the aircraft held the subject so close
+    to the centre that the constant-centre null cannot be beaten."""
     from track_truth import score_instance
     out = ROOT / "demo" / "out"
     # The fixture is the recorded FLIGHTS, not the directory (review of
@@ -453,10 +455,23 @@ def test_the_median_separates_where_the_fraction_does_not():
         # only if the score against the ONE figure followed beats its own null
         # by at least 0.05: a detector on facades cannot pass that, which is
         # what the rejected 09-22 crowd exception could not say.
+        #
+        # SHAPE FOUR (2026-10-23, the fine-tune's expert recordings
+        # ft_expert_01/02b/03: 3.4 px against 3.4, 3.0 against 3.0, 3.3
+        # against 3.3): a TIE AT THE CENTRE. The expert kept the car within a
+        # few pixels of the frame centre all flight, so the constant-centre
+        # null is as good as any box can be. Their perturbed twins
+        # (ft_expert_p01..p06, the same expert knocked off its heading on a
+        # seeded schedule) put the car off-centre and the box wins clearly:
+        # 27.0-30.5 px against 37.6-39.3. Only a tie, only under 8 px (1 % of
+        # a 768 px frame), only with the subject in frame on >= 95 % of rows:
+        # a box on the wrong object is not within 8 px of the subject.
         absent = presence_absent.get(name)
         crowd_ok = (candidates is not None and candidates > 1
                     and inst_margin is not None and inst_margin >= 0.05)
-        assert in_shot < 0.5 or (absent is not None and absent > 0.5) or crowd_ok, (
+        centre_tie = in_shot >= 0.95 and null <= 8.0 and real <= null + 0.1
+        assert (in_shot < 0.5 or (absent is not None and absent > 0.5) or crowd_ok
+                or centre_tie), (
             f"{name} lost to the null ({real} px against {null}) on a flight "
             f"whose subject was in frame {in_shot:.0%} of the time and whose "
             f"presence check called the box ABSENT on "
