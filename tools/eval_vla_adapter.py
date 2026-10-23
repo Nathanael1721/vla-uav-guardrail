@@ -28,6 +28,17 @@ is checked: its image_sha256 must equal the dataset mosaic's and its
 prompt_sha256 the sample prompt's (counted as fidelity failures otherwise:
 then the server did not see what the model was trained on).
 
+THE LOWER TILE (2026-10-24). The bottom tile is sent whatever it is: for a
+prev_front dataset (tools/build_follow_dataset.py --bottom-tile prev_front)
+it is the front frame dt_s earlier, in the down slot - what a prev_front
+flight sends (demo/vla_mission.VLAFrames). The dataset's tile
+(finetune_aerialvla_follow.dataset_bottom_tile) is recorded, and each
+evaluated adapter's own (its provenance, from the identity) is checked
+against it: `bottom_tile_check` is "ok" or why not, and a mismatch is
+printed. Not refused: the parent adapter (upstream's, "down") on a
+prev_front dataset is the baseline, labelled - its numbers are what it says
+to inputs it never saw.
+
 WHAT IS SCORED: finetune_aerialvla_follow.score_outputs - parse-ok rate,
 exact-bin accuracy per axis, step MAE (m / rad), turn-sign agreement, LAND.
 
@@ -150,6 +161,19 @@ def check_served_adapter(identity: dict | None, adapter: str | Path,
         return (f"the server serves adapter {a.get('path')} (sha256 {a['sha256'][:12]}...), "
                 f"not {adapter} ({mine[:12]}...)")
     return None
+
+
+def tile_check(identity: dict | None, dataset_tile: dict) -> str:
+    """"ok", or why the adapter `identity` announces was not trained on the
+    dataset's lower tile (aerialvla_codec.adapter_bottom_tile: no recorded
+    tile is "down")."""
+    try:
+        trained, _src = C.adapter_bottom_tile(identity)
+        given = C.bottom_tile_from(dataset_tile)
+    except ValueError as exc:
+        return f"a lower tile record is malformed ({exc})"
+    why = C.bottom_tile_mismatch(trained, given)
+    return "ok" if why is None else why
 
 
 def socket_send(addr: str):
@@ -289,6 +313,10 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--in-process needs --precision, --attn and --merge/--no-merge (no default: "
                  "the precision changes what the model says, demo/vla_server_v2.py)")
     samples, report = FT.load_samples(Path(args.data))
+    try:
+        dtile = FT.dataset_bottom_tile(Path(args.data), samples)
+    except FT.DataError as exc:
+        raise SystemExit(f"[eval] refused: {exc}") from None
     split = set(args.split)
     chosen = [s for s in samples if s.split in split]
     chosen = FT.heldout_subset(chosen, args.max, args.seed)
@@ -314,9 +342,16 @@ def main(argv: list[str] | None = None) -> int:
                                         merge=args.merge, max_new_tokens=args.max_new_tokens)
         else:
             print("[eval] no baseline: give --baseline-server, or --in-process", flush=True)
+    for name, r in (("adapter", res_a), ("baseline", res_b)):
+        if r is not None:
+            r["bottom_tile_check"] = tile_check(r.get("identity"), dtile)
+            if r["bottom_tile_check"] != "ok":
+                print(f"[eval] *** {name}: {r['bottom_tile_check']} (the dataset's lower tile "
+                      f"is {dtile['mode']}): its numbers are for inputs it never saw",
+                      flush=True)
     res = {"schema": SCHEMA,
            "created_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-           "data": report, "splits": sorted(split), "n": len(chosen),
+           "data": report, "bottom_tile": dtile, "splits": sorted(split), "n": len(chosen),
            "adapter_path": Path(args.adapter).as_posix(), "adapter": res_a,
            "baseline_path": None if res_b is None else Path(args.baseline).as_posix(),
            "baseline": res_b,

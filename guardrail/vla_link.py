@@ -22,7 +22,11 @@ heading and down_m vertically at 1.0 m/s; then hover 0.5 s
 2603.14363, action space). Our earlier code read the same three numbers as m/s,
 m/s and rad/s and held them for seconds; that mismatch, not only the decision
 rate, is why those flights spun and overshot (discovery report vla-assets.md,
-2026-10-21). Nothing here reads them as velocities.
+2026-10-21). Nothing here reads them as velocities - except on request:
+our follow fine-tune's labels ARE displacements over a known horizon H
+(tools/build_follow_dataset.py), and TrackerConfig.rate_horizon_s = H flies
+such a step as fwd_m / H and dpsi_rad / H until the next answer (RATE
+EXECUTION, off by default; demo/vla_fly.py --step-as-rate).
 
 The model decides at well under 10 Hz (0.35 s per decision on an RTX 4090 in
 the paper; 2.5-12 s measured on the old 4080 SUPER, in or out of process). The
@@ -44,7 +48,8 @@ capture a second time.
 
 EVERY TICK SAYS WHO AUTHORED IT (`Tick.author`):
 
-    vla_step  motion toward the endpoint of an accepted VLA step
+    vla_step  motion toward the endpoint of an accepted VLA step (with
+              RATE EXECUTION: at its rates, reason "rate")
     hold      a deliberate stand-still that a VLA answer asked for: the step
               is complete (altitude still held at the step's target), the
               answer was malformed (parse_ok false: zero, counted), or the
@@ -295,11 +300,18 @@ class Step:
 class Capture:
     """One observation for the model: the front (and optional down) camera as
     JPEG bytes, and the pose and time they were captured at. The rail pairs
-    them; this module never grabs a frame itself."""
+    them; this module never grabs a frame itself.
+
+    `lower` (optional, never sent): what the down slot carries when it is
+    NOT the down camera - aerialvla_codec's prev_front lower tile, the front
+    frame from dt_s earlier (demo/vla_mission.VLAFrames): {"mode", "dt_s",
+    "tol_s", "dt_actual_s", ...}. It goes into the request's record as
+    `bottom_tile`; None is the down camera, as always before."""
     t_capture: float
     pose: Pose
     front_jpg: bytes
     down_jpg: bytes | None = None
+    lower: dict | None = field(default=None, compare=False)
 
     def __post_init__(self):
         _finite(self.t_capture, "t_capture")
@@ -517,6 +529,10 @@ def build_infer_fields(capture: Capture, hint: Hint, object_text: str,
     }
     if hint.kind is not None:
         meta["hint_kind"] = hint.kind       # the record's only: never on the wire
+    if capture.lower is not None:
+        # the down slot is the front frame from dt_s earlier (Capture.lower):
+        # the record says so, and the measured dt; the wire cannot
+        meta["bottom_tile"] = dict(capture.lower)
     return fields, meta
 
 
@@ -1402,6 +1418,33 @@ class TrackerConfig:
     smooth_yaw_accel_rps2: float | None = None
     carry_s: float = 0.0
     smooth_tick_s: float = 0.1
+    # RATE EXECUTION (the follow fine-tune, 2026-10-24; off by default, so
+    # every other run keeps the step as an endpoint). The fine-tune's label
+    # is the expert's DISPLACEMENT over the next horizon (tools/
+    # build_follow_dataset.py --horizon-s, 1.0 s): a 2 m label is the expert
+    # flying 2 m/s, not a 2 m endpoint. Flown as an endpoint at cruise (4.5
+    # m/s, then min(cruise, sqrt(2 a d)) into it), the first fine-tuned
+    # follow (vla_follow_ft_01_20261024) sprinted and braked on every step.
+    # With rate_horizon_s = H a step is a VELOCITY until the next answer
+    # replaces it:
+    #   speed fwd_m / H along the BODY heading, at most speed_cap_mps
+    #     (cruise_mps does not apply), scaled by cos(heading error) under
+    #     turn_while_moving, zero on a rotate-only step without it;
+    #   yaw rate dpsi_rad / H, at most yaw_rate_cap_rad_s, until the heading
+    #     reaches psi_capture + dpsi (the anchor rules as for an endpoint;
+    #     at or past it, zero - no turning back; never past it within one
+    #     smooth_tick_s; with smooth_yaw_accel_rps2 the slew's stopping
+    #     profile, as for an endpoint);
+    #   the altitude as before (hold_altitude_m, the band).
+    # A step no answer has replaced within H x (1 + rate_overrun_frac) of its
+    # acceptance is complete (completion "rate_horizon") and the existing
+    # rules end it: the carry while an answer is pending, else the hold -
+    # no new stop rule, no silent hover. The smoothing limits apply to its
+    # output as to any. Every such tick says so (Tick.reason "rate", and
+    # StepTracker.last_rate: the commanded speed and yaw rate, before the
+    # limits, for the rail's row).
+    rate_horizon_s: float | None = None
+    rate_overrun_frac: float = 0.2
 
     @property
     def smoothing(self) -> bool:
@@ -1414,13 +1457,16 @@ class TrackerConfig:
                   "time_cap_factor", "time_cap_max_s", "decision_timeout_s", "smooth_tick_s"):
             if _finite(getattr(self, k), k) <= 0:
                 raise ValueError(f"{k} must be positive")
-        for k in ("time_cap_base_s", "alt_band_inset_m", "carry_s"):
+        for k in ("time_cap_base_s", "alt_band_inset_m", "carry_s", "rate_overrun_frac"):
             if _finite(getattr(self, k), k) < 0:
                 raise ValueError(f"{k} must not be negative")
         for k in ("smooth_accel_mps2", "smooth_yaw_accel_rps2"):
             v = getattr(self, k)
             if v is not None and _finite(v, k) <= 0:
                 raise ValueError(f"{k} must be positive, or None for no limit")
+        if self.rate_horizon_s is not None and _finite(self.rate_horizon_s,
+                                                       "rate_horizon_s") <= 0:
+            raise ValueError("rate_horizon_s must be positive, or None for the endpoint")
         if self.hold_altitude_m is not None:
             _finite(self.hold_altitude_m, "hold_altitude_m")
         if self.cruise_mps > self.speed_cap_mps:
@@ -1478,6 +1524,9 @@ class _Current:
     # TrackerConfig.carry_s: the horizontal velocity commanded when the step
     # completed, carried (decaying) while the next answer is pending.
     carry_v: tuple[float, float] | None = None
+    # TrackerConfig.rate_horizon_s: the step's speed and yaw rate, fixed when
+    # it is accepted (None: the step is an endpoint)
+    rate: dict | None = None
 
 
 _ZERO = Action4D()
@@ -1509,6 +1558,12 @@ class StepTracker:
     can stop from, a step completed while an answer is pending carries its
     velocity for carry_s, and every output passes the acceleration limits
     last (`_smooth`), whoever authored it.
+
+    With TrackerConfig.rate_horizon_s (RATE EXECUTION, the follow
+    fine-tune) a step is no endpoint: it flies fwd_m / H along the body
+    heading and dpsi / H toward psi_t until the next answer replaces it or
+    H x (1 + rate_overrun_frac) has passed (`_rate_tick`); then the carry
+    or the hold above.
     """
 
     def __init__(self, config: TrackerConfig | None = None):
@@ -1533,6 +1588,8 @@ class StepTracker:
         self._finished: list[dict] = []
         self.counts: Counter = Counter()
         self.ticks: Counter = Counter()
+        # RATE EXECUTION: the last tick's commanded rates (last_rate)
+        self._rate: dict | None = None
 
     # -- inputs ------------------------------------------------------------ #
     @property
@@ -1630,6 +1687,11 @@ class StepTracker:
                 # The model's target stays up_raw; the one flown (before the
                 # band's clamp) is this (review of d6e7123, P3).
                 decision.record["target"]["up_held"] = cur.up_held
+            if cur.rate is not None:
+                # flown as a velocity (RATE EXECUTION): x/y above are the
+                # step's geometry, not a target
+                decision.record["target"]["rate"] = dict(cur.rate)
+                self.counts["rate_steps"] += 1
             if cur.alt_clamped:
                 self.counts["alt_clamped"] += 1
             if cur.turn_moving:
@@ -1730,6 +1792,16 @@ class StepTracker:
         return None if self._t_still is None else max(base, self._t_still)
 
     @property
+    def last_rate(self) -> dict | None:
+        """TrackerConfig RATE EXECUTION: the last tick's commanded
+        {horizon_s, speed_mps, yaw_rate_rps, heading_reached} when it flew a
+        step as a velocity (reason "rate"), before the smoothing; None after
+        any other tick. For the rail's per-tick row (demo/vla_mission.
+        MissionLoop, demo/vla_dagger.py): a Tick carries its action, author
+        and LAND flag, nothing else."""
+        return None if self._rate is None else dict(self._rate)
+
+    @property
     def current_seq(self) -> int | None:
         return self._cur.decision.seq if self._cur is not None else None
 
@@ -1759,6 +1831,7 @@ class StepTracker:
         tick (the follow's close box): the horizontal target is zero, yaw
         and climb fly, counted (held_horizontal). With smoothing the hold
         ramps down at the acceleration limit."""
+        self._rate = None
         out = self._tick(now, pose, pending=pending)
         if hold_horizontal and (out.action.vx or out.action.vy):
             a = out.action
@@ -1814,6 +1887,16 @@ class StepTracker:
         e_psi = wrap_pi(c.psi_t - pose.yaw_rad)
         e_up = c.up_t - pose.up
         vz = max(-cfg.climb_cap_mps, min(cfg.climb_cap_mps, cfg.k_alt * e_up))
+        if not c.complete and c.rate is not None:
+            if now - c.t_start < c.time_cap_s:
+                return self._rate_tick(c, pose, e_psi, vz, seq, age)
+            # No answer replaced it within H x (1 + overrun): complete, and
+            # the carry or the hold below ends it (RATE EXECUTION).
+            c.complete, c.t_complete = True, now
+            c.completion = "rate_horizon"
+            self.counts["completed_rate_horizon"] += 1
+            if cfg.carry_s > 0.0:
+                c.carry_v = (self._prev.vx, self._prev.vy)
         if not c.complete:
             vx = vy = 0.0
             trans_done = True
@@ -1867,6 +1950,31 @@ class StepTracker:
             return Tick(Action4D(vx=c.carry_v[0] * f, vy=c.carry_v[1] * f, vz_up=vz),
                         "vla_step", "carry", seq, age)
         return Tick(Action4D(vz_up=vz), "hold", "step_complete", seq, age)
+
+    def _rate_tick(self, c: _Current, pose: Pose, e_psi: float, vz: float, seq: int,
+                   age: float) -> Tick:
+        """One tick of a step flown as a velocity (TrackerConfig, RATE
+        EXECUTION): its speed along the body heading (cos-scaled under
+        turn_while_moving), its yaw rate until the heading reaches psi_t."""
+        cfg, r = self.cfg, c.rate
+        speed = r["speed_mps"]
+        if cfg.turn_while_moving:
+            speed *= max(0.0, math.cos(e_psi))
+        want = r["yaw_rate_rps"]
+        # at the target heading, or past it the way the step turns: no turn
+        # (a pipelined answer whose turn was flown since its capture)
+        reached = abs(e_psi) <= cfg.yaw_tol_rad or want * e_psi <= 0.0
+        yaw_rate = 0.0
+        if not reached:
+            lim = abs(e_psi) / cfg.smooth_tick_s           # never past psi_t in one tick
+            if cfg.smooth_yaw_accel_rps2 is not None:
+                lim = min(lim, math.sqrt(2.0 * cfg.smooth_yaw_accel_rps2 * abs(e_psi)))
+            yaw_rate = math.copysign(min(abs(want), lim), want)
+        self.counts["rate_ticks"] += 1
+        self._rate = {"horizon_s": r["horizon_s"], "speed_mps": speed, "yaw_rate_rps": yaw_rate,
+                      "heading_reached": reached}
+        return Tick(Action4D(vx=speed * math.cos(pose.yaw_rad), vy=speed * math.sin(pose.yaw_rad),
+                             vz_up=vz, yaw_rate=yaw_rate), "vla_step", "rate", seq, age)
 
     def _smooth(self, now: float, out: Tick) -> Tick:
         """The acceleration limits (TrackerConfig, SMOOTHING) on this tick's
@@ -1939,6 +2047,15 @@ class StepTracker:
                        abs(s.dpsi_rad) / cfg.yaw_rate_cap_rad_s)
         c.time_cap_s = min(cfg.time_cap_max_s,
                            cfg.time_cap_factor * expected + cfg.time_cap_base_s)
+        if cfg.rate_horizon_s is not None:
+            # RATE EXECUTION: the step's velocity, flown until replaced or
+            # until H x (1 + overrun) after it is taken
+            h = float(cfg.rate_horizon_s)
+            c.rate = {"horizon_s": h,
+                      "speed_mps": 0.0 if c.rotate_only else min(s.fwd_m / h, cfg.speed_cap_mps),
+                      "yaw_rate_rps": max(-cfg.yaw_rate_cap_rad_s,
+                                          min(cfg.yaw_rate_cap_rad_s, s.dpsi_rad / h))}
+            c.time_cap_s = min(cfg.time_cap_max_s, h * (1.0 + cfg.rate_overrun_frac))
 
     def _finish(self, c: _Current, now: float, end: str) -> None:
         if self._cur is c:

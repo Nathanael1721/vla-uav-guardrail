@@ -68,11 +68,22 @@ raw RGB bytes, aerialvla_codec.mosaic_sha256), pose, t_capture. A sample that
 fails a check is dropped and counted by reason; a run found in both train and
 a held-out split refuses the dataset (hold-out runs never in train).
 
+THE LOWER TILE (2026-10-24; aerialvla_codec, THE MOSAIC'S LOWER TILE). The
+builder writes the mosaic's lower tile - "down", or "prev_front" (the front
+frame dt_s earlier) - into stats.json and every sample (`bottom_tile`).
+dataset_bottom_tile reads it (a dataset without it is "down") and refuses a
+dataset whose samples mix tiles or disagree with its stats.json; the trainer
+copies it, with the label horizon (stats.json args.horizon_s), into every
+checkpoint's provenance file - the file the server announces in hello, so a
+flight with another tile is refused before take-off (demo/vla_mission.
+bottom_tile_check).
+
 THE RUN (outputs under --out-root, default D:/models/aerialvla-ft-follow)
 -------------------------------------------------------------------------
   <run>/epoch<N>/            the adapter (save_pretrained) and the provenance
                              file aerialvla_ft_provenance.json (the server's id
-                             and `adapter` block come from it) - nothing else:
+                             and `adapter` block come from it, the lower tile
+                             and the label horizon included) - nothing else:
                              the server's digest covers every file here, so
                              write no other file into it
   <run>/heldout_eval_epoch<N>.json   that epoch's held-out answers and metrics
@@ -237,7 +248,8 @@ def check_sample(rec: Any, root: Path, idx: int) -> Sample:
     sha = _first(rec, SHA_KEYS)
     if sha is not None and not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha)):
         raise SampleError("bad_image_sha256", f"{sha!r}")
-    extra = {k: rec[k] for k in ("pose", "t_capture", "id", "sample_id") if k in rec}
+    extra = {k: rec[k] for k in ("pose", "t_capture", "id", "sample_id", "bottom_tile")
+             if k in rec}
     return Sample(idx=idx, image=path, prompt=prompt, target=target, run=run, split=split,
                   phrase=phrase, object=obj, bins=p.bins, land=p.land, image_sha256=sha,
                   extra=extra)
@@ -301,6 +313,58 @@ def split_samples(samples: list[Sample], holdout_splits: Iterable[str] = HOLDOUT
                          "train_runs": sorted({s.run for s in train}),
                          "held_out_runs": sorted({s.run for s in held}),
                          "other_splits": dict(other), "held_out_splits": sorted(hs)}
+
+
+def _tile_key(t: "C.BottomTile") -> tuple:
+    return (t.mode, None if t.dt_s is None else round(float(t.dt_s), 6))
+
+
+def dataset_bottom_tile(data: Path, samples: list[Sample]) -> dict:
+    """The lower tile the dataset's mosaics carry (module docstring, THE
+    LOWER TILE): {mode, dt_s, tol_s, source, label_horizon_s}. Read from
+    stats.json beside samples.jsonl (the builder's) and checked against every
+    sample's `bottom_tile` (a sample without one is "down"): the samples
+    must agree with one another and with stats.json on the mode and dt_s, or
+    DataError. Neither present: "down" (every dataset from before
+    2026-10-24). `label_horizon_s`: stats.json's args.horizon_s, or None."""
+    stats_p = samples_file(data).parent / "stats.json"
+    st_tile = horizon = None
+    if stats_p.is_file():
+        try:
+            st = json.loads(stats_p.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise DataError(f"{stats_p}: unreadable ({exc}), so its lower tile is unknown") \
+                from None
+        if isinstance(st, dict):
+            if st.get("bottom_tile") is not None:
+                try:
+                    st_tile = C.bottom_tile_from(st["bottom_tile"])
+                except ValueError as exc:
+                    raise DataError(f"{stats_p}: its lower tile is malformed ({exc})") from None
+            h = (st.get("args") or {}).get("horizon_s") if isinstance(st.get("args"), dict) \
+                else None
+            horizon = float(h) if isinstance(h, (int, float)) and not isinstance(h, bool) else None
+    seen: dict[tuple, Any] = {}
+    marked = False
+    for s in samples:
+        rec = s.extra.get("bottom_tile")
+        marked |= rec is not None
+        try:
+            t = C.bottom_tile_from(rec)
+        except ValueError as exc:
+            raise DataError(f"sample {s.idx}: its lower tile is malformed ({exc})") from None
+        seen.setdefault(_tile_key(t), t)
+    if len(seen) > 1:
+        raise DataError(f"the samples mix lower tiles {sorted(seen, key=str)}: one model learns "
+                        f"one tile (tools/build_follow_dataset.py --bottom-tile)")
+    s_tile = next(iter(seen.values()), None)
+    if st_tile is not None and s_tile is not None and _tile_key(s_tile) != _tile_key(st_tile):
+        raise DataError(f"stats.json says the lower tile is {st_tile.as_dict()}, the samples say "
+                        f"{s_tile.as_dict()}: rebuild the dataset")
+    tile = st_tile or s_tile or C.BottomTile()
+    source = ("stats.json" if st_tile is not None else "samples" if marked else
+              "absent (a dataset from before 2026-10-24): down")
+    return {**tile.as_dict(), "source": source, "label_horizon_s": horizon}
 
 
 def turn_class(yaw_bin: int) -> int:
@@ -596,12 +660,19 @@ def git_commit() -> str | None:
 
 def provenance(*, run: str, epoch: int, parent_adapter: str, parent_sha256: str | None,
                base: str, data_report: dict, split_info: dict, precision: str, hyper: dict,
-               metrics: dict | None, step: int) -> dict:
+               metrics: dict | None, step: int, bottom_tile: dict | None = None,
+               label_horizon_s: float | None = None) -> dict:
     """aerialvla_codec.ADAPTER_PROVENANCE_FILE's content: what the server
     reads to announce the checkpoint (id_root, run, epoch_dir) and what the
     identity's `adapter.provenance` repeats (parent adapter and its digest,
-    base, data and its sha256, precision)."""
+    base, data and its sha256, precision, the lower tile and the label
+    horizon). `bottom_tile`: dataset_bottom_tile's ({mode, dt_s, tol_s}
+    kept); None records "down"."""
+    tile = C.bottom_tile_from(bottom_tile).as_dict()
     return {"schema": SCHEMA, "id_root": ID_ROOT, "run": run, "epoch": int(epoch),
+            # the mosaic's lower tile this adapter learned: a flight with
+            # another is refused (demo/vla_mission.bottom_tile_check)
+            "bottom_tile": tile, "label_horizon_s": label_horizon_s,
             "epoch_dir": f"epoch{int(epoch)}", "optimizer_step": int(step),
             "parent_adapter": Path(parent_adapter).as_posix(),
             "parent_adapter_sha256": parent_sha256, "base": Path(base).as_posix(),
@@ -687,6 +758,10 @@ def train(args, loader: Callable = None) -> int:
                          f"checkpoint is ever replaced under a name already recorded")
     samples, report = load_samples(Path(args.data))
     tr, held, sinfo = split_samples(samples, args.holdout_splits)
+    try:
+        tile = dataset_bottom_tile(Path(args.data), samples)
+    except DataError as exc:
+        raise SystemExit(f"[ft] refused: {exc}") from None
     if not tr:
         raise SystemExit("[ft] no training samples")
     if not held:
@@ -699,6 +774,10 @@ def train(args, loader: Callable = None) -> int:
           f"(dropped {report['dropped']}); train {len(tr)} ({len(train_list)} with "
           f"oversampling) from {len(sinfo['train_runs'])} runs, held-out {len(held)} from "
           f"{sinfo['held_out_runs']}, evaluating {len(eval_set)}", flush=True)
+    print(f"[ft] lower tile {tile['mode']}"
+          + (f" (the front frame {tile['dt_s']:g} s earlier)" if tile["dt_s"] else "")
+          + f" from {tile['source']}; label horizon {tile['label_horizon_s']} s - both go "
+            f"into every checkpoint's provenance", flush=True)
 
     parent_sha = weights_digest([Path(args.adapter)])
     device = args.device
@@ -724,7 +803,8 @@ def train(args, loader: Callable = None) -> int:
     hyper.update({"optimizer_steps_planned": total, "warmup_steps": warmup,
                   "grad_ckpt": not args.no_grad_ckpt, "lora": "the parent adapter's own config"})
     runrec = {"schema": SCHEMA, "run": args.run, "created_utc": _utc(), "argv": sys.argv[1:],
-              "data": report, "split": sinfo, "train_stats": data_stats(tr),
+              "data": report, "split": sinfo, "bottom_tile": tile,
+              "train_stats": data_stats(tr),
               "held_out_stats": data_stats(held), "parent_adapter": args.adapter,
               "parent_adapter_sha256": parent_sha, "base": args.base,
               "precision": args.precision, "params": pinfo, "hyperparameters": hyper,
@@ -810,7 +890,8 @@ def train(args, loader: Callable = None) -> int:
             _write_json(ck / C.ADAPTER_PROVENANCE_FILE, provenance(
                 run=args.run, epoch=epoch, parent_adapter=args.adapter, parent_sha256=parent_sha,
                 base=args.base, data_report=report, split_info=sinfo, precision=args.precision,
-                hyper=hyper, metrics=metrics, step=step))
+                hyper=hyper, metrics=metrics, step=step, bottom_tile=tile,
+                label_horizon_s=tile["label_horizon_s"]))
         _prov(None)
         ev = do_eval(epoch, step)
         m = ev["metrics"]
@@ -895,6 +976,7 @@ def dry_run(args) -> int:
     rep: dict[str, Any] = {"schema": SCHEMA + "#dry-run", "data": report}
     try:
         tr, held, sinfo = split_samples(samples, args.holdout_splits)
+        rep["bottom_tile"] = dataset_bottom_tile(Path(args.data), samples)
     except DataError as exc:
         rep["refused"] = str(exc)
         text = json.dumps(rep, indent=1, default=str)

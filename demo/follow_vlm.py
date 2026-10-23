@@ -4289,7 +4289,9 @@ async def fly(args) -> int:
                 policy=policy, object_text=lambda: args.object, cruise_alt=args.cruise_alt,
                 record_dir=args.record_vla, every_s=args.perturb_vla_every,
                 dur_s=args.perturb_vla_dur, allow_stand_in=args.perturb_vla_allow_stand_in,
-                log=print)
+                bottom_tile=args.perturb_vla_bottom_tile,
+                prev_dt_s=args.perturb_vla_prev_dt_s,
+                step_as_rate=args.perturb_vla_step_as_rate, log=print)
         except vla_dagger.DaggerRefused as exc:
             raise SystemExit(f"[vla-dagger] *** refused: {exc}") from None
         print(f"[vla-dagger] {perturber.describe()}")
@@ -7338,6 +7340,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="with --record-perturb-vla: fly the windows from a server that is "
                          "not AerialVLA (the scripted stand-in: a plumbing dry run, recorded "
                          "as one, never training data)")
+    ap.add_argument("--perturb-vla-bottom-tile", choices=("down", "prev_front"),
+                    default="down",
+                    help="with --record-perturb-vla: the mosaic's lower tile the windows ask "
+                         "with (vla_fly --vla-bottom-tile): 'prev_front' is the front frame "
+                         "--perturb-vla-prev-dt-s earlier. Must be the tile the served adapter "
+                         "was trained on, or the recording is refused (default down)")
+    ap.add_argument("--perturb-vla-prev-dt-s", type=float, default=None,
+                    help="with --perturb-vla-bottom-tile prev_front: how many seconds earlier "
+                         "(vla_fly --vla-prev-dt-s; default 1.0)")
+    ap.add_argument("--perturb-vla-step-as-rate", type=float, default=None, metavar="H",
+                    help="with --record-perturb-vla: the windows fly each step as a velocity "
+                         "over H seconds (vla_fly --step-as-rate; default off: an endpoint)")
     ap.add_argument("--record-hz", type=float, default=20.0,
                     help="frames per second the recorder writes, on its OWN "
                          "thread. Replaces --view-every, which tied recording "
@@ -7423,13 +7437,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.record_perturb:
             ap.error("--record-perturb-vla and --record-perturb: one perturbation at a time")
         from vla_dagger import check_args
-        why = check_args(args.record_perturb_vla, args.perturb_vla_every, args.perturb_vla_dur)
+        why = check_args(args.record_perturb_vla, args.perturb_vla_every, args.perturb_vla_dur,
+                         bottom_tile=args.perturb_vla_bottom_tile,
+                         prev_dt_s=args.perturb_vla_prev_dt_s,
+                         step_as_rate=args.perturb_vla_step_as_rate)
         if why is not None:
             ap.error(why)
     elif (args.perturb_vla_every != (6.0, 10.0) or args.perturb_vla_dur != (2.5, 4.0)
           or args.perturb_vla_allow_stand_in):
         ap.error("--perturb-vla-every, --perturb-vla-dur and --perturb-vla-allow-stand-in "
                  "need --record-perturb-vla")
+    elif (args.perturb_vla_bottom_tile != "down" or args.perturb_vla_prev_dt_s is not None
+          or args.perturb_vla_step_as_rate is not None):
+        ap.error("--perturb-vla-bottom-tile, --perturb-vla-prev-dt-s and "
+                 "--perturb-vla-step-as-rate need --record-perturb-vla")
     global LINEAR_BEARING
     LINEAR_BEARING = bool(args.linear_bearing)
     if args.coarse_timer:

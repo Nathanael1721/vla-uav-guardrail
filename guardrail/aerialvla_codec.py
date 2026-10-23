@@ -99,6 +99,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import bisect
 import hashlib
 import io
 import math
@@ -414,6 +415,156 @@ def mosaic_sha256(mosaic) -> str:
     if mosaic.mode != "RGB" or tuple(mosaic.size) != MOSAIC_SIZE:
         raise ValueError(f"not a {MOSAIC_SIZE} RGB mosaic: {mosaic.mode} {mosaic.size}")
     return hashlib.sha256(mosaic.tobytes()).hexdigest()
+
+
+# --------------------------------------------------------------------------- #
+# The mosaic's lower tile: the down camera, or the front frame from dt earlier
+# (2026-10-24)
+# --------------------------------------------------------------------------- #
+# The first fine-tuned follow (demo/out/vla_follow_ft_01_20261024, adapter
+# follow_v2_r1/epoch4) held at a red light ~9 m behind the car - right - and
+# went on answering fwd 0.0 for ~6 s while the car pulled away from 9.8 to
+# 27.6 m: one image cannot tell a STOPPED car from one PULLING AWAY. The
+# expert knows the car's speed from its box history; the model sees one
+# frame, and the mosaic's lower tile is the DOWN camera (the road under the
+# aircraft), close to useless for a car ahead. BOTTOM_TILE_PREV_FRONT puts
+# the FRONT frame from dt_s earlier in that tile instead, so one input
+# carries the scene's motion. Upstream trained on "down" only: a prev_front
+# model is one of our fine-tunes, trained on a prev_front dataset
+# (tools/build_follow_dataset.py --bottom-tile prev_front), flown with the
+# same tile (demo/vla_fly.py --vla-bottom-tile prev_front), and refused
+# otherwise (adapter_bottom_tile, bottom_tile_mismatch; demo/vla_mission.
+# bottom_tile_check).
+#
+# THE RULE, one for both sides (pick_prev_front): the lower tile is the front
+# frame whose capture time is nearest t_capture - dt_s, within tol_s; with
+# none there is no sample (the builder's drop "no_prev_front") and no request
+# (VLAFrames counts no_prev_front) - never the down frame, never black.
+# tol_s < dt_s, so the frame is always strictly earlier than the capture.
+# The times are capture times on the capture's own clock - captures.jsonl's
+# t_capture in the builder, VLAFrames' capture time of each frame in its
+# ring in flight - and the recorder builds captures.jsonl with VLAFrames
+# itself, so the two are one rule. The request carries the earlier front
+# JPEG in its down slot: the wire protocol is unchanged, and the server
+# cannot tell (the mosaic is front over "lower"); the records say which.
+BOTTOM_TILE_DOWN = "down"
+BOTTOM_TILE_PREV_FRONT = "prev_front"
+BOTTOM_TILE_MODES = (BOTTOM_TILE_DOWN, BOTTOM_TILE_PREV_FRONT)
+DEFAULT_PREV_DT_S = 1.0
+DEFAULT_PREV_TOL_S = 0.25
+
+
+@dataclass(frozen=True)
+class BottomTile:
+    """What the mosaic's lower tile is: "down" (upstream's; no dt), or
+    "prev_front" with `dt_s` (how much earlier) and `tol_s` (how far the
+    frame may sit from t_capture - dt_s). Validated: 0 < tol_s < dt_s."""
+    mode: str = BOTTOM_TILE_DOWN
+    dt_s: float | None = None
+    tol_s: float | None = None
+
+    def __post_init__(self):
+        if self.mode not in BOTTOM_TILE_MODES:
+            raise ValueError(f"lower tile {self.mode!r} is not one of {list(BOTTOM_TILE_MODES)}")
+        if self.mode == BOTTOM_TILE_DOWN:
+            if self.dt_s is not None or self.tol_s is not None:
+                raise ValueError("a 'down' lower tile has no dt_s / tol_s")
+            return
+        for k in ("dt_s", "tol_s"):
+            v = getattr(self, k)
+            if not _finite_number(v) or float(v) <= 0:
+                raise ValueError(f"prev_front {k} must be a positive number of seconds, got {v!r}")
+        if not float(self.tol_s) < float(self.dt_s):
+            raise ValueError(f"prev_front tol_s {self.tol_s:g} must be below dt_s {self.dt_s:g}: "
+                             f"else the 'earlier' frame could be the capture's own")
+
+    @property
+    def prev_front(self) -> bool:
+        return self.mode == BOTTOM_TILE_PREV_FRONT
+
+    def as_dict(self) -> dict:
+        return {"mode": self.mode, "dt_s": self.dt_s, "tol_s": self.tol_s}
+
+
+def bottom_tile(mode: str = BOTTOM_TILE_DOWN, dt_s: float | None = None,
+                tol_s: float | None = None) -> BottomTile:
+    """The tile of `mode`; for prev_front, dt_s and tol_s default to
+    DEFAULT_PREV_DT_S / DEFAULT_PREV_TOL_S, for down they are ignored.
+    ValueError for anything BottomTile refuses."""
+    if mode == BOTTOM_TILE_PREV_FRONT:
+        return BottomTile(mode, float(DEFAULT_PREV_DT_S if dt_s is None else dt_s),
+                          float(DEFAULT_PREV_TOL_S if tol_s is None else tol_s))
+    return BottomTile(mode)
+
+
+def bottom_tile_from(rec: Any) -> BottomTile:
+    """A recorded tile (a sample's or stats.json's `bottom_tile`, a
+    provenance file's) -> BottomTile. None, {} or a record without a mode is
+    "down": every dataset and adapter from before 2026-10-24, and upstream's.
+    A prev_front record must carry its dt_s (tol_s defaults); extra keys
+    (dt_actual_s, prev_i, ...) are ignored. ValueError otherwise."""
+    if rec is None:
+        return BottomTile()
+    if not isinstance(rec, dict):
+        raise ValueError(f"a lower tile record is an object, got {type(rec).__name__}")
+    mode = rec.get("mode")
+    if mode is None or mode == BOTTOM_TILE_DOWN:
+        return BottomTile()
+    if mode != BOTTOM_TILE_PREV_FRONT:
+        raise ValueError(f"lower tile {mode!r} is not one of {list(BOTTOM_TILE_MODES)}")
+    if rec.get("dt_s") is None:
+        raise ValueError("a prev_front lower tile record carries no dt_s")
+    return bottom_tile(mode, rec["dt_s"], rec.get("tol_s"))
+
+
+def pick_prev_front(t_capture: float, times, dt_s: float, tol_s: float) -> int | None:
+    """THE RULE (above): the index into `times` (capture times, ascending) of
+    the frame nearest t_capture - dt_s, if it is within tol_s of it and
+    strictly earlier than t_capture; else None. 1e-9 s of slack on the
+    tolerance for clock floats; a tie takes either neighbour."""
+    target = float(t_capture) - float(dt_s)
+    i = bisect.bisect_left(times, target)
+    best, err = None, math.inf
+    for j in (i - 1, i):
+        if 0 <= j < len(times):
+            e = abs(float(times[j]) - target)
+            if e < err:
+                best, err = j, e
+    if best is None or err > float(tol_s) + 1e-9 or not float(times[best]) < float(t_capture):
+        return None
+    return best
+
+
+def adapter_bottom_tile(identity: Any) -> tuple[BottomTile, str]:
+    """(the lower tile an identity's adapter was trained on, "announced") from
+    the provenance block hello carries (demo/vla_server_v2.adapter_identity:
+    `adapter.provenance.bottom_tile`, which training/finetune_aerialvla_
+    follow.py copied from the dataset's stats.json); (BottomTile("down"),
+    "absent") when there is none - upstream's adapter, a stand-in, a
+    fine-tune from before 2026-10-24: "down" is the only tile those saw.
+    ValueError for a field that is there and malformed."""
+    a = identity.get("adapter") if isinstance(identity, dict) else None
+    prov = a.get("provenance") if isinstance(a, dict) else None
+    if isinstance(prov, dict) and prov.get("bottom_tile") is not None:
+        return bottom_tile_from(prov["bottom_tile"]), "announced"
+    return BottomTile(), "absent"
+
+
+def _tile_words(t: BottomTile) -> str:
+    return (f"'prev_front' (the front frame {t.dt_s:g} s earlier)" if t.prev_front
+            else "'down' (the down camera)")
+
+
+def bottom_tile_mismatch(trained: BottomTile, given: BottomTile) -> str | None:
+    """Why a model trained with lower tile `trained` must not be given
+    `given`, or None when they agree. The mode and, for prev_front, dt_s
+    must match (to the microsecond); tol_s is sampling slack, not part of
+    the input, and may differ."""
+    if trained.mode == given.mode and (
+            not trained.prev_front or abs(float(trained.dt_s) - float(given.dt_s)) <= 1e-6):
+        return None
+    return (f"the adapter was trained with the lower tile {_tile_words(trained)} and would be "
+            f"given {_tile_words(given)}: an input it never saw")
 
 
 # The most pixels a wire frame may claim. The frames this protocol carries are

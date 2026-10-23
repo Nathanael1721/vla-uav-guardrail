@@ -58,6 +58,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from guardrail import aerialvla_codec as C                           # noqa: E402
 from guardrail.models import Action4D, State                         # noqa: E402
 from guardrail.vla_link import (                                      # noqa: E402
     NO_HINT, Capture, Hint, Pose, RemoteVLA, LinkError, ProtocolError, build_infer_fields,
@@ -1168,6 +1169,10 @@ class MissionLoop:
             row["hint_kind"] = cur.get("hint_kind")
             row["hint_sent_kind"] = ((self.hint_source.last or {}).get("kind")
                                      if self.hint_source is not None else None)
+        if getattr(getattr(tracker, "cfg", None), "rate_horizon_s", None) is not None:
+            # RATE EXECUTION (vla_link.TrackerConfig): the commanded speed and
+            # yaw rate of a step flown as a velocity; None on any other tick
+            row["vla_rate"] = getattr(tracker, "last_rate", None)
         if extra_row:
             row.update(extra_row)
         hud = vla_hud(now - self.t0, state.up, tk, cur, step, touched=bool(hd.touched),
@@ -1407,26 +1412,53 @@ class VLAFrames:
     capture was saved and logged before the hint check, so M2's captures
     with no fresh box - never sent - filled vla_frames/ and the log (review
     of the CityLife flight, P3-8). `counts` has "captures" (built) and
-    "committed" (sent)."""
+    "committed" (sent).
+
+    THE LOWER TILE (`bottom_tile`, aerialvla_codec.BottomTile; 2026-10-24).
+    "down" (the default) is everything above. "prev_front" keeps a short
+    ring of front messages (put_front appends a pointer; about dt + tol +
+    RING_MARGIN_S of them) and puts, in the request's down slot, the front
+    frame whose capture time - this class's own rule, the one the capture
+    gets - is nearest t_capture - dt_s within tol_s (aerialvla_codec.
+    pick_prev_front, the dataset builder's rule). None: NO REQUEST this tick
+    (counted no_prev_front), never the down frame; the down camera is not
+    needed at all. The Capture says so (`lower`: mode, dt, the measured
+    dt_actual_s, the earlier frame's stamp), and so do the request's record
+    (vla_steps.jsonl `bottom_tile`), the log line and stats()."""
+
+    # prev_front: frames kept beyond dt + tol (s of arrival time)
+    RING_MARGIN_S = 0.5
 
     def __init__(self, obs, encode: Callable[[dict], bytes | None] | None = None,
                  saver: FrameSaver | None = None, clock: Callable[[], float] = time.time,
-                 max_pair_dt_s: float = 0.25, max_log: int = 20000):
+                 max_pair_dt_s: float = 0.25, max_log: int = 20000,
+                 bottom_tile: "C.BottomTile | None" = None):
         self.obs = obs
         self.encode = encode or jpeg_from_msg
         self.saver = saver
         self.clock = clock
         self.max_pair_dt_s = float(max_pair_dt_s)
+        self.tile = bottom_tile if bottom_tile is not None else C.BottomTile()
         self._lock = threading.Lock()
         self._front: tuple[dict, float] | None = None
         self._down: tuple[dict, float] | None = None
+        # prev_front: (message, arrival) of the recent front frames (the
+        # length cap only guards a clock that stands still)
+        self._fronts: deque = deque(maxlen=256)
+        self._ring_s = ((self.tile.dt_s + self.tile.tol_s + self.RING_MARGIN_S)
+                        if self.tile.prev_front else 0.0)
         self.log: deque = deque(maxlen=max_log)
         self.counts: Counter = Counter()
         self._built: dict | None = None      # the last capture built, until committed
 
     def put_front(self, msg) -> None:
         with self._lock:
-            self._front = (msg, self.clock())
+            t = self.clock()
+            self._front = (msg, t)
+            if self.tile.prev_front:
+                self._fronts.append((msg, t))
+                while self._fronts and self._fronts[0][1] < t - self._ring_s:
+                    self._fronts.popleft()
 
     def put_down(self, msg) -> None:
         with self._lock:
@@ -1436,6 +1468,30 @@ class VLAFrames:
         with self._lock:
             got = self._front if which == "front" else self._down
         return None if got is None else got[0]
+
+    def _capture_time(self, msg, t_arr: float) -> tuple[float, str]:
+        """(a front frame's capture time, its basis): its sim stamp mapped to
+        wall time through the pose ring, never later than its arrival or
+        now; the arrival when there is no stamp or the two clocks disagree
+        by more than 2 s. Every capture's time, and in prev_front mode every
+        ring frame's (the earlier frame is picked on the same clock)."""
+        stamp = _stamp(msg)
+        t_cap = self.obs.wall_at_stamp(stamp) if stamp is not None else None
+        basis = "stamp"
+        if t_cap is None or abs(t_cap - t_arr) > 2.0:
+            t_cap = t_arr                 # no stamps, or the clocks disagree
+            basis = "arrival"
+        return min(t_cap, t_arr, self.clock()), basis
+
+    def _prev_front(self, t_cap: float):
+        """prev_front: (the ring's front message from dt_s earlier, its
+        capture time) by aerialvla_codec.pick_prev_front, or None."""
+        with self._lock:
+            ring = list(self._fronts)
+        cands = sorted(((self._capture_time(m, ta)[0], i, m) for i, (m, ta) in enumerate(ring)),
+                       key=lambda c: (c[0], c[1]))
+        j = C.pick_prev_front(t_cap, [c[0] for c in cands], self.tile.dt_s, self.tile.tol_s)
+        return None if j is None else (cands[j][2], cands[j][0])
 
     def capture(self) -> Capture | None:
         with self._lock:
@@ -1449,37 +1505,48 @@ class VLAFrames:
         if pose is None:
             self.counts["no_pose"] += 1
             return None
-        if d is None:
-            self.counts["no_down"] += 1
-            return None
-        dmsg, d_arr = d
-        ds = _stamp(dmsg)
-        pair_dt = (abs(ds - stamp) / 1e9 if ds is not None and stamp is not None
-                   else abs(d_arr - t_arr))
-        if pair_dt > self.max_pair_dt_s:
-            self.counts["down_unpaired"] += 1
-            return None
-        t_cap = self.obs.wall_at_stamp(stamp) if stamp is not None else None
-        basis = "stamp"
-        if t_cap is None or abs(t_cap - t_arr) > 2.0:
-            t_cap = t_arr                 # no stamps, or the clocks disagree
-            basis = "arrival"
-        t_cap = min(t_cap, t_arr, self.clock())
+        lower = None
+        if self.tile.prev_front:
+            # the down slot is the front frame from dt_s earlier; the down
+            # camera is not used (class docstring, THE LOWER TILE)
+            t_cap, basis = self._capture_time(fmsg, t_arr)
+            got = self._prev_front(t_cap)
+            if got is None:
+                self.counts["no_prev_front"] += 1
+                return None
+            dmsg, t_prev = got
+            ds, pair_dt = _stamp(dmsg), None
+            lower = {**self.tile.as_dict(), "dt_actual_s": round(t_cap - t_prev, 4),
+                     "prev_t_capture": round(t_prev, 4), "prev_stamp_ns": ds}
+        else:
+            if d is None:
+                self.counts["no_down"] += 1
+                return None
+            dmsg, d_arr = d
+            ds = _stamp(dmsg)
+            pair_dt = (abs(ds - stamp) / 1e9 if ds is not None and stamp is not None
+                       else abs(d_arr - t_arr))
+            if pair_dt > self.max_pair_dt_s:
+                self.counts["down_unpaired"] += 1
+                return None
+            t_cap, basis = self._capture_time(fmsg, t_arr)
         front, down = self.encode(fmsg), self.encode(dmsg)
         if not front or not down:
             self.counts["decode_failed"] += 1
             return None
         cap = Capture(float(t_cap), Pose(float(pose["x"]), float(pose["y"]), float(pose["up"]),
-                                         float(pose["yaw"])), front, down)
+                                         float(pose["yaw"])), front, down, lower=lower)
         self.counts["captures"] += 1
-        self._built = {
-            "cap": cap,
-            "rec": {"t_capture": round(cap.t_capture, 4), "t_arrival": round(t_arr, 4),
-                    "stamp_ns": stamp, "down_stamp_ns": ds, "pair_dt_s": round(pair_dt, 4),
-                    "pose_src": pose.get("src"), "t_capture_basis": basis,
-                    "pose": cap.pose.as_wire(),
-                    "front_wh": [fmsg.get("width"), fmsg.get("height")],
-                    "down_wh": [dmsg.get("width"), dmsg.get("height")]}}
+        rec = {"t_capture": round(cap.t_capture, 4), "t_arrival": round(t_arr, 4),
+               "stamp_ns": stamp, "down_stamp_ns": ds,
+               "pair_dt_s": None if pair_dt is None else round(pair_dt, 4),
+               "pose_src": pose.get("src"), "t_capture_basis": basis,
+               "pose": cap.pose.as_wire(),
+               "front_wh": [fmsg.get("width"), fmsg.get("height")],
+               "down_wh": [dmsg.get("width"), dmsg.get("height")]}
+        if lower is not None:
+            rec["bottom_tile"] = dict(lower)
+        self._built = {"cap": cap, "rec": rec}
         return cap
 
     def commit(self, capture: Capture, hint: Hint | None = None, seq: int | None = None,
@@ -1494,6 +1561,8 @@ class VLAFrames:
             "front_wh": [None, None], "down_wh": [None, None], "pair_dt_s": None}
         if built:
             self._built = None
+        elif capture.lower is not None:
+            rec["bottom_tile"] = dict(capture.lower)
         front, down = capture.front_jpg, capture.down_jpg
         if self.saver is not None:
             self.saver.save(front)
@@ -1519,11 +1588,16 @@ class VLAFrames:
         latency included - where the ring has no sim stamps, as on the
         ArduPilot rail, whose poses are the EKF's)."""
         sizes = Counter(tuple(r["front_wh"]) for r in self.log)
-        return {"counts": dict(self.counts),
-                "front_sizes": {f"{w}x{h}": n for (w, h), n in sizes.items()},
-                "pair_dt_s": spread([r["pair_dt_s"] for r in self.log]),
-                "pose_src": dict(Counter(r.get("pose_src") for r in self.log)),
-                "t_capture_basis": dict(Counter(r.get("t_capture_basis") for r in self.log))}
+        out = {"counts": dict(self.counts),
+               "front_sizes": {f"{w}x{h}": n for (w, h), n in sizes.items()},
+               "pair_dt_s": spread([r["pair_dt_s"] for r in self.log]),
+               "pose_src": dict(Counter(r.get("pose_src") for r in self.log)),
+               "t_capture_basis": dict(Counter(r.get("t_capture_basis") for r in self.log))}
+        if self.tile.prev_front:
+            # the lower tile and how much earlier the sent frames really were
+            out["bottom_tile"] = {**self.tile.as_dict(), "dt_actual_s": spread(
+                [(r.get("bottom_tile") or {}).get("dt_actual_s") for r in self.log])}
+        return out
 
 
 # --------------------------------------------------------------------------- #
@@ -1786,6 +1860,60 @@ def local_weight_paths(identity: dict | None) -> list[str] | None:
         return None
     paths = [str(f) for f in files]
     return paths if all(Path(p).exists() for p in paths) else None
+
+
+# --------------------------------------------------------------------------- #
+# The lower tile the adapter was trained on, against the flight's (2026-10-24)
+# --------------------------------------------------------------------------- #
+def adapter_tile(identity: dict | None, read_local: bool = True) -> tuple["C.BottomTile", str]:
+    """(the lower tile the server's adapter was trained on, where that was
+    read): aerialvla_codec.adapter_bottom_tile from hello ("announced", or
+    "absent" = down). A server from before the field announces a provenance
+    block WITHOUT the key (demo/vla_server_v2.adapter_identity now always
+    carries it, None for an older checkpoint): then, with `read_local`, the
+    adapter's own provenance file is read here when its path is readable
+    ("local provenance file") - a prev_front checkpoint served by an old
+    server must not pass as "down". ValueError for a malformed field."""
+    tile, src = C.adapter_bottom_tile(identity)
+    if src == "announced" or not read_local:
+        return tile, src
+    a = identity.get("adapter") if isinstance(identity, dict) else None
+    prov = a.get("provenance") if isinstance(a, dict) else None
+    if isinstance(prov, dict) and "bottom_tile" not in prov and a.get("path"):
+        try:
+            p = json.loads((Path(str(a["path"])) / C.ADAPTER_PROVENANCE_FILE).read_text(
+                encoding="utf-8"))
+        except (OSError, ValueError):
+            p = None
+        if isinstance(p, dict) and p.get("bottom_tile") is not None:
+            return C.bottom_tile_from(p["bottom_tile"]), "local provenance file"
+    return tile, src
+
+
+def bottom_tile_check(identity: dict | None, flight: "C.BottomTile", *, is_vla: bool = True,
+                      read_local: bool = True) -> dict:
+    """Is this flight's lower tile the one the server's adapter was trained
+    on? {flight, adapter, source, checked, ok, why}: `ok` False (with `why`)
+    refuses the flight before take-off (demo/vla_fly.py, demo/vla_dagger.py)
+    - a model is never flown with a tile it never saw. A stand-in (not
+    is_vla: the scripted server reads no image) is not checked, and says
+    so; an adapter that records no tile is "down"."""
+    rec = {"flight": flight.as_dict(), "adapter": None, "source": None, "checked": False,
+           "ok": True, "why": None}
+    if not is_vla:
+        rec["source"] = "not checked: a stand-in, not a VLA (it reads no image)"
+        return rec
+    rec["checked"] = True
+    try:
+        tile, src = adapter_tile(identity, read_local=read_local)
+    except ValueError as exc:
+        rec.update({"ok": False, "why": f"the adapter's recorded lower tile is malformed ({exc})"})
+        return rec
+    rec.update({"adapter": tile.as_dict(), "source": src})
+    why = C.bottom_tile_mismatch(tile, flight)
+    if why is not None:
+        rec.update({"ok": False, "why": why})
+    return rec
 
 
 # --------------------------------------------------------------------------- #

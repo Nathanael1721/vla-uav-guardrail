@@ -656,6 +656,47 @@ def test_a_follow_whose_identity_fails_flies_the_detector_gate_and_says_so():
     assert mo["cmd_accel_max"] <= 2.5 + 1e-6 or any(r["touched"] for r in rows), mo
 
 
+def test_a_prev_front_follow_flown_as_rates_sends_the_earlier_front_and_records_it():
+    """2026-10-24 through fly(): --vla-bottom-tile prev_front --step-as-rate
+    1.0. Every request's down slot is the VLAFront frame from about 1 s
+    earlier (the fake cameras give front and down the same image at each
+    tick, so a down-mode request's two JPEGs are equal and a prev_front one's
+    are not), its record says so (vla_steps.jsonl `bottom_tile`, the
+    measured dt within the tolerance), every row carries the commanded rates
+    (`vla_rate`), and params record the rate and the tile check (a stand-in
+    reads no image: not checked)."""
+    why = _missing()
+    if why:
+        print(f"      ({why})")
+        return SKIP
+    import level_actors
+    code, out, said = _fly(["--mission", "follow", "--tag", "fakesim_pf", "--max-s", "10",
+                            "--no-transfer", "--no-land-site", "--no-save-view",
+                            "--cadence", "pipelined", "--vla-fake-output", "58 49 52</s>",
+                            "--vla-bottom-tile", "prev_front", "--step-as-rate", "1.0"],
+                           grounder=_GrowingBox,
+                           patch={(level_actors, "LevelCar"): _LevelCar})
+    assert code == 0, said[-3000:]
+    m = _metrics(out)
+    p = m["params"]
+    assert p["step_as_rate_s"] == 1.0 and p["tracker"]["rate_horizon_s"] == 1.0, p["tracker"]
+    assert p["bottom_tile"]["flight"] == {"mode": "prev_front", "dt_s": 1.0, "tol_s": 0.25}
+    assert p["bottom_tile"]["checked"] is False and "stand-in" in p["bottom_tile"]["source"]
+    recs = [json.loads(x) for x in (out / "vla_steps.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert recs
+    for r in recs:
+        bt = r["bottom_tile"]
+        assert bt["mode"] == "prev_front" and 0.75 <= bt["dt_actual_s"] <= 1.25, bt
+        assert r["down_jpg_sha256"] != r["front_jpg_sha256"], "the down camera was sent"
+    fc = m["frames"]["capture"]["bottom_tile"]
+    assert fc["mode"] == "prev_front" and fc["dt_actual_s"]["n"] >= len(recs) - 1, fc
+    rows = _rows(out)
+    assert rows and all("vla_rate" in r for r in rows)
+    rate = [r for r in rows if r["author_reason"] == "rate"]
+    assert rate and all(r["vla_rate"]["horizon_s"] == 1.0 for r in rate), rows[-1]
+    assert all(r["vla_rate"] is None for r in rows if r["author_reason"] != "rate")
+
+
 def test_a_fault_in_the_records_still_leaves_metrics_and_the_manifest():
     """P3-12: pilot_entry raising after a real flight - metrics.json is
     still written, with the error in records_errors, the manifest and the
