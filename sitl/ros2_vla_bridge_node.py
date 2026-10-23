@@ -747,7 +747,9 @@ class VLABridge:
     # -- the identity --------------------------------------------------------- #
     def model_id(self) -> str:
         if self.is_vla:
-            return VM.MODEL_ID
+            # MODEL_ID for upstream's adapter, its own id for a follow
+            # fine-tune (vla_mission.model_id_for, 2026-10-23)
+            return VM.model_id_for(self.hello)
         sid = str((self.hello or {}).get("id") or "unknown")
         return sid if sid.startswith("fake:") else f"fake:{sid}"
 

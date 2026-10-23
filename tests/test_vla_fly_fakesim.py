@@ -644,6 +644,16 @@ def test_a_follow_whose_identity_fails_flies_the_detector_gate_and_says_so():
     assert recs and all(r.get("hint_kind") in ("fresh", "memory", "search") for r in recs)
     rows = _rows(out)
     assert all("hint_kind" in r and "close_box" in r and "pilot_raw" in r for r in rows)
+    # Wave FT (2026-10-23): the follow's tracker smooths by default, every
+    # row carries the attitude (the fake kinematics' quaternion: level), and
+    # metrics carry the motion on tools/compare_motion.py's definitions.
+    tr = m["params"]["tracker"]
+    assert (tr["smooth_accel_mps2"], tr["smooth_yaw_accel_rps2"], tr["carry_s"]) == (2.5, 0.6, 1.0)
+    assert m["params"]["smooth"]["on"] is True
+    assert all(r.get("pitch_deg") == 0.0 and r.get("roll_deg") == 0.0 for r in rows), rows[0]
+    mo = m["motion"]
+    assert mo["attitude_recorded"] is True and mo["ticks"] == len(rows), mo
+    assert mo["cmd_accel_max"] <= 2.5 + 1e-6 or any(r["touched"] for r in rows), mo
 
 
 def test_a_fault_in_the_records_still_leaves_metrics_and_the_manifest():

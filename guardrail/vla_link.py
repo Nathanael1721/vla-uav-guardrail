@@ -124,7 +124,7 @@ import socket
 import threading
 import time
 from collections import Counter, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable
 
@@ -1363,16 +1363,64 @@ class TrackerConfig:
     # after 17 s). The answer is held as a zero step (author hold, reason
     # land) until the next decision; land_requested is never set. Counted.
     land_as_arrival: bool = False
+    # SMOOTHING (follow, 2026-10-23; all off by default, so every other run
+    # keeps the tracker's motion as it was). The user found the VLA follow
+    # "very not smooth": follow #9 (vla_follow_redcar_09_20261023) commanded
+    # a horizontal acceleration of p95 / p99 / max 3.75 / 32.68 / 54.32 m/s^2
+    # and a yaw acceleration of p99 / max 6.87 / 18.41 rad/s^2, against the
+    # hand-written follow's 2.60 / 3.90 / 5.56 and 0.50 / 2.09 (19 Oct,
+    # citylife_redcar_nfz_motion2_20261019; tools/compare_motion.py, the
+    # same definitions). Its largest steps were a new answer superseding a
+    # step (the velocity re-pointed and re-sped in one tick, the speed having
+    # decayed into the old endpoint at k_pos), holds between steps and the
+    # heading controller jumping to its cap. Three opt-in answers:
+    #   smooth_accel_mps2: the commanded horizontal velocity changes by at
+    #     most this x dt per tick, as a vector (its direction kept), dt the
+    #     time since the last tick capped at smooth_tick_s - follow_vlm's
+    #     VecSlewLimiter rule (its --accel-max 2.5). With it, a step is
+    #     approached at min(cruise, sqrt(2 a d)) - the fastest speed from
+    #     which that limit still stops at the endpoint - instead of k_pos x
+    #     d, which slowed every step from 4.5 m out.
+    #   smooth_yaw_accel_rps2: the commanded yaw rate changes by at most this
+    #     x dt per tick, and the heading is approached at
+    #     min(cap, k_yaw |e|, sqrt(2 alpha |e|)) so the slew cannot overshoot.
+    #   carry_s: a step flown to its end while the next answer is PENDING (a
+    #     request in flight; StepTracker.tick(pending=True)) keeps its last
+    #     horizontal velocity, decaying linearly to zero over carry_s, instead
+    #     of stopping (author vla_step, reason "carry", counted): the
+    #     aircraft no longer halts between successive steps. It flies on past
+    #     the step's endpoint by up to about half v x carry_s - this
+    #     executor's choice, never the model's. With no request in flight
+    #     (stop-and-go, no hint, a failed request) the step ends in a hold as
+    #     before.
+    # With smoothing on, every output goes through the limits: a hold, a
+    # hover or a close hold (StepTracker.tick(hold_horizontal=True), the
+    # follow's close box) ramps down at the limit instead of stopping in one
+    # tick, and is counted (smooth_decay_ticks). The Shield still judges, and
+    # repairs, every tick after this.
+    smooth_accel_mps2: float | None = None
+    smooth_yaw_accel_rps2: float | None = None
+    carry_s: float = 0.0
+    smooth_tick_s: float = 0.1
+
+    @property
+    def smoothing(self) -> bool:
+        return (self.smooth_accel_mps2 is not None or self.smooth_yaw_accel_rps2 is not None
+                or self.carry_s > 0.0)
 
     def __post_init__(self):
         for k in ("cruise_mps", "speed_cap_mps", "climb_cap_mps", "yaw_rate_cap_rad_s",
                   "k_yaw", "k_pos", "k_alt", "pos_tol_m", "alt_tol_m", "yaw_tol_rad",
-                  "time_cap_factor", "time_cap_max_s", "decision_timeout_s"):
+                  "time_cap_factor", "time_cap_max_s", "decision_timeout_s", "smooth_tick_s"):
             if _finite(getattr(self, k), k) <= 0:
                 raise ValueError(f"{k} must be positive")
-        for k in ("time_cap_base_s", "alt_band_inset_m"):
+        for k in ("time_cap_base_s", "alt_band_inset_m", "carry_s"):
             if _finite(getattr(self, k), k) < 0:
                 raise ValueError(f"{k} must not be negative")
+        for k in ("smooth_accel_mps2", "smooth_yaw_accel_rps2"):
+            v = getattr(self, k)
+            if v is not None and _finite(v, k) <= 0:
+                raise ValueError(f"{k} must be positive, or None for no limit")
         if self.hold_altitude_m is not None:
             _finite(self.hold_altitude_m, "hold_altitude_m")
         if self.cruise_mps > self.speed_cap_mps:
@@ -1427,6 +1475,9 @@ class _Current:
     ticks: Counter = field(default_factory=Counter)
     t_first_tick: float | None = None
     t_last_tick: float | None = None
+    # TrackerConfig.carry_s: the horizontal velocity commanded when the step
+    # completed, carried (decaying) while the next answer is pending.
+    carry_v: tuple[float, float] | None = None
 
 
 _ZERO = Action4D()
@@ -1452,11 +1503,25 @@ class StepTracker:
     heading, position and altitude are within tolerance, or at its time cap;
     the tracker then holds (zero horizontal and yaw, altitude kept at up_t)
     until the next decision.
+
+    With TrackerConfig smoothing (the follow; TrackerConfig.smoothing says
+    what each limit does) the approach profiles change to what the limits
+    can stop from, a step completed while an answer is pending carries its
+    velocity for carry_s, and every output passes the acceleration limits
+    last (`_smooth`), whoever authored it.
     """
 
     def __init__(self, config: TrackerConfig | None = None):
         self.cfg = config or TrackerConfig()
         self._band = self.cfg.alt_band
+        # The smoothing's memory: the last action this tracker output and
+        # when (TrackerConfig.smoothing). Reset to zero by suspend(): the
+        # rail flies its own actions then, and a resume starts from rest.
+        self._prev = _ZERO
+        self._t_prev: float | None = None
+        # when the smoothed horizontal command last reached zero (None while
+        # it is not zero): idle_since's start under smoothing
+        self._t_still: float | None = -math.inf
         self._cur: _Current | None = None
         self._fallback: str | None = None    # hover reason when no decision is current
         self._none_reason = "no_decision"    # why nothing has flown yet
@@ -1477,6 +1542,13 @@ class StepTracker:
     @property
     def suspended(self) -> bool:
         return self._suspended
+
+    @property
+    def smoothing(self) -> bool:
+        """TrackerConfig.smoothing: a rail that holds the horizontal motion
+        itself (the follow's close box) hands it to tick(hold_horizontal=)
+        instead, so the hold ramps like everything else."""
+        return self.cfg.smoothing
 
     def set_alt_band(self, band: tuple[float, float] | None) -> None:
         """A new band (a hot-applied policy). The step being flown is
@@ -1597,6 +1669,7 @@ class StepTracker:
             return
         self._suspended = True
         self.counts["suspends"] += 1
+        self._prev, self._t_prev, self._t_still = _ZERO, None, -math.inf
         if self._cur is not None:
             self._finish(self._cur, now, "suspended")
 
@@ -1622,10 +1695,18 @@ class StepTracker:
         (used by the stop-and-go cadence to wait the upstream 0.5 s)."""
         c = self._cur
         if c is None:
-            return self._idle_t
-        if c.decision.kind != "step":
-            return c.t_start
-        return c.t_complete if c.complete else None
+            base = self._idle_t
+        elif c.decision.kind != "step":
+            base = c.t_start
+        else:
+            base = c.t_complete if c.complete else None
+        if base is None or not self.cfg.smoothing:
+            return base
+        # Smoothing: idle only once the commanded horizontal velocity has
+        # ramped down to zero (a carry or a ramp is still motion), and from
+        # then: stop-and-go's settle then starts when the aircraft is told to
+        # stand still, as upstream's step-then-hover does.
+        return None if self._t_still is None else max(base, self._t_still)
 
     @property
     def current_seq(self) -> int | None:
@@ -1649,8 +1730,22 @@ class StepTracker:
         if self._cur is not None:
             self._finish(self._cur, now, "closed")
 
-    def tick(self, now: float, pose: Pose) -> Tick:
-        out = self._tick(now, pose)
+    def tick(self, now: float, pose: Pose, *, pending: bool | None = None,
+             hold_horizontal: bool = False) -> Tick:
+        """This tick's action. `pending`: is an answer on its way (a request
+        in flight)? Only TrackerConfig.carry_s reads it, and only True
+        carries. `hold_horizontal`: the rail holds the horizontal motion this
+        tick (the follow's close box): the horizontal target is zero, yaw
+        and climb fly, counted (held_horizontal). With smoothing the hold
+        ramps down at the acceleration limit."""
+        out = self._tick(now, pose, pending=pending)
+        if hold_horizontal and (out.action.vx or out.action.vy):
+            a = out.action
+            out = replace(out, action=Action4D(vx=0.0, vy=0.0, vz_up=a.vz_up,
+                                               yaw_rate=a.yaw_rate))
+            self.counts["held_horizontal"] += 1
+        if self.cfg.smoothing and not self._suspended:
+            out = self._smooth(now, out)
         self.ticks[out.author] += 1
         c = self._cur
         if c is not None:
@@ -1660,7 +1755,7 @@ class StepTracker:
             c.t_last_tick = now
         return out
 
-    def _tick(self, now: float, pose: Pose) -> Tick:
+    def _tick(self, now: float, pose: Pose, pending: bool | None = None) -> Tick:
         if self._suspended:
             return Tick(_ZERO, "none", "suspended", land_requested=self.land_requested)
         if self.land_requested:
@@ -1707,7 +1802,12 @@ class StepTracker:
                 along = dx * math.cos(c.psi_t) + dy * math.sin(c.psi_t)
                 if dist > cfg.pos_tol_m and along > 0.0:
                     trans_done = False
-                    speed = min(cfg.cruise_mps, cfg.k_pos * dist, cfg.speed_cap_mps)
+                    # The approach: k_pos x d, or with the smoothing's
+                    # acceleration limit the fastest speed it can still stop
+                    # from at the endpoint (TrackerConfig, SMOOTHING).
+                    near = (math.sqrt(2.0 * cfg.smooth_accel_mps2 * dist)
+                            if cfg.smooth_accel_mps2 is not None else cfg.k_pos * dist)
+                    speed = min(cfg.cruise_mps, near, cfg.speed_cap_mps)
                     if cfg.turn_while_moving:
                         speed *= max(0.0, math.cos(e_psi))
                     vx, vy = speed * dx / dist, speed * dy / dist
@@ -1717,9 +1817,17 @@ class StepTracker:
                 c.complete, c.t_complete = True, now
                 c.completion = "tolerance" if done else "time_cap"
                 self.counts[f"completed_{c.completion}"] += 1
+                if cfg.carry_s > 0.0:
+                    # what the aircraft was last told: the velocity a carry
+                    # continues from (TrackerConfig.carry_s)
+                    c.carry_v = (self._prev.vx, self._prev.vy)
             else:
                 yaw_rate = max(-cfg.yaw_rate_cap_rad_s,
                                min(cfg.yaw_rate_cap_rad_s, cfg.k_yaw * e_psi))
+                if cfg.smooth_yaw_accel_rps2 is not None:
+                    # the heading approached at what the yaw slew can stop from
+                    lim = math.sqrt(2.0 * cfg.smooth_yaw_accel_rps2 * abs(e_psi))
+                    yaw_rate = max(-lim, min(lim, yaw_rate))
                 # turn_moving: a step whose turn upstream would only have
                 # rotated, flown while moving (TrackerConfig.turn_while_moving;
                 # review of d6e7123, P3: it read "translate").
@@ -1727,7 +1835,56 @@ class StepTracker:
                             "vla_step", ("rotate" if c.rotate_only else
                                          "turn_moving" if c.turn_moving else "translate"),
                             seq, age)
+        if (cfg.carry_s > 0.0 and pending is True and c.carry_v is not None
+                and c.t_complete is not None and now - c.t_complete < cfg.carry_s):
+            # No stop between steps while the next answer is on its way: the
+            # last velocity, decaying linearly to zero over carry_s (author
+            # vla_step - the motion of the VLA's last step, carried by this
+            # executor - reason "carry", counted).
+            f = 1.0 - (now - c.t_complete) / cfg.carry_s
+            self.counts["carry_ticks"] += 1
+            return Tick(Action4D(vx=c.carry_v[0] * f, vy=c.carry_v[1] * f, vz_up=vz),
+                        "vla_step", "carry", seq, age)
         return Tick(Action4D(vz_up=vz), "hold", "step_complete", seq, age)
+
+    def _smooth(self, now: float, out: Tick) -> Tick:
+        """The acceleration limits (TrackerConfig, SMOOTHING) on this tick's
+        action, against the last action output. dt is the time since the
+        last call capped at smooth_tick_s, so a late tick buys no burst. The
+        horizontal step is scaled as a vector (direction kept); the climb
+        rate is not limited (the follow holds its altitude). A tick whose own
+        action was zero horizontally but leaves non-zero (a hold or hover
+        ramping down) is counted smooth_decay_ticks."""
+        cfg = self.cfg
+        dt = (cfg.smooth_tick_s if self._t_prev is None
+              else min(max(now - self._t_prev, 0.0), cfg.smooth_tick_s))
+        self._t_prev = now
+        p, a = self._prev, out.action
+        vx, vy, yr = a.vx, a.vy, a.yaw_rate
+        if cfg.smooth_accel_mps2 is not None:
+            dvx, dvy = vx - p.vx, vy - p.vy
+            n = math.hypot(dvx, dvy)
+            lim = cfg.smooth_accel_mps2 * dt
+            if n > lim:
+                k = lim / n
+                vx, vy = p.vx + dvx * k, p.vy + dvy * k
+                self.counts["smooth_limited_h"] += 1
+                if a.vx == 0.0 and a.vy == 0.0:
+                    self.counts["smooth_decay_ticks"] += 1
+        if cfg.smooth_yaw_accel_rps2 is not None:
+            lim = cfg.smooth_yaw_accel_rps2 * dt
+            d = yr - p.yaw_rate
+            if abs(d) > lim:
+                yr = p.yaw_rate + math.copysign(lim, d)
+                self.counts["smooth_limited_yaw"] += 1
+        new = Action4D(vx=vx, vy=vy, vz_up=a.vz_up, yaw_rate=yr)
+        self._prev = new
+        if math.hypot(vx, vy) <= 1e-3:
+            if self._t_still is None:
+                self._t_still = now
+        else:
+            self._t_still = None
+        return out if new == a else replace(out, action=new)
 
     # -- internals ----------------------------------------------------------- #
     def _clamp_alt(self, up_raw: float) -> tuple[float, bool]:

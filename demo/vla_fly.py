@@ -12,6 +12,10 @@ every 10 Hz tick through the Safety Shield, with honest records.
     python demo/vla_fly.py --mission approach --object "an orange car" --tag vla_appr_01
     python demo/vla_fly.py --mission goto --vla-server 127.0.0.1:8790 ...   # attach
     python demo/vla_fly.py --mission goto --vla-low-vram ...   # nf4/sdpa/merge
+    # a follow fine-tune's checkpoint instead of upstream's adapter; the follow
+    # flies its step tracker smoothed unless --no-smooth (TrackerConfig)
+    python demo/vla_fly.py --mission follow --cadence pipelined \\
+        --vla-adapter D:/models/aerialvla-ft-follow/<run>/epoch<N> ...
     # the whole flight path without the 7B model: the scripted server (its
     # identity is fake:scripted; the run is recorded as a stand-in, never a VLA)
     python demo/vla_fly.py --mission goto --vla-fake-output "96 48 49</s>" --tag vla_dry
@@ -144,6 +148,9 @@ RUN_FILES = ("flight_log.jsonl", "vla_steps.jsonl", "vla_captures.jsonl", "detec
 XY_FLAGS = ("--goal", "--start-xy", "--park-at")
 # Exit codes (scripts/run_vla_fly.ps1 reads them).
 EXIT_OK, EXIT_ABORTED, EXIT_VLA_FAILURE, EXIT_REFUSED, EXIT_INTERRUPTED = 0, 1, 3, 4, 130
+# The follow's step-tracker smoothing (TrackerConfig.smooth_accel_mps2,
+# smooth_yaw_accel_rps2, carry_s; build_arg_parser says where each comes from).
+DEFAULT_SMOOTH = {"accel": 2.5, "yaw_accel": 0.6, "carry_s": 1.0}
 
 
 def _is_link(p: Path) -> bool:
@@ -266,6 +273,23 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--no-follow-executor", action="store_true",
                     help="M3: fly upstream's execution (rotate in place on a big turn, the "
                          "model's altitude) instead of turning while moving at a held altitude")
+    # SMOOTHING (guardrail/vla_link.TrackerConfig, SMOOTHING): on by default
+    # for the follow executor, never for M1 / M2. The defaults are follow_vlm's
+    # --accel-max (2.5 m/s^2) and the hand-written follow's measured yaw
+    # acceleration p99 (0.50 rad/s^2, 19 Oct; 0.6 the target set for the
+    # VLA follow), and about one decision interval of carry.
+    ap.add_argument("--smooth", action=argparse.BooleanOptionalAction, default=None,
+                    help="M3: the step tracker's smoothing - an acceleration limit on the "
+                         "commanded velocity and yaw rate, and no stop between steps while the "
+                         "next answer is pending (default on with the follow executor; "
+                         "--no-smooth flies the tracker as before)")
+    ap.add_argument("--smooth-accel", type=float, default=DEFAULT_SMOOTH["accel"],
+                    help="m/s^2 on the commanded horizontal velocity (default %(default)s)")
+    ap.add_argument("--smooth-yaw-accel", type=float, default=DEFAULT_SMOOTH["yaw_accel"],
+                    help="rad/s^2 on the commanded yaw rate (default %(default)s)")
+    ap.add_argument("--carry-s", type=float, default=DEFAULT_SMOOTH["carry_s"],
+                    help="s: a step flown to its end while the next answer is pending keeps "
+                         "its velocity, decaying to zero over this (default %(default)s)")
     ap.add_argument("--arrive-radius-m", type=float, default=3.0)
     ap.add_argument("--arrive-grace-s", type=float, default=8.0)
     ap.add_argument("--overshoot-s", type=float, default=3.0,
@@ -315,6 +339,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--vla-hello-timeout-s", type=float, default=VM.HELLO_TIMEOUT_S,
                     help="how long to wait for the server's hello (a bf16 cold load under "
                          "RAM pressure took over 15 min; default %(default)g s)")
+    ap.add_argument("--vla-adapter", default=None, metavar="DIR",
+                    help="the LoRA the started server loads instead of upstream's aero_vla - "
+                         "a follow fine-tune's checkpoint (training/finetune_aerialvla_follow.py), "
+                         "announced and recorded under its own id")
     ap.add_argument("--vla-fake-output", nargs="+", default=None,
                     help="start the scripted stand-in server instead of the model")
     ap.add_argument("--vla-fake-delay-s", type=float, default=0.3)
@@ -382,6 +410,22 @@ def resolve_args(args):
     # The follow executor (TrackerConfig.turn_while_moving + hold_altitude_m):
     # on for a follow unless --no-follow-executor; never for M1 / M2.
     args.follow_executor = m == "follow" and not args.no_follow_executor
+    # Its smoothing (TrackerConfig, SMOOTHING): on with the follow executor
+    # unless --no-smooth; refused for M1 / M2, which keep the tracker's motion.
+    if args.smooth and not args.follow_executor:
+        raise ValueError("--smooth is the follow executor's (--mission follow, without "
+                         "--no-follow-executor): goto and approach keep the tracker's motion")
+    args.smooth = args.follow_executor if args.smooth is None else bool(args.smooth)
+    for k in ("smooth_accel", "smooth_yaw_accel"):
+        v = getattr(args, k)
+        if not (math.isfinite(v) and v > 0):
+            raise ValueError(f"--{k.replace('_', '-')} must be a positive number")
+    if not (math.isfinite(args.carry_s) and args.carry_s >= 0):
+        raise ValueError("--carry-s must be 0 (no carry) or more")
+    if args.vla_adapter is not None and (args.vla_server or args.vla_fake_output):
+        raise ValueError("--vla-adapter is the adapter of a server this flight STARTS: an "
+                         "attached server flies whatever it was started with (its hello's "
+                         "identity names it), the scripted stand-in has none")
     for k in ("follow_memory_s", "follow_search_s"):
         if not (getattr(args, k) >= 0 and math.isfinite(getattr(args, k))):
             raise ValueError(f"--{k.replace('_', '-')} must not be negative")
@@ -500,13 +544,66 @@ def resolve_args(args):
     return args
 
 
+def smooth_record(args) -> dict:
+    """The follow's smoothing as this flight applies it (TrackerConfig's
+    SMOOTHING fields), for --check-args and metrics.params."""
+    on = bool(getattr(args, "smooth", False))
+    return {"on": on,
+            "accel_mps2": args.smooth_accel if on else None,
+            "yaw_accel_rps2": args.smooth_yaw_accel if on else None,
+            "carry_s": args.carry_s if on else 0.0}
+
+
+def tracker_config(args, pilot_band, TrackerConfig):
+    """The step tracker's configuration for this flight: upstream's
+    execution for M1 / M2; the follow executor (turn while moving, the
+    altitude held, steps anchored at the answer, LAND as arrival) and, unless
+    --no-smooth, its smoothing for M3."""
+    s = smooth_record(args)
+    fe = args.follow_executor
+    return TrackerConfig(cruise_mps=args.cruise_mps, speed_cap_mps=args.speed_cap_mps,
+                         turn_while_moving=fe, anchor_at_answer=fe, land_as_arrival=fe,
+                         hold_altitude_m=args.cruise_alt if fe else None,
+                         decision_timeout_s=args.decision_timeout_s, alt_band=pilot_band,
+                         smooth_accel_mps2=s["accel_mps2"],
+                         smooth_yaw_accel_rps2=s["yaw_accel_rps2"], carry_s=s["carry_s"])
+
+
+def attitude_fields(kin, FV) -> dict:
+    """pitch_deg / roll_deg of a kinematics read, as follow_vlm's rows carry
+    them (FV.quat_pitch / quat_roll of the NED quaternion: pitch positive
+    nose up, roll positive right wing down). Until 2026-10-23 vla_fly's rows
+    had none, so tools/compare_motion.py read 0 tilt and 0 deg/s for every
+    VLA run - a zero nobody measured. None when the read has no
+    orientation."""
+    try:
+        q = kin["pose"]["orientation"]
+        return {"pitch_deg": round(math.degrees(FV.quat_pitch(q)), 2),
+                "roll_deg": round(math.degrees(FV.quat_roll(q)), 2)}
+    except (KeyError, TypeError, ValueError):
+        return {"pitch_deg": None, "roll_deg": None}
+
+
+def motion_record(rows: list[dict]) -> dict | None:
+    """metrics["motion"]: tools/compare_motion.motion_summary of the flight
+    log (the hand-written follow's smoothness definitions), or None for a
+    log too short to measure."""
+    tools = str(ROOT / "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    import compare_motion
+    return compare_motion.motion_summary(rows) if len(rows) >= 2 else None
+
+
 def check_args_report(args) -> dict:
     """What --check-args prints: the resolved flight, nothing started."""
     return {"ok": True, "mission": args.mission, "tag": args.tag,
             "goal_xy": list(args.goal) if args.goal else None,
             "start_xy": list(args.start_xy), "park_at": list(args.park_at) if args.park_at else None,
             "object": args.object, "shield": args.shield, "cadence": args.cadence,
+            "smooth": smooth_record(args),
             "vla_server": args.vla_server, "vla_config": args.vla_config,
+            "vla_adapter": args.vla_adapter,
             "vla_fake_output": args.vla_fake_output, "max_s": args.max_s,
             "warmup_max_latency_s": args.warmup_max_latency_s,
             "monitor": args.monitor.as_dict()}
@@ -522,7 +619,8 @@ def server_plan(args, out: Path) -> "VM.VLAServer":
     argv = VM.server_argv(args.vla_python, precision=c["precision"], attn=c["attn"],
                           merge=c["merge"], port=args.vla_port,
                           log=str(out / "vla_server.jsonl"),
-                          fake_output=args.vla_fake_output, fake_delay_s=args.vla_fake_delay_s)
+                          fake_output=args.vla_fake_output, fake_delay_s=args.vla_fake_delay_s,
+                          adapter=getattr(args, "vla_adapter", None))
     return VM.VLAServer("127.0.0.1", args.vla_port, argv=argv,
                         log_path=out / "vla_server_stdout.log")
 
@@ -1174,12 +1272,7 @@ async def _fly(args, holder: dict) -> int:
             else:
                 detector_hint = VM.DetectorHint(latest_box, bridge, fresh_s=args.det_fresh_s)
             hint_src = VM.HintSource(detector_hint, "detector")
-        tcfg = TrackerConfig(cruise_mps=args.cruise_mps, speed_cap_mps=args.speed_cap_mps,
-                             turn_while_moving=args.follow_executor,
-                             anchor_at_answer=args.follow_executor,
-                             land_as_arrival=args.follow_executor,
-                             hold_altitude_m=args.cruise_alt if args.follow_executor else None,
-                             decision_timeout_s=args.decision_timeout_s, alt_band=pilot_band)
+        tcfg = tracker_config(args, pilot_band, TrackerConfig)
         backend = make_backend("aerovla", None, backend_policy, get_capture=frames.capture,
                                get_hint=hint_src, client=client, object_text=args.object,
                                tracker_config=tcfg, cadence=args.cadence,
@@ -1459,7 +1552,9 @@ async def _fly(args, holder: dict) -> int:
                     if len(acq_box["errors"]) < 20:
                         acq_box["errors"].append(f"{type(exc).__name__}: {exc}")
             off_map = shield.off_map(state.x, state.y) if shield.has_obstacle_map else None
-            res = loop.tick(state, extra_row={"off_map": off_map})
+            # the attitude, so the motion compares with follow_vlm's rows
+            # (tools/compare_motion.py tilt and pitch/roll rates)
+            res = loop.tick(state, extra_row={"off_map": off_map, **attitude_fields(kin, FV)})
             e = res.flown
             cmd_times.append(time.time())
             await drone.move_by_velocity_async(e.vx, e.vy, -e.vz_up, duration=0.3,
@@ -1715,6 +1810,9 @@ async def _fly(args, holder: dict) -> int:
             SIM_CONFIG_DIR / SCENES[args.mission], depth_read=bool(identity_rec["on"])))}
            if args.mission in VM.DETECTOR_MISSIONS else {}),
         "land": guard("land", lambda: VM.land_record(rows, records, goal)),
+        # Smoothness on the hand-written follow's definitions (tools/
+        # compare_motion.py), so the two controllers compare number for number.
+        "motion": guard("motion", lambda: motion_record(rows)),
         "pre_mission": pre_mission,
         "warmup": warmup,
         "shield": args.shield,
@@ -1756,6 +1854,8 @@ async def _fly(args, holder: dict) -> int:
                    "follow": (follow_params(args, follow_plan)
                               if args.mission == "follow" else None),
                    "tracker": {k: getattr(tcfg, k) for k in tcfg.__dataclass_fields__},
+                   "smooth": smooth_record(args),
+                   "vla_adapter": args.vla_adapter,
                    "citymap": str(args.citymap), "seed": args.seed},
     }
     metrics["pilot"] = guard("pilot_entry", lambda: VM.pilot_entry(

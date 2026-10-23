@@ -173,14 +173,19 @@ class RemoteVLABackend:
         self._t0: float | None = None
 
     # -- the slot ------------------------------------------------------------ #
-    def act(self, state: State) -> Action4D:
+    def act(self, state: State, hold_horizontal: bool = False) -> Action4D:
+        """`hold_horizontal`: the rail holds the horizontal motion this tick
+        (the follow's close box, when the tracker smooths: StepTracker.tick).
+        The tracker is told whether an answer is pending (a request in
+        flight), which only its carry (TrackerConfig.carry_s) reads."""
         from .vla_link import Pose
         now = self.clock()
         if self._t0 is None:
             self._t0 = now
         pose_now = Pose.from_state(state)
         self._safe_drain(now, pose_now)
-        tick = self.tracker.tick(now, pose_now)
+        tick = self.tracker.tick(now, pose_now, pending=bool(getattr(self.client, "busy", False)),
+                                 hold_horizontal=hold_horizontal)
         try:
             self._maybe_request(now)
         except Exception as exc:                                  # noqa: BLE001
