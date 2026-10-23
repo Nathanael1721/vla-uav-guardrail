@@ -977,11 +977,16 @@ def test_the_vla_cameras_are_aerialvlas_training_cameras_and_the_airframe_is_the
             assert cams[cid]["capture-interval"] <= 0.1
         streaming = sorted(c for c, s in cams.items()
                            if any(x.get("streaming-enabled") for x in s["capture-settings"]))
-        assert streaming == ["Chase"], streaming
+        # The detector camera's depth stream (2026-10-23) feeds the follow's
+        # identity check, as follow_vlm's FrontCamera does; streamed like it.
+        assert streaming == (["Chase", "FrontCamera"] if det else ["Chase"]), streaming
         assert ("FrontCamera" in cams) == det
         if det:
-            (cs,) = cams["FrontCamera"]["capture-settings"]
+            cs, dep = cams["FrontCamera"]["capture-settings"]
             assert (cs["width"], cs["height"], cs["fov-degrees"]) == (768, 432, 90)
+            assert cs["image-type"] == 0 and not cs["streaming-enabled"]
+            assert (dep["image-type"], dep["width"], dep["height"], dep["fov-degrees"]) == \
+                (2, 768, 432, 90) and dep["pixels-as-float"]
             assert float(cams["FrontCamera"]["origin"]["rpy-deg"].split()[1]) == -20.0
             assert [a["name"] for a in sc["environment-actors"]] == ["SemCarActor"]
         else:
@@ -1107,6 +1112,190 @@ def test_a_follow_chases_on_a_large_box_and_ends_only_when_lost_or_on_time():
         raise AssertionError("a follow without a det_source was accepted")
 
 
+def test_the_follow_hint_remembers_then_searches_and_asks_nothing_when_close():
+    """DetectorHint memory_s / search_s / close (2026-10-23, the follow): a
+    box lost keeps the phrase of its last bearing, held in the world frame
+    and re-read against the current heading, for memory_s; then a quarter
+    turn's phrase toward the side it was last seen on for search_s; then no
+    request. A close box (bottom edge low, or wide) asks for no new step.
+    The protocol's hint source stays "detector". With both 0: M2's rule."""
+    from vla_bridge import VLABridge, bearing_from_box
+    br = VLABridge("a red car", hfov_deg=90.0)
+    box = {"v": None}
+
+    def latest():
+        return box["v"] if box["v"] is not None else (None, None, None, None)
+
+    h = VM.DetectorHint(latest, br, fresh_s=1.0, memory_s=6.0, search_s=20.0,
+                        close=VM.BoxClose(0.92, 0.25))
+
+    def cap(t, yaw=0.0):
+        return Capture(t, Pose(0.0, 0.0, 10.0, yaw), JPG, JPG)
+    right = (700.0, 200.0, 40.0, 30.0, 0.3, 768, 432, 0.5)       # well right of centre
+    b = bearing_from_box(right, 90.0)
+    assert b > math.radians(30)
+    box["v"] = (right, 10.0, 0.0, 10.1)
+    hint = h(cap(10.5))
+    assert hint is not None and hint.source == "detector" and h.last_kind == "fresh"
+    fresh_phrase = hint.phrase
+    box["v"] = None
+    hint = h(cap(13.0))                                          # 3 s on, same heading
+    assert hint.phrase == fresh_phrase and h.last_kind == "memory"
+    hint = h(cap(14.0, yaw=b))                                   # turned to face it
+    assert hint.phrase == "straight ahead " and h.last_kind == "memory"
+    hint = h(cap(20.0))                                          # past memory: search
+    assert hint.phrase == "to your right " and h.last_kind == "search"
+    assert h(cap(40.0)) is None                                  # past the search
+    k = h.stats()["hints_by_kind"]
+    assert (k["fresh"], k["memory"], k["search"]) == (1, 2, 1), k
+    low = (384.0, 380.0, 100.0, 80.0, 0.3, 768, 432, 0.5)       # bottom at 420 / 432
+    box["v"] = (low, 50.0, 0.0, 50.1)
+    assert h(cap(50.3)) is None and h.last_kind == "close" and h.stats()["close_no_request"] == 1
+    wide = (384.0, 200.0, 200.0, 60.0, 0.3, 768, 432, 0.5)      # 0.26 of the width
+    assert VM.BoxClose(0.92, 0.25)(wide) and not VM.BoxClose(0.92, 0.25)(right)
+    m2 = VM.DetectorHint(latest, br, fresh_s=1.0)
+    box["v"] = (right, 60.0, 0.0, 60.1)
+    assert m2(cap(60.5)) is not None and m2(cap(65.0)) is None   # M2: stale, no request
+
+
+def test_the_follow_start_gate_waits_for_a_near_box_on_successive_frames():
+    """DetectorHint start_gate (n, width_frac), follow_vlm's --start-when-seen
+    for the VLA follow: no request (and no memory or search) until n
+    successive detector frames gave a fresh box at least width_frac wide; a
+    far box or a gap resets the streak; then the hint flows as usual."""
+    from vla_bridge import VLABridge
+    br = VLABridge("a red car", hfov_deg=90.0)
+    box = {"v": None}
+    h = VM.DetectorHint(lambda: box["v"] or (None, None, None, None), br, fresh_s=1.0,
+                        memory_s=6.0, search_s=20.0, start_gate=(3, 0.04))
+
+    def cap(t):
+        return Capture(t, Pose(0.0, 0.0, 10.0, 0.0), JPG, JPG)
+    near = (384.0, 200.0, 40.0, 30.0, 0.3, 768, 432, 0.5)       # 0.052 wide
+    far = (384.0, 200.0, 20.0, 15.0, 0.3, 768, 432, 0.5)        # 0.026 wide
+    assert h(cap(0.5)) is None and h.last_kind == "gated"          # no box at all
+    for k, b in enumerate((near, near, far, near, near)):        # the far box resets
+        box["v"] = (b, 1.0 + k, 0.0, 1.05 + k)
+        assert h(cap(1.2 + k)) is None and not h.gate_open, k
+    box["v"] = None
+    assert h(cap(6.5)) is None and h.last_kind == "gated"          # no memory before the gate
+    for k in range(3):
+        box["v"] = (near, 10.0 + k, 0.0, 10.05 + k)
+        out = h(cap(10.2 + k))
+    assert h.gate_open and out is not None and out.phrase == "straight ahead "
+    g = h.stats()["start_gate"]
+    assert g["open"] and g["n"] == 3 and g["gated_calls"] >= 7 and g["t_open"] == 12.2
+
+
+def test_the_stuck_watch_fires_once_when_the_shield_pins_the_aircraft():
+    """StuckWatch (follow #4: 2447 Shield blocks in 225 s against a building):
+    the Shield touching >= 80 % of 4 s of ticks with under 1 m of progress
+    fires once, then waits its cooldown; moving, or the Shield quiet, never."""
+    w = VM.StuckWatch(window_s=4.0, touched_frac=0.8, min_progress_m=1.0, cooldown_s=6.0)
+    fired = [t for t in [k * 0.1 for k in range(100)]
+             if w.update(t, 10.0 + 0.001 * t, 5.0, True)]
+    assert len(fired) == 2 and 3.7 <= fired[0] <= 4.1 and fired[1] - fired[0] >= 6.0, fired
+    assert w.as_dict()["resets"] == 2
+    moving = VM.StuckWatch()
+    assert not any(moving.update(k * 0.1, k * 0.2, 0.0, True) for k in range(100))
+    quiet = VM.StuckWatch()
+    assert not any(quiet.update(k * 0.1, 0.0, 0.0, k % 3 == 0) for k in range(100))
+
+
+def test_the_follow_acquires_with_identity_then_reacquires_after_a_long_loss():
+    """vla_fly._acquire_step (follow #7, 23 Oct: identity's strict lock was
+    never seeded, so no box ever came and AerialVLA was never asked): each
+    new detector frame steps the Reacquirer; its pick is committed once
+    reached; a subject unseen past memory + search restarts acquisition."""
+    import time as _t
+
+    class _G:
+        def __init__(self):
+            self.state = {"seq": 0, "t": _t.time(), "t_det": 0.0, "det": None,
+                          "cands": [("c",)], "cand_tiers": ["OK"], "cand_feats": [{}],
+                          "inf_cap": {"t_capture": 1.0, "pose": {"yaw": 0.3}}}
+            self.commits, self.reacq = [], 0
+
+        def latest(self):
+            return dict(self.state)
+
+        def commit(self, cand, yaw=None):
+            self.commits.append((cand, yaw))
+
+        def begin_reacquire(self):
+            self.reacq += 1
+
+    class _A:
+        def __init__(self):
+            self.n, self.pick, self.starts = 0, ("pick",), 0
+
+        def step(self, cands, tiers, feats, t_cap):
+            self.n += 1
+            return self.n >= 3
+
+        def start(self, anchor):
+            self.starts += 1
+    g, a = _G(), _A()
+    box = {"acq": a, "committed": False, "last_seq": -1, "commits": [], "reacquires": 0,
+           "errors": []}
+    args = SimpleNamespace(follow_memory_s=6.0, follow_search_s=20.0)
+    for k in range(5):
+        g.state.update(seq=k + 1, t=_t.time())
+        vla_fly._acquire_step(g, box, args)
+        vla_fly._acquire_step(g, box, args)          # same frame twice: one step
+    assert a.n == 3 and box["committed"] and g.commits == [(("pick",), 0.3)]
+    # Right after the commit t_det is still 0: no instant re-acquisition.
+    g.state.update(seq=9, t=_t.time(), det=None, t_det=0.0)
+    vla_fly._acquire_step(g, box, args)
+    assert box["committed"] and g.reacq == 0
+    box["commits"][-1] = _t.time() - 60.0                         # committed a minute ago
+    g.state.update(seq=10, t=_t.time(), det=None, t_det=_t.time() - 5.0)
+    vla_fly._acquire_step(g, box, args)
+    assert box["committed"] and g.reacq == 0                     # 5 s: memory still
+    g.state.update(seq=11, t=_t.time(), det=None, t_det=_t.time() - 30.0)
+    vla_fly._acquire_step(g, box, args)
+    assert not box["committed"] and g.reacq == 1 and a.starts == 1 and box["reacquires"] == 1
+
+
+def test_a_close_box_holds_the_follows_horizontal_motion_before_the_shield():
+    """MissionLoop close_hold: a fresh close box zeroes the VLA action's
+    horizontal velocity (its yaw rate and climb still fly) before the Shield;
+    the row says close_hold, the count goes up; a far box flies as asked."""
+    from guardrail.replay import rail_shield
+    from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S
+    shield = rail_shield(load_policy(POLICY), lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
+    sim = _Sim()
+
+    class _Be:
+        tracker = None
+        last_link_failure = None
+
+        def __init__(self):
+            self.last_tick = None
+
+        def act(self, state):
+            from guardrail.vla_link import Tick
+            self.last_tick = Tick(Action4D(vx=0.0, vy=2.0, vz_up=0.3, yaw_rate=0.1),
+                                  "vla_step", "translate", 1, 0.2)
+            return self.last_tick.action
+    box = {"v": None}
+    mon = VM.MissionMonitor(VM.MonitorConfig(mission="follow", max_s=60.0, lost_timeout_s=90.0),
+                            sim.clock())
+    loop = VM.MissionLoop(_Be(), shield, mon, mission="follow",
+                          det_source=lambda: box["v"], clock=sim.clock,
+                          close_hold=VM.BoxClose(0.92, 0.25))
+    low = (384.0, 380.0, 100.0, 80.0, 0.3, 768, 432, 0.5)
+    far = (384.0, 200.0, 30.0, 20.0, 0.3, 768, 432, 0.5)
+    box["v"] = (low, sim.clock() - 0.2, 0.0, sim.clock() - 0.1)
+    res = loop.tick(sim.state())
+    assert res.row["close_hold"] and res.row["raw"]["vy"] == 0.0 and res.row["raw"]["vx"] == 0.0
+    assert res.row["raw"]["vz_up"] == 0.3 and res.row["raw"]["yaw_rate"] == 0.1
+    assert loop.n_close_hold == 1
+    box["v"] = (far, sim.clock() - 0.2, 0.0, sim.clock() - 0.1)
+    res = loop.tick(sim.state())
+    assert not res.row["close_hold"] and res.row["raw"]["vy"] == 2.0 and loop.n_close_hold == 1
+
+
 def test_follow_scores_read_the_level_car_truth_rows_only():
     rows = [{"t": 0.0, "x": 0, "y": 0}, {"t": 0.1, "x": 0, "y": 0, "subject_dist_m": 12.0},
             {"t": 0.2, "x": 0, "y": 0, "subject_dist_m": 45.0},
@@ -1127,6 +1316,9 @@ def test_the_follow_cli_defaults_to_the_red_car_of_the_city_follow():
     assert a.lost_timeout_s == 90.0 and a.start_heading == "street"
     assert a.monitor.mission == "follow" and a.monitor.lost_timeout_s == 90.0
     assert vla_fly.SCENES["follow"] == vla_fly.SCENES["approach"]      # the detector camera
+    assert a.follow_executor and (a.follow_memory_s, a.follow_search_s) == (6.0, 20.0)
+    assert not vla_fly.parse_cli(ap, ["--mission", "follow", "--no-follow-executor"]).follow_executor
+    assert not vla_fly.parse_cli(ap, ["--mission", "goto"]).follow_executor
     a = vla_fly.parse_cli(ap, ["--mission", "follow", "--level-car", "Car_3",
                                "--object", "a white van", "--lost-timeout-s", "30"])
     assert (a.level_car, a.object, a.lost_timeout_s) == ("Car_3", "a white van", 30.0)

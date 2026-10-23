@@ -286,6 +286,88 @@ def test_translation_only_below_the_rotate_gate():
         assert tk.reason == "translate" and math.hypot(tk.action.vx, tk.action.vy) > 0.9
 
 
+def test_the_follow_executor_turns_while_moving_and_holds_its_altitude():
+    """TrackerConfig.turn_while_moving / hold_altitude_m (2026-10-23, the
+    follow executor; both off by default, above): a big turn still flies its
+    fwd_m along the new heading, slowed by cos(heading error), and the
+    altitude target is the held one whatever down_m says - recorded on the
+    step's target, counted."""
+    cfg = TrackerConfig(cruise_mps=2.5, speed_cap_mps=3.0, turn_while_moving=True,
+                        hold_altitude_m=10.0)
+    tr = StepTracker(cfg)
+    veh = _Vehicle()
+    d = Decision.of(1, 0.0, veh.pose(), Step(4.0, -3.0, 0.6))     # a 3 m climb asked
+    tr.accept(d, 0.0)
+    tk = tr.tick(0.1, veh.pose())
+    assert tk.reason == "translate" and math.hypot(tk.action.vx, tk.action.vy) > 0.5, tk
+    assert math.hypot(tk.action.vx, tk.action.vy) < 2.5 * math.cos(0.6) + 1e-6
+    tgt = d.record["target"]
+    assert tgt["turn_while_moving"] and tgt["alt_held"] and tgt["up"] == 10.0, tgt
+    assert tgt["up_raw"] == 10.0 and not tgt["rotate_only"]
+    _fly(tr, veh, 0.1, 10.0)
+    assert math.hypot(veh.x, veh.y) > 3.0 and abs(veh.up - 10.0) < 0.35
+    assert tr.counts["turn_while_moving"] == 1 and tr.counts["alt_held"] == 1
+    # Off (the default): the same answer rotates in place and climbs.
+    plain = StepTracker(TrackerConfig(cruise_mps=2.5, speed_cap_mps=3.0))
+    d2 = Decision.of(1, 0.0, Pose(0, 0, 10, 0), Step(4.0, -3.0, 0.6))
+    plain.accept(d2, 0.0)
+    tk = plain.tick(0.1, Pose(0, 0, 10, 0))
+    assert tk.reason == "rotate" and tk.action.vx == 0.0 and tk.action.vy == 0.0
+    assert d2.record["target"]["up"] == 13.0 and not d2.record["target"]["alt_held"]
+    for bad in (float("nan"), float("inf")):
+        try:
+            TrackerConfig(hold_altitude_m=bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"hold_altitude_m {bad} accepted")
+
+
+def test_a_follow_step_can_be_anchored_where_its_answer_arrives():
+    """TrackerConfig.anchor_at_answer (2026-10-23, follow #3 flew 1.54 m/s at
+    a 4.5 m/s cruise): the step's displacement starts from the pose passed
+    with the answer, not the capture pose; the heading target stays capture
+    yaw + dpsi; recorded as anchor "answer". Off, or no pose: the capture."""
+    on = StepTracker(TrackerConfig(anchor_at_answer=True))
+    d = Decision.of(1, 0.0, Pose(0.0, 0.0, 10.0, 0.0), Step(4.0, 0.0, 0.1))
+    on.accept(d, 0.0, pose_now=Pose(3.0, 0.5, 10.0, 0.05))
+    tgt = d.record["target"]
+    assert tgt["anchor"] == "answer" and abs(tgt["psi_rad"] - 0.1) < 1e-12
+    assert abs(tgt["x"] - (3.0 + 4.0 * math.cos(0.1))) < 1e-9
+    assert abs(tgt["y"] - (0.5 + 4.0 * math.sin(0.1))) < 1e-9
+    off = StepTracker()
+    d2 = Decision.of(1, 0.0, Pose(0.0, 0.0, 10.0, 0.0), Step(4.0, 0.0, 0.1))
+    off.accept(d2, 0.0, pose_now=Pose(3.0, 0.5, 10.0, 0.05))
+    assert d2.record["target"]["anchor"] == "capture"
+    assert abs(d2.record["target"]["x"] - 4.0 * math.cos(0.1)) < 1e-9
+    nopose = StepTracker(TrackerConfig(anchor_at_answer=True))
+    d3 = Decision.of(1, 0.0, Pose(0.0, 0.0, 10.0, 0.0), Step(4.0, 0.0, 0.1))
+    nopose.accept(d3, 0.0)
+    assert d3.record["target"]["anchor"] == "capture"
+
+
+def test_a_follow_holds_on_the_models_land_instead_of_landing():
+    """TrackerConfig.land_as_arrival (follow #5 ended on LAND 0.08 m from the
+    car after a 17 s chase): the answer is a hold (author hold, reason land),
+    land_requested stays False, the next answer supersedes it, a silent pilot
+    still goes to hover after the decision timeout. Off: LAND as before."""
+    tr = StepTracker(TrackerConfig(land_as_arrival=True, decision_timeout_s=5.0))
+    land = Decision.of(1, 0.0, Pose(0, 0, 10, 0), Step(0.0, 0.0, 0.0), land=True)
+    assert tr.accept(land, 0.1)
+    tk = tr.tick(0.2, Pose(0, 0, 10, 0))
+    assert (tk.author, tk.reason, tk.land_requested) == ("hold", "land", False), tk
+    assert tk.action.vx == 0.0 and tk.action.vy == 0.0 and not tr.land_requested
+    assert land.record["land_as_arrival"] and tr.counts["land_as_arrival"] == 1
+    step = Decision.of(2, 0.3, Pose(0, 0, 10, 0), Step(3.0, 0.0, 0.0))
+    assert tr.accept(step, 0.4)
+    assert tr.tick(0.5, Pose(0, 0, 10, 0)).reason == "translate"
+    tr2 = StepTracker(TrackerConfig(land_as_arrival=True, decision_timeout_s=5.0))
+    tr2.accept(Decision.of(1, 0.0, Pose(0, 0, 10, 0), Step(0.0, 0.0, 0.0), land=True), 0.1)
+    assert tr2.tick(6.0, Pose(0, 0, 10, 0)).author == "hover"      # silent: hover
+    plain = StepTracker()
+    plain.accept(Decision.of(1, 0.0, Pose(0, 0, 10, 0), Step(0.0, 0.0, 0.0), land=True), 0.1)
+    assert plain.land_requested and plain.tick(0.2, Pose(0, 0, 10, 0)).land_requested
+
+
 def test_the_altitude_target_is_clamped_into_the_policy_band():
     """up_capture - down_m, clamped into the hard altitude envelope (inset
     0.5 m): the model's 5 m descent from 12 m in a 10-30 m band stops at

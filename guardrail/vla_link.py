@@ -1327,6 +1327,30 @@ class TrackerConfig:
     alt_band: tuple[float, float] | None = None
     alt_band_inset_m: float = 0.5
     hover_on_link_loss: bool = True
+    # A FOLLOW executor's choices (2026-10-23, the user's "make the VLA
+    # follow the target"); both default off, so every other run keeps
+    # upstream's execution. turn_while_moving: a step whose heading change
+    # is at least ROTATE_ONLY_RAD still flies its fwd_m along the new
+    # heading (upstream rotates in place), the speed scaled by cos(heading
+    # error) so it slows while it turns. hold_altitude_m: the altitude
+    # target is this (inside the band), not up_capture - down_m - the
+    # model's vertical output is recorded, not flown.
+    turn_while_moving: bool = False
+    hold_altitude_m: float | None = None
+    # anchor_at_answer (follow): a step's horizontal displacement starts from
+    # where the aircraft is when the answer is taken, not from the capture
+    # pose. Upstream flies stop-and-go, where the two are the same place;
+    # pipelined, the aircraft has already flown most of a capture-anchored
+    # step by the time its answer arrives (~1.3 s in flight on 23 Oct) and
+    # slows into an endpoint it has nearly passed (follow #3: 1.54 m/s median
+    # at a 4.5 m/s cruise). The heading target stays capture yaw + dpsi.
+    anchor_at_answer: bool = False
+    # land_as_arrival (follow): AerialVLA was trained to answer LAND once it
+    # has found the target; following a car, that is "caught up", not "land
+    # on it" (follow #5, 23 Oct: LAND 0.08 m from the car ended the chase
+    # after 17 s). The answer is held as a zero step (author hold, reason
+    # land) until the next decision; land_requested is never set. Counted.
+    land_as_arrival: bool = False
 
     def __post_init__(self):
         for k in ("cruise_mps", "speed_cap_mps", "climb_cap_mps", "yaw_rate_cap_rad_s",
@@ -1337,6 +1361,8 @@ class TrackerConfig:
         for k in ("time_cap_base_s", "alt_band_inset_m"):
             if _finite(getattr(self, k), k) < 0:
                 raise ValueError(f"{k} must not be negative")
+        if self.hold_altitude_m is not None:
+            _finite(self.hold_altitude_m, "hold_altitude_m")
         if self.cruise_mps > self.speed_cap_mps:
             raise ValueError(f"cruise {self.cruise_mps} m/s exceeds the speed cap "
                              f"{self.speed_cap_mps} m/s")
@@ -1377,7 +1403,10 @@ class _Current:
     up_t: float | None = None
     up_raw: float | None = None
     alt_clamped: bool = False
+    alt_held: bool = False
     rotate_only: bool = False
+    turn_moving: bool = False
+    anchor: str = "capture"
     time_cap_s: float | None = None
     complete: bool = False
     completion: str | None = None
@@ -1445,7 +1474,7 @@ class StepTracker:
         if c is not None and c.up_raw is not None:
             c.up_t, c.alt_clamped = self._clamp_alt(c.up_raw)
 
-    def accept(self, decision: Decision, now: float) -> bool:
+    def accept(self, decision: Decision, now: float, pose_now: Pose | None = None) -> bool:
         """Take a decision. Refused (and recorded as refused) when it is a
         server error, while suspended, when captured before the last rail
         hold ended, after LAND, when already older than the decision timeout,
@@ -1487,6 +1516,12 @@ class StepTracker:
         self.counts["accepted"] += 1
         self.counts[f"kind_{decision.kind}"] += 1
         decision.record.update({"accepted": True, "refused": None})
+        if decision.kind == "land" and self.cfg.land_as_arrival:
+            # A follow's arrival: hold here (the next answer supersedes it).
+            self.counts["land_as_arrival"] += 1
+            decision.record.update({"target": None, "land_as_arrival": True})
+            self._cur = _Current(decision, now)
+            return True
         if decision.kind == "land":
             # Stop and say so. The rail decides what landing means.
             self.land_requested = True
@@ -1498,13 +1533,19 @@ class StepTracker:
             return True
         cur = _Current(decision, now)
         if decision.kind == "step":
-            self._targets(cur)
+            self._targets(cur, pose_now)
             decision.record["target"] = {
                 "psi_rad": cur.psi_t, "x": cur.x_t, "y": cur.y_t, "up": cur.up_t,
                 "up_raw": cur.up_raw, "alt_clamped": cur.alt_clamped,
-                "rotate_only": cur.rotate_only, "time_cap_s": cur.time_cap_s}
+                "rotate_only": cur.rotate_only, "time_cap_s": cur.time_cap_s,
+                "turn_while_moving": cur.turn_moving, "alt_held": cur.alt_held,
+                "anchor": cur.anchor}
             if cur.alt_clamped:
                 self.counts["alt_clamped"] += 1
+            if cur.turn_moving:
+                self.counts["turn_while_moving"] += 1
+            if cur.alt_held:
+                self.counts["alt_held"] += 1
         else:
             # parse_fail: the model answered, malformed. Hold zero, counted.
             decision.record["target"] = None
@@ -1644,6 +1685,8 @@ class StepTracker:
                 if dist > cfg.pos_tol_m and along > 0.0:
                     trans_done = False
                     speed = min(cfg.cruise_mps, cfg.k_pos * dist, cfg.speed_cap_mps)
+                    if cfg.turn_while_moving:
+                        speed *= max(0.0, math.cos(e_psi))
                     vx, vy = speed * dx / dist, speed * dy / dist
             done = (trans_done and abs(e_psi) <= cfg.yaw_tol_rad
                     and abs(e_up) <= cfg.alt_tol_m)
@@ -1668,17 +1711,23 @@ class StepTracker:
         up = min(max(up_raw, lo + inset), hi - inset)
         return up, abs(up - up_raw) > 1e-12
 
-    def _targets(self, c: _Current) -> None:
+    def _targets(self, c: _Current, pose_now: Pose | None = None) -> None:
         d, s, cfg = c.decision, c.decision.step, self.cfg
+        ax, ay = d.pose.x, d.pose.y
+        if cfg.anchor_at_answer and pose_now is not None:
+            ax, ay, c.anchor = pose_now.x, pose_now.y, "answer"
         c.psi_t = wrap_pi(d.pose.yaw_rad + s.dpsi_rad)
-        c.rotate_only = s.rotate_only
+        c.rotate_only = s.rotate_only and not cfg.turn_while_moving
+        c.turn_moving = s.rotate_only and cfg.turn_while_moving
         if c.rotate_only:
-            c.x_t, c.y_t, dist_h = d.pose.x, d.pose.y, 0.0
+            c.x_t, c.y_t, dist_h = ax, ay, 0.0
         else:
-            c.x_t = d.pose.x + s.fwd_m * math.cos(c.psi_t)
-            c.y_t = d.pose.y + s.fwd_m * math.sin(c.psi_t)
+            c.x_t = ax + s.fwd_m * math.cos(c.psi_t)
+            c.y_t = ay + s.fwd_m * math.sin(c.psi_t)
             dist_h = s.fwd_m
         c.up_raw = d.pose.up - s.down_m
+        if cfg.hold_altitude_m is not None:
+            c.up_raw, c.alt_held = float(cfg.hold_altitude_m), True
         c.up_t, c.alt_clamped = self._clamp_alt(c.up_raw)
         expected = max(dist_h / cfg.cruise_mps,
                        abs(c.up_t - d.pose.up) / cfg.climb_cap_mps,

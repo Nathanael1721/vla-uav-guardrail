@@ -385,6 +385,19 @@
           "pixels-as-float": false,
           "compress": false,
           "target-gamma": 2.5
+        },
+        // Depth for the follow's identity check (demo/identity.py, as
+        // follow_vlm's FrontCamera in robot_semantic_quad.jsonc): which box is
+        // the subject, never how the VLA steers. 2026-10-23.
+        {
+          "image-type": 2,
+          "width": 768,
+          "height": 432,
+          "fov-degrees": 90,
+          "capture-enabled": true,
+          "streaming-enabled": true,
+          "pixels-as-float": true,
+          "compress": false
         }
       ],
       "origin": {

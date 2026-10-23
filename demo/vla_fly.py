@@ -218,6 +218,39 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help=f"M3 follow: the car the LEVEL drives that is the subject, read from "
                          f"the simulator for SCORING only (subject_dist_m per row; never the "
                          f"phrase, the VLA or a stop rule). Default {DEFAULT_LEVEL_CAR}")
+    ap.add_argument("--follow-memory-s", type=float, default=6.0,
+                    help="M3: past the box's freshness, keep the phrase of its last bearing "
+                         "(world frame, re-read against the current heading) this long")
+    ap.add_argument("--follow-search-s", type=float, default=20.0,
+                    help="M3: then turn toward the side it was last seen on this long")
+    ap.add_argument("--close-bottom-frac", type=float, default=0.92,
+                    help="M3: a box whose bottom edge is this low in the image is close: no new "
+                         "step, horizontal motion held")
+    ap.add_argument("--close-width-frac", type=float, default=0.25,
+                    help="M3: a box at least this wide (fraction of the image) is close")
+    ap.add_argument("--lock-gate", type=float, default=0.12,
+                    help="M3: follow_vlm's TargetLock on the detector (one instance, not the "
+                         "most salient box this frame): max jump from its prediction, as a "
+                         "fraction of the image width (the earlier city follows' --lock-target)")
+    ap.add_argument("--start-gate-n", type=int, default=5,
+                    help="M3: no VLA request until this many successive detector frames gave a "
+                         "near box (follow_vlm's --start-when-seen); 0 disables")
+    ap.add_argument("--start-gate-width", type=float, default=0.04,
+                    help="M3: a near box is at least this wide (fraction of the image; a car "
+                         "about 20 m away)")
+    ap.add_argument("--no-lock", action="store_true",
+                    help="M3: no TargetLock (each frame's best box, as M2)")
+    ap.add_argument("--acquire-max-range-m", type=float, default=30.0,
+                    help="M3 with identity: the start gate / re-acquisition accepts a subject "
+                         "this close (run_citylife_follow.ps1 -StartMaxRange 30)")
+    ap.add_argument("--no-identity", action="store_true",
+                    help="M3: no identity check on the detector's candidates (follow_vlm "
+                         "--identity: physical size from depth, the street mask)")
+    ap.add_argument("--no-stuck-reset", action="store_true",
+                    help="M3: never reset the detector lock when the Shield pins the aircraft")
+    ap.add_argument("--no-follow-executor", action="store_true",
+                    help="M3: fly upstream's execution (rotate in place on a big turn, the "
+                         "model's altitude) instead of turning while moving at a held altitude")
     ap.add_argument("--arrive-radius-m", type=float, default=3.0)
     ap.add_argument("--arrive-grace-s", type=float, default=8.0)
     ap.add_argument("--overshoot-s", type=float, default=3.0,
@@ -230,7 +263,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--det-fresh-s", type=float, default=1.0)
     ap.add_argument("--approach-radius-m", type=float, default=10.0)
     ap.add_argument("--dead-timeout-s", type=float, default=10.0)
-    ap.add_argument("--first-decision-timeout-s", type=float, default=60.0)
+    ap.add_argument("--first-decision-timeout-s", type=float, default=None,
+                    help="no parsed answer this long after the mission start ends it "
+                         "(default 60 s; a follow's: its lost timeout + 60 s, since its start "
+                         "gate may wait for the subject)")
     ap.add_argument("--det-thresh", type=float, default=0.02)
     ap.add_argument("--colour-min", type=float, default=0.10)
     ap.add_argument("--bearing-gain", type=float, default=1.0,
@@ -322,8 +358,21 @@ def resolve_args(args):
     args.tag = args.tag or f"vla_{m}"
     if args.lost_timeout_s is None:
         args.lost_timeout_s = LOST_TIMEOUT_S[m]
+    if args.first_decision_timeout_s is None:
+        args.first_decision_timeout_s = (args.lost_timeout_s + 60.0 if m == "follow" else 60.0)
+    if args.start_gate_n < 0 or not 0 < args.start_gate_width < 1:
+        raise ValueError("--start-gate-n must be >= 0 and --start-gate-width in (0, 1)")
     if m != "follow" and args.level_car is not None:
         raise ValueError("--level-car is for --mission follow")
+    # The follow executor (TrackerConfig.turn_while_moving + hold_altitude_m):
+    # on for a follow unless --no-follow-executor; never for M1 / M2.
+    args.follow_executor = m == "follow" and not args.no_follow_executor
+    for k in ("follow_memory_s", "follow_search_s"):
+        if not (getattr(args, k) >= 0 and math.isfinite(getattr(args, k))):
+            raise ValueError(f"--{k.replace('_', '-')} must not be negative")
+    for k in ("close_bottom_frac", "close_width_frac"):
+        if not 0 < getattr(args, k) <= 1:
+            raise ValueError(f"--{k.replace('_', '-')} must be in (0, 1]")
     if m == "follow":
         # M3: chase the level's moving car. The phrase comes from OWL-ViT's box
         # (as M2's); the subject's truth is the level car, read for scoring.
@@ -586,6 +635,42 @@ def _feed_pose(drone, obs, State, quat_yaw, FV):
     return state, yaw, kin
 
 
+def _acquire_step(grounder, acq_box: dict, args) -> None:
+    """M3 with identity, once per tick: while acquiring, step follow_vlm's
+    Reacquirer on each new detector frame's candidates and commit its pick
+    (the strict lock's seed); once committed, a subject unseen for longer
+    than the hint's memory + search restarts the acquisition
+    (begin_reacquire), as follow_vlm does after a lapse. Perception only."""
+    gw = grounder.latest()
+    if gw.get("seq") == acq_box["last_seq"]:
+        return
+    acq_box["last_seq"] = gw.get("seq")
+    now = time.time()
+    if not acq_box["committed"]:
+        if not (gw.get("t") and now - gw["t"] < 1.0):
+            return
+        ic = gw.get("inf_cap") or {}
+        reached = acq_box["acq"].step(gw.get("cands") or [], gw.get("cand_tiers") or [],
+                                      gw.get("cand_feats") or [],
+                                      ic.get("t_capture") or ic.get("t_cap") or now)
+        if reached:
+            grounder.commit(acq_box["acq"].pick, yaw=(ic.get("pose") or {}).get("yaw"))
+            acq_box["committed"] = True
+            acq_box["commits"].append(round(now, 3))
+            print("[follow] subject acquired (identity): lock seeded")
+        return
+    # Unseen since its last box, never since before the commit (until the
+    # first box after a commit, t_det is still the old one, or 0).
+    seen_t = max(float(gw.get("t_det") or 0.0), acq_box["commits"][-1] if acq_box["commits"] else 0.0)
+    lost_for = now - seen_t if gw.get("det") is None else 0.0
+    if lost_for > args.follow_memory_s + args.follow_search_s:
+        grounder.begin_reacquire()
+        acq_box["acq"].start(None)
+        acq_box["committed"] = False
+        acq_box["reacquires"] += 1
+        print(f"[follow] subject unseen {lost_for:.0f} s: re-acquiring")
+
+
 async def _warmup(args, drone, obs, frames, client, hint_src, State, quat_yaw, FV, live,
                   wait_frames_s: float = 30.0) -> dict:
     """The warm-up gate, before arming (review of the CityLife flight, P2-5):
@@ -797,7 +882,7 @@ async def _fly(args, holder: dict) -> int:
         obs = SemanticObs()
         saver = VM.FrameSaver(out / "vla_frames")
         frames = VM.VLAFrames(obs, saver=saver)
-        det_source = detector_hint = grounder = None
+        det_source = detector_hint = grounder = close_rule = None
         if args.mission == "goto":
             hint_src = VM.goto_hint_source(args.goal, args.arrive_radius_m)
         else:
@@ -816,9 +901,24 @@ async def _fly(args, holder: dict) -> int:
                 return (g["det"], (cap.get("t_capture") or cap.get("t_cap") or g.get("t_det")),
                         None if yaw is None else float(yaw), g.get("t_det"))
             det_source = latest_box
-            detector_hint = VM.DetectorHint(latest_box, bridge, fresh_s=args.det_fresh_s)
+            if args.mission == "follow":
+                close_rule = VM.BoxClose(args.close_bottom_frac, args.close_width_frac)
+                detector_hint = VM.DetectorHint(latest_box, bridge, fresh_s=args.det_fresh_s,
+                                                memory_s=args.follow_memory_s,
+                                                search_s=args.follow_search_s,
+                                                close=close_rule,
+                                                start_gate=((args.start_gate_n,
+                                                             args.start_gate_width)
+                                                            if args.start_gate_n > 0
+                                                            and args.no_identity else None))
+            else:
+                detector_hint = VM.DetectorHint(latest_box, bridge, fresh_s=args.det_fresh_s)
             hint_src = VM.HintSource(detector_hint, "detector")
         tcfg = TrackerConfig(cruise_mps=args.cruise_mps, speed_cap_mps=args.speed_cap_mps,
+                             turn_while_moving=args.follow_executor,
+                             anchor_at_answer=args.follow_executor,
+                             land_as_arrival=args.follow_executor,
+                             hold_altitude_m=args.cruise_alt if args.follow_executor else None,
                              decision_timeout_s=args.decision_timeout_s, alt_band=pilot_band)
         backend = make_backend("aerovla", None, backend_policy, get_capture=frames.capture,
                                get_hint=hint_src, client=client, object_text=args.object,
@@ -862,6 +962,10 @@ async def _fly(args, holder: dict) -> int:
     car = car_truth = None
     level_car = None
     level_truth_errors: list[str] = []
+    stuck_events: list[dict] = []
+    identity_rec: dict = {"on": False, "hash": None}
+    acq_box: dict = {"acq": None, "committed": False, "last_seq": -1, "commits": [],
+                     "reacquires": 0, "errors": []}
     aborted = abort_landing = None
     interrupted = False
     refused = None
@@ -911,11 +1015,54 @@ async def _fly(args, holder: dict) -> int:
             # and the take-off (2026-10-23): a follow's subject, the level's
             # car, starts driving when the scene loads, and loading the
             # detector only after the transfer cost the first ~30 s of it.
+            # M3: the earlier city follows' TargetLock and identity check
+            # (perception only: which box is the subject; the VLA still
+            # steers). Follow #6 (23 Oct) without them: the box matched the
+            # car on 157 of 1036 chase ticks. The identity tiers judge each
+            # candidate physically from its frame's depth and pose and the
+            # street mask (demo/identity.py), as follow_vlm --identity does.
+            # M2 keeps each frame's best box.
+            det_lock = (FV.TargetLock(gate_frac=args.lock_gate)
+                        if args.mission == "follow" and not args.no_lock else None)
+            id_cfg = None
+            if args.mission == "follow" and not args.no_identity:
+                try:
+                    sim.subscribe(drone.sensors[CAMERAS["detector"]]["depth_camera"],
+                                  lambda _, m: obs.put_depth(m))
+                    import identity as identity_mod
+                    _th = identity_mod.load_thresholds(None)
+                    _sp = Path(args.citymap).parent / "street.npz"
+                    _sd = identity_mod.StreetDistance.load(_sp) if _sp.is_file() else None
+                    if _sd is None:
+                        print(f"[identity] *** no street mask at {_sp}: the off-street rules "
+                              f"cannot fire")
+                    id_cfg = {"thresholds": _th, "street": _sd, "hfov": FV.CAMERA_HFOV_DEG,
+                              "hash": identity_mod.thresholds_hash(_th),
+                              "path": str(identity_mod.DEFAULT_THRESHOLDS),
+                              "nouns": {args.object: identity_mod.noun_of(args.object)}}
+                    if det_lock is None:
+                        det_lock = FV.TargetLock(gate_frac=args.lock_gate)
+                    print(f"[identity] ON - thresholds {id_cfg['hash']}, strict lock")
+                except Exception as exc:                           # noqa: BLE001
+                    id_cfg = None
+                    print(f"[identity] *** OFF ({type(exc).__name__}: {exc})")
+            identity_rec["on"] = id_cfg is not None
+            identity_rec["hash"] = None if id_cfg is None else id_cfg["hash"]
             grounder = FV.Grounder(obs, args.object, thresh=args.det_thresh,
                                    log_path=out / "detections.jsonl",
-                                   colour_min=args.colour_min, lock=None)
+                                   colour_min=args.colour_min, lock=det_lock,
+                                   identity=id_cfg)
             grounder_box["g"] = grounder
             grounder.start()
+            if id_cfg is not None:
+                # follow_vlm's start gate with identity: the Grounder publishes
+                # candidates (acquiring), follow_vlm's Reacquirer judges them
+                # (identity tiers, range, motion) and commit() seeds the strict
+                # lock; until then there is no box, so no VLA request.
+                acq_box["acq"] = FV.Reacquirer(need=max(1, args.start_gate_n),
+                                               max_range_m=args.acquire_max_range_m)
+                acq_box["acq"].start(None)
+                grounder.begin_acquire()
         if args.save_view:
             try:
                 sim.subscribe(drone.sensors[CAMERAS["chase"]]["scene_camera"],
@@ -1037,13 +1184,22 @@ async def _fly(args, holder: dict) -> int:
                               goal_xy=args.goal if args.mission == "goto" else None,
                               det_source=det_source, hint_source=hint_src,
                               detector_hint=detector_hint, audit=audit,
-                              server_alive=lambda: server.alive, clock=time.time)
+                              server_alive=lambda: server.alive, clock=time.time,
+                              close_hold=close_rule)
         print(f"[vla] mission {args.mission} - AerialVLA flies; hint source "
               f"{hint_src.kind}; object words {args.object!r} (inert)")
         deadline = None
+        stuck = (VM.StuckWatch() if args.mission == "follow" and not args.no_stuck_reset
+                 else None)
         while True:
             tk0 = time.time()
             state, yaw, kin = _feed_pose(drone, obs, State, quat_yaw, FV)
+            if acq_box["acq"] is not None and grounder is not None:
+                try:
+                    _acquire_step(grounder, acq_box, args)
+                except Exception as exc:                           # noqa: BLE001
+                    if len(acq_box["errors"]) < 20:
+                        acq_box["errors"].append(f"{type(exc).__name__}: {exc}")
             off_map = shield.off_map(state.x, state.y) if shield.has_obstacle_map else None
             res = loop.tick(state, extra_row={"off_map": off_map})
             e = res.flown
@@ -1062,6 +1218,22 @@ async def _fly(args, holder: dict) -> int:
                 except Exception as exc:                       # noqa: BLE001
                     if len(level_truth_errors) < 20:
                         level_truth_errors.append(f"{type(exc).__name__}: {exc}")
+            if stuck is not None and stuck.update(res.row["t"], state.x, state.y,
+                                                  bool(res.decision.touched)):
+                # Pinned by the Shield: the box is probably the wrong object.
+                lk = getattr(grounder, "lock", None) if grounder is not None else None
+                try:
+                    if lk is not None:
+                        lk.reset()
+                    if detector_hint is not None:
+                        detector_hint.forget()
+                except Exception as exc:                           # noqa: BLE001
+                    print(f"[follow] *** stuck reset failed ({type(exc).__name__}: {exc})")
+                stuck_events.append({"t": res.row["t"], "x": round(state.x, 2),
+                                     "y": round(state.y, 2)})
+                res.row["stuck_reset"] = True
+                print(f"[follow] pinned by the Shield at ({state.x:.1f}, {state.y:.1f}): "
+                      f"target lock reset")
             rows.append(res.row)
             traj.append({"x": state.x, "y": state.y, "up": state.up,
                          "touched": bool(res.hud_decision.touched)})
@@ -1305,6 +1477,20 @@ async def _fly(args, holder: dict) -> int:
                    "late_reply_wait_s": args.late_reply_wait_s,
                    "start_tolerance_m": args.start_tolerance_m,
                    "det_fresh_s": args.det_fresh_s,
+                   "follow": ({"memory_s": args.follow_memory_s, "search_s": args.follow_search_s,
+                               "close_bottom_frac": args.close_bottom_frac,
+                               "close_width_frac": args.close_width_frac,
+                               "executor": args.follow_executor,
+                               "lock_gate": None if args.no_lock else args.lock_gate,
+                               "identity": dict(identity_rec),
+                               "acquisition": {k: acq_box[k] for k in
+                                               ("committed", "commits", "reacquires", "errors")},
+                               "stuck_resets": (stuck_events if args.mission == "follow"
+                                                else None),
+                               "start_gate": ([args.start_gate_n, args.start_gate_width]
+                                              if args.start_gate_n > 0 else None),
+                               "close_hold_ticks": loop.n_close_hold if loop is not None else None}
+                              if args.mission == "follow" else None),
                    "tracker": {k: getattr(tcfg, k) for k in tcfg.__dataclass_fields__},
                    "citymap": str(args.citymap), "seed": args.seed},
     }

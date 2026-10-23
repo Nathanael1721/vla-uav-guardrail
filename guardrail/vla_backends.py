@@ -178,8 +178,9 @@ class RemoteVLABackend:
         now = self.clock()
         if self._t0 is None:
             self._t0 = now
-        self._safe_drain(now)
-        tick = self.tracker.tick(now, Pose.from_state(state))
+        pose_now = Pose.from_state(state)
+        self._safe_drain(now, pose_now)
+        tick = self.tracker.tick(now, pose_now)
         try:
             self._maybe_request(now)
         except Exception as exc:                                  # noqa: BLE001
@@ -305,16 +306,16 @@ class RemoteVLABackend:
         self.counts[key] += 1
         self.last_errors[key] = f"{type(exc).__name__}: {exc}"
 
-    def _safe_drain(self, now: float) -> None:
+    def _safe_drain(self, now: float, pose_now=None) -> None:
         try:
-            self._drain(now)
+            self._drain(now, pose_now)
         except Exception as exc:                                  # noqa: BLE001
             # A reply that could not be handed to the tracker is no answer:
             # hover, counted, and the loop goes on.
             self._error("drain_errors", exc)
             self.tracker.link_lost(now, f"drain: {type(exc).__name__}: {exc}")
 
-    def _drain(self, now: float) -> None:
+    def _drain(self, now: float, pose_now=None) -> None:
         from .vla_link import decision_from_result, make_record
         res = self.client.poll()
         if res is None:
@@ -344,7 +345,9 @@ class RemoteVLABackend:
             self.tracker.link_lost(now, res.detail)
             self._emit(rec)
             return
-        self.tracker.accept(dec, now)
+        # pose_now: where the aircraft is as the answer is taken - the anchor
+        # of a follow's step (TrackerConfig.anchor_at_answer); unused otherwise.
+        self.tracker.accept(dec, now, pose_now=pose_now)
 
     @staticmethod
     def _unhandled_record(meta: dict, res, kind: str, exc: BaseException) -> dict:

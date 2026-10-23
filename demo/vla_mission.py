@@ -283,12 +283,45 @@ class DetectorHint:
     `n_no_yaw`. Kept for the rows and stats: the box's age at the hint, the
     correction, and the detector's own latency (publish - frame capture)."""
 
-    def __init__(self, latest: Callable[[], tuple], bridge, fresh_s: float = 1.0):
+    def __init__(self, latest: Callable[[], tuple], bridge, fresh_s: float = 1.0,
+                 memory_s: float = 0.0, search_s: float = 0.0,
+                 close: "BoxClose | None" = None,
+                 start_gate: tuple[int, float] | None = None):
         if not fresh_s > 0:
             raise ValueError("fresh_s must be positive")
+        if not (memory_s >= 0 and search_s >= 0):
+            raise ValueError("memory_s and search_s must not be negative")
         self.latest = latest
         self.bridge = bridge
         self.fresh_s = float(fresh_s)
+        # FOLLOW (2026-10-23): past fresh_s the last sighting's bearing, held
+        # in the world frame and re-read against the current heading, until
+        # memory_s ("memory"); then a turn toward the side it was last seen
+        # on, until memory_s + search_s ("search"). Both 0: M2's rule (no
+        # fresh box, no request). The protocol's hint_source stays
+        # "detector": the phrase still comes only from the detector's boxes.
+        self.memory_s = float(memory_s)
+        self.search_s = float(search_s)
+        self.close = close
+        # FOLLOW's start gate (as follow_vlm's --start-when-seen): no request
+        # until `n` successive detector frames gave a fresh box at least
+        # `width_frac` of the image wide (the subject near), so the chase
+        # starts close instead of 40 m behind a car already pulling away.
+        if start_gate is not None:
+            n, wf = start_gate
+            if not (int(n) >= 1 and 0 < float(wf) < 1):
+                raise ValueError("start_gate is (n >= 1, 0 < width_frac < 1)")
+            start_gate = (int(n), float(wf))
+        self.start_gate = start_gate
+        self.gate_open = start_gate is None
+        self.gate_open_t: float | None = None
+        self._gate_streak = 0
+        self._gate_last_t: float | None = None
+        self.n_gated = 0
+        self._seen: tuple[float, float] | None = None     # (world bearing, t of its frame)
+        self.last_kind: str | None = None
+        self.kinds: Counter = Counter()
+        self.n_close = 0
         self.n_stale = 0
         self.n_none = 0
         self.n_no_yaw = 0
@@ -305,17 +338,35 @@ class DetectorHint:
         det, t_box, yaw_box, t_pub = unpack_box(self.latest())
         self.last_yaw_correction_rad = None
         self.last_detector_latency_s = None
+        self.last_kind = None
         if det is None or t_box is None:
             self.n_none += 1
             self.last_box_age_s = None
-            return None
+            if not self.gate_open:
+                self._gate_streak = 0
+                return self._gated()
+            return self._remembered(capture)
         age = float(capture.t_capture) - float(t_box)
         self.last_box_age_s = age
         if t_pub is not None:
             self.last_detector_latency_s = float(t_pub) - float(t_box)
         if age > self.fresh_s:
             self.n_stale += 1
-            return None
+            if not self.gate_open:
+                self._gate_streak = 0
+                return self._gated()
+            return self._remembered(capture)
+        if not self.gate_open:
+            n, wf = self.start_gate
+            frac = box_fraction(det)
+            if frac is None or frac < wf:
+                self._gate_streak = 0
+            elif self._gate_last_t != float(t_box):
+                self._gate_streak += 1
+                self._gate_last_t = float(t_box)
+            if self._gate_streak < n:
+                return self._gated()
+            self.gate_open, self.gate_open_t = True, float(capture.t_capture)
         bearing = bearing_from_box(det, self.bridge.hfov_deg)
         if yaw_box is None:
             self.n_no_yaw += 1
@@ -323,8 +374,18 @@ class DetectorHint:
             corr = wrap_pi(float(capture.pose.yaw_rad) - float(yaw_box))
             self.last_yaw_correction_rad = corr
             bearing -= corr
+            self._seen = (wrap_pi(float(yaw_box) + bearing + corr), float(t_box))
+        if self.close is not None and self.close(det):
+            # The subject is close (leaving the view below, or large): no new
+            # step toward it - the rail holds the horizontal motion meanwhile
+            # (MissionLoop, follow).
+            self.n_close += 1
+            self.last_kind = "close"
+            return None
         phrase = self.bridge.phrase_for_bearing(bearing)
         self.n_hints += 1
+        self.last_kind = "fresh"
+        self.kinds["fresh"] += 1
         self._ages.append(age)
         if self.last_yaw_correction_rad is not None:
             self._corr.append(abs(math.degrees(self.last_yaw_correction_rad)))
@@ -332,14 +393,119 @@ class DetectorHint:
             self._lat.append(self.last_detector_latency_s)
         return Hint(phrase, "detector")
 
+    def forget(self) -> None:
+        """Drop the remembered sighting (StuckWatch): no memory or search
+        toward a box that was probably the wrong object."""
+        self._seen = None
+        self.kinds["forgotten"] += 1
+
+    def _gated(self) -> None:
+        self.n_gated += 1
+        self.last_kind = "gated"
+        return None
+
+    def _remembered(self, capture: Capture) -> Hint | None:
+        """No fresh box: the follow's memory, then its search, else None."""
+        if self._seen is None or (self.memory_s <= 0 and self.search_s <= 0):
+            return None
+        world, t_seen = self._seen
+        since = float(capture.t_capture) - t_seen
+        rel = wrap_pi(world - float(capture.pose.yaw_rad))
+        if since <= self.memory_s:
+            kind, bearing = "memory", rel
+        elif since <= self.memory_s + self.search_s:
+            # Toward the side it was last seen on: a quarter turn's phrase
+            # ("to your right " / "to your left "), the band AerialVLA turns on.
+            kind, bearing = "search", (math.pi / 2 if rel >= 0 else -math.pi / 2)
+        else:
+            return None
+        phrase = self.bridge.phrase_for_bearing(bearing)
+        self.n_hints += 1
+        self.last_kind = kind
+        self.kinds[kind] += 1
+        return Hint(phrase, "detector")
+
     def stats(self) -> dict:
-        return {"fresh_s": self.fresh_s, "hints": self.n_hints, "stale": self.n_stale,
+        return {"fresh_s": self.fresh_s, "memory_s": self.memory_s, "search_s": self.search_s,
+                "hints_by_kind": dict(self.kinds), "close_no_request": self.n_close,
+                "start_gate": (None if self.start_gate is None else
+                               {"n": self.start_gate[0], "width_frac": self.start_gate[1],
+                                "open": self.gate_open, "t_open": self.gate_open_t,
+                                "gated_calls": self.n_gated}),
+                "close_rule": None if self.close is None else self.close.as_dict(),
+                "hints": self.n_hints, "stale": self.n_stale,
                 "no_box": self.n_none, "no_frame_heading": self.n_no_yaw,
                 "box_age_at_hint_s": spread(self._ages),
                 "yaw_correction_abs_deg": spread(self._corr),
                 "detector_latency_s": spread(self._lat),
                 "rule": "bearing rotated by (heading at the VLA capture - heading at the "
                         "detector frame) before the band lookup"}
+
+
+@dataclass(frozen=True)
+class BoxClose:
+    """FOLLOW: when the subject counts as close - its box's bottom edge at or
+    below `bottom_frac` of the image height (it is leaving the view below,
+    the aircraft about to fly over it) or its width at least `width_frac`
+    of the image. Ours, recorded; not upstream's."""
+    bottom_frac: float = 0.92
+    width_frac: float = 0.25
+
+    def __call__(self, det) -> bool:
+        if det is None:
+            return False
+        try:
+            cy, h, H = float(det[1]), float(det[3]), float(det[6])
+        except (TypeError, ValueError, IndexError):
+            h = H = 0.0
+            cy = 0.0
+        frac = box_fraction(det)
+        low = H > 0 and (cy + h / 2.0) / H >= self.bottom_frac
+        return bool(low or (frac is not None and frac >= self.width_frac))
+
+    def as_dict(self) -> dict:
+        return {"bottom_frac": self.bottom_frac, "width_frac": self.width_frac}
+
+
+class StuckWatch:
+    """FOLLOW: the aircraft pinned by the Shield. When over the last
+    `window_s` the Shield touched at least `touched_frac` of the ticks and
+    the aircraft moved less than `min_progress_m`, the box it is steering on
+    is taken to be the wrong one (follow #4, 23 Oct: the lock held something
+    beside a building and the Shield blocked 2447 ticks in 225 s): `update`
+    returns True once, then waits `cooldown_s`. The caller resets the
+    detector's lock and the remembered sighting - perception only; the VLA
+    still steers."""
+
+    def __init__(self, window_s: float = 4.0, touched_frac: float = 0.8,
+                 min_progress_m: float = 1.0, cooldown_s: float = 6.0):
+        self.window_s, self.touched_frac = float(window_s), float(touched_frac)
+        self.min_progress_m, self.cooldown_s = float(min_progress_m), float(cooldown_s)
+        self._hist: deque = deque()
+        self._t_last: float | None = None
+        self.resets = 0
+
+    def update(self, t: float, x: float, y: float, touched: bool) -> bool:
+        self._hist.append((float(t), float(x), float(y), bool(touched)))
+        while self._hist and t - self._hist[0][0] > self.window_s:
+            self._hist.popleft()
+        if self._t_last is not None and t - self._t_last < self.cooldown_s:
+            return False
+        if not self._hist or t - self._hist[0][0] < self.window_s * 0.95:
+            return False
+        frac = sum(1 for h in self._hist if h[3]) / len(self._hist)
+        x0, y0 = self._hist[0][1], self._hist[0][2]
+        if frac >= self.touched_frac and math.hypot(x - x0, y - y0) < self.min_progress_m:
+            self._t_last = t
+            self.resets += 1
+            self._hist.clear()
+            return True
+        return False
+
+    def as_dict(self) -> dict:
+        return {"window_s": self.window_s, "touched_frac": self.touched_frac,
+                "min_progress_m": self.min_progress_m, "cooldown_s": self.cooldown_s,
+                "resets": self.resets}
 
 
 def box_fraction(det) -> float | None:
@@ -752,7 +918,8 @@ class MissionLoop:
                  shield_on: bool = True, goal_xy=None, det_source=None, hint_source=None,
                  detector_hint: DetectorHint | None = None, audit=None,
                  server_alive: Callable[[], bool] = lambda: True,
-                 clock: Callable[[], float] = time.time):
+                 clock: Callable[[], float] = time.time,
+                 close_hold: BoxClose | None = None):
         from guardrail.replay import flown_fields
         if mission not in MISSIONS:
             raise ValueError(f"mission {mission!r}")
@@ -766,6 +933,12 @@ class MissionLoop:
         self.det_source, self.hint_source = det_source, hint_source
         self.detector_hint = detector_hint
         self.audit, self.server_alive, self.clock = audit, server_alive, clock
+        # FOLLOW: while a fresh box counts as close, the VLA's horizontal
+        # motion is held (zeroed before the Shield; its yaw and climb fly),
+        # so the aircraft keeps the subject in view instead of flying over it.
+        # Counted, and the row says so (close_hold).
+        self.close_hold = close_hold
+        self.n_close_hold = 0
         self._flown_fields = flown_fields
         self.n = 0
         self.t0: float | None = None
@@ -779,6 +952,14 @@ class MissionLoop:
             self.t0 = now
         action = self.backend.act(state)
         tk = self.backend.last_tick
+        held_close = False
+        if self.close_hold is not None and self.det_source is not None:
+            cdet, ct_box, _, _ = unpack_box(self.det_source())
+            fresh_s = self.detector_hint.fresh_s if self.detector_hint is not None else 1.0
+            if cdet is not None and ct_box is not None and now - float(ct_box) <= fresh_s                     and self.close_hold(cdet) and (action.vx or action.vy):
+                action = Action4D(vx=0.0, vy=0.0, vz_up=action.vz_up, yaw_rate=action.yaw_rate)
+                held_close = True
+                self.n_close_hold += 1
         d = self.shield.filter(state, action)
         flown = d.emitted if self.shield_on else action
         ff = self._flown_fields(self.shield, state, d, shield_on=self.shield_on)
@@ -821,6 +1002,8 @@ class MissionLoop:
             # the mission
             **mission_fields(gd, gb, frac, det, det_age, self.detector_hint),
         }
+        if self.close_hold is not None:
+            row["close_hold"] = held_close
         if extra_row:
             row.update(extra_row)
         hud = vla_hud(now - self.t0, state.up, tk, cur, step, touched=bool(hd.touched),
