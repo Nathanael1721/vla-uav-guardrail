@@ -1840,7 +1840,8 @@ async def _fly(args, holder: dict) -> int:
     # keys go to the TOP of metrics, where guardrail/kpi.py reads them
     # (review of d6e7123, P1-1). A score that could not be computed is no
     # score: follow_scored False, so kpi says "not measurable", never success.
-    fscores = (guard("follow_scores", lambda: VM.follow_scores(rows), None)
+    fscores = (guard("follow_scores", lambda: VM.follow_scores(
+        rows, acquired_at_s=(acq_box["commits"][0] if acq_box.get("commits") else None)), None)
                if args.mission == "follow" else None)
     metrics = {
         "tag": args.tag, "rail": "projectairsim-simple_flight", "level": "CityLife_Day",

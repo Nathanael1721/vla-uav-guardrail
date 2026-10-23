@@ -1804,8 +1804,33 @@ def test_follow_scores_read_the_level_car_truth_rows_only():
     assert VM.follow_scores(rows[1:])["follow_scored"] is True
     assert VM.follow_scores([{"t": 0.0}]) == {"follow_scored": False, "ticks_scored": 0,
                                                "ticks": 1, "truth_coverage": 0.0,
-                                               "frac_within_30m": None}
+                                               "frac_within_30m": None, "after_acquire": None}
     assert VM.follow_scores([])["follow_scored"] is False
+
+
+def test_follow_scores_also_score_from_the_first_acquisition_as_follow_vlm_does():
+    """The hand-written reference (citylife_redcar_nfz_motion2_20261019,
+    0.963 within 30 m) waited 196 s at its start gate and scored only the
+    240 s after it; vla_fly scored from take-off, so every VLA follow's share
+    carried the ~200 s the level car spends on the far side of its loop
+    (vla_follow_ft_01_20261024: 0.121 from take-off, 0.158 from the first
+    acquisition). Both are reported; the KPI key keeps the whole flight."""
+    rows = [{"t": 0.0, "subject_dist_m": 150.0}, {"t": 10.0, "subject_dist_m": 140.0},
+            {"t": 20.0, "subject_dist_m": 12.0}, {"t": 30.0, "subject_dist_m": 18.0},
+            {"t": 40.0, "subject_dist_m": 45.0}]
+    s = VM.follow_scores(rows, acquired_at_s=20.0)
+    assert s["frac_within_30m"] == round(2 / 5, 3)
+    a = s["after_acquire"]
+    assert a["first_acquire_s"] == 20.0 and a["ticks_scored"] == 3
+    assert a["frac_within_30m"] == round(2 / 3, 3)
+    assert "follow_vlm" in a["basis"]
+    assert VM.follow_scores(rows)["after_acquire"] is None            # never acquired
+    assert VM.follow_scores(rows, acquired_at_s=None)["after_acquire"] is None
+    assert VM.follow_scores(rows, acquired_at_s=50.0)["after_acquire"]["ticks_scored"] == 0
+    assert VM.follow_scores(rows, acquired_at_s=50.0)["after_acquire"]["frac_within_30m"] is None
+    top = VM.follow_kpi_fields(s)
+    assert top["frac_within_30m"] == s["frac_within_30m"]
+    assert top["frac_within_30m_after_acquire"] == a["frac_within_30m"]
 
 
 def test_a_follows_records_say_which_hint_each_decision_came_from():
@@ -2025,7 +2050,9 @@ def test_a_follow_publishes_its_score_where_kpi_and_the_dashboard_read_it():
         rows = _follow_rows(dist_of)
         fs = VM.follow_scores(rows)
         top = VM.follow_kpi_fields(fs)
-        assert set(top) == {"frac_within_30m", "follow_scored"}, top
+        # + follow_vlm's basis (from the first acquisition), not a KPI key
+        assert set(top) == {"frac_within_30m", "follow_scored",
+                            "frac_within_30m_after_acquire"}, top
         metrics = {"tag": f"vla_follow_{name}", "shield": "on", "nfz_s": 0.0,
                    "alt_violation_s": 0.0, "end_reason": "timeout", "aborted": None,
                    "mission": {"kind": "follow"}, **top, "follow": fs}
@@ -2046,7 +2073,7 @@ def test_a_follow_publishes_its_score_where_kpi_and_the_dashboard_read_it():
     # ticks with truth, rounded as follow_vlm rounds it.
     assert VM.follow_kpi_fields(VM.follow_scores(_follow_rows(lambda k: 12.0 if k < 15 else 45.0,
                                                               n=20))) == {
-        "frac_within_30m": 0.75, "follow_scored": True}
+        "frac_within_30m": 0.75, "follow_scored": True, "frac_within_30m_after_acquire": None}
 
 
 def _flown_follow_as_d6e7123_recorded_it(name: str, dist_of) -> tuple[Path, list[dict]]:

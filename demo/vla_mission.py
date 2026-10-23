@@ -2421,7 +2421,8 @@ def mission_scores(mission: str, rows: list[dict], *, goal_xy=None, arrive_radiu
 FOLLOW_TRUTH_MIN_COVERAGE = 0.95
 
 
-def follow_scores(rows: list[dict], *, within_m: float = 30.0) -> dict:
+def follow_scores(rows: list[dict], *, within_m: float = 30.0,
+                  acquired_at_s: float | None = None) -> dict:
     """How closely a follow kept to the moving subject, from each row's
     `subject_dist_m` (the level car's simulator position against the
     aircraft's: ground truth for SCORING only - it never reaches the phrase,
@@ -2434,22 +2435,41 @@ def follow_scores(rows: list[dict], *, within_m: float = 30.0) -> dict:
     truth on at least FOLLOW_TRUTH_MIN_COVERAGE of the ticks - so a follow
     whose truth polling failed for a stretch is not called measured.
     `frac_within` (the name of d6e7123) is kept beside it. follow_kpi_fields
-    lifts the two keys guardrail/kpi.py reads to the top of metrics."""
+    lifts the two keys guardrail/kpi.py reads to the top of metrics.
+
+    FROM THE FIRST ACQUISITION (2026-10-24): follow_vlm starts its mission
+    clock, and its score, at its start gate - the hand-written reference
+    (citylife_redcar_nfz_motion2_20261019, 0.963) waited 196 s there and
+    scored the 240 s after - while vla_fly scores from take-off, so a VLA
+    follow's share carried the ~200 s the level car spends on the far side
+    of its loop. `after_acquire` is the same share over the rows from
+    `acquired_at_s` (mission seconds of the first identity commit; None when
+    the follow never acquired): the number that compares with follow_vlm's.
+    The whole-flight share stays the KPI key."""
     d = [r["subject_dist_m"] for r in rows if r.get("subject_dist_m") is not None]
     n = len(rows)
     coverage = round(len(d) / n, 4) if n else 0.0
     scored = n > 0 and len(d) >= FOLLOW_TRUTH_MIN_COVERAGE * n
     if not d:
         return {"follow_scored": False, "ticks_scored": 0, "ticks": n,
-                "truth_coverage": coverage, "frac_within_30m": None}
+                "truth_coverage": coverage, "frac_within_30m": None,
+                "after_acquire": None}
     frac = round(sum(1 for x in d if x <= within_m) / len(d), 3)
+    after = None
+    if acquired_at_s is not None:
+        da = [r["subject_dist_m"] for r in rows if r.get("subject_dist_m") is not None
+              and r.get("t") is not None and r["t"] >= acquired_at_s]
+        fa = round(sum(1 for x in da if x <= within_m) / len(da), 3) if da else None
+        after = {"first_acquire_s": round(float(acquired_at_s), 3), "ticks_scored": len(da),
+                 "frac_within": fa, "frac_within_30m": fa if within_m == 30.0 else None,
+                 "basis": "follow_vlm's: scored from the start gate's acquisition"}
     return {"follow_scored": bool(scored), "ticks_scored": len(d), "ticks": n,
             "truth_coverage": coverage, "within_m": within_m,
             "frac_within": frac,
             "frac_within_30m": frac if within_m == 30.0 else None,
             "dist_min_m": round(min(d), 2), "dist_median_m": round(statistics.median(d), 2),
             "dist_max_m": round(max(d), 2), "dist_start_m": round(d[0], 2),
-            "dist_end_m": round(d[-1], 2)}
+            "dist_end_m": round(d[-1], 2), "after_acquire": after}
 
 
 def follow_kpi_fields(scores: dict | None) -> dict:
@@ -2462,8 +2482,11 @@ def follow_kpi_fields(scores: dict | None) -> dict:
     follow test, and every VLA follow's kpi.json said mission_success true -
     two of them with 0.0 of their ticks within 30 m."""
     s = scores if isinstance(scores, dict) else {}
+    after = s.get("after_acquire") if isinstance(s.get("after_acquire"), dict) else {}
     return {"frac_within_30m": s.get("frac_within_30m"),
-            "follow_scored": bool(s.get("follow_scored"))}
+            "follow_scored": bool(s.get("follow_scored")),
+            # follow_vlm's basis (follow_scores); not a KPI key
+            "frac_within_30m_after_acquire": after.get("frac_within_30m")}
 
 
 def land_record(rows: list[dict], records: list[dict], goal_xy=None) -> dict:
