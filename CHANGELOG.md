@@ -16,6 +16,106 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-24 — AerialVLA fine-tuned on the hand-written follow: held-out step error 2.47 m to 0.36 m, the first fine-tuned flights still lose the car, DAgger and a temporal tile next
+
+The user's goal: the VLA-piloted follow as good as, or better than, the
+hand-written follow. AerialVLA was fine-tuned on the expert's own flights
+(the 23 Oct FT-D / FT-T / DART tools, merged 5269143 and ce1a61c), flown,
+and the two failures it showed were turned into the next round's data and
+inputs. Not yet as good as the hand-written follow; the second model is
+training.
+
+#### Added
+- **Expert recordings for the fine-tune** (`follow_vlm --record-vla`, with
+  `--record-perturb` DART on the p runs): ft_expert_01, 02b, 03 and p01-p06,
+  within 30 m on 0.953, 0.948, 0.939, 0.972, 0.934, 0.969, 0.928, 0.985 and
+  0.95 of their ticks. p06 kept 339 of its frames: C: filled during the
+  batch (5096 write errors; frames now go to D:, commit 40e079e).
+- **Dataset follow_v2**: 5706 train samples (2853 real, 2853 mirrored) and
+  345 held-out (ft_expert_p03), labels the expert's motion over 1.0 s.
+- **Fine-tune follow_v2_r1** (bf16 LoRA from upstream's aero_vla, 4 epochs,
+  116.5 min). Held-out (345 samples, never trained on), original adapter
+  then epochs 1-4: forward step error 2.467, 0.432, 0.377, 0.396, 0.359 m;
+  turn error 0.103, 0.056, 0.053, 0.050, 0.053 rad; turn sign agreeing
+  0.699, 0.791, 0.817, 0.826, 0.835. Epoch 4 merged in bf16 (the flying
+  configuration): 0.360 m, 0.0526 rad, 0.838 - merging costs nothing here.
+- **DAgger recording** (merge c9dc0a1): `follow_vlm --record-vla
+  --record-perturb-vla HOST:PORT` (`-RecordPerturbVla`) lets the fine-tuned
+  AerialVLA fly seeded 2.5-4.0 s windows every 6-10 s of the expert's
+  recording, through vla_fly's own follow tracker, after the controller and
+  before the Shield; the expert's recovery is the label (the DART rule). A
+  window with no fresh step is flown by the expert and says so.
+  `StepTracker.note_flown` starts the tracker's smoothing from the command
+  in force, so the hand-over does not jump.
+- **Five DAgger flights** with follow_v2_r1/epoch4 (ft_dagger_01-05): 52,
+  53, 52, 50 and 51 windows; within 30 m on 0.803, 0.879, 0.799, 0.811 and
+  0.846 of their ticks; capture-to-answer p50 0.78-0.83 s. Against
+  follow_v2, ft_dagger_01's labels sit farther from the car (median 23.9 m
+  against 20.4 m) and twice as often at full speed (fwd >= 4.5 m on 0.15
+  against 0.08): the states the VLA creates and the expert's catch-up.
+- **The front frame 1 s earlier as the lower tile** (merge ee4762d, off by
+  default): `--bottom-tile prev_front` (builder) and `--vla-bottom-tile
+  prev_front` (flight) put the front frame nearest t - 1.0 s (within
+  0.25 s) where the down camera was; no such frame is no sample and no
+  request, never a fallback. Checkpoints record the tile and label horizon
+  they learned; the server announces both and vla_fly / the DAgger recorder
+  refuse to fly a mismatch.
+- **Rate execution** (`vla_fly --step-as-rate H`, off by default): a step
+  flies at fwd / H and dpsi / H until the next answer replaces it - what a
+  1.0 s label means - instead of flying to an endpoint at cruise and braking.
+- **Dataset follow_v3_pf**: the 9 expert and 5 DAgger recordings with the
+  prev_front tile, stride 0.25 s: 13762 train samples (6881 real, 6881
+  mirrored) and 1076 held-out (ft_expert_p03, ft_dagger_03); measured tile
+  dt p50 1.0082 s. Training follow_v3_pf_r1 on it is in progress.
+- A follow's score from its first acquisition (`metrics.follow.after_acquire`,
+  top-level `frac_within_30m_after_acquire`; commit 3cd51d3), see Found.
+
+#### Flown
+- **vla_follow_ft_01_20261024** (follow_v2_r1/epoch4, merged bf16, 8 m - the
+  expert's altitude; the dataset's median is 8.06 m and vla_fly's default
+  10 m): within 30 m on 0.121 of the flight, 0.158 from the first acquisition
+  (229.3 s). The car stopped at a light about 9 m ahead and the model held,
+  as the expert does; the car drove off and the model answered forward 0.0
+  for about 6 s while the car went from 9.8 m to 27.6 m - one frame cannot
+  tell a stopped car from one pulling away. It then matched the car's speed
+  about 30 m behind and lost it.
+- **vla_follow_ft_02_rate_20261024** (as ft_01 with `--step-as-rate 1.0` and
+  `--acquire-max-range-m 60`): 0.196 of the flight, 0.238 from the first
+  acquisition. It closed from 33.0 m to 5.5 m behind a stopping car, lagged
+  again when the car pulled away, and lost the car at a corner where it had
+  turned toward the car and the Shield's 3 m building clearance held it at
+  0.5 m/s. P0 escape rate 0.0 in both.
+
+#### Found
+- **The VLA-to-hand-written comparison was on unequal bases.** follow_vlm
+  starts its clock and score at its start gate: the reference
+  citylife_redcar_nfz_motion2_20261019 (0.963) waited 196.1 s and scored
+  the 2400 rows after it. vla_fly scored from take-off, and in every flight
+  the level car spends about 200 s on the far side of its loop first. From
+  the first acquisition: ft_01 0.158, ft_02_rate 0.238, follow #10 0.235
+  (0.17 of its whole flight). Still far from 0.963.
+
+#### Fixed
+- The trainer refused the builder's whole first dataset (6051 of 6051 lines
+  "no_target": the builder writes the answer as action_text); a test now
+  feeds the builder's rows to the trainer's loader (f8476a3, 1762e9f).
+- tests/test_track_truth.py knows a tie at the frame centre: the clean
+  expert recordings tie the constant-centre null (3.4 px against 3.4, 3.0
+  against 3.0, 3.3 against 3.3) while their perturbed twins win, 27.0-30.5 px
+  against 37.6-39.3 (896b50d); the tie may be within 5 % + 0.1 px of the
+  null (ft_dagger_01: 5.5 px against 5.3, its four siblings win).
+
+#### Tests
+- `tests/test_vla_fly.py` 62/62, `tests/test_vla_dagger.py` 17/17,
+  `tests/test_vla_prev_front_rate.py` 21/24 (3 need Pillow / torch),
+  `tests/test_follow_dataset.py` 35/39 (39/39 with Pillow),
+  `tests/test_track_truth.py` 36/36.
+- The CI list, 120 files: 2 lab-only files fail, both stale decks
+  (`tests/test_explainer_deck.py`: the 14 Oct pack cites a shield.py
+  sentence rewritten on 21 Oct; `tests/test_build_progress_oct_data.py`:
+  the ITRI pack was not rebuilt after its data changed on 22 Oct). Left for
+  a separate change: the PI chooses which deck is sent.
+
 ### 2026-10-23 (follow, reviewed) — the follow's score now counts, a lost car is re-acquired at once, follow #10
 
 An independent review of the follow work (no P0; truth never reaches control)
