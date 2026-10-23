@@ -16,6 +16,71 @@ shipped change and recorded as one.
 
 ## [Unreleased]
 
+### 2026-10-23 (follow) — AerialVLA chases the red car: nine follow flights, each fix measured on the next
+
+The user asked for AerialVLA to follow the target as the hand-written
+controller does. AerialVLA still decides every step; what changed is which box
+is the car (perception) and how a step is executed, all for `--mission follow`
+only (commit d6e7123). CityLife simple_flight, Car_10 as truth for scoring
+only, not KPI-grade. Within 30 m, whole flight / while the VLA flew:
+
+| # | what changed | within 30 m | while flying | closest | box on the car |
+|---|---|---|---|---|---|
+| 1 | first follow (3 m/s goto policy) | 0.348 | 0.506 | 0.49 m | 586 of 814 |
+| 2 | fresh scene (the car started 35 m ahead) | 0.0 | 0.0 | 35.29 m | 374 of 1412 |
+| 3 | the city follows' 5 m/s policy, a lock, memory and search | 0.0 | 0.0 | 41.76 m | 517 of 2384 |
+| 4 | a start gate, steps anchored where the answer arrives | 0.252 | 0.195 | 0.93 m | 968 of 3834 |
+| 5 | a reset when the Shield pins the aircraft | 0.315 | 1.0 | 0.08 m | 174 of 194 |
+| 6 | the model's LAND held as arrival | 0.216 | 0.254 | 0.12 m | 182 of 1061 |
+| 7 | identity check on (its lock never seeded: no request) | 0.139 | - | 2.74 m | none |
+| 8 | identity acquisition (follow_vlm's Reacquirer) | 0.199 | 0.646 | 0.1 m | 344 of 451 |
+| 9 | as #8, bf16 merged model (latency p50 0.7914 s) | 0.308 | 0.552 | 0.07 m | 473 of 763 |
+
+The hand-written controller's 19 Oct flight: 0.963.
+
+#### Flown
+- **#9, the best**: two chases - up the street and, for the first time,
+  round the right-hand corner and on along the next street; within 30 m on
+  0.552 of the ticks AerialVLA flew, speed while chasing p90 3.46 m/s. Between
+  the chases the drone hovered until the car came round its loop again, which
+  is most of the whole-flight shortfall.
+- **#5**: the closest chase - within 30 m on every tick the VLA flew, down to
+  0.08 m above the car, until AerialVLA answered LAND (its training: target
+  found, land), which ended that flight; #6 onwards hold instead.
+- Every follow: P0 escape 0.0 and 0.0 s in the no-fly zone; #4 was pinned 225 s
+  against a building by a wrong box (2510 Shield interventions).
+
+#### Added
+- Perception for the follow: follow_vlm's TargetLock and identity check (the
+  VLA detector camera gains follow_vlm's depth stream), follow_vlm's
+  Reacquirer as the start gate and the re-acquisition after a lapse; the box
+  matched the car on 0.17-0.26 of the ticks with a box without them (#2, #3,
+  #4, #6) and 0.62-0.76 with them (#8, #9).
+- The follow's hint: the last sighting's bearing for 6 s after the box is
+  lost, then a quarter-turn phrase toward its side for 20 s; a close box asks
+  for no new step and holds the horizontal motion; the Shield pinning the
+  aircraft resets the lock.
+- The follow's executor (TrackerConfig, all default off): turn while moving,
+  the altitude held (AerialVLA's 2-4 m descents), steps anchored where the
+  answer arrives (#3 flew 1.54 m/s at a 4.5 m/s cruise), LAND as arrival.
+
+#### Found
+- The remaining limit is AerialVLA itself: steps of at most 5 m at about one
+  answer per 0.8-1.3 s leave it below the car's 3.4-4 m/s on a straight, and
+  it was never trained to pursue; when the car leaves the view at a corner,
+  nothing but the car's own loop brings it back.
+
+#### Tests
+- `tests/test_vla_fly.py` 45/45, `tests/test_vla_link.py` 33/33; the CI list
+  115 files, 0 failing.
+
+#### Not done
+- Training AerialVLA on following (expert demonstrations from the
+  hand-written controller with step labels, matched to the model's decision
+  latency, as the July campaign learned) is the next step and has not
+  started. The merged model (#9) agrees with the upstream-precision reference
+  on 88 % of the probe, not 96 %.
+
 ### 2026-10-23 (flown) — AerialVLA flies the drone: a goal reached and landed by the model, and the red car chased then lost
 
 The first two flights piloted by AerialVLA (OpenVLA-7B + the original
