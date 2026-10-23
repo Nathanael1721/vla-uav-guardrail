@@ -155,6 +155,31 @@ def test_a_request_carries_exactly_the_protocol_fields_and_no_coordinates():
         raise AssertionError("an unknown field was not refused")
 
 
+def test_a_hints_kind_is_recorded_never_sent():
+    """Review of d6e7123, P2-2: a follow's detector phrase comes from a
+    fresh box, from the remembered sighting or from the search turn, and the
+    records called all three "detector" (57-74 % of the decisions of follows
+    #6, #8 and #9 were memory or search). Hint.kind says which: it goes into
+    the request's record (meta `hint_kind`) and never onto the wire (the
+    protocol's hint_source stays "detector"); a hint without a kind - every
+    other rail's - records exactly what it did before; two hints are equal
+    on phrase and source, as before."""
+    plain_f, plain_m = _fields(1.0, phrase="forward-left ", src="detector")
+    f, m = L.build_infer_fields(_cap(1.0), Hint("forward-left ", "detector", "memory"),
+                                "an orange car")
+    assert f == plain_f and "hint_kind" not in plain_m and m["hint_kind"] == "memory"
+    assert {k: v for k, v in m.items() if k != "hint_kind"} == plain_m
+    assert set(f) | {"seq"} == set(L.INFER_FIELDS)
+    assert Hint("forward-left ", "detector", "search") == Hint("forward-left ", "detector")
+    assert Hint("forward-left ", "detector").kind is None
+    for bad in ("", 3, "memory "):
+        try:
+            Hint("forward-left ", "detector", bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"hint kind {bad!r} accepted")
+
+
 def test_hints_and_csp_arms_are_refused_outside_the_protocol():
     for phrase, src in (("go to the red car ", "goal"), ("straight ahead", "goal"),
                         ("straight ahead ", "operator"), ("forward-left ", "none"),
@@ -291,7 +316,14 @@ def test_the_follow_executor_turns_while_moving_and_holds_its_altitude():
     follow executor; both off by default, above): a big turn still flies its
     fwd_m along the new heading, slowed by cos(heading error), and the
     altitude target is the held one whatever down_m says - recorded on the
-    step's target, counted."""
+    step's target, counted.
+
+    Review of d6e7123 (P3): the tick's reason for such a step is
+    "turn_moving", not "translate" (its rotation dominates: upstream would
+    only have rotated), and the record keeps the MODEL's altitude target as
+    up_raw beside the held one (up_held) - it used to overwrite up_raw with
+    the held altitude, so what the model asked for was lost. A new policy
+    band re-clamps the held target, not the model's."""
     cfg = TrackerConfig(cruise_mps=2.5, speed_cap_mps=3.0, turn_while_moving=True,
                         hold_altitude_m=10.0)
     tr = StepTracker(cfg)
@@ -299,14 +331,24 @@ def test_the_follow_executor_turns_while_moving_and_holds_its_altitude():
     d = Decision.of(1, 0.0, veh.pose(), Step(4.0, -3.0, 0.6))     # a 3 m climb asked
     tr.accept(d, 0.0)
     tk = tr.tick(0.1, veh.pose())
-    assert tk.reason == "translate" and math.hypot(tk.action.vx, tk.action.vy) > 0.5, tk
+    assert tk.reason == "turn_moving" and math.hypot(tk.action.vx, tk.action.vy) > 0.5, tk
     assert math.hypot(tk.action.vx, tk.action.vy) < 2.5 * math.cos(0.6) + 1e-6
     tgt = d.record["target"]
     assert tgt["turn_while_moving"] and tgt["alt_held"] and tgt["up"] == 10.0, tgt
-    assert tgt["up_raw"] == 10.0 and not tgt["rotate_only"]
+    assert tgt["up_raw"] == 13.0 and tgt["up_held"] == 10.0 and not tgt["rotate_only"], tgt
     _fly(tr, veh, 0.1, 10.0)
     assert math.hypot(veh.x, veh.y) > 3.0 and abs(veh.up - 10.0) < 0.35
     assert tr.counts["turn_while_moving"] == 1 and tr.counts["alt_held"] == 1
+    # A small turn under the same executor still translates.
+    small = StepTracker(cfg)
+    small.accept(Decision.of(1, 0.0, Pose(0, 0, 10, 0), Step(4.0, 0.0, 0.1)), 0.0)
+    assert small.tick(0.1, Pose(0, 0, 10, 0)).reason == "translate"
+    # A hot-applied band re-clamps the HELD target (10 -> 12.5 in 12-20 m).
+    held = StepTracker(cfg)
+    d3 = Decision.of(1, 0.0, Pose(0, 0, 10, 0), Step(4.0, -3.0, 0.1))
+    held.accept(d3, 0.0)
+    held.set_alt_band((12.0, 20.0))
+    assert held.tick(0.1, Pose(0, 0, 12.5, 0)).action.vz_up == 0.0
     # Off (the default): the same answer rotates in place and climbs.
     plain = StepTracker(TrackerConfig(cruise_mps=2.5, speed_cap_mps=3.0))
     d2 = Decision.of(1, 0.0, Pose(0, 0, 10, 0), Step(4.0, -3.0, 0.6))
@@ -314,6 +356,7 @@ def test_the_follow_executor_turns_while_moving_and_holds_its_altitude():
     tk = plain.tick(0.1, Pose(0, 0, 10, 0))
     assert tk.reason == "rotate" and tk.action.vx == 0.0 and tk.action.vy == 0.0
     assert d2.record["target"]["up"] == 13.0 and not d2.record["target"]["alt_held"]
+    assert "up_held" not in d2.record["target"] and d2.record["target"]["up_raw"] == 13.0
     for bad in (float("nan"), float("inf")):
         try:
             TrackerConfig(hold_altitude_m=bad)
@@ -347,14 +390,16 @@ def test_a_follow_step_can_be_anchored_where_its_answer_arrives():
 
 def test_a_follow_holds_on_the_models_land_instead_of_landing():
     """TrackerConfig.land_as_arrival (follow #5 ended on LAND 0.08 m from the
-    car after a 17 s chase): the answer is a hold (author hold, reason land),
-    land_requested stays False, the next answer supersedes it, a silent pilot
-    still goes to hover after the decision timeout. Off: LAND as before."""
+    car after a 17 s chase): the answer is a hold (author hold, reason
+    land_as_arrival - review of d6e7123, P2-6: it was "land", which read as a
+    LAND the rail would fly), land_requested stays False, the next answer
+    supersedes it, a silent pilot still goes to hover after the decision
+    timeout. Off: LAND as before."""
     tr = StepTracker(TrackerConfig(land_as_arrival=True, decision_timeout_s=5.0))
     land = Decision.of(1, 0.0, Pose(0, 0, 10, 0), Step(0.0, 0.0, 0.0), land=True)
     assert tr.accept(land, 0.1)
     tk = tr.tick(0.2, Pose(0, 0, 10, 0))
-    assert (tk.author, tk.reason, tk.land_requested) == ("hold", "land", False), tk
+    assert (tk.author, tk.reason, tk.land_requested) == ("hold", "land_as_arrival", False), tk
     assert tk.action.vx == 0.0 and tk.action.vy == 0.0 and not tr.land_requested
     assert land.record["land_as_arrival"] and tr.counts["land_as_arrival"] == 1
     step = Decision.of(2, 0.3, Pose(0, 0, 10, 0), Step(3.0, 0.0, 0.0))

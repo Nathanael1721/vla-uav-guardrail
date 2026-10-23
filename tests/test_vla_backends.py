@@ -296,6 +296,37 @@ def test_an_answer_to_an_image_from_before_a_rail_hold_is_thrown_away():
             be.close()
 
 
+def test_a_follow_step_is_anchored_where_act_takes_its_answer():
+    """TrackerConfig.anchor_at_answer through the backend (review of
+    d6e7123, test gap): act() hands the pose of ITS state to _drain, and the
+    answer that drain takes is anchored there - not at the capture pose,
+    and not at a pose from any other tick. The aircraft moves 3 m while the
+    answer is out; the step's 4 m start where it is when act() takes it.
+    The default (capture anchor) is unchanged: the same flight anchors at
+    the capture pose."""
+    for anchored in (True, False):
+        sim = _Sim()
+        with F.FakeVLAServer(lambda req: F.Delay(0.2, F.step_reply(req, 4.0, 0.0, 0.0))) as srv:
+            be = _backend(srv, sim, tracker_config=TrackerConfig(anchor_at_answer=anchored))
+            try:
+                be.act(sim.state())                    # the request, captured at (0, 0)
+                be.client.wait_idle(3.0)
+                assert len(srv.requests) == 1 and srv.requests[0]["pose"]["x"] == 0.0
+                sim.x, sim.y, sim.t = 3.0, 0.5, 0.3    # it moved while the answer was out
+                be.act(sim.state())                    # this act() takes the answer
+                assert be.last_tick.author == "vla_step" and be.last_tick.seq == 1
+                tgt = be.tracker.current_record["target"]
+                fwd = be.tracker.current_record["step"]["fwd_m"]
+                if anchored:
+                    assert tgt["anchor"] == "answer", tgt
+                    assert abs(tgt["x"] - (3.0 + fwd)) < 1e-6 and abs(tgt["y"] - 0.5) < 1e-6, tgt
+                else:
+                    assert tgt["anchor"] == "capture", tgt
+                    assert abs(tgt["x"] - fwd) < 1e-6 and abs(tgt["y"]) < 1e-6, tgt
+            finally:
+                be.close()
+
+
 def test_link_failures_and_missing_hints_are_counted_and_recorded():
     sim = _Sim()
     calls = {"n": 0}

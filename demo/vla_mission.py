@@ -230,6 +230,8 @@ class HintSource:
             raise ValueError(f"a {self.kind} hint source produced a {h.source!r} hint")
         self.counts[h.phrase] += 1
         self.last = {"t_capture": capture.t_capture, "phrase": h.phrase, "source": h.source}
+        if h.kind is not None:
+            self.last["kind"] = h.kind
         return h
 
     def stats(self) -> dict:
@@ -286,7 +288,8 @@ class DetectorHint:
     def __init__(self, latest: Callable[[], tuple], bridge, fresh_s: float = 1.0,
                  memory_s: float = 0.0, search_s: float = 0.0,
                  close: "BoxClose | None" = None,
-                 start_gate: tuple[int, float] | None = None):
+                 start_gate: tuple[int, float] | None = None,
+                 record_kind: bool = False):
         if not fresh_s > 0:
             raise ValueError("fresh_s must be positive")
         if not (memory_s >= 0 and search_s >= 0):
@@ -294,6 +297,15 @@ class DetectorHint:
         self.latest = latest
         self.bridge = bridge
         self.fresh_s = float(fresh_s)
+        # FOLLOW (review of d6e7123, P2-2): each hint says how it was made -
+        # "fresh", "memory" or "search" - as Hint.kind, which the request's
+        # vla_steps record and the rows carry (never the wire). Off for an
+        # approach and the ArduPilot rail, whose records stay as they were.
+        self.record_kind = bool(record_kind)
+        # A perception reset (forget(t_reset); review of d6e7123, P2-4):
+        # boxes whose frame was captured at or before this are no boxes.
+        self._ignore_until: float | None = None
+        self.n_ignored = 0
         # FOLLOW (2026-10-23): past fresh_s the last sighting's bearing, held
         # in the world frame and re-read against the current heading, until
         # memory_s ("memory"); then a turn toward the side it was last seen
@@ -307,17 +319,8 @@ class DetectorHint:
         # until `n` successive detector frames gave a fresh box at least
         # `width_frac` of the image wide (the subject near), so the chase
         # starts close instead of 40 m behind a car already pulling away.
-        if start_gate is not None:
-            n, wf = start_gate
-            if not (int(n) >= 1 and 0 < float(wf) < 1):
-                raise ValueError("start_gate is (n >= 1, 0 < width_frac < 1)")
-            start_gate = (int(n), float(wf))
-        self.start_gate = start_gate
-        self.gate_open = start_gate is None
-        self.gate_open_t: float | None = None
-        self._gate_streak = 0
-        self._gate_last_t: float | None = None
         self.n_gated = 0
+        self.set_start_gate(start_gate)
         self._seen: tuple[float, float] | None = None     # (world bearing, t of its frame)
         self.last_kind: str | None = None
         self.kinds: Counter = Counter()
@@ -333,12 +336,41 @@ class DetectorHint:
         self._corr: deque = deque(maxlen=20000)
         self._lat: deque = deque(maxlen=20000)
 
+    def set_start_gate(self, start_gate: tuple[int, float] | None) -> None:
+        """(n, width_frac), or None for no gate. Settable after construction
+        so a follow arms the gate only once it knows which one applies -
+        after the identity setup, which may fail (review of d6e7123, P2-5:
+        the gate used to be chosen from --no-identity before that setup ran,
+        and a follow whose identity failed to load flew with none). Meant
+        for before the first hint: it (re)starts the gate closed."""
+        if start_gate is not None:
+            n, wf = start_gate
+            if not (int(n) >= 1 and 0 < float(wf) < 1):
+                raise ValueError("start_gate is (n >= 1, 0 < width_frac < 1)")
+            start_gate = (int(n), float(wf))
+        self.start_gate = start_gate
+        self.gate_open = start_gate is None
+        self.gate_open_t: float | None = None
+        self._gate_streak = 0
+        self._gate_last_t: float | None = None
+
+    def box_ignored(self, t_box) -> bool:
+        """Is a box whose frame was captured at `t_box` one a perception reset
+        dropped (forget(t_reset): captured at or before t_reset)?"""
+        return (self._ignore_until is not None and t_box is not None
+                and float(t_box) <= self._ignore_until)
+
     def __call__(self, capture: Capture) -> Hint | None:
         from vla_bridge import bearing_from_box
         det, t_box, yaw_box, t_pub = unpack_box(self.latest())
         self.last_yaw_correction_rad = None
         self.last_detector_latency_s = None
         self.last_kind = None
+        if det is not None and self.box_ignored(t_box):
+            # The box a reset dropped, still published (fresh for fresh_s,
+            # kept by the Grounder up to its drop_after): no box at all.
+            self.n_ignored += 1
+            det = t_box = None
         if det is None or t_box is None:
             self.n_none += 1
             self.last_box_age_s = None
@@ -391,13 +423,24 @@ class DetectorHint:
             self._corr.append(abs(math.degrees(self.last_yaw_correction_rad)))
         if self.last_detector_latency_s is not None:
             self._lat.append(self.last_detector_latency_s)
-        return Hint(phrase, "detector")
+        return self._hint(phrase, "fresh")
 
-    def forget(self) -> None:
-        """Drop the remembered sighting (StuckWatch): no memory or search
-        toward a box that was probably the wrong object."""
+    def _hint(self, phrase: str, kind: str) -> Hint:
+        return Hint(phrase, "detector", kind if self.record_kind else None)
+
+    def forget(self, t_reset: float | None = None) -> None:
+        """Drop the remembered sighting (a perception reset: StuckWatch,
+        CloseStall): no memory or search toward a box that was probably the
+        wrong object. With `t_reset` (wall time, the clock of the boxes'
+        frame times) every box captured at or before it is ignored from now
+        on: until the review of d6e7123 (P2-4) the dropped box stayed fresh
+        for fresh_s and the Grounder kept publishing it up to its drop_after
+        (8 s), so the next hint re-seeded the memory with it."""
         self._seen = None
         self.kinds["forgotten"] += 1
+        if t_reset is not None:
+            t = float(t_reset)
+            self._ignore_until = t if self._ignore_until is None else max(self._ignore_until, t)
 
     def _gated(self) -> None:
         self.n_gated += 1
@@ -423,15 +466,28 @@ class DetectorHint:
         self.n_hints += 1
         self.last_kind = kind
         self.kinds[kind] += 1
-        return Hint(phrase, "detector")
+        return self._hint(phrase, kind)
 
-    def stats(self) -> dict:
-        return {"fresh_s": self.fresh_s, "memory_s": self.memory_s, "search_s": self.search_s,
-                "hints_by_kind": dict(self.kinds), "close_no_request": self.n_close,
-                "start_gate": (None if self.start_gate is None else
-                               {"n": self.start_gate[0], "width_frac": self.start_gate[1],
-                                "open": self.gate_open, "t_open": self.gate_open_t,
-                                "gated_calls": self.n_gated}),
+    def stats(self, t0: float | None = None) -> dict:
+        """The counts and spreads. With `t0` (the mission start, wall time)
+        the start gate's opening is given in mission seconds (`t_open_s`;
+        review of d6e7123, P3: it was an epoch time), else as the wall time
+        (`t_open`), as before."""
+        gate = None
+        if self.start_gate is not None:
+            gate = {"n": self.start_gate[0], "width_frac": self.start_gate[1],
+                    "open": self.gate_open, "gated_calls": self.n_gated}
+            if t0 is None:
+                gate["t_open"] = self.gate_open_t
+            else:
+                gate["t_open_s"] = (None if self.gate_open_t is None
+                                    else round(self.gate_open_t - float(t0), 3))
+        out = {"fresh_s": self.fresh_s, "memory_s": self.memory_s, "search_s": self.search_s,
+               "hints_by_kind": dict(self.kinds), "close_no_request": self.n_close,
+               "start_gate": gate}
+        if self.record_kind or self._ignore_until is not None:
+            out["ignored_after_reset"] = self.n_ignored
+        return {**out,
                 "close_rule": None if self.close is None else self.close.as_dict(),
                 "hints": self.n_hints, "stale": self.n_stale,
                 "no_box": self.n_none, "no_frame_heading": self.n_no_yaw,
@@ -508,6 +564,44 @@ class StuckWatch:
                 "resets": self.resets}
 
 
+class CloseStall:
+    """FOLLOW: a close box and no request for `max_s` (review of d6e7123,
+    P2-8). A locked WRONG box that counts as close (BoxClose: >= 0.25 of the
+    width, say a bus or a wall) asks for no step (DetectorHint "close"), the
+    close hold zeroes any motion, the tracker hovers, the Shield stays quiet
+    (StuckWatch never fires) and the box stays fresh (target_lost never
+    fires): a hover until max_s. `update(t, close, requests)` - `close`: a
+    fresh close box this tick (the row's close_box); `requests`: the
+    backend's request count - returns True once when a spell of close ticks
+    has lasted max_s with no request sent; a request sent, or a tick that is
+    not close, starts the spell again. The caller resets the perception
+    (perception only; the VLA still steers). 0 disables."""
+
+    def __init__(self, max_s: float = 8.0):
+        if not (math.isfinite(float(max_s)) and float(max_s) >= 0):
+            raise ValueError("max_s must be 0 (off) or more")
+        self.max_s = float(max_s)
+        self._since: float | None = None
+        self._req0 = None
+        self.stalls = 0
+
+    def update(self, t: float, close: bool, requests) -> bool:
+        if self.max_s <= 0 or not close:
+            self._since = None
+            return False
+        if self._since is None or requests != self._req0:
+            self._since, self._req0 = float(t), requests
+            return False
+        if float(t) - self._since >= self.max_s - 1e-9:
+            self._since = None
+            self.stalls += 1
+            return True
+        return False
+
+    def as_dict(self) -> dict:
+        return {"max_s": self.max_s, "stalls": self.stalls}
+
+
 def box_fraction(det) -> float | None:
     """Box width over image width (det[2] / det[5]), or None."""
     if det is None:
@@ -531,6 +625,10 @@ END_REASONS = {
                           "aircraft and receding for overshoot_s (flew past it; no LAND)"),
     "close_box": "the detector's box filled close_box_frac of its frame",
     "target_lost": "no fresh detection for lost_timeout_s",
+    "subject_not_acquired": ("a follow that never sent the model a request within "
+                             "first_decision_timeout_s: its start gate never opened, or its "
+                             "subject was close from the start - nothing was asked, so not "
+                             "a VLA failure"),
     "timeout": "the mission time ran out",
     # the VLA failed
     "server_dead": ("no answer for dead_timeout_s while hovering: the link failed "
@@ -628,7 +726,16 @@ class MissionMonitor:
     overshoot, the box's absence, the mission time) and `unhold(now)`
     shifts them by the time held, so no stop rule ends - and names - a
     mission the rail was holding; the time is in the summary (`held_s`).
-    The caller makes no update() while held."""
+    The caller makes no update() while held.
+
+    NOTHING ASKED (review of d6e7123, P2-7). A follow whose start gate never
+    let a request out, or whose box was close from the start, has no parsed
+    answer either, and no_first_decision called that a VLA failure (exit
+    3). A caller that knows how many requests were sent passes
+    `requests_sent` (MissionLoop reads RemoteVLABackend.counts); a FOLLOW
+    with none sent by first_decision_timeout_s ends `subject_not_acquired`,
+    which is not one of VLA_FAILURE_ENDS. Without the count, and for goto
+    and approach, the rule is as before."""
 
     def __init__(self, cfg: MonitorConfig, t0: float):
         self.cfg = cfg
@@ -657,6 +764,7 @@ class MissionMonitor:
         self.ticks_close_box = 0
         self.link_failure_kinds: Counter = Counter()
         self._last_failure_key = None
+        self.requests_sent: int | None = None    # the latest count a caller passed
 
     def _end(self, why: str, now: float) -> str:
         self.end_reason, self.t_end = why, now
@@ -685,12 +793,16 @@ class MissionMonitor:
 
     def update(self, now: float, pose: Pose, tick, *, goal_xy=None, det=None,
                det_age_s: float | None = None, server_alive: bool = True,
-               link_failure: dict | None = None) -> str | None:
+               link_failure: dict | None = None,
+               requests_sent: int | None = None) -> str | None:
         """`link_failure`: the backend's last_link_failure ({"kind", "seq",
-        ...}, RemoteVLABackend), or None."""
+        ...}, RemoteVLABackend), or None. `requests_sent`: how many requests
+        the pilot has sent so far, or None when the caller cannot say."""
         if self.end_reason is not None:
             return self.end_reason
         cfg = self.cfg
+        if requests_sent is not None:
+            self.requests_sent = int(requests_sent)
         if not server_alive and self.t_server_exit is None:
             self.t_server_exit = now
             self.events.append({"t": round(now - self.t0, 3), "event": "server_exited"})
@@ -722,6 +834,8 @@ class MissionMonitor:
         if kind is not None and not graced and now - self._streak_t0 >= cfg.dead_timeout_s:
             return self._end(kind, now)
         if self._t_first_decision is None and now - self._t_ref >= cfg.first_decision_timeout_s:
+            if cfg.mission == "follow" and requests_sent == 0:
+                return self._end("subject_not_acquired", now)
             return self._end("no_first_decision", now)
         if cfg.mission == "goto":
             if goal_xy is None:
@@ -774,7 +888,8 @@ class MissionMonitor:
         return None
 
     def summary(self) -> dict:
-        return {"end_reason": self.end_reason,
+        extra = {} if self.requests_sent is None else {"requests_sent": self.requests_sent}
+        return {**extra, "end_reason": self.end_reason,
                 "end_reason_means": END_REASONS.get(self.end_reason),
                 "vla_failure": self.end_reason in VLA_FAILURE_ENDS,
                 "t_end_s": None if self.t_end is None else round(self.t_end - self.t0, 3),
@@ -805,6 +920,7 @@ class LoopTick:
     hud: dict                # what the recorder draws
     end_reason: str | None
     hud_decision: Any = None  # what the policy indicator reads (hud_decision)
+    det: Any = None           # the detector box this tick read (the recorder draws it)
 
 
 def _r(v, n=3):
@@ -910,9 +1026,20 @@ class MissionLoop:
          record), the Shield's decision, and the mission's numbers.
 
     `det_source() -> (det, box capture wall time[, ...])` for M2 (None for
-    M1; unpack_box). `server_alive() -> bool` for a server this process
-    started. `n_touched` counts ticks the Shield corrected what FLEW (0 with
-    the Shield off), `n_shadow_touched` the shadow's would-be corrections."""
+    M1; unpack_box), read ONCE per tick - the close hold, the monitor, the
+    row and LoopTick.det (the recorder's box) see the same box (review of
+    d6e7123, P3: the close check and the row were two reads).
+    `server_alive() -> bool` for a server this process started. `n_touched`
+    counts ticks the Shield corrected what FLEW (0 with the Shield off),
+    `n_shadow_touched` the shadow's would-be corrections.
+
+    A FOLLOW's rows (close_hold set) also carry `close_box` (a fresh close
+    box this tick, whatever the tracker did; CloseStall reads it) and
+    `pilot_raw` (the tracker's own action: `raw` is what the Shield judged,
+    the held one on a close-hold tick); with a DetectorHint that records
+    kinds, `hint_kind` (the decision flown) and `hint_sent_kind` (the latest
+    hint sent). The monitor gets the backend's request count
+    (RemoteVLABackend.counts["requests"]) when it has one."""
 
     def __init__(self, backend, shield, monitor: MissionMonitor, *, mission: str,
                  shield_on: bool = True, goal_xy=None, det_source=None, hint_source=None,
@@ -952,11 +1079,17 @@ class MissionLoop:
             self.t0 = now
         action = self.backend.act(state)
         tk = self.backend.last_tick
-        held_close = False
+        pilot_action = action
+        held_close = close_now = False
+        got = None
         if self.close_hold is not None and self.det_source is not None:
-            cdet, ct_box, _, _ = unpack_box(self.det_source())
+            got = unpack_box(self.det_source())
+            cdet, ct_box = got[0], got[1]
             fresh_s = self.detector_hint.fresh_s if self.detector_hint is not None else 1.0
-            if cdet is not None and ct_box is not None and now - float(ct_box) <= fresh_s                     and self.close_hold(cdet) and (action.vx or action.vy):
+            dropped = self.detector_hint is not None and self.detector_hint.box_ignored(ct_box)
+            close_now = bool(cdet is not None and ct_box is not None and not dropped
+                             and now - float(ct_box) <= fresh_s and self.close_hold(cdet))
+            if close_now and (action.vx or action.vy):
                 action = Action4D(vx=0.0, vy=0.0, vz_up=action.vz_up, yaw_rate=action.yaw_rate)
                 held_close = True
                 self.n_close_hold += 1
@@ -972,7 +1105,9 @@ class MissionLoop:
         pose = Pose.from_state(state)
         det = t_box = None
         if self.det_source is not None:
-            det, t_box, _, _ = unpack_box(self.det_source())
+            if got is None:
+                got = unpack_box(self.det_source())
+            det, t_box = got[0], got[1]
         det_age = None if t_box is None else now - float(t_box)
         try:
             alive = bool(self.server_alive())
@@ -980,8 +1115,14 @@ class MissionLoop:
             alive = False
         lf = getattr(self.backend, "last_link_failure", None)
         lf = lf if isinstance(lf, dict) else None
+        # The request count, for a follow's subject_not_acquired (goto and
+        # approach records stay as they were).
+        counts = getattr(self.backend, "counts", None)
+        sent = (int(counts.get("requests", 0))
+                if self.mission == "follow" and isinstance(counts, dict) else None)
         end = self.monitor.update(now, pose, tk, goal_xy=self.goal_xy, det=det,
-                                  det_age_s=det_age, server_alive=alive, link_failure=lf)
+                                  det_age_s=det_age, server_alive=alive, link_failure=lf,
+                                  requests_sent=sent)
         cur, step = current_decision(self.backend)
         self.authors[tk.author] += 1
         self.n_touched += int(bool(hd.touched))
@@ -1004,6 +1145,12 @@ class MissionLoop:
         }
         if self.close_hold is not None:
             row["close_hold"] = held_close
+            row["close_box"] = close_now
+            row["pilot_raw"] = pilot_action.model_dump()
+        if self.detector_hint is not None and self.detector_hint.record_kind:
+            row["hint_kind"] = cur.get("hint_kind")
+            row["hint_sent_kind"] = ((self.hint_source.last or {}).get("kind")
+                                     if self.hint_source is not None else None)
         if extra_row:
             row.update(extra_row)
         hud = vla_hud(now - self.t0, state.up, tk, cur, step, touched=bool(hd.touched),
@@ -1011,7 +1158,7 @@ class MissionLoop:
                       cadence=getattr(self.backend, "cadence", None),
                       goal_dist_m=gd, box_frac=frac, end_reason=end)
         self.n += 1
-        return LoopTick(flown, d, row, hud, end, hd)
+        return LoopTick(flown, d, row, hud, end, hd, det)
 
 
 # --------------------------------------------------------------------------- #
@@ -1335,6 +1482,8 @@ class VLAFrames:
             self.saver.save(front)
             if down:
                 self.saver.save(down)
+        if hint is not None and hint.kind is not None:
+            rec["hint_kind"] = hint.kind
         rec.update({"seq": seq, "phrase": None if hint is None else hint.phrase,
                     "hint_source": None if hint is None else hint.source,
                     "front_jpg_sha256": hashlib.sha256(front).hexdigest(),
@@ -1849,7 +1998,17 @@ def pilot_summary(stats: dict, records: list[dict], rows: list[dict]) -> dict:
     aircraft (rows with `pilot_held`: the ArduPilot rail's FSM, a fault, a
     takeover), never a tick whose action the rail held, whoever authored it
     (review of 4a0da6d, P3-12: the first tick of each hold is the tracker's
-    vla_step and flew nothing); those are `ticks_held_by_rail`."""
+    vla_step and flew nothing); those are `ticks_held_by_rail`.
+
+    A FOLLOW (review of d6e7123): a vla_step tick whose horizontal motion
+    the close hold zeroed (row `close_hold`) is counted apart -
+    `ticks_close_held`, `close_held_tick_share` - and not in the vla_step or
+    VLA-authored shares (P3); a LAND held as arrival is the model's decision
+    (its hold ticks, reason land_as_arrival, are VLA-authored), counted as
+    `land_as_arrival` and never in `land_accepted`, which counts LANDs that
+    landed (P2-6); `hint_kind_counts` says how many requests came from a
+    fresh box, the memory, the search (P2-2). Each key only where it applies,
+    so the other rails' summaries are unchanged."""
     answered = [r for r in records if r.get("kind") in ("step", "land", "parse_fail")]
     lat_c = [r.get("latency_client_s") for r in answered]
     lat_s = [r.get("latency_server_s") for r in answered]
@@ -1857,9 +2016,12 @@ def pilot_summary(stats: dict, records: list[dict], rows: list[dict]) -> dict:
     n = len(rows)
     by_author = Counter(r.get("author") for r in rows)
     flew = [r for r in rows if not r.get("pilot_held")]
-    vla_step = sum(1 for r in flew if r.get("author") == "vla_step")
+    close_held = sum(1 for r in flew if r.get("close_hold"))
+    vla_step = sum(1 for r in flew if r.get("author") == "vla_step" and not r.get("close_hold"))
     held_parsed = sum(1 for r in flew if r.get("author") == "hold"
-                      and r.get("author_reason") in ("step_complete", "land"))
+                      and r.get("author_reason") in ("step_complete", "land", "land_as_arrival"))
+    lands = [r for r in records if r.get("kind") == "land"]
+    lands_held = sum(1 for r in lands if r.get("accepted") and r.get("land_as_arrival"))
     # The request in flight when the mission ended comes back as a link
     # failure refused "closed" (RemoteVLABackend.close): the run ended, the
     # server did not fail. Counted apart, so the answers say what the server
@@ -1873,6 +2035,19 @@ def pilot_summary(stats: dict, records: list[dict], rows: list[dict]) -> dict:
                          if r.get("kind") == "link_failure" and r.get("refused") != "closed")
     phrases = Counter(r.get("phrase") for r in records if "phrase" in r)
     sources = Counter(r.get("hint_source") for r in records if "hint_source" in r)
+    extra: dict[str, Any] = {}
+    if any("close_hold" in r for r in rows):
+        extra.update({
+            "ticks_close_held": close_held,
+            "close_held_tick_share": round(close_held / n, 4) if n else None,
+            "close_held_note": ("vla_step ticks whose horizontal motion the rail held "
+                                "(MissionLoop close_hold): the model's turn and climb flew, "
+                                "its translation did not; apart from the VLA shares")})
+    if lands_held:
+        extra["land_as_arrival"] = lands_held
+    if any("hint_kind" in r for r in records):
+        extra["hint_kind_counts"] = dict(Counter(r.get("hint_kind") for r in records
+                                                 if "hint_kind" in r))
     return {
         "decisions_accepted": stats.get("decisions_accepted"),
         "decision_hz": stats.get("decision_hz"),
@@ -1887,14 +2062,16 @@ def pilot_summary(stats: dict, records: list[dict], rows: list[dict]) -> dict:
         "link_failure": stats.get("link_failure"), "link_failure_by_kind": dict(link_kinds),
         "late_replies": len([x for x in (stats.get("late_replies") or [])
                              if isinstance(x, dict) and "dropped" not in x]),
-        "land": sum(1 for r in records if r.get("kind") == "land"),
-        "land_accepted": sum(1 for r in records if r.get("kind") == "land" and r.get("accepted")),
+        "land": len(lands),
+        "land_accepted": sum(1 for r in lands if r.get("accepted")
+                             and not r.get("land_as_arrival")),
         "ticks": n, "ticks_by_author": dict(by_author),
         "ticks_held_by_rail": n - len(flew),
         "vla_step_tick_share": round(vla_step / n, 4) if n else None,
         "vla_authored_tick_share": round((vla_step + held_parsed) / n, 4) if n else None,
         "phrase_counts": dict(phrases), "hint_source_counts": dict(sources),
         "distinct_phrases": len([p for p in phrases if p is not None]),
+        **extra,
     }
 
 
@@ -1945,6 +2122,59 @@ def manifest_for(policy_hash: str, identity: dict | None, seed: int, scene_path:
                           scene_path=scene_path)
 
 
+# Project AirSim capture image types, as the robot configs here use them.
+_IMAGE_TYPES = {0: "scene", 1: "depth_planar", 2: "depth"}
+DETECTOR_CAMERA = "FrontCamera"
+
+
+def sim_config_record(scene_path: str | Path, *, depth_read: bool | None) -> dict:
+    """metrics["sim_config"] for a detector mission (review of d6e7123, P3):
+    the scene and the robot config it names (sha256 of both), the streams
+    the detector camera captures, and whether this run READ the depth. The
+    follow's identity check added a depth stream to FrontCamera in
+    robot_vla_quad_det.jsonc on 2026-10-23 (d6e7123); the approach flies the
+    same robot config, so an approach since renders that stream unread - a
+    render load the approaches before it did not carry. Recorded, so runs
+    either side of it are compared knowingly. Problems are listed, never
+    guessed over."""
+    import hashlib
+    from guardrail.manifest import _strip_jsonc
+    scene_path = Path(scene_path)
+    rec: dict[str, Any] = {
+        "scene": scene_path.name, "scene_sha256": None, "robot_config": None,
+        "robot_config_sha256": None, "detector_camera": None, "detector_streams": None,
+        "detector_depth_rendered": None, "detector_depth_read": depth_read,
+        "comparability": ("the detector camera captures a depth stream since d6e7123 "
+                          "(2026-10-23, the follow's identity check); a run that does not "
+                          "read it (an approach; a follow with identity off) still renders "
+                          "it, which detector-mission runs before d6e7123 did not"),
+        "problems": []}
+    try:
+        raw = scene_path.read_bytes()
+        rec["scene_sha256"] = hashlib.sha256(raw).hexdigest()
+        scene = json.loads(_strip_jsonc(raw.decode("utf-8")))
+        robot = next(a for a in scene.get("actors") or []
+                     if isinstance(a, dict) and a.get("type") == "robot")
+        rec["robot_config"] = str(robot.get("robot-config"))
+        rraw = (scene_path.parent / rec["robot_config"]).read_bytes()
+        rec["robot_config_sha256"] = hashlib.sha256(rraw).hexdigest()
+        cfg = json.loads(_strip_jsonc(rraw.decode("utf-8")))
+        cam = next((s for s in cfg.get("sensors") or []
+                    if isinstance(s, dict) and s.get("id") == DETECTOR_CAMERA), None)
+        if cam is None:
+            rec["problems"].append(f"{rec['robot_config']} has no {DETECTOR_CAMERA}")
+            return rec
+        rec["detector_camera"] = DETECTOR_CAMERA
+        caps = [c for c in cam.get("capture-settings") or []
+                if isinstance(c, dict) and c.get("capture-enabled", True)]
+        types = [c.get("image-type") for c in caps]
+        rec["detector_streams"] = [_IMAGE_TYPES.get(t, f"image-type {t}") for t in types]
+        rec["detector_depth_rendered"] = any(t in (1, 2) for t in types)
+    except (OSError, ValueError, StopIteration, AttributeError) as exc:
+        rec["problems"].append(f"{type(exc).__name__}: {exc}")
+    return rec
+
+
 def write_jsonl(path: Path, rows) -> None:
     """LF line endings on every platform (a CRLF file would be a whole-file
     diff for anything that compares records)."""
@@ -1964,13 +2194,26 @@ def finish_run(out: str | Path, rows: list[dict], metrics: dict, manifest: dict,
     the rows, graded by guardrail/manifest.is_kpi_grade), as every rail does,
     and return the KPIs. flight_log.jsonl is written by the flight first (a
     teardown that hangs must not cost it); here only if it is missing."""
-    from guardrail import kpi as kpi_mod
-    from guardrail.manifest import is_kpi_grade
     out = Path(out)
     if not (out / "flight_log.jsonl").exists():
         write_jsonl(out / "flight_log.jsonl", rows)
     write_json(out / "metrics.json", metrics)
     write_json(out / "manifest.json", manifest)
+    kpis = run_kpis(rows, metrics, manifest, policy)
+    write_json(out / "kpi.json", kpis)
+    metrics["kpi_grade"] = kpis["kpi_grade"]
+    metrics["p0_violation_escape_rate"] = kpis.get("p0_violation_escape_rate")
+    write_json(out / "metrics.json", metrics)
+    return kpis
+
+
+def run_kpis(rows: list[dict], metrics: dict, manifest: dict, policy) -> dict:
+    """kpi.json's content: guardrail/kpi.py over the rows and metrics, graded
+    by guardrail/manifest.is_kpi_grade, with the run's own records beside it
+    - what finish_run writes, and what tools/rescore_vla_follow.py recomputes
+    for a run flown before a records fix."""
+    from guardrail import kpi as kpi_mod
+    from guardrail.manifest import is_kpi_grade
     kpis = kpi_mod.compute(rows, kpi_mod.rule_priorities(policy), metrics)
     graded, reasons = is_kpi_grade(manifest, metrics)
     kpis.update({"kpi_grade": graded, "kpi_grade_reasons": reasons, "manifest": manifest,
@@ -1980,10 +2223,6 @@ def finish_run(out: str | Path, rows: list[dict], metrics: dict, manifest: dict,
                  "interrupted": metrics.get("interrupted"),
                  "pilot_alt_band": metrics.get("pilot_alt_band"),
                  "cadence": (metrics.get("params") or {}).get("cadence")})
-    write_json(out / "kpi.json", kpis)
-    metrics["kpi_grade"] = graded
-    metrics["p0_violation_escape_rate"] = kpis.get("p0_violation_escape_rate")
-    write_json(out / "metrics.json", metrics)
     return kpis
 
 
@@ -2008,30 +2247,83 @@ def mission_scores(mission: str, rows: list[dict], *, goal_xy=None, arrive_radiu
     return out
 
 
+# The share of the ticks the subject's truth must cover for a follow to count
+# as SCORED: follow_vlm.FOLLOW_TRUTH_MIN_COVERAGE (perception_node's
+# TRUTH_MIN_COVERAGE), so the three rails answer "was this follow measured?"
+# the same way (tests/test_vla_fly.py checks the two constants agree).
+FOLLOW_TRUTH_MIN_COVERAGE = 0.95
+
+
 def follow_scores(rows: list[dict], *, within_m: float = 30.0) -> dict:
     """How closely a follow kept to the moving subject, from each row's
     `subject_dist_m` (the level car's simulator position against the
     aircraft's: ground truth for SCORING only - it never reaches the phrase,
     the VLA or a stop rule). The same "within 30 m" share the city follow
-    reports (follow_vlm frac_within_30m), so the two are comparable."""
+    reports (follow_vlm frac_within_30m), so the two are comparable.
+
+    WITH follow_vlm's MEANING (review of d6e7123, P1-1): `frac_within_30m`
+    is the share of the ticks that HAVE the truth, rounded to 3 places, None
+    without any; `follow_scored` is follow_vlm.follow_scored's rule - the
+    truth on at least FOLLOW_TRUTH_MIN_COVERAGE of the ticks - so a follow
+    whose truth polling failed for a stretch is not called measured.
+    `frac_within` (the name of d6e7123) is kept beside it. follow_kpi_fields
+    lifts the two keys guardrail/kpi.py reads to the top of metrics."""
     d = [r["subject_dist_m"] for r in rows if r.get("subject_dist_m") is not None]
+    n = len(rows)
+    coverage = round(len(d) / n, 4) if n else 0.0
+    scored = n > 0 and len(d) >= FOLLOW_TRUTH_MIN_COVERAGE * n
     if not d:
-        return {"follow_scored": False, "ticks_scored": 0, "ticks": len(rows)}
-    return {"follow_scored": True, "ticks_scored": len(d), "ticks": len(rows),
-            "within_m": within_m,
-            "frac_within": round(sum(1 for x in d if x <= within_m) / len(d), 3),
+        return {"follow_scored": False, "ticks_scored": 0, "ticks": n,
+                "truth_coverage": coverage, "frac_within_30m": None}
+    frac = round(sum(1 for x in d if x <= within_m) / len(d), 3)
+    return {"follow_scored": bool(scored), "ticks_scored": len(d), "ticks": n,
+            "truth_coverage": coverage, "within_m": within_m,
+            "frac_within": frac,
+            "frac_within_30m": frac if within_m == 30.0 else None,
             "dist_min_m": round(min(d), 2), "dist_median_m": round(statistics.median(d), 2),
             "dist_max_m": round(max(d), 2), "dist_start_m": round(d[0], 2),
             "dist_end_m": round(d[-1], 2)}
 
 
+def follow_kpi_fields(scores: dict | None) -> dict:
+    """The follow's score where guardrail/kpi.py, tools/kpi_report.py and
+    tools/build_dashboard.py read it - the TOP of metrics.json, as
+    follow_vlm and perception_node write it: `frac_within_30m` (kpi fails a
+    follow under FOLLOW_MIN_FRAC, "follow_proxy") and `follow_scored` (False
+    makes mission_success None, "follow_not_scored"). Until the review of
+    d6e7123 (P1-1) they sat only under metrics["follow"], kpi applied no
+    follow test, and every VLA follow's kpi.json said mission_success true -
+    two of them with 0.0 of their ticks within 30 m."""
+    s = scores if isinstance(scores, dict) else {}
+    return {"frac_within_30m": s.get("frac_within_30m"),
+            "follow_scored": bool(s.get("follow_scored"))}
+
+
 def land_record(rows: list[dict], records: list[dict], goal_xy=None) -> dict:
     """What happened at a LAND: where, under which phrase (the decision's own
     phrase from its vla_steps record), and how far from the goal - the
-    evidence for "LAND only near the goal or without a hint"."""
-    lands = [r for r in records if r.get("kind") == "land" and r.get("accepted")]
+    evidence for "LAND only near the goal or without a hint".
+
+    A LAND a follow HELD as arrival (TrackerConfig.land_as_arrival) is no
+    landing the VLA requested: `requested_by_vla` counts only a LAND that
+    landed, and the held ones are under `land_as_arrival` (how many, that
+    they were held, the first one's seq and when its hold began). Until the
+    review of d6e7123 (P2-6) follows #6 and #9 read "requested_by_vla true"
+    with no time, though both ended on the clock."""
+    accepted = [r for r in records if r.get("kind") == "land" and r.get("accepted")]
+    held = [r for r in accepted if r.get("land_as_arrival")]
+    lands = [r for r in accepted if not r.get("land_as_arrival")]
     if not lands:
-        return {"requested_by_vla": False}
+        out = {"requested_by_vla": False}
+        if held:
+            first = held[0].get("seq")
+            out["land_as_arrival"] = {
+                "count": len(held), "held": True, "first_seq": first,
+                "first_t_s": next((r["t"] for r in rows if r.get("vla_seq") == first
+                                   and r.get("author_reason") == "land_as_arrival"), None),
+                "note": ("the model answered LAND; the follow held each as arrival "
+                         "(TrackerConfig.land_as_arrival) - no landing was flown")}
+        return out
     rec = lands[0]
     pose = rec.get("pose_capture") or {}
     out = {"requested_by_vla": True, "seq": rec.get("seq"), "phrase": rec.get("phrase"),

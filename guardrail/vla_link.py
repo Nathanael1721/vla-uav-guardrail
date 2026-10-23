@@ -314,11 +314,21 @@ class Capture:
 class Hint:
     """The prompt's direction phrase and where it came from: `goal` (a GOTO
     mission's commanded goal), `detector` (the OWL-ViT box bearing,
-    demo/vla_bridge.py) or `none` (no hint: the empty phrase)."""
+    demo/vla_bridge.py) or `none` (no hint: the empty phrase).
+
+    `kind` (optional, never sent): how the source arrived at the phrase,
+    for the records only - a follow's detector phrase is a "fresh" box's,
+    the remembered sighting's ("memory") or the search turn's ("search")
+    (demo/vla_mission.DetectorHint; review of d6e7123, P2-2). It goes into
+    the request's record as `hint_kind`; equality is phrase and source."""
     phrase: str
     source: str
+    kind: str | None = field(default=None, compare=False)
 
     def __post_init__(self):
+        if self.kind is not None and (not isinstance(self.kind, str) or not self.kind
+                                      or self.kind != self.kind.strip()):
+            raise ValueError(f"hint kind {self.kind!r} is not a plain word")
         if self.phrase not in PHRASES:
             raise ValueError(f"phrase {self.phrase!r} is not one of the training "
                              f"phrases {sorted(PHRASES)}")
@@ -505,6 +515,8 @@ def build_infer_fields(capture: Capture, hint: Hint, object_text: str,
         "down_jpg_sha256": _sha256(down) if down is not None else None,
         "down_jpg_bytes": len(down) if down is not None else None,
     }
+    if hint.kind is not None:
+        meta["hint_kind"] = hint.kind       # the record's only: never on the wire
     return fields, meta
 
 
@@ -1401,7 +1413,8 @@ class _Current:
     x_t: float | None = None
     y_t: float | None = None
     up_t: float | None = None
-    up_raw: float | None = None
+    up_raw: float | None = None          # the MODEL's altitude target (up_capture - down_m)
+    up_held: float | None = None         # TrackerConfig.hold_altitude_m, when it replaces it
     alt_clamped: bool = False
     alt_held: bool = False
     rotate_only: bool = False
@@ -1472,7 +1485,8 @@ class StepTracker:
         self._band = (float(band[0]), float(band[1])) if band is not None else None
         c = self._cur
         if c is not None and c.up_raw is not None:
-            c.up_t, c.alt_clamped = self._clamp_alt(c.up_raw)
+            c.up_t, c.alt_clamped = self._clamp_alt(
+                c.up_held if c.up_held is not None else c.up_raw)
 
     def accept(self, decision: Decision, now: float, pose_now: Pose | None = None) -> bool:
         """Take a decision. Refused (and recorded as refused) when it is a
@@ -1540,6 +1554,10 @@ class StepTracker:
                 "rotate_only": cur.rotate_only, "time_cap_s": cur.time_cap_s,
                 "turn_while_moving": cur.turn_moving, "alt_held": cur.alt_held,
                 "anchor": cur.anchor}
+            if cur.alt_held:
+                # The model's target stays up_raw; the one flown (before the
+                # band's clamp) is this (review of d6e7123, P3).
+                decision.record["target"]["up_held"] = cur.up_held
             if cur.alt_clamped:
                 self.counts["alt_clamped"] += 1
             if cur.turn_moving:
@@ -1670,7 +1688,12 @@ class StepTracker:
             return Tick(_ZERO, "none", self._none_reason)
         seq, age = c.decision.seq, now - c.decision.t_capture
         if c.decision.kind != "step":
-            return Tick(_ZERO, "hold", c.decision.kind, seq, age)
+            # A LAND held as a follow's arrival says so: "land" read as a LAND
+            # the rail would fly (review of d6e7123, P2-6). Still the model's
+            # decision: it chose to stop.
+            why = ("land_as_arrival" if c.decision.record.get("land_as_arrival")
+                   else c.decision.kind)
+            return Tick(_ZERO, "hold", why, seq, age)
         cfg = self.cfg
         e_psi = wrap_pi(c.psi_t - pose.yaw_rad)
         e_up = c.up_t - pose.up
@@ -1697,8 +1720,12 @@ class StepTracker:
             else:
                 yaw_rate = max(-cfg.yaw_rate_cap_rad_s,
                                min(cfg.yaw_rate_cap_rad_s, cfg.k_yaw * e_psi))
+                # turn_moving: a step whose turn upstream would only have
+                # rotated, flown while moving (TrackerConfig.turn_while_moving;
+                # review of d6e7123, P3: it read "translate").
                 return Tick(Action4D(vx=vx, vy=vy, vz_up=vz, yaw_rate=yaw_rate),
-                            "vla_step", "rotate" if c.rotate_only else "translate",
+                            "vla_step", ("rotate" if c.rotate_only else
+                                         "turn_moving" if c.turn_moving else "translate"),
                             seq, age)
         return Tick(Action4D(vz_up=vz), "hold", "step_complete", seq, age)
 
@@ -1727,8 +1754,8 @@ class StepTracker:
             dist_h = s.fwd_m
         c.up_raw = d.pose.up - s.down_m
         if cfg.hold_altitude_m is not None:
-            c.up_raw, c.alt_held = float(cfg.hold_altitude_m), True
-        c.up_t, c.alt_clamped = self._clamp_alt(c.up_raw)
+            c.up_held, c.alt_held = float(cfg.hold_altitude_m), True
+        c.up_t, c.alt_clamped = self._clamp_alt(c.up_held if c.alt_held else c.up_raw)
         expected = max(dist_h / cfg.cruise_mps,
                        abs(c.up_t - d.pose.up) / cfg.climb_cap_mps,
                        abs(s.dpsi_rad) / cfg.yaw_rate_cap_rad_s)

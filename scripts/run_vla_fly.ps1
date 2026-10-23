@@ -55,7 +55,7 @@ param(
     [string]$LevelCar  = "",            # M3 follow: the level's car, truth for scoring (default Car_10)
     [double]$CruiseMps = 0,             # step tracker cruise speed (0 = vla_fly's default, 1 m/s)
     [double]$SpeedCapMps = 0,           # step tracker speed cap (0 = vla_fly's default, 2 m/s)
-    [string[]]$ExtraArgs = @(),         # passed to demola_fly.py as given (checked by its --check-args)
+    [string[]]$ExtraArgs = @(),         # passed to demo\vla_fly.py as given, last (checked by its --check-args)
     [string]$VlaServer = "",            # host:port: attach instead of starting one
     [string[]]$FakeOutput = @(),        # the scripted stand-in (no GPU; never a VLA run)
     [string]$PolicyFile = "",           # default policies\vla_goto_citylife.yaml

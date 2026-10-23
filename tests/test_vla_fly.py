@@ -53,6 +53,24 @@ WHAT IS BEING CLAIMED
    the client's backoff is over (P2-8) - vla_mission.wait_client_ready and
    a per-request response timeout, shared with that rail. Both failed on
    4a0da6d: refused, "not sent".
+8. The review of the AerialVLA follow (d6e7123, 2026-10-23): the follow's
+   score is at the top of metrics, where kpi and the dashboard read it, with
+   follow_vlm's meaning, and tools/rescore_vla_follow.py re-scores a run
+   flown before (P1-1); each request and row says whether its hint was a
+   fresh box, the memory or the search (P2-2); with identity, a lapse - the
+   strict lock's "no held instance" or LAPSE_S unseen - re-acquires at once
+   from the last sighting, shown with follow_vlm's real Grounder state,
+   strict TargetLock and Reacquirer (P2-3; the unfixed code never took the
+   reappearing car back); a perception reset ignores the dropped box and,
+   with identity, re-acquires directly (P2-4); the start gate is decided
+   after the identity setup and recorded as applied (P2-5); a LAND held as
+   arrival is not a landing the VLA asked for (P2-6); a follow that never
+   asked is subject_not_acquired, not a VLA failure (P2-7); a close box with
+   no request is a stall that resets the perception (P2-8); and the P3s -
+   pilot_raw and close-held shares, StuckWatch on what flew, the flags and
+   records agreeing, measured outcomes in metrics in mission time, one
+   detector read per tick, the depth stream in sim_config, -ExtraArgs.
+   Every one failed on df10863 (missing names, or the old records).
 
 Shown failing first: before this change demo/vla_mission.py, demo/vla_fly.py,
 the VLA robot and scene configs, policies/vla_goto_citylife.yaml and
@@ -1187,6 +1205,116 @@ def test_the_follow_start_gate_waits_for_a_near_box_on_successive_frames():
     assert g["open"] and g["n"] == 3 and g["gated_calls"] >= 7 and g["t_open"] == 12.2
 
 
+def test_a_forgotten_box_can_neither_reseed_the_memory_nor_count_as_seen():
+    """Review of d6e7123, P2-4: the stuck reset called forget(), which
+    cleared the sighting - but the wrong box stayed fresh up to det_fresh_s
+    and the Grounder kept publishing it up to its drop_after (8 s), so the
+    next hint re-seeded the memory with the very object just dropped.
+    forget(t_reset) now also ignores every box whose frame was captured at
+    or before t_reset (counted); a box from a later frame is the hint's
+    again."""
+    from vla_bridge import VLABridge
+    box = {"v": None}
+    h = VM.DetectorHint(lambda: box["v"] or (None, None, None, None),
+                        VLABridge("a red car", hfov_deg=90.0), fresh_s=1.0, memory_s=6.0,
+                        search_s=20.0, record_kind=True)
+
+    def cap(t):
+        return Capture(t, Pose(0.0, 0.0, 10.0, 0.0), JPG, JPG)
+    right = (700.0, 200.0, 40.0, 30.0, 0.3, 768, 432, 0.5)
+    box["v"] = (right, 10.0, 0.0, 10.1)
+    assert h(cap(10.2)).kind == "fresh"
+    h.forget(10.3)                                   # the reset, at 10.3
+    assert h(cap(10.4)) is None and h.last_kind is None, h.last_kind   # same box: ignored
+    assert h(cap(14.0)) is None                      # and no memory of it
+    assert h.box_ignored(10.0) and h.box_ignored(10.3) and not h.box_ignored(10.31)
+    st = h.stats()
+    assert st["ignored_after_reset"] == 2 and st["hints_by_kind"]["forgotten"] == 1
+    box["v"] = (right, 14.5, 0.0, 14.6)              # a frame after the reset
+    got = h(cap(14.7))
+    assert got is not None and got.kind == "fresh"
+    assert not VM.DetectorHint(lambda: (None, None), VLABridge("a red car")).box_ignored(1.0)
+
+
+def test_the_follow_start_gate_can_be_armed_after_the_identity_setup():
+    """Review of d6e7123, P2-5: the DetectorHint's start gate was decided
+    from --no-identity before the identity setup ran, so a follow whose
+    identity failed to load flew with no gate at all. The hint is now built
+    ungated and armed afterwards (set_start_gate), once the flight knows
+    which gate applies; its stats give the gate's opening in mission time
+    (P3: it was an epoch time)."""
+    from vla_bridge import VLABridge
+    box = {"v": None}
+    h = VM.DetectorHint(lambda: box["v"] or (None, None, None, None),
+                        VLABridge("a red car", hfov_deg=90.0), fresh_s=1.0)
+    assert h.gate_open and h.start_gate is None
+    h.set_start_gate((2, 0.04))
+    assert not h.gate_open and h.stats()["start_gate"]["n"] == 2
+    near = (384.0, 200.0, 40.0, 30.0, 0.3, 768, 432, 0.5)
+
+    def cap(t):
+        return Capture(t, Pose(0.0, 0.0, 10.0, 0.0), JPG, JPG)
+    for k in range(2):
+        box["v"] = (near, 1000.0 + k, 0.0, 1000.05 + k)
+        out = h(cap(1000.2 + k))
+    assert h.gate_open and out is not None
+    g = h.stats(t0=990.0)["start_gate"]
+    assert g["t_open_s"] == 11.2 and "t_open" not in g, g
+    assert h.stats()["start_gate"]["t_open"] == 1001.2          # no t0: as before
+    for bad in ((0, 0.04), (2, 1.5)):
+        try:
+            VM.DetectorHint(lambda: (None, None), VLABridge("a red car")).set_start_gate(bad)
+        except ValueError:
+            continue
+        raise AssertionError(f"start gate {bad} accepted")
+    h2 = VM.DetectorHint(lambda: (None, None), VLABridge("a red car"), start_gate=(3, 0.04))
+    h2.set_start_gate(None)
+    assert h2.gate_open and h2.start_gate is None
+
+
+def test_a_close_box_with_no_request_for_too_long_is_a_stall():
+    """Review of d6e7123, P2-8: a locked WRONG box that counts as close (>=
+    0.25 of the width) asks for no step, the close hold zeroes the motion,
+    the tracker hovers, the Shield stays quiet (no StuckWatch) and the box
+    stays fresh (no target_lost): a hover until max_s. CloseStall fires once
+    when a close box has lasted max_s with no request sent; a request sent,
+    or the box no longer close, starts the spell again; 0 disables it."""
+    w = VM.CloseStall(8.0)
+    fired = [k * 0.1 for k in range(200) if w.update(k * 0.1, True, 5)]
+    assert len(fired) == 2 and abs(fired[0] - 8.0) < 0.11 and fired[1] - fired[0] >= 8.0, fired
+    assert w.as_dict() == {"max_s": 8.0, "stalls": 2}
+    w = VM.CloseStall(8.0)
+    assert not any(w.update(k * 0.1, True, k // 50) for k in range(200))   # a request every 5 s
+    w = VM.CloseStall(8.0)
+    assert not any(w.update(k * 0.1, k % 60 != 0, 5) for k in range(200))  # broken spells
+    w = VM.CloseStall(0.0)
+    assert not any(w.update(k * 0.1, True, 5) for k in range(200))
+    try:
+        VM.CloseStall(-1.0)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("a negative stall time accepted")
+
+
+def test_the_detector_scenes_record_the_depth_stream_they_render():
+    """Review of d6e7123 (P3): the follow's identity check added a depth
+    stream to the detector camera of robot_vla_quad_det.jsonc, which the
+    APPROACH shares: an approach flown since renders it unread, so its render
+    load is not the earlier approaches'. sim_config_record reads the scene
+    and its robot config (hashes, the detector camera's streams) and says
+    whether this run read the depth, for metrics.json."""
+    rec = VM.sim_config_record(CFG / "scene_vla_det.jsonc", depth_read=False)
+    assert rec["scene"] == "scene_vla_det.jsonc" and rec["robot_config"] == "robot_vla_quad_det.jsonc"
+    assert len(rec["scene_sha256"]) == 64 and len(rec["robot_config_sha256"]) == 64
+    assert rec["detector_camera"] == "FrontCamera" and rec["detector_streams"] == ["scene", "depth"]
+    assert rec["detector_depth_rendered"] is True and rec["detector_depth_read"] is False
+    assert "d6e7123" in rec["comparability"]
+    assert VM.sim_config_record(CFG / "scene_vla_det.jsonc", depth_read=True)["detector_depth_read"]
+    bad = VM.sim_config_record(CFG / "no_such_scene.jsonc", depth_read=False)
+    assert bad["problems"] and bad["detector_depth_rendered"] is None
+
+
 def test_the_stuck_watch_fires_once_when_the_shield_pins_the_aircraft():
     """StuckWatch (follow #4: 2447 Shield blocks in 225 s against a building):
     the Shield touching >= 80 % of 4 s of ticks with under 1 m of progress
@@ -1202,18 +1330,22 @@ def test_the_stuck_watch_fires_once_when_the_shield_pins_the_aircraft():
     assert not any(quiet.update(k * 0.1, 0.0, 0.0, k % 3 == 0) for k in range(100))
 
 
-def test_the_follow_acquires_with_identity_then_reacquires_after_a_long_loss():
+def test_the_follow_acquires_with_identity_then_reacquires_after_a_lapse():
     """vla_fly._acquire_step (follow #7, 23 Oct: identity's strict lock was
     never seeded, so no box ever came and AerialVLA was never asked): each
-    new detector frame steps the Reacquirer; its pick is committed once
-    reached; a subject unseen past memory + search restarts acquisition."""
-    import time as _t
+    new detector frame steps the Reacquirer (a frame seen twice, once); its
+    pick is committed once reached, at a mission time. Since the review of
+    d6e7123 (P2-3) a committed subject unseen past LAPSE_S restarts the
+    acquisition at once, anchored at its last sighting - here the
+    committing one - not after memory + search (26 s). The real lock and
+    Reacquirer: the two tests above."""
+    clock = {"t": 100.0}
 
     class _G:
         def __init__(self):
-            self.state = {"seq": 0, "t": _t.time(), "t_det": 0.0, "det": None,
+            self.state = {"seq": 0, "t": clock["t"], "t_det": 0.0, "det": None,
                           "cands": [("c",)], "cand_tiers": ["OK"], "cand_feats": [{}],
-                          "inf_cap": {"t_capture": 1.0, "pose": {"yaw": 0.3}}}
+                          "inf_cap": {"t_capture": 99.9, "pose": {"yaw": 0.3}}}
             self.commits, self.reacq = [], 0
 
         def latest(self):
@@ -1227,86 +1359,784 @@ def test_the_follow_acquires_with_identity_then_reacquires_after_a_long_loss():
 
     class _A:
         def __init__(self):
-            self.n, self.pick, self.starts = 0, ("pick",), 0
+            self.n, self.pick, self.pick_feat, self.anchors = 0, ("pick",), {"P": (5.0, 1.0)}, []
 
         def step(self, cands, tiers, feats, t_cap):
             self.n += 1
             return self.n >= 3
 
         def start(self, anchor):
-            self.starts += 1
+            self.anchors.append(anchor)
     g, a = _G(), _A()
-    box = {"acq": a, "committed": False, "last_seq": -1, "commits": [], "reacquires": 0,
-           "errors": []}
+    box = vla_fly.new_acquisition(a, t0=90.0)
     args = SimpleNamespace(follow_memory_s=6.0, follow_search_s=20.0)
     for k in range(5):
-        g.state.update(seq=k + 1, t=_t.time())
-        vla_fly._acquire_step(g, box, args)
-        vla_fly._acquire_step(g, box, args)          # same frame twice: one step
+        clock["t"] = round(clock["t"] + 0.2, 6)
+        g.state.update(seq=k + 1, t=clock["t"])
+        vla_fly._acquire_step(g, box, args, clock=lambda: clock["t"])
+        vla_fly._acquire_step(g, box, args, clock=lambda: clock["t"])   # same frame: one step
     assert a.n == 3 and box["committed"] and g.commits == [(("pick",), 0.3)]
+    assert box["commits"] == [10.6], box["commits"]                     # mission seconds
     # Right after the commit t_det is still 0: no instant re-acquisition.
-    g.state.update(seq=9, t=_t.time(), det=None, t_det=0.0)
-    vla_fly._acquire_step(g, box, args)
+    clock["t"] = 101.1
+    g.state.update(seq=9, t=clock["t"], det=None, t_det=0.0)
+    vla_fly._acquire_step(g, box, args, clock=lambda: clock["t"])
     assert box["committed"] and g.reacq == 0
-    box["commits"][-1] = _t.time() - 60.0                         # committed a minute ago
-    g.state.update(seq=10, t=_t.time(), det=None, t_det=_t.time() - 5.0)
-    vla_fly._acquire_step(g, box, args)
-    assert box["committed"] and g.reacq == 0                     # 5 s: memory still
-    g.state.update(seq=11, t=_t.time(), det=None, t_det=_t.time() - 30.0)
-    vla_fly._acquire_step(g, box, args)
-    assert not box["committed"] and g.reacq == 1 and a.starts == 1 and box["reacquires"] == 1
+    clock["t"] = 103.4                                                  # 2.8 s unseen
+    g.state.update(seq=10, t=clock["t"])
+    vla_fly._acquire_step(g, box, args, clock=lambda: clock["t"])
+    assert box["committed"] and g.reacq == 0
+    clock["t"] = 103.8                                                  # 3.2 s: the lapse
+    g.state.update(seq=11, t=clock["t"])
+    vla_fly._acquire_step(g, box, args, clock=lambda: clock["t"])
+    assert not box["committed"] and g.reacq == 1 and box["reacquires"] == 1
+    assert a.anchors[-1] == {"t": 99.9, "P": (5.0, 1.0), "v": None}, a.anchors
+    assert box["lapses"][0]["why"].startswith("unseen") and box["lapses"][0]["t"] == 13.8
+
+
+def _strict_grounder():
+    """follow_vlm's REAL Grounder (not started: no OWL-ViT) with its REAL
+    strict TargetLock, as vla_fly builds it with identity on."""
+    import follow_vlm as FV
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()):
+        g = FV.Grounder(SimpleNamespace(pose=None), "a red car",
+                        lock=FV.TargetLock(gate_frac=0.12), identity={"hfov": 90.0})
+    return g
+
+
+def _strict_inference(g, now, cands, feats, t_capture, yaw=0.0):
+    """One inference's bookkeeping, exactly as follow_vlm.Grounder._worker
+    does it on the identity path (every candidate "ok" here): the seed a
+    commit() handed over is taken first (the lock reset and seeded), then -
+    unless acquiring - TargetLock.select_strict with the estimator prior
+    (_prior_at: None without set_prior), then the publication under the
+    Grounder's lock, the box dropped after drop_after. Only the detector
+    and the identity judging are left out; the times are `now`."""
+    if g._seed is not None:
+        (seed, seed_yaw), g._seed = g._seed, None
+        g.lock.reset()
+        g.lock.seed(seed, seed_yaw if seed_yaw is not None else yaw, now)
+    acquiring = g.acquiring
+    tiers = ["ok"] * len(cands)
+    pose = {"x": 40.0, "y": 0.0, "up": 10.0, "yaw": yaw}
+    det = det_feat = lock_why = None
+    if cands and not acquiring:
+        k, lock_why = g.lock.select_strict(cands, tiers, feats, 768, yaw, now,
+                                           prior=g._prior_at(pose, 768, 432, t_capture))
+        if k is not None:
+            det, det_feat = cands[k], feats[k]
+    with g._lock:
+        g._seq += 1
+        g._t = now
+        g._cands, g._cand_tiers, g._cand_feats = list(cands), list(tiers), list(feats)
+        g._lock_why = lock_why
+        g._inf_cap = {"t_cap": t_capture, "t_capture": t_capture, "pose": pose}
+        if det is not None:
+            g._det, g._t_det, g._det_tier, g._det_feat = det, now, "ok", det_feat
+            g._det_cap = {"t_cap": t_capture, "t_capture": t_capture, "pose": pose}
+        elif g._t_det and now - g._t_det > g.drop_after:
+            g._det = None
+    return det, lock_why
+
+
+def _chase_with_a_gap(gap_cands, t_gap=(3.0, 5.6), t_end=9.0, need=3):
+    """A red car driving +x at 5 m/s, seen at the image centre at 5 Hz, then
+    hidden for t_gap (the detector giving `gap_cands(t)` instead), then seen
+    again where it has driven to. vla_fly._acquire_step drives follow_vlm's
+    real Reacquirer (identity on) against the real Grounder state and strict
+    lock; a DetectorHint reads the Grounder as vla_fly's latest_box does.
+    Returns (frames: [(t, fresh det published?, lock_why, hint kind)], the
+    acquisition box, the Reacquirer)."""
+    import follow_vlm as FV
+    from vla_bridge import VLABridge
+    g = _strict_grounder()
+    acq = FV.Reacquirer(need=need, max_range_m=30.0)
+    acq.start(None)
+    g.begin_acquire()
+    box = vla_fly.new_acquisition(acq, t0=0.0)
+    args = SimpleNamespace(follow_memory_s=6.0, follow_search_s=20.0)
+    clock = {"t": 0.0}
+
+    def latest_box():
+        gw = g.latest()
+        if gw.get("det") is None:
+            return None, None, None, None
+        cap = gw.get("cap") or {}
+        return gw["det"], cap.get("t_capture"), 0.0, gw.get("t_det")
+    hint = VM.DetectorHint(latest_box, VLABridge("a red car", hfov_deg=90.0), fresh_s=1.0,
+                           memory_s=6.0, search_s=20.0, record_kind=True)
+    frames = []
+    t = 0.0
+    while t < t_end - 1e-9:
+        clock["t"] = t
+        x = 60.0 + 5.0 * t
+        car = (384.0, 200.0, 40.0, 25.0, 0.3, 768, 432, 0.6)
+        car_f = {"P": (x, 0.0), "rng_h": 20.0}
+        if t_gap[0] <= t < t_gap[1]:
+            cands, feats = gap_cands(t)
+        else:
+            cands, feats = [car] + gap_cands(t)[0], [car_f] + gap_cands(t)[1]
+        import contextlib
+        import io
+        with contextlib.redirect_stdout(io.StringIO()):
+            det, why = _strict_inference(g, t, cands, feats, t - 0.1)
+            vla_fly._acquire_step(g, box, args, clock=lambda: clock["t"])
+        h = hint(Capture(t + 0.05, Pose(40.0, 0.0, 10.0, 0.0), JPG, JPG))
+        frames.append((round(t, 3), det is not None, why, None if h is None else h.kind))
+        t = round(t + 0.2, 10)
+    return frames, box, acq
+
+
+def test_a_lost_subject_is_reacquired_at_once_where_it_was_last_seen():
+    """Review of d6e7123, P2-3 - the follows' longest blackout. With
+    identity, follow_vlm's strict lock adopts nothing it was not seeded
+    with: after its 2 s hold it answers "no held instance" unless an
+    estimator prior stands in, and vla_fly never set one. _acquire_step only
+    restarted the acquisition after memory_s + search_s (26 s) unseen, and
+    counted "unseen" only once the Grounder dropped the stale box (8 s): #8
+    spent 1060 of 1306 detector frames acquiring, #9 hovered 54 % of the
+    time. Now the follow does what follow_vlm does on a lapse with no
+    estimator: at the lock's "no held instance" (or LAPSE_S unseen) it
+    re-acquires at once - begin_reacquire, and the Reacquirer started from
+    an anchor at the last sighting (its place, capture time and measured
+    speed), so the car is taken back within `need` frames of reappearing
+    where it could have driven, with no motion test; the memory and search
+    phrases flow meanwhile. Real Grounder state, strict lock, Reacquirer."""
+    wrong = (700.0, 200.0, 40.0, 25.0, 0.3, 768, 432, 0.6)      # something else, far off
+    frames, box, acq = _chase_with_a_gap(lambda t: ([wrong], [{"P": (75.0, 60.0),
+                                                               "rng_h": 28.0}]))
+    committed_t = [t for t, d, _, _ in frames if d]
+    assert committed_t and committed_t[0] <= 1.4, frames[:10]     # acquired, moving, by 1.2 s
+    gap = [f for f in frames if 3.0 <= f[0] < 5.6]
+    assert any(w == "no held instance" for _, _, w, _ in gap), gap
+    lapse = box["lapses"][0]
+    assert lapse["why"] == "lock: no held instance" and lapse["t"] == 5.0, lapse
+    assert lapse["P"] == [74.0, 0.0] and abs(lapse["v"] - 5.0) < 0.2, lapse
+    assert acq.anchor is not None and acq.anchor["P"] == (74.0, 0.0)
+    back = [t for t, d, _, _ in frames if d and t >= 5.6]
+    assert back and back[0] <= 6.4, frames[25:]                  # need=3 frames, then the seed
+    assert box["reacquires"] == 1 and box["committed"] and len(box["commits"]) == 2
+    # Mission time. (The frame at t = 0 is no frame to _acquire_step: a
+    # Grounder time of 0 means it never ran - so six frames from 0.2 s.)
+    assert box["commits"][0] == 1.2 and box["commits"][1] <= 6.2, box["commits"]
+    # While it was gone the phrase kept coming: the remembered sighting (the
+    # last box is fresh for det_fresh_s into the gap, then memory).
+    kinds = {k for t, _, _, k in frames if 4.0 <= t < 5.6}
+    assert kinds == {"memory"}, kinds
+
+
+def test_a_subject_gone_without_a_trace_is_reacquired_after_the_lapse():
+    """P2-3 with nothing in view at all (the lock is never asked, so it never
+    says "no held instance"): LAPSE_S unseen (follow_vlm's --lapse-s, past
+    the lock's 2 s hold) starts the anchored re-acquisition; the car is back
+    within the Reacquirer's frames of reappearing."""
+    frames, box, _ = _chase_with_a_gap(lambda t: ([], []), t_gap=(3.0, 6.4))
+    assert vla_fly.LAPSE_S == 3.0
+    lapse = box["lapses"][0]
+    assert lapse["why"].startswith("unseen") and 5.8 < lapse["t"] <= 6.0, lapse
+    back = [t for t, d, _, _ in frames if d and t >= 6.4]
+    assert back and back[0] <= 7.2, frames[30:]
+
+
+def test_a_perception_reset_drops_the_subject_everywhere_it_is_held():
+    """Review of d6e7123, P2-4 (the stuck reset, and P2-8's close stall,
+    which shares it): with identity, lock.reset() left the strict lock empty
+    while _acquire_step still believed it was committed - nothing could take
+    the subject back for ~26 s. _perception_reset now starts the
+    re-acquisition directly (begin_reacquire, the Reacquirer unanchored:
+    the box was probably the wrong object, so its place is no anchor;
+    committed False), and the hint ignores every box captured up to the
+    reset (forget(t_reset)). Without identity the TargetLock forgets its
+    instance. Real Grounder state, strict lock and Reacquirer."""
+    import follow_vlm as FV
+    from vla_bridge import VLABridge
+    g = _strict_grounder()
+    acq = FV.Reacquirer(need=3, max_range_m=30.0)
+    box = vla_fly.new_acquisition(acq, t0=0.0)
+    car = (384.0, 200.0, 40.0, 25.0, 0.3, 768, 432, 0.6)
+    g.commit(car, yaw=0.0)
+    box["committed"] = True
+    det, _ = _strict_inference(g, 10.0, [car], [{"P": (70.0, 0.0), "rng_h": 20.0}], 9.9)
+    assert det is not None and g.lock.cx == 384.0 and not g.acquiring
+
+    def latest_box():
+        gw = g.latest()
+        if gw.get("det") is None:
+            return None, None, None, None
+        return gw["det"], (gw.get("cap") or {}).get("t_capture"), 0.0, gw.get("t_det")
+    hint = VM.DetectorHint(latest_box, VLABridge("a red car", hfov_deg=90.0), fresh_s=1.0,
+                           memory_s=6.0, search_s=20.0, record_kind=True)
+    assert hint(Capture(10.1, Pose(40.0, 0.0, 10.0, 0.0), JPG, JPG)).kind == "fresh"
+    st = SimpleNamespace(x=41.234, y=-0.5)
+    ev = vla_fly._perception_reset("stuck", 10.2, 7.5, g, hint, box, st)
+    assert ev == {"t": 7.5, "why": "stuck", "x": 41.23, "y": -0.5, "reacquiring": True}, ev
+    assert g.acquiring and g.latest()["det"] is None and g.lock.cx is None
+    assert not box["committed"] and acq.anchor is None
+    assert hint.box_ignored(9.9) and not hint.box_ignored(10.3)
+    assert hint(Capture(10.4, Pose(40.0, 0.0, 10.0, 0.0), JPG, JPG)) is None   # no memory of it
+    # Without identity: the plain TargetLock forgets its instance; the box
+    # the Grounder still publishes is ignored by the hint.
+    lock = FV.TargetLock(gate_frac=0.12)
+    lock.select([car], 768, 0.0, 10.0)
+    plain = SimpleNamespace(lock=lock)
+    hint2 = VM.DetectorHint(lambda: (car, 9.9, 0.0, 10.0), VLABridge("a red car"), fresh_s=1.0,
+                            memory_s=6.0, search_s=20.0, record_kind=True)
+    ev = vla_fly._perception_reset("close_stall", 10.2, 7.5, plain, hint2,
+                                   vla_fly.new_acquisition(None), st)
+    assert ev["why"] == "close_stall" and ev.get("lock_reset") and lock.cx is None, ev
+    assert hint2(Capture(10.4, Pose(40.0, 0.0, 10.0, 0.0), JPG, JPG)) is None
+
+
+def test_the_follow_resets_read_what_flew():
+    """vla_fly._follow_watch: StuckWatch reads the decision that FLEW
+    (review of d6e7123, P3: it read res.decision.touched, which with the
+    Shield off is the shadow's touch - an aircraft nothing pinned was
+    "pinned" and its lock reset); CloseStall reads the row's close_box and
+    the backend's request count (P2-8)."""
+    def res(t, shadow, flown, close=False):
+        return SimpleNamespace(row={"t": t, "close_box": close},
+                               decision=SimpleNamespace(touched=shadow),
+                               hud_decision=SimpleNamespace(touched=flown))
+    st = SimpleNamespace(x=10.0, y=5.0)
+    stuck = VM.StuckWatch()
+    assert not any(vla_fly._follow_watch(res(k * 0.1, True, False), st, stuck, None, 3)
+                   for k in range(100))                       # Shield off: the shadow touched
+    stuck = VM.StuckWatch()
+    got = [vla_fly._follow_watch(res(k * 0.1, True, True), st, stuck, None, 3) for k in range(60)]
+    assert got.count("stuck") == 1, got
+    close = VM.CloseStall(2.0)
+    got = [vla_fly._follow_watch(res(k * 0.1, False, False, True), st, None, close, 3)
+           for k in range(30)]
+    assert got.count("close_stall") == 1 and got.index("close_stall") == 20, got
+    assert vla_fly._follow_watch(res(0.0, True, True, True), st, None, None, 3) is None
+
+
+def test_the_follow_records_the_perception_it_applied():
+    """Review of d6e7123, P2-5 and P3: the gate is decided AFTER the identity
+    setup (follow_perception): identity on - follow_vlm's Reacquirer, the
+    strict lock; identity requested but failed to load - the DetectorHint's
+    gate (it used to fly with none) and the plain lock, the failure named;
+    --no-identity --no-lock --start-gate-n 0 - none of them. params.follow
+    records exactly that (follow_params: configuration only), and the
+    measured outcomes (acquisition, resets, close-hold ticks) are
+    metrics.follow's (follow_measured), in mission seconds."""
+    ap = vla_fly.build_arg_parser()
+    a = vla_fly.parse_cli(ap, ["--mission", "follow"])
+    on = vla_fly.follow_perception(a, True)
+    assert on == {"lock": True, "lock_gate": 0.12,
+                  "identity": {"requested": True, "on": True, "error": None},
+                  "start_gate": {"kind": "identity_reacquirer", "need": 5,
+                                 "max_range_m": 30.0}}, on
+    failed = vla_fly.follow_perception(a, False, "KeyError: 'depth_camera'")
+    assert failed["start_gate"] == {"kind": "detector_hint", "n": 5, "width_frac": 0.04}
+    assert failed["identity"] == {"requested": True, "on": False,
+                                  "error": "KeyError: 'depth_camera'"} and failed["lock"]
+    bare = vla_fly.parse_cli(ap, ["--mission", "follow", "--no-identity", "--no-lock",
+                                  "--start-gate-n", "0"])
+    none = vla_fly.follow_perception(bare, False)
+    assert none == {"lock": False, "lock_gate": None,
+                    "identity": {"requested": False, "on": False, "error": None},
+                    "start_gate": None}, none
+    p = vla_fly.follow_params(a, failed)
+    assert p["start_gate"] == failed["start_gate"] and p["lock_gate"] == 0.12
+    assert p["identity"] == failed["identity"] and p["perception_applied"] is True
+    assert p["lapse_s"] == vla_fly.LAPSE_S and p["close_stall_s"] == 8.0 and p["stuck_reset"]
+    assert not {"acquisition", "stuck_resets", "close_hold_ticks"} & set(p), p
+    assert vla_fly.follow_params(a, None)["perception_applied"] is False
+    box = vla_fly.new_acquisition(SimpleNamespace(), t0=100.0)
+    box.update(committed=True, commits=[1.2, 6.0], reacquires=1,
+               lapses=[{"t": 5.0, "why": "lock: no held instance"}])
+    resets = [{"t": 20.0, "why": "stuck"}, {"t": 40.0, "why": "close_stall"},
+              {"t": 50.0, "why": "stuck"}]
+    m = vla_fly.follow_measured(box, resets, SimpleNamespace(n_close_hold=17))
+    assert m["acquisition"] == {"committed": True, "commits_s": [1.2, 6.0], "reacquires": 1,
+                                "lapses": [{"t": 5.0, "why": "lock: no held instance"}],
+                                "errors": []}, m
+    assert m["stuck_resets"] == 2 and m["close_stalls"] == 1 and m["close_hold_ticks"] == 17
+    assert m["perception_resets"] == resets
+    assert vla_fly.follow_measured(vla_fly.new_acquisition(None), [], None)["acquisition"] is None
+
+
+def test_an_identity_that_fails_to_load_is_named_and_flown_without():
+    """vla_fly._identity_setup (review of d6e7123, P2-5's other half): any
+    failure - here a robot config whose detector camera has no depth
+    topic - comes back as (None, why), never an exception, so the flight
+    goes on with the DetectorHint gate (follow_perception) and says why;
+    with the depth topic it returns follow_vlm's identity configuration and
+    subscribes the depth stream."""
+    import follow_vlm as FV
+    args = vla_fly.parse_cli(vla_fly.build_arg_parser(), ["--mission", "follow",
+                                                         "--citymap", str(_tmp() / "occ.npz")])
+    subs = []
+    sim = SimpleNamespace(subscribe=lambda topic, cb: subs.append(topic))
+    obs = SimpleNamespace(put_depth=lambda m: None)
+    no_depth = SimpleNamespace(sensors={"FrontCamera": {"scene_camera": "det"}})
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()):
+        cfg, why = vla_fly._identity_setup(args, sim, no_depth, obs, FV)
+    assert cfg is None and "depth_camera" in why and subs == [], (cfg, why)
+    depth = SimpleNamespace(sensors={"FrontCamera": {"scene_camera": "det",
+                                                     "depth_camera": "det_depth"}})
+    with contextlib.redirect_stdout(io.StringIO()):
+        cfg, why = vla_fly._identity_setup(args, sim, depth, obs, FV)
+    assert why is None and subs == ["det_depth"], why
+    assert cfg["hfov"] == FV.CAMERA_HFOV_DEG and len(cfg["hash"]) > 8 and cfg["street"] is None
+
+
+def test_the_follow_flags_and_their_records_agree():
+    """Review of d6e7123 (P3): --no-lock still got a lock when identity was
+    on (identity works through the strict lock) while params said lock_gate
+    None, and --start-gate-n 0 ("0 disables") still gated with identity
+    (need = max(1, n)). Both are refused unless --no-identity; --lock-gate
+    (a fraction of the width), --acquire-max-range-m and --close-stall-s are
+    validated."""
+    import contextlib
+    import io
+    ap = vla_fly.build_arg_parser()
+    for bad in (["--mission", "follow", "--no-lock"],
+                ["--mission", "follow", "--start-gate-n", "0"],
+                ["--mission", "follow", "--lock-gate", "0"],
+                ["--mission", "follow", "--lock-gate", "1.5"],
+                ["--mission", "follow", "--lock-gate", "nan"],
+                ["--mission", "follow", "--acquire-max-range-m", "0"],
+                ["--mission", "follow", "--acquire-max-range-m", "inf"],
+                ["--mission", "follow", "--close-stall-s", "-1"]):
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                vla_fly.parse_cli(ap, bad)
+        except SystemExit as exc:
+            assert exc.code == 2, bad
+            continue
+        raise AssertionError(f"accepted {bad}")
+    a = vla_fly.parse_cli(ap, ["--mission", "follow", "--no-identity", "--no-lock",
+                               "--start-gate-n", "0", "--close-stall-s", "0"])
+    assert a.no_lock and a.start_gate_n == 0 and a.close_stall_s == 0.0
+    # The other missions never read them: no refusal there.
+    assert vla_fly.parse_cli(ap, ["--mission", "goto", "--no-lock"]).no_lock
 
 
 def test_a_close_box_holds_the_follows_horizontal_motion_before_the_shield():
     """MissionLoop close_hold: a fresh close box zeroes the VLA action's
     horizontal velocity (its yaw rate and climb still fly) before the Shield;
-    the row says close_hold, the count goes up; a far box flies as asked."""
+    the row says close_hold, the count goes up; a far box flies as asked.
+
+    Review of d6e7123 (P3): the row's `raw` is what the Shield judged (the
+    held action), and the tracker's own command is kept as `pilot_raw`;
+    `close_box` says the box was close whatever the tracker did; the
+    detector is read ONCE per tick (the close check and the row's box were
+    two reads, which could disagree), and the tick hands that box on
+    (LoopTick.det, the recorder's); pilot_summary counts the held ticks
+    apart from vla_step in its shares. P2-4: a box from before a perception
+    reset (DetectorHint.forget) holds nothing."""
     from guardrail.replay import rail_shield
     from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S
+    from vla_bridge import VLABridge
     shield = rail_shield(load_policy(POLICY), lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
     sim = _Sim()
-
-    class _Be:
-        tracker = None
-        last_link_failure = None
-
-        def __init__(self):
-            self.last_tick = None
-
-        def act(self, state):
-            from guardrail.vla_link import Tick
-            self.last_tick = Tick(Action4D(vx=0.0, vy=2.0, vz_up=0.3, yaw_rate=0.1),
-                                  "vla_step", "translate", 1, 0.2)
-            return self.last_tick.action
+    move = Action4D(vx=0.0, vy=2.0, vz_up=0.3, yaw_rate=0.1)
     box = {"v": None}
+    reads = {"n": 0}
+
+    def det_source():
+        reads["n"] += 1
+        return box["v"]
+    hint = VM.DetectorHint(det_source, VLABridge("a red car", hfov_deg=90.0), fresh_s=1.0)
     mon = VM.MissionMonitor(VM.MonitorConfig(mission="follow", max_s=60.0, lost_timeout_s=90.0),
                             sim.clock())
-    loop = VM.MissionLoop(_Be(), shield, mon, mission="follow",
-                          det_source=lambda: box["v"], clock=sim.clock,
-                          close_hold=VM.BoxClose(0.92, 0.25))
+    loop = VM.MissionLoop(_FixedBackend(move, "vla_step", "translate", 1), shield, mon,
+                          mission="follow", det_source=det_source, detector_hint=hint,
+                          clock=sim.clock, close_hold=VM.BoxClose(0.92, 0.25))
     low = (384.0, 380.0, 100.0, 80.0, 0.3, 768, 432, 0.5)
     far = (384.0, 200.0, 30.0, 20.0, 0.3, 768, 432, 0.5)
     box["v"] = (low, sim.clock() - 0.2, 0.0, sim.clock() - 0.1)
     res = loop.tick(sim.state())
+    assert reads["n"] == 1, reads
     assert res.row["close_hold"] and res.row["raw"]["vy"] == 0.0 and res.row["raw"]["vx"] == 0.0
     assert res.row["raw"]["vz_up"] == 0.3 and res.row["raw"]["yaw_rate"] == 0.1
+    assert res.row["pilot_raw"] == move.model_dump() and res.row["close_box"]
+    assert res.det == low and res.row["det"]["cy"] == 380.0
     assert loop.n_close_hold == 1
+    rows = [res.row]
     box["v"] = (far, sim.clock() - 0.2, 0.0, sim.clock() - 0.1)
     res = loop.tick(sim.state())
+    assert reads["n"] == 2
     assert not res.row["close_hold"] and res.row["raw"]["vy"] == 2.0 and loop.n_close_hold == 1
+    assert not res.row["close_box"] and res.row["pilot_raw"] == res.row["raw"]
+    rows.append(res.row)
+    # A perception reset at t: the close box captured before it holds nothing.
+    sim.step(Action4D())
+    box["v"] = (low, sim.clock() - 0.2, 0.0, sim.clock() - 0.1)
+    hint.forget(sim.clock())
+    res = loop.tick(sim.state())
+    assert not res.row["close_hold"] and not res.row["close_box"] and res.row["raw"]["vy"] == 2.0
+    rows.append(res.row)
+    s = VM.pilot_summary({}, [], rows)
+    assert s["ticks_close_held"] == 1 and s["close_held_tick_share"] == round(1 / 3, 4)
+    assert s["vla_step_tick_share"] == round(2 / 3, 4), s
+    # No close rule (an approach, the other rails): no such row keys, no
+    # such summary keys - their records are unchanged.
+    m = VM.MissionLoop(_FixedBackend(move, "vla_step", "translate", 1), shield,
+                       VM.MissionMonitor(VM.MonitorConfig(mission="approach"), sim.clock()),
+                       mission="approach", det_source=det_source, clock=sim.clock)
+    r = m.tick(sim.state()).row
+    assert not {"close_hold", "close_box", "pilot_raw", "hint_kind"} & set(r)
+    assert "ticks_close_held" not in VM.pilot_summary({}, [], [r])
 
 
 def test_follow_scores_read_the_level_car_truth_rows_only():
+    """follow_scores reads each row's subject_dist_m (the level car's truth,
+    for scoring only). Since the review of d6e7123 (P1-1) "scored" has
+    follow_vlm's meaning (follow_vlm.follow_scored): the truth on at least
+    FOLLOW_TRUTH_MIN_COVERAGE of the ticks - 3 of 4 here is not scored, though
+    the share within 30 m of the ticks that have it is still reported."""
     rows = [{"t": 0.0, "x": 0, "y": 0}, {"t": 0.1, "x": 0, "y": 0, "subject_dist_m": 12.0},
             {"t": 0.2, "x": 0, "y": 0, "subject_dist_m": 45.0},
             {"t": 0.3, "x": 0, "y": 0, "subject_dist_m": 20.0}]
     s = VM.follow_scores(rows)
-    assert s["follow_scored"] and s["ticks_scored"] == 3 and s["ticks"] == 4
-    assert s["frac_within"] == round(2 / 3, 3) and s["within_m"] == 30.0
+    assert not s["follow_scored"] and s["ticks_scored"] == 3 and s["ticks"] == 4
+    assert s["truth_coverage"] == 0.75
+    assert s["frac_within"] == s["frac_within_30m"] == round(2 / 3, 3) and s["within_m"] == 30.0
     assert (s["dist_min_m"], s["dist_median_m"], s["dist_max_m"]) == (12.0, 20.0, 45.0)
     assert s["dist_start_m"] == 12.0 and s["dist_end_m"] == 20.0
+    assert VM.follow_scores(rows[1:])["follow_scored"] is True
     assert VM.follow_scores([{"t": 0.0}]) == {"follow_scored": False, "ticks_scored": 0,
-                                               "ticks": 1}
+                                               "ticks": 1, "truth_coverage": 0.0,
+                                               "frac_within_30m": None}
+    assert VM.follow_scores([])["follow_scored"] is False
+
+
+def test_a_follows_records_say_which_hint_each_decision_came_from():
+    """Review of d6e7123, P2-2: 57-74 % of the decisions of follows #6, #8
+    and #9 came from the remembered sighting or the search turn, and every
+    record called them "detector". With record_kind (the follow's
+    DetectorHint), each request's vla_steps record says fresh / memory /
+    search (`hint_kind`), as does vla_captures.jsonl; each row says the kind
+    of the decision being flown and of the latest hint sent; pilot_summary
+    counts them. The protocol is unchanged: every request still says
+    hint_source "detector" and carries no kind. Closed loop through TCP: a
+    box for 3 s, then none (memory 3 s, search 3 s, then no request)."""
+    from collections import Counter
+    from guardrail.replay import rail_shield
+    from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S
+    from guardrail.vla_backends import make_backend
+    from vla_bridge import VLABridge
+    policy = load_policy(POLICY)
+    sim = _Sim()
+    box = {"v": None}
+
+    def latest():
+        return box["v"] or (None, None, None, None)
+    det_hint = VM.DetectorHint(latest, VLABridge("a red car", hfov_deg=90.0), fresh_s=1.0,
+                               memory_s=3.0, search_s=3.0, record_kind=True)
+    hint = VM.HintSource(det_hint, "detector")
+    srv = F.FakeVLAServer(_with_model(lambda req: F.step_reply(req, 1.0, 0.0, 0.0), REAL_MODEL),
+                          model=REAL_MODEL)
+    srv.start()
+    frames = VM.VLAFrames(SimpleNamespace())
+    try:
+        client = RemoteVLA("127.0.0.1", srv.port, response_timeout_s=2.0,
+                           reconnect_backoff_s=0.5, strict_identity=True, clock=sim.clock)
+        be = make_backend("aerovla", None, policy, get_capture=sim.capture, get_hint=hint,
+                          client=client, object_text="a red car", cadence="pipelined",
+                          tracker_config=TrackerConfig(), clock=sim.clock,
+                          on_submit=frames.commit)
+        shield = rail_shield(policy, lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
+        mon = VM.MissionMonitor(VM.MonitorConfig(mission="follow", max_s=60.0,
+                                                 lost_timeout_s=90.0), sim.clock())
+        loop = VM.MissionLoop(be, shield, mon, mission="follow", det_source=latest,
+                              hint_source=hint, detector_hint=det_hint, clock=sim.clock,
+                              close_hold=VM.BoxClose(0.92, 0.25))
+        far = (384.0, 200.0, 30.0, 20.0, 0.3, 768, 432, 0.5)
+        rows = []
+        while sim.t < 9.0:
+            box["v"] = ((far, sim.t - 0.1, sim.yaw, sim.t - 0.05) if sim.t < 3.0 else None)
+            res = loop.tick(sim.state())
+            rows.append(res.row)
+            be.client.wait_idle(3.0)
+            sim.step(res.flown)
+        be.close()
+    finally:
+        srv.stop()
+    recs = [r for r in be.records if r.get("kind") == "step"]
+    kinds = Counter(r.get("hint_kind") for r in recs)
+    assert {"fresh", "memory", "search"} <= set(kinds) and None not in kinds, kinds
+    assert all(r["hint_source"] == "detector" for r in recs)
+    assert srv.requests and all(q["hint_source"] == "detector" and "hint_kind" not in q
+                                for q in srv.requests)
+    by_seq = {r["seq"]: r for r in be.records}
+    flown = [r for r in rows if r["vla_seq"] is not None]
+    assert flown and all(r["hint_kind"] == by_seq[r["vla_seq"]].get("hint_kind") for r in flown)
+    assert {r["hint_sent_kind"] for r in rows} >= {"fresh", "memory", "search"}
+    s = VM.pilot_summary(be.stats(), list(be.records), rows)
+    assert s["hint_kind_counts"]["memory"] == kinds["memory"], s["hint_kind_counts"]
+    assert {c.get("hint_kind") for c in frames.log} >= {"fresh", "memory", "search"}
+    # Without record_kind (an approach; the ArduPilot rail's DetectorHint) no
+    # kind anywhere.
+    plain = VM.DetectorHint(latest, VLABridge("a red car", hfov_deg=90.0), fresh_s=1.0)
+    box["v"] = (far, 99.9, 0.0, 99.95)
+    h = plain(Capture(100.0, Pose(0.0, 0.0, 10.0, 0.0), JPG, JPG))
+    assert h is not None and h.kind is None
+    assert "hint_kind_counts" not in VM.pilot_summary({}, [{"kind": "step"}], [])
+
+
+def test_a_land_held_as_arrival_is_not_recorded_as_a_landing_the_vla_asked_for():
+    """Review of d6e7123, P2-6: follows #6 and #9 ended on time, yet their
+    land record said requested_by_vla true with no time - the model's LAND
+    that land_as_arrival HELD read as a landing. Now land_record says no
+    landing was requested and counts the held ones (land_as_arrival, held
+    true, the first one's seq and time); pilot_summary's land_accepted counts
+    only LANDs that landed, land_as_arrival the held ones, and the hold
+    ticks (reason land_as_arrival) stay VLA-authored: the model chose to
+    stop. A real LAND (goto) is recorded exactly as before."""
+    held = {"seq": 7, "kind": "land", "accepted": True, "land_as_arrival": True,
+            "phrase": "straight ahead ", "hint_source": "detector",
+            "pose_capture": {"x": 50.0, "y": 0.0, "up": 10.0, "yaw_rad": 0.0}}
+    rows = [{"t": 0.0, "author": "vla_step", "author_reason": "translate", "land_requested": False},
+            {"t": 0.1, "author": "hold", "author_reason": "land_as_arrival", "vla_seq": 7,
+             "land_requested": False},
+            {"t": 0.2, "author": "hold", "author_reason": "land_as_arrival", "vla_seq": 7,
+             "land_requested": False},
+            {"t": 0.3, "author": "hover", "author_reason": "no_new_decision",
+             "land_requested": False}]
+    lr = VM.land_record(rows, [held])
+    assert lr["requested_by_vla"] is False, lr
+    a = lr["land_as_arrival"]
+    assert a["count"] == 1 and a["held"] is True and a["first_seq"] == 7 and a["first_t_s"] == 0.1
+    s = VM.pilot_summary({}, [held], rows)
+    assert s["land"] == 1 and s["land_accepted"] == 0 and s["land_as_arrival"] == 1, s
+    assert s["vla_authored_tick_share"] == 0.75, s
+    real = dict(held, land_as_arrival=None)
+    real.pop("land_as_arrival")
+    lr = VM.land_record([{"t": 4.2, "land_requested": True}], [real], (50.0, 3.0))
+    assert lr == {"requested_by_vla": True, "seq": 7, "phrase": "straight ahead ",
+                  "hint_source": "detector", "with_hint": True,
+                  "pose_capture": real["pose_capture"], "dist_to_goal_m": 3.0, "t_s": 4.2}, lr
+    s = VM.pilot_summary({}, [real], [])
+    assert s["land_accepted"] == 1 and "land_as_arrival" not in s
+
+
+def test_a_follow_whose_gate_never_opened_is_not_a_vla_failure():
+    """Review of d6e7123, P2-7: a follow whose start gate never let a request
+    out (or whose box was close from the start) ended no_first_decision,
+    vla_failure true, exit 3 - blaming a model nothing was asked. With no
+    request ever sent it ends `subject_not_acquired`, not a VLA failure;
+    a request sent and never answered is still no_first_decision; goto and
+    approach keep their rule."""
+    cfg = VM.MonitorConfig(mission="follow", max_s=500.0, lost_timeout_s=300.0,
+                           first_decision_timeout_s=10.0)
+    box = (384.0, 200.0, 30.0, 20.0, 0.3, 768, 432, 0.5)
+    m = VM.MissionMonitor(cfg, 0.0)
+    nd = _tick("none", "no_decision", None, None)
+    for k in range(99):
+        assert m.update(0.1 * k, FAR, nd, det=box, det_age_s=0.2, requests_sent=0) is None
+    assert m.update(10.0, FAR, nd, det=box, det_age_s=0.2, requests_sent=0) == "subject_not_acquired"
+    s = m.summary()
+    assert not s["vla_failure"] and s["requests_sent"] == 0 and "subject_not_acquired" in VM.END_REASONS
+    assert "subject_not_acquired" not in VM.VLA_FAILURE_ENDS
+    m = VM.MissionMonitor(cfg, 0.0)
+    assert m.update(10.0, FAR, nd, det=box, det_age_s=0.2, requests_sent=2) == "no_first_decision"
+    m = VM.MissionMonitor(cfg, 0.0)                    # a caller that cannot say: as before
+    assert m.update(10.0, FAR, nd, det=box, det_age_s=0.2) == "no_first_decision"
+    g = VM.MissionMonitor(VM.MonitorConfig(mission="goto", first_decision_timeout_s=10.0), 0.0)
+    assert g.update(10.0, FAR, nd, goal_xy=(500.0, 500.0), requests_sent=0) == "no_first_decision"
+    assert "requests_sent" not in VM.MissionMonitor(cfg, 0.0).summary()
+    # MissionLoop reads the count from the backend (RemoteVLABackend.counts).
+    from guardrail.replay import rail_shield
+    from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S
+    shield = rail_shield(load_policy(POLICY), lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
+    sim = _Sim()
+    mon = VM.MissionMonitor(cfg, sim.clock())
+    loop = VM.MissionLoop(_FixedBackend(requests=0), shield, mon, mission="follow",
+                          det_source=lambda: (box, sim.clock() - 0.2), clock=sim.clock)
+    end = None
+    while end is None:
+        end = loop.tick(sim.state()).end_reason
+        sim.step(Action4D())
+    assert end == "subject_not_acquired" and sim.t <= 10.2, (end, sim.t)
+
+
+class _FixedBackend:
+    """A backend whose every act() is the same tick (MissionLoop needs act,
+    last_tick, tracker and last_link_failure; `counts` like RemoteVLABackend's
+    when `requests` is given)."""
+
+    def __init__(self, action=None, author="none", reason="no_decision", seq=None,
+                 requests=None):
+        self.tracker = None
+        self.last_link_failure = None
+        self.tick_ = Tick(action or Action4D(), author, reason, seq, None if seq is None else 0.2)
+        self.last_tick = None
+        if requests is not None:
+            from collections import Counter
+            self.counts = Counter(requests=requests) if requests else Counter()
+
+    def act(self, state):
+        self.last_tick = self.tick_
+        return self.tick_.action
+
+
+def _follow_rows(dist_of, n=60, box=(384.0, 200.0, 30.0, 20.0, 0.3, 768, 432, 0.5)):
+    """`n` rows of a follow through the real MissionLoop and the real Shield
+    over the CityLife policy (a hovering backend at the mission start), each
+    given subject_dist_m = dist_of(k) as vla_fly adds it after loop.tick
+    (None: no truth on that tick)."""
+    from guardrail.replay import rail_shield
+    from guardrail.shield import LOOKAHEAD_DT_S, LOOKAHEAD_S
+    shield = rail_shield(load_policy(POLICY), lookahead_s=LOOKAHEAD_S, dt=LOOKAHEAD_DT_S)
+    sim = _Sim()
+    mon = VM.MissionMonitor(VM.MonitorConfig(mission="follow", max_s=600.0, lost_timeout_s=90.0),
+                            sim.clock())
+    loop = VM.MissionLoop(_FixedBackend(), shield, mon, mission="follow",
+                          det_source=lambda: (box, sim.clock() - 0.2), clock=sim.clock)
+    rows = []
+    for k in range(n):
+        res = loop.tick(sim.state())
+        d = dist_of(k)
+        if d is not None:
+            res.row["subject_xy"] = [50.0, -18.0]
+            res.row["subject_dist_m"] = d
+        rows.append(res.row)
+        sim.step(res.flown)
+    return rows
+
+
+def test_a_follow_publishes_its_score_where_kpi_and_the_dashboard_read_it():
+    """Review of d6e7123, P1-1: vla_fly put the follow's score under
+    metrics["follow"] only; guardrail/kpi.py reads frac_within_30m and
+    follow_scored at the TOP of metrics (kpi.compute), found neither and
+    applied no follow test, so all nine VLA follows of 23 Oct wrote kpi.json
+    with mission_success true - #2 and #3 with 0.0 of their ticks within
+    30 m. follow_kpi_fields lifts the two, with follow_vlm's meaning: a
+    subject kept beyond 30 m fails kpi's own 5 % rule (follow_proxy), one kept
+    close succeeds, and truth on too few ticks is not scored (mission_success
+    None, follow_not_scored). tools/build_dashboard.py reads the same key."""
+    import follow_vlm as FV
+    import build_dashboard as BD
+    assert VM.FOLLOW_TRUTH_MIN_COVERAGE == FV.FOLLOW_TRUTH_MIN_COVERAGE
+    policy = load_policy(POLICY)
+    manifest = VM.manifest_for(policy.policy_hash, REAL_MODEL, 7, CFG / "scene_vla_det.jsonc")
+    cases = (("near", lambda k: 12.0, True, None),
+             ("far", lambda k: 45.0, False, "follow_proxy"),
+             ("thin", lambda k: 12.0 if k % 10 else None, None, "follow_not_scored"))
+    for name, dist_of, want, reason in cases:
+        rows = _follow_rows(dist_of)
+        fs = VM.follow_scores(rows)
+        top = VM.follow_kpi_fields(fs)
+        assert set(top) == {"frac_within_30m", "follow_scored"}, top
+        metrics = {"tag": f"vla_follow_{name}", "shield": "on", "nfz_s": 0.0,
+                   "alt_violation_s": 0.0, "end_reason": "timeout", "aborted": None,
+                   "mission": {"kind": "follow"}, **top, "follow": fs}
+        out = _tmp() / f"vla_follow_{name}"
+        out.mkdir()
+        k = VM.finish_run(out, rows, metrics, manifest, policy)
+        assert k["mission_success"] is want, (name, k["mission_success"], k["mission_fail_reasons"])
+        if reason is None:
+            assert k["mission_fail_reasons"] == [], (name, k["mission_fail_reasons"])
+        else:
+            assert reason in k["mission_fail_reasons"], (name, k["mission_fail_reasons"])
+        assert k["mission_goal_status"] == "undeclared"
+        stored = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+        assert stored["frac_within_30m"] == fs["frac_within_30m"]
+        assert stored["follow_scored"] is fs["follow_scored"]
+        assert BD.flight_record(ROOT, out)["frac_within_30m"] == fs["frac_within_30m"], name
+    # The share kpi reads is the one follow_vlm writes: within 30 m over the
+    # ticks with truth, rounded as follow_vlm rounds it.
+    assert VM.follow_kpi_fields(VM.follow_scores(_follow_rows(lambda k: 12.0 if k < 15 else 45.0,
+                                                              n=20))) == {
+        "frac_within_30m": 0.75, "follow_scored": True}
+
+
+def _flown_follow_as_d6e7123_recorded_it(name: str, dist_of) -> tuple[Path, list[dict]]:
+    """A follow run folder written the way vla_fly wrote it at d6e7123: the
+    follow's score only under metrics["follow"] (its old keys), the policy
+    source a YAML path, kpi.json from VM.finish_run over those metrics."""
+    policy = load_policy(POLICY)
+    rows = _follow_rows(dist_of)
+    d = [r["subject_dist_m"] for r in rows if r.get("subject_dist_m") is not None]
+    old_follow = {"follow_scored": bool(d), "ticks_scored": len(d), "ticks": len(rows),
+                  "within_m": 30.0, "frac_within": round(sum(x <= 30 for x in d) / len(d), 3),
+                  "level_car": "Car_10"}
+    out = _tmp() / name
+    out.mkdir()
+    metrics = {"tag": name, "shield": "on", "nfz_s": 0.0, "alt_violation_s": 0.0,
+               "end_reason": "timeout", "aborted": None, "interrupted": False,
+               "mission": {"kind": "follow", "level_car": "Car_10"}, "reached_goal": None,
+               "follow": old_follow, "params": {"cadence": "pipelined"},
+               "policy_source": {"kind": "yaml", "path": str(POLICY),
+                                 "loaded_policy_hash": policy.policy_hash,
+                                 "signature": "unsigned"}}
+    manifest = VM.manifest_for(policy.policy_hash, REAL_MODEL, 7, CFG / "scene_vla_det.jsonc")
+    VM.write_jsonl(out / "flight_log.jsonl", rows)
+    VM.finish_run(out, rows, metrics, manifest, policy)
+    return out, rows
+
+
+def test_the_rescore_tool_gives_a_flown_follow_the_kpi_it_should_have_had():
+    """tools/rescore_vla_follow.py: the nine follows flown on 23 Oct carry
+    the P1-1 records (kpi.json mission_success true for a subject 45 m away).
+    The tool re-reads each run's flight_log.jsonl, publishes the follow's
+    score at the top of metrics.json (follow_vlm's meaning), recomputes
+    kpi.json against the run's own policy (its hash checked) and refuses to
+    write unless the stored P0 figures come back unchanged; the superseded
+    values are kept under `rescore`. A dry run writes nothing; a second run
+    changes nothing; a run that is not a follow is refused."""
+    import rescore_vla_follow as RS
+    out, rows = _flown_follow_as_d6e7123_recorded_it("vla_follow_redcar_far", lambda k: 45.0)
+    k_old = json.loads((out / "kpi.json").read_text(encoding="utf-8"))
+    assert k_old["mission_success"] is True                   # the record P1-1 is about
+    before = {p.name: p.read_bytes() for p in out.iterdir() if p.is_file()}
+    rep = RS.rescore(out, write=False, rebundle=False)
+    assert rep["status"] == "would_change" and rep["kpi"]["mission_success"] == [True, False], rep
+    assert {p.name: p.read_bytes() for p in out.iterdir() if p.is_file()} == before
+    rep = RS.rescore(out, rebundle=False)
+    assert rep["status"] == "rescored", rep
+    k = json.loads((out / "kpi.json").read_text(encoding="utf-8"))
+    m = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+    assert k["mission_success"] is False and "follow_proxy" in k["mission_fail_reasons"]
+    assert m["frac_within_30m"] == 0.0 and m["follow_scored"] is True
+    assert m["follow"]["frac_within_30m"] == 0.0 and m["follow"]["truth_coverage"] == 1.0
+    assert m["follow"]["level_car"] == "Car_10"               # what the flight recorded stays
+    for f in ("p0_violation_escape_rate", "p0_escapes", "p0_violation_ticks"):
+        assert k[f] == k_old[f], f
+    sup = m["rescore"]
+    assert sup["tool"] == "tools/rescore_vla_follow.py" and "P1-1" in sup["why"]
+    assert sup["superseded"]["kpi"]["mission_success"] is True
+    assert sup["superseded"]["metrics"]["frac_within_30m"] is None
+    assert k["rescore"]["superseded"]["mission_success"] is True
+    assert b"\r\n" not in (out / "metrics.json").read_bytes()
+    assert RS.rescore(out, rebundle=False)["status"] == "unchanged"
+    near, _ = _flown_follow_as_d6e7123_recorded_it("vla_follow_redcar_near", lambda k: 12.0)
+    rep = RS.rescore(near, rebundle=False)
+    assert rep["status"] == "rescored" and rep["kpi"]["mission_success"] == [True, True], rep
+    goto, _ = _flown_follow_as_d6e7123_recorded_it("vla_goto_x", lambda k: 12.0)
+    m = json.loads((goto / "metrics.json").read_text(encoding="utf-8"))
+    m["mission"]["kind"] = "goto"
+    VM.write_json(goto / "metrics.json", m)
+    assert RS.rescore(goto, rebundle=False)["status"] == "refused"
+    # Another policy than the run's: refused, nothing written.
+    other = ROOT / "policies" / "follow_car_citylife.yaml"
+    before = (near / "kpi.json").read_bytes()
+    assert RS.rescore(near, policy_path=other, rebundle=False)["status"] == "refused"
+    assert (near / "kpi.json").read_bytes() == before
+    # The replay bundle is re-written over the re-scored records and still
+    # re-derives them; the as-flown bundle is kept beside it.
+    from guardrail.replay import write_replay
+    b, _ = _flown_follow_as_d6e7123_recorded_it("vla_follow_redcar_b", lambda k: 45.0)
+    write_replay(b, load_policy(POLICY), b / "vla_follow_redcar_b.replay.tar.gz",
+                 changelog="VLA flight vla_follow_redcar_b")
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()) as said:
+        assert RS.main([str(b), "--dry-run"]) == 0
+        assert RS.main([str(goto)]) == 1                         # refused: exit 1
+    assert '"would_change"' in said.getvalue() and '"refused"' in said.getvalue()
+    rep = RS.rescore(b)
+    assert rep["status"] == "rescored" and rep["replay"]["verified"], rep
+    assert rep["replay"]["as_flown_kept"] == "vla_follow_redcar_b.replay.tar.gz.pre-rescore"
+    assert (b / "vla_follow_redcar_b.replay.tar.gz.pre-rescore").is_file()
 
 
 def test_the_follow_cli_defaults_to_the_red_car_of_the_city_follow():
@@ -1616,6 +2446,16 @@ def test_the_launcher_assembles_the_arguments_the_flight_parses():
         assert a.cadence == ("pipelined" if "pipelined" in text else "stop_and_go")
     r, got = _launch("-Mission goto -Tag t6 -Goal 43,100", file_mode=True)
     assert r.returncode == 0 and got[got.index("--goal") + 1] == "43,100", (got, r.stderr)
+    # -ExtraArgs (d6e7123; review test gap): handed on as given, after the
+    # rest, and the flight's parser reads them.
+    r, got = _launch("-Mission follow -Tag t7 -ExtraArgs '--follow-memory-s','4',"
+                     "'--close-stall-s','5','--no-stuck-reset'")
+    assert r.returncode == 0, r.stderr[-1500:]
+    assert got[-5:] == ["--follow-memory-s", "4", "--close-stall-s", "5", "--no-stuck-reset"], got
+    a = vla_fly.parse_cli(vla_fly.build_arg_parser(), got[1:] + ["--dev-yaml"])
+    assert a.mission == "follow" and a.follow_memory_s == 4.0 and a.close_stall_s == 5.0
+    assert a.no_stuck_reset and a.tag == "t7"
+    assert "passed to demo\\vla_fly.py" in src and "demola_fly" not in src
     for bad in ("-Goal 43", "-Goal '1,000,5'", "-Goal 'a,b'", "-Mission approach -ParkAt '48;12'"):
         r, got = _launch(bad)
         assert r.returncode != 0 and "is not X,Y" in (r.stderr + r.stdout), (bad, r.stdout,
