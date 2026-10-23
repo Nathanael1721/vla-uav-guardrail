@@ -7,6 +7,10 @@ from the client.
     python demo/vla_server_v2.py serve --precision bf16 --attn sdpa --no-merge   # fidelity
     python demo/vla_server_v2.py serve --precision nf4 --attn sdpa --merge       # low VRAM
     python demo/vla_server.py --v2 serve ...                  # the same, via the old entry point
+    # a follow fine-tune instead of upstream's adapter (training/
+    # finetune_aerialvla_follow.py); the identity names it (id, adapter)
+    python demo/vla_server_v2.py serve --precision bf16 --attn sdpa --no-merge \
+        --adapter D:/models/aerialvla-ft-follow/<run>/epoch<N>
 
     # a scripted stand-in for client development (no torch, no GPU, never a VLA)
     python demo/vla_server_v2.py serve --fake-output "96 48 49</s>" "00 49 49 LAND</s>"
@@ -306,21 +310,86 @@ def weights_sha256(paths: list[Path], sidecar: Path = SIDECAR_DEFAULT,
     return digest, info
 
 
+def read_adapter_provenance(adapter: str | Path | None) -> dict | None:
+    """The provenance file training/finetune_aerialvla_follow.py writes into
+    every checkpoint (aerialvla_codec.ADAPTER_PROVENANCE_FILE), or None when
+    there is none or it does not read as a fine-tune's: a dict naming its
+    `run` and `epoch` (both plain names, no path separator) under one of
+    aerialvla_codec.FINE_TUNE_ID_ROOTS."""
+    if not adapter:
+        return None
+    p = Path(adapter) / C.ADAPTER_PROVENANCE_FILE
+    try:
+        prov = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(prov, dict):
+        return None
+    root, run, epoch = prov.get("id_root"), prov.get("run"), prov.get("epoch_dir")
+    ok = (root in C.FINE_TUNE_ID_ROOTS and all(
+        isinstance(v, str) and v and not any(c in v for c in "/\\@:") for v in (run, epoch)))
+    return prov if ok else None
+
+
+def adapter_identity(adapter: str | Path | None, digest: str | None) -> dict[str, Any] | None:
+    """What the identity says about the ADAPTER (2026-10-23, the follow
+    fine-tune): its path, the SHA-256 over its own files (`digest`:
+    guardrail.manifest.weights_digest of the adapter directory alone - the
+    whole-model weights_sha256 covers base + adapter), its variant
+    ("original" / "fine-tune" / "other") and, for a fine-tune, what it was
+    trained from (the provenance file's parent adapter and digest, data and
+    epoch). None without an adapter. A flight records it from hello, so
+    which adapter flew is on file even where the weights cannot be read."""
+    if not adapter:
+        return None
+    a = Path(adapter)
+    prov = read_adapter_provenance(a)
+    out: dict[str, Any] = {"path": a.as_posix(), "sha256": digest, "provenance": None}
+    if prov is not None:
+        out["variant"] = "fine-tune"
+        out["provenance"] = {k: prov.get(k) for k in (
+            "id_root", "run", "epoch", "epoch_dir", "parent_adapter", "parent_adapter_sha256",
+            "base", "data", "samples_sha256", "precision", "created_utc")}
+    elif a.name == Path(DEFAULT_ADAPTER).name and a.parent.name == Path(DEFAULT_ADAPTER).parent.name:
+        out["variant"] = "original"
+    else:
+        out["variant"] = "other"
+    return out
+
+
 def model_identity(base: str | Path, adapter: str | Path | None, precision: str, attn: str,
                    merged: bool, digest: str | None,
-                   agreement: dict | None = None) -> dict[str, Any]:
+                   agreement: dict | None = None,
+                   adapter_info: dict | None = None) -> dict[str, Any]:
     """The `model` object every response carries (brief: id, base,
     weights_sha256, precision, attn, merged), plus `agreement`
-    (measured_agreement; None when not given). Clients compare the brief's
-    six fields and allow the rest (guardrail/vla_link.py check_identity)."""
+    (measured_agreement; None when not given) and, when given, `adapter`
+    (adapter_identity). Clients compare the brief's six fields and allow the
+    rest (guardrail/vla_link.py check_identity).
+
+    The id names the adapter. Upstream's: "<parent>/<name>@<HF revision>"
+    ("aerialvla-lora/aero_vla@196f2f32"). A fine-tune written by
+    training/finetune_aerialvla_follow.py (its provenance file present):
+    "<id_root>/<run>/<epoch_dir>@<first 8 hex of the adapter's own sha256>"
+    ("aerialvla-ft-follow/r1/epoch2@1a2b3c4d"), which tools/todo.py accepts
+    as a VLA by that prefix (aerialvla_codec.adapter_variant) and records as
+    a fine-tune - never under upstream's name."""
     def rev8(p):
         r = local_hf_revision(p) if p and Path(p).exists() else None
         return r[:8] if r else "unknown"
     a = Path(adapter) if adapter else None
     aid = f"{a.parent.name}/{a.name}@{rev8(a)}" if a else "none"
-    return {"id": aid, "base": f"{Path(base).name}@{rev8(base)}",
-            "weights_sha256": digest, "precision": precision, "attn": attn,
-            "merged": bool(merged), "agreement": agreement}
+    prov = read_adapter_provenance(a) if a else None
+    if prov is not None:
+        sha = (adapter_info or {}).get("sha256")
+        aid = (f"{prov['id_root']}/{prov['run']}/{prov['epoch_dir']}@"
+               f"{sha[:8] if isinstance(sha, str) and sha else 'unhashed'}")
+    out = {"id": aid, "base": f"{Path(base).name}@{rev8(base)}",
+           "weights_sha256": digest, "precision": precision, "attn": attn,
+           "merged": bool(merged), "agreement": agreement}
+    if adapter_info is not None:
+        out["adapter"] = adapter_info
+    return out
 
 
 def _cfg_name(precision: str, attn: str, merged: bool) -> str:
@@ -385,12 +454,14 @@ def measured_agreement(precision: str, attn: str, merged: bool, weights_sha256: 
 
 def serving_identity(base: str | Path, adapter: str | Path | None, precision: str, attn: str,
                      merged: bool, digest: str | None,
-                     serving_json: Path = SERVING_JSON) -> dict[str, Any]:
+                     serving_json: Path = SERVING_JSON,
+                     adapter_info: dict | None = None) -> dict[str, Any]:
     """model_identity with the configuration's measured agreement: what a
     real server announces (build_real)."""
     return model_identity(base, adapter, precision, attn, merged, digest,
                           agreement=measured_agreement(precision, attn, merged, digest,
-                                                       serving_json))
+                                                       serving_json),
+                          adapter_info=adapter_info)
 
 
 def configuration_table(path: Path = SERVING_JSON) -> str:
@@ -424,6 +495,47 @@ def configuration_table(path: Path = SERVING_JSON) -> str:
 # --------------------------------------------------------------------------- #
 # The model (vla-real: torch, transformers, peft, bitsandbytes)
 # --------------------------------------------------------------------------- #
+def generate_text(model, tok, imgproc, mosaic, prompt: str, *, device: str,
+                  max_new_tokens: int, eos_id: int, pad_id: int,
+                  autocast_dtype: Any = None) -> dict[str, Any]:
+    """ONE inference, the server's way: the prompt through the tokenizer as
+    is (its BOS added, nothing appended), the 224x448 mosaic through the
+    Prismatic processor, greedy generate up to max_new_tokens stopping at
+    EOS, and the NEW tokens decoded with their special tokens (so a text
+    that ends without "</s>" ran out of tokens; parse_action(require_eos)).
+    AerialVLAModel.generate is this; so is the follow fine-tune's held-out
+    evaluation (training/finetune_aerialvla_follow.py), which passes
+    `autocast_dtype` because it holds the LoRA weights in fp32 for the
+    optimizer - the only difference from serving, and the reason
+    tools/eval_vla_adapter.py, which serves the saved checkpoint through
+    this server's own core, is the measurement to quote."""
+    import torch
+    t0 = time.perf_counter()
+    enc = tok(prompt, return_tensors="pt")
+    pv = imgproc(images=mosaic, return_tensors="pt")["pixel_values"]
+    n_prompt = int(enc["input_ids"].shape[1])
+    t1 = time.perf_counter()
+    with torch.inference_mode():
+        kw = dict(input_ids=enc["input_ids"].to(device),
+                  attention_mask=enc["attention_mask"].to(device),
+                  pixel_values=pv.to(device, dtype=torch.bfloat16),
+                  max_new_tokens=max_new_tokens, do_sample=False,
+                  eos_token_id=[eos_id], pad_token_id=pad_id)
+        if autocast_dtype is not None:
+            with torch.autocast(device_type=str(device).split(":", 1)[0], dtype=autocast_dtype):
+                out = model.generate(**kw)
+        else:
+            out = model.generate(**kw)
+    if str(device).startswith("cuda"):
+        torch.cuda.synchronize()
+    t2 = time.perf_counter()
+    gen = out[0, n_prompt:]
+    raw = tok.decode(gen, skip_special_tokens=False)
+    t3 = time.perf_counter()
+    return {"raw_text": raw, "new_tokens": int(gen.shape[0]), "prompt_tokens": n_prompt,
+            "pre_s": t1 - t0, "gen_s": t2 - t1, "model_s": t3 - t0}
+
+
 class AerialVLAModel:
     """OpenVLA-7B + the AerialVLA LoRA, loaded once. `generate(mosaic, prompt)`
     is the whole model step; nothing here decides what the text means.
@@ -480,26 +592,9 @@ class AerialVLAModel:
         self.pad_id = self.tok.pad_token_id
 
     def generate(self, mosaic, prompt: str) -> dict[str, Any]:
-        torch = self.torch
-        t0 = time.perf_counter()
-        enc = self.tok(prompt, return_tensors="pt")
-        pv = self.imgproc(images=mosaic, return_tensors="pt")["pixel_values"]
-        n_prompt = int(enc["input_ids"].shape[1])
-        t1 = time.perf_counter()
-        with torch.inference_mode():
-            out = self.model.generate(
-                input_ids=enc["input_ids"].to(self.device),
-                attention_mask=enc["attention_mask"].to(self.device),
-                pixel_values=pv.to(self.device, dtype=torch.bfloat16),
-                max_new_tokens=self.max_new_tokens, do_sample=False,
-                eos_token_id=[self.eos_id], pad_token_id=self.pad_id)
-        torch.cuda.synchronize()
-        t2 = time.perf_counter()
-        gen = out[0, n_prompt:]
-        raw = self.tok.decode(gen, skip_special_tokens=False)
-        t3 = time.perf_counter()
-        return {"raw_text": raw, "new_tokens": int(gen.shape[0]), "prompt_tokens": n_prompt,
-                "pre_s": t1 - t0, "gen_s": t2 - t1, "model_s": t3 - t0}
+        return generate_text(self.model, self.tok, self.imgproc, mosaic, prompt,
+                             device=self.device, max_new_tokens=self.max_new_tokens,
+                             eos_id=self.eos_id, pad_id=self.pad_id)
 
     def save_merged(self, out_dir: str | Path, provenance: dict) -> Path:
         """Write the merged bf16 model (safetensors), its tokenizer and image
@@ -946,10 +1041,19 @@ def build_real(args) -> tuple[AerialVLAModel, dict, dict]:
         raise SystemExit(f"weights_sha256 did not resolve over {[str(p) for p in paths]}: a "
                          f"named weight is missing or unreadable; refusing to serve an "
                          f"unidentified model")
+    # The adapter's own digest (its files alone), so a flight records WHICH
+    # adapter flew, not only that the whole model's bytes changed: a
+    # fine-tune and the original differ in weights_sha256 and in this
+    # (adapter_identity; the follow fine-tune, 2026-10-23).
+    a_info = None
+    if args.adapter:
+        a_digest, _ = weights_sha256([Path(args.adapter)], Path(args.digest_sidecar),
+                                     rehash=args.rehash)
+        a_info = adapter_identity(args.adapter, a_digest)
     model = AerialVLAModel(args.base, args.adapter, precision=args.precision, attn=args.attn,
                            merge=args.merge, max_new_tokens=args.max_new_tokens)
     ident = serving_identity(args.base, args.adapter, args.precision, args.attn, model.merged,
-                             digest)
+                             digest, adapter_info=a_info)
     facts = {"max_new_tokens": model.max_new_tokens, "load": model.timing,
              "digest": dinfo, "weight_files": [p.as_posix() for p in paths],
              "libraries": library_versions(), "protocol": C.PROTOCOL_VERSION}
@@ -1100,7 +1204,11 @@ def _add_model_args(ap: argparse.ArgumentParser) -> None:
     # --no-merge; the measured low-VRAM option --precision nf4 --attn sdpa
     # --merge.
     ap.add_argument("--base", default=DEFAULT_BASE)
-    ap.add_argument("--adapter", default=DEFAULT_ADAPTER)
+    ap.add_argument("--adapter", default=DEFAULT_ADAPTER,
+                    help="the LoRA directory (default upstream's aero_vla). A checkpoint of "
+                         "training/finetune_aerialvla_follow.py is announced under its own id "
+                         "(aerialvla-ft-follow/<run>/<epoch>@<adapter sha8>) with an `adapter` "
+                         "block: path, sha256 over its files, variant, provenance")
     ap.add_argument("--precision", choices=PRECISIONS, default=None,
                     help="REQUIRED for a real model: nf4 (4-bit) or bf16 (upstream's)")
     ap.add_argument("--attn", choices=ATTNS, default=None,

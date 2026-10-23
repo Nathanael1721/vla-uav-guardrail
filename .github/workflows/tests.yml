@@ -53,11 +53,16 @@
 #          mission state machine, records, configs, server lifecycle and
 #          launcher with a point vehicle; its whole flight path against a
 #          fake projectairsim module, lab-only: it SKIPs here, where no job
-#          installs OpenCV or Pillow; and the offline replay gate),
-#          test_aerialvla_codec (AerialVLA's prompt, vocabulary,
-#          mosaic and strict output reader), and test_pas_vla (the
-#          ArduPilot rail's AerialVLA pilot, perception_node --pilot vla,
-#          and its VLA cameras, on that rail's stand-ins against the
+#          installs OpenCV or Pillow; the offline replay gate; and the
+#          follow's step-tracker smoothing with the motion comparison,
+#          tools/compare_motion.py), test_finetune_follow (the follow
+#          fine-tune's format-exact encoding, held-out metrics, checkpoint
+#          identity and adapter evaluation tool; its Pillow, torch and
+#          real-tokenizer checks SKIP here), test_aerialvla_codec (AerialVLA's
+#          prompt, vocabulary, mosaic and strict output reader), and
+#          test_pas_vla (the ArduPilot rail's AerialVLA pilot,
+#          perception_node --pilot vla, and its VLA cameras, on that rail's
+#          stand-ins against the
 #          loopback fake server; its Pillow drawing check and its CityLife
 #          map check SKIP here). test_follow_dataset (the follow expert's
 #          AerialVLA recording, demo/vla_record.py and follow_vlm
@@ -254,7 +259,12 @@
 #          test_vla_backend_table's CPU-only row; and the D:/models folders
 #          for 1 of test_vla_server's 32 tests (the revisions of the real
 #          checkpoints); and Pillow again, for 1 of test_pas_vla's 29 tests
-#          (the VLA panel drawn on the ArduPilot rail's frames).
+#          (the VLA panel drawn on the ArduPilot rail's frames); and Pillow,
+#          torch, transformers and the D:/models tokenizer, for 4 of
+#          test_finetune_follow's 15 tests (collate, the evaluation tool's
+#          requests through the server, the training loop on a CPU stand-in
+#          model, the real tokenizer and processor against the server's
+#          preprocessing; all four run in the vla-real env).
 #        - Pillow for the AerialVLA image path: 3 of test_aerialvla_codec's
 #          20 tests (the mosaic, the JPEG frames, a frame claiming too many
 #          pixels) and 1 of test_vla_server's 32 (real frames through the
@@ -546,6 +556,8 @@ jobs:
               tests/test_vla_fly.py \
               tests/test_vla_fly_fakesim.py \
               tests/test_vla_replay_gate.py \
+              tests/test_vla_follow_smooth.py \
+              tests/test_finetune_follow.py \
               tests/test_pas_vla.py \
               tests/test_follow_dataset.py \
               tests/test_citylife_peds.py \

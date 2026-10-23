@@ -733,6 +733,50 @@ class ProtocolError(CodecError):
     """A request protocol v2 refuses."""
 
 
+# --------------------------------------------------------------------------- #
+# Which adapter answered: the original, or one of our fine-tunes (2026-10-23)
+# --------------------------------------------------------------------------- #
+# The server's model id names its adapter: "aerialvla-lora/aero_vla@<rev>"
+# for upstream's own LoRA (D:/models/aerialvla-lora/aero_vla), and since the
+# follow fine-tune (training/finetune_aerialvla_follow.py)
+# "aerialvla-ft-follow/<run>/<epochN>@<first 8 hex of the adapter's sha256>"
+# for a checkpoint that trainer wrote: it leaves ADAPTER_PROVENANCE_FILE in
+# every checkpoint directory, and the server builds the id from that file,
+# never from the folder's name alone (demo/vla_server_v2.adapter_identity).
+# Every reader that decides "was this the VLA" (tools/todo.py) or "which
+# weights flew" (demo/vla_mission.model_id_for) reads the variant from here,
+# so the three cannot disagree about a prefix. A variant is a LABEL on the
+# id; the weights themselves are pinned by weights_sha256 (base shards +
+# adapter directory), which changes with any fine-tune.
+ADAPTER_PROVENANCE_FILE = "aerialvla_ft_provenance.json"
+ORIGINAL_ADAPTER_ID = "aerialvla-lora/aero_vla"
+FINE_TUNE_ID_ROOTS = ("aerialvla-ft-follow",)
+ADAPTER_VARIANTS = ("original", "fine-tune")
+
+
+def adapter_variant(model_id: Any) -> str | None:
+    """"original" for upstream's adapter id, "fine-tune" for an id under one
+    of FINE_TUNE_ID_ROOTS (by prefix, "<root>/"), None for anything else - a
+    fake: stand-in, a bare base, another adapter. Reads the server's id
+    ("aerialvla-ft-follow/r1/epoch2@1a2b3c4d") and the pilot side's model id
+    ("aerialvla:openvla-7b+aerialvla-ft-follow/r1/epoch2@sha256:..."), whose
+    adapter part follows the "+"."""
+    if not isinstance(model_id, str) or not model_id.strip():
+        return None
+    s = model_id.strip()
+    if s.lower().startswith("fake:"):
+        return None
+    ident = s.split("@", 1)[0]
+    if ident.startswith("aerialvla:") and "+" in ident:
+        ident = ident.split("+", 1)[1]
+    if ident == ORIGINAL_ADAPTER_ID or ident == "aero_vla":
+        return "original"
+    if any(ident.startswith(root + "/") and len(ident) > len(root) + 1
+           for root in FINE_TUNE_ID_ROOTS):
+        return "fine-tune"
+    return None
+
+
 def _is_coordinate_name(key: str) -> bool:
     k = key.lower()
     return k in COORDINATE_FIELD_NAMES or "target" in k or "goal" in k

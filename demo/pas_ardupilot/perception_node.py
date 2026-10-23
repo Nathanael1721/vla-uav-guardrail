@@ -4024,7 +4024,9 @@ def vla_manifest_model(VM, identity: dict | None, rec: dict) -> dict:
     manifest_for's rule): the server's reported digest for a real AerialVLA
     identity, else the stand-in's own fake: id."""
     if rec.get("is_vla"):
-        return {"model_id": VM.MODEL_ID, "reported_digest": identity["weights_sha256"],
+        # MODEL_ID for upstream's adapter, its own id for a follow fine-tune
+        # (vla_mission.model_id_for, 2026-10-23)
+        return {"model_id": VM.model_id_for(identity), "reported_digest": identity["weights_sha256"],
                 "weight_paths": rec.get("weight_paths")}
     sid = str((identity or {}).get("id") or "unknown")
     return {"model_id": sid if sid.startswith("fake:") else f"fake:{sid}"}

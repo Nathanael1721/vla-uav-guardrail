@@ -73,6 +73,40 @@ SIMPLIFIED = set(AU.SIMPLIFIED) | set("务单车场东压参确称稳类组细�
 # ------------------------------------------------------------------ classify
 VLA_ALLOW = (re.compile(r"(?i)openvla"), re.compile(r"(?i)aerial[-_ ]?vla"),
              re.compile(r"(?i)aero[-_]?vla"))
+# Our fine-tunes of AerialVLA (training/finetune_aerialvla_follow.py), allowed
+# BY PREFIX: the server announces a checkpoint as
+# "aerialvla-ft-follow/<run>/<epoch>@<adapter sha8>" (demo/vla_server_v2.py
+# model_identity, from the provenance file the trainer writes) and the pilot
+# side records "aerialvla:openvla-7b+aerialvla-ft-follow/<run>/<epoch>"
+# (demo/vla_mission.model_id_for). A run is recorded with its variant
+# (`adapter`: original / fine-tune), never counted as upstream's adapter.
+# guardrail/aerialvla_codec.py FINE_TUNE_ID_ROOTS, ORIGINAL_ADAPTER_ID and
+# adapter_variant, copied: this file stays stdlib-only (importing the codec
+# runs guardrail/__init__, which imports the Shield), and
+# tests/test_finetune_follow.py holds the copy equal to the codec's on every
+# id form.
+FINE_TUNE_ID_ROOTS = ("aerialvla-ft-follow",)
+ORIGINAL_ADAPTER_ID = "aerialvla-lora/aero_vla"
+VLA_PREFIXES = tuple(f"{r}/" for r in FINE_TUNE_ID_ROOTS)
+
+
+def adapter_variant(model_id) -> str | None:
+    """"original" (upstream's aero_vla), "fine-tune" (an id under
+    VLA_PREFIXES) or None; the server's id or the pilot side's
+    "aerialvla:openvla-7b+<adapter>" form (aerialvla_codec.adapter_variant)."""
+    if not isinstance(model_id, str) or not model_id.strip():
+        return None
+    s = model_id.strip()
+    if s.lower().startswith("fake:"):
+        return None
+    ident = s.split("@", 1)[0]
+    if ident.startswith("aerialvla:") and "+" in ident:
+        ident = ident.split("+", 1)[1]
+    if ident == ORIGINAL_ADAPTER_ID or ident == "aero_vla":
+        return "original"
+    if any(ident.startswith(p) and len(ident) > len(p) for p in VLA_PREFIXES):
+        return "fine-tune"
+    return None
 
 
 def classify_pilot(vla_model_hash) -> str:
@@ -102,7 +136,7 @@ def classify_pilot(vla_model_hash) -> str:
         return "stub"
     if "owlvit" in low or "owl-vit" in low or "owlv2" in low:
         return "detector"
-    if any(p.search(ident) for p in VLA_ALLOW):
+    if adapter_variant(s) is not None or any(p.search(ident) for p in VLA_ALLOW):
         return "vla"
     return "unknown"
 
@@ -350,6 +384,9 @@ def vla_evidence(run: Path, metrics: dict | None = None, kpi: dict | None = None
     ev = ev or {"source": None, "decisions": 0, "vla_step_ticks": 0, "digests": [], "model_ids": []}
     ev["weights_sha256"] = ev["digests"][0] if len(ev.get("digests") or []) == 1 else None
     ev["model_id"] = ev["model_ids"][0] if len(ev.get("model_ids") or []) == 1 else None
+    # Which adapter answered (original / fine-tune / None), from the server's
+    # own id: a fine-tune's flight is a VLA flight, recorded as the fine-tune.
+    ev["adapter"] = adapter_variant(ev["model_id"])
     return ev
 
 
@@ -381,6 +418,12 @@ def server_model_problem(vla_model_hash, ev: dict) -> str | None:
     want, got = vla_family(h), vla_family(ev.get("model_id"))
     if want != got:
         return f"server_model_differs:configured {want}, server {got}"
+    # The adapter, by name: a run configured as upstream's adapter and served
+    # by a follow fine-tune (or the reverse) did not fly what it says, even
+    # where no digest is on file to tell (2026-10-23).
+    va, vb = adapter_variant(h), adapter_variant(ev.get("model_id"))
+    if va is not None and vb is not None and va != vb:
+        return f"server_model_differs:configured the {va} adapter, server the {vb}"
     m = _MANIFEST_DIGEST.search(h)
     served = ev.get("weights_sha256")
     if m and served and m.group(1) != served and ev.get("pilot_agreed_digest") != served:

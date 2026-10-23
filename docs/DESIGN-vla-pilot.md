@@ -21,6 +21,13 @@ AerialVLA's two cameras added to that rail's robot config. Tested with the
 rail's stand-ins against the scripted server (`tests/test_pas_vla.py`); it
 has NOT flown ArduPilot, Unreal or the model.
 
+2026-10-23, wave FT: the follow's step-tracker smoothing (section 13,
+"Smoothing the follow") and a format-exact fine-tune of the adapter for the
+follow, its evaluation tool and the server's adapter identity (section 15).
+Tested offline (`tests/test_vla_follow_smooth.py`,
+`tests/test_finetune_follow.py`); neither has flown, and no training run has
+been made.
+
 2026-10-22: the review of 7c7cc50 found nine problems; all are fixed, each
 with a failing-first test. The ones that change behaviour: a server error is
 no answer (section 5), the client re-reads `raw_text` and pins the model
@@ -673,6 +680,40 @@ simulator.
 - The FSM's N-in-T for a slow pilot (section 8) is still a PI question; this
   rail runs no escalation FSM.
 
+### Smoothing the follow (2026-10-23)
+
+The user found the VLA follow "very not smooth". On the hand-written
+follow's own definitions (`tools/compare_motion.py`: the Shield's emitted
+velocity and yaw rate differenced over max(dt, 0.05 s)), follow #9 commanded
+p95 / p99 / max 3.75 / 32.68 / 54.32 m/s^2 and a yaw acceleration p99 / max of
+6.87 / 18.41 rad/s^2, against 2.60 / 3.90 / 5.56 and 0.50 / 2.09 for the
+hand-written follow of 19 Oct. The largest steps were translate-to-translate:
+a new answer re-pointing and re-speeding the velocity in one tick, the speed
+having decayed into the old endpoint at k_pos x d.
+
+`TrackerConfig` gains three opt-in limits (all off by default; `vla_fly`
+turns them on for the follow executor unless `--no-smooth`, and refuses
+`--smooth` for goto and approach):
+
+| field | follow default | what it does |
+|---|---|---|
+| `smooth_accel_mps2` | 2.5 (follow_vlm's `--accel-max`) | the commanded horizontal velocity changes by at most this x dt (dt capped at one tick), as a vector; the endpoint is approached at min(cruise, sqrt(2 a d)) instead of k_pos x d |
+| `smooth_yaw_accel_rps2` | 0.6 | the yaw rate changes by at most this x dt; the heading is approached at min(cap, k_yaw e, sqrt(2 alpha e)), so the slew cannot overshoot |
+| `carry_s` | 1.0 | a step flown to its end while a request is in flight keeps its velocity, decaying linearly to zero over carry_s (author vla_step, reason `carry`, counted) instead of stopping between steps |
+
+Every output passes the limits last, whoever authored it: a hold, a hover
+and the follow's close hold ramp down instead of stopping in one tick
+(`smooth_decay_ticks`). The close hold is therefore the tracker's input
+(`StepTracker.tick(hold_horizontal=True)`, read before `act` in
+`MissionLoop`) when the tracker smooths. The Shield still judges and repairs
+every tick after the tracker. vla_fly's rows now carry `pitch_deg` /
+`roll_deg` (follow_vlm's quaternion reading) - until now compare_motion read
+their absence as 0 tilt - and metrics.json carries `motion` on the same
+definitions. Closed loop on a point vehicle (0.8 s answers, pipelined, a car
+turning a corner; `tests/test_vla_follow_smooth.py`): commanded acceleration
+p99 22.1 -> 2.5 m/s^2, yaw acceleration p99 1.73 -> 0.60 rad/s^2, median
+distance to the car 17.4 -> 16.3 m. Not flown.
+
 ## 14. Flying it on the ArduPilot rail: `perception_node.py --pilot vla`
 
 Wave V2b, 2026-10-23 (to-do VLA-07, and VLA-03 for the cameras). The same
@@ -862,3 +903,71 @@ server with a real-looking identity).
   been made.
 - The FSM's N-in-T for a slow pilot (section 8) applies here unchanged; how
   often a stop-and-go VLA trips it is unmeasured.
+
+## 15. Fine-tuning AerialVLA to follow (wave FT, 2026-10-23)
+
+The approved next step after the ten follow flights: expert demonstrations
+from the hand-written follow (recorded and labelled by branch FT-D,
+`tools/build_follow_dataset.py`), and a fine-tune of the original adapter on
+them.
+
+### Format-exact training
+
+`training/finetune_aerialvla_follow.py` trains on exactly what the server
+feeds and reads: the prompt is `aerialvla_codec.build_prompt`'s (a sample is
+kept only when its prompt re-builds from its phrase and object), the image is
+the dataset's 224x448 mosaic through the Prismatic processor as
+`vla_server_v2.generate_text` calls it, the target is the truncated two-digit
+"FF DD YY" the strict reader accepts, and input_ids = tok(prompt + target) +
+[EOS] with the server's tok(prompt) as a checked prefix (labels -100 over
+it; loss on the answer and EOS only). On the real tokenizer the prefix holds
+on all eight phrases, upstream's text EOS is the same token, and one encoded
+sample equals the server's own preprocessing (prompt bytes, mosaic sha256,
+prompt ids, pixel_values: `--dry-run`'s `server_parity`). The July trainer
+(`training/finetune_aerialvla.py`) rounded and did not pad its bins,
+tokenised the answer apart (a second dummy-prefix space), used one image and
+its own prompt; it is kept, not reused.
+
+bf16 LoRA continuing `aero_vla` (its own r 64 / alpha 128 / targets /
+projector), the LoRA and projector in fp32 for AdamW under bf16 autocast,
+gradient checkpointing; nf4 QLoRA as the fallback. Cosine LR with warm-up,
+per-epoch checkpoints `D:/models/aerialvla-ft-follow/<run>/epoch<N>`, a
+held-out evaluation before training and after every epoch (parse-ok rate,
+exact bin per axis, step MAE in m / rad, turn-sign agreement), early
+stopping on step_mae_norm, loss and evaluation CSVs and `run.json`.
+Held-out runs never train (split by run, refused otherwise).
+
+### Which adapter flew
+
+Each checkpoint carries `aerialvla_ft_provenance.json`; `vla_server_v2
+--adapter` announces it as `aerialvla-ft-follow/<run>/<epoch>@<adapter
+sha8>` with an `adapter` block (path, sha256 over its files, variant,
+provenance), the pilot side records the model id
+`aerialvla:openvla-7b+aerialvla-ft-follow/<run>/<epoch>` (never upstream's
+name with the fine-tune's digest), and `tools/todo.py` allows the prefix as a
+VLA and records the variant (`adapter`: original / fine-tune); a run
+configured as one adapter and served by the other is `vla_unverified`.
+`vla_fly --vla-adapter DIR` starts the server with a checkpoint.
+
+### Evaluating
+
+`tools/eval_vla_adapter.py` sends every held-out sample as a flight sends it
+(the mosaic's tiles as PNG, which the server rebuilds pixel for pixel - each
+answer's image and prompt sha256 are checked) to a running server (refused
+unless its adapter digest is `--adapter`'s) or in process through
+`V2Server`'s core, and the same for the original adapter as the baseline.
+That, not the training run's own evaluation (bf16 autocast over fp32 LoRA),
+is the number to quote; and offline step accuracy is not the follow: the
+closed-loop measure is a flight scored by `tools/compare_motion.py` and
+`frac_within_30m`.
+
+### Not verified
+
+- No training run has been made: nothing here loaded the 7B model. The loop
+  ran end to end only on a CPU stand-in model; whether bf16 LoRA with
+  gradient checkpointing fits 24 GB beside nothing else is unmeasured (the
+  estimate is about 20 GB at batch 4).
+- The expert's decision cadence must match the model's (the July lesson:
+  run2 overshot because the expert decided at 10 Hz and the model at
+  0.8 Hz); that is the dataset's labels (FT-D's horizon and stride), not this
+  trainer's.

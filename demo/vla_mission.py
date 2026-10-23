@@ -1077,18 +1077,35 @@ class MissionLoop:
         now = self.clock()
         if self.t0 is None:
             self.t0 = now
-        action = self.backend.act(state)
-        tk = self.backend.last_tick
-        pilot_action = action
         held_close = close_now = False
         got = None
-        if self.close_hold is not None and self.det_source is not None:
-            got = unpack_box(self.det_source())
+
+        def _close() -> bool:
             cdet, ct_box = got[0], got[1]
             fresh_s = self.detector_hint.fresh_s if self.detector_hint is not None else 1.0
             dropped = self.detector_hint is not None and self.detector_hint.box_ignored(ct_box)
-            close_now = bool(cdet is not None and ct_box is not None and not dropped
-                             and now - float(ct_box) <= fresh_s and self.close_hold(cdet))
+            return bool(cdet is not None and ct_box is not None and not dropped
+                        and now - float(ct_box) <= fresh_s and self.close_hold(cdet))
+        tracker = getattr(self.backend, "tracker", None)
+        if (self.close_hold is not None and self.det_source is not None
+                and bool(getattr(tracker, "smoothing", False))):
+            # SMOOTHING (TrackerConfig): the close hold is the TRACKER's
+            # input, so it ramps down at the acceleration limit like every
+            # other change, instead of zeroing a 4.5 m/s command in one tick
+            # here (still once per tick: the box is read before act, which
+            # neither reads nor changes it).
+            got = unpack_box(self.det_source())
+            close_now = _close()
+            action = self.backend.act(state, hold_horizontal=close_now)
+            held_close = close_now
+            self.n_close_hold += int(close_now)
+        else:
+            action = self.backend.act(state)
+        tk = self.backend.last_tick
+        pilot_action = action
+        if got is None and self.close_hold is not None and self.det_source is not None:
+            got = unpack_box(self.det_source())
+            close_now = _close()
             if close_now and (action.vx or action.vy):
                 action = Action4D(vx=0.0, vy=0.0, vz_up=action.vz_up, yaw_rate=action.yaw_rate)
                 held_close = True
@@ -1528,14 +1545,18 @@ LOW_VRAM = {"precision": "nf4", "attn": "sdpa", "merge": True}
 def server_argv(python: str, *, precision: str, attn: str, merge: bool,
                 host: str = "127.0.0.1", port: int = 8790, log: str | None = None,
                 fake_output: list[str] | None = None, fake_delay_s: float = 0.0,
-                missing_down: str = "refuse") -> list[str]:
+                missing_down: str = "refuse", adapter: str | None = None) -> list[str]:
     """The command line of demo/vla_server_v2.py serve. A real model gets
     --precision, --attn and --merge/--no-merge, always explicit (the server
     refuses a run that leaves one out). `fake_output` serves the scripted
     stand-in instead (identity fake:scripted, no weights): a plumbing dry run
     that can never be recorded as a VLA flight. --missing-down refuse: this
     pilot always sends the down frame, so a missing one is a fault, not a
-    black tile the model never saw in training."""
+    black tile the model never saw in training. `adapter` (a real model
+    only): the LoRA directory instead of the server's default, upstream's
+    aero_vla - a follow fine-tune's checkpoint, announced under its own id."""
+    if adapter is not None and fake_output:
+        raise ValueError("an adapter is for a real model, not the scripted stand-in")
     if precision not in ("bf16", "nf4"):
         raise ValueError(f"precision {precision!r} is not bf16 or nf4")
     if attn not in ("sdpa", "eager"):
@@ -1550,6 +1571,8 @@ def server_argv(python: str, *, precision: str, attn: str, merge: bool,
     else:
         argv += ["--precision", precision, "--attn", attn,
                  "--merge" if merge else "--no-merge"]
+        if adapter is not None:
+            argv += ["--adapter", str(adapter)]
     argv += ["--missing-down", missing_down, "--host", str(host), "--port", str(int(port))]
     if log:
         argv += ["--log", str(log)]
@@ -1710,7 +1733,7 @@ class VLAServer:
                                  else round(self.t_hello - self.t_start, 1)),
                 "exit_code": self.exit_code, "stop": self.stop_how,
                 "identity": {k: h.get(k) for k in ("id", "base", "weights_sha256", "precision",
-                                                    "attn", "merged", "agreement")},
+                                                    "attn", "merged", "agreement", "adapter")},
                 "max_new_tokens": h.get("max_new_tokens"),
                 "libraries": h.get("libraries"), "weight_files": h.get("weight_files")}
 
@@ -1734,6 +1757,22 @@ def identity_is_vla(identity: dict | None) -> tuple[bool, str | None]:
     if len(set(d)) < 2:
         return False, "weights_sha256 is one repeated digit: a stand-in, not a model"
     return True, None
+
+
+def model_id_for(identity: dict | None) -> str:
+    """The pilot side's model id for a real AerialVLA identity: MODEL_ID
+    ("aerialvla:openvla-7b+aero_vla") for upstream's adapter, and for a
+    follow fine-tune (the server's id "aerialvla-ft-follow/<run>/<epoch>@...",
+    aerialvla_codec.adapter_variant) "aerialvla:openvla-7b+aerialvla-ft-
+    follow/<run>/<epoch>". Until the follow fine-tune (2026-10-23) every
+    real identity was recorded under MODEL_ID, so a fine-tune would have
+    flown under upstream's adapter name with the fine-tune's digest beside
+    it: the digest was honest, the name was not."""
+    from guardrail.aerialvla_codec import adapter_variant
+    sid = str((identity or {}).get("id") or "")
+    if adapter_variant(sid) == "fine-tune":
+        return f"aerialvla:openvla-7b+{sid.split('@', 1)[0]}"
+    return MODEL_ID
 
 
 def local_weight_paths(identity: dict | None) -> list[str] | None:
@@ -2091,7 +2130,7 @@ def pilot_entry(identity: dict | None, stats: dict, records: list[dict], rows: l
     from guardrail.manifest import pilot_record
     ok, why = identity_is_vla(identity)
     if ok:
-        rec = pilot_record(MODEL_ID, "vla", weight_paths=weight_paths,
+        rec = pilot_record(model_id_for(identity), "vla", weight_paths=weight_paths,
                            reported_digest=identity["weights_sha256"], reported_by=reported_by)
     else:
         sid = str((identity or {}).get("id") or "unknown")
@@ -2099,7 +2138,7 @@ def pilot_entry(identity: dict | None, stats: dict, records: list[dict], rows: l
         rec["not_a_vla_because"] = why
     rec["server_identity"] = {k: (identity or {}).get(k) for k in
                               ("id", "base", "weights_sha256", "precision", "attn", "merged",
-                               "agreement")}
+                               "agreement", "adapter")}
     rec["vla"] = stats
     rec["summary"] = pilot_summary(stats, records, rows)
     rec["server"] = server
@@ -2114,7 +2153,7 @@ def manifest_for(policy_hash: str, identity: dict | None, seed: int, scene_path:
     from guardrail.manifest import build_manifest
     ok, _ = identity_is_vla(identity)
     if ok:
-        return build_manifest(policy_hash, MODEL_ID, seed, scene_path=scene_path,
+        return build_manifest(policy_hash, model_id_for(identity), seed, scene_path=scene_path,
                               weight_paths=weight_paths,
                               reported_digest=identity["weights_sha256"])
     sid = str((identity or {}).get("id") or "unknown")

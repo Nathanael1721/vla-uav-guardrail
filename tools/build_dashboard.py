@@ -335,6 +335,9 @@ def _evidence_summary(tag: str, ev: dict) -> dict:
         "decisions": ev.get("decisions") or 0, "vla_step_ticks": ev.get("vla_step_ticks") or 0,
         "weights_sha256": ev.get("weights_sha256"),
         "model_id": None if ev.get("model_id") is None else str(ev["model_id"])[:80],
+        # original / fine-tune (tools/todo.py adapter_variant): which AerialVLA
+        # adapter answered, so a fine-tune's flight never reads as upstream's
+        "adapter": ev.get("adapter"),
         "digests_seen": len(ev.get("digests") or []),
         **{k: ev.get(k) or 0 for k in ("parse_fail", "server_error", "link_failure", "no_digest",
                                        "requests", "vla_ticks")},
@@ -505,9 +508,10 @@ def vla_section(flights: list[dict], todo_items: list[dict]) -> dict:
         "counts": counts, "total": len(flights),
         "first_vla_flight": {"tag": first["tag"], "date": first["date"], "id": first["pilot"]["id"]} if first else None,
         "last_vla_flight": {"tag": last["tag"], "date": last["date"], "id": last["pilot"]["id"],
-                            **{k: last["pilot"]["evidence"][k] for k in (
+                            **{k: last["pilot"]["evidence"].get(k) for k in (
                                 "decisions", "weights_sha256", "requests", "decision_share",
-                                "vla_tick_share", "link_failure", "server_error", "parse_fail")}}
+                                "vla_tick_share", "link_failure", "server_error", "parse_fail",
+                                "adapter")}}
         if last else None,
         "last_vla_unverified": {"tag": last_unv["tag"], "date": last_unv["date"], "id": last_unv["pilot"]["id"],
                                 "reason": last_unv["pilot"]["unverified_reason"]} if last_unv else None,

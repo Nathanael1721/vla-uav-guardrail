@@ -685,6 +685,24 @@ def test_the_follow_dataset_test_runs_in_ci_and_its_mosaic_with_pillow():
     assert len(steps) == 1 and "tests/test_follow_dataset.py" in steps[0]["run"], steps
 
 
+def test_the_follow_fine_tune_and_smoothing_tests_run_in_ci():
+    """Wave FT (2026-10-23): the follow fine-tune (training/
+    finetune_aerialvla_follow.py: the format-exact encoding, the held-out
+    metrics, the checkpoint's identity through the server, the dashboard
+    rule and the adapter evaluation tool) and the step tracker's follow
+    smoothing with tools/compare_motion.py. Neither needs a GPU, a model or
+    a simulator; the fine-tune file's Pillow / torch / real-tokenizer checks
+    SKIP where those are absent, and its runner counts them."""
+    loop = _loop()
+    for f in ("test_finetune_follow.py", "test_vla_follow_smooth.py"):
+        assert f in loop, f"{f} is not run in CI"
+        src = (ROOT / "tests" / f).read_text(encoding="utf-8")
+        runner = src.split('if __name__ == "__main__":', 1)[-1]
+        assert "== SKIP" in runner, f"{f}: the runner does not count the SKIP"
+    src = (ROOT / "tests" / "test_finetune_follow.py").read_text(encoding="utf-8")
+    assert "return SKIP" in src and "GUARDRAIL_REQUIRE_PILLOW" in src
+
+
 def test_the_ardupilot_vla_pilot_test_runs_in_ci():
     """Wave V2b (2026-10-23): the ArduPilot rail's AerialVLA pilot
     (perception_node --pilot vla, to-do VLA-07) and its VLA cameras (VLA-03).
