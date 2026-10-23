@@ -42,6 +42,23 @@
 #         -PolicyFile policies\follow_car_citylife_nfz.yaml -Seconds 300 `
 #         -Tag ft_expert_p01 -RecordVla -RecordPerturb -Seed 101
 #
+# -RecordPerturbVla HOST:PORT (with -RecordVla only; not with -RecordPerturb)
+# is DAgger (demo/vla_dagger.py): the fine-tuned AerialVLA, served by a
+# running demo\vla_server_v2.py, flies windows of the recording - every
+# 6-10 s, for 2.5-4.0 s (-PerturbVlaEvery / -PerturbVlaDur "LO,HI"), the
+# executed command is vla_fly's follow step tracker on AerialVLA's latest
+# step, before the Shield - and the expert's recovery from wherever it left
+# the aircraft becomes the label. Start the server first (vla-real env); this
+# script refuses to start the simulator when nothing listens on HOST:PORT,
+# and follow_vlm refuses a server that does not answer hello as AerialVLA
+# (-PerturbVlaAllowStandIn: the scripted stand-in, a plumbing dry run):
+#
+#     python demo\vla_server_v2.py serve --precision bf16 --attn sdpa --merge `
+#         --missing-down refuse --adapter D:\models\aerialvla-ft-follow\<run>\epoch<N>
+#     .\scripts\run_citylife_follow.ps1 -Object "a red car" -LevelCar Car_10 `
+#         -PolicyFile policies\follow_car_citylife_nfz.yaml -Seconds 300 `
+#         -Tag ft_dagger_01 -RecordVla -RecordPerturbVla 127.0.0.1:8790 -Seed 201
+#
 # WARNING: like every demo script here, this restarts the simulator, which kills
 # any process holding Blocks.uproject - INCLUDING an editor you have open. Close
 # the editor first. The match is on the .uproject, not the process name, so
@@ -84,6 +101,11 @@ param(
     [switch]$PerturbReplaceYaw,         # with -RecordPerturb: the offset replaces the
                                         # expert's yaw rate while it lasts (stronger)
     [string]$PerturbYawRate = "",       # with -RecordPerturb: "LO,HI" rad/s (default 0.3,0.5)
+    [string]$RecordPerturbVla = "",     # with -RecordVla: HOST:PORT of a running AerialVLA
+                                        # server that flies windows of the recording (DAgger)
+    [string]$PerturbVlaEvery = "",      # with -RecordPerturbVla: "LO,HI" s onset to onset (6,10)
+    [string]$PerturbVlaDur = "",        # with -RecordPerturbVla: "LO,HI" s per window (2.5,4.0)
+    [switch]$PerturbVlaAllowStandIn,    # with -RecordPerturbVla: a server that is not AerialVLA
     [int]$Seed = 0,                     # follow_vlm --seed (0 = its default); the
                                         # perturbation schedule follows it
     [switch]$KeepSim,                   # leave the simulator running afterwards
@@ -169,6 +191,30 @@ if ($RecordPerturb -and -not $RecordVla) { throw "-RecordPerturb needs -RecordVl
 if ($PerturbSpeed -and -not $RecordPerturb) { throw "-PerturbSpeed needs -RecordPerturb" }
 if (($PerturbReplaceYaw -or $PerturbYawRate) -and -not $RecordPerturb) {
     throw "-PerturbReplaceYaw and -PerturbYawRate need -RecordPerturb"
+}
+if ($RecordPerturbVla -and -not $RecordVla) { throw "-RecordPerturbVla needs -RecordVla" }
+if ($RecordPerturbVla -and $RecordPerturb) {
+    throw "-RecordPerturbVla and -RecordPerturb: one perturbation at a time"
+}
+if (($PerturbVlaEvery -or $PerturbVlaDur -or $PerturbVlaAllowStandIn) -and -not $RecordPerturbVla) {
+    throw "-PerturbVlaEvery, -PerturbVlaDur and -PerturbVlaAllowStandIn need -RecordPerturbVla"
+}
+if ($RecordPerturbVla) {
+    # The VLA server must already listen: follow_vlm refuses a DAgger flight
+    # whose server does not answer hello, but only after a simulator has been
+    # started (minutes) for nothing.
+    $i = $RecordPerturbVla.LastIndexOf(':')
+    $vlaPort = 0
+    if ($i -lt 1 -or -not [int]::TryParse($RecordPerturbVla.Substring($i + 1), [ref]$vlaPort)) {
+        throw "-RecordPerturbVla $RecordPerturbVla is not HOST:PORT"
+    }
+    $vlaHost = $RecordPerturbVla.Substring(0, $i)
+    if (-not (Test-NetConnection $vlaHost -Port $vlaPort -WarningAction SilentlyContinue).TcpTestSucceeded) {
+        throw ("nothing listens on ${RecordPerturbVla}: start the VLA server first (vla-real env), " +
+               "e.g. python demo\vla_server_v2.py serve --precision bf16 --attn sdpa --merge " +
+               "--missing-down refuse --adapter D:\models\aerialvla-ft-follow\<run>\epoch<N>")
+    }
+    Say "VLA server listening on $RecordPerturbVla (follow_vlm checks its hello)"
 }
 
 # Everything from here runs under try/finally: a -game simulator left running
@@ -388,6 +434,19 @@ if ($RecordVla) {
         }
         if ($PerturbYawRate) {
             $a += @("--perturb-yaw-rate", $PerturbYawRate)
+        }
+    }
+    if ($RecordPerturbVla) {
+        $a += @("--record-perturb-vla", $RecordPerturbVla)
+        # An unquoted -PerturbVlaEvery 6,10 binds to a [string] as "6 10".
+        if ($PerturbVlaEvery) {
+            $a += @("--perturb-vla-every", ($PerturbVlaEvery.Trim() -replace '\s+', ','))
+        }
+        if ($PerturbVlaDur) {
+            $a += @("--perturb-vla-dur", ($PerturbVlaDur.Trim() -replace '\s+', ','))
+        }
+        if ($PerturbVlaAllowStandIn) {
+            $a += @("--perturb-vla-allow-stand-in")
         }
     }
 }
